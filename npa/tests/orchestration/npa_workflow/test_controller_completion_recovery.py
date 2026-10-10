@@ -10,6 +10,7 @@ import yaml
 
 from npa.orchestration.npa_workflow import build_plan, load_spec
 from npa.orchestration.npa_workflow.runtime import RuntimeOptions, run_workflow_runtime
+from npa.orchestration.skypilot.workflow import ManagedJobEvidence
 from test_runtime_orchestrator import (
     GATE_LOOP_SPEC,
     FANOUT_SPEC,
@@ -69,11 +70,12 @@ def _evidence(case, **changes):
             },
         ),
     )
-    return SimpleNamespace(**{**vars(evidence), **changes})
+    return ManagedJobEvidence(**{**vars(evidence), **changes})
 
 
-def _resume(case, *, evidence=None, output_checker=None, retries=0):
+def _resume(case, *, evidence=None, output_checker=None, retries=0, project=""):
     submits, observations, reads, cancels = FakeSubmitter(), [], [], []
+    logs = []
 
     def reconcile(name, *, job_id=""):
         observations.append((name, job_id))
@@ -84,7 +86,11 @@ def _resume(case, *, evidence=None, output_checker=None, retries=0):
         return output_checker(uri) if output_checker is not None else True
 
     options = RuntimeOptions(
-        poll_seconds=0, max_wait_seconds=60, resume=True, retries=retries
+        poll_seconds=0,
+        max_wait_seconds=60,
+        resume=True,
+        retries=retries,
+        project=project,
     )
     executor = _executor(
         case.spec,
@@ -96,6 +102,7 @@ def _resume(case, *, evidence=None, output_checker=None, retries=0):
         output_checker=check_output,
         cancels=cancels,
     )
+    executor._log = logs.append
     report = run_workflow_runtime(
         case.spec,
         run_id=case.run_id,
@@ -109,7 +116,94 @@ def _resume(case, *, evidence=None, output_checker=None, retries=0):
         observations=observations,
         reads=reads,
         cancels=cancels,
+        logs=logs,
     )
+
+
+@pytest.mark.parametrize(
+    "category,decision",
+    [
+        ("operator_recovery", "operator_authorized_verified_absent_relaunch"),
+        ("kubernetes_transport", "interrupted_verified_absent"),
+        ("kubernetes_rate_limit", "interrupted_verified_absent"),
+        ("kubernetes_server", "recovery_deadline_exhausted_verified_absent"),
+    ],
+)
+def test_controller_failure_preserves_verified_absent_relaunch(
+    failed_controller, category, decision
+):
+    case = failed_controller
+    state = case.store.read_runtime_state()
+    state.waves[-1].update(error_category=category, recovery_decision=decision)
+    case.store.write_runtime_state(state)
+    outcome = _resume(case, evidence=_evidence(case, outcome="absent"))
+    assert outcome.report.status == "succeeded"
+    assert [call["tasks"] for call in outcome.submits] == [["gate"], ["publish"]]
+    assert outcome.submits[0]["job_name"].endswith("-a2")
+    assert outcome.cancels == []
+    waves = case.store.read_runtime_state().waves
+    prior = next(wave for wave in waves if wave["key"] == case.record["key"])
+    assert prior["attempt"] == 1 and prior["sky_status"] == "FAILED_CONTROLLER"
+    assert prior["recovery_decision"] == decision
+
+
+@pytest.mark.parametrize(
+    "category,decision",
+    [
+        ("none", "operator_authorized_verified_absent_relaunch"),
+        ("controller", "verified_absent_no_retry"),
+        ("controller", "phantom_record_cancelled_verified_relaunch"),
+        ("kubernetes_transport", "interrupted_verified_absent"),
+        ("operator_recovery", "operator_authorized_verified_absent_relaunch"),
+    ],
+)
+def test_controller_failure_does_not_treat_a_decision_as_cancellation_proof(
+    failed_controller, category, decision
+):
+    case = failed_controller
+    state = case.store.read_runtime_state()
+    state.waves[-1].update(error_category=category, recovery_decision=decision)
+    state.waves[-1]["cancellation"] = {"state": "verified"}
+    state.waves[-1]["reconciliation"] = [
+        {
+            "outcome": "found_unobservable",
+            "job_id": case.record["job_id"],
+            "status": "PENDING",
+            "workload_observable": False,
+        }
+    ]
+    case.store.write_runtime_state(state)
+    outcome = _resume(
+        case, evidence=_evidence(case, status="FAILED_CONTROLLER"), retries=3
+    )
+    assert outcome.report.status == "failed"
+    assert outcome.submits == [] and outcome.cancels == []
+    latest = case.store.read_runtime_state().waves[-1]
+    assert latest["attempt"] == case.record["attempt"]
+    assert latest["job_id"] == case.record["job_id"]
+    assert latest["status"] == "failed"
+
+
+def test_controller_completion_names_project_identity_mismatch(failed_controller):
+    outcome = _resume(failed_controller, project="different-project")
+    assert outcome.report.status == "failed"
+    assert "logical_launch_id (project/run/wave/attempt)" in outcome.report.error
+    assert "original project" in outcome.report.error
+    assert outcome.observations == [] and outcome.submits == []
+
+
+@pytest.mark.parametrize("name,value", [("launch_sequence", 0), ("job_id", "01")])
+def test_controller_completion_identifies_ineligible_record(
+    failed_controller, name, value
+):
+    state = failed_controller.store.read_runtime_state()
+    state.waves[-1][name] = value
+    failed_controller.store.write_runtime_state(state)
+    outcome = _resume(failed_controller, retries=3)
+    assert "record is ineligible" in outcome.report.error
+    assert name in outcome.report.error
+    assert "immutable" not in outcome.report.error
+    assert outcome.observations == [] and outcome.submits == []
 
 
 def test_verified_controller_completion_advances_without_repeating_job(
@@ -143,6 +237,11 @@ def test_verified_controller_completion_advances_without_repeating_job(
     assert adopted["replayed"] is True and adopted["adopted"] is True
     assert adopted["primary_error"] == before["error"]
     assert adopted["error"] == ""
+    assert adopted["error_category"] == before["error_category"]
+    assert any(
+        "adopted the original attempt without submitting a replacement workload" in line
+        for line in outcome.logs
+    )
     proof = adopted["reconciliation"][-1]
     assert adopted["tasks"] == list(_evidence(case).task_rows)
     assert proof["task_rows"] == adopted["tasks"]

@@ -1054,7 +1054,10 @@ class SkyPilotWaveExecutor:
                     infrastructure_recoveries = int(recovery_record.get("used") or 0)
                 category = str(latest.get("error_category") or "")
                 sky_status = str(latest.get("sky_status") or "").upper()
-                if sky_status == "FAILED_CONTROLLER":
+                verified_absent_retry = self._verified_absent_relaunch(latest)
+                if sky_status == "FAILED_CONTROLLER" and not (
+                    verified_absent_retry and self._controller_retry_is_absent(latest)
+                ):
                     return self._recover_controller_completion(
                         latest, steps, key=key, kind=kind, group=group
                     )
@@ -1134,20 +1137,6 @@ class SkyPilotWaveExecutor:
                     self.ledger.record(attempt)
                     self.attempts.append(attempt)
                     return attempt
-                safe_transport_retry = category in {
-                    "kubernetes_transport",
-                    "kubernetes_rate_limit",
-                    "kubernetes_server",
-                } and str(latest.get("recovery_decision") or "") in {
-                    "recovery_deadline_exhausted_verified_absent",
-                    "interrupted_verified_absent",
-                    "verified_absent_no_retry",
-                }
-                explicit_absence_retry = (
-                    category == "operator_recovery"
-                    and str(latest.get("recovery_decision") or "")
-                    == "operator_authorized_verified_absent_relaunch"
-                )
                 verified_phantom_retry = (
                     category == "controller"
                     and str(latest.get("recovery_decision") or "")
@@ -1164,11 +1153,7 @@ class SkyPilotWaveExecutor:
                     "workload",
                     "schema",
                 }
-                if (
-                    safe_transport_retry
-                    or explicit_absence_retry
-                    or verified_phantom_retry
-                ):
+                if verified_absent_retry or verified_phantom_retry:
                     retrying_prior_terminal = True
                     self._log(
                         f"wave {key}: prior verified recovery permits a new "
@@ -1292,6 +1277,31 @@ class SkyPilotWaveExecutor:
         failed.error = last_error or "wave failed"
         return failed
 
+    @staticmethod
+    def _verified_absent_relaunch(record: Mapping[str, Any]) -> bool:
+        category = str(record.get("error_category") or "")
+        decision = str(record.get("recovery_decision") or "")
+        if category == "operator_recovery":
+            return decision == "operator_authorized_verified_absent_relaunch"
+        return category in {
+            "kubernetes_transport",
+            "kubernetes_rate_limit",
+            "kubernetes_server",
+        } and decision in {
+            "recovery_deadline_exhausted_verified_absent",
+            "interrupted_verified_absent",
+            "verified_absent_no_retry",
+        }
+
+    def _controller_retry_is_absent(self, record: Mapping[str, Any]) -> bool:
+        # A recorded absence decision must not override a newer native job
+        # observation: FAILED_CONTROLLER does not establish successful cleanup.
+        name = str(record.get("job_name") or "")
+        if not name:
+            return False
+        evidence = self._reconcile_exact(name, str(record.get("job_id") or ""))
+        return str(getattr(evidence, "outcome", "") or "") == "absent"
+
     def _recover_controller_completion(
         self,
         record: Mapping[str, Any],
@@ -1325,6 +1335,11 @@ class SkyPilotWaveExecutor:
         attempt.ended_at = utc_now()
         self.ledger.record(attempt)
         self.attempts.append(attempt)
+        self._log(
+            f"wave {key}: exact job {attempt.job_id} ({attempt.job_name}) and "
+            "declared outputs prove completion; adopted the original attempt "
+            "without submitting a replacement workload"
+        )
         return attempt
 
     @staticmethod
@@ -1357,27 +1372,31 @@ class SkyPilotWaveExecutor:
         key: str,
         group: str,
     ) -> None:
-        valid = self._controller_record_matches(record, steps, key)
-        if valid:
-            attempt = self._attempt_from_record(
-                record, steps=steps, kind="", group=group
-            )
-            valid = record.get("job_name") == self._job_name(
-                steps, group=group, attempt=attempt
-            ) and not self._completed_replay_identity_mismatches(record, steps)
-        if not valid:
+        invalid = self._controller_record_ineligible_fields(record)
+        if invalid:
             raise NpaWorkflowError(
-                f"wave {key}: controller completion blocked: immutable attempt "
-                "identity or declared outputs differ. Restore the original workflow, "
-                "staged source and image selection; no replacement was submitted."
+                f"wave {key}: controller completion blocked: record is ineligible "
+                f"({', '.join(invalid)}). Inspect the original launch evidence; "
+                "no replacement was submitted."
+            )
+        mismatches = self._controller_record_mismatches(record, steps, key)
+        attempt = self._attempt_from_record(record, steps=steps, kind="", group=group)
+        if record.get("job_name") != self._job_name(
+            steps, group=group, attempt=attempt
+        ):
+            mismatches.append("job_name")
+        mismatches.extend(self._completed_replay_identity_mismatches(record, steps))
+        if mismatches:
+            raise NpaWorkflowError(
+                f"wave {key}: controller completion blocked: identity or output "
+                f"declarations differ ({', '.join(mismatches)}). Restore the original "
+                "project, workflow, staged source and image selection; "
+                "no replacement was submitted."
             )
 
-    def _controller_record_matches(
-        self,
-        record: Mapping[str, Any],
-        steps: Sequence[PlanStep],
-        key: str,
-    ) -> bool:
+    @staticmethod
+    def _controller_record_ineligible_fields(record: Mapping[str, Any]) -> list[str]:
+        invalid = []
         job_id = record.get("job_id")
         if not (
             isinstance(job_id, str)
@@ -1385,12 +1404,27 @@ class SkyPilotWaveExecutor:
             and job_id.isdecimal()
             and not job_id.startswith("0")
         ):
-            return False
-        if any(
-            type(record.get(name)) is not int or record[name] <= 0
+            invalid.append("job_id")
+        invalid.extend(
+            name
             for name in ("attempt", "launch_sequence")
-        ):
-            return False
+            if type(record.get(name)) is not int or record[name] <= 0
+        )
+        invalid.extend(
+            name
+            for name in ("partial_launch", "recovery_reservation")
+            if record.get(name)
+        )
+        if not record.get("outputs"):
+            invalid.append("declared outputs")
+        return invalid
+
+    def _controller_record_mismatches(
+        self,
+        record: Mapping[str, Any],
+        steps: Sequence[PlanStep],
+        key: str,
+    ) -> list[str]:
         states = [step.state for step in steps]
         outputs = [dict(item) for step in steps for item in step.outputs]
         logical_id = logical_launch_identity(
@@ -1400,15 +1434,13 @@ class SkyPilotWaveExecutor:
             str(record["attempt"]),
             ",".join(states),
         )
-        return (
-            bool(outputs)
-            and record.get("key") == key
-            and record.get("states") == states
-            and record.get("outputs") == outputs
-            and not record.get("partial_launch")
-            and not record.get("recovery_reservation")
-            and record.get("logical_launch_id") == logical_id
-        )
+        expected = {"key": key, "states": states, "outputs": outputs}
+        mismatches = [
+            name for name, value in expected.items() if record.get(name) != value
+        ]
+        if record.get("logical_launch_id") != logical_id:
+            mismatches.append("logical_launch_id (project/run/wave/attempt)")
+        return mismatches
 
     def _require_controller_completion_evidence(
         self,
