@@ -19,19 +19,20 @@ def test_transfer_security_override_uses_the_verified_fixed_pyjwt_wheel():
     match = re.search(
         r"/pyjwt-(\d+\.\d+\.\d+)-py3-none-any\.whl#sha256=([0-9a-f]{64})$", jwt
     )
-    assert match and Version(match[1]) >= Version("2.14.0")
-    assert match[1] == "2.14.0"
+    # CVE-2026-101918 and CVE-2026-102275 remain present in 2.14.0.
+    assert match and Version(match[1]) >= Version("2.15.0")
+    assert match[1] == "2.15.0"
     # The exact wheel hash is filled from a retained full-byte public download,
     # never derived by replacing the version in the old wheel's URL/hash.
     assert (
-        match[2] == "ad0cef71c756a56e74863c2919cf0985f72decbcfcb550ee2f422e7c62b5eedc"
+        match[2] == "7a3742debf6b879e912dbb9819ceec1594be812452b78c5f2e2dfc56564954f8"
     )
 
 
 def test_isaac_oss_closure_does_not_retain_vulnerable_pyjwt():
     text = (WORKBENCH / "common/isaac3-oss-deps.txt").read_text()
     match = re.search(r"^pyjwt==(\S+)$", text, re.MULTILINE)
-    assert match and Version(match[1]) == Version("2.14.0")
+    assert match and Version(match[1]) == Version("2.15.0")
 
 
 def test_envgen_uses_explicit_fixed_headers_without_changing_other_callers():
