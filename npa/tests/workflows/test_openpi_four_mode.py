@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import asyncio
+import base64
+import hashlib
 import json
+import sys
+import types
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -26,6 +31,115 @@ SPEC = ROOT / "workflows" / "testing" / "openpi-pi05-four-mode.yaml"
 DIGEST_IMAGE = "registry.example.invalid/openpi@sha256:" + "a" * 64
 
 
+class _FakePolicy:
+    metadata: dict = {}
+    _model = SimpleNamespace(action_horizon=15, action_dim=32)
+
+    def infer(self, _observation, noise=None):
+        return {"actions": np.zeros((15, 8)), "noise": noise}
+
+    def _input_transform(self, observation):
+        wrist = np.asarray(observation["observation/wrist_image_left"])
+        return {
+            "image": {
+                "left_wrist_0_rgb": wrist,
+                "right_wrist_0_rgb": np.zeros_like(wrist),
+            },
+            "image_mask": {
+                "left_wrist_0_rgb": np.asarray(True),
+                "right_wrist_0_rgb": np.asarray(False),
+            },
+        }
+
+
+class _FakeUpstreamServer:
+    def __init__(self, **_kwargs):
+        self.authorized_requests = 0
+
+    async def _handler(self, _websocket):
+        self.authorized_requests += 1
+
+    def serve_forever(self):
+        return None
+
+
+class _FakeWebsocket:
+    def __init__(self, authorization: str):
+        self.request = SimpleNamespace(headers={"Authorization": authorization})
+        self.closed: tuple[int, str] | None = None
+
+    async def close(self, *, code: int, reason: str):
+        self.closed = (code, reason)
+
+
+def _install_fake_openpi(monkeypatch: pytest.MonkeyPatch, create_policy) -> None:
+    selected = SimpleNamespace(model=SimpleNamespace(action_horizon=15, action_dim=32))
+    monkeypatch.setitem(sys.modules, "openpi", types.ModuleType("openpi"))
+    monkeypatch.setitem(
+        sys.modules,
+        "openpi.policies",
+        SimpleNamespace(
+            policy_config=SimpleNamespace(create_trained_policy=create_policy)
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "openpi.serving",
+        SimpleNamespace(
+            websocket_policy_server=SimpleNamespace(
+                WebsocketPolicyServer=_FakeUpstreamServer
+            )
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "openpi.training",
+        SimpleNamespace(config=SimpleNamespace(get_config=lambda _name: selected)),
+    )
+
+
+def _execute_noise_server(
+    monkeypatch: pytest.MonkeyPatch, token: str, *, fail_on_policy_load: bool = False
+):
+    created = {"policies": 0}
+
+    def create_policy(*_args):
+        if fail_on_policy_load:
+            raise AssertionError("model loading ran before authentication preflight")
+        created["policies"] += 1
+        return _FakePolicy()
+
+    _install_fake_openpi(monkeypatch, create_policy)
+    monkeypatch.setenv("NPA_OPENPI_SERVICE_AUTH_TOKEN", token)
+    monkeypatch.setattr(
+        sys, "argv", ["server", "--config=x", "--checkpoint=y", "--port=1"]
+    )
+    namespace: dict = {}
+    exec(
+        compile(service._pi05_noise_server_program(), "noise-server", "exec"), namespace
+    )
+    return namespace, created
+
+
+class _RangeResponse:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return None
+
+    def read(self, _size: int) -> bytes:
+        return b"x"
+
+
+class _PayloadResponse(_RangeResponse):
+    def __init__(self, payload: bytes):
+        self.payload = payload
+
+    def read(self, _size: int) -> bytes:
+        return self.payload
+
+
 def test_live_deployer_is_installed_publicly_and_reuses_tls_material() -> None:
     pyproject = tomllib.loads((ROOT / "npa/pyproject.toml").read_text(encoding="utf-8"))
     assert pyproject["project"]["scripts"]["npa-openpi-live-deploy"] == (
@@ -38,116 +152,181 @@ def test_live_deployer_is_installed_publicly_and_reuses_tls_material() -> None:
     assert 'state["total_connections"]' in openpi_live.gateway_program()
 
 
-def test_terms_gate_exits_before_openpi_import_or_checkpoint_fetch(
+def test_public_artifact_preflight_requires_no_npa_consent_secret(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import sys
-
-    output = tmp_path / "success.json"
-    diagnostics = tmp_path / "attempt-diagnostics"
+    output = tmp_path / "artifact-preflight.json"
     monkeypatch.delenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", raising=False)
-    before = {
-        name for name in sys.modules if name == "openpi" or name.startswith("openpi.")
-    }
+    monkeypatch.setattr(
+        pipeline,
+        "_source_build_evidence",
+        lambda _root: {"commit": pipeline.SOURCE_REF},
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_checkpoint_provenance",
+        lambda _uri: {
+            "object_count": 27,
+            "all_objects_have_generation_and_crc32c": True,
+            "payload_probe": {"generation_bound": True, "bytes_read": 1},
+            "required_tokenizer": {
+                "uri": pipeline.REQUIRED_TOKENIZER_URI,
+                "generation": pipeline.REQUIRED_TOKENIZER_GENERATION,
+                "size": pipeline.REQUIRED_TOKENIZER_SIZE,
+                "sha256": pipeline.REQUIRED_TOKENIZER_SHA256,
+            },
+        },
+    )
 
-    with pytest.raises(SystemExit) as raised:
+    assert (
         pipeline.main(
             [
-                "direct",
+                "artifact-preflight",
                 "--output-uri",
                 str(output),
-                "--terms-diagnostic-root-uri",
-                str(diagnostics),
-                "--runtime-image",
-                DIGEST_IMAGE,
-            ]
-        )
-
-    assert raised.value.code == 64
-    assert not output.exists()
-    refusal_paths = list(diagnostics.glob("*.json"))
-    assert len(refusal_paths) == 1
-    refusal = json.loads(refusal_paths[0].read_text(encoding="utf-8"))
-    assert all(
-        refusal[key] == value for key, value in pipeline._terms_refusal().items()
-    )
-    assert refusal["declared_success_output_uri"] == str(output)
-    assert refusal["stage"] == "direct"
-    after = {
-        name for name in sys.modules if name == "openpi" or name.startswith("openpi.")
-    }
-    assert after == before
-
-    # An accepted retry under the same logical output prefix is not poisoned by
-    # the refusal. Its declared success object remains independently writable.
-    monkeypatch.setenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", "YES")
-    pipeline._gate_or_exit(
-        str(output), diagnostic_root_uri=str(diagnostics), stage="direct"
-    )
-    success = {"schema": "test.success.v1", "status": "passed"}
-    pipeline._write_json_uri(str(output), success)
-    assert json.loads(output.read_text(encoding="utf-8")) == success
-    assert json.loads(refusal_paths[0].read_text(encoding="utf-8")) == refusal
-
-
-def test_service_terms_refusal_writes_only_attempt_diagnostic(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    success = tmp_path / "service-success.json"
-    diagnostic_root = tmp_path / "service-diagnostics"
-    monkeypatch.delenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", raising=False)
-
-    assert (
-        service._run(
-            SimpleNamespace(
-                output_uri=str(success),
-                terms_diagnostic_root_uri=str(diagnostic_root),
-            )
-        )
-        == 64
-    )
-
-    assert not success.exists()
-    diagnostics = list(diagnostic_root.glob("serve-*.json"))
-    assert len(diagnostics) == 1
-    refusal = json.loads(diagnostics[0].read_text(encoding="utf-8"))
-    assert refusal["declared_success_output_uri"] == str(success)
-    assert refusal["stage"] == "serve"
-
-
-def test_negative_gate_persists_refusal_then_writes_accepted_retry(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    success = tmp_path / "reports" / "negative-gate.json"
-    diagnostics = tmp_path / "diagnostics" / "terms-refusals"
-    monkeypatch.setenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", "YES")
-
-    assert (
-        pipeline.main(
-            [
-                "negative-gate",
-                "--output-uri",
-                str(success),
-                "--terms-diagnostic-root-uri",
-                str(diagnostics),
                 "--runtime-image",
                 DIGEST_IMAGE,
             ]
         )
         == 0
     )
+    result = json.loads(output.read_text(encoding="utf-8"))
+    assert result["schema"] == "npa.workbench.openpi.public-artifact-preflight.v1"
+    assert result["checkpoint"]["access"] == "public_anonymous_gcs"
+    assert result["required_runtime_payloads"]["tokenizer"]["size"] == 4_264_023
+    assert result["credential_required"] is False
+    assert result["npa_terms_attestation_required"] is False
 
-    result = json.loads(success.read_text(encoding="utf-8"))
-    refusal = result["tested_child_refusal"]
-    assert result["accepted_retry_same_logical_output_uri"] is True
-    assert refusal["declared_success_output_uri"] == str(success)
-    assert refusal["declared_success_output_uri_untouched"] is True
-    assert refusal["diagnostic_persistence"] == "separate_attempt_scoped_uri"
-    diagnostic = Path(refusal["diagnostic_uri"])
-    assert diagnostic.parent == diagnostics
-    persisted = json.loads(diagnostic.read_text(encoding="utf-8"))
-    assert persisted["attempt_id"] == refusal["attempt_id"]
-    assert persisted["status"] == "refused"
+
+def test_artifact_preflight_rejects_unpinned_checkpoint(tmp_path: Path) -> None:
+    with pytest.raises(pipeline.OpenPIPipelineError, match="pinned Polaris URI"):
+        pipeline.main(
+            [
+                "artifact-preflight",
+                "--output-uri",
+                str(tmp_path / "result.json"),
+                "--runtime-image",
+                DIGEST_IMAGE,
+                "--checkpoint-uri",
+                "gs://untrusted/mirror",
+            ]
+        )
+
+
+def test_public_probe_selects_generation_bound_model_weight_not_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requested: list[object] = []
+
+    def _open(request):
+        requested.append(request)
+        return _RangeResponse()
+
+    monkeypatch.setattr(pipeline.urllib.request, "urlopen", _open)
+    records = [
+        {
+            "name": "checkpoint/metadata.json",
+            "generation": "1",
+            "size": 99,
+            "crc32c": "a",
+        },
+        {
+            "name": "checkpoint/params/ocdbt/d/weight",
+            "generation": "2",
+            "size": 2_000_000,
+            "crc32c": "b",
+        },
+    ]
+    receipt = pipeline._probe_public_gcs_payload("openpi-assets", records)
+    assert receipt["object_kind"] == "params_weight_shard"
+    assert receipt["object_size_bytes"] == 2_000_000
+    assert (
+        receipt["scope"] == "access_probe_not_full_payload_integrity_or_model_execution"
+    )
+    assert "generation=2" in requested[0].full_url
+
+
+def test_required_tokenizer_is_a_separate_generation_bound_full_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = b"pinned-tokenizer-payload"
+    requested: list[str] = []
+    monkeypatch.setattr(pipeline, "REQUIRED_TOKENIZER_SIZE", len(payload))
+    monkeypatch.setattr(
+        pipeline,
+        "REQUIRED_TOKENIZER_MD5",
+        base64.b64encode(hashlib.md5(payload, usedforsecurity=False).digest()).decode(),
+    )
+    monkeypatch.setattr(
+        pipeline, "REQUIRED_TOKENIZER_SHA256", hashlib.sha256(payload).hexdigest()
+    )
+
+    def _open(url):
+        requested.append(str(url))
+        return _PayloadResponse(payload)
+
+    monkeypatch.setattr(pipeline.urllib.request, "urlopen", _open)
+    receipt = pipeline._tokenizer_provenance()
+    assert receipt["size"] == len(payload)
+    assert receipt["checkpoint_object_count_excludes_this_payload"] is True
+    assert receipt["access"] == "public_anonymous_generation_bound_full_download"
+    assert "/b/big_vision/o/paligemma_tokenizer.model?" in requested[0]
+    assert f"generation={pipeline.REQUIRED_TOKENIZER_GENERATION}" in requested[0]
+
+
+def test_required_tokenizer_rejects_a_non_gcs_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(pipeline, "REQUIRED_TOKENIZER_URI", "https://example.invalid/x")
+    with pytest.raises(pipeline.OpenPIPipelineError, match="exact gs:// object"):
+        pipeline._tokenizer_provenance()
+
+
+def test_downloaded_public_checkpoint_must_match_generation_manifest(tmp_path) -> None:
+    payload = b"real-weight-bytes"
+    (tmp_path / "params").mkdir()
+    (tmp_path / "params" / "shard").write_bytes(payload)
+    provenance = {
+        "sha256": "c" * 64,
+        "objects": [
+            {
+                "path": "params/shard",
+                "generation": "17",
+                "size": len(payload),
+                "md5Hash": base64.b64encode(
+                    hashlib.md5(payload, usedforsecurity=False).digest()
+                ).decode(),
+            }
+        ],
+    }
+    receipt = pipeline._verify_public_checkpoint_download(
+        pipeline.DEFAULT_CHECKPOINT_URI, tmp_path, provenance
+    )
+    assert receipt["verified"] is True
+    (tmp_path / "params" / "shard").write_bytes(b"changed-weight-bytes")
+    with pytest.raises(pipeline.OpenPIPipelineError, match="generation-bound"):
+        pipeline._verify_public_checkpoint_download(
+            pipeline.DEFAULT_CHECKPOINT_URI, tmp_path, provenance
+        )
+
+
+def test_public_polaris_rejects_generation_manifest_drift(monkeypatch) -> None:
+    records = [
+        {
+            "name": "checkpoints/polaris/pi05_droid_jointpos_polaris/params/shard",
+            "generation": "new-generation",
+            "size": 1,
+            "md5Hash": "different",
+            "crc32c": "different",
+        }
+    ]
+    monkeypatch.setattr(
+        pipeline,
+        "_public_gcs_records",
+        lambda _uri: ("openpi-assets", "checkpoints/polaris/", records),
+    )
+    with pytest.raises(pipeline.OpenPIPipelineError, match="pinned revision"):
+        pipeline._checkpoint_provenance(pipeline.DEFAULT_CHECKPOINT_URI)
 
 
 def test_mini_dataset_is_byte_reproducible_and_split_disjoint(tmp_path: Path) -> None:
@@ -266,7 +445,32 @@ def _service_manifests() -> dict[str, dict]:
         gpu_node_selector_key="nebius.com/gpu-name",
         gpu_node_selector_value="B200",
         cache_size="40Gi",
+        auth_secret="operator-openpi-auth",
     )
+
+
+def test_service_rejects_invalid_auth_secret_name() -> None:
+    with pytest.raises(service.OpenPIServiceError, match="Kubernetes DNS label"):
+        service.build_manifests(
+            run_id="openpi-four-mode-contract",
+            namespace="default",
+            runtime_image=DIGEST_IMAGE,
+            checkpoint_uri=pipeline.DEFAULT_CHECKPOINT_URI,
+            config_name=pipeline.DEFAULT_CONFIG_NAME,
+            gpu_count=1,
+            expected_gpu_type="B200",
+            expected_compute_capability="10.0",
+            server_cpu="16",
+            server_memory="96Gi",
+            client_cpu="2",
+            client_memory="8Gi",
+            pull_secret="operator-byof-pull-secret",
+            liveness_initial_delay_seconds=600,
+            gpu_node_selector_key="nebius.com/gpu-name",
+            gpu_node_selector_value="B200",
+            cache_size="40Gi",
+            auth_secret="INVALID_SECRET_NAME",
+        )
 
 
 def test_service_is_clusterip_digest_pinned_probed_and_cross_pod() -> None:
@@ -277,7 +481,7 @@ def test_service_is_clusterip_digest_pinned_probed_and_cross_pod() -> None:
     server_container = deployment["spec"]["template"]["spec"]["containers"][0]
     client_container = client["spec"]["template"]["spec"]["containers"][0]
 
-    assert set(manifests) == {"secret", "deployment", "service", "client_job"}
+    assert set(manifests) == {"deployment", "service", "client_job"}
     assert service_manifest["spec"]["type"] == "ClusterIP"
     assert "Ingress" not in {item["kind"] for item in manifests.values()}
     assert server_container["image"] == DIGEST_IMAGE
@@ -299,23 +503,120 @@ def test_service_is_clusterip_digest_pinned_probed_and_cross_pod() -> None:
     assert server_container["command"][2].startswith("set -euo pipefail;")
     assert "from npa." not in server_container["command"][2]
     compile(service._server_hardware_program(), "openpi-server-hardware", "exec")
+    wrapper = service._pi05_noise_server_program()
+    compile(wrapper, "openpi-pi05-noise-server", "exec")
+    assert "policy.infer(observation, noise=noise)" in wrapper
+    assert "model_config.action_dim" in wrapper
+    assert "npa_sampler_noise_sha256" in wrapper
+    assert "AuthenticatedNoiseServer" in wrapper
+    assert "hmac.compare_digest" in wrapper
+    assert "OPENPI_CHECKPOINT_URI" not in wrapper
     server_shell = server_container["command"][2]
     assert (
-        server_shell.index('test "$NPA_OPENPI_ACCEPT_GEMMA_TERMS"')
-        < (server_shell.index("NPA_OPENPI_SERVER_HARDWARE="))
+        server_shell.index("NPA_OPENPI_SERVER_HARDWARE=")
         < server_shell.index("download.maybe_download")
-        < server_shell.index("serve_policy.py")
+        < server_shell.index("npa_explicit_noise_protocol")
     )
+    assert "NPA_OPENPI_ACCEPT_GEMMA_TERMS" not in server_shell
     server_env = {item["name"]: item for item in server_container["env"]}
     assert server_env["OPENPI_EXPECTED_GPU_TYPE"]["value"] == "B200"
     assert server_env["OPENPI_EXPECTED_GPU_COUNT"]["value"] == "1"
     assert server_env["OPENPI_EXPECTED_COMPUTE_CAPABILITY"]["value"] == "10.0"
-    secret_ref = server_container["env"][0]["valueFrom"]["secretKeyRef"]
-    assert secret_ref["key"] == "NPA_OPENPI_ACCEPT_GEMMA_TERMS"
-    assert "value" not in server_container["env"][0]
-    assert service.service_resource_names("openpi-four-mode-contract") == {
-        key: manifest["metadata"]["name"] for key, manifest in manifests.items()
+    assert server_env["NPA_OPENPI_SERVICE_AUTH_TOKEN"]["valueFrom"] == {
+        "secretKeyRef": {
+            "name": "operator-openpi-auth",
+            "key": "auth_token",
+        }
     }
+    client_env = {item["name"]: item for item in client_container["env"]}
+    assert client_env["NPA_OPENPI_SERVICE_AUTH_TOKEN"]["valueFrom"] == {
+        "secretKeyRef": {
+            "name": "operator-openpi-auth",
+            "key": "auth_token",
+        }
+    }
+    expected_names = service.service_resource_names("openpi-four-mode-contract")
+    assert {
+        key: manifest["metadata"]["name"] for key, manifest in manifests.items()
+    } == {key: expected_names[key] for key in manifests}
+
+
+def test_generic_service_keeps_upstream_server_without_scoped_auth_wrapper() -> None:
+    manifests = service.build_manifests(
+        run_id="generic-openpi",
+        namespace="default",
+        runtime_image=DIGEST_IMAGE,
+        checkpoint_uri="file:///runtime/checkpoint",
+        config_name=pipeline.DEFAULT_CONFIG_NAME,
+        gpu_count=1,
+        expected_gpu_type="B200",
+        expected_compute_capability="10.0",
+        server_cpu="16",
+        server_memory="96Gi",
+        client_cpu="2",
+        client_memory="8Gi",
+        pull_secret="",
+        liveness_initial_delay_seconds=600,
+        gpu_node_selector_key="",
+        gpu_node_selector_value="",
+        cache_size="40Gi",
+    )
+    container = manifests["deployment"]["spec"]["template"]["spec"]["containers"][0]
+    shell = container["command"][2]
+    compile(service._generic_server_program(), "generic-openpi-server", "exec")
+    assert "AuthenticatedNoiseServer" not in shell
+    assert "WebsocketPolicyServer" in shell
+    assert "NPA_OPENPI_SERVICE_AUTH_TOKEN" not in {
+        row["name"] for row in container["env"]
+    }
+
+
+def test_noise_server_rejects_empty_token_before_model_loading(monkeypatch) -> None:
+    with pytest.raises(RuntimeError, match="auth token is empty"):
+        _execute_noise_server(monkeypatch, "", fail_on_policy_load=True)
+
+
+def test_noise_server_authenticates_bearer_and_api_key(monkeypatch) -> None:
+    namespace, created = _execute_noise_server(monkeypatch, "private-token")
+    server = namespace["AuthenticatedNoiseServer"](
+        policy=_FakePolicy(),
+        host="127.0.0.1",
+        port=1,
+        metadata={},
+        auth_token="private-token",
+    )
+    rejected = _FakeWebsocket("")
+    bearer = _FakeWebsocket("Bearer private-token")
+    api_key = _FakeWebsocket("Api-Key private-token")
+    asyncio.run(server._handler(rejected))
+    asyncio.run(server._handler(bearer))
+    asyncio.run(server._handler(api_key))
+    assert created["policies"] == 1
+    assert rejected.closed == (1008, "authentication required")
+    assert bearer.closed is None and api_key.closed is None
+    assert server.authorized_requests == 2
+
+
+def test_noise_wrapper_receipts_bind_real_left_wrist_to_model_input(
+    monkeypatch,
+) -> None:
+    namespace, _created = _execute_noise_server(monkeypatch, "private-token")
+    wrapped = namespace["ExplicitNoisePolicy"](
+        _FakePolicy(), SimpleNamespace(action_horizon=15, action_dim=32)
+    )
+    wrist = np.full((224, 224, 3), 19, dtype=np.uint8)
+    result = wrapped.infer(
+        {
+            "observation/wrist_image_left": wrist,
+            "npa/sampling_noise": np.ones((15, 32), dtype=np.float32),
+            "npa/sampling_sequence": "paired-0",
+        }
+    )
+    receipt = result["npa_wrist_transform_receipt"]
+    assert receipt["source_wrist_sha256"] == hashlib.sha256(wrist.tobytes()).hexdigest()
+    assert receipt["left_wrist_0_rgb_sha256"] == receipt["source_wrist_sha256"]
+    assert receipt["left_wrist_mask"] is True
+    assert receipt["right_wrist_mask"] is False
 
 
 def test_live_service_is_persistent_authenticated_and_cache_backed(
@@ -342,12 +643,7 @@ def test_live_service_is_persistent_authenticated_and_cache_backed(
         source_ranges=("192.0.2.10/32",),
     )
 
-    assert set(manifests) == {
-        "terms_secret",
-        "deployment",
-        "service",
-        "network_policy",
-    }
+    assert set(manifests) == {"deployment", "service", "network_policy"}
     deployment = manifests["deployment"]
     assert deployment["spec"]["strategy"] == {"type": "Recreate"}
     assert deployment["spec"]["replicas"] == 1
@@ -566,9 +862,9 @@ def test_service_client_job_is_created_only_after_server_phase() -> None:
 
     manifests = _service_manifests()
     service._create_server_objects(Core(), Apps(), manifests)
-    assert calls == ["secret", "deployment", "service"]
+    assert calls == ["deployment", "service"]
     service._create_client_job(Batch(), manifests)
-    assert calls == ["secret", "deployment", "service", "client_job"]
+    assert calls == ["deployment", "service", "client_job"]
 
 
 def test_service_controller_rbac_is_name_scoped_with_qualified_residuals() -> None:
@@ -621,7 +917,7 @@ def test_service_controller_rbac_is_name_scoped_with_qualified_residuals() -> No
     base = service._safe_name(run_id)
     assert exact == {
         "services": [f"{base}-policy"],
-        "secrets": [f"{base}-terms"],
+        "secrets": [f"{base}-runtime", f"{base}-terms"],
         "deployments": [base],
         "jobs": [f"{base}-client"],
     }
@@ -873,13 +1169,11 @@ def test_service_cleanup_uses_only_exact_names_and_verifies_absence() -> None:
         "deployment": True,
         "pods": True,
         "service": True,
-        "secret": True,
     }
     assert api.deleted == [
         ("client_job", names["client_job"]),
         ("deployment", names["deployment"]),
         ("service", names["service"]),
-        ("secret", names["secret"]),
     ]
 
 
@@ -1046,7 +1340,6 @@ def test_service_api_uncertainty_after_creation_triggers_exact_cleanup(
 ) -> None:
     from kubernetes import client, config
 
-    monkeypatch.setenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", "YES")
     monkeypatch.setattr(config, "load_incluster_config", lambda: None)
     monkeypatch.setattr(client, "CoreV1Api", object)
     monkeypatch.setattr(client, "AppsV1Api", object)
@@ -1249,7 +1542,7 @@ def test_service_partial_create_tracks_uncertain_identity_for_cleanup() -> None:
         service._create_server_objects(Core(), Apps(), manifests, created=created)
     # Deployment identity is deliberately tracked before its create request:
     # the API response may be lost after a successful server-side create.
-    assert created == {"secret", "deployment"}
+    assert created == {"deployment"}
     names = {key: value["metadata"]["name"] for key, value in manifests.items()}
     cleanup_api = _FakeApi()
     verified = service._delete_and_verify(
@@ -1264,7 +1557,6 @@ def test_service_partial_create_tracks_uncertain_identity_for_cleanup() -> None:
     assert all(verified.values())
     assert cleanup_api.deleted == [
         ("deployment", names["deployment"]),
-        ("secret", names["secret"]),
     ]
 
 
@@ -1299,15 +1591,15 @@ def test_four_mode_spec_plans_complete_lineage_and_configurable_resources() -> N
     spec = load_spec(SPEC)
     plan = build_plan(spec, run_id="openpi-four-mode-plan")
     assert [step.tool_ref for step in plan.steps] == [
-        "workbench.openpi.negative_terms_gate",
+        "workbench.openpi.artifact_preflight",
         "workbench.openpi.prepare_data",
         "workbench.openpi.direct",
         "workbench.openpi.serve",
         "workbench.openpi.train",
         "workbench.openpi.evaluate",
     ]
-    assert secret_env_hints_for_plan(plan.steps) == ("NPA_OPENPI_ACCEPT_GEMMA_TERMS",)
-    gpu = plan.steps[0].resources_profile
+    assert secret_env_hints_for_plan(plan.steps) == ()
+    gpu = plan.steps[2].resources_profile
     assert gpu["accelerators"] == "B200:1"
     assert gpu["image"] == "registry.example.invalid/openpi@sha256:" + "0" * 64
     train = plan.steps[4]
@@ -1336,7 +1628,7 @@ def test_four_mode_spec_plans_complete_lineage_and_configurable_resources() -> N
         "service_server_ready_timeout_seconds",
         "service_cleanup_timeout_seconds",
         "serve_artifact_root_uri",
-        "terms_diagnostic_root_uri",
+        "artifact_preflight_uri",
         "trained_checkpoint_uri",
     ):
         assert f"{configurable}:" in spec_text
@@ -1367,7 +1659,7 @@ def test_openpi_serving_output_root_override_keeps_declared_outputs_in_sync() ->
 
 def test_openpi_gpu_stages_use_pinned_vendor_python_only() -> None:
     gpu_stages = (
-        "negative_terms_gate",
+        "artifact_preflight",
         "direct",
         "train",
         "evaluate",
@@ -1427,3 +1719,24 @@ def test_policy_checkpoint_keeps_its_ephemeral_volume_without_a_cache(
     server = next(c for c in pod["containers"] if c["name"] == "openpi-policy")
     env = {item["name"]: item["value"] for item in server["env"] if "value" in item}
     assert env["OPENPI_DATA_HOME"] == "/workspace/openpi-server-cache"
+
+
+def test_service_cleanup_failure_preserves_primary_run_error(monkeypatch) -> None:
+    def fail_cleanup(*_args, **_kwargs):
+        raise RuntimeError("cleanup boom")
+
+    monkeypatch.setattr(service, "_cleanup_service_run", fail_cleanup)
+    primary = RuntimeError("inference boom")
+    context = {
+        "clients": (object(), object(), object()),
+        "names": {},
+        "manifests": {},
+        "timeouts": {},
+    }
+    with pytest.raises(service.OpenPIServiceError) as captured:
+        service._finish_owned_service(
+            SimpleNamespace(), context, {"deployment"}, primary
+        )
+    assert "service failed (inference boom)" in str(captured.value)
+    assert "cleanup also failed (cleanup boom)" in str(captured.value)
+    assert captured.value.__cause__ is primary

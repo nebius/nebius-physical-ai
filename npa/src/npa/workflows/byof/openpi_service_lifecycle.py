@@ -16,14 +16,13 @@ import urllib.request
 from collections.abc import Sequence
 from typing import Any
 
-from npa.workflows.byof.openpi import OPENPI_TERMS_ACCEPTED_VALUE, OPENPI_TERMS_ENV
 from npa.workflows.byof.openpi_pipeline import (
     DEFAULT_CHECKPOINT_URI,
     DEFAULT_CONFIG_NAME,
     RUNTIME_IMAGE_RE,
     SOURCE_REF,
+    _checkpoint_provenance,
     _write_json_uri,
-    _write_terms_refusal_diagnostic,
 )
 from npa.workflows.byof.openpi_service import (
     SERVER_DIAGNOSTICS_PORT,
@@ -32,13 +31,17 @@ from npa.workflows.byof.openpi_service import (
     _assert_targets_absent,
     _create_server_objects,
     _delete_and_verify,
+    _inject_public_checkpoint_binding,
     _validated_positive_seconds,
     _wait_server_ready,
     build_manifests,
+    service_resource_names,
 )
 
 
-def _manifests(args: argparse.Namespace) -> dict[str, dict[str, Any]]:
+def _manifests(
+    args: argparse.Namespace, *, include_checkpoint_credentials: bool = True
+) -> dict[str, dict[str, Any]]:
     manifests = build_manifests(
         run_id=args.run_id,
         namespace=args.namespace,
@@ -57,11 +60,17 @@ def _manifests(args: argparse.Namespace) -> dict[str, dict[str, Any]]:
         gpu_node_selector_key=args.gpu_node_selector_key,
         gpu_node_selector_value=args.gpu_node_selector_value,
         cache_size=args.service_cache_size,
+        auth_secret=args.auth_secret,
         server_ready_timeout_seconds=args.server_ready_timeout_seconds,
         client_timeout_seconds=60,
     )
-    if args.checkpoint_uri.startswith("s3://"):
-        _patch_private_s3_checkpoint(manifests, args.checkpoint_uri)
+    if args.checkpoint_uri.startswith("s3://") and include_checkpoint_credentials:
+        _patch_private_s3_checkpoint(
+            manifests,
+            args.checkpoint_uri,
+            run_id=args.run_id,
+            namespace=args.namespace,
+        )
     _inject_checkpoint_probe(manifests)
     return manifests
 
@@ -89,24 +98,14 @@ for item in items:
 
 
 def _patch_private_s3_checkpoint(
-    manifests: dict[str, dict[str, Any]], checkpoint_uri: str
+    manifests: dict[str, dict[str, Any]],
+    checkpoint_uri: str,
+    *,
+    run_id: str,
+    namespace: str,
 ) -> None:
-    required = {
-        "AWS_ENDPOINT_URL": os.environ.get("AWS_ENDPOINT_URL", ""),
-        "AWS_ACCESS_KEY_ID": os.environ.get("AWS_ACCESS_KEY_ID", ""),
-        "AWS_SECRET_ACCESS_KEY": os.environ.get("AWS_SECRET_ACCESS_KEY", ""),
-    }
-    if not all(required.values()):
-        raise OpenPIServiceError(
-            "private adapted checkpoint requires exact S3 credentials"
-        )
-    secret = manifests["secret"]
-    secret["data"].update(
-        {
-            key: base64.b64encode(value.encode()).decode()
-            for key, value in required.items()
-        }
-    )
+    required = _private_s3_credentials()
+    secret = _install_private_s3_secret(manifests, required, run_id, namespace)
     container = manifests["deployment"]["spec"]["template"]["spec"]["containers"][0]
     secret_name = secret["metadata"]["name"]
     container["env"].extend(
@@ -126,6 +125,44 @@ def _patch_private_s3_checkpoint(
     container["command"][2] = download + shell.replace(
         'os.environ["OPENPI_CHECKPOINT_URI"]', repr(local), 1
     )
+
+
+def _private_s3_credentials() -> dict[str, str]:
+    required = {
+        "AWS_ENDPOINT_URL": os.environ.get("AWS_ENDPOINT_URL", ""),
+        "AWS_ACCESS_KEY_ID": os.environ.get("AWS_ACCESS_KEY_ID", ""),
+        "AWS_SECRET_ACCESS_KEY": os.environ.get("AWS_SECRET_ACCESS_KEY", ""),
+    }
+    if not all(required.values()):
+        raise OpenPIServiceError(
+            "private adapted checkpoint requires exact S3 credentials"
+        )
+    return required
+
+
+def _install_private_s3_secret(
+    manifests: dict[str, dict[str, Any]],
+    required: dict[str, str],
+    run_id: str,
+    namespace: str,
+) -> dict[str, Any]:
+    labels = dict(manifests["deployment"]["metadata"]["labels"])
+    secret = {
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "metadata": {
+            "name": service_resource_names(run_id)["secret"],
+            "namespace": namespace,
+            "labels": labels,
+        },
+        "type": "Opaque",
+        "data": {
+            key: base64.b64encode(value.encode()).decode()
+            for key, value in required.items()
+        },
+    }
+    manifests["secret"] = secret
+    return secret
 
 
 def _checkpoint_probe_program() -> str:
@@ -152,7 +189,7 @@ pathlib.Path('/tmp/npa-openpi-loaded-checkpoint.json').write_text(json.dumps(res
 def _inject_checkpoint_probe(manifests: dict[str, dict[str, Any]]) -> None:
     container = manifests["deployment"]["spec"]["template"]["spec"]["containers"][0]
     shell = container["command"][2]
-    marker = "exec /opt/venv/bin/python /opt/byof/scripts/serve_policy.py"
+    marker = "exec /opt/venv/bin/python -c "
     if marker not in shell:
         raise OpenPIServiceError("unexpected OpenPI server exec contract")
     probe = "/opt/venv/bin/python -c " + shlex.quote(_checkpoint_probe_program())
@@ -167,18 +204,34 @@ def _clients() -> tuple[Any, Any, Any]:
     return client.CoreV1Api(), client.AppsV1Api(), client.BatchV1Api()
 
 
-def _check_common(args: argparse.Namespace, stage: str) -> int | None:
-    if os.environ.get(OPENPI_TERMS_ENV) != OPENPI_TERMS_ACCEPTED_VALUE:
-        _, refusal = _write_terms_refusal_diagnostic(
-            args.output_uri,
-            diagnostic_root_uri=args.terms_diagnostic_root_uri,
-            stage=stage,
-        )
-        print(json.dumps(refusal, sort_keys=True), flush=True)
-        return 64
+def _check_common(args: argparse.Namespace) -> None:
     if not RUNTIME_IMAGE_RE.fullmatch(args.runtime_image):
         raise OpenPIServiceError("service runtime image must be digest-pinned")
-    return None
+
+
+def _owned_secret_manifest(
+    args: argparse.Namespace, manifests: dict[str, Any], name_key: str
+) -> dict[str, Any]:
+    """Describe an owned Secret without needing its credential values."""
+
+    labels = dict(manifests["deployment"]["metadata"]["labels"])
+    return {
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "metadata": {
+            "name": service_resource_names(args.run_id)[name_key],
+            "namespace": args.namespace,
+            "labels": labels,
+        },
+    }
+
+
+def _legacy_secret_manifest(
+    args: argparse.Namespace, manifests: dict[str, Any]
+) -> dict[str, Any]:
+    """Describe the retired deterministic Secret for ownership-safe cleanup."""
+
+    return _owned_secret_manifest(args, manifests, "legacy_terms_secret")
 
 
 def _timeouts(args: argparse.Namespace) -> tuple[float, float, float, float]:
@@ -228,6 +281,8 @@ def _start_result(
         "server_pod_uid": str(pod.metadata.uid),
         "hardware": hardware,
         "public_ingress": False,
+        "application_authentication": "kubernetes_secret_bearer",
+        "auth_secret_persisted_in_receipt": False,
         "client_job_created": False,
         "cleanup_required": True,
         "exact_names": names,
@@ -310,13 +365,15 @@ def _publish_service_component(
 
 
 def _start(args: argparse.Namespace) -> int:
-    refused = _check_common(args, "service-start")
-    if refused is not None:
-        return refused
+    _check_common(args)
     timeouts = _timeouts(args)
     _, poll, api_timeout, _ = timeouts
     manifests = _manifests(args)
-    names = {key: str(value["metadata"]["name"]) for key, value in manifests.items()}
+    if args.checkpoint_uri.startswith("gs://"):
+        _inject_public_checkpoint_binding(
+            manifests, _checkpoint_provenance(args.checkpoint_uri)
+        )
+    names = service_resource_names(args.run_id)
     clients = _clients()
     _assert_targets_absent(
         *clients, namespace=args.namespace, names=names, request_timeout=api_timeout
@@ -350,12 +407,17 @@ def _start(args: argparse.Namespace) -> int:
 
 
 def _cleanup(args: argparse.Namespace) -> int:
-    # Cleanup is always permitted: removing exact workflow-owned resources
-    # must not depend on continued model-terms acceptance.
+    # Cleanup remains able to remove an exact owned Secret from the retired policy.
     if not RUNTIME_IMAGE_RE.fullmatch(args.runtime_image):
         raise OpenPIServiceError("service runtime image must be digest-pinned")
-    manifests = _manifests(args)
-    names = {key: str(value["metadata"]["name"]) for key, value in manifests.items()}
+    # Ownership labels do not depend on checkpoint credentials. Cleanup must
+    # remain possible after an adapted-checkpoint credential is rotated/lost.
+    manifests = _manifests(args, include_checkpoint_credentials=False)
+    manifests["secret"] = _owned_secret_manifest(args, manifests, "secret")
+    manifests["legacy_terms_secret"] = _legacy_secret_manifest(args, manifests)
+    names = service_resource_names(args.run_id)
+    created = {"service", "deployment", "legacy_terms_secret"}
+    created.add("secret")
     api, apps, batch = _clients()
     verified = _delete_and_verify(
         api,
@@ -363,12 +425,20 @@ def _cleanup(args: argparse.Namespace) -> int:
         batch,
         namespace=args.namespace,
         names=names,
-        created={"secret", "service", "deployment"},
+        created=created,
         manifests=manifests,
         timeout=args.cleanup_timeout_seconds,
         poll_interval=args.poll_interval_seconds,
         request_timeout=args.api_timeout_seconds,
     )
+    result = _publish_cleanup_result(args, verified)
+    print(json.dumps(result, sort_keys=True), flush=True)
+    return 0
+
+
+def _publish_cleanup_result(
+    args: argparse.Namespace, verified: dict[str, bool]
+) -> dict[str, Any]:
     result = {
         "schema": "npa.workbench.openpi.pi05-service-cleanup.v1",
         "status": "clean",
@@ -387,8 +457,7 @@ def _cleanup(args: argparse.Namespace) -> int:
         evidence="Removed and verified absence of the exact workflow-owned private service.",
         artifacts={"cleanup": args.output_uri},
     )
-    print(json.dumps(result, sort_keys=True), flush=True)
-    return 0
+    return result
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -398,7 +467,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--output-uri", required=True)
     parser.add_argument("--component-root-uri", required=True)
-    parser.add_argument("--terms-diagnostic-root-uri", default="")
     parser.add_argument("--runtime-image", required=True)
     parser.add_argument("--namespace", default="default")
     parser.add_argument("--checkpoint-uri", default=DEFAULT_CHECKPOINT_URI)
@@ -410,6 +478,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--server-cpu", default="16")
     parser.add_argument("--server-memory", default="96Gi")
     parser.add_argument("--pull-secret", default="")
+    parser.add_argument("--auth-secret", required=True)
     parser.add_argument("--liveness-initial-delay-seconds", type=int, default=600)
     parser.add_argument("--gpu-node-selector-key", default="nebius.com/gpu-name")
     parser.add_argument("--gpu-node-selector-value", required=True)

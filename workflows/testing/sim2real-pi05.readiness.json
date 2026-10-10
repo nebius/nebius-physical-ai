@@ -1,10 +1,10 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "8f50fed52bd48786da0798568aae7bd91d311c4ca1c76fe7d457dad6b0d702bf",
+  "workflow_sha256": "422d8f9ff85469f2bdf0db5ea6c3ff3e78ccefeaadc3c729466f3ff0e97f985b",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "The separate 14-state npa.workflow validates, plans, and renders with explicit immutable-image and source placeholders; module argv, live-matrix, schema-chain, and declared-output checks cover the new toolRefs.",
+      "reason": "The separate 14-state npa.workflow validates, plans, and renders with explicit immutable-image and source placeholders; module argv, live-matrix, schema-chain, declared-output, and independent training/service GPU-allocation checks cover the new toolRefs.",
       "evidence": [
         "npa workbench workflow validate-spec workflows/testing/sim2real-pi05.yaml",
         "npa workbench workflow plan-spec workflows/testing/sim2real-pi05.yaml --json --check-render",
@@ -13,7 +13,7 @@
     },
     "task_fidelity": {
       "status": "unverified",
-      "reason": "Offline contracts and tests prove the absolute-joint/DROID-gripper bridge, dense camera/action alignment, split isolation, and released-support metric, but the differential-IK expert and camera/contact configuration have not completed a real Isaac run on this source revision.",
+      "reason": "Offline contracts and tests prove the absolute-joint/DROID-gripper bridge, dense camera/action alignment, raw object/finger semantic-mask rules, one-body support contract, split isolation, and released-support metric. One earlier snapshot exposed a multi-body contact-filter failure; the next cleared it but failed at first reset after unsafe post-physics semantic mutation and an inherited command visualizer warning. This revision moves finger labels before physics, disables that visualizer, and fixes the raw Warp/reset-local camera clock, but has not completed a real Isaac run.",
       "evidence": [
         "npa/tests/test_sim2real_pi05_contract.py",
         "npa/tests/test_sim2real_pi05_pipeline.py"
@@ -30,31 +30,31 @@
     },
     "worker_input": {
       "status": "blocked",
-      "reason": "No task-scoped affirmative Gemma terms receipt exists, so real OpenPI weights cannot be fetched. The separately authorized Isaac expert path also has not yet produced physics-qualified demonstrations.",
+      "reason": "All 27 authoritative public Polaris checkpoint objects were downloaded anonymously and verified against generation-bound MD5 metadata plus independently computed SHA256 (12,434,530,837 bytes total). The separately required 4,264,023-byte public tokenizer was also downloaded at its exact generation and verified against authoritative MD5 plus computed SHA256; CRC32C was not independently checked or claimed. This proves input integrity, not tokenizer or model execution; the Isaac expert path has not produced physics-qualified demonstrations.",
       "evidence": [
-        "Explicit operator decision remains pending; prior acceptance and general setup authorization are not reused.",
-        "Sanitized private Isaac submission evidence records no managed job launch."
+        "Private public-artifact receipts record 27 complete checkpoint objects and the separate tokenizer payload with exact generation, byte count, authoritative MD5, and computed SHA256 without credentials.",
+        "Private Isaac evidence records a reset failure before frames or episode artifacts on an earlier source snapshot."
       ]
     },
     "credentials": {
-      "status": "blocked",
-      "reason": "Nebius and storage credentials passed, but the distinct operator-owned Gemma terms gate remains unresolved and is mandatory before OpenPI image or weight access.",
+      "status": "unverified",
+      "reason": "Earlier Nebius and storage credentials passed, and public Polaris uses anonymous authoritative-GCS access with no NPA consent variable or HF token. The revised private policy data path also requires an operator-managed Kubernetes Secret with an auth_token key; its presence and mount have not been verified on a live target. An explicitly selected gated HF alternative would require the operator's own token and exact-revision payload probe.",
       "evidence": [
-        "NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES is intentionally absent until an explicit task-scoped authorization receipt exists."
+        "Sanitized private health-preflight conclusion; public Polaris artifact preflight remains an execution check rather than a credential gate."
       ]
     },
     "source_image": {
       "status": "unverified",
-      "reason": "The workflow requires immutable private controller, data, Isaac, viewer, and restricted OpenPI images carrying this exact source; the checked-in values are non-runnable placeholders and no new image was built or qualified.",
+      "reason": "The immutable public Gen3 runtime-fetch Isaac image launched on the earlier RTX target with a fresh job-local cache, but that route lacked graphics drivers. The workflow now binds all CPU roles to one exact-source Rerun Viewer image and separately requires exact-source Isaac Lab and OpenPI images. All three checked-in values remain non-runnable placeholders. OpenPI training/serving defaults still route to B200/SM100, so this is not a qualified RTX-only deployment.",
       "evidence": [
         "workflows/testing/sim2real-pi05.yaml"
       ]
     },
     "target_runtime": {
       "status": "blocked",
-      "reason": "The authorized Isaac image preflight passed, but Kubernetes GPU inventory disappeared during SkyPilot discovery and the repository readiness gate expired before launch. No expert, base-policy, fine-tuning, adapted-policy, MP4, or Rerun live result exists for this revision.",
+      "reason": "Current-source Nebius/S3 preflight passes through the recovered operator helper. The earlier exact-image diagnostic proved CUDA compute but failed before environment creation because its compute-only route exposed no NVIDIA Vulkan driver; later reset CUDA errors are not treated as the root cause, and independent artifact readback found zero objects. A task-private cluster now has one Ready CPU worker and one Ready one-GPU RTX PRO 6000 worker with runtimeClass nvidia after typed eight-GPU capacity and CPU-quota failures were recovered through owned pool replacement; full CUDA stabilization and GLX/EGL/Vulkan readiness remain unverified. The workflow applies configurable isaac_runtime_class=nvidia only to camera-bearing Isaac tasks, and both collector and evaluator fail before Kit unless graphics readiness passes, but final bytes have not run live. OpenPI images and inference are also unqualified. One eight-GPU node remains only a capacity assessment because the provider did not place it; increasing one shared GPU request to eight can starve the evaluator. This variant rejects multi-host JAX, so a second node does not establish 16-GPU training. The interpreter has no finally/on_failure transition, requiring an owned failure monitor or real failure transition before service operation. No expert, base-policy, fine-tuning, adapted-policy, MP4, or Rerun live result exists for this revision.",
       "evidence": [
-        "Sanitized private submit log retained outside Git; no live resource identifiers committed."
+        "Sanitized private helper preflight, image-launch, and reset-failure receipts are retained outside Git; no live resource identifiers are committed."
       ]
     }
   }

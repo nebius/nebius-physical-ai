@@ -11,9 +11,13 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
+import subprocess
+import sys
 import tempfile
+import traceback
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from npa.workflows.sim2real.pi05_contract import (
     CONTROL_HZ,
@@ -28,6 +32,44 @@ EXPERT_BASE_TASK_ID = "Isaac-Lift-Cube-Franka-IK-Rel-v0"
 EXPERT_SURFACE_TASK_ID = "NPA-Pi05-SurfacePlace-Franka-IK-Rel-v0"
 POLICY_BASE_TASK_ID = "Isaac-Lift-Cube-Franka-v0"
 POLICY_SURFACE_TASK_ID = "NPA-Pi05-SurfacePlace-Franka-v0"
+DESTINATION_RADIUS_M = 0.05
+DESTINATION_LABEL = "pi05_destination_marker"
+SUPPORT_SURFACE_SIZE_M = (1.0, 0.8, 0.05)
+SUPPORT_SURFACE_CENTER_M = (0.5, 0.0, -0.025)
+WRIST_MOUNT_TRANSLATION_M = (0.025, 0.0, 0.035)
+WRIST_MOUNT_QUATERNION_XYZW = (0.0, 0.0, 0.0, 1.0)
+
+
+class CollectionFailure(RuntimeError):
+    """Collector failure with a stable evidence phase."""
+
+    def __init__(self, message: str, *, phase: str) -> None:
+        super().__init__(message)
+        self.phase = phase
+        self.runtime_app: Any | None = None
+
+
+class _EnvironmentSetupError(RuntimeError):
+    """Carry the live app so failure evidence can be written before shutdown."""
+
+    def __init__(self, error: Exception, app: Any) -> None:
+        super().__init__(str(error))
+        self.original, self.app = error, app
+
+
+def support_surface_contract() -> dict[str, Any]:
+    """Return the exact one-body support geometry used by expert and policy."""
+
+    return {
+        "source": "isaaclab_task_owned_kinematic_cuboid",
+        "prim_path": "{ENV_REGEX_NS}/Table",
+        "size_m": list(SUPPORT_SURFACE_SIZE_M),
+        "center_m": list(SUPPORT_SURFACE_CENTER_M),
+        "top_z_m": SUPPORT_SURFACE_CENTER_M[2] + SUPPORT_SURFACE_SIZE_M[2] / 2,
+        "rigid_body_count": 1,
+        "kinematic": True,
+        "contact_filter": "{ENV_REGEX_NS}/Table",
+    }
 
 
 def register_surface_task(gym: Any, *, base_id: str, task_id: str) -> None:
@@ -45,10 +87,98 @@ def configure_surface_goal(cfg: Any, target: tuple[float, float, float]) -> None
     """Replace the stock airborne goal with one object center on the support."""
 
     command = cfg.commands.object_pose
+    # The task renders its own stable destination cue. Gen3's inherited
+    # command-frame PointInstancer is unnecessary and failed on first reset.
+    command.debug_vis = False
     command.resampling_time_range = (1.0e9, 1.0e9)
     command.ranges.pos_x = (target[0], target[0])
     command.ranges.pos_y = (target[1], target[1])
     command.ranges.pos_z = (target[2], target[2])
+
+
+def configure_destination_marker(
+    cfg: Any, target: tuple[float, float, float], *, support_z: float = 0.0
+) -> None:
+    """Add the shared rendered, non-colliding cyan destination disc."""
+
+    import isaaclab.sim as sim_utils
+    from isaaclab.assets import AssetBaseCfg
+
+    cfg.scene.pi05_destination = AssetBaseCfg(
+        prim_path="{ENV_REGEX_NS}/Pi05DestinationMarker",
+        init_state=AssetBaseCfg.InitialStateCfg(
+            pos=(target[0], target[1], support_z + 0.0005)
+        ),
+        spawn=sim_utils.CylinderCfg(
+            radius=DESTINATION_RADIUS_M,
+            height=0.001,
+            axis="Z",
+            collision_props=None,
+            visual_material=sim_utils.PreviewSurfaceCfg(
+                diffuse_color=(0.0, 0.85, 0.85),
+                emissive_color=(0.0, 0.08, 0.08),
+            ),
+            semantic_tags=[("class", DESTINATION_LABEL)],
+        ),
+    )
+
+
+def configure_support_surface(cfg: Any) -> None:
+    """Replace the multi-body stock table with one filtered support body."""
+
+    import isaaclab.sim as sim_utils
+    from isaaclab.assets import AssetBaseCfg
+
+    cfg.scene.table = AssetBaseCfg(
+        prim_path="{ENV_REGEX_NS}/Table",
+        init_state=AssetBaseCfg.InitialStateCfg(pos=SUPPORT_SURFACE_CENTER_M),
+        spawn=sim_utils.CuboidCfg(
+            size=SUPPORT_SURFACE_SIZE_M,
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
+            collision_props=sim_utils.CollisionPropertiesCfg(),
+            visual_material=sim_utils.PreviewSurfaceCfg(
+                diffuse_color=(0.24, 0.28, 0.32)
+            ),
+            activate_contact_sensors=True,
+        ),
+    )
+
+
+def _tag_spawned_finger_prims(root: Any) -> dict[str, str]:
+    """Author Gen3 LabelsAPI finger tags before physics/Fabric initialization."""
+
+    from isaaclab.sim.utils.semantics import add_labels
+    from pxr import Usd
+
+    tagged = {}
+    for side in ("left", "right"):
+        name = f"panda_{side}finger"
+        matches = [prim for prim in Usd.PrimRange(root) if prim.GetName() == name]
+        if len(matches) != 1:
+            raise RuntimeError(f"spawned Franka must contain exactly one {name} prim")
+        add_labels(matches[0], [f"pi05_{side}_finger"], instance_name="class")
+        tagged[side] = str(matches[0].GetPath())
+    return tagged
+
+
+def configure_finger_semantics(cfg: Any) -> None:
+    """Wrap robot spawning so finger schemas exist before physics views."""
+
+    original = cfg.scene.robot.spawn.func
+
+    def spawn_with_finger_tags(
+        prim_path: str,
+        spawn_cfg: Any,
+        translation: Any = None,
+        orientation: Any = None,
+    ) -> Any:
+        root = original(
+            prim_path, spawn_cfg, translation=translation, orientation=orientation
+        )
+        _tag_spawned_finger_prims(root)
+        return root
+
+    cfg.scene.robot.spawn.func = spawn_with_finger_tags
 
 
 def _sha(value: object) -> str:
@@ -57,43 +187,102 @@ def _sha(value: object) -> str:
     ).hexdigest()
 
 
-def _camera_config(env_cfg: Any) -> None:
-    """Install a fixed exterior camera and a real panda-hand child camera."""
+def _matrix_to_xyzw(matrix: Any) -> tuple[float, float, float, float]:
+    """Convert one proper 3x3 rotation matrix into a normalized XYZW quaternion."""
 
+    import numpy as np
+
+    value = np.asarray(matrix, dtype=float)
+    trace = float(np.trace(value))
+    if trace > 0.0:
+        scale = 2.0 * np.sqrt(trace + 1.0)
+        quaternion = np.asarray(
+            [
+                (value[2, 1] - value[1, 2]) / scale,
+                (value[0, 2] - value[2, 0]) / scale,
+                (value[1, 0] - value[0, 1]) / scale,
+                0.25 * scale,
+            ]
+        )
+    else:
+        index = int(np.argmax(np.diag(value)))
+        j, k = (index + 1) % 3, (index + 2) % 3
+        scale = 2.0 * np.sqrt(1.0 + value[index, index] - value[j, j] - value[k, k])
+        quaternion = np.zeros(4)
+        quaternion[index] = 0.25 * scale
+        quaternion[j] = (value[j, index] + value[index, j]) / scale
+        quaternion[k] = (value[k, index] + value[index, k]) / scale
+        quaternion[3] = (value[k, j] - value[j, k]) / scale
+    quaternion /= np.linalg.norm(quaternion)
+    quaternion *= 1.0 if quaternion[3] >= 0 else -1.0
+    return tuple(float(item) for item in quaternion)
+
+
+def _ros_look_at_xyzw(position: Any, target: Any) -> tuple[float, float, float, float]:
+    """Aim ROS camera +Z at target while keeping image up near world +Z."""
+
+    import numpy as np
+
+    forward = np.asarray(target, dtype=float) - np.asarray(position, dtype=float)
+    forward /= np.linalg.norm(forward)
+    right = np.cross(forward, np.asarray([0.0, 0.0, 1.0]))
+    right /= np.linalg.norm(right)
+    down = np.cross(forward, right)
+    return _matrix_to_xyzw(np.column_stack((right, down, forward)))
+
+
+def _camera_common() -> dict[str, Any]:
     import isaaclab.sim as sim_utils
-    from isaaclab.sensors import TiledCameraCfg
+    from isaaclab_physx.renderers import IsaacRtxRendererCfg
 
-    common = {
+    return {
         "data_types": ["rgb", "semantic_segmentation"],
         "width": 224,
         "height": 224,
         "update_period": 0.0,
+        "renderer_cfg": IsaacRtxRendererCfg(
+            semantic_filter=["class"],
+            colorize_semantic_segmentation=False,
+        ),
+        "update_latest_camera_pose": True,
         "spawn": sim_utils.PinholeCameraCfg(
-            focal_length=24.0,
+            focal_length=18.0,
             horizontal_aperture=20.955,
             clipping_range=(0.03, 10.0),
         ),
     }
+
+
+def _camera_config(env_cfg: Any) -> None:
+    """Install exterior and live-hand-driven RTX camera sensors."""
+
+    from isaaclab.sensors import TiledCameraCfg
+
+    exterior_position = (1.25, -1.25, 1.05)
     env_cfg.scene.pi05_exterior = TiledCameraCfg(
         prim_path="{ENV_REGEX_NS}/Pi05ExteriorCamera",
         offset=TiledCameraCfg.OffsetCfg(
-            pos=(1.25, -1.25, 1.05),
-            rot=(0.683013, 0.183013, 0.183013, 0.683013),
-            convention="world",
+            pos=exterior_position,
+            rot=_ros_look_at_xyzw(exterior_position, (0.5, 0.0, 0.05)),
+            convention="ros",
         ),
-        **common,
+        **_camera_common(),
     )
-    # The prim is below panda_hand, so its world extrinsics advance with every
-    # articulation step.  A world/static camera with a wrist-like label cannot
-    # satisfy this contract.
+    # Panda fingers extend along hand +Z in the selected Franka asset.  ROS
+    # camera +Z is therefore the explicit wrist optical axis; the old Gen2-era
+    # world quaternion aimed Gen3 camera +X toward hand -X and is rejected.
+    # Gen3's Isaac RTX renderer reads camera transforms from USD while Fabric
+    # owns the moving articulation pose.  A world-pose-driven camera avoids a
+    # stale authored hand transform; every capture republishes the calibrated
+    # live hand mount to both USD/RTX and CameraData.
     env_cfg.scene.pi05_wrist = TiledCameraCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/panda_hand/Pi05WristCamera",
+        prim_path="{ENV_REGEX_NS}/Pi05WristCamera",
         offset=TiledCameraCfg.OffsetCfg(
-            pos=(0.045, 0.0, 0.035),
-            rot=(0.0, 0.0, 1.0, 0.0),
-            convention="world",
+            pos=(0.0, 0.0, 1.0),
+            rot=WRIST_MOUNT_QUATERNION_XYZW,
+            convention="ros",
         ),
-        **common,
+        **_camera_common(),
     )
 
 
@@ -104,6 +293,7 @@ def _contact_config(env_cfg: Any) -> None:
 
     env_cfg.scene.robot.spawn.activate_contact_sensors = True
     env_cfg.scene.object.spawn.activate_contact_sensors = True
+    env_cfg.scene.table.spawn.activate_contact_sensors = True
     env_cfg.scene.left_object_contact = ContactSensorCfg(
         prim_path="{ENV_REGEX_NS}/Robot/panda_leftfinger",
         filter_prim_paths_expr=["{ENV_REGEX_NS}/Object"],
@@ -116,7 +306,7 @@ def _contact_config(env_cfg: Any) -> None:
     )
     env_cfg.scene.object_support_contact = ContactSensorCfg(
         prim_path="{ENV_REGEX_NS}/Object",
-        filter_prim_paths_expr=["{ENV_REGEX_NS}/Table/.*"],
+        filter_prim_paths_expr=["{ENV_REGEX_NS}/Table"],
         history_length=3,
     )
 
@@ -163,41 +353,391 @@ def _rgb(native: Any, sensor_name: str) -> Any:
     return frame.copy()
 
 
-def _target_pixel_count(native: Any, sensor_name: str) -> int:
+def _proxy_torch(value: Any) -> Any:
+    """Resolve Gen3 CameraData ProxyArray before tensor indexing."""
+
+    return value.torch if hasattr(value, "torch") else value
+
+
+def _rgb_receipt(frame: Any, capture_time: float, observation_time: float) -> dict:
+    import numpy as np
+
+    value = np.ascontiguousarray(frame)
+    return {
+        "sha256": hashlib.sha256(value.tobytes()).hexdigest(),
+        "capture_time_s": capture_time,
+        "observation_time_s": observation_time,
+        "age_s": observation_time - capture_time,
+        "minimum": int(value.min()),
+        "maximum": int(value.max()),
+        "standard_deviation": float(value.std()),
+        "channel_order": "RGB",
+    }
+
+
+def _semantic_pixel_count(native: Any, sensor_name: str, label: str) -> int:
     import numpy as np
 
     sensor = native.scene[sensor_name]
-    labels = sensor.data.info.get("semantic_segmentation", {}).get("idToLabels", {})
-    target_ids = [
-        int(label_id)
-        for label_id, value in labels.items()
-        if "pi05_target_object" in str(value)
-    ]
-    if not target_ids:
-        raise RuntimeError(f"{sensor_name} semantic output has no target-object label")
-    segmentation = sensor.data.output["semantic_segmentation"][0]
-    if hasattr(segmentation, "detach"):
-        segmentation = segmentation.detach().cpu().numpy()
-    return int(np.isin(np.asarray(segmentation), target_ids).sum())
+    segmentation, labels = _semantic_encoding(sensor, sensor_name)
+    target_ids = [code for code, value in labels.items() if value == label]
+    if len(target_ids) != 1:
+        raise RuntimeError(f"{sensor_name} semantic output has no {label} label")
+    return int(np.isin(segmentation.reshape(224, 224), target_ids).sum())
+
+
+def _packed_rgba_code(value: Any, sensor_name: str) -> int:
+    """Decode one renderer-declared RGBA tuple into its int32 pixel code."""
+
+    import ast
+
+    try:
+        rgba = ast.literal_eval(str(value))
+    except (SyntaxError, ValueError) as error:
+        raise RuntimeError(f"{sensor_name} semantic metadata key is invalid") from error
+    if not isinstance(rgba, tuple) or len(rgba) != 4:
+        raise RuntimeError(f"{sensor_name} semantic metadata must use RGBA tuples")
+    if any(type(channel) is not int or not 0 <= channel <= 255 for channel in rgba):
+        raise RuntimeError(f"{sensor_name} semantic RGBA channels are invalid")
+    return int.from_bytes(bytes(rgba), byteorder="little", signed=True)
+
+
+def _semantic_metadata(sensor: Any, sensor_name: str) -> dict[int, str]:
+    """Validate the pinned RTX packed-RGBA metadata as a strict bijection."""
+
+    from collections.abc import Mapping
+
+    raw = sensor.data.info.get("semantic_segmentation", {}).get("idToLabels", {})
+    if not isinstance(raw, Mapping) or not raw:
+        raise RuntimeError(f"{sensor_name} semantic metadata is missing")
+    labels: dict[int, str] = {}
+    for key, metadata in raw.items():
+        if not isinstance(metadata, Mapping) or set(metadata) != {"class"}:
+            raise RuntimeError(f"{sensor_name} semantic class metadata is invalid")
+        label = metadata["class"]
+        if not isinstance(label, str) or not label:
+            raise RuntimeError(f"{sensor_name} semantic class label is invalid")
+        code = _packed_rgba_code(key, sensor_name)
+        if code in labels:
+            raise RuntimeError(f"{sensor_name} semantic metadata is ambiguous")
+        if label in labels.values():
+            raise RuntimeError(f"{sensor_name} semantic class mapping is ambiguous")
+        labels[code] = label
+    return labels
+
+
+def _semantic_encoding(sensor: Any, sensor_name: str) -> tuple[Any, dict[int, str]]:
+    """Return pixels only after exact metadata-to-packed-code validation."""
+
+    import numpy as np
+
+    value = _proxy_torch(sensor.data.output["semantic_segmentation"])
+    segmentation = np.asarray(value[0].detach().cpu().numpy())
+    if segmentation.dtype != np.int32 or segmentation.shape != (224, 224, 1):
+        raise RuntimeError(
+            f"{sensor_name} semantic pixels must be int32[224,224,1], "
+            f"got {segmentation.shape} {segmentation.dtype}"
+        )
+    labels = _semantic_metadata(sensor, sensor_name)
+    observed = {int(code) for code in np.unique(segmentation)}
+    if not observed.issubset(labels):
+        raise RuntimeError(f"{sensor_name} semantic pixels contain unmapped codes")
+    return segmentation, labels
+
+
+def _semantic_encoding_receipt(native: Any, sensor_name: str) -> dict[str, Any]:
+    """Describe the exact non-color-heuristic renderer encoding in one frame."""
+
+    import numpy as np
+
+    sensor = native.scene[sensor_name]
+    segmentation, labels = _semantic_encoding(sensor, sensor_name)
+    return {
+        "encoding": "int32_little_endian_packed_rgba_metadata_bijection",
+        "shape": list(segmentation.shape),
+        "dtype": str(segmentation.dtype),
+        "metadata_sha256": _sha(sorted(labels.items())),
+        "mapped_code_count": len(labels),
+        "observed_code_count": int(np.unique(segmentation).size),
+    }
+
+
+def _target_pixel_count(native: Any, sensor_name: str) -> int:
+    return _semantic_pixel_count(native, sensor_name, "pi05_target_object")
+
+
+def _destination_pixel_count(native: Any, sensor_name: str) -> int:
+    return _semantic_pixel_count(native, sensor_name, DESTINATION_LABEL)
+
+
+def _finger_pixel_counts(native: Any, sensor_name: str) -> dict[str, int]:
+    return {
+        side: _semantic_pixel_count(native, sensor_name, f"pi05_{side}_finger")
+        for side in ("left", "right")
+    }
 
 
 def _camera_pose_sample(native: Any) -> dict[str, list[float]]:
     robot = native.scene["robot"]
     hand_index = robot.body_names.index("panda_hand")
+    renderer_position, renderer_quaternion = _renderer_usd_pose(
+        native.scene["pi05_wrist"]
+    )
 
     def values(tensor: Any) -> list[float]:
+        tensor = _proxy_torch(tensor)
         return tensor.detach().cpu().numpy().astype(float).tolist()
 
     return {
-        "hand_position_m": values(robot.data.body_pos_w[0, hand_index]),
-        "wrist_camera_position_m": values(native.scene["pi05_wrist"].data.pos_w[0]),
-        "exterior_camera_position_m": values(
-            native.scene["pi05_exterior"].data.pos_w[0]
+        "hand_position_m": values(_proxy_torch(robot.data.body_pos_w)[0, hand_index]),
+        "hand_quaternion_xyzw": values(
+            _proxy_torch(robot.data.body_quat_w)[0, hand_index]
         ),
+        "wrist_camera_position_m": values(native.scene["pi05_wrist"].data.pos_w)[0],
+        "wrist_camera_quaternion_xyzw": values(
+            native.scene["pi05_wrist"].data.quat_w_ros
+        )[0],
+        "wrist_renderer_usd_position_m": renderer_position.tolist(),
+        "wrist_renderer_usd_quaternion_xyzw": renderer_quaternion.tolist(),
+        "exterior_camera_position_m": values(native.scene["pi05_exterior"].data.pos_w)[
+            0
+        ],
+        "exterior_camera_quaternion_xyzw": values(
+            native.scene["pi05_exterior"].data.quat_w_world
+        )[0],
     }
 
 
-def _verify_camera_motion(traces: list[dict[str, Any]]) -> dict[str, float]:
+def _xyzw_to_wxyz(quaternion: Any) -> Any:
+    import numpy as np
+
+    value = np.asarray(quaternion, dtype=float)
+    if value.shape != (4,):
+        raise RuntimeError(f"camera quaternion must be xyzw[4], got {value.shape}")
+    return np.asarray([value[3], value[0], value[1], value[2]])
+
+
+def _relative_camera_quaternion(camera_xyzw: Any, hand_xyzw: Any) -> Any:
+    import numpy as np
+
+    hand = _xyzw_to_wxyz(hand_xyzw)
+    hand_conjugate = np.asarray([hand[0], -hand[1], -hand[2], -hand[3]])
+    camera = _xyzw_to_wxyz(camera_xyzw)
+    w1, x1, y1, z1 = hand_conjugate
+    w2, x2, y2, z2 = camera
+    return np.asarray(
+        [
+            w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
+            w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+            w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
+            w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
+        ]
+    )
+
+
+def _multiply_xyzw(left: Any, right: Any) -> Any:
+    """Compose two finite unit XYZW quaternions."""
+
+    import numpy as np
+
+    values = []
+    for name, quaternion in (("left", left), ("right", right)):
+        value = np.asarray(quaternion, dtype=float)
+        norm = float(np.linalg.norm(value))
+        if value.shape != (4,) or not np.isfinite(value).all() or norm < 1.0e-8:
+            raise RuntimeError(f"{name} camera quaternion is invalid")
+        values.append(value / norm)
+    lx, ly, lz, lw = values[0]
+    rx, ry, rz, rw = values[1]
+    return np.asarray(
+        [
+            lw * rx + lx * rw + ly * rz - lz * ry,
+            lw * ry - lx * rz + ly * rw + lz * rx,
+            lw * rz + lx * ry - ly * rx + lz * rw,
+            lw * rw - lx * rx - ly * ry - lz * rz,
+        ]
+    )
+
+
+def _ros_to_opengl_xyzw(quaternion: Any) -> Any:
+    """Apply the pinned Gen3 ROS-to-OpenGL camera-frame conversion."""
+
+    return _multiply_xyzw(quaternion, (1.0, 0.0, 0.0, 0.0))
+
+
+def _rotate_vector(quaternion: Any, vector: Any) -> Any:
+    import numpy as np
+
+    q = np.asarray(quaternion, dtype=float)
+    v = np.asarray(vector, dtype=float)
+    q_vector = q[1:]
+    return v + 2.0 * (
+        q[0] * np.cross(q_vector, v) + np.cross(q_vector, np.cross(q_vector, v))
+    )
+
+
+def _finger_link_paths(native: Any) -> dict[str, str]:
+    paths = getattr(native.scene["robot"].root_physx_view, "link_paths", None)
+    if not paths:
+        raise RuntimeError("Franka articulation did not expose runtime link paths")
+    paths = list(paths[0] if isinstance(paths[0], (list, tuple)) else paths)
+    result = {}
+    for side in ("left", "right"):
+        suffix = f"/panda_{side}finger"
+        matches = [str(path) for path in paths if str(path).endswith(suffix)]
+        if len(matches) != 1:
+            raise RuntimeError(f"expected one runtime link path ending {suffix}")
+        result[side] = matches[0]
+    return result
+
+
+def _runtime_stage() -> Any:
+    import omni.usd
+
+    stage = omni.usd.get_context().get_stage()
+    if stage is None:
+        raise RuntimeError("Isaac runtime did not expose the active USD stage")
+    return stage
+
+
+def _install_finger_semantics(native: Any) -> dict[str, str]:
+    """Verify pre-physics finger labels without mutating the live USD schema."""
+
+    from isaaclab.sim.utils.semantics import get_labels
+
+    stage = _runtime_stage()
+    paths = _finger_link_paths(native)
+    for side, path in paths.items():
+        prim = stage.GetPrimAtPath(path)
+        if not prim or not prim.IsValid():
+            raise RuntimeError(f"missing finger prim for semantic tag: {path}")
+        labels = get_labels(prim).get("class", [])
+        if f"pi05_{side}_finger" not in labels:
+            raise RuntimeError(
+                f"finger semantic tag was not authored before physics: {path}"
+            )
+    return paths
+
+
+def _finger_local_bounds(native: Any) -> dict[str, Any]:
+    from pxr import Usd, UsdGeom
+
+    cache = UsdGeom.BBoxCache(Usd.TimeCode.Default(), [UsdGeom.Tokens.default_])
+    result, stage = {}, _runtime_stage()
+    for side, path in _finger_link_paths(native).items():
+        result[side] = _untransformed_aligned_bounds(cache, stage.GetPrimAtPath(path))
+    return result
+
+
+def _untransformed_aligned_bounds(cache: Any, prim: Any) -> tuple[Any, Any]:
+    """Return geometry in the rigid-link frame, excluding its authored pose."""
+
+    aligned = cache.ComputeUntransformedBound(prim).ComputeAlignedBox()
+    return aligned.GetMin(), aligned.GetMax()
+
+
+def _bounds_corners(bounds: Any) -> Any:
+    import numpy as np
+
+    minimum, maximum = (np.asarray(value, dtype=float) for value in bounds)
+    return np.asarray(
+        [
+            [x, y, z]
+            for x in (minimum[0], maximum[0])
+            for y in (minimum[1], maximum[1])
+            for z in (minimum[2], maximum[2])
+        ]
+    )
+
+
+def _finger_bounds(native: Any) -> dict[str, Any]:
+    import numpy as np
+
+    robot = native.scene["robot"]
+    positions = _proxy_torch(robot.data.body_pos_w)[0].detach().cpu().numpy()
+    quaternions = _proxy_torch(robot.data.body_quat_w)[0].detach().cpu().numpy()
+    result = {}
+    for side, local_bounds in _finger_local_bounds(native).items():
+        index = robot.body_names.index(f"panda_{side}finger")
+        quaternion = _xyzw_to_wxyz(quaternions[index])
+        world = np.asarray(
+            [
+                _rotate_vector(quaternion, point) + positions[index]
+                for point in _bounds_corners(local_bounds)
+            ]
+        )
+        result[side] = {
+            "local_bounds_m": [list(map(float, value)) for value in local_bounds],
+            "world_corners_m": world,
+            "geometry_source": "usd_compute_untransformed_bound_link_frame",
+            "pose_source": "live_articulation_body_pos_w_body_quat_w_xyzw",
+        }
+    return result
+
+
+def _finger_in_frustum(native: Any) -> dict[str, Any]:
+    import numpy as np
+
+    sensor = native.scene["pi05_wrist"].data
+    camera_position = _proxy_torch(sensor.pos_w)[0].detach().cpu().numpy()
+    camera_quaternion = _xyzw_to_wxyz(
+        _proxy_torch(sensor.quat_w_ros)[0].detach().cpu().numpy()
+    )
+    inverse = np.asarray([camera_quaternion[0], *(-camera_quaternion[1:])], dtype=float)
+    intrinsics = _proxy_torch(sensor.intrinsic_matrices)[0].detach().cpu().numpy()
+    result = {}
+    for side, geometry in _finger_bounds(native).items():
+        world_corners = geometry["world_corners_m"]
+        camera = np.asarray(
+            [
+                _rotate_vector(inverse, point - camera_position)
+                for point in world_corners
+            ]
+        )
+        pixels = (intrinsics @ camera.T).T
+        pixels[:, :2] /= np.maximum(pixels[:, 2:], 1.0e-12)
+        inside = (camera[:, 2] > 0.03) & (pixels[:, 0] >= 0) & (pixels[:, 0] < 224)
+        inside &= (pixels[:, 1] >= 0) & (pixels[:, 1] < 224)
+        result[side] = {
+            "in_frustum": bool(np.any(inside)),
+            "asset_local_bounds_m": geometry["local_bounds_m"],
+            "live_world_bounds_m": [
+                np.min(world_corners, axis=0).tolist(),
+                np.max(world_corners, axis=0).tolist(),
+            ],
+            "pose_source": geometry["pose_source"],
+            "projected_corner_count": int(np.sum(inside)),
+            "evidence_scope": "asset_bounds_in_frustum_not_rendered_visibility",
+        }
+    return result
+
+
+def _camera_angular_drift(traces: list[dict[str, Any]]) -> float:
+    import numpy as np
+
+    relative_quaternions = np.asarray(
+        [
+            _relative_camera_quaternion(
+                row["camera_pose"]["wrist_camera_quaternion_xyzw"],
+                row["camera_pose"]["hand_quaternion_xyzw"],
+            )
+            for row in traces
+        ]
+    )
+    relative_quaternions *= np.sign(relative_quaternions[:, :1] + 1.0e-12)
+    return float(
+        np.max(
+            2.0
+            * np.arccos(
+                np.clip(
+                    np.abs(relative_quaternions @ relative_quaternions[0]), 0.0, 1.0
+                )
+            )
+        )
+    )
+
+
+def _camera_motion_metrics(traces: list[dict[str, Any]]) -> dict[str, float]:
     import numpy as np
 
     hand = np.asarray([row["camera_pose"]["hand_position_m"] for row in traces])
@@ -209,25 +749,128 @@ def _verify_camera_motion(traces: list[dict[str, Any]]) -> dict[str, float]:
     )
     wrist_world_motion = float(np.linalg.norm(wrist - wrist[0], axis=1).max())
     hand_world_motion = float(np.linalg.norm(hand - hand[0], axis=1).max())
-    relative = np.linalg.norm(wrist - hand, axis=1)
-    relative_drift = float(np.ptp(relative))
+    relative_drift = float(np.ptp(np.linalg.norm(wrist - hand, axis=1)))
+    angular_drift = _camera_angular_drift(traces)
     exterior_drift = float(np.linalg.norm(exterior - exterior[0], axis=1).max())
-    if wrist_world_motion < 0.05 or hand_world_motion < 0.05:
-        raise RuntimeError("wrist camera/hand did not move through the manipulation")
-    if relative_drift > 0.002 or exterior_drift > 1.0e-4:
-        raise RuntimeError(
-            "camera extrinsics violate moving-wrist/static-exterior contract"
-        )
-    if min(int(row["wrist_target_pixels"]) for row in traces) < 4:
-        raise RuntimeError("wrist camera did not keep the target object in view")
-    if min(int(row["exterior_target_pixels"]) for row in traces) < 4:
-        raise RuntimeError("exterior camera did not keep the target object in view")
-    return {
+    renderer = _renderer_motion_metrics(traces, wrist)
+    metrics = {
         "wrist_world_motion_m": wrist_world_motion,
         "hand_world_motion_m": hand_world_motion,
         "wrist_mount_distance_drift_m": relative_drift,
+        "wrist_mount_angular_drift_rad": angular_drift,
         "exterior_world_drift_m": exterior_drift,
+        **renderer,
     }
+    _validate_camera_motion_metrics(metrics)
+    return metrics
+
+
+def _validate_camera_motion_metrics(metrics: Mapping[str, float]) -> None:
+    """Fail closed when physical, CameraData, USD, or static-view motion drifts."""
+
+    moving = (
+        "wrist_world_motion_m",
+        "hand_world_motion_m",
+        "wrist_renderer_world_motion_m",
+    )
+    if any(metrics[name] < 0.05 for name in moving):
+        raise RuntimeError("wrist camera/hand did not move through the manipulation")
+    limits = {
+        "wrist_mount_distance_drift_m": 0.002,
+        "wrist_mount_angular_drift_rad": 0.01,
+        "exterior_world_drift_m": 1.0e-4,
+        "wrist_renderer_position_error_m": 0.002,
+        "wrist_renderer_orientation_error_rad": 0.01,
+    }
+    if any(metrics[name] > limit for name, limit in limits.items()):
+        raise RuntimeError("camera extrinsics violate moving/static-view contract")
+
+
+def _renderer_motion_metrics(
+    traces: list[dict[str, Any]], wrist: Any
+) -> dict[str, float]:
+    """Compare the USD pose consumed by RTX with CameraData on every row."""
+
+    import numpy as np
+
+    renderer = np.asarray(
+        [row["camera_pose"]["wrist_renderer_usd_position_m"] for row in traces]
+    )
+    orientation = max(
+        _quaternion_angle_xyzw(
+            row["camera_pose"]["wrist_renderer_usd_quaternion_xyzw"],
+            row["camera_pose"]["wrist_camera_quaternion_xyzw"],
+        )
+        for row in traces
+    )
+    return {
+        "wrist_renderer_world_motion_m": float(
+            np.linalg.norm(renderer - renderer[0], axis=1).max()
+        ),
+        "wrist_renderer_position_error_m": float(
+            np.linalg.norm(renderer - wrist, axis=1).max()
+        ),
+        "wrist_renderer_orientation_error_rad": float(orientation),
+    }
+
+
+def _phase_visibility(traces: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    phase_visibility = {}
+    for phase in sorted({str(row.get("phase", "policy_query")) for row in traces}):
+        rows = [row for row in traces if row.get("phase", "policy_query") == phase]
+        phase_visibility[phase] = {
+            "samples": len(rows),
+            "wrist_visible_samples": sum(
+                row["wrist_target_pixels"] >= 4 for row in rows
+            ),
+            "exterior_visible_samples": sum(
+                row["exterior_target_pixels"] >= 4 for row in rows
+            ),
+            "destination_exterior_visible_samples": sum(
+                row["exterior_destination_pixels"] >= 16 for row in rows
+            ),
+            "both_fingers_rendered_samples": sum(
+                all(count >= 4 for count in row["wrist_finger_pixels"].values())
+                for row in rows
+            ),
+            "occlusion_permitted": phase == "retreat",
+        }
+    return phase_visibility
+
+
+def _require_expert_phase_visibility(
+    visibility: Mapping[str, Mapping[str, Any]],
+) -> None:
+    required = {"approach", "grasp", "lift", "transport", "lower", "release"}
+    missing = [
+        phase
+        for phase in required
+        if visibility.get(phase, {}).get("wrist_visible_samples", 0) == 0
+        or visibility.get(phase, {}).get("exterior_visible_samples", 0) == 0
+        or visibility.get(phase, {}).get("destination_exterior_visible_samples", 0) == 0
+    ]
+    if missing:
+        raise RuntimeError(f"target visibility missing for phases: {missing}")
+    finger_phases = {"grasp", "lift", "transport", "lower", "release"}
+    missing = [
+        phase
+        for phase in finger_phases
+        if visibility.get(phase, {}).get("both_fingers_rendered_samples", 0) == 0
+    ]
+    if missing:
+        raise RuntimeError(
+            f"both rendered finger masks missing from wrist view: {missing}"
+        )
+
+
+def _verify_camera_motion(
+    traces: list[dict[str, Any]], *, require_expert_phases: bool = True
+) -> dict[str, Any]:
+    metrics = _camera_motion_metrics(traces)
+    visibility = _phase_visibility(traces)
+    if require_expert_phases:
+        _require_expert_phase_visibility(visibility)
+    return {**metrics, "phase_visibility": visibility}
 
 
 def _action_layout(native: Any) -> tuple[int, int, int]:
@@ -250,7 +893,7 @@ def _controller_target(native: Any) -> Any:
     names = list(robot.joint_names)
     indices = [names.index(name) for name in JOINT_NAMES]
     value = (
-        robot.data.joint_pos_target[0, indices]
+        _proxy_torch(robot.data.joint_pos_target)[0, indices]
         .detach()
         .cpu()
         .numpy()
@@ -269,7 +912,7 @@ def _gripper_width(native: Any) -> float:
     indices = [
         names.index(name) for name in ("panda_finger_joint1", "panda_finger_joint2")
     ]
-    q = robot.data.joint_pos[0, indices].detach().cpu().numpy()
+    q = _proxy_torch(robot.data.joint_pos)[0, indices].detach().cpu().numpy()
     width = float(np.sum(q))
     if not 0.0 <= width <= MAX_GRIPPER_WIDTH_M + 0.005:
         raise RuntimeError(f"measured physical finger width is invalid: {width}")
@@ -284,28 +927,421 @@ def _finger_controller_target(native: Any) -> Any:
     indices = [
         names.index(name) for name in ("panda_finger_joint1", "panda_finger_joint2")
     ]
-    target = robot.data.joint_pos_target[0, indices].detach().cpu().numpy()
+    target = (
+        _proxy_torch(robot.data.joint_pos_target)[0, indices].detach().cpu().numpy()
+    )
     if target.shape != (2,) or not np.isfinite(target).all():
         raise RuntimeError("Isaac did not expose finite two-finger controller targets")
     return target.astype(np.float32, copy=True)
 
 
-def _wrist_mount_evidence(native: Any) -> dict[str, Any]:
+def _first_array(value: Any) -> Any:
+    """Return the first row of a Gen3 ProxyArray as a host array."""
+
+    return _proxy_torch(value)[0].detach().cpu().numpy().astype(float, copy=True)
+
+
+def _wrist_expected_pose(native: Any) -> tuple[Any, Any]:
+    """Compose the declared local wrist mount with the live hand pose."""
+
     import numpy as np
 
-    wrist = native.scene["pi05_wrist"].data
-    hand_index = native.scene["robot"].body_names.index("panda_hand")
-    hand = native.scene["robot"].data.body_pos_w[0, hand_index].detach().cpu().numpy()
-    camera = wrist.pos_w[0].detach().cpu().numpy()
+    robot = native.scene["robot"]
+    hand_index = robot.body_names.index("panda_hand")
+    hand_position = _first_array(robot.data.body_pos_w)[hand_index]
+    hand_xyzw = _first_array(robot.data.body_quat_w)[hand_index]
+    offset = _rotate_vector(
+        _xyzw_to_wxyz(hand_xyzw), np.asarray(WRIST_MOUNT_TRANSLATION_M)
+    )
+    world_xyzw = _multiply_xyzw(hand_xyzw, WRIST_MOUNT_QUATERNION_XYZW)
+    return hand_position + offset, world_xyzw
+
+
+def _wrist_sensor_state(sensor: Any) -> dict[str, Any]:
+    """Record the pinned SensorBase and renderer state without raw pixels."""
+
+    view = sensor._view
+    return {
+        "sensor_initialized": bool(getattr(sensor, "_is_initialized", False)),
+        "sensor_timestamp_s": _sensor_clock_scalar(sensor._timestamp),
+        "sensor_last_update_s": _sensor_clock_scalar(sensor._timestamp_last_update),
+        "sensor_is_outdated": bool(_sensor_clock_scalar(sensor._is_outdated)),
+        "frame": int(_proxy_torch(sensor.frame)[0].detach().cpu().item()),
+        "renderer_class": type(getattr(sensor, "_renderer", None)).__name__,
+        "render_data_initialized": getattr(sensor, "_render_data", None) is not None,
+        "frame_view_class": type(view).__name__,
+        "fabric_enabled": bool(getattr(view, "_use_fabric", False)),
+        "fabric_initialized": bool(getattr(view, "_fabric_initialized", False)),
+        "fabric_usd_sync_done": bool(getattr(view, "_fabric_usd_sync_done", False)),
+    }
+
+
+def _wrist_raw_pose_snapshot(native: Any) -> dict[str, Any]:
+    """Read cached, Fabric, RTX/USD, and declared live-mount poses."""
+
+    sensor = native.scene["pi05_wrist"]
+    data = sensor.data
+    world_position, world_quaternion = sensor._view.get_world_poses()
+    local_position, local_quaternion = sensor._view.get_local_poses()
+    expected_position, expected_quaternion = _wrist_expected_pose(native)
+    renderer_position, renderer_quaternion = _renderer_usd_pose(sensor)
+    frame_view_raw = _first_array(world_quaternion)
+    return {
+        "camera_data_position_m": _first_array(data.pos_w).tolist(),
+        "camera_data_quaternion_xyzw": _first_array(data.quat_w_ros).tolist(),
+        "frame_view_world_position_m": _first_array(world_position).tolist(),
+        "frame_view_world_quaternion_raw": frame_view_raw.tolist(),
+        "frame_view_world_quaternion_xyzw": _ros_to_opengl_xyzw(
+            frame_view_raw
+        ).tolist(),
+        "authored_local_translation_m": _first_array(local_position).tolist(),
+        "authored_local_quaternion_raw": _first_array(local_quaternion).tolist(),
+        "renderer_usd_position_m": renderer_position.tolist(),
+        "renderer_usd_quaternion_xyzw": renderer_quaternion.tolist(),
+        "expected_live_position_m": expected_position.tolist(),
+        "expected_live_quaternion_xyzw": expected_quaternion.tolist(),
+        "sensor_state": _wrist_sensor_state(sensor),
+    }
+
+
+def _wrist_prim_identity(sensor: Any) -> dict[str, str]:
+    """Return the one runtime camera prim and its immediate parent."""
+
+    prim_paths = list(getattr(sensor._view, "prim_paths", ()) or ())
+    if len(prim_paths) != 1:
+        raise RuntimeError("wrist camera FrameView must resolve exactly one prim")
+    path = str(prim_paths[0])
+    parent = path.rsplit("/", 1)[0]
+    return {"runtime_prim_path": path, "runtime_parent_prim": parent}
+
+
+def _validate_wrist_parent(receipt: Mapping[str, Any]) -> None:
+    """Require the explicit world-pose RTX bridge, never a stale hand child."""
+
+    path = str(receipt["runtime_prim_path"])
+    parent = str(receipt["runtime_parent_prim"])
+    if not path.endswith("/Pi05WristCamera") or "/Robot/" in path:
+        raise RuntimeError("wrist renderer camera must use the world-pose bridge")
+    if not parent.rsplit("/", 1)[-1].startswith("env_"):
+        raise RuntimeError("wrist renderer camera must be rooted in one environment")
+
+
+def _renderer_usd_pose(sensor: Any) -> tuple[Any, Any]:
+    """Read the USD pose Isaac RTX actually consumes, in ROS XYZW form."""
+
+    import numpy as np
+
+    hook = getattr(sensor, "_npa_renderer_usd_pose", None)
+    if hook is not None:
+        position, quaternion = hook()
+        return np.asarray(position, dtype=float), np.asarray(quaternion, dtype=float)
+    import omni.usd
+    from pxr import Usd, UsdGeom
+
+    path = str(sensor._view.prim_paths[0])
+    stage = omni.usd.get_context().get_stage()
+    prim = UsdGeom.Xformable(stage.GetPrimAtPath(path))
+    matrix = np.asarray(prim.ComputeLocalToWorldTransform(Usd.TimeCode.Default()))
+    position = matrix[3, :3]
+    opengl = _matrix_to_xyzw(matrix[:3, :3].T)
+    return position, np.asarray(_ros_to_opengl_xyzw(opengl))
+
+
+def _world_pose_matrix(position: Any, ros_quaternion: Any) -> Any:
+    """Build the row-vector USD camera matrix for one ROS world pose."""
+
+    import numpy as np
+
+    opengl = _xyzw_to_wxyz(_ros_to_opengl_xyzw(ros_quaternion))
+    rotation = np.column_stack(
+        [_rotate_vector(opengl, axis) for axis in np.eye(3, dtype=float)]
+    )
+    matrix = np.eye(4, dtype=float)
+    matrix[:3, :3], matrix[:3, 3] = rotation, np.asarray(position, dtype=float)
+    return matrix.T
+
+
+def _publish_renderer_usd_pose(sensor: Any, position: Any, quaternion: Any) -> None:
+    """Publish the calibrated live-hand pose to the USD-backed RTX camera."""
+
+    hook = getattr(sensor, "_npa_publish_renderer_pose", None)
+    if hook is not None:
+        hook(position, quaternion)
+        return
+    import omni.usd
+    from pxr import Gf, UsdGeom
+
+    op = getattr(sensor, "_npa_pi05_renderer_transform", None)
+    if op is None:
+        path = str(sensor._view.prim_paths[0])
+        stage = omni.usd.get_context().get_stage()
+        xform = UsdGeom.Xformable(stage.GetPrimAtPath(path))
+        xform.ClearXformOpOrder()
+        xform.SetResetXformStack(True)
+        op = xform.AddTransformOp(opSuffix="npaLiveWrist")
+        sensor._npa_pi05_renderer_transform = op
+    op.Set(Gf.Matrix4d(_world_pose_matrix(position, quaternion).tolist()))
+
+
+def _pose_distance(snapshot: Mapping[str, Any], key: str) -> float:
+    import numpy as np
+
+    actual = np.asarray(snapshot[key], dtype=float)
+    expected = np.asarray(snapshot["expected_live_position_m"], dtype=float)
+    return float(np.linalg.norm(actual - expected))
+
+
+def _quaternion_angle_xyzw(actual: Any, expected: Any) -> float:
+    """Return a sign-invariant angle after strict quaternion validation."""
+
+    import numpy as np
+
+    normalized = []
+    for name, quaternion in (("actual", actual), ("expected", expected)):
+        value = np.asarray(quaternion, dtype=float)
+        norm = float(np.linalg.norm(value))
+        if value.shape != (4,) or not np.isfinite(value).all() or norm < 1.0e-8:
+            raise RuntimeError(f"{name} camera quaternion is invalid")
+        normalized.append(value / norm)
+    dot = float(np.clip(abs(np.dot(*normalized)), 0.0, 1.0))
+    angle = float(2.0 * np.arccos(dot))
+    if not np.isfinite(angle):
+        raise RuntimeError("camera orientation error is not finite")
+    return angle
+
+
+def _camera_orientation_error(snapshot: Mapping[str, Any]) -> float:
+    """Return the shortest cached-camera error from the expected ROS pose."""
+
+    return _quaternion_angle_xyzw(
+        snapshot["camera_data_quaternion_xyzw"],
+        snapshot["expected_live_quaternion_xyzw"],
+    )
+
+
+def _renderer_orientation_error(snapshot: Mapping[str, Any]) -> float:
+    """Return the RTX/USD camera error from the expected ROS pose."""
+
+    return _quaternion_angle_xyzw(
+        snapshot["renderer_usd_quaternion_xyzw"],
+        snapshot["expected_live_quaternion_xyzw"],
+    )
+
+
+def _apply_wrist_world_pose(native: Any, position: Any, quaternion: Any) -> None:
+    """Publish one pose to RTX/USD and Fabric, then force a fresh frame."""
+
+    import torch
+
+    sensor = native.scene["pi05_wrist"]
+    frame_before = int(_proxy_torch(sensor.frame)[0].detach().cpu().item())
+    _publish_renderer_usd_pose(sensor, position, quaternion)
+    sensor.set_world_poses(
+        torch.as_tensor(position, dtype=torch.float32).reshape(1, 3),
+        torch.as_tensor(quaternion, dtype=torch.float32).reshape(1, 4),
+        convention="ros",
+    )
+    _pump_rtx_after_pose_write(sensor)
+    _force_wrist_render(sensor, frame_before)
+
+
+def _pump_rtx_after_pose_write(sensor: Any) -> None:
+    """Make the USD-backed RTX view consume the new pose without physics."""
+
+    hook = getattr(sensor, "_npa_render_after_pose", None)
+    if hook is not None:
+        hook()
+        return
+    from isaaclab.sim import SimulationContext
+
+    simulation = SimulationContext.instance()
+    if simulation is None:
+        raise RuntimeError("wrist RTX pose publication requires SimulationContext")
+    simulation.render()
+
+
+def _force_wrist_render(sensor: Any, frame_before: int | None = None) -> None:
+    """Force and verify the pinned public Camera render-refresh boundary."""
+
+    if frame_before is None:
+        frame_before = int(_proxy_torch(sensor.frame)[0].detach().cpu().item())
+    sensor.update(0.0, force_recompute=True)
+    frame_after = int(_proxy_torch(sensor.frame)[0].detach().cpu().item())
+    if frame_after <= frame_before:
+        raise RuntimeError("wrist camera renderer frame did not advance after refresh")
+
+
+def _refresh_wrist_camera_pose(native: Any, snapshot: Mapping[str, Any]) -> str:
+    """Synchronize the live mount across the pinned USD and Fabric views."""
+
+    sensor = native.scene["pi05_wrist"]
+    if (
+        _pose_distance(snapshot, "camera_data_position_m") <= 0.002
+        and _pose_distance(snapshot, "frame_view_world_position_m") <= 0.002
+        and _pose_distance(snapshot, "renderer_usd_position_m") <= 0.002
+        and _camera_orientation_error(snapshot) <= 0.01
+        and _renderer_orientation_error(snapshot) <= 0.01
+    ):
+        _force_wrist_render(sensor)
+        return "usd_fabric_pose_already_current_and_rendered"
+    _apply_wrist_world_pose(
+        native,
+        snapshot["expected_live_position_m"],
+        snapshot["expected_live_quaternion_xyzw"],
+    )
+    return "usd_and_fabric_world_pose_synchronized_from_live_hand_mount"
+
+
+def _validate_refreshed_wrist_pose(snapshot: Mapping[str, Any]) -> None:
+    """Require cached, Fabric and rendered USD poses to match the live mount."""
+
+    for key in (
+        "camera_data_position_m",
+        "frame_view_world_position_m",
+        "renderer_usd_position_m",
+    ):
+        if _pose_distance(snapshot, key) > 0.002:
+            raise RuntimeError("wrist camera live pose did not match the hand mount")
+    if _camera_orientation_error(snapshot) > 0.01:
+        raise RuntimeError("wrist camera live orientation did not match the hand mount")
+    if (
+        _quaternion_angle_xyzw(
+            snapshot["frame_view_world_quaternion_xyzw"],
+            snapshot["expected_live_quaternion_xyzw"],
+        )
+        > 0.01
+    ):
+        raise RuntimeError("wrist Fabric orientation did not match the hand mount")
+    if _renderer_orientation_error(snapshot) > 0.01:
+        raise RuntimeError("wrist RTX/USD orientation did not match the hand mount")
+
+
+def _wrist_render_receipt(native: Any) -> dict[str, Any]:
+    """Bind the post-publication renderer frame to its RGB bytes."""
+
+    import numpy as np
+
+    sensor = native.scene["pi05_wrist"]
+    frame = np.ascontiguousarray(_rgb(native, "pi05_wrist"))
+    position, quaternion = _renderer_usd_pose(sensor)
+    return {
+        "renderer_frame": int(_proxy_torch(sensor.frame)[0].detach().cpu().item()),
+        "rgb_sha256": hashlib.sha256(frame.tobytes()).hexdigest(),
+        "rgb_shape": list(frame.shape),
+        "rgb_dtype": str(frame.dtype),
+        "sensor_timestamp_s": _sensor_clock_scalar(sensor._timestamp_last_update),
+        "renderer_usd_position_m": position.tolist(),
+        "renderer_usd_quaternion_xyzw": quaternion.tolist(),
+    }
+
+
+def _synchronize_wrist_before_capture(native: Any) -> None:
+    """Keep the verified Fabric camera pose causal with the live articulation."""
+
+    if not getattr(native, "_npa_pi05_wrist_mount_verified", False):
+        raise RuntimeError("wrist mount provenance was not verified before capture")
+    position, quaternion = _wrist_expected_pose(native)
+    _apply_wrist_world_pose(native, position, quaternion)
+
+
+def _wrist_mount_receipt(native: Any, buffers: dict[str, list[Any]]) -> dict[str, Any]:
+    """Refresh and retain pre/post evidence for the Gen3 moving camera mount."""
+
+    sensor = native.scene["pi05_wrist"]
+    receipt = {
+        "schema": "npa.sim2real.pi05.wrist-mount.v1",
+        **_wrist_prim_identity(sensor),
+        "pose_sources": {
+            "hand": "ArticulationData.body_pos_w/body_quat_w",
+            "camera_cached": "CameraData.pos_w/quat_w_ros",
+            "camera_live": "FabricFrameView.get_world_poses",
+            "renderer": "UsdGeom.ComputeLocalToWorldTransform",
+            "mount": "declared hand-frame calibration composed with live articulation",
+        },
+        "before": _wrist_raw_pose_snapshot(native),
+    }
+    buffers["wrist_mount_receipts"].append(receipt)
+    try:
+        _validate_wrist_parent(receipt)
+        receipt["refresh_action"] = _refresh_wrist_camera_pose(
+            native, receipt["before"]
+        )
+        receipt["after"] = _wrist_raw_pose_snapshot(native)
+        _validate_refreshed_wrist_pose(receipt["after"])
+        receipt["post_refresh_render"] = _wrist_render_receipt(native)
+        native._npa_pi05_wrist_mount_verified = True
+    except Exception as error:
+        receipt["failure"] = f"{type(error).__name__}: {error}"
+        raise
+    return receipt
+
+
+def _wrist_geometry(native: Any, wrist: Any, camera: Any) -> dict[str, Any]:
+    import numpy as np
+
+    bounds = _finger_bounds(native)
+    centers = [
+        np.mean(np.asarray(value["world_corners_m"], dtype=float), axis=0)
+        for value in bounds.values()
+    ]
+    finger_midpoint = np.mean(centers, axis=0)
+    optical_quaternion = _xyzw_to_wxyz(
+        _proxy_torch(wrist.quat_w_ros)[0].detach().cpu().numpy()
+    )
+    optical_axis = _rotate_vector(optical_quaternion, [0.0, 0.0, 1.0])
+    finger_direction = finger_midpoint - camera
+    finger_direction /= np.linalg.norm(finger_direction)
+    alignment = float(np.dot(optical_axis, finger_direction))
+    if alignment < 0.5:
+        raise RuntimeError("wrist optical axis does not aim toward the actual fingers")
+    return {
+        "measured_optical_axis_world": optical_axis.tolist(),
+        "measured_finger_midpoint_world_m": finger_midpoint.tolist(),
+        "finger_geometry_source": (
+            "usd_compute_untransformed_bound_link_frame_transformed_by_"
+            "live_articulation_body_pose_xyzw"
+        ),
+        "measured_optical_finger_alignment_cosine": alignment,
+    }
+
+
+def _wrist_mount_evidence(native: Any, buffers: dict[str, list[Any]]) -> dict[str, Any]:
+    import numpy as np
+
+    sensor = native.scene["pi05_wrist"]
+    receipt = _wrist_mount_receipt(native, buffers)
+    wrist = sensor.data
+    robot = native.scene["robot"]
+    hand_index = robot.body_names.index("panda_hand")
+    hand = _proxy_torch(robot.data.body_pos_w)[0, hand_index].detach().cpu().numpy()
+    camera = _proxy_torch(wrist.pos_w)[0].detach().cpu().numpy()
     distance = float(np.linalg.norm(camera - hand))
     if not 0.02 <= distance <= 0.12:
         raise RuntimeError("wrist camera world pose is not attached near panda_hand")
+    horizontal_fov = 2.0 * np.arctan(20.955 / (2.0 * 18.0))
     return {
-        "parent_prim": "{ENV_REGEX_NS}/Robot/panda_hand",
-        "mount_translation_m": [0.045, 0.0, 0.035],
-        "mount_quaternion_wxyz": [0.0, 0.0, 1.0, 0.0],
+        "runtime_prim_path": receipt["runtime_prim_path"],
+        "runtime_parent_prim": receipt["runtime_parent_prim"],
+        "mount_translation_m": list(WRIST_MOUNT_TRANSLATION_M),
+        "mount_quaternion_xyzw": list(WRIST_MOUNT_QUATERNION_XYZW),
+        "quaternion_order": "xyzw",
+        "offset_convention": "ros",
+        "optical_convention": "ros_forward_positive_z_right_positive_x_down_positive_y",
+        "hand_asset_axis": "panda_fingers_extend_along_hand_positive_z",
+        **_wrist_geometry(native, wrist, camera),
+        "latest_pose_updates_enabled": True,
+        "renderer_pose_bridge": "live_hand_mount_to_world_usd_and_fabric",
+        "semantic_segmentation": (
+            "int32_little_endian_packed_rgba_with_exact_metadata_bijection"
+        ),
+        "resolution_hw": [224, 224],
+        "focal_length_mm": 18.0,
+        "horizontal_aperture_mm": 20.955,
+        "horizontal_fov_rad": float(horizontal_fov),
+        "vertical_fov_rad": float(horizontal_fov),
         "measured_camera_to_hand_distance_m": distance,
         "moving_with_end_effector": True,
+        "runtime_pose_receipt": receipt,
     }
 
 
@@ -322,24 +1358,45 @@ def _contact_forces(native: Any) -> tuple[float, float, float]:
         force = getattr(sensor.data, "force_matrix_w", None)
         if force is None:
             raise RuntimeError(f"{name} did not publish filtered contact forces")
+        force = _proxy_torch(force)
         values.append(float(torch.linalg.norm(force).item()))
     return values[0], values[1], values[2]
 
 
 def _sim_time(native: Any) -> float:
-    return float(native.common_step_counter) * float(native.step_dt)
+    """Return the environment's episode-local control clock."""
+
+    value = _proxy_torch(native.episode_length_buf)
+    if hasattr(value, "detach"):
+        value = value[0].detach().cpu().item()
+    else:
+        value = value[0]
+    return float(value) * float(native.step_dt)
+
+
+def _sensor_clock_scalar(value: Any) -> float:
+    """Read one Gen3 Warp, ProxyArray, Torch, or NumPy sensor clock."""
+
+    value = _proxy_torch(value)
+    if not hasattr(value, "detach"):
+        try:
+            import warp as wp
+
+            value = wp.to_torch(value)
+        except (ImportError, TypeError, AttributeError) as error:
+            raise RuntimeError("unsupported Isaac sensor clock buffer") from error
+    return float(value[0].detach().cpu().item())
 
 
 def _camera_time(native: Any, name: str) -> float:
     sensor = native.scene[name]
-    value = getattr(sensor, "timestamp", None)
+    # Camera.data performs the documented lazy renderer refresh. Its base-class
+    # last-update clock then names the capture that produced those exact bytes.
+    _ = sensor.data
+    value = getattr(sensor, "_timestamp_last_update", None)
     if value is None:
-        value = getattr(sensor, "_timestamp", None)
-    if value is None:
-        raise RuntimeError(f"{name} exposes no simulator capture timestamp")
-    if hasattr(value, "detach"):
-        value = value[0].detach().cpu().item()
-    return float(value)
+        raise RuntimeError(f"{name} exposes no capture-update clock")
+    return _sensor_clock_scalar(value)
 
 
 def _expert_waypoints(
@@ -357,26 +1414,121 @@ def _expert_waypoints(
     ]
 
 
-def _causal_observation(native: Any, joint_indices: list[int]) -> dict[str, Any]:
+def _sensor_clock_reference(native: Any) -> dict[str, Any]:
+    """Reproduce SensorBase's reset-local float32 update arithmetic."""
+
     import numpy as np
 
-    now = _sim_time(native)
-    exterior_time = _camera_time(native, "pi05_exterior")
-    wrist_time = _camera_time(native, "pi05_wrist")
-    if max(abs(exterior_time - now), abs(wrist_time - now)) > native.step_dt:
+    control_steps = int(_proxy_torch(native.episode_length_buf)[0].item())
+    updates = control_steps * int(native.cfg.decimation)
+    physics_dt = np.float32(native.physics_dt)
+    cache = getattr(native, "_npa_pi05_sensor_clock", None)
+    if cache is None or updates < cache["updates"]:
+        epoch = 0 if cache is None else cache["reset_epoch"] + 1
+        cache = {"updates": 0, "value": np.float32(0.0), "reset_epoch": epoch}
+    for _ in range(cache["updates"], updates):
+        cache["value"] = np.float32(cache["value"] + physics_dt)
+    cache["updates"] = updates
+    native._npa_pi05_sensor_clock = cache
+    return {
+        "expected_sensor_time_s": float(cache["value"]),
+        "physics_update_count": updates,
+        "physics_period_s": float(physics_dt),
+        "reset_epoch": cache["reset_epoch"],
+    }
+
+
+def _validate_capture_ages(
+    captures: tuple[float, float], reference: dict[str, Any], control_dt: float
+) -> None:
+    """Reject future or stale raw clocks against reproduced float32 time."""
+
+    import numpy as np
+
+    expected = reference["expected_sensor_time_s"]
+    ages = tuple(expected - capture for capture in captures)
+    tolerance = max(1.0e-7, 4.0 * abs(float(np.spacing(np.float32(expected)))))
+    if min(ages) < -tolerance:
+        raise RuntimeError("camera capture timestamp is in the simulator future")
+    if max(ages) > control_dt + tolerance:
         raise RuntimeError(
             "camera captures are stale relative to the causal observation"
         )
-    q = native.scene["robot"].data.joint_pos[0, joint_indices]
+
+
+def _raw_camera_observation(native: Any) -> dict[str, Any]:
+    """Capture synchronized RGB and pose before semantic validation can fail."""
+
+    _synchronize_wrist_before_capture(native)
+    now = _sim_time(native)
+    exterior_time = _camera_time(native, "pi05_exterior")
+    wrist_time = _camera_time(native, "pi05_wrist")
+    clock = _sensor_clock_reference(native)
+    _validate_capture_ages((exterior_time, wrist_time), clock, native.step_dt)
+    exterior, wrist = _rgb(native, "pi05_exterior"), _rgb(native, "pi05_wrist")
+    exterior_receipt = _rgb_receipt(exterior, exterior_time, now)
+    wrist_receipt = _rgb_receipt(wrist, wrist_time, now)
+    expected = clock["expected_sensor_time_s"]
+    exterior_receipt["sensor_causal_age_s"] = expected - exterior_time
+    wrist_receipt["sensor_causal_age_s"] = expected - wrist_time
     return {
-        "exterior": _rgb(native, "pi05_exterior"),
-        "wrist": _rgb(native, "pi05_wrist"),
-        "exterior_pixels": _target_pixel_count(native, "pi05_exterior"),
-        "wrist_pixels": _target_pixel_count(native, "pi05_wrist"),
-        "camera_pose": _camera_pose_sample(native),
-        "time": now,
+        "exterior": exterior,
+        "wrist": wrist,
         "exterior_time": exterior_time,
         "wrist_time": wrist_time,
+        "time": now,
+        "sensor_clock_reference": {
+            **clock,
+            "representation_offset_s": clock["expected_sensor_time_s"] - now,
+        },
+        "camera_pose": _camera_pose_sample(native),
+        "exterior_receipt": exterior_receipt,
+        "wrist_receipt": wrist_receipt,
+    }
+
+
+def _stage_diagnostic_capture(
+    buffers: dict[str, list[Any]], raw: dict[str, Any]
+) -> None:
+    """Preserve a non-training camera row for failures after RGB capture."""
+
+    buffers["diagnostic_exterior"].append(raw["exterior"].copy())
+    buffers["diagnostic_wrist"].append(raw["wrist"].copy())
+    buffers["diagnostic_receipts"].append(
+        {
+            "observation_time_s": raw["time"],
+            "exterior_capture_time_s": raw["exterior_time"],
+            "wrist_capture_time_s": raw["wrist_time"],
+            "sensor_clock_reference": raw["sensor_clock_reference"],
+            "camera_pose": raw["camera_pose"],
+            "exterior_rgb": raw["exterior_receipt"],
+            "wrist_rgb": raw["wrist_receipt"],
+        }
+    )
+
+
+def _causal_observation(
+    native: Any, joint_indices: list[int], buffers: dict[str, list[Any]]
+) -> dict[str, Any]:
+    import numpy as np
+
+    raw = _raw_camera_observation(native)
+    _stage_diagnostic_capture(buffers, raw)
+    semantic_receipts = {
+        name: _semantic_encoding_receipt(native, name)
+        for name in ("pi05_exterior", "pi05_wrist")
+    }
+    q = _proxy_torch(native.scene["robot"].data.joint_pos)[0, joint_indices]
+    return {
+        **raw,
+        "semantic_receipts": semantic_receipts,
+        "exterior_pixels": _target_pixel_count(native, "pi05_exterior"),
+        "exterior_destination_pixels": _destination_pixel_count(
+            native, "pi05_exterior"
+        ),
+        "wrist_pixels": _target_pixel_count(native, "pi05_wrist"),
+        "wrist_finger_in_frustum": _finger_in_frustum(native),
+        "wrist_finger_pixels": _finger_pixel_counts(native, "pi05_wrist"),
         "q": q.detach().cpu().numpy().astype(np.float32, copy=True),
         "width": _gripper_width(native),
     }
@@ -388,7 +1540,7 @@ def _expert_command(
     import torch
 
     native = context["native"]
-    ee = native.scene["ee_frame"].data.target_pos_w[0, 0, :3]
+    ee = _proxy_torch(native.scene["ee_frame"].data.target_pos_w)[0, 0, :3]
     error = torch.as_tensor(goal, device=ee.device) - ee
     command = torch.zeros((1, context["total_dim"]), device=ee.device)
     start = context["arm_start"]
@@ -417,8 +1569,26 @@ def _hand_object_distance(native: Any, object_position: Any) -> float:
 
     robot = native.scene["robot"]
     hand_index = list(robot.body_names).index("panda_hand")
-    hand = robot.data.body_pos_w[0, hand_index].detach().cpu().numpy()
+    hand = _proxy_torch(robot.data.body_pos_w)[0, hand_index].detach().cpu().numpy()
     return float(np.linalg.norm(hand - object_position))
+
+
+def _object_kinematics(native: Any) -> tuple[Any, float]:
+    import numpy as np
+
+    position = (
+        _proxy_torch(native.scene["object"].data.root_pos_w)[0, :3]
+        .detach()
+        .cpu()
+        .numpy()
+    )
+    velocity = (
+        _proxy_torch(native.scene["object"].data.root_lin_vel_w)[0]
+        .detach()
+        .cpu()
+        .numpy()
+    )
+    return position, float(np.linalg.norm(velocity))
 
 
 def _physics_sample(
@@ -427,10 +1597,7 @@ def _physics_sample(
     import numpy as np
 
     native = context["native"]
-    obj = native.scene["object"].data.root_pos_w[0, :3]
-    obj_np = obj.detach().cpu().numpy()
-    velocity = native.scene["object"].data.root_lin_vel_w[0].detach().cpu().numpy()
-    speed = float(np.linalg.norm(velocity))
+    obj_np, speed = _object_kinematics(native)
     left, right, support = _contact_forces(native)
     width = _gripper_width(native)
     bilateral = left > 1.0e-3 and right > 1.0e-3
@@ -493,40 +1660,66 @@ def _record_step(
 
     buffers, native = context["buffers"], context["native"]
     target_q = _controller_target(native)
-    actual_q = native.scene["robot"].data.joint_pos[0, context["joint_indices"]]
+    actual_q = _proxy_torch(native.scene["robot"].data.joint_pos)[
+        0, context["joint_indices"]
+    ]
     actual_q = actual_q.detach().cpu().numpy()
     buffers["controller_errors"].append(float(np.max(np.abs(target_q - actual_q))))
+    state = np.r_[observation["q"], 1.0 - observation["width"] / MAX_GRIPPER_WIDTH_M]
     buffers["frames_exterior"].append(observation["exterior"])
     buffers["frames_wrist"].append(observation["wrist"])
-    state = np.r_[observation["q"], 1.0 - observation["width"] / MAX_GRIPPER_WIDTH_M]
     buffers["states"].append(state.astype(np.float32))
     buffers["actions"].append(np.r_[target_q, intent].astype(np.float32))
     buffers["timestamps"].append(observation["time"])
     sample = _physics_sample(context, phase, intent)
     _update_events(context, sample)
     sample.update(
-        {
-            "step": len(buffers["actions"]) - 1,
-            "phase": phase,
-            "observation_time_s": observation["time"],
-            "exterior_capture_time_s": observation["exterior_time"],
-            "wrist_capture_time_s": observation["wrist_time"],
-            "command_application_time_s": command_time,
-            "resulting_state_time_s": resulting_time,
-            "camera_pose": observation["camera_pose"],
-            "exterior_target_pixels": observation["exterior_pixels"],
-            "wrist_target_pixels": observation["wrist_pixels"],
-            "stable_steps": context["stable_steps"],
-        }
+        _trace_receipts(context, observation, phase, command_time, resulting_time)
     )
     buffers["traces"].append(sample)
+    # Once the row is admitted, its ordinary episode arrays and trace own the
+    # bytes. Keep diagnostic buffers only for a capture that fails validation.
+    for name in ("diagnostic_exterior", "diagnostic_wrist", "diagnostic_receipts"):
+        buffers[name].pop()
+
+
+def _trace_receipts(
+    context: dict,
+    observation: dict,
+    phase: str,
+    command_time: float,
+    result_time: float,
+) -> dict[str, Any]:
+    return {
+        "step": len(context["buffers"]["actions"]) - 1,
+        "phase": phase,
+        "observation_time_s": observation["time"],
+        "exterior_capture_time_s": observation["exterior_time"],
+        "wrist_capture_time_s": observation["wrist_time"],
+        "command_application_time_s": command_time,
+        "resulting_state_time_s": result_time,
+        "time_scope": "episode_local_since_reset",
+        "sensor_clock_reference": observation["sensor_clock_reference"],
+        "camera_pose": observation["camera_pose"],
+        "wrist_finger_in_frustum": observation["wrist_finger_in_frustum"],
+        "wrist_finger_pixels": observation["wrist_finger_pixels"],
+        "exterior_rgb": observation["exterior_receipt"],
+        "wrist_rgb": observation["wrist_receipt"],
+        "semantic_encoding": observation["semantic_receipts"],
+        "exterior_target_pixels": observation["exterior_pixels"],
+        "exterior_destination_pixels": observation["exterior_destination_pixels"],
+        "wrist_target_pixels": observation["wrist_pixels"],
+        "stable_steps": context["stable_steps"],
+    }
 
 
 def _run_phase(context: dict[str, Any], phase: str, goal: Any, intent: float) -> None:
     reached = 0
     for _ in range(90):
         command, distance = _expert_command(context, goal, intent)
-        observation = _causal_observation(context["native"], context["joint_indices"])
+        observation = _causal_observation(
+            context["native"], context["joint_indices"], context["buffers"]
+        )
         command_time, resulting_time = _step_command(context, command, phase)
         _record_step(context, observation, intent, phase, command_time, resulting_time)
         reached = reached + 1 if distance < 0.012 else 0
@@ -534,6 +1727,22 @@ def _run_phase(context: dict[str, Any], phase: str, goal: Any, intent: float) ->
         if reached >= hold or (phase == "retreat" and context["stable_steps"] >= 3):
             return
     raise RuntimeError(f"expert failed to reach {phase} waypoint")
+
+
+def _verify_saved_camera_rows(episode: Path, traces: list[dict[str, Any]]) -> None:
+    import numpy as np
+
+    for filename, receipt_name in (
+        ("obs_workspace.npy", "exterior_rgb"),
+        ("obs_wrist.npy", "wrist_rgb"),
+    ):
+        frames = np.load(episode / filename, mmap_mode="r", allow_pickle=False)
+        if len(frames) != len(traces):
+            raise RuntimeError(f"{filename} row count changed on readback")
+        for index, frame in enumerate(frames):
+            digest = hashlib.sha256(np.ascontiguousarray(frame).tobytes()).hexdigest()
+            if digest != traces[index][receipt_name]["sha256"]:
+                raise RuntimeError(f"{filename} row {index} changed on readback")
 
 
 def _write_episode_arrays(episode: Path, buffers: dict[str, list[Any]]) -> None:
@@ -564,36 +1773,67 @@ def _write_episode_arrays(episode: Path, buffers: dict[str, list[Any]]) -> None:
             for key in keys
         },
     )
+    _verify_saved_camera_rows(episode, trace)
+
+
+def _image_record(filename: str, index: int, receipt: dict) -> dict[str, Any]:
+    return {
+        "path": f"{filename}#{index}",
+        "shape": [224, 224, 3],
+        "dtype": "uint8",
+        **receipt,
+    }
+
+
+def _visibility_record(trace: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "target_exterior_pixels": trace["exterior_target_pixels"],
+        "target_wrist_pixels": trace["wrist_target_pixels"],
+        "bilateral_finger_object_contact": trace["bilateral_finger_contact"],
+        "left_finger_object_force_n": trace["left_finger_object_force_n"],
+        "right_finger_object_force_n": trace["right_finger_object_force_n"],
+        "wrist_finger_geometry": trace["wrist_finger_in_frustum"],
+        "wrist_finger_rendered_pixels": trace["wrist_finger_pixels"],
+        "semantic_encoding": trace["semantic_encoding"],
+    }
+
+
+def _step_record(buffers: dict[str, list[Any]], index: int) -> dict[str, Any]:
+    trace = buffers["traces"][index]
+    timestamp = buffers["timestamps"][index]
+    record = {
+        "step": index,
+        "phase": trace["phase"],
+        "timestamp_s": timestamp,
+        "exterior_timestamp_s": trace["exterior_capture_time_s"],
+        "wrist_timestamp_s": trace["wrist_capture_time_s"],
+        "command_application_timestamp_s": trace["command_application_time_s"],
+        "resulting_state_timestamp_s": trace["resulting_state_time_s"],
+        "joint_position": buffers["states"][index][:7].tolist(),
+        "gripper_position": [float(buffers["states"][index][7])],
+        "action": buffers["actions"][index].tolist(),
+        "exterior_image_1_left": _image_record(
+            "obs_workspace.npy", index, trace["exterior_rgb"]
+        ),
+        "wrist_image_left": _image_record("obs_wrist.npy", index, trace["wrist_rgb"]),
+        "visibility": _visibility_record(trace),
+        "camera_pose": trace["camera_pose"],
+    }
+    record["row_identity_sha256"] = _sha(
+        {
+            "step": index,
+            "phase": record["phase"],
+            "timestamp_s": timestamp,
+            "exterior_sha256": trace["exterior_rgb"]["sha256"],
+            "wrist_sha256": trace["wrist_rgb"]["sha256"],
+            "action": record["action"],
+        }
+    )
+    return record
 
 
 def _step_records(buffers: dict[str, list[Any]]) -> list[dict[str, Any]]:
-    records = []
-    for index, timestamp in enumerate(buffers["timestamps"]):
-        trace = buffers["traces"][index]
-        records.append(
-            {
-                "step": index,
-                "timestamp_s": timestamp,
-                "exterior_timestamp_s": trace["exterior_capture_time_s"],
-                "wrist_timestamp_s": trace["wrist_capture_time_s"],
-                "command_application_timestamp_s": trace["command_application_time_s"],
-                "resulting_state_timestamp_s": trace["resulting_state_time_s"],
-                "joint_position": buffers["states"][index][:7].tolist(),
-                "gripper_position": [float(buffers["states"][index][7])],
-                "action": buffers["actions"][index].tolist(),
-                "exterior_image_1_left": {
-                    "path": f"obs_workspace.npy#{index}",
-                    "shape": [224, 224, 3],
-                    "dtype": "uint8",
-                },
-                "wrist_image_left": {
-                    "path": f"obs_wrist.npy#{index}",
-                    "shape": [224, 224, 3],
-                    "dtype": "uint8",
-                },
-            }
-        )
-    return records
+    return [_step_record(buffers, index) for index in range(len(buffers["timestamps"]))]
 
 
 def _controller_success_evidence(context: dict[str, Any]) -> dict[str, Any]:
@@ -633,12 +1873,24 @@ def _episode_evidence(
 ) -> dict[str, Any]:
     buffers = context["buffers"]
     count = len(buffers["actions"])
+    ordered_receipts = [
+        {
+            "step": row["step"],
+            "phase": row["phase"],
+            "exterior_sha256": row["exterior_rgb"]["sha256"],
+            "wrist_sha256": row["wrist_rgb"]["sha256"],
+            "observation_time_s": row["observation_time_s"],
+        }
+        for row in buffers["traces"]
+    ]
     return {
         "camera": {
             "exterior": {"mount": "world"},
             "wrist": mounted,
             "motion_and_visibility": _verify_camera_motion(buffers["traces"]),
-            "semantic_target_visible_every_step": True,
+            "capture_receipts_sha256": _sha(ordered_receipts),
+            "saved_array_hash_readback": True,
+            "visibility_semantics": "phase-specific; retreat occlusion is permitted",
         },
         "dense_alignment": {
             name: count
@@ -662,15 +1914,6 @@ def _episode_metadata(
     mounted: dict[str, Any],
 ) -> dict[str, Any]:
     buffers = context["buffers"]
-    scene_digest = _sha(
-        {
-            "scene_id": scene_id,
-            "target": context["target"].tolist(),
-            "attempt": attempt,
-            "initial_z": context["initial_z"],
-            "scene_seed": context["scene_seed"],
-        }
-    )
     return {
         "schema": EPISODE_SCHEMA,
         "episode_id": f"episode-{attempt:06d}",
@@ -685,11 +1928,49 @@ def _episode_metadata(
         "object_width_m": context["object_width_m"],
         "initial_object_position_m": context["initial_object_position"].tolist(),
         "target_position_m": context["target"].tolist(),
-        "scene_configuration_digest": scene_digest,
+        "support_surface": support_surface_contract(),
+        "scene_configuration_digest": _scene_digest(context, scene_id, attempt),
         "scene_seed": context["scene_seed"],
+        "destination_marker": _destination_marker_evidence(context, buffers),
         "instruction": build_contract()["task"]["instruction"],
         **_episode_evidence(context, mounted),
         "steps": _step_records(buffers),
+    }
+
+
+def _scene_digest(context: dict[str, Any], scene_id: str, attempt: int) -> str:
+    return _sha(
+        {
+            "scene_id": scene_id,
+            "target": context["target"].tolist(),
+            "destination_marker": {
+                "label": DESTINATION_LABEL,
+                "radius_m": DESTINATION_RADIUS_M,
+                "physics_collision": False,
+            },
+            "support_surface": support_surface_contract(),
+            "attempt": attempt,
+            "initial_z": context["initial_z"],
+            "scene_seed": context["scene_seed"],
+        }
+    )
+
+
+def _destination_marker_evidence(
+    context: dict[str, Any], buffers: dict[str, list[Any]]
+) -> dict[str, Any]:
+    return {
+        "source": "isaaclab_noncolliding_cylinder_primitive",
+        "center_xy_m": context["target"][:2].tolist(),
+        "support_z_m": 0.0,
+        "radius_m": DESTINATION_RADIUS_M,
+        "height_m": 0.001,
+        "color_rgb": [0.0, 0.85, 0.85],
+        "semantic_label": DESTINATION_LABEL,
+        "minimum_exterior_semantic_pixels": min(
+            row["exterior_destination_pixels"] for row in buffers["traces"]
+        ),
+        "physics_collision": False,
     }
 
 
@@ -734,14 +2015,17 @@ def _capture_attempt(
     import numpy as np
 
     object_position = (
-        native.scene["object"].data.root_pos_w[0, :3].detach().cpu().numpy()
+        _proxy_torch(native.scene["object"].data.root_pos_w)[0, :3]
+        .detach()
+        .cpu()
+        .numpy()
     )
     target = np.asarray([0.50, 0.18, float(object_position[2])], dtype=np.float32)
     context = _attempt_context(
         native, env, buffers, object_position, target, object_width_m
     )
     context["scene_seed"] = scene_seed
-    mounted = _wrist_mount_evidence(native)
+    mounted = _wrist_mount_evidence(native, buffers)
     for phase, goal, intent in _expert_waypoints(object_position, target):
         _run_phase(context, phase, goal, intent)
     episode = output / f"episode-{attempt:06d}"
@@ -766,6 +2050,10 @@ def _new_attempt_buffers() -> dict[str, list[Any]]:
             "controller_errors",
             "events",
             "traces",
+            "diagnostic_exterior",
+            "diagnostic_wrist",
+            "diagnostic_receipts",
+            "wrist_mount_receipts",
         )
     }
 
@@ -787,12 +2075,21 @@ def _save_partial_attempt(
     for source, filename in array_names.items():
         if buffers[source]:
             np.save(episode / filename, np.asarray(buffers[source]))
+    for source, filename in (
+        ("diagnostic_exterior", "diagnostic_workspace.npy"),
+        ("diagnostic_wrist", "diagnostic_wrist.npy"),
+    ):
+        if buffers[source]:
+            np.save(episode / filename, np.asarray(buffers[source]))
     failure = {
         "schema": "npa.sim2real.pi05.failed_attempt.v1",
         "episode_id": f"episode-{attempt:06d}",
         "failure": f"{type(error).__name__}: {error}",
         "captured_steps": len(buffers["actions"]),
         "partial_frames_preserved": bool(buffers["frames_exterior"]),
+        "diagnostic_camera_rows": len(buffers["diagnostic_receipts"]),
+        "diagnostic_receipts": buffers["diagnostic_receipts"],
+        "wrist_mount_receipts": buffers["wrist_mount_receipts"],
         "training_admitted": False,
         "trace": buffers["traces"],
     }
@@ -805,6 +2102,7 @@ def _save_partial_attempt(
 def _make_environment(
     seed: int, object_usd: str, object_scale: tuple[float, float, float]
 ) -> tuple[Any, Any]:
+    _require_isaac_camera_runtime()
     from isaaclab.app import AppLauncher
 
     app = AppLauncher(headless=True, enable_cameras=True).app
@@ -812,9 +2110,59 @@ def _make_environment(
     import isaaclab_tasks  # noqa: F401
     from isaaclab_tasks.utils import parse_env_cfg
 
+    try:
+        cfg = parse_env_cfg(EXPERT_BASE_TASK_ID, device="cuda:0", num_envs=1)
+        _configure_environment(cfg, seed, object_usd, object_scale)
+        register_surface_task(
+            gym, base_id=EXPERT_BASE_TASK_ID, task_id=EXPERT_SURFACE_TASK_ID
+        )
+        env = gym.make(EXPERT_SURFACE_TASK_ID, cfg=cfg)
+        _install_finger_semantics(env.unwrapped)
+        env.reset(seed=seed)
+        return app, env
+    except Exception as error:
+        raise _EnvironmentSetupError(error, app) from error
+
+
+def _graphics_preflight() -> dict[str, Any]:
+    """Fail before Kit unless GLX/EGL and an NVIDIA Vulkan device are usable."""
+
+    probe = (
+        "import ctypes,os; ctypes.CDLL('libGLX_nvidia.so.0'); "
+        "ctypes.CDLL('libEGL_nvidia.so.0'); os._exit(0)"
+    )
+    try:
+        subprocess.run([sys.executable, "-c", probe], check=True, capture_output=True)
+        result = subprocess.run(
+            ["vulkaninfo", "--summary"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise RuntimeError(
+            "pi0.5 RTX capture requires injected NVIDIA GLX/EGL and working Vulkan"
+        ) from error
+    output = result.stdout
+    if not re.search(r"vendorID\s*=\s*0x10de\b", output, re.IGNORECASE):
+        raise RuntimeError("Vulkan did not enumerate an NVIDIA physical device")
+    return {
+        "schema": "npa.sim2real.pi05.graphics-preflight.v1",
+        "glx": "loaded",
+        "egl": "loaded",
+        "vulkan_nvidia_device": True,
+        "vulkan_summary_sha256": hashlib.sha256(output.encode()).hexdigest(),
+    }
+
+
+def _configure_environment(
+    cfg: Any,
+    seed: int,
+    object_usd: str,
+    object_scale: tuple[float, float, float],
+) -> None:
     from npa.workflows.sim2real.isaac_assets_compat import remap_moved_franka_usd
 
-    cfg = parse_env_cfg(EXPERT_BASE_TASK_ID, device="cuda:0", num_envs=1)
     cfg.seed, cfg.sim.dt, cfg.decimation = seed, 1.0 / 60.0, 4
     cfg.episode_length_s = 240.0
     remap_moved_franka_usd(cfg)
@@ -822,16 +2170,24 @@ def _make_environment(
         cfg.scene.object.spawn.usd_path = object_usd
     cfg.scene.object.spawn.scale = object_scale
     cfg.scene.object.spawn.semantic_tags = [("class", "pi05_target_object")]
-    configure_surface_goal(cfg, (0.50, 0.18, 0.025 * object_scale[2]))
+    target = (0.50, 0.18, 0.025 * object_scale[2])
+    configure_finger_semantics(cfg)
+    configure_support_surface(cfg)
+    configure_surface_goal(cfg, target)
+    configure_destination_marker(cfg, target)
     _camera_config(cfg)
     _contact_config(cfg)
     _physics_randomization(cfg)
-    register_surface_task(
-        gym, base_id=EXPERT_BASE_TASK_ID, task_id=EXPERT_SURFACE_TASK_ID
-    )
-    env = gym.make(EXPERT_SURFACE_TASK_ID, cfg=cfg)
-    env.reset(seed=seed)
-    return app, env
+
+
+def _require_isaac_camera_runtime() -> None:
+    import importlib.metadata
+
+    version = importlib.metadata.version("isaaclab")
+    if version != "3.0.0b2.post1":
+        raise RuntimeError(
+            f"pi0.5 camera contract requires Isaac Lab 3.0.0b2.post1; found {version}"
+        )
 
 
 def _collect_attempts(
@@ -870,44 +2226,122 @@ def _collect_attempts(
     return attempts
 
 
+def _successful_scenarios(attempts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "scene_seed": row["scene_seed"],
+            "scene_configuration_digest": row["scene_configuration_digest"],
+            "initial_object_position_m": row["initial_object_position_m"],
+            "target_position_m": row["target_position_m"],
+            "destination_marker": row["destination_marker"],
+            "support_surface": row["support_surface"],
+        }
+        for row in attempts
+        if row.get("success_evidence", {}).get("released_supported_surface_placement")
+    ]
+
+
+def _timestamp_contract() -> dict[str, str]:
+    return {
+        "scope": "episode_local_since_reset",
+        "camera_source": "SensorBase._timestamp_last_update_after_data_refresh",
+        "control_source": "episode_length_buf_times_step_dt",
+        "representation": (
+            "raw Warp float32 is retained; freshness uses the recorded update count "
+            "and period to reproduce SensorBase float32 accumulation"
+        ),
+    }
+
+
+def _destination_contract() -> dict[str, Any]:
+    return {
+        "source": "isaaclab_noncolliding_cylinder_primitive",
+        "radius_m": DESTINATION_RADIUS_M,
+        "color": "cyan",
+        "semantic_label": DESTINATION_LABEL,
+        "exterior_raw_semantic_pixels_required": True,
+    }
+
+
 def _collection_report(
     attempts: list[dict[str, Any]],
     identity: str,
     object_usd: str,
     scale: tuple[float, float, float],
     scene_id: str,
+    graphics_preflight: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    successes = sum(
-        bool(
-            row.get("success_evidence", {}).get("released_supported_surface_placement")
-        )
-        for row in attempts
-    )
-    scenarios = [
-        {
-            "scene_seed": row["scene_seed"],
-            "scene_configuration_digest": row["scene_configuration_digest"],
-            "initial_object_position_m": row["initial_object_position_m"],
-            "target_position_m": row["target_position_m"],
-        }
-        for row in attempts
-        if row.get("success_evidence", {}).get("released_supported_surface_placement")
-    ]
+    scenarios = _successful_scenarios(attempts)
     return {
         "schema": "npa.sim2real.pi05.expert_collection.v1",
         "task_contract": build_contract(),
         "attempt_count": len(attempts),
-        "successful_episode_count": successes,
+        "successful_episode_count": len(scenarios),
         "attempts": attempts,
         "training_admission": "successful episodes only; failures retained",
+        "timestamp_contract": _timestamp_contract(),
         "object_asset": {
+            "family": "isaac-multicolor-cube",
             "identity": identity,
             "usd": object_usd or "task_default",
             "scale": list(scale),
         },
         "scene_id": scene_id,
+        "scene_layout_holdout": False,
+        "destination_marker_contract": _destination_contract(),
+        "support_surface_contract": support_surface_contract(),
+        "graphics_preflight": dict(graphics_preflight or {}),
         "successful_scenarios": scenarios,
     }
+
+
+def _failure_report(error: Exception, scene_id: str, phase: str) -> dict[str, Any]:
+    raw_traceback = "".join(traceback.format_exception(error))
+    safe_traceback = re.sub(
+        r"\b(?:s3|gs|https?)://[^\s'\"\\]+", "<redacted-uri>", raw_traceback
+    )
+    return {
+        "schema": "npa.sim2real.pi05.collection_failure.v1",
+        "phase": phase,
+        "failure": re.sub(
+            r"\b(?:s3|gs|https?)://[^\s'\"\\]+",
+            "<redacted-uri>",
+            f"{type(error).__name__}: {error}",
+        ),
+        "scene_id": scene_id,
+        "valid_collection": False,
+        "training_admitted": False,
+        "traceback": safe_traceback,
+    }
+
+
+def _persist_failure(
+    work: Path,
+    storage: Any,
+    output_uri: str,
+    scene_id: str,
+    error: Exception,
+    phase: str,
+) -> None:
+    report = _failure_report(error, scene_id, phase)
+    path = work / "collection-failure.json"
+    path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+    try:
+        storage.upload_directory(str(work), output_uri)
+    except Exception as upload_error:
+        raise RuntimeError(
+            "collector failed and failure evidence upload also failed: "
+            f"{type(upload_error).__name__}: {upload_error}"
+        ) from error
+
+
+def _close_runtime(env: Any | None, app: Any | None) -> None:
+    try:
+        if env is not None:
+            env.close()
+    finally:
+        if app is not None:
+            app.close()
 
 
 def collect(
@@ -924,26 +2358,105 @@ def collect(
 
     from npa.clients.storage import StorageClient
 
-    work = Path(tempfile.mkdtemp(prefix="npa-pi05-isaac-"))
-    app, env = _make_environment(seed, object_usd, object_scale)
+    storage = StorageClient.from_environment()
+    with tempfile.TemporaryDirectory(prefix="npa-pi05-isaac-") as directory:
+        return _collect_in_directory(
+            Path(directory),
+            storage,
+            output_uri,
+            {
+                "episodes": episodes,
+                "seed": seed,
+                "identity": object_identity,
+                "object_usd": object_usd,
+                "scale": object_scale,
+                "scene_id": scene_id,
+            },
+        )
+
+
+def _collect_in_directory(
+    work: Path, storage: Any, output_uri: str, settings: Mapping[str, Any]
+) -> dict[str, Any]:
+    app, env = None, None
     try:
-        attempts = _collect_attempts(
-            env, work, episodes, seed, object_identity, scene_id, object_scale
+        app, env, graphics = _prepare_environment(work, settings)
+        return _run_collection(
+            env=env,
+            work=work,
+            storage=storage,
+            output_uri=output_uri,
+            episodes=int(settings["episodes"]),
+            seed=int(settings["seed"]),
+            identity=str(settings["identity"]),
+            object_usd=str(settings["object_usd"]),
+            scale=tuple(settings["scale"]),
+            scene_id=str(settings["scene_id"]),
+            graphics=graphics,
         )
-        report = _collection_report(
-            attempts, object_identity, object_usd, object_scale, scene_id
+    except Exception as error:
+        app = app or getattr(error, "runtime_app", None)
+        phase = getattr(
+            error,
+            "phase",
+            "environment_startup" if env is None else "collection_runtime",
         )
-        path = work / "collection.json"
-        path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
-        StorageClient.from_environment().upload_directory(str(work), output_uri)
-        if report["successful_episode_count"] < 1:
-            raise RuntimeError(
-                "expert produced no physics-verified released placements"
-            )
-        return report
+        _persist_failure(
+            work, storage, output_uri, str(settings["scene_id"]), error, phase
+        )
+        raise
     finally:
-        env.close()
-        app.close()
+        _close_runtime(env, app)
+
+
+def _prepare_environment(
+    work: Path, settings: Mapping[str, Any]
+) -> tuple[Any, Any, dict[str, Any]]:
+    graphics = _graphics_preflight()
+    (work / "graphics-preflight.json").write_text(
+        json.dumps(graphics, indent=2, sort_keys=True) + "\n"
+    )
+    try:
+        app, env = _make_environment(
+            int(settings["seed"]),
+            str(settings["object_usd"]),
+            tuple(settings["scale"]),
+        )
+    except _EnvironmentSetupError as error:
+        failure = CollectionFailure(str(error.original), phase="environment_startup")
+        failure.runtime_app = error.app
+        raise failure from error.original
+    return app, env, graphics
+
+
+def _run_collection(
+    *,
+    env: Any,
+    work: Path,
+    storage: Any,
+    output_uri: str,
+    episodes: int,
+    seed: int,
+    identity: str,
+    object_usd: str,
+    scale: tuple[float, float, float],
+    scene_id: str,
+    graphics: Mapping[str, Any],
+) -> dict[str, Any]:
+    attempts = _collect_attempts(env, work, episodes, seed, identity, scene_id, scale)
+    report = _collection_report(
+        attempts, identity, object_usd, scale, scene_id, graphics
+    )
+    (work / "collection.json").write_text(
+        json.dumps(report, indent=2, sort_keys=True) + "\n"
+    )
+    storage.upload_directory(str(work), output_uri)
+    if report["successful_episode_count"] < 1:
+        raise CollectionFailure(
+            "expert produced no physics-verified released placements",
+            phase="physics_qualification",
+        )
+    return report
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -965,15 +2478,21 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(f"--object-scale must be three comma-separated numbers: {exc}")
     if len(scale) != 3 or any(value <= 0 for value in scale):
         parser.error("--object-scale must contain three positive values")
-    report = collect(
-        output_uri=args.output_uri,
-        episodes=args.episodes,
-        seed=args.seed,
-        object_identity=args.object_identity,
-        object_usd=args.object_usd,
-        object_scale=scale,
-        scene_id=args.scene_id,
-    )
+    try:
+        report = collect(
+            output_uri=args.output_uri,
+            episodes=args.episodes,
+            seed=args.seed,
+            object_identity=args.object_identity,
+            object_usd=args.object_usd,
+            object_scale=scale,
+            scene_id=args.scene_id,
+        )
+    except Exception as error:
+        phase = getattr(error, "phase", "collection_runtime")
+        failure = _failure_report(error, args.scene_id, phase)
+        print(json.dumps(failure, sort_keys=True), file=sys.stderr, flush=True)
+        return 1
     print(json.dumps(report, sort_keys=True), flush=True)
     return 0
 

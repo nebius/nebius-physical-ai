@@ -364,10 +364,12 @@ images:
     notes: >-
       Bakes pinned Apache-2.0 OpenPI source, its frozen RLDS/JAX dependency
       environment, and an SM120 probe on the redistributable CUDA base. Gemma
-      and pi0.5 weights, DROID records, terms acceptance, credentials, trained
-      checkpoints, and populated caches are runtime-only. Built-image byte and
-      layer scanning plus an eight-node RTX PRO 6000 qualification are required
-      before release promotion.
+      and pi0.5 weights, DROID records, credentials, trained checkpoints, and
+      populated caches are runtime-only. Public Polaris uses anonymous exact-GCS
+      generation/checksum/payload checks; an explicitly gated HF alternative
+      uses the operator's own token and exact immutable revision. Built-image
+      byte and layer scanning plus an eight-node RTX PRO 6000 qualification are
+      required before release promotion.
   habitat-sim:
     dockerfile: habitat-sim/Dockerfile.bootstrap
     tier: interactive

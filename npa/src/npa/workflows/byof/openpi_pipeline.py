@@ -1,10 +1,4 @@
-"""Real OpenPI pi0.5 four-mode workflow stages.
-
-The module deliberately imports OpenPI/JAX only *after* the scoped Gemma terms
-gate.  It supplies a deterministic, tiny Franka data adapter, then delegates
-model construction, forward/backward/optimizer work, checkpointing, policy
-inference, and loss evaluation to the pinned upstream OpenPI implementation.
-"""
+"""Real OpenPI pi0.5 data, inference, training, and artifact-proof stages."""
 
 from __future__ import annotations
 
@@ -16,18 +10,11 @@ import os
 from pathlib import Path
 import re
 import subprocess
-import sys
 import time
 from typing import Any, Mapping, Sequence
-from urllib.parse import urlencode, urlparse
+from urllib.parse import quote, urlencode, urlparse
 import urllib.request
-import uuid
 import zipfile
-
-from npa.workflows.byof.openpi import (
-    OPENPI_TERMS_ACCEPTED_VALUE,
-    OPENPI_TERMS_ENV,
-)
 
 SOURCE_REF = "15a9616a00943ada6c20a0f158e3adb39df2ccac"
 SOURCE_REPOSITORY = "https://github.com/Physical-Intelligence/openpi"
@@ -35,6 +22,16 @@ SOURCE_LICENSE = "Apache-2.0"
 DEFAULT_CONFIG_NAME = "pi05_droid_jointpos_polaris"
 DEFAULT_CHECKPOINT_URI = (
     "gs://openpi-assets/checkpoints/polaris/pi05_droid_jointpos_polaris"
+)
+DEFAULT_CHECKPOINT_MANIFEST_SHA256 = (
+    "8b97388a0bbe5913210255d9e77c8ff925562ec7b40213b4525226c6d5885218"
+)
+REQUIRED_TOKENIZER_URI = "gs://big_vision/paligemma_tokenizer.model"
+REQUIRED_TOKENIZER_GENERATION = "1711547605575873"
+REQUIRED_TOKENIZER_SIZE = 4_264_023
+REQUIRED_TOKENIZER_MD5 = "FCCtyYVnIKVZ6KhyhLGV4g=="
+REQUIRED_TOKENIZER_SHA256 = (
+    "8986bb4f423f07f8c7f70d0dbe3526fb2316056c17bae71b1ea975e77a168fc6"
 )
 ACTION_HORIZON = 15
 ACTION_DIM = 8
@@ -141,6 +138,8 @@ def _read_json_uri(uri: str) -> dict[str, Any]:
 
 
 def _uri_exists(uri: str) -> bool:
+    """Return whether an owned file/S3 artifact exists without hiding access errors."""
+
     parsed = urlparse(uri)
     if parsed.scheme == "s3":
         bucket, key = _parse_s3_uri(uri)
@@ -156,96 +155,6 @@ def _uri_exists(uri: str) -> bool:
         return True
     path = Path(parsed.path if parsed.scheme == "file" else uri)
     return path.exists()
-
-
-def _terms_refusal() -> dict[str, object]:
-    return {
-        "schema": "npa.workbench.openpi.terms-gate.v1",
-        "status": "refused",
-        "exit_code": 64,
-        "checkpoint_fetch_started": False,
-        "model_import_started": False,
-        "required_env": OPENPI_TERMS_ENV,
-        "accepted_value": OPENPI_TERMS_ACCEPTED_VALUE,
-        "acceptance_persisted": False,
-    }
-
-
-def _terms_diagnostic_uri(
-    output_uri: str,
-    *,
-    diagnostic_root_uri: str,
-    stage: str,
-    attempt_id: str,
-) -> str:
-    """Return a sibling, attempt-scoped URI that can never poison success output."""
-
-    safe_stage = re.sub(r"[^a-z0-9-]+", "-", stage.strip().lower()).strip("-")
-    if not safe_stage:
-        safe_stage = "unknown-stage"
-    filename = f"{safe_stage}-{attempt_id}.json"
-    root = diagnostic_root_uri.strip()
-    if root:
-        return f"{root.rstrip('/')}/{filename}"
-    parsed = urlparse(output_uri)
-    if parsed.scheme == "s3":
-        bucket, key = _parse_s3_uri(output_uri)
-        parent = key.rsplit("/", 1)[0] if "/" in key else ""
-        prefix = f"{parent}/terms-refusals" if parent else "terms-refusals"
-        return f"s3://{bucket}/{prefix}/{filename}"
-    path = Path(parsed.path if parsed.scheme == "file" else output_uri)
-    diagnostic = path.parent / "terms-refusals" / filename
-    return f"file://{diagnostic}" if parsed.scheme == "file" else str(diagnostic)
-
-
-def _write_terms_refusal_diagnostic(
-    output_uri: str,
-    *,
-    diagnostic_root_uri: str = "",
-    stage: str,
-    attempt_id: str | None = None,
-) -> tuple[str, dict[str, object]]:
-    """Publish refusal evidence separately while preserving write-once success."""
-
-    resolved_attempt = attempt_id or uuid.uuid4().hex
-    diagnostic_uri = _terms_diagnostic_uri(
-        output_uri,
-        diagnostic_root_uri=diagnostic_root_uri,
-        stage=stage,
-        attempt_id=resolved_attempt,
-    )
-    refusal = {
-        **_terms_refusal(),
-        "attempt_id": resolved_attempt,
-        "stage": stage,
-        "declared_success_output_uri": output_uri,
-        "diagnostic_uri": diagnostic_uri,
-    }
-    _write_json_uri(diagnostic_uri, refusal)
-    return diagnostic_uri, refusal
-
-
-def _gate_or_exit(
-    output_uri: str, *, diagnostic_root_uri: str = "", stage: str
-) -> None:
-    """Exit 64 before any OpenPI/JAX import or checkpoint access."""
-
-    if os.environ.get(OPENPI_TERMS_ENV) == OPENPI_TERMS_ACCEPTED_VALUE:
-        return
-    _diagnostic_uri, refusal = _write_terms_refusal_diagnostic(
-        output_uri,
-        diagnostic_root_uri=diagnostic_root_uri,
-        stage=stage,
-    )
-    print(json.dumps(refusal, sort_keys=True), flush=True)
-    raise SystemExit(64)
-
-
-def _require_parent_acceptance() -> None:
-    if os.environ.get(OPENPI_TERMS_ENV) != OPENPI_TERMS_ACCEPTED_VALUE:
-        raise OpenPIPipelineError(
-            f"{OPENPI_TERMS_ENV}={OPENPI_TERMS_ACCEPTED_VALUE} is required for this accepted run"
-        )
 
 
 def validate_actions(actions: object, *, label: str) -> dict[str, object]:
@@ -267,6 +176,178 @@ def validate_actions(actions: object, *, label: str) -> dict[str, object]:
         "dtype": str(value.dtype),
         "finite": True,
         "minimum_horizon_satisfied": True,
+    }
+
+
+def _array_sha256(value: object) -> str:
+    """Hash array identity, including dtype and shape, without logging content."""
+
+    import numpy as np
+
+    array = np.ascontiguousarray(np.asarray(value))
+    digest = hashlib.sha256()
+    digest.update(str(array.dtype).encode("ascii"))
+    digest.update(_canonical_json(list(array.shape)))
+    digest.update(array.tobytes(order="C"))
+    return digest.hexdigest()
+
+
+def _droid_input_receipt(observation: Mapping[str, object]) -> dict[str, object]:
+    import numpy as np
+    from openpi.models import model as openpi_model
+    from openpi.policies import droid_policy
+
+    source_wrist = np.asarray(observation["observation/wrist_image_left"])
+    source_exterior = np.asarray(observation["observation/exterior_image_1_left"])
+    droid = droid_policy.DroidInputs(model_type=openpi_model.ModelType.PI05)(
+        dict(observation)
+    )
+    images = droid["image"]
+    masks = droid["image_mask"]
+    if _array_sha256(images["left_wrist_0_rgb"]) != _array_sha256(source_wrist):
+        raise OpenPIPipelineError("DroidInputs changed or swapped the left wrist image")
+    if _array_sha256(images["base_0_rgb"]) != _array_sha256(source_exterior):
+        raise OpenPIPipelineError("DroidInputs changed or swapped the exterior image")
+    if bool(masks["left_wrist_0_rgb"]) is not True:
+        raise OpenPIPipelineError("DroidInputs masked the real left wrist image")
+    if bool(masks["right_wrist_0_rgb"]) is not False:
+        raise OpenPIPipelineError("DroidInputs exposed the padded right wrist image")
+    if np.any(images["right_wrist_0_rgb"]):
+        raise OpenPIPipelineError("DroidInputs right wrist padding is not zero")
+    return {
+        "base_0_rgb_sha256": _array_sha256(images["base_0_rgb"]),
+        "left_wrist_0_rgb_sha256": _array_sha256(images["left_wrist_0_rgb"]),
+        "right_wrist_0_rgb_sha256": _array_sha256(images["right_wrist_0_rgb"]),
+        "masks": {name: bool(value) for name, value in masks.items()},
+        "left_wrist_identity_preserved": True,
+    }
+
+
+def _composed_input_receipt(
+    policy: object, observation: Mapping[str, object]
+) -> dict[str, object]:
+    import numpy as np
+
+    transformed = policy._input_transform(dict(observation))  # type: ignore[attr-defined]
+    transformed_images = transformed["image"]
+    transformed_masks = transformed["image_mask"]
+    if bool(np.asarray(transformed_masks["left_wrist_0_rgb"]).all()) is not True:
+        raise OpenPIPipelineError(
+            "composed policy transform masked the left wrist input"
+        )
+    if bool(np.asarray(transformed_masks["right_wrist_0_rgb"]).any()) is not False:
+        raise OpenPIPipelineError(
+            "composed policy transform unmasked right wrist padding"
+        )
+    if not np.asarray(transformed_images["left_wrist_0_rgb"]).any():
+        raise OpenPIPipelineError(
+            "composed policy transform replaced wrist RGB with zeros"
+        )
+    return {
+        "left_wrist_0_rgb_sha256": _array_sha256(
+            transformed_images["left_wrist_0_rgb"]
+        ),
+        "right_wrist_0_rgb_sha256": _array_sha256(
+            transformed_images["right_wrist_0_rgb"]
+        ),
+        "masks": {
+            name: bool(np.asarray(value).all())
+            for name, value in transformed_masks.items()
+        },
+        "left_wrist_nonzero": True,
+    }
+
+
+def _wrist_transform_receipt(
+    policy: object, observation: Mapping[str, object]
+) -> dict[str, object]:
+    """Prove pinned DROID and composed transforms consume left wrist RGB."""
+
+    return {
+        "source": {
+            "exterior_sha256": _array_sha256(
+                observation["observation/exterior_image_1_left"]
+            ),
+            "wrist_sha256": _array_sha256(observation["observation/wrist_image_left"]),
+        },
+        "droid_inputs": _droid_input_receipt(observation),
+        "composed_model_input": _composed_input_receipt(policy, observation),
+    }
+
+
+def _infer_wrist_variants(
+    policy: object,
+    base: Mapping[str, object],
+    variants: Mapping[str, object],
+    noise: object,
+) -> tuple[dict[str, object], dict[str, object]]:
+    import numpy as np
+
+    actions, receipts = {}, {}
+    for name, wrist in variants.items():
+        observation = dict(base)
+        observation["observation/wrist_image_left"] = wrist
+        receipts[name] = _wrist_transform_receipt(policy, observation)
+        value = np.asarray(policy.infer(observation, noise=noise)["actions"])
+        validate_actions(value, label=f"wrist_sensitivity.{name}")
+        actions[name] = value
+    return actions, receipts
+
+
+def _wrist_action_deltas(actions: Mapping[str, object]) -> dict[str, object]:
+    import numpy as np
+
+    fresh = np.asarray(actions["fresh"])
+    deltas = {}
+    for name in ("frozen_previous_heldout_frame", "pixel_channel_shuffle"):
+        delta = np.asarray(actions[name]) - fresh
+        deltas[name] = {
+            "l2": float(np.linalg.norm(delta)),
+            "mean_absolute": float(np.mean(np.abs(delta))),
+            "per_dimension_mean_absolute": np.mean(np.abs(delta), axis=0).tolist(),
+            "action_sha256": _array_sha256(actions[name]),
+        }
+    return deltas
+
+
+def _paired_wrist_sensitivity(
+    policy: object,
+    *,
+    fresh_observation: Mapping[str, object],
+    frozen_wrist: object,
+    action_horizon: int,
+    action_dim: int,
+    seed: int,
+) -> dict[str, object]:
+    import numpy as np
+
+    fresh_wrist = np.asarray(fresh_observation["observation/wrist_image_left"])
+    rng = np.random.default_rng(seed)
+    noise = rng.standard_normal((action_horizon, action_dim), dtype=np.float32)
+    permutation = rng.permutation(fresh_wrist.size)
+    shuffled_wrist = fresh_wrist.reshape(-1)[permutation].reshape(fresh_wrist.shape)
+    variants = {
+        "fresh": fresh_wrist,
+        "frozen_previous_heldout_frame": np.asarray(frozen_wrist),
+        "pixel_channel_shuffle": shuffled_wrist,
+    }
+    actions, receipts = _infer_wrist_variants(
+        policy, fresh_observation, variants, noise
+    )
+    return {
+        "schema": "npa.workbench.openpi.pi05-wrist-action-sensitivity.v1",
+        "scope": "heldout_action_sensitivity_not_functional_effectiveness",
+        "same_exterior_state_prompt": True,
+        "same_explicit_sampling_noise": True,
+        "noise_sha256": _array_sha256(noise),
+        "fresh_action_sha256": _array_sha256(actions["fresh"]),
+        "variant_receipts": receipts,
+        "action_deltas_from_fresh": _wrist_action_deltas(actions),
+        "limitations": [
+            "action_difference_does_not_establish_helpful_wrist_use",
+            "pixel_channel_shuffle_is_out_of_distribution_corruption_not_a_real_frame",
+            "matched_closed_loop_task_ablation_is_required_for_effectiveness",
+        ],
     }
 
 
@@ -693,23 +774,15 @@ def _observation(index: int = 0) -> dict[str, Any]:
     }
 
 
-def _checkpoint_provenance(checkpoint_uri: str) -> dict[str, object]:
+def _public_gcs_records(checkpoint_uri: str) -> tuple[str, str, list[dict[str, Any]]]:
     parsed = urlparse(checkpoint_uri)
     if parsed.scheme != "gs" or not parsed.netloc:
-        return {"scheme": parsed.scheme or "local", "uri": checkpoint_uri}
+        raise OpenPIPipelineError("public checkpoint preflight requires a gs:// URI")
     prefix = parsed.path.lstrip("/").rstrip("/") + "/"
     page_token = ""
     records: list[dict[str, Any]] = []
     while True:
-        query = {"prefix": prefix, "maxResults": "1000"}
-        if page_token:
-            query["pageToken"] = page_token
-        url = (
-            f"https://storage.googleapis.com/storage/v1/b/{parsed.netloc}/o?"
-            + urlencode(query)
-        )
-        with urllib.request.urlopen(url) as response:  # noqa: S310 - pinned public GCS API
-            payload = json.load(response)
+        payload = _public_gcs_page(parsed.netloc, prefix, page_token)
         for item in payload.get("items", []):
             records.append(
                 {
@@ -724,11 +797,175 @@ def _checkpoint_provenance(checkpoint_uri: str) -> dict[str, object]:
         if not page_token:
             break
     records.sort(key=lambda item: str(item["name"]))
+    if not records or sum(int(item["size"]) for item in records) <= 0:
+        raise OpenPIPipelineError("public checkpoint listing contains no payload bytes")
+    if any(
+        not item["generation"] or not item["crc32c"] or not item["md5Hash"]
+        for item in records
+    ):
+        raise OpenPIPipelineError(
+            "public checkpoint lacks generation, MD5, or CRC32C metadata"
+        )
+    return parsed.netloc, prefix, records
+
+
+def _public_gcs_page(bucket: str, prefix: str, page_token: str) -> dict[str, Any]:
+    query = {"prefix": prefix, "maxResults": "1000"}
+    if page_token:
+        query["pageToken"] = page_token
+    url = f"https://storage.googleapis.com/storage/v1/b/{bucket}/o?" + urlencode(query)
+    with urllib.request.urlopen(url) as response:  # noqa: S310 - public GCS API
+        return json.load(response)
+
+
+def _probe_public_gcs_payload(
+    bucket: str, records: Sequence[Mapping[str, Any]]
+) -> dict[str, object]:
+    weight_shards = [
+        item
+        for item in records
+        if "/params/" in str(item["name"]) and int(item["size"]) >= 1024 * 1024
+    ]
+    if not weight_shards:
+        raise OpenPIPipelineError(
+            "public checkpoint has no probeable params weight shard"
+        )
+    record = max(weight_shards, key=lambda item: int(item["size"]))
+    name = str(record["name"])
+    generation = str(record["generation"])
+    url = (
+        f"https://storage.googleapis.com/download/storage/v1/b/{quote(bucket, safe='')}/o/"
+        f"{quote(name, safe='')}?alt=media&generation={quote(generation, safe='')}"
+    )
+    request = urllib.request.Request(url, headers={"Range": "bytes=0-0"})
+    with urllib.request.urlopen(request) as response:  # noqa: S310 - pinned public GCS API
+        payload = response.read(2)
+    if len(payload) != 1:
+        raise OpenPIPipelineError("public checkpoint payload-byte probe was not exact")
     return {
+        "object_kind": "params_weight_shard",
+        "object_name_sha256": _sha256_bytes(name.encode("utf-8")),
+        "generation": generation,
+        "object_size_bytes": int(record["size"]),
+        "object_crc32c": str(record["crc32c"]),
+        "bytes_read": len(payload),
+        "generation_bound": True,
+        "scope": "access_probe_not_full_payload_integrity_or_model_execution",
+        "authentication": "anonymous",
+    }
+
+
+def _checkpoint_provenance(checkpoint_uri: str) -> dict[str, object]:
+    parsed = urlparse(checkpoint_uri)
+    if parsed.scheme != "gs" or not parsed.netloc:
+        return {"scheme": parsed.scheme or "local", "uri": checkpoint_uri}
+    bucket, prefix, records = _public_gcs_records(checkpoint_uri)
+    manifest_sha256 = _sha256_bytes(_canonical_json(records))
+    if (
+        checkpoint_uri == DEFAULT_CHECKPOINT_URI
+        and manifest_sha256 != DEFAULT_CHECKPOINT_MANIFEST_SHA256
+    ):
+        raise OpenPIPipelineError(
+            "public Polaris generation manifest differs from the pinned revision"
+        )
+    provenance = {
         "scheme": "gcs_object_generation_manifest_sha256",
-        "sha256": _sha256_bytes(_canonical_json(records)),
+        "sha256": manifest_sha256,
+        "expected_sha256": (
+            DEFAULT_CHECKPOINT_MANIFEST_SHA256
+            if checkpoint_uri == DEFAULT_CHECKPOINT_URI
+            else None
+        ),
         "object_count": len(records),
         "total_size_bytes": sum(int(item["size"]) for item in records),
+        "objects": [
+            {
+                "path": str(item["name"])[len(prefix) :],
+                "generation": str(item["generation"]),
+                "size": int(item["size"]),
+                "md5Hash": str(item["md5Hash"]),
+            }
+            for item in records
+        ],
+        "payload_probe": _probe_public_gcs_payload(bucket, records),
+    }
+    if checkpoint_uri == DEFAULT_CHECKPOINT_URI:
+        provenance["required_tokenizer"] = _tokenizer_provenance()
+    return provenance
+
+
+def _tokenizer_provenance() -> dict[str, object]:
+    """Download and bind the separate tokenizer payload to its exact generation."""
+
+    import base64
+
+    parsed = urlparse(REQUIRED_TOKENIZER_URI)
+    bucket, name = parsed.netloc, parsed.path.lstrip("/")
+    if parsed.scheme != "gs" or not bucket or not name:
+        raise OpenPIPipelineError("required tokenizer must be an exact gs:// object")
+    url = (
+        f"https://storage.googleapis.com/download/storage/v1/b/{bucket}/o/"
+        f"{quote(name, safe='')}?alt=media&generation={REQUIRED_TOKENIZER_GENERATION}"
+    )
+    with urllib.request.urlopen(url) as response:  # noqa: S310 - pinned public GCS
+        payload = response.read(REQUIRED_TOKENIZER_SIZE + 1)
+    md5 = base64.b64encode(
+        hashlib.md5(payload, usedforsecurity=False).digest()  # noqa: S324
+    ).decode("ascii")
+    sha256 = hashlib.sha256(payload).hexdigest()
+    if len(payload) != REQUIRED_TOKENIZER_SIZE:
+        raise OpenPIPipelineError("required tokenizer size differs from pinned payload")
+    if md5 != REQUIRED_TOKENIZER_MD5 or sha256 != REQUIRED_TOKENIZER_SHA256:
+        raise OpenPIPipelineError("required tokenizer bytes differ from pinned payload")
+    return {
+        "uri": REQUIRED_TOKENIZER_URI,
+        "generation": REQUIRED_TOKENIZER_GENERATION,
+        "size": len(payload),
+        "md5Hash": md5,
+        "sha256": sha256,
+        "access": "public_anonymous_generation_bound_full_download",
+        "checkpoint_object_count_excludes_this_payload": True,
+    }
+
+
+def _verify_public_checkpoint_download(
+    checkpoint_uri: str, checkpoint_dir: Path, provenance: Mapping[str, object]
+) -> dict[str, object]:
+    """Bind all downloaded public GCS bytes to the preflight object manifest."""
+
+    import base64
+
+    if not checkpoint_uri.startswith("gs://"):
+        return {"scope": "non_public_gcs_checkpoint"}
+    expected = provenance.get("objects")
+    if not isinstance(expected, list) or not expected:
+        raise OpenPIPipelineError("public checkpoint provenance lacks object records")
+    actual: list[dict[str, object]] = []
+    for path in sorted(item for item in checkpoint_dir.rglob("*") if item.is_file()):
+        md5 = hashlib.md5(usedforsecurity=False)  # noqa: S324
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(8 * 1024 * 1024), b""):
+                md5.update(chunk)
+        actual.append(
+            {
+                "path": path.relative_to(checkpoint_dir).as_posix(),
+                "size": path.stat().st_size,
+                "md5Hash": base64.b64encode(md5.digest()).decode("ascii"),
+            }
+        )
+    comparable = [
+        {"path": row["path"], "size": row["size"], "md5Hash": row["md5Hash"]}
+        for row in expected
+    ]
+    if actual != comparable:
+        raise OpenPIPipelineError(
+            "downloaded checkpoint bytes differ from generation-bound GCS manifest"
+        )
+    return {
+        "verified": True,
+        "object_count": len(actual),
+        "total_size_bytes": sum(int(row["size"]) for row in actual),
+        "generation_manifest_sha256": provenance["sha256"],
     }
 
 
@@ -744,6 +981,120 @@ def _validated_cuda_probe_output(output: str, *, expected_cc: str) -> str:
     return expected
 
 
+def _single_host_runtime_evidence(
+    jax_module: Any, environment: Mapping[str, str] | None = None
+) -> dict[str, int]:
+    source = os.environ if environment is None else environment
+    raw_nodes = str(source.get("SKYPILOT_NUM_NODES", "1"))
+    try:
+        sky_nodes = int(raw_nodes)
+    except ValueError as exc:
+        raise OpenPIPipelineError("SKYPILOT_NUM_NODES must be an integer") from exc
+    process_count = int(jax_module.process_count())
+    process_index = int(jax_module.process_index())
+    local_devices = len(jax_module.local_devices())
+    global_devices = len(jax_module.devices())
+    if sky_nodes != 1 or process_count != 1 or process_index != 0:
+        raise OpenPIPipelineError(
+            "this pi0.5 variant supports one host only; use the full-DROID recipe "
+            "for initialized multi-host JAX"
+        )
+    if local_devices != global_devices:
+        raise OpenPIPipelineError("single-host JAX device visibility is inconsistent")
+    return {
+        "skypilot_nodes": sky_nodes,
+        "jax_process_count": process_count,
+        "jax_process_index": process_index,
+        "local_device_count": local_devices,
+        "global_device_count": global_devices,
+    }
+
+
+def _device_capability(device: Any) -> str:
+    raw = getattr(device, "compute_capability", "")
+    raw = raw() if callable(raw) else raw
+    major, minor = getattr(raw, "major", None), getattr(raw, "minor", None)
+    if major is not None and minor is not None:
+        return f"{int(major)}.{int(minor)}"
+    match = re.search(r"(\d{1,2})[.,](\d)", str(raw))
+    if match:
+        return f"{int(match.group(1))}.{int(match.group(2))}"
+    compact = re.search(r"(?:sm_)?(\d{2,3})", str(raw), re.IGNORECASE)
+    if not compact:
+        raise OpenPIPipelineError(f"cannot parse compute capability {raw!r}")
+    number = int(compact.group(1))
+    return f"{number // 10}.{number % 10}"
+
+
+def _compiled_sm_probe(compute_capability: str) -> dict[str, object]:
+    required = compute_capability in {"10.0", "12.0"}
+    result: dict[str, object] = {"required": required}
+    if not required:
+        return result
+    compact = compute_capability.replace(".", "")
+    probe = Path(f"/usr/local/bin/npa-openpi-sm{compact}-probe")
+    if not probe.is_file():
+        raise OpenPIPipelineError(f"compiled SM{compact} CUDA probe is missing")
+    output = subprocess.run(
+        [str(probe)], check=True, capture_output=True, text=True
+    ).stdout
+    elf = subprocess.run(
+        ["cuobjdump", "--list-elf", str(probe)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    if f"sm_{compact}" not in f"{elf.stdout}\n{elf.stderr}".lower():
+        raise OpenPIPipelineError(f"CUDA probe has no sm_{compact} ELF")
+    result.update(
+        {
+            "passed": True,
+            "output": _validated_cuda_probe_output(
+                output, expected_cc=compute_capability
+            ),
+            f"elf_contains_sm{compact}": True,
+        }
+    )
+    return result
+
+
+def _nvidia_smi_rows(expected_gpu_count: int) -> list[str]:
+    result = subprocess.run(
+        [
+            "nvidia-smi",
+            "--query-gpu=index,name,driver_version,memory.total",
+            "--format=csv,noheader",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    rows = result.stdout.strip().splitlines()
+    if len(rows) != expected_gpu_count:
+        raise OpenPIPipelineError("nvidia-smi visible GPU count disagrees with JAX")
+    return rows
+
+
+def _validated_gpu_identity(
+    devices: Sequence[Any], expected_gpu_type: str, expected_compute_capability: str
+) -> tuple[list[str], list[str]]:
+    kinds = [str(getattr(device, "device_kind", "")) for device in devices]
+    if expected_gpu_type and any(
+        expected_gpu_type.upper() not in k.upper() for k in kinds
+    ):
+        raise OpenPIPipelineError(
+            f"expected GPU type {expected_gpu_type!r}, got {kinds!r}"
+        )
+    capabilities = [_device_capability(device) for device in devices]
+    if expected_compute_capability and any(
+        c != expected_compute_capability for c in capabilities
+    ):
+        raise OpenPIPipelineError(
+            f"expected compute capability {expected_compute_capability}, got {capabilities}"
+        )
+    return kinds, capabilities
+
+
 def _hardware_evidence(
     *, expected_gpu_type: str, expected_gpu_count: int, expected_compute_capability: str
 ) -> dict[str, object]:
@@ -756,127 +1107,27 @@ def _hardware_evidence(
         raise OpenPIPipelineError(
             f"expected {expected_gpu_count} visible GPU(s), got {len(devices)}"
         )
-    kinds = [str(getattr(device, "device_kind", "")) for device in devices]
-    if expected_gpu_type and any(
-        expected_gpu_type.upper() not in item.upper() for item in kinds
-    ):
-        raise OpenPIPipelineError(
-            f"expected GPU type {expected_gpu_type!r}, got {kinds!r}"
-        )
-    capabilities: list[str] = []
-    for device in devices:
-        raw = getattr(device, "compute_capability", "")
-        raw = raw() if callable(raw) else raw
-        major = getattr(raw, "major", None)
-        minor = getattr(raw, "minor", None)
-        if major is not None and minor is not None:
-            text = f"{int(major)}.{int(minor)}"
-        else:
-            match = re.search(r"(\d{1,2})[.,](\d)", str(raw))
-            if match:
-                text = f"{int(match.group(1))}.{int(match.group(2))}"
-            else:
-                compact = re.search(r"(?:sm_)?(\d{2,3})", str(raw), re.IGNORECASE)
-                if not compact:
-                    raise OpenPIPipelineError(
-                        f"cannot parse compute capability {raw!r}"
-                    )
-                number = int(compact.group(1))
-                text = f"{number // 10}.{number % 10}"
-        capabilities.append(text)
-    if expected_compute_capability and any(
-        value != expected_compute_capability for value in capabilities
-    ):
-        raise OpenPIPipelineError(
-            f"expected compute capability {expected_compute_capability}, got {capabilities}"
-        )
-    sm100_probe: dict[str, object] = {"required": expected_compute_capability == "10.0"}
-    if sm100_probe["required"]:
-        probe = Path("/usr/local/bin/npa-openpi-sm100-probe")
-        if not probe.is_file():
-            raise OpenPIPipelineError("compiled SM100 CUDA probe is missing")
-        output = _validated_cuda_probe_output(
-            subprocess.run(
-                [str(probe)], check=True, capture_output=True, text=True
-            ).stdout,
-            expected_cc="10.0",
-        )
-        elf = subprocess.run(
-            ["cuobjdump", "--list-elf", str(probe)],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        elf_text = "\n".join((elf.stdout, elf.stderr)).strip()
-        if "sm_100" not in elf_text.lower():
-            raise OpenPIPipelineError("CUDA probe has no sm_100 ELF")
-        sm100_probe.update(
-            {"passed": True, "output": output, "elf_contains_sm100": True}
-        )
-    sm120_probe: dict[str, object] = {"required": expected_compute_capability == "12.0"}
-    if sm120_probe["required"]:
-        probe = Path("/usr/local/bin/npa-openpi-sm120-probe")
-        if not probe.is_file():
-            raise OpenPIPipelineError("compiled SM120 CUDA probe is missing")
-        output = _validated_cuda_probe_output(
-            subprocess.run(
-                [str(probe)], check=True, capture_output=True, text=True
-            ).stdout,
-            expected_cc="12.0",
-        )
-        elf = subprocess.run(
-            ["cuobjdump", "--list-elf", str(probe)],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        elf_text = "\n".join((elf.stdout, elf.stderr)).strip()
-        if "sm_120" not in elf_text.lower():
-            raise OpenPIPipelineError("CUDA probe has no sm_120 ELF")
-        sm120_probe.update(
-            {"passed": True, "output": output, "elf_contains_sm120": True}
-        )
-    nvidia_smi = (
-        subprocess.run(
-            [
-                "nvidia-smi",
-                "--query-gpu=index,name,driver_version,memory.total",
-                "--format=csv,noheader",
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        .stdout.strip()
-        .splitlines()
+    kinds, capabilities = _validated_gpu_identity(
+        devices, expected_gpu_type, expected_compute_capability
     )
-    if len(nvidia_smi) != expected_gpu_count:
-        raise OpenPIPipelineError("nvidia-smi visible GPU count disagrees with JAX")
     return {
         "gpu_count_allocated": len(devices),
         "device_kinds": kinds,
         "compute_capabilities": capabilities,
-        "nvidia_smi": nvidia_smi,
+        "nvidia_smi": _nvidia_smi_rows(expected_gpu_count),
         "jax": jax.__version__,
         "jaxlib": importlib.metadata.version("jaxlib"),
         "xla_platform_version": str(jax_backend.get_backend().platform_version),
-        "sm100_probe": sm100_probe,
-        "sm120_probe": sm120_probe,
+        "sm100_probe": _compiled_sm_probe("10.0")
+        if expected_compute_capability == "10.0"
+        else {"required": False},
+        "sm120_probe": _compiled_sm_probe("12.0")
+        if expected_compute_capability == "12.0"
+        else {"required": False},
     }
 
 
-def _direct(args: argparse.Namespace) -> int:
-    _gate_or_exit(
-        args.output_uri,
-        diagnostic_root_uri=args.terms_diagnostic_root_uri,
-        stage="direct",
-    )
-    _validate_runtime_image(args.runtime_image)
-    _set_runtime_cache(args.work_dir, "direct")
-    repo_root = Path(args.repo_root)
-    build = _source_build_evidence(repo_root)
-
-    # All model/runtime imports stay below the fail-closed terms gate.
+def _load_direct_runtime(args: argparse.Namespace) -> dict[str, Any]:
     import jax
     import numpy as np
     from openpi.policies import policy_config
@@ -888,9 +1139,13 @@ def _direct(args: argparse.Namespace) -> int:
         expected_gpu_count=args.expected_gpu_count,
         expected_compute_capability=args.expected_compute_capability,
     )
+    hardware["topology"] = _single_host_runtime_evidence(jax)
     provenance = _checkpoint_provenance(args.checkpoint_uri)
     fetch_started = time.perf_counter()
     checkpoint_dir = Path(download.maybe_download(args.checkpoint_uri, token="anon"))
+    payload_binding = _verify_public_checkpoint_download(
+        args.checkpoint_uri, checkpoint_dir, provenance
+    )
     checkpoint_seconds = time.perf_counter() - fetch_started
     config = openpi_config.get_config(args.config_name)
     if config.model.action_horizon != ACTION_HORIZON:
@@ -898,13 +1153,59 @@ def _direct(args: argparse.Namespace) -> int:
     load_started = time.perf_counter()
     policy = policy_config.create_trained_policy(config, checkpoint_dir)
     load_seconds = time.perf_counter() - load_started
-    observation = _observation()
+    return {
+        "jax": jax,
+        "numpy": np,
+        "hardware": hardware,
+        "provenance": provenance,
+        "payload_binding": payload_binding,
+        "fetch_seconds": checkpoint_seconds,
+        "policy": policy,
+        "load_seconds": load_seconds,
+    }
+
+
+def _direct_trajectory(runtime: Mapping[str, Any]) -> tuple[dict[str, Any], Any]:
+    policy, np = runtime["policy"], runtime["numpy"]
     infer_started = time.perf_counter()
-    response = policy.infer(observation)
+    response = policy.infer(_observation())
     infer_seconds = time.perf_counter() - infer_started
     actions = np.asarray(response["actions"])
     trajectory = validate_actions(actions, label="direct")
-    result: dict[str, object] = {
+    trajectory.update(
+        {
+            "inference_ms": round(infer_seconds * 1000, 3),
+            "first_five_targets": actions[:5].tolist(),
+            "action_semantics": "joint_position_targets_dims_0_6_radians;parallel_jaw_gripper_dim_7",
+            "consumer_guidance": "execute_about_5_targets_at_15_hz_then_requery",
+        }
+    )
+    return trajectory, actions
+
+
+def _direct_observation_schema() -> dict[str, Any]:
+    return {
+        "exterior_image": {"shape": list(IMAGE_SHAPE), "dtype": "uint8"},
+        "wrist_image": {"shape": list(IMAGE_SHAPE), "dtype": "uint8"},
+        "joint_position": {"shape": [JOINT_DIM], "dtype": "float32"},
+        "gripper_position": {"shape": [1], "dtype": "float32"},
+        "prompt": PROMPT,
+    }
+
+
+def _public_artifact_access() -> dict[str, Any]:
+    return {
+        "checkpoint_source": "public_anonymous_gcs",
+        "npa_terms_attestation_required": False,
+        "credential_persisted": False,
+    }
+
+
+def _direct_result(
+    args: argparse.Namespace, build: Mapping[str, Any], runtime: Mapping[str, Any]
+) -> dict[str, object]:
+    trajectory, _actions = _direct_trajectory(runtime)
+    return {
         "schema": "npa.workbench.openpi.pi05-direct-inference.v2",
         "status": "passed",
         "mode": "direct",
@@ -918,34 +1219,30 @@ def _direct(args: argparse.Namespace) -> int:
         "runtime_image": args.runtime_image,
         "checkpoint": {
             "uri": args.checkpoint_uri,
-            "provenance": provenance,
-            "fetch_seconds": round(checkpoint_seconds, 3),
+            "provenance": runtime["provenance"],
+            "downloaded_payload_binding": runtime["payload_binding"],
+            "fetch_seconds": round(runtime["fetch_seconds"], 3),
             "weights_baked": False,
         },
-        "terms": {"forwarded": True, "persisted": False, "scope": "this_run_only"},
-        "observation_schema": {
-            "exterior_image": {"shape": list(IMAGE_SHAPE), "dtype": "uint8"},
-            "wrist_image": {"shape": list(IMAGE_SHAPE), "dtype": "uint8"},
-            "joint_position": {"shape": [JOINT_DIM], "dtype": "float32"},
-            "gripper_position": {"shape": [1], "dtype": "float32"},
-            "prompt": PROMPT,
-        },
-        "trajectory": {
-            **trajectory,
-            "inference_ms": round(infer_seconds * 1000, 3),
-            "first_five_targets": actions[:5].tolist(),
-            "action_semantics": "joint_position_targets_dims_0_6_radians;parallel_jaw_gripper_dim_7",
-            "consumer_guidance": "execute_about_5_targets_at_15_hz_then_requery",
-        },
-        "policy_load_seconds": round(load_seconds, 3),
-        "memory": _memory_stats(jax.devices()[0]),
-        "hardware": hardware,
+        "artifact_access": _public_artifact_access(),
+        "observation_schema": _direct_observation_schema(),
+        "trajectory": trajectory,
+        "policy_load_seconds": round(runtime["load_seconds"], 3),
+        "memory": _memory_stats(runtime["jax"].devices()[0]),
+        "hardware": runtime["hardware"],
         "software": {
-            "numpy": np.__version__,
+            "numpy": runtime["numpy"].__version__,
             "openpi_distribution": "editable_pinned_source",
         },
         "limitations": ["no_physical_franka_task_success_claim"],
     }
+
+
+def _direct(args: argparse.Namespace) -> int:
+    _validate_runtime_image(args.runtime_image)
+    _set_runtime_cache(args.work_dir, "direct")
+    build = _source_build_evidence(Path(args.repo_root))
+    result = _direct_result(args, build, _load_direct_runtime(args))
     _write_json_uri(args.output_uri, result)
     print(json.dumps(result, sort_keys=True), flush=True)
     return 0
@@ -1307,54 +1604,50 @@ def _download_checkpoint(output_uri: str, local_root: Path) -> dict[str, object]
     return manifest
 
 
-def _train(args: argparse.Namespace) -> int:
-    _gate_or_exit(
-        args.output_uri,
-        diagnostic_root_uri=args.terms_diagnostic_root_uri,
-        stage="train",
+def _training_base_checkpoint(
+    args: argparse.Namespace, download: Any
+) -> dict[str, Any]:
+    provenance = _checkpoint_provenance(args.base_checkpoint_uri)
+    started = time.perf_counter()
+    checkpoint_dir = Path(
+        download.maybe_download(args.base_checkpoint_uri, token="anon")
     )
-    _validate_runtime_image(args.runtime_image)
-    _set_runtime_cache(args.work_dir, "train")
-    repo_root = Path(args.repo_root)
-    build = _source_build_evidence(repo_root)
-    arrays, dataset_manifest = _load_dataset(
-        args.dataset_uri, args.dataset_manifest_uri
+    binding = _verify_public_checkpoint_download(
+        args.base_checkpoint_uri, checkpoint_dir, provenance
     )
-    train_count = int(dataset_manifest["splits"]["train"]["count"])  # type: ignore[index]
+    return {
+        "dir": checkpoint_dir,
+        "provenance": provenance,
+        "binding": binding,
+        "fetch_seconds": time.perf_counter() - started,
+    }
+
+
+def _validate_training_request(
+    args: argparse.Namespace, dataset_manifest: Mapping[str, Any], device_count: int
+) -> int:
+    train_count = int(dataset_manifest["splits"]["train"]["count"])
     if args.batch_size > train_count:
         raise OpenPIPipelineError("batch size exceeds miniature training split")
     if args.train_steps < 1:
         raise OpenPIPipelineError("at least one optimizer step is required")
-
-    # OpenPI/JAX imports remain below the terms gate.
-    import functools
-    import jax
-    import numpy as np
-    from openpi.models import model as openpi_model
-    from openpi.shared import download
-    from openpi.training import checkpoints
-    from openpi.training import sharding as openpi_sharding
-
-    hardware = _hardware_evidence(
-        expected_gpu_type=args.expected_gpu_type,
-        expected_gpu_count=args.expected_gpu_count,
-        expected_compute_capability=args.expected_compute_capability,
-    )
-    if args.batch_size % len(jax.devices()) != 0:
+    if args.batch_size % device_count != 0:
         raise OpenPIPipelineError(
             "training batch size must be divisible by the allocated GPU count"
         )
-    if args.fsdp_devices < 1 or len(jax.devices()) % args.fsdp_devices != 0:
+    if args.fsdp_devices < 1 or device_count % args.fsdp_devices != 0:
         raise OpenPIPipelineError(
             "FSDP device count must be positive and divide the allocated GPU count"
         )
-    started = time.perf_counter()
-    base_provenance = _checkpoint_provenance(args.base_checkpoint_uri)
-    base_fetch_started = time.perf_counter()
-    base_checkpoint_dir = Path(
-        download.maybe_download(args.base_checkpoint_uri, token="anon")
-    )
-    base_fetch_seconds = time.perf_counter() - base_fetch_started
+    return train_count
+
+
+def _training_data_runtime(
+    args: argparse.Namespace, arrays: Mapping[str, Any], base_dir: Path, repo_root: Path
+) -> dict[str, Any]:
+    from openpi.training import checkpoints
+    from openpi.training import sharding as openpi_sharding
+
     work_root = Path(args.work_dir) / f"train-{os.getpid()}"
     work_root.mkdir(parents=True, exist_ok=False)
     config, data_config = _training_configuration(
@@ -1363,169 +1656,165 @@ def _train(args: argparse.Namespace) -> int:
         train_steps=args.train_steps,
         batch_size=args.batch_size,
         seed=args.seed,
-        base_checkpoint_location=str(base_checkpoint_dir),
+        base_checkpoint_location=str(base_dir),
         fsdp_devices=args.fsdp_devices,
     )
-    upstream_train = _load_upstream_train_module(repo_root)
     mesh = openpi_sharding.make_mesh(args.fsdp_devices)
-    data_sharding = jax.sharding.NamedSharding(
+    loader = _training_loader(args, arrays, config, data_config, mesh, openpi_sharding)
+    manager = _fresh_checkpoint_manager(checkpoints, config.checkpoint_dir)
+    return {
+        "config": config,
+        "mesh": mesh,
+        "loader": loader,
+        "manager": manager,
+        "checkpoints": checkpoints,
+        "sharding": openpi_sharding,
+        "upstream": _load_upstream_train_module(repo_root),
+    }
+
+
+def _training_loader(
+    args: argparse.Namespace,
+    arrays: Mapping[str, Any],
+    config: Any,
+    data_config: Any,
+    mesh: Any,
+    openpi_sharding: Any,
+) -> Any:
+    import jax
+
+    sharding = jax.sharding.NamedSharding(
         mesh, jax.sharding.PartitionSpec(openpi_sharding.DATA_AXIS)
     )
-    replicated_sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
-    loader = _make_data_loader(
+    return _make_data_loader(
         arrays=arrays,
         split="train",
         config=config,
         data_config=data_config,
-        sharding=data_sharding,
+        sharding=sharding,
         batch_size=args.batch_size,
         seed=args.seed,
         num_batches=args.train_steps,
     )
-    iterator = iter(loader)
-    batch = next(iterator)
+
+
+def _fresh_checkpoint_manager(checkpoints: Any, checkpoint_dir: Path) -> Any:
     manager, resuming = checkpoints.initialize_checkpoint_dir(
-        config.checkpoint_dir,
-        keep_period=None,
-        overwrite=True,
-        resume=False,
+        checkpoint_dir, keep_period=None, overwrite=True, resume=False
     )
     if resuming:
         raise OpenPIPipelineError(
             "fresh optimizer smoke unexpectedly entered resume mode"
         )
-    rng = jax.random.key(args.seed)
-    train_rng, init_rng = jax.random.split(rng)
-    init_started = time.perf_counter()
-    state, state_sharding = upstream_train.init_train_state(
+    return manager
+
+
+def _initialize_training_state(
+    args: argparse.Namespace, runtime: Mapping[str, Any]
+) -> dict[str, Any]:
+    import jax
+
+    config, mesh = runtime["config"], runtime["mesh"]
+    train_rng, init_rng = jax.random.split(jax.random.key(args.seed))
+    started = time.perf_counter()
+    state, state_sharding = runtime["upstream"].init_train_state(
         config, init_rng, mesh, resume=False
     )
     jax.block_until_ready(state)
-    init_seconds = time.perf_counter() - init_started
     before_tree = _tree_to_host(_pure_trainable(state, config.trainable_filter))
-    before_hash = _tree_sha256(before_tree)
-    train_step = jax.jit(
-        functools.partial(upstream_train.train_step, config),
-        in_shardings=(replicated_sharding, state_sharding, data_sharding),
-        out_shardings=(state_sharding, replicated_sharding),
+    return {
+        "state": state,
+        "state_sharding": state_sharding,
+        "train_rng": train_rng,
+        "before_tree": before_tree,
+        "before_hash": _tree_sha256(before_tree),
+        "init_seconds": time.perf_counter() - started,
+    }
+
+
+def _run_training_steps(
+    args: argparse.Namespace, runtime: Mapping[str, Any], initialized: Mapping[str, Any]
+) -> dict[str, Any]:
+    import functools
+    import jax
+    import numpy as np
+
+    mesh, loader = runtime["mesh"], runtime["loader"]
+    replicated = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
+    data = jax.sharding.NamedSharding(
+        mesh, jax.sharding.PartitionSpec(runtime["sharding"].DATA_AXIS)
+    )
+    step_fn = jax.jit(
+        functools.partial(runtime["upstream"].train_step, runtime["config"]),
+        in_shardings=(replicated, initialized["state_sharding"], data),
+        out_shardings=(initialized["state_sharding"], replicated),
         donate_argnums=(1,),
     )
-    metrics: list[dict[str, float]] = []
-    optimize_started = time.perf_counter()
-    with openpi_sharding.set_mesh(mesh):
+    iterator, state, metrics = iter(loader), initialized["state"], []
+    batch, started = next(iterator), time.perf_counter()
+    with runtime["sharding"].set_mesh(mesh):
         for step in range(args.train_steps):
-            step_rng = _optimizer_step_rng(jax.random, train_rng, step)
-            state, info = train_step(step_rng, state, batch)
+            rng = _optimizer_step_rng(jax.random, initialized["train_rng"], step)
+            state, info = step_fn(rng, state, batch)
             jax.block_until_ready(state)
-            row = {
-                key: float(np.asarray(jax.device_get(value)))
-                for key, value in info.items()
-            }
-            if not all(np.isfinite(value) for value in row.values()):
-                raise OpenPIPipelineError(
-                    f"non-finite optimizer metrics at step {step}: {row}"
-                )
-            row["optimizer_step"] = float(step + 1)
-            metrics.append(row)
+            row = _finite_optimizer_metrics(jax, np, info, step)
+            metrics.append({**row, "optimizer_step": float(step + 1)})
             if step + 1 < args.train_steps:
                 batch = next(iterator)
-    optimize_seconds = time.perf_counter() - optimize_started
-    after_tree = _tree_to_host(_pure_trainable(state, config.trainable_filter))
-    after_hash = _tree_sha256(after_tree)
-    update_l2 = _tree_update_l2(before_tree, after_tree)
-    if before_hash == after_hash or not np.isfinite(update_l2) or update_l2 <= 0.0:
-        raise OpenPIPipelineError("optimizer did not change trainable OpenPI state")
-    checkpoint_step = int(np.asarray(jax.device_get(state.step)))
-    if checkpoint_step != args.train_steps:
-        raise OpenPIPipelineError(
-            f"optimizer step mismatch: state={checkpoint_step} requested={args.train_steps}"
-        )
-    save_started = time.perf_counter()
-    checkpoints.save_state(manager, state, loader, checkpoint_step)
-    manager.wait_until_finished()
-    save_seconds = time.perf_counter() - save_started
-    step_dir = Path(config.checkpoint_dir) / str(checkpoint_step)
-    restored_params = openpi_model.restore_params(step_dir / "params")
-    restored_param_hash = _tree_sha256(restored_params)
-    restored_state = checkpoints.restore_state(manager, state, loader, checkpoint_step)
-    restored_step = int(np.asarray(jax.device_get(restored_state.step)))
-    if restored_step != checkpoint_step:
-        raise OpenPIPipelineError("reloaded train state step does not match saved step")
-    manager.close()
-    checkpoint_manifest = _upload_checkpoint(
-        Path(config.checkpoint_dir), args.checkpoint_uri
-    )
-    checkpoint_manifest_hash = str(checkpoint_manifest["content_manifest_sha256"])
-    dataset_hash = str(dataset_manifest["archive_sha256"])
-    elapsed_seconds = time.perf_counter() - started
-    result: dict[str, object] = {
-        "schema": "npa.workbench.openpi.pi05-training.v1",
-        "status": "passed",
-        "mode": "train",
-        "source": {
-            "repository": SOURCE_REPOSITORY,
-            "ref": SOURCE_REF,
-            "license": SOURCE_LICENSE,
-            **build,
-        },
-        "redistribution": _redistribution_evidence(trained_checkpoint=True),
-        "runtime_image": args.runtime_image,
-        "base_checkpoint": {
-            "uri": args.base_checkpoint_uri,
-            "weight_loader": "upstream CheckpointWeightLoader",
-            "provenance": base_provenance,
-            "fetch_seconds": round(base_fetch_seconds, 3),
-            "weights_baked": False,
-        },
-        "dataset": {
-            "uri": args.dataset_uri,
-            "manifest_uri": args.dataset_manifest_uri,
-            "archive_sha256": dataset_hash,
-            "train_sample_count": train_count,
-            "heldout_sample_count": int(
-                dataset_manifest["splits"]["heldout"]["count"]  # type: ignore[index]
-            ),
-            "split_disjoint": dataset_manifest["split_isolation"]["disjoint"],  # type: ignore[index]
-        },
-        "optimization": {
-            "implementation": "pinned upstream scripts/train.py:init_train_state+train_step",
-            "parameterization": "pi0.5_polaris_compatible_lora",
-            "forward": True,
-            "backward": True,
-            "optimizer": "upstream optax AdamW",
-            "optimizer_steps": args.train_steps,
-            "metrics": metrics,
-            "all_metrics_finite": True,
-            "trainable_state_sha256_before": before_hash,
-            "trainable_state_sha256_after": after_hash,
-            "trainable_state_changed": True,
-            "trainable_update_l2": update_l2,
-        },
-        "checkpoint": {
-            "uri": args.checkpoint_uri.rstrip("/") + "/",
-            "manifest_uri": args.checkpoint_uri.rstrip("/") + "/manifest.json",
-            "content_manifest_sha256": checkpoint_manifest_hash,
-            "file_count": checkpoint_manifest["file_count"],
-            "total_size_bytes": checkpoint_manifest["total_size_bytes"],
-            "saved_step": checkpoint_step,
-            "reloadable_params_sha256": restored_param_hash,
-            "reloaded_train_state_step": restored_step,
-            "reload_passed": True,
-        },
-        "timings_seconds": {
-            "initialization": round(init_seconds, 3),
-            "optimization": round(optimize_seconds, 3),
-            "checkpoint_save": round(save_seconds, 3),
-            "total": round(elapsed_seconds, 3),
-        },
-        "memory": _memory_stats(jax.devices()[0]),
-        "hardware": hardware,
-        "terms": {"forwarded": True, "persisted": False},
-        "limitations": [
-            "tiny_data_optimizer_smoke_is_not_convergence",
-            "no_physical_franka_task_success_claim",
-        ],
+    return {
+        "state": state,
+        "metrics": metrics,
+        "seconds": time.perf_counter() - started,
     }
+
+
+def _finite_optimizer_metrics(
+    jax: Any, numpy: Any, info: Mapping[str, Any], step: int
+) -> dict[str, float]:
+    row = {
+        key: float(numpy.asarray(jax.device_get(value))) for key, value in info.items()
+    }
+    if not all(numpy.isfinite(value) for value in row.values()):
+        raise OpenPIPipelineError(f"non-finite optimizer metrics at step {step}: {row}")
+    return row
+
+
+def _training_evidence(
+    build: Mapping[str, Any],
+    base: Mapping[str, Any],
+    dataset: Mapping[str, Any],
+    train_count: int,
+    initialized: Mapping[str, Any],
+    optimized: Mapping[str, Any],
+    update: Mapping[str, Any],
+    saved: Mapping[str, Any],
+    hardware: Mapping[str, Any],
+    memory: Mapping[str, Any],
+    started: float,
+) -> dict[str, Any]:
+    return {
+        "build": build,
+        "base": base,
+        "dataset": dataset,
+        "train_count": train_count,
+        "initialized": initialized,
+        "optimized": optimized,
+        "update": update,
+        "saved": saved,
+        "hardware": hardware,
+        "memory": memory,
+        "timings": {
+            "initialization": round(initialized["init_seconds"], 3),
+            "optimization": round(optimized["seconds"], 3),
+            "checkpoint_save": round(saved["seconds"], 3),
+            "total": round(time.perf_counter() - started, 3),
+        },
+    }
+
+
+def _publish_training_result(
+    args: argparse.Namespace, result: Mapping[str, Any]
+) -> int:
     _write_json_uri(args.output_uri, result)
     _publish_pi05_component(
         args,
@@ -1537,12 +1826,202 @@ def _train(args: argparse.Namespace) -> int:
     return 0
 
 
-def _evaluate(args: argparse.Namespace) -> int:
-    _gate_or_exit(
-        args.output_uri,
-        diagnostic_root_uri=args.terms_diagnostic_root_uri,
-        stage="evaluate",
+def _verify_training_update(
+    args: argparse.Namespace,
+    runtime: Mapping[str, Any],
+    initialized: Mapping[str, Any],
+    state: Any,
+) -> dict[str, Any]:
+    import jax
+    import numpy as np
+
+    after_tree = _tree_to_host(
+        _pure_trainable(state, runtime["config"].trainable_filter)
     )
+    after_hash = _tree_sha256(after_tree)
+    update_l2 = _tree_update_l2(initialized["before_tree"], after_tree)
+    if (
+        initialized["before_hash"] == after_hash
+        or not np.isfinite(update_l2)
+        or update_l2 <= 0
+    ):
+        raise OpenPIPipelineError("optimizer did not change trainable OpenPI state")
+    checkpoint_step = int(np.asarray(jax.device_get(state.step)))
+    if checkpoint_step != args.train_steps:
+        raise OpenPIPipelineError(
+            f"optimizer step mismatch: state={checkpoint_step} requested={args.train_steps}"
+        )
+    return {"after_hash": after_hash, "update_l2": update_l2, "step": checkpoint_step}
+
+
+def _save_training_state(
+    args: argparse.Namespace,
+    runtime: Mapping[str, Any],
+    state: Any,
+    update: Mapping[str, Any],
+) -> dict[str, Any]:
+    import jax
+    import numpy as np
+    from openpi.models import model as openpi_model
+
+    started = time.perf_counter()
+    manager, loader, step = runtime["manager"], runtime["loader"], update["step"]
+    runtime["checkpoints"].save_state(manager, state, loader, step)
+    manager.wait_until_finished()
+    save_seconds = time.perf_counter() - started
+    step_dir = Path(runtime["config"].checkpoint_dir) / str(step)
+    params_hash = _tree_sha256(openpi_model.restore_params(step_dir / "params"))
+    restored = runtime["checkpoints"].restore_state(manager, state, loader, step)
+    restored_step = int(np.asarray(jax.device_get(restored.step)))
+    manager.close()
+    if restored_step != step:
+        raise OpenPIPipelineError("reloaded train state step does not match saved step")
+    manifest = _upload_checkpoint(
+        Path(runtime["config"].checkpoint_dir), args.checkpoint_uri
+    )
+    return {
+        "manifest": manifest,
+        "params_hash": params_hash,
+        "restored_step": restored_step,
+        "seconds": save_seconds,
+    }
+
+
+def _training_result(
+    args: argparse.Namespace, evidence: Mapping[str, Any]
+) -> dict[str, object]:
+    dataset = evidence["dataset"]
+    return {
+        "schema": "npa.workbench.openpi.pi05-training.v1",
+        "status": "passed",
+        "mode": "train",
+        "source": {
+            "repository": SOURCE_REPOSITORY,
+            "ref": SOURCE_REF,
+            "license": SOURCE_LICENSE,
+            **evidence["build"],
+        },
+        "redistribution": _redistribution_evidence(trained_checkpoint=True),
+        "runtime_image": args.runtime_image,
+        "base_checkpoint": _training_base_evidence(args, evidence["base"]),
+        "dataset": _training_dataset_evidence(args, dataset, evidence["train_count"]),
+        "optimization": _training_optimization_evidence(args, evidence),
+        "checkpoint": _training_checkpoint_evidence(args, evidence["saved"]),
+        "timings_seconds": evidence["timings"],
+        "memory": evidence["memory"],
+        "hardware": evidence["hardware"],
+        "artifact_access": _public_artifact_access(),
+        "limitations": [
+            "tiny_data_optimizer_smoke_is_not_convergence",
+            "no_physical_franka_task_success_claim",
+        ],
+    }
+
+
+def _training_base_evidence(
+    args: argparse.Namespace, base: Mapping[str, Any]
+) -> dict[str, Any]:
+    return {
+        "uri": args.base_checkpoint_uri,
+        "weight_loader": "upstream CheckpointWeightLoader",
+        "provenance": base["provenance"],
+        "downloaded_payload_binding": base["binding"],
+        "fetch_seconds": round(base["fetch_seconds"], 3),
+        "weights_baked": False,
+    }
+
+
+def _training_dataset_evidence(
+    args: argparse.Namespace, manifest: Mapping[str, Any], train_count: int
+) -> dict[str, Any]:
+    return {
+        "uri": args.dataset_uri,
+        "manifest_uri": args.dataset_manifest_uri,
+        "archive_sha256": str(manifest["archive_sha256"]),
+        "train_sample_count": train_count,
+        "heldout_sample_count": int(manifest["splits"]["heldout"]["count"]),
+        "split_disjoint": manifest["split_isolation"]["disjoint"],
+    }
+
+
+def _training_optimization_evidence(
+    args: argparse.Namespace, evidence: Mapping[str, Any]
+) -> dict[str, Any]:
+    return {
+        "implementation": "pinned upstream scripts/train.py:init_train_state+train_step",
+        "parameterization": "pi0.5_polaris_compatible_lora",
+        "forward": True,
+        "backward": True,
+        "optimizer": "upstream optax AdamW",
+        "optimizer_steps": args.train_steps,
+        "metrics": evidence["optimized"]["metrics"],
+        "all_metrics_finite": True,
+        "trainable_state_sha256_before": evidence["initialized"]["before_hash"],
+        "trainable_state_sha256_after": evidence["update"]["after_hash"],
+        "trainable_state_changed": True,
+        "trainable_update_l2": evidence["update"]["update_l2"],
+    }
+
+
+def _training_checkpoint_evidence(
+    args: argparse.Namespace, saved: Mapping[str, Any]
+) -> dict[str, Any]:
+    manifest = saved["manifest"]
+    return {
+        "uri": args.checkpoint_uri.rstrip("/") + "/",
+        "manifest_uri": args.checkpoint_uri.rstrip("/") + "/manifest.json",
+        "content_manifest_sha256": str(manifest["content_manifest_sha256"]),
+        "file_count": manifest["file_count"],
+        "total_size_bytes": manifest["total_size_bytes"],
+        "saved_step": saved["restored_step"],
+        "reloadable_params_sha256": saved["params_hash"],
+        "reloaded_train_state_step": saved["restored_step"],
+        "reload_passed": True,
+    }
+
+
+def _train(args: argparse.Namespace) -> int:
+    _validate_runtime_image(args.runtime_image)
+    _set_runtime_cache(args.work_dir, "train")
+    repo_root = Path(args.repo_root)
+    build = _source_build_evidence(repo_root)
+    arrays, dataset_manifest = _load_dataset(
+        args.dataset_uri, args.dataset_manifest_uri
+    )
+    import jax
+    from openpi.shared import download
+
+    started = time.perf_counter()
+    hardware = _hardware_evidence(
+        expected_gpu_type=args.expected_gpu_type,
+        expected_gpu_count=args.expected_gpu_count,
+        expected_compute_capability=args.expected_compute_capability,
+    )
+    hardware["topology"] = _single_host_runtime_evidence(jax)
+    train_count = _validate_training_request(args, dataset_manifest, len(jax.devices()))
+    base = _training_base_checkpoint(args, download)
+    runtime = _training_data_runtime(args, arrays, base["dir"], repo_root)
+    initialized = _initialize_training_state(args, runtime)
+    optimized = _run_training_steps(args, runtime, initialized)
+    update = _verify_training_update(args, runtime, initialized, optimized["state"])
+    saved = _save_training_state(args, runtime, optimized["state"], update)
+    evidence = _training_evidence(
+        build,
+        base,
+        dataset_manifest,
+        train_count,
+        initialized,
+        optimized,
+        update,
+        saved,
+        hardware,
+        _memory_stats(jax.devices()[0]),
+        started,
+    )
+    return _publish_training_result(args, _training_result(args, evidence))
+
+
+def _evaluate(args: argparse.Namespace) -> int:
     _validate_runtime_image(args.runtime_image)
     _set_runtime_cache(args.work_dir, "evaluate")
     repo_root = Path(args.repo_root)
@@ -1576,6 +2055,7 @@ def _evaluate(args: argparse.Namespace) -> int:
         expected_gpu_count=args.expected_gpu_count,
         expected_compute_capability=args.expected_compute_capability,
     )
+    hardware["topology"] = _single_host_runtime_evidence(jax)
     heldout_count = len(heldout_ids)
     if args.batch_size % len(jax.devices()) != 0:
         raise OpenPIPipelineError(
@@ -1654,6 +2134,10 @@ def _evaluate(args: argparse.Namespace) -> int:
         raise OpenPIPipelineError("held-out model loss sample count is incorrect")
     del model, restored_params
     policy = policy_config.create_trained_policy(config, step_dir)
+    if heldout_count < 2:
+        raise OpenPIPipelineError(
+            "wrist sensitivity requires at least two disjoint held-out samples"
+        )
     predictions: list[np.ndarray] = []
     targets: list[np.ndarray] = []
     trajectory_evidence: dict[str, object] | None = None
@@ -1677,6 +2161,31 @@ def _evaluate(args: argparse.Namespace) -> int:
             }
         predictions.append(prediction)
         targets.append(np.asarray(raw["actions"], dtype=np.float64))
+    sensitivity_raw = _ArrayDataset(arrays, "heldout")[1]
+    sensitivity_observation = {
+        "observation/exterior_image_1_left": sensitivity_raw["observation"][
+            "exterior_image_1_left"
+        ],
+        "observation/wrist_image_left": sensitivity_raw["observation"][
+            "wrist_image_left"
+        ],
+        "observation/joint_position": sensitivity_raw["observation"]["joint_position"],
+        "observation/gripper_position": sensitivity_raw["observation"][
+            "gripper_position"
+        ],
+        "prompt": sensitivity_raw["prompt"],
+    }
+    frozen_wrist = _ArrayDataset(arrays, "heldout")[0]["observation"][
+        "wrist_image_left"
+    ]
+    wrist_sensitivity = _paired_wrist_sensitivity(
+        policy,
+        fresh_observation=sensitivity_observation,
+        frozen_wrist=frozen_wrist,
+        action_horizon=config.model.action_horizon,
+        action_dim=config.model.action_dim,
+        seed=args.seed,
+    )
     predicted = np.stack(predictions)
     target = np.stack(targets)
     error = predicted - target
@@ -1739,10 +2248,15 @@ def _evaluate(args: argparse.Namespace) -> int:
             "all_finite": True,
         },
         "reloaded_trajectory": trajectory_evidence,
+        "wrist_action_sensitivity": wrist_sensitivity,
         "timings_seconds": {"total": round(time.perf_counter() - started, 3)},
         "memory": _memory_stats(jax.devices()[0]),
         "hardware": hardware,
-        "terms": {"forwarded": True, "persisted": False},
+        "artifact_access": {
+            "base_checkpoint_source": "public_anonymous_gcs",
+            "npa_terms_attestation_required": False,
+            "credential_persisted": False,
+        },
         "limitations": [
             "offline_heldout_evaluation_is_not_robot_success",
             "tiny_dataset_metrics_are_operational_not_statistical",
@@ -1760,77 +2274,38 @@ def _evaluate(args: argparse.Namespace) -> int:
     return 0
 
 
-def _negative_gate(args: argparse.Namespace) -> int:
-    """Live-probe the missing-acceptance child before any accepted checkpoint fetch."""
+def _artifact_preflight(args: argparse.Namespace) -> int:
+    """Prove anonymous access and immutable metadata for the public checkpoint."""
 
-    _require_parent_acceptance()
     _validate_runtime_image(args.runtime_image)
-    child_env = dict(os.environ)
-    child_env.pop(OPENPI_TERMS_ENV, None)
-    command = [
-        sys.executable,
-        "-m",
-        "npa.workflows.byof.openpi_pipeline",
-        "direct",
-        "--output-uri",
-        args.output_uri,
-        "--terms-diagnostic-root-uri",
-        args.terms_diagnostic_root_uri,
-        "--runtime-image",
-        args.runtime_image,
-        "--repo-root",
-        args.repo_root,
-    ]
-    completed = subprocess.run(
-        command, env=child_env, check=False, capture_output=True, text=True
-    )
-    try:
-        refusal = json.loads(completed.stdout.strip().splitlines()[-1])
-    except (IndexError, json.JSONDecodeError) as exc:
-        raise OpenPIPipelineError(
-            "negative terms child emitted no valid refusal evidence: "
-            f"rc={completed.returncode}; stderr={completed.stderr[-2000:]}"
-        ) from exc
-    diagnostic_uri = str(refusal.get("diagnostic_uri", ""))
-    if completed.returncode != 64 or not diagnostic_uri:
-        raise OpenPIPipelineError(
-            f"negative terms child did not fail closed: rc={completed.returncode}"
-        )
-    persisted_refusal = _read_json_uri(diagnostic_uri)
-    if persisted_refusal != refusal:
-        raise OpenPIPipelineError(
-            "negative terms child diagnostic readback differs from emitted evidence"
-        )
-    if _uri_exists(args.output_uri):
-        raise OpenPIPipelineError(
-            "negative terms child poisoned its declared success output URI"
-        )
-    if any(refusal.get(key) != value for key, value in _terms_refusal().items()):
-        raise OpenPIPipelineError(f"unexpected negative terms artifact: {refusal}")
+    if args.checkpoint_uri != DEFAULT_CHECKPOINT_URI:
+        raise OpenPIPipelineError("artifact preflight requires the pinned Polaris URI")
+    build = _source_build_evidence(Path(args.repo_root))
+    provenance = _checkpoint_provenance(args.checkpoint_uri)
     result: dict[str, object] = {
-        **_terms_refusal(),
-        "schema": "npa.workbench.openpi.live-negative-terms-gate.v1",
+        "schema": "npa.workbench.openpi.public-artifact-preflight.v1",
         "status": "passed",
-        "tested_child_status": "refused",
-        "tested_child_exit_code": 64,
         "execution_scope": "live_kubernetes_workload",
         "runtime_image": args.runtime_image,
-        "accepted_checkpoint_fetch_started_after_probe": False,
-        "accepted_retry_same_logical_output_uri": True,
-        # Preserve attribution in the accepted parent while the complete refusal
-        # remains independently durable at its attempt-scoped diagnostic URI.
-        "tested_child_refusal": {
-            **refusal,
-            "diagnostic_persistence": "separate_attempt_scoped_uri",
-            "declared_success_output_uri_untouched": True,
+        "source": build,
+        "checkpoint": {
+            "uri": args.checkpoint_uri,
+            "access": "public_anonymous_gcs",
+            "provenance": provenance,
         },
+        "required_runtime_payloads": {
+            "tokenizer": provenance["required_tokenizer"],
+        },
+        "npa_terms_attestation_required": False,
+        "credential_required": False,
+        "credential_persisted": False,
     }
     _write_json_uri(args.output_uri, result)
     _publish_pi05_component(
         args,
         4,
-        "pi05_negative_terms_gate",
-        "Proved that missing Gemma acceptance refuses access before checkpoint fetch.",
+        "pi05_public_artifact_preflight",
+        "Proved anonymous Polaris payload access and generation/checksum provenance.",
     )
     print(json.dumps(result, sort_keys=True), flush=True)
     return 0
@@ -1848,17 +2323,16 @@ def build_parser() -> argparse.ArgumentParser:
     data.add_argument("--seed", type=int, default=20_260_815)
     data.set_defaults(func=_prepare_data)
 
-    negative = commands.add_parser("negative-gate")
-    negative.add_argument("--output-uri", required=True)
-    negative.add_argument("--terms-diagnostic-root-uri", default="")
-    negative.add_argument("--runtime-image", required=True)
-    negative.add_argument("--repo-root", default="/opt/byof")
-    negative.add_argument("--component-root-uri", default="")
-    negative.set_defaults(func=_negative_gate)
+    preflight = commands.add_parser("artifact-preflight")
+    preflight.add_argument("--output-uri", required=True)
+    preflight.add_argument("--runtime-image", required=True)
+    preflight.add_argument("--repo-root", default="/opt/byof")
+    preflight.add_argument("--checkpoint-uri", default=DEFAULT_CHECKPOINT_URI)
+    preflight.add_argument("--component-root-uri", default="")
+    preflight.set_defaults(func=_artifact_preflight)
 
     def add_runtime_args(command: argparse.ArgumentParser) -> None:
         command.add_argument("--output-uri", required=True)
-        command.add_argument("--terms-diagnostic-root-uri", default="")
         command.add_argument("--runtime-image", required=True)
         command.add_argument("--repo-root", default="/opt/byof")
         command.add_argument("--expected-gpu-type", default="")

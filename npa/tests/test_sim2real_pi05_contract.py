@@ -23,35 +23,39 @@ from npa.workflows.sim2real.pi05_contract import (
 DEFAULTS = [0.0, -0.4, 0.0, -2.0, 0.0, 2.0, 0.7]
 SCALES = [0.5] * 7
 TARGET = [0.1, -0.5, 0.2, -2.1, 0.3, 2.1, 0.8, 0.73]
+EVENTS = [
+    "contact",
+    "grasp",
+    "lift",
+    "transport",
+    "release",
+    "support_contact",
+    "stable",
+]
+
+
+def _episode_step(index: int) -> dict:
+    timestamp = (index + 1) / 15
+    image = {"shape": [224, 224, 3], "dtype": "uint8"}
+    return {
+        "step": index,
+        "timestamp_s": timestamp,
+        "exterior_timestamp_s": timestamp,
+        "wrist_timestamp_s": timestamp,
+        "command_application_timestamp_s": timestamp,
+        "resulting_state_timestamp_s": timestamp + 1 / 15,
+        "joint_position": TARGET[:7],
+        "gripper_position": [0.0],
+        "action": TARGET,
+        "exterior_image_1_left": {
+            **image,
+            "path": f"exterior/{index:06d}.png",
+        },
+        "wrist_image_left": {**image, "path": f"wrist/{index:06d}.png"},
+    }
 
 
 def _episode() -> dict:
-    steps = []
-    for index in range(15):
-        timestamp = (index + 1) / 15
-        steps.append(
-            {
-                "step": index,
-                "timestamp_s": timestamp,
-                "exterior_timestamp_s": timestamp,
-                "wrist_timestamp_s": timestamp,
-                "command_application_timestamp_s": timestamp,
-                "resulting_state_timestamp_s": timestamp + 1 / 15,
-                "joint_position": TARGET[:7],
-                "gripper_position": [0.0],
-                "action": TARGET,
-                "exterior_image_1_left": {
-                    "path": f"exterior/{index:06d}.png",
-                    "shape": [224, 224, 3],
-                    "dtype": "uint8",
-                },
-                "wrist_image_left": {
-                    "path": f"wrist/{index:06d}.png",
-                    "shape": [224, 224, 3],
-                    "dtype": "uint8",
-                },
-            }
-        )
     return {
         "schema": EPISODE_SCHEMA,
         "episode_id": "episode-001",
@@ -62,19 +66,16 @@ def _episode() -> dict:
         "object_width_m": 0.05,
         "initial_object_position_m": [0.45, -0.15, 0.025],
         "target_position_m": [0.50, 0.18, 0.025],
+        "destination_marker": {
+            "semantic_label": "pi05_destination_marker",
+            "physics_collision": False,
+            "minimum_exterior_semantic_pixels": 16,
+        },
         "scene_configuration_digest": "scene-a",
         "scene_seed": 41,
-        "steps": steps,
+        "steps": [_episode_step(index) for index in range(15)],
         "success_evidence": {
-            "ordered_events": [
-                "contact",
-                "grasp",
-                "lift",
-                "transport",
-                "release",
-                "support_contact",
-                "stable",
-            ],
+            "ordered_events": EVENTS,
             "released_supported_surface_placement": True,
             "stable_steps": 3,
         },
@@ -86,7 +87,9 @@ def test_contract_is_final_byte_bound_and_distinct_from_ppo() -> None:
     assert_contract(contract)
     assert contract["task_id"] == "Isaac-Surface-PickPlace-Franka-OpenPI-v0"
     assert contract["comparison_scope"]["canonical_ppo"] == "historical_diagnostic_only"
-    assert contract["observation"]["wrist_image_left"]["mount"] == "panda_hand"
+    wrist = contract["observation"]["wrist_image_left"]
+    assert wrist["mount"] == "calibrated_live_panda_hand_world_pose"
+    assert wrist["renderer_bridge"] == "world_usd_and_fabric"
     assert contract["action"]["joint_order"] == list(JOINT_NAMES)
 
     modified = copy.deepcopy(contract)
@@ -164,6 +167,11 @@ def test_dense_episode_requires_real_aligned_wrist_and_ordered_physics_evidence(
     teleported["object_motion"] = "scripted_object_pose"
     with pytest.raises(Pi05ContractError, match="physics"):
         validate_dense_episode(teleported)
+
+    invisible_destination = _episode()
+    invisible_destination["destination_marker"]["minimum_exterior_semantic_pixels"] = 0
+    with pytest.raises(Pi05ContractError, match="exterior-visible"):
+        validate_dense_episode(invisible_destination)
 
 
 def test_split_manifest_rejects_object_or_scene_leakage() -> None:

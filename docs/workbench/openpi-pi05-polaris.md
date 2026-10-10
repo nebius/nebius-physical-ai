@@ -10,7 +10,8 @@ The connected OpenPI workflow family has two deliberately separate surfaces:
   to a digest. Its original direct plus same-pod WebSocket smoke remains a
   regression gate.
 - `openpi-pi05-four-mode.yaml` consumes only that digest and runs the live
-  negative terms probe, direct inference, private cross-pod serving, real
+  public-artifact access preflight, direct inference, private cross-pod
+  serving, real
   optimizer/checkpoint work, and disjoint held-out evaluation.
 
 The builder uses CUDA 12.8, compiles an `sm_100` runtime probe, and retains
@@ -33,27 +34,30 @@ operator/project-controlled storage. It is never copied into the distributable
 image or uploaded with the inference evidence. Provenance includes a SHA-256
 over a canonical manifest of GCS object names, generations, sizes, MD5 values,
 and CRC32C values. The public GCS source is opened anonymously; the workload
-does not probe or require Google application credentials.
+does not probe or require Google application credentials. Every pipeline stage
+must reproduce the checked-in Polaris generation-manifest identity and then
+match every downloaded object's byte count and MD5; a later upstream generation
+is rejected instead of being silently adopted between preflight and execution.
+The policy also requires `gs://big_vision/paligemma_tokenizer.model`, which is
+outside the 27-object checkpoint prefix. Preflight downloads that separate
+4,264,023-byte object at its pinned generation and verifies its authoritative
+MD5 plus an independently pinned SHA-256. CRC32C is not independently checked
+or claimed by this receipt.
 
 OpenPI source is Apache-2.0. The CUDA base/runtime retains NVIDIA's upstream
 license terms. This BYOF result stays in the operator's private project registry
 and is not classified for public redistribution. Checkpoint weights, input
 frames, and robot state are not baked into it. The checkpoint contains
-Gemma-derived material: before any image build or checkpoint fetch, the
-operator must review the
+Gemma-derived material. Upstream use remains subject to the
 [Gemma Terms of Use](https://ai.google.dev/gemma/terms) and
-[Gemma Prohibited Use Policy](https://ai.google.dev/gemma/prohibited_use_policy),
-then provide the exact run-scoped gate:
-
-```bash
-export NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES
-```
-
-NPA forwards that value through SkyPilot's secret channel. The four-mode
-server places it in an ephemeral Kubernetes Secret referenced by the server
-pod, then deletes and independently verifies that Secret absent. Acceptance is
-not a workflow default, image environment variable, build argument, repository
-file, or project credential. No other agreement is inferred from it.
+[Gemma Prohibited Use Policy](https://ai.google.dev/gemma/prohibited_use_policy).
+NPA does not add a duplicate consent flag. The pinned Polaris checkpoint is
+fetched anonymously from its authoritative public GCS URI and is accepted only
+after generation, size, MD5, and generation-bound payload checks. A
+future explicitly selected gated Hugging Face artifact instead uses the
+operator's own token and an exact immutable revision payload probe through the
+standard model-access preflight. No credential or model byte is baked or
+persisted by either path.
 
 ## Request, response, and service contract
 
@@ -74,6 +78,17 @@ ClusterIP Service with readiness and liveness probes. A distinct CPU-only
 client Job connects through the Service DNS name; server and client pod UIDs
 must differ. There is no Ingress or public load balancer. The older builder
 smoke remains explicitly labeled same-pod loopback.
+
+The pi0.5 Sim2Real evaluator adds an NPA-owned, pipeline-scoped wrapper around
+the pinned policy's real `Policy.infer(observation, noise=noise)` call. The
+wrapper derives the padded sampler-noise shape from the selected upstream model
+configuration, rejects wrong-shape or non-finite `float32` input, and returns a
+hash/shape/sequence receipt without returning raw noise or credentials. This is
+not a capability claim about the unchanged generic upstream WebSocket server.
+For the Sim2Real path the wrapper validates an operator-managed Kubernetes
+Secret bearer token before sending metadata or accepting inference requests;
+the token is mounted into the server and Isaac client and is never emitted in
+artifact or wire receipts.
 
 All service waits are bounded by monotonic, configurable failure-recovery
 deadlines. The Deployment progress deadline matches server readiness, and the
@@ -286,8 +301,8 @@ npa/.venv/bin/npa workbench workflow plan-spec \
 
 On a fresh isolated B200 MK8s context, the canonical E2E builds the source,
 executes the declared editable install and `nvcc -arch=sm_100` build, pushes and
-resolves the image, scans the built bytes, preserves the historical negative
-and inference regression, and submits the connected graph through
+resolves the image, scans the built bytes, proves anonymous checkpoint payload
+access, and submits the connected graph through
 `npa workbench workflow submit`:
 
 ```bash
@@ -297,7 +312,6 @@ NPA_E2E_PROJECT="<project-alias>" \
 NPA_E2E_S3_BUCKET="<existing-project-bucket>" \
 NPA_BYOF_S3_ENDPOINT="https://storage.<bucket-region>.nebius.cloud" \
 NPA_BYOF_OPENPI_REGISTRY="<operator-registry>/<namespace>" \
-NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES \
 npa/.venv/bin/python -m pytest -q -s \
   npa/tests/e2e/test_byof_openpi_polaris_live_e2e.py
 ```
@@ -317,7 +331,7 @@ OPENPI_SERVICE_ACCOUNT="$(npa/.venv/bin/python -c \
   'import os; from npa.workflows.byof.openpi_service import controller_service_account_name; print(controller_service_account_name(os.environ["OPENPI_RUN_ID"]))')"
 
 # Fail closed if this exact name is foreign. Name-scoped get/delete rules cover
-# the exact Secret, Service, Deployment, and Job. Namespace-wide scope is limited
+# current/legacy owned Secrets, Service, Deployment, and Job. Namespace-wide scope is limited
 # to Kubernetes' unavoidable create rules and pod list; pod logs and pod delete
 # are not granted.
 npa/.venv/bin/python -m npa.workflows.byof.openpi_service_rbac apply \
@@ -356,7 +370,6 @@ npa/.venv/bin/npa workbench workflow submit \
   --var 'service_cleanup_timeout_seconds=180' \
   --var 'service_api_timeout_seconds=30' \
   --var 'service_http_timeout_seconds=30' \
-  --secret-env NPA_OPENPI_ACCEPT_GEMMA_TERMS \
   --secret-env AWS_ACCESS_KEY_ID \
   --secret-env AWS_SECRET_ACCESS_KEY
 
@@ -404,9 +417,10 @@ byte-scan evidence.
 
 The historical builder baseline uses one B200 (`sm_100`) on isolated reserved
 MK8s capacity. It includes private-registry build/push/digest verification,
-built-byte inspection, an exit-64 negative terms workload, and positive direct
+built-byte inspection, an anonymous public-artifact preflight, and positive direct
 plus same-pod inference. It fetched 27 checkpoint objects (12,434,530,837
-bytes) at runtime and returned finite `float64[15,8]` trajectories.
+bytes) at runtime and returned finite `float64[15,8]` trajectories. The
+separately required tokenizer is not included in that object or byte count.
 
 The four-mode gate adds cross-pod ClusterIP topology, a real LoRA optimizer
 update and checkpoint reload, and held-out offline metrics. Acceptance requires

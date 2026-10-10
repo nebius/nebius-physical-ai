@@ -1,4 +1,4 @@
-"""Collect train/validation/gold experts with disjoint object/scene identities."""
+"""Collect size and randomized-scenario holdouts for one multicolor cube family."""
 
 from __future__ import annotations
 
@@ -14,21 +14,21 @@ from npa.workflows.sim2real.workflow_io import publish_component_record
 SPLITS = {
     "train": {
         "seed_offset": 0,
-        "object_identity": "isaac-multicolor-cube-040m",
+        "object_identity": "isaac-multicolor-cube-040mm",
         "object_scale": (0.8, 0.8, 0.8),
-        "scene_id": "surface-train-a",
+        "scene_id": "pi05-single-body-support-layout-v1",
     },
     "validation": {
         "seed_offset": 10_000,
-        "object_identity": "isaac-multicolor-cube-050m",
+        "object_identity": "isaac-multicolor-cube-050mm",
         "object_scale": (1.0, 1.0, 1.0),
-        "scene_id": "surface-validation-b",
+        "scene_id": "pi05-single-body-support-layout-v1",
     },
     "gold": {
         "seed_offset": 20_000,
-        "object_identity": "isaac-multicolor-cube-060m",
+        "object_identity": "isaac-multicolor-cube-060mm",
         "object_scale": (1.2, 1.2, 1.2),
-        "scene_id": "surface-gold-c",
+        "scene_id": "pi05-single-body-support-layout-v1",
     },
 }
 

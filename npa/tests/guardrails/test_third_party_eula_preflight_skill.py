@@ -149,15 +149,18 @@ def test_retired_manual_gate_surfaces_do_not_return() -> None:
                 assert marker not in text, f"retired manual gate {marker!r} in {path}"
 
 
-def test_openpi_product_policy_keeps_its_scoped_runtime_gate() -> None:
+def test_openpi_public_artifact_uses_integrity_not_duplicate_consent() -> None:
     text = SKILL.read_text(encoding="utf-8")
     assert "## OpenPI pi0.5 Reference" in text
-    assert "NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES" in text
-    assert "before any accepted checkpoint" in text
-    assert "Forward it only as a runtime secret" in text
+    assert "NPA_OPENPI_ACCEPT_GEMMA_TERMS" not in text
+    assert "public GCS URI with anonymous access" in text
+    assert "exact-revision" in text
+    assert "operator's own token" in text
 
     workflow = REPO_ROOT / "workflows/testing/byof-openpi.yaml"
-    assert "NPA_OPENPI_ACCEPT_GEMMA_TERMS" in workflow.read_text(encoding="utf-8")
+    workflow_text = workflow.read_text(encoding="utf-8")
+    assert "NPA_OPENPI_ACCEPT_GEMMA_TERMS" not in workflow_text
+    assert 'token="anon"' in workflow_text
 
 
 def test_antioch_product_policy_is_explicit_scoped_and_runtime_only() -> None:

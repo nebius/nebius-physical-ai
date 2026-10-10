@@ -63,6 +63,27 @@ def _verify_array_metadata(arrays: dict[str, Any], metadata: dict[str, Any]) -> 
         raise Pi05ContractError("timestamp array does not match causal episode rows")
 
 
+def _verify_camera_receipts(arrays: dict[str, Any], metadata: dict[str, Any]) -> None:
+    import numpy as np
+
+    for index, row in enumerate(metadata["steps"]):
+        for array_name, row_name in (
+            ("exterior", "exterior_image_1_left"),
+            ("wrist", "wrist_image_left"),
+        ):
+            frame = np.ascontiguousarray(arrays[array_name][index])
+            digest = hashlib.sha256(frame.tobytes()).hexdigest()
+            if digest != row[row_name].get("sha256"):
+                raise Pi05ContractError(
+                    f"{row_name} capture hash mismatch at row {index}"
+                )
+            age = float(row[row_name].get("age_s", -1.0))
+            if age < -1.0e-9 or age > 1.0 / 15.0 + 1.0e-9:
+                raise Pi05ContractError(
+                    f"{row_name} causal age is invalid at row {index}"
+                )
+
+
 def _first_true(mask: Any, start: int, label: str) -> int:
     import numpy as np
 
@@ -151,6 +172,7 @@ def _episode_arrays(episode_dir: Path, metadata: dict[str, Any]) -> dict[str, An
     if arrays["state"].dtype != np.float32 or arrays["actions"].dtype != np.float32:
         raise Pi05ContractError("OpenPI state/actions must be float32")
     _verify_array_metadata(arrays, metadata)
+    _verify_camera_receipts(arrays, metadata)
     _verify_physics_evidence(episode_dir, arrays, metadata)
     return arrays
 
@@ -160,6 +182,7 @@ def _append_episode_samples(
     lineage: list[dict[str, str]],
     arrays: dict[str, Any],
     metadata: dict[str, Any],
+    split: str,
 ) -> None:
     length = int(arrays["state"].shape[0])
     for index in range(length - ACTION_HORIZON + 1):
@@ -169,7 +192,7 @@ def _append_episode_samples(
         output["gripper_position"].append(arrays["state"][index, 7:8])
         output["actions"].append(arrays["actions"][index : index + ACTION_HORIZON])
         output["prompts"].append(str(metadata["instruction"]))
-        sample_id = f"{metadata['episode_id']}:{index:06d}"
+        sample_id = f"{split}:{metadata['episode_id']}:{index:06d}"
         output["sample_ids"].append(sample_id)
         lineage.append(
             {
@@ -179,12 +202,21 @@ def _append_episode_samples(
                 "scene_configuration_digest": str(
                     metadata["scene_configuration_digest"]
                 ),
+                "source_row_identity_sha256": str(
+                    metadata["steps"][index]["row_identity_sha256"]
+                ),
+                "source_exterior_sha256": str(
+                    metadata["steps"][index]["exterior_image_1_left"]["sha256"]
+                ),
+                "source_wrist_sha256": str(
+                    metadata["steps"][index]["wrist_image_left"]["sha256"]
+                ),
             }
         )
 
 
 def _samples(
-    episodes: list[tuple[Path, dict[str, Any]]],
+    episodes: list[tuple[Path, dict[str, Any]]], split: str
 ) -> tuple[dict[str, Any], list[dict[str, str]]]:
     import numpy as np
 
@@ -201,7 +233,7 @@ def _samples(
     lineage: list[dict[str, str]] = []
     for episode_dir, metadata in episodes:
         _append_episode_samples(
-            output, lineage, _episode_arrays(episode_dir, metadata), metadata
+            output, lineage, _episode_arrays(episode_dir, metadata), metadata, split
         )
     if not output["sample_ids"]:
         raise Pi05ContractError(
@@ -297,8 +329,10 @@ def _sample_hashes(values: dict[str, Any]) -> list[str]:
 def _openpi_archive(
     split_episodes: dict[str, Any], output: Path
 ) -> tuple[dict[str, Any], ...]:
-    train_arrays, train_lineage = _samples(split_episodes["train"])
-    heldout_arrays, validation_lineage = _samples(split_episodes["validation"])
+    train_arrays, train_lineage = _samples(split_episodes["train"], "train")
+    heldout_arrays, validation_lineage = _samples(
+        split_episodes["validation"], "validation"
+    )
     arrays: dict[str, Any] = {}
     for split_name, values in (("train", train_arrays), ("heldout", heldout_arrays)):
         arrays.update({f"{split_name}_{key}": value for key, value in values.items()})
@@ -363,6 +397,7 @@ def _write_openpi_manifest(
     gold_rows: list[dict[str, str]],
     normalization: dict[str, Any],
 ) -> None:
+    isolation = _split_isolation(train, heldout, hashes)
     manifest = {
         "schema": OPENPI_SCHEMA,
         "contract": _openpi_contract(),
@@ -373,13 +408,7 @@ def _write_openpi_manifest(
             "heldout": _split_manifest(heldout, hashes["heldout"], lineages[1]),
         },
         "gold": {"episodes": gold_rows, "used_for_training_or_selection": False},
-        "split_isolation": {
-            "sample_id_intersection": [],
-            "sample_hash_intersection": [],
-            "disjoint": True,
-            "object_identity_disjoint": True,
-            "scene_configuration_disjoint": True,
-        },
+        "split_isolation": isolation,
         "normalization": normalization,
         "limitations": [
             "simulation_demonstrations",
@@ -389,6 +418,24 @@ def _write_openpi_manifest(
     (output / "openpi-manifest.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n"
     )
+
+
+def _split_isolation(
+    train: dict[str, Any], heldout: dict[str, Any], hashes: dict[str, list[str]]
+) -> dict[str, Any]:
+    train_ids = {str(value) for value in train["sample_ids"]}
+    heldout_ids = {str(value) for value in heldout["sample_ids"]}
+    id_intersection = sorted(train_ids & heldout_ids)
+    hash_intersection = sorted(set(hashes["train"]) & set(hashes["heldout"]))
+    if id_intersection or hash_intersection:
+        raise Pi05ContractError("train and validation sample identity/content overlap")
+    return {
+        "sample_id_intersection": id_intersection,
+        "sample_hash_intersection": hash_intersection,
+        "disjoint": True,
+        "object_identity_disjoint": True,
+        "scene_configuration_disjoint": True,
+    }
 
 
 def _convert_lerobot(
@@ -426,9 +473,25 @@ def _convert_lerobot(
 def _verify_openpi_readback(output: Path) -> None:
     import numpy as np
 
+    manifest = json.loads((output / "openpi-manifest.json").read_text())
     with np.load(output / "openpi-dataset.npz", allow_pickle=False) as readback:
         if readback["train_actions"].shape[1:] != (15, 8):
             raise Pi05ContractError("OpenPI readback action contract mismatch")
+        for split in ("train", "heldout"):
+            values = {
+                key: readback[f"{split}_{key}"]
+                for key in (
+                    "exterior_image",
+                    "wrist_image",
+                    "joint_position",
+                    "gripper_position",
+                    "actions",
+                    "prompts",
+                    "sample_ids",
+                )
+            }
+            if _sample_hashes(values) != manifest["splits"][split]["sample_hashes"]:
+                raise Pi05ContractError(f"OpenPI {split} camera/action hashes changed")
 
 
 def _dataset_report(
@@ -509,7 +572,13 @@ def main(argv: list[str] | None = None) -> int:
     from npa.clients.storage import StorageClient
 
     storage = StorageClient.from_environment()
-    work = Path(tempfile.mkdtemp(prefix="npa-pi05-data-"))
+    with tempfile.TemporaryDirectory(prefix="npa-pi05-data-") as directory:
+        report = _export_from_storage(args, storage, Path(directory))
+    print(json.dumps(report, sort_keys=True), flush=True)
+    return 0
+
+
+def _export_from_storage(args: Any, storage: Any, work: Path) -> dict[str, Any]:
     roots: dict[str, Path] = {}
     for split in ("train", "validation", "gold"):
         root = work / split
@@ -536,8 +605,7 @@ def main(argv: list[str] | None = None) -> int:
             "normalization_sha256": report["normalization"]["sha256"],
         },
     )
-    print(json.dumps(report, sort_keys=True), flush=True)
-    return 0
+    return report
 
 
 if __name__ == "__main__":

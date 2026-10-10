@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 import types
@@ -10,22 +11,184 @@ import numpy as np
 import pytest
 
 from npa.adapter.sim_to_lerobot import _episode_timestamps
-from npa.workflows.byof.openpi_pipeline import _load_dataset
+from npa.workflows.byof.openpi_pipeline import (
+    OpenPIPipelineError,
+    _load_dataset,
+    _single_host_runtime_evidence,
+)
+from npa.workflows.byof import openpi_service_lifecycle
+from npa.workflows.sim2real import pi05_closed_loop, pi05_isaac
 from npa.workflows.byof.openpi_service_lifecycle import (
     _inject_checkpoint_probe,
     _patch_private_s3_checkpoint,
 )
-from npa.workflows.sim2real.pi05_closed_loop import _success
+from npa.workflows.sim2real.pi05_closed_loop import (
+    _policy_phase,
+    _sampler_noise_pairing,
+    _success,
+    _wrist_variant,
+)
 from npa.workflows.sim2real.pi05_contract import EPISODE_SCHEMA, Pi05ContractError
-from npa.workflows.sim2real.pi05_collect_all import _collector_argv
+from npa.workflows.sim2real.pi05_collect_all import SPLITS, _collector_argv
 from npa.workflows.sim2real.pi05_data import OPENPI_SCHEMA, export_local
 from npa.workflows.sim2real.pi05_isaac import (
     _collection_report,
+    _new_attempt_buffers,
+    _save_partial_attempt,
     configure_surface_goal,
+    support_surface_contract,
 )
 
 
 TARGET = np.asarray([0.0, -0.5, 0.0, -2.0, 0.0, 2.0, 0.7, 0.37], dtype=np.float32)
+SUCCESS_EVENTS = [
+    "contact",
+    "grasp",
+    "lift",
+    "transport",
+    "release",
+    "support_contact",
+    "stable",
+]
+
+
+class _FakeJaxTopology:
+    def __init__(self, processes: int = 1, local: int = 8, global_: int = 8):
+        self._processes = processes
+        self._local = local
+        self._global = global_
+
+    def process_count(self) -> int:
+        return self._processes
+
+    def process_index(self) -> int:
+        return 0
+
+    def local_devices(self) -> list[object]:
+        return [object()] * self._local
+
+    def devices(self) -> list[object]:
+        return [object()] * self._global
+
+
+class _LifecycleApp:
+    def __init__(self, lifecycle: dict[str, bool]):
+        self.lifecycle = lifecycle
+
+    def close(self) -> None:
+        self.lifecycle["app_closed"] = True
+
+
+class _TrackingTemporaryDirectory:
+    def __init__(self, path: Path, lifecycle: dict[str, bool]):
+        self.name = str(path)
+        self.lifecycle = lifecycle
+
+    def __enter__(self) -> str:
+        Path(self.name).mkdir()
+        return self.name
+
+    def __exit__(self, *_args) -> None:
+        self.lifecycle["temp_exited"] = True
+
+
+class _JointTensor:
+    def __init__(self, value: object) -> None:
+        self.value = np.asarray(value)
+
+    def __getitem__(self, item: object) -> _JointTensor:
+        return _JointTensor(self.value[item])
+
+    def detach(self) -> _JointTensor:
+        return self
+
+    def cpu(self) -> _JointTensor:
+        return self
+
+    def numpy(self) -> np.ndarray:
+        return self.value
+
+
+def test_closed_loop_synchronizes_wrist_before_reading_rgb(monkeypatch) -> None:
+    events: list[str] = []
+    robot = Namespace(
+        joint_names=list(pi05_closed_loop.JOINT_NAMES),
+        data=Namespace(joint_pos=_JointTensor([np.arange(7, dtype=np.float32)])),
+    )
+    native = Namespace(scene={"robot": robot})
+
+    monkeypatch.setattr(
+        pi05_closed_loop,
+        "_synchronize_wrist_before_capture",
+        lambda _native: events.append("synchronized"),
+    )
+
+    def rgb(_native: object, name: str) -> np.ndarray:
+        assert events[0] == "synchronized"
+        events.append(name)
+        return np.zeros((224, 224, 3), dtype=np.uint8)
+
+    monkeypatch.setattr(pi05_closed_loop, "_rgb", rgb)
+    monkeypatch.setattr(pi05_closed_loop, "_gripper_width", lambda _native: 0.08)
+
+    _exterior, _wrist, joint, gripper = pi05_closed_loop._policy_observation(native)
+
+    assert events == ["synchronized", "pi05_exterior", "pi05_wrist"]
+    assert joint.tolist() == list(range(7))
+    assert gripper.tolist() == [0.0]
+
+
+def test_closed_loop_wrist_ablation_is_deterministic() -> None:
+    first = np.arange(224 * 224 * 3, dtype=np.uint8).reshape(224, 224, 3)
+    second = np.flip(first, axis=0).copy()
+    frozen = {"wrist_mode": "frozen", "ablation_seed": 7, "frozen_wrist": None}
+    initial, _ = _wrist_variant(frozen, first, 0)
+    later, receipt = _wrist_variant(frozen, second, 1)
+    assert np.array_equal(initial, first)
+    assert np.array_equal(later, first)
+    assert receipt["source_sha256"] != receipt["policy_sha256"]
+
+    left = {
+        "wrist_mode": "pixel_channel_shuffle",
+        "ablation_seed": 11,
+        "frozen_wrist": None,
+    }
+    right = {
+        "wrist_mode": "pixel_channel_shuffle",
+        "ablation_seed": 11,
+        "frozen_wrist": None,
+    }
+    assert np.array_equal(
+        _wrist_variant(left, first, 3)[0], _wrist_variant(right, first, 3)[0]
+    )
+
+
+def test_effectiveness_rejects_absent_sampler_identity() -> None:
+    def episode(mode: str, identity: str | None) -> dict:
+        return {
+            "scenario_seed": 9,
+            "wrist_ablation_mode": mode,
+            "queries": [
+                {"decision": 0, "inference": {"sampler_noise_sha256": identity}}
+            ],
+        }
+
+    modes = ["fresh", "frozen", "pixel_channel_shuffle"]
+    absent = _sampler_noise_pairing([episode(mode, None) for mode in modes], modes)
+    assert absent["sampler_noise_identity_verified"] is False
+    paired = _sampler_noise_pairing([episode(mode, "a" * 64) for mode in modes], modes)
+    assert paired["sampler_noise_identity_verified"] is True
+
+
+def test_pi05_mesh_is_single_host_and_rejects_uninitialized_second_node() -> None:
+    evidence = _single_host_runtime_evidence(
+        _FakeJaxTopology(), {"SKYPILOT_NUM_NODES": "1"}
+    )
+    assert evidence["local_device_count"] == 8
+    with pytest.raises(OpenPIPipelineError, match="supports one host only"):
+        _single_host_runtime_evidence(_FakeJaxTopology(), {"SKYPILOT_NUM_NODES": "2"})
+    with pytest.raises(OpenPIPipelineError, match="supports one host only"):
+        _single_host_runtime_evidence(_FakeJaxTopology(processes=2), {})
 
 
 def test_surface_task_replaces_airborne_goal_and_exports_exact_scenario() -> None:
@@ -37,8 +200,10 @@ def test_surface_task_replaces_airborne_goal_and_exports_exact_scenario() -> Non
     )
     configure_surface_goal(cfg, (0.50, 0.18, 0.025))
     assert ranges.pos_z == (0.025, 0.025)
+    assert cfg.commands.object_pose.debug_vis is False
     attempt = _episode_metadata("cube", "scene", 16)
     attempt["scene_seed"] = 7
+    attempt["support_surface"] = support_surface_contract()
     report = _collection_report([attempt], "cube", "", (1.0, 1.0, 1.0), "scene")
     assert report["successful_scenarios"] == [
         {
@@ -46,8 +211,34 @@ def test_surface_task_replaces_airborne_goal_and_exports_exact_scenario() -> Non
             "scene_configuration_digest": "scene",
             "initial_object_position_m": [0.45, -0.15, 0.025],
             "target_position_m": [0.50, 0.18, 0.025],
+            "destination_marker": attempt["destination_marker"],
+            "support_surface": support_surface_contract(),
         }
     ]
+
+
+def test_failed_semantic_validation_preserves_only_diagnostic_rgb(tmp_path) -> None:
+    buffers = _new_attempt_buffers()
+    exterior = np.full((224, 224, 3), 17, dtype=np.uint8)
+    wrist = np.full((224, 224, 3), 29, dtype=np.uint8)
+    buffers["diagnostic_exterior"].append(exterior)
+    buffers["diagnostic_wrist"].append(wrist)
+    buffers["diagnostic_receipts"].append(
+        {"observation_time_s": 1.0, "wrist_capture_time_s": 1.0}
+    )
+    buffers["wrist_mount_receipts"].append({"refresh_action": "failed_before_rgb"})
+
+    report = _save_partial_attempt(
+        tmp_path, 0, buffers, RuntimeError("semantic label missing")
+    )
+
+    failed = tmp_path / "episode-000000-failed"
+    assert report["training_admitted"] is False
+    assert report["diagnostic_camera_rows"] == 1
+    assert report["wrist_mount_receipts"] == [{"refresh_action": "failed_before_rgb"}]
+    assert np.array_equal(np.load(failed / "diagnostic_workspace.npy"), exterior[None])
+    assert np.array_equal(np.load(failed / "diagnostic_wrist.npy"), wrist[None])
+    assert not (failed / "obs_workspace.npy").exists()
 
 
 def test_lerobot_preserves_episode_relative_source_timestamps() -> None:
@@ -75,8 +266,186 @@ def test_each_split_collector_runs_in_a_fresh_isaac_process() -> None:
     assert argv[argv.index("--object-scale") + 1] == "1.2,1.2,1.2"
 
 
-def _episode_metadata(identity: str, scene: str, length: int) -> dict:
-    steps = []
+def test_default_asset_split_is_size_only_on_one_scene_layout() -> None:
+    assert {row["scene_id"] for row in SPLITS.values()} == {
+        "pi05-single-body-support-layout-v1"
+    }
+    assert {row["object_scale"] for row in SPLITS.values()} == {
+        (0.8, 0.8, 0.8),
+        (1.0, 1.0, 1.0),
+        (1.2, 1.2, 1.2),
+    }
+
+
+def test_collector_uploads_fail_closed_startup_receipt(monkeypatch) -> None:
+    uploaded: dict[str, object] = {}
+
+    class Storage:
+        def upload_directory(self, directory: str, output_uri: str) -> None:
+            uploaded["uri"] = output_uri
+            uploaded["failure"] = json.loads(
+                (Path(directory) / "collection-failure.json").read_text()
+            )
+
+    def fail_environment(*_args) -> None:
+        raise RuntimeError("contact initialization rejected")
+
+    monkeypatch.setattr(
+        "npa.clients.storage.StorageClient.from_environment",
+        classmethod(lambda _cls: Storage()),
+    )
+    monkeypatch.setattr(pi05_isaac, "_graphics_preflight", lambda: {"status": "ok"})
+    monkeypatch.setattr(pi05_isaac, "_make_environment", fail_environment)
+    with pytest.raises(RuntimeError, match="contact initialization rejected"):
+        pi05_isaac.collect(
+            output_uri="s3://example/failure/",
+            episodes=1,
+            seed=7,
+            object_identity="cube",
+            object_usd="",
+            object_scale=(1.0, 1.0, 1.0),
+            scene_id="pi05-single-body-support-layout-v1",
+        )
+    assert uploaded["uri"] == "s3://example/failure/"
+    assert uploaded["failure"]["valid_collection"] is False
+    assert uploaded["failure"]["training_admitted"] is False
+    assert uploaded["failure"]["phase"] == "environment_startup"
+
+
+def test_collector_persists_reset_traceback_before_kit_shutdown(monkeypatch) -> None:
+    events: list[str] = []
+
+    class App:
+        def close(self) -> None:
+            events.append("app.close")
+
+    class Storage:
+        def upload_directory(self, directory: str, _output_uri: str) -> None:
+            report = json.loads(
+                (Path(directory) / "collection-failure.json").read_text()
+            )
+            assert "first reset failed" in report["traceback"]
+            assert "app.close" not in events
+            events.append("upload")
+
+    def fail_after_app(*_args):
+        raise pi05_isaac._EnvironmentSetupError(
+            RuntimeError("first reset failed"), App()
+        )
+
+    monkeypatch.setattr(
+        "npa.clients.storage.StorageClient.from_environment",
+        classmethod(lambda _cls: Storage()),
+    )
+    monkeypatch.setattr(pi05_isaac, "_graphics_preflight", lambda: {"status": "ok"})
+    monkeypatch.setattr(pi05_isaac, "_make_environment", fail_after_app)
+    with pytest.raises(RuntimeError, match="first reset failed"):
+        pi05_isaac.collect(
+            output_uri="s3://example/failure/",
+            episodes=1,
+            seed=7,
+            object_identity="cube",
+            object_usd="",
+            object_scale=(1.0, 1.0, 1.0),
+            scene_id="pi05-single-body-support-layout-v1",
+        )
+    assert events == ["upload", "app.close"]
+
+
+def test_graphics_preflight_rejects_vulkan_without_nvidia_device(monkeypatch) -> None:
+    responses = [
+        Namespace(returncode=0, stdout="", stderr=""),
+        Namespace(returncode=0, stdout="Vulkan Instance Version: 1.3", stderr=""),
+    ]
+    monkeypatch.setattr(
+        pi05_isaac.subprocess, "run", lambda *_a, **_k: responses.pop(0)
+    )
+    with pytest.raises(RuntimeError, match="NVIDIA physical device"):
+        pi05_isaac._graphics_preflight()
+
+
+def test_runtime_closes_app_even_when_environment_close_fails() -> None:
+    events: list[str] = []
+
+    class Env:
+        def close(self) -> None:
+            events.append("env.close")
+            raise RuntimeError("environment close failed")
+
+    class App:
+        def close(self) -> None:
+            events.append("app.close")
+
+    with pytest.raises(RuntimeError, match="environment close failed"):
+        pi05_isaac._close_runtime(Env(), App())
+    assert events == ["env.close", "app.close"]
+
+
+def test_collection_failure_receipt_redacts_private_uris() -> None:
+    report = pi05_isaac._failure_report(
+        RuntimeError("asset s3://private-bucket/owned/object failed"),
+        "scene",
+        "environment_startup",
+    )
+    assert "private-bucket" not in json.dumps(report)
+    assert "<redacted-uri>" in report["failure"]
+
+
+def test_closed_loop_persists_graphics_failure_before_kit(monkeypatch) -> None:
+    uploaded = {}
+
+    class Storage:
+        def upload_directory(self, directory, uri, *, require_empty):
+            uploaded.update(
+                uri=uri,
+                require_empty=require_empty,
+                report=json.loads((Path(directory) / "report.json").read_text()),
+            )
+
+    monkeypatch.setattr(
+        "npa.clients.storage.StorageClient.from_environment",
+        classmethod(lambda _cls: Storage()),
+    )
+    monkeypatch.setattr(
+        pi05_closed_loop,
+        "_graphics_preflight",
+        lambda: (_ for _ in ()).throw(RuntimeError("Vulkan unavailable")),
+    )
+    args = Namespace(artifact_root_uri="s3://example/closed-loop-failure/")
+    with pytest.raises(RuntimeError, match="Vulkan unavailable"):
+        pi05_closed_loop.run(args)
+    assert uploaded["require_empty"] is True
+    assert uploaded["report"]["phase"] == "graphics_preflight"
+
+
+def test_collector_main_returns_nonzero_on_runtime_failure(monkeypatch, capsys) -> None:
+    def fail_collection(**_kwargs) -> None:
+        raise RuntimeError("sensor reset failed")
+
+    monkeypatch.setattr(pi05_isaac, "collect", fail_collection)
+    result = pi05_isaac.main(
+        [
+            "--output-uri",
+            "s3://example/failure/",
+            "--episodes",
+            "1",
+            "--seed",
+            "7",
+            "--object-identity",
+            "cube",
+            "--scene-id",
+            "pi05-single-body-support-layout-v1",
+        ]
+    )
+    assert result == 1
+    failure = json.loads(capsys.readouterr().err)
+    assert failure["valid_collection"] is False
+    assert failure["training_admitted"] is False
+    assert failure["phase"] == "collection_runtime"
+
+
+def _dense_steps(length: int) -> list[dict]:
+    steps: list[dict] = []
     for index in range(length):
         timestamp = (index + 1) / 15
         action = TARGET.copy()
@@ -104,6 +473,10 @@ def _episode_metadata(identity: str, scene: str, length: int) -> dict:
                 },
             }
         )
+    return steps
+
+
+def _episode_metadata(identity: str, scene: str, length: int) -> dict:
     return {
         "schema": EPISODE_SCHEMA,
         "episode_id": f"episode-{identity}",
@@ -114,20 +487,24 @@ def _episode_metadata(identity: str, scene: str, length: int) -> dict:
         "object_width_m": 0.05,
         "initial_object_position_m": [0.45, -0.15, 0.025],
         "target_position_m": [0.50, 0.18, 0.025],
+        "destination_marker": {
+            "source": "isaaclab_noncolliding_cylinder_primitive",
+            "center_xy_m": [0.50, 0.18],
+            "support_z_m": 0.0,
+            "radius_m": 0.05,
+            "height_m": 0.001,
+            "color_rgb": [0.0, 0.85, 0.85],
+            "semantic_label": "pi05_destination_marker",
+            "minimum_exterior_semantic_pixels": 16,
+            "physics_collision": False,
+        },
+        "support_surface": support_surface_contract(),
         "scene_configuration_digest": scene,
         "scene_seed": 41,
         "instruction": "pick and place",
-        "steps": steps,
+        "steps": _dense_steps(length),
         "success_evidence": {
-            "ordered_events": [
-                "contact",
-                "grasp",
-                "lift",
-                "transport",
-                "release",
-                "support_contact",
-                "stable",
-            ],
+            "ordered_events": SUCCESS_EVENTS,
             "released_supported_surface_placement": True,
             "stable_steps": 3,
         },
@@ -138,16 +515,41 @@ def _write_episode(root: Path, identity: str, scene: str, length: int = 16) -> N
     episode = root / "episode-000000"
     episode.mkdir(parents=True)
     metadata = _episode_metadata(identity, scene, length)
-    (episode / "episode.json").write_text(json.dumps(metadata))
     frames = np.zeros((length, 224, 224, 3), dtype=np.uint8)
     frames[:, 80:120, 80:120] = sum(identity.encode()) % 255
+    wrist_frames = frames[:, :, ::-1]
+    _bind_frame_hashes(metadata["steps"], frames, wrist_frames)
+    (episode / "episode.json").write_text(json.dumps(metadata))
     np.save(episode / "obs_workspace.npy", frames)
-    np.save(episode / "obs_wrist.npy", frames[:, :, ::-1])
+    np.save(episode / "obs_wrist.npy", wrist_frames)
     state = np.r_[TARGET[:7], np.float32(0.0)]
     np.save(episode / "state.npy", np.tile(state, (length, 1)).astype(np.float32))
     actions = np.asarray([row["action"] for row in metadata["steps"]], dtype=np.float32)
     np.save(episode / "actions.npy", actions)
     np.save(episode / "timestamps.npy", np.arange(1, length + 1) / 15)
+    _write_physics_trace(episode, length)
+
+
+def _bind_frame_hashes(
+    steps: list[dict], exterior: np.ndarray, wrist: np.ndarray
+) -> None:
+    for index, row in enumerate(steps):
+        exterior_hash = hashlib.sha256(exterior[index].tobytes()).hexdigest()
+        wrist_hash = hashlib.sha256(wrist[index].tobytes()).hexdigest()
+        row["exterior_image_1_left"].update({"sha256": exterior_hash, "age_s": 0.0})
+        row["wrist_image_left"].update({"sha256": wrist_hash, "age_s": 0.0})
+        identity = {
+            "step": index,
+            "exterior": exterior_hash,
+            "wrist": wrist_hash,
+            "action": row["action"],
+        }
+        row["row_identity_sha256"] = hashlib.sha256(
+            json.dumps(identity, sort_keys=True).encode()
+        ).hexdigest()
+
+
+def _write_physics_trace(episode: Path, length: int) -> None:
     position = np.tile([0.45, -0.15, 0.025], (length, 1)).astype(np.float32)
     position[1] = [0.45, -0.15, 0.031]
     position[2:12] = [0.50, 0.18, 0.10]
@@ -263,33 +665,94 @@ def test_export_rejects_claimed_success_without_post_retreat_physics(
 def test_surface_success_requires_three_consecutive_supported_release_steps() -> None:
     base = {
         "bilateral_finger_contact": False,
-        "object_lift_m": 0.06,
-        "target_xy_distance_m": 0.01,
+        "gripper_closing_intent": False,
+        "object_width_m": 0.05,
+        "object_lift_m": 0.0,
+        "target_xy_distance_m": 0.3,
         "gripper_width_m": 0.07,
-        "object_support_force_n": 1.0,
+        "object_support_force_n": 0.0,
         "object_speed_m_s": 0.0,
+        "hand_object_distance_m": 0.02,
+    }
+    gripping = {
+        **base,
+        "bilateral_finger_contact": True,
+        "gripper_closing_intent": True,
+        "gripper_width_m": 0.05,
+        "object_speed_m_s": 0.01,
+    }
+    placed = {
+        **base,
+        "object_lift_m": 0.0,
+        "target_xy_distance_m": 0.01,
+        "object_support_force_n": 1.0,
         "hand_object_distance_m": 0.12,
     }
     trace = [
-        {**base, "bilateral_finger_contact": True},
-        base,
-        {**base, "object_support_force_n": 0.0},
-        base,
-        base,
+        {**gripping, "object_speed_m_s": 0.0},
+        gripping,
+        gripping,
+        {**gripping, "object_lift_m": 0.06},
+        {**gripping, "object_lift_m": 0.06, "target_xy_distance_m": 0.01},
+        placed,
+        placed,
     ]
     assert not _success(trace)["released_supported_surface_placement"]
-    trace.append(base)
-    assert _success(trace)["released_supported_surface_placement"]
-    trace[-1] = {**base, "hand_object_distance_m": 0.05}
+    trace.append(placed)
+    assert not _success(trace)["released_supported_surface_placement"]
+    trace.append(placed)
+    result = _success(trace)
+    assert result["released_supported_surface_placement"]
+    assert result["support_contact"] is True
+    assert list(result["ordered_event_steps"]) == result["required_event_order"]
+    trace[-1] = {**placed, "hand_object_distance_m": 0.05}
     assert not _success(trace)["released_supported_surface_placement"]
 
 
-def test_service_manifest_adds_private_checkpoint_probe_without_client_job(
-    monkeypatch,
-) -> None:
-    manifests = {
+def test_policy_phase_requires_ordered_release_before_retreat() -> None:
+    initial = {
+        "bilateral_finger_contact": False,
+        "gripper_closing_intent": False,
+        "object_width_m": 0.05,
+        "object_lift_m": 0.0,
+        "target_xy_distance_m": 0.18,
+        "gripper_width_m": 0.08,
+        "object_support_force_n": 0.6,
+        "object_speed_m_s": 0.0,
+        "hand_object_distance_m": 0.2,
+    }
+    gripping = {
+        **initial,
+        "bilateral_finger_contact": True,
+        "gripper_closing_intent": True,
+        "gripper_width_m": 0.05,
+        "object_support_force_n": 0.0,
+        "object_speed_m_s": 0.01,
+        "hand_object_distance_m": 0.02,
+    }
+    trace = [initial]
+    assert _policy_phase({"physics_trace": trace}) == "approach"
+    lifted = {**gripping, "object_lift_m": 0.06}
+    trace.extend([gripping, gripping, gripping, lifted])
+    assert _policy_phase({"physics_trace": trace}) == "transport"
+    trace.append({**gripping, "object_lift_m": 0.06, "target_xy_distance_m": 0.01})
+    assert _policy_phase({"physics_trace": trace}) == "lower"
+    placed = {
+        **initial,
+        "target_xy_distance_m": 0.01,
+        "hand_object_distance_m": 0.12,
+    }
+    trace.append(placed)
+    assert _policy_phase({"physics_trace": trace}) == "release"
+    trace.append(placed)
+    assert _policy_phase({"physics_trace": trace}) == "retreat"
+
+
+def _private_checkpoint_manifests() -> dict:
+    return {
         "secret": {"metadata": {"name": "secret"}, "data": {}},
         "deployment": {
+            "metadata": {"labels": {"app.kubernetes.io/managed-by": "npa-openpi"}},
             "spec": {
                 "template": {
                     "spec": {
@@ -300,19 +763,30 @@ def test_service_manifest_adds_private_checkpoint_probe_without_client_job(
                                     "/bin/bash",
                                     "-lc",
                                     "checkpoint_dir=$(python -c 'print(os.environ[\"OPENPI_CHECKPOINT_URI\"])'); "
-                                    "exec /opt/venv/bin/python /opt/byof/scripts/serve_policy.py",
+                                    "exec /opt/venv/bin/python -c 'wrapper'",
                                 ],
                             }
                         ]
                     }
                 }
-            }
+            },
         },
     }
+
+
+def test_service_manifest_adds_private_checkpoint_probe_without_client_job(
+    monkeypatch,
+) -> None:
+    manifests = _private_checkpoint_manifests()
     monkeypatch.setenv("AWS_ENDPOINT_URL", "https://storage.invalid")
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "redacted")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "redacted")
-    _patch_private_s3_checkpoint(manifests, "s3://private/checkpoint")
+    _patch_private_s3_checkpoint(
+        manifests,
+        "s3://private/checkpoint",
+        run_id="private-checkpoint",
+        namespace="default",
+    )
     _inject_checkpoint_probe(manifests)
     shell = manifests["deployment"]["spec"]["template"]["spec"]["containers"][0][
         "command"
@@ -320,3 +794,121 @@ def test_service_manifest_adds_private_checkpoint_probe_without_client_job(
     assert "npa-openpi-loaded-checkpoint.json" in shell
     assert "NPA_RESOLVED_CHECKPOINT_DIR" in shell
     assert set(manifests) == {"secret", "deployment"}
+
+
+def _cleanup_args() -> Namespace:
+    values = [
+        "cleanup",
+        "--run-id=private-checkpoint",
+        "--output-uri=file:///tmp/cleanup.json",
+        "--component-root-uri=file:///tmp/components",
+        "--runtime-image=registry.invalid/openpi@sha256:" + "0" * 64,
+        "--checkpoint-uri=s3://private/checkpoint",
+        "--checkpoint-role=adapted",
+        "--auth-secret=operator-openpi-auth",
+        "--expected-gpu-type=RTXPRO6000",
+        "--expected-compute-capability=12.0",
+        "--gpu-node-selector-value=RTXPRO6000",
+    ]
+    return openpi_service_lifecycle.build_parser().parse_args(values)
+
+
+def test_cleanup_manifest_reconstruction_needs_no_s3_credentials(monkeypatch) -> None:
+    for name in ("AWS_ENDPOINT_URL", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(
+        openpi_service_lifecycle,
+        "build_manifests",
+        lambda **_kwargs: {
+            "deployment": {
+                "metadata": {"labels": {"app.kubernetes.io/managed-by": "npa-openpi"}},
+                "spec": {"template": {"spec": {"containers": [{"env": []}]}}},
+            }
+        },
+    )
+    monkeypatch.setattr(
+        openpi_service_lifecycle, "_inject_checkpoint_probe", lambda _manifests: None
+    )
+
+    manifests = openpi_service_lifecycle._manifests(
+        _cleanup_args(), include_checkpoint_credentials=False
+    )
+
+    assert set(manifests) == {"deployment"}
+    assert "AWS_ACCESS_KEY_ID" not in str(manifests)
+
+
+def test_cleanup_reconstructs_owned_runtime_secret_without_credentials(
+    monkeypatch,
+) -> None:
+    args = _cleanup_args()
+    deployment = {
+        "metadata": {"labels": {"app.kubernetes.io/managed-by": "npa-openpi"}},
+        "spec": {"template": {"spec": {"containers": [{"env": []}]}}},
+    }
+    monkeypatch.setattr(
+        openpi_service_lifecycle,
+        "_manifests",
+        lambda *_args, **_kwargs: {"deployment": deployment, "service": {}},
+    )
+    monkeypatch.setattr(openpi_service_lifecycle, "_clients", lambda: (1, 2, 3))
+    captured = {}
+
+    def delete(*_clients, **kwargs):
+        captured.update(kwargs)
+        return {name: True for name in kwargs["created"]}
+
+    monkeypatch.setattr(openpi_service_lifecycle, "_delete_and_verify", delete)
+    monkeypatch.setattr(
+        openpi_service_lifecycle, "_publish_cleanup_result", lambda *_args: {}
+    )
+    assert openpi_service_lifecycle._cleanup(args) == 0
+    assert "secret" in captured["created"]
+    runtime_secret = captured["manifests"]["secret"]
+    assert runtime_secret["metadata"]["name"].endswith("-runtime")
+    assert "data" not in runtime_secret and "stringData" not in runtime_secret
+
+
+def test_closed_loop_closes_app_and_temporary_directory_on_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lifecycle = {"app_closed": False, "temp_exited": False}
+    app_module = types.SimpleNamespace(
+        AppLauncher=lambda **_kwargs: types.SimpleNamespace(
+            app=_LifecycleApp(lifecycle)
+        )
+    )
+    monkeypatch.setitem(sys.modules, "isaaclab", types.SimpleNamespace(app=app_module))
+    monkeypatch.setitem(sys.modules, "isaaclab.app", app_module)
+    monkeypatch.setitem(sys.modules, "isaaclab_tasks", types.SimpleNamespace())
+    monkeypatch.setitem(
+        sys.modules,
+        "isaaclab_tasks.utils",
+        types.SimpleNamespace(parse_env_cfg=lambda *_args, **_kwargs: None),
+    )
+    monkeypatch.setitem(sys.modules, "gymnasium", types.SimpleNamespace())
+    monkeypatch.setattr(
+        pi05_closed_loop.tempfile,
+        "TemporaryDirectory",
+        lambda **_kwargs: _TrackingTemporaryDirectory(
+            tmp_path / "closed-loop", lifecycle
+        ),
+    )
+    monkeypatch.setattr(
+        pi05_closed_loop,
+        "_run_from_receipt",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("receipt failed")),
+    )
+    monkeypatch.setattr(
+        pi05_closed_loop,
+        "_graphics_preflight",
+        lambda: {"status": "passed"},
+    )
+    monkeypatch.setattr(
+        pi05_closed_loop,
+        "_persist_evaluation_failure",
+        lambda *_args: None,
+    )
+    with pytest.raises(RuntimeError, match="receipt failed"):
+        pi05_closed_loop.run(Namespace())
+    assert lifecycle == {"app_closed": True, "temp_exited": True}

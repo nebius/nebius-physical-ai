@@ -152,9 +152,6 @@ MANUAL_GATES = {
     "NPA_ANTIOCH_ACCEPT_TERMS": (
         "Antioch live validation requires the operator's own runtime terms acceptance"
     ),
-    "NPA_OPENPI_ACCEPT_GEMMA_TERMS": (
-        "OpenPI live validation requires the operator's own Gemma terms acceptance"
-    ),
     "NPA_BYOF_WAN22_LIVE_GPU": "Wan single-GPU BYOF mutation requires an explicitly selected validation run",
     "NPA_BYOF_WAN22_MULTIGPU_LIVE_GPU": "Wan multi-GPU BYOF mutation requires an explicitly selected validation run",
     "NPA_BYOF_WAN22_WORKER_VERIFY": (

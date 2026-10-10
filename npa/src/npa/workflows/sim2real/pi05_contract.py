@@ -54,32 +54,72 @@ def _task_contract() -> dict[str, Any]:
             "old_strict_5cm_diagnostic_preserved": True,
         },
         "task": {
-            "instruction": "Pick up the object and place it inside the target area on the table.",
+            "instruction": "Pick up the object and place it inside the cyan circular target on the table.",
             "support_surface": "table",
             "target_xy_m": {"x": [0.42, 0.58], "y": [0.10, 0.25]},
             "target_z": "derived from measured table top plus half object height",
             "object_initial_xy_m": {"x": [0.42, 0.55], "y": [-0.25, -0.08]},
             "object_motion": "physics_only_no_teleport_or_direct_object_state_write",
+            "destination_marker": {
+                "shape": "noncolliding_rendered_disc",
+                "color": "cyan",
+                "radius_m": 0.05,
+                "semantic_label": "pi05_destination_marker",
+                "pose": "centered_on_declared_target_xy_at_measured_support_surface",
+                "exterior_visibility": "raw_int32_semantic_pixels_required",
+            },
         },
-        "success": {
-            "authoritative_metric": "released_supported_surface_placement_v1",
-            "required_event_order": [
-                "contact",
-                "grasp",
-                "lift",
-                "transport",
-                "release",
-                "support_contact",
-                "stable",
-            ],
-            "target_xy_distance_m_lt": 0.05,
-            "object_speed_m_s_lt": 0.03,
-            "stable_steps_gte": 3,
-            "lift_delta_m_gte": 0.05,
-            "gripper_released_width_m_gte": 0.06,
-            "hand_object_retreat_distance_m_gte": 0.10,
-            "old_goal_distance_5cm": "diagnostic_only_not_cross_task_comparison",
-        },
+        "success": _surface_success_contract(),
+    }
+
+
+def _surface_success_contract() -> dict[str, Any]:
+    return {
+        "authoritative_metric": "released_supported_surface_placement_v1",
+        "required_event_order": [
+            "contact",
+            "grasp",
+            "lift",
+            "transport",
+            "release",
+            "support_contact",
+            "stable",
+        ],
+        "target_xy_distance_m_lt": 0.05,
+        "object_speed_m_s_lt": 0.03,
+        "stable_steps_gte": 3,
+        "lift_delta_m_gte": 0.05,
+        "gripper_released_width_m_gte": 0.06,
+        "hand_object_retreat_distance_m_gte": 0.10,
+        "old_goal_distance_5cm": "diagnostic_only_not_cross_task_comparison",
+    }
+
+
+def _wrist_observation_contract() -> dict[str, Any]:
+    return {
+        "dtype": "uint8",
+        "shape": [224, 224, 3],
+        "mount": "calibrated_live_panda_hand_world_pose",
+        "renderer_bridge": "world_usd_and_fabric",
+        "mount_translation_m": [0.025, 0.0, 0.035],
+        "mount_quaternion_xyzw": [0.0, 0.0, 0.0, 1.0],
+        "quaternion_order": "xyzw",
+        "offset_convention": "ros",
+        "optical_convention": "ros_forward_positive_z",
+        "hand_axis": "panda_fingers_extend_positive_z",
+        "focal_length_mm": 18.0,
+        "latest_pose_updates": True,
+        "semantic_labels": "int32_little_endian_packed_rgba_metadata_bijection",
+        "rendered_visibility_labels": [
+            "pi05_target_object",
+            "pi05_left_finger",
+            "pi05_right_finger",
+        ],
+        "geometry_projection_scope": (
+            "usd_untransformed_link_bounds_transformed_by_"
+            "live_articulation_pose_in_frustum_not_visibility"
+        ),
+        "moving_with_end_effector": True,
     }
 
 
@@ -90,15 +130,9 @@ def _observation_contract() -> dict[str, Any]:
                 "dtype": "uint8",
                 "shape": [224, 224, 3],
                 "mount": "world",
+                "required_rendered_label": "pi05_destination_marker",
             },
-            "wrist_image_left": {
-                "dtype": "uint8",
-                "shape": [224, 224, 3],
-                "mount": "panda_hand",
-                "mount_translation_m": [0.045, 0.0, 0.035],
-                "mount_quaternion_wxyz": [0.0, 0.0, 1.0, 0.0],
-                "moving_with_end_effector": True,
-            },
+            "wrist_image_left": _wrist_observation_contract(),
             "joint_position": {
                 "dtype": "float32",
                 "shape": [7],
@@ -158,6 +192,9 @@ def _data_contract() -> dict[str, Any]:
             "failures_retained_as_evidence": True,
             "normalization": "train_split_only",
             "split_keys": ["object_identity", "scene_configuration_digest"],
+            "asset_holdout": "one multicolor-cube USD at 40/50/60 mm",
+            "novel_object_categories": False,
+            "distinct_scene_layouts": False,
             "public_seed": "rejected: lift-only 7D relative actions and insufficient task/camera contract",
         },
         "upstream": {
@@ -439,6 +476,17 @@ def _validate_episode_header(episode: Mapping[str, Any]) -> None:
         raise Pi05ContractError("object width is missing or incompatible with Franka")
     if not isinstance(episode.get("scene_seed"), int):
         raise Pi05ContractError("scene randomization seed provenance is missing")
+    marker = episode.get("destination_marker")
+    if not isinstance(marker, Mapping):
+        raise Pi05ContractError("episode lacks rendered destination provenance")
+    if (
+        marker.get("semantic_label") != "pi05_destination_marker"
+        or marker.get("physics_collision") is not False
+        or int(marker.get("minimum_exterior_semantic_pixels") or 0) < 16
+    ):
+        raise Pi05ContractError(
+            "destination must be a rendered non-colliding exterior-visible marker"
+        )
 
 
 def validate_dense_episode(episode: Mapping[str, Any]) -> dict[str, Any]:

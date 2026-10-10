@@ -20,24 +20,23 @@ config:
   require_baked_npa: "1"
   baked_npa_import: npa.workflows.sim2real.pi05_stage
 
-  controller_image: ""
+  cpu_image: ""
   isaac_image: ""
-  data_image: ""
   runtime_image: "registry.example.invalid/openpi@sha256:0000000000000000000000000000000000000000000000000000000000000000"
-  viewer_image: ""
   isaac_cache_pvc: ""
 
   base_config_name: pi05_droid_jointpos_polaris
   base_checkpoint_uri: "gs://openpi-assets/checkpoints/polaris/pi05_droid_jointpos_polaris"
-  gpu_type: B200
-  gpu_count: "1"
-  expected_gpu_type: B200
-  expected_compute_capability: "10.0"
+  training_gpu_type: B200
+  training_gpu_count: "1"
+  training_expected_gpu_type: B200
+  training_expected_compute_capability: "10.0"
   gpu_cpus: "16"
   gpu_memory: 96Gi
   gpu_disk_size: "100"
-  gpu_num_nodes: "1"
+  training_num_nodes: "1"
   isaac_gpu_type: RTXPRO6000
+  isaac_runtime_class: nvidia
   isaac_cpus: "16"
   isaac_memory: 128Gi
   isaac_disk_size: "100"
@@ -51,6 +50,8 @@ config:
   gold_episodes: "8"
   gold_seed: "20271007"
   eval_decisions: "24"
+  wrist_ablation_modes: fresh,frozen,pixel_channel_shuffle
+  wrist_ablation_seed: "20271008"
   train_steps: "1000"
   train_batch_size: "8"
   train_fsdp_devices: "1"
@@ -59,7 +60,11 @@ config:
   evaluation_batch_size: "4"
 
   service_namespace: default
+  service_auth_secret: replace-with-operator-openpi-auth-secret
   service_account: npa-openpi-pi05-controller
+  service_gpu_count: "1"
+  service_expected_gpu_type: B200
+  service_expected_compute_capability: "10.0"
   service_gpu_node_selector_key: nebius.com/gpu-name
   service_gpu_node_selector_value: B200
   service_server_cpus: "16"
@@ -81,8 +86,7 @@ config:
   dataset_uri: "{{config.dataset_root_uri}}openpi-dataset.npz"
   dataset_manifest_uri: "{{config.dataset_root_uri}}openpi-manifest.json"
   lerobot_uri: "{{config.dataset_root_uri}}lerobot-v3/"
-  terms_diagnostic_root_uri: "{{config.root_uri}}/diagnostics/terms-refusals"
-  negative_gate_uri: "{{config.root_uri}}/stage_04_gate/negative-terms-gate.json"
+  artifact_preflight_uri: "{{config.root_uri}}/stage_04_artifact/preflight.json"
 
   base_service_start_uri: "{{config.root_uri}}/stage_05_base_service/start.json"
   base_service_cleanup_uri: "{{config.root_uri}}/stage_07_base_cleanup/cleanup.json"
@@ -110,20 +114,26 @@ resources:
     cpus: "{{config.cpu_cpus}}"
     memory: "{{config.cpu_memory}}"
     disk_size: "{{config.cpu_disk_size}}"
-    image: "{{config.controller_image}}"
+    image: "{{config.cpu_image}}"
   data:
     cloud: kubernetes
     cpus: "{{config.cpu_cpus}}"
     memory: "{{config.cpu_memory}}"
     disk_size: "{{config.cpu_disk_size}}"
-    image: "{{config.data_image}}"
-  openpi:
+    image: "{{config.cpu_image}}"
+  openpi-artifact:
     cloud: kubernetes
-    accelerators: "{{config.gpu_type}}:{{config.gpu_count}}"
+    cpus: "2"
+    memory: 8Gi
+    disk_size: "20"
+    image: "{{config.runtime_image}}"
+  openpi-training:
+    cloud: kubernetes
+    accelerators: "{{config.training_gpu_type}}:{{config.training_gpu_count}}"
     cpus: "{{config.gpu_cpus}}"
     memory: "{{config.gpu_memory}}"
     disk_size: "{{config.gpu_disk_size}}"
-    num_nodes: "{{config.gpu_num_nodes}}"
+    num_nodes: "{{config.training_num_nodes}}"
     image: "{{config.runtime_image}}"
   isaac:
     cloud: kubernetes
@@ -136,6 +146,7 @@ resources:
       provision_timeout: 2400
       pod_config:
         spec:
+          runtimeClassName: "{{config.isaac_runtime_class}}"
           containers:
             - name: ray-node
               env:
@@ -143,6 +154,11 @@ resources:
                 - {name: NPA_ISAAC_CACHE_READONLY, value: "1"}
                 - {name: NPA_ISAAC_BOOTSTRAP_OFFLINE, value: "1"}
                 - {name: NPA_BAKED_PYTHON, value: /opt/npa/sim/venv/bin/python}
+                - name: NPA_OPENPI_SERVICE_AUTH_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: "{{config.service_auth_secret}}"
+                      key: auth_token
               volumeMounts:
                 - {name: npa-isaac-runtime-cache, mountPath: /opt/isaac-cache, readOnly: true}
           volumes:
@@ -153,7 +169,7 @@ resources:
     cpus: "2"
     memory: 8Gi
     disk_size: "20"
-    image: "{{config.controller_image}}"
+    image: "{{config.cpu_image}}"
     kubernetes:
       pod_config:
         spec:
@@ -163,7 +179,7 @@ resources:
     cpus: "{{config.cpu_cpus}}"
     memory: "{{config.cpu_memory}}"
     disk_size: "{{config.cpu_disk_size}}"
-    image: "{{config.viewer_image}}"
+    image: "{{config.cpu_image}}"
 
 initial: prepare-contract
 
@@ -179,8 +195,9 @@ states:
 
   collect-expert:
     description: >
-      Run the differential-IK expert in real Isaac physics for disjoint object
-      morphologies/scenes; record every causal exterior+wrist/state/action row,
+      Run the differential-IK expert in real Isaac physics for 40/50/60 mm size
+      and randomized-physics holdouts of one multicolor-cube family on the same
+      task-owned single-body support layout; record every causal exterior+wrist/state/action row,
       bilateral grasp forces, lift, transport, release and table support dwell.
     needs: [prepare-contract]
     toolRef: workbench.sim2real.pi05_collect_all
@@ -206,21 +223,21 @@ states:
       - {uri: "{{config.dataset_root_uri}}dataset-report.json", schema: npa.sim2real.pi05.dense_dataset.v1}
       - {uri: "{{config.lerobot_uri}}meta/info.json", schema: lerobot.dataset.v3.info}
       - {uri: "{{config.component_root_uri}}/components/stage_03.json", schema: npa.sim2real.component_record.v1}
-    next: negative-terms-gate
+    next: artifact-preflight
 
-  negative-terms-gate:
-    description: Prove the existing product gate refuses checkpoint access when acceptance is removed.
+  artifact-preflight:
+    description: Prove anonymous payload-byte access and generation/checksum provenance for authoritative public Polaris.
     needs: [export-dataset]
-    toolRef: workbench.openpi.negative_terms_gate
-    resources: openpi
+    toolRef: workbench.openpi.artifact_preflight
+    resources: openpi-artifact
     outputs:
-      - {uri: "{{config.negative_gate_uri}}", schema: npa.workbench.openpi.live-negative-terms-gate.v1}
+      - {uri: "{{config.artifact_preflight_uri}}", schema: npa.workbench.openpi.public-artifact-preflight.v1}
       - {uri: "{{config.component_root_uri}}/components/stage_04.json", schema: npa.sim2real.component_record.v1}
     next: start-base-service
 
   start-base-service:
     description: Start a private digest-pinned base pi0.5 server; the graph owns the later Isaac client and cleanup.
-    needs: [negative-terms-gate]
+    needs: [artifact-preflight]
     toolRef: workbench.openpi.pi05_base_service_start
     resources: service-control
     outputs:
@@ -253,8 +270,8 @@ states:
   train-lora:
     description: Run upstream-native pi0.5 LoRA on successful train demonstrations and publish reloadable bytes.
     needs: [cleanup-base-service]
-    toolRef: workbench.openpi.train
-    resources: openpi
+    toolRef: workbench.openpi.pi05_surface_train
+    resources: openpi-training
     outputs:
       - {uri: "{{config.training_uri}}", schema: npa.workbench.openpi.pi05-training.v1}
       - {uri: "{{config.trained_checkpoint_manifest_uri}}", schema: npa.workbench.openpi.checkpoint-manifest.v1}
@@ -264,8 +281,8 @@ states:
   reload-validation:
     description: Reload the exact selected checkpoint and evaluate model loss/action targets on held-out validation data.
     needs: [train-lora]
-    toolRef: workbench.openpi.evaluate
-    resources: openpi
+    toolRef: workbench.openpi.pi05_surface_evaluate
+    resources: openpi-training
     outputs:
       - {uri: "{{config.reload_uri}}", schema: npa.workbench.openpi.pi05-heldout-evaluation.v1}
       - {uri: "{{config.component_root_uri}}/components/stage_09.json", schema: npa.sim2real.component_record.v1}

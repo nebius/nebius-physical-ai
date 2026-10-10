@@ -170,8 +170,9 @@ containers:
       external_fetch: [gcs-droid-runtime, gcs-openpi-weights-runtime, s3-runtime]
       notes: >-
         Pinned Apache-2.0 source and dependencies are baked. Weights, DROID
-        records, credentials, terms acceptance, trained checkpoints, and caches
-        remain runtime-only. Gemma terms acceptance is required per run.
+        records, credentials, trained checkpoints, and caches remain runtime-only.
+        Public Polaris is fetched anonymously only after exact GCS
+        generation/checksum/payload integrity checks; NPA adds no consent flag.
     golden_eval:
       kind: container-smoke
       command: >-

@@ -84,6 +84,10 @@ COPY --chown=ubuntu:ubuntu docker/workbench/common/sim2real-controller-requireme
     /opt/npa/sim2real-controller-requirements.txt
 COPY --chown=ubuntu:ubuntu docker/workbench/common/sim2real-control-requirements.txt \
     /opt/npa/sim2real-control-requirements.txt
+COPY --chown=ubuntu:ubuntu docker/workbench/rerun-viewer/kubernetes36-requirements.txt \
+    /opt/npa/kubernetes36-requirements.txt
+COPY --chown=ubuntu:ubuntu docker/workbench/rerun-viewer/verify_pi05_conversion.py \
+    /opt/npa/verify_pi05_conversion.py
 COPY --chown=ubuntu:ubuntu --chmod=0755 docker/workbench/rerun-viewer/entrypoint.sh \
     /opt/npa/docker/workbench/rerun-viewer/entrypoint.sh
 
@@ -100,10 +104,17 @@ RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
       -r /opt/npa/sim2real-viewer-requirements.txt \
       -r /opt/npa/sim2real-controller-requirements.txt \
       -r /opt/npa/sim2real-control-requirements.txt \
+    && python -m pip install --no-cache-dir --no-deps \
+      -r /opt/npa/kubernetes36-requirements.txt \
     && python -m pip check \
     && python -c "import site; from pathlib import Path; Path(site.getsitepackages()[0], 'npa-exact-source.pth').write_text('/opt/npa/src\n', encoding='utf-8')" \
     && env -u PYTHONPATH python -c \
       'import boto3, mcap, rerun; from npa.workflows.sim2real.workflow_stage import main; assert callable(main)' \
+    && python -m npa.workflows.sim2real.pi05_stage --help >/dev/null \
+    && python -m npa.workflows.sim2real.pi05_data --help >/dev/null \
+    && python -m npa.workflows.byof.openpi_service_lifecycle --help >/dev/null \
+    && python /opt/npa/verify_pi05_conversion.py \
+    && python -c 'import importlib.metadata as m; assert m.version("cryptography") == "50.0.2" and m.version("kubernetes") == "36.0.3"' \
     && python -c 'import os, rerun; assert rerun.__version__ == os.environ["RERUN_SDK_VERSION"]'
 
 WORKDIR /workspace

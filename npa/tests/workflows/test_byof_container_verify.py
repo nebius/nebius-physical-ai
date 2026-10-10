@@ -3614,20 +3614,17 @@ def test_runtime_secret_channel_has_no_invented_wan_consent(monkeypatch) -> None
     assert module.resolve_secret_envs(["HF_TOKEN"], solution_name="wan2.2") == []
 
 
-def test_openpi_runtime_acceptance_uses_secret_channel(monkeypatch) -> None:
+def test_public_openpi_runtime_has_no_model_secret_channel(monkeypatch) -> None:
     module = _load_module()
-    monkeypatch.setenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", "YES")
+    monkeypatch.setenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", "hostile-canary")
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "probe-id")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "probe-secret")
 
     assert module.resolve_secret_envs(None, solution_name="openpi") == [
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",
-        "NPA_OPENPI_ACCEPT_GEMMA_TERMS",
     ]
-    assert module.resolve_secret_envs(["HF_TOKEN"], solution_name="openpi") == [
-        "NPA_OPENPI_ACCEPT_GEMMA_TERMS"
-    ]
+    assert module.resolve_secret_envs(["HF_TOKEN"], solution_name="openpi") == []
 
 
 def test_robotwin_gate_evidence_uses_secret_channel(monkeypatch) -> None:

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import os
+import re
 import time
 from typing import Any
 
@@ -52,13 +55,21 @@ def _unpack_array(value: dict[bytes, Any]) -> Any:
 class Pi05PolicyClient:
     """Small exact implementation of pinned ``openpi-client`` wire semantics."""
 
-    def __init__(self, host: str, port: int = 8000) -> None:
+    def __init__(
+        self, host: str, port: int = 8000, *, auth_token: str | None = None
+    ) -> None:
         import msgpack
         from websockets.sync.client import connect
 
         self._msgpack = msgpack
+        token = auth_token or os.environ.get("NPA_OPENPI_SERVICE_AUTH_TOKEN", "")
+        if not token:
+            raise Pi05PolicyClientError("pi0.5 policy service auth token is required")
         self._connection = connect(
-            f"ws://{host}:{port}", compression=None, max_size=None
+            f"ws://{host}:{port}",
+            compression=None,
+            max_size=None,
+            additional_headers={"Authorization": f"Bearer {token}"},
         )
         metadata = self._connection.recv()
         if isinstance(metadata, str):
@@ -73,6 +84,10 @@ class Pi05PolicyClient:
         joint_position: Any,
         gripper_position: Any,
         prompt: str,
+        capture_age_s: float | None = None,
+        source_wrist_sha256: str = "",
+        sampling_noise: Any | None = None,
+        sampling_sequence: str = "",
     ) -> tuple[Any, dict[str, Any]]:
         observation = _observation(
             exterior=exterior,
@@ -81,8 +96,26 @@ class Pi05PolicyClient:
             gripper_position=gripper_position,
             prompt=prompt,
         )
+        if capture_age_s is not None and not 0.0 <= capture_age_s <= 1.0 / 15.0:
+            raise Pi05PolicyClientError("wrist capture is stale at policy query")
+        wrist_sha256 = _validated_wrist_hash(observation, source_wrist_sha256)
+        sampling = _sampling_request(self.metadata, sampling_noise, sampling_sequence)
+        if sampling:
+            observation.update(sampling["payload"])
+        return self._send_inference(observation, wrist_sha256, capture_age_s, sampling)
+
+    def _send_inference(
+        self,
+        observation: dict[str, Any],
+        wrist_sha256: str,
+        capture_age_s: float | None,
+        sampling: dict[str, Any],
+    ) -> tuple[Any, dict[str, Any]]:
         started = time.perf_counter()
         payload = self._msgpack.packb(observation, default=_pack_array)
+        wire, wire_wrist_sha256 = _verify_wire_roundtrip(
+            self._msgpack, payload, wrist_sha256
+        )
         self._connection.send(payload)
         response = self._connection.recv()
         if isinstance(response, str):
@@ -90,11 +123,86 @@ class Pi05PolicyClient:
                 f"OpenPI server returned text error: {response}"
             )
         decoded = self._msgpack.unpackb(response, object_hook=_unpack_array)
-        return _validated_response(decoded, started)
+        actions, evidence = _validated_response(
+            decoded, started, sampling, expected_wrist_sha256=wrist_sha256
+        )
+        evidence["wire_input"] = _wire_receipt(
+            payload, wire, wire_wrist_sha256, capture_age_s
+        )
+        return actions, evidence
+
+
+def _validated_wrist_hash(observation: dict[str, Any], source_hash: str) -> str:
+    wrist_hash = _array_sha256(observation["observation/wrist_image_left"])
+    if source_hash and source_hash != wrist_hash:
+        raise Pi05PolicyClientError("wrist bytes changed before wire serialization")
+    return wrist_hash
+
+
+def _wire_receipt(
+    payload: bytes, wire: dict[str, Any], wrist_hash: str, capture_age_s: float | None
+) -> dict[str, Any]:
+    return {
+        "payload_sha256": hashlib.sha256(payload).hexdigest(),
+        "exterior_rgb_sha256": _array_sha256(wire["observation/exterior_image_1_left"]),
+        "wrist_rgb_sha256": wrist_hash,
+        "wrist_source_hash_matched": True,
+        "capture_age_s": capture_age_s,
+    }
+
+
+def _verify_wire_roundtrip(
+    msgpack: Any, payload: bytes, expected: str
+) -> tuple[dict, str]:
+    wire = msgpack.unpackb(payload, object_hook=_unpack_array)
+    wrist_hash = _array_sha256(wire["observation/wrist_image_left"])
+    if wrist_hash != expected:
+        raise Pi05PolicyClientError("wrist bytes changed in msgpack roundtrip")
+    return wire, wrist_hash
+
+
+def _array_sha256(value: Any) -> str:
+    import numpy as np
+
+    array = np.ascontiguousarray(value)
+    return hashlib.sha256(array.tobytes()).hexdigest()
+
+
+def _sampling_request(
+    metadata: dict[str, Any], noise: Any | None, sequence: str
+) -> dict[str, Any] | None:
+    import numpy as np
+
+    if noise is None and not sequence:
+        return None
+    protocol = metadata.get("npa_explicit_noise_protocol") or {}
+    expected_shape = tuple(protocol.get("shape") or ())
+    value = np.asarray(noise)
+    if protocol.get("schema") != "npa.openpi.pi05-explicit-noise.v1":
+        raise Pi05PolicyClientError("server lacks the pi0.5 explicit-noise protocol")
+    if value.dtype != np.float32 or value.shape != expected_shape:
+        raise Pi05PolicyClientError("sampling noise violates server model shape/dtype")
+    if not np.isfinite(value).all() or not re.fullmatch(
+        r"[a-zA-Z0-9_.:-]{1,128}", sequence
+    ):
+        raise Pi05PolicyClientError("sampling noise or sequence identity is invalid")
+    return {
+        "payload": {
+            "npa/sampling_noise": value,
+            "npa/sampling_sequence": sequence,
+        },
+        "sha256": _array_sha256(value),
+        "shape": list(value.shape),
+        "sequence": sequence,
+    }
 
 
 def _validated_response(
-    decoded: dict[str, Any], started: float
+    decoded: dict[str, Any],
+    started: float,
+    sampling: dict[str, Any] | None,
+    *,
+    expected_wrist_sha256: str,
 ) -> tuple[Any, dict[str, Any]]:
     import numpy as np
 
@@ -105,14 +213,54 @@ def _validated_response(
         )
     if actions.shape[0] < 15 or not np.isfinite(actions).all():
         raise Pi05PolicyClientError("OpenPI actions lack a finite 15-step horizon")
+    identity = _sampler_noise_identity(decoded)
+    if sampling and (
+        identity != sampling["sha256"]
+        or decoded.get("npa_sampler_noise_shape") != sampling["shape"]
+        or decoded.get("npa_sampling_sequence") != sampling["sequence"]
+    ):
+        raise Pi05PolicyClientError("server did not bind actions to requested noise")
+    transform = _validated_transform_receipt(
+        decoded, expected_wrist_sha256, required=bool(sampling)
+    )
     evidence = {
         "shape": list(actions.shape),
         "dtype": str(actions.dtype),
         "finite": True,
         "round_trip_ms": (time.perf_counter() - started) * 1000.0,
         "server_timing": decoded.get("server_timing", {}),
+        "sampler_noise_sha256": identity,
+        "sampler_noise_shape": decoded.get("npa_sampler_noise_shape"),
+        "sampling_sequence": decoded.get("npa_sampling_sequence"),
+        "model_wrist_transform": transform,
     }
     return actions, evidence
+
+
+def _validated_transform_receipt(
+    decoded: dict[str, Any], expected_wrist_sha256: str, *, required: bool
+) -> dict[str, Any] | None:
+    transform = decoded.get("npa_wrist_transform_receipt")
+    if required and (
+        not isinstance(transform, dict)
+        or transform.get("schema") != "npa.openpi.pi05-live-wrist-transform.v1"
+        or transform.get("source_wrist_sha256") != expected_wrist_sha256
+        or transform.get("left_wrist_mask") is not True
+        or transform.get("right_wrist_mask") is not False
+    ):
+        raise Pi05PolicyClientError(
+            "server did not bind the real wrist bytes to the model input"
+        )
+    return transform if isinstance(transform, dict) else None
+
+
+def _sampler_noise_identity(decoded: dict[str, Any]) -> str | None:
+    identity = decoded.get("npa_sampler_noise_sha256")
+    if identity is None:
+        return None
+    if not isinstance(identity, str) or not re.fullmatch(r"[0-9a-f]{64}", identity):
+        raise Pi05PolicyClientError("server sampler-noise identity is malformed")
+    return identity
 
 
 def _observation(

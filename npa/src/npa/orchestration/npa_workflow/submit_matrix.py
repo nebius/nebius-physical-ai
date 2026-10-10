@@ -1519,11 +1519,14 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "sim2real-pi05.yaml",
         "multi",
-        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
         plan_only=True,
         plan_only_justification=(
-            "Execution requires explicit task-scoped Gemma terms acceptance, "
-            "immutable private OpenPI and Isaac images, scoped service RBAC, a "
+            "Execution requires immutable private OpenPI and Isaac images, "
+            "scoped service RBAC, exact public Polaris artifact preflight, a "
             "prewarmed Isaac cache, and simultaneously healthy B200 and RTX capacity."
         ),
         runtime=True,
@@ -1646,7 +1649,6 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "byof-openpi.yaml",
         "multi",
-        secret_envs=("NPA_OPENPI_ACCEPT_GEMMA_TERMS",),
         plan_only=True,
         plan_only_justification="delegated BYOF execution is covered by its dedicated live onboarding tier",
         notes="OpenPI Polaris B200 inference; covered by test_byof_openpi_polaris_live_e2e.py.",
@@ -1657,7 +1659,6 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         secret_envs=(
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
-            "NPA_OPENPI_ACCEPT_GEMMA_TERMS",
         ),
         plan_only=True,
         plan_only_justification=(
@@ -1674,7 +1675,6 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         secret_envs=(
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
-            "NPA_OPENPI_ACCEPT_GEMMA_TERMS",
         ),
         plan_only=True,
         plan_only_justification=(

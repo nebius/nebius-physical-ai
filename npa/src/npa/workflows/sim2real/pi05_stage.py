@@ -27,15 +27,19 @@ def _prepare(args: argparse.Namespace) -> dict:
         "planning_prerequisites": {
             "immutable_openpi_source": contract["upstream"]["openpi_commit"],
             "digest_pinned_images_required": True,
-            "disjoint_object_and_scene_splits_required": True,
+            "size_and_randomized_scenario_holdouts_required": True,
+            "novel_object_category_holdout": False,
+            "distinct_scene_layout_holdout": False,
         },
         "execution_prerequisites": {
-            "gemma_terms": "operator-owned task-scoped NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES",
+            "polaris_artifact": "anonymous public GCS generation/checksum and payload-byte preflight",
+            "gated_hf_artifacts": "operator token plus exact-revision payload-byte access when selected",
             "isaac_eula": "standard submit-time product routing",
             "private_clusterip_and_scoped_rbac": True,
         },
     }
-    write_json(args.output_uri, result, directory=Path(tempfile.mkdtemp()))
+    with tempfile.TemporaryDirectory(prefix="npa-pi05-prepare-") as directory:
+        write_json(args.output_uri, result, directory=Path(directory))
     publish_component_record(
         root_uri=args.component_root_uri,
         stage=1,
@@ -60,7 +64,8 @@ def _external_seam(args: argparse.Namespace) -> dict:
             "supervised physical trials",
         ],
     }
-    write_json(args.output_uri, result, directory=Path(tempfile.mkdtemp()))
+    with tempfile.TemporaryDirectory(prefix="npa-pi05-external-") as directory:
+        write_json(args.output_uri, result, directory=Path(directory))
     publish_component_record(
         root_uri=args.component_root_uri,
         stage=12,
@@ -155,7 +160,11 @@ def _load_final_inputs(args: argparse.Namespace, work: Path) -> dict[str, dict]:
 
 
 def _finalize(args: argparse.Namespace) -> dict:
-    work = Path(tempfile.mkdtemp(prefix="npa-pi05-finalize-"))
+    with tempfile.TemporaryDirectory(prefix="npa-pi05-finalize-") as directory:
+        return _finalize_in_directory(args, Path(directory))
+
+
+def _finalize_in_directory(args: argparse.Namespace, work: Path) -> dict:
     artifacts = _load_final_inputs(args, work)
     copied = {
         "mp4": _copy_artifact(

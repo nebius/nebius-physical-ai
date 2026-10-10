@@ -95,6 +95,9 @@ regexes = [
     # Public Comet50 checkpoint Git blob SHA-1, independently verified from its
     # 19,663-byte Hugging Face payload. Its e00 prefix matches the identifier rule.
     '''e00923ccf417486f96b4c7f41bb400e8f9651274''',
+    # Public GCS MD5 metadata for the immutable Paligemma tokenizer payload.
+    # generic-api-key classifies the authoritative base64 checksum as opaque.
+    '''^FCCtyYVnIKVZ6KhyhLGV4g==$''',
 ]
 paths = [
     '''SECURITY\.md''',
