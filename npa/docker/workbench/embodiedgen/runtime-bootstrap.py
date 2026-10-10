@@ -48,6 +48,21 @@ TRELLIS_ATTENTION_RUNTIME_CONTRACT = {
     "expected_dispatch_prefix": "fa2F",
     "cuda_capability": [12, 0],
 }
+URDF_PROPERTY_RESPONSE_CONTRACT = {
+    "reasoning_prefix": "one_completed_leading_think_block",
+    "completion_finish_reason": "stop",
+    "max_tokens": 2048,
+    "required_labels": [
+        "Category",
+        "Description",
+        "Pose",
+        "Height",
+        "Weight",
+        "Static friction coefficient",
+        "Dynamic friction coefficient",
+    ],
+    "query_or_parse_failure": "fail",
+}
 
 # EmbodiedGen's pinned requirements.txt names these validation dependencies but
 # leaves several of them unversioned. Pin the imports used by
@@ -270,6 +285,8 @@ def _read_manifest(path: Path) -> dict[str, Any]:
         raise ValueError("unexpected EmbodiedGen validation system package contract")
     if runtime.get("trellis_attention_runtime") != TRELLIS_ATTENTION_RUNTIME_CONTRACT:
         raise ValueError("unexpected EmbodiedGen attention runtime contract")
+    if runtime.get("urdf_property_response") != URDF_PROPERTY_RESPONSE_CONTRACT:
+        raise ValueError("unexpected EmbodiedGen URDF property response contract")
     return payload
 
 
@@ -527,6 +544,114 @@ def _patch_trellis_xformers_fa3(source: Path) -> None:
     path.write_text(text.replace(old, new), encoding="utf-8")
 
 
+def _patch_urdf_property_response_contract(source: Path) -> None:
+    """Accept only EmbodiedGen's completed final VLM property answer.
+
+    The pinned MiniCPM model can return a leading ``<think>`` block. Its
+    colon-bearing reasoning is not part of EmbodiedGen's seven-field property
+    contract, so canonicalize only the completed answer for upstream's
+    positional parser. The upstream client must also preserve the provider
+    completion status: a syntactically plausible prefix from a length-limited
+    response is not a completed property estimate. Query failures, incomplete
+    reasoning, non-completed responses, or absent and duplicate final fields
+    fail rather than using upstream fallback defaults.
+    """
+
+    path = source / "embodied_gen" / "validators" / "urdf_convertor.py"
+    text = path.read_text(encoding="utf-8")
+    client_path = source / "embodied_gen" / "utils" / "gpt_clients.py"
+    client_text = client_path.read_text(encoding="utf-8")
+    parser_anchor = '        raw_lines = response.split("\\n")\n'
+    parser_prefix = """        if not isinstance(response, str):
+            raise ValueError("URDF property response must be text")
+        answer = response.strip()
+        open_tag, close_tag = "<think>", "</think>"
+        if open_tag in answer or close_tag in answer:
+            start, end = answer.find(open_tag), answer.find(close_tag)
+            if (
+                start != 0
+                or end < start
+                or answer.count(open_tag) != 1
+                or answer.count(close_tag) != 1
+            ):
+                raise ValueError("URDF property response has an incomplete reasoning block")
+            answer = answer[end + len(close_tag) :].strip()
+        if not answer:
+            raise ValueError("URDF property response has no final answer")
+
+        field_names = {
+            "category": "Category",
+            "description": "Description",
+            "pose": "Pose",
+            "height": "Height",
+            "weight": "Weight",
+            "static friction coefficient": "Static friction coefficient",
+            "dynamic friction coefficient": "Dynamic friction coefficient",
+        }
+        fields = {}
+        for raw_line in answer.splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("```"):
+                continue
+            label, separator, value = line.partition(":")
+            canonical = field_names.get(" ".join(label.split()).lower())
+            if canonical is None:
+                continue
+            value = value.strip()
+            if not value or canonical in fields:
+                raise ValueError("URDF property response has an invalid final field")
+            fields[canonical] = value
+
+        missing = [label for label in field_names.values() if label not in fields]
+        if missing:
+            raise ValueError("URDF property response misses required final fields")
+        response = "\\n".join(
+            [f"{label}: {fields[label]}" for label in field_names.values()]
+        )
+"""
+    query_anchor = "        response = self.gpt_client.query(text_prompt, image_path)\n"
+    query_prefix = f"""        response = self.gpt_client.query(
+            text_prompt, image_path, params={{"max_tokens": {URDF_PROPERTY_RESPONSE_CONTRACT["max_tokens"]}}}
+        )
+        finish_reason = getattr(self.gpt_client, "last_completion_finish_reason", None)
+"""
+    query_guard = (
+        query_prefix
+        + "        if response is None:\n"
+        + '            raise RuntimeError("URDF property estimator returned no final answer")\n'
+        + '        if finish_reason != "stop":\n'
+        + '            raise RuntimeError("URDF property estimator did not complete: "\n'
+        + '                               f"finish_reason={finish_reason!r}")\n'
+    )
+    client_query_anchor = "        if system_role is None:\n"
+    completion_anchor = (
+        "            response = self.completion_with_backoff(**payload)\n"
+        "            response = response.choices[0].message.content\n"
+    )
+    completion_replacement = """            completion = self.completion_with_backoff(**payload)
+            choice = completion.choices[0]
+            self.last_completion_finish_reason = choice.finish_reason
+            response = choice.message.content
+"""
+    if (
+        parser_anchor not in text
+        or query_anchor not in text
+        or client_query_anchor not in client_text
+        or completion_anchor not in client_text
+    ):
+        raise RuntimeError("upstream URDF property response boundary changed")
+    text = text.replace(parser_anchor, parser_prefix + parser_anchor)
+    text = text.replace(query_anchor, query_guard)
+    client_text = client_text.replace(
+        client_query_anchor,
+        "        self.last_completion_finish_reason = None\n" + client_query_anchor,
+        1,
+    )
+    client_text = client_text.replace(completion_anchor, completion_replacement, 1)
+    path.write_text(text, encoding="utf-8")
+    client_path.write_text(client_text, encoding="utf-8")
+
+
 def _prepare(cache: Path) -> tuple[Path, Path]:
     runtime = cache / RUNTIME_NAME
     source, venv = runtime / "source", runtime / "venv"
@@ -537,6 +662,7 @@ def _prepare(cache: Path) -> tuple[Path, Path]:
     _patch_trellis_only_import(source)
     _patch_token_factory_image_mime(source)
     _patch_trellis_xformers_fa3(source)
+    _patch_urdf_property_response_contract(source)
     _pin_install_script(source)
     if not (venv / "bin" / "python").is_file():
         _run([sys.executable, "-m", "venv", str(venv)])
@@ -804,6 +930,7 @@ def _runtime_receipt(
         "trellis_model_revision": MODEL_REVISION,
         "operator_runtime": RUNTIME_CONTRACT,
         "trellis_attention_runtime": TRELLIS_ATTENTION_RUNTIME_CONTRACT,
+        "urdf_property_response": URDF_PROPERTY_RESPONSE_CONTRACT,
         "validation_requirements": list(VALIDATION_REQUIREMENTS),
         "source_path": str(source),
         "venv_path": str(venv),

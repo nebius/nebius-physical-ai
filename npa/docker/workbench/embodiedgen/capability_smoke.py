@@ -41,6 +41,20 @@ DEFAULT_INPUT = (
 DEFAULT_INPUT_SHA256 = (
     "d60272ce039e4a230cb2654b5ecb74021b1e3048a82e4d27b62e2c027a109dcd"
 )
+PHYSICS_STEP_HZ = 240
+PHYSICS_OBSERVATION_SECONDS = 40
+PHYSICS_OBSERVATION_STEPS = PHYSICS_STEP_HZ * PHYSICS_OBSERVATION_SECONDS
+PHYSICS_SETTLE_WINDOW_STEPS = 120
+PHYSICS_CAPTURE_INTERVAL_STEPS = 60
+PHYSICS_CAPTURE_FPS = PHYSICS_STEP_HZ // PHYSICS_CAPTURE_INTERVAL_STEPS
+
+
+class RigidBodySettleError(RuntimeError):
+    """A failed settle gate that retains the measured late-window metrics."""
+
+    def __init__(self, measurements: dict[str, Any]) -> None:
+        super().__init__("generated URDF did not settle under rigid-body physics")
+        self.measurements = measurements
 
 
 def sha256(path: Path) -> str:
@@ -260,7 +274,7 @@ def gpu_evidence() -> dict[str, Any]:
 def require_rigid_body_settle(body: int) -> dict[str, Any]:
     """Prove the simulated generated body is no longer moving materially."""
     positions = []
-    for step in range(120):
+    for step in range(PHYSICS_SETTLE_WINDOW_STEPS):
         bullet.stepSimulation()
         if step % 12 == 0:
             positions.append(np.asarray(bullet.getBasePositionAndOrientation(body)[0]))
@@ -268,38 +282,80 @@ def require_rigid_body_settle(body: int) -> dict[str, Any]:
     linear_speed = float(np.linalg.norm(linear))
     angular_speed = float(np.linalg.norm(angular))
     drift = float(np.linalg.norm(positions[-1] - positions[0]))
-    if not all(math.isfinite(value) for value in (linear_speed, angular_speed, drift)):
-        raise RuntimeError("generated URDF settle measurements are not finite")
-    if linear_speed > 0.05 or angular_speed > 0.1 or drift > 0.01:
-        raise RuntimeError("generated URDF did not settle under rigid-body physics")
-    return {
-        "settle_steps": 120,
+    measurements = {
+        "settle_steps": PHYSICS_SETTLE_WINDOW_STEPS,
+        "settle_window_seconds": PHYSICS_SETTLE_WINDOW_STEPS / PHYSICS_STEP_HZ,
         "linear_speed_m_per_s": linear_speed,
         "angular_speed_rad_per_s": angular_speed,
         "late_window_drift_m": drift,
     }
+    if not all(math.isfinite(value) for value in (linear_speed, angular_speed, drift)):
+        raise RuntimeError("generated URDF settle measurements are not finite")
+    if linear_speed > 0.05 or angular_speed > 0.1 or drift > 0.01:
+        raise RigidBodySettleError(measurements)
+    return measurements
 
 
-def _capture_pybullet_frames() -> list[np.ndarray]:
-    projection = bullet.computeProjectionMatrixFOV(55, 4 / 3, 0.05, 5.0)
-    view = bullet.computeViewMatrix([2.0, -2.0, 1.5], [0, 0, 0.35], [0, 0, 1])
+def _pybullet_camera(body: int) -> tuple[Any, Any, dict[str, Any]]:
+    lower, upper = (np.asarray(bound, dtype=float) for bound in bullet.getAABB(body))
+    extent = float(np.max(upper - lower))
+    if not math.isfinite(extent) or extent <= 0:
+        raise RuntimeError("generated URDF has invalid camera bounds")
+    center = (lower + upper) / 2
+    distance = max(0.25, extent * 2.5)
+    direction = np.asarray([1.0, -1.0, 0.75])
+    direction /= np.linalg.norm(direction)
+    eye = center + direction * distance
+    near, far = max(0.01, distance / 50), max(2.0, distance * 6)
+    projection = bullet.computeProjectionMatrixFOV(55, 4 / 3, near, far)
+    view = bullet.computeViewMatrix(eye.tolist(), center.tolist(), [0, 0, 1])
+    return (
+        view,
+        projection,
+        {
+            "target_m": center.tolist(),
+            "eye_m": eye.tolist(),
+            "distance_m": distance,
+            "near_m": near,
+            "far_m": far,
+        },
+    )
+
+
+def _capture_pybullet_frames(body: int) -> tuple[list[np.ndarray], dict[str, Any]]:
     frames = []
-    for step in range(480):
+    first_camera = None
+    last_camera = None
+    for step in range(PHYSICS_OBSERVATION_STEPS):
         bullet.stepSimulation()
-        if step % 8 == 0:
+        if (step + 1) % PHYSICS_CAPTURE_INTERVAL_STEPS == 0:
+            view, projection, camera = _pybullet_camera(body)
+            if first_camera is None:
+                first_camera = camera
+            last_camera = camera
             pixels = bullet.getCameraImage(
                 640, 480, view, projection, renderer=bullet.ER_TINY_RENDERER
             )[2]
             frames.append(np.asarray(pixels, dtype=np.uint8)[..., :3])
-    return frames
+    if not frames:
+        raise RuntimeError("PyBullet observation did not capture any frames")
+    return frames, {
+        "mode": "body_aabb_tracking",
+        "first_capture": first_camera,
+        "last_capture": last_camera,
+    }
 
 
 def _write_decoded_view(
-    output: Path, frames: list[np.ndarray]
+    output: Path,
+    frames: list[np.ndarray],
+    *,
+    png_name: str = "pybullet_view.png",
+    mp4_name: str = "pybullet_settle.mp4",
 ) -> tuple[Path, Path, int]:
-    view_png, view_mp4 = output / "pybullet_view.png", output / "pybullet_settle.mp4"
+    view_png, view_mp4 = output / png_name, output / mp4_name
     iio.imwrite(view_png, frames[-1])
-    iio.imwrite(view_mp4, np.stack(frames), fps=30)
+    iio.imwrite(view_mp4, np.stack(frames), fps=PHYSICS_CAPTURE_FPS)
     decoded = sum(1 for _ in iio.imiter(view_mp4))
     if decoded != len(frames):
         raise RuntimeError("PyBullet video did not decode completely")
@@ -319,6 +375,48 @@ def _validate_pybullet_body(
     return final, contacts, settle
 
 
+def _write_pybullet_failure_evidence(
+    output: Path,
+    frames: list[np.ndarray],
+    camera: dict[str, Any],
+    body: int,
+    plane: int,
+    initial: Any,
+    error: RuntimeError,
+) -> None:
+    """Keep actual simulator observations when a generated asset is rejected."""
+
+    view_png, view_mp4, decoded = _write_decoded_view(
+        output,
+        frames,
+        png_name="pybullet_failure_view.png",
+        mp4_name="pybullet_failure_settle.mp4",
+    )
+    final = bullet.getBasePositionAndOrientation(body)[0]
+    contacts = bullet.getContactPoints(bodyA=body, bodyB=plane)
+    atomic_json(
+        output / "pybullet_validation_failure.json",
+        {
+            "schema": "npa.embodiedgen.pybullet-validation-failure.v1",
+            "status": "failed",
+            "reason": str(error),
+            "observation_steps": PHYSICS_OBSERVATION_STEPS,
+            "observation_seconds": PHYSICS_OBSERVATION_SECONDS,
+            "capture_interval_steps": PHYSICS_CAPTURE_INTERVAL_STEPS,
+            "capture_fps": PHYSICS_CAPTURE_FPS,
+            "captured_frames": len(frames),
+            "decoded_video_frames": decoded,
+            "initial_position_m": initial,
+            "final_position_m": final,
+            "contact_points": len(contacts),
+            "camera": camera,
+            "settle": getattr(error, "measurements", None),
+            "view_png": view_png.name,
+            "view_mp4": view_mp4.name,
+        },
+    )
+
+
 def pybullet_validation(urdf: Path, output: Path) -> dict[str, Any]:
     client = bullet.connect(bullet.DIRECT)
     try:
@@ -327,16 +425,29 @@ def pybullet_validation(urdf: Path, output: Path) -> dict[str, Any]:
         bullet.setGravity(0, 0, -9.81)
         body = bullet.loadURDF(str(urdf), basePosition=[0, 0, 1.0], useFixedBase=False)
         initial = bullet.getBasePositionAndOrientation(body)[0]
-        frames = _capture_pybullet_frames()
-        final, contacts, settle = _validate_pybullet_body(body, plane, initial)
+        frames, camera = _capture_pybullet_frames(body)
+        try:
+            final, contacts, settle = _validate_pybullet_body(body, plane, initial)
+        except RuntimeError as error:
+            _write_pybullet_failure_evidence(
+                output, frames, camera, body, plane, initial, error
+            )
+            raise
         view_png, view_mp4, decoded = _write_decoded_view(output, frames)
         return {
             "simulator": "PyBullet DIRECT",
-            "steps": 600,
+            "observation_steps": PHYSICS_OBSERVATION_STEPS,
+            "observation_seconds": PHYSICS_OBSERVATION_SECONDS,
+            "settle_steps": PHYSICS_SETTLE_WINDOW_STEPS,
+            "total_steps": PHYSICS_OBSERVATION_STEPS + PHYSICS_SETTLE_WINDOW_STEPS,
+            "capture_interval_steps": PHYSICS_CAPTURE_INTERVAL_STEPS,
+            "capture_fps": PHYSICS_CAPTURE_FPS,
+            "captured_frames": len(frames),
             "initial_position_m": initial,
             "final_position_m": final,
             "contact_points": len(contacts),
             "settle": settle,
+            "camera": camera,
             "view_png": view_png.name,
             "view_mp4": view_mp4.name,
             "decoded_video_frames": decoded,

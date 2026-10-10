@@ -62,6 +62,21 @@
       "expected_dispatch_prefix": "fa2F",
       "cuda_capability": [12, 0]
     },
+    "urdf_property_response": {
+      "reasoning_prefix": "one_completed_leading_think_block",
+      "completion_finish_reason": "stop",
+      "max_tokens": 2048,
+      "required_labels": [
+        "Category",
+        "Description",
+        "Pose",
+        "Height",
+        "Weight",
+        "Static friction coefficient",
+        "Dynamic friction coefficient"
+      ],
+      "query_or_parse_failure": "fail"
+    },
     "credential_envs": ["NEBIUS_TOKEN_FACTORY_KEY", "NPA_TOKEN_FACTORY_API_KEY"],
     "baked": {
       "source": false,

@@ -11,12 +11,14 @@ import os
 import subprocess
 import sys
 import tarfile
+from xml.etree import ElementTree as XML_ET
 from dataclasses import replace
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import pytest
 import yaml
+import numpy as np
 from PIL import Image
 
 from npa.orchestration.npa_workflow import build_plan
@@ -75,6 +77,9 @@ def test_manifest_pins_the_selected_upstream_components() -> None:
     assert payload["runtime"]["trellis_attention_runtime"] == (
         BOOTSTRAP.TRELLIS_ATTENTION_RUNTIME_CONTRACT
     )
+    assert payload["runtime"]["urdf_property_response"] == (
+        BOOTSTRAP.URDF_PROPERTY_RESPONSE_CONTRACT
+    )
     assert payload["runtime"]["baked"] == {
         "source": False,
         "model": False,
@@ -120,6 +125,17 @@ def test_manifest_refuses_a_changed_trellis_attention_contract(tmp_path: Path) -
     path = tmp_path / "manifest.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(ValueError, match="attention runtime contract"):
+        BOOTSTRAP._read_manifest(path)
+
+
+def test_manifest_refuses_a_changed_urdf_property_response_contract(
+    tmp_path: Path,
+) -> None:
+    payload = json.loads((IMAGE / "runtime-manifest.json").read_text())
+    payload["runtime"]["urdf_property_response"]["query_or_parse_failure"] = "fallback"
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="URDF property response contract"):
         BOOTSTRAP._read_manifest(path)
 
 
@@ -612,6 +628,175 @@ def test_token_factory_mime_patch_uses_decoded_format_not_staged_suffix(
     assert base64.b64decode(url.split(",", 1)[1]) == image_bytes
 
 
+def test_urdf_property_response_patch_uses_only_completed_final_answer(
+    tmp_path: Path,
+) -> None:
+    package = tmp_path / "embodied_gen"
+    source = package / "validators"
+    client_source = package / "utils"
+    source.mkdir(parents=True)
+    client_source.mkdir()
+    converter = source / "urdf_convertor.py"
+    client = client_source / "gpt_clients.py"
+    client.write_text(
+        "class _Message:\n"
+        "    def __init__(self, content):\n"
+        "        self.content = content\n\n"
+        "class _Choice:\n"
+        "    def __init__(self, content, finish_reason):\n"
+        "        self.message = _Message(content)\n"
+        "        self.finish_reason = finish_reason\n\n"
+        "class _Completion:\n"
+        "    def __init__(self, content, finish_reason):\n"
+        "        self.choices = [_Choice(content, finish_reason)]\n\n"
+        "class GPTclient:\n"
+        "    def __init__(self, content, finish_reason):\n"
+        "        self.content = content\n"
+        "        self.finish_reason = finish_reason\n"
+        "        self.last_payload = None\n\n"
+        "    def completion_with_backoff(self, **payload):\n"
+        "        self.last_payload = payload\n"
+        "        return _Completion(self.content, self.finish_reason)\n\n"
+        "    def query(self, text_prompt, image_base64=None, system_role=None, params=None):\n"
+        "        if system_role is None:\n"
+        "            system_role = 'physics'\n"
+        "        payload = {'max_tokens': 500}\n"
+        "        if params:\n"
+        "            payload.update(params)\n"
+        "        response = None\n"
+        "        try:\n"
+        "            response = self.completion_with_backoff(**payload)\n"
+        "            response = response.choices[0].message.content\n"
+        "        except Exception:\n"
+        "            response = None\n"
+        "        return response\n",
+        encoding="utf-8",
+    )
+    converter.write_text(
+        "from datetime import datetime\n"
+        'VERSION = "test"\n\n'
+        "class URDFGenerator:\n"
+        "    def __init__(self, gpt_client):\n"
+        "        self.gpt_client = gpt_client\n\n"
+        "    def parse_response(self, response):\n"
+        '        raw_lines = response.split("\\n")\n'
+        "        lines = []\n"
+        "        for line in raw_lines:\n"
+        "            line = line.strip()\n"
+        '            if line and not line.startswith("```") and ":" in line:\n'
+        "                lines.append(line)\n\n"
+        '        category = lines[0].split(": ")[1]\n'
+        '        description = lines[1].split(": ")[1]\n'
+        "        min_height, max_height = map(\n"
+        '            lambda x: float(x.strip().replace(",", "").split()[0]),\n'
+        '            lines[3].split(": ")[1].split("-"),\n'
+        "        )\n"
+        "        min_mass, max_mass = map(\n"
+        '            lambda x: float(x.strip().replace(",", "").split()[0]),\n'
+        '            lines[4].split(": ")[1].split("-"),\n'
+        "        )\n"
+        '        mu1 = float(lines[5].split(": ")[1].replace(",", ""))\n'
+        '        mu2 = float(lines[6].split(": ")[1].replace(",", ""))\n\n'
+        "        return {\n"
+        '            "category": category.lower(),\n'
+        '            "description": description.lower(),\n'
+        '            "min_height": round(min_height, 4),\n'
+        '            "max_height": round(max_height, 4),\n'
+        '            "min_mass": round(min_mass, 4),\n'
+        '            "max_mass": round(max_mass, 4),\n'
+        '            "mu1": round(mu1, 2),\n'
+        '            "mu2": round(mu2, 2),\n'
+        '            "version": VERSION,\n'
+        '            "generate_time": datetime.now().strftime("%Y%m%d%H%M%S"),\n'
+        "        }\n\n"
+        "    def resolve(self):\n"
+        '        text_prompt = "prompt"\n'
+        '        image_path = ["front.png"]\n'
+        "        response = self.gpt_client.query(text_prompt, image_path)\n"
+        "        if response is None:\n"
+        "            asset_attrs = {\n"
+        '                "category": "fallback",\n'
+        '                "description": "fallback",\n'
+        '                "min_height": 1,\n'
+        '                "max_height": 1,\n'
+        '                "min_mass": 1,\n'
+        '                "max_mass": 1,\n'
+        '                "mu1": 0.8,\n'
+        '                "mu2": 0.6,\n'
+        "            }\n"
+        "        else:\n"
+        "            asset_attrs = self.parse_response(response)\n"
+        "        return asset_attrs\n",
+        encoding="utf-8",
+    )
+    BOOTSTRAP._patch_urdf_property_response_contract(tmp_path)
+    client_spec = importlib.util.spec_from_file_location(
+        "embodiedgen_urdf_property_client_fixture", client
+    )
+    assert client_spec and client_spec.loader
+    client_fixture = importlib.util.module_from_spec(client_spec)
+    sys.modules[client_spec.name] = client_fixture
+    client_spec.loader.exec_module(client_fixture)
+    fixture_spec = importlib.util.spec_from_file_location(
+        "embodiedgen_urdf_property_fixture", converter
+    )
+    assert fixture_spec and fixture_spec.loader
+    fixture = importlib.util.module_from_spec(fixture_spec)
+    fixture_spec.loader.exec_module(fixture)
+
+    completed_response = """<think>
+Pose: the object appears upright
+Height: the object is standing
+</think>
+Category: cup
+Description: a small ceramic cup
+Pose: upright on its base
+Height: 0.08-0.15 m
+Weight: 0.05-0.10 kg
+Static friction coefficient: 0.6
+Dynamic friction coefficient: 0.5
+"""
+    completed_client = client_fixture.GPTclient(completed_response, "stop")
+    attrs = fixture.URDFGenerator(completed_client).resolve()
+    assert completed_client.last_completion_finish_reason == "stop"
+    assert completed_client.last_payload == {"max_tokens": 2048}
+    assert attrs | {"generate_time": "ignored"} == {
+        "category": "cup",
+        "description": "a small ceramic cup",
+        "min_height": 0.08,
+        "max_height": 0.15,
+        "min_mass": 0.05,
+        "max_mass": 0.1,
+        "mu1": 0.6,
+        "mu2": 0.5,
+        "version": "test",
+        "generate_time": "ignored",
+    }
+    parseable_prefix_client = client_fixture.GPTclient(
+        """Category: cup
+Description: a small ceramic cup
+Pose: upright on its base
+Height: 0.08-0.15 m
+Weight: 0.05-0.10 kg
+Static friction coefficient: 0.6
+Dynamic friction coefficient: 0.5""",
+        "length",
+    )
+    with pytest.raises(RuntimeError, match="finish_reason='length'"):
+        fixture.URDFGenerator(parseable_prefix_client).resolve()
+    assert parseable_prefix_client.last_payload == {"max_tokens": 2048}
+    with pytest.raises(ValueError, match="incomplete reasoning block"):
+        fixture.URDFGenerator(
+            client_fixture.GPTclient("<think>unfinished", "stop")
+        ).resolve()
+    with pytest.raises(ValueError, match="required final fields"):
+        fixture.URDFGenerator(
+            client_fixture.GPTclient("Category: cup\nDescription: cup", "stop")
+        ).resolve()
+    with pytest.raises(RuntimeError, match="no final answer"):
+        fixture.URDFGenerator(client_fixture.GPTclient(None, "stop")).resolve()
+
+
 def test_asset_bundle_preserves_nested_generated_assets_and_rejects_symlinks(
     tmp_path: Path,
 ) -> None:
@@ -645,6 +830,141 @@ def test_asset_bundle_preserves_nested_generated_assets_and_rejects_symlinks(
     with pytest.raises(RuntimeError, match="symbolic link"):
         ASSET_BUNDLE.archive_asset_tree(generated, tmp_path / "unsafe.tar.gz")
     assert not (tmp_path / "unsafe.tar.gz").exists()
+
+
+def test_pybullet_validation_tracks_the_body_and_keeps_failure_media(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    class FakeBullet(ModuleType):
+        DIRECT = 1
+        ER_TINY_RENDERER = 2
+
+        def __init__(self, *, settled: bool) -> None:
+            super().__init__("pybullet")
+            self.settled = settled
+            self.steps = 0
+
+        def connect(self, _: int) -> int:
+            return 7
+
+        def disconnect(self, _: int) -> None:
+            return None
+
+        def setAdditionalSearchPath(self, _: str) -> None:
+            return None
+
+        def loadURDF(self, _: str, **kwargs: object) -> int:
+            return 2 if kwargs else 1
+
+        def setGravity(self, *_: object) -> None:
+            return None
+
+        def stepSimulation(self) -> None:
+            self.steps += 1
+
+        def getAABB(self, _: int) -> tuple[list[float], list[float]]:
+            z = max(0.05, 1.0 - self.steps / 1_200)
+            return ([-0.06, -0.06, z - 0.05], [0.06, 0.06, z + 0.05])
+
+        def computeProjectionMatrixFOV(self, *_: object) -> list[float]:
+            return []
+
+        def computeViewMatrix(self, *_: object) -> list[float]:
+            return []
+
+        def getCameraImage(
+            self, *_: object, **__: object
+        ) -> tuple[None, None, np.ndarray]:
+            return None, None, np.zeros((480, 640, 4), dtype=np.uint8)
+
+        def getBasePositionAndOrientation(
+            self, _: int
+        ) -> tuple[list[float], list[float]]:
+            if self.steps == 0:
+                return [0.0, 0.0, 1.0], [0.0, 0.0, 0.0, 1.0]
+            return [0.02, 0.03, 0.05], [0.0, 0.0, 0.0, 1.0]
+
+        def getBaseVelocity(self, _: int) -> tuple[list[float], list[float]]:
+            speed = 0.0 if self.settled else 0.2
+            return [speed, 0.0, 0.0], [0.0, speed, 0.0]
+
+        def getContactPoints(self, **_: object) -> list[object]:
+            return [object()]
+
+    class FakeImageIo(ModuleType):
+        def __init__(self) -> None:
+            super().__init__("imageio.v3")
+            self.videos: dict[Path, int] = {}
+
+        def imwrite(self, path: Path, data: np.ndarray, **_: object) -> None:
+            target = Path(path)
+            target.write_bytes(b"decoded-test-media")
+            if target.suffix == ".mp4":
+                self.videos[target] = len(data)
+
+        def imiter(self, path: Path):
+            return iter(range(self.videos[Path(path)]))
+
+    def load_smoke(*, settled: bool, suffix: str):
+        fake_bullet = FakeBullet(settled=settled)
+        fake_iio = FakeImageIo()
+        imageio = ModuleType("imageio")
+        imageio.v3 = fake_iio
+        asset_bundle = ModuleType("asset_bundle")
+        asset_bundle.archive_asset_tree = lambda *_: {}
+        defusedxml = ModuleType("defusedxml")
+        defusedxml.ElementTree = XML_ET
+        pybullet_data = ModuleType("pybullet_data")
+        pybullet_data.getDataPath = lambda: "/tmp"
+        monkeypatch.setitem(sys.modules, "asset_bundle", asset_bundle)
+        monkeypatch.setitem(sys.modules, "defusedxml", defusedxml)
+        monkeypatch.setitem(sys.modules, "imageio", imageio)
+        monkeypatch.setitem(sys.modules, "imageio.v3", fake_iio)
+        monkeypatch.setitem(sys.modules, "pybullet", fake_bullet)
+        monkeypatch.setitem(sys.modules, "pybullet_data", pybullet_data)
+        monkeypatch.setitem(sys.modules, "trimesh", ModuleType("trimesh"))
+        spec = importlib.util.spec_from_file_location(
+            f"embodiedgen_capability_smoke_{suffix}", IMAGE / "capability_smoke.py"
+        )
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module, fake_bullet
+
+    urdf = tmp_path / "generated.urdf"
+    output = tmp_path / "success"
+    output.mkdir()
+    smoke, bullet = load_smoke(settled=True, suffix="success")
+    result = smoke.pybullet_validation(urdf, output)
+    assert (
+        bullet.steps
+        == smoke.PHYSICS_OBSERVATION_STEPS + smoke.PHYSICS_SETTLE_WINDOW_STEPS
+    )
+    assert result["observation_seconds"] == 40
+    assert result["captured_frames"] == 160
+    assert result["decoded_video_frames"] == 160
+    assert result["camera"]["mode"] == "body_aabb_tracking"
+    assert result["camera"]["first_capture"] != result["camera"]["last_capture"]
+    assert (output / result["view_png"]).is_file()
+    assert (output / result["view_mp4"]).is_file()
+
+    failure_output = tmp_path / "failure"
+    failure_output.mkdir()
+    smoke, bullet = load_smoke(settled=False, suffix="failure")
+    with pytest.raises(smoke.RigidBodySettleError):
+        smoke.pybullet_validation(urdf, failure_output)
+    failure = json.loads(
+        (failure_output / "pybullet_validation_failure.json").read_text()
+    )
+    assert (
+        bullet.steps
+        == smoke.PHYSICS_OBSERVATION_STEPS + smoke.PHYSICS_SETTLE_WINDOW_STEPS
+    )
+    assert failure["status"] == "failed"
+    assert failure["settle"]["angular_speed_rad_per_s"] == 0.2
+    assert failure["captured_frames"] == failure["decoded_video_frames"] == 160
+    assert (failure_output / failure["view_png"]).is_file()
+    assert (failure_output / failure["view_mp4"]).is_file()
 
 
 def test_capability_smoke_executes_the_real_generation_and_simulation_chain() -> None:

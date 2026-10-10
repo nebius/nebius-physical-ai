@@ -29,7 +29,7 @@ same capability boundary.
 | EmbodiedGen source | `HorizonRobotics/EmbodiedGen@f0124197888c2b733e4eaa65acd81ad9cfda3b79`, Apache-2.0, runtime fetched |
 | TRELLIS source | upstream gitlink `55a8e8164b195bbf927e0978f00e76c835e6011f`, MIT, runtime fetched |
 | TRELLIS model | `microsoft/TRELLIS-image-large@25e0d31ffbebe4b5a97464dd851910efc3002d96`, MIT, runtime fetched and receipt-verified |
-| Validation runtime | upstream `requirements.txt` SHA-256 `acd142fb…af9157`; a NumPy-1.26-compatible SciPy/plyfile/tifffile/contourpy closure plus Pillow/trimesh/ImageIO/ImageIO-FFmpeg/PyBullet imports is probed with a real MP4 encode/decode before the smoke. Snapshot package `libxrender1` is also declared and a real VTK/PyVista/PyMeshFix geometry import-and-repair runs before model fetch. |
+| Validation runtime | upstream `requirements.txt` SHA-256 `acd142fb…af9157`; a NumPy-1.26-compatible SciPy/plyfile/tifffile/contourpy closure plus Pillow/trimesh/ImageIO/ImageIO-FFmpeg/PyBullet imports is probed with a real MP4 encode/decode before the smoke. Snapshot package `libxrender1` is also declared and a real VTK/PyVista/PyMeshFix geometry import-and-repair runs before model fetch. The VLM property adapter explicitly requests a 2048-token response and accepts only provider `finish_reason: stop` plus the final seven fields after one leading completed `<think>` block; query failure, truncation, incomplete reasoning, or missing/duplicate fields fail the stage rather than emit fallback physical defaults. PyBullet observes the exact free body for 40 seconds at 240 Hz, then applies its unchanged late-window velocity/drift/contact gate; a body-AABB tracking camera retains a decoded 4 fps view and failure metrics/media. |
 | Blackwell bootstrap | exact upstream `install_basic.sh` SHA-256 `2969700d…f84d1`; the non-Conda CPython 3.12 worker restores `pip==24.0` before reuse, selects upstream Torch `cu128`, and keeps EmbodiedGen's pinned xFormers dense and block-diagonal sparse paths while disabling only xFormers 0.0.32.post2's unsupported FA3 dispatch before TRELLIS imports. Before model fetch, the RTX PRO 6000 probe verifies the FA2 dispatch on dense self/cross and block-diagonal shapes, synchronized finite results, and agreement with SDPA references. |
 | Baked image | digest-pinned CUDA/OS bootstrap plus NPA fetch/validation code only; no source, model, task input, Python application dependencies, cache, output, or credential bytes |
 | Input and cache | worker-readable HTTPS or S3 image fetched into a run-local staging directory; fetched runtime cache is outside image layers and checked against receipts |
@@ -225,6 +225,10 @@ bundle member inventory to unpack the exact assets. The BYOF profile requires a
 successful smoke exit and readbacks of its primary report and summary. Separately,
 the standard workflow runtime validates every declared S3 output before it marks
 the workflow wave complete. A summary JSON alone is not the generation claim.
+If the PyBullet gate rejects a generated asset, the worker retains the real
+`pybullet_validation_failure.json`, failure PNG, and decoded failure MP4 in the
+summary's artifact inventory for diagnosis. They are not declared success
+outputs and do not turn a failed physics gate into a simulator-validation claim.
 
 ## Monitor, inspect, retry, and clean up
 
