@@ -2,7 +2,7 @@
 # historical SONIC container lineage: no NGC/NLC base, private-registry layer,
 # Isaac/Omniverse payload, model weights, driver userspace, terms, or credentials.
 ARG BASE_IMAGE=python:3.11.16-slim-bookworm@sha256:528257d48c1da0dcecc2e725d1ae34498d60c965f1241e39cd6a85a8859bdf84
-ARG DEBIAN_SNAPSHOT=20260906T000000Z
+ARG DEBIAN_SNAPSHOT=20261009T000000Z
 
 FROM ${BASE_IMAGE} AS sonic-source
 ARG DEBIAN_SNAPSHOT

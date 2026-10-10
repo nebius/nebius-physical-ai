@@ -5,6 +5,7 @@ FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04@sha256:24c8e3581ea6330038b0d3749
 ARG ALPAMAYO2_SOURCE_URL=https://github.com/NVlabs/alpamayo2.git
 ARG ALPAMAYO2_SOURCE_REF=beb2977d9a7e9d66837d4a3ad5144ff59de37519
 ARG NPA_SOURCE_COMMIT=unknown
+ARG UBUNTU_SNAPSHOT=20261009T000000Z
 
 LABEL npa.tool="alpamayo2-super" \
       npa.version="0.1.0-cu128-r3" \
@@ -18,6 +19,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     HF_HOME=/workspace/.cache/huggingface \
     MPLCONFIGDIR=/workspace/.cache/matplotlib \
     PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
     TORCH_CUDA_ARCH_LIST="9.0;10.0;12.0" \
     UV_PROJECT_ENVIRONMENT=/opt/alpamayo2/.venv \
     UV_CACHE_DIR=/tmp/uv-cache \
@@ -26,12 +28,15 @@ ENV DEBIAN_FRONTEND=noninteractive \
 SHELL ["/bin/bash", "-lc"]
 USER root
 
+COPY --chmod=0755 docker/workbench/common/configure_ubuntu_snapshot.sh /usr/local/bin/configure-ubuntu-snapshot
+
 # The CUDA devel base carries an old linux-libc-dev build and an unused Nsight
 # EFA helper linked against vulnerable Go standard libraries. Refresh the
 # headers explicitly and remove the profiler tree instead of exempting either
 # finding from the complete-image security gate.
-RUN rm -f /etc/apt/sources.list.d/*.list \
+RUN configure-ubuntu-snapshot "${UBUNTU_SNAPSHOT}" \
     && apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends \
       ca-certificates ffmpeg git linux-libc-dev openssh-server python3.12 python3.12-dev \
       python3.12-venv rsync sudo \
@@ -65,6 +70,7 @@ RUN python3.12 -m venv /opt/uv \
       -r /tmp/alpamayo2-security-upgrades.txt \
     && /opt/uv/bin/uv pip check --python .venv/bin/python \
     && rm -f /tmp/alpamayo2-security-upgrades.txt \
+    && rm -rf /tmp/uv-cache /opt/alpamayo2/.venv/lib/python3.12/site-packages/pyarrow/tests \
     && /opt/alpamayo2/.venv/bin/python - <<'PY'
 import torch
 flags = set(torch._C._cuda_getArchFlags().split())
@@ -74,7 +80,11 @@ PY
 COPY pyproject.toml README.md /opt/npa-src/
 COPY src/npa /opt/npa-src/src/npa
 RUN python3.12 -m venv /opt/npa-venv \
-    && /opt/npa-venv/bin/pip install --no-cache-dir 'uvicorn==0.41.0' /opt/npa-src \
+    && /opt/npa-venv/bin/pip install --no-cache-dir --no-compile 'uvicorn==0.41.0' /opt/npa-src \
+    && rm -rf /opt/npa-venv/lib/python3.12/site-packages/pyarrow/tests \
+      /opt/npa-venv/lib/python3.12/site-packages/boto3/examples \
+    && find /opt/npa-venv /opt/alpamayo2/.venv -type d -name __pycache__ -prune -exec rm -rf {} + \
+    && find /opt/npa-venv/lib/python3.12/site-packages/botocore/data -name 'examples-1.json' -delete \
     && rm -rf /root/.cache /tmp/uv-cache /tmp/pip-* \
     && test -z "$(find /opt/alpamayo2 /opt/npa-src /opt/npa-venv \
       \( -iname '*.safetensors' -o -iname '*.ckpt' -o -iname 'pytorch_model*.bin' \) \

@@ -40,8 +40,12 @@ COPY workflows /opt/npa/workflows
 COPY --chmod=0755 docker/workbench/lyra2/entrypoint.sh /usr/local/bin/lyra2-entrypoint
 COPY --chmod=0644 docker/workbench/lyra2/REDISTRIBUTION.md /usr/share/doc/npa-lyra2/REDISTRIBUTION.md
 
+# The retained bootstrap has cryptography 50.0.1; current NPA requires 50.0.2.
+# Update that wheel without resolving or introducing the runtime-only Torch closure.
 RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && grep -qx 'ubuntu ALL=(ALL) NOPASSWD:ALL' /etc/sudoers.d/npa-skypilot \
+    && /opt/npa/.venv/bin/python -m pip install --no-cache-dir --no-deps \
+      "cryptography @ https://files.pythonhosted.org/packages/d3/69/2c833a049475e0a3444e94c7d0aca0aa51d166374a449b09e92ac98138de/cryptography-50.0.2-cp311-abi3-manylinux_2_34_x86_64.whl#sha256=9dab55f57c74c3cad24c323bacbbd04be4705ba6eb0d92e920b1fc4837ed5079" \
     && /opt/npa/.venv/bin/python -m pip install --no-cache-dir --no-deps /opt/npa \
     && /opt/npa/.venv/bin/python -m pip check \
     && python3.12 -c "import site; from pathlib import Path; Path(site.getsitepackages()[0], 'npa-source.pth').write_text('/opt/npa/src\\n')" \
