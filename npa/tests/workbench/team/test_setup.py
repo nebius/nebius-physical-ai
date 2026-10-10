@@ -368,6 +368,39 @@ def test_service_uid_alone_cannot_adopt_an_unowned_deployment(
     assert infrastructure.mutations == before
 
 
+def test_selected_deployment_can_be_preserved_when_public_service_is_absent(
+    setup_request, infrastructure, tmp_path
+):
+    setup.setup_control_plane(setup_request, tmp_path / "original.json")
+    deployment = infrastructure.objects[("deployment", "npa-team")]
+    deployment["metadata"].pop("labels")
+    del infrastructure.objects[("service", "npa-team")]
+    infrastructure.allocation = None
+    selected = setup_request.model_copy(
+        update={"existing_deployment_uid": deployment["metadata"]["uid"]}
+    )
+    before = len(infrastructure.mutations)
+    assert (
+        setup.setup_control_plane(selected, tmp_path / "adopted.json")["status"]
+        == "ready"
+    )
+    assert infrastructure.objects[("deployment", "npa-team")] == deployment
+    created = [
+        doc for kind, doc in infrastructure.mutations[before:] if kind == "apply"
+    ]
+    assert [doc["kind"] for doc in created] == ["Service"]
+
+
+def test_deployment_disappearance_is_an_identity_failure_without_indefinite_wait(
+    setup_request, infrastructure, tmp_path
+):
+    receipt = SetupReceipt(tmp_path / "installation.json", setup_request)
+    receipt.save(deployment_uid="expected")
+    with pytest.raises(ConflictError, match="Deployment identity changed"):
+        setup._wait_deployment(setup_request, receipt)
+    assert not infrastructure.mutations
+
+
 def test_explicit_clusterip_conversion_preserves_uid_ports_and_operator_annotations(
     setup_request, infrastructure, tmp_path
 ):

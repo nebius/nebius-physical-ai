@@ -145,7 +145,8 @@ def _validate_existing(request, receipt, deployment, service):
         _verify_deployment(request, deployment)
         receipt.save(
             deployment_uid=deployment["metadata"]["uid"],
-            deployment_preserved=adopted
+            deployment_preserved=request.existing_deployment_uid
+            == deployment["metadata"]["uid"]
             or receipt.data.get("deployment_preserved", False),
         )
 
@@ -274,11 +275,11 @@ def _wait_deployment(request, receipt):
     while True:
         deployment = resource(request, "deployment", "npa-team")
         if (
-            deployment
-            and deployment["metadata"]["uid"] != receipt.data["deployment_uid"]
+            not deployment
+            or deployment["metadata"]["uid"] != receipt.data["deployment_uid"]
         ):
             raise ConflictError("Deployment identity changed during setup")
-        status = deployment.get("status", {}) if deployment else {}
+        status = deployment.get("status", {})
         if (
             deployment
             and status.get("observedGeneration", 0)
