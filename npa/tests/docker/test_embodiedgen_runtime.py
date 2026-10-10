@@ -16,6 +16,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from PIL import Image
 
 from npa.orchestration.npa_workflow import build_plan
 from npa.orchestration.npa_workflow.skypilot_render import (
@@ -216,15 +217,18 @@ def test_trellis_only_patch_removes_unselected_sam_import(tmp_path: Path) -> Non
     assert "NPA_EMBODIEDGEN_TRELLIS_MODEL_DIR" in image_to_3d.read_text()
 
 
-def test_token_factory_mime_patch_emits_a_jpeg_data_url(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("image_format", "expected_mime"),
+    [("JPEG", "image/jpeg"), ("PNG", "image/png")],
+)
+def test_token_factory_mime_patch_uses_decoded_format_not_staged_suffix(
+    tmp_path: Path, image_format: str, expected_mime: str
+) -> None:
     source = tmp_path / "embodied_gen" / "utils"
     source.mkdir(parents=True)
     client = source / "gpt_clients.py"
     client.write_text(
-        "import base64\nimport os\n"
-        "class _Image:\n    pass\n"
-        "class Image:\n    Image = _Image\n"
-        "class BytesIO:\n    pass\n"
+        "import base64\nimport os\nfrom io import BytesIO\nfrom PIL import Image\n"
         "class Client:\n"
         "    def __init__(self):\n"
         '        self.image_formats = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}\n'
@@ -257,16 +261,19 @@ def test_token_factory_mime_patch_emits_a_jpeg_data_url(tmp_path: Path) -> None:
         "        return content_user\n",
         encoding="utf-8",
     )
+    # require_input stages every accepted format at input.jpg. Exercise both
+    # real formats through that worker boundary rather than their original names.
     input_path = tmp_path / "input.jpg"
-    image_bytes = b"jpeg input bytes"
-    input_path.write_bytes(image_bytes)
+    image = Image.new("RGB", (2, 2), color=(12, 34, 56))
+    image.save(input_path, format=image_format)
+    image_bytes = input_path.read_bytes()
 
     BOOTSTRAP._patch_token_factory_image_mime(tmp_path)
     namespace: dict[str, object] = {}
     exec(client.read_text(encoding="utf-8"), namespace)
     content = namespace["Client"]().build(str(input_path))
     url = content[1]["image_url"]["url"]
-    assert url.startswith("data:image/jpeg;base64,")
+    assert url.startswith(f"data:{expected_mime};base64,")
     assert base64.b64decode(url.split(",", 1)[1]) == image_bytes
 
 

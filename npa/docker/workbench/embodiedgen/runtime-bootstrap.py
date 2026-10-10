@@ -264,15 +264,19 @@ def _patch_token_factory_image_mime(source: Path) -> None:
                 ):
                     if not os.path.exists(img):
                         raise FileNotFoundError(f"Image file not found: {img}")
-                    suffix = os.path.splitext(img)[-1].lower()
+                    with Image.open(img) as source_image:
+                        image_format = (source_image.format or "").upper()
                     image_mime_type = {
-                        ".bmp": "image/bmp",
-                        ".gif": "image/gif",
-                        ".jpeg": "image/jpeg",
-                        ".jpg": "image/jpeg",
-                        ".png": "image/png",
-                        ".webp": "image/webp",
-                    }[suffix]
+                        "BMP": "image/bmp",
+                        "GIF": "image/gif",
+                        "JPEG": "image/jpeg",
+                        "PNG": "image/png",
+                        "WEBP": "image/webp",
+                    }.get(image_format)
+                    if image_mime_type is None:
+                        raise ValueError(
+                            f"Unsupported image format for Token Factory: {image_format}"
+                        )
                     with open(img, "rb") as f:
                         img = base64.b64encode(f.read()).decode("utf-8")
 """,
