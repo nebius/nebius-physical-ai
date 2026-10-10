@@ -19,6 +19,7 @@ lists other affected images and shipped workflows, including the Sim2Real seams.
 | --- | --- |
 | Choose a workload | [Robot and workflow guides](guides/README.md) · [workflow catalog](../../workflows/README.md) |
 | Run or resume a workflow manually | [Manual workflow operations](guides/manual-workflow-operations.md) |
+| Generate twelve PAIDF appearances from MP4 or real ALOHA data | [Manual twelve-profile recipe](guides/paidf-appearance-12.md) |
 | Submit episode batches and choose concurrency | [Dataset batches](guides/paidf-dataset-batches.md) · [capacity planning](guides/paidf-dataset-batches.md#concurrency-and-existing-capacity) |
 | Inspect supported quality reports | [Shared report inspection](insights-reports.md) |
 | Copy selected GCS/S3 inputs or outputs | [Scoped storage transfers](guides/scoped-storage-transfers.md) |
@@ -35,6 +36,10 @@ lists other affected images and shipped workflows, including the Sim2Real seams.
 
 ## Generation and scenes
 
+[Physical prompt comparison](physical-prompt-comparison.md) compares three
+Wan 2.1 14B prompt arms with full videos, blinded assertion judgments, and
+a standalone HTML report.
+
 | Capability | Guide |
 | --- | --- |
 | Cosmos 3 batch generation | [Generate](cosmos3-generate.md) · [access preflight](cosmos3-access-preflight.md) |
@@ -43,7 +48,7 @@ lists other affected images and shipped workflows, including the Sim2Real seams.
 | Plan a Cosmos 3 model factory | [Architecture, current gaps, and implementation sequence](../architecture/cosmos3-model-factory.md) · [Live generation and quality feedback](cosmos3-model-factory-live-20260915.md) |
 | Train and evaluate a Cosmos 3 robot policy | [Experimental native LIBERO model-factory workflow](cosmos3-policy-model-factory.md) |
 | Measure Cosmos 3 WAM training across B200 nodes | [Experimental Slurm recipe](cookbooks/cosmos3-wam-slurm.md) · [Measured 8/16-GPU results](evidence/cosmos3-wam-scaling/README.md) |
-| Scene reconstruction | [NuRec](guides/neural-reconstruction.md) · [living-lab fan-out](guides/living-lab-nurec-fanout.md) |
+| Scenes and digital twins | [NuRec reconstruction](guides/neural-reconstruction.md) · [RTX campus rendering and infrastructure](guides/digital-twin.md) · [living-lab fan-out](guides/living-lab-nurec-fanout.md) |
 | USD object preparation | [Content Agents](content-agents.md) |
 | Other video models | [Wan 2.2](wan2.2.md) · [LTX-2](ltx2.md) |
 
@@ -54,6 +59,7 @@ lists other affected images and shipped workflows, including the Sim2Real seams.
 | Robot policy walkthroughs | [Franka / Genesis](guides/franka-pick-and-place-genesis.md) · [PushT SDK smoke](guides/pusht-sim-to-real.md) · [Reachy 2 / LeRobot](guides/reachy2-lerobot-policy.md) · [subtask labeling](guides/lerobot-subtask-labeling.md) |
 | Locomotion | [G1 / SONIC](guides/g1-humanoid-walk-sonic.md) · [quadruped / Isaac Lab](guides/quadruped-isaac-lab.md) |
 | GR00T fine-tuning and evaluation | [GR00T N1.7](cookbooks/groot-1-7-training.md) · [LIBERO-X closed-loop evaluation](groot-libero-x.md) |
+| Public-data VLA training | [SmolVLA → task adaptation → LIBERO evaluation](cookbooks/public-vla-training.md), on MK8s or Slurm/Soperator |
 | OpenPI policy training | [Pi0.5 / Polaris](openpi-pi05-polaris.md) |
 | Simulation-to-policy pipeline | [Sim2Real runbook](guides/sim2real-workflow.md) · [data contracts](guides/sim2real-data-contracts.md) · [customer assets](guides/sim2real-customer-assets.md) · [robot spec](guides/sim2real-robot-spec.md) |
 | Browser teleoperation | [LeIsaac](leisaac-teleoperation.md) · [latency measurement](guides/leisaac-transport-latency.md) |
