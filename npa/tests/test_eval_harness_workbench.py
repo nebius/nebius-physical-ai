@@ -30,6 +30,7 @@ from npa.workbench.eval_harness.tasks import (
     get_task,
     register_task,
 )
+from npa.workflows.byof import artifact_io
 from npa.workflows.byof import eval_harness_pipeline as pipe
 
 
@@ -73,6 +74,25 @@ _FAKE_TASK = "test_eval_harness_fake_task"
 _FAKE_POLICY = f"python:{__name__}:_fake_policy"
 
 register_task(_FAKE_TASK, lambda: _FakeEnv())
+
+
+class _ConditionalStorage:
+    """In-memory create-only store with the production retry interface."""
+
+    def __init__(self) -> None:
+        self.attempts = 0
+        self.objects: dict[str, bytes] = {}
+
+    def put_bytes_conditional(self, payload, bucket_uri, **_kwargs):
+        self.attempts += 1
+        if bucket_uri in self.objects:
+            raise artifact_io.StoragePreconditionFailed("already exists")
+        self.objects[bucket_uri] = payload
+        return '"etag"'
+
+    def read_bytes_with_etag(self, output_path):
+        payload = self.objects.get(output_path)
+        return None if payload is None else (payload, '"etag"')
 
 
 def test_sdk_surface_is_workbench_first():
@@ -261,6 +281,36 @@ def test_pipeline_run_writes_reports(tmp_path):
     assert report["records"][0]["judge"] == "heuristic"
     assert (out / "report.md").read_text().startswith("# eval_harness run")
     assert result["artifacts"]["report_json"].endswith("report.json")
+
+
+def test_pipeline_s3_retry_is_exact_across_changed_utc_seconds(monkeypatch):
+    """The real producer may retry an existing report only when bytes match."""
+    storage = _ConditionalStorage()
+    monkeypatch.setattr(
+        artifact_io.StorageClient,
+        "from_environment",
+        staticmethod(lambda: storage),
+    )
+    clock = {"utc": "2026-10-10T15:00:00Z"}
+    monkeypatch.setattr(pipe.time, "strftime", lambda *_args: clock["utc"])
+    common = {
+        "task": _FAKE_TASK,
+        "policy": _FAKE_POLICY,
+        "output_path": "s3://evidence-bucket/runs/841/eval",
+        "episodes": 1,
+        "seed": 4,
+    }
+
+    first = pipe.run(**common)
+    saved_objects = dict(storage.objects)
+    clock["utc"] = "2026-10-10T15:00:01Z"
+    second = pipe.run(**common)
+
+    assert first["created_utc"] != second["created_utc"]
+    assert storage.objects == saved_objects
+    assert storage.attempts == 4
+    with pytest.raises(artifact_io.StorageError, match="non-identical artifact"):
+        pipe.run(**{**common, "seed": 5})
 
 
 def test_pipeline_compare_writes_reports(tmp_path):

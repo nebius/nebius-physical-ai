@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import time
 from typing import Any, Mapping, Sequence
 
 from npa.workflows.byof.artifact_io import ArtifactPathError, write_bytes
@@ -134,7 +133,6 @@ def run(
             "mean_steps": (sum(e["steps"] for e in episode_reports) / n if n else 0.0),
         },
         "episodes": episode_reports,
-        "created_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
     _write_json_path(output_path, report)
     return report

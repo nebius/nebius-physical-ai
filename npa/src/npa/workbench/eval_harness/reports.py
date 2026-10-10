@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import time
 from typing import Any, Mapping
 
 from npa.workflows.byof.artifact_io import (
@@ -22,7 +21,6 @@ def _write_report(
     markdown: str,
 ) -> dict[str, str]:
     payload = dict(report)
-    payload["written_utc"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     try:
         json_path = join_output_path(output_path, json_name)
         md_path = join_output_path(output_path, json_name.replace(".json", ".md"))
