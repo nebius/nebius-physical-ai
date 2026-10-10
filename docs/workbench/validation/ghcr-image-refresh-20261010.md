@@ -21,7 +21,8 @@ functional qualification before promotion.
 - OpenArm: refresh unavailable deadsnakes artifacts using exact package-index
   hashes, fixed userspace headers, and the October 9 Ubuntu snapshot; add the
   cryptography dependency required by current NPA image routing.
-- SONIC MuJoCo: refresh the Debian snapshot to include the fixed Perl packages.
+- SONIC MuJoCo and Cosmos3 serving: refresh the Debian snapshot to include the
+  fixed Perl packages.
 - Diffusers, LingBot World, and SAM2: derive from the verified refreshed Wan
   digest rather than the older supported Wan runtime.
 - Alpamayo: exclude host bytecode recursively, disable runtime bytecode creation,
