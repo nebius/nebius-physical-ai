@@ -942,6 +942,17 @@ def _cancelled_summary(summary, observer):
         observer.event("cancelled", signal=observer.signum)
 
 
+def _retain_summary(summary, ssh, root, selector, run):
+    try:
+        summary.update(_retain(ssh, root, selector, run))
+    except (OSError, ValueError, KeyError, TypeError, _QualificationError) as error:
+        failure = _failure(error, "receipt-retention")
+        summary["receipt_retention_failure"] = failure
+        if summary["status"] == "passed":
+            summary.update(failure)
+        summary.update(status="failed", complete=False)
+
+
 def _qualify(scanner, root, ssh, selector, run):
     summary = {
         "status": "failed",
@@ -959,7 +970,7 @@ def _qualify(scanner, root, ssh, selector, run):
         observer.retaining = True
         _phase("receipt-retention")
         _write(root / "summary.json", _json_bytes(summary))
-        summary.update(_retain(ssh, root, selector, run))
+        _retain_summary(summary, ssh, root, selector, run)
         # A late signal cannot turn an interrupted run into an accepted result,
         # even when the receipt already contains a completed scanner report.
         if cancelled_before_retention is None:

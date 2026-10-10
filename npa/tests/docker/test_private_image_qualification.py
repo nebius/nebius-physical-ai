@@ -460,7 +460,8 @@ def terminate(number,frame):
 signal.signal(signal.SIGTERM,terminate)
 print('synthetic-private-child-stdout',flush=True)
 print('synthetic-private-child-stderr',file=sys.stderr,flush=True)
-Path(sys.argv[1]).write_text(json.dumps({'pid':os.getpid()}))
+marker=Path(sys.argv[1]);temporary=marker.with_suffix('.tmp')
+temporary.write_text(json.dumps({'pid':os.getpid()}));temporary.replace(marker)
 signal.pause()
 """)
 
@@ -545,7 +546,8 @@ def _cancelled_transfer_program(runner, marker, selector):
     child = (
         "import json,os,signal,sys;from pathlib import Path;"
         "signal.signal(signal.SIGTERM,lambda *_:sys.exit(2));"
-        f"Path({str(marker)!r}).write_text(json.dumps({{'pid':os.getpid()}}));"
+        f"marker=Path({str(marker)!r});temporary=marker.with_suffix('.tmp');"
+        "temporary.write_text(json.dumps({'pid':os.getpid()}));temporary.replace(marker);"
         "sys.stdout.buffer.write(b'x');sys.stdout.buffer.flush();signal.pause()"
     )
     return f"""import importlib.util,sys
@@ -844,6 +846,36 @@ def test_private_receipt_transport_failure_prevents_success(
     )
     with pytest.raises(Q._QualificationError, match="private_receipt_not_retained"):
         Q._retain([], private_root, export[1], "789-1")
+
+
+@pytest.mark.parametrize("original_status", ["failed", "passed"])
+def test_retention_failure_preserves_original_failure(
+    private_root, export, monkeypatch, capsys, original_status
+):
+    original = {"status": original_status, "complete": original_status == "passed"}
+    if original_status == "failed":
+        original.update(
+            failure_code="remote_export_missing", failure_stage="manifest-transfer"
+        )
+    monkeypatch.setattr(Q, "_qualification_steps", lambda *_: dict(original))
+
+    def fail_retention(*_):
+        raise Q._QualificationError("private_receipt_not_retained")
+
+    monkeypatch.setattr(Q, "_retain", fail_retention)
+    assert Q._qualify(private_root, private_root, [], export[1], "789-1") == 1
+    result = json.loads(capsys.readouterr().out.splitlines()[-1])
+    assert result["status"] == "failed" and result["complete"] is False
+    assert (
+        result["receipt_retention_failure"]["failure_code"]
+        == "private_receipt_not_retained"
+    )
+    assert result["failure_code"] == (
+        "remote_export_missing"
+        if original_status == "failed"
+        else "private_receipt_not_retained"
+    )
+    assert "receipt_sha256" not in result
 
 
 def test_receipt_digest_supports_python310(private_root, monkeypatch):

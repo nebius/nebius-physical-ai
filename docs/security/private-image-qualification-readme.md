@@ -209,6 +209,8 @@ produce fixed transport codes; raw SSH diagnostics remain private. A successful
 sender must still satisfy the exact manifest digest and schema.
 If the connection or host storage fails during retention, the job fails and
 cannot claim durable evidence; do not treat an earlier scanner exit as success.
+The public summary preserves any original failure and separately identifies the
+receipt-retention failure, without claiming that a private receipt was stored.
 
 This qualifies only complete-byte confidentiality for the configured policy.
 It does not replace payload/licensing, vulnerabilities, attestations, image
