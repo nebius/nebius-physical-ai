@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import multiprocessing
 import shutil
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -179,6 +180,10 @@ def test_real_http_run_status_remains_failed_after_diagnostic_publication(
     refused_pair,
     upload_failure,
 ):
+    from test_robocasa import _TransactionalFakeS3
+
+    storage = _TransactionalFakeS3()
+    monkeypatch.setattr("boto3.client", lambda *_a, **_k: storage)
     monkeypatch.setattr(service, "verify_runtime_identity", lambda *_: None)
     monkeypatch.setattr(service, "_assets_root", lambda: tmp_path / "assets")
     execute = service._execute_capability_in_worker
@@ -201,6 +206,11 @@ def test_real_http_run_status_remains_failed_after_diagnostic_publication(
         published.append(directory)
         if upload_failure:
             raise OSError("private provider details must not be echoed")
+        cap.upload_output(directory, uri, report)
+        assert report["output_uri"] == uri
+        assert report["output_commit"]["schema"] == "npa.robocasa.output-commit.v1"
+        # Nested isolation also holds if publication later gains annotations.
+        report["policy"]["steps"] = 999
 
     monkeypatch.setattr(service, "upload_output", upload)
     client = TestClient(
@@ -223,6 +233,12 @@ def test_real_http_run_status_remains_failed_after_diagnostic_publication(
     else:
         assert status["result"]["status"] == "failed"
         assert status["result"]["seed"] == 42
+        assert status["result"]["policy"]["steps"] == 100
+        diag.PairFailure.model_validate(status["result"])
+        retained_report = json.loads(
+            storage.objects["run/failure-diagnostics/failure.json"][0]
+        )
+        assert retained_report == status["result"]
     assert client.get("/health").json()["execution_available"] is True
 
 
@@ -271,7 +287,10 @@ def test_unstopped_failure_never_publishes(monkeypatch, request_body):
     assert client.get("/health").status_code == 503
 
 
-def test_initial_frame_is_saved_before_first_action(tmp_path, monkeypatch):
+@pytest.mark.parametrize("native_location", ["nested", "unwrapped", "outer"])
+def test_initial_frame_is_saved_before_first_action(
+    tmp_path, monkeypatch, native_location
+):
     pixels = np.zeros((8, 8, 3), dtype=np.uint8)
     observation = {"video.robot0_agentview_left": pixels}
     state = np.array([0.0, 1.0])
@@ -282,6 +301,11 @@ def test_initial_frame_is_saved_before_first_action(tmp_path, monkeypatch):
         reset=lambda **_: (observation, {}),
         close=lambda: None,
     )
+    if native_location == "unwrapped":
+        env.unwrapped = native
+    elif native_location == "outer":
+        env.unwrapped = object()
+        env.sim = native.sim
     monkeypatch.setattr(cap, "_make_env", lambda *_, **__: env)
     monkeypatch.setattr(cap, "_seed_action_space", lambda *_: None)
     video = tmp_path / "rollout.mp4"
@@ -366,3 +390,102 @@ def test_robot_state_refusal_has_distinct_reason():
     )
     assert evidence["reason"] == "initial_robot_state_mismatch"
     assert evidence["episode_index"] == 3
+
+
+@pytest.mark.parametrize("value", [None, object(), [1.0], np.array([object()])])
+def test_unavailable_simulator_accessor_returns_null(value):
+    env = SimpleNamespace(sim=SimpleNamespace(get_state=lambda: value))
+    assert cap._initial_simulator_state_hash(env) is None
+
+
+@pytest.mark.parametrize("error", [AttributeError, TypeError])
+def test_optional_simulator_accessor_error_is_contained(error):
+    def unavailable():
+        raise error("unsupported native accessor")
+
+    env = SimpleNamespace(sim=SimpleNamespace(get_state=unavailable))
+    assert cap._initial_simulator_state_hash(env) is None
+
+
+@pytest.mark.parametrize("value", [np.nan, np.inf, -np.inf])
+def test_observed_nonfinite_native_state_still_fails(value):
+    env = SimpleNamespace(sim=SimpleNamespace(get_state=lambda: np.array([value])))
+    with pytest.raises(cap.RoboCasaError, match="non-finite initial simulator"):
+        cap._initial_simulator_state_hash(env)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [{"episode_index": 6}, {"seed": 43}, {"env_id": "robocasa/Other"}],
+)
+def test_parent_refuses_pair_identity_not_in_request(
+    tmp_path, request_body, refused_pair, changes
+):
+    directory = _failed_directory(tmp_path / "worker", request_body)
+    report_path = directory / diag.REPORT
+    report = json.loads(report_path.read_text())
+    report.update(changes)
+    report_path.write_text(json.dumps(report))
+    outcome = service._retain_failure_diagnostics(
+        request_body, directory.parent, service._WorkerOutcome(error="match refusal")
+    )
+    assert outcome.stopped and outcome.output_dir is None
+    assert not outcome.failure_diagnostics and not directory.parent.exists()
+    assert "diagnostics unavailable" in outcome.error
+
+
+def test_parent_binds_exact_round_robin_environment_and_default_seed(
+    tmp_path, request_body, refused_pair
+):
+    body = request_body.model_copy(
+        update={"seed": None, "heldout_env_ids": "robocasa/Heldout,robocasa/Other"}
+    )
+    directory = _failed_directory(tmp_path / "worker", body)
+    report = diag.validate_directory(directory)
+    service._validate_failure_request_binding(body, report)
+    report["env_id"] = "robocasa/Other"
+    with pytest.raises(ValueError, match="pair binding"):
+        service._validate_failure_request_binding(body, report)
+
+
+@pytest.mark.parametrize("retained_cleanup_fails", [False, True])
+def test_worker_cleanup_failure_does_not_lose_retained_ownership(
+    tmp_path, monkeypatch, request_body, refused_pair, retained_cleanup_fails
+):
+    directory = _failed_directory(tmp_path / "worker", request_body)
+    retained = tmp_path / "retained"
+    retained.mkdir()
+    monkeypatch.setattr(service.tempfile, "mkdtemp", lambda **_: str(retained))
+    remove = shutil.rmtree
+
+    def cleanup(path, *args, **kwargs):
+        if Path(path) == directory.parent or retained_cleanup_fails:
+            raise OSError("injected owned-directory cleanup refusal")
+        return remove(path, *args, **kwargs)
+
+    monkeypatch.setattr(service.shutil, "rmtree", cleanup)
+    outcome = service._retain_failure_diagnostics(
+        request_body, directory.parent, service._WorkerOutcome(error="match refusal")
+    )
+    assert not outcome.stopped and not outcome.failure_diagnostics
+    assert outcome.output_dir == (retained if retained_cleanup_fails else None)
+    assert retained.exists() is retained_cleanup_fails
+    assert "match refusal" in outcome.error
+
+
+def test_success_provenance_binds_initial_png_bytes(tmp_path, request_body):
+    for stem in ("rollout", "random_baseline"):
+        directory = tmp_path / "episode_0000"
+        directory.mkdir(exist_ok=True)
+        Image.fromarray(np.zeros((8, 8, 3), dtype=np.uint8)).save(
+            directory / f"{stem}.png"
+        )
+    provenance = cap._execution_provenance(request_body, tmp_path, {})
+    assert provenance["png_artifacts"] == [
+        {
+            "path": path.relative_to(tmp_path).as_posix(),
+            "sha256": cap._sha256_file(path),
+        }
+        for path in sorted(tmp_path.rglob("*.png"))
+    ]
+    assert len(provenance["png_artifacts"]) == 2

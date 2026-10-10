@@ -16,6 +16,7 @@ import threading
 import time
 import uuid
 from collections.abc import Iterator
+from copy import deepcopy
 from dataclasses import dataclass
 from multiprocessing.connection import wait as wait_connections
 from pathlib import Path
@@ -32,6 +33,7 @@ from npa.workbench.robocasa.capabilities import (
     RoboCasaError,
     RoboCasaMatchError,
     _assets_root,
+    _parse_env_ids,
     compute_manifest_sha256,
     make_run_id,
     run_capability_with_output,
@@ -520,7 +522,7 @@ def _run_capability(
                     upload_output(
                         retained_output,
                         body.output_uri.rstrip("/") + "/failure-diagnostics",
-                        diagnostics,
+                        deepcopy(diagnostics),
                     )
                 except Exception as exc:
                     diagnostics = None
@@ -1078,12 +1080,7 @@ def _retain_failure_diagnostics(
             worker_output / pair_diagnostics.DIRECTORY,
             retained,
         )
-        expected = compute_manifest_sha256("run", body.model_dump(mode="json"))
-        if (
-            body.capability != "kitchen_policy_eval"
-            or report["request_manifest_sha256"] != expected
-        ):
-            raise ValueError("failure diagnostics request binding differs")
+        _validate_failure_request_binding(body, report)
         ready = True
     except Exception as exc:
         error = f"{error}; failure diagnostics unavailable ({type(exc).__name__})"
@@ -1095,12 +1092,42 @@ def _retain_failure_diagnostics(
         return _WorkerOutcome(
             error=f"{error}; failure diagnostic cleanup failed ({type(exc).__name__})",
             stopped=False,
+            output_dir=_discard_failure_snapshot(retained),
         )
     return _WorkerOutcome(
         error=error,
         output_dir=retained if ready else None,
         failure_diagnostics=ready,
     )
+
+
+def _discard_failure_snapshot(retained: Path) -> Path | None:
+    try:
+        shutil.rmtree(retained)
+    except FileNotFoundError:
+        return None
+    except OSError:
+        # Return ownership so the service's final cleanup still retries it.
+        return retained
+    return None
+
+
+def _validate_failure_request_binding(
+    body: RoboCasaRunRequest, report: dict[str, Any]
+) -> None:
+    expected = compute_manifest_sha256("run", body.model_dump(mode="json"))
+    episode = report["episode_index"]
+    heldout = _parse_env_ids(body.heldout_env_ids)
+    seed = body.seed if body.seed is not None else 42
+    if (
+        body.capability != "kitchen_policy_eval"
+        or report["request_manifest_sha256"] != expected
+        or not 0 <= episode < body.num_envs
+        or report["seed"] != seed + episode
+        or not heldout
+        or report["env_id"] != heldout[episode % len(heldout)]
+    ):
+        raise ValueError("failure diagnostics request or pair binding differs")
 
 
 def _receive_worker_message(receiver: Any) -> dict[str, Any]:

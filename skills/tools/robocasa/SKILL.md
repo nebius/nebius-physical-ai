@@ -183,7 +183,10 @@ pair's two initial PNGs, two completed arm videos, and typed `failure.json` unde
 the run's `failure-diagnostics/` output prefix. The record identifies the pair,
 seed, robot-state/workspace hashes, optional full simulator-state hash, action
 digests, checkpoint/tree hashes, request hash and runtime image/source identity.
-An unavailable simulator-state hash is `null`, not an empty or fabricated state.
+An unavailable or unsupported simulator-state accessor yields `null`, not an
+empty or fabricated state. An observed non-finite simulator state still fails
+the run. The parent independently checks the retained episode index, seed and
+held-out environment against the requested episode plan.
 No scratch tree, environment dump or checkpoint is retained with these artifacts.
 Diagnostic publication uses the same immutable byte/readback commit as successful
 outputs, but its commit only establishes delivery of failure evidence; it does
@@ -193,7 +196,11 @@ not publish these files.
 
 Every run uploads `result.json` and `provenance.json`. Rollout provenance names
 the RoboCasa → MuJoCo execution path, exact image source revision, and hashes
-each generated MP4, with machine-readable `rrd: false` and `mcap: false` fields;
+each generated MP4. Successful policy evaluation also retains each arm's
+after-reset/before-action-0 workspace PNG at `episode_XXXX/rollout.png` and
+`episode_XXXX/random_baseline.png`; `png_artifacts` in provenance binds their
+paths and byte hashes, and the immutable output commit covers those bytes.
+Machine-readable `rrd: false` and `mcap: false` fields remain explicit;
 this tool does not emit RRD or MCAP recordings.
 
 The service owns one GPU, so accepted runs execute through one process-wide GPU

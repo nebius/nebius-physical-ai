@@ -18,7 +18,6 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 import numpy as np
-from PIL import Image
 
 from npa.workbench.robocasa.asset_paths import hold_asset_directory
 
@@ -162,6 +161,8 @@ def validate_directory(directory: Path) -> dict:
 
 
 def _verify_initial_pixels(path: Path, arm: ArmEvidence) -> None:
+    from PIL import Image
+
     with _open_regular(path) as stream, Image.open(stream) as image:
         if image.format != "PNG" or image.mode != "RGB":
             raise ValueError("diagnostic initial frame must be an RGB PNG")

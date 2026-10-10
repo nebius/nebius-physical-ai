@@ -2172,16 +2172,25 @@ def _run_eval_episode(
 
 
 def _initial_simulator_state_hash(env: Any) -> str | None:
-    native = getattr(getattr(env, "unwrapped", env), "env", env)
-    simulator = getattr(native, "sim", None)
-    if simulator is None:
+    try:
+        unwrapped = getattr(env, "unwrapped", env)
+        candidates = (unwrapped, getattr(unwrapped, "env", None), env)
+    except (AttributeError, TypeError):
         return None
-    # Preserve native precision: the policy's float32 conversion would erase
-    # physics differences that this diagnostic is meant to expose.
-    state = np.asarray(simulator.get_state().flatten())
-    if not np.all(np.isfinite(state)):
-        raise RoboCasaError("non-finite initial simulator state")
-    return _sha256_array(state)
+    for native in candidates:
+        try:
+            simulator = getattr(native, "sim", None)
+            if simulator is None:
+                continue
+            # Preserve native precision; policy float32 conversion loses evidence.
+            state = np.asarray(simulator.get_state().flatten())
+            finite = np.all(np.isfinite(state))
+        except (AttributeError, TypeError):
+            continue
+        if not finite:
+            raise RoboCasaError("non-finite initial simulator state")
+        return _sha256_array(state)
+    return None
 
 
 def _write_initial_workspace(observation: dict[str, Any], path: Path) -> None:
@@ -2693,12 +2702,16 @@ def _provenance_environment_ids(
 
 
 def _provenance_mp4_artifacts(output_dir: Path) -> list[dict[str, str]]:
+    return _provenance_media_artifacts(output_dir, "*.mp4")
+
+
+def _provenance_media_artifacts(output_dir: Path, pattern: str) -> list[dict[str, str]]:
     return [
         {
             "path": path.relative_to(output_dir).as_posix(),
             "sha256": _sha256_file(path),
         }
-        for path in sorted(output_dir.rglob("*.mp4"))
+        for path in sorted(output_dir.rglob(pattern))
     ]
 
 
@@ -2744,6 +2757,7 @@ def _execution_provenance(
             "mcap": False,
         },
         "mp4_artifacts": mp4_artifacts,
+        "png_artifacts": _provenance_media_artifacts(output_dir, "*.png"),
         "validation_scope": "runtime artifact provenance; no GPU validation claim",
     }
 
