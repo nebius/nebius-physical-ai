@@ -35,6 +35,8 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
 # linkage and secret-shaped literal bytes that must not enter the final image.
 FROM debian-snapshot-base AS pyav-wheel-builder
 
+# PyAV 17.1.0 redeclares a typed local with Cython 3.3; constrain its isolated
+# build dependency until the pinned PyAV source can be upgraded.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
       build-essential \
@@ -46,9 +48,12 @@ RUN apt-get update \
       libavutil-dev \
       libswresample-dev \
       libswscale-dev \
-    && /opt/wan-base/bin/python -m pip wheel --no-cache-dir --no-deps \
+    && printf '%s\n' 'Cython==3.2.9' > /tmp/npa-pyav-build-constraints.txt \
+    && PIP_CONSTRAINT=/tmp/npa-pyav-build-constraints.txt \
+      /opt/wan-base/bin/python -m pip wheel --no-cache-dir --no-deps \
       --no-binary=av --wheel-dir /opt/npa-pyav-wheel av==17.1.0 \
-    && test -n "$(find /opt/npa-pyav-wheel -maxdepth 1 -type f -name 'av-17.1.0-*.whl' -print -quit)"
+    && test -n "$(find /opt/npa-pyav-wheel -maxdepth 1 -type f -name 'av-17.1.0-*.whl' -print -quit)" \
+    && rm -f /tmp/npa-pyav-build-constraints.txt
 
 FROM debian-snapshot-base
 
