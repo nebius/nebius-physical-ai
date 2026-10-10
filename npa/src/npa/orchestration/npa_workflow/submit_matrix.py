@@ -225,6 +225,23 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Official v3.9.2 RGBD evaluator; no challenge score has been measured.",
     ),
     SubmitLiveCase(
+        "dm05-opendm.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        plan_only=True,
+        plan_only_justification=(
+            "The five-stage path requires an inspected operator-private immutable "
+            "OpenDM image, but the configured registry resolves only to an "
+            "unapproved public destination without credentials."
+        ),
+        notes=(
+            "Pinned Dexmal OpenDM LIBERO preparation, full SFT, upstream v1 HTTP "
+            "rollout, Dexbotic closed-loop spatial evaluation, and factual RRD/MP4. "
+            "Plan-only until the operator supplies a private image digest."
+        ),
+    ),
+    SubmitLiveCase(
         "xr1-antioch-finetune.yaml",
         "multi",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),

@@ -250,6 +250,15 @@ operator runtime fetches, and upstream Arena 0.3.0 remains alpha.
 
 ## BYOF bootstrap candidates excluded from supported publication
 
+OpenDM DM05 is also excluded from the supported public image table. Its
+operator-private BYOF image needs Apache-2.0 OpenDM source and MIT Dexbotic/
+LIBERO evaluator source, while the Gemma-licensed DM05 checkpoint and the
+CC-BY-4.0 HuggingFaceVLA/libero v2.1 conversion of LIBERO remain runtime-only.
+No NPA public image, public registry tag, anonymous-pull claim, hosted model
+service, or acceptance variable is authorized by the current record. See
+[OpenDM DM05](dm05-opendm.md) for exact pins, credit, terms separation, and the
+required private build/Kubernetes acceptance path.
+
 RoboTwin 2.0 remains absent from the supported public image table. Its
 `npa-robotwin:2.0-curobo-v0.7.8-rtfetch-unbuilt` release candidate stays quarantined
 pending validation of the supported submission path. The neutral bootstrap builds from an official Ubuntu
