@@ -6,9 +6,9 @@
 # payload scanner. The first stage is used only as a pinned OSS Wan source and
 # CPU-Python closure; none of its operating-system layers enter the final image.
 # The official Python 3.10 image and final runtime both use Debian Trixie, so
-# the copied CPython C extensions share their libc and libffi ABI. Copy only
-# CPython's /usr/local tree into the final root; the Python source-stage OS
-# layers do not become image ancestors.
+# the copied CPython C extensions share their libc and libffi ABI. Copy the
+# CPython /usr/local tree and its CA bundle needed to contact the pinned Debian
+# snapshot; Python source-stage OS layers do not become image ancestors.
 ARG PYTHON_RUNTIME_SOURCE=python:3.10-slim-trixie@sha256:7b6bd969dda3ecfca0655524e338b57a8b8cd692a9362e3d55b5a3ef49b07256
 ARG DEBIAN_RUNTIME_BASE=debian:trixie-slim@sha256:918311b7b6c4c6f68b232ba516584925f6c78ad82b6fd534b98979df6438e483
 ARG WAN_SOURCE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@sha256:5780959ca6c6e7eb77ee7ea7d005fcf0f56db50783ce798dddee2809185eb837
@@ -23,6 +23,10 @@ ARG DEBIAN_SNAPSHOT=20261009T000000Z
 ARG NPA_SOURCE_SHA=unknown
 
 COPY --from=python-runtime /usr/local /usr/local
+# debian:trixie-slim intentionally omits CA roots. Bootstrap HTTPS snapshot
+# verification from the separately pinned Python source stage, then install
+# the final root's own ca-certificates package from that verified snapshot.
+COPY --from=python-runtime /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 
 LABEL npa.tool="lingbot-world-switchworld-private" \
       npa.version="a43bec7f8091c83e9b30b16b912f6fc906236fa6-switchworld-private" \

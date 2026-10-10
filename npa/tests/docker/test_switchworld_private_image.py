@@ -41,6 +41,11 @@ def test_private_recipe_uses_audited_snapshot_and_no_easydict_wheel() -> None:
     assert "FROM ${PYTHON_RUNTIME_SOURCE} AS python-runtime" in text
     assert "FROM ${DEBIAN_RUNTIME_BASE}" in text
     assert "COPY --from=python-runtime /usr/local /usr/local" in text
+    assert (
+        "COPY --from=python-runtime /etc/ssl/certs/ca-certificates.crt "
+        "/etc/ssl/certs/ca-certificates.crt"
+    ) in text
+    assert text.index("ca-certificates.crt") < text.index("snapshot.debian.org")
     assert "PATH=/usr/local/bin:${PATH}" in text
     assert "ARG DEBIAN_SNAPSHOT=20261009T000000Z" in text
     assert "snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}" in text
