@@ -60,9 +60,23 @@ states:
     return path
 
 
+@pytest.mark.parametrize("name", ["paidf-cosmos3.yaml", "sim2real.yaml"])
+def test_reference_workflow_rejects_dangling_next_before_planning(tmp_path, name):
+    import yaml
+
+    source = yaml.safe_load((REPO_ROOT / "workflows" / "main" / name).read_text())
+    first = source["initial"]
+    source["states"][first]["next"] = "missing-transition-target"
+    candidate = tmp_path / name
+    candidate.write_text(yaml.safe_dump(source))
+    with pytest.raises(NpaWorkflowError, match="next.*unknown state"):
+        load_spec(candidate)
+
+
 @pytest.mark.parametrize(
     "name",
     [
+        "video-variant-sweep.yaml",
         "vlm-eval-single.yaml",
         "tokenfactory-rollout-judge.yaml",
         "sim2real.yaml",
@@ -73,6 +87,7 @@ states:
         "cosmos-synth-fanout-curation.yaml",
         "robocasa-data-policy.yaml",
         "lerobot-transfer.yaml",
+        "rgbd-scan-to-policy-demo.yaml",
     ],
 )
 def test_example_specs_validate(name: str) -> None:

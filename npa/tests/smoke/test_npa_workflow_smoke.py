@@ -19,6 +19,7 @@ def _spec(name: str) -> Path:
 @pytest.mark.parametrize(
     "name",
     [
+        "video-variant-sweep.yaml",
         "vlm-eval-single.yaml",
         "tokenfactory-rollout-judge.yaml",
         "sim2real.yaml",
@@ -32,6 +33,7 @@ def _spec(name: str) -> Path:
         "paidf-image-attribute-augmentation.yaml",
         "paidf-event-video-generation.yaml",
         "lerobot-transfer.yaml",
+        "rgbd-scan-to-policy-demo.yaml",
     ],
 )
 def test_cli_validate_spec(name: str) -> None:

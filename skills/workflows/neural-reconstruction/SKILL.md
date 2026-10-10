@@ -132,8 +132,12 @@ npa workbench nurec status      # what a run prefix holds, stage by stage
 
 Default: **`nvidia/PhysicalAI-NuRec-PPISP`** — ungated, CC-BY-4.0, real
 photographic captures of four outdoor object-centric scenes shipped **already in
-NCore V4**, which is what NRE consumes. Scene `struktur28`, variant `auto`, is
-the small default (59 images across two cameras, ~1.1 GB archive).
+NCore V4**, which is what NRE consumes. The main demo, single-pod example and
+standalone fetch select scene `struktur28`, variant `auto`: all 59 images across
+two cameras. The `standard` variant has 518 HDR exposure-bracketed photographs
+across three cameras. It is an opt-in photometric calibration input, not simply
+a denser version of the default. Both variants share the ~1.1 GB archive.
+See [NVIDIA's dataset description](https://arxiv.org/html/2601.18336v1).
 
 The `nvidia/PhysicalAI-Autonomous-Vehicles*` family (raw clips, `-NCore`, and the
 pre-built `-NuRec` USDZ scenes) is **gated**: the account that owns `HF_TOKEN`
@@ -288,6 +292,21 @@ Pass `--no-derive-rig` for AV-style sequences that already ship a rig edge (the
 derivation short-circuits with `already_present: true` anyway), and
 `--reference-camera <id>` to pin which camera becomes the rig.
 
+
+For derived multi-camera photographic captures, reconstruction prepares a separate
+training input with one unique virtual timestamp per photograph. The virtual rig
+visits each photograph's original camera pose, and camera-to-rig transforms are
+static identities. This matters during training as well as rendering: NRE 26.04
+otherwise interpolates every camera against one reference camera's rig trajectory.
+Original camera images remain byte-identical, intrinsics and sparse-point stores
+are retained, and the fetched or converted source generation is unchanged.
+These timestamps describe photographic ordering, not synchronized capture time.
+The published `reconstruction/photographic-timeline.json` records all source and
+training timestamps, camera poses, image hashes, and retained-store hashes.
+The preparation currently requires instantaneous photographic frames in separate
+camera stores; it rejects incompatible layouts instead of losing source data.
+Native physical rigs and custom recipes retain their own input representation.
+
 ## Recipe Selection
 
 The container resolves `--config-name` against its own `configs/` tree. Pick by
@@ -326,6 +345,12 @@ before claiming that every source image participated in training. The COLMAP
 multi-camera path still requires a real full RTX run after integration; offline
 PLY tests do not validate native reconstruction quality.
 
+The default object-centric recipe uses full-resolution training
+(`dataset.n_train_sequential_image_subsample=1`) and native PPISP camera-response
+correction (`model/post_processing@model.post_processing.b=ppisp`). Explicit
+Hydra overrides take precedence. Custom recipes keep their own defaults. The
+native 30,000-step budget remains unchanged.
+
 Enumerate what a given release actually ships with:
 
 ```bash
@@ -347,6 +372,16 @@ model was trained on. That is **not** a novel view. The tool therefore emits
 - `--renderer default` (the artifact's own trained renderer) is the default.
   `nrend` is faster but needs the nrend model dictionary embedded in the USDZ,
   which the object-centric recipe disables.
+
+Independent photographic cameras do not form a rigid sensor rig. NPA embeds
+`npa-capture-trajectory.json` in their USDZ after training, preserving every
+camera's exact source pose and the original native archive entries. Rendering
+selects native `training-rig-poses-per-frame` calibration with that trajectory,
+identity camera-to-rig transforms, and the requested offset in each camera's
+local frame. Intrinsics, frame times and world coordinates must match the native
+artifact; missing exact source poses fail before publishing the reconstruction.
+Explicit custom trajectories, training-view replication and native rigid-rig
+captures retain their existing paths.
 
 ## Artifact Layout
 
@@ -561,11 +596,40 @@ NPA_NUREC_E2E_PREFIX=checkpoints \
 
 Also needs `AWS_ENDPOINT_URL`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and
 `NGC_API_KEY` exported. `HF_TOKEN` is optional for the public PPISP default and
-required only for a gated/private dataset override. Budget ~30 min end to end (image pull,
-30k 3DGUT steps, render, upload); raise `NPA_NUREC_E2E_MAX_WAIT_SECONDS` (default
-7200) for a slower cluster. Measured: **1 passed in 28m47s**, with the underlying
-SkyPilot job taking 26m10s and reporting `test/psnr 31.19`, `test/ssim 0.833`,
-`test/lpips 0.267`.
+required only for a gated/private dataset override. The current two-camera,
+six-stage default completed in about 70 minutes including worker setup; the
+[qualification receipt](../../../docs/workbench/evidence/nurec-default-quality-20261008.json)
+records PSNR 30.272694, SSIM 0.825870 and LPIPS 0.255115, plus decoded artifacts
+and visual review of actual nonzero-offset views. Raise
+`NPA_NUREC_E2E_MAX_WAIT_SECONDS` (default 7200) when a slower target requires it.
+The earlier single-pod result (**1 passed in 28m47s**, PSNR 31.19 / SSIM 0.833 /
+LPIPS 0.267) belongs to its historical input and settings, not these defaults.
+
+The default object recipe allows two million Gaussians
+(`model.strategy.add.max_n_gaussians=2000000`) to retain detail across both
+full-resolution photographic cameras. The native 30,000-step training recipe
+still applies. An explicit Hydra override selects a different model capacity.
+
+### Default quality readback
+
+After the main demo completes, independently read its metrics and
+effective settings from S3:
+
+```bash
+NPA_INTEGRATION_E2E=1 \
+NPA_NUREC_QUALITY_RUN_URI=s3://<bucket>/<prefix>/neural-reconstruction/<run-id> \
+  npa/.venv/bin/python -m pytest \
+    npa/tests/e2e/test_nurec_reconstruct_live_e2e.py \
+    -k default_quality_readback -q
+```
+
+Supply the same AWS credentials and endpoint as other live readback tests. This
+requires the default auto-exposure capture, native 30,000-step recipe, full-resolution
+training and rendering, two-million-Gaussian capacity, PPISP, photographic poses
+and the nonzero offset. It
+rejects metrics below PSNR 28 / SSIM 0.8 or above LPIPS 0.3. These checks
+supplement visual inspection of multiple cameras; they do not prove unseen
+surface quality.
 
 ### Offline verification
 
@@ -588,6 +652,15 @@ GPU with no H100/H200 reference, every stage in the YAML is a real
 `list_runs` with `has_viewable=True` and `preferred == reports/sim2real.rrd`.
 
 ## Limitations
+
+For a dedicated RTX PRO 6000 project and offline digital-twin handoff, use
+`npa/examples/fleet/digital-twin.yaml` and `docs/workbench/guides/digital-twin.md`.
+Native renders emit `novel_views/render-evidence.json`, binding the source USDZ
+and rendered image hashes to observed allocated-device GPU telemetry. The HTML
+verifies these bindings and labels missing hardware activity unverified. Do not
+describe device-wide telemetry as process attestation or recorded-view playback
+as live free-camera/XR rendering. Keep exact infrastructure identities in private
+runtime configuration, never in the HTML or reusable spec.
 
 - **Linux x86_64 + NVIDIA RT-core GPU only.** aarch64 is unsupported upstream.
 - **NGC entitlement.** Only the `-ga` repositories are pullable with a standard

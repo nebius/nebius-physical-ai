@@ -7,6 +7,15 @@ artifacts. Complete the [quickstart](../../quickstart.md) and
 [GPU runtime setup](../getting-started.md) before a cloud run. A local preview
 checks the declaration; each guide states what its live validation actually proves.
 
+## Workflow operations
+
+| Task | Guide |
+| --- | --- |
+| Configure, submit, inspect or resume a workflow | [Manual workflow operations](manual-workflow-operations.md) |
+| Batch episodes and choose concurrency | [Dataset batches and capacity](paidf-dataset-batches.md) |
+| Inspect supported quality reports | [Shared report inspection](../insights-reports.md) |
+| Copy selected GCS/S3 objects | [Scoped storage transfers](scoped-storage-transfers.md) |
+
 ## Robot and reconstruction guides
 
 | Goal | Guide and required input | Compute and result scope |
@@ -32,6 +41,7 @@ it remains unvalidated end to end. For browser teleoperation measurements, see
 | --- | --- |
 | Generate images with Cosmos 3 | [Generation guide](../cosmos3-generate.md) and [access preflight](../cosmos3-access-preflight.md) |
 | Augment your source video with Cosmos 3 | [PAIDF + Cosmos 3](paidf-cosmos3.md) and [setup/run procedure](../../../workflows/guides/paidf-cosmos3.md) |
+| Generate twelve distinct appearance scenarios | [Reusable twelve-profile recipe](paidf-appearance-12.md); one separate MP4 per variant |
 | Assess augmentation across manipulation tasks | [LeRobot realism comparison](paidf-lerobot-realism.md); pinned cup, coffee and simulated cube-lift episodes |
 | Produce a labeled dataset with Cosmos Transfer | Run the separately named `nvidia-paidf-vda-cosmos-transfer25.yaml` via [Data Factory deployment](physical-ai-data-factory-deploy.md); its [quickstart](physical-ai-data-factory-deploy.md#quick-start-copy-paste) can seed generated frames |
 | Understand Data Factory stages and artifacts | [Component and S3 mapping](physical-ai-data-factory.md) |
@@ -56,7 +66,7 @@ when adapting it:
 
 | Task | Guide |
 | --- | --- |
-| Configure, preflight, submit, and recover | [Sim2Real operator runbook](sim2real-workflow.md) |
+| Configure, preflight, submit, and recover | [Sim2Real operator runbook](sim2real-workflow.md); first confirm the declared data/robot contract, run-scoped S3 storage, a validated plan, image preflight, and the exact execution context |
 | Prepare formats, schemas, and S3 layout | [Data contracts](sim2real-data-contracts.md) |
 | Supply customer data and robot assets | [Customer assets](sim2real-customer-assets.md) · [RobotSpec](sim2real-robot-spec.md) |
 | Understand stages, loops, and parallel execution | [Architecture](sim2real-architecture.md) |

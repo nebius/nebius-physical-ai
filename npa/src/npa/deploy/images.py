@@ -150,6 +150,7 @@ LIBERO_SIGSTORE_PUBLICATION_REFERRERS = (
 )
 
 CONTAINER_IMAGE_NAMES = {
+    "lyra2": "npa-lyra2",
     "antioch": "npa-antioch",
     "openpi": "npa-openpi",
     "habitat-sim": "npa-habitat-sim",
@@ -211,6 +212,7 @@ CONTAINER_IMAGE_NAMES = {
 # npa/tests/docker/test_packaging_contract.py locks the two inventories together.
 SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
     {
+        "lyra2",
         "paidf-anomalygen-sky",
         "paidf-attribute-search-sky",
         "paidf-detection-sky",
@@ -383,6 +385,10 @@ PUBLIC_RELEASE_TAG_OVERRIDES: dict[str, str] = {
 # whose filesystem/layers were scanned and whose advertised GPU capability ran.
 # A newly built dev tag must earn fresh evidence before this mapping changes.
 GPU_ACCEPTED_PUBLIC_IMAGE_SOURCES: dict[str, dict[str, str]] = {
+    "lyra2": {
+        "development_sha": "51be9e81450233d6742489c95b2cd250ed482acc",
+        "oci_digest": "sha256:c959e2338409195b8b2082e5f199a84c782ff81f2b2dac794e10c70f233a5bf6",
+    },
     "isaac-arena": {
         "development_sha": "ae5adea6ab895660996f513f14160c89d06f47e5",
         "oci_digest": "sha256:9c6a417672d6f87499680ba337c90488c2a33d41ac9f7b5452eb5d97d00e097e",
@@ -453,6 +459,7 @@ PUBLIC_REGISTRY_HOSTS = frozenset(
 )
 
 SUPPORTED_TOOL_VERSIONS = {
+    "lyra2": "2.0-rtfetch2",
     "antioch": "0.1.0-cli0.4.289",
     "openpi": "pi05-full-droid-rlds-cu128-unbuilt",
     # Default LeRobot image release. Selectable package versions and their
@@ -2096,6 +2103,71 @@ def ncore_accepted_image_manifest() -> dict[str, Any]:
     return validate_ncore_accepted_image_manifest(payload)
 
 
+def _validate_workflow_image_candidate(tool: str, entry: Any) -> None:
+    """Keep validation candidates distinct from accepted public releases."""
+
+    if tool not in LAYER_STALE_PUBLICATION_TOOLS or not isinstance(entry, dict):
+        raise RuntimeError(f"Invalid public workflow candidate for {tool!r}")
+    development_tag(str(entry.get("development_sha") or ""))
+    if (
+        re.fullmatch(r"sha256:[0-9a-f]{64}", str(entry.get("published_digest") or ""))
+        is None
+    ):
+        raise RuntimeError(f"Public workflow candidate digest is invalid for {tool!r}")
+    tool_refs = entry.get("validation_tool_refs")
+    prefix = f"workbench.{tool.replace('-', '_')}."
+    if (
+        not isinstance(tool_refs, list)
+        or not tool_refs
+        or any(
+            not isinstance(ref, str) or not ref.startswith(prefix) for ref in tool_refs
+        )
+        or len(tool_refs) != len(set(tool_refs))
+    ):
+        raise RuntimeError(f"Public workflow candidate scope is invalid for {tool!r}")
+    if not str(entry.get("scope_reason") or "").strip():
+        raise RuntimeError(
+            f"Public workflow candidate scope needs a reason for {tool!r}"
+        )
+    if not re.fullmatch(
+        r"https://github.com/nebius/nebius-physical-ai/actions/runs/[0-9]+",
+        str(entry.get("build_run_url") or ""),
+    ):
+        raise RuntimeError(
+            f"Public workflow candidate build evidence is invalid for {tool!r}"
+        )
+
+
+def public_workflow_image_default(
+    tool: str, *, tool_ref: str, registry: str | None
+) -> str:
+    """Resolve an official workflow validation candidate within its recorded scope.
+
+    Args:
+        tool: Canonical workbench image tool name.
+        tool_ref: Workflow action whose runtime is being selected.
+        registry: Explicit registry selection, or None for the official default.
+
+    Returns:
+        The digest-bound candidate, or an empty string for normal routing.
+
+    Raises:
+        RuntimeError: The governed public image manifest is invalid.
+    """
+    if registry and registry.rstrip("/") != DEFAULT_PUBLIC_CONTAINER_REGISTRY:
+        return ""
+    candidates = public_release_manifest().get("workflow_validation_candidates", {})
+    candidate = candidates.get(tool)
+    if candidate is None or tool_ref not in candidate["validation_tool_refs"]:
+        return ""
+    image_name = CONTAINER_IMAGE_NAMES[tool]
+    tag = development_tag(candidate["development_sha"])
+    return (
+        f"{DEFAULT_PUBLIC_CONTAINER_REGISTRY}/{image_name}:{tag}"
+        f"@{candidate['published_digest']}"
+    )
+
+
 @lru_cache(maxsize=1)
 def public_release_manifest() -> dict[str, Any]:
     """Load exact anonymously verified release-digest claims."""
@@ -2151,6 +2223,13 @@ def public_release_manifest() -> dict[str, Any]:
         development_sha = entry.get("development_sha")
         if development_sha is not None:
             development_tag(str(development_sha))
+    candidates = payload.get("workflow_validation_candidates", {})
+    if not isinstance(candidates, dict) or not set(candidates) <= pending_tools:
+        raise RuntimeError(
+            "Public workflow candidates must be publication-pending tools"
+        )
+    for tool, entry in candidates.items():
+        _validate_workflow_image_candidate(tool, entry)
     return payload
 
 

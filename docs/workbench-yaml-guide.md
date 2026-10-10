@@ -16,14 +16,18 @@ SkyPilot remains the execution engine, not the repository authoring surface. The
 old shipped multi-document SkyPilot workflow catalog is retired and guarded from
 returning. `npa workbench workflow submit` still accepts customer-provided raw
 SkyPilot YAML, and a few tool-specific single-task examples or resource profiles
-remain in guarded locations. The supported catalog has two workflow directories:
+remain in guarded locations. The supported catalog separates principal, reference, and partner workflows:
 
 ```text
-workflows/main/     # sim2real.yaml, paidf-cosmos3.yaml, nurec-reconstruct.yaml
-workflows/testing/  # All other catalog workflows; add new pipelines here
+workflows/main/     # promoted principal pipelines; see workflows/README.md
+workflows/testing/  # General references, component tests, and fixtures
+workflows/partners/<partner>/  # Partner integrations and runbooks
 ```
 
-Catalog documentation lives in [`workflows/README.md`](../workflows/README.md).
+The catalog overview lives in [`workflows/README.md`](../workflows/README.md).
+The [main](../workflows/main/README.md) and
+[testing](../workflows/testing/README.md) directory READMEs pair each YAML with
+its guide; detailed guides stay in their existing locations.
 The concise language reference is
 [`docs/workbench/npa-workflow-guide.md`](workbench/npa-workflow-guide.md). This guide
 uses
@@ -65,7 +69,7 @@ states:
     inputs:
       - uri: "{{config.rollouts_uri}}"
     outputs:
-      - uri: "{{config.scores_uri}}vlm_eval_stub.json"
+      - uri: "{{config.scores_uri}}vlm_eval.json"
         schema: npa.workbench.vlm_eval.report.v1
     terminal: true
 ```

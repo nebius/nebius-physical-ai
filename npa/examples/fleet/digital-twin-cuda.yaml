@@ -1,0 +1,20 @@
+apiVersion: npa.fleet/v0.0.1
+name: digital-twin-cuda
+tenant_id: "" # Supply the authorized tenant in a private runtime copy.
+region: us-central1
+profile: ""
+defaults:
+  name: render
+  gpu_driver_mode: managed-image
+  managed_driver_preset: cuda13.0
+  gpu_nodes:
+    count: 1
+    platform: gpu-b200-sxm
+    preset: 1gpu-20vcpu-224gb
+    # Optional: set capacity_block_group privately for a strict reservation.
+  cpu_nodes: {count: 1, platform: cpu-d3, preset: 16vcpu-64gb}
+  enable_gpu_cluster: false
+  enable_filestore: false
+projects:
+  - name: digital-twin-cuda
+    project_id: "<your-project-id>"

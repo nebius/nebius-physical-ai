@@ -212,11 +212,23 @@ def _generation_inputs(tmp_path: Path) -> dict[str, Path]:
 
 @requires_ffmpeg
 @pytest.mark.parametrize("prior_status", ["completed", "degraded"])
+@pytest.mark.parametrize("with_content_region", [False, True, None])
 def test_generate_variants_runs_real_runner_contract_and_changes_retry(
     tmp_path: Path,
     prior_status: str,
+    with_content_region: bool | None,
 ) -> None:
     paths = _generation_inputs(tmp_path)
+    region = None
+    if with_content_region:
+        from npa.workflows.paidf_cosmos3_media import probe_video
+        from npa.workflows.video_content_region import content_region_record
+
+        region = content_region_record(probe_video(paths["source"]), [0, 0, 64, 64])
+    if with_content_region is not False:
+        paths["provenance"].write_text(
+            json.dumps({"status": "prepared", "source_content_region": region})
+        )
     storage = _MemoryStorage()
     calls: list[dict] = []
     generated_video = _tiny_video(tmp_path / "generated.mp4", color="red")
@@ -252,6 +264,16 @@ def test_generate_variants_runs_real_runner_contract_and_changes_retry(
         True,
         "test-run",
     )
+    if with_content_region is None:
+        with pytest.raises(c3.PaidfCosmos3Error, match="provenance is null"):
+            c3.generate_variants(
+                *args,
+                storage=storage,
+                environ={"CUDA_VISIBLE_DEVICES": "0"},
+                generator=fake_generator,
+            )
+        assert not calls
+        return
     first = c3.generate_variants(
         *args,
         storage=storage,
@@ -280,6 +302,12 @@ def test_generate_variants_runs_real_runner_contract_and_changes_retry(
     assert metadata["conditioned_input"] == "source.mp4"
     assert metadata["weights_baked"] is False
     assert metadata["motion_preservation"] is None
+    detected = metadata["source_content_region"]
+    assert detected["bounds"] == [0, 0, 64, 64]
+    assert detected["origin"] == "source-padding-detection"
+    assert detected["padding_detection"]["status"] == "no-additional-padding"
+    if region:
+        assert detected["source_sha256"] == region["source_sha256"]
     generated_bytes = generated_video.read_bytes()
     assert generated_bytes != paths["source"].read_bytes()
     for variant in first["variants"]:
