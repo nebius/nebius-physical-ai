@@ -57,7 +57,7 @@ USER root
 
 # The fixed snapshot supplies the exact libssh2 bytes independently audited in
 # ncore/native-bootstrap-lock.json. No package acquisition occurs at pod time.
-RUN python3 -c 'import sys; raise SystemExit(sys.version_info[:2] != (3, 10))' \
+RUN python3 -c 'import ctypes, hashlib, lzma, sqlite3, ssl, sys, zlib; assert sys.version_info[:2] == (3, 10); assert ssl.OPENSSL_VERSION; assert hashlib.algorithms_available; assert ctypes.CDLL(None); assert zlib.ZLIB_VERSION; assert lzma.CHECK_CRC64; assert sqlite3.sqlite_version' \
     && sed -ri \
       -e "s|https?://deb.debian.org/debian-security|https://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}|g" \
       -e "s|https?://deb.debian.org/debian|https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}|g" \

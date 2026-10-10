@@ -44,7 +44,16 @@ def test_private_recipe_uses_audited_snapshot_and_no_easydict_wheel() -> None:
     assert "PATH=/usr/local/bin:${PATH}" in text
     assert "ARG DEBIAN_SNAPSHOT=20261009T000000Z" in text
     assert "snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}" in text
-    assert "sys.version_info[:2] != (3, 10)" in text
+    assert (
+        "import ctypes, hashlib, lzma, sqlite3, ssl, sys, zlib; "
+        "assert sys.version_info[:2] == (3, 10); "
+        "assert ssl.OPENSSL_VERSION; "
+        "assert hashlib.algorithms_available; "
+        "assert ctypes.CDLL(None); "
+        "assert zlib.ZLIB_VERSION; "
+        "assert lzma.CHECK_CRC64; "
+        "assert sqlite3.sqlite_version"
+    ) in text
     assert "COPY --from=wan-source /opt/byof /opt/byof" in text
     assert "COPY --from=wan-source /opt/wan-base /opt/wan-base" in text
     assert "wan/utils/easydict.py" in text
