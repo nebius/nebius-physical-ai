@@ -55,6 +55,11 @@ from npa.workbench.cosmos_evaluator.hallucination import (
     HallucinationResult,
     check_hallucination,
 )
+from npa.workbench.cosmos_evaluator.report import (
+    CosmosEvaluatorReportError,
+    inspect_evaluator_report,
+    summarize_evaluator_report,
+)
 from npa.workbench.cosmos_evaluator.temporal_consistency import (
     TemporalConsistencyResult,
     check_temporal_consistency,
@@ -85,6 +90,7 @@ __all__ = [
     "AppearanceFidelityResult",
     "ClipEvaluation",
     "CosmosEvaluatorError",
+    "CosmosEvaluatorReportError",
     "CosmosEvaluatorStorageError",
     "EvaluateRunResult",
     "HallucinationResult",
@@ -93,7 +99,9 @@ __all__ = [
     "check_appearance_fidelity",
     "check_temporal_consistency",
     "evaluate_run",
+    "inspect_evaluator_report",
     "report_uri_for",
+    "summarize_evaluator_report",
     "upstream_source_dir",
     "verify_attributes",
 ]

@@ -49,6 +49,7 @@ CLI:
 
 ```bash
 npa workbench insights record --input-path <records.json> --output-path <store>
+npa workbench insights report --input-path <exact-report-json-or-s3-object> --output-format json
 npa workbench insights ingest-run --input-path <run-prefix> --output-path <store>
 npa workbench insights query --input-path <store> --tool <t> --metric-name <m>
 npa workbench insights lineage --input-path <store> --uri <artifact>
@@ -60,11 +61,19 @@ npa workbench insights list
 ```
 
 Endpoints: `/health`, `/status`, `/system-info`, `/list`, `POST /record`,
-`POST /ingest-run`, `GET /lineage`, `GET /query`, `GET /compare`,
+`POST /ingest-run`, `POST /report`, `GET /lineage`, `GET /query`, `GET /compare`,
 `GET /dashboard`.
 
 ## API contract
 
+- `POST /report`: inspect one exact local/S3 report without storing metrics or
+  executing evaluation. Schema adapters currently support Cosmos Evaluator v1
+  and current dataset validation v1 reports. The common envelope preserves the
+  producer's gate and source-specific evidence under `summary`; it never
+  normalizes unlike scores. Unknown schemas are rejected. See
+  `docs/workbench/insights-reports.md`. Add new formats as tested schema adapters
+  in `npa/src/npa/workbench/insights/reports.py`, reusing each producer's validator;
+  the CLI, SDK and HTTP endpoint remain shared. Keep ingestion support separate.
 - `POST /record`: append one or more metric emissions (+ lineage edges) keyed by
   run id + lineage refs. Rows validate against `npa.insights.metric_record.v1`.
 - `POST /ingest-run`: **non-invasive ingestion** — scan an S3 run prefix for
