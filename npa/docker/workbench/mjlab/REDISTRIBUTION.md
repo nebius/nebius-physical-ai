@@ -82,3 +82,5 @@ service directly. The service generates fresh host keys at runtime. The build
 probes that exact service-start path from a keyless state, stops the service,
 and removes generated keys before the layer commits. Private host keys are
 never delivered in the image.
+The container declares the non-root user's home explicitly so SkyPilot's root
+setup shell preserves a writable user home in its exported login environment.

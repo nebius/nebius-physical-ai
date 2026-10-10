@@ -85,11 +85,12 @@ COPY docker/workbench/mjlab/REDISTRIBUTION.md /usr/share/doc/npa-mjlab/REDISTRIB
 COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh /usr/local/bin/npa-workflow-entrypoint
 WORKDIR /workspace
 USER ubuntu
+ENV HOME=/home/ubuntu
 # Prove the declared bootstrap behavior before publishing its OCI attestation.
 # This probe exercises the existing SkyPilot-only passwordless_root_exemption
 # in packaging-contract.yaml; the service disables privilege escalation.
 # trivy:ignore:AVD-DS-0010
-RUN sudo -n true && test -w /tmp && test -w /home/ubuntu \
+RUN sudo -n true && test "$HOME" = /home/ubuntu && test -w "$HOME" && test -w /tmp \
     && command -v rsync && command -v ssh-keygen && command -v service \
     && test ! -e /etc/ssh/ssh_host_ed25519_key \
     && sudo service ssh start && sudo /usr/sbin/sshd -t \
