@@ -13,8 +13,9 @@ from urllib.parse import urlsplit
 import pytest
 import yaml
 
-from npa.workflows.paidf_cosmos3_media import verify_pair
+from npa.workflows.paidf_cosmos3_media import verify_pair, video_sha256
 from npa.workflows.paidf_cosmos3 import _validated_quality_status
+from npa.workflows.video_padding_preservation import _pixel_hashes
 
 
 pytestmark = [pytest.mark.e2e, pytest.mark.e2e_skypilot, pytest.mark.gpu]
@@ -90,6 +91,7 @@ def _audit_variant(client, root, variant, source, destination, recipe, frames):
     assert alignment["decoded_frames"] == frames
     assert alignment["generated_sha256"] == metadata["published_video_sha256"]
     assert alignment["source_sha256"] == metadata["temporal_alignment"]["source_sha256"]
+    _audit_padding(client, root, relative, source, video, metadata)
     assert metadata["guardrails"] is True and metadata["motion_preservation"] is None
     assert receipt["text_guardrail_passed"] is receipt["video_guardrail_passed"] is True
     assert receipt["control_loader_verified"] is True
@@ -105,6 +107,36 @@ def _audit_variant(client, root, variant, source, destination, recipe, frames):
         recipe["retry_steps_delta"]
     )
     return alignment["generated_sha256"]
+
+
+def _audit_padding(client, root, relative, source, video, metadata):
+    record = metadata.get("source_content_region")
+    receipt = metadata.get("padding_preservation")
+    if record is None:
+        assert receipt is None
+        return
+    if receipt is None:
+        assert record["bounds"] == [0, 0, *record["canvas"]]
+        return
+    assert receipt["status"] == "verified"
+    assert (
+        receipt["padding_matches_source"] is receipt["scene_pixels_unchanged"] is True
+    )
+    raw = _download(
+        client, root, relative + "raw_model_video.mp4", video.with_suffix(".raw.mp4")
+    )
+    for path, key in (
+        (source, "source_sha256"),
+        (raw, "raw_model_sha256"),
+        (video, "published_sha256"),
+    ):
+        assert video_sha256(path) == receipt[key]
+    source_pixels = _pixel_hashes(source, record)
+    raw_pixels = _pixel_hashes(raw, record)
+    published_pixels = _pixel_hashes(video, record)
+    assert source_pixels["padding_rgb_sha256"] == published_pixels["padding_rgb_sha256"]
+    assert raw_pixels["scene_rgb_sha256"] == published_pixels["scene_rgb_sha256"]
+    assert published_pixels == {key: receipt[key] for key in published_pixels}
 
 
 def _audit_terminal(runtime, accepted):

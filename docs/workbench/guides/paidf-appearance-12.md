@@ -243,7 +243,12 @@ or state tables to generated observations or produce a trainable LeRobot dataset
 
 ### 6. Submit and monitor
 
-Use the input array selected above. Keep the recipe's counts and thresholds:
+Use the input array selected above. Keep the recipe's counts and thresholds.
+
+The workflow allows two total generation/evaluation passes, including the
+initial pass. If the first batch fails quality checks, it automatically
+generates all twelve profiles again with new seeds, guidance `4.5` and `39`
+steps. Inspect the final pass after the run is terminal.
 
 ```bash
 npa/.venv/bin/npa workbench workflow submit "$SPEC" \
@@ -477,12 +482,27 @@ must remain in private storage for private recordings.
 
 The retained-run audit checks workflow completion, all twelve profiles,
 complete video decoding, source/output alignment, native control receipts and
-evaluator accounting. It verifies that the evaluator's video hashes match the
+evaluator accounting. For automatically preserved output, it also downloads the
+raw model video, verifies all file hashes, and checks every decoded source-border
+and raw-model scene pixel against the published video and preservation receipt.
+Use the worker's FFmpeg build for these exact RGB comparisons. The audit
+verifies that the evaluator's video hashes match the
 retained outputs, so an earlier pass cannot stand in for the final results.
-Create a private JSON array with `run_uri` and `expected_frames` for each proof,
-then run:
+Create the private case file from this run and its downloaded source, then run:
 
 ```bash
+npa/.venv/bin/python - "$RUN_URI" "$EVIDENCE_DIR/source.mp4" \
+  "$PRIVATE_RUN_DIR/proof-cases.json" <<'PYTHON'
+import json
+import sys
+from pathlib import Path
+from npa.workflows.paidf_cosmos3_media import probe_video
+
+frames = probe_video(Path(sys.argv[2]))["decoded_frames"]
+Path(sys.argv[3]).write_text(
+    json.dumps([{"run_uri": sys.argv[1], "expected_frames": frames}]) + "\n"
+)
+PYTHON
 NPA_INTEGRATION_E2E=1 \
 NPA_E2E_PROJECT="$PROJECT_ALIAS" \
 NPA_PAIDF_APPEARANCE_CASES="$PRIVATE_RUN_DIR/proof-cases.json" \
@@ -497,27 +517,10 @@ The canonical workflow deliberately finishes a rejected batch with a failed
 requires that exact rejection path, a valid rejected disposition and successful
 preceding stages; other workflow failures do not qualify.
 
-To audit padding-aware scoring on retained outputs, use the same private case
-file with `NPA_PAIDF_PADDING_CASES`, set `NPA_PAIDF_PADDING_EVIDENCE_DIR` to a
-private local directory, and run
-`npa/tests/e2e/test_paidf_padding_evaluation_live.py`. This audit downloads the
-videos and makes real Token Factory calls. It requires the same hallucination
-engine as the retained grades; for production Cosmos Evaluator runs, use its
-pinned NVIDIA checkout and dependencies (`NPA_COSMOS_EVALUATOR_SRC`). Legacy
-rectangles are reconstructed only from the retained normalization recipe and
-the hash-verified original and prepared videos. Reports are written locally;
-retained videos and original grades are not overwritten. The audit also measures
-a fresh full-frame hallucination baseline with the same engine to isolate the
-effect of padding removal on that metric.
-
-To test source detection and border preservation on retained real outputs, use
-`NPA_PAIDF_PADDING_CASES` with the same private case file and set
-`NPA_PAIDF_PADDING_PRESERVATION_DIR` to a new private local directory, then run
-`npa/tests/e2e/test_paidf_padding_preservation_live.py` with the integration and
-project variables above. This makes read-only storage calls, detects borders
-without relying on old preparation metadata, and checks every decoded scene
-and border pixel in each corrected video. It neither generates new model
-outputs nor reruns the VLM.
+The historical padding evaluation/preservation tests use the earlier direct
+publication layout and legacy restoration procedure. Use the retained-run audit
+above for a fresh run with automatic padding preservation and native publication
+URIs; it does not rewrite videos or rerun the VLM.
 
 ## Public reference measurement
 
