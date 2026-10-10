@@ -84,10 +84,27 @@ MANIPULATION_EVENT_ORDER = (
 def _vector(value: Any, size: int, label: str) -> list[float]:
     import numpy as np
 
-    array = np.asarray(value).reshape(-1)
+    value = _proxy_torch(value)
+    if hasattr(value, "detach"):
+        value = value.detach()
+    if hasattr(value, "cpu"):
+        value = value.cpu()
+    if hasattr(value, "numpy"):
+        value = value.numpy()
+    array = np.asarray(value)
     if array.shape != (size,) or not np.isfinite(array).all():
         raise RuntimeError(f"{label} must contain {size} finite values")
     return [float(item) for item in array]
+
+
+def _action_parameter_row(value: Any, size: int, label: str) -> list[float]:
+    value = _proxy_torch(value)
+    shape = tuple(int(dimension) for dimension in getattr(value, "shape", ()))
+    if shape != (1, size):
+        raise RuntimeError(
+            f"{label} must have single-environment shape (1, {size}), got {shape}"
+        )
+    return _vector(value[0], size, label)
 
 
 def _joint_bridge(native: Any) -> tuple[list[float], list[float], int, int, int]:
@@ -104,8 +121,8 @@ def _joint_bridge(native: Any) -> tuple[list[float], list[float], int, int, int]
     offset, scale = getattr(arm, "_offset", None), getattr(arm, "_scale", None)
     if offset is None or scale is None:
         raise RuntimeError("arm action term does not expose configured offsets/scales")
-    defaults = _vector(offset[0], 7, "arm action offsets")
-    scales = _vector(scale[0], 7, "arm action scales")
+    defaults = _action_parameter_row(offset, 7, "arm action offsets")
+    scales = _action_parameter_row(scale, 7, "arm action scales")
     return (
         defaults,
         scales,

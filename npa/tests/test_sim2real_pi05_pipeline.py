@@ -135,6 +135,64 @@ class _JointTensor:
         return self.value
 
 
+class _CudaActionTensor:
+    def __init__(self, value: object, *, on_host: bool = False) -> None:
+        self.value = np.asarray(value, dtype=np.float32)
+        self.on_host = on_host
+
+    @property
+    def shape(self) -> tuple[int, ...]:
+        return self.value.shape
+
+    def __getitem__(self, item: object) -> _CudaActionTensor:
+        return _CudaActionTensor(self.value[item], on_host=self.on_host)
+
+    def detach(self) -> _CudaActionTensor:
+        return self
+
+    def cpu(self) -> _CudaActionTensor:
+        return _CudaActionTensor(self.value, on_host=True)
+
+    def numpy(self) -> np.ndarray:
+        if not self.on_host:
+            raise TypeError("can't convert cuda:0 device type tensor to numpy")
+        return self.value
+
+
+class _ActionProxy:
+    def __init__(self, value: object) -> None:
+        self.torch = _CudaActionTensor(value)
+
+
+def _policy_action_native(offset: object, scale: object) -> Namespace:
+    term = Namespace(_offset=offset, _scale=scale)
+    manager = Namespace(
+        active_terms=["arm_action", "gripper_action"],
+        action_term_dim=[7, 1],
+        get_term=lambda name: term if name == "arm_action" else Namespace(),
+    )
+    return Namespace(action_manager=manager)
+
+
+def test_joint_bridge_moves_proxy_action_parameters_to_host() -> None:
+    native = _policy_action_native(_ActionProxy([[0.1] * 7]), _ActionProxy([[0.5] * 7]))
+
+    defaults, scales, total, arm_start, grip_start = pi05_closed_loop._joint_bridge(
+        native
+    )
+
+    assert np.allclose(defaults, [0.1] * 7)
+    assert np.allclose(scales, [0.5] * 7)
+    assert (total, arm_start, grip_start) == (8, 0, 7)
+
+
+def test_joint_bridge_rejects_broadcastable_action_parameter_shape() -> None:
+    native = _policy_action_native(_ActionProxy([0.1] * 7), _ActionProxy([[0.5] * 7]))
+
+    with pytest.raises(RuntimeError, match=r"shape \(1, 7\), got \(7,\)"):
+        pi05_closed_loop._joint_bridge(native)
+
+
 def test_closed_loop_synchronizes_wrist_before_reading_rgb(monkeypatch) -> None:
     events: list[str] = []
     robot = Namespace(
