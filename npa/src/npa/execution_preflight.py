@@ -366,7 +366,7 @@ def _run_gpu_check(gpu_check: Callable[[], Any]) -> None:
     except SkyPilotGpuLabelError as exc:
         raise ExecutionPreflightError(
             "gpu",
-            "reviewed GPU nodes lack the effective skypilot.co/accelerator label; "
+            "reviewed GPU nodes cannot satisfy SkyPilot's effective accelerator selector; "
             "rerun supported GPU setup for the exact context with label_known_gpus=True; "
             "submission preflight does not modify node labels",
         ) from exc

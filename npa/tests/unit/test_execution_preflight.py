@@ -892,6 +892,7 @@ def test_single_node_gpu_preflight_rejects_wrong_product(provider, monkeypatch):
                 allocatable_cpu_millis=4000,
                 allocatable_memory_bytes=16 * 10**9,
                 allocatable_pods=1,
+                labels=(("nvidia.com/gpu.product", "NVIDIA-B200"),),
             ),
         ),
     )
@@ -2226,7 +2227,7 @@ def test_sky_gpu_preflight_rejects_replacement_without_effective_label(
     )
 
     with pytest.raises(
-        ExecutionPreflightError, match="skypilot.co/accelerator"
+        ExecutionPreflightError, match="effective accelerator selector"
     ) as caught:
         preflight_skypilot_submission(
             [document], project="unit", infra="k8s/unit-context"
@@ -2350,7 +2351,9 @@ def test_sky_gpu_preflight_follows_first_invalid_context_label_fallback(
         )
         assert report["checks"]["gpu"] == "pass"
     else:
-        with pytest.raises(ExecutionPreflightError, match="skypilot.co/accelerator"):
+        with pytest.raises(
+            ExecutionPreflightError, match="effective accelerator selector"
+        ):
             preflight_skypilot_submission(
                 [document], project="unit", infra="k8s/unit-context"
             )

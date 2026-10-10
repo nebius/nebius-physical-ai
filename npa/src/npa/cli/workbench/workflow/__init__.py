@@ -5291,7 +5291,7 @@ def _preflight_submit_gang_capacity(
     from npa.orchestration.skypilot.k8s_gpu_catalog import (
         accelerator_spec,
         discover_kubernetes_gpu_inventory,
-        preflight_kubernetes_gpu_gang,
+        preflight_skypilot_gpu_gang,
     )
     from npa.orchestration.skypilot.resource_quantities import (
         kubernetes_ephemeral_storage_quantity,
@@ -5339,7 +5339,11 @@ def _preflight_submit_gang_capacity(
         pod_spec = pod_config.get("spec")
         pod_spec = pod_spec if isinstance(pod_spec, Mapping) else {}
         inventory = discover_kubernetes_gpu_inventory(context=context)
-        result = preflight_kubernetes_gpu_gang(
+        # This is the normal NPA-spec submit boundary.  It must enforce the
+        # same effective formatter contract as raw SkyPilot YAML before the
+        # shared execution gate can stage source, probe S3, or reach a
+        # controller.
+        result = preflight_skypilot_gpu_gang(
             inventory,
             accelerator=selected,
             node_count=nodes,
