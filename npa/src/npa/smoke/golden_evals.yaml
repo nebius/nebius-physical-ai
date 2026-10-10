@@ -1382,6 +1382,30 @@ containers:
         Runs offline, so it uses sampled primitives rather than the upstream
         captured scans; stage-demo covers those in the reference workflow.
 
+  lyra2:
+    image: npa-lyra2
+    dockerfile: npa/docker/workbench/lyra2/Dockerfile
+    physical_ai:
+      useful: true
+      role: Reconstruct captured RGB video into native Lyra Gaussians and rendered video.
+    safety:
+      runs_as: ubuntu
+      base_image: nvidia/cuda:12.8.1-devel-ubuntu24.04 (digest pinned)
+      network: Runtime source, inference dependencies, model and operator input/output delivery.
+      external_fetch: [github-lyra-source, pytorch-cu128, huggingface-lyra-model, s3]
+      notes: No weights or captures are baked; NPA_LYRA_INPUT_PATH names a prepared input bundle.
+    golden_eval:
+      kind: container-smoke
+      module: npa.smoke.test_lyra2_functional
+      command: python3 -m npa.smoke.test_lyra2_functional
+      serverless_gpu: b200
+      gpu: required
+      timeout_seconds: unlimited
+      status: gpu-gated
+      notes: >-
+        Exact published digest qualified with native B200 reconstruction,
+        full video decode, S3 artifact readback and offline HTML. Operator input
+        and applicable Lyra internal R&D model rights remain required.
   alpamayo2-super:
     image: npa-alpamayo2-super
     dockerfile: npa/docker/workbench/alpamayo2-super/Dockerfile

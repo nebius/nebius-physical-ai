@@ -78,7 +78,7 @@ Those boundaries motivate three complementary maintained scanners:
 |---|---|
 | Bandit 1.9.4 | All tracked Python, including scripts and tests; medium/high severity and confidence, including unsafe deserialization, injection, weak transport and unsafe APIs. |
 | zizmor 1.30.1 | GitHub workflows and local actions; regular-persona findings with at least medium severity/confidence, including template injection and excessive permissions. |
-| Trivy 0.74.0 | All advisory severities, including unfixed vulnerabilities, for exact Python requirement pins, project extra pins, npm lock dependencies including development dependencies, and the resolved NPA core/development dependency closure. |
+| Trivy 0.74.0 | All advisory severities, including unfixed vulnerabilities, for exact Python requirement pins, bare and PEP 508 named hash-fragment-bound wheel URLs, explicitly mapped immutable source archives, project extra pins, npm lock dependencies including development dependencies, and the resolved NPA core/development dependency closure. |
 
 The gate materializes regular files from the actual target commit and the
 proposed merge commit, scans both with the same policy and vulnerability database,
@@ -100,8 +100,11 @@ unchanged pin on both branches. This covers `npa/requirements-lock.txt`,
 closure, the browser test npm lock, and `scripts/security-requirements.txt`.
 Deleting either required application/CI requirements file fails scanning.
 The private summary separates new regressions from all blocking findings.
-Vendor and tool-runtime inventories retain differential checks and their
-separate image validation requirements.
+For deployed workbench image and workflow-runtime inventories, the remediated
+`fsspec`, GitPython, Hydra-core, multidict, OAuthlib, urllib3, virtualenv, and
+Werkzeug families also have an absolute gate. Other workbench dependencies
+retain regression checks; Robomimic's unshipped historical source-evidence lock
+remains explicitly differential.
 
 The AnyIO floor is 4.14.2 for ordinary installs and the application lock, covering
 [TLS hostname verification](https://github.com/advisories/GHSA-82r6-8w77-94w6)
@@ -116,9 +119,14 @@ version-update configuration does not enable it or merge its PRs automatically.
 
 Candidate Bandit/zizmor ignore comments and configuration are disabled. Trivy
 receives isolated empty configuration and ignore files, so the image scan's
-OS-only settings do not hide application vulnerabilities. Python requirements
-with nonstandard filenames are normalized into explicit pip inventories, including
-pins with inline hashes and whitespace-separated comments. npm locks must retain
+OS-only settings do not hide application vulnerabilities. Python requirements,
+`*-deps.txt`, `*-wheels.txt`, `*-overrides.txt`, and constraint files are
+normalized into explicit pip inventories, including pins with inline hashes,
+whitespace-separated comments, and bare or PEP 508 named wheel URLs carrying
+SHA-256 fragments. Named wheels must agree with their declared package name.
+The one immutable MoviePy source archive is explicitly mapped to the version in
+that source revision; other non-wheel direct references fail closed.
+npm locks must retain
 resolved direct packages and agree with exact direct version pins. The
 core/development dependency closure is resolved with pinned uv, Python 3.12 and
 public PyPI metadata, with source builds disabled. Candidate application code,

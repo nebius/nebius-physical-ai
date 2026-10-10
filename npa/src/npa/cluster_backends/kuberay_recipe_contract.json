@@ -16,7 +16,7 @@
   "k8s-training/gpu_cluster.tf": "4213133cf206f93936050c7529723bf734e986c5026f1724674bfc53e3ebda68",
   "k8s-training/helm.tf": "91a842176ba507fd476793521512ea89a517ffc88cd52938a853069e104e8d37",
   "k8s-training/locals.tf": "8cc9fb9a1c4adc9bf07eda6463d4fa775af7d5b730ebc60a6d52e5e224f8787b",
-  "k8s-training/main.tf": "92750436d798abb903b05f9c62717f4de8be4f00a70fe8dfd41a3095079b738f",
+  "k8s-training/main.tf": "ce583d7f1fb7abb4ca0a0945ae06083450cda14905fa2c95fd2cd71bef9d0e13",
   "k8s-training/output.tf": "657da422fc710da8f8374f547f75a6ae596e4228796609023312960e8b0028ad",
   "k8s-training/provider.tf": "12bbc3d5886e305f4b34c31be9f435fb2813d9acf42da513ba3279a887ac4d63",
   "k8s-training/rbac_bindings.tf": "74e6fae621b0389ddd1af95800a367f5c10a280ded956eecabfe33bdb7acff56",

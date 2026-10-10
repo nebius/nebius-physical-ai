@@ -158,6 +158,8 @@ resource "nebius_mk8s_v1_node_group" "gpu" {
       on_preemption = "STOP"
       priority      = 1
     } : null
+    # Preemptible nodes also require a pricing model under the spot API.
+    follows_spot_price = var.gpu_nodes_preemptible ? {} : null
     filesystems = var.enable_filestore ? [
       {
         attach_mode = "READ_WRITE"

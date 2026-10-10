@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from packaging.requirements import Requirement
 import pytest
 import yaml
 
@@ -62,11 +63,8 @@ def test_every_declared_requirement_names_an_executable_and_a_spec() -> None:
         assert requirements, tool_ref
         for executable, requirement in requirements:
             assert executable and " " not in executable, (tool_ref, executable)
-            # A pip requirement, not a bare import name.
-            assert (
-                any(marker in requirement for marker in "=<>[")
-                or requirement.isidentifier()
-            )
+            # Validate PEP 508, including named references to pinned Git sources.
+            assert Requirement(requirement).name
 
 
 def test_shipped_cosmos_spec_renders_the_installer(

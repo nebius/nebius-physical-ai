@@ -6,6 +6,10 @@ profile: "" # set to an owner-configured profile at runtime
 project_prefix: rtx-render-fleet-
 defaults:
   gpu_workload_profile: rtx-rendering
+  # Replace in an owner-private runtime copy with a reviewed immutable image
+  # qualified for the GLX/EGL/Vulkan graphics gate. The governed default is
+  # quarantined and is intentionally not a deployment fallback.
+  gpu_graphics_smoke_image: '<reviewed-registry>/graphics@sha256:<64-hex-digest>'
   # Match these repositories to the verified Ubuntu 24.04 driver image.
   # HTTPS also works where outbound HTTP package traffic is unavailable.
   gpu_driver_package_repositories:

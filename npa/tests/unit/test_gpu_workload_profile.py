@@ -28,7 +28,11 @@ def test_unprofiled_selection_preserves_existing_defaults() -> None:
 
 
 def test_rtx_rendering_profile_selects_complete_driver_and_health_contract() -> None:
-    cluster = ClusterSpec(name="render", gpu_workload_profile="rtx-rendering")
+    cluster = ClusterSpec(
+        name="render",
+        gpu_workload_profile="rtx-rendering",
+        gpu_graphics_smoke_image="registry.example/graphics:operator",
+    )
     cluster.validate()
     plan = desired_state(cluster)
 
@@ -57,6 +61,7 @@ def test_rtx_rendering_profile_accepts_eight_gpu_rtx_nodes() -> None:
     cluster = ClusterSpec(
         name="render",
         gpu_workload_profile="rtx-rendering",
+        gpu_graphics_smoke_image="registry.example/graphics:operator",
         gpu_nodes=NodePoolSpec(
             count=3,
             platform=RTX_RENDERING_PLATFORM,
@@ -78,6 +83,7 @@ def test_rtx_rendering_profile_preserves_exact_zonal_rtx_platform() -> None:
     cluster = ClusterSpec(
         name="render",
         gpu_workload_profile="rtx-rendering",
+        gpu_graphics_smoke_image="registry.example/graphics:operator",
         gpu_nodes=NodePoolSpec(
             count=3,
             platform="gpu-rtx6000-a",

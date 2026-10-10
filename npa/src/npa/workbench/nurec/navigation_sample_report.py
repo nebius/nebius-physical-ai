@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import tempfile
 
+from npa.exception_notes import add_exception_note
 from npa.workbench.nurec.navigation_assets import materialize
 from npa.workbench.nurec.navigation_publication import verify_publication
 from npa.workbench.nurec.navigation_sample_publication import (
@@ -169,13 +170,21 @@ def evaluate_report(
     try:
         result = run_stage("evaluate", input_path, output_path)
     except (RuntimeError, ValueError, OSError, subprocess.SubprocessError) as error:
-        try:
-            build_report(reconstruction_path, output_path, input_path, report_path)
-        except (ValueError, OSError) as report_error:
-            error.add_note(f"HTML report unavailable: {type(report_error).__name__}")
+        _retain_failed_evaluation_report(
+            reconstruction_path, output_path, input_path, report_path, error
+        )
         raise
     build_report(reconstruction_path, output_path, input_path, report_path)
     return result
+
+
+def _retain_failed_evaluation_report(reconstruction, output, input_path, report, error):
+    try:
+        build_report(reconstruction, output, input_path, report)
+    except (ValueError, OSError) as report_error:
+        add_exception_note(
+            error, f"HTML report unavailable: {type(report_error).__name__}"
+        )
 
 
 def main(argv=None):

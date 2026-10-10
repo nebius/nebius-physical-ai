@@ -30,6 +30,8 @@ from npa.orchestration.skypilot.storage_context import call_with_workflow_storag
 from npa.cli.workbench.trigger import app as trigger_app
 from npa.cli._typer_defaults import resolve_typer_defaults
 from npa.cli.workbench.workflow.demo import app as demo_app
+from npa.cli.workbench.workflow.batch import app as batch_app
+from npa.cli.workbench.workflow.input_check import check_input_cmd
 from npa.cli.workbench.workflow.absence_recovery import register as register_absence
 from npa.cli.workbench.workflow.challenge import app as challenge_app
 from npa.cli.workbench.workflow.controller_recovery import (
@@ -67,6 +69,26 @@ MAX_LOG_OUTPUT_CHARS = 262_144
 _SUBMIT_PRIVATE_REDACTIONS: ContextVar[tuple[str, ...]] = ContextVar(
     "npa_submit_private_redactions", default=()
 )
+
+
+@app.command("schema")
+@resolve_typer_defaults
+def schema_cmd() -> None:
+    """Print the authoritative workflow JSON Schema as one JSON document.
+
+    Args:
+        None.
+
+    Returns:
+        None.
+
+    Raises:
+        FileNotFoundError: The bundled schema is unavailable from the installation.
+        ValueError: The bundled schema is not a JSON object.
+    """
+    from npa.orchestration.npa_workflow.schema_export import load_workflow_schema
+
+    typer.echo(json.dumps(load_workflow_schema(), indent=2, sort_keys=True))
 
 
 def _robotwin_render_process(
@@ -1046,8 +1068,8 @@ def submit_cmd(
         "",
         "--preset",
         help=(
-            "Explicit shipped workflow seed/config preset. Preset-owned dataset, "
-            "task, and trigger keys cannot be replaced with --var."
+            "Explicit shipped workflow seed/config preset. Preset-owned settings "
+            "cannot be replaced with --var."
         ),
     ),
     assume_decision: str = typer.Option(
@@ -1817,6 +1839,11 @@ def submit_cmd(
     try:
         required_secret_env = list(secret_env)
         if merged_npa_spec is not None and not plan_only:
+            from npa.orchestration.npa_workflow.marble_credentials import (
+                marble_secret_names,
+            )
+
+            required_secret_env.extend(marble_secret_names(merged_npa_spec))
             selected_access = _workflow_access_requirements(merged_npa_spec)
             if any(item.provider == "huggingface" for item in selected_access):
                 workflow_access_secret_names.add("HF_TOKEN")
@@ -6683,7 +6710,18 @@ def _durable_workflow_status(
             for item in job_observations.values()
             if str(item.get("status") or "").strip()
         ]
-        if any(item.startswith("FAILED") for item in observed_states):
+        active_wave_status = str(
+            job_observations.get(resolution.job_id, {}).get("status") or ""
+        ).upper()
+        if runtime_waves and active_wave_status in {
+            "RUNNING",
+            "STARTING",
+            "PENDING",
+            "RECOVERING",
+        }:
+            # A resumed wave can run while other stages retain failed history.
+            live_status = active_wave_status
+        elif any(item.startswith("FAILED") for item in observed_states):
             live_status = "FAILED"
         elif any(item == "CANCELLED" for item in observed_states):
             live_status = "CANCELLED"
@@ -10568,6 +10606,8 @@ def _emit_gpu_discovery_json(inventory, catalog, sky_error, resolutions):
 
 
 app.add_typer(trigger_app, name="trigger")
+app.add_typer(batch_app, name="batch")
+app.command("check-input")(check_input_cmd)
 app.add_typer(demo_app, name="demo")
 app.add_typer(challenge_app, name="challenge")
 register_controller_recovery(app)

@@ -33,6 +33,8 @@ Options
 --gpu-cuda-smoke  --skip-gpu-cuda-smoke  Run CUDA vectorAdd on every requested GPU node. [default: gpu-cuda-smoke]
 --gpu-cuda-smoke-image  <str>  Container image for CUDA vectorAdd validation.
     [default: nvcr.io/nvidia/k8s/cuda-sample:vectoradd-cuda12.5.0-ubuntu22.04]
+--gpu-graphics-smoke-image  <str>  Operator-controlled image for RTX GLX/EGL/Vulkan validation; the default follows public-image policy.
+    [default: tool://sonic]
 --mig  --no-mig  Enable the same pinned RTX PRO 6000 MIG policy as fleet. [default: no-mig]
 --mig-strategy  <str>  [default: mixed]
 --mig-config  <str>  [default: all-balanced]
@@ -77,6 +79,7 @@ Options
 | `--gpu-health-timeout-minutes` | <int>  GPU/MIG health deadline, matching `npa cluster up`. [default: 60] |
 | `--gpu-cuda-smoke` | --skip-gpu-cuda-smoke  Run CUDA vectorAdd on every requested GPU node. [default: gpu-cuda-smoke] |
 | `--gpu-cuda-smoke-image` | <str>  Container image for CUDA vectorAdd validation. [default: nvcr.io/nvidia/k8s/cuda-sample:vectoradd-cuda12.5.0-ubuntu22.04] |
+| `--gpu-graphics-smoke-image` | <str>  Operator-controlled image for RTX GLX/EGL/Vulkan validation; the default follows public-image policy. [default: tool://sonic] |
 | `--mig` | --no-mig  Enable the same pinned RTX PRO 6000 MIG policy as fleet. [default: no-mig] |
 | `--mig-strategy` | <str>  [default: mixed] |
 | `--mig-config` | <str>  [default: all-balanced] |
