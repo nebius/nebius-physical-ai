@@ -1489,26 +1489,34 @@ def test_validation_environment_recovers_stale_identity_raised_before_api_ensure
         scope: Path, *, environment: dict[str, str]
     ) -> dict[str, str]:
         calls.append("environment")
+        if calls.count("environment") == 1:
+            raise local_api.IsolatedApiError(failure_message)
+        return {
+            **environment,
+            "SKYPILOT_USER_ID": "npa-test-validation",
+            "SKYPILOT_API_SERVER_ENDPOINT": "http://127.0.0.1:41001",
+        }
+
+    def fake_recover(scope: Path, **kwargs: object) -> bool:
+        recovered.append({"scope": str(scope), "user_id": str(kwargs["user_id"])})
+        client_config = scope / "client-config.yaml"
+        if client_config.exists():
+            client_config.rename(scope / "retired-client-config.yaml")
+        return True
+
+    monkeypatch.setattr(cleanup, "sky_environment", fake_sky_environment)
+
+    def capture_ensure(**kwargs: object) -> None:
+        calls.append("ensure")
+        environment = kwargs["environment"]
+        assert isinstance(environment, dict)
         client_configs.append(
             yaml.safe_load(
                 Path(environment["SKYPILOT_GLOBAL_CONFIG"]).read_text(encoding="utf-8")
             )
         )
-        if calls.count("environment") == 1:
-            raise local_api.IsolatedApiError(failure_message)
-        return {**environment, "SKYPILOT_USER_ID": "npa-test-validation"}
 
-    def fake_recover(scope: Path, **kwargs: object) -> bool:
-        recovered.append({"scope": str(scope), "user_id": str(kwargs["user_id"])})
-        (scope / "client-config.yaml").rename(scope / "retired-client-config.yaml")
-        return True
-
-    monkeypatch.setattr(cleanup, "sky_environment", fake_sky_environment)
-    monkeypatch.setattr(
-        local_api,
-        "ensure_isolated_api",
-        lambda **_kwargs: calls.append("ensure"),
-    )
+    monkeypatch.setattr(local_api, "ensure_isolated_api", capture_ensure)
     monkeypatch.setattr(gpu_catalog, "_recover_idle_validation_scope", fake_recover)
 
     env = gpu_catalog.kubernetes_sky_environment(
@@ -1519,9 +1527,14 @@ def test_validation_environment_recovers_stale_identity_raised_before_api_ensure
 
     assert calls == ["environment", "environment", "ensure"]
     assert env["SKYPILOT_USER_ID"] == "npa-test-validation"
-    assert client_configs[0] == client_configs[1]
     assert Path(env["SKYPILOT_GLOBAL_CONFIG"]).stat().st_mode & 0o777 == 0o600
-    assert all(config["allowed_clouds"] == ["kubernetes"] for config in client_configs)
+    assert client_configs == [
+        {
+            "allowed_clouds": ["kubernetes"],
+            "api_server": {"endpoint": "http://127.0.0.1:41001"},
+            "kubernetes": {"allowed_contexts": ["exact-context"]},
+        }
+    ]
     assert len(recovered) == 1
     expected_scope = (
         isolated_root
@@ -1572,7 +1585,10 @@ def test_validation_environment_migrates_changed_config_only_after_safe_recovery
     def fake_sky_environment(
         _scope: Path, *, environment: dict[str, str]
     ) -> dict[str, str]:
-        return dict(environment)
+        return {
+            **environment,
+            "SKYPILOT_API_SERVER_ENDPOINT": "http://127.0.0.1:41001",
+        }
 
     monkeypatch.setattr(gpu_catalog, "_recover_idle_validation_scope", fake_recover)
     monkeypatch.setattr(cleanup, "sky_environment", fake_sky_environment)
@@ -1588,6 +1604,72 @@ def test_validation_environment_migrates_changed_config_only_after_safe_recovery
     assert yaml.safe_load(stale_config.read_text(encoding="utf-8"))[
         "allowed_clouds"
     ] == ["kubernetes"]
+
+
+def test_validation_environment_rebinds_inherited_api_endpoint_to_validation_scope(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """GPU discovery must not submit through a workload API endpoint."""
+
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+    inherited_config = tmp_path / "workload-config.yaml"
+    inherited_config.write_text(
+        "api_server:\n  endpoint: http://127.0.0.1:41000\n", encoding="utf-8"
+    )
+    isolated_root = tmp_path / "isolated"
+    validation_endpoint = "http://127.0.0.1:41001"
+    monkeypatch.setenv("NPA_SKYPILOT_ISOLATED_CONFIG_DIR", str(isolated_root))
+    monkeypatch.setenv("SKYPILOT_GLOBAL_CONFIG", str(inherited_config))
+    monkeypatch.delenv("SKYPILOT_USER_ID", raising=False)
+
+    from npa.orchestration.skypilot import cleanup, local_api
+
+    ensured_configs: list[dict] = []
+
+    def fake_sky_environment(
+        _scope: Path, *, environment: dict[str, str]
+    ) -> dict[str, str]:
+        return {**environment, "SKYPILOT_API_SERVER_ENDPOINT": validation_endpoint}
+
+    def capture_ensure(**kwargs: object) -> None:
+        environment = kwargs["environment"]
+        assert isinstance(environment, dict)
+        client_config = yaml.safe_load(
+            Path(environment["SKYPILOT_GLOBAL_CONFIG"]).read_text(encoding="utf-8")
+        )
+        ensured_configs.append(client_config)
+        assert (
+            client_config["api_server"]["endpoint"]
+            == environment["SKYPILOT_API_SERVER_ENDPOINT"]
+        )
+
+    monkeypatch.setattr(cleanup, "sky_environment", fake_sky_environment)
+    monkeypatch.setattr(local_api, "ensure_isolated_api", capture_ensure)
+    monkeypatch.setattr(
+        gpu_catalog,
+        "_recover_idle_validation_scope",
+        lambda *_args, **_kwargs: pytest.fail("stable validation config was recovered"),
+    )
+
+    first = gpu_catalog.kubernetes_sky_environment(
+        context="exact-context",
+        kubeconfig=kubeconfig,
+        sky_executable="/opt/sky/bin/sky",
+    )
+    second = gpu_catalog.kubernetes_sky_environment(
+        context="exact-context",
+        kubeconfig=kubeconfig,
+        sky_executable="/opt/sky/bin/sky",
+    )
+
+    assert first["SKYPILOT_API_SERVER_ENDPOINT"] == validation_endpoint
+    assert second["SKYPILOT_API_SERVER_ENDPOINT"] == validation_endpoint
+    assert len(ensured_configs) == 2
+    assert all(
+        item["api_server"]["endpoint"] == validation_endpoint
+        for item in ensured_configs
+    )
 
 
 def test_readiness_retries_quarantined_snapshot_before_healthy_inventory(monkeypatch):

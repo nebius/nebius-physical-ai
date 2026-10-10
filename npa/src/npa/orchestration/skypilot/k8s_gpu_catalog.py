@@ -270,35 +270,51 @@ def kubernetes_sky_environment(
         raise RuntimeError("SkyPilot Kubernetes configuration must be a mapping")
     kubernetes["allowed_contexts"] = [context]
     config["allowed_clouds"] = ["kubernetes"]
-    config_bytes = yaml.safe_dump(config, sort_keys=True).encode()
     config_path = scope / "client-config.yaml"
-    write_config = False
-    try:
-        fd = os.open(config_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        write_config = True
-    except FileExistsError:
-        if config_path.is_symlink() or config_path.read_bytes() != config_bytes:
-            if config_path.is_symlink() or not _recover_idle_validation_scope(
-                scope,
-                context=context,
-                kubeconfig_path=kubeconfig_path,
-                user_id=validation_user_id,
-            ):
-                raise RuntimeError(
-                    "Cluster validation configuration changed; reconcile its owned API first"
-                ) from None
-            fd = os.open(config_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-            write_config = True
-    if write_config:
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(config_bytes)
-            handle.flush()
-            os.fsync(handle.fileno())
-    env["SKYPILOT_GLOBAL_CONFIG"] = str(config_path)
     base_environment = dict(env)
 
-    def start_validation_api() -> dict[str, str]:
+    def start_validation_api(*, recovered_config: bool = False) -> dict[str, str]:
         validation_env = sky_environment(scope, environment=base_environment)
+        endpoint = str(validation_env.get("SKYPILOT_API_SERVER_ENDPOINT") or "").strip()
+        if not endpoint:
+            raise RuntimeError("Cluster validation API did not provide an endpoint")
+        api_server = config.setdefault("api_server", {})
+        if not isinstance(api_server, dict):
+            raise RuntimeError("SkyPilot api_server configuration must be a mapping")
+        # This client config is consumed by SkyPilot itself. The validation
+        # scope gets its own dynamic API endpoint, so it must never retain the
+        # endpoint inherited from the workload's scoped daemon.
+        api_server["endpoint"] = endpoint
+        config_bytes = yaml.safe_dump(config, sort_keys=True).encode()
+        write_config = False
+        try:
+            fd = os.open(config_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            write_config = True
+        except FileExistsError:
+            if config_path.is_symlink() or config_path.read_bytes() != config_bytes:
+                if (
+                    config_path.is_symlink()
+                    or recovered_config
+                    or not _recover_idle_validation_scope(
+                        scope,
+                        context=context,
+                        kubeconfig_path=kubeconfig_path,
+                        user_id=validation_user_id,
+                    )
+                ):
+                    raise RuntimeError(
+                        "Cluster validation configuration changed; reconcile its owned API first"
+                    ) from None
+                # Recovery archives both the stale validation API and its
+                # client config. Recreate the API intent before binding the
+                # replacement config to its new dynamic endpoint.
+                return start_validation_api(recovered_config=True)
+        if write_config:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(config_bytes)
+                handle.flush()
+                os.fsync(handle.fileno())
+        validation_env["SKYPILOT_GLOBAL_CONFIG"] = str(config_path)
         ensure_isolated_api(
             isolated_dir=scope,
             sky_executable=sky_executable,
@@ -320,13 +336,7 @@ def kubernetes_sky_environment(
         ):
             raise
         # Recovery archives the client configuration along with the stale API.
-        # Recreate the same verified bytes before starting its replacement.
-        with open(
-            config_path, "xb", opener=lambda path, flags: os.open(path, flags, 0o600)
-        ) as handle:
-            handle.write(config_bytes)
-            handle.flush()
-            os.fsync(handle.fileno())
+        # Recreate it only after the replacement API supplies its endpoint.
         return start_validation_api()
 
 
