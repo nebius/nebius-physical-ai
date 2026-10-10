@@ -97,8 +97,10 @@ URI reachable or authorize its contents.
 ### Private registry target configuration
 
 Keep one task-scoped SkyPilot global configuration outside the repository and
-pass its path to planning, image preflight, submit, and resume. It must select
-the intended context, the standard SkyPilot identity, and an existing
+pass its path to provider-facing image preflight, submit, and resume commands.
+`plan-spec --check-render` is a local static render and does not take a
+SkyPilot configuration path. The private configuration must select the
+intended context, the standard SkyPilot identity, and an existing
 namespace-scoped `dockerconfigjson` pull Secret for the private registry:
 
 ```yaml
@@ -162,7 +164,6 @@ npa workbench workflow validate-spec workflows/testing/byof-embodiedgen.yaml --j
 
 npa workbench workflow plan-spec workflows/testing/byof-embodiedgen.yaml \
   --run-id "${RUN_ID}" \
-  --config-path "${SKYPILOT_CONFIG}" \
   --var "bucket=${OUTPUT_BUCKET}" \
   --var "input_uri=${INPUT_URI}" \
   --var "base_image=${IMAGE_REF}" \
