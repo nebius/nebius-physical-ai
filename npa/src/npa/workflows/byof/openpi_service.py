@@ -168,10 +168,23 @@ _GENERIC_SERVER_PROGRAM = r"""
         """
 
 
-def _pi05_noise_server_program() -> str:
+def _pi05_noise_server_program(*, adapted: bool = False) -> str:
     """Return the scoped wrapper that adds explicit-noise inference receipts."""
 
-    return textwrap.dedent(_PI05_NOISE_SERVER_PROGRAM).strip()
+    program = textwrap.dedent(_PI05_NOISE_SERVER_PROGRAM).strip()
+    if adapted:
+        original = (
+            "selected = training_config.get_config(args.config)\n"
+            "real_policy = policy_config.create_trained_policy(selected, args.checkpoint)"
+        )
+        replacement = (
+            "from npa.workflows.byof.openpi_selected_policy import load_selected_policy\n"
+            "real_policy, selected = load_selected_policy(args.checkpoint)"
+        )
+        if program.count(original) != 1:
+            raise OpenPIServiceError("adapted policy loader insertion contract changed")
+        program = program.replace(original, replacement)
+    return program
 
 
 def _generic_server_program() -> str:

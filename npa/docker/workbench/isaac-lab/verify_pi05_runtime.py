@@ -36,7 +36,17 @@ def _synthetic_episode() -> dict:
         "queries": [
             {
                 "observation_time_s": 0.0,
+                "exterior_capture_time_s": 0.0,
+                "wrist_capture_time_s": 0.0,
                 "inference": {"wire_input": {"capture_age_s": 0.0}},
+                "controller_proofs": [
+                    {
+                        "physics_observation_status": "recorded",
+                        "physics_trace_index": 0,
+                        "command_application_time_s": 0.0,
+                        "resulting_state_time_s": 1.0 / 15.0,
+                    }
+                ],
             }
         ],
         "physics_trace": [
@@ -44,6 +54,7 @@ def _synthetic_episode() -> dict:
                 "object_position_m": [0.5, 0.18, 0.024],
                 "object_speed_m_s": 0.0,
                 "target_xy_distance_m": 0.0,
+                "simulator_time_s": 1.0 / 15.0,
             }
         ],
     }

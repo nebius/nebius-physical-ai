@@ -176,8 +176,24 @@ def _pi05_service_argv(command: str, role: str) -> list[str]:
         f"{{{{config.{checkpoint}}}}}",
         "--checkpoint-role",
         role,
+        *_pi05_selected_policy_argv(command, role),
         *_pi05_service_runtime_argv(),
         *_pi05_service_timeout_argv(),
+    ]
+
+
+def _pi05_selected_policy_argv(command: str, role: str) -> list[str]:
+    if command != "start" or role != "adapted":
+        return []
+    return [
+        "--dataset-uri",
+        "{{config.dataset_uri}}",
+        "--dataset-manifest-uri",
+        "{{config.dataset_manifest_uri}}",
+        "--training-uri",
+        "{{config.training_uri}}",
+        "--evaluation-uri",
+        "{{config.evaluation_uri}}",
     ]
 
 

@@ -1898,6 +1898,61 @@ def test_cleanup_manifest_reconstruction_needs_no_s3_credentials(monkeypatch) ->
     assert "AWS_ACCESS_KEY_ID" not in str(manifests)
 
 
+def test_failed_camera_admission_retains_pixels_without_a_fictitious_query(
+    tmp_path, monkeypatch
+) -> None:
+    exterior = np.full((224, 224, 3), 17, dtype=np.uint8)
+    wrist = np.full((224, 224, 3), 29, dtype=np.uint8)
+    record = pi05_closed_loop._new_episode_record()
+    monkeypatch.setattr(
+        pi05_closed_loop, "_policy_observation", lambda _: (exterior, wrist, [], [])
+    )
+    timing = {"observation_time_s": 0.5, "wrist_capture_time_s": 0.5}
+    receipts = {"exterior": {"sha256": "a" * 64}, "wrist": {"sha256": "b" * 64}}
+    monkeypatch.setattr(
+        pi05_closed_loop, "_camera_query_receipts", lambda *_: (timing, receipts)
+    )
+    monkeypatch.setattr(
+        pi05_closed_loop, "_infer_query", lambda *_: ([], {"wire_input": {}})
+    )
+
+    def fail_marker(*_):
+        raise RuntimeError("cyan destination marker is not observable")
+
+    monkeypatch.setattr(pi05_closed_loop, "_record_query_camera", fail_marker)
+    with pytest.raises(RuntimeError, match="destination marker"):
+        pi05_closed_loop._query_policy({"native": None, "record": record}, 0)
+    assert not record["queries"] and not record["_wrist_frames"]
+    assert record["failed_camera_observations"][0]["policy_query_recorded"] is False
+    artifacts = pi05_closed_loop._write_failed_camera_evidence(tmp_path, [record])
+    assert len(artifacts) == 2
+    assert np.array_equal(np.load(tmp_path / artifacts[1]["path"]), wrist[None])
+    assert not any(key.startswith("_failed") for key in record)
+
+
+def test_admitted_camera_frames_match_completed_query_count(monkeypatch) -> None:
+    exterior = np.zeros((224, 224, 3), dtype=np.uint8)
+    wrist = np.ones_like(exterior)
+    record = pi05_closed_loop._new_episode_record()
+    monkeypatch.setattr(
+        pi05_closed_loop, "_policy_observation", lambda _: (exterior, wrist, [], [])
+    )
+    receipts = {"exterior": {"sha256": "a" * 64}, "wrist": {"sha256": "b" * 64}}
+    monkeypatch.setattr(
+        pi05_closed_loop, "_camera_query_receipts", lambda *_: ({}, receipts)
+    )
+    monkeypatch.setattr(
+        pi05_closed_loop, "_infer_query", lambda *_: ("actions", {"wire_input": {}})
+    )
+    monkeypatch.setattr(pi05_closed_loop, "_record_query_camera", lambda *_: None)
+    actions, _, _ = pi05_closed_loop._query_policy(
+        {"native": None, "record": record}, 0
+    )
+    assert actions == "actions"
+    assert len(record["_exterior_frames"]) == len(record["_wrist_frames"]) == 1
+    assert "failed_camera_observations" not in record
+
+
 def test_cleanup_reconstructs_owned_runtime_secret_without_credentials(
     monkeypatch,
 ) -> None:

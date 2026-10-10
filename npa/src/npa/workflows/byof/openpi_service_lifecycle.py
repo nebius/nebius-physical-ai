@@ -32,6 +32,7 @@ from npa.workflows.byof.openpi_service import (
     _create_server_objects,
     _delete_and_verify,
     _inject_public_checkpoint_binding,
+    _pi05_noise_server_program,
     _validated_positive_seconds,
     _wait_server_ready,
     build_manifests,
@@ -71,8 +72,33 @@ def _manifests(
             run_id=args.run_id,
             namespace=args.namespace,
         )
+    if args.checkpoint_role == "adapted" and include_checkpoint_credentials:
+        _bind_selected_policy(manifests, args)
     _inject_checkpoint_probe(manifests)
     return manifests
+
+
+def _bind_selected_policy(manifests: dict, args: argparse.Namespace) -> None:
+    if not args.checkpoint_uri.startswith("s3://"):
+        raise OpenPIServiceError("adapted policy requires an exact private checkpoint")
+    keys = ("dataset_uri", "dataset_manifest_uri", "training_uri", "evaluation_uri")
+    if not all(getattr(args, key, "") for key in keys):
+        raise OpenPIServiceError(
+            "adapted policy requires dataset, training and evaluation lineage"
+        )
+    container = manifests["deployment"]["spec"]["template"]["spec"]["containers"][0]
+    container["env"].append({"name": "NPA_OPENPI_CHECKPOINT_ROLE", "value": "adapted"})
+    container["env"].extend(
+        {"name": "NPA_OPENPI_" + key.upper(), "value": getattr(args, key)}
+        for key in keys
+    )
+    original = shlex.quote(_pi05_noise_server_program())
+    shell = container["command"][2]
+    if shell.count(original) != 1:
+        raise OpenPIServiceError("adapted policy server wrapper contract changed")
+    container["command"][2] = shell.replace(
+        original, shlex.quote(_pi05_noise_server_program(adapted=True))
+    )
 
 
 def _s3_download_program(checkpoint_uri: str, local: str) -> str:
@@ -266,6 +292,9 @@ def _start_result(
         raise OpenPIServiceError(
             "adapted checkpoint lacks a validated content manifest"
         )
+    selected = checkpoint.get("selected_policy", {})
+    if args.checkpoint_role == "adapted" and not selected.get("loaded"):
+        raise OpenPIServiceError("adapted policy lacks actual selected-step load proof")
     return {
         "schema": "npa.workbench.openpi.pi05-service-start.v1",
         "status": "ready",
@@ -274,7 +303,8 @@ def _start_result(
         "checkpoint_sha256": checkpoint["checkpoint_sha256"],
         "checkpoint_manifest_sha256": checkpoint.get("checkpoint_manifest_sha256"),
         "source_commit": SOURCE_REF,
-        "config_name": args.config_name,
+        "config_name": selected.get("config_name", args.config_name),
+        "selected_policy": selected,
         "image_digest": args.runtime_image.rsplit("@sha256:", 1)[-1],
         "service_host": host,
         "service_port": SERVER_PORT,
@@ -472,6 +502,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--checkpoint-uri", default=DEFAULT_CHECKPOINT_URI)
     parser.add_argument("--checkpoint-role", choices=("base", "adapted"), required=True)
     parser.add_argument("--config-name", default=DEFAULT_CONFIG_NAME)
+    parser.add_argument("--dataset-uri", default="")
+    parser.add_argument("--dataset-manifest-uri", default="")
+    parser.add_argument("--training-uri", default="")
+    parser.add_argument("--evaluation-uri", default="")
     parser.add_argument("--gpu-count", type=int, default=1)
     parser.add_argument("--expected-gpu-type", required=True)
     parser.add_argument("--expected-compute-capability", required=True)

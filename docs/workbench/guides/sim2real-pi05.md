@@ -125,8 +125,15 @@ policy retains absolute joint targets. Collection records the live actuator
 joint membership, stiffness, damping, and rigid-body gravity setting; policy
 evaluation rejects a gold protocol unless its runtime plant receipt is equal.
 
-The base and adapted policies use the pinned OpenPI source, Polaris config, and
-checkpoint documented in [the OpenPI pi0.5 guide](../openpi-pi05-polaris.md).
+The base policy uses the pinned Polaris config and checkpoint documented in
+[the OpenPI pi0.5 guide](../openpi-pi05-polaris.md). The adapted service reconstructs
+the training LoRA model, joint delta/absolute transforms, and train-only statistics.
+Its `start` call requires `--dataset-uri`, `--dataset-manifest-uri`, `--training-uri`,
+and `--evaluation-uri`; the workflow supplies these artifacts automatically.
+The service verifies their checkpoint and dataset lineage, loads the selected
+`<step>/params` directory, and checks saved `<step>/assets/droid` normalization
+against the training data before starting. Its receipt records the loaded step,
+model variants and dataset digest. Cleanup needs no dataset or model imports.
 They are evaluated with the same gold object, scenario seeds, instruction,
 15 Hz absolute-joint controller, and eight-action receding-horizon prefix. A
 continuous policy gripper value is explicitly thresholded at `>0.5`, matching

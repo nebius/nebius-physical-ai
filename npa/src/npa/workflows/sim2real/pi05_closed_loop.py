@@ -507,14 +507,29 @@ def _decision_noise(context: dict[str, Any], decision: int) -> tuple[Any, str]:
 def _query_policy(
     context: dict[str, Any], decision: int
 ) -> tuple[Any, dict[str, Any], dict[str, Any]]:
-    native, client, record = context["native"], context["client"], context["record"]
+    native, record = context["native"], context["record"]
     exterior, wrist, joint, gripper = _policy_observation(native)
+    timing, receipts = _camera_query_receipts(native, exterior, wrist)
+    timing["exterior_rgb_sha256"] = receipts["exterior"]["sha256"]
+    timing["wrist_rgb_sha256"] = receipts["wrist"]["sha256"]
+    try:
+        actions, inference = _infer_query(
+            context, decision, (exterior, wrist, joint, gripper), receipts
+        )
+        _record_query_camera(native, record, receipts, inference["wire_input"])
+    except Exception as error:
+        _retain_failed_camera(record, exterior, wrist, timing, error)
+        raise
     record["_exterior_frames"].append(exterior)
     record["_wrist_frames"].append(wrist)
-    timing, receipts = _camera_query_receipts(native, exterior, wrist)
+    return actions, inference, timing
+
+
+def _infer_query(context: dict, decision: int, observation: tuple, receipts: dict):
+    exterior, wrist, joint, gripper = observation
     policy_wrist, intervention = _wrist_variant(context, wrist, decision)
     sampling_noise, sampling_sequence = _decision_noise(context, decision)
-    actions, inference = client.infer(
+    actions, inference = context["client"].infer(
         exterior=exterior,
         wrist=policy_wrist,
         joint_position=joint,
@@ -526,10 +541,40 @@ def _query_policy(
         sampling_sequence=sampling_sequence,
     )
     inference["wrist_intervention"] = intervention
-    _record_query_camera(native, record, receipts, inference["wire_input"])
-    timing["exterior_rgb_sha256"] = receipts["exterior"]["sha256"]
-    timing["wrist_rgb_sha256"] = receipts["wrist"]["sha256"]
-    return actions, inference, timing
+    return actions, inference
+
+
+def _retain_failed_camera(
+    record: dict, exterior: Any, wrist: Any, timing: dict, error: Exception
+) -> None:
+    record.setdefault("failed_camera_observations", []).append(
+        {**timing, "failure": _execution_error(error), "policy_query_recorded": False}
+    )
+    record.setdefault("_failed_exterior_frames", []).append(exterior)
+    record.setdefault("_failed_wrist_frames", []).append(wrist)
+
+
+def _write_failed_camera_evidence(work: Path, episodes: list[dict]) -> list[dict]:
+    import numpy as np
+
+    artifacts = []
+    for index, episode in enumerate(episodes):
+        for camera in ("exterior", "wrist"):
+            frames = episode.pop(f"_failed_{camera}_frames", [])
+            if not frames:
+                continue
+            path = work / f"episode-{index:06d}-failed-{camera}.npy"
+            np.save(path, np.asarray(frames, dtype=np.uint8), allow_pickle=False)
+            artifacts.append(
+                {
+                    "path": path.name,
+                    "episode": index,
+                    "camera": camera,
+                    "frames": len(frames),
+                    "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                }
+            )
+    return artifacts
 
 
 def _execute_prefix(context: dict[str, Any], actions: Any, query: dict) -> bool:
@@ -961,6 +1006,7 @@ def _decode_artifacts(mp4: Path, rrd: Path) -> tuple[dict[str, Any], str]:
 def _write_review_artifacts(
     work: Path, episodes: list[dict[str, Any]], checkpoint_role: str
 ) -> dict[str, Any]:
+    failed_cameras = _write_failed_camera_evidence(work, episodes)
     mp4, frames = _write_video(work, episodes)
     rrd, steps = _write_rrd(work, episodes, checkpoint_role)
     probe, _ = _decode_artifacts(mp4, rrd)
@@ -968,6 +1014,7 @@ def _write_review_artifacts(
         episode.pop("_exterior_frames", None)
         episode.pop("_wrist_frames", None)
     return {
+        "failed_camera_observations": failed_cameras,
         "mp4": {
             "path": mp4.name,
             "bytes": mp4.stat().st_size,
@@ -985,6 +1032,7 @@ def _write_review_artifacts(
 
 
 def _persist_partial_episodes(work: Path, episodes: list[dict[str, Any]]) -> None:
+    _write_failed_camera_evidence(work, episodes)
     receipts = [
         {
             key: value
