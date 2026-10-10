@@ -1,0 +1,63 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "11fc5e6f732b1a2fc68266934e134f5fdb347226d5a181137a427f310f4a753c",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "The spec validates and its rendered six-task plan has run-scoped object-store handoffs. The first state directly stages the reviewed raw LeRobot v2.1 source and emits its per-file manifest; every later state consumes the exact prior artifact tree or manifest.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/lingbot-va-libero-long.yaml --json",
+        "npa workbench workflow plan-spec workflows/testing/lingbot-va-libero-long.yaml --run-id lingbot-va-private-qualification-20261004 --check-render --json",
+        "npa/tests/workflows/test_lingbot_va_workflow.py: 7 passed"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "The resolved worker argv invokes the direct exact-revision raw source stager, native LingBot-VA prepare, upstream post-train, closed-loop LIBERO rollout, numerical evaluation, and RRD/MP4 visualization handlers. Contract tests exercise the real raw-data schema transformation and physical train-only reindexing, reject echo/sleep placeholders, bind every declared S3 handoff, and require a staged NPA source URI for the source-only candidate's worker bootstrap. This is planning and contract evidence only; no model, benchmark, or physical-robot success is claimed.",
+      "evidence": [
+        "npa/tests/workflows/test_lingbot_va_workflow.py::test_stage_raw_source_downloads_only_exact_cc_by_long_input",
+        "npa/tests/workflows/test_lingbot_va_workflow.py::test_workflow_is_six_connected_native_stages_with_exact_artifact_handoffs",
+        "npa/tests/workflows/test_lingbot_va_workflow.py::test_training_subset_physically_reindexes_parquet_videos_and_latents",
+        "npa/tests/workflows/test_lingbot_va_workflow.py::test_pinned_candidate_receives_staged_npa_source_for_worker_bootstrap"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "The checked-in bucket remains a placeholder. A new run must pass NPA's exact selected-project output-prefix preflight before it writes the six stage artifacts; no generic storage check is treated as proof of every declared output path.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "The exact HuggingFaceVLA/libero revision affa19c0de0f6bce2a7edd26dddef8a532e7e6f6 declares CC-BY-4.0 and LeRobot v2.1 with 10 Hz embedded cameras and 7D actions. The workflow never uses the separate Robbyant CC-BY-NC-SA latent data, but selected raw LIBERO-Long data availability and decoding still need a fresh worker proof.",
+      "evidence": [
+        "https://huggingface.co/datasets/HuggingFaceVLA/libero/blob/affa19c0de0f6bce2a7edd26dddef8a532e7e6f6/README.md",
+        "https://huggingface.co/datasets/HuggingFaceVLA/libero/blob/affa19c0de0f6bce2a7edd26dddef8a532e7e6f6/meta/info.json",
+        "docs/workbench/lingbot-va.md"
+      ]
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "The runtime uses operator-owned object-storage credentials and public/runtime-fetched source and checkpoint payloads. Exact payload access and the scoped credential path must be verified by the selected private execution route; no new EULA or acceptance flag is introduced.",
+      "evidence": []
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "The checked-in digest is an intentional refusal placeholder. Security-maintenance dependency changes require a new immutable private candidate to pass local inspection, full byte scans, target pull/bootstrap, and real device execution before use. Public release remains unauthorized.",
+      "evidence": [
+        "npa/docker/workbench/lingbot-va/Dockerfile",
+        "npa/docker/workbench/lingbot-va/REDISTRIBUTION.md",
+        "npa/docker/workbench/packaging-contract.yaml"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "No current dependency-closure GPU worker has materialized fresh VAE/text latents or completed post-training, closed-loop rollout, evaluation, and independent RRD/MP4 inspection. No success, convergence, benchmark, or physical-robot result is claimed.",
+      "evidence": [
+        "workflows/testing/lingbot-va-libero-long.yaml",
+        "npa/src/npa/solutions/lingbot_va.py"
+      ]
+    }
+  }
+}

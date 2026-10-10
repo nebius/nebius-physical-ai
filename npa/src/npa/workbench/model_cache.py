@@ -147,6 +147,9 @@ class ModelCacheError(ValueError):
 #: * ``HF_LEROBOT_HOME`` / ``LEROBOT_HF_HOME``: LeRobot datasets and policies.
 #: * ``WAN22_CACHE_DIR`` / ``NPA_LTX_MODEL_CACHE``: the BYOF video models, whose
 #:   images ship zero weights.
+#: * ``NPA_LINGBOT_VA_RUNTIME_CACHE``: the isolated CUDA/Python closure that the
+#:   LingBot-VA candidate installs at runtime; it must persist separately from
+#:   the model checkpoints it later consumes.
 #: * ``NPA_CONTENT_AGENTS_RUNTIME_CACHE``: the exact OVRTX SDK delivered by
 #:   NVIDIA to the operator; the public Content Agents image ships zero OVRTX.
 MODEL_CACHE_LAYOUT: tuple[tuple[str, str], ...] = (
@@ -179,6 +182,7 @@ MODEL_CACHE_LAYOUT: tuple[tuple[str, str], ...] = (
     ("LEISAAC_ASSETS_ROOT", "leisaac/assets/runtime"),
     ("WAN22_CACHE_DIR", "wan2.2"),
     ("NPA_LTX_MODEL_CACHE", "ltx-2.5"),
+    ("NPA_LINGBOT_VA_RUNTIME_CACHE", "runtimes/lingbot-va"),
     # flex-pi keeps converted Wan/T5 assets in the DiffSynth tree while the
     # ModelScope client maintains its own metadata/cache. Both must survive a
     # pod retry or the 12+ GiB text encoder is downloaded again.

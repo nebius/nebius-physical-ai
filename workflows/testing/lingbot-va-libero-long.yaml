@@ -1,0 +1,148 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: lingbot-va-libero-long
+  description: >-
+    Quarantined LingBot-VA LIBERO-Long path: stage actual multi-step episodes
+    from the exact CC-BY HuggingFaceVLA LeRobot v2.1 source into this run's
+    object-store prefix, decode embedded cameras and create fresh upstream
+    Wan2.2 latents, then run the upstream eight-GPU Flex Attention
+    post-train recipe from the official LIBERO-Long derivative, run upstream
+    Torch-attention websocket inference with genuine LIBERO-Long rollouts,
+    aggregate numerical evidence, then emit an RRD plus a real rollout MP4.
+    No data, model, CUDA runtime, credentials, or consent are baked or inferred.
+config:
+  bucket: example-bucket
+  prefix: "oss-solutions/lingbot-va/libero-long/{{run.id}}"
+  # Must be replaced with a pushed, immutable, source-only candidate after its
+  # exact byte/security checks. It is intentionally not a released tool route.
+  candidate_image: "ghcr.io/nebius/nebius-physical-ai/npa-lingbot-va@sha256:REPLACE_WITH_VERIFIED_CANDIDATE_DIGEST"
+  # Written by stage_raw from exact HuggingFaceVLA/libero@affa19... raw LeRobot
+  # v2.1 source (CC-BY-4.0), never from the Robbyant CC-BY-NC-SA latent data.
+  source_dataset_uri: "s3://{{config.bucket}}/{{config.prefix}}/source/raw-libero-v2.1/"
+  prepared_dataset_uri: "s3://{{config.bucket}}/{{config.prefix}}/prepare/dataset/"
+  prepared_uri: "s3://{{config.bucket}}/{{config.prefix}}/prepare/prepared.json"
+  checkpoint_uri: "s3://{{config.bucket}}/{{config.prefix}}/training/checkpoints/"
+  training_uri: "s3://{{config.bucket}}/{{config.prefix}}/training/training.json"
+  rollout_root_uri: "s3://{{config.bucket}}/{{config.prefix}}/rollout/"
+  rollout_uri: "s3://{{config.bucket}}/{{config.prefix}}/rollout/rollout.json"
+  evaluation_uri: "s3://{{config.bucket}}/{{config.prefix}}/evaluation/evaluation.json"
+  rrd_uri: "s3://{{config.bucket}}/{{config.prefix}}/visualization/libero-long.rrd"
+  mp4_uri: "s3://{{config.bucket}}/{{config.prefix}}/visualization/libero-rollout-preview.mp4"
+  visualization_uri: "s3://{{config.bucket}}/{{config.prefix}}/visualization/visualization.json"
+  test_episodes_per_task: "50"
+  task_start: "0"
+  task_end: "10"
+resources:
+  cpu:
+    cloud: kubernetes
+    image: "{{config.candidate_image}}"
+    cpus: 16
+    memory: 64Gi
+  train:
+    cloud: kubernetes
+    image: "{{config.candidate_image}}"
+    accelerators: RTXPRO6000:8
+    cpus: 128
+    memory: 1Ti
+  gpu:
+    cloud: kubernetes
+    image: "{{config.candidate_image}}"
+    accelerators: RTXPRO6000:1
+    cpus: 32
+    memory: 256Gi
+initial: stage_raw
+states:
+  stage_raw:
+    description: >-
+      Download the exact CC-BY-4.0 HuggingFaceVLA/libero revision directly to
+      this run's target-owned object store, validate the v2.1 metadata and
+      actual LIBERO-Long labels, select only those raw episodes, and emit a
+      per-file source/terms manifest. It never fetches Robbyant latent data.
+    resources: cpu
+    run:
+      argv: [lingbot-va-runtime, exec, python, -m, npa.solutions.lingbot_va, stage-raw, --output-uri, "{{config.source_dataset_uri}}"]
+    outputs:
+      - {uri: "{{config.source_dataset_uri}}", schema: npa.lingbot_va.raw_lerobot_v2_1.v1}
+    next: prepare
+  prepare:
+    description: >-
+      Select actual LIBERO-Long episodes from raw LeRobot v2.1 parquet data,
+      decode embedded image/image2 PNG/JPEG frames to 10 Hz MP4s, create fresh
+      upstream Wan2.2 VAE/text latents, add task-label action segmentation, and
+      recompute train-split 7D-to-30D action statistics before publishing the
+      derived dataset and trajectory-disjoint split manifest.
+    needs: [stage_raw]
+    resources: gpu
+    run:
+      argv: [lingbot-va-runtime, exec, python, -m, npa.solutions.lingbot_va, prepare, --source-uri, "{{config.source_dataset_uri}}", --prepared-dataset-uri, "{{config.prepared_dataset_uri}}", --output-uri, "{{config.prepared_uri}}"]
+    inputs:
+      - {uri: "{{config.source_dataset_uri}}", schema: npa.lingbot_va.raw_lerobot_v2_1.v1}
+    outputs:
+      - {uri: "{{config.prepared_dataset_uri}}", schema: npa.lingbot_va.lerobot_wan_latent_dataset.v1}
+      - {uri: "{{config.prepared_uri}}", schema: npa.lingbot_va.prepared.v1}
+    next: posttrain
+  posttrain:
+    description: >-
+      Continue the official LIBERO-Long checkpoint using the unmodified
+      upstream wan_va.train FSDP recipe: exactly eight GPUs, 5,000 steps,
+      Flex Attention, full action SNR/statistics contract, and W&B disabled.
+    needs: [prepare]
+    resources: train
+    run:
+      argv: [lingbot-va-runtime, exec, python, -m, npa.solutions.lingbot_va, train, --prepared-uri, "{{config.prepared_uri}}", --checkpoint-uri, "{{config.checkpoint_uri}}", --training-uri, "{{config.training_uri}}"]
+    inputs:
+      - {uri: "{{config.prepared_uri}}", schema: npa.lingbot_va.prepared.v1}
+    outputs:
+      - {uri: "{{config.checkpoint_uri}}", schema: npa.lingbot_va.upstream_checkpoint_tree.v1}
+      - {uri: "{{config.training_uri}}", schema: npa.lingbot_va.training.v1}
+    next: rollout
+  rollout:
+    description: >-
+      Overlay the exact post-train transformer into the official derivative,
+      serve it with upstream Torch attention, and call the upstream LIBERO
+      client function directly for LIBERO-Long closed-loop episodes. The stage
+      requires real success JSON, camera MP4s, predicted actions, and latents.
+    needs: [posttrain]
+    resources: gpu
+    run:
+      argv: [lingbot-va-runtime, exec, python, -m, npa.solutions.lingbot_va, rollout, --prepared-uri, "{{config.prepared_uri}}", --checkpoint-uri, "{{config.checkpoint_uri}}", --rollout-root-uri, "{{config.rollout_root_uri}}", --output-uri, "{{config.rollout_uri}}", --test-num, "{{config.test_episodes_per_task}}", --task-start, "{{config.task_start}}", --task-end, "{{config.task_end}}"]
+    inputs:
+      - {uri: "{{config.prepared_uri}}", schema: npa.lingbot_va.prepared.v1}
+      - {uri: "{{config.checkpoint_uri}}", schema: npa.lingbot_va.upstream_checkpoint_tree.v1}
+    outputs:
+      - {uri: "{{config.rollout_root_uri}}", schema: npa.lingbot_va.rollout_tree.v1}
+      - {uri: "{{config.rollout_uri}}", schema: npa.lingbot_va.rollout.v1}
+    next: evaluate
+  evaluate:
+    description: >-
+      Compute aggregate LIBERO-Long success from upstream result
+      JSON and numerical action-prediction validity from model-emitted tensors.
+      It expressly does not fabricate an aligned action/video-accuracy claim.
+    needs: [rollout]
+    resources: gpu
+    run:
+      argv: [lingbot-va-runtime, exec, python, -m, npa.solutions.lingbot_va, evaluate, --rollout-uri, "{{config.rollout_uri}}", --rollout-root-uri, "{{config.rollout_root_uri}}", --output-uri, "{{config.evaluation_uri}}"]
+    inputs:
+      - {uri: "{{config.rollout_uri}}", schema: npa.lingbot_va.rollout.v1}
+      - {uri: "{{config.rollout_root_uri}}", schema: npa.lingbot_va.rollout_tree.v1}
+    outputs:
+      - {uri: "{{config.evaluation_uri}}", schema: npa.lingbot_va.evaluation.v1}
+    next: visualize
+  visualize:
+    description: >-
+      Decode a real upstream LIBERO rollout MP4 and record its observed camera
+      frames plus evaluated metrics into a Rerun RRD with linked provenance.
+    needs: [evaluate]
+    resources: cpu
+    run:
+      argv: [lingbot-va-runtime, exec, python, -m, npa.solutions.lingbot_va, visualize, --rollout-uri, "{{config.rollout_uri}}", --rollout-root-uri, "{{config.rollout_root_uri}}", --evaluation-uri, "{{config.evaluation_uri}}", --rrd-uri, "{{config.rrd_uri}}", --mp4-uri, "{{config.mp4_uri}}", --output-uri, "{{config.visualization_uri}}"]
+    inputs:
+      - {uri: "{{config.rollout_uri}}", schema: npa.lingbot_va.rollout.v1}
+      - {uri: "{{config.rollout_root_uri}}", schema: npa.lingbot_va.rollout_tree.v1}
+      - {uri: "{{config.evaluation_uri}}", schema: npa.lingbot_va.evaluation.v1}
+    outputs:
+      - {uri: "{{config.rrd_uri}}", schema: application/vnd.rerun.rrd}
+      - {uri: "{{config.mp4_uri}}", schema: video/mp4}
+      - {uri: "{{config.visualization_uri}}", schema: npa.lingbot_va.visualization.v1}
+    terminal: true

@@ -2328,6 +2328,47 @@ def test_internal_skypilot_override_prevents_storage(provider, configured, monke
     assert not provider.s3.calls
 
 
+def test_resolved_skypilot_config_path_is_not_treated_as_an_override(
+    provider, configured, monkeypatch, tmp_path
+):
+    from npa.execution_preflight import preflight_skypilot_submission
+
+    config_path = tmp_path / "resolved-sky-config.yaml"
+    config_path.write_text("kubernetes: {}\n")
+    monkeypatch.setenv("SKYPILOT_CONFIG", str(config_path))
+
+    preflight_skypilot_submission(
+        [raw_task()],
+        project="unit",
+        infra="k8s/unit-context",
+        resolved_sky_config_path=str(config_path),
+    )
+
+    assert provider.s3.calls
+
+
+def test_mismatched_resolved_skypilot_config_path_prevents_storage(
+    provider, configured, monkeypatch, tmp_path
+):
+    from npa.execution_preflight import preflight_skypilot_submission
+
+    configured_path = tmp_path / "configured-sky-config.yaml"
+    expected_path = tmp_path / "expected-sky-config.yaml"
+    configured_path.write_text("kubernetes: {}\n")
+    expected_path.write_text("kubernetes: {}\n")
+    monkeypatch.setenv("SKYPILOT_CONFIG", str(configured_path))
+
+    with pytest.raises(ExecutionPreflightError, match="worker_environment"):
+        preflight_skypilot_submission(
+            [raw_task()],
+            project="unit",
+            infra="k8s/unit-context",
+            resolved_sky_config_path=str(expected_path),
+        )
+
+    assert not provider.s3.calls
+
+
 @pytest.mark.parametrize("explicit_path", [False, True])
 def test_implicit_project_override_prevents_storage(
     provider, configured, monkeypatch, tmp_path, explicit_path

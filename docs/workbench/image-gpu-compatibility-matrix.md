@@ -131,6 +131,7 @@ likewise predates its current coherent release.
 | `npa-wan2-2` | supported | supported | **verified** [accepted records](#accepted-release-evidence) | **historical evidence** [61]; current distributed path unqualified | supported |
 | `npa-diffusers` | unverified | unverified | unverified | **verified** [native capability evidence](validation/studio-public-models-20260916.json) | unverified |
 | `npa-lingbot-world` | unverified | unverified | unverified | **verified** [native capability evidence](validation/studio-public-models-20260916.json) | unverified |
+| `npa-lingbot-va` (operator-private candidate) | unbuilt; not validated | unbuilt; not validated | unbuilt; no `sm_120` device result | unbuilt; compatibility unknown | unbuilt; compatibility unknown |
 | `npa-sam3` | unverified | unverified | unverified | unverified | unverified |
 | `npa-mjlab` (private candidate) | unverified | unverified | **verified** [CUDA 13 trained G1 rollout](validation/mjlab-trained-g1-20260925.json) | current CUDA 13 unverified; [historical CUDA 12.8 acceptance](validation/mjlab-gpu-20260924.json) (1 and 8 GPUs) | unverified |
 | `npa-sam2` | unverified | unverified | unverified | **verified** [native capability evidence](validation/studio-public-models-20260916.json) | unverified |

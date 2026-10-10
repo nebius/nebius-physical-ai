@@ -10,6 +10,7 @@ from npa.deploy.images import (
     DEFAULT_CONTAINER_REGISTRY,
     SUPPORTED_TOOL_VERSIONS,
     UNBUILT_CANDIDATE_TOOL_VERSIONS,
+    build_and_push_command,
     development_image_for_tool,
     container_image_for_tool,
     default_vlm_image,
@@ -47,6 +48,7 @@ def test_non_sonic_workbench_images_resolve_from_supported_tools() -> None:
         == "ghcr.io/nebius/nebius-physical-ai/npa-lancedb:"
         "cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z"
     )
+
     assert container_image_for_tool("detection-training") == (
         "ghcr.io/nebius/nebius-physical-ai/npa-detection-training:runtime-v1-20260905"
     )
@@ -68,6 +70,24 @@ def test_non_sonic_workbench_images_resolve_from_supported_tools() -> None:
         container_image_for_tool("envgen")
         == "ghcr.io/nebius/nebius-physical-ai/npa-envgen:"
         "0.1.2-sim2real-coherent-20260904"
+    )
+
+
+def test_lingbot_va_private_candidate_requires_explicit_source_bound_tag() -> None:
+    """A private registry must not turn an unbuilt candidate into a default."""
+    tag = "dev-" + "a" * 40
+
+    with pytest.raises(ValueError, match="no default private image"):
+        container_image_for_tool("lingbot-va", registry="registry.example/operator")
+
+    assert (
+        container_image_for_tool(
+            "lingbot-va", registry="registry.example/operator", tag=tag
+        )
+        == f"registry.example/operator/npa-lingbot-va:{tag}"
+    )
+    assert (
+        build_and_push_command(f"registry.example/operator/npa-lingbot-va:{tag}") == ""
     )
 
 

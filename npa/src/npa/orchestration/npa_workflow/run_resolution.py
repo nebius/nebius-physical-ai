@@ -448,6 +448,50 @@ def _mark_manifest(
     return result
 
 
+def _probe_ordinary_workflow(
+    result: RunResolution,
+    parent: WorkflowS3Config | None,
+    *,
+    run_id: str,
+    project: str,
+    workflow_s3_prefix: str,
+    s3_bucket: str,
+    s3_endpoint: str,
+) -> tuple[WorkflowS3Config | None, bool]:
+    """Probe the ordinary run convention once and append its exact outcome."""
+
+    try:
+        if parent is None:
+            parent = _parent_state(
+                run_id=run_id,
+                project=project,
+                workflow_s3_prefix=workflow_s3_prefix,
+                s3_bucket=s3_bucket,
+                s3_endpoint=s3_endpoint,
+            )
+        base = parent.prefix.strip("/")
+        ordinary_prefix = "/".join(part for part in (base, run_id) if part)
+        ordinary_state = _child_state(parent, ordinary_prefix)
+        outcome, manifest, detail = _probe_manifest(ordinary_state, run_id)
+        result.checks.append(ResolutionCheck("ordinary_workflow", outcome, detail))
+        if outcome == "found" and manifest is not None:
+            _mark_manifest(
+                result,
+                state=ordinary_state,
+                manifest=manifest,
+                source="ordinary_workflow",
+            )
+            return parent, True
+        if outcome == "unavailable":
+            result.verification_unavailable = True
+    except Exception as exc:  # noqa: BLE001
+        result.checks.append(
+            ResolutionCheck("ordinary_workflow", "unavailable", redact_text(str(exc)))
+        )
+        result.verification_unavailable = True
+    return parent, False
+
+
 def resolve_run(
     run_id: str,
     *,
@@ -480,7 +524,11 @@ def resolve_run(
     explicit_uri = workflow_s3_uri or (
         run_id if str(run_id).startswith("s3://") else ""
     )
-    planned_only_candidate = False
+    from npa.orchestration.npa_workflow.first_run_state import terminal_run_evidence
+
+    terminal_evidence = terminal_run_evidence(
+        project=ledger_project, run_id=resolved_id
+    )
     receipt_read = inspect_submission_state(ledger_project, resolved_id)
     if receipt_read.outcome == "found":
         result.receipt = receipt_read.payload
@@ -547,23 +595,26 @@ def resolve_run(
             "durable_submission_receipt", receipt_read.outcome, receipt_read.error
         )
     )
+    local_not_submitted_candidate = False
     if receipt_read.outcome == "unavailable":
         result.verification_unavailable = True
     elif receipt_read.outcome == "found":
         workflow = _receipt_workflow(result.receipt)
         launch = _receipt_launch(result.receipt)
-        if (
+        local_not_submitted_candidate = (
             allow_local_not_submitted
+            and not explicit_uri
             and not exact_job_id
+            and not terminal_evidence
             and submission_proves_never_launched(
                 result.receipt, project=ledger_project, run_id=resolved_id
             )
-        ):
-            planned_only_candidate = True
+        )
+        if local_not_submitted_candidate:
             result.checks[-1] = ResolutionCheck(
                 "durable_submission_receipt",
                 "found",
-                "durable local ledger has no launch transition; checking later durable sources",
+                "current exact ledger has no launch transition; S3 discovery required",
             )
         launch_status = str(launch.get("status") or "").lower()
         receipt_proves_run = bool(
@@ -635,11 +686,6 @@ def resolve_run(
             result.source = result.source or "durable_submission_receipt"
             result.manifest_pending = True
 
-    from npa.orchestration.npa_workflow.first_run_state import terminal_run_evidence
-
-    terminal_evidence = terminal_run_evidence(
-        project=ledger_project, run_id=resolved_id
-    )
     if terminal_evidence:
         result.found = True
         result.source = "project_run_terminal_ledger"
@@ -658,6 +704,7 @@ def resolve_run(
         )
 
     parent: WorkflowS3Config | None = None
+    ordinary_checked = False
     if not explicit_uri and not result.found:
         try:
             parent = _parent_state(
@@ -729,6 +776,41 @@ def resolve_run(
             )
         )
 
+    # A current local receipt with no launch transition can avoid an unneeded
+    # managed-job lookup, but only after every durable S3 convention has had a
+    # chance to contradict it.  In particular, a separate submit process may
+    # have written an ordinary or PAIDF-convention manifest without updating
+    # this local receipt.
+    if (
+        local_not_submitted_candidate
+        and not result.found
+        and not result.verification_unavailable
+    ):
+        parent, ordinary_found = _probe_ordinary_workflow(
+            result,
+            parent,
+            run_id=resolved_id,
+            project=project,
+            workflow_s3_prefix=workflow_s3_prefix,
+            s3_bucket=s3_bucket,
+            s3_endpoint=s3_endpoint,
+        )
+        ordinary_checked = True
+        if ordinary_found:
+            return result
+        if not result.verification_unavailable:
+            result.checks.append(
+                ResolutionCheck(
+                    "managed_job",
+                    "skipped",
+                    "current exact ledger and all applicable S3 paths show no launch",
+                )
+            )
+            result.not_submitted = True
+            result.source = "durable_submission_receipt"
+            result.workflow_name = str(workflow.get("name") or "")
+            return result
+
     explicit_route = bool(result.sky_bin or result.isolated_config_dir is not None)
     route_missing = bool(result.job_id) and not (
         result.controller_route_recorded or explicit_route
@@ -781,11 +863,12 @@ def resolve_run(
         result.verification_unavailable = True
 
     if result.found:
-        result.checks.append(
-            ResolutionCheck(
-                "ordinary_workflow", "skipped", f"resolved via {result.source}"
+        if not ordinary_checked:
+            result.checks.append(
+                ResolutionCheck(
+                    "ordinary_workflow", "skipped", f"resolved via {result.source}"
+                )
             )
-        )
         return result
 
     if explicit_uri:
@@ -794,55 +877,19 @@ def resolve_run(
                 "ordinary_workflow", "skipped", "explicit URI was checked exactly"
             )
         )
-    else:
-        try:
-            if parent is None:
-                parent = _parent_state(
-                    run_id=resolved_id,
-                    project=project,
-                    workflow_s3_prefix=workflow_s3_prefix,
-                    s3_bucket=s3_bucket,
-                    s3_endpoint=s3_endpoint,
-                )
-            base = parent.prefix.strip("/")
-            ordinary_prefix = "/".join(part for part in (base, resolved_id) if part)
-            ordinary_state = _child_state(parent, ordinary_prefix)
-            outcome, manifest, detail = _probe_manifest(ordinary_state, resolved_id)
-            result.checks.append(ResolutionCheck("ordinary_workflow", outcome, detail))
-            if outcome == "found" and manifest is not None:
-                return _mark_manifest(
-                    result,
-                    state=ordinary_state,
-                    manifest=manifest,
-                    source="ordinary_workflow",
-                )
-            if outcome == "unavailable":
-                result.verification_unavailable = True
-        except Exception as exc:  # noqa: BLE001
-            result.checks.append(
-                ResolutionCheck(
-                    "ordinary_workflow", "unavailable", redact_text(str(exc))
-                )
-            )
-            result.verification_unavailable = True
-
-    if (
-        planned_only_candidate
-        and not result.found
-        and not result.verification_unavailable
-    ):
-        later_checks = [
-            check
-            for check in result.checks
-            if check.source != "durable_submission_receipt"
-        ]
-        if all(
-            check.outcome in {"absent", "not_supplied", "skipped"}
-            for check in later_checks
-        ):
-            result.not_submitted = True
-            result.source = "durable_submission_receipt"
+    elif not ordinary_checked:
+        _parent, ordinary_found = _probe_ordinary_workflow(
+            result,
+            parent,
+            run_id=resolved_id,
+            project=project,
+            workflow_s3_prefix=workflow_s3_prefix,
+            s3_bucket=s3_bucket,
+            s3_endpoint=s3_endpoint,
+        )
+        if ordinary_found:
             return result
+
     result.conclusively_absent = not result.verification_unavailable and all(
         check.outcome in {"absent", "not_supplied", "skipped"}
         for check in result.checks

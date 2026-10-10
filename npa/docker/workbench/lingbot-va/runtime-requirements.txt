@@ -1,0 +1,64 @@
+# Runtime-only closure for LingBot-VA's documented Python 3.10 / CUDA 13.0
+# environment. Models and datasets are intentionally absent. The compatible
+# RTX PRO 6000 target requires the CUDA 13.0 wheel channel because cu126 stops
+# at sm_90; non-CUDA dependencies are from PyPI. Security-motivated updates
+# still require verified native GPU execution before a capability claim.
+--extra-index-url https://download.pytorch.org/whl/cu130
+# LingBot's project metadata declares torch/torchvision lower bounds (2.9/0.24),
+# rather than an upper bound. Use the first security-maintained CUDA 13.0 pair
+# whose wheel includes sm_120. Native GPU qualification is still required.
+torch==2.13.0+cu130
+torchvision==0.28.0+cu130
+diffusers==0.38.0
+transformers==5.10.0
+# The upstream requirements file names torchaudio and accelerate, but the pinned
+# source has no import of either.  Diffusers exposes accelerate only through
+# opt-in extras, while this recipe uses native torch/FSDP.  Do not install the
+# scanner-blocked unused packages into the runtime closure.
+einops==0.8.1
+easydict==1.13
+# Flash Attention is optional upstream. The supported paths are Flex training
+# and Torch inference; the source-only image softens the unused import so this
+# runtime does not compile a CUDA extension merely to import either path.
+numpy==1.26.4
+tqdm==4.67.1
+imageio[ffmpeg]==2.37.0
+websockets==15.0.1
+msgpack==1.2.1
+opencv-python-headless==4.11.0.86
+matplotlib==3.10.3
+ftfy==6.3.1
+# The pinned diffusers 0.38.0 resolver requires safetensors>=0.8.0-rc.0.
+# Keep the first final release: 0.5.3 made stage_raw fail before payload work.
+safetensors==0.8.0
+Pillow==12.3.0
+# LeRobot itself is installed with --no-deps by the runtime, exactly as the
+# upstream LingBot-VA instructions require: its metadata caps Torch below the
+# source-required 2.9.0 and datasets at 3.6.0. Keep the non-Torch 0.3.3 data
+# dependencies explicit. The native reader probe exercises this maintained
+# 5.0.1 pin before GPU submission; it is not a capability-acceptance result.
+datasets==5.0.1
+pyarrow==25.0.1
+cmake==4.0.3
+av==16.0.1
+jsonlines==4.0.0
+# The runtime script installs LeRobot's two control-input package names
+# without their optional dependency trees, which avoids building kernel-bound
+# evdev drivers for this offline LIBERO workload.
+torchcodec==0.5
+draccus==0.10.0
+gymnasium==0.29.1
+deepdiff==8.6.2
+Flask==3.1.3
+termcolor==3.1.0
+scipy==1.15.3
+wandb==0.20.1
+# The pinned transformers 5.10.0 resolver requires huggingface-hub>=1.5.0.
+# The former 0.36.2 pin made stage_raw fail before payload work.
+huggingface-hub==1.5.0
+boto3==1.39.11
+rerun-sdk==0.22.1
+# lingbot-va-runtime validates LIBERO's exact public revision and installed
+# distribution. Keep its VCS reference out of this pip-facing manifest so the
+# bulk install cannot resolve LIBERO transitive dependencies without pins; the
+# runtime-source manifest retains its scanner-visible version inventory.

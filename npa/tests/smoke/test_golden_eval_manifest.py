@@ -683,7 +683,11 @@ def test_every_manifest_entry_resolves_to_a_real_image() -> None:
     CONTAINER_IMAGE_NAMES key, so it has to resolve through its parent tool's image
     manifest instead. Nothing checked that the entry pointed at something resolvable.
     """
-    from npa.deploy.images import PUBLICATION_QUARANTINE_TOOLS, container_image_for_tool
+    from npa.deploy.images import (
+        PRIVATE_VALIDATION_CANDIDATE_TOOLS,
+        PUBLICATION_QUARANTINE_TOOLS,
+        container_image_for_tool,
+    )
     from npa.smoke.serverless_runner import resolve_golden_image
 
     for name, spec in load_manifest().items():
@@ -700,7 +704,12 @@ def test_every_manifest_entry_resolves_to_a_real_image() -> None:
         else:
             # Quarantine inventories do not promise a release exists. An
             # explicit full-SHA development tag must still resolve for testing.
-            tag = "dev-" + "a" * 40 if name in PUBLICATION_QUARANTINE_TOOLS else None
+            tag = (
+                "dev-" + "a" * 40
+                if name
+                in PUBLICATION_QUARANTINE_TOOLS | PRIVATE_VALIDATION_CANDIDATE_TOOLS
+                else None
+            )
             ref = container_image_for_tool(
                 name, registry="registry.example/test", tag=tag
             )
