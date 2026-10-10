@@ -211,6 +211,9 @@ accidental dead entries fail the guardrail. The retired monolithic
 | `workbench.newton.train_teacher` | `python3 -m npa.workflows.byof.newton_pipeline train-teacher` | `config.dataset_uri`, `config.training_uri` | validated config plus a plan-only stub manifest under `config.training_uri` | yes (plan-only: validates config, writes stub manifest, then raises; training not implemented) |
 | `workbench.newton.generate_demos` | `python3 -m npa.workflows.byof.newton_pipeline generate-demos` | `config.trained_checkpoint_uri`, `config.demos_uri` | validated config plus a plan-only stub manifest under `config.demos_uri` | yes (plan-only: validates config, writes stub manifest, then raises; demo generation not implemented) |
 | `workbench.newton.eval` | `python3 -m npa.workflows.byof.newton_pipeline eval` | `config.trained_checkpoint_uri`, `config.dataset_uri`, `config.evaluation_uri` | validated config plus a plan-only stub manifest under `config.evaluation_uri` | yes (plan-only: validates config, writes stub manifest, then raises; evaluation not implemented) |
+| `workbench.intrinsic.preflight` | `npa workbench intrinsic preflight` | Intrinsic ingress address (default `localhost:17080`) | host + runtime check report; non-zero exit with remediation when unusable | no (read-only probes) |
+| `workbench.intrinsic.icon_status` | `npa workbench intrinsic icon-status` | ingress address, ICON instance name | ICON controller state / fault report | no (read-only) |
+| `workbench.intrinsic.world_probe` | `npa workbench intrinsic world-probe` | ingress address | digital-twin reachability verdict | no (read-only) |
 
 Creative mashup example: `tokenfactory-cosmos-gate.yaml` (reason → augment → VLM gate loop).
 

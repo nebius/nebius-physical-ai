@@ -961,6 +961,12 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         "groot",
         "health",
         "insights",
+        # Intrinsic Core read-only probes (preflight, ICON status,
+        # digital-twin reachability): no service tier and no npa.workflow
+        # stage surface, so there is no YAML env block to keep coherent.
+        # CLI <-> SDK <-> catalog argv coherence is enforced by
+        # test_tool_catalog_argv.py instead.
+        "intrinsic",
         "isaac-lab",
         "lancedb",
         # Interactive LeIsaac sessions are lifecycle-bearing Kubernetes services:
