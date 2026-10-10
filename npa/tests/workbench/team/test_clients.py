@@ -1,6 +1,8 @@
 """Exercise CLI serialization and the shared authenticated SDK transport."""
 
 import json
+import subprocess
+import sys
 
 import httpx
 import pytest
@@ -11,6 +13,37 @@ from npa.cli.workbench import team as cli
 from npa.workbench.team.client import TeamClient, load_bearer_token
 from npa.workbench.team.errors import AuthenticationError, TeamError
 from npa.workbench.team.models import SubmitRequest
+
+
+def test_client_sdk_does_not_load_operator_file_locking():
+    """Allow API clients to work without the provisioning host's file-locking module.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Client import or authenticated transport loads operator setup.
+    """
+    script = """
+import sys
+sys.modules["fcntl"] = None
+import httpx
+from npa.sdk.workbench.team import TeamClient, setup_control_plane
+assert "npa.workbench.team.setup" not in sys.modules
+client = TeamClient(
+    "https://team.example.test", "test-token",
+    transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"subject": "verified"})),
+)
+try:
+    assert client.whoami()["subject"] == "verified"
+finally:
+    client.close()
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_sdk_sends_token_only_in_header_and_preserves_idempotency(workflow):
