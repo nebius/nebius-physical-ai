@@ -1509,13 +1509,22 @@ def default_npa_setup() -> str:
         "    return 1\n"
         "  fi\n"
         "}\n"
-        "if ! command -v npa >/dev/null 2>&1; then\n"
+        # Some workbench images expose the lightweight NPA console entrypoint through
+        # their declared runtime without installing a shell-visible ``npa`` script.
+        # The stage preamble creates a shim for that exact entrypoint, so do not try to
+        # mutate an intentionally non-root baked environment just to create the script.
+        # Restrict the exception to the declared baked interpreter: an arbitrary module
+        # on PATH is not evidence that a vendor image has a usable NPA runtime.
+        "npa_baked_entry_available=0\n"
+        'if [ -n "${NPA_BAKED_PYTHON:-}" ] && [ "$npa_setup_python" = "$NPA_BAKED_PYTHON" ] \\\n'
+        "  && \"$npa_setup_python\" -c 'from npa.cli.entry import main' >/dev/null 2>&1; then\n"
+        "  npa_baked_entry_available=1\n"
+        "fi\n"
+        'if ! command -v npa >/dev/null 2>&1 && [ "$npa_baked_entry_available" != "1" ]; then\n'
         # The active runtime-fetch images intentionally ship the installable
-        # project under /opt/npa but not a shell-visible `npa` launcher. Recording
-        # that tree alone is insufficient: the first task then skips the legacy
-        # branch, has no staged source URI, and exits before its GPU command runs.
-        # Install from the image-local source before falling back to the legacy
-        # layout or external source staging.
+        # project under /opt/npa but not a shell-visible `npa` launcher. When the
+        # declared baked runtime cannot supply the lightweight entrypoint, install
+        # from the image-local source before falling back to legacy or staged source.
         "  if [ -f /opt/npa/pyproject.toml ] && [ -d /opt/npa/src/npa ]; then\n"
         "    npa_pip_install -e /opt/npa\n"
         "    npa_record_src_root /opt/npa\n"
@@ -2803,9 +2812,9 @@ def _build_skypilot_task_doc(
         # A pinned image is EITHER an NPA workbench image with npa baked in, OR a
         # VENDOR image that has never heard of npa (e.g. NVIDIA's NRE container,
         # which is the runtime for the neural-reconstruction workflow). Propagating
-        # the source URI serves both: setup's primary install path is guarded by
-        # `command -v npa`, so it is a no-op when npa is already present and
-        # installs it WITH dependencies when it is not. Without this, a vendor image
+        # the source URI serves both: setup's primary install path is guarded by a
+        # shell-visible launcher or a verified declared baked entrypoint, so it is a
+        # no-op only when the task can already run NPA. Without this, a vendor image
         # fails setup with "npa CLI not found; set NPA_SRC_S3_URI or use a workbench
         # image" (observed live on the NRE image).
         if src_uri:
