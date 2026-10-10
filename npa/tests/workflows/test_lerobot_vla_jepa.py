@@ -98,8 +98,43 @@ def test_workflow_has_five_connected_native_stages() -> None:
     assert spec.resources["gpu"]["memory"] == "96Gi"
     assert "registry.invalid" in spec.config["vla_jepa_image"]
     assert spec.config["require_baked_npa"] is True
+    assert spec.config["source_sha"] == ""
     assert spec.config["train_steps"] == "30000"
     assert spec.config["heldout_task_ids"] == "[0, 1]"
+
+
+def test_baked_candidate_rejects_missing_source_sha(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A declared empty source SHA cannot render a baked candidate."""
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        NpaWorkflowRenderError,
+        SkypilotRenderOptions,
+        render_skypilot_yaml,
+    )
+    from npa.orchestration.npa_workflow.submit import merge_config_overrides
+
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example.invalid/npa-src")
+    spec = merge_config_overrides(
+        load_spec(WORKFLOW),
+        {
+            "vla_jepa_image": (
+                "registry.example.invalid/operator/npa-lerobot-vla-jepa@sha256:"
+                + "a" * 64
+            ),
+            "bucket": "unit-bucket",
+            "prefix": "unit-prefix",
+        },
+    )
+
+    with pytest.raises(NpaWorkflowRenderError, match="requires an exact source SHA"):
+        render_skypilot_yaml(
+            spec,
+            build_plan(spec, run_id="vla-missing-source-sha"),
+            run_id="vla-missing-source-sha",
+            options=SkypilotRenderOptions(materialize_registry_secrets=False),
+        )
 
 
 def test_stage_templates_pass_exact_predecessor_artifacts() -> None:

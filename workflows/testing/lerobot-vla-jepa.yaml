@@ -19,6 +19,9 @@ config:
   # This candidate ships the NPA adapter and its LeRobot vendor runtime.  Operators
   # must bind source_sha to the exact commit attested by their immutable digest.
   require_baked_npa: true
+  # Deliberately empty: rendering rejects this baked workflow until the operator
+  # supplies --var source_sha=<exact-40-hex-commit> for the candidate image.
+  source_sha: ""
   dataset_repo: HuggingFaceVLA/libero
   dataset_revision: 86958911c0f959db2bbbdb107eb3e17c5f9c798e
   heldout_task_ids: "[0, 1]"
