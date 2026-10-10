@@ -6902,6 +6902,49 @@ def test_exact_managed_job_lookup_refuses_ambiguous_name_without_immutable_id(
     assert exact.task_rows[0]["retry_count"] == 2
 
 
+@pytest.mark.parametrize(
+    "names,expected",
+    [
+        (["exact-run", "exact-run"], "exact-run"),
+        (["exact-run", "other-run"], ""),
+        (["exact-run", None], ""),
+        ([None, None], ""),
+    ],
+)
+def test_exact_lookup_retains_only_unanimous_native_job_name(
+    monkeypatch,
+    tmp_path,
+    names,
+    expected,
+) -> None:
+    from npa.orchestration.skypilot.workflow import lookup_managed_job
+
+    sky_bin = _fake_sky(tmp_path)
+    payload = [
+        {
+            "job_id": 42,
+            "job_name": name,
+            "task_id": index,
+            "task_name": f"task-{index}",
+            "status": "SUCCEEDED",
+        }
+        for index, name in enumerate(names)
+    ]
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout=json.dumps(payload),
+            stderr="",
+        ),
+    )
+    evidence = lookup_managed_job("exact-run", job_id="42", sky_bin=sky_bin)
+    assert evidence.outcome == "found"
+    assert evidence.job_name == expected
+
+
 def test_verified_job_id_prefers_the_name_lookup(mocker) -> None:
     """A stale scraped id must not win over the queue's view of the job name."""
 

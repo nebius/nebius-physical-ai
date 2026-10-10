@@ -176,6 +176,7 @@ class ManagedJobEvidence:
     workload_observable: bool = True
     workload_evidence: str = ""
     error: str = ""
+    job_name: str = ""
 
 
 def _managed_job_workload_markers(row: Mapping[str, Any]) -> set[str]:
@@ -3034,7 +3035,17 @@ def lookup_managed_job(
         task_rows=rows,
         workload_observable=bool(markers),
         workload_evidence=",".join(markers),
+        job_name=_exact_queue_job_name(jobs, selected),
     )
+
+
+def _exact_queue_job_name(rows: Sequence[Mapping[str, Any]], job_id: str) -> str:
+    """Keep native name evidence only when every exact job row agrees."""
+    selected = [row for row in rows if _queue_row_job_id(row) == job_id]
+    names = [row.get("job_name") for row in selected]
+    if not names or any(not isinstance(name, str) or not name for name in names):
+        return ""
+    return names[0] if len(set(names)) == 1 else ""
 
 
 def _libero_owner_binding_payload(

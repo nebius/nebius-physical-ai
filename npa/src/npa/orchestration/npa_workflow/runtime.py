@@ -1054,6 +1054,10 @@ class SkyPilotWaveExecutor:
                     infrastructure_recoveries = int(recovery_record.get("used") or 0)
                 category = str(latest.get("error_category") or "")
                 sky_status = str(latest.get("sky_status") or "").upper()
+                if sky_status == "FAILED_CONTROLLER":
+                    return self._recover_controller_completion(
+                        latest, steps, key=key, kind=kind, group=group
+                    )
                 reached_running = _record_reached_running(latest)
                 if (
                     self.options.adopt_absent_in_flight_outputs
@@ -1287,6 +1291,178 @@ class SkyPilotWaveExecutor:
         failed = self.attempts[-1]
         failed.error = last_error or "wave failed"
         return failed
+
+    def _recover_controller_completion(
+        self,
+        record: Mapping[str, Any],
+        steps: Sequence[PlanStep],
+        *,
+        key: str,
+        kind: str,
+        group: str,
+    ) -> WaveAttempt:
+        """Reconcile a driver failure without authorizing another workload attempt."""
+        self._require_controller_completion_identity(record, steps, key, group)
+        evidence = self._reconcile_exact(record["job_name"], record["job_id"])
+        self._require_controller_completion_evidence(record, steps, evidence)
+        if not self._outputs_exist(record["outputs"]):
+            raise NpaWorkflowError(
+                f"wave {key}: controller completion blocked: declared outputs "
+                "are not verified; inspect the original attempt and resume. "
+                "No replacement workload was submitted."
+            )
+        attempt = self._attempt_from_record(record, steps=steps, kind=kind, group=group)
+        attempt.tasks = [dict(row) for row in evidence.task_rows]
+        attempt.reconciliation.append(
+            self._controller_completion_proof(record, evidence)
+        )
+        attempt.status = "succeeded"
+        attempt.sky_status = "SUCCEEDED"
+        attempt.adopted = attempt.replayed = True
+        attempt.primary_error = attempt.primary_error or attempt.error
+        attempt.error = ""
+        attempt.recovery_decision = "adopted_terminal_success_after_driver_failure"
+        attempt.ended_at = utc_now()
+        self.ledger.record(attempt)
+        self.attempts.append(attempt)
+        return attempt
+
+    @staticmethod
+    def _controller_completion_proof(
+        record: Mapping[str, Any],
+        evidence: Any,
+    ) -> dict[str, Any]:
+        body = json.dumps(record, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return {
+            "outcome": "found",
+            "source": "exact_managed_job_reconciliation",
+            "status": "SUCCEEDED",
+            "job_id": record["job_id"],
+            "job_name": evidence.job_name,
+            "workload_observable": evidence.workload_observable,
+            "task_rows": [dict(row) for row in evidence.task_rows],
+            "declared_outputs_valid": True,
+            "checked_at": utc_now(),
+            "prior_record_sha256": hashlib.sha256(body).hexdigest(),
+            "prior_status": record["status"],
+            "prior_sky_status": record["sky_status"],
+            "prior_error": record.get("error", ""),
+            "prior_error_category": record.get("error_category", ""),
+        }
+
+    def _require_controller_completion_identity(
+        self,
+        record: Mapping[str, Any],
+        steps: Sequence[PlanStep],
+        key: str,
+        group: str,
+    ) -> None:
+        valid = self._controller_record_matches(record, steps, key)
+        if valid:
+            attempt = self._attempt_from_record(
+                record, steps=steps, kind="", group=group
+            )
+            valid = record.get("job_name") == self._job_name(
+                steps, group=group, attempt=attempt
+            ) and not self._completed_replay_identity_mismatches(record, steps)
+        if not valid:
+            raise NpaWorkflowError(
+                f"wave {key}: controller completion blocked: immutable attempt "
+                "identity or declared outputs differ. Restore the original workflow, "
+                "staged source and image selection; no replacement was submitted."
+            )
+
+    def _controller_record_matches(
+        self,
+        record: Mapping[str, Any],
+        steps: Sequence[PlanStep],
+        key: str,
+    ) -> bool:
+        job_id = record.get("job_id")
+        if not (
+            isinstance(job_id, str)
+            and job_id.isascii()
+            and job_id.isdecimal()
+            and not job_id.startswith("0")
+        ):
+            return False
+        if any(
+            type(record.get(name)) is not int or record[name] <= 0
+            for name in ("attempt", "launch_sequence")
+        ):
+            return False
+        states = [step.state for step in steps]
+        outputs = [dict(item) for step in steps for item in step.outputs]
+        logical_id = logical_launch_identity(
+            self.options.project or "default",
+            self.run_id,
+            key,
+            str(record["attempt"]),
+            ",".join(states),
+        )
+        return (
+            bool(outputs)
+            and record.get("key") == key
+            and record.get("states") == states
+            and record.get("outputs") == outputs
+            and not record.get("partial_launch")
+            and not record.get("recovery_reservation")
+            and record.get("logical_launch_id") == logical_id
+        )
+
+    def _require_controller_completion_evidence(
+        self,
+        record: Mapping[str, Any],
+        steps: Sequence[PlanStep],
+        evidence: Any,
+    ) -> None:
+        rows = getattr(evidence, "task_rows", ())
+        valid = (
+            getattr(evidence, "outcome", "") == "found"
+            and getattr(evidence, "job_id", "") == record["job_id"]
+            and getattr(evidence, "job_name", "") == record["job_name"]
+            and getattr(evidence, "workload_observable", False) is True
+            and getattr(evidence, "status", "") == "SUCCEEDED"
+            and isinstance(rows, (list, tuple))
+            and len(rows) == len(steps)
+            and all(
+                isinstance(row, Mapping)
+                and row.get("status") == "SUCCEEDED"
+                and str(row.get("job_id", "")) == record["job_id"]
+                for row in rows
+            )
+            and self._controller_task_membership_matches(record, steps, rows)
+        )
+        if not valid:
+            raise NpaWorkflowError(
+                f"wave {record['key']}: controller completion blocked: the original "
+                "provider job and all tasks must be verifiably SUCCEEDED. Inspect "
+                "the exact attempt and resume; no replacement was submitted."
+            )
+
+    def _controller_task_membership_matches(
+        self,
+        record: Mapping[str, Any],
+        steps: Sequence[PlanStep],
+        rows: Sequence[Mapping[str, Any]],
+    ) -> bool:
+        from npa.orchestration.npa_workflow.skypilot_render import (
+            build_skypilot_task_docs,
+        )
+
+        if len(steps) == 1:
+            names = [record["job_name"]]
+        else:
+            docs = build_skypilot_task_docs(
+                self.spec, steps, run_id=self.run_id, options=self.render_options
+            )
+            names = [doc["name"] for doc in docs]
+        task_ids = [row.get("task_id") for row in rows]
+        if any(type(task_id) is not int for task_id in task_ids):
+            return False
+        if sorted(task_ids) != list(range(len(names))):
+            return False
+        return all(row.get("task_name") == names[row["task_id"]] for row in rows)
 
     def _verified_completion(self, record: Mapping[str, Any]) -> dict[str, Any] | None:
         """Recover a completed wave whose driver failed while recording success."""

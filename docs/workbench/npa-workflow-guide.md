@@ -564,6 +564,20 @@ exit nonzero, and `--cached` remains
 non-authoritative. Completion and declared artifact validation are separate
 requirements.
 
+If a driver recorded `FAILED_CONTROLLER` while the original managed job later
+finished successfully, an explicit resume can recover that same attempt. It
+requires the original workflow, staged source, image selection, launch identity,
+and output declarations, then verifies the exact provider job and every native
+task as `SUCCEEDED` before checking all declared outputs. Missing or conflicting
+evidence blocks recovery, including when payload retries were requested. Success
+retains the original failure evidence and advances without rerunning the completed
+wave. This intentionally tightens older retry behavior: SkyPilot can record
+`FAILED_CONTROLLER` even if its workload cleanup failed, so that status alone
+does not prove the original workload stopped. A repaired driver can use the
+original content-addressed `NPA_SRC_S3_URI`
+with `--no-stage-src`; the submit path verifies that archive instead of substituting
+the repaired driver's source for the original workload payload.
+
 Job aggregates and task rows come from separate queue snapshots. A successful
 task row or durable stage record can therefore coexist with a recognized
 nonterminal job observation. Status retains the incomplete workflow lifecycle
