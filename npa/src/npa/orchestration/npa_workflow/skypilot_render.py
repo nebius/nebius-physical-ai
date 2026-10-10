@@ -1901,11 +1901,11 @@ def render_setup_for_tool(
 
     if not options.default_setup:
         return ""
-    if tool_ref == HABITAT_SIM_TOOL_REF:
-        return _habitat_sim_setup(config)
     if tool_ref.startswith("workbench.seedvr2."):
         _require_seedvr2_baked_config(config)
         return SEEDVR2_IMMUTABLE_SETUP
+    if tool_ref == HABITAT_SIM_TOOL_REF:
+        return _habitat_sim_setup(config)
     if tool_ref == "workbench.nurec.convert_colmap":
         # Conversion uses the committed CPU image and its hash-locked runtime
         # bootstrap. Do not run the NRE vendor-image dependency installer or overlay
