@@ -201,15 +201,17 @@ def test_token_factory_caption_help_exposes_thinking_override() -> None:
 
 
 @pytest.mark.parametrize(
-    ("flag", "expected"),
+    ("model", "flag", "expected"),
     [
-        (None, None),
-        ("--no-thinking", False),
-        ("--thinking", True),
+        ("openbmb/MiniCPM-V-4_5", None, None),
+        ("openbmb/MiniCPM-V-4_5", "--no-thinking", {"thinking": False}),
+        ("openbmb/MiniCPM-V-4_5", "--thinking", {"thinking": True}),
+        ("Qwen/Qwen3.8-27B", None, {"enable_thinking": False}),
+        ("Qwen/Qwen3.8-27B", "--thinking", {"enable_thinking": True}),
     ],
 )
 def test_token_factory_caption_cli_forwards_thinking_payload(
-    monkeypatch, tmp_path: Path, flag: str | None, expected: bool | None
+    monkeypatch, tmp_path: Path, model: str, flag: str | None, expected: dict | None
 ) -> None:
     captured: dict = {}
     _install_fake_client(monkeypatch, "visible caption", captured)
@@ -224,7 +226,7 @@ def test_token_factory_caption_cli_forwards_thinking_payload(
         "--output-path",
         str(tmp_path / "out"),
         "--model",
-        "openbmb/MiniCPM-V-4_5",
+        model,
         "--dry-run",
         "--output",
         "json",
@@ -239,7 +241,7 @@ def test_token_factory_caption_cli_forwards_thinking_payload(
     if expected is None:
         assert "chat_template_kwargs" not in body
     else:
-        assert body["chat_template_kwargs"] == {"thinking": expected}
+        assert body["chat_template_kwargs"] == expected
 
 
 @pytest.mark.parametrize(

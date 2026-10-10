@@ -499,6 +499,7 @@ def test_chat_completion_text_raises_on_reasoning_only_response() -> None:
     [
         ("nvidia/Nemotron-3_5-Lightning", {"enable_thinking": False}),
         ("MiniMaxAI/MiniMax-M3", {"thinking_mode": "disabled"}),
+        ("Qwen/Qwen3.8-27B", {"enable_thinking": False}),
         ("openbmb/MiniCPM-V-4_5", None),
         ("vendor/explicit-model", None),
         ("meta-llama/Llama-3.3-70B-Instruct", None),
@@ -552,6 +553,10 @@ def test_kimi_profile_uses_low_reasoning_without_fixed_sampling_fields() -> None
         (
             "MiniMaxAI/MiniMax-M3",
             b',"temperature":0.0,"chat_template_kwargs":{"thinking_mode":"disabled"}}',
+        ),
+        (
+            "Qwen/Qwen3.8-27B",
+            b',"temperature":0.0,"chat_template_kwargs":{"enable_thinking":false}}',
         ),
         ("vendor/explicit-model", b',"temperature":0.0}'),
         ("moonshotai/Kimi-K3", b',"reasoning_effort":"low"}'),
@@ -623,7 +628,7 @@ def _profile_assignment_sha256() -> str:
 
 
 _EXPECTED_POLICY_AST_HASHES = {
-    "profile-assignment": "9fdbc318b41b4b49731e24d7a7ee516cd110cc5f8fec32fccc4e2aaa9a9c3efa",
+    "profile-assignment": "d340b9e6b798f848f160ddf661f79cbe8bca05c398cc7740f7e2b0e710116c7e",
     "profile-lookup": "acb9f15d262d592dc8e42223b18b5d9c1056ae914a26538a196858655d43cf5e",
     "profile-default-extra": "747196a0990c411b8c81c50ee7a0fcede5bb00cf0b837404d0fc946939709512",
     "default-chat-extra": "b80360e5856bc5d03c05b9008efe78ee72c1c040d999b066fc0530da154d85e8",
@@ -720,6 +725,8 @@ def test_explicit_kimi_extra_wins_over_direct_output_profile() -> None:
         ("nvidia/Nemotron-3_5-Lightning", True, {"enable_thinking": True}),
         ("MiniMaxAI/MiniMax-M3", False, {"thinking_mode": "disabled"}),
         ("MiniMaxAI/MiniMax-M3", True, {"thinking_mode": "enabled"}),
+        ("Qwen/Qwen3.8-27B", False, {"enable_thinking": False}),
+        ("Qwen/Qwen3.8-27B", True, {"enable_thinking": True}),
         ("openbmb/MiniCPM-V-4_5", False, {"thinking": False}),
         ("openbmb/MiniCPM-V-4_5", True, {"thinking": True}),
         ("vendor/explicit-model", False, {"thinking": False}),
