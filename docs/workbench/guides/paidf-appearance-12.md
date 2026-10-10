@@ -288,19 +288,27 @@ aws s3 cp "$RUN_URI/input/provenance.json" "$EVIDENCE_DIR/provenance.json" --pro
 aws s3 cp "$RUN_URI/input/source.mp4" "$EVIDENCE_DIR/source.mp4" --profile nebius
 aws s3 cp "$RUN_URI/cosmos_augmented/manifest.json" "$EVIDENCE_DIR/manifest.json" \
   --profile nebius
+aws s3 cp "$RUN_URI/configs/manifest.json" "$EVIDENCE_DIR/appearance-configs.json" \
+  --profile nebius
 aws s3 cp "$RUN_URI/cosmos_augmented/" "$EVIDENCE_DIR/cosmos_augmented/" \
   --recursive --exclude '*' --include 'variant-*/augmented_video.mp4' \
   --include 'variant-*/metadata.json' --include 'variant-*/raw_model_video.mp4' \
+  --include 'variant-*/transfer.json' \
   --include 'variant-*/raw_model_metadata.json' \
   --include 'variant-*/_native/*/*/augmented_video.mp4' \
   --include 'variant-*/_native/*/*/metadata.json' \
   --include 'variant-*/_native/*/*/raw_model_video.mp4' \
+  --include 'variant-*/_native/*/*/transfer.json' \
   --include 'variant-*/_native/*/*/raw_model_metadata.json' --profile nebius
 aws s3 cp "$RUN_URI/grade/cosmos_evaluator.json" "$EVIDENCE_DIR/cosmos_evaluator.json" \
   --profile nebius
 aws s3 cp "$RUN_URI/grade/quality_disposition.json" "$EVIDENCE_DIR/quality_disposition.json" \
   --profile nebius
-aws s3 cp "$RUN_URI/reports/sim2real.rrd" "$EVIDENCE_DIR/sim2real.rrd" --profile nebius
+aws s3 cp "$RUN_URI/reports/quality-evidence.rrd" "$EVIDENCE_DIR/quality-evidence.rrd" \
+  --profile nebius
+npa/.venv/bin/rerun rrd verify "$EVIDENCE_DIR/quality-evidence.rrd"
+npa/.venv/bin/rerun rrd print -vv "$EVIDENCE_DIR/quality-evidence.rrd" \
+  > "$EVIDENCE_DIR/recording-inspection.txt"
 jq '{status, variant_count, published: (.variants | length)}' "$EVIDENCE_DIR/manifest.json"
 find "$EVIDENCE_DIR/cosmos_augmented" -type f -name metadata.json -print0 |
   xargs -0 -r jq '{clip, profile: .variables, bounds: .source_content_region.bounds,
@@ -316,10 +324,18 @@ A completed generation manifest should report twelve published variants. For a
 LeRobot input, also verify `source_kind: lerobot_dataset`, the exact camera and
 episode in `provenance.json`; for the cups example, verify 192 decoded frames
 at 24 fps in each published video. Read `quality_disposition.json` for the
-batch decision and open the recording with the setup guide's
+batch decision. Both accepted and rejected batches retain `quality-evidence.rrd`;
+the commands above verify it without a desktop. Use the setup guide's
+[local Rerun procedure](../../../workflows/guides/paidf-cosmos3.md#open-the-recording)
+with `RRD_FILE=quality-evidence.rrd` to open it. Review its source and twelve
+generated-video entities, and inspect the [quality evidence](../../../workflows/guides/paidf-cosmos3.md#r6-diagnose-quality-rejection-and-prepare-the-next-run).
+A terminal `reject-quality` retains the candidates and recording and stops
+before annotation and curation. Other stage failures require
+[recovery](../../../workflows/guides/paidf-cosmos3.md#r4-monitor-and-recover)
+before treating this evidence as complete. An accepted run also publishes
+`reports/sim2real.rrd`; download that only after confirming acceptance and use the
 [local Rerun procedure](../../../workflows/guides/paidf-cosmos3.md#open-the-recording).
-For a
-source with verified padding, each metadata record should show preservation `status: verified`,
+For a source with verified padding, each metadata record should show preservation `status: verified`,
 `scene_pixels_unchanged: true` and `padding_matches_source: true`. The evaluator's
 padding diagnostic should show zero RGB error. `detection: detected` identifies
 additional embedded bars; `no-additional-padding` can still have preservation
