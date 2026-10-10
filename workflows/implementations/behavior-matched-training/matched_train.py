@@ -256,7 +256,10 @@ def _verify_checkpoint_member(source, member, checkpoint: Path, files: dict):
     ):
         raise ValueError("Unexpected parent checkpoint archive layout")
     with source.open(member) as stream:
-        member_digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        digest_state = hashlib.sha256()
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest_state.update(chunk)
+        member_digest = digest_state.hexdigest()
     if not target.is_file() or digest(target) != member_digest:
         raise ValueError("Loaded parent checkpoint bytes differ from release archive")
     return relative, member_digest
