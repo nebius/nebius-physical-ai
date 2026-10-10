@@ -138,11 +138,16 @@ Use `npa login` once with a personal key, or choose the
 [Nebius human sign-in path](team-identity.md#sign-in-once-with-npa-login).
 Both save a connection for the CLI and agent-callable SDK:
 
+`submit` starts execution and returns a run ID. `run RUN_ID` shows that existing
+run's status; use `--action logs` or `--action artifacts` to read its outputs.
+`runs` lists your runs.
+
 ```bash
 npa login --endpoint https://team.example.invalid --token-file ./workbench.key
 npa workbench whoami
 npa workbench submit --spec workflow.yaml
 npa workbench runs
+npa workbench run "$RUN_ID" --action status
 npa workbench run "$RUN_ID" --action logs
 ```
 

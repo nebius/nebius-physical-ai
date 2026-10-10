@@ -11,9 +11,9 @@ Options
 --help  Show this message and exit.
 Commands
 whoami  Show verified identity and workspace access without a personal cloud account.
-submit  Submit an NPA workflow through the authenticated Workbench endpoint.
+submit  Start a workflow and return its run ID; unchanged retries reuse that run.
 runs  List the authenticated person's runs in one workspace.
-run  Inspect, cancel, or resume an owned run using the authenticated Workbench API.
+run  Show an existing run's status, or manage that run with --action.
 specialists  Self-hosted specialist agents and durable task monitoring.
 antioch  Run Antioch simulations and collect policy-compatible data.
 lerobot  LeRobot policy training, evaluation, serving, and inference.
@@ -75,9 +75,9 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 | Command | Description |
 | --- | --- |
 | `whoami` | Show verified identity and workspace access without a personal cloud account. |
-| `submit` | Submit an NPA workflow through the authenticated Workbench endpoint. |
+| `submit` | Start a workflow and return its run ID; unchanged retries reuse that run. |
 | `runs` | List the authenticated person's runs in one workspace. |
-| `run` | Inspect, cancel, or resume an owned run using the authenticated Workbench API. |
+| `run` | Show an existing run's status, or manage that run with --action. |
 | `specialists` | Self-hosted specialist agents and durable task monitoring. |
 | `antioch` | Run Antioch simulations and collect policy-compatible data. |
 | `lerobot` | LeRobot policy training, evaluation, serving, and inference. |

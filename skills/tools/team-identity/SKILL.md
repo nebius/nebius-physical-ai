@@ -22,6 +22,9 @@ private named connection and unambiguous placement defaults. Use
 `npa workbench whoami`, `submit`, `runs`, and `run` for ordinary execution;
 administrators use `npa workbench access`. The same commands support an individual
 or a shared installation. Older `npa workbench team` commands remain compatible.
+`submit` starts execution and returns a run ID. `run RUN_ID` shows that existing
+run's status by default; `--action` selects logs, artifacts, cancellation, or
+resumption. `runs` lists the person's runs.
 Workbench commands can omit endpoint and credential flags; agents can use
 `npa.sdk.workbench.team.connect()`. A native session asks the official Nebius CLI
 for a token on each command without copying IAM tokens into Workbench storage.

@@ -1016,10 +1016,17 @@ npa workbench access render-service --namespace workbench-system \
             </div>
             <div class="card">
               <h2>CLI and SDK use the same API</h2>
+              <p>
+                <code>submit</code> starts execution and returns a run ID.
+                <code>run RUN_ID</code> shows that existing run's status;
+                <code>--action logs</code> and <code>--action artifacts</code>
+                retrieve its outputs. <code>runs</code> lists your runs.
+              </p>
               <pre>
 npa workbench submit --spec workflow.yaml \
   --workspace robotics --cluster east \
   --idempotency-key retained-key
+npa workbench run "$RUN_ID" --action status
 npa workbench run "$RUN_ID" --action logs
 npa workbench run "$RUN_ID" --action artifacts
 npa workbench run "$RUN_ID" --action resume

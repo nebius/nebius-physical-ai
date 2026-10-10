@@ -61,12 +61,19 @@ Both paths use the same Workbench commands for one person or a shared
 installation. Add people and allocations to the existing installation as needed.
 Login remembers placement when there is
 one authorized workspace and cluster; otherwise select `--workspace` and
-`--cluster` at login or submission. Set `RUN_ID` to the returned ID:
+`--cluster` at login or submission.
+
+`submit` starts workflow execution and returns a run ID. `run` takes that ID
+and shows the existing run's status; `--action logs` or `--action artifacts`
+retrieves its outputs. `runs` lists your runs. Set `RUN_ID` to the ID returned
+by `submit`:
 
 ```bash
 npa workbench whoami
+# Start execution and retain the returned run ID.
 npa workbench submit --spec workflow.yaml
 npa workbench runs
+# Inspect that same run; these commands do not start another workflow.
 npa workbench run "$RUN_ID" --action status
 npa workbench run "$RUN_ID" --action logs
 npa workbench run "$RUN_ID" --action artifacts

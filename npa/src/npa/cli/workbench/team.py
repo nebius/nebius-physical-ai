@@ -306,7 +306,7 @@ def submit_cmd(
     ),
     output_format: str = typer.Option("json", "--output-format"),
 ):
-    """Submit an NPA workflow through the authenticated Workbench endpoint.
+    """Start a workflow and return its run ID; unchanged retries reuse that run.
 
     Args:
         spec: Canonical workflow YAML.
@@ -348,7 +348,9 @@ def submit_cmd(
 def run_cmd(
     run_id: str = typer.Argument(...),
     action: str = typer.Option(
-        "status", "--action", help="status, cancel, resume, logs, or artifacts"
+        "status",
+        "--action",
+        help="Existing run operation: status (default), logs, artifacts, cancel, or resume.",
     ),
     endpoint: str | None = typer.Option(None, "--endpoint", envvar="NPA_TEAM_ENDPOINT"),
     token_env: str = typer.Option("NPA_TEAM_TOKEN", "--token-env"),
@@ -361,7 +363,7 @@ def run_cmd(
     ),
     output_format: str = typer.Option("json", "--output-format"),
 ):
-    """Inspect, cancel, or resume an owned run using the authenticated Workbench API.
+    """Show an existing run's status, or manage that run with --action.
 
     Args:
         run_id, action: Owned run and supported operation.
