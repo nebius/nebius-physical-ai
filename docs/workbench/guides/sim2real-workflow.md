@@ -348,8 +348,8 @@ kubectl --namespace "$NPA_NAMESPACE" get pvc npa-isaac-cache
 
 Private-registry users must include the prepared pull secret in the generated
 Job's `spec.template.spec.imagePullSecrets` before applying it.
-Expected: bootstrap reports its versioned cache tree ready, the Job succeeds,
-and the PVC is `Bound` with `ReadWriteMany`. Cold installation downloads several
+Expected: the Job logs show `ready=yes` for the selected image's `expected_tree`,
+the Job succeeds, and the PVC is `Bound` with `ReadWriteMany`. Cold installation downloads several
 gigabytes and can stay quiet while extracting wheels into the shared filesystem.
 While waiting, inspect the Job and
 pod events from another terminal; a failed Job never reaches `complete`.
