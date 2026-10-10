@@ -842,7 +842,7 @@ def _finger_bounds(native: Any) -> dict[str, Any]:
             "local_bounds_m": [list(map(float, value)) for value in local_bounds],
             "world_corners_m": world,
             "geometry_source": "usd_compute_untransformed_bound_link_frame",
-            "pose_source": "live_articulation_body_pos_w_body_quat_w_xyzw",
+            "pose_source": "live_articulation_body_pose_xyzw",
         }
     return result
 

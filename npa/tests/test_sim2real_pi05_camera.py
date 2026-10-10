@@ -1183,7 +1183,7 @@ def _projected_finger_bounds() -> dict:
             "world_corners_m": np.asarray(
                 [[x, y, z] for x in x_values for y in (-0.01, 0.01) for z in (0.8, 1.0)]
             ),
-            "pose_source": "live_articulation_body_pos_w_body_quat_w_xyzw",
+            "pose_source": "live_articulation_body_pose_xyzw",
         }
 
     return {"left": bounds((-0.03, -0.01)), "right": bounds((0.01, 0.03))}
@@ -1490,6 +1490,6 @@ def test_finger_bounds_transform_local_geometry_with_live_body_pose(
         [-0.1, 0.0, 0.0],
     )
     assert all(
-        value["pose_source"] == "live_articulation_body_pos_w_body_quat_w_xyzw"
+        value["pose_source"] == "live_articulation_body_pose_xyzw"
         for value in second.values()
     )
