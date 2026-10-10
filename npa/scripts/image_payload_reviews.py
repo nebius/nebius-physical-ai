@@ -21,6 +21,16 @@ KINDS = {"aws_access_key_id", "private_key_content", "credential_assignment"}
 
 
 def load_reviews(path: Path = CATALOG) -> dict[str, dict]:
+    """Load the checked-in dispositions keyed by complete member SHA-256.
+
+    Args:
+        path: Trusted repository review catalog.
+    Returns:
+        Validated records keyed by their full content digest.
+    Raises:
+        OSError: The catalog cannot be read.
+        ValueError: Its schema, finding kinds, identity, or source is invalid.
+    """
     document = json.loads(path.read_text(encoding="utf-8"))
     if document.get("schema_version") != "npa.image-payload-content-reviews.v1":
         raise ValueError("unsupported payload content review schema")
@@ -61,6 +71,17 @@ class _HashingReader:
 def reviewed_content_credential(
     stream: IO[bytes], reviews: dict[str, dict]
 ) -> tuple[str | None, dict | None]:
+    """Detect a credential and disposition only an exact reviewed member.
+
+    Args:
+        stream: One regular image member's binary stream.
+        reviews: Trusted records returned by ``load_reviews``.
+    Returns:
+        The unresolved finding kind, or an exact-content disposition receipt.
+        Both are None when the detector finds no credential-shaped content.
+    Raises:
+        OSError: Reading the complete member fails.
+    """
     reader = _HashingReader(stream)
     kind = content_credential(reader)
     if kind is None:

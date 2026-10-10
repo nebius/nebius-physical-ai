@@ -27,7 +27,7 @@ functional qualification before promotion.
   digest rather than the older supported Wan runtime.
 - Alpamayo: exclude host bytecode recursively, disable runtime bytecode creation,
   and remove dependency test/example data and UV caches before installation
-  layers commit.
+  layers commit; upgrade inherited Ubuntu packages from the October 9 snapshot.
 
 ## Reviewed public content
 
@@ -39,7 +39,8 @@ matches cannot be accepted by filename or by excluding binary files.
 [The review catalog](../../../npa/scripts/image-payload-content-reviews.json)
 binds each reviewed member's complete SHA-256, byte count, finding kinds and
 counts to its exact public repository or package artifact. GnuTLS key-body
-prefixes were compared with official known-answer self-test source; the
+constants were decoded from adjacent C string literals and compared in full
+with official known-answer self-test source; the
 libunistring match was reconstructed from successive Unicode name tokens.
 The font match occurs in Pillow's embedded base64 Aileron font. SDK and NPA
 matches reference runtime inputs, type annotations, or documented placeholders.

@@ -16,7 +16,7 @@
       "supporting_source": {
         "url": "https://github.com/gnutls/gnutls/blob/3.8.11/lib/crypto-selftests-pk.c",
         "sha256": "6e596be00754107fd7f7d1f132c2dc8cd0ff12bbdfc6de08c162a1dd5eedc7e8",
-        "verification": "Every exact first 32-byte key-body prefix in the reviewed ELF occurs in this official known-answer self-test source."
+        "verification": "Every complete PEM self-test key in the reviewed ELF matches an adjacent-string C constant decoded from this official known-answer self-test source."
       }
     },
     {
@@ -54,7 +54,7 @@
       "supporting_source": {
         "url": "https://github.com/gnutls/gnutls/blob/3.8.11/lib/crypto-selftests-pk.c",
         "sha256": "6e596be00754107fd7f7d1f132c2dc8cd0ff12bbdfc6de08c162a1dd5eedc7e8",
-        "verification": "Every exact first 32-byte key-body prefix in the reviewed ELF occurs in this official known-answer self-test source."
+        "verification": "Every complete PEM self-test key in the reviewed ELF matches an adjacent-string C constant decoded from this official known-answer self-test source."
       }
     },
     {
@@ -785,7 +785,7 @@
       "match_counts": {
         "private_key_content": 10
       },
-      "reason": "Official package contains GnuTLS known-answer self-test keys; all 10 exact key-body prefixes match lib/crypto-selftests-pk.c in the official source.",
+      "reason": "Official package contains GnuTLS known-answer self-test keys; all 10 complete PEM constants match lib/crypto-selftests-pk.c in the official source.",
       "source": {
         "url": "https://snapshot.debian.org/archive/debian/20261009T000000Z/pool/main/g/gnutls28/libgnutls30_3.7.9-2+deb12u7_amd64.deb",
         "revision": "30abec8c824feb1d2d7e9000a34083cccd19d139625e1b21547e3ac53b922f8e",
@@ -794,7 +794,7 @@
       "supporting_source": {
         "url": "https://github.com/gnutls/gnutls/blob/3.7.9/lib/crypto-selftests-pk.c",
         "sha256": "c3d79122e072177f55dc30a98f68b949c0f36f6159a363aae9512a22a9280ed0",
-        "verification": "Every exact first 32-byte key-body prefix in the reviewed ELF occurs in this official known-answer self-test source."
+        "verification": "Every complete PEM self-test key in the reviewed ELF matches an adjacent-string C constant decoded from this official known-answer self-test source."
       }
     },
     {
@@ -823,7 +823,7 @@
       "match_counts": {
         "private_key_content": 10
       },
-      "reason": "Official package contains GnuTLS known-answer self-test keys; all 10 exact key-body prefixes match lib/crypto-selftests-pk.c in the official source.",
+      "reason": "Official package contains GnuTLS known-answer self-test keys; all 10 complete PEM constants match lib/crypto-selftests-pk.c in the official source.",
       "source": {
         "url": "https://snapshot.ubuntu.com/ubuntu/20261009T000000Z/pool/main/g/gnutls28/libgnutls30t64_3.8.3-1.1ubuntu3.6_amd64.deb",
         "revision": "b8944756260c5ea6b7fac019745f931f905aa7a4df0763676b1b25c911b692e2",
@@ -832,7 +832,7 @@
       "supporting_source": {
         "url": "https://github.com/gnutls/gnutls/blob/3.7.9/lib/crypto-selftests-pk.c",
         "sha256": "c3d79122e072177f55dc30a98f68b949c0f36f6159a363aae9512a22a9280ed0",
-        "verification": "Every exact first 32-byte key-body prefix in the reviewed ELF occurs in this official known-answer self-test source."
+        "verification": "Every complete PEM self-test key in the reviewed ELF matches an adjacent-string C constant decoded from this official known-answer self-test source."
       }
     },
     {
@@ -853,6 +853,29 @@
         "member": "libunistring-1.0/lib/uniname/uninames.h",
         "member_sha256": "8c95494071c9ef65cd44c2aaa3acef3d4c1820adabf00c38449719c4c9706dae",
         "verification": "The exact AWS-shaped substring spans successive Unicode name tokens in the generated character array."
+      }
+    },
+    {
+      "sha256": "2e644667e5e61567648ef912ea5b54931fee3c3cfc85979dc6b6a575fb306621",
+      "bytes": 2057632,
+      "match_counts": {
+        "private_key_content": 10
+      },
+      "reason": "The immutable CUDA parent contains ten complete public GnuTLS known-answer self-test key constants; every PEM body matches the official self-test source.",
+      "source": {
+        "url": "https://registry-1.docker.io/v2/nvidia/cuda/blobs/sha256:5a7813e071bfadf18aaa6ca8318be4824a9b6297b3240f2cc84c1db6f4113040",
+        "revision": "5a7813e071bfadf18aaa6ca8318be4824a9b6297b3240f2cc84c1db6f4113040",
+        "member": "usr/lib/x86_64-linux-gnu/libgnutls.so.30.37.1",
+        "base_index": "sha256:24c8e3581ea6330038b0d374920721983312627f8adbfcf390bdb4b399d280ed",
+        "layer_diff_id": "sha256:4b7c01ed0534d4f9be9cf97d068da1598c6c20b26cb6134fad066defdb6d541d",
+        "package": "libgnutls30t64 3.8.3-1.1ubuntu3.2"
+      },
+      "supporting_source": {
+        "url": "https://snapshot.debian.org/archive/debian/20261009T000000Z/pool/main/g/gnutls28/gnutls28_3.7.9.orig.tar.xz",
+        "archive_sha256": "aaa03416cdbd54eb155187b359e3ec3ed52ec73df4df35a0edd49429ff64d844",
+        "member": "gnutls-3.7.9/lib/crypto-selftests-pk.c",
+        "member_sha256": "c3d79122e072177f55dc30a98f68b949c0f36f6159a363aae9512a22a9280ed0",
+        "verification": "Every complete PEM self-test key in the reviewed ELF matches an adjacent-string C constant decoded from this official known-answer self-test source."
       }
     }
   ]

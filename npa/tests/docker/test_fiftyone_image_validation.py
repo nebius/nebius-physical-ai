@@ -765,6 +765,11 @@ def test_public_summary_uses_only_explicit_package_gate_and_annex_fields(
     output = tmp_path / "bare"
     output.mkdir()
     sensitive = "synthetic-private-diagnostic"
+    (output / "bare-environment.stdout").write_text(
+        "PASS: import fiftyone\n"
+        "FAIL: check LeRobot temporal API\n"
+        f"  {sensitive}\nPASS: {sensitive}\n"
+    )
     checks = _public_receipt_fixture(sensitive)
     (output / "bare.json").write_text(
         json.dumps({"checks": checks, "diagnostic": sensitive})
@@ -788,6 +793,15 @@ def test_public_summary_uses_only_explicit_package_gate_and_annex_fields(
     }
     assert summary["owned_cleanup"]["verified"] is False
     assert summary["phases"][0]["checks"][1]["checks_total"] == 5
+    assert summary["environment_checks"] == [
+        {
+            "phase": "bare",
+            "checks": [
+                {"name": "import fiftyone", "passed": True},
+                {"name": "check LeRobot temporal API", "passed": False},
+            ],
+        }
+    ]
 
 
 @pytest.mark.parametrize(

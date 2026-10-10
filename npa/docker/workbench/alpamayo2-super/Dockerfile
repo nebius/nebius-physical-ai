@@ -5,6 +5,7 @@ FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04@sha256:24c8e3581ea6330038b0d3749
 ARG ALPAMAYO2_SOURCE_URL=https://github.com/NVlabs/alpamayo2.git
 ARG ALPAMAYO2_SOURCE_REF=beb2977d9a7e9d66837d4a3ad5144ff59de37519
 ARG NPA_SOURCE_COMMIT=unknown
+ARG UBUNTU_SNAPSHOT=20261009T000000Z
 
 LABEL npa.tool="alpamayo2-super" \
       npa.version="0.1.0-cu128-r3" \
@@ -27,12 +28,15 @@ ENV DEBIAN_FRONTEND=noninteractive \
 SHELL ["/bin/bash", "-lc"]
 USER root
 
+COPY --chmod=0755 docker/workbench/common/configure_ubuntu_snapshot.sh /usr/local/bin/configure-ubuntu-snapshot
+
 # The CUDA devel base carries an old linux-libc-dev build and an unused Nsight
 # EFA helper linked against vulnerable Go standard libraries. Refresh the
 # headers explicitly and remove the profiler tree instead of exempting either
 # finding from the complete-image security gate.
-RUN rm -f /etc/apt/sources.list.d/*.list \
+RUN configure-ubuntu-snapshot "${UBUNTU_SNAPSHOT}" \
     && apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends \
       ca-certificates ffmpeg git linux-libc-dev openssh-server python3.12 python3.12-dev \
       python3.12-venv rsync sudo \
