@@ -92,6 +92,8 @@ COPY --chown=ubuntu:ubuntu docker/workbench/fiftyone/mongodb-source-version.json
 COPY --chown=ubuntu:ubuntu docker/workbench/fiftyone/SOURCE.md /opt/fiftyone/mongodb-notices/SOURCE.md
 COPY --chown=ubuntu:ubuntu docker/workbench/fiftyone/verify_source.py /opt/npa/docker/workbench/fiftyone/verify_source.py
 
+# FiftyOne 1.22 uses Strawberry 0.316, whose ExecutionContext import requires
+# GraphQL Core 3.2. Keep the compatible wheel pinned by its upstream SHA-256.
 # Replace any wheel-provided database binary before this installation layer is
 # committed, so an older executable cannot survive in an ancestor layer.
 RUN python -m venv "${FIFTYONE_VENV}" \
@@ -99,6 +101,7 @@ RUN python -m venv "${FIFTYONE_VENV}" \
       -r /opt/npa-packaging-requirements.txt \
     && python -m pip install --no-cache-dir \
       "fiftyone==${FIFTYONE_VERSION}" \
+      "graphql-core @ https://files.pythonhosted.org/packages/00/15/b92b4e1d88d02c6eff9733c9eea21846ab435cc4d813d84ccc5d335955df/graphql_core-3.2.11-py3-none-any.whl#sha256=0b3e35ff41e9adba53021ab0cef475eb18f57c7f53f0f2ca55567fbf3c537ea0" \
       "boto3==${BOTO3_VERSION}" \
       "datasets==${DATASETS_VERSION}" \
       "huggingface_hub==${HUGGINGFACE_HUB_VERSION}" \
