@@ -137,6 +137,11 @@ match the original stage request. Then resume the workflow through its normal
 runtime command. Local retained directories can be removed after verified
 publication. Failed evidence is retained separately for inspection.
 
+If a worker or its disk is lost during publication and no complete retained
+copy survives, start a new workflow with a fresh run ID and output prefix.
+Keep the original partial prefix as failure evidence. Its checksum manifest
+reserves that result; removing the manifest cannot recover missing video bytes.
+
 No Physis-Lang source, paper figures, benchmark data, or trained checkpoint is
 redistributed. The scenario text and adapter code are original NPA work. Wan
 and Diffusers retain their upstream Apache-2.0 terms; runtime delivery retains
