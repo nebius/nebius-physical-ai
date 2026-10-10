@@ -1579,7 +1579,7 @@ def default_npa_setup() -> str:
         # Opt-in branch overlay: reinstall npa from NPA_SRC_S3_URI on TOP of a
         # baked workbench image so branch code (e.g. a new augment prompt path)
         # actually runs on GPU without rebuilding the image. Default off (no-op).
-        'if [ "$NPA_SRC_OVERLAY" = "1" ] && [ -n "$NPA_SRC_S3_URI" ]; then\n'
+        'if [ "${NPA_SRC_OVERLAY:-}" = "1" ] && [ -n "${NPA_SRC_S3_URI:-}" ]; then\n'
         "  if ! \"$npa_setup_python\" -c 'import boto3, botocore' >/dev/null 2>&1; then\n"
         "    npa_pip_install boto3\n"
         "  fi\n"

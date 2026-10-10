@@ -2742,7 +2742,7 @@ def test_default_npa_setup_has_optin_source_overlay() -> None:
     setup = default_npa_setup()
     # Opt-in overlay: gated on NPA_SRC_OVERLAY, reinstalls branch npa on top of a
     # baked image so branch code runs on GPU without an image rebuild. Default off.
-    assert 'if [ "$NPA_SRC_OVERLAY" = "1" ]' in setup
+    assert 'if [ "${NPA_SRC_OVERLAY:-}" = "1" ]' in setup
     assert "/tmp/npa-src-overlay" in setup
     # Installs route through the PEP 668-tolerant helper (see npa_pip_install).
     assert "npa_pip_install -e /tmp/npa-src-overlay --no-deps" in setup
@@ -2754,6 +2754,33 @@ def test_default_npa_setup_has_optin_source_overlay() -> None:
     assert setup.index("PYTHONPATH=/tmp/npa-src-overlay/src") < setup.index(
         "npa_pip_install -e /tmp/npa-src-overlay --no-deps"
     )
+
+
+@pytest.mark.parametrize(
+    ("overlay", "source_uri", "expected_exit"),
+    ((None, None, 0), ("1", None, 0), ("1", "s3://fixture/source", 42)),
+)
+def test_default_npa_setup_source_overlay_guard_is_nounset_safe(
+    overlay: str | None, source_uri: str | None, expected_exit: int
+) -> None:
+    """Run the generated source-overlay guard with the production nounset mode."""
+    from npa.orchestration.npa_workflow.skypilot_render import default_npa_setup
+
+    guard = next(
+        line
+        for line in default_npa_setup().splitlines()
+        if line.startswith('if [ "${NPA_SRC_OVERLAY:-}" = "1" ]')
+    )
+    environment = os.environ.copy()
+    environment.pop("NPA_SRC_OVERLAY", None)
+    environment.pop("NPA_SRC_S3_URI", None)
+    if overlay is not None:
+        environment["NPA_SRC_OVERLAY"] = overlay
+    if source_uri is not None:
+        environment["NPA_SRC_S3_URI"] = source_uri
+    script = f"set -euo pipefail\n{guard}\n  exit 42\nfi\n"
+    result = subprocess.run(["bash", "-c", script], env=environment, check=False)
+    assert result.returncode == expected_exit
 
 
 def test_default_npa_setup_installs_the_image_local_runtime_source_first() -> None:
