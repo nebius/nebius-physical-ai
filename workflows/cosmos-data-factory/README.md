@@ -8,6 +8,21 @@ Two separate Early Access NVIDIA Physical AI Data Factory workflows, adapted to
 | [Image Attribute Augmentation](paidf-image-attribute-augmentation.yaml) | [IAA getting started](image-attribute-augmentation.md) | Edit clothing, colors, and footwear in person images; verify attributes and publish a searchable image dataset |
 | [Event Video Generation](paidf-event-video-generation.yaml) | [EVG getting started](event-video-generation.md) | Generate event videos from seed images; detect, track, caption, answer event/person questions, and assemble an annotated dataset |
 
+This package covers these two workflows and their setup/operating skills from
+NVIDIA's IAA/EVG Early Access announcement. Keep CDF-specific specs, guides, and
+proof guidance in this directory. The current main PAIDF workflow remains at
+`workflows/main/paidf-cosmos3.yaml`; its video-to-video graph and automatic edge
+conditioning are a separate integration. IAA and EVG do not add that graph or
+its edge-conditioning stages to their published task definitions.
+
+For the right seed data and a reviewable standalone HTML, use the
+[proof guide](proof.md). IAA needs person images; EVG needs scene images suitable
+for the requested event. The workflow guides list the current adapter's sampling
+coverage and implementation gaps; the announcement's full configurable attribute
+and event vocabulary is not implemented. A robot-dataset frame can be evaluated
+as an EVG seed, but that tests image-to-event-video synthesis. Robot-video augmentation,
+action preservation, and policy generalization require their own evidence.
+
 The implementations already existed in Workbench's testing catalog. These are
 their canonical locations; workflow names, run prefixes, model revisions, stage
 graphs, and existing live-matrix registrations are retained. The generic catalog
@@ -131,6 +146,7 @@ from deployment prerequisites; no new GPU execution is claimed by this relocatio
 
 ## Agent skills
 
+Start with the local [CDF entry point](SKILL.md) when working in this directory.
 Load [shared setup](../../skills/cosmos-data-factory/cosmos-data-factory-setup/SKILL.md),
 then [IAA](../../skills/cosmos-data-factory/physical-ai-image-attribute-augmentation/SKILL.md)
 or [EVG](../../skills/cosmos-data-factory/physical-ai-event-video-generation/SKILL.md).

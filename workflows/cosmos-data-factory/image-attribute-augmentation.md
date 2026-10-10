@@ -2,13 +2,22 @@
 
 [Shared setup and YAML decision](README.md) · [NPA workflow](paidf-image-attribute-augmentation.yaml) · [Upstream guide](https://github.com/NVIDIA/paidf-orchestration/blob/f7ecd8c5d7aeec28b2d476b9e71b53a48ba8c0f9/docs/image-attribute-augmentation/getting-started.md)
 
-IAA creates person-image variants with sampled clothing, colors, footwear, and
-accessories. It runs Qwen Image Edit, the real PAIDF augmentation verifier,
+IAA creates person-image variants with sampled clothing, colors, and footwear.
+It runs Qwen Image Edit, the real PAIDF augmentation verifier,
 upstream pane postprocessing, and Person Attribute Search before assembling and
 reopening the final dataset. There are nine states, including provenance and
 terminal validation.
 
 ## Prepare input
+
+NVIDIA's [pinned input guidance](https://github.com/NVIDIA/paidf-orchestration/blob/f7ecd8c5d7aeec28b2d476b9e71b53a48ba8c0f9/docs/image-attribute-augmentation/getting-started.md)
+suggests [RSTPReid](https://github.com/NjtechCVLab/RSTPReid-Dataset) or a similar
+person-image dataset. Clothing, color, and footwear edits are the intended task.
+For representative validation, choose real person images with the requested
+attributes visible; retain the person ID and original view for comparison.
+A geometric silhouette can exercise the protocol, but cannot establish
+photographic person re-identification quality. Robot-only images do not exercise
+this person-attribute workflow.
 
 Stage an authorized person-image dataset to an S3 prefix, retaining the upstream
 one-folder-per-person layout for source traceability:
@@ -66,6 +75,13 @@ drop-in NPA config. Changing those distributions requires a reviewed adapter
 change, rather than an ignored YAML key. Generation pins remain Qwen Image Edit
 2511 at `6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9`.
 
+The current sampler controls six fields: `top_outer_color`, `top_outer_type`,
+`bottom_type`, `bottom_color`, `shoe_type`, and `shoe_color`. It does not expose
+upstream's full configurable attribute vocabulary or weighted distributions.
+Accessory edit controls and grouped same-person views remain implementation
+gaps; downstream labels must not be presented as proof of a requested accessory
+edit or identity-preserving multi-view augmentation.
+
 ## Find and assess outputs
 
 Under `paidf-image-attribute-augmentation/<run-id>/`, inspect:
@@ -83,3 +99,6 @@ Under `paidf-image-attribute-augmentation/<run-id>/`, inspect:
 Follow [monitoring and outputs](README.md#monitoring-and-outputs). Successful
 protocol validation does not prove person identity, pose, or requested attribute
 quality; review actual images before using them for re-identification training.
+Use the [standalone proof checklist](proof.md) to show the original image,
+sampled attributes, raw edit, postprocessed image, and actual verification labels
+together. Record which attributes were checked and which were skipped.

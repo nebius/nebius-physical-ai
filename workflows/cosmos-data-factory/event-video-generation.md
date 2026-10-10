@@ -5,10 +5,18 @@
 EVG generates event videos from seed images with Cosmos3 Super Image2Video, then
 runs real detection/tracking, captioning, anomaly Visual QA, person Visual QA,
 and Person Attribute Search. Dataset assembly and final reopening complete the
-twelve-state graph. Examples include falling, fighting, fire/smoke, and shoplifting;
-the sampled event and environment are recorded in the config manifest.
+twelve-state graph. The current sampler covers falling, climbing, running,
+smoking/vaping, and fire/smoke; the sampled event and environment are recorded
+in the config manifest.
 
 ## Prepare input
+
+NVIDIA's [pinned input guidance](https://github.com/NVIDIA/paidf-orchestration/blob/f7ecd8c5d7aeec28b2d476b9e71b53a48ba8c0f9/docs/event-video-generation/getting-started.md)
+uses warehouse-entrance and loading-dock scenes as examples, with warehouse
+safety starter configurations. It does not prescribe a bundled benchmark
+dataset. For meaningful validation, choose an authorized scene in which the
+requested event can occur and be reviewed. The historical cameraman fixture is
+integration evidence; it does not validate a warehouse/person-falling scenario.
 
 Stage an authorized flat image directory to an S3 prefix, for example:
 
@@ -24,6 +32,11 @@ supported image recursively, verifies decoding and a minimum 64-by-64 size,
 normalizes to RGB JPEG, and records source/prepared hashes. There is no implicit
 demo or `max_images` selector: stage the exact requested subset. Upstream's flat
 directory convention is recommended for an unambiguous source-to-video mapping.
+
+If evaluating ALOHA or another robot dataset, stage a selected frame as an image
+and record its dataset, episode, camera, and frame identity. EVG consumes that
+image, not the source trajectory or actions. Keep conclusions limited to the
+requested generated event in that scene.
 
 ## Configure, plan, and run
 
@@ -64,6 +77,15 @@ come from the reviewed adapter; upstream `cosmos.variable_distribution`,
 service-mode JSON, and Airflow payloads are not NPA overrides. Cosmos3 Super
 Image2Video remains pinned at `4f847566f3d3388fbf0ac07b99dd1a6432db9ecd`.
 
+The current event values are `person_falling`, `person_climbing`,
+`person_running`, `smoking_or_vaping`, and `fire_or_smoke`; environment values
+are `warehouse`, `retail`, `office`, and `education_facility`. Sampling is
+uniform over these fixed lists. Fighting and shoplifting from NVIDIA's workflow
+description are not included in this adapter. Configurable/weighted event
+distributions remain an implementation gap. A YAML override named after an
+unsupported event does not make that event run; inspect `configs/manifest.json`
+for the actual sampled values.
+
 The NPA path enables request guardrails, unlike upstream's disabled template.
 Guardrail/model snapshots and exact source adaptations are verified offline.
 Visual QA uses published ten-image sampling controls to fit the selected hosted
@@ -88,3 +110,6 @@ decode generated MP4s and inspect whether the intended event occurred. QA answer
 coverage is separate from terminal protocol success; trackless scenes may omit
 only the supported track-dependent PAS outputs. Existing live evidence records
 partial person-QA answers and visual limitations rather than claiming perfect labels.
+Use the [standalone proof checklist](proof.md) to show the seed, sampled event,
+full generated video, and actual annotation answers. A completed graph or a full
+set of negative QA answers does not establish that the requested event occurred.
