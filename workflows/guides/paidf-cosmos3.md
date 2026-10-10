@@ -1,9 +1,19 @@
 # PAIDF with Cosmos 3: setup and run guide
 
+For whole-dataset submission, read-only input checks and private processing,
+see [PAIDF dataset batches](../../docs/workbench/guides/paidf-dataset-batches.md).
+
 Run the [Physical AI Data Factory (PAIDF) Cosmos 3 workflow](../main/paidf-cosmos3.yaml)
 on Nebius AI Cloud. This guide covers account prerequisites, local installation,
 project storage, Kubernetes setup, submission, and output inspection. Follow it
 in a terminal or give it to a coding agent that operates your terminal.
+
+For a compact, current manual lifecycle and exact installed command names, see
+[manual workflow operations](../../docs/workbench/guides/manual-workflow-operations.md).
+That guide is the authority for the generic single-run command sequence,
+`--var` configuration, private local configuration, scoped external transfers,
+and the distinction between execution, optional authoring assistance, and
+the shipped dataset batch driver.
 
 The workflow selects a robot video, captions it with a hosted vision-language
 model through Token Factory, generates appearance variants with Cosmos3-Nano
@@ -717,9 +727,7 @@ can dominate GPU startup. Inspect stage logs to distinguish setup from payload
 progress, and keep the submit command running so its driver can launch later
 stages. R4 describes recovery if that driver is interrupted.
 
-`--max-wait-seconds 0` waits without a per-stage deadline. The CLI default
-is one hour, which can cancel a healthy generation stage when a video or
-variant batch takes longer. Keep the submit driver running while work proceeds.
+The shared Workbench workflow runtime defaults to a 3600-second deadline per wave (covering all variants in `generate-variants`) and requests cancellation on timeout; pass `--max-wait-seconds 0` to `npa workbench workflow submit` to wait indefinitely, or `--max-wait-seconds 14400` for four hours per wave.
 
 `--runtime` lets the orchestrator read evaluator decisions and execute real
 refinement loops. This workflow declares `metadata.executionMode: runtime`, so
@@ -806,7 +814,10 @@ LEROBOT_URI="s3://$BUCKET/datasets/paidf-cosmos3/$RUN_ID/aloha-sim-transfer-cube
 NPA_E2E_PAIDF_LEROBOT_FRESH_AFTER="$(date -u +%Y-%m-%dT%H:%M:%S+00:00)" || exit 1
 export NPA_E2E_PAIDF_LEROBOT_FRESH_AFTER
 printf 'Save the freshness timestamp for %s: %s\n' "$RUN_ID" "$NPA_E2E_PAIDF_LEROBOT_FRESH_AFTER"
-aws s3 sync "$LEROBOT_DIR/" "$LEROBOT_URI/" --profile nebius || exit 1
+for file in README.md meta/info.json meta/episodes/chunk-000/file-000.parquet \
+  videos/observation.images.top/chunk-000/file-000.mp4; do
+  aws s3 cp "$LEROBOT_DIR/$file" "$LEROBOT_URI/$file" --profile nebius || exit 1
+done
 ```
 
 Stop if a download, checksum check, or upload fails. Keep the dataset prefix
@@ -815,11 +826,12 @@ Save the printed timestamp with this run ID. It is captured before upload in
 ISO-8601 UTC format with an explicit `+00:00` offset. Restore that same value
 if you audit from a new terminal; do not generate a replacement after the run.
 
-For your own dataset, set `LEROBOT_DIR` and `LEROBOT_URI` to your local directory
-and destination, then use the same `aws s3 sync` command. An existing S3 dataset
-needs no upload. This workflow needs `meta/info.json`, v3 episode metadata under
-`meta/episodes/`, and the referenced video files; action/state Parquet tables are
-not consumed for video augmentation.
+For your own dataset, copy only the selected `meta/info.json`, selected episode
+metadata, and selected camera video to the run-scoped `LEROBOT_URI`, preserving
+their relative paths. Do not use a whole-directory or whole-bucket sync. An
+existing S3 dataset needs no upload. This workflow needs `meta/info.json`, v3
+episode metadata under `meta/episodes/`, and the referenced video files;
+action/state Parquet tables are not consumed for video augmentation.
 
 Use this full submission command in place of R3 with the same `RUN_ID` reserved
 above. Keep the default seeds and exploratory thresholds for the example.
