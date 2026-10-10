@@ -28,7 +28,9 @@ def archive_asset_tree(source: Path, destination: Path) -> dict[str, Any]:
     try:
         with temporary.open("wb") as raw:
             with gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as stream:
-                with tarfile.open(fileobj=stream, mode="w", format=tarfile.PAX_FORMAT) as archive:
+                with tarfile.open(
+                    fileobj=stream, mode="w", format=tarfile.PAX_FORMAT
+                ) as archive:
                     for path in sorted(root.rglob("*")):
                         if path.is_symlink():
                             raise RuntimeError(

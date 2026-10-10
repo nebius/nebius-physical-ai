@@ -366,9 +366,7 @@ def test_input_uri_reaches_the_byof_shell_as_literal_data(tmp_path: Path) -> Non
     spec = load_spec(WORKFLOW)
     spec = replace(spec, config={**spec.config, "input_uri": hostile})
     plan = build_plan(spec, run_id="literal-uri")
-    smoke_command = plan.steps[0].argv[
-        plan.steps[0].argv.index("--smoke-command") + 1
-    ]
+    smoke_command = plan.steps[0].argv[plan.steps[0].argv.index("--smoke-command") + 1]
     encoded = base64.b64encode(hostile.encode("utf-8")).decode("ascii")
 
     assert hostile not in smoke_command
@@ -416,9 +414,10 @@ def test_workflow_declares_worker_input_and_generated_asset_outputs() -> None:
 def test_readiness_record_binds_workflow_and_live_blockers() -> None:
     readiness = json.loads(READINESS.read_text(encoding="utf-8"))
     assert readiness["schema_version"] == "workflow-readiness/v1"
-    assert readiness["workflow_sha256"] == hashlib.sha256(
-        WORKFLOW.read_bytes()
-    ).hexdigest()
+    assert (
+        readiness["workflow_sha256"]
+        == hashlib.sha256(WORKFLOW.read_bytes()).hexdigest()
+    )
     assert readiness["planning"]["validation"]["status"] == "verified"
     assert readiness["planning"]["task_fidelity"]["status"] == "verified"
     assert readiness["prerequisites"]["source_image"]["status"] == "blocked"

@@ -450,8 +450,8 @@ def main() -> int:
     output = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"]).resolve()
     source = Path(os.environ["NPA_EMBODIEDGEN_SOURCE_ROOT"]).resolve()
     output.mkdir(parents=True, exist_ok=True)
-    input_hash, urdf, collisions, mjcf, generated_bundle, physics, elapsed = _generate_and_validate(
-        output, source
+    input_hash, urdf, collisions, mjcf, generated_bundle, physics, elapsed = (
+        _generate_and_validate(output, source)
     )
     report = _report(
         output,
