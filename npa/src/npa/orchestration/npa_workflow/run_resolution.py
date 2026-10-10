@@ -448,6 +448,50 @@ def _mark_manifest(
     return result
 
 
+def _probe_ordinary_workflow(
+    result: RunResolution,
+    parent: WorkflowS3Config | None,
+    *,
+    run_id: str,
+    project: str,
+    workflow_s3_prefix: str,
+    s3_bucket: str,
+    s3_endpoint: str,
+) -> tuple[WorkflowS3Config | None, bool]:
+    """Probe the ordinary run convention once and append its exact outcome."""
+
+    try:
+        if parent is None:
+            parent = _parent_state(
+                run_id=run_id,
+                project=project,
+                workflow_s3_prefix=workflow_s3_prefix,
+                s3_bucket=s3_bucket,
+                s3_endpoint=s3_endpoint,
+            )
+        base = parent.prefix.strip("/")
+        ordinary_prefix = "/".join(part for part in (base, run_id) if part)
+        ordinary_state = _child_state(parent, ordinary_prefix)
+        outcome, manifest, detail = _probe_manifest(ordinary_state, run_id)
+        result.checks.append(ResolutionCheck("ordinary_workflow", outcome, detail))
+        if outcome == "found" and manifest is not None:
+            _mark_manifest(
+                result,
+                state=ordinary_state,
+                manifest=manifest,
+                source="ordinary_workflow",
+            )
+            return parent, True
+        if outcome == "unavailable":
+            result.verification_unavailable = True
+    except Exception as exc:  # noqa: BLE001
+        result.checks.append(
+            ResolutionCheck("ordinary_workflow", "unavailable", redact_text(str(exc)))
+        )
+        result.verification_unavailable = True
+    return parent, False
+
+
 def resolve_run(
     run_id: str,
     *,
@@ -742,38 +786,18 @@ def resolve_run(
         and not result.found
         and not result.verification_unavailable
     ):
-        try:
-            if parent is None:
-                parent = _parent_state(
-                    run_id=resolved_id,
-                    project=project,
-                    workflow_s3_prefix=workflow_s3_prefix,
-                    s3_bucket=s3_bucket,
-                    s3_endpoint=s3_endpoint,
-                )
-            base = parent.prefix.strip("/")
-            ordinary_prefix = "/".join(part for part in (base, resolved_id) if part)
-            ordinary_state = _child_state(parent, ordinary_prefix)
-            outcome, manifest, detail = _probe_manifest(ordinary_state, resolved_id)
-            result.checks.append(ResolutionCheck("ordinary_workflow", outcome, detail))
-            ordinary_checked = True
-            if outcome == "found" and manifest is not None:
-                return _mark_manifest(
-                    result,
-                    state=ordinary_state,
-                    manifest=manifest,
-                    source="ordinary_workflow",
-                )
-            if outcome == "unavailable":
-                result.verification_unavailable = True
-        except Exception as exc:  # noqa: BLE001
-            result.checks.append(
-                ResolutionCheck(
-                    "ordinary_workflow", "unavailable", redact_text(str(exc))
-                )
-            )
-            ordinary_checked = True
-            result.verification_unavailable = True
+        parent, ordinary_found = _probe_ordinary_workflow(
+            result,
+            parent,
+            run_id=resolved_id,
+            project=project,
+            workflow_s3_prefix=workflow_s3_prefix,
+            s3_bucket=s3_bucket,
+            s3_endpoint=s3_endpoint,
+        )
+        ordinary_checked = True
+        if ordinary_found:
+            return result
         if not result.verification_unavailable:
             result.checks.append(
                 ResolutionCheck(
@@ -854,36 +878,17 @@ def resolve_run(
             )
         )
     elif not ordinary_checked:
-        try:
-            if parent is None:
-                parent = _parent_state(
-                    run_id=resolved_id,
-                    project=project,
-                    workflow_s3_prefix=workflow_s3_prefix,
-                    s3_bucket=s3_bucket,
-                    s3_endpoint=s3_endpoint,
-                )
-            base = parent.prefix.strip("/")
-            ordinary_prefix = "/".join(part for part in (base, resolved_id) if part)
-            ordinary_state = _child_state(parent, ordinary_prefix)
-            outcome, manifest, detail = _probe_manifest(ordinary_state, resolved_id)
-            result.checks.append(ResolutionCheck("ordinary_workflow", outcome, detail))
-            if outcome == "found" and manifest is not None:
-                return _mark_manifest(
-                    result,
-                    state=ordinary_state,
-                    manifest=manifest,
-                    source="ordinary_workflow",
-                )
-            if outcome == "unavailable":
-                result.verification_unavailable = True
-        except Exception as exc:  # noqa: BLE001
-            result.checks.append(
-                ResolutionCheck(
-                    "ordinary_workflow", "unavailable", redact_text(str(exc))
-                )
-            )
-            result.verification_unavailable = True
+        _parent, ordinary_found = _probe_ordinary_workflow(
+            result,
+            parent,
+            run_id=resolved_id,
+            project=project,
+            workflow_s3_prefix=workflow_s3_prefix,
+            s3_bucket=s3_bucket,
+            s3_endpoint=s3_endpoint,
+        )
+        if ordinary_found:
+            return result
 
     result.conclusively_absent = not result.verification_unavailable and all(
         check.outcome in {"absent", "not_supplied", "skipped"}
