@@ -28,6 +28,18 @@ EXACT_INPUT_SPECS = (
     "rgbd-scan-to-isaac.yaml",
     "scan-to-isaac-navigation.yaml",
 )
+OPERATOR_IMAGE_SPECS = (
+    *EXACT_INPUT_SPECS,
+    "lyra-scene-actions.yaml",
+    "physical-augmentation.yaml",
+)
+
+
+def _shipped_workflow_path(name: str):
+    directory = "main" if name == "rgbd-scan-to-policy-demo.yaml" else "testing"
+    return ROOT / "workflows" / directory / name
+
+
 GOVERNED_SPECS = ("franka-rl-transfer.yaml",)
 
 
@@ -195,15 +207,15 @@ def test_tagged_digest_explains_the_required_canonical_form(tmp_path):
         interpreter.build_plan(spec)
 
 
-@pytest.mark.parametrize("name", EXACT_INPUT_SPECS)
+@pytest.mark.parametrize("name", OPERATOR_IMAGE_SPECS)
 def test_shipped_exact_image_consumers_require_operator_input_before_planning(name):
-    spec = load_spec(ROOT / "workflows/testing" / name)
+    spec = load_spec(_shipped_workflow_path(name))
     with pytest.raises(NpaWorkflowError, match="requires an explicit.*--var"):
         interpreter.build_plan(spec, run_id="missing-images")
 
 
 def _supplied_spec(name):
-    spec = load_spec(ROOT / "workflows/testing" / name)
+    spec = load_spec(_shipped_workflow_path(name))
     images = {
         "isaac_image": ISAAC,
         "navigation_image": ISAAC,
@@ -269,7 +281,7 @@ def test_required_image_binding_rejects_a_digest_pin_replacement():
         )
 
 
-@pytest.mark.parametrize("name", EXACT_INPUT_SPECS)
+@pytest.mark.parametrize("name", OPERATOR_IMAGE_SPECS)
 def test_exact_operator_images_reach_real_renderer_and_native_provenance(
     name, monkeypatch
 ):
@@ -365,7 +377,7 @@ def test_historical_records_remain_bound_and_current_records_await_workload_proo
     archived = ROOT / "docs/workbench/evidence/workflow-defaults-807" / name
     old = load_readiness_record(archived.with_suffix(".readiness.json"))
     current = load_readiness_record(
-        (ROOT / "workflows/testing" / name).with_suffix(".readiness.json")
+        _shipped_workflow_path(name).with_suffix(".readiness.json")
     )
     assert old["workflow_sha256"] != current["workflow_sha256"]
     assert current["planning"]["task_fidelity"]["status"] == "unverified"

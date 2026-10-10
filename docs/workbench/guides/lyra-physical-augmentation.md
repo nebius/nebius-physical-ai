@@ -146,6 +146,7 @@ and generates the combined HTML automatically:
 npa workbench workflow submit workflows/testing/lyra-scene-actions.yaml \
   --project "$NPA_PROJECT" --infra "k8s/$NPA_RTX_CLUSTER" --stage-src \
   --run-id "$NPA_ACTION_RUN_ID" --var "bucket=$NPA_S3_BUCKET" \
+  --var "isaac_image=$NPA_ISAAC_IMAGE" \
   --var "prepared_uri=$NPA_LYRA_PREPARED_URI" \
   --var "reconstruction_uri=$NPA_LYRA_RECONSTRUCTION_URI" \
   --var "geometry_uri=$NPA_LYRA_GEOMETRY_URI" \
