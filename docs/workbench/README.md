@@ -35,6 +35,10 @@ lists other affected images and shipped workflows, including the Sim2Real seams.
 
 ## Generation and scenes
 
+[Physical prompt comparison](physical-prompt-comparison.md) compares three
+Wan 2.1 14B prompt arms with full videos, blinded assertion judgments, and
+a standalone HTML report.
+
 | Capability | Guide |
 | --- | --- |
 | Cosmos 3 batch generation | [Generate](cosmos3-generate.md) · [access preflight](cosmos3-access-preflight.md) |
