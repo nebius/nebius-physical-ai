@@ -1405,6 +1405,10 @@ def _reviewed_native_accelerator(labels: dict[str, str], label_key: str) -> str:
             .replace("GEFORCE-", "")
             .replace("RTX-", "RTX")
         )
+    # `_KNOWN_SKYPILOT_LABELS` names the SkyPilot label to add during the
+    # explicit repair operation.  It must not normalize an observed native
+    # Nebius label here: when this formatter is selected, SkyPilot receives the
+    # native value, so RTX6000 cannot stand in for RTXPRO6000 without repair.
     return product.upper()
 
 

@@ -15,6 +15,7 @@ from npa.orchestration.skypilot.k8s_gpu_catalog import (
     KubernetesGpuCatalogError,
     KubernetesGpuInventory,
     KubernetesGpuNode,
+    SkyPilotGpuLabelError,
     UnsatisfiableAcceleratorError,
     context_from_infra,
     discover_kubernetes_gpu_catalog,
@@ -897,6 +898,31 @@ def test_skypilot_label_fallback_accepts_native_b200_without_sky_label(
 
     assert evidence["compatible_free_nodes"] == 1
     assert evidence["selected_nodes"] == ["native-b200"]
+
+
+def test_skypilot_label_fallback_rejects_compact_nebius_rtx_alias_without_sky_label() -> None:
+    product = "RTX6000"
+    node = replace(
+        _node("native-rtx", product=product),
+        labels=(("nebius.com/gpu-name", product),),
+    )
+    inventory = KubernetesGpuInventory(
+        context="exact-context",
+        ready_nodes=1,
+        eligible_gpu_nodes=1,
+        capacity=1,
+        allocatable=1,
+        products=(product,),
+        node_labels={"native-rtx": {"nebius.com/gpu-name": product}},
+        nodes=(node,),
+    )
+
+    assert "skypilot.co/accelerator" not in dict(node.labels)
+    assert skypilot_label_ready_nodes(inventory, "RTXPRO6000:1") == ()
+    with pytest.raises(SkyPilotGpuLabelError, match="effective skypilot.co/accelerator"):
+        preflight_skypilot_gpu_gang(
+            inventory, accelerator="RTXPRO6000:1", node_count=1
+        )
 
 
 @pytest.mark.parametrize(
