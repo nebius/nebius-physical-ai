@@ -948,6 +948,19 @@ def test_exact_source_archive_mapping_is_inventoried(security_modules):
     assert dependencies._exact_pins(declaration) == ["moviepy==2.2.1"]
 
 
+def test_lingbot_runtime_source_inventory_declares_exact_libero_version(
+    security_modules,
+):
+    """Retain the runtime-fetched source package in the security inventory."""
+    _, dependencies = security_modules
+    repository = Path(__file__).resolve().parents[3]
+    requirements = (
+        repository / "npa/docker/workbench/lingbot-va/runtime-source-requirements.txt"
+    )
+
+    assert dependencies._exact_pins(requirements.read_text()) == ["libero==0.1.0"]
+
+
 @pytest.mark.parametrize(
     "declaration",
     [

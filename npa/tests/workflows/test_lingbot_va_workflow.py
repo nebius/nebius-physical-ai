@@ -463,6 +463,9 @@ def test_source_only_image_pins_the_distinct_cuda_contract_without_extra_accepta
     requirements = DOCKERFILE.parent.joinpath("runtime-requirements.txt").read_text(
         encoding="utf-8"
     )
+    source_requirements = DOCKERFILE.parent.joinpath(
+        "runtime-source-requirements.txt"
+    ).read_text(encoding="utf-8")
     runtime_script = DOCKERFILE.parent.joinpath("lingbot_va_runtime.sh").read_text(
         encoding="utf-8"
     )
@@ -500,6 +503,16 @@ def test_source_only_image_pins_the_distinct_cuda_contract_without_extra_accepta
     assert "Flask==3.1.3" in requirements
     assert "pyarrow==25.0.1" in requirements
     assert not any(line.startswith("libero @ ") for line in active_requirements)
+    active_source_requirements = [
+        line
+        for line in source_requirements.splitlines()
+        if line and not line.startswith("#")
+    ]
+    assert active_source_requirements == ["libero==0.1.0"]
+    assert (
+        "COPY --chmod=0444 docker/workbench/lingbot-va/runtime-source-requirements.txt "
+        "/opt/npa/lingbot-va/runtime-source-requirements.txt"
+    ) in dockerfile
     assert (
         'LIBERO_SOURCE_URL="https://github.com/Lifelong-Robot-Learning/LIBERO.git"'
         in runtime_script
@@ -518,6 +531,16 @@ def test_source_only_image_pins_the_distinct_cuda_contract_without_extra_accepta
         'pip install --no-cache-dir --no-deps --no-build-isolation "$tmp/libero"'
         in runtime_script
     )
+    assert (
+        'SOURCE_REQUIREMENTS="${NPA_LINGBOT_VA_SOURCE_REQUIREMENTS:-/opt/npa/lingbot-va/runtime-source-requirements.txt}"'
+        in runtime_script
+    )
+    assert 'LIBERO_VERSION="0.1.0"' in runtime_script
+    assert (
+        'assert package_version("libero") == os.environ["NPA_LINGBOT_VA_LIBERO_VERSION"]'
+        in runtime_script
+    )
+    assert 'pip install --no-cache-dir -r "$SOURCE_REQUIREMENTS"' not in runtime_script
     assert "lerobot==0.3.3" in runtime_script
     assert "--no-deps" in runtime_script
     assert "torch==2.13.0+cu130" in runtime_script

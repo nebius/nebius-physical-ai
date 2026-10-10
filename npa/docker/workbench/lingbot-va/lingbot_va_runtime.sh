@@ -11,18 +11,21 @@ readonly EX_SOFTWARE=70
 
 CACHE_ROOT="${NPA_LINGBOT_VA_RUNTIME_CACHE:-/workspace/.cache/npa/lingbot-va/runtime}"
 REQUIREMENTS="${NPA_LINGBOT_VA_RUNTIME_REQUIREMENTS:-/opt/npa/lingbot-va/runtime-requirements.txt}"
+SOURCE_REQUIREMENTS="${NPA_LINGBOT_VA_SOURCE_REQUIREMENTS:-/opt/npa/lingbot-va/runtime-source-requirements.txt}"
 OFFLINE="${NPA_LINGBOT_VA_RUNTIME_OFFLINE:-0}"
 LIBERO_SOURCE_URL="https://github.com/Lifelong-Robot-Learning/LIBERO.git"
 LIBERO_SOURCE_REF="8f1084e3132a39270c3a13ebe37270a43ece2a01"
+LIBERO_VERSION="0.1.0"
 
 die() { printf 'lingbot-va-runtime: %s\n' "$*" >&2; exit "$1"; }
 
 stamp() {
-  local abi requirement_sha script_sha
+  local abi requirement_sha source_requirement_sha script_sha
   abi="$(python3 -c 'import sys,sysconfig; print(f"{sys.version_info.major}.{sys.version_info.minor}-{sysconfig.get_platform()}")')"
   requirement_sha="$(sha256sum "$REQUIREMENTS" | cut -d' ' -f1)"
+  source_requirement_sha="$(sha256sum "$SOURCE_REQUIREMENTS" | cut -d' ' -f1)"
   script_sha="$(sha256sum "${BASH_SOURCE[0]}" | cut -d' ' -f1)"
-  printf '%s|%s|%s' "$abi" "$requirement_sha" "$script_sha" | sha256sum | cut -c1-16
+  printf '%s|%s|%s|%s' "$abi" "$requirement_sha" "$source_requirement_sha" "$script_sha" | sha256sum | cut -c1-16
 }
 
 ready() { [[ -x "$1/venv/bin/python" && -f "$1/.complete" ]]; }
@@ -35,7 +38,12 @@ verify() {
   # also declares evdev and python-xlib, neither of which the offline LIBERO
   # path imports. Keep pip's full integrity check, but reject every mismatch
   # other than these explicitly named compatibility overrides.
-  local pip_check unexpected
+  local pip_check unexpected source_pin_count
+  source_pin_count="$(grep -Fxc "libero==$LIBERO_VERSION" "$SOURCE_REQUIREMENTS" || true)"
+  [[ "$source_pin_count" == 1 ]] || {
+    printf 'lingbot-va-runtime: runtime source inventory must declare libero==%s\n' "$LIBERO_VERSION" >&2
+    return "$EX_CONFIG"
+  }
   if ! pip_check="$("$1/venv/bin/python" -m pip check 2>&1)"; then
     unexpected="$(printf '%s\n' "$pip_check" | grep -Ev '^(lerobot 0\.3\.3 has requirement (datasets|torch|torchvision|transformers).*, but you have |pynput 1\.8\.1 requires (evdev|python-xlib), which is not installed\.)' || true)"
     if [[ -n "$unexpected" ]]; then
@@ -44,21 +52,29 @@ verify() {
     fi
     printf '%s\n' "$pip_check" >&2
   fi
-  "$1/venv/bin/python" - <<'PY'
+  NPA_LINGBOT_VA_LIBERO_VERSION="$LIBERO_VERSION" "$1/venv/bin/python" - <<'PY'
+import os
+from importlib.metadata import version as package_version
+
 import torch
 import datasets
 assert torch.__version__.split('+', 1)[0] == '2.13.0', torch.__version__
 assert torch.version.cuda == '13.0', torch.version.cuda
 assert datasets.__version__ == '5.0.1', datasets.__version__
+assert package_version("libero") == os.environ["NPA_LINGBOT_VA_LIBERO_VERSION"]
 from torch.nn.attention.flex_attention import flex_attention
 import wan_va.modules.model
-print(f'torch={torch.__version__} cuda={torch.version.cuda} flex_attention=ready')
+print(
+    f'torch={torch.__version__} cuda={torch.version.cuda} '
+    f'libero={package_version("libero")} flex_attention=ready'
+)
 PY
 }
 
 promote() {
   local candidate="$1" target="$2"
   cp "$REQUIREMENTS" "$candidate/runtime-requirements.txt"
+  cp "$SOURCE_REQUIREMENTS" "$candidate/runtime-source-requirements.txt"
   "$candidate/venv/bin/python" -m pip freeze --all > "$candidate/pip-freeze.txt"
   : > "$candidate/.complete"
   mv "$candidate" "$target"
@@ -136,6 +152,7 @@ case "${1:-health}" in
   health)
     test -s /opt/lingbot-va/LICENSE.txt
     test -r "$REQUIREMENTS"
+    test -r "$SOURCE_REQUIREMENTS"
     printf '%s\n' '{"status":"ok","source_ref":"7c6ffa9bfc4b83582cafc860fab4c82cc7deeeeb","cuda_runtime":"runtime-fetch"}'
     ;;
   status)
