@@ -108,6 +108,32 @@ def _action_parameter_row(value: Any, size: int, label: str) -> list[float]:
     return _vector(value[0], size, label)
 
 
+def _action_scale(value: Any, size: int) -> list[float]:
+    import math
+    import numpy as np
+
+    value = _proxy_torch(value)
+    shape = tuple(int(dimension) for dimension in getattr(value, "shape", ()))
+    if shape == (1, size):
+        scales = _vector(value[0], size, "arm action scales")
+    elif shape == ():
+        if hasattr(value, "detach"):
+            value = value.detach()
+        if hasattr(value, "cpu"):
+            value = value.cpu()
+        if hasattr(value, "numpy"):
+            value = value.numpy()
+        scalar = float(np.asarray(value).item())
+        scales = [scalar] * size
+    else:
+        raise RuntimeError(
+            f"arm action scales must be a scalar or shape (1, {size}), got {shape}"
+        )
+    if any(not math.isfinite(scale) or scale == 0.0 for scale in scales):
+        raise RuntimeError("arm action scales must be finite and nonzero")
+    return scales
+
+
 def _joint_bridge(native: Any) -> tuple[list[float], list[float], int, int, int]:
     names = list(native.action_manager.active_terms)
     dimensions = [int(value) for value in native.action_manager.action_term_dim]
@@ -123,7 +149,7 @@ def _joint_bridge(native: Any) -> tuple[list[float], list[float], int, int, int]
     if offset is None or scale is None:
         raise RuntimeError("arm action term does not expose configured offsets/scales")
     defaults = _action_parameter_row(offset, 7, "arm action offsets")
-    scales = _action_parameter_row(scale, 7, "arm action scales")
+    scales = _action_scale(scale, 7)
     return (
         defaults,
         scales,

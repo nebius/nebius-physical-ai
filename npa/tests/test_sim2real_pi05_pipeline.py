@@ -186,10 +186,46 @@ def test_joint_bridge_moves_proxy_action_parameters_to_host() -> None:
     assert (total, arm_start, grip_start) == (8, 0, 7)
 
 
+def test_joint_bridge_expands_pinned_uniform_scalar_scale() -> None:
+    native = _policy_action_native(_ActionProxy([[0.1] * 7]), 0.5)
+
+    defaults, scales, total, arm_start, grip_start = pi05_closed_loop._joint_bridge(
+        native
+    )
+
+    assert np.allclose(defaults, [0.1] * 7)
+    assert scales == [0.5] * 7
+    assert (total, arm_start, grip_start) == (8, 0, 7)
+
+
 def test_joint_bridge_rejects_broadcastable_action_parameter_shape() -> None:
     native = _policy_action_native(_ActionProxy([0.1] * 7), _ActionProxy([[0.5] * 7]))
 
     with pytest.raises(RuntimeError, match=r"shape \(1, 7\), got \(7,\)"):
+        pi05_closed_loop._joint_bridge(native)
+
+
+@pytest.mark.parametrize("scale", [0.0, float("nan"), float("inf")])
+def test_joint_bridge_rejects_invalid_uniform_scale(scale: float) -> None:
+    native = _policy_action_native(_ActionProxy([[0.1] * 7]), scale)
+
+    with pytest.raises(RuntimeError, match="finite and nonzero"):
+        pi05_closed_loop._joint_bridge(native)
+
+
+def test_joint_bridge_rejects_zero_per_joint_scale() -> None:
+    native = _policy_action_native(
+        _ActionProxy([[0.1] * 7]), _ActionProxy([[0.5] * 6 + [0.0]])
+    )
+
+    with pytest.raises(RuntimeError, match="finite and nonzero"):
+        pi05_closed_loop._joint_bridge(native)
+
+
+def test_joint_bridge_rejects_broadcastable_scale_shape() -> None:
+    native = _policy_action_native(_ActionProxy([[0.1] * 7]), _ActionProxy([0.5] * 7))
+
+    with pytest.raises(RuntimeError, match=r"scalar or shape \(1, 7\), got \(7,\)"):
         pi05_closed_loop._joint_bridge(native)
 
 
