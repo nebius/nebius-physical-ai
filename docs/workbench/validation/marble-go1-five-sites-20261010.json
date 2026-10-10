@@ -1,0 +1,655 @@
+{
+  "validated_on": "2026-10-10",
+  "workflow": "workflows/testing/marble-go1-five-sites.yaml",
+  "workflow_sha256": "2f8a08f6b486f872a689a016d3a9ce0abbea5620b23abab1c8ef312c1348bb6a",
+  "runtime": {
+    "status": "succeeded",
+    "sites": 5,
+    "logical_stages": 15,
+    "submission_max_concurrency": 4,
+    "default_five_concurrent_collectors_verified": false,
+    "native_parallel_assertion": "passed",
+    "all_batch_barriers": "passed",
+    "batches": [
+      {
+        "states": [
+          "acquire-warehouse",
+          "acquire-shipyard",
+          "acquire-home",
+          "acquire-factory"
+        ],
+        "status": "succeeded",
+        "max_concurrent_observed": 4
+      },
+      {
+        "states": [
+          "acquire-utility"
+        ],
+        "status": "succeeded",
+        "max_concurrent_observed": 1
+      },
+      {
+        "states": [
+          "collect-warehouse",
+          "collect-shipyard",
+          "collect-home",
+          "collect-factory"
+        ],
+        "status": "succeeded",
+        "max_concurrent_observed": 4
+      },
+      {
+        "states": [
+          "collect-utility"
+        ],
+        "status": "succeeded",
+        "max_concurrent_observed": 1
+      },
+      {
+        "states": [
+          "report-warehouse",
+          "report-shipyard",
+          "report-home",
+          "report-factory"
+        ],
+        "status": "succeeded",
+        "max_concurrent_observed": 4
+      },
+      {
+        "states": [
+          "report-utility"
+        ],
+        "status": "succeeded",
+        "max_concurrent_observed": 1
+      }
+    ]
+  },
+  "distinct_gpu_nodes": 4,
+  "world_source": "World Labs hosted API, five distinct newly generated worlds",
+  "collector_source_commit": "eb81e7039",
+  "source_scope": "The final native HTML template repackages unchanged recorded video and telemetry after a frame-boundary player fix. Full collection ran before XML hardening; the hardened parser and JSON renderer handoff were separately qualified against the pinned real robot assets and the same recorded pose on CUDA.",
+  "xml_hardening_cuda_qualification": {
+    "accepted": true,
+    "cuda": true,
+    "visual_parts": 38,
+    "exact_geometry_material_offset_equivalence": true,
+    "oriented_faces_compared_without_polygon_order": true,
+    "repeated_original_control": true,
+    "pixel_comparisons": {
+      "hardened": {
+        "maximum_channel_difference": 1,
+        "mean_channel_difference": 2.44140625e-05,
+        "different_channels": 90,
+        "total_channels": 3686400
+      },
+      "original-repeat": {
+        "maximum_channel_difference": 1,
+        "mean_channel_difference": 2.387152777777778e-05,
+        "different_channels": 88,
+        "total_channels": 3686400
+      }
+    },
+    "scope": "Real CUDA rendering and native geometry from a completed world/recorded robot pose. Repeated native UV-sphere construction changes face ordering; ordered face lists and byte-identical images are not stable invariants. Oriented topology, vertices, offsets and materials are identical."
+  },
+  "fresh_merged_api_qualification": {
+    "source_commit": "d5c4b8eaf",
+    "commands": [
+      "sky check kubernetes",
+      "sky jobs queue",
+      "sky status"
+    ],
+    "cloud_jobs_submitted": 0,
+    "world_api_requests": 0,
+    "kubernetes_access": "passed",
+    "same_version_identity_revalidation": "passed",
+    "managed_job_queue": "verified_empty",
+    "controller_status": "verified_empty",
+    "json_service_account_binding": true,
+    "owned_api_stopped": true
+  },
+  "cross_version_status_scope": "Merged-source status correctly refused the old running API identity seal. The original source retained a matching seal. A separate fresh merged-source API passed Kubernetes access, identity revalidation, queue and controller-status checks without launching cloud jobs, then was stopped.",
+  "individual_entrypoints": "The five parameterizations ran inside the combined native workflow; five independent single-site submissions were not repeated.",
+  "visual_review": "Recorded robot articulation is visible in all five inspected observer views. Generated backgrounds retain reconstruction artifacts; the utility background is noticeably soft. These are unretouched generated-world captures, not a scene-quality or sim-to-real benchmark.",
+  "sites": {
+    "warehouse": {
+      "frames": 500,
+      "resolution": [
+        1280,
+        720
+      ],
+      "gpu": {
+        "name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+        "cuda": "13.0",
+        "torch": "2.9.0+cu130",
+        "compute_capability": [
+          12,
+          0
+        ],
+        "torch_peak_allocated_bytes": 131795456
+      },
+      "physics": {
+        "engine": "pybullet",
+        "device": "CPU",
+        "step_seconds": 0.004,
+        "sensor_hz": 25,
+        "distance_m": 13.043504167234424,
+        "motion_profile": "turnaround",
+        "commanded_speed_mps": 1.2,
+        "peak_speed_mps": 1.3095499449279997,
+        "p95_speed_mps": 1.2745398395424308,
+        "heading_excursion_degrees": 349.49916528580235,
+        "return_distance_m": 5.7567927744829905,
+        "route": {
+          "start": [
+            0.5,
+            0,
+            0.3832749313466596
+          ],
+          "heading": 1.5707963267948966,
+          "distance": 8.0
+        },
+        "embodiment": "Unitree Go1",
+        "actuated_joints": 12,
+        "foot_contact_frames": 468,
+        "controller": "MuJoCo Playground pretrained ONNX walking policy; Bullet PD torque adapter",
+        "policy_device": "CPU",
+        "policy_sha256": "386cde6a1eac679e2f2a313ade2b395d9f26905b151ee3b019c2c4163d49b6f2",
+        "trained_in_this_run": false,
+        "collision_geometry": "original Marble concave collision triangles"
+      },
+      "world_asset_sha256": "1d50cbec4f85a90645c6a906941e4abc1c7bda39a1c7959197c98f923adef0fb",
+      "report": {
+        "original_sha256": "e6e1df9992123bf94dca2d9bfcf905c0bac0dbfae3a87e7f27ac94151281f06f",
+        "sha256": "75cefb128f4fa11e8343b25758e34644a235eb2035d433e2c03aab74c7a4b7a1",
+        "bytes": 34719201,
+        "capture_payload_sha256": "d33a224e42c1fbe247e332883b17660001054dabcef7fcfdde57d8362c15d3f6",
+        "capture_payload_unchanged": true,
+        "producer": "npa.workbench.marble.quadruped_report._write_html",
+        "change": "Native player frame-boundary rounding fix; recorded media and telemetry unchanged."
+      },
+      "original_native_report": {
+        "bytes": 34718967,
+        "sha256": "e6e1df9992123bf94dca2d9bfcf905c0bac0dbfae3a87e7f27ac94151281f06f"
+      },
+      "observed_gpu_telemetry": {
+        "samples": 17136,
+        "interval_ms": 250,
+        "gpu_name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+        "peak_utilization_percent": 100.0,
+        "median_utilization_percent": 0.0,
+        "mean_utilization_percent": 8.877684407096172,
+        "active_sample_fraction": 0.12435807656395892,
+        "peak_memory_mib": 8430.0,
+        "peak_power_watts": 349.81,
+        "scope": "Statistics describe the recorded worker sampling window, not isolated kernel time. Samples may include setup, CPU physics, GPU rendering, artifact upload and group-barrier waiting."
+      },
+      "cuda_actor": {
+        "engine": "Blender Cycles",
+        "version": "4.5.14 LTS",
+        "device_type": "CUDA",
+        "cpu_render_fallback": false,
+        "samples": 32,
+        "renderer_processes": 2
+      },
+      "result_sha256": "944e6157a06c0587e89e176f526d97f6aa6bcdc25a83656af0a8ec5972e04376"
+    },
+    "shipyard": {
+      "frames": 750,
+      "resolution": [
+        1280,
+        720
+      ],
+      "gpu": {
+        "name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+        "cuda": "13.0",
+        "torch": "2.9.0+cu130",
+        "compute_capability": [
+          12,
+          0
+        ],
+        "torch_peak_allocated_bytes": 115231744
+      },
+      "physics": {
+        "engine": "pybullet",
+        "device": "CPU",
+        "step_seconds": 0.004,
+        "sensor_hz": 25,
+        "distance_m": 15.519461082927462,
+        "motion_profile": "turnaround",
+        "commanded_speed_mps": 0.7,
+        "peak_speed_mps": 0.810585885319132,
+        "p95_speed_mps": 0.7859682536924848,
+        "heading_excursion_degrees": 363.52840792791164,
+        "return_distance_m": 5.659372874267623,
+        "route": {
+          "start": [
+            0.5,
+            0,
+            0.3231340279381013
+          ],
+          "heading": 1.5707963267948966,
+          "distance": 8.0
+        },
+        "embodiment": "Unitree Go1",
+        "actuated_joints": 12,
+        "foot_contact_frames": 735,
+        "controller": "MuJoCo Playground pretrained ONNX walking policy; Bullet PD torque adapter",
+        "policy_device": "CPU",
+        "policy_sha256": "386cde6a1eac679e2f2a313ade2b395d9f26905b151ee3b019c2c4163d49b6f2",
+        "trained_in_this_run": false,
+        "collision_geometry": "original Marble concave collision triangles"
+      },
+      "world_asset_sha256": "a3f6260b201d0673e4e3a760391604998258bfe77dd5f208a48e8fdc9bed322b",
+      "report": {
+        "original_sha256": "f16f74fa968b78242b9c1cd4518ea2cd1fbb6a980ee7d61ec18d3512f9d5d6b3",
+        "sha256": "878fa3c08e3d3b4b13f7feb09817fcfe19f1f3a403c2d3d88d2604cb76e7d673",
+        "bytes": 53238446,
+        "capture_payload_sha256": "c121bfe232854dccf576bf51862eee60872419f40685c024dd603d786566e08f",
+        "capture_payload_unchanged": true,
+        "producer": "npa.workbench.marble.quadruped_report._write_html",
+        "change": "Native player frame-boundary rounding fix; recorded media and telemetry unchanged."
+      },
+      "original_native_report": {
+        "bytes": 53238212,
+        "sha256": "f16f74fa968b78242b9c1cd4518ea2cd1fbb6a980ee7d61ec18d3512f9d5d6b3"
+      },
+      "observed_gpu_telemetry": {
+        "samples": 16203,
+        "interval_ms": 250,
+        "gpu_name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+        "peak_utilization_percent": 100.0,
+        "median_utilization_percent": 0.0,
+        "mean_utilization_percent": 10.552737147441832,
+        "active_sample_fraction": 0.16250077146207492,
+        "peak_memory_mib": 8430.0,
+        "peak_power_watts": 338.36,
+        "scope": "Statistics describe the recorded worker sampling window, not isolated kernel time. Samples may include setup, CPU physics, GPU rendering, artifact upload and group-barrier waiting."
+      },
+      "cuda_actor": {
+        "engine": "Blender Cycles",
+        "version": "4.5.14 LTS",
+        "device_type": "CUDA",
+        "cpu_render_fallback": false,
+        "samples": 32,
+        "renderer_processes": 2
+      },
+      "result_sha256": "04f735a96f70d055ebdee0b7101ee16de7280d2eec1a718928598fbefd3022d4"
+    },
+    "home": {
+      "frames": 1000,
+      "resolution": [
+        1280,
+        720
+      ],
+      "gpu": {
+        "name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+        "cuda": "13.0",
+        "torch": "2.9.0+cu130",
+        "compute_capability": [
+          12,
+          0
+        ],
+        "torch_peak_allocated_bytes": 119437824
+      },
+      "physics": {
+        "engine": "pybullet",
+        "device": "CPU",
+        "step_seconds": 0.004,
+        "sensor_hz": 25,
+        "distance_m": 10.955380189929349,
+        "motion_profile": "turnaround",
+        "commanded_speed_mps": 0.35,
+        "peak_speed_mps": 0.3992588524798199,
+        "p95_speed_mps": 0.3695723391650508,
+        "heading_excursion_degrees": 188.24978084546527,
+        "return_distance_m": 4.03959329122537,
+        "route": {
+          "start": [
+            0.5,
+            0,
+            0.3740945749988144
+          ],
+          "heading": 1.5707963267948966,
+          "distance": 8.0
+        },
+        "embodiment": "Unitree Go1",
+        "actuated_joints": 12,
+        "foot_contact_frames": 1000,
+        "controller": "MuJoCo Playground pretrained ONNX walking policy; Bullet PD torque adapter",
+        "policy_device": "CPU",
+        "policy_sha256": "386cde6a1eac679e2f2a313ade2b395d9f26905b151ee3b019c2c4163d49b6f2",
+        "trained_in_this_run": false,
+        "collision_geometry": "original Marble concave collision triangles"
+      },
+      "world_asset_sha256": "403b5e687649f5b68ef9fd1b639e5eac76c4a64b47ffb2ea91986ef733e2583e",
+      "report": {
+        "original_sha256": "66815400406c982a6c014cd63de52d2f0bf7a10c487b0144c439b4ac7ff67bb3",
+        "sha256": "0f2c744b31b539852e5bc932812b27fd80bc8e2b1e4d61f247392a76e92e4375",
+        "bytes": 56300353,
+        "capture_payload_sha256": "51e0038157c2f54e055cd10510b8fbff0ed8b2a56a06e6a8f25ef8df5795cd22",
+        "capture_payload_unchanged": true,
+        "producer": "npa.workbench.marble.quadruped_report._write_html",
+        "change": "Native player frame-boundary rounding fix; recorded media and telemetry unchanged."
+      },
+      "original_native_report": {
+        "bytes": 56300119,
+        "sha256": "66815400406c982a6c014cd63de52d2f0bf7a10c487b0144c439b4ac7ff67bb3"
+      },
+      "observed_gpu_telemetry": {
+        "samples": 20558,
+        "interval_ms": 250,
+        "gpu_name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+        "peak_utilization_percent": 100.0,
+        "median_utilization_percent": 0.0,
+        "mean_utilization_percent": 10.64505302072186,
+        "active_sample_fraction": 0.17759509679929955,
+        "peak_memory_mib": 8430.0,
+        "peak_power_watts": 345.05,
+        "scope": "Statistics describe the recorded worker sampling window, not isolated kernel time. Samples may include setup, CPU physics, GPU rendering, artifact upload and group-barrier waiting."
+      },
+      "cuda_actor": {
+        "engine": "Blender Cycles",
+        "version": "4.5.14 LTS",
+        "device_type": "CUDA",
+        "cpu_render_fallback": false,
+        "samples": 32,
+        "renderer_processes": 2
+      },
+      "result_sha256": "5977b68861f8384639dfc05ebc43d92f42f0e979bbe2088288f295ec0c7e8fd4"
+    },
+    "factory": {
+      "frames": 1000,
+      "resolution": [
+        1280,
+        720
+      ],
+      "gpu": {
+        "name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+        "cuda": "13.0",
+        "torch": "2.9.0+cu130",
+        "compute_capability": [
+          12,
+          0
+        ],
+        "torch_peak_allocated_bytes": 123903488
+      },
+      "physics": {
+        "engine": "pybullet",
+        "device": "CPU",
+        "step_seconds": 0.004,
+        "sensor_hz": 25,
+        "distance_m": 16.94639275927298,
+        "motion_profile": "turnaround",
+        "commanded_speed_mps": 0.5,
+        "peak_speed_mps": 0.6123431675089822,
+        "p95_speed_mps": 0.5896060188642562,
+        "heading_excursion_degrees": 364.83893149228544,
+        "return_distance_m": 5.637706690488799,
+        "route": {
+          "start": [
+            0.5,
+            0,
+            0.3697869742046581
+          ],
+          "heading": 1.5707963267948966,
+          "distance": 8.0
+        },
+        "embodiment": "Unitree Go1",
+        "actuated_joints": 12,
+        "foot_contact_frames": 999,
+        "controller": "MuJoCo Playground pretrained ONNX walking policy; Bullet PD torque adapter",
+        "policy_device": "CPU",
+        "policy_sha256": "386cde6a1eac679e2f2a313ade2b395d9f26905b151ee3b019c2c4163d49b6f2",
+        "trained_in_this_run": false,
+        "collision_geometry": "original Marble concave collision triangles"
+      },
+      "world_asset_sha256": "792e3ced35a6261b4b9958edcae4ba1296eff458a03e8afe9597fe782e0bfe5e",
+      "report": {
+        "original_sha256": "d209581943515277103c805f7ab24bbf8ad21e02fd9d69789d73bd9fa58cbbf0",
+        "sha256": "312d0a73cc251cf8f2ccc0752bea60cbed32d8d639960e0d92dc335281df21cf",
+        "bytes": 53868849,
+        "capture_payload_sha256": "b29ae5fe193dc29a7f8d9b02ab119e70e36b9fcef77831b22db3c917724e17ad",
+        "capture_payload_unchanged": true,
+        "producer": "npa.workbench.marble.quadruped_report._write_html",
+        "change": "Native player frame-boundary rounding fix; recorded media and telemetry unchanged."
+      },
+      "original_native_report": {
+        "bytes": 53868615,
+        "sha256": "d209581943515277103c805f7ab24bbf8ad21e02fd9d69789d73bd9fa58cbbf0"
+      },
+      "observed_gpu_telemetry": {
+        "samples": 16987,
+        "interval_ms": 250,
+        "gpu_name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+        "peak_utilization_percent": 100.0,
+        "median_utilization_percent": 0.0,
+        "mean_utilization_percent": 16.413610407959027,
+        "active_sample_fraction": 0.2479543180078884,
+        "peak_memory_mib": 8430.0,
+        "peak_power_watts": 353.59,
+        "scope": "Statistics describe the recorded worker sampling window, not isolated kernel time. Samples may include setup, CPU physics, GPU rendering, artifact upload and group-barrier waiting."
+      },
+      "cuda_actor": {
+        "engine": "Blender Cycles",
+        "version": "4.5.14 LTS",
+        "device_type": "CUDA",
+        "cpu_render_fallback": false,
+        "samples": 32,
+        "renderer_processes": 2
+      },
+      "result_sha256": "babb5fc4bfb71560ce35d2bda4ef4a4e80e1790e68b8a25b55ca2118fbff2d5b"
+    },
+    "utility": {
+      "frames": 1000,
+      "resolution": [
+        1280,
+        720
+      ],
+      "gpu": {
+        "name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+        "cuda": "13.0",
+        "torch": "2.9.0+cu130",
+        "compute_capability": [
+          12,
+          0
+        ],
+        "torch_peak_allocated_bytes": 167978496
+      },
+      "physics": {
+        "engine": "pybullet",
+        "device": "CPU",
+        "step_seconds": 0.004,
+        "sensor_hz": 25,
+        "distance_m": 16.814975862522953,
+        "motion_profile": "turnaround",
+        "commanded_speed_mps": 0.5,
+        "peak_speed_mps": 0.6119296076487507,
+        "p95_speed_mps": 0.5886294799938491,
+        "heading_excursion_degrees": 365.0193503204506,
+        "return_distance_m": 5.683619382825807,
+        "route": {
+          "start": [
+            0.5,
+            0,
+            0.365198120146378
+          ],
+          "heading": -1.5707963267948966,
+          "distance": 8.0
+        },
+        "embodiment": "Unitree Go1",
+        "actuated_joints": 12,
+        "foot_contact_frames": 1000,
+        "controller": "MuJoCo Playground pretrained ONNX walking policy; Bullet PD torque adapter",
+        "policy_device": "CPU",
+        "policy_sha256": "386cde6a1eac679e2f2a313ade2b395d9f26905b151ee3b019c2c4163d49b6f2",
+        "trained_in_this_run": false,
+        "collision_geometry": "original Marble concave collision triangles"
+      },
+      "world_asset_sha256": "c8971a575fc67ee11dc63816fc6c0dbca000c854356e05bf5448fcaea8888c42",
+      "report": {
+        "original_sha256": "e6056d65f5e20cfd81dcb4b03f7b717d9eca002f19d3cc107555d8c9af510b06",
+        "sha256": "5b54c4ffa4844cc2fddadf2285c9f8e73dac944f6b8e86aff1b95925fdcbc7ec",
+        "bytes": 48382298,
+        "capture_payload_sha256": "e7135c9085d3ffbad9958348dd7b29e2fb27f0bcac1d2634279033aa43849ad9",
+        "capture_payload_unchanged": true,
+        "producer": "npa.workbench.marble.quadruped_report._write_html",
+        "change": "Native player frame-boundary rounding fix; recorded media and telemetry unchanged."
+      },
+      "original_native_report": {
+        "bytes": 48382064,
+        "sha256": "e6056d65f5e20cfd81dcb4b03f7b717d9eca002f19d3cc107555d8c9af510b06"
+      },
+      "observed_gpu_telemetry": {
+        "samples": 13023,
+        "interval_ms": 250,
+        "gpu_name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+        "peak_utilization_percent": 100.0,
+        "median_utilization_percent": 0.0,
+        "mean_utilization_percent": 18.49811871304615,
+        "active_sample_fraction": 0.2573907701758427,
+        "peak_memory_mib": 12643.0,
+        "peak_power_watts": 360.65,
+        "scope": "Statistics describe the recorded worker sampling window, not isolated kernel time. Samples may include setup, CPU physics, GPU rendering, artifact upload and group-barrier waiting. Utility sampling began during rendering and also includes a short same-GPU renderer validation."
+      },
+      "cuda_actor": {
+        "engine": "Blender Cycles",
+        "version": "4.5.14 LTS",
+        "device_type": "CUDA",
+        "cpu_render_fallback": false,
+        "samples": 32,
+        "renderer_processes": 2
+      },
+      "result_sha256": "955be7be9ba9bc3f47129c843ecf92ef6835f676df23d377ed15d2b3a2b17d2c"
+    }
+  },
+  "browser_checks": [
+    {
+      "site": "warehouse",
+      "viewport": "desktop",
+      "videos": 3,
+      "playback": "passed",
+      "seeking": "passed",
+      "downloads": 2,
+      "external_requests": 0,
+      "javascript_errors": 0
+    },
+    {
+      "site": "warehouse",
+      "viewport": "mobile",
+      "videos": 3,
+      "playback": "passed",
+      "seeking": "passed",
+      "downloads": 2,
+      "external_requests": 0,
+      "javascript_errors": 0
+    },
+    {
+      "site": "shipyard",
+      "viewport": "desktop",
+      "videos": 3,
+      "playback": "passed",
+      "seeking": "passed",
+      "downloads": 2,
+      "external_requests": 0,
+      "javascript_errors": 0
+    },
+    {
+      "site": "shipyard",
+      "viewport": "mobile",
+      "videos": 3,
+      "playback": "passed",
+      "seeking": "passed",
+      "downloads": 2,
+      "external_requests": 0,
+      "javascript_errors": 0
+    },
+    {
+      "site": "home",
+      "viewport": "desktop",
+      "videos": 3,
+      "playback": "passed",
+      "seeking": "passed",
+      "downloads": 2,
+      "external_requests": 0,
+      "javascript_errors": 0
+    },
+    {
+      "site": "home",
+      "viewport": "mobile",
+      "videos": 3,
+      "playback": "passed",
+      "seeking": "passed",
+      "downloads": 2,
+      "external_requests": 0,
+      "javascript_errors": 0
+    },
+    {
+      "site": "factory",
+      "viewport": "desktop",
+      "videos": 3,
+      "playback": "passed",
+      "seeking": "passed",
+      "downloads": 2,
+      "external_requests": 0,
+      "javascript_errors": 0
+    },
+    {
+      "site": "factory",
+      "viewport": "mobile",
+      "videos": 3,
+      "playback": "passed",
+      "seeking": "passed",
+      "downloads": 2,
+      "external_requests": 0,
+      "javascript_errors": 0
+    },
+    {
+      "site": "utility",
+      "viewport": "desktop",
+      "videos": 3,
+      "playback": "passed",
+      "seeking": "passed",
+      "downloads": 2,
+      "external_requests": 0,
+      "javascript_errors": 0
+    },
+    {
+      "site": "utility",
+      "viewport": "mobile",
+      "videos": 3,
+      "playback": "passed",
+      "seeking": "passed",
+      "downloads": 2,
+      "external_requests": 0,
+      "javascript_errors": 0
+    },
+    {
+      "site": "five-site-overview",
+      "viewport": "desktop",
+      "timelines": 5,
+      "playback": "passed",
+      "external_requests": 0,
+      "javascript_errors": 0
+    },
+    {
+      "site": "five-site-overview",
+      "viewport": "mobile",
+      "timelines": 5,
+      "playback": "passed",
+      "external_requests": 0,
+      "javascript_errors": 0
+    }
+  ],
+  "overview": {
+    "producer": "npa.workflows.preview_html.write_preview",
+    "sampled_frames": true,
+    "sha256": "ff06ac08632a07c5940ca095979d6facd0409c8bf93d9f9aa4b6dce5683b3a8b"
+  },
+  "limitations": [
+    "Generated collision geometry is approximate and not survey-calibrated.",
+    "CPU pretrained policy inference and rigid-body dynamics; CUDA RGB, depth and articulated robot rendering; CPU denoising.",
+    "No physical robot operation, newly trained policy, defect detection, thermal inspection or demonstrated manufacturing accuracy.",
+    "ANYmal GPU PPO and held-out evaluation remain unverified.",
+    "Four-plus-one native batching was verified; the default five-concurrent-collector plan was not completed."
+  ]
+}

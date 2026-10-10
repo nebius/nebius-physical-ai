@@ -18,6 +18,14 @@ identity. The default still saves the source URI. See the
 [workflow guide](../docs/workbench/npa-workflow-guide.md#source-staging-and-run-ids)
 for passing the returned URI and selecting the same project across commands.
 
+The [Marble quadruped workflow](../docs/workbench/guides/marble-warehouse-quadruped.md)
+reuses a generated warehouse and captures a simulated Go1 on one Nebius GPU.
+Its `motion_profile=turnaround` and `speed_mps=1.2` workflow defaults add fast
+aisle traversals and physical U-turns. Direct CLI/SDK callers retain
+`motion_profile=straight` and `speed_mps=0.35`; select `--motion-profile
+turnaround --speed-mps 1.2` to enable the patrol. The standalone HTML embeds
+the resulting videos and measured motion for offline playback.
+
 `npa workbench vlm-eval review-visual` and its SDK write a separate private rich
 visual audit. Choose an exact hosted model, neutral task, and fresh output path;
 optional `--baseline-path` compares both sources in both A/B orders. See the
@@ -385,6 +393,16 @@ expose CLI callback wrappers under `npa.workbench`; those wrappers can print
 output or raise CLI exits and do not guarantee typed response objects.
 The [walkthrough](../docs/workbench/cli-sdk-yaml-walkthrough.md) explains these
 differences with a detection-training service example.
+
+For public-data GPU training and deployment, use the single
+[`robot-policy-train-and-serve.yaml`](../workflows/testing/robot-policy-train-and-serve.yaml).
+The [operator cookbook](../docs/workbench/cookbooks/robot-policy-train-and-serve.md)
+covers prerequisites and standard `npa workbench workflow` validation, submission,
+monitoring, resume and cancellation. Catalog stages run pinned public LeRobot data
+through FiftyOne curation, native SmolVLA continued training, both measured
+promotion gates, export, independent GPU HTTP serving and native simulation.
+The same run produces standalone HTML/MP4 proof. This qualified recipe uses
+managed Kubernetes plus torchrun and needs no private trainer scripts.
 
 For artifact conversion and sharing, see the
 [CLI / SDK walkthrough](../docs/workbench/cli-sdk-yaml-walkthrough.md),
