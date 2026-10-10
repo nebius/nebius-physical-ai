@@ -9,7 +9,8 @@ Gemini API for
 - ``eval`` — rubric-scored evaluation of a plan.
 
 Credentials come from the ``GOOGLE_API_KEY`` environment variable (overrideable
-with ``GEMINI_ROBOTICS_BASE_URL`` for the endpoint).  Auth failures raise a
+with ``GEMINI_ROBOTICS_BASE_URL`` for the endpoint), falling back to
+``tokens.GOOGLE_API_KEY`` in ``~/.npa/credentials.yaml``.  Auth failures raise a
 clear, actionable error instead of leaking the key.  No live calls are made in
 tests; unit tests drive the client through ``httpx.MockTransport``.
 """
@@ -114,6 +115,26 @@ class GeminiRoboticsConfig:
         return f"{self.base_url}/v1beta/models/{model}:generateContent"
 
 
+def _resolve_env(environ: Mapping[str, str] | None) -> dict[str, str]:
+    """Build the env map used for Gemini Robotics config resolution.
+
+    When callers use the default (``environ=None``), merge in
+    ``tokens.GOOGLE_API_KEY`` from ``~/.npa/credentials.yaml`` so the BYO-key
+    flow works without an exported environment variable. An explicit
+    ``environ`` mapping is used as-is (unit-test isolation).
+    """
+    if environ is not None:
+        return dict(environ)
+    from npa.clients.credentials import load_credentials
+
+    env = dict(os.environ)
+    if not env.get(API_KEY_ENV):
+        file_key = load_credentials(environ=env).tokens.get(API_KEY_ENV, "")
+        if file_key:
+            env[API_KEY_ENV] = file_key
+    return env
+
+
 def resolve_config(
     api_key: str | None = None,
     base_url: str | None = None,
@@ -125,11 +146,12 @@ def resolve_config(
     the ``GEMINI_ROBOTICS_BASE_URL`` environment variable. PROVISIONAL_API_BASE_URL
     is documentation only and is never used implicitly.
     """
-    env = environ if environ is not None else os.environ
+    env = _resolve_env(environ)
     key = (api_key if api_key is not None else env.get(API_KEY_ENV, "")).strip()
     if not key:
         raise GeminiRoboticsError(
             f"Missing Gemini API key: set the {API_KEY_ENV} environment variable "
+            "or add it under tokens: in ~/.npa/credentials.yaml "
             "before calling Gemini Robotics endpoints."
         )
     resolved_base = (

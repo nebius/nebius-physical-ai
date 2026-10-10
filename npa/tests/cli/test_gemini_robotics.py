@@ -40,6 +40,30 @@ def test_resolve_config_uses_env_key() -> None:
     assert config.base_url == "https://example.test"
 
 
+def test_resolve_config_falls_back_to_credentials_file(tmp_path, monkeypatch) -> None:
+    """tokens.GOOGLE_API_KEY in ~/.npa/credentials.yaml is used when env is absent."""
+    import npa.clients.credentials as creds_mod
+
+    creds_file = tmp_path / "credentials.yaml"
+    creds_file.write_text("tokens:\n  GOOGLE_API_KEY: file-key\n", encoding="utf-8")
+    monkeypatch.setattr(creds_mod, "CREDENTIALS_PATH", creds_file)
+    monkeypatch.delenv(API_KEY_ENV, raising=False)
+    config = resolve_config(base_url="https://example.test")
+    assert config.api_key == "file-key"
+
+
+def test_resolve_config_env_beats_credentials_file(tmp_path, monkeypatch) -> None:
+    """An exported GOOGLE_API_KEY takes precedence over the credentials file."""
+    import npa.clients.credentials as creds_mod
+
+    creds_file = tmp_path / "credentials.yaml"
+    creds_file.write_text("tokens:\n  GOOGLE_API_KEY: file-key\n", encoding="utf-8")
+    monkeypatch.setattr(creds_mod, "CREDENTIALS_PATH", creds_file)
+    monkeypatch.setenv(API_KEY_ENV, "env-key")
+    config = resolve_config(base_url="https://example.test")
+    assert config.api_key == "env-key"
+
+
 def test_resolve_config_missing_base_url_fails_closed() -> None:
     """The provisional base URL is never used implicitly."""
     with pytest.raises(GeminiRoboticsError, match=BASE_URL_ENV):
