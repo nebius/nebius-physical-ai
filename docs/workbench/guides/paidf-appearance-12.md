@@ -3,16 +3,18 @@
 [Main workflows](../../../workflows/main/README.md) ·
 [Workflow YAML](../../../workflows/main/paidf-cosmos3.yaml)
 
-The [twelve-profile recipe](../examples/paidf-appearance-12.yaml) supplies a
+Run this guide manually in a terminal; no agent is required. The
+[twelve-profile recipe](../examples/paidf-appearance-12.yaml) supplies a
 complete, opt-in configuration for `workflows/main/paidf-cosmos3.yaml`. It
 generates twelve separate videos from one source using oak, walnut, aluminum,
 stainless steel, granite, terracotta, rubber, cork, ceramic, green laminate,
 warm side lighting and cool twilight lighting. Existing workflow defaults remain
 unchanged.
 
-Both features are on `main`: [#907](https://github.com/nebius/nebius-physical-ai/pull/907)
-adds the twelve-profile recipe; [#908](https://github.com/nebius/nebius-physical-ai/pull/908)
-adds automatic padding detection, preservation and scene-only scoring.
+Start from a fresh checkout using the [one-time setup](../../../workflows/guides/paidf-cosmos3.md#before-you-start),
+then follow this guide to select either your MP4 or the pinned public ALOHA
+cup-opening episode, submit twelve candidates, inspect the results and clean up.
+Padding detection, preservation and scene-only scoring run automatically.
 
 | What you want | What to do |
 | --- | --- |
@@ -33,39 +35,33 @@ Complete the [one-time operator setup](../../../workflows/guides/paidf-cosmos3.m
 first: a Linux operator host, verified GPU cluster, project storage, Hugging Face
 model access, Token Factory access and the `nebius` AWS profile for downloads.
 Run the following steps from the repository root in the same Bash session on
-that Linux host. The commands use `uv` and `npa/.venv`; see
-[installation](../../install.md) if `uv` is missing. Keep private input paths,
-configuration and outputs outside Git.
+that Linux host. The commands use the setup guide's `npa/.venv`. Keep private
+input paths, configuration and outputs outside Git.
 
-### 1. Update the code used by the workers
+### 1. Verify the code used by the workers
 
-Finish or recover active runs in their original environment before upgrading.
-Preserve local edits, then update the checkout and its editable installation:
+The setup guide installs the fresh checkout into `npa/.venv`. Activate that
+environment and verify the source path before continuing:
 
 ```bash
-git switch main
-git pull --ff-only origin main
-uv venv --python 3.12 --allow-existing npa/.venv
-uv pip install --python npa/.venv/bin/python --upgrade -e ./npa
 source npa/.venv/bin/activate
 git rev-parse HEAD
 npa/.venv/bin/python -c 'import npa; from npa.workflows.video_padding_detection import detect_source_padding; print(npa.__file__)'
-unset NPA_SRC_S3_URI NPA_E2E_NPA_SRC_S3_URI NPA_SRC_OVERLAY
 ```
 
 The import must point into this checkout's `npa/src/npa`. A package version of
 `0.1.0` alone does not establish that the update is installed. The canonical
 workflow already sets `source_overlay: true`; normal submission stages the
-current checkout's NPA code for the workers inside the pinned images. Clearing
-old source overrides prevents accidentally selecting earlier code. Keep
+current checkout's NPA code for the workers inside the pinned images. Keep
 automatic source staging enabled; no manual image rebuild or bucket resync is
-needed for these NPA changes. Start a fresh run below; resuming an older run
-keeps its original source/configuration and does not upgrade its videos.
+needed. For an existing installation, finish active runs and follow the
+[upgrade procedure](../../../workflows/guides/paidf-cosmos3.md#upgrading-an-existing-installation)
+first; it covers saved source overrides. Start a fresh run below; resuming an
+older run keeps its original source/configuration and does not upgrade its videos.
 
-### 2. Select your MP4 and existing environment
+### 2. Select your configured environment
 
-Place the MP4 on the Linux operator host and use its absolute path. Replace
-each placeholder with the values from your setup:
+Restore the values from one-time setup in this Bash session:
 
 ```bash
 export PROJECT_ALIAS='<your-npa-project-alias>'
@@ -75,26 +71,25 @@ export KUBECONFIG='<your-verified-kubeconfig-path>'
 export BUCKET='<your-configured-bucket-name>'
 export NPA_WORKFLOW_GPU_ACCELERATOR='<discovered-gpu-name>:1'
 export NPA_SKYPILOT_BIN="$(npa/.venv/bin/npa skypilot status --bin-path)"
-INPUT_VIDEO='/absolute/path/source.mp4'
-
 npa/.venv/bin/npa workbench token-factory models
 ```
 
-Select an available vision model from that list, then check the complete input:
+Select an available vision model from that list:
 
 ```bash
 export CAPTION_MODEL='<available-vision-model-id>'
-ffprobe -v error -select_streams v:0 \
-  -show_entries stream=codec_name,width,height,r_frame_rate:format=duration \
-  -of json "$INPUT_VIDEO"
-ffmpeg -v error -xerror -i "$INPUT_VIDEO" -map 0:v:0 -f null -
 ```
 
-Both media checks must succeed. Use an H.264 MP4 with a visible stationary work
-surface for these profiles. Keep source bars in the input: the pipeline detects
-top/bottom, left/right and all-around black padding, including embedded bars.
-It preserves known normalization padding and only adds detected bands when the
-complete clip provides consistent evidence.
+Run the credential and model-access checks for this selected project:
+
+```bash
+npa/.venv/bin/npa workbench health preflight \
+  --project "$PROJECT_ALIAS" --checks nebius,s3,token_factory --json
+npa/.venv/bin/npa workbench health access --capability cosmos3 --json
+```
+
+Require the relevant checks to pass. GPU discovery and dispatch were verified
+in setup; image pullability is checked below against that same context.
 
 ### 3. Create a private workflow with all twelve profiles
 
@@ -104,7 +99,7 @@ copies the canonical workflow and merges the entire recipe, including its
 
 ```bash
 umask 077
-PRIVATE_RUN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/paidf-appearance-12.XXXXXX")"
+PRIVATE_RUN_DIR="$(npa/.venv/bin/python -c 'import tempfile; print(tempfile.mkdtemp(prefix="paidf-appearance-12-"))')"
 PRIVATE_SPEC="$PRIVATE_RUN_DIR/paidf-cosmos3.yaml"
 npa/.venv/bin/python - "$PRIVATE_SPEC" <<'PYTHON'
 import json
@@ -133,7 +128,7 @@ overrides that replace its count, profiles or thresholds. To customize a look,
 edit the private copy and keep `appearance_profiles_json` as a JSON string with
 exactly `lighting`, `background`, `color_grade` and `surface_finish` per profile.
 
-### 4. Reserve, check and submit a fresh run
+### 4. Reserve and check a fresh run
 
 ```bash
 RUN_ID="$(npa/.venv/bin/npa workbench workflow prepare-run "$SPEC" --project "$PROJECT_ALIAS")"
@@ -141,19 +136,117 @@ export NPA_SKYPILOT_ISOLATED_CONFIG_DIR="$HOME/.npa/workflow-runs/$RUN_ID/skypil
 RUN_URI="s3://$BUCKET/paidf-cosmos3/$RUN_ID"
 npa/.venv/bin/npa workbench workflow validate-spec "$SPEC" --json
 npa/.venv/bin/npa workbench workflow plan-spec "$SPEC" \
-  --run-id "$RUN_ID" --assume-decision promote_checkpoint --check-render \
+  --run-id "$RUN_ID" --assume-decision promote_checkpoint \
   --var bucket="$BUCKET" --var caption_model="$CAPTION_MODEL" --json
 npa/.venv/bin/npa workbench workflow preflight-images "$SPEC" \
-  --assume-decision promote_checkpoint --project "$PROJECT_ALIAS"
+  --assume-decision promote_checkpoint --project "$PROJECT_ALIAS" \
+  --infra "k8s/$KUBE_CONTEXT" \
+  --var bucket="$BUCKET" --var caption_model="$CAPTION_MODEL" --json
 ```
 
-Continue only when these checks succeed. The assumed decision is for the plan
-and image check; the executing command below follows actual evaluator results:
+Continue only when these checks succeed. Inspect the planned generation task:
+it must request one GPU, twelve variants and parallelism one. The assumed
+decision is for the plan and image check; execution follows actual evaluator
+results. Keep the run ID, private spec and environment for monitoring and recovery.
+Use the planning command above before the first submission: `--check-render`
+requires an already staged source URI for image-less stages. Submission stages
+this checkout automatically and checks the rendered tasks before dispatch.
+
+### 5. Choose one source
+
+Use one of the following input selections. Both feed the same complete recipe
+and submit command in step 6.
+
+#### Your local MP4
+
+Place the H.264 MP4 on the Linux operator host and use its absolute path:
+
+```bash
+INPUT_VIDEO='/absolute/path/source.mp4'
+ffprobe -v error -select_streams v:0 \
+  -show_entries stream=codec_name,width,height,r_frame_rate:format=duration \
+  -of json "$INPUT_VIDEO"
+ffmpeg -nostdin -v error -xerror -i "$INPUT_VIDEO" -map 0:v:0 -f null -
+INPUT_OPTIONS=(--input-video "$INPUT_VIDEO")
+```
+
+Both media checks must succeed. Review the source and require a visible
+stationary work surface. Keep source bars: the pipeline detects persistent
+paired black bands and preserves known normalization padding automatically.
+
+#### Public ALOHA cup-opening data
+
+This selects real ALOHA episode **0**, camera **`observation.images.cam_high`**
+from the immutable revision used in the [public reference measurement](#public-reference-measurement).
+The source dataset declares MIT licensing. Download its README, metadata and
+one shared camera video into this run's private directory. The selector uses
+the episode metadata to trim seconds 0–8; do not manually edit the dataset
+metadata or extract an episode for submission.
+
+```bash
+LEROBOT_DIR="$PRIVATE_RUN_DIR/aloha-cups"
+DATASET_REVISION=d793c969cf716001dcca18a0842c3d7e9de9e41b
+DATASET_BASE="https://huggingface.co/datasets/lerobot/aloha_static_cups_open/resolve/$DATASET_REVISION"
+for file in README.md meta/info.json meta/episodes/chunk-000/file-000.parquet \
+  videos/observation.images.cam_high/chunk-000/file-000.mp4; do
+  mkdir -p "$(dirname "$LEROBOT_DIR/$file")"
+  curl --fail --location "$DATASET_BASE/$file" --output "$LEROBOT_DIR/$file" || exit 1
+done
+npa/.venv/bin/python - "$LEROBOT_DIR" <<'PYTHON' || exit 1
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+selection = json.loads(
+    Path("docs/workbench/examples/paidf-lerobot-realism-sources.json").read_text()
+)["selections"][0]
+assert selection["dataset"] == "lerobot/aloha_static_cups_open"
+assert selection["revision"] == "d793c969cf716001dcca18a0842c3d7e9de9e41b"
+root = Path(sys.argv[1])
+for name, expected in selection["downloaded_sha256"].items():
+    with (root / name).open("rb") as source:
+        actual = hashlib.file_digest(source, "sha256").hexdigest()
+    if actual != expected:
+        raise SystemExit(f"Checksum mismatch: {name}; stop before uploading")
+print("Verified all four pinned ALOHA files")
+PYTHON
+```
+
+Stop on any download or checksum failure. Review the beginning, middle and end
+of the selected eight-second episode before GPU submission. Decode the shared
+source and make a local preview; upload the original files unchanged:
+
+```bash
+ALOHA_VIDEO="$LEROBOT_DIR/videos/observation.images.cam_high/chunk-000/file-000.mp4"
+ffmpeg -nostdin -v error -xerror -i "$ALOHA_VIDEO" -map 0:v:0 -f null - || exit 1
+ffmpeg -nostdin -y -v error -i "$ALOHA_VIDEO" -t 8 -map 0:v:0 -an \
+  -c:v libx264 "$PRIVATE_RUN_DIR/aloha-episode-0-preview.mp4" || exit 1
+LEROBOT_URI="s3://$BUCKET/datasets/paidf-cosmos3/$RUN_ID/aloha-cups"
+for file in README.md meta/info.json meta/episodes/chunk-000/file-000.parquet \
+  videos/observation.images.cam_high/chunk-000/file-000.mp4; do
+  aws s3 cp "$LEROBOT_DIR/$file" "$LEROBOT_URI/$file" --profile nebius || exit 1
+done
+INPUT_OPTIONS=(
+  --lerobot-uri "$LEROBOT_URI/"
+  --lerobot-camera observation.images.cam_high --lerobot-episode 0
+  --require-explicit-lerobot-selection
+)
+```
+
+Keep this prefix unchanged until the workflow finishes. NPA selects the episode
+and normalizes it to **192 frames at 24 fps** across eight seconds. The output
+is augmented video and evidence; this workflow does not attach LeRobot action
+or state tables to generated observations or produce a trainable LeRobot dataset.
+
+### 6. Submit and monitor
+
+Use the input array selected above. Keep the recipe's counts and thresholds:
 
 ```bash
 npa/.venv/bin/npa workbench workflow submit "$SPEC" \
   --run-id "$RUN_ID" \
-  --input-video "$INPUT_VIDEO" \
+  "${INPUT_OPTIONS[@]}" \
   --var bucket="$BUCKET" \
   --var caption_model="$CAPTION_MODEL" \
   --runtime --max-wait-seconds 0 \
@@ -178,11 +271,11 @@ npa/.venv/bin/npa workbench workflow logs "$RUN_ID" --project "$PROJECT_ALIAS" \
 
 Use the setup guide for [monitoring or recovery](../../../workflows/guides/paidf-cosmos3.md#r4-monitor-and-recover)
 and [cleanup of this run's resources](../../../workflows/guides/paidf-cosmos3.md#r7-finish-owned-cleanup).
-For a LeRobot input, keep this private spec and use the
-[explicit episode/camera submission](../../../workflows/guides/paidf-cosmos3.md#r3a-augment-one-lerobot-episode-and-camera)
-in place of `--input-video`.
+For another LeRobot input, retain this private spec and use the
+[episode/camera contract](../../../workflows/guides/paidf-cosmos3.md#r3a-augment-one-lerobot-episode-and-camera)
+to prepare its input selection.
 
-### 5. Download the videos and verify padding preservation
+### 7. Download the videos and verify padding preservation
 
 Wait for the run to become terminal before collecting final evidence; a
 refinement pass can replace the latest variants. These commands use the default
@@ -191,6 +284,7 @@ run prefix above and the `nebius` AWS profile configured during setup:
 ```bash
 EVIDENCE_DIR="$PRIVATE_RUN_DIR/evidence"
 mkdir -p "$EVIDENCE_DIR/cosmos_augmented"
+aws s3 cp "$RUN_URI/input/provenance.json" "$EVIDENCE_DIR/provenance.json" --profile nebius
 aws s3 cp "$RUN_URI/input/source.mp4" "$EVIDENCE_DIR/source.mp4" --profile nebius
 aws s3 cp "$RUN_URI/cosmos_augmented/manifest.json" "$EVIDENCE_DIR/manifest.json" \
   --profile nebius
@@ -204,6 +298,9 @@ aws s3 cp "$RUN_URI/cosmos_augmented/" "$EVIDENCE_DIR/cosmos_augmented/" \
   --include 'variant-*/_native/*/*/raw_model_metadata.json' --profile nebius
 aws s3 cp "$RUN_URI/grade/cosmos_evaluator.json" "$EVIDENCE_DIR/cosmos_evaluator.json" \
   --profile nebius
+aws s3 cp "$RUN_URI/grade/quality_disposition.json" "$EVIDENCE_DIR/quality_disposition.json" \
+  --profile nebius
+aws s3 cp "$RUN_URI/reports/sim2real.rrd" "$EVIDENCE_DIR/sim2real.rrd" --profile nebius
 jq '{status, variant_count, published: (.variants | length)}' "$EVIDENCE_DIR/manifest.json"
 find "$EVIDENCE_DIR/cosmos_augmented" -type f -name metadata.json -print0 |
   xargs -0 -r jq '{clip, profile: .variables, bounds: .source_content_region.bounds,
@@ -216,6 +313,12 @@ jq '{status, passed, score, clip_count, passed_clips,
 ```
 
 A completed generation manifest should report twelve published variants. For a
+LeRobot input, also verify `source_kind: lerobot_dataset`, the exact camera and
+episode in `provenance.json`; for the cups example, verify 192 decoded frames
+at 24 fps in each published video. Read `quality_disposition.json` for the
+batch decision and open the recording with the setup guide's
+[local Rerun procedure](../../../workflows/guides/paidf-cosmos3.md#open-the-recording).
+For a
 source with verified padding, each metadata record should show preservation `status: verified`,
 `scene_pixels_unchanged: true` and `padding_matches_source: true`. The evaluator's
 padding diagnostic should show zero RGB error. `detection: detected` identifies
@@ -230,6 +333,17 @@ is the retained model output and can still show augmented borders. Missing
 proofs do not change when you update the checkout. A failed/missing generation
 or evaluation report requires checking stage logs before treating the evidence
 as complete. Padding preservation does not imply an accepted quality gate.
+
+### 8. Finish cleanup
+
+After the submit driver and monitors exit, follow
+[R7's receipt-checked cleanup](../../../workflows/guides/paidf-cosmos3.md#r7-finish-owned-cleanup)
+in this run's original environment: cancel/reconcile the exact run, remove its
+owned controller, then stop its local API. Keep the private spec, run state,
+input and evidence. A quality rejection still needs cleanup. Destroy a cluster
+only if you created and own it for this task, using the
+[cluster teardown guide](../../teardown.md); adopting a shared cluster does
+not make it yours to destroy.
 
 ## Count, concurrency and outputs
 

@@ -2002,9 +2002,12 @@ def kubeconfig_cmd(
     `npa workbench workflow submit --infra k8s/<context>` read.
     """
     from npa.clients.config import resolve_environment
+    from npa.clients.nebius_auth import nebius_profile
 
     nebius_bin = _require_bin(os.environ.get("NPA_NEBIUS_BIN") or "nebius")
-    env = _terraform_env(nebius_bin)
+    profile = nebius_profile()
+    prefix = [nebius_bin, *(["--profile", profile] if profile else [])]
+    env = _terraform_env(nebius_bin, profile=profile)
     tfvars: dict[str, Any] = {}
     try:
         tfvars = _read_tfvars(_resolve_terraform_dir(terraform_dir))
@@ -2027,7 +2030,7 @@ def kubeconfig_cmd(
 
     result = _run_capture(
         [
-            nebius_bin,
+            *prefix,
             "mk8s",
             "cluster",
             "list",
@@ -2055,7 +2058,7 @@ def kubeconfig_cmd(
 
     context = context_name.strip() or name
     kubeconfig_path = kubeconfig or kubeconfig_file(context)
-    _write_kubeconfig(nebius_bin, cluster_id, kubeconfig_path, context)
+    _write_kubeconfig(nebius_bin, cluster_id, kubeconfig_path, context, profile=profile)
     _save_terraform_cluster_state(
         {**tfvars, "parent_id": resolved_project, "cluster_name": name},
         {"id": cluster_id, "name": name},
@@ -3763,12 +3766,18 @@ def _cluster_output(outputs: dict[str, Any]) -> dict[str, Any]:
 
 
 def _write_kubeconfig(
-    nebius_bin: str, cluster_id: str, kubeconfig_path: Path, context: str
+    nebius_bin: str,
+    cluster_id: str,
+    kubeconfig_path: Path,
+    context: str,
+    *,
+    profile: str = "",
 ) -> None:
     kubeconfig_path.parent.mkdir(parents=True, exist_ok=True)
     _run_stream(
         [
             nebius_bin,
+            *(["--profile", profile] if profile else []),
             "mk8s",
             "cluster",
             "get-credentials",
