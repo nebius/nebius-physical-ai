@@ -1,0 +1,118 @@
+{
+  "boundary": "first production dispatch to final response persisted; validation excluded",
+  "comparison_basis": "nano_h200_p2_cell",
+  "concurrency": 1,
+  "derived": {
+    "attempts": 24,
+    "clip_video_seconds": 7.875,
+    "clips_per_node_hour": 131.9,
+    "max_client_wall_s": 218.588,
+    "median_client_wall_s": 216.282,
+    "p95_client_wall_s": 218.283,
+    "valid_attempts": 24,
+    "video_seconds_per_node_hour": 1038.8,
+    "window_seconds": 654.97
+  },
+  "dispatch_schedule": "synchronized_rounds",
+  "expected": {
+    "fps": 24.0,
+    "frames": 189,
+    "height": 720,
+    "max_seconds": 7.955,
+    "min_seconds": 7.795,
+    "width": 1280
+  },
+  "expected_adopted_from_warmup": false,
+  "node_gpu_count": 8,
+  "prompt_hashes": {
+    "negative_prompt": "007a1bdfe1ec3edf3b9a71789ca1999a47ad565560f269a3d78bf9a8dfef9cfd",
+    "prompt": "61c9c4b46b6787d967cc509a2bf323766e70bf5ecf40e09a739362beac135677"
+  },
+  "protocol_version": "v1-p2-runlocal",
+  "replica_ports": [
+    8100,
+    8101,
+    8102,
+    8103,
+    8104,
+    8105,
+    8106,
+    8107
+  ],
+  "replicas": 8,
+  "rounds": [
+    {
+      "attempt_index_start": 0,
+      "attempt_index_stop": 1,
+      "finished_utc": "2026-10-05T22:25:33.850011Z",
+      "requests": 8,
+      "round": 0,
+      "started_utc": "2026-10-05T22:21:55.231830Z"
+    },
+    {
+      "attempt_index_start": 1,
+      "attempt_index_stop": 2,
+      "finished_utc": "2026-10-05T22:29:12.168164Z",
+      "requests": 8,
+      "round": 1,
+      "started_utc": "2026-10-05T22:25:33.850025Z"
+    },
+    {
+      "attempt_index_start": 2,
+      "attempt_index_stop": 3,
+      "finished_utc": "2026-10-05T22:32:50.201552Z",
+      "requests": 8,
+      "round": 2,
+      "started_utc": "2026-10-05T22:29:12.168180Z"
+    }
+  ],
+  "spec": {
+    "expected": {
+      "fps": 24.0,
+      "frames": 189,
+      "height": 720,
+      "max_seconds": 7.955,
+      "min_seconds": 7.795,
+      "width": 1280
+    },
+    "extra_params": {
+      "condition_frame_indexes_vision": [
+        0,
+        1
+      ],
+      "condition_video_keep": "first",
+      "guardrails": false,
+      "use_duration_template": false,
+      "use_resolution_template": false
+    },
+    "files": {
+      "input_reference": "inputs/n8-clip.mp4"
+    },
+    "negative_file": "prompts/negative_prompt.json",
+    "note": "Plain video-to-video: P1 controls plus a P1 Nano clip as input_reference, first two latent frames conditioned",
+    "prompt_file": "prompts/example_t2v_prompt.json",
+    "shape": {
+      "flow_shift": "10.0",
+      "fps": 24,
+      "guidance_scale": "6.0",
+      "max_sequence_length": "4096",
+      "num_frames": 189,
+      "num_inference_steps": 35,
+      "size": "1280x720"
+    }
+  },
+  "validation_run_id": "validation-2026-10-05T22:32:50.201673Z",
+  "warmup_rounds": [
+    {
+      "attempt_index_start": 0,
+      "attempt_index_stop": 1,
+      "finished_utc": "2026-10-05T22:21:50.155392Z",
+      "requests": 8,
+      "round": 0,
+      "started_utc": "2026-10-05T22:18:11.214260Z"
+    }
+  ],
+  "window_end_utc": "2026-10-05T22:32:50.201664Z",
+  "window_seconds": 654.969842,
+  "window_start_utc": "2026-10-05T22:21:55.231817Z"
+}
