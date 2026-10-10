@@ -16,7 +16,7 @@ NATIVE_PINS = {
     "torchvision": "0.26.0",
     "transformers": "5.5.4",
     "requests": "2.32.5",
-    "torchcodec": "0.11.0",
+    "torchcodec": "0.11.0+cpu",
 }
 
 
@@ -32,7 +32,10 @@ def native_runtime(root: Path) -> None:
         subprocess.CalledProcessError: Runtime installation fails.
     """
     versions = {key: _version(key) for key in NATIVE_PINS}
-    if any(versions[key].split("+")[0] != value for key, value in NATIVE_PINS.items()):
+    if any(
+        (versions[key].split("+")[0] if key != "torchcodec" else versions[key]) != value
+        for key, value in NATIVE_PINS.items()
+    ):
         _install(root)
     # Import loads the decoder's native libraries: version metadata alone cannot
     # prove its compiled ABI matches torch or the image's FFmpeg shared libraries.
@@ -77,7 +80,9 @@ def _install(root):
             check=True,
         )
         requirements = [
-            f"{key}=={value}" for key, value in NATIVE_PINS.items() if key != "lerobot"
+            f"{key}=={value}"
+            for key, value in NATIVE_PINS.items()
+            if key not in {"lerobot", "torchcodec"}
         ]
         subprocess.run(
             [
@@ -94,6 +99,28 @@ def _install(root):
             stderr=subprocess.STDOUT,
             check=True,
         )
+        _install_decoder(log)
+
+
+def _install_decoder(log):
+    # LeRobot decodes dataset frames on CPU. The default CUDA codec adds NVDEC /
+    # NPP dependencies without helping this path; keep CUDA torch for the policy.
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "--no-cache-dir",
+            "--no-deps",
+            "--force-reinstall",
+            "--index-url=https://download.pytorch.org/whl/cpu",
+            f"torchcodec=={NATIVE_PINS['torchcodec']}",
+        ],
+        stdout=log,
+        stderr=subprocess.STDOUT,
+        check=True,
+    )
 
 
 def run_native(command: list[str], log: Path, environment: dict) -> None:

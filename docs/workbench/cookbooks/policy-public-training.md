@@ -46,6 +46,17 @@ and the success threshold. Change it before starting a new run. Three disjoint
 LIBERO initial-state sets require at most 16 trials in each set. The standard
 runtime workflow identity is sealed into the recipe and final proof.
 
+The split targets 90/5/5 within each task's unique trajectory groups, rounding
+each holdout upward so small tasks retain both reserved sets. Actual episode
+counts appear in the report; rounding can reduce the overall training fraction.
+The selected public model is `HuggingFaceVLA/smolvla_libero`, with a frozen
+SmolVLM backbone and a trainable action expert. The final specialist checkpoint
+is served, rather than the original downloaded weights. Simulator scenes and
+objects come from the revision-pinned `lerobot/libero-assets` snapshot.
+The demonstration partitions are excluded from this run's optimizer updates.
+Prior exposure by the downloaded pretrained checkpoint is not ruled out;
+these results qualify the workflow and deployment, not novel-data generalization.
+
 | Stage | Real computation and proof |
 | --- | --- |
 | Prepare | Fetch pinned `lerobot/libero`; audit trajectories and decode every episode preview. |

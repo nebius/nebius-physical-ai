@@ -9,10 +9,15 @@ curation, multi-task training, checkpoint evaluation, task-specific fine-tuning,
 and policy evaluation. Data generation is a separate pipeline and is not part
 of this graph.
 
-For an implemented public-data path that runs native SmolVLA training and LIBERO
-evaluation, start with [the turnkey VLA reference](public-vla-training.md).
-It supports a Kubernetes Job or a Slurm/Pyxis allocation and exports real
-checkpoint-bound rollouts. The preview below explains the larger architecture.
+For the integrated public-data path, start with
+[the single Workbench workflow](policy-public-training.md). Its catalog stages
+run FiftyOne curation, native SmolVLA training, both evaluation/gate loops,
+checkpoint export, authenticated GPU policy serving and an independent
+GPU-rendered LIBERO client, then produce same-run offline HTML/MP4 proof.
+That recipe uses managed Kubernetes plus torchrun. The older
+[VLA operator reference](public-vla-training.md) supports a direct Kubernetes
+Job or Slurm/Pyxis allocation outside the Workbench control plane.
+The preview below explains the larger architecture.
 
 ## See the public-data preview
 
@@ -56,7 +61,7 @@ is a separate local contract test; it is not the foundation-model demonstration.
 | Task-specific fine-tuning | Explicit `task_ids` filter the training partition. An empty task subset or missing corpus weight fails before batch submission. |
 | Different entry events | Corpus events run the full graph. Dataset events can stop after curation or start fine-tuning from an approved checkpoint. Code events start fine-tuning and evaluation without redoing pretraining. |
 | Checkpoint-triggered evaluation | A trainer hook hashes a completed checkpoint and its recovery files, atomically publishes a ready event, then submits an evaluation job with a durable receipt. This hook must be wired into the selected trainer's post-save barrier. |
-| Shared model server with benchmark clients | Required evaluation topology: benchmark containers exchange observations/actions with one checkpoint-bound GPU policy server. Model-server and benchmark integration are not implemented by the generic batch adapter. |
+| Shared model server with benchmark clients | The public Workbench recipe deploys one checkpoint-bound GPU HTTP server and one independent GPU-rendered LIBERO client. Every returned/applied action is reconciled in the report. Concurrent clients and batching are not qualified by this recipe; the generic batch adapter does not supply a model server. |
 | Model recovery | The ready-event contract requires model, optimizer, scheduler, RNG and sampler files. The public SmolVLA reference has passed a one-GPU interruption/resume test through its final step. Other trainers and multi-node allocations require their own qualification. |
 | Final policy quality | The public SmolVLA reference records actual CUDA updates, 40 native rollout videos and an 8/10 final simulator score. These results do not qualify a different model, benchmark or physical robot. |
 
