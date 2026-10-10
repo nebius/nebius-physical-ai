@@ -63,6 +63,78 @@ def test_resolve_config_missing_base_url_fails_closed() -> None:
         resolve_config(base_url="", environ={API_KEY_ENV: "secret"})
 
 
+@pytest.mark.parametrize("command", ["plan", "eval"])
+@pytest.mark.parametrize("missing", ["api_key", "api_base_url", "model"])
+def test_cli_rejects_missing_config_before_storage_or_http(
+    monkeypatch: pytest.MonkeyPatch, command: str, missing: str
+) -> None:
+    """CLI preflight rejects incomplete Gemini settings before side effects."""
+    from npa.cli.workbench import gemini_robotics as cli
+    from npa.clients.storage import StorageClient
+
+    attempts = {
+        "storage_construct": 0,
+        "storage_download": 0,
+        "storage_read": 0,
+        "storage_write": 0,
+        "http": 0,
+    }
+
+    class StorageProbe:
+        def download_file(self, *_args: object) -> None:
+            attempts["storage_download"] += 1
+
+        def read_bytes_with_etag(self, *_args: object) -> None:
+            attempts["storage_read"] += 1
+            return None
+
+        def put_bytes_conditional(self, *_args: object, **_kwargs: object) -> str:
+            attempts["storage_write"] += 1
+            return "unexpected-write"
+
+    def storage_factory(_cls: type[StorageClient]) -> StorageProbe:
+        attempts["storage_construct"] += 1
+        return StorageProbe()
+
+    def http_request(*_args: object, **_kwargs: object) -> httpx.Response:
+        attempts["http"] += 1
+        raise AssertionError("incomplete config must not attempt HTTP")
+
+    monkeypatch.setattr(StorageClient, "from_environment", classmethod(storage_factory))
+    monkeypatch.setattr(httpx.Client, "request", http_request)
+    monkeypatch.delenv(API_KEY_ENV, raising=False)
+    monkeypatch.delenv(BASE_URL_ENV, raising=False)
+    if missing != "api_key":
+        monkeypatch.setenv(API_KEY_ENV, "test-key")
+
+    args = [command]
+    if command == "plan":
+        args.append("inspect the scene")
+    else:
+        args.extend(["--input-path", "s3://example-bucket/inputs/eval.json"])
+    args.extend(
+        [
+            "--model",
+            "" if missing == "model" else "operator-selected-model",
+            "--output-path",
+            "s3://example-bucket/outputs/receipt.json",
+        ]
+    )
+    if missing != "api_base_url":
+        args.extend(["--api-base-url", "https://provider.example.invalid"])
+
+    result = CliRunner().invoke(cli.app, args)
+
+    assert result.exit_code != 0, result.output
+    assert attempts == {
+        "storage_construct": 0,
+        "storage_download": 0,
+        "storage_read": 0,
+        "storage_write": 0,
+        "http": 0,
+    }
+
+
 def test_provisional_constants_are_documented_as_unvalidated() -> None:
     assert PROVISIONAL_API_BASE_URL.startswith("https://")
     # The provisional guesses exist; entry points must not use them implicitly.

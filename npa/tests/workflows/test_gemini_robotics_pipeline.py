@@ -10,6 +10,7 @@ import hashlib
 import json
 from pathlib import Path
 
+import httpx
 import pytest
 import yaml
 
@@ -250,3 +251,142 @@ def test_pipeline_main_rejects_missing_overrides() -> None:
                 "s3://b/o",
             ]
         )
+
+
+@pytest.mark.parametrize("stage", ["plan", "eval"])
+@pytest.mark.parametrize("missing", ["api_key", "api_base_url", "model"])
+def test_pipeline_stages_reject_missing_config_before_storage_or_http(
+    monkeypatch: pytest.MonkeyPatch, stage: str, missing: str
+) -> None:
+    """SDK stage defaults fail before selecting storage or provider transport."""
+    from npa.workflows.byof import gemini_robotics_pipeline as pipe
+
+    attempts = {
+        "storage_construct": 0,
+        "storage_download": 0,
+        "storage_read": 0,
+        "storage_write": 0,
+        "http": 0,
+    }
+
+    class StorageProbe:
+        def download_file(self, *_args: object) -> None:
+            attempts["storage_download"] += 1
+
+        def read_bytes_with_etag(self, *_args: object) -> None:
+            attempts["storage_read"] += 1
+            return None
+
+        def put_bytes_conditional(self, *_args: object, **_kwargs: object) -> str:
+            attempts["storage_write"] += 1
+            return "unexpected-write"
+
+    def storage_factory(_cls: object) -> StorageProbe:
+        attempts["storage_construct"] += 1
+        return StorageProbe()
+
+    def http_request(*_args: object, **_kwargs: object) -> httpx.Response:
+        attempts["http"] += 1
+        raise AssertionError("incomplete config must not attempt HTTP")
+
+    monkeypatch.setattr(
+        pipe.StorageClient, "from_environment", classmethod(storage_factory)
+    )
+    monkeypatch.setattr(httpx.Client, "request", http_request)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_ROBOTICS_BASE_URL", raising=False)
+    if missing != "api_key":
+        monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    if missing != "api_base_url":
+        monkeypatch.setenv("GEMINI_ROBOTICS_BASE_URL", "https://provider.example.invalid")
+
+    config = _config(model="" if missing == "model" else "operator-selected-model")
+    with pytest.raises(GeminiRoboticsPipelineError):
+        if stage == "plan":
+            run_er_planning_stage(config, client=None, storage=None)
+        else:
+            run_eval_stage(
+                config,
+                {"plan_text": "plan"},
+                "safety first",
+                client=None,
+                storage=None,
+            )
+
+    assert attempts == {
+        "storage_construct": 0,
+        "storage_download": 0,
+        "storage_read": 0,
+        "storage_write": 0,
+        "http": 0,
+    }
+
+
+@pytest.mark.parametrize("command", ["plan", "eval"])
+@pytest.mark.parametrize("missing", ["api_key", "api_base_url", "model"])
+def test_pipeline_main_rejects_missing_config_before_storage_or_http(
+    monkeypatch: pytest.MonkeyPatch, command: str, missing: str
+) -> None:
+    """Pipeline entrypoints reject incomplete config before storage side effects."""
+    from npa.workflows.byof import gemini_robotics_pipeline as pipe
+
+    attempts = {
+        "storage_construct": 0,
+        "storage_download": 0,
+        "storage_read": 0,
+        "storage_write": 0,
+        "http": 0,
+    }
+
+    class StorageProbe:
+        def download_file(self, *_args: object) -> None:
+            attempts["storage_download"] += 1
+
+        def read_bytes_with_etag(self, *_args: object) -> None:
+            attempts["storage_read"] += 1
+            return None
+
+        def put_bytes_conditional(self, *_args: object, **_kwargs: object) -> str:
+            attempts["storage_write"] += 1
+            return "unexpected-write"
+
+    def storage_factory(_storage: object) -> StorageProbe:
+        attempts["storage_construct"] += 1
+        return StorageProbe()
+
+    def http_request(*_args: object, **_kwargs: object) -> httpx.Response:
+        attempts["http"] += 1
+        raise AssertionError("incomplete config must not attempt HTTP")
+
+    monkeypatch.setattr(pipe, "_storage_or_default", storage_factory)
+    monkeypatch.setattr(httpx.Client, "request", http_request)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    if missing != "api_key":
+        monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+
+    args: list[str] = []
+    if missing != "api_base_url":
+        args.extend(["--api-base-url", "https://provider.example.invalid"])
+    if command == "plan":
+        args.extend(["plan", "--task", "inspect the scene"])
+    else:
+        args.extend(["eval", "--input-path", "s3://example-bucket/inputs/eval.json"])
+    args.extend(
+        [
+            "--model",
+            "" if missing == "model" else "operator-selected-model",
+            "--output-path",
+            "s3://example-bucket/outputs/receipt.json",
+        ]
+    )
+
+    with pytest.raises((GeminiRoboticsPipelineError, SystemExit)):
+        pipe.main(args)
+
+    assert attempts == {
+        "storage_construct": 0,
+        "storage_download": 0,
+        "storage_read": 0,
+        "storage_write": 0,
+        "http": 0,
+    }

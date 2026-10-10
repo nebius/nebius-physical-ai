@@ -210,8 +210,8 @@ def run_er_planning_stage(
 
     model = config.require_model()
     output_path = config.require_output_path()
-    active_storage = _storage_or_default(storage)
     active = _client_or_default(client)
+    active_storage = _storage_or_default(storage)
     try:
         result: PlanResult = active.plan(
             task=config.task,
@@ -263,8 +263,8 @@ def run_eval_stage(
         raise GeminiRoboticsPipelineError(
             "Eval stage input provenance must include path, ETag, and SHA-256 together."
         )
-    active_storage = _storage_or_default(storage)
     active = _client_or_default(client)
+    active_storage = _storage_or_default(storage)
     try:
         result: EvalResult = active.eval_plan(
             plan_text=plan_text,
@@ -344,8 +344,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         config.require_model()
         config.require_output_path()
+        client = _configured_client(args)
         storage = _storage_or_default(None)
-        receipt = run_er_planning_stage(config, _configured_client(args), storage)
+        receipt = run_er_planning_stage(config, client, storage)
     elif args.command == "eval":
         config = GeminiRoboticsPipelineConfig(
             task=args.input_path,
@@ -354,6 +355,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         config.require_model()
         config.require_output_path()
+        client = _configured_client(args)
         storage = _storage_or_default(None)
         plan_receipt, input_path, input_etag, input_sha256 = read_eval_input(
             args.input_path, storage
@@ -362,7 +364,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             config,
             plan_receipt,
             str(plan_receipt["rubric"]),
-            _configured_client(args),
+            client,
             storage,
             input_path=input_path,
             input_etag=input_etag,

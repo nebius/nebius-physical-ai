@@ -395,22 +395,24 @@ def plan_cmd(
                 option="--image",
                 allow_hf=False,
             )
-        storage = StorageClient.from_environment()
+        stage_config = GeminiRoboticsPipelineConfig(
+            task=task,
+            output_path=output_path,
+            model=model,
+        )
+        stage_config.require_model()
         config = resolve_config(base_url=api_base_url or None)
         client = GeminiRoboticsClient(config)
+        storage = StorageClient.from_environment()
         with tempfile.TemporaryDirectory(prefix="npa-gemini-robotics-") as temp_dir:
             local_images: list[str] = []
             for index, image_path in enumerate(image):
                 local_path = Path(temp_dir) / f"{index}-{Path(image_path).name}"
                 storage.download_file(image_path, str(local_path))
                 local_images.append(str(local_path))
+            stage_config.images = local_images
             receipt = run_er_planning_stage(
-                GeminiRoboticsPipelineConfig(
-                    task=task,
-                    output_path=output_path,
-                    images=local_images,
-                    model=model,
-                ),
+                stage_config,
                 client,
                 storage,
             )
@@ -458,18 +460,20 @@ def eval_cmd(
         )
 
         validate_write_path(output_path, tool="gemini-robotics eval", required=True)
+        stage_config = GeminiRoboticsPipelineConfig(
+            task=input_path,
+            output_path=output_path,
+            model=model,
+        )
+        stage_config.require_model()
+        config = resolve_config(base_url=api_base_url or None)
+        client = GeminiRoboticsClient(config)
         storage = StorageClient.from_environment()
         plan_receipt, source_uri, source_etag, source_sha256 = read_eval_input(
             input_path, storage
         )
-        config = resolve_config(base_url=api_base_url or None)
-        client = GeminiRoboticsClient(config)
         receipt = run_eval_stage(
-            GeminiRoboticsPipelineConfig(
-                task=input_path,
-                output_path=output_path,
-                model=model,
-            ),
+            stage_config,
             plan_receipt,
             str(plan_receipt["rubric"]),
             client,
