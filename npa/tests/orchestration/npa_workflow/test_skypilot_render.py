@@ -50,6 +50,7 @@ from npa.orchestration.npa_workflow.submission_state import (
 )
 from npa.orchestration.skypilot.workflow import WorkflowResult
 from vendor_interpreter_contract import (
+    DEFAULT_SETUP_CLI_FAILURE_MESSAGE,
     VENDOR_INTERPRETER_CLI_DIAGNOSTIC,
     VENDOR_INTERPRETER_CLI_IMPORT,
     VENDOR_INTERPRETER_CLI_WARNING,
@@ -530,7 +531,7 @@ def test_default_setup_rejects_interpreter_without_the_npa_cli(
     )
 
     assert result.returncode != 0
-    assert "npa CLI is not importable after setup" in result.stderr
+    assert DEFAULT_SETUP_CLI_FAILURE_MESSAGE in result.stderr
     assert not receipt.exists()
 
 

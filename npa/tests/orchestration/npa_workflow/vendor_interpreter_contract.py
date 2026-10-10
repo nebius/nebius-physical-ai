@@ -14,3 +14,7 @@ VENDOR_INTERPRETER_CLI_WARNING = (
 VENDOR_INTERPRETER_CLI_DIAGNOSTIC = (
     f'"$npa_vendor_python" {VENDOR_INTERPRETER_CLI_PROBE} 2>&1 | tail -3 >&2'
 )
+
+# This is emitted by default_npa_setup(), whose selected interpreter must run
+# the same CLI module that a rendered stage invokes.
+DEFAULT_SETUP_CLI_FAILURE_MESSAGE = "npa CLI is not importable after setup"

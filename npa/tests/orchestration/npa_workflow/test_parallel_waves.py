@@ -14,6 +14,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from vendor_interpreter_contract import DEFAULT_SETUP_CLI_FAILURE_MESSAGE
+
 from npa.orchestration.npa_workflow import build_plan, load_spec
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 from npa.orchestration.npa_workflow.skypilot_render import (
@@ -607,7 +609,7 @@ def test_stage_shell_gets_the_right_interpreter(parallel_spec) -> None:
 
     setup = default_npa_setup()
     assert "/tmp/npa-python" in setup  # records the good interpreter
-    assert "npa CLI is not importable after setup" in setup  # fails loudly
+    assert DEFAULT_SETUP_CLI_FAILURE_MESSAGE in setup  # fails loudly
     assert "/usr/local/bin/npa" in setup  # console script reachable for toolRefs
 
     run_script = render_task_run_script(["python3", "-c", "import npa"])
