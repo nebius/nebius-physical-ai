@@ -142,7 +142,8 @@ def test_build_uses_stdin_dockerfile_without_acceptance_value(
 
     build_argv, build_kwargs = calls[1]
     assert build_argv[-2:] == ["-", str(tmp_path)]
-    assert OPENPI_TERMS_ENV not in str(build_kwargs["input_text"])
+    assert f"ENV {OPENPI_TERMS_ENV}=YES" not in str(build_kwargs["input_text"])
+    assert "--build-arg" not in build_argv
     assert "pi05_droid" not in str(build_kwargs["input_text"])
 
 
@@ -152,9 +153,14 @@ def test_negative_probe_strips_parent_acceptance(
     monkeypatch.setenv(OPENPI_TERMS_ENV, "YES")
     observed_env: dict[str, str] = {}
 
+    calls: list[list[str]] = []
+
     def fake_run(argv, **kwargs):
+        calls.append(list(argv))
         observed_env.update(kwargs["env"])
-        return _completed(list(argv), "NPA_OPENPI_TERMS_REFUSED\n", 64)
+        return subprocess.CompletedProcess(
+            list(argv), 64, "", "NPA_OPENPI_TERMS_REFUSED\n"
+        )
 
     monkeypatch.setattr(antioch, "_run", fake_run)
     antioch._negative_terms_probe(
@@ -167,6 +173,112 @@ def test_negative_probe_strips_parent_acceptance(
     )
 
     assert OPENPI_TERMS_ENV not in observed_env
+    assert "--entrypoint" not in calls[0]
+
+
+def test_policy_wait_times_out_when_container_stays_running(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config = antioch.LiveLoopConfig(
+        project_dir=tmp_path,
+        cache_dir=tmp_path,
+        image="local/openpi:test",
+        policy_host="policy-host.example",
+        policy_ready_timeout_s=1,
+    )
+    monotonic_values = iter([0.0, 1.1])
+
+    def unavailable_socket(*_args, **_kwargs):
+        raise OSError("not ready")
+
+    monkeypatch.setattr(antioch.socket, "create_connection", unavailable_socket)
+    monkeypatch.setattr(antioch.time, "monotonic", lambda: next(monotonic_values))
+    monkeypatch.setattr(antioch.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        antioch,
+        "_run",
+        lambda argv, **_kwargs: _completed(list(argv), "true 0\n"),
+    )
+
+    with pytest.raises(antioch.OpenPIAntiochError, match="did not become ready"):
+        antioch._wait_for_policy(config, container_name="test-policy")
+
+
+def test_scenario_wait_times_out_when_result_never_completes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config = antioch.LiveLoopConfig(
+        project_dir=tmp_path,
+        cache_dir=tmp_path,
+        image="local/openpi:test",
+        policy_host="policy-host.example",
+        scenario_timeout_s=1,
+    )
+    monotonic_values = iter([0.0, 1.1])
+    monkeypatch.setattr(antioch.time, "monotonic", lambda: next(monotonic_values))
+    monkeypatch.setattr(antioch.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        antioch,
+        "_run",
+        lambda argv, **_kwargs: _completed(list(argv), '{"phase":"running"}\n'),
+    )
+
+    with pytest.raises(antioch.OpenPIAntiochError, match="did not complete"):
+        antioch._wait_for_scenario(config, "scenario-run")
+
+
+def test_cleanup_failure_does_not_mask_primary_live_loop_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv(OPENPI_TERMS_ENV, "YES")
+    config = antioch.LiveLoopConfig(
+        project_dir=tmp_path,
+        cache_dir=tmp_path,
+        image="local/openpi:test",
+        policy_host="policy-host.example",
+        cleanup_container=True,
+    )
+
+    def fake_run(argv, **_kwargs):
+        if argv[:2] == ["antioch", "auth"]:
+            raise antioch.OpenPIAntiochError("primary scenario setup failure")
+        raise antioch.OpenPIAntiochError("cleanup failure")
+
+    monkeypatch.setattr(antioch, "_run", fake_run)
+
+    with pytest.raises(antioch.OpenPIAntiochError, match="primary scenario setup"):
+        antioch.run_live_loop(config)
+
+
+def test_live_loop_parser_has_bounded_wait_defaults_and_overrides() -> None:
+    parser = antioch.build_parser()
+    required = [
+        "live-loop",
+        "--project-dir",
+        "/tmp/project",
+        "--cache-dir",
+        "/tmp/cache",
+        "--image",
+        "local/openpi:test",
+        "--policy-host",
+        "policy-host.example",
+    ]
+
+    defaults = parser.parse_args(required)
+    overrides = parser.parse_args(
+        required
+        + [
+            "--policy-ready-timeout-s",
+            "17.5",
+            "--scenario-timeout-s",
+            "180.5",
+        ]
+    )
+
+    assert defaults.policy_ready_timeout_s == 300.0
+    assert defaults.scenario_timeout_s == 1800.0
+    assert overrides.policy_ready_timeout_s == 17.5
+    assert overrides.scenario_timeout_s == 180.5
 
 
 def test_accepted_container_forwards_env_by_name_only(tmp_path: Path) -> None:

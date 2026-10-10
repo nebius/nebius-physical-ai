@@ -157,7 +157,8 @@ client Job connects through the Service DNS name; server and client pod UIDs
 must differ. There is no Ingress or public load balancer. The older builder
 smoke remains explicitly labeled same-pod loopback.
 
-All service waits are bounded by monotonic, configurable failure-recovery
+The local policy and selected scenario waits are bounded by monotonic,
+configurable `--policy-ready-timeout-s` and `--scenario-timeout-s` failure-recovery
 deadlines. The Deployment progress deadline matches server readiness, and the
 client Job has `activeDeadlineSeconds` in addition to `backoffLimit: 0`.
 Pending/Unschedulable placement, image-pull failures, failed probes, uncertain

@@ -47,7 +47,15 @@ RUN python3 -m venv /opt/venv && \\
     /opt/venv/bin/python -m pip install --no-cache-dir --upgrade pip uv && \\
     GIT_LFS_SKIP_SMUDGE=1 /opt/venv/bin/uv pip install \\
       --python /opt/venv/bin/python --no-cache -e .
-ENTRYPOINT ["/opt/venv/bin/python", "scripts/serve_policy.py"]
+RUN printf '%s\\n' \\
+    '#!/bin/sh' \\
+    'if [ "${NPA_OPENPI_ACCEPT_GEMMA_TERMS:-}" != "YES" ]; then' \\
+    '  echo NPA_OPENPI_TERMS_REFUSED >&2' \\
+    '  exit 64' \\
+    'fi' \\
+    'exec /opt/venv/bin/python scripts/serve_policy.py "$@"' \\
+    > /usr/local/bin/npa-openpi-entrypoint && chmod 0755 /usr/local/bin/npa-openpi-entrypoint
+ENTRYPOINT ["/usr/local/bin/npa-openpi-entrypoint"]
 """
 
 
@@ -67,6 +75,8 @@ class LiveLoopConfig:
     policy_port: int | None = None
     scenario: str = "pi05_droid_loop"
     chunks: int = 3
+    policy_ready_timeout_s: float = 300.0
+    scenario_timeout_s: float = 1800.0
     docker_bin: str = "docker"
     antioch_bin: str = "antioch"
     rerun_from: str | None = None
@@ -157,7 +167,7 @@ def build_local_image(
 
 
 def _negative_terms_probe(config: LiveLoopConfig) -> None:
-    """Prove an unaccepted child refuses before the OpenPI entrypoint starts."""
+    """Prove the image entrypoint rejects a child without accepted terms."""
 
     child_env = dict(os.environ)
     child_env.pop(OPENPI_TERMS_ENV, None)
@@ -166,19 +176,15 @@ def _negative_terms_probe(config: LiveLoopConfig) -> None:
             config.docker_bin,
             "run",
             "--rm",
-            "--entrypoint",
-            "/bin/sh",
             config.image,
-            "-c",
-            f'test "${{{OPENPI_TERMS_ENV}:-}}" = YES || {{ '
-            'echo "NPA_OPENPI_TERMS_REFUSED"; exit 64; }',
         ],
         env=child_env,
         check=False,
     )
-    if completed.returncode != 64 or "NPA_OPENPI_TERMS_REFUSED" not in completed.stdout:
+    output = completed.stdout + completed.stderr
+    if completed.returncode != 64 or "NPA_OPENPI_TERMS_REFUSED" not in output:
         raise OpenPIAntiochError(
-            "negative OpenPI terms child did not fail closed before model startup"
+            "OpenPI image entrypoint did not fail closed before model startup"
         )
 
 
@@ -278,7 +284,18 @@ def _remove_policy_container(config: LiveLoopConfig) -> None:
     _run([config.docker_bin, "rm", "--force", config.container_name])
 
 
+def _deadline(timeout_s: float, *, operation: str) -> float:
+    """Return a monotonic deadline for a bounded external operation."""
+
+    if not math.isfinite(timeout_s) or timeout_s <= 0:
+        raise OpenPIAntiochError(f"{operation} timeout must be a positive finite number")
+    return time.monotonic() + timeout_s
+
+
 def _wait_for_policy(config: LiveLoopConfig, *, container_name: str) -> None:
+    """Wait for a local policy socket without leaving an unbounded GPU container."""
+
+    deadline = _deadline(config.policy_ready_timeout_s, operation="policy readiness")
     while True:
         try:
             with socket.create_connection(("127.0.0.1", config.host_port), timeout=2):
@@ -300,6 +317,8 @@ def _wait_for_policy(config: LiveLoopConfig, *, container_name: str) -> None:
                 raise OpenPIAntiochError(
                     f"OpenPI container exited before websocket readiness: {tail}"
                 )
+            if time.monotonic() >= deadline:
+                raise OpenPIAntiochError("OpenPI policy did not become ready before timeout")
             time.sleep(2)
 
 
@@ -341,6 +360,9 @@ def _latest_scenario(config: LiveLoopConfig) -> dict[str, Any] | None:
 
 
 def _wait_for_scenario(config: LiveLoopConfig, scenario_run_id: str) -> dict[str, Any]:
+    """Wait for the selected scenario result until its explicit deadline."""
+
+    deadline = _deadline(config.scenario_timeout_s, operation="scenario")
     while True:
         shown = _run(
             [
@@ -355,6 +377,8 @@ def _wait_for_scenario(config: LiveLoopConfig, scenario_run_id: str) -> dict[str
         payload = _json_object(shown.stdout, label="Antioch scenario show")
         if payload.get("phase") == "completed" or payload.get("outcome"):
             return payload
+        if time.monotonic() >= deadline:
+            raise OpenPIAntiochError("Antioch scenario did not complete before timeout")
         time.sleep(2)
 
 
@@ -484,6 +508,7 @@ def run_live_loop(config: LiveLoopConfig) -> dict[str, object]:
     _run([config.docker_bin, "image", "inspect", config.image])
     _negative_terms_probe(config)
 
+    primary_error: BaseException | None = None
     try:
         _ensure_policy_container(config)
         _wait_for_policy(config, container_name=config.container_name)
@@ -569,9 +594,16 @@ def run_live_loop(config: LiveLoopConfig) -> dict[str, object]:
             ]
         ).stdout.strip()
         return {**evidence, "image_id": image_id}
+    except BaseException as exc:
+        primary_error = exc
+        raise
     finally:
         if config.cleanup_container:
-            _remove_policy_container(config)
+            try:
+                _remove_policy_container(config)
+            except Exception:
+                if primary_error is None:
+                    raise
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -605,6 +637,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Project-relative Pi loop for direct `antioch run` execution",
     )
     live.add_argument("--chunks", type=int, default=3)
+    live.add_argument(
+        "--policy-ready-timeout-s",
+        type=float,
+        default=300.0,
+        help="Maximum monotonic seconds to wait for the local policy socket",
+    )
+    live.add_argument(
+        "--scenario-timeout-s",
+        type=float,
+        default=1800.0,
+        help="Maximum monotonic seconds to wait for the selected Antioch result",
+    )
     live.add_argument("--docker-bin", default="docker")
     live.add_argument("--antioch-bin", default="antioch")
     live.add_argument("--container-name", default=DEFAULT_CONTAINER_NAME)
@@ -636,6 +680,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 policy_port=args.policy_port,
                 scenario=args.scenario,
                 chunks=args.chunks,
+                policy_ready_timeout_s=args.policy_ready_timeout_s,
+                scenario_timeout_s=args.scenario_timeout_s,
                 docker_bin=args.docker_bin,
                 antioch_bin=args.antioch_bin,
                 rerun_from=args.rerun_from,
