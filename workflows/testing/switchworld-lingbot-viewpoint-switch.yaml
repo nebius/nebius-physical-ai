@@ -1,0 +1,248 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: switchworld-lingbot-viewpoint-switch
+  description: >-
+    Prepare a real native SwitchWorld case; execute the pinned LingBot baseline
+    and canonical SwitchWorld adapter; measure decoded target and transition
+    frames; then emit two paired MP4s and an independently verified Rerun RRD.
+
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/switchworld"
+  source_overlay: true
+  seed: "20260819"
+  # The operator supplies the exact accelerator advertised by the selected
+  # NPA target at submit time.  Keep this compatibility default for ordinary
+  # plan rendering; do not treat it as a claim that every target is qualified.
+  gpu_type: B200
+  gpu_count: "1"
+  # The default routes through the existing catalog entry.  A private,
+  # digest-pinned LingBot runtime may instead be supplied at submit time with
+  # ``--var runtime_image=...`` while this source-overlay workflow still stages
+  # the exact checked-out NPA adapter code.
+  runtime_image: tool://lingbot-world
+
+  reference_uri: "s3://{{config.bucket}}/{{config.prefix}}/inputs/reference.png"
+  target_uri: "s3://{{config.bucket}}/{{config.prefix}}/inputs/target.mp4"
+  controls_uri: "s3://{{config.bucket}}/{{config.prefix}}/inputs/controls.json"
+  latent_uri: "s3://{{config.bucket}}/{{config.prefix}}/inputs/latent.pt"
+  condition_uri: "s3://{{config.bucket}}/{{config.prefix}}/inputs/condition.pt"
+  contexts_uri: "s3://{{config.bucket}}/{{config.prefix}}/inputs/contexts.pt"
+
+  prepared_uri: "s3://{{config.bucket}}/{{config.prefix}}/prepare/"
+  baseline_uri: "s3://{{config.bucket}}/{{config.prefix}}/baseline/"
+  adapted_uri: "s3://{{config.bucket}}/{{config.prefix}}/adapter/"
+  metrics_uri: "s3://{{config.bucket}}/{{config.prefix}}/metrics/"
+  visualization_uri: "s3://{{config.bucket}}/{{config.prefix}}/visualization/"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 8
+    memory: 64Gi
+    image: "{{config.runtime_image}}"
+  gpu:
+    cloud: kubernetes
+    accelerators: "{{config.gpu_type}}:{{config.gpu_count}}"
+    cpus: 32
+    memory: 256Gi
+    image: "{{config.runtime_image}}"
+
+initial: prepare-real-case
+
+states:
+  prepare-real-case:
+    description: >-
+      Download and fully decode the supplied target video, verify its native
+      condition tensor matches its camera/view schedule, and extract actual
+      before/after-switch context frames.
+    run:
+      argv:
+        # Keep CUDA/PyTorch runtime bytes out of the private image. This exact
+        # launcher installs the pinned Wan closure into the writable runtime
+        # cache and runs the real case validator with that interpreter.
+        - wan-runtime
+        - exec
+        - python3
+        - -m
+        - npa.workflows.switchworld
+        - prepare
+        - --reference-uri
+        - "{{config.reference_uri}}"
+        - --target-uri
+        - "{{config.target_uri}}"
+        - --controls-uri
+        - "{{config.controls_uri}}"
+        - --latent-uri
+        - "{{config.latent_uri}}"
+        - --condition-uri
+        - "{{config.condition_uri}}"
+        - --contexts-uri
+        - "{{config.contexts_uri}}"
+        - --output-uri
+        - "{{config.prepared_uri}}"
+    resources: cpu
+    inputs:
+      - uri: "{{config.reference_uri}}"
+        schema: image/png
+      - uri: "{{config.target_uri}}"
+        schema: video/mp4
+      - uri: "{{config.controls_uri}}"
+        schema: npa.switchworld.controls.v1
+      - uri: "{{config.latent_uri}}"
+        schema: npa.switchworld.native_latent.v1
+      - uri: "{{config.condition_uri}}"
+        schema: npa.switchworld.native_condition.v1
+      - uri: "{{config.contexts_uri}}"
+        schema: npa.switchworld.native_contexts.v1
+    outputs:
+      - uri: "{{config.prepared_uri}}"
+        schema: npa.switchworld.prepared_bundle.v1
+      - uri: "{{config.prepared_uri}}prepared.json"
+        schema: npa.switchworld.prepared_case.v1
+    next: generate-lingbot-baseline
+
+  generate-lingbot-baseline:
+    description: >-
+      Run the source-pinned upstream infer_lingbot_switchmolora_case.py entry
+      point without adapters, using the exact prepared latents, condition,
+      prompt context, and reference image.
+    run:
+      argv:
+        - wan-runtime
+        - exec
+        - python3
+        - -m
+        - npa.workflows.switchworld
+        - baseline
+        - --prepared-uri
+        - "{{config.prepared_uri}}"
+        - --output-uri
+        - "{{config.baseline_uri}}"
+        - --seed
+        - "{{config.seed}}"
+    resources: gpu
+    inputs:
+      - uri: "{{config.prepared_uri}}"
+        schema: npa.switchworld.prepared_bundle.v1
+    outputs:
+      - uri: "{{config.baseline_uri}}baseline.mp4"
+        schema: video/mp4
+      - uri: "{{config.baseline_uri}}baseline.json"
+        schema: npa.switchworld.baseline.v1
+    next: generate-adapter-switch
+
+  generate-adapter-switch:
+    description: >-
+      Runtime-fetch the two hash-pinned canonical joint adapters and run the
+      same upstream entry point with its real perspective-switch conditioning.
+    run:
+      argv:
+        - wan-runtime
+        - exec
+        - python3
+        - -m
+        - npa.workflows.switchworld
+        - adapter
+        - --prepared-uri
+        - "{{config.prepared_uri}}"
+        - --output-uri
+        - "{{config.adapted_uri}}"
+        - --seed
+        - "{{config.seed}}"
+    resources: gpu
+    inputs:
+      - uri: "{{config.prepared_uri}}"
+        schema: npa.switchworld.prepared_bundle.v1
+    outputs:
+      - uri: "{{config.adapted_uri}}adapted.mp4"
+        schema: video/mp4
+      - uri: "{{config.adapted_uri}}adapted.json"
+        schema: npa.switchworld.adapter.v1
+    next: measure-real-frames
+
+  measure-real-frames:
+    description: >-
+      Invoke the upstream decoder-based evaluator on target-versus-adapter and
+      baseline-versus-adapter MP4s, then summarize the exact declared switch
+      window. Mock SwitchWorld metrics are deliberately excluded.
+    run:
+      argv:
+        - wan-runtime
+        - exec
+        - python3
+        - -m
+        - npa.workflows.switchworld
+        - measure
+        - --prepared-uri
+        - "{{config.prepared_uri}}"
+        - --baseline-uri
+        - "{{config.baseline_uri}}baseline.mp4"
+        - --adapted-uri
+        - "{{config.adapted_uri}}adapted.mp4"
+        - --output-uri
+        - "{{config.metrics_uri}}"
+    resources: cpu
+    inputs:
+      - uri: "{{config.prepared_uri}}"
+        schema: npa.switchworld.prepared_bundle.v1
+      - uri: "{{config.baseline_uri}}baseline.mp4"
+        schema: video/mp4
+      - uri: "{{config.adapted_uri}}adapted.mp4"
+        schema: video/mp4
+    outputs:
+      - uri: "{{config.metrics_uri}}metrics.json"
+        schema: npa.switchworld.real_frame_metrics.v1
+      - uri: "{{config.metrics_uri}}target_vs_adapter_comparison.mp4"
+        schema: video/mp4
+    next: emit-paired-artifacts
+
+  emit-paired-artifacts:
+    description: >-
+      Fully decode the baseline, adapter, and target videos; emit baseline and
+      target paired H.264 MP4s plus a verified RRD containing their real pixels
+      and the measured metrics.
+    run:
+      argv:
+        # Rerun requires NumPy 2, so final visualization uses its own
+        # hash-locked CPU environment without changing the Wan model runtime.
+        - switchworld-visualize-runtime
+        - exec
+        - python3
+        - -m
+        - npa.workflows.switchworld
+        - visualize
+        - --prepared-uri
+        - "{{config.prepared_uri}}"
+        - --baseline-uri
+        - "{{config.baseline_uri}}baseline.mp4"
+        - --adapted-uri
+        - "{{config.adapted_uri}}adapted.mp4"
+        - --metrics-uri
+        - "{{config.metrics_uri}}metrics.json"
+        - --output-uri
+        - "{{config.visualization_uri}}"
+        - --run-id
+        - "{{run.id}}"
+    resources: cpu
+    inputs:
+      - uri: "{{config.prepared_uri}}"
+        schema: npa.switchworld.prepared_bundle.v1
+      - uri: "{{config.baseline_uri}}baseline.mp4"
+        schema: video/mp4
+      - uri: "{{config.adapted_uri}}adapted.mp4"
+        schema: video/mp4
+      - uri: "{{config.metrics_uri}}metrics.json"
+        schema: npa.switchworld.real_frame_metrics.v1
+    outputs:
+      - uri: "{{config.visualization_uri}}baseline_vs_adapted.mp4"
+        schema: video/mp4
+      - uri: "{{config.visualization_uri}}target_vs_adapted.mp4"
+        schema: video/mp4
+      - uri: "{{config.visualization_uri}}switchworld.rrd"
+        schema: application/vnd.rerun.rrd
+      - uri: "{{config.visualization_uri}}visualization.json"
+        schema: npa.switchworld.visualization.v1
+    terminal: true

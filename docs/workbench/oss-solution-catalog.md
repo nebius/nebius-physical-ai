@@ -666,6 +666,23 @@ These Tier 1 BYOF recipes use immutable Diffusers source and model revisions. Th
 
 `byof-lingbot-world.yaml` exercises `lingbot_world_camera_conditioned_video` using pinned upstream `generate.py`, FSDP, and Ulysses on four B200 GPUs. It emits `lingbot_world_camera_conditioned_video.json`, per-rank execution evidence, authored camera controls, the source image, and a fully decoded MP4. Exact public GHCR image inference verified on B200 on 2026-09-16. Camera trajectories and approximate intrinsics are authored, not measured. This v1 recipe does not claim robot action input, training, real-time performance, or support for the separate World Infinity successor.
 
+### SwitchWorld enhanced LingBot-World adapters
+
+`switchworld-lingbot-viewpoint-switch.yaml` is a five-stage source-pinned
+runtime-fetch workflow: native-case/control preparation → upstream LingBot
+baseline → upstream adapter-conditioned switch → decoded-frame metrics → paired
+MP4/RRD. It selects `PencilHu/SwitchWorld` after verifying every released LFS
+payload matches `wangmingxinthu/SwitchWorld`; the upstream repository itself
+directs downloads to PencilHu. It uses only the two hash-checked joint rank-128
+adapter files, keeps them out of image layers, credits SwitchWorld, PencilHu,
+wangmingxinthu, LingBot-World, and Wan, and excludes the published mock metric
+hooks. See [the SwitchWorld contract](switchworld.md).
+
+This is not a new public image and has no GPU acceptance result yet. It requires
+an operator-staged genuine native case; planning and local media/RRD tests do
+not establish adapter quality, semantic consistency, benchmark performance, or
+robot success.
+
 - `byof-depth-anything-v2.yaml`: `relative_depth_video` emits `depth_anything_v2_relative_depth.json`, raw prediction arrays and a fully decoded GPU-derived video. Exact public GHCR image inference verified on B200 on 2026-09-16. Model checkpoints are immutable runtime fetches; video inputs require a complete SHA256. No metric-depth, ground-truth-mask, or robot-success claim.
 
 - `byof-sam2.1.yaml`: `prompted_video_mask_propagation` emits `sam2_1_video_mask_propagation.json`, raw prediction arrays and a fully decoded GPU-derived video. Exact public GHCR image inference verified on B200 on 2026-09-16. Model checkpoints are immutable runtime fetches; video inputs require a complete SHA256. No metric-depth, ground-truth-mask, or robot-success claim.

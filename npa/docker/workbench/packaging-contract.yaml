@@ -535,6 +535,27 @@ images:
       Pinned Apache-2.0 LingBot source, retained upstream license, OSS CPU
       dependencies and native camera adapter. Runtime-only CUDA and checkpoints.
       Four-rank attention/all-to-all and decoded video gate supported publication.
+  lingbot-world-switchworld-private:
+    dockerfile: lingbot-world/Dockerfile.switchworld-private
+    tier: job
+    redistribution: unvalidated
+    passwordless_root_exemption: >-
+      SkyPilot Kubernetes bootstrap only; the final runtime user is non-root
+      ubuntu, no sshd service is enabled by default, and no credentials or
+      acceptance material are baked.
+    notes: >-
+      Operator-private SwitchWorld validation derivative. It rebuilds the
+      operating-system layer from the audited Debian snapshot and reuses pinned
+      public Wan source/CPU bytes while replacing LingBot's easydict wheel with
+      the retained Wan compatibility source. No CUDA, model checkpoint,
+      adapter, case, credential, or populated cache is baked. This quarantined
+      entry has no public publication or release intent. Its prior private
+      digest completed exact built-byte scanning, the repository's
+      secret/fixed-CRITICAL Trivy policy scan, SPDX inventory, and exact-target
+      image-pull preflight only; native workflow evidence remains required. The hash-locked
+      PyAV decoder requirement is fetched only into the operator-owned runtime
+      cache for real-frame processing; it is not an image byte or public
+      distribution payload.
   sam3:
     dockerfile: sam3/Dockerfile
     tier: job

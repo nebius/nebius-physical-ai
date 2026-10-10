@@ -65,6 +65,7 @@ def test_needs_image_update_exclusions_can_only_shrink() -> None:
         "lerobot",
         "lerobot-vlm-rl",
         "libero",
+        "lingbot-world-switchworld-private",
         "loop-eval",
         "ncore",
         "openpi",

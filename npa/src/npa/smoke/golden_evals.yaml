@@ -34,6 +34,36 @@
 format: npa_golden_evals_v1
 
 containers:
+  lingbot-world-switchworld-private:
+    image: npa-lingbot-world-switchworld-private
+    internal: true
+    default_tag: switchworld-private-neutral-unbuilt
+    dockerfile: npa/docker/workbench/lingbot-world/Dockerfile.switchworld-private
+    physical_ai:
+      useful: true
+      role: >-
+        Operator-private native SwitchWorld viewpoint-generation candidate with
+        runtime-fetched LingBot, Wan, adapter, and real-case payloads.
+    safety:
+      runs_as: ubuntu
+      base_image: python:3.10-slim-bookworm
+      network: operator-authorized runtime fetch only
+      external_fetch:
+        - runtime-only CUDA/PyTorch closure, LingBot checkpoint, and canonical adapters
+      notes: >-
+        This unvalidated private candidate is not a public image or release.
+        A real decoded-frame five-stage GPU run, exact built-byte scan, and
+        independent final-artifact readback remain required before any
+        capability claim.
+    golden_eval:
+      kind: workflow-smoke
+      command: >-
+        npa workbench workflow validate-spec
+        workflows/testing/switchworld-lingbot-viewpoint-switch.yaml
+      gpu: required
+      timeout_seconds: 1800
+      status: needs-image-update
+
   robotwin:
     image: npa-robotwin
     dockerfile: npa/docker/workbench/robotwin/Dockerfile

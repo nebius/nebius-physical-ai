@@ -16,6 +16,7 @@ from npa.deploy.images import (
     default_workbench_image,
     development_tag,
     execution_container_registry,
+    NEUTRAL_UNBUILT_CANDIDATE_TOOLS,
     PUBLICATION_QUARANTINE_TOOLS,
     public_release_tag_for_tool,
     registry_from_env,
@@ -83,6 +84,7 @@ def test_quarantined_public_release_metadata_fails_closed(tool: str) -> None:
         PUBLICATION_QUARANTINE_TOOLS
         - {"sonic"}
         - UNBUILT_CANDIDATE_TOOL_VERSIONS.keys()
+        - NEUTRAL_UNBUILT_CANDIDATE_TOOLS
     ),
 )
 def test_quarantined_public_releases_fail_closed_for_consumers(tool: str) -> None:
@@ -110,6 +112,24 @@ def test_unbuilt_public_planning_sentinel_is_not_a_consumable_release(
     assert container_image_for_tool(tool).endswith(f":{display_tag}")
     with pytest.raises(ValueError, match="quarantined"):
         container_image_for_tool(tool, tag=display_tag)
+
+
+def test_switchworld_neutral_candidate_never_resolves_a_public_release() -> None:
+    tool = "lingbot-world-switchworld-private"
+    sha = "a" * 40
+
+    with pytest.raises(ValueError, match="no accepted public release.*quarantined"):
+        container_image_for_tool(tool)
+    with pytest.raises(ValueError, match="quarantined"):
+        container_image_for_tool(tool, tag="switchworld-private-neutral-unbuilt")
+
+    # A source-addressed candidate is a planning/validation reference only. It
+    # is not a published image and execution still requires an explicit private
+    # immutable image override.
+    assert container_image_for_tool(tool, tag=f"dev-{sha}").endswith(f":dev-{sha}")
+    assert container_image_for_tool(
+        tool, registry="registry.example/operator"
+    ).endswith(":switchworld-private-neutral-unbuilt")
 
 
 @pytest.mark.parametrize("tool", ["ncore", "robomimic", "robotwin"])

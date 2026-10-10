@@ -710,10 +710,7 @@ def _bundle(root):
                     member.size, member.mode = info.st_size, 0o600
                     archive.addfile(member, stream)
     with _private_input(target) as (stream, info):
-        digest_state = hashlib.sha256()
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest_state.update(chunk)
-        value = digest_state.hexdigest()
+        value = _descriptor_digest(stream.fileno(), info.st_size)
     return target, info.st_size, value
 
 

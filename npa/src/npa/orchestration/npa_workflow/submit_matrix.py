@@ -303,6 +303,21 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Uses a qualified public GHCR image; exact-digest GPU evidence is recorded in the OSS solution catalog.",
     ),
     SubmitLiveCase(
+        "switchworld-lingbot-viewpoint-switch.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        rotation_skip=True,
+        skip_reason=(
+            "Requires an operator-staged genuine native SwitchWorld case bundle "
+            "(reference, held-out target, controls, and native tensors); this "
+            "adapter entry-point path has no GPU acceptance record yet."
+        ),
+        notes=(
+            "Real five-stage source-pinned LingBot baseline, canonical adapter, "
+            "decoded-frame metrics, and paired MP4/RRD workflow."
+        ),
+    ),
+    SubmitLiveCase(
         "byof-depth-anything-v2.yaml",
         "gpu",
         plan_only=True,
