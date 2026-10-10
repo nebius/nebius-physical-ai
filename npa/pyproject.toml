@@ -41,7 +41,7 @@ dependencies = [
     "jinja2>=3.1.6,<4.0",
     # Official API client matched to the production Kubernetes 1.33 cluster.
     # Sim2Real uses typed Job/Pod conditions instead of parsing kubectl prose.
-    "kubernetes==36.0.3",
+    "kubernetes==37.0.0",
     # Exclude OAuth transport versions affected by CVE-2026-49264/49265.
     "oauthlib>=4.0.0",
     "numpy>=1.24",
@@ -65,7 +65,7 @@ dependencies = [
     "scipy>=1.10",
     # Formerly the `lancedb` extra: LanceDB workbench tool (local server,
     # BDD100K import, materialized views).
-    "lancedb==0.39.0",
+    "lancedb==0.40.0",
     # Formerly the `viz` extra: Rerun viewer/recording integration
     # (`npa rerun`, sim-viz adapters).
     "rerun-sdk==0.38.1",
@@ -78,7 +78,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-policy-demo = ["fiftyone==1.22.0", "graphql-core>=3.2.13,<3.3", "playwright>=1.63.0,<2"]
+policy-demo = ["fiftyone==1.22.1", "graphql-core>=3.2.13,<3.4", "playwright>=1.63.0,<2"]
 video-sweep = ["psycopg[binary]>=3.2,<4"]
 mjlab = ["mjlab==1.6.0", "torch>=2.13.0", "uvicorn>=0.52.4"]
 encord = ["encord>=0.1.202,<0.2", "av>=14.0", "Pillow>=10.0"]
@@ -100,7 +100,7 @@ full = []
 # The former optional package was imported only to report its presence.
 agent-eval = []
 agent-specialists = [
-    "langgraph==1.2.12",
+    "langgraph==1.2.14",
     "langgraph-checkpoint-sqlite==3.1.1",
     "uvicorn>=0.52.4",
 ]
@@ -155,7 +155,7 @@ sonic = [
 # standard (non-e2e) test suite collects without pulling in the GPU-heavy
 # extras (genesis, groot, sonic).
 dev = [
-    "langgraph==1.2.12",
+    "langgraph==1.2.14",
     "langgraph-checkpoint-sqlite==3.1.1",
     # Parse real raw USD layers/variants in sensor-rig scene preflight tests.
     "usd-core==26.8",
@@ -172,7 +172,7 @@ dev = [
     # Isaac Arena replay validation and its unit fixtures use real HDF5 bytes.
     "h5py==3.16.0",
     # Marble collider preparation and robot mesh regression fixtures.
-    "trimesh==4.12.2",
+    "trimesh==5.1.1",
     # Selected-policy fixtures exercise real BF16 checkpoint bytes.
     "ml-dtypes>=0.5.1",
     # Exercise the OpenPI simulator's real wire codec in the finite-loop tests.
@@ -191,7 +191,7 @@ dev = [
 
 [dependency-groups]
 dev = [
-    "langgraph==1.2.12",
+    "langgraph==1.2.14",
     "langgraph-checkpoint-sqlite==3.1.1",
     "usd-core==26.8",
     "uvicorn>=0.52.4",
@@ -201,7 +201,7 @@ dev = [
     # Mirrors project.optional-dependencies.dev for `uv sync --group dev`.
     "imageio-ffmpeg==0.6.0",
     "h5py==3.16.0",
-    "trimesh==4.12.2",
+    "trimesh==5.1.1",
     "ml-dtypes>=0.5.1",
     "msgpack>=1.1.1,<2",
     "pytest>=9.0.3",

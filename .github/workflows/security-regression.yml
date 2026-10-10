@@ -426,7 +426,7 @@ jobs:
         run: printf '%s\n' "$GITHUB_SHA" > "$RUNNER_TEMP/validated-candidate.txt"
       - name: Publish validation identity
         if: github.event_name == 'pull_request'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: validated-candidate-${{ github.run_attempt }}-${{ github.sha }}
           path: ${{ runner.temp }}/validated-candidate.txt
@@ -469,7 +469,7 @@ jobs:
             --output-directory "${RUNNER_TEMP}/ci-timing-report"
           cat "${RUNNER_TEMP}/ci-timing-report/timing.md" >> "$GITHUB_STEP_SUMMARY"
       - name: Upload timing report
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ci-timing-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/ci-timing-report/
