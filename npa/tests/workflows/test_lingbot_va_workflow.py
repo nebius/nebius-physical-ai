@@ -479,6 +479,13 @@ def test_source_only_image_pins_the_distinct_cuda_contract_without_extra_accepta
     assert safetensors.specifier.contains(Version("0.8.0"))
     assert not safetensors.specifier.contains(Version("0.5.3"))
     assert "transformers==5.10.0" in requirements
+    huggingface_hub = next(
+        Requirement(line)
+        for line in requirements.splitlines()
+        if line.startswith("huggingface-hub")
+    )
+    assert huggingface_hub.specifier.contains(Version("1.5.0"))
+    assert not huggingface_hub.specifier.contains(Version("0.36.2"))
     assert "accelerate==" not in requirements
     assert "Pillow==12.3.0" in requirements
     assert "datasets==5.0.1" in requirements
