@@ -25,6 +25,18 @@
     "cache_env": "NPA_EMBODIEDGEN_RUNTIME_CACHE",
     "input_uri_env": "NPA_EMBODIEDGEN_INPUT_URI",
     "output_env": "NPA_SMOKE_OUTPUT_DIR",
+    "upstream_requirements": {
+      "path": "requirements.txt",
+      "sha256": "acd142fb1d6d87931a5b4c783110526acade67d641d01ab2660f1fece7af9157"
+    },
+    "validation_requirements": [
+      "numpy==1.26.4",
+      "Pillow==11.3.0",
+      "trimesh==4.11.1",
+      "imageio==2.37.4",
+      "imageio-ffmpeg==0.6.0",
+      "pybullet==3.2.7"
+    ],
     "credential_envs": ["NEBIUS_TOKEN_FACTORY_KEY", "NPA_TOKEN_FACTORY_API_KEY"],
     "baked": {
       "source": false,

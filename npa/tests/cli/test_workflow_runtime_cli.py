@@ -31,6 +31,7 @@ SPECS = REPO_ROOT / "workflows" / "testing"
 FANOUT = SPECS / "token-factory-parallel-fanout.yaml"
 GATE_LOOP = SPECS / "token-factory-gate-loop.yaml"
 PAIDF_COSMOS3 = REPO_ROOT / "workflows" / "main" / "paidf-cosmos3.yaml"
+EMBODIEDGEN = SPECS / "byof-embodiedgen.yaml"
 RUNNER = CliRunner()
 
 
@@ -1011,6 +1012,58 @@ def test_runtime_required_workflow_rejects_explicit_no_runtime(mocker) -> None:
             str(PAIDF_COSMOS3),
             "--run-id",
             "paidf-no-runtime",
+            "--no-runtime",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "requires runtime execution" in result.output
+    runtime_driver.assert_not_called()
+
+
+def test_embodiedgen_runtime_mode_is_selected_by_its_checked_in_spec(
+    fake_runtime, mocker
+) -> None:
+    preflight = mocker.patch(
+        "npa.cli.workbench.workflow._preflight_submit_images", return_value={}
+    )
+    mocker.patch("npa.orchestration.skypilot.workflow.ensure_local_api_daemon_health")
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(EMBODIEDGEN),
+            "--run-id",
+            "embodiedgen-runtime-required",
+            "--no-resolve-accelerators",
+            "--var",
+            "bucket=rt-bucket",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert fake_runtime["spec"].name == "byof-embodiedgen"
+    assert fake_runtime["spec"].metadata["executionMode"] == "runtime"
+    preflight.assert_called_once()
+
+
+def test_embodiedgen_runtime_mode_refuses_explicit_no_runtime(mocker) -> None:
+    runtime_driver = mocker.patch(
+        "npa.orchestration.npa_workflow.runtime.run_workflow_runtime"
+    )
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(EMBODIEDGEN),
+            "--run-id",
+            "embodiedgen-no-runtime",
             "--no-runtime",
         ],
     )

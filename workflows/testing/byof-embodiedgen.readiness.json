@@ -1,14 +1,15 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "a1fec374c9964026bddbc9dd6dd4ac16db7d2b02a96c4c8a18dd1793b798a111",
+  "workflow_sha256": "01749e68cb6945dedaea4b1c0bde0f6df9c1e7b1408c8ccae266a3aa17afdedc",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "The checked-in workflow validates, plans one workbench.byof.repo GPU state, and passes the production SkyPilot renderer without contacting a provider.",
+      "reason": "The checked-in workflow requires runtime execution, validates, plans one workbench.byof.repo GPU state, and passes the production SkyPilot renderer without contacting a provider. Generic CLI tests prove the spec selects runtime automatically and refuses incompatible --no-runtime, so the standard runtime owns all-declared-output completion validation.",
       "evidence": [
         "npa workbench workflow validate-spec workflows/testing/byof-embodiedgen.yaml --json",
         "npa workbench workflow plan-spec workflows/testing/byof-embodiedgen.yaml --run-id embodiedgen-review-plan --check-render --json",
-        "npa/tests/docker/test_embodiedgen_runtime.py"
+        "npa/tests/docker/test_embodiedgen_runtime.py",
+        "npa/tests/cli/test_workflow_runtime_cli.py"
       ]
     },
     "task_fidelity": {
@@ -17,7 +18,7 @@
       "evidence": [
         "npa/tests/docker/test_embodiedgen_runtime.py",
         "npa/tests/workflows/test_byof_solution_smokes.py",
-        "sha256:a1fec374c9964026bddbc9dd6dd4ac16db7d2b02a96c4c8a18dd1793b798a111 workflows/testing/byof-embodiedgen.yaml"
+        "sha256:01749e68cb6945dedaea4b1c0bde0f6df9c1e7b1408c8ccae266a3aa17afdedc workflows/testing/byof-embodiedgen.yaml"
       ]
     }
   },

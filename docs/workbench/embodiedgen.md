@@ -29,6 +29,7 @@ same capability boundary.
 | EmbodiedGen source | `HorizonRobotics/EmbodiedGen@f0124197888c2b733e4eaa65acd81ad9cfda3b79`, Apache-2.0, runtime fetched |
 | TRELLIS source | upstream gitlink `55a8e8164b195bbf927e0978f00e76c835e6011f`, MIT, runtime fetched |
 | TRELLIS model | `microsoft/TRELLIS-image-large@25e0d31ffbebe4b5a97464dd851910efc3002d96`, MIT, runtime fetched and receipt-verified |
+| Validation runtime | upstream `requirements.txt` SHA-256 `acd142fb…af9157`; pinned NumPy/Pillow/trimesh/ImageIO/ImageIO-FFmpeg/PyBullet imports are probed with a real MP4 encode/decode before the smoke |
 | Baked image | digest-pinned CUDA/OS bootstrap plus NPA fetch/validation code only; no source, model, task input, Python application dependencies, cache, output, or credential bytes |
 | Input and cache | worker-readable HTTPS or S3 image fetched into a run-local staging directory; fetched runtime cache is outside image layers and checked against receipts |
 | Outputs | run-scoped S3 objects; see [declared artifacts](#declared-input-and-output-contract) |
@@ -129,7 +130,7 @@ npa workbench workflow plan-spec workflows/testing/byof-embodiedgen.yaml \
 
 npa workbench workflow submit workflows/testing/byof-embodiedgen.yaml \
   --run-id "${RUN_ID}" --project "${PROJECT}" \
-  --workflow-s3-uri "${WORKFLOW_STATE_URI}" --durable-s3 --plan-only \
+  --workflow-s3-uri "${WORKFLOW_STATE_URI}" --durable-s3 --runtime --plan-only \
   --var "bucket=${OUTPUT_BUCKET}" \
   --var "input_uri=${INPUT_URI}" \
   --var "base_image=${IMAGE_REF}" \
@@ -137,7 +138,11 @@ npa workbench workflow submit workflows/testing/byof-embodiedgen.yaml \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY
 ```
 
-The first two commands are local schema/render checks. `submit --plan-only`
+The first two commands are local schema/render checks. The workflow declares
+`metadata.executionMode: runtime`; `--runtime` is stated explicitly so a human
+or agent cannot mistake durable S3 state for runtime execution. Runtime owns
+wave completion and verifies all six declared S3 outputs before completion;
+`--durable-s3` alone does not select that execution mode. `submit --plan-only`
 renders the same SkyPilot task without launching it. Just before a real submit,
 prove the target cluster can pull that exact private digest; this creates only a
 bounded, owned pull-probe pod and verifies its cleanup:
@@ -205,7 +210,7 @@ claim model-level resume.
 ```bash
 npa workbench workflow submit workflows/testing/byof-embodiedgen.yaml \
   --resume-run "${RUN_ID}" --project "${PROJECT}" \
-  --workflow-s3-uri "${WORKFLOW_STATE_URI}" --durable-s3 \
+  --workflow-s3-uri "${WORKFLOW_STATE_URI}" --durable-s3 --runtime \
   --var "bucket=${OUTPUT_BUCKET}" \
   --var "input_uri=${INPUT_URI}" \
   --var "base_image=${IMAGE_REF}" \

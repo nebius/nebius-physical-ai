@@ -22,6 +22,48 @@ MODEL_REVISION = "25e0d31ffbebe4b5a97464dd851910efc3002d96"
 SOURCE_URL = "https://github.com/HorizonRobotics/EmbodiedGen.git"
 TRELLIS_URL = "https://github.com/microsoft/TRELLIS.git"
 RUNTIME_NAME = "embodiedgen-v2-trellis"
+UPSTREAM_REQUIREMENTS_SHA256 = (
+    "acd142fb1d6d87931a5b4c783110526acade67d641d01ab2660f1fece7af9157"
+)
+
+# EmbodiedGen's pinned requirements.txt names these validation dependencies but
+# leaves several of them unversioned.  Pin the imports used by
+# capability_smoke.py after the upstream installer so the generated-view and
+# physics checks do not depend on a future resolver result.
+VALIDATION_REQUIREMENTS = (
+    "numpy==1.26.4",
+    "Pillow==11.3.0",
+    "trimesh==4.11.1",
+    "imageio==2.37.4",
+    "imageio-ffmpeg==0.6.0",
+    "pybullet==3.2.7",
+)
+BOOTSTRAP_REQUIREMENTS = (
+    "boto3==1.35.99",
+    "defusedxml==0.7.1",
+)
+VALIDATION_RUNTIME_PROBE = """from pathlib import Path
+import tempfile
+
+import imageio.v3 as iio
+import imageio_ffmpeg
+import numpy as np
+import pybullet_data
+import trimesh
+from PIL import Image
+
+assert Path(imageio_ffmpeg.get_ffmpeg_exe()).is_file()
+assert pybullet_data.getDataPath()
+assert trimesh.__version__
+assert Image
+with tempfile.TemporaryDirectory() as directory:
+    video = Path(directory) / "validation.mp4"
+    frame = np.zeros((16, 16, 3), dtype=np.uint8)
+    iio.imwrite(video, frame, fps=1)
+    assert video.is_file() and video.stat().st_size > 0
+    decoded = list(iio.imiter(video))
+    assert len(decoded) == 1 and decoded[0].shape == frame.shape
+"""
 
 
 def _read_manifest(path: Path) -> dict[str, Any]:
@@ -32,6 +74,14 @@ def _read_manifest(path: Path) -> dict[str, Any]:
         raise ValueError("unexpected TRELLIS source revision")
     if payload["backend"]["model_revision"] != MODEL_REVISION:
         raise ValueError("unexpected TRELLIS model revision")
+    runtime = payload["runtime"]
+    if runtime.get("upstream_requirements") != {
+        "path": "requirements.txt",
+        "sha256": UPSTREAM_REQUIREMENTS_SHA256,
+    }:
+        raise ValueError("unexpected EmbodiedGen requirements contract")
+    if runtime.get("validation_requirements") != list(VALIDATION_REQUIREMENTS):
+        raise ValueError("unexpected EmbodiedGen validation dependency contract")
     return payload
 
 
@@ -76,6 +126,17 @@ def _clone_exact(source: Path, url: str, revision: str) -> None:
     ).strip()
     if observed != revision:
         raise RuntimeError(f"source revision mismatch: {observed}")
+
+
+def _verify_upstream_requirements(source: Path) -> None:
+    requirements = source / "requirements.txt"
+    if (
+        not requirements.is_file()
+        or _sha256(requirements) != UPSTREAM_REQUIREMENTS_SHA256
+    ):
+        raise RuntimeError(
+            "EmbodiedGen requirements.txt does not match the pinned source"
+        )
 
 
 def _install_trellis(source: Path) -> Path:
@@ -161,6 +222,7 @@ def _prepare(cache: Path) -> tuple[Path, Path]:
     source, venv = runtime / "source", runtime / "venv"
     runtime.mkdir(parents=True, exist_ok=True)
     _clone_exact(source, SOURCE_URL, SOURCE_REVISION)
+    _verify_upstream_requirements(source)
     _install_trellis(source)
     _patch_trellis_only_import(source)
     _pin_install_script(source)
@@ -187,13 +249,22 @@ def _install(source: Path, venv: Path, cache: Path) -> None:
             "-m",
             "pip",
             "install",
-            "pybullet==3.2.7",
-            "boto3==1.35.99",
-            "defusedxml==0.7.1",
+            *VALIDATION_REQUIREMENTS,
+            *BOOTSTRAP_REQUIREMENTS,
         ],
         env=env,
     )
+    _verify_validation_runtime(venv, cache)
     _write_install_receipt(venv, marker, cache)
+
+
+def _verify_validation_runtime(venv: Path, cache: Path) -> None:
+    """Run the same import and MP4 encode/decode boundary as the smoke."""
+
+    _run(
+        [str(venv / "bin" / "python"), "-c", VALIDATION_RUNTIME_PROBE],
+        env=_venv_environment(venv, cache),
+    )
 
 
 def _venv_file_records(venv: Path) -> list[dict[str, str]]:
@@ -324,8 +395,10 @@ def _runtime_receipt(source: Path, venv: Path, cache: Path) -> Path:
     receipt = {
         "schema": "npa.embodiedgen.runtime-receipt.v1",
         "source_revision": SOURCE_REVISION,
+        "source_requirements_sha256": _sha256(source / "requirements.txt"),
         "trellis_revision": TRELLIS_REVISION,
         "trellis_model_revision": MODEL_REVISION,
+        "validation_requirements": list(VALIDATION_REQUIREMENTS),
         "source_path": str(source),
         "venv_path": str(venv),
         "install_marker_sha256": _sha256(venv / ".npa-embodiedgen-installed.json"),

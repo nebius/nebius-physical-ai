@@ -5,5 +5,13 @@
 - `microsoft/TRELLIS-image-large`, revision `25e0d31ffbebe4b5a97464dd851910efc3002d96` — MIT, runtime fetched.
 - `openbmb/MiniCPM-V-4_5` — Apache-2.0, hosted runtime request only.
 - NVIDIA CUDA 12.8 development base — NVIDIA CUDA Toolkit EULA; retained only in the operator-private image.
+- Validation runtime closure — `numpy==1.26.4` (BSD-3-Clause),
+  `Pillow==11.3.0` (MIT-CMU), `trimesh==4.11.1` (MIT),
+  `imageio==2.37.4` (BSD-2-Clause), `imageio-ffmpeg==0.6.0` (BSD-2-Clause
+  wrapper), and `pybullet==3.2.7` (zlib), all runtime fetched. The pinned
+  ImageIO FFmpeg wheel may carry its platform executable; it remains in the
+  operator runtime cache rather than the image, and its applicable binary terms
+  still govern any redistribution.
 
-The runtime dependency closure is recorded with each run's `pip freeze` receipt.
+The pinned EmbodiedGen `requirements.txt` hash, validation package list, and
+full runtime dependency closure are recorded with each run's receipt.

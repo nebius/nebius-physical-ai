@@ -47,7 +47,7 @@ supported handoff only; PyBullet is the simulator actually exercised.
 
 ## Operate through Workbench
 
-Run `validate-spec`, `plan-spec --check-render`, `submit --plan-only`, target
+Run `validate-spec`, `plan-spec --check-render`, `submit --runtime --plan-only`, target
 `preflight-images`, then submit with one matching `base_image` config value and
 `--image-override workbench.byof.repo=<same-digest>`. Reuse the same project,
 run ID, workflow S3 prefix, input URI, bucket, and image digest for status,

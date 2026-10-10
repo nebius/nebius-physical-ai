@@ -25,6 +25,7 @@ from npa.orchestration.npa_workflow.skypilot_render import (
     validate_image_override_selectors,
 )
 from npa.orchestration.npa_workflow.spec import load_spec
+from npa.orchestration.npa_workflow.submit import spec_requires_runtime
 from npa.orchestration.npa_workflow.submit_matrix import SUBMIT_LIVE_MATRIX
 
 
@@ -54,6 +55,13 @@ def test_manifest_pins_the_selected_upstream_components() -> None:
     assert payload["solution"]["license"] == "Apache-2.0"
     assert payload["backend"]["license"] == "MIT"
     assert payload["backend"]["model_revision"] == BOOTSTRAP.MODEL_REVISION
+    assert payload["runtime"]["upstream_requirements"] == {
+        "path": "requirements.txt",
+        "sha256": BOOTSTRAP.UPSTREAM_REQUIREMENTS_SHA256,
+    }
+    assert payload["runtime"]["validation_requirements"] == list(
+        BOOTSTRAP.VALIDATION_REQUIREMENTS
+    )
     assert payload["runtime"]["baked"] == {
         "source": False,
         "model": False,
@@ -71,6 +79,72 @@ def test_manifest_refuses_a_changed_model_revision(tmp_path: Path) -> None:
     path.write_text(json.dumps(payload))
     with pytest.raises(ValueError, match="model revision"):
         BOOTSTRAP._read_manifest(path)
+
+
+def test_manifest_refuses_a_changed_validation_dependency_contract(
+    tmp_path: Path,
+) -> None:
+    payload = json.loads((IMAGE / "runtime-manifest.json").read_text())
+    payload["runtime"]["validation_requirements"] = []
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="validation dependency contract"):
+        BOOTSTRAP._read_manifest(path)
+
+
+def test_runtime_bootstrap_pins_and_probes_validation_dependency_closure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    expected = (
+        "numpy==1.26.4",
+        "Pillow==11.3.0",
+        "trimesh==4.11.1",
+        "imageio==2.37.4",
+        "imageio-ffmpeg==0.6.0",
+        "pybullet==3.2.7",
+    )
+    assert BOOTSTRAP.VALIDATION_REQUIREMENTS == expected
+    assert "import imageio.v3 as iio" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
+    assert "import imageio_ffmpeg" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
+    assert "import numpy as np" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
+    assert "import pybullet_data" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
+    assert "import trimesh" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
+    assert "from PIL import Image" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
+    assert "iio.imwrite(video, frame, fps=1)" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
+    assert "iio.imiter(video)" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
+
+    calls: list[tuple[list[str], dict[str, str]]] = []
+
+    def record(argv: list[str], **kwargs) -> None:
+        calls.append((argv, kwargs["env"]))
+
+    monkeypatch.setattr(BOOTSTRAP, "_run", record)
+    venv = tmp_path / "venv"
+    cache = tmp_path / "cache"
+    BOOTSTRAP._verify_validation_runtime(venv, cache)
+    assert calls == [
+        (
+            [str(venv / "bin" / "python"), "-c", BOOTSTRAP.VALIDATION_RUNTIME_PROBE],
+            BOOTSTRAP._venv_environment(venv, cache),
+        )
+    ]
+
+
+def test_runtime_bootstrap_refuses_changed_upstream_requirements(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    requirements = tmp_path / "requirements.txt"
+    expected = b"pinned upstream requirements\n"
+    requirements.write_bytes(expected)
+    monkeypatch.setattr(
+        BOOTSTRAP,
+        "UPSTREAM_REQUIREMENTS_SHA256",
+        hashlib.sha256(expected).hexdigest(),
+    )
+    BOOTSTRAP._verify_upstream_requirements(tmp_path)
+    requirements.write_text("changed", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="requirements.txt"):
+        BOOTSTRAP._verify_upstream_requirements(tmp_path)
 
 
 def test_model_receipt_rejects_changed_cached_bytes(tmp_path: Path) -> None:
@@ -397,6 +471,8 @@ def test_input_uri_reaches_the_byof_shell_as_literal_data(tmp_path: Path) -> Non
 
 def test_workflow_declares_worker_input_and_generated_asset_outputs() -> None:
     spec = load_spec(WORKFLOW)
+    assert spec.metadata["executionMode"] == "runtime"
+    assert spec_requires_runtime(spec)
     state = spec.states["byof-run"]
     assert [(item.uri, item.schema) for item in state.inputs] == [
         ("{{config.input_uri}}", "image/*")

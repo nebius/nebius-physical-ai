@@ -2,6 +2,7 @@ apiVersion: npa.workflow/v0.0.1
 kind: Workflow
 metadata:
   name: byof-embodiedgen
+  executionMode: runtime
   description: >
     Operator-private EmbodiedGen V2.1.0 image-to-rigid-object workflow. It runs
     the upstream img3d-cli TRELLIS backend, exports its URDF/collision meshes,
