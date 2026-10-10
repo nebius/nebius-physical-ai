@@ -1,0 +1,63 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "1e0dfb1c2b41dee58a34f4369d962d6694d4c69336d0300760f948b919dfdcf0",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Schema validation and native render checks passed for the complete workflow.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/physical-prompt-comparison.yaml --json",
+        "npa workbench workflow plan-spec workflows/testing/physical-prompt-comparison.yaml --run-id physical-prompt-comparison-validation --check-render --json"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Original scenarios and assertions are frozen before full Wan generation; three arms share each seed, and evaluation verifies exact coverage.",
+      "evidence": [
+        "npa/tests/workflows/test_physical_prompt_comparison.py",
+        "docs/workbench/physical-prompt-comparison.md"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "verified",
+      "reason": "All four stage manifests passed complete storage readback; all 36 original videos and the gallery matched native SHA-256 receipts.",
+      "evidence": [
+        "docs/workbench/physical-prompt-comparison-validation.md",
+        "docs/workbench/validation/physical-prompt-comparison.json"
+      ]
+    },
+    "worker_input": {
+      "status": "verified",
+      "reason": "Pinned Wan weights loaded on both GPU workers; six real model-produced physical descriptions and negative prompts were frozen in the shared recipe before generation.",
+      "evidence": [
+        "docs/workbench/physical-prompt-comparison-validation.md",
+        "docs/workbench/validation/physical-prompt-comparison.json"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "Project, S3 and Token Factory credential checks passed on the Linux operator host; Kubernetes service-account access verified.",
+      "evidence": [
+        "Private operator health and ownership checks, 2026-10-02"
+      ]
+    },
+    "source_image": {
+      "status": "verified",
+      "reason": "Pinned accepted Diffusers runtime passed image pull and bootstrap compatibility preflight; staged NPA source supplies this experiment.",
+      "evidence": [
+        "workflows/testing/physical-prompt-comparison.yaml",
+        "Private image preflight record, 2026-10-02"
+      ]
+    },
+    "target_runtime": {
+      "status": "verified",
+      "reason": "Historical full SkyPilot qualification on two RTX PRO 6000 GPUs: 36 full 720p/81-frame/50-step videos and 108 verdicts. Native generation settings and scoring are unchanged by the descriptive namespace rename; see the qualification guide for the evidence boundary.",
+      "evidence": [
+        "docs/workbench/physical-prompt-comparison-validation.md",
+        "docs/workbench/validation/physical-prompt-comparison.json"
+      ]
+    }
+  }
+}

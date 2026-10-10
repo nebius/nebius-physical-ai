@@ -204,34 +204,10 @@ def validate_video(video: Path, expected_frames: int) -> dict:
     }
 
 
-def generate_video(
-    solution: str, prompt: str, seed: int, output_dir: Path, negative_prompt: str = ""
-) -> dict:
-    """Execute native text-to-video inference and validate its resulting MP4.
-
-    Args:
-        solution: One of the reviewed MODELS keys.
-        prompt: Text describing the requested video.
-        seed: Reproducible generator seed.
-        output_dir: Writable, run-scoped artifact directory.
-        negative_prompt: Optional text passed to native negative conditioning.
-
-    Returns:
-        Capability evidence including model identity and decoded output.
-
-    Raises:
-        ValueError: Invalid generation controls.
-        RuntimeError: GPU execution or decoded-media validation fails.
-    """
-    model = validate_request(solution, prompt, seed)
-    if not isinstance(negative_prompt, str):
-        raise ValueError("Negative prompt must be text")
+def _render_video(pipeline, model, prompt, negative_prompt, seed, output_dir):
     import torch
     from diffusers.utils import export_to_video
 
-    runtime = cuda_inventory()
-    output_dir.mkdir(parents=True, exist_ok=True)
-    pipeline = _pipeline(model)
     options = dict(
         prompt=prompt,
         num_frames=model.frames,
@@ -243,17 +219,69 @@ def generate_video(
     )
     if negative_prompt:
         options["negative_prompt"] = negative_prompt
+    output_dir.mkdir(parents=True, exist_ok=True)
+    video = output_dir / "video.mp4"
     started = time.monotonic()
     with torch.inference_mode():
         frames = pipeline(**options).frames[0]
-    video = output_dir / "video.mp4"
     export_to_video(frames, str(video), fps=model.fps)
     observed = validate_video(video, model.frames)
-    evidence = _evidence(
-        solution, model, prompt, seed, runtime, observed, time.monotonic() - started
+    return observed, time.monotonic() - started
+
+
+def generate_video(
+    solution: str,
+    prompt: str,
+    seed: int,
+    output_dir: Path,
+    negative_prompt: str = "",
+    *,
+    pipeline=None,
+) -> dict:
+    """Execute native text-to-video inference and validate its resulting MP4.
+
+    Args:
+        solution: One of the reviewed MODELS keys.
+        prompt: Text describing the requested video.
+        seed: Reproducible generator seed.
+        output_dir: Writable, run-scoped artifact directory.
+        negative_prompt: Optional text passed to native negative conditioning.
+        pipeline: Optional already-loaded native pipeline for this exact solution.
+
+    Returns:
+        Capability evidence including model identity and decoded output.
+
+    Raises:
+        ValueError: Invalid generation controls.
+        RuntimeError: GPU execution or decoded-media validation fails.
+    """
+    model = validate_request(solution, prompt, seed)
+    if not isinstance(negative_prompt, str):
+        raise ValueError("Negative prompt must be text")
+    runtime = cuda_inventory()
+    pipeline = pipeline if pipeline is not None else _pipeline(model)
+    observed, elapsed = _render_video(
+        pipeline, model, prompt, negative_prompt, seed, output_dir
     )
+    evidence = _evidence(solution, model, prompt, seed, runtime, observed, elapsed)
     evidence["negative_prompt"] = negative_prompt
     return evidence
+
+
+def load_video_pipeline(solution: str):
+    """Load one pinned native model for a sequence of generation requests.
+
+    Args:
+        solution: Reviewed key in MODELS.
+    Returns:
+        CUDA pipeline using the pinned checkpoint and native scheduler.
+    Raises:
+        ValueError: The solution is unknown.
+        RuntimeError: CUDA or checkpoint loading fails.
+    """
+    model = validate_request(solution, "pipeline initialization", 0)
+    cuda_inventory()
+    return _pipeline(model)
 
 
 def _evidence(solution, model, prompt, seed, runtime, observed, elapsed):

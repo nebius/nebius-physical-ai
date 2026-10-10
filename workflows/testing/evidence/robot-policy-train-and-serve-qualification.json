@@ -1,0 +1,124 @@
+{
+  "schema": "npa.policy-public.qualification.v1",
+  "qualified": true,
+  "runtime_source_commit": "7f8699ab12748831cad85e8ae3aa8c615aa422ae",
+  "workflow_yaml_sha256": "1cf8be2723820a7f5031f231c2742faefefd8b45519a44e0f52c0f97e5b8e244",
+  "resolved_workflow_sha256": "3623f3bfa0622ff275df96f3fcec3e5a1f1e7d8eec3845b23f73ba614e9e2e03",
+  "checkpoint_sha256": "2816ed27b32ff3329b5e513a61bfa7b7fdd51b47fcbd77b1c0c0f56ace2ef306",
+  "training": [
+    {
+      "phase": "pretrain",
+      "iteration": 1,
+      "training_episodes": 1477,
+      "training_frames": 238494,
+      "resumed": false,
+      "input_checkpoint_sha256": "71d9563c8295284acba8fc2d5c19de000d6fe9ba58a406832af7ef3d221ed52f",
+      "checkpoint_sha256": "b7898d46d07605b6eec269cd57ac8a4256460db01c93f3869bda79f2d5ab969a",
+      "runtime": {
+        "gpu": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+        "parameters": 604934176,
+        "rank": 0,
+        "torch": "2.11.0+cu130",
+        "trainable_parameters": 97451872,
+        "world_size": 1
+      },
+      "optimizer_updates": 3727,
+      "recorded_updates": 3727
+    },
+    {
+      "phase": "finetune",
+      "iteration": 1,
+      "training_episodes": 39,
+      "training_frames": 3889,
+      "resumed": false,
+      "input_checkpoint_sha256": "b7898d46d07605b6eec269cd57ac8a4256460db01c93f3869bda79f2d5ab969a",
+      "checkpoint_sha256": "2816ed27b32ff3329b5e513a61bfa7b7fdd51b47fcbd77b1c0c0f56ace2ef306",
+      "runtime": {
+        "gpu": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+        "parameters": 604934176,
+        "rank": 0,
+        "torch": "2.11.0+cu130",
+        "trainable_parameters": 97451872,
+        "world_size": 1
+      },
+      "optimizer_updates": 2431,
+      "recorded_updates": 2431
+    }
+  ],
+  "gates": [
+    {
+      "phase": "finetune",
+      "iteration": 1,
+      "decision": "promote_checkpoint",
+      "successes": 7,
+      "trials": 10,
+      "minimum_success": 0.7,
+      "checkpoint_sha256": "2816ed27b32ff3329b5e513a61bfa7b7fdd51b47fcbd77b1c0c0f56ace2ef306"
+    },
+    {
+      "phase": "pretrain",
+      "iteration": 1,
+      "decision": "promote_checkpoint",
+      "successes": 7,
+      "trials": 10,
+      "minimum_success": 0.7,
+      "checkpoint_sha256": "b7898d46d07605b6eec269cd57ac8a4256460db01c93f3869bda79f2d5ab969a"
+    }
+  ],
+  "deployment": {
+    "trials": 10,
+    "successes": 9,
+    "steps": 947,
+    "new_action_chunks": 99,
+    "simulation_rendering": "NVIDIA EGL"
+  },
+  "workers": [
+    {
+      "stage": "serve-server",
+      "engine": "smolvla-http",
+      "rank": 0,
+      "workers": 2,
+      "checkpoint_sha256": "2816ed27b32ff3329b5e513a61bfa7b7fdd51b47fcbd77b1c0c0f56ace2ef306"
+    },
+    {
+      "stage": "serve-client",
+      "engine": "native-libero-nvidia-egl",
+      "rank": 1,
+      "workers": 2,
+      "checkpoint_sha256": "2816ed27b32ff3329b5e513a61bfa7b7fdd51b47fcbd77b1c0c0f56ace2ef306"
+    }
+  ],
+  "prior_pilot": {
+    "run_id": "policy-public-2a133f70",
+    "specialist_epochs": 10,
+    "deployment_successes": 5,
+    "trials": 10,
+    "steps": 1757,
+    "all_actions_reconciled": true,
+    "qualified": false
+  },
+  "public_data_only": true,
+  "slurm_used": false,
+  "physical_robot_tested": false,
+  "concurrent_clients_tested": false,
+  "retry_iterations_observed": 0,
+  "artifact_sha256": {
+    "demo.html": "ff27d1765a9d2bb897cfc252ac3675b78c45e74085267d5b51fed168a7b8c739",
+    "demo.mp4": "28edf7075c1feca4b9c4502b999397eecf700eab08cf9b55eb6b74ad47dcbdfc",
+    "proof.json": "8642f1647fdb89c7528e1714e8b7d02b22a0a4c2da47d7512b3f0bc46d065528"
+  },
+  "validation": {
+    "live_e2e_tests": {
+      "passed": 3,
+      "file": "npa/tests/e2e/test_policy_public_live.py"
+    },
+    "offline_html": {
+      "offline": true,
+      "network_requests": 0,
+      "javascript_errors": 0,
+      "chapter_selection": true,
+      "video_playback": true,
+      "mobile_overflow": false
+    }
+  }
+}
