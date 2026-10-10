@@ -102,6 +102,7 @@ ENV WANDB_MODE=disabled \
     WANDB_DISABLED=true \
     HF_HUB_DISABLE_TELEMETRY=1 \
     NPA_LEROBOT_VERSION=0.6.1 \
+    NPA_BAKED_PYTHON=/opt/lerobot/venv/bin/python \
     PYTHONPATH=/opt/vla-jepa-npa/src \
     HOME=/home/ubuntu \
     PATH=/usr/bin:/opt/lerobot/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/sbin:/bin

@@ -176,6 +176,63 @@ def test_candidate_image_declares_and_implements_skypilot_bootstrap_contract() -
     assert "lerobot-vla-jepa" in SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS
 
 
+def test_candidate_baked_vendor_python_matches_prepare_render(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The baked-only prepare stage must not fall back to system ``python3``.
+
+    The candidate intentionally puts ``/usr/bin`` first for SkyPilot's bootstrap
+    tools, while VLA-JEPA and its NPA adapter live in LeRobot's vendor venv.  The
+    baked-stage renderer records ``NPA_BAKED_PYTHON`` and the run shell then
+    shadows the catalog's ``python3`` with that recorded interpreter.
+    """
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        SkypilotRenderOptions,
+        render_skypilot_yaml,
+    )
+    from npa.orchestration.npa_workflow.submit import merge_config_overrides
+
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+    assert "NPA_BAKED_PYTHON=/opt/lerobot/venv/bin/python" in dockerfile
+    assert "PATH=/usr/bin:/opt/lerobot/venv/bin:" in dockerfile
+
+    # Render an otherwise normal workflow with syntactically valid local values;
+    # rendering is pure and does not contact the source/object-store URI.
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example.invalid/npa-src")
+    spec = merge_config_overrides(
+        load_spec(WORKFLOW),
+        {
+            "vla_jepa_image": (
+                "registry.example.invalid/operator/npa-lerobot-vla-jepa@sha256:"
+                + "a" * 64
+            ),
+            "bucket": "unit-bucket",
+            "prefix": "unit-prefix",
+            "require_baked_npa": True,
+            "source_sha": "a" * 40,
+        },
+    )
+    rendered = render_skypilot_yaml(
+        spec,
+        build_plan(spec, run_id="vla-baked-interpreter-test"),
+        run_id="vla-baked-interpreter-test",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+    )
+    documents = [document for document in yaml.safe_load_all(rendered) if document]
+    prepare = next(
+        document
+        for document in documents
+        if document["name"].endswith("prepare")
+    )
+    assert 'npa_baked_python="${NPA_BAKED_PYTHON:-}"' in prepare["setup"]
+    assert 'printf \'%s\\n\' "$npa_baked_python" > /tmp/npa-python' in prepare[
+        "setup"
+    ]
+    assert "/tmp/npa-shim/python3" in prepare["run"]
+    assert "python3 -m npa.workflows.lerobot_vla_jepa prepare" in prepare["run"]
+
+
 def test_task_disjoint_split_and_numeric_training_statistics() -> None:
     """Held-out tasks cannot leak into the train episode set or its statistics."""
     by_task = {0: [0, 1], 1: [2, 3], 2: [4, 5]}
