@@ -114,9 +114,15 @@ For a restricted alternative, set `rbac.manageRbacPolicies: false` and configure
 `kubernetes.remote_identity` in the SkyPilot server configuration to use an
 explicitly provisioned workload service account. The operator must provision
 and bind that identity within the approved workload namespace. Disabling policy
-management alone is not a complete replacement configuration. This alternative
-has only been rendered, not qualified for live execution; require a completed
-CPU job that verifies the intended workload identity and namespace before use.
+management alone is not a complete replacement configuration. It also leaves
+DaemonSet management in `skypilot-system` enabled. To remove that grant too, set
+`rbac.manageSystemComponents: false`. That disables automatic system-component
+management, including the support needed for object-store mounting; provision
+those components separately or do not use workloads that require them. Review
+the remaining pod permissions and the cluster's workload admission policy.
+These alternatives have only been rendered, not qualified for live execution;
+require a completed CPU job that verifies the intended workload identity and
+namespace before use, plus mounting checks if that capability is required.
 
 Authentication and user management run in SkyPilot itself. Basic-auth nginx
 annotations do not protect a different ingress controller. The initial secret
