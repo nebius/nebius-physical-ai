@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation
 import fcntl
 import hashlib
@@ -46,6 +46,18 @@ class KubernetesGpuCatalogError(RuntimeError):
 
 class PendingGpuPlacementError(KubernetesGpuCatalogError):
     """Active unbound GPU demand makes shared placement indeterminate."""
+
+
+class SkyPilotGpuLabelError(KubernetesGpuCatalogError):
+    """Signal that native capacity fits but reviewed SkyPilot labels do not.
+
+    Args:
+        *args: Error context retained in the exception's diagnostic text.
+    Returns:
+        None.
+    Raises:
+        None.
+    """
 
 
 class UnsatisfiableAcceleratorError(ValueError):
@@ -1381,6 +1393,269 @@ def _known_skypilot_label(labels: dict[str, str]) -> str:
             # entry is added in mixed case.
             return _KNOWN_SKYPILOT_LABELS[normalized].lower()
     return ""
+
+
+_SKYPILOT_0122_CANONICAL_GPU_NAMES = (
+    "GB300",
+    "GB200",
+    "B300",
+    "B200",
+    "B100",
+    "GH200",
+    "H200",
+    "H100-80GB",
+    "H100-MEGA",
+    "H100",
+    "A100-80GB",
+    "A100",
+    "A10G",
+    "A10",
+    "A16",
+    "A30",
+    "A40",
+    "RTX6000-Ada",
+    "L40S",
+    "L40",
+    "L4",
+    "A6000",
+    "A5000",
+    "A4000",
+    "V100-32GB",
+    "V100",
+    "P100",
+    "P40",
+    "P4000",
+    "P4",
+    "T4g",
+    "T4",
+    "K80",
+    "M60",
+)
+
+# This order and the validation/matching below mirror the pinned SkyPilot
+# 0.12.2 existing-node ``LABEL_FORMATTER_REGISTRY`` and
+# ``get_accelerator_label_key_values`` path.  Keep this local mirror strict:
+# the preflight must model the selector that SkyPilot will render, not choose a
+# convenient label per node.
+_SKYPILOT_0122_FORMATTER_KEYS = (
+    ("sky", ("skypilot.co/accelerator",)),
+    (
+        "gke",
+        (
+            "cloud.google.com/gke-accelerator",
+            "cloud.google.com/gke-tpu-accelerator",
+        ),
+    ),
+    ("karpenter", ("karpenter.k8s.aws/instance-gpu-name",)),
+    ("gfd", ("nvidia.com/gpu.product",)),
+    ("coreweave", ("gpu.nvidia.com/class",)),
+    ("nebius", ("nebius.com/gpu-name",)),
+)
+
+
+def _gke_label_accelerator(value: str) -> str:
+    if value.startswith("nvidia-tesla-"):
+        return value.replace("nvidia-tesla-", "").upper()
+    if value.startswith("nvidia-"):
+        accelerator = value.replace("nvidia-", "").upper()
+        if accelerator == "H100-80GB":
+            return "H100"
+        if accelerator == "H200-141GB":
+            return "H200"
+        return accelerator
+    normalized_tpu = value
+    for pattern, replacement in (
+        (r"^tpu-v6e-\d+$", "tpu-v6e-slice"),
+        (r"^tpu-v5p-\d+$", "tpu-v5p-slice"),
+        (r"^tpu-v5litepod-\d+$", "tpu-v5-lite-podslice"),
+        (r"^tpu-v5lite-\d+$", "tpu-v5-lite-device"),
+        (r"^tpu-v4-\d+$", "tpu-v4-podslice"),
+    ):
+        if re.match(pattern, value):
+            normalized_tpu = replacement
+            break
+    if normalized_tpu in {
+        "tpu-v4-podslice",
+        "tpu-v5-lite-device",
+        "tpu-v5-lite-podslice",
+        "tpu-v5p-slice",
+        "tpu-v6e-slice",
+    }:
+        return value
+    if value == "":
+        return ""
+    raise ValueError(f"invalid GKE accelerator label {value!r}")
+
+
+def _gfd_label_accelerator(value: str) -> str:
+    for canonical_name in _SKYPILOT_0122_CANONICAL_GPU_NAMES:
+        if canonical_name == "A100-80GB" and re.search(r"A100.*-80GB", value):
+            return canonical_name
+        if canonical_name == "H100-80GB" and re.search(r"H100.*-80GB", value):
+            return canonical_name
+        if re.search(rf"\b{re.escape(canonical_name)}\b", value):
+            return canonical_name
+    return (
+        value.upper()
+        .replace("NVIDIA-", "")
+        .replace("GEFORCE-", "")
+        .replace("RTX-", "RTX")
+    )
+
+
+def _formatter_label_valid(formatter: str, value: str) -> bool:
+    if formatter in {"sky", "karpenter"}:
+        return value == value.lower()
+    if formatter == "nebius":
+        return value == value.upper()
+    if formatter == "gke":
+        try:
+            _gke_label_accelerator(value)
+        except ValueError:
+            return False
+    return True
+
+
+def _formatter_inventory_labels(
+    inventory: KubernetesGpuInventory,
+) -> tuple[dict[str, str], ...]:
+    """Return one ordered observed-label map per node for formatter mirroring."""
+
+    if inventory.node_labels:
+        return tuple(inventory.node_labels.values())
+    # Production discovery records ``node_labels`` for every named node. The
+    # fallback keeps direct SDK callers and hermetic inventories truthful when
+    # their sole observed label source is the immutable node record.
+    return tuple(dict(node.labels) for node in inventory.nodes)
+
+
+def _select_skypilot_formatter(
+    inventory: KubernetesGpuInventory,
+) -> tuple[str, tuple[str, ...]] | None:
+    """Mirror pinned SkyPilot's ordered context formatter discovery."""
+
+    node_labels = _formatter_inventory_labels(inventory)
+    for formatter, keys in _SKYPILOT_0122_FORMATTER_KEYS:
+        invalid = False
+        for labels in node_labels:
+            for key, value in labels.items():
+                if key not in keys:
+                    continue
+                if not value.strip():
+                    continue
+                if _formatter_label_valid(formatter, value):
+                    return formatter, keys
+                invalid = True
+                break
+            if invalid:
+                break
+    return None
+
+
+def _formatter_accelerator(formatter: str, value: str) -> str:
+    if formatter == "gfd":
+        return _gfd_label_accelerator(value)
+    if formatter == "gke":
+        return _gke_label_accelerator(value)
+    if formatter == "coreweave":
+        return {"H100_NVLINK_80GB": "H100"}.get(value, value)
+    # SkyPilot, Karpenter and Nebius each use their raw label uppercased.  In
+    # particular, Nebius never substitutes a local RTX alias here.
+    return value.upper()
+
+
+def _skypilot_accelerator_matches(requested: str, viable_names: list[str]) -> bool:
+    requested_lower = requested.lower()
+    for viable in viable_names:
+        viable_lower = viable.lower()
+        if requested_lower == viable_lower:
+            return True
+        shorter, longer = (
+            (requested_lower, viable_lower)
+            if len(requested_lower) <= len(viable_lower)
+            else (viable_lower, requested_lower)
+        )
+        if len(longer) > len(shorter) and longer.startswith(shorter):
+            if longer[len(shorter)] == "-":
+                return True
+    return False
+
+
+def skypilot_label_ready_nodes(
+    inventory: KubernetesGpuInventory, accelerator: str
+) -> tuple[KubernetesGpuNode, ...]:
+    """Select nodes accepted by SkyPilot's effective context label formatter.
+
+    Args:
+        inventory: Node labels observed in one Kubernetes context.
+        accelerator: The requested SkyPilot accelerator specification.
+    Returns:
+        Nodes whose reviewed labels are compatible with the selected formatter.
+    Raises:
+        None.
+    """
+    selected = _select_skypilot_formatter(inventory)
+    if selected is None:
+        return ()
+    formatter, keys = selected
+    node_labels = _formatter_inventory_labels(inventory)
+    for labels in node_labels:
+        for key, value in labels.items():
+            if key in keys and not _formatter_label_valid(formatter, value):
+                return ()
+    requested = parse_accelerator_request(accelerator).name
+    target: tuple[str, str] | None = None
+    for labels in node_labels:
+        for key, value in labels.items():
+            if key not in keys:
+                continue
+            resolved = _formatter_accelerator(formatter, value)
+            if _skypilot_accelerator_matches(requested, [value, resolved]):
+                target = key, value
+                break
+        if target is not None:
+            break
+    if target is None:
+        return ()
+    label_key, label_value = target
+    return tuple(
+        node
+        for node in inventory.nodes
+        if dict(node.labels).get(label_key) == label_value
+    )
+
+
+def preflight_skypilot_gpu_gang(
+    inventory: KubernetesGpuInventory, **requirements: object
+) -> dict[str, object]:
+    """Require native free capacity and effective SkyPilot bridge labels.
+
+    Args:
+        inventory: Actual node labels and free resources in the selected context.
+        requirements: Arguments accepted by ``preflight_kubernetes_gpu_gang``.
+    Returns:
+        Existing-capacity evidence restricted to SkyPilot-compatible nodes.
+    Raises:
+        SkyPilotGpuLabelError: Reviewed bridge labels cannot place this task.
+        KubernetesGpuCatalogError: The native inventory is unverifiable.
+        UnsatisfiableAcceleratorError: The native resource requirements do not fit.
+    """
+    native_fit = preflight_kubernetes_gpu_gang(inventory, **requirements)
+    accelerator = str(requirements["accelerator"])
+    eligible = skypilot_label_ready_nodes(inventory, accelerator)
+    if eligible == inventory.nodes:
+        return native_fit
+    try:
+        return preflight_kubernetes_gpu_gang(
+            replace(inventory, nodes=eligible), **requirements
+        )
+    except UnsatisfiableAcceleratorError as exc:
+        raise SkyPilotGpuLabelError(
+            "Native GPU capacity fits, but reviewed GPU nodes cannot satisfy "
+            "SkyPilot's effective accelerator selector for this task. Re-run "
+            "the supported GPU setup for the exact context with "
+            "label_known_gpus=True; submission preflight does not modify node labels."
+        ) from exc
 
 
 def label_known_kubernetes_gpus_for_skypilot(
