@@ -108,6 +108,7 @@ RUN python3 -m venv /opt/genesis/venv \
       "jinja2==3.1.6" \
       "pyarrow==24.0.0" \
     && /opt/genesis/venv/bin/pip install --no-cache-dir --no-deps --upgrade "pillow>=12.3.0,<13.0" \
+    && /opt/genesis/venv/bin/pip install --no-cache-dir --no-deps --upgrade "fsspec==2026.6.0" \
     && /opt/genesis/venv/bin/python /opt/genesis/prepare-public-runtime.py \
       --site-packages /opt/genesis/venv/lib/python3.10/site-packages --check-only \
     && /opt/genesis/venv/bin/python /opt/genesis/prepare-public-policies.py \
