@@ -274,14 +274,16 @@ def test_cleanup_failure_does_not_mask_primary_live_loop_error(
         antioch.run_live_loop(config)
 
 
-def test_live_loop_parser_has_bounded_wait_defaults_and_overrides() -> None:
+def test_live_loop_parser_has_bounded_wait_defaults_and_overrides(
+    tmp_path: Path,
+) -> None:
     parser = antioch.build_parser()
     required = [
         "live-loop",
         "--project-dir",
-        "/tmp/project",
+        str(tmp_path / "project"),
         "--cache-dir",
-        "/tmp/cache",
+        str(tmp_path / "cache"),
         "--image",
         "local/openpi:test",
         "--policy-host",
@@ -306,7 +308,7 @@ def test_live_loop_parser_has_bounded_wait_defaults_and_overrides() -> None:
 
 
 def test_main_emits_sanitized_structured_error(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
     monkeypatch.setattr(
         antioch,
@@ -317,7 +319,13 @@ def test_main_emits_sanitized_structured_error(
     )
 
     status = antioch.main(
-        ["build-image", "--openpi-dir", "/tmp/openpi", "--image", "local/openpi:test"]
+        [
+            "build-image",
+            "--openpi-dir",
+            str(tmp_path / "openpi"),
+            "--image",
+            "local/openpi:test",
+        ]
     )
     result = json.loads(capsys.readouterr().err)
 
