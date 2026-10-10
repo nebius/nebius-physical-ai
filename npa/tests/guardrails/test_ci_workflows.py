@@ -156,6 +156,30 @@ def test_merge_queue_suite_is_sharded_and_scheduled_audit_keeps_compatibility() 
         assert "npa/tests/test_anyio_security_regressions.py" in regression["run"]
 
 
+@pytest.mark.parametrize("version", ["3.10", "3.14"])
+def test_recent_stdlib_failures_run_in_focused_compatibility(version):
+    """Keep recent failures covered without expanding the queue shard matrix.
+
+    Args:
+        version: Supported compatibility interpreter.
+    Returns:
+        None.
+    Raises:
+        AssertionError: A focused regression is removed from CI.
+    """
+    regression = _step("test.yml", "browser-mocked", f"Run Python {version}")
+    for path in (
+        "npa/tests/test_python_compatibility.py",
+        "npa/tests/scripts/test_vlm_audit_live_recheck.py::test_actual_evidence_symlink_loop_is_sanitized",
+        "npa/tests/scripts/test_vlm_paired_audit_live_recheck.py::test_actual_entrypoint_symlink_loop_target_is_sanitized",
+        "npa/tests/scripts/test_vlm_provenance_live_recheck.py::test_sampling_output_resolution_also_sanitizes_real_symlink_loop",
+        "npa/tests/workbench/test_vlm_benchmark_rubric_paths.py",
+        "npa/tests/agent_eval/test_specialist_observation_recovery.py::test_commit_failure_rolls_back_both_resolution_and_history",
+        "npa/tests/agent_eval/test_specialist_observation_recovery.py::test_sqlite_failure_is_classified_without_raw_text",
+    ):
+        assert path in regression["run"]
+
+
 def test_compatibility_regressions_run_before_heavy_dependencies() -> None:
     job = _load_workflow("test.yml")["jobs"]["test"]
     steps = job["steps"]
@@ -499,6 +523,31 @@ def test_dependabot_does_not_edit_generated_ci_constraints() -> None:
     ]
     assert len(pip_updates) == 1
     assert "/npa/ci" not in pip_updates[0]["directories"]
+    # Omitting /npa/ci alone still lets the parent /npa scan edit these files.
+    assert "ci/**" in pip_updates[0].get("exclude-paths", [])
+
+
+def test_dependabot_preserves_manually_qualified_runtimes() -> None:
+    """Require explicit qualification before changing coupled runtime pins.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Automation can replace a deliberately qualified runtime.
+    """
+    configuration = yaml.safe_load((REPO_ROOT / ".github/dependabot.yml").read_text())
+    for update in configuration["updates"]:
+        directories = update.get("directories", [update.get("directory")])
+        if update["package-ecosystem"] != "pip" or "/npa" not in directories:
+            continue
+        ignored = {
+            item["dependency-name"]
+            for item in update.get("ignore", [])
+            if set(item) == {"dependency-name"}
+        }
+        assert {"torch", "mujoco"} <= ignored
 
 
 def test_compatibility_checks_cannot_be_deferred_until_the_queue() -> None:

@@ -32,6 +32,7 @@ from typing import Any, Callable
 
 import yaml  # type: ignore[import-untyped]
 
+from npa.cluster.gpu_health import resolve_graphics_smoke_image
 from npa.cluster_backends.process import (
     require_bin as _require_bin,
     run_capture as _run_capture,
@@ -1433,6 +1434,17 @@ def deploy_fleet(
     )
     selected_projects = kwargs.get("only_projects")
     selected_clusters = kwargs.get("only_clusters")
+    for project, cluster in spec.cluster_targets():
+        if not _project_in_scope(project, selected_projects, selected_prefix):
+            continue
+        if selected_clusters and cluster.name not in selected_clusters:
+            continue
+        if (
+            cluster.backend_name() == "mk8s"
+            and cluster.gpu_graphics_smoke
+            and cluster.gpu_count() > 0
+        ):
+            resolve_graphics_smoke_image(cluster.gpu_graphics_smoke_image)
     # Storage quota checks and reconciliation currently run through mk8s.
     # Reject unsupported selections before either backend can mutate state.
     for project in spec.projects:

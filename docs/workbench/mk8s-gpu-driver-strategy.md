@@ -61,9 +61,11 @@ single explicit profile instead of assembling independent platform, preset, and
 driver flags:
 
 ```bash
-npa cluster up --gpu-workload-profile rtx-rendering
+npa cluster up --gpu-workload-profile rtx-rendering \
+  --gpu-graphics-smoke-image '<reviewed-registry>/graphics@sha256:<64-hex-digest>'
 # or, for additive project setup:
-npa provision-if-absent --gpu-workload-profile rtx-rendering
+npa provision-if-absent --gpu-workload-profile rtx-rendering \
+  --gpu-graphics-smoke-image '<reviewed-registry>/graphics@sha256:<64-hex-digest>'
 ```
 
 The marketplace driver defaults may omit zonal RTX selectors. NPA supplies an
@@ -81,21 +83,39 @@ shapes select the supported NVIDIA GPU Operator mounted-driver path. The
 8-GPU RTX preset is not an SXM/NVL fabric topology, so GPU-cluster/InfiniBand
 settings remain disabled.
 It also makes graphics readiness mandatory. After the ordinary stability and
-per-node CUDA vectorAdd gates, NPA runs an immutable, payload-clean RTX image
+per-node CUDA vectorAdd gates, NPA runs the selected graphics probe image
 with `runtimeClassName: nvidia` and `NVIDIA_DRIVER_CAPABILITIES=all` on every
 requested GPU node. The pod must dynamically load `libGLX_nvidia.so.0` and
 `libEGL_nvidia.so.0`, create a Vulkan instance, and enumerate an NVIDIA physical
 device. A missing runtime class, library mount, ICD, or device fails deployment.
+
+The default `tool://sonic` follows the governed public-release policy. The
+historical SONIC release remains quarantined, so a deployment requiring graphics
+health must select a reviewed operator image before provisioning. Use
+`--gpu-graphics-smoke-image` with either CLI, `gpu_graphics_smoke_image` in Fleet
+YAML, or the matching SDK argument. Existing explicit operator tags remain
+supported; prefer an immutable digest qualified for GLX/EGL/Vulkan. An image
+pull and a hardware health pass do not establish image-byte acceptance.
+An omitted or null Fleet image uses the governed default; other non-string
+values and an empty image for an enabled graphics check are rejected.
+CPU-only or disabled graphics checks do not resolve this default. Read-only
+plans and the existing standalone `--skip-validate` option remain available;
+skipping validation does not establish graphics readiness.
 
 Fleet and SDK use the same contract:
 
 ```yaml
 defaults:
   gpu_workload_profile: rtx-rendering
+  gpu_graphics_smoke_image: '<reviewed-registry>/graphics@sha256:<64-hex-digest>'
 ```
 
 ```python
-ClusterSpec(name="render", gpu_workload_profile="rtx-rendering")
+ClusterSpec(
+    name="render",
+    gpu_workload_profile="rtx-rendering",
+    gpu_graphics_smoke_image="<reviewed-registry>/graphics@sha256:<64-hex-digest>",
+)
 ```
 
 The empty profile retains all historical defaults. Conflicting platform,
@@ -147,11 +167,39 @@ under its per-cluster install directory so an operator can inspect evidence and
 retry reconciliation. CUDA smoke pods are deleted after each attempt.
 
 Fleet settings are `gpu_health_stabilization_seconds`,
-`gpu_health_timeout_minutes`, `gpu_cuda_smoke`, and `gpu_cuda_smoke_image`.
+`gpu_health_timeout_minutes`, `gpu_cuda_smoke`, `gpu_cuda_smoke_image`,
+`gpu_graphics_smoke`, and `gpu_graphics_smoke_image`.
 Direct equivalents are `--gpu-health-stabilization-seconds`,
 `--validation-timeout`, `--gpu-cuda-smoke/--skip-gpu-cuda-smoke`, and
-`--gpu-cuda-smoke-image`. Skipping validation is an explicit diagnostic choice,
-not the success default.
+`--gpu-cuda-smoke-image`; graphics image selection uses
+`--gpu-graphics-smoke-image`. Skipping validation is an explicit diagnostic
+choice, not the success default.
+
+## Qualifying an existing standalone RTX cluster
+
+The operator-invoked standalone harness preserves its explicit live opt-in and
+does not provision, select, or mutate a cluster beyond its short-lived health
+pods. Alongside the existing exact cluster selectors, it requires
+`NPA_E2E_MK8S_GRAPHICS_SMOKE_IMAGE` to be a reviewed immutable
+`<registry>/<image>@sha256:<64-hex-digest>` reference. A missing, tagged, or
+malformed reference is refused before the harness invokes GPU health or
+`kubectl`; it never falls back to the quarantined `tool://sonic` default.
+
+```bash
+NPA_E2E_MK8S_RTX_RENDERING=1 \
+NPA_E2E_MK8S_GPU_KUBECONFIG=/private/path/to/kubeconfig \
+NPA_E2E_MK8S_GPU_NODES=1 \
+NPA_E2E_MK8S_GPU_PLATFORM=gpu-rtx6000 \
+NPA_E2E_MK8S_GPU_PRESET=1gpu-24vcpu-218gb \
+NPA_E2E_MK8S_GPU_DRIVER_MODE=operator \
+NPA_E2E_MK8S_GRAPHICS_SMOKE_IMAGE='<reviewed-registry>/graphics@sha256:<64-hex-digest>' \
+npa/.venv/bin/python -m pytest npa/tests/e2e/test_mk8s_gpu_health_live.py -q -s
+```
+
+This selector is an operator-owned runtime input and must not be committed to
+public configuration. The harness retains the CUDA, mixed-pool, and live
+authorization gates; its private health evidence and short-lived pods remain
+subject to the existing cleanup checks.
 
 ## Qualifying an existing RTX Fleet
 

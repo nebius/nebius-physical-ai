@@ -657,6 +657,38 @@ def test_npm_lock_must_resolve_direct_dependencies(security_modules, tmp_path):
         dependencies._validate_npm_manifests(tmp_path)
 
 
+def test_dependency_scanner_accepts_installed_uv_pin(
+    security_modules, monkeypatch, tmp_path
+):
+    """Keep the scanner's version check aligned with its installation manifest.
+
+    Args:
+        security_modules: Checked-out gate modules.
+        monkeypatch: Supplies the declared scanner versions without installation.
+        tmp_path: Isolated version evidence directory.
+    Returns:
+        None.
+    Raises:
+        RuntimeError: The gate rejects the uv version that CI installs.
+    """
+    _, dependencies = security_modules
+    requirements = Path(dependencies.__file__).with_name("security-requirements.txt")
+    uv = next(
+        Requirement(line)
+        for line in requirements.read_text().splitlines()
+        if line.startswith("uv==")
+    )
+    version = str(uv.specifier).removeprefix("==")
+    versions = {"uv": f"uv {version}\n", "trivy": "Version: 0.74.0\n"}
+    monkeypatch.setattr(
+        dependencies.subprocess,
+        "run",
+        lambda args, **kwargs: SimpleNamespace(stdout=versions[args[0]]),
+    )
+    dependencies._scanner_versions(tmp_path)
+    assert (tmp_path / "uv-version.txt").read_text() == versions["uv"]
+
+
 def test_dependency_scan_rejects_invalid_json(security_modules, monkeypatch, tmp_path):
     """Reject truncated scanner JSON instead of producing a clean result.
 

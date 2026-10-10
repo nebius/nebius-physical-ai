@@ -34,6 +34,7 @@ import urllib.request
 
 import yaml
 
+from npa.exception_notes import add_exception_note
 from npa.orchestration.skypilot._bin import resolve_skypilot_kubeconfig_path
 
 DEFAULT_TIMEOUT_SECONDS = 30
@@ -2065,10 +2066,8 @@ def verify_kubernetes_image_pull(
             if cleanup_interrupt is not None:
                 if cleanup_status != "verified":
                     note = f"target pull probe cleanup={cleanup_status}"
-                    add_note = getattr(cleanup_interrupt, "add_note", None)
-                    if callable(add_note):
-                        add_note(note)
-                    else:
+                    add_exception_note(cleanup_interrupt, note)
+                    if not callable(getattr(cleanup_interrupt, "add_note", None)):
                         setattr(
                             cleanup_interrupt,
                             "__npa_cleanup_note__",

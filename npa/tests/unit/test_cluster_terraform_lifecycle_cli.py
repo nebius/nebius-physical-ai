@@ -46,6 +46,118 @@ runner = CliRunner()
 _REAL_WHOLE_PATH_PREFLIGHT = tf_mod._preflight_whole_path_capacity
 
 
+@pytest.mark.parametrize(
+    "image",
+    [
+        "registry.example/graphics:operator",
+        "registry.example/graphics@sha256:" + "1" * 64,
+    ],
+)
+def test_cluster_validation_preserves_explicit_graphics_image(
+    monkeypatch, tmp_path, image
+):
+    observed = []
+
+    def capture_health(*_args, **kwargs):
+        observed.append(kwargs["config"])
+        return {
+            "final_snapshot": {"ready_nodes": 2, "gpu_nodes": ["gpu"], "total_gpus": 1},
+            "cuda_smokes": [],
+            "graphics_smokes": [],
+        }
+
+    monkeypatch.setattr(tf_mod, "validate_gpu_health", capture_health)
+    monkeypatch.setattr(
+        tf_mod,
+        "_validate_cluster_once",
+        lambda *_args, **_kwargs: {"default_storage_class": "csi-test"},
+    )
+    tf_mod._validate_cluster(
+        "kubectl",
+        tmp_path / "kubeconfig",
+        {
+            "gpu_nodes_count": 1,
+            "gpu_nodes_preset": "1gpu-24vcpu-218gb",
+            "gpu_driver_mode": "operator",
+        },
+        1,
+        gpu_graphics_smoke=True,
+        gpu_graphics_smoke_image=image,
+        env={},
+    )
+
+    assert observed[0].graphics_smoke_image == image
+    assert observed[0].graphics_smoke is True
+
+
+def test_graphics_default_rejected_before_provider_or_terraform_calls(
+    monkeypatch, tmp_path
+):
+    tf_dir = tmp_path / "cluster"
+    tf_dir.mkdir()
+    (tf_dir / "terraform.tfvars").write_text(
+        'cluster_name = "render-test"\nparent_id = "project-test"\n'
+    )
+    monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
+    monkeypatch.setattr(tf_mod, "_preflight_provider_lock", lambda *_args: None)
+
+    def unexpected_mutation(*_args, **_kwargs):
+        pytest.fail("default image must fail before provider or Terraform operations")
+
+    for name in ("_terraform_env", "_run_capture", "_run_stream", "_terraform_init"):
+        monkeypatch.setattr(tf_mod, name, unexpected_mutation)
+    result = runner.invoke(
+        app,
+        [
+            "up",
+            "--terraform-dir",
+            str(tf_dir),
+            "--gpu-workload-profile",
+            "rtx-rendering",
+        ],
+    )
+
+    assert result.exit_code == 2, result.output
+    assert "quarantined public release" in result.output
+    assert "--gpu-graphics-smoke-image" in result.output
+
+
+def test_cluster_skip_validate_does_not_resolve_graphics_image(monkeypatch, tmp_path):
+    tf_dir = tmp_path / "cluster"
+    tf_dir.mkdir()
+    (tf_dir / "terraform.tfvars").write_text(
+        'cluster_name = "render-test"\nparent_id = "project-test"\n'
+    )
+    monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
+    monkeypatch.setattr(tf_mod, "_preflight_provider_lock", lambda *_args: None)
+    monkeypatch.setattr(
+        tf_mod,
+        "resolve_graphics_smoke_image",
+        lambda *_args: pytest.fail("skipped health must not resolve images"),
+    )
+    reached_provider = []
+
+    def stop_before_provider(*_args, **_kwargs):
+        reached_provider.append(True)
+        raise RuntimeError("fixture boundary after image selection")
+
+    monkeypatch.setattr(tf_mod, "_terraform_env", stop_before_provider)
+    result = runner.invoke(
+        app,
+        [
+            "up",
+            "--terraform-dir",
+            str(tf_dir),
+            "--gpu-workload-profile",
+            "rtx-rendering",
+            "--skip-validate",
+        ],
+    )
+
+    assert reached_provider == [True]
+    assert result.exit_code != 0
+
+
 @pytest.fixture(autouse=True)
 def _owned_api_process_boundary(monkeypatch):
     from npa.orchestration.skypilot import local_api

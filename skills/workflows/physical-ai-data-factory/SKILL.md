@@ -494,6 +494,17 @@ npa workbench workflow submit workflows/testing/nvidia-paidf-vda-cosmos-transfer
 `NPA_COSMOS_MASK_PROMPT`, and `NPA_COSMOS_MASK_ASSET` override the same knobs for a
 submit that cannot change the toolRef argv.
 
+To inspect an existing evaluator artifact, read one exact local file or S3
+object with `npa workbench cosmos-evaluator report --input-path <report>`;
+add `--output-format json` for the SDK-compatible diagnostic projection.
+The command preserves reported outcomes and shows required, advisory, or
+unverified enforcement plus incomplete evidence. A valid failed-quality report
+is a successful read. Inspection runs no inference, performs no prefix
+discovery, and establishes neither calibrated confidence nor semantic material
+or multiview validation. See
+[report inspection](../../../docs/workbench/cosmos-evaluator-report.md) and
+[manual operations](../../../docs/workbench/guides/manual-workflow-operations.md).
+
 **Cosmos Evaluator grading (`evaluate` stage).** `npa workbench cosmos-evaluator
 evaluate` runs two of upstream's checks per augmented variant and writes
 `grade/cosmos_evaluator.json` (schema `npa.cosmos_evaluator.report.v1`):
