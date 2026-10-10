@@ -17,11 +17,30 @@ _EMPTY_QUEUE_MESSAGES = {
     "sky.exceptions.clusternotuperror: no in-progress managed jobs.",
 }
 
+# SkyPilot 0.12.2 emits this client/server configuration notice before queue JSON.
+# Its embedded key list is not a second queue document. Only the exact allowed_clouds
+# notice is admitted; other configuration differences remain unverified.
+_ALLOWED_CLOUDS_CONFIG_WARNING = (
+    'The following keys (["allowed_clouds"]) have different values in the client '
+    "SkyPilot config with the server and will be ignored. Remove these keys to "
+    "disable this warning. If you want to specify it, please modify it on server "
+    "side or contact your administrator."
+)
+
+
+def _without_allowed_clouds_warning(output: str) -> str:
+    """Remove only complete lines matching the pinned allowed_clouds notice."""
+    return "\n".join(
+        line
+        for line in str(output or "").splitlines()
+        if line.strip() != _ALLOWED_CLOUDS_CONFIG_WARNING
+    )
+
 
 def queue_rows_from_output(output: str) -> list[dict[str, Any]] | None:
     """Parse a verified SkyPilot queue list from one unambiguous JSON payload."""
 
-    payload = parse_single_json_document(output)
+    payload = parse_single_json_document(_without_allowed_clouds_warning(output))
     if isinstance(payload, list):
         rows = payload
     elif isinstance(payload, dict) and isinstance(payload.get("jobs"), list):
@@ -81,6 +100,8 @@ def _semantic_queue_lines(value: str, *, structured: bool) -> list[str] | None:
     ansi = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
     normalized: list[str] = []
     for raw in str(value or "").splitlines():
+        if raw.strip() == _ALLOWED_CLOUDS_CONFIG_WARNING:
+            continue
         line = " ".join(ansi.sub("", raw).strip().lower().split())
         if not line:
             continue
@@ -128,7 +149,7 @@ def _semantic_queue_lines(value: str, *, structured: bool) -> list[str] | None:
 def _without_single_json_document(value: str) -> str | None:
     """Remove the one JSON document while retaining surrounding diagnostics."""
 
-    text = str(value or "")
+    text = _without_allowed_clouds_warning(value)
     decoder = json.JSONDecoder()
     matches: list[tuple[int, int]] = []
     for index, character in enumerate(text):
