@@ -1203,6 +1203,57 @@ def test_job_group_stays_nonterminal_until_every_row_is_terminal(status: str) ->
     assert statuses == {"7": status}
 
 
+@pytest.mark.parametrize("exact_job", [False, True])
+def test_controller_state_loss_is_typed_and_never_authorizes_down(
+    monkeypatch, exact_job
+):
+    from dataclasses import asdict
+
+    run_id = "synthetic-run-123456"
+    jobs = [{"job_id": "7", "job_name": run_id, "status": "FAILED_CONTROLLER"}]
+    calls = []
+    monkeypatch.setattr(
+        cleanup_module,
+        "_all_jobs",
+        lambda **_: cleanup_module.JobQueueSnapshot("verified_jobs", jobs=tuple(jobs)),
+    )
+    monkeypatch.setattr(
+        cleanup_module,
+        "_cancel_job",
+        lambda job_id, **_: CleanupResult(
+            commands=[["sky", "jobs", "cancel", "--yes", job_id]]
+        ),
+    )
+    monkeypatch.setattr(
+        cleanup_module,
+        "sky_down",
+        lambda cluster, **_: calls.append(cluster) or CleanupResult(),
+    )
+    if exact_job:
+        result = cleanup_module.cleanup_launched_workflows(
+            [("7", run_id)], run_id, job_drain_timeout=0
+        )
+    else:
+        result = cleanup_module.cleanup_all_for_run(run_id, job_drain_timeout=0)
+    assert not result.ok and calls == []
+    payload = asdict(result)
+    assert payload["outcome"] == "controller_state_lost"
+    assert payload["controller_state_lost_job_ids"] == ["7"]
+    assert payload["recovery"]["destructive_cleanup_allowed"] is False
+    assert payload["recovery"]["absence_only_command"].endswith("reconcile-absent")
+    assert payload["recovery"]["absence_only_scope"] == (
+        "supported_original_failed_submit_evidence_only"
+    )
+    assert payload["recovery"]["unsupported_case"] == (
+        "operator_recovery_required_no_automatic_teardown"
+    )
+    # A later authoritative empty queue permits the original guarded path.
+    # No operator assertion or new bypass flag is supplied.
+    jobs.clear()
+    assert cleanup_module.cleanup_all_for_run(run_id, job_drain_timeout=0).ok
+    assert calls == cleanup_module.cluster_name_patterns_for_run(run_id)
+
+
 @pytest.mark.parametrize(
     ("returncode", "stdout", "stderr", "match"),
     [

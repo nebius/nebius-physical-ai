@@ -9,7 +9,8 @@ _ACTION = (
     "Package admin: refresh the exact validated inventory immediately before action; "
     "in GitHub organization nebius, container package nebius-physical-ai/npa-ncore, "
     "open Package settings > Danger Zone > Change visibility > Public. "
-    "Then retry publish with the same original OCI archive and a new evidence directory; "
+    "Then retry publish with the same original OCI archive, a new evidence directory, "
+    "and --resume-transfer plus --resume-transfer-sha256 for the retained completed-transfer receipt; "
     "anonymous full graph, hash and byte verification is mandatory."
 )
 _GATE_FILES = (

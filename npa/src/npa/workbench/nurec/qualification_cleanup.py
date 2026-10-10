@@ -372,6 +372,7 @@ def cleanup_qualification(
         "active_job_pods": 0,
         "controller_disposition": "retained_not_owned",
         "storage_disposition": "retained_declared",
+        "storage_prefix_sha256": hashlib.sha256(storage_prefix.encode()).hexdigest(),
         "storage_inventory_sha256": _sha(inventory),
         "storage_objects": len(inventory),
         "registry_disposition": "not_created_local_oci_route",

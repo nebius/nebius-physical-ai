@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import tarfile
 
 from image_byte_scan import core as W, prepare as P
@@ -60,6 +61,15 @@ def _parser():
         "--policy-mode", choices=("ci-regex", "exact-literals"), default="ci-regex"
     )
     parser.add_argument(
+        "--resume-transfer",
+        type=Path,
+        help="Private completed-transfer receipt from this accepted archive; publish only",
+    )
+    parser.add_argument(
+        "--resume-transfer-sha256",
+        help="Independently retained SHA-256 of the continuation receipt",
+    )
+    parser.add_argument(
         "--literal-inventory",
         type=Path,
         help="Owner-only exact private literal inventory; exact-literals mode only",
@@ -69,6 +79,7 @@ def _parser():
 
 def _inputs(args):
     args.analysis_root = args.analysis_root.absolute()
+    _resume_input(args)
     _policy_input(args)
     committed_source(args.source_sha)
     from . import gates
@@ -119,6 +130,29 @@ def _inputs(args):
             "acceptance_is_publish_only",
         )
     _keyring_input(args)
+
+
+def _resume_input(args):
+    receipt = getattr(args, "resume_transfer", None)
+    digest = getattr(args, "resume_transfer_sha256", None)
+    if receipt is None and digest is None:
+        return
+    W.require(
+        args.action == "publish"
+        and receipt is not None
+        and type(digest) is str
+        and re.fullmatch(r"[0-9a-f]{64}", digest),
+        "invalid_resume_transfer_input",
+    )
+    args.resume_transfer = receipt.absolute()
+    W.require(
+        args.resume_transfer.is_relative_to(args.analysis_root),
+        "resume_transfer_outside_private_root",
+    )
+    W.require(
+        P.binding(args.resume_transfer)["sha256"] == digest,
+        "resume_transfer_receipt_changed",
+    )
 
 
 def _keyring_input(args):

@@ -1477,6 +1477,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workbench.nurec.render": ToolEntry(
         name="workbench.nurec.render",
+        config_defaults={"nurec_image": ""},
+        omit_flags_when_empty=("--image",),
         access_capabilities=("nurec",),
         description=(
             "Render novel views from a trained reconstruction with `nre render` "

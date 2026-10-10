@@ -71,3 +71,26 @@ def test_public_source_acquisition_never_overwrites_existing_output(
             downloader=lambda *_args, **_kwargs: None,
         )
     assert output.read_bytes() == b"owned"
+
+
+@pytest.mark.parametrize("failure", ["download", "hash", "receipt-collision"])
+def test_acquisition_preserves_another_writers_receipt(monkeypatch, tmp_path, failure):
+    receipt = tmp_path / "receipt.json"
+    payload = b"synthetic archive"
+    monkeypatch.setattr(
+        source_acquisition, "SOURCE_SHA256", hashlib.sha256(payload).hexdigest()
+    )
+
+    def download(_url, stream, **_kwargs):
+        # Another invocation wins the receipt while this invocation owns its ZIP.
+        receipt.write_bytes(b"other writer's durable receipt")
+        if failure == "download":
+            raise OSError("synthetic download failure")
+        stream.write(b"wrong" if failure == "hash" else payload)
+
+    with pytest.raises((OSError, source_acquisition.NcoreSourceAcquisitionError)):
+        source_acquisition.acquire_public_source(
+            tmp_path / "source.zip", receipt, downloader=download
+        )
+    assert receipt.read_bytes() == b"other writer's durable receipt"
+    assert not (tmp_path / "source.zip").exists()

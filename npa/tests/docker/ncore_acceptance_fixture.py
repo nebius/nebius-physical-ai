@@ -311,7 +311,8 @@ def _runtime_observation(readback):
 def _readback_summary(root, manifest, sha):
     proof = manifest["rtx_proof"]
     readback = root / "readback"
-    status = _write(readback, "evidence/workflow-status.json", {"status": "SUCCEEDED"})
+    fixture = _module("npa/tests/workbench/test_nurec_qualification_cleanup.py")
+    status = fixture._workflow_status(readback / "evidence")
     final = _write(readback, "reports/final.json", {"has_usdz": True})
     rrd = readback / "reports/sim2real.rrd"
     rrd.write_bytes(b"synthetic binding fixture, not a decoded RRD")
@@ -324,7 +325,11 @@ def _readback_summary(root, manifest, sha):
     readback_receipt = _write(
         root,
         "qualification-readback.json",
-        {"format": "npa_ncore_qualification_readback_v1", "status": "pass"},
+        {
+            "format": "npa_ncore_qualification_readback_v1",
+            "status": "pass",
+            "prefix_sha256": hashlib.sha256(b"s3://private/run/evidence/").hexdigest(),
+        },
     )
     return status, final, readback_receipt
 
@@ -387,7 +392,26 @@ def synthetic_statement_inputs(root, sha):
     _conversion(readback, manifest, sha)
     _native(readback, manifest, usdz, sha)
     _objective(evidence, manifest, usdz, sha)
-    cleanup = _write(evidence, "cleanup.json", manifest["cleanup"])
+    fixture = _module("npa/tests/workbench/test_nurec_qualification_cleanup.py")
+    build = root / "build"
+    build.mkdir(mode=0o700)
+    fixture._build_receipt(build).rename(build / "build.json")
+    cleanup = evidence / "cleanup.json"
+    manifest["cleanup"] = fixture.cleanup_qualification(
+        run_id="private-run",
+        workflow_status_path=readback / "evidence/workflow-status.json",
+        context="synthetic-context",
+        namespace="synthetic-namespace",
+        storage_prefix="s3://private/run/evidence/",
+        local_image="local/ncore:candidate",
+        builder="synthetic-builder",
+        build_receipt_path=build / "build.json",
+        source_sha=fixture.SOURCE_SHA,
+        output_path=cleanup,
+        storage_client=fixture._Storage(),
+        process_runner=fixture._runner(),
+        workflow_cleaner=fixture._cleaner,
+    )
     manifest["cleanup"]["receipt_sha256"] = sha(cleanup)
     for path in root.rglob("*"):
         path.chmod(0o700 if path.is_dir() else 0o600)

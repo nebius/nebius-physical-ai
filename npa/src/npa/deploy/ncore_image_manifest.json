@@ -132,6 +132,7 @@
     "status": null,
     "source_acquisition_receipt_sha256": null,
     "s3_probe_receipt_sha256": null,
+    "s3_probe_provenance_sha256": null,
     "source_staging_receipt_sha256": null,
     "candidate_image_receipt_sha256": null,
     "qualification_execution_receipt_sha256": null,

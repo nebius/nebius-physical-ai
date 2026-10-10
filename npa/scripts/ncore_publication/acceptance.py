@@ -14,7 +14,13 @@ from image_byte_scan import core as W, prepare as P
 from npa.deploy import images
 from npa.workbench.nurec.evidence import validate_runtime_attestation
 
-from . import byte_acceptance, retained_receipts, retained_security, retained_source
+from . import (
+    byte_acceptance,
+    qualification_binding,
+    retained_receipts,
+    retained_security,
+    retained_source,
+)
 from .process import ROOT, committed_source, file_sha, write_json
 from .vlm_evidence import verify_complete_evidence
 
@@ -206,6 +212,7 @@ def _prepublication(
 def _qualification(
     manifest: dict[str, Any],
     evidence_root: Path,
+    analysis_root: Path,
 ) -> dict[str, Any]:
     controls = manifest["qualification_controls"]
     control_paths = {
@@ -429,6 +436,9 @@ def _qualification(
         "acceptance_native_receipt_evidence",
     )
     _hash_field(manifest["cleanup"], "receipt_sha256", cleanup_path)
+    qualification_binding.cleanup_run(
+        cleanup, readback, workflow_status_path, analysis_root / "build/build.json"
+    )
     for field in (
         "format",
         "status",
@@ -501,6 +511,7 @@ def _visual(manifest: dict[str, Any], evidence_root: Path) -> dict[str, Any]:
     )
     calibration = verified["calibration"]
     final = verified["final"]
+    qualification_binding.visual_run(manifest, evidence_root)
     W.require(
         visual.get("calibration_total") == calibration.get("total")
         and visual.get("true_positives") == calibration.get("true_positives")
@@ -569,7 +580,7 @@ def build_statement(
         _prepublication(manifest, analysis_root, gate_dir, evidence_root)
     else:
         _prepublication(manifest, analysis_root, gate_dir)
-    objective = _qualification(manifest, evidence_root)
+    objective = _qualification(manifest, evidence_root, analysis_root)
     visual = _visual(manifest, evidence_root)
     inventory = _inventory(analysis_root, evidence_root, gate_dir)
     _retained_inventory(manifest, analysis_root, evidence_root, gate_dir, inventory)

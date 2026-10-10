@@ -124,42 +124,37 @@ def readback_qualification(
     if not before:
         raise NcoreQualificationReadbackError("qualification evidence prefix is empty")
     destination.mkdir(mode=0o700, parents=True)
-    try:
-        client.download_directory(prefix_uri, str(destination))
-        for path in destination.rglob("*"):
-            if path.is_file() and not path.is_symlink():
-                path.chmod(0o600)
-        after = _snapshot_complete(client, bucket, prefix)
-        if before != after:
-            raise NcoreQualificationReadbackError(
-                "qualification object inventory changed during readback"
-            )
-        local = local_inventory(destination)
-        if (
-            len(local) != len(after)
-            or {item["path"] for item in local} != {item["path"] for item in after}
-            or any(
-                local_item["bytes"] != s3_item["bytes"]
-                for local_item, s3_item in zip(local, after, strict=True)
-            )
-        ):
-            raise NcoreQualificationReadbackError(
-                "local readback differs from the complete object inventory"
-            )
-        receipt = {
-            "format": READBACK_FORMAT,
-            "status": "pass",
-            "prefix_sha256": hashlib.sha256(prefix_uri.encode()).hexdigest(),
-            "stable_listing": True,
-            "object_count": len(after),
-            "s3_inventory_sha256": _canonical_sha(after),
-            "s3_inventory": after,
-            "local_inventory_sha256": _canonical_sha(local),
-            "local_inventory": local,
-        }
-        _write_private(receipt_path, receipt)
-        return receipt
-    except Exception:
-        if receipt_path.exists():
-            receipt_path.unlink()
-        raise
+    client.download_directory(prefix_uri, str(destination))
+    for path in destination.rglob("*"):
+        if path.is_file() and not path.is_symlink():
+            path.chmod(0o600)
+    after = _snapshot_complete(client, bucket, prefix)
+    if before != after:
+        raise NcoreQualificationReadbackError(
+            "qualification object inventory changed during readback"
+        )
+    local = local_inventory(destination)
+    if (
+        len(local) != len(after)
+        or {item["path"] for item in local} != {item["path"] for item in after}
+        or any(
+            local_item["bytes"] != s3_item["bytes"]
+            for local_item, s3_item in zip(local, after, strict=True)
+        )
+    ):
+        raise NcoreQualificationReadbackError(
+            "local readback differs from the complete object inventory"
+        )
+    receipt = {
+        "format": READBACK_FORMAT,
+        "status": "pass",
+        "prefix_sha256": hashlib.sha256(prefix_uri.encode()).hexdigest(),
+        "stable_listing": True,
+        "object_count": len(after),
+        "s3_inventory_sha256": _canonical_sha(after),
+        "s3_inventory": after,
+        "local_inventory_sha256": _canonical_sha(local),
+        "local_inventory": local,
+    }
+    _write_private(receipt_path, receipt)
+    return receipt

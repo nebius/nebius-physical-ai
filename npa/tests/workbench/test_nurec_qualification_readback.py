@@ -100,6 +100,26 @@ def test_complete_readback_rejects_inventory_drift(tmp_path: Path) -> None:
     assert not (tmp_path / "readback.json").exists()
 
 
+@pytest.mark.parametrize("failure", ["download", "inventory", "receipt-collision"])
+def test_readback_preserves_another_writers_receipt(tmp_path, failure):
+    receipt = tmp_path / "receipt.json"
+    storage = _Storage(change_after_download=failure == "inventory")
+    original = storage.download_directory
+
+    def download(uri, destination):
+        receipt.write_bytes(b"other writer's durable receipt")
+        if failure == "download":
+            raise OSError("synthetic download failure")
+        return original(uri, destination)
+
+    storage.download_directory = download
+    with pytest.raises((OSError, NcoreQualificationReadbackError)):
+        readback_qualification(
+            "s3://private/run/", tmp_path / "readback", receipt, storage_client=storage
+        )
+    assert receipt.read_bytes() == b"other writer's durable receipt"
+
+
 def test_complete_readback_requires_new_destination(tmp_path: Path) -> None:
     destination = tmp_path / "readback"
     destination.mkdir()

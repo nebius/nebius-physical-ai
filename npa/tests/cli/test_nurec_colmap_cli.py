@@ -17,6 +17,83 @@ from npa.workbench.nurec import (
 )
 
 
+@pytest.mark.parametrize("failure", ["download", "receipt-collision"])
+@pytest.mark.parametrize("command", ["acquire-source", "readback-qualification"])
+def test_receipt_failure_cli_preserves_existing_evidence(
+    monkeypatch, tmp_path, command, failure
+):
+    import hashlib
+    from npa.workbench.nurec import source_acquisition
+    from npa.clients.storage import StorageClient
+    from types import SimpleNamespace
+
+    receipt = tmp_path / "receipt.json"
+    original = b"durable evidence owned by another invocation"
+    receipt.write_bytes(original)
+    calls = []
+    payload = b"synthetic source"
+
+    def download(_url, output, **_kwargs):
+        calls.append("download")
+        if failure == "download":
+            raise OSError("synthetic unavailable transport")
+        if command == "acquire-source":
+            output.write(payload)
+        else:
+            (Path(output) / "file").write_bytes(payload)
+
+    monkeypatch.setattr(
+        source_acquisition, "SOURCE_SHA256", hashlib.sha256(payload).hexdigest()
+    )
+    monkeypatch.setattr("npa._public_https.download_public_https", download)
+    storage = SimpleNamespace(
+        s3=SimpleNamespace(
+            get_paginator=lambda _: SimpleNamespace(
+                paginate=lambda **_: [
+                    {
+                        "Contents": [
+                            {
+                                "Key": "run/file",
+                                "Size": len(payload),
+                                "ETag": '"synthetic"',
+                            }
+                        ]
+                    }
+                ]
+            )
+        ),
+        download_directory=download,
+    )
+    monkeypatch.setattr(StorageClient, "from_environment", lambda: storage)
+    options = (
+        ["--output-path", str(tmp_path / "source.zip")]
+        if command == "acquire-source"
+        else [
+            "--prefix",
+            "s3://synthetic/run/",
+            "--destination",
+            str(tmp_path / "readback"),
+        ]
+    )
+    result = CliRunner().invoke(
+        app,
+        [
+            "workbench",
+            "nurec",
+            command,
+            *options,
+            "--receipt-path",
+            str(receipt),
+            "--output-format",
+            "json",
+        ],
+    )
+    assert calls == ["download"]
+    assert result.exit_code == 1, result.output
+    assert json.loads(result.stdout)["status"] == "failed"
+    assert receipt.read_bytes() == original
+
+
 @pytest.mark.parametrize("has_unrelated_file", [False, True])
 def test_explicit_ncore_source_without_metadata_never_falls_back(
     tmp_path, has_unrelated_file

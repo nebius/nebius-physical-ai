@@ -3,7 +3,7 @@
 import subprocess
 
 from image_byte_scan import core as W, oci_graph as G
-from . import artifact, handoff
+from . import artifact, handoff, transfer_resume
 from .diagnostics import phase, run_phase
 from .process import ROOT, public_environment, run, write_json
 
@@ -73,33 +73,49 @@ def transfer(args, directory, build, graph, verification):
         "transfer_source_selection_differs",
     )
     observed = _observed(image, directory / "existing.json", args.authfile)
-    W.require(observed is None, "development_tag_preexisted_acceptance")
+    resuming = getattr(args, "resume_transfer", None) is not None
+    if resuming:
+        transfer_resume.require_prior_transfer(args, build, graph, verification)
+        W.require(observed == digest, "resume_transfer_tag_differs")
+    else:
+        W.require(observed is None, "development_tag_preexisted_acceptance")
     anonymous_auth = directory / "anonymous-before.json"
     write_json(anonymous_auth, {"auths": {}})
-    W.require(
-        _observed(
-            image,
-            directory / "anonymous-existing.json",
-            anonymous_auth,
-            True,
-        )
-        is None,
-        "development_tag_was_anonymously_visible_before_acceptance",
+    anonymous_before = _observed(
+        image,
+        directory / "anonymous-existing.json",
+        anonymous_auth,
+        True,
     )
+    if resuming:
+        _require_equal_or_absent(anonymous_before, digest)
+    else:
+        W.require(
+            anonymous_before is None,
+            "development_tag_was_anonymously_visible_before_acceptance",
+        )
     # The workflow serializes this immutable SHA. Recheck immediately before
     # the first registry write and fail closed on every pre-existing tag.
     observed = _observed(image, directory / "before-copy.json", args.authfile)
-    W.require(observed is None, "development_tag_preexisted_acceptance")
-    run_phase(
-        "registry-copy",
-        _copy,
-        args,
-        directory,
-        image,
-        digest,
-        archive,
-        verification,
+    if resuming:
+        W.require(observed == digest, "resume_transfer_tag_differs")
+    else:
+        W.require(observed is None, "development_tag_preexisted_acceptance")
+        run_phase(
+            "registry-copy",
+            _copy,
+            args,
+            directory,
+            image,
+            digest,
+            archive,
+            verification,
+        )
+    W.require(
+        _observed(image, directory / "after-copy.json", args.authfile) == digest,
+        "completed_transfer_tag_differs",
     )
+    transfer_resume.save_transfer(args, directory, build, graph, verification)
     run_phase(
         "registry-visibility",
         _public_visibility,

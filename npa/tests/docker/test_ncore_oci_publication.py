@@ -629,8 +629,10 @@ def test_preacceptance_tag_must_be_absent_for_authenticated_and_anonymous_reads(
 ):
     path, digest, _ = _archive(private)
     graph, verification = artifact.inspect(path, digest)
+    receipt = _build_receipt(private, digest)
     build = private / "build"
-    build.mkdir(mode=0o700)
+    receipt["archive_sha256"] = verification["archive_sha256"]
+    (build / "build.json").write_text(json.dumps(receipt))
     path.rename(build / "image.oci.tar")
     calls = []
     files, _, _ = _fixture()
@@ -640,19 +642,44 @@ def test_preacceptance_tag_must_be_absent_for_authenticated_and_anonymous_reads(
     )
     value = digest if observed == "same" else "sha256:" + "e" * 64 if observed else None
     monkeypatch.setattr(registry, "_observed", lambda *_: value)
-    monkeypatch.setattr(registry, "_copy", lambda *_: calls.append("copy"))
+
+    def copied(*_):
+        nonlocal value
+        calls.append("copy")
+        value = digest
+
+    monkeypatch.setattr(registry, "_copy", copied)
     monkeypatch.setattr(
         registry, "_public_visibility", lambda *_: calls.append("visibility")
     )
     monkeypatch.setattr(registry, "_readback", lambda *_: calls.append("readback"))
-    args = SimpleNamespace(analysis_root=private, authfile=private / "auth.json")
-    receipt = {"image": gates.eligibility(SHA), "image_digest": digest}
+    args = SimpleNamespace(
+        analysis_root=private,
+        authfile=private / "auth.json",
+        acceptance=private / "accepted.json",
+    )
+    args.acceptance.write_text('{"synthetic":true}')
+    args.acceptance.chmod(0o600)
+    directory = private / "gate/transfer"
+    directory.mkdir(mode=0o700, parents=True)
+    process.write_json(
+        directory.parent / "prepublication.json",
+        {
+            "status": "pass",
+            **{
+                key: receipt[key]
+                for key in ("source_sha", "image_digest", "archive_sha256")
+            },
+        },
+    )
     if observed is not None:
         with pytest.raises(ValueError, match="preexisted"):
-            registry.transfer(args, private, receipt, graph, verification)
+            registry.transfer(args, directory, receipt, graph, verification)
         assert calls == []
     else:
-        assert registry.transfer(args, private, receipt, graph, verification) == digest
+        assert (
+            registry.transfer(args, directory, receipt, graph, verification) == digest
+        )
         assert calls == ["copy", "visibility", "readback"]
 
 

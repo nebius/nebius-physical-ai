@@ -109,5 +109,4 @@ def acquire_public_source(
         return receipt
     except Exception:
         output_path.unlink(missing_ok=True)
-        receipt_path.unlink(missing_ok=True)
         raise

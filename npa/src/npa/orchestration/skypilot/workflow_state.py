@@ -841,15 +841,12 @@ def cancel_workflow_job(
                 break
             if time.monotonic() < deadline:
                 time.sleep(poll_seconds)
-    down = subprocess.CompletedProcess(
-        [executable, "down", "--yes", cluster_name],
-        0,
-        stdout="not requested",
-        stderr="",
-    )
+    down = None
+    down_disposition = "refused_nonterminal" if also_down_cluster else "not_requested"
     down_attempted = False
     if also_down_cluster and cancel.returncode == 0 and terminal_confirmed:
         down_attempted = True
+        down_disposition = "attempted"
         down = subprocess.run(
             [executable, "down", "--yes", cluster_name],
             env=env,
@@ -884,9 +881,10 @@ def cancel_workflow_job(
         "terminal_status": terminal_status,
         "terminal_confirmed": terminal_confirmed if also_down_cluster else None,
         "down_attempted": down_attempted,
-        "down_returncode": down.returncode,
-        "down_stdout": redact_text(down.stdout),
-        "down_stderr": redact_text(down.stderr),
+        "down_disposition": down_disposition,
+        "down_returncode": down.returncode if down is not None else None,
+        "down_stdout": redact_text(down.stdout) if down is not None else "",
+        "down_stderr": redact_text(down.stderr) if down is not None else "",
         "status_after_down": redact_text(last_status),
     }
 

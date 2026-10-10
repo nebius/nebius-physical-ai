@@ -332,7 +332,14 @@ A package administrator must refresh the complete exact inventory immediately
 before that UI action and compare it with the private handoff, stopping if
 anything changed. Inventory reads cannot lock the package or authorize later
 unvalidated versions. After the UI change, retry `publish` using the same
-original OCI archive and build receipt with a new output directory. All
+original OCI archive and build receipt with a new output directory. Supply
+`--resume-transfer` with the prior private `transfer/completed-transfer.json`
+and `--resume-transfer-sha256` with its independently retained SHA-256. The
+receipt is written after the exact tag is observed and before visibility or
+anonymous readback, so it also supports retry after a readback failure. It binds
+the original build, acceptance, archive and full graph; an equal tag without
+this explicit continuation proof remains forbidden. Keep the original gate
+directory because its prepublication receipt is rechecked. All
 prepublication gates run again; an equal immutable tag is not copied. A fresh,
 nondeterministic build from the same source SHA does not validate or replace the
 existing tag: a different digest is refused.

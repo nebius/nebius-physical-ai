@@ -20,6 +20,16 @@ HASH = "e" * 64
 REPOSITORY = images.DEFAULT_PUBLIC_CONTAINER_REGISTRY + "/npa-ncore"
 
 
+def test_packaged_template_contains_every_qualification_control(accepted):
+    template = json.loads(
+        Path(images.__file__).with_name("ncore_image_manifest.json").read_text()
+    )
+    assert set(accepted["qualification_controls"]) <= set(
+        template["qualification_controls"]
+    )
+    assert "s3_probe_provenance_sha256" in template["qualification_controls"]
+
+
 @pytest.fixture
 def accepted():
     scan = {"status": "pass", "report_sha256": HASH, "image_digest": DIGEST}

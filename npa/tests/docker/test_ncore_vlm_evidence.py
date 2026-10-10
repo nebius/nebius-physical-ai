@@ -41,7 +41,7 @@ class _Storage:
         return self.objects.get(uri)
 
 
-def _root(tmp_path: Path) -> tuple[Path, list[dict]]:
+def _root(tmp_path: Path, color_offset=0) -> tuple[Path, list[dict]]:
     root = tmp_path / "evidence"
     root.mkdir(mode=0o700)
     directory = root / "final"
@@ -49,7 +49,7 @@ def _root(tmp_path: Path) -> tuple[Path, list[dict]]:
     records = []
     for index in range(4):
         path = directory / f"frame-{index:03d}.png"
-        image = Image.new("RGB", (64, 64), (20 + index, 40, 60))
+        image = Image.new("RGB", (64, 64), (20 + index + color_offset, 40, 60))
         image.putpixel((0, 0), (200, 10, 20))
         image.save(path)
         body = path.read_bytes()
@@ -610,9 +610,12 @@ def test_final_rejects_passing_calibration_from_another_freeze(
         vlm_evidence.final(args)
 
 
-def _calibrated_schedule(monkeypatch, tmp_path, *, final_score=0.9):
+def _calibrated_schedule(monkeypatch, tmp_path, *, final_score=0.9, qualification=None):
     """Exercise real evidence producers/checkers with synthetic media and transport."""
-    root, records = _root(tmp_path)
+    root, records = _root(tmp_path, (qualification or {}).get("color_offset", 0))
+    binding = (
+        _qualification_media(root, records, qualification) if qualification else {}
+    )
     labels = {
         f"case-{index}": {"role": "synthetic-control", "expected_label": index < 2}
         for index in range(4)
@@ -627,14 +630,24 @@ def _calibrated_schedule(monkeypatch, tmp_path, *, final_score=0.9):
         root / "final-frame-manifest.json",
         {
             "format": "npa_ncore_vlm_final_frames_v1",
-            "render_inventory_sha256": "b" * 64,
+            "render_inventory_sha256": binding.get("render_inventory_sha256", "b" * 64),
+            "render_camera_sha256": binding.get("render_camera_sha256"),
             "frames": records,
         },
     )
     prompts = {}
     for name in ("rubric", "calibration_task", "final_task"):
         path = tmp_path / f"{name}.txt"
-        path.write_text(f"Review visible scene geometry: {name}.")
+        body = (
+            (
+                ROOT
+                / "npa/scripts/ncore_publication"
+                / ("vlm-" + name.replace("_", "-") + "-v2.txt")
+            ).read_text()
+            if qualification
+            else f"Review visible scene geometry: {name}."
+        )
+        path.write_text(body)
         prompts[name] = path
     manifest = {
         "format": vlm_evidence.FREEZE_FORMAT,
@@ -647,7 +660,8 @@ def _calibrated_schedule(monkeypatch, tmp_path, *, final_score=0.9):
         "final_frame_manifest_sha256": vlm_evidence._sha_file(
             root / "final-frame-manifest.json"
         ),
-        "render_inventory_sha256": "b" * 64,
+        "render_inventory_sha256": binding.get("render_inventory_sha256", "b" * 64),
+        "source_archive_sha256": binding.get("source_archive_sha256"),
         "final_frames": records,
         **{name + "_sha256": vlm_evidence._sha_file(p) for name, p in prompts.items()},
     }
@@ -702,6 +716,33 @@ def _calibrated_schedule(monkeypatch, tmp_path, *, final_score=0.9):
     args.calibration_sha256 = result["sha256"]
     assert len(calls) == len(storage.objects) == 4
     return args, calls, storage
+
+
+def _qualification_media(root, records, qualification):
+    from npa.workbench.nurec.qualification_readback import local_inventory
+
+    evidence = qualification["evidence"]
+    camera = qualification.get("camera", "camera-1")
+    target = evidence / "readback/novel_views" / camera
+    target.mkdir(mode=0o700, parents=True)
+    inventory = []
+    for index, record in enumerate(records):
+        source = root / record["path"]
+        body = source.read_bytes()
+        (target / source.name).write_bytes(body)
+        record.update(source_index=index, source_sha256=vlm_evidence._sha_bytes(body))
+        inventory.append({"sha256": record["source_sha256"], "bytes": len(body)})
+    receipt = evidence / "qualification-readback.json"
+    readback = json.loads(receipt.read_text())
+    readback["local_inventory"] = local_inventory(evidence / "readback")
+    receipt.write_text(json.dumps(readback))
+    return {
+        "source_archive_sha256": qualification["source_archive_sha256"],
+        "render_camera_sha256": vlm_evidence._sha_bytes(camera.encode()),
+        "render_inventory_sha256": vlm_evidence._sha_bytes(
+            vlm_evidence._canonical(inventory)
+        ),
+    }
 
 
 def _verify_schedule(args, final_sha256):

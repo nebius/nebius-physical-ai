@@ -4425,6 +4425,30 @@ def test_cancel_workflow_never_downs_cluster_after_failed_cancel(
     assert result["cancel_returncode"] == 1
     assert result["terminal_confirmed"] is False
     assert result["down_attempted"] is False
+    assert result["down_disposition"] == "refused_nonterminal"
+    assert result["down_returncode"] is None
+    assert len(calls) == 1
+
+
+def test_cancel_without_down_reports_unrequested_not_success(monkeypatch, tmp_path):
+    sky_bin = _fake_sky(tmp_path)
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="cancelled", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    result = cancel_workflow_job(
+        sky_bin=str(sky_bin),
+        job_id="42",
+        run_id="isolated-run",
+        also_down_cluster=False,
+        timeout=0,
+    )
+    assert result["down_disposition"] == "not_requested"
+    assert result["down_returncode"] is None
+    assert result["down_attempted"] is False
     assert len(calls) == 1
 
 
@@ -4455,6 +4479,8 @@ def test_cancel_workflow_never_downs_cluster_before_terminal_observation(
     assert result["terminal_status"] == "RUNNING"
     assert result["terminal_confirmed"] is False
     assert result["down_attempted"] is False
+    assert result["down_disposition"] == "refused_nonterminal"
+    assert result["down_returncode"] is None
     assert [call[1] for call in calls] == ["jobs"]
 
 
@@ -4487,6 +4513,8 @@ def test_cancel_workflow_never_treats_failed_controller_as_job_terminality(
     assert result["terminal_status"] == "FAILED_CONTROLLER"
     assert result["terminal_confirmed"] is False
     assert result["down_attempted"] is False
+    assert result["down_disposition"] == "refused_nonterminal"
+    assert result["down_returncode"] is None
     assert [call[1] for call in calls] == ["jobs"]
 
 
