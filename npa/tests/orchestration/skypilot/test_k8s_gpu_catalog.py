@@ -921,10 +921,128 @@ def test_skypilot_label_fallback_rejects_compact_nebius_rtx_alias_without_sky_la
 
     assert "skypilot.co/accelerator" not in dict(node.labels)
     assert skypilot_label_ready_nodes(inventory, "RTXPRO6000:1") == ()
-    with pytest.raises(
-        SkyPilotGpuLabelError, match="effective skypilot.co/accelerator"
-    ):
+    with pytest.raises(SkyPilotGpuLabelError, match="effective accelerator selector"):
         preflight_skypilot_gpu_gang(inventory, accelerator="RTXPRO6000:1", node_count=1)
+
+
+def test_skypilot_label_selection_uses_upstream_gke_priority_over_nebius() -> None:
+    node = replace(
+        _node("mixed-format", product="B200"),
+        labels=(
+            ("cloud.google.com/gke-accelerator", "nvidia-tesla-h100"),
+            ("nebius.com/gpu-name", "B200"),
+        ),
+    )
+    inventory = KubernetesGpuInventory(
+        context="exact-context",
+        ready_nodes=1,
+        eligible_gpu_nodes=1,
+        capacity=1,
+        allocatable=1,
+        products=("B200",),
+        node_labels={
+            "mixed-format": {
+                "cloud.google.com/gke-accelerator": "nvidia-tesla-h100",
+                "nebius.com/gpu-name": "B200",
+            }
+        },
+        nodes=(node,),
+    )
+
+    # SkyPilot 0.12.2 detects the formatter by registry priority across the
+    # context.  The valid GKE label therefore wins before Nebius is considered.
+    assert skypilot_label_ready_nodes(inventory, "B200:1") == ()
+
+
+@pytest.mark.parametrize(
+    ("label_key", "label_value", "accelerator"),
+    [
+        ("skypilot.co/accelerator", "h200", "H200:1"),
+        ("cloud.google.com/gke-accelerator", "nvidia-tesla-a100", "A100:1"),
+        ("karpenter.k8s.aws/instance-gpu-name", "h200", "H200:1"),
+        ("nvidia.com/gpu.product", "NVIDIA-H100-80GB-HBM3", "H100:1"),
+        ("gpu.nvidia.com/class", "H100_NVLINK_80GB", "H100:1"),
+        ("nebius.com/gpu-name", "B200", "B200:1"),
+    ],
+)
+def test_skypilot_label_selection_mirrors_each_pinned_formatter(
+    label_key: str, label_value: str, accelerator: str
+) -> None:
+    node = replace(
+        _node("formatter-node", product=label_value),
+        labels=((label_key, label_value),),
+    )
+    inventory = KubernetesGpuInventory(
+        context="exact-context",
+        ready_nodes=1,
+        eligible_gpu_nodes=1,
+        capacity=1,
+        allocatable=1,
+        products=(label_value,),
+        node_labels={"formatter-node": {label_key: label_value}},
+        nodes=(node,),
+    )
+
+    assert skypilot_label_ready_nodes(inventory, accelerator) == (node,)
+
+
+def test_skypilot_label_selection_skips_invalid_earlier_formatter() -> None:
+    node = replace(
+        _node("fallback-node", product="B200"),
+        labels=(
+            ("skypilot.co/accelerator", "B200"),
+            ("nebius.com/gpu-name", "B200"),
+        ),
+    )
+    inventory = KubernetesGpuInventory(
+        context="exact-context",
+        ready_nodes=1,
+        eligible_gpu_nodes=1,
+        capacity=1,
+        allocatable=1,
+        products=("B200",),
+        node_labels={
+            "fallback-node": {
+                "skypilot.co/accelerator": "B200",
+                "nebius.com/gpu-name": "B200",
+            }
+        },
+        nodes=(node,),
+    )
+
+    # The uppercase SkyPilot label invalidates that formatter; the valid Nebius
+    # formatter is selected only after the ordered fallback.
+    assert skypilot_label_ready_nodes(inventory, "B200:1") == (node,)
+
+
+def test_skypilot_label_selection_keeps_first_matching_raw_selector_value() -> None:
+    first = replace(
+        _node("first", product="H200-SXM-141GB"),
+        labels=(("skypilot.co/accelerator", "h200-sxm-141gb"),),
+    )
+    second = replace(
+        _node("second", product="H200"),
+        labels=(("skypilot.co/accelerator", "h200"),),
+    )
+    inventory = KubernetesGpuInventory(
+        context="exact-context",
+        ready_nodes=2,
+        eligible_gpu_nodes=2,
+        capacity=2,
+        allocatable=2,
+        products=("H200", "H200-SXM-141GB"),
+        node_labels={
+            "first": {"skypilot.co/accelerator": "h200-sxm-141gb"},
+            "second": {"skypilot.co/accelerator": "h200"},
+        },
+        nodes=(first, second),
+    )
+
+    # SkyPilot accepts the hyphen-compatible first value, then renders that
+    # exact raw value into the node selector; it does not union per-node aliases.
+    assert [node.name for node in skypilot_label_ready_nodes(inventory, "H200:1")] == [
+        "first"
+    ]
 
 
 @pytest.mark.parametrize(
