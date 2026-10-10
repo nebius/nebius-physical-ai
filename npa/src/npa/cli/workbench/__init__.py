@@ -113,7 +113,7 @@ def _full_app() -> typer.Typer:
     from npa.cli.workbench.sonic import app as sonic_app
     from npa.cli.workbench.specialists import app as specialists_app
     from npa.cli.workbench.token_factory import app as token_factory_app
-    from npa.cli.workbench.team import app as team_app
+    from npa.cli.workbench import team
     from npa.cli.workbench.vlm_eval import app as vlm_eval_app
     from npa.cli.workbench.workflow import app as workflow_app
 
@@ -171,7 +171,12 @@ def _full_app() -> typer.Typer:
     full.add_typer(insights_app, name="insights")
     full.add_typer(vlm_eval_app, name="vlm-eval")
     full.add_typer(token_factory_app, name="token-factory")
-    full.add_typer(team_app, name="team")
+    full.add_typer(team.access_app, name="access")
+    full.command("whoami")(team.whoami_cmd)
+    full.command("submit")(team.submit_cmd)
+    full.command("runs")(team.list_cmd)
+    full.command("run")(team.run_cmd)
+    full.add_typer(team.app, name="team", hidden=True)
     full.add_typer(byof_app, name="byof")
     full.add_typer(workflow_app, name="workflow")
     full.add_typer(health_app, name="health")

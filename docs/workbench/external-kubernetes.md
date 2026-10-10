@@ -23,7 +23,7 @@ the scheduler and workflow policy still permit only enrolled Kubernetes targets.
 3. Apply enrollment with operator credentials against the selected destination:
 
    ```bash
-   npa workbench team enroll --config /private/workbench/operator.yaml \
+   npa workbench access enroll --config /private/workbench/operator.yaml \
      --workspace research --cluster external-training --subject "$WORKBENCH_USER_ID"
    ```
 
@@ -38,7 +38,7 @@ the scheduler and workflow policy still permit only enrolled Kubernetes targets.
 5. Export the runtime policy's connections for both server containers:
 
    ```bash
-   npa workbench team export-connections \
+   npa workbench access export-connections \
      --config /private/workbench/runtime.yaml \
      --output-dir /private/workbench/connections
    ```
@@ -60,7 +60,7 @@ the scheduler and workflow policy still permit only enrolled Kubernetes targets.
 7. From the gateway container or its equivalent server environment, run:
 
    ```bash
-   npa workbench team check-clusters --config /etc/npa-team/team.yaml
+   npa workbench access check-clusters --config /etc/npa-team/team.yaml
    ```
 
    This verifies connection access and every configured allocation's quota,
@@ -109,7 +109,7 @@ plugins beyond AWS are not bundled automatically.
 Select an authorized destination without changing the server endpoint:
 
 ```bash
-npa workbench team submit --spec workflow.yaml \
+npa workbench submit --spec workflow.yaml \
   --workspace research --cluster external-training
 ```
 

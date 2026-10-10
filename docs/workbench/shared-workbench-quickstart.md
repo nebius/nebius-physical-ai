@@ -27,7 +27,7 @@ AWS EKS authentication, connection export, and destination checks.
 2. Run setup from a management host or CI with the required permissions:
 
    ```bash
-   npa workbench team setup --input-path /private/npa-team/setup.yaml \
+   npa workbench access setup --input-path /private/npa-team/setup.yaml \
      --output-path /private/npa-team/installation.json
    ```
 
@@ -57,17 +57,19 @@ Neither path needs a Workbench login page or Keycloak. See the
 [identity guide](team-identity.md#sign-in-once-with-npa-login) for remote sign-in
 and private certificates.
 
-Both paths then use the same commands. Login remembers placement when there is
+Both paths use the same Workbench commands for one person or a shared
+installation. Add people and allocations to the existing installation as needed.
+Login remembers placement when there is
 one authorized workspace and cluster; otherwise select `--workspace` and
 `--cluster` at login or submission. Set `RUN_ID` to the returned ID:
 
 ```bash
-npa workbench team whoami
-npa workbench team submit --spec workflow.yaml
-npa workbench team list
-npa workbench team run "$RUN_ID" --action status
-npa workbench team run "$RUN_ID" --action logs
-npa workbench team run "$RUN_ID" --action artifacts
+npa workbench whoami
+npa workbench submit --spec workflow.yaml
+npa workbench runs
+npa workbench run "$RUN_ID" --action status
+npa workbench run "$RUN_ID" --action logs
+npa workbench run "$RUN_ID" --action artifacts
 ```
 
 Repeating the same submission safely recovers its original run. Add `--new-run`
@@ -82,8 +84,11 @@ Users can operate their own runs within the permissions granted by the operator.
 
 `npa configure` handles operator project, credential, and storage configuration.
 It does not install the shared service or create its LoadBalancer. The one-time
-installation command is `npa workbench team setup`; everyday shared access uses
-`npa login` followed by `npa workbench team` commands.
+installation command is `npa workbench access setup`; everyday shared access uses
+`npa login` followed by `npa workbench submit`, `runs`, `run`, and `whoami`.
+
+Existing `npa workbench team` commands remain compatibility aliases. They use the
+same accounts, saved connections, and submission receipts; no migration is needed.
 
 Ordinary `npa workbench workflow` commands retain the
 [operator workflow](getting-started.md). Setting `NPA_TEAM_ENDPOINT` does not

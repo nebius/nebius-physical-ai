@@ -30,7 +30,7 @@
 For a shared Workbench endpoint, start with the
 [shared-access quickstart](docs/workbench/shared-workbench-quickstart.md).
 Operators install the HTTPS service once; users and coding agents connect with
-`npa login` using a personal key or Nebius human sign-in. Team mode adds
+`npa login` using a personal key or Nebius human sign-in. Workbench access adds
 personal namespaces, GPU caps, and scoped storage. The CLI and agents reuse
 the saved connection through the same authenticated API.
 Operators managing Kubernetes directly can use

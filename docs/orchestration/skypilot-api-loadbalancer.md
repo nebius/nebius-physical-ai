@@ -3,7 +3,7 @@
 [SkyPilot setup](skypilot-setup.md) · [Docs](../README.md)
 
 Shared Workbench installations use
-[`npa workbench team setup`](../workbench/team-access.md#deploy-and-qualify-the-service)
+[`npa workbench access setup`](../workbench/team-access.md#deploy-and-qualify-the-service)
 to create or reuse their persistent HTTPS endpoint as part of server setup.
 Workbench remains the CLI/SDK control plane for agents; its native SkyPilot
 scheduler stays private. No desktop client or tunnel is required for setup.

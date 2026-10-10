@@ -6,7 +6,7 @@ Use `npa workbench <tool> <command>` for a capability and
 `npa workbench workflow` for a pipeline. Tools exchange artifacts through S3;
 Python and HTTP access follow each tool's documented contract.
 
-[Optional team mode](team-access.md) adds shared execution through the existing
+[Workbench access](team-access.md) adds shared execution through the existing
 CLI, API, and SDK. Administrators create local users/groups and explicit personal
 GPU allocations and artifact storage; users use revocable personal key files and
 never receive scheduler or cluster credentials. The CPU gateway and private

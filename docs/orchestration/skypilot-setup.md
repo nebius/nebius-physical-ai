@@ -7,7 +7,7 @@ SkyPilot is an external CLI dependency for NPA orchestration. NPA calls the
 Python environment.
 
 For the shared Workbench control plane, run
-[`npa workbench team setup`](../workbench/team-access.md#deploy-and-qualify-the-service).
+[`npa workbench access setup`](../workbench/team-access.md#deploy-and-qualify-the-service).
 Server setup creates or reuses its persistent HTTPS LoadBalancer automatically,
 using operator infrastructure credentials without a desktop client or tunnel.
 Workbench exposes its authenticated API and keeps native SkyPilot private.

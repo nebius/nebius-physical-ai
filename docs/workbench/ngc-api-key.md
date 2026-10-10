@@ -87,7 +87,7 @@ capability-specific access check before provisioning for a gated image/model.
   <https://org.ngc.nvidia.com/setup/api-key>.
 - **`401 Unauthorized` pulling `nvcr.io/...`** — the key is missing, wrong, or
   lacks catalog access. Re-generate it and include the NGC Catalog service.
-- **Org/team model not found** — set `org` (and `team`) in the `ngc:` block so
+- **Org/Workbench accessl not found** — set `org` (and `team`) in the `ngc:` block so
   the key resolves the right namespace.
 
 ## See also

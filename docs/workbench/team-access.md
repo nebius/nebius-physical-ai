@@ -1,6 +1,6 @@
-# Optional Workbench team mode
+# Workbench access
 
-Team mode gives a shared Kubernetes installation a small authenticated execution
+Workbench access gives a shared Kubernetes installation a small authenticated execution
 boundary. Administrators create persistent local accounts, assign local groups
 and explicit allocations, and operate the service. Users keep using the
 existing CLI, HTTP API, or Python SDK with a personal access-key file.
@@ -25,7 +25,7 @@ storage scope needed to submit. Both are required for execution.
 
 | Role | Uses | Does not receive |
 | --- | --- | --- |
-| Administrator | `npa workbench team account`, policy configuration, enrollment, and service deployment | User keys, worker tokens, or a user-facing portal |
+| Administrator | `npa workbench access account`, policy configuration, enrollment, and service deployment | User keys, worker tokens, or a user-facing portal |
 | User | A personal key file with the CLI, API, or SDK | Scheduler, Kubernetes, or administrator credentials |
 | Team service | TLS gateway, durable ownership ledger, and loopback private scheduler | A public scheduler API or a per-user controller |
 
@@ -84,11 +84,11 @@ as the allocation `subject`. The name is a local administration label, not an
 authentication credential.
 
 ```bash
-npa workbench team account create --config /private/npa-team/team.yaml \
+npa workbench access account create --config /private/npa-team/team.yaml \
   --name researcher-a --group researchers
-npa workbench team account create --config /private/npa-team/team.yaml \
+npa workbench access account create --config /private/npa-team/team.yaml \
   --name reviewer-a --group reviewers
-npa workbench team account list --config /private/npa-team/team.yaml
+npa workbench access account list --config /private/npa-team/team.yaml
 ```
 
 An allocation is selected in configuration, then enrolled explicitly. Its GPU
@@ -97,9 +97,9 @@ allocation, fair queue, or cross-cluster entitlement. Per-cluster allocations
 must fit both the person's and workspace's configured limits.
 
 ```bash
-npa workbench team render --config /private/npa-team/team.yaml \
+npa workbench access render --config /private/npa-team/team.yaml \
   --output-dir /private/npa-team/rendered
-npa workbench team enroll --config /private/npa-team/team.yaml \
+npa workbench access enroll --config /private/npa-team/team.yaml \
   --workspace robotics --cluster training \
   --subject "$WORKBENCH_USER_ID"
 ```
@@ -111,7 +111,7 @@ storage principal and bucket whose cloud IAM permits only that allocation's
 scope. `shared_inputs` can name declared read-only inputs, but it cannot grant
 cloud IAM access by itself.
 
-Use `npa workbench team storage-create` only when its Nebius storage setup
+Use `npa workbench access storage-create` only when its Nebius storage setup
 matches the deployment you operate; otherwise provide an equivalently narrow
 storage grant through the private configuration. Workload storage keys are
 separate from personal API access keys.
@@ -123,7 +123,7 @@ refuses to overwrite one; its JSON response includes a credential ID and path,
 not the secret. Deliver the resulting mode-0600 file privately to the user.
 
 ```bash
-npa workbench team account issue-key --config /private/npa-team/team.yaml \
+npa workbench access account issue-key --config /private/npa-team/team.yaml \
   --user "$WORKBENCH_USER_ID" \
   --output-file /private/key-delivery/researcher-a.key
 ```
@@ -140,10 +140,10 @@ Both save a connection for the CLI and agent-callable SDK:
 
 ```bash
 npa login --endpoint https://team.example.invalid --token-file ./workbench.key
-npa workbench team whoami
-npa workbench team submit --spec workflow.yaml
-npa workbench team list
-npa workbench team run "$RUN_ID" --action logs
+npa workbench whoami
+npa workbench submit --spec workflow.yaml
+npa workbench runs
+npa workbench run "$RUN_ID" --action logs
 ```
 
 When only one authorized workspace and cluster are allocated, login remembers
@@ -193,8 +193,8 @@ keep the delivered file private.
 export NPA_TEAM_ENDPOINT=https://team.example.invalid
 TEAM_KEY_FILE="$HOME/.config/npa/team.key"
 
-npa workbench team whoami --token-file "$TEAM_KEY_FILE"
-npa workbench team submit --spec workflow.yaml --workspace robotics \
+npa workbench whoami --token-file "$TEAM_KEY_FILE"
+npa workbench submit --spec workflow.yaml --workspace robotics \
   --cluster training --idempotency-key researcher-a-001 \
   --token-file "$TEAM_KEY_FILE"
 ```
@@ -205,12 +205,12 @@ than silently launching different work. Save the returned run ID, then use the
 same key-backed client for status, logs, artifacts, cancellation, and recovery.
 
 ```bash
-npa workbench team list --workspace robotics --token-file "$TEAM_KEY_FILE"
-npa workbench team run "$RUN_ID" --action status --token-file "$TEAM_KEY_FILE"
-npa workbench team run "$RUN_ID" --action logs --token-file "$TEAM_KEY_FILE"
-npa workbench team run "$RUN_ID" --action artifacts --token-file "$TEAM_KEY_FILE"
-npa workbench team run "$RUN_ID" --action cancel --token-file "$TEAM_KEY_FILE"
-npa workbench team run "$RUN_ID" --action resume --token-file "$TEAM_KEY_FILE"
+npa workbench runs --workspace robotics --token-file "$TEAM_KEY_FILE"
+npa workbench run "$RUN_ID" --action status --token-file "$TEAM_KEY_FILE"
+npa workbench run "$RUN_ID" --action logs --token-file "$TEAM_KEY_FILE"
+npa workbench run "$RUN_ID" --action artifacts --token-file "$TEAM_KEY_FILE"
+npa workbench run "$RUN_ID" --action cancel --token-file "$TEAM_KEY_FILE"
+npa workbench run "$RUN_ID" --action resume --token-file "$TEAM_KEY_FILE"
 ```
 
 `resume` reconciles a `recovery_required` run's recorded scheduler identity. If
@@ -278,11 +278,11 @@ for future requests and new workflow waves; they do not cancel already admitted
 work or rotate workload storage keys.
 
 ```bash
-npa workbench team account revoke-key --config /private/npa-team/team.yaml \
+npa workbench access account revoke-key --config /private/npa-team/team.yaml \
   --key-id "$WORKBENCH_KEY_ID"
-npa workbench team account update --config /private/npa-team/team.yaml \
+npa workbench access account update --config /private/npa-team/team.yaml \
   --user "$WORKBENCH_USER_ID" --disabled
-npa workbench team stop-run "$RUN_ID" --config /private/npa-team/team.yaml
+npa workbench access stop-run "$RUN_ID" --config /private/npa-team/team.yaml
 ```
 
 Cancel known active runs separately and revoke or rotate any static storage
@@ -302,7 +302,7 @@ After the administrator verifies the provider's immutable issuer and subject,
 they link it to the existing local account:
 
 ```bash
-npa workbench team account link --config /private/npa-team/team.yaml \
+npa workbench access account link --config /private/npa-team/team.yaml \
   --user "$WORKBENCH_USER_ID" \
   --issuer "$EXTERNAL_ISSUER" --subject "$EXTERNAL_SUBJECT"
 ```
@@ -360,7 +360,7 @@ node_selector:
 ```
 
 ```bash
-npa workbench team setup --input-path /private/npa-team/setup.yaml \
+npa workbench access setup --input-path /private/npa-team/setup.yaml \
   --output-path /private/npa-team/installation.json
 ```
 
@@ -439,7 +439,7 @@ The rendered scheduler reloads Kubernetes credentials every 60 seconds so
 projected service-account token rotation does not leave cached clients expired.
 
 ```bash
-npa workbench team render-service --namespace workbench-system \
+npa workbench access render-service --namespace workbench-system \
   --image registry.example.invalid/npa-team:reviewed \
   --secret team-config --claim team-state \
   --output-path /private/npa-team/service.yaml

@@ -3,9 +3,9 @@ name: team-identity
 description: Configure or use optional Workbench team identities, including local access keys, explicit generic JWT links, and native Nebius human identity verification.
 ---
 
-# Workbench team identity
+# Workbench identity and access
 
-Use this skill for the optional `npa workbench team` identity boundary. It is
+Use this skill for the `npa workbench access` identity boundary. It is
 not a chat-agent routing feature and does not provision a cluster, gateway, or
 browser login flow.
 
@@ -16,10 +16,13 @@ agent-callable API for an already-authorized service endpoint. Obtain credential
 through the private saved-session provider or the explicit `load_bearer_token`
 file/environment path. Never print bearer credentials or copy them into reports.
 
-For end users, start with `npa login --endpoint <team-HTTPS-endpoint>` and choose
+For end users, start with `npa login --endpoint <workbench-HTTPS-endpoint>` and choose
 a privately delivered personal key or `--nebius`. Successful login saves a
-private named connection and unambiguous placement defaults. Subsequent team
-commands can omit endpoint and credential flags; agents can use
+private named connection and unambiguous placement defaults. Use
+`npa workbench whoami`, `submit`, `runs`, and `run` for ordinary execution;
+administrators use `npa workbench access`. The same commands support an individual
+or a shared installation. Older `npa workbench team` commands remain compatible.
+Workbench commands can omit endpoint and credential flags; agents can use
 `npa.sdk.workbench.team.connect()`. A native session asks the official Nebius CLI
 for a token on each command without copying IAM tokens into Workbench storage.
 If no human profile exists, create an isolated CLI configuration, preserving

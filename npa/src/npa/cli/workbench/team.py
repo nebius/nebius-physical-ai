@@ -1,4 +1,4 @@
-"""Expose team enrollment, private service operation, and authenticated run commands."""
+"""Expose Workbench access administration and authenticated run commands."""
 
 from __future__ import annotations
 
@@ -16,16 +16,22 @@ from .team_accounts import app as accounts_app
 from .team_login import login_cmd, logout_cmd
 
 app = typer.Typer(
-    help="Optional team access and authenticated workflow execution.",
+    help="Compatibility commands for Workbench access and workflow execution.",
+    no_args_is_help=True,
+)
+access_app = typer.Typer(
+    help="Configure Workbench accounts, allocations, connections, and service access.",
     no_args_is_help=True,
 )
 
 app.add_typer(accounts_app, name="account")
+access_app.add_typer(accounts_app, name="account")
 app.command("login")(login_cmd)
 app.command("logout")(logout_cmd)
 
 
 @app.command("export-connections")
+@access_app.command("export-connections")
 @json_stdout_contract
 def export_connections_cmd(
     config: Path = typer.Option(..., "--config"),
@@ -58,6 +64,7 @@ def export_connections_cmd(
 
 
 @app.command("check-clusters")
+@access_app.command("check-clusters")
 @json_stdout_contract
 def check_clusters_cmd(
     config: Path = typer.Option(..., "--config"),
@@ -80,6 +87,7 @@ def check_clusters_cmd(
 
 
 @app.command("setup")
+@access_app.command("setup")
 @intent_boundary(OperationIntent.ENSURE_PRESENT)
 @json_stdout_contract
 def setup_cmd(
@@ -109,6 +117,7 @@ def setup_cmd(
 
 
 @app.command("stop-run")
+@access_app.command("stop-run")
 @intent_boundary(OperationIntent.DESTROY)
 @json_stdout_contract
 def stop_cmd(
@@ -134,6 +143,7 @@ def stop_cmd(
 
 
 @app.command("render")
+@access_app.command("render")
 @json_stdout_contract
 def render_cmd(
     config: Path = typer.Option(..., "--config"),
@@ -157,6 +167,7 @@ def render_cmd(
 
 
 @app.command("enroll")
+@access_app.command("enroll")
 @intent_boundary(OperationIntent.ENSURE_PRESENT)
 @json_stdout_contract
 def enroll_cmd(
@@ -193,6 +204,7 @@ def enroll_cmd(
 
 
 @app.command("export-kubeconfig")
+@access_app.command("export-kubeconfig")
 @json_stdout_contract
 def export_cmd(
     config: Path = typer.Option(..., "--config"),
@@ -216,12 +228,13 @@ def export_cmd(
 
 
 @app.command("serve")
+@access_app.command("serve")
 def serve_cmd(
     config: Path = typer.Option(..., "--config"),
     host: str = typer.Option("127.0.0.1", "--host"),
     port: int = typer.Option(8443, "--port"),
 ):
-    """Run one private team supervisor behind the administrator's HTTPS ingress.
+    """Run one private Workbench supervisor behind the administrator's HTTPS ingress.
 
     Args:
         config: Private administrator policy.
@@ -293,7 +306,7 @@ def submit_cmd(
     ),
     output_format: str = typer.Option("json", "--output-format"),
 ):
-    """Submit an NPA workflow through the authenticated team execution boundary.
+    """Submit an NPA workflow through the authenticated Workbench endpoint.
 
     Args:
         spec: Canonical workflow YAML.
@@ -348,7 +361,7 @@ def run_cmd(
     ),
     output_format: str = typer.Option("json", "--output-format"),
 ):
-    """Inspect, cancel, or resume an owned run using the authenticated team API.
+    """Inspect, cancel, or resume an owned run using the authenticated Workbench API.
 
     Args:
         run_id, action: Owned run and supported operation.
@@ -437,12 +450,13 @@ def _placement(explicit, saved, name):
     selected = explicit or saved
     if not selected:
         raise TeamError(
-            f"Choose --{name}; use npa workbench team whoami to see permitted choices."
+            f"Choose --{name}; use npa workbench whoami to see permitted choices."
         )
     return selected
 
 
 @app.command("storage-create")
+@access_app.command("storage-create")
 @intent_boundary(OperationIntent.ENSURE_PRESENT)
 @json_stdout_contract
 def storage_cmd(
@@ -469,6 +483,7 @@ def storage_cmd(
 
 
 @app.command("render-service")
+@access_app.command("render-service")
 @json_stdout_contract
 def service_cmd(
     namespace: str = typer.Option(..., "--namespace"),

@@ -11,7 +11,7 @@ Direct [Token Factory](token-factory.md) inference uses the hosted API. Its loca
 CLI/SDK calls do not require the Kubernetes setup below.
 
 For a shared Workbench installation, the operator runs
-[`npa workbench team setup`](team-access.md#deploy-and-qualify-the-service) as part
+[`npa workbench access setup`](team-access.md#deploy-and-qualify-the-service) as part
 of server setup. It creates the persistent Nebius HTTPS LoadBalancer and retains
 its address using operator infrastructure credentials. Desktop clients and
 personal Workbench keys are not provisioning dependencies. Users and agents access the

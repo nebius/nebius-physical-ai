@@ -1,9 +1,9 @@
-# `npa workbench team account`
+# `npa workbench access account`
 
 ## Command Tree
 
 ```text
-Usage: npa workbench team account [OPTIONS] COMMAND [ARGS]...
+Usage: npa workbench access account [OPTIONS] COMMAND [ARGS]...
 
 Operator-managed users, personal keys, and optional SSO links.
 
@@ -40,8 +40,8 @@ unlink  Remove an exact SSO link while retaining the user's keys and ownership.
 ## Examples
 
 ```bash
-npa workbench team account --help
-npa workbench team account create --help
+npa workbench access account --help
+npa workbench access account create --help
 ```
 
 Regenerate this page with `bash scripts/build_docs.sh` after changing `account`.

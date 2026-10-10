@@ -9,6 +9,7 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
+from npa.cli.workbench import app as workbench_app
 from npa.cli.workbench import team as cli
 from npa.workbench.team.client import TeamClient, load_bearer_token
 from npa.workbench.team.errors import AuthenticationError, TeamError
@@ -129,7 +130,7 @@ def test_cli_and_sdk_share_the_submission_contract(tmp_path, workflow, monkeypat
 
     monkeypatch.setattr(cli, "TeamClient", Client)
     result = CliRunner().invoke(
-        cli.app,
+        workbench_app,
         [
             "submit",
             "--spec",
@@ -170,7 +171,7 @@ def test_cli_whoami_uses_the_authenticated_client(tmp_path, monkeypatch):
 
     monkeypatch.setattr(cli, "TeamClient", Client)
     result = CliRunner().invoke(
-        cli.app,
+        workbench_app,
         [
             "whoami",
             "--endpoint",
@@ -214,9 +215,9 @@ def test_cli_list_and_run_accept_the_same_private_token_file(tmp_path, monkeypat
         "--token-file",
         str(token_file),
     ]
-    listed = runner.invoke(cli.app, ["list", "--workspace", "robotics", *common])
+    listed = runner.invoke(workbench_app, ["runs", "--workspace", "robotics", *common])
     run_id = "run-" + "1" * 32
-    logged = runner.invoke(cli.app, ["run", run_id, "--action", "logs", *common])
+    logged = runner.invoke(workbench_app, ["run", run_id, "--action", "logs", *common])
     assert listed.exit_code == 0, listed.output
     assert logged.exit_code == 0, logged.output
     assert observed == [("list", "robotics"), ("run", run_id, "logs")]

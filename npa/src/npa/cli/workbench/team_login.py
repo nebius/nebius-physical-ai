@@ -199,11 +199,9 @@ def _show_access(profile, session, access, output_format):
             f"  {entry['name']}: {entry['role']}; {clusters}; GPU cap {entry.get('gpu_limit')}"
         )
     if session.workspace and session.cluster:
-        typer.echo("Next: npa workbench team submit --spec workflow.yaml")
+        typer.echo("Next: npa workbench submit --spec workflow.yaml")
     else:
-        typer.echo(
-            "Use npa workbench team whoami to inspect access and choose placement."
-        )
+        typer.echo("Use npa workbench whoami to inspect access and choose placement.")
 
 
 @json_stdout_contract

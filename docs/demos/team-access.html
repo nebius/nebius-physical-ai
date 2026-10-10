@@ -9,7 +9,7 @@
       http-equiv="Content-Security-Policy"
       content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'"
     />
-    <title>Workbench · Simulated team access</title>
+    <title>Workbench · Simulated access example</title>
     <style>
       :root {
         --ink: #172339;
@@ -683,7 +683,7 @@
     <div class="shell">
       <aside class="sidebar">
         <div class="brand"><span class="brandmark">w</span>workbench</div>
-        <div class="eyebrow">Offline team-access illustration</div>
+        <div class="eyebrow">Offline Workbench access illustration</div>
         <nav aria-label="Example sections">
           <button class="active" data-tab="playground">01 &nbsp; Try it</button
           ><button data-tab="access">02 &nbsp; People &amp; access</button
@@ -925,11 +925,11 @@
                 operations, not a shipped admin UI.
               </p>
               <pre>
-npa workbench team account create --config /private/team.yaml \
+npa workbench access account create --config /private/team.yaml \
   --name sample-runner-a --group researchers
-npa workbench team render --config /private/team.yaml \
+npa workbench access render --config /private/team.yaml \
   --output-dir /private/rendered
-npa workbench team enroll --config /private/team.yaml \
+npa workbench access enroll --config /private/team.yaml \
   --workspace robotics --cluster east --subject "$WORKBENCH_USER_ID"</pre>
             </div>
           </div>
@@ -1007,9 +1007,9 @@ npa workbench team enroll --config /private/team.yaml \
                 </dd>
               </dl>
               <pre>
-npa workbench team export-kubeconfig --config /private/team.yaml \
+npa workbench access export-kubeconfig --config /private/team.yaml \
   --output-path /private/sky-kubeconfig.yaml
-npa workbench team render-service --namespace workbench-system \
+npa workbench access render-service --namespace workbench-system \
   --image registry.example.invalid/team:reviewed \
   --secret team-config --claim team-state \
   --output-path /private/team-service.yaml</pre>
@@ -1017,13 +1017,13 @@ npa workbench team render-service --namespace workbench-system \
             <div class="card">
               <h2>CLI and SDK use the same API</h2>
               <pre>
-npa workbench team submit --spec workflow.yaml \
+npa workbench submit --spec workflow.yaml \
   --workspace robotics --cluster east \
   --idempotency-key retained-key
-npa workbench team run "$RUN_ID" --action logs
-npa workbench team run "$RUN_ID" --action artifacts
-npa workbench team run "$RUN_ID" --action resume
-npa workbench team run "$RUN_ID" --action cancel</pre>
+npa workbench run "$RUN_ID" --action logs
+npa workbench run "$RUN_ID" --action artifacts
+npa workbench run "$RUN_ID" --action resume
+npa workbench run "$RUN_ID" --action cancel</pre>
               <pre>
 from npa.sdk.workbench.team import TeamClient, SubmitRequest
 
@@ -1043,7 +1043,7 @@ finally:
                 <thead>
                   <tr>
                     <th>Capability</th>
-                    <th>Workbench team mode</th>
+                    <th>Workbench access</th>
                     <th>Boundary</th>
                   </tr>
                 </thead>
@@ -1215,7 +1215,7 @@ finally:
           </div>
         </section>
         <footer>
-          Optional Workbench team mode · all people, keys, resources, and
+          Workbench access · all people, keys, resources, and
           outcomes in this example are synthetic · no control contacts or
           provisions infrastructure.
         </footer>
