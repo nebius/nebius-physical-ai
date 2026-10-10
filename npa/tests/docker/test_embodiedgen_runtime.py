@@ -915,7 +915,7 @@ def test_pybullet_validation_tracks_the_body_and_keeps_failure_media(
         defusedxml = ModuleType("defusedxml")
         defusedxml.ElementTree = XML_ET
         pybullet_data = ModuleType("pybullet_data")
-        pybullet_data.getDataPath = lambda: "/tmp"
+        pybullet_data.getDataPath = lambda: str(tmp_path / "pybullet-data")
         monkeypatch.setitem(sys.modules, "asset_bundle", asset_bundle)
         monkeypatch.setitem(sys.modules, "defusedxml", defusedxml)
         monkeypatch.setitem(sys.modules, "imageio", imageio)
