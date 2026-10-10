@@ -10,10 +10,11 @@ YAMLs and the five-site fan-out live in `workflows/testing/`; the
 [testing catalog](../../../workflows/testing/README.md#generation-and-reconstruction)
 pairs each workflow with this guide.
 
-These are testing workflows. Their schema, resolved commands and fan-out are
-checked locally. The earlier warehouse demo completed on one real RTX PRO 6000;
-these five new generated worlds and the combined fan-out have not completed
-live acceptance. Generated geometry must pass route and motion checks.
+These remain testing workflows. All five generated-site parameterizations
+completed native live collection and standalone reporting on 2026-10-10 using
+four RTX PRO 6000 workers followed by the fifth collection on a reused worker.
+See [live acceptance](#live-acceptance) for measurements and the tested scope.
+Newly generated geometry must still pass route and motion checks.
 
 | Preset | YAML in `workflows/testing/` | Commanded speed | Observations | Intended experiment |
 | --- | --- | --- | --- | --- |
@@ -209,3 +210,54 @@ Factory and utility presets collect views; they do not detect defects, read
 gauges or simulate thermal measurements. Home does not manipulate objects.
 None trains a policy or proves production inspection performance. Navigation
 learning requires the separate training/evaluation path and held-out evidence.
+
+## Live acceptance
+
+The [sanitized acceptance record](../validation/marble-go1-five-sites-20261010.json)
+captures five distinct worlds generated with a funded `WLT_API_KEY`, all fifteen
+acquire/collect/report stages, and 4,250 observations at 1280 × 720 and 25 Hz.
+Native submission used `--max-concurrency 4`: four collectors ran concurrently,
+then utility ran on one worker. All batch barriers passed the native workflow
+assertion. The default five-concurrent-collector plan was not completed.
+
+| Site | Observations | Recorded travel (m) | Return leg (m) | Peak speed (m/s) |
+| --- | --- | --- | --- | --- |
+| Warehouse | 500 | 13.04 | 5.76 | 1.31 |
+| Shipyard | 750 | 15.52 | 5.66 | 0.81 |
+| Home | 1,000 | 10.96 | 4.04 | 0.40 |
+| Factory | 1,000 | 16.95 | 5.64 | 0.61 |
+| Utility | 1,000 | 16.81 | 5.68 | 0.61 |
+
+Each site passed the turn and contact checks and produced three embedded videos:
+observer, robot RGB and mesh depth. The five native reports were repackaged
+through NPA's HTML writer after fixing chapter-boundary rounding, preserving
+every recorded video and telemetry byte. Both original and final report hashes
+are retained. The final files were checked offline in Chromium desktop and
+mobile viewports for playback, synchronized seeking,
+motion chapters and telemetry downloads, with zero external requests or
+JavaScript errors. A sixth overview uses NPA's
+`npa.workflows.preview_html.write_preview` with hash-verified sampled frames;
+the individual reports contain the full recordings.
+
+The single-site YAMLs were validated and their matching parameterizations were
+executed in the combined workflow; five independent entrypoint submissions were
+not repeated. Collection used source `eb81e7039`. Subsequent XML hardening was
+qualified separately using the pinned real Go1 URDF and a recorded pose on CUDA:
+all 38 visual parts retained identical vertices, oriented topology, transforms
+and materials. The largest image difference was one 8-bit color level, also
+observed when repeating the original renderer. This is not a full fan-out rerun
+of the hardened source.
+
+GPU utilization statistics describe the recorded sampling windows, which may
+include setup, CPU physics, rendering, artifact upload and group-barrier waiting.
+Utility sampling began during rendering and includes a short renderer
+qualification. Peak utilization does not establish sustained throughput.
+Exact infrastructure and credential evidence is retained privately.
+Visual inspection found reconstruction artifacts and a noticeably soft utility
+background; the reports preserve that generated-world quality.
+
+Main's newer credential-binding scheme intentionally refuses the older running
+API session's identity seal. A separate fresh API using the merged source passed
+Kubernetes access, identity revalidation, queue and controller-status checks,
+then was stopped. That check launched no cloud jobs and does not replace the
+collection's source-scope disclosure above.

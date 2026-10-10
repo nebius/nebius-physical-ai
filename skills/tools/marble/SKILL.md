@@ -12,9 +12,13 @@ warehouse, shipyard, home, factory or utility. Each includes hosted generation
 with `WLT_API_KEY`, GPU collection and standalone HTML reporting. The combined
 spec runs three native parallel waves of five tasks, with one RTX PRO 6000 per
 collector and separate S3 paths. These are Go1 presets, not ANYmal or Spot.
-The existing warehouse run proves the collector only; each new generated route
-and the complete fan-out require their own live acceptance. Do not advertise
-thermal inspection, defect detection, household manipulation or RL training.
+All five generated-site parameterizations completed native collection and
+standalone reporting with `--max-concurrency 4` (four collectors, then one).
+See the guide's live-acceptance section and sanitized validation record. This
+does not qualify default five-way concurrency or five independent single-site
+submissions. New generated routes still need their own acceptance. Do not
+advertise thermal inspection, defect detection, household manipulation or
+RL training.
 
 For detailed quadruped collection, use
 `workflows/testing/marble-warehouse-quadruped.yaml` and

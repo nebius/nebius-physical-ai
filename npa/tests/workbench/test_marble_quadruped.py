@@ -1,6 +1,10 @@
 """Guard physical robot import, upstream policy inputs, and truthful GPU reports."""
 
 import json
+from pathlib import Path
+import re
+import shutil
+import subprocess
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -14,6 +18,35 @@ from npa.workbench.marble.quadruped_assets import _description, acquire_robot
 from npa.workbench.marble.quadruped_control import DEFAULT_ANGLES, observe
 from npa.workbench.marble.quadruped_report import _data
 from npa.workbench.marble.schemas import QuadrupedRequest
+
+
+def test_report_chapter_boundaries_select_the_matching_telemetry_frame():
+    from npa.workbench.marble import quadruped_report
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("JavaScript execution requires Node.js")
+    template = Path(quadruped_report.__file__).with_name("quadruped-report.html")
+    source = re.search(
+        r"function frameIndex\(time\)\{.*?\n\}", template.read_text(), re.S
+    )
+    assert source is not None
+    program = (
+        source.group()
+        + """
+const assert=require('node:assert/strict'), rows=Array(1000);
+for (const frequency of [25,50,250]) {
+    hz=frequency;
+    for(let index=0;index<rows.length;index++) {
+        assert.equal(frameIndex(index/hz),index);
+        assert.equal(frameIndex((index+0.75)/hz),index);
+        if(index>0)assert.equal(frameIndex((index-0.001)/hz),index-1);
+    }
+    assert.equal(frameIndex(rows.length/hz),rows.length-1);
+}
+"""
+    )
+    subprocess.run([node, "-e", "let hz;\n" + program], check=True, capture_output=True)
 
 
 def test_shadow_mesh_matches_physics_after_provider_transform(monkeypatch, tmp_path):

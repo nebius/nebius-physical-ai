@@ -21,29 +21,44 @@
   },
   "prerequisites": {
     "output_storage": {
-      "status": "unverified",
-      "reason": "The example bucket must be replaced and storage access verified for the selected project.",
-      "evidence": []
+      "status": "verified",
+      "reason": "Owned S3 output storage accepted and returned hash-verified world, collection and native report artifacts. Operators must replace the example bucket and verify their own destination.",
+      "evidence": [
+        "docs/workbench/validation/marble-go1-five-sites-20261010.json",
+        "docs/workbench/guides/marble-robot-presets.md#live-acceptance"
+      ]
     },
     "worker_input": {
-      "status": "unverified",
-      "reason": "The generation prompt is wired into the World API stage; no world has been generated or route-qualified for this new preset.",
-      "evidence": []
+      "status": "verified",
+      "reason": "A distinct World API generation passed the consuming collector route, contact, turning and return-travel checks. Newly generated scenes require fresh checks.",
+      "evidence": [
+        "docs/workbench/validation/marble-go1-five-sites-20261010.json",
+        "docs/workbench/guides/marble-robot-presets.md#live-acceptance"
+      ]
     },
     "credentials": {
-      "status": "unverified",
-      "reason": "Requires funded WLT_API_KEY plus operator Nebius and S3 access; no new credential or credit check was performed.",
-      "evidence": []
+      "status": "verified",
+      "reason": "The acceptance used funded WLT_API_KEY and working Nebius/S3 credentials through native secret injection. Each operator must supply and verify their own credentials.",
+      "evidence": [
+        "docs/workbench/validation/marble-go1-five-sites-20261010.json",
+        "docs/workbench/guides/marble-robot-presets.md#live-acceptance"
+      ]
     },
     "source_image": {
-      "status": "unverified",
-      "reason": "Uses the existing EnvGen image and staged checkout bootstrap; new preset worker execution is not yet accepted.",
-      "evidence": []
+      "status": "verified",
+      "reason": "Pinned EnvGen image plus staged collector source completed real CUDA collection. Later XML hardening was separately qualified against real pinned assets and recorded-pose CUDA rendering; the full fan-out was not rerun after that change.",
+      "evidence": [
+        "docs/workbench/validation/marble-go1-five-sites-20261010.json",
+        "docs/workbench/guides/marble-robot-presets.md#live-acceptance"
+      ]
     },
     "target_runtime": {
-      "status": "unverified",
-      "reason": "Requires Linux SkyPilot and schedulable RTX PRO 6000 workers. Earlier warehouse collection is historical component evidence, not a completed run of this preset.",
-      "evidence": []
+      "status": "verified",
+      "reason": "Linux SkyPilot runtime completed GPU collection and CPU report stages on RTX PRO 6000 workers. This parameterization completed inside the native five-site workflow; its independent entrypoint was not resubmitted.",
+      "evidence": [
+        "docs/workbench/validation/marble-go1-five-sites-20261010.json",
+        "docs/workbench/guides/marble-robot-presets.md#live-acceptance"
+      ]
     }
   }
 }

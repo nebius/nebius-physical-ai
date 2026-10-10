@@ -74,6 +74,20 @@ def _data(root, result):
     }
 
 
+def _write_html(root, data):
+    payload = json.dumps(data, allow_nan=False, separators=(",", ":")).replace(
+        "<", "\\u003c"
+    )
+    template = Path(__file__).with_name("quadruped-report.html").read_text()
+    page = template.replace("__CAPTURE_DATA__", payload)
+    script = page.split('<script id="player">', 1)[1].split("</script>", 1)[0]
+    digest = base64.b64encode(hashlib.sha256(script.encode()).digest()).decode()
+    page = page.replace("__SCRIPT_SHA256__", digest)
+    output = root / "index.html"
+    output.write_text(page)
+    return output
+
+
 def write_quadruped_report(root, result):
     """Encode actual recorded frames and embed them with their measured telemetry.
 
@@ -96,14 +110,4 @@ def write_quadruped_report(root, result):
                 }
             )
     data["notices"] = notices
-    payload = json.dumps(data, allow_nan=False, separators=(",", ":")).replace(
-        "<", "\\u003c"
-    )
-    template = Path(__file__).with_name("quadruped-report.html").read_text()
-    page = template.replace("__CAPTURE_DATA__", payload)
-    script = page.split('<script id="player">', 1)[1].split("</script>", 1)[0]
-    digest = base64.b64encode(hashlib.sha256(script.encode()).digest()).decode()
-    page = page.replace("__SCRIPT_SHA256__", digest)
-    output = root / "index.html"
-    output.write_text(page)
-    return output
+    return _write_html(root, data)
