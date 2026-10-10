@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation
 import fcntl
 import hashlib
@@ -46,6 +46,18 @@ class KubernetesGpuCatalogError(RuntimeError):
 
 class PendingGpuPlacementError(KubernetesGpuCatalogError):
     """Active unbound GPU demand makes shared placement indeterminate."""
+
+
+class SkyPilotGpuLabelError(KubernetesGpuCatalogError):
+    """Signal that native capacity fits but reviewed SkyPilot labels do not.
+
+    Args:
+        *args: Error context retained in the exception's diagnostic text.
+    Returns:
+        None.
+    Raises:
+        None.
+    """
 
 
 class UnsatisfiableAcceleratorError(ValueError):
@@ -1381,6 +1393,94 @@ def _known_skypilot_label(labels: dict[str, str]) -> str:
             # entry is added in mixed case.
             return _KNOWN_SKYPILOT_LABELS[normalized].lower()
     return ""
+
+
+def _reviewed_native_accelerator(labels: dict[str, str], label_key: str) -> str:
+    product = labels.get(label_key, "")
+    if label_key == "nvidia.com/gpu.product":
+        # The pinned SkyPilot GFD fallback handles these reviewed product names.
+        return (
+            product.upper()
+            .replace("NVIDIA-", "")
+            .replace("GEFORCE-", "")
+            .replace("RTX-", "RTX")
+        )
+    return product.upper()
+
+
+def _skypilot_node_label_ready(
+    node: KubernetesGpuNode,
+    accelerator: str,
+    *,
+    label_key: str = "skypilot.co/accelerator",
+) -> bool:
+    labels = dict(node.labels)
+    if not _known_skypilot_label(labels):
+        return True
+    requested = parse_accelerator_request(accelerator)
+    if label_key == "skypilot.co/accelerator":
+        return labels.get(label_key, "") == requested.name.lower()
+    return _reviewed_native_accelerator(labels, label_key) == requested.name.upper()
+
+
+def _skypilot_label_ready_nodes(inventory, accelerator):
+    # SkyPilot selects one formatter for the context, preferring valid Sky labels.
+    sky_value = next(
+        (
+            value
+            for labels in inventory.node_labels.values()
+            if (value := labels.get("skypilot.co/accelerator", "")).strip()
+        ),
+        "",
+    )
+    label_key = "skypilot.co/accelerator"
+    if not sky_value or sky_value != sky_value.lower():
+        label_key = (
+            "nvidia.com/gpu.product"
+            if any(
+                labels.get("nvidia.com/gpu.product", "").strip()
+                for labels in inventory.node_labels.values()
+            )
+            else "nebius.com/gpu-name"
+        )
+    return tuple(
+        node
+        for node in inventory.nodes
+        if _skypilot_node_label_ready(node, accelerator, label_key=label_key)
+    )
+
+
+def preflight_skypilot_gpu_gang(
+    inventory: KubernetesGpuInventory, **requirements: object
+) -> dict[str, object]:
+    """Require native free capacity and effective SkyPilot bridge labels.
+
+    Args:
+        inventory: Actual node labels and free resources in the selected context.
+        requirements: Arguments accepted by ``preflight_kubernetes_gpu_gang``.
+    Returns:
+        Existing-capacity evidence restricted to SkyPilot-compatible nodes.
+    Raises:
+        SkyPilotGpuLabelError: Reviewed bridge labels cannot place this task.
+        KubernetesGpuCatalogError: The native inventory is unverifiable.
+        UnsatisfiableAcceleratorError: The native resource requirements do not fit.
+    """
+    native_fit = preflight_kubernetes_gpu_gang(inventory, **requirements)
+    accelerator = str(requirements["accelerator"])
+    eligible = _skypilot_label_ready_nodes(inventory, accelerator)
+    if eligible == inventory.nodes:
+        return native_fit
+    try:
+        return preflight_kubernetes_gpu_gang(
+            replace(inventory, nodes=eligible), **requirements
+        )
+    except UnsatisfiableAcceleratorError as exc:
+        raise SkyPilotGpuLabelError(
+            "Native GPU capacity fits, but reviewed GPU nodes lack the effective "
+            "skypilot.co/accelerator label for this task. Re-run the supported "
+            "GPU setup for the exact context with label_known_gpus=True; "
+            "submission preflight does not modify node labels."
+        ) from exc
 
 
 def label_known_kubernetes_gpus_for_skypilot(

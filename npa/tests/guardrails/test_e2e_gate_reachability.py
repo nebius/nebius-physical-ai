@@ -105,6 +105,10 @@ MANUAL_GATES = {
     ),
     "NPA_DETECTION_RUNTIME_LIVE": "real detector training and service restart require an operator-selected deployment",
     "NPA_EXECUTION_PREFLIGHT_LIVE_CONFIG": "exact-prefix write verification requires an operator-selected private execution target",
+    "NPA_SKYPILOT_GPU_LABEL_LIVE_CONFIG": (
+        "read-only GPU label and free-placement checks require an operator-selected exact kubeconfig, "
+        "context and private evidence; run with npa/tests/e2e/README.md"
+    ),
     "NPA_AGENT_IMPROVEMENT_LIVE": (
         "requires a dedicated operator-selected queue, protected actual-check receipts "
         "and independently obtained review evidence; shared-agent runners cannot synthesize these"

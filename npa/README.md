@@ -199,6 +199,9 @@ environments, and the separate SkyPilot environment.
 
 The cluster GPU smoke manages an owned SkyPilot API session through workload
 cleanup; see [SkyPilot setup](../docs/orchestration/skypilot-setup.md#verify).
+GPU submission also checks reviewed SkyPilot bridge labels after node replacement;
+native Ready/allocatable GPU capacity alone does not establish placement. See the
+same setup guide for the exact-context repair and supported workflow resume.
 The [PAIDF starter guide](../workflows/guides/paidf-cosmos3.md#audit-a-completed-default-starter-run)
 also provides a read-only live audit using the selected run URI, project, and
 saved pre-submission UTC timestamp. Its test settings are scoped to the audit
