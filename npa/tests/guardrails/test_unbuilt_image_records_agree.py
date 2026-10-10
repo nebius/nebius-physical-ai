@@ -250,6 +250,14 @@ def test_agent_indexes_describe_quarantined_ray_serve_as_unavailable() -> None:
     )
     assert "must not be deployed or operated" in skill_text
 
+    agent_interface = yaml.safe_load(
+        (REPO_ROOT / "skills/tools/cosmos3-ray-serve/agents/openai.yaml").read_text(
+            encoding="utf-8"
+        )
+    )["interface"]
+    assert "quarantined" in agent_interface["short_description"]
+    assert "do not deploy or operate" in agent_interface["default_prompt"]
+
     matrix = (REPO_ROOT / "docs/workbench/image-gpu-compatibility-matrix.md").read_text(
         encoding="utf-8"
     )
