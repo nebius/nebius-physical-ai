@@ -372,6 +372,7 @@ def test_preflight_resume_allows_provider_progress_for_the_same_requested_shape(
             "required_disks": 1,
             "required_network_ssd_bytes": 256 * 1024**3,
             "required_network_ssd_gib": "256",
+            "required_vpc_pools": 1,
             "required_gpus": 1,
         },
     }
@@ -387,6 +388,7 @@ def test_preflight_resume_allows_provider_progress_for_the_same_requested_shape(
             "required_disks": 0,
             "required_network_ssd_bytes": 0,
             "required_network_ssd_gib": "0",
+            "required_vpc_pools": 0,
             "required_gpus": 0,
         },
     }

@@ -238,6 +238,7 @@ _TOPOLOGY_PROGRESS_KEYS = frozenset(
         "required_network_ssd_bytes",
         "required_network_ssd_gib",
         "required_public_ips",
+        "required_vpc_pools",
         "required_gpus",
     }
 )

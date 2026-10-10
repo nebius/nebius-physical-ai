@@ -151,6 +151,53 @@ def test_agent_capacity_rejects_an_exhausted_vpc_pool_quota(monkeypatch) -> None
         )
 
 
+def test_agent_capacity_allows_unadvertised_vpc_pool_in_tenant_catalog(
+    monkeypatch,
+) -> None:
+    payload = _allowances()
+    payload["items"] = [
+        item for item in payload["items"] if item["metadata"]["name"] != VPC_POOL_QUOTA
+    ]
+    monkeypatch.setattr(
+        "npa.clients.nebius.get_project_region", lambda _project_id: REGION
+    )
+    monkeypatch.setattr(
+        "npa.clients.nebius.list_quota_allowances", lambda _parent_id: payload
+    )
+
+    plan = _agent_check_whole_path_capacity(
+        "project-test",
+        "tenant-test",
+        REGION,
+        include_paidf=False,
+    )
+
+    vpc_pool = next(item for item in plan.quotas if item.name == VPC_POOL_QUOTA)
+    assert plan.decision == "ready"
+    assert vpc_pool.status == "unbounded"
+
+
+def test_agent_capacity_allows_unadvertised_vpc_pool_in_project_catalog(
+    monkeypatch,
+) -> None:
+    payload = _allowances()
+    payload["items"] = [
+        item for item in payload["items"] if item["metadata"]["name"] != VPC_POOL_QUOTA
+    ]
+    _project_scoped_quota_setup(monkeypatch, payload)
+
+    plan = _agent_check_whole_path_capacity(
+        "project-test",
+        "tenant-test",
+        REGION,
+        include_paidf=False,
+    )
+
+    vpc_pool = next(item for item in plan.quotas if item.name == VPC_POOL_QUOTA)
+    assert plan.decision == "ready"
+    assert vpc_pool.status == "unbounded"
+
+
 def test_project_quota_query_failure_remains_fail_closed_and_sanitized(
     monkeypatch,
 ) -> None:

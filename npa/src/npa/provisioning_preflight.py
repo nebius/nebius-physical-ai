@@ -23,6 +23,12 @@ NETWORK_SSD_BYTES_QUOTA = "compute.disk.size.network-ssd"
 PUBLIC_IP_QUOTA = "vpc.ipv4-address.public.count"
 VPC_POOL_QUOTA = "vpc.pool.count"
 
+# The provider's completed quota catalog does not advertise this resource in
+# every region. Its absence there means the resource is not quota-controlled,
+# not that capacity evidence is missing. Malformed and unreadable catalogs stay
+# fail-closed.
+_OPTIONAL_UNADVERTISED_QUOTAS = frozenset({VPC_POOL_QUOTA})
+
 GIB = 1024**3
 DEFAULT_AGENT_ROOT_DISK_GIB = 100
 DEFAULT_CPU_DISK_GIB = 128
@@ -657,9 +663,10 @@ def read_provider_quotas(
         }
     from npa.clients.nebius import list_quota_allowances
 
-    return parse_quota_allowances(
+    parsed = parse_quota_allowances(
         list_quota_allowances(tenant_id), region=region, names=names
     )
+    return _allow_unadvertised_optional_quotas(parsed)
 
 
 def read_project_quota_observations(
@@ -668,13 +675,17 @@ def read_project_quota_observations(
     """Read exact-project quota constraints after tenant scope is denied.
 
     Project allowances are an additional provider-enforced boundary. An absent
-    row does not establish that a quota is unconstrained, so it remains unknown
-    and blocks a mutation until the provider returns explicit allowance data.
+    ordinary row does not establish that a quota is unconstrained, so it remains
+    unknown and blocks a mutation until the provider returns explicit allowance
+    data. Optional resources absent from a well-formed completed catalog are not
+    quota-controlled in that region.
     """
     from npa.clients.nebius import list_quota_allowances
 
     payload = list_quota_allowances(str(project_id or "").strip())
-    parsed = parse_quota_allowances(payload, region=region, names=names)
+    parsed = _allow_unadvertised_optional_quotas(
+        parse_quota_allowances(payload, region=region, names=names)
+    )
     return {
         name: (
             QuotaObservation(
@@ -686,6 +697,29 @@ def read_project_quota_observations(
             else observation
         )
         for name, observation in parsed.items()
+    }
+
+
+def _allow_unadvertised_optional_quotas(
+    observations: Mapping[str, QuotaObservation],
+) -> dict[str, QuotaObservation]:
+    """Mark optional rows absent from a completed quota catalog as unbounded."""
+
+    return {
+        name: (
+            QuotaObservation(
+                name=name,
+                state="unbounded",
+                reason=(
+                    "completed quota catalog does not advertise this optional "
+                    "resource in the requested region"
+                ),
+            )
+            if name in _OPTIONAL_UNADVERTISED_QUOTAS
+            and observation.state == "unsupported"
+            else observation
+        )
+        for name, observation in observations.items()
     }
 
 
