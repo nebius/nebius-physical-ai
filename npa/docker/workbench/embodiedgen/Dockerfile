@@ -15,7 +15,10 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # The CUDA development image supplies nvcc for upstream TRELLIS extensions.
 # These ordinary worker packages are acquired from an immutable Ubuntu snapshot;
 # the application and every model byte remain a non-root runtime fetch.
+# Do not mix that snapshot with inherited CUDA-base APT definitions. Ubuntu 24.04
+# bases use deb822 ubuntu.sources, so remove both legacy and deb822 files first.
 RUN set -eux; \
+    rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; \
     printf '%s\n' \
       'Types: deb' \
       "URIs: https://snapshot.ubuntu.com/ubuntu/${UBUNTU_SNAPSHOT}/" \
@@ -23,14 +26,23 @@ RUN set -eux; \
       'Components: main universe' \
       'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
       'Check-Valid-Until: no' > /etc/apt/sources.list.d/npa-snapshot.sources; \
-    rm -f /etc/apt/sources.list; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
       ca-certificates git libegl1 libgl1 libglib2.0-0 openssh-server \
       python3 python3-pip python3-venv rsync sudo util-linux; \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*; \
     rm -f /etc/ssh/ssh_host_*; \
-    useradd --uid 1000 --create-home --shell /bin/bash ubuntu; \
+    if getent passwd ubuntu >/dev/null; then \
+      test "$(id -u ubuntu)" = 1000; \
+      test "$(id -g ubuntu)" = 1000; \
+      test "$(getent passwd ubuntu | cut -d: -f6)" = /home/ubuntu; \
+      test "$(stat -c '%u:%g' /home/ubuntu)" = 1000:1000; \
+    else \
+      test ! -e /home/ubuntu; \
+      useradd --uid 1000 --create-home --shell /bin/bash ubuntu; \
+      test "$(id -g ubuntu)" = 1000; \
+      test "$(stat -c '%u:%g' /home/ubuntu)" = 1000:1000; \
+    fi; \
     install -d -m 0755 /workspace /run/sshd /opt/byof /opt/npa/embodiedgen; \
     chown ubuntu:ubuntu /workspace; \
     printf '%s\n' \
