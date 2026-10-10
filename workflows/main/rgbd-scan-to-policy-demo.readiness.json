@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "97d72418ce2d5a4fb7ef40b50307c74e65f2cc940808a74a137bbcc68296b229",
+  "workflow_sha256": "ae4d842cf74b8d39f43b89978842e9517a6e551f5c815933c1a8d36490bf0edd",
   "planning": {
     "validation": {
       "status": "verified",
@@ -12,7 +12,7 @@
     },
     "task_fidelity": {
       "status": "unverified",
-      "reason": "The original workflow and readiness record are preserved under docs/workbench/evidence/workflow-defaults-807/. Image-default changes require fresh workload qualification; historical live evidence does not accept the current specification.",
+      "reason": "The original main workflow and readiness record are preserved under docs/workbench/evidence/workflow-defaults-807/. This explicit-image specification requires fresh workload qualification; historical native evidence does not qualify caller-selected image bytes.",
       "evidence": []
     }
   },
@@ -24,7 +24,7 @@
     },
     "worker_input": {
       "status": "unverified",
-      "reason": "Inputs and applicable access/terms must be checked for the current run; historical sample evidence remains bound to its original workflow.",
+      "reason": "Inputs and applicable access and terms must be checked for the current run; historical sample evidence remains bound to its original workflow.",
       "evidence": []
     },
     "credentials": {

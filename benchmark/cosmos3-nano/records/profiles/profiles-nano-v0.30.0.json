@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "model": {
+    "id": "nvidia/Cosmos3-Nano",
+    "revision": "e59a53c25979a090fa8706c9acc0c254a6e89b92"
+  },
+  "container": {
+    "image": "vllm/vllm-omni",
+    "digest": "sha256:fc77cfaac7b1b43c30cbf32eaea214864434c6e0f303e6e9eb9f64104241a994"
+  },
+  "defaults": {
+    "front_door_host": "127.0.0.1",
+    "front_door_port": 8000,
+    "backend_host": "127.0.0.1",
+    "backend_base_port": 8100,
+    "active_requests_per_replica": 1,
+    "queue_limit": 8,
+    "queue_timeout_seconds": 900,
+    "generation_timeout_seconds": 5400,
+    "startup_timeout_seconds": 2400,
+    "guardrails": false
+  },
+  "platforms": {
+    "b200": {
+      "gpu_name_contains": "B200",
+      "evidence": "results/b200-single-node-20260831.json"
+    },
+    "h200": {
+      "gpu_name_contains": "H200",
+      "evidence": "results/h200-single-node-20260831.json"
+    }
+  },
+  "profiles": {
+    "latency": {
+      "topology": "1x8",
+      "description": "Lowest measured request latency",
+      "evidence_cells": {
+        "b200": "T1_1x8",
+        "h200": "H1_1x8"
+      }
+    },
+    "balanced": {
+      "topology": "4x2",
+      "description": "Intermediate measured latency and node throughput",
+      "evidence_cells": {
+        "b200": "T3_4x2",
+        "h200": "H3_4x2"
+      }
+    },
+    "throughput": {
+      "topology": "8x1",
+      "description": "Highest node throughput among the four measured topologies for the pinned workload",
+      "evidence_cells": {
+        "b200": "T4_8x1",
+        "h200": "H4_8x1"
+      }
+    }
+  },
+  "topologies": {
+    "1x8": {
+      "replicas": 1,
+      "gpus_per_replica": 8,
+      "server_flags": [
+        "--cfg-parallel-size",
+        "2",
+        "--ulysses-degree",
+        "4",
+        "--use-hsdp",
+        "--hsdp-shard-size",
+        "8"
+      ]
+    },
+    "2x4": {
+      "replicas": 2,
+      "gpus_per_replica": 4,
+      "server_flags": [
+        "--tensor-parallel-size",
+        "4"
+      ]
+    },
+    "4x2": {
+      "replicas": 4,
+      "gpus_per_replica": 2,
+      "server_flags": [
+        "--tensor-parallel-size",
+        "2"
+      ]
+    },
+    "8x1": {
+      "replicas": 8,
+      "gpus_per_replica": 1,
+      "server_flags": [
+        "--tensor-parallel-size",
+        "1"
+      ]
+    }
+  },
+  "_run_local_note": "Run-local Nano profile on vLLM-Omni v0.30.0 (released 2026-09-27) for the runtime bridge cell N8-V30. Launcher's runtime_identity string still says vLLM 0.25.0; the image reports vLLM 0.30.0 and vLLM-Omni 0.30.0."
+}
