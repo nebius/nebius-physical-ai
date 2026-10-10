@@ -54,12 +54,20 @@ export BYOF_PROFILE=npa/src/npa/workflows/byof/profiles/isaac-lab-rl-train.yaml
 writes a sentinel, then delegates to the upstream RSL-RL training script with
 the original arguments.
 
+The previous public Isaac Lab release is withdrawn. Select a rebuilt,
+byte-qualified immutable base in `NPA_ISAAC_LAB_BASE_IMAGE`; the example
+Dockerfile has no automatic base. The standalone runner also resolves an
+omitted `--image` through the public release policy and refuses a quarantined
+default before runtime setup, including with `--render-only`.
+
 ```bash
 export BYOF_BUILD_ID="byof-$(date -u +%Y%m%dT%H%M%SZ)"
 export BYOF_REGISTRY='<your-registry>/<namespace>'
 export BYOF_IMAGE="$BYOF_REGISTRY/isaac-lab-byof-test:$BYOF_BUILD_ID"
+export NPA_ISAAC_LAB_BASE_IMAGE='<reviewed-registry>/npa-isaac-lab@sha256:<64-hex-digest>'
 
 docker build --platform linux/amd64 \
+  --build-arg "NPA_ISAAC_LAB_BASE_IMAGE=$NPA_ISAAC_LAB_BASE_IMAGE" \
   --build-arg "BYOF_RUN_ID=$BYOF_BUILD_ID" \
   -f docs/workbench/cookbooks/byof-isaac-lab/Dockerfile.example \
   -t "$BYOF_IMAGE" docs/workbench/cookbooks/byof-isaac-lab
