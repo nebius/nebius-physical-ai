@@ -156,10 +156,20 @@ npa workbench team run "$RUN_ID" --action cancel --token-file "$TEAM_KEY_FILE"
 npa workbench team run "$RUN_ID" --action resume --token-file "$TEAM_KEY_FILE"
 ```
 
-`resume` reconciles the recorded scheduler identity. If a launch acknowledgement
-is missing, do not submit a replacement blindly: retain the idempotency key and
-ask an administrator to reconcile the original run. A cancellation remains
-pending until provider state proves the job is terminal.
+`resume` reconciles a `recovery_required` run's recorded scheduler identity. If
+a launch acknowledgement is missing, do not submit a replacement blindly:
+retain the idempotency key and ask an administrator to reconcile the original
+run. A `cancelling` run retains that intent across a service restart and cannot
+be resumed. Repeat `cancel` (or the administrator's `stop-run`) to retry exact
+cancellation: saved request IDs are reconciled before cancellation, but an
+unidentified launch remains pending rather than being guessed or relaunched.
+
+A run becomes terminal `failed` only when the canonical runtime records an
+exact scheduler job in a terminal `FAILED` state and every recorded wave is
+terminal. Its status response includes the safe fixed failure object
+`{"code":"scheduler_terminal_failure",...}`; it never copies worker output
+or credentials. `recovery_required` instead means at least one launch or
+scheduler observation is unknown or still active, including driver failures.
 
 The HTTP API uses the same key as a bearer credential. A raw client should read
 the private file only long enough to make its request, then discard the value.

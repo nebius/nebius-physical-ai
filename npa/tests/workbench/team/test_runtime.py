@@ -7,11 +7,13 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
+from npa.orchestration.npa_workflow.runtime import RuntimeReport
 from npa.workbench.team.engine import execute_run
 from npa.workbench.team.errors import BackendError, ConflictError
 from npa.workbench.team.ledger import TeamLedger
+from npa.workbench.team.lifecycle import classify_runtime_report
 from npa.workbench.team.models import Allocation, SubmitRequest
-from npa.workbench.team.service import binding_snapshot
+from npa.workbench.team.service import TeamService, binding_snapshot
 from npa.workbench.team.sky_backend import SkyBackend, _read_log_paths
 from npa.workbench.team.workflow_policy import worker_context
 
@@ -23,6 +25,8 @@ class Scheduler:
         self.calls = []
         self.payloads = []
         self.fail_launch = False
+        self.fail_result = False
+        self.queue_statuses = []
 
     def __call__(self, command, **kwargs):
         request = json.loads(kwargs["input"])
@@ -34,8 +38,13 @@ class Scheduler:
                 return SimpleNamespace(returncode=1, stdout='{"error":"unavailable"}')
             response = {"request_id": "request-1"}
         elif operation == "result":
+            if self.fail_result:
+                return SimpleNamespace(returncode=1, stdout='{"error":"unavailable"}')
             response = {"job_ids": [42]}
         elif operation == "queue":
+            status = (
+                self.queue_statuses.pop(0) if self.queue_statuses else "SUCCEEDED"
+            )
             response = {
                 "jobs": [
                     {
@@ -43,7 +52,7 @@ class Scheduler:
                         "task_id": 0,
                         "task_name": "hello",
                         "job_name": "team",
-                        "status": "SUCCEEDED",
+                        "status": status,
                     }
                 ]
             }
@@ -167,6 +176,158 @@ def test_exact_wave_cannot_cancel_other_run(config, actor, binding, workflow):
     with pytest.raises(ConflictError):
         backend.cancel(job_id="another-wave")
     assert scheduler.calls == []
+
+
+def test_cancel_reconciles_saved_request_and_continues_after_unknown_wave(
+    config, actor, binding, workflow
+):
+    record, backend, scheduler = _backend(config, actor, binding, workflow)
+    backend.ledger.begin_wave(record["id"], "unknown-wave")
+    known = backend.ledger.begin_wave(record["id"], "known-wave")
+    backend.ledger.record_wave(known["id"], request_id="request-1")
+    scheduler.queue_statuses = ["CANCELLED"]
+
+    assert backend.cancel_run() is False
+    assert json.loads(backend.ledger.waves(record["id"])[1]["job_ids"]) == [42]
+    assert [call["operation"] for call in scheduler.calls] == [
+        "result",
+        "cancel",
+        "queue",
+    ]
+    assert scheduler.calls[1]["job_ids"] == [42]
+
+
+def test_cancel_continues_after_saved_request_lookup_is_unavailable(
+    config, actor, binding, workflow
+):
+    record, backend, scheduler = _backend(config, actor, binding, workflow)
+    unresolved = backend.ledger.begin_wave(record["id"], "unresolved-wave")
+    backend.ledger.record_wave(unresolved["id"], request_id="request-1")
+    known = backend.ledger.begin_wave(record["id"], "known-wave")
+    backend.ledger.record_wave(known["id"], job_ids=(42,))
+    scheduler.fail_result = True
+    scheduler.queue_statuses = ["CANCELLED"]
+
+    assert backend.cancel_run() is False
+    assert [call["operation"] for call in scheduler.calls] == [
+        "result",
+        "cancel",
+        "queue",
+    ]
+
+
+def test_restart_preserves_cancellation_and_retries_exact_jobs(
+    config, actor, binding, workflow
+):
+    record, backend, scheduler = _backend(config, actor, binding, workflow)
+    wave = backend.ledger.begin_wave(record["id"], "known-wave")
+    backend.ledger.record_wave(wave["id"], job_ids=(42,))
+    assert backend.ledger.transition(record["id"], ("running",), "cancelling")
+    restarted = TeamLedger(config.state_dir)
+    restarted.recover()
+    assert restarted.get(record["id"])["status"] == "cancelling"
+
+    def backend_factory(selected, selected_binding, ledger, run_id):
+        return SkyBackend(selected, selected_binding, ledger, run_id, runner=scheduler)
+
+    service = TeamService(
+        lambda: config,
+        backend_factory=backend_factory,
+        enrollment_check=lambda selected: None,
+    )
+    with pytest.raises(ConflictError, match="interrupted"):
+        service.resume(actor, record["id"])
+    with pytest.raises(ConflictError, match="accepting new launches"):
+        service.ledger.begin_wave(record["id"], "late-wave")
+
+    scheduler.queue_statuses = ["RUNNING", "CANCELLED"]
+    assert service.cancel(actor, record["id"])["status"] == "cancelling"
+    assert service.cancel(actor, record["id"])["status"] == "cancelled"
+    calls = [call for call in scheduler.calls if call["operation"] == "cancel"]
+    assert [call["job_ids"] for call in calls] == [[42], [42]]
+
+
+def test_canonical_terminal_scheduler_failure_is_durable_and_safe(
+    config, actor, binding, workflow
+):
+    record, backend, scheduler = _backend(config, actor, binding, workflow)
+    scheduler.queue_statuses = ["FAILED"]
+    reports = []
+    storage = SimpleNamespace(client=SimpleNamespace(put_object=lambda **kwargs: None))
+
+    def canonical_engine(*args, **kwargs):
+        report = execute_run(*args, **kwargs, storage=storage)
+        reports.append(report)
+        return report
+
+    def backend_factory(selected, selected_binding, ledger, run_id):
+        return SkyBackend(selected, selected_binding, ledger, run_id, runner=scheduler)
+
+    service = TeamService(
+        lambda: config,
+        backend_factory=backend_factory,
+        engine=canonical_engine,
+        enrollment_check=lambda selected: None,
+    )
+    service._execute(actor, record, binding, False)
+
+    assert reports[0].status == "failed"
+    assert reports[0].waves[0]["sky_status"] == "FAILED"
+    result = service.get(actor, record["id"])
+    assert result["status"] == "failed"
+    assert result["failure"] == {
+        "code": "scheduler_terminal_failure",
+        "message": "Exact scheduler evidence confirms a terminal workload failure.",
+    }
+    persisted = TeamLedger(config.state_dir).get(record["id"])
+    assert persisted["failure_code"] == "scheduler_terminal_failure"
+    assert "secret" not in persisted["failure_message"]
+
+
+@pytest.mark.parametrize(
+    "waves",
+    [
+        [],
+        [{"job_id": "", "status": "failed", "sky_status": "FAILED"}],
+        [
+            {"job_id": "wave-1", "status": "failed", "sky_status": "FAILED"},
+            {"job_id": "wave-2", "status": "running", "sky_status": "RUNNING"},
+        ],
+    ],
+)
+def test_unproven_runtime_failures_require_recovery(waves):
+    report = RuntimeReport(
+        workflow="team-smoke",
+        run_id="run-test",
+        status="failed",
+        waves=waves,
+        error="private scheduler detail",
+    )
+    outcome = classify_runtime_report(report)
+    assert outcome.status == "recovery_required"
+    assert not outcome.failure_code
+
+
+def test_driver_failure_never_exposes_raw_error_or_becomes_terminal(
+    config, actor, binding, workflow
+):
+    record, _, _ = _backend(config, actor, binding, workflow)
+    secret = "worker-error-secret-value"
+
+    def failed_driver(*args, **kwargs):
+        return RuntimeReport(
+            workflow="team-smoke", run_id=record["id"], status="failed", error=secret
+        )
+
+    service = TeamService(
+        lambda: config, engine=failed_driver, enrollment_check=lambda selected: None
+    )
+    service._execute(actor, record, binding, False)
+
+    result = service.get(actor, record["id"])
+    assert result["status"] == "recovery_required"
+    assert secret not in json.dumps(result)
+    assert secret not in json.dumps(service.ledger.get(record["id"]))
 
 
 def test_log_reader_keeps_paths_and_symlinks_inside_private_destination(tmp_path):
