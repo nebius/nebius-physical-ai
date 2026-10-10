@@ -27,6 +27,14 @@ supplies the reachability-probe target and isolated credentials unless the
 corresponding S3 flag is explicit. It has no effect on selections without `s3`.
 See the [Sim2Real guide](../docs/workbench/guides/sim2real-workflow.md).
 
+The [Marble quadruped workflow](../docs/workbench/guides/marble-warehouse-quadruped.md)
+reuses a generated warehouse and captures a simulated Go1 on one Nebius GPU.
+Its `motion_profile=turnaround` and `speed_mps=1.2` workflow defaults add fast
+aisle traversals and physical U-turns. Direct CLI/SDK callers retain
+`motion_profile=straight` and `speed_mps=0.35`; select `--motion-profile
+turnaround --speed-mps 1.2` to enable the patrol. The standalone HTML embeds
+the resulting videos and measured motion for offline playback.
+
 `npa workbench vlm-eval review-visual` and its SDK write a separate private rich
 visual audit. Choose an exact hosted model, neutral task, and fresh output path;
 optional `--baseline-path` compares both sources in both A/B orders. See the
