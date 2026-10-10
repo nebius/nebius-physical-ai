@@ -82,6 +82,16 @@ Rendered Isaac Lab tasks also declare their run-scoped S3 prefix through
 `NPA_EXECUTION_OUTPUTS`, allowing the preflight to verify the exact directory
 ownership and write access before a controller or GPU pod is created.
 
+The three Isaac Lab RL profiles use `tool://isaac-lab`. The Isaac runner resolves
+this through the governed public-image policy before runtime setup; a withdrawn
+release stops rendering and submission. Supply `--image` with a reviewed
+immutable operator image while no accepted public release exists. A custom
+profile's explicit image remains an operator choice. These profiles require the
+NPA runner to materialize the tool reference before passing YAML to SkyPilot.
+The BYOF builder forwards its selected image to that runner. For an Isaac-based
+build, supply a reviewed immutable `--base-image`; a quarantined default base
+returns a structured refusal before cloning, building, pushing or launching.
+
 ## Do not add a multi-stage pipeline here
 
 If you find yourself chaining stages, that is a workflow: author an

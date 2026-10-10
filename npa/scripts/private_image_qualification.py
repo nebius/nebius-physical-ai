@@ -88,6 +88,12 @@ ERROR_CODES = frozenset(
         "native_integration_failed",
         "scanner_source_dirty",
         "scanner_source_revision",
+        "ssh_authentication_failed",
+        "ssh_host_verification_failed",
+        "ssh_connection_failed",
+        "remote_export_missing",
+        "remote_export_permissions",
+        "remote_interface_failed",
         "ssh_configuration",
         "ssh_host",
         "ssh_port",
@@ -432,6 +438,34 @@ def _remote_command(ssh, *arguments):
     ]
 
 
+def _transfer_failure(errors):
+    """Classify failed transport without disclosing SSH output or remote paths."""
+    errors.seek(0)
+    diagnostic = errors.read(MANIFEST_BYTES)
+    for marker, code in (
+        (b"Permission denied (", "ssh_authentication_failed"),
+        (b"Host key verification failed", "ssh_host_verification_failed"),
+        (b"REMOTE HOST IDENTIFICATION HAS CHANGED", "ssh_host_verification_failed"),
+        (b"Connection refused", "ssh_connection_failed"),
+        (b"Connection timed out", "ssh_connection_failed"),
+        (b"No route to host", "ssh_connection_failed"),
+        (b"Could not resolve hostname", "ssh_connection_failed"),
+    ):
+        if marker in diagnostic:
+            return _QualificationError(code)
+    try:
+        remote = json.loads(diagnostic)
+    except ValueError:
+        return _QualificationError("ssh_transfer_failed")
+    if isinstance(remote, dict) and remote.get("status") == "failed":
+        if remote.get("exception_class") == "FileNotFoundError":
+            return _QualificationError("remote_export_missing")
+        if remote.get("exception_class") == "PermissionError":
+            return _QualificationError("remote_export_permissions")
+        return _QualificationError("remote_interface_failed")
+    return _QualificationError("ssh_transfer_failed")
+
+
 def _fetch(ssh, selector, role, destination, *, size=None, digest=None):
     command = _remote_command(ssh, "fetch", selector, role)
     with _private_output(destination) as output, tempfile.TemporaryFile() as errors:
@@ -441,14 +475,26 @@ def _fetch(ssh, selector, role, destination, *, size=None, digest=None):
             try:
                 if role == "manifest":
                     payload = process.stdout.read(MANIFEST_BYTES + 1)
+                    _require(len(payload) <= MANIFEST_BYTES, "manifest_size")
+                    if process.wait() != 0:
+                        raise _transfer_failure(errors)
                     _manifest(payload, selector)
                     output.write(payload)
                 else:
-                    _copy_exact(process.stdout, output, size, digest)
+                    try:
+                        _copy_exact(process.stdout, output, size, digest)
+                    except _QualificationError as error:
+                        # These failures mean stdout reached EOF. An oversized
+                        # sender may still be writing, so never wait for it here.
+                        if error.code in ("transfer_truncated", "transfer_digest"):
+                            if process.wait() != 0:
+                                raise _transfer_failure(errors) from error
+                        raise
             except BaseException:
                 process.kill()
                 raise
-            _require(process.wait() == 0, "ssh_transfer_failed")
+            if process.wait() != 0:
+                raise _transfer_failure(errors)
 
 
 def _source_binding(scanner):
@@ -664,7 +710,10 @@ def _bundle(root):
                     member.size, member.mode = info.st_size, 0o600
                     archive.addfile(member, stream)
     with _private_input(target) as (stream, info):
-        value = hashlib.file_digest(stream, "sha256").hexdigest()
+        digest_state = hashlib.sha256()
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest_state.update(chunk)
+        value = digest_state.hexdigest()
     return target, info.st_size, value
 
 

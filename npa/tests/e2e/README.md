@@ -1,4 +1,48 @@
-# Live storage tests
+# Live tests
+
+## Existing cluster adoption and profile selection
+
+Run the profile regression against an existing cluster the operator can read:
+
+```bash
+NPA_INTEGRATION_E2E=1 \
+NPA_E2E_PROJECT='<configured-project-alias>' \
+NPA_E2E_ADOPT_CLUSTER_NAME='<existing-cluster-name>' \
+NPA_NEBIUS_PROFILE='<verified-nebius-profile>' \
+  npa/.venv/bin/python -m pytest npa/tests/e2e/test_cluster_adoption_profile_live.py -q
+```
+
+All four variables are required; the test skips without them. There is no default
+target. The test reads the selected project's configuration and the live cluster,
+then fetches a temporary kubeconfig with a deliberately conflicting
+`NEBIUS_PROFILE`. It verifies that the generated credential plugin retains
+`NPA_NEBIUS_PROFILE`. Child-process NPA state stays under pytest's private
+temporary directory; the test creates no cloud resources or GPU jobs.
+Set `NPA_CONFIG_DIR` to select an isolated operator configuration.
+
+## PAIDF native variant recovery
+
+After executing the reviewed candidate source through the standard PAIDF runtime,
+run the read-only receipt audit with `NPA_INTEGRATION_E2E=1` and
+`NPA_PAIDF_VARIANT_RECOVERY_LIVE_CONFIG` pointing to an owner-only JSON file outside
+Git. The configuration has `project`, `run_uri` (the exact run prefix ending in
+`/`), `run_id`, `fresh_after` (an aware UTC timestamp recorded before submission),
+`input_sha256`, `runtime_image` (an immutable reference), `variant_count`, and
+`require_recovery` (a boolean). Set the latter to true to require actual reuse
+after worker recovery. Neither variable has a default target.
+
+```bash
+NPA_INTEGRATION_E2E=1 \
+NPA_PAIDF_VARIANT_RECOVERY_LIVE_CONFIG="$PRIVATE_RECOVERY_CONFIG" \
+  npa/.venv/bin/python -m pytest npa/tests/e2e/test_paidf_variant_recovery_live.py -q
+```
+
+The test reads only that run's exact source, manifest and new per-variant
+receipts. It verifies full video decoding, all object bytes, native controls,
+guardrails, immutable model binding and actual source fingerprints. It does not
+submit, cancel, infer, repair infrastructure or publish objects. Run it from the
+same reviewed checkout staged to the workload. Fixture tests and an audit of an
+older source without these receipts do not establish native recovery acceptance.
 
 Run the Insights storage tests against an explicitly selected project's own
 configured credentials:

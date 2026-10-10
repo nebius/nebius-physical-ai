@@ -14,6 +14,7 @@
 
 **[Quickstart](docs/quickstart.md)** ·
 **[Guides](docs/workbench/guides/README.md)** ·
+**[Manual workflows](docs/workbench/guides/manual-workflow-operations.md)** ·
 **[Workbench docs](docs/workbench/README.md)** ·
 **[Shared access](docs/workbench/shared-workbench-quickstart.md)** ·
 **[Benchmarks](benchmark/README.md)** ·
@@ -223,6 +224,11 @@ does not prove its inputs, credentials, image, or GPU are ready for execution.
 
 For a real run, follow the selected guide's `prepare-run`, image preflight,
 `submit --runtime`, and monitoring instructions with your own project and input.
+Collect executed actions across physical scene variations with the
+[physical augmentation demo](docs/workbench/guides/physical-augmentation.md):
+one launch command produces an offline interactive replay, comparison film,
+and verified action dataset from actual RTX simulation.
+
 See the [workflow catalog](workflows/README.md),
 [authoring guide](docs/workbench/npa-workflow-guide.md), and
 [run lifecycle](docs/run-lifecycle.md). The canonical
@@ -297,7 +303,12 @@ of policy convergence. See also the
 ## Documentation
 
 Use the [documentation index](docs/README.md) to find setup, operations, and
-contributor references. Report a broken example with its command, `npa` version,
+contributor references. For workflow operations, start with
+[manual runs](docs/workbench/guides/manual-workflow-operations.md),
+[episode batches and capacity](docs/workbench/guides/paidf-dataset-batches.md), or
+[quality reports](docs/workbench/insights-reports.md).
+
+Report a broken example with its command, `npa` version,
 and redacted error in [GitHub Issues](https://github.com/nebius/nebius-physical-ai/issues).
 Keep credentials and private infrastructure identifiers out of issue text.
 

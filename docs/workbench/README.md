@@ -33,6 +33,11 @@ lists other affected images and shipped workflows, including the Sim2Real seams.
 | Task | Guide |
 | --- | --- |
 | Choose a workload | [Robot and workflow guides](guides/README.md) · [workflow catalog](../../workflows/README.md) |
+| Run or resume a workflow manually | [Manual workflow operations](guides/manual-workflow-operations.md) |
+| Generate twelve PAIDF appearances from MP4 or real ALOHA data | [Manual twelve-profile recipe](guides/paidf-appearance-12.md) |
+| Submit episode batches and choose concurrency | [Dataset batches](guides/paidf-dataset-batches.md) · [capacity planning](guides/paidf-dataset-batches.md#concurrency-and-existing-capacity) |
+| Inspect supported quality reports | [Shared report inspection](insights-reports.md) |
+| Copy selected GCS/S3 inputs or outputs | [Scoped storage transfers](guides/scoped-storage-transfers.md) |
 | Run public samples | [Four workflow demos](guides/public-workflow-demos.md): qualified scan-to-policy, industrial sensors and NuRec; RL comparison with a measured rejection report |
 | Use your coding agent | [First-run prompts](agent-first-run.md) · [workflow operations](agent-workflow-operations.md) |
 | Prepare the runtime | [Workbench setup](getting-started.md) · [Kubernetes](kubernetes.md) · [direct runtime modes](runtime-modes.md) |
@@ -40,11 +45,15 @@ lists other affected images and shipped workflows, including the Sim2Real seams.
 | Compare FA2 and FA4 on RTX PRO 6000 | [Build and tuning guide](guides/fa2-fa4-comparison.md) · [Latest speeds, cold-start cost and actual renders](fa4-rtx-optimization.md) |
 | Author and submit | [Workflow guide](npa-workflow-guide.md) · [toolRef catalog](npa-workflow-tool-catalog.md) |
 | Integrate from Python or HTTP | [CLI / SDK walkthrough](cli-sdk-yaml-walkthrough.md) · [SDK errors](../sdk/errors.md) |
-| Inspect or recover | [Run lifecycle](../run-lifecycle.md) · [controller recovery](controller-recovery.md) · [troubleshooting](troubleshooting/known-footguns.md) · [CLI errors](../cli-errors.md) |
+| Diagnose or recover a run | [Run lifecycle](../run-lifecycle.md) · [controller recovery](controller-recovery.md) · [troubleshooting](troubleshooting/known-footguns.md) · [CLI errors](../cli-errors.md) |
 | Curate media with Encord | [S3 registration, pull, roundtrip verification, and a local MP4 demo](encord.md) |
 | Finish | [Teardown](../teardown.md) |
 
 ## Generation and scenes
+
+[Physical prompt comparison](physical-prompt-comparison.md) compares three
+Wan 2.1 14B prompt arms with full videos, blinded assertion judgments, and
+a standalone HTML report.
 
 | Capability | Guide |
 | --- | --- |
@@ -54,7 +63,7 @@ lists other affected images and shipped workflows, including the Sim2Real seams.
 | Plan a Cosmos 3 model factory | [Architecture, current gaps, and implementation sequence](../architecture/cosmos3-model-factory.md) · [Live generation and quality feedback](cosmos3-model-factory-live-20260915.md) |
 | Train and evaluate a Cosmos 3 robot policy | [Experimental native LIBERO model-factory workflow](cosmos3-policy-model-factory.md) |
 | Measure Cosmos 3 WAM training across B200 nodes | [Experimental Slurm recipe](cookbooks/cosmos3-wam-slurm.md) · [Measured 8/16-GPU results](evidence/cosmos3-wam-scaling/README.md) |
-| Scene reconstruction | [NuRec](guides/neural-reconstruction.md) · [living-lab fan-out](guides/living-lab-nurec-fanout.md) |
+| Scenes and digital twins | [NuRec reconstruction](guides/neural-reconstruction.md) · [RTX campus rendering and infrastructure](guides/digital-twin.md) · [living-lab fan-out](guides/living-lab-nurec-fanout.md) |
 | USD object preparation | [Content Agents](content-agents.md) |
 | Other video models | [Wan 2.2](wan2.2.md) · [LTX-2](ltx2.md) |
 
@@ -65,6 +74,7 @@ lists other affected images and shipped workflows, including the Sim2Real seams.
 | Robot policy walkthroughs | [Franka / Genesis](guides/franka-pick-and-place-genesis.md) · [PushT SDK smoke](guides/pusht-sim-to-real.md) · [Reachy 2 / LeRobot](guides/reachy2-lerobot-policy.md) · [subtask labeling](guides/lerobot-subtask-labeling.md) |
 | Locomotion | [G1 / SONIC](guides/g1-humanoid-walk-sonic.md) · [quadruped / Isaac Lab](guides/quadruped-isaac-lab.md) |
 | GR00T fine-tuning | [GR00T N1.7](cookbooks/groot-1-7-training.md) |
+| Public-data VLA training | [SmolVLA → task adaptation → LIBERO evaluation](cookbooks/public-vla-training.md), on MK8s or Slurm/Soperator |
 | OpenPI policy training | [Pi0.5 / Polaris](openpi-pi05-polaris.md) |
 | Simulation-to-policy pipeline | [Sim2Real runbook](guides/sim2real-workflow.md) · [data contracts](guides/sim2real-data-contracts.md) · [customer assets](guides/sim2real-customer-assets.md) · [robot spec](guides/sim2real-robot-spec.md) |
 | Browser teleoperation | [LeIsaac](leisaac-teleoperation.md) · [latency measurement](guides/leisaac-transport-latency.md) |
@@ -97,6 +107,7 @@ lists other affected images and shipped workflows, including the Sim2Real seams.
 | Select images | [Public catalog](container-image-catalog.md) · [GPU compatibility](image-gpu-compatibility-matrix.md) · [SONIC variants](sonic-image-catalog.md) |
 | Use Blackwell | [B200 / B300](blackwell-datacenter-image-compatibility.md) · [RTX PRO 6000](sm120-image-catalog.md) · [RTX FA4 adoption](guides/rtx6000-fa4.md) · [FA4 evidence](flash-attention.md) · [Full-model rendering validation](fa4-sdxl-validation.md) |
 | Configure nodes and caches | [GPU driver strategy](mk8s-gpu-driver-strategy.md) · [model-weight cache](model-weight-cache.md) · [preemptible VMs](preemptible-vms.md) |
+| Plan a GPU launch | [Quota and capacity](gpu-capacity-quota-plan.md) |
 | Reproduce benchmarks and demos | [Benchmarks](../../benchmark/README.md) · [Cookbooks](cookbooks/README.md) · [validation scope](solutions-validation.md) · [performance/reliability validation](workbench-improvements-validation.md) |
 | Add or package a solution | [Contributing](../../CONTRIBUTING.md) · [containerized solutions](contributing-a-containerized-solution.md) · [OSS catalog](oss-solution-catalog.md) · [packaging contract](container-packaging.md) · [FiftyOne image validation](../../npa/docker/workbench/fiftyone/RELEASE.md#validate-a-local-candidate) |
 

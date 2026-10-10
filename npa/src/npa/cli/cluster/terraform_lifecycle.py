@@ -33,9 +33,11 @@ from npa.cluster.gpu_driver import (
 )
 from npa.cluster.gpu_health import (
     DEFAULT_CUDA_SMOKE_IMAGE,
+    DEFAULT_GRAPHICS_SMOKE_IMAGE,
     DEFAULT_STABILIZATION_SECONDS,
     GpuHealthConfig,
     probe_gpu_health,
+    resolve_graphics_smoke_image,
     validate_gpu_health,
 )
 from npa.cluster.gpu_workload_profile import resolve_gpu_workload_profile
@@ -388,6 +390,11 @@ def up_cmd(
         "--gpu-cuda-smoke-image",
         help="Container image for the post-deploy CUDA vectorAdd smoke.",
     ),
+    gpu_graphics_smoke_image: str = typer.Option(
+        DEFAULT_GRAPHICS_SMOKE_IMAGE,
+        "--gpu-graphics-smoke-image",
+        help="Operator-controlled image for RTX GLX/EGL/Vulkan validation; the default follows public-image policy.",
+    ),
     mig_enabled: bool = typer.Option(
         False,
         "--mig/--no-mig",
@@ -438,6 +445,9 @@ def up_cmd(
     _preflight_provider_lock(tf_dir)
     tfvars = _read_tfvars(tf_dir)
     from npa.provisioning_preflight import current_resolved_plan
+    from npa.clients.nebius_auth import nebius_profile
+
+    profile = nebius_profile()
 
     inherited_plan = current_resolved_plan()
     if inherited_plan is not None:
@@ -464,6 +474,15 @@ def up_cmd(
     gpu_platform = workload.gpu_platform
     gpu_preset = workload.gpu_preset
     gpu_driver_mode = workload.gpu_driver_mode
+    if validate and workload.graphics_smoke:
+        try:
+            gpu_graphics_smoke_image = resolve_graphics_smoke_image(
+                gpu_graphics_smoke_image
+            )
+        except ValueError as exc:
+            raise typer.BadParameter(
+                str(exc), param_hint="--gpu-graphics-smoke-image"
+            ) from exc
     explicit_context = _apply_context_cluster_name(
         tfvars,
         context_name,
@@ -618,6 +637,7 @@ def up_cmd(
             gpu_health_timeout_minutes=validation_timeout,
             gpu_cuda_smoke=gpu_cuda_smoke,
             gpu_cuda_smoke_image=gpu_cuda_smoke_image,
+            gpu_graphics_smoke_image=gpu_graphics_smoke_image,
             gpu_workload_profile=workload.profile,
             mig=(
                 MigSpec(enabled=True, strategy=mig_strategy, config=mig_config)
@@ -673,6 +693,7 @@ def up_cmd(
             tenant_id=tenant_id_value,
             region=region_value,
             provider_env=env,
+            profile=profile,
             # Every fresh shared-backend apply uses the fleet capacity/quota
             # preflight, not only MIG targets. In particular, a non-MIG GPU
             # pool with a capacity block must prove the exact STRICT
@@ -725,6 +746,7 @@ def up_cmd(
                     project_id_value,
                     name_stem=context,
                     env=env,
+                    profile=profile,
                     network_state_path=(
                         backend_root / project_spec.key() / ".npa-fleet-network.json"
                     ),
@@ -759,6 +781,7 @@ def up_cmd(
                     recipe_root=recipe_dir.parent,
                     terraform_bin=terraform_bin,
                     nebius_bin=nebius_bin,
+                    profile=profile,
                     timeout_minutes=timeout,
                     on_status=lambda message: typer.echo(message, err=True),
                     standalone_context=context,
@@ -1014,7 +1037,9 @@ def up_cmd(
             operation.transition("state-durable")
 
         kubeconfig_path = kubeconfig or kubeconfig_file(context)
-        _write_kubeconfig(nebius_bin, cluster_id, kubeconfig_path, context)
+        _write_kubeconfig(
+            nebius_bin, cluster_id, kubeconfig_path, context, profile=profile
+        )
         _save_terraform_cluster_state(
             tfvars,
             cluster,
@@ -1057,6 +1082,7 @@ def up_cmd(
                 gpu_cuda_smoke=gpu_cuda_smoke,
                 gpu_cuda_smoke_image=gpu_cuda_smoke_image,
                 gpu_graphics_smoke=workload.graphics_smoke,
+                gpu_graphics_smoke_image=gpu_graphics_smoke_image,
                 env=env,
             )
             typer.echo(
@@ -1241,6 +1267,21 @@ def down_cmd(
                 "nothing was deleted."
             )
         shared_metadata = candidate
+    if not metadata_present:
+        from npa.cluster_backends.standalone_recovery import partial_backend_metadata
+
+        try:
+            shared_metadata = partial_backend_metadata(
+                context=preview_context,
+                project_id=exact_project_id,
+                tenant_id=str(cleanup_identity.get("tenant_id") or ""),
+                region=str(cleanup_identity.get("region") or ""),
+                operation_id=operation_id,
+            )
+        except (OSError, ValueError, RuntimeError) as exc:
+            raise typer.BadParameter(
+                f"Partial standalone recovery failed: {exc}"
+            ) from exc
     if saved_cluster is not None and not metadata_present:
         raise typer.BadParameter(
             "Local cluster state exists without its ownership metadata; nothing was "
@@ -1339,6 +1380,11 @@ def down_cmd(
             raise RuntimeError(
                 "; ".join(str(item) for item in destroyed.get("errors") or [])
             )
+        recovery_id = str(shared_metadata.get("backend_recovery_operation_id") or "")
+        if recovery_id:
+            from npa.provisioning_journal import load_operation
+
+            load_operation(recovery_id).transition("destroyed")
         if not keep_local_state:
             delete_cluster_state(preview_context)
         response = {
@@ -2002,9 +2048,12 @@ def kubeconfig_cmd(
     `npa workbench workflow submit --infra k8s/<context>` read.
     """
     from npa.clients.config import resolve_environment
+    from npa.clients.nebius_auth import nebius_profile
 
     nebius_bin = _require_bin(os.environ.get("NPA_NEBIUS_BIN") or "nebius")
-    env = _terraform_env(nebius_bin)
+    profile = nebius_profile()
+    prefix = [nebius_bin, *(["--profile", profile] if profile else [])]
+    env = _terraform_env(nebius_bin, profile=profile)
     tfvars: dict[str, Any] = {}
     try:
         tfvars = _read_tfvars(_resolve_terraform_dir(terraform_dir))
@@ -2027,7 +2076,7 @@ def kubeconfig_cmd(
 
     result = _run_capture(
         [
-            nebius_bin,
+            *prefix,
             "mk8s",
             "cluster",
             "list",
@@ -2055,7 +2104,7 @@ def kubeconfig_cmd(
 
     context = context_name.strip() or name
     kubeconfig_path = kubeconfig or kubeconfig_file(context)
-    _write_kubeconfig(nebius_bin, cluster_id, kubeconfig_path, context)
+    _write_kubeconfig(nebius_bin, cluster_id, kubeconfig_path, context, profile=profile)
     _save_terraform_cluster_state(
         {**tfvars, "parent_id": resolved_project, "cluster_name": name},
         {"id": cluster_id, "name": name},
@@ -2208,9 +2257,12 @@ def _terraform_env(nebius_bin: str, *, profile: str = "") -> dict[str, str]:
     the machine's active profile.
     """
     from npa.cluster_backends.process import BackendCommandError, terraform_env
+    from npa.clients.nebius_auth import nebius_profile
 
     try:
-        return terraform_env(nebius_bin, profile=profile, capture_runner=_run_capture)
+        return terraform_env(
+            nebius_bin, profile=profile or nebius_profile(), capture_runner=_run_capture
+        )
     except BackendCommandError as exc:
         raise typer.BadParameter(str(exc)) from exc
 
@@ -3763,12 +3815,18 @@ def _cluster_output(outputs: dict[str, Any]) -> dict[str, Any]:
 
 
 def _write_kubeconfig(
-    nebius_bin: str, cluster_id: str, kubeconfig_path: Path, context: str
+    nebius_bin: str,
+    cluster_id: str,
+    kubeconfig_path: Path,
+    context: str,
+    *,
+    profile: str = "",
 ) -> None:
     kubeconfig_path.parent.mkdir(parents=True, exist_ok=True)
     _run_stream(
         [
             nebius_bin,
+            *(["--profile", profile] if profile else []),
             "mk8s",
             "cluster",
             "get-credentials",
@@ -3840,6 +3898,7 @@ def _validate_cluster(
     gpu_cuda_smoke: bool = True,
     gpu_cuda_smoke_image: str = DEFAULT_CUDA_SMOKE_IMAGE,
     gpu_graphics_smoke: bool = False,
+    gpu_graphics_smoke_image: str = DEFAULT_GRAPHICS_SMOKE_IMAGE,
     env: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     resolved_env = dict(env or os.environ)
@@ -3884,6 +3943,7 @@ def _validate_cluster(
                     cuda_smoke=gpu_cuda_smoke,
                     cuda_smoke_image=gpu_cuda_smoke_image,
                     graphics_smoke=gpu_graphics_smoke,
+                    graphics_smoke_image=gpu_graphics_smoke_image,
                 ),
                 evidence_path=kubeconfig_path.parent / "gpu-health.json",
                 on_status=lambda message: typer.echo(message),

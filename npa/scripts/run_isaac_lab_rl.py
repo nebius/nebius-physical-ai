@@ -15,6 +15,7 @@ from typing import Any
 
 import yaml
 
+from npa.deploy.images import container_image_for_tool
 from npa.workflows.byof.live import (
     resolve_byof_kubernetes_target,
     resolve_byof_profile_path,
@@ -83,6 +84,22 @@ TERMINAL_STATUSES = {
 }
 
 
+class _IsaacLabImageUnavailable(ValueError):
+    """The selected governed image has no consumable public release."""
+
+
+def _task_image(resources: dict[str, Any], override: str) -> str:
+    selected = override or str(resources.get("image_id") or "tool://isaac-lab")
+    if not override and selected == "tool://isaac-lab":
+        try:
+            selected = container_image_for_tool("isaac-lab")
+        except ValueError as exc:
+            raise _IsaacLabImageUnavailable(
+                f"{exc} Supply --image with a reviewed immutable operator image."
+            ) from exc
+    return selected if selected.startswith("docker:") else f"docker:{selected}"
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     try:
@@ -91,10 +108,12 @@ def main(argv: list[str] | None = None) -> int:
         SkyPilotNotInstalledError,
         SkyPilotConfigError,
         SkyPilotVersionError,
+        _IsaacLabImageUnavailable,
     ) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         print(
-            "For a no-infrastructure check, rerun with --render-only.", file=sys.stderr
+            "For a no-infrastructure check, use --image IMAGE --render-only.",
+            file=sys.stderr,
         )
         return 2
 
@@ -120,6 +139,9 @@ def render_workflow(
     train_docs = [doc for doc in docs[1:] if isinstance(doc.get("envs"), dict)]
     multiple = len(train_docs) > 1
     for doc in train_docs:
+        resources = doc.setdefault("resources", {})
+        if isinstance(resources, dict):
+            resources["image_id"] = _task_image(resources, image)
         envs = doc["envs"]
         envs["NPA_ISAAC_LAB_RUN_ID"] = run_id
         envs["ISAAC_LAB_TASK"] = task
@@ -158,12 +180,6 @@ def render_workflow(
         envs["NPA_EXECUTION_OUTPUTS"] = json.dumps(
             [{"uri": prefix, "kind": "directory"}]
         )
-        if image:
-            resources = doc.setdefault("resources", {})
-            if isinstance(resources, dict):
-                resources["image_id"] = (
-                    f"docker:{image}" if not image.startswith("docker:") else image
-                )
     return docs
 
 

@@ -72,6 +72,40 @@ class SubmitLiveCase:
 
 SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
+        "robot-policy-train-and-serve.yaml",
+        "multi",
+        runtime=True,
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        notes="Public SmolVLA/FiftyOne training, both measured retry gates, two GPU serving workers and standalone HTML proof.",
+    ),
+    SubmitLiveCase(
+        "physical-prompt-comparison.yaml",
+        "multi",
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "NEBIUS_TOKEN_FACTORY_KEY",
+        ),
+        runtime=True,
+        requires_token_factory=True,
+        expected_parallel_tasks=2,
+        notes="Full Wan 2.1 physical-prompt comparison: six scenarios, two seeds, three arms, blinded video judgment.",
+    ),
+    SubmitLiveCase(
+        "digital-twin-campus-render.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        notes="RTX OptiX campus rendering, native geometry counts, four camera routes and private offline HTML.",
+    ),
+    SubmitLiveCase(
+        "digital-twin-cuda-render.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        notes="Native Blender Cycles CUDA reference scene, OpenUSD/glTF export, and offline HTML with bound rendering evidence.",
+    ),
+    SubmitLiveCase(
         "video-variant-sweep.yaml",
         "multi",
         runtime=True,
@@ -200,6 +234,31 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "demonstrations, pinned XR1 assets, and the verified SM120 runtime in S3."
         ),
         notes="Native eight-RTX-PRO-6000 XR1 fine-tuning; paired Antioch robot evaluation is a separate operator step.",
+    ),
+    SubmitLiveCase(
+        "lyra-reconstruction.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        rotation_skip=True,
+        skip_reason="Requires a checksummed captured-video bundle and operator-scoped internal Lyra R&D use.",
+        notes="Pinned upstream Lyra reconstruction, real Gaussian render and retained depth/camera predictions.",
+    ),
+    SubmitLiveCase(
+        "lyra-scene-actions.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        rotation_skip=True,
+        skip_reason="Requires matching Lyra reconstruction, metric geometry and an operator-calibrated robot mounting bundle.",
+        notes="Native RTX manipulation in the imported collision scene with a scene-matched offline HTML review.",
+    ),
+    SubmitLiveCase(
+        "physical-augmentation.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        notes="Native RTX Franka physical variants, regenerated IK actions, verified transitions, and LeRobot/Rerun demonstrations.",
     ),
     SubmitLiveCase(
         "franka-rl-transfer.yaml",

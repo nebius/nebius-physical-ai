@@ -33,6 +33,22 @@ MANUAL_GATES = {
         "requires operator credentials and a private input selecting an existing HTTPS installation; "
         "qualifies real LB adoption and retries without a personal client as documented in docs/workbench/team-access.md"
     ),
+    "NPA_POLICY_PUBLIC_RESULTS": (
+        "verifies same-run training, both gates, independent GPU serving and standalone HTML; "
+        "collect the standard runtime artifacts with the public policy workflow cookbook"
+    ),
+    "NPA_PUBLIC_VLA_RESULTS": (
+        "verifies collected artifacts from an operator-launched real SmolVLA GPU training "
+        "and LIBERO evaluation run; use the public VLA cookbook"
+    ),
+    "NPA_E2E_POLICY_DEMO": (
+        "local policy contract demo requires FiftyOne, Playwright Chromium, ffmpeg, "
+        "and an isolated artifact directory; run the cookbook's documented E2E command"
+    ),
+    "NPA_PAIDF_VARIANT_RECOVERY_LIVE_CONFIG": (
+        "read-only immutable native variant verification requires an owner-selected "
+        "completed candidate-source PAIDF run and private fresh-run configuration"
+    ),
     "NPA_LINEAGE_POSTGRES_DSN": "requires operator-selected private Postgres and MLflow tracking services",
     "NPA_VIDEO_SWEEP_FULL_GPU": "requires real Transfer runtime, licensed model access, inputs and tracking services",
     "NPA_VIDEO_SWEEP_REASONER_MODEL": "requires an explicit available model for live paid hosted inference",

@@ -18,6 +18,10 @@ prepare its project and compute, then inspect the result.
 
 | Task | Read |
 | --- | --- |
+| Run or resume a workflow manually | [Manual workflow operations](workbench/guides/manual-workflow-operations.md) |
+| Submit episode batches and choose concurrency | [Dataset batches and capacity](workbench/guides/paidf-dataset-batches.md) |
+| Inspect supported quality reports | [Shared report inspection](workbench/insights-reports.md) |
+| Copy selected GCS/S3 inputs or outputs | [Scoped storage transfers](workbench/guides/scoped-storage-transfers.md) |
 | Author and submit YAML | [Workflow guide](workbench/npa-workflow-guide.md) · [toolRef catalog](workbench/npa-workflow-tool-catalog.md) |
 | Use CLI, Python, or HTTP | [CLI reference](cli/README.md) · [SDK surface](sdk/README.md) · [SDK walkthrough](workbench/cli-sdk-yaml-walkthrough.md) · [SDK errors](sdk/errors.md) |
 | Choose a direct deployment mode | [Runtime modes](workbench/runtime-modes.md) |
@@ -40,6 +44,7 @@ prepare its project and compute, then inspect the result.
 | Compare standalone FA2 and tuned FA4 | [RTX PRO 6000 measurements and actual renders](workbench/fa2-fa4-validation.md) |
 | Reuse model downloads | [Model-weight cache](workbench/model-weight-cache.md) |
 | Use preemptible VMs | [Preemptible capacity](workbench/preemptible-vms.md) |
+| Plan a GPU launch | [Quota and capacity](workbench/gpu-capacity-quota-plan.md) |
 | Reproduce a workload | [Cookbooks](workbench/cookbooks/README.md) |
 
 ## Contribute and verify
