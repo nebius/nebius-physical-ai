@@ -29,7 +29,9 @@ msgpack==1.2.1
 opencv-python-headless==4.11.0.86
 matplotlib==3.10.3
 ftfy==6.3.1
-safetensors==0.5.3
+# The pinned diffusers 0.38.0 resolver requires safetensors>=0.8.0-rc.0.
+# Keep the first final release: 0.5.3 made stage_raw fail before payload work.
+safetensors==0.8.0
 Pillow==12.3.0
 # LeRobot itself is installed with --no-deps by the runtime, exactly as the
 # upstream LingBot-VA instructions require: its metadata caps Torch below the

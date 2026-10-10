@@ -14,6 +14,8 @@ import sys
 import pyarrow as pa
 import pyarrow.parquet as pq
 import yaml
+from packaging.requirements import Requirement
+from packaging.version import Version
 
 from npa.orchestration.npa_workflow import build_plan, load_spec, validate_spec
 from npa.orchestration.npa_workflow.skypilot_render import (
@@ -469,6 +471,13 @@ def test_source_only_image_pins_the_distinct_cuda_contract_without_extra_accepta
     assert "torchvision==0.28.0+cu126" in requirements
     assert "torchaudio==" not in requirements
     assert "diffusers==0.38.0" in requirements
+    safetensors = next(
+        Requirement(line)
+        for line in requirements.splitlines()
+        if line.startswith("safetensors")
+    )
+    assert safetensors.specifier.contains(Version("0.8.0"))
+    assert not safetensors.specifier.contains(Version("0.5.3"))
     assert "transformers==5.10.0" in requirements
     assert "accelerate==" not in requirements
     assert "Pillow==12.3.0" in requirements
