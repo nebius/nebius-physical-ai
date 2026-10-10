@@ -900,7 +900,9 @@ def test_skypilot_label_fallback_accepts_native_b200_without_sky_label(
     assert evidence["selected_nodes"] == ["native-b200"]
 
 
-def test_skypilot_label_fallback_rejects_compact_nebius_rtx_alias_without_sky_label() -> None:
+def test_skypilot_label_fallback_rejects_compact_nebius_rtx_alias_without_sky_label() -> (
+    None
+):
     product = "RTX6000"
     node = replace(
         _node("native-rtx", product=product),
@@ -919,10 +921,10 @@ def test_skypilot_label_fallback_rejects_compact_nebius_rtx_alias_without_sky_la
 
     assert "skypilot.co/accelerator" not in dict(node.labels)
     assert skypilot_label_ready_nodes(inventory, "RTXPRO6000:1") == ()
-    with pytest.raises(SkyPilotGpuLabelError, match="effective skypilot.co/accelerator"):
-        preflight_skypilot_gpu_gang(
-            inventory, accelerator="RTXPRO6000:1", node_count=1
-        )
+    with pytest.raises(
+        SkyPilotGpuLabelError, match="effective skypilot.co/accelerator"
+    ):
+        preflight_skypilot_gpu_gang(inventory, accelerator="RTXPRO6000:1", node_count=1)
 
 
 @pytest.mark.parametrize(
