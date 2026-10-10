@@ -652,6 +652,7 @@ def validate_spec(spec: NpaWorkflowSpec) -> None:
 
         if state.loop:
             _validate_loop_max(state, spec.config)
+            _validate_until_only_loop(spec, state)
 
     _validate_resource_profiles(spec)
     _validate_executable_resource_contracts(spec)
@@ -1269,6 +1270,19 @@ def _validate_resolvable(spec: NpaWorkflowSpec) -> None:
             except TokenError as exc:
                 if not str(exc).startswith("unknown state token:"):
                     raise NpaWorkflowError(f"state {state.name}: {exc}") from exc
+
+
+def _validate_until_only_loop(spec: NpaWorkflowSpec, state: StateSpec) -> None:
+    if state.loop.max is not None or not state.loop.until:
+        return
+    if spec.metadata.get("executionMode") != "runtime":
+        raise NpaWorkflowError(
+            "until-only loops require metadata.executionMode: runtime"
+        )
+    if not state.sequence or not spec.states[state.sequence[-1]].writes_decision:
+        raise NpaWorkflowError(
+            "until-only loops require a sequence ending in a decision writer"
+        )
 
 
 def _validate_loop_max(state: StateSpec, config: dict[str, Any]) -> None:
