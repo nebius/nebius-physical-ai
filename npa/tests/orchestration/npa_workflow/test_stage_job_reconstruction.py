@@ -258,14 +258,22 @@ def test_rebatched_wave_uses_its_own_attempt_counter(prior_attempt) -> None:
     assert stages["collect-b"]["managed_job_id"] == "20"
 
 
-def test_different_wave_keys_do_not_hide_an_unfinished_conflicting_attempt() -> None:
+@pytest.mark.parametrize("prior_attempt", [1, 3])
+@pytest.mark.parametrize("prior_status", ["running", "pending", "starting"])
+def test_different_wave_keys_do_not_hide_an_unfinished_conflicting_attempt(
+    prior_attempt,
+    prior_status,
+) -> None:
     manifest = RunManifest(
         workflow="collection",
         run_id="conflicting-waves",
         api_version="npa.workflow/v0.0.1",
         steps=[{"state": "collect", "status": "submitted"}],
     )
-    waves = [_wave(1, "collect", "20"), _wave(2, "collect", "21")]
+    waves = [
+        _wave(1, "collect", "20", attempt=prior_attempt, status=prior_status),
+        _wave(2, "collect", "21"),
+    ]
 
     [stage] = reconstruct_stage_job_attribution(manifest, runtime_waves=waves).values()
 

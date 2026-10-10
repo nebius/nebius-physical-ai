@@ -763,6 +763,7 @@ def reconstruct_stage_job_attribution(
             )
         )
         final_scope = attempts
+        unresolved_wave_scopes = False
         if latest_wave_key and all(
             item.get("provenance") == "runtime_wave" and item.get("wave_key")
             for item in attempts
@@ -778,6 +779,8 @@ def reconstruct_stage_job_attribution(
                 # Retain history, but compare attempt IDs within the latest wave.
                 attempts = previous + current
                 final_scope = current
+            elif previous:
+                unresolved_wave_scopes = True
         final = attempts[-1] if attempts else {}
         final_attempt = int(final.get("attempt") or 0)
         final_ids = {
@@ -786,7 +789,7 @@ def reconstruct_stage_job_attribution(
             if int(item.get("attempt") or 0) == final_attempt
             and str(item.get("job_id") or "")
         }
-        ambiguous = len(final_ids) > 1
+        ambiguous = unresolved_wave_scopes or len(final_ids) > 1
         public_attempts = [
             {field: value for field, value in item.items() if field != "_order"}
             for item in attempts
