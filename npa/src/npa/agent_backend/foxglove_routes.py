@@ -257,6 +257,8 @@ def register_foxglove_routes(app: Any, deps: FoxgloveDeps, http_error: Any) -> N
                 s3_uri = str(canonical.get("s3_uri") or "")
                 output_path = Path(str(canonical.get("local_path") or ""))
                 summary = dict(canonical.get("summary") or {})
+                # The request-owned input is released before the response is sent.
+                summary.pop("output", None)
                 if not artifact_key or not s3_uri or not output_path.is_file():
                     raise http_error(
                         status_code=502,
@@ -298,10 +300,13 @@ def register_foxglove_routes(app: Any, deps: FoxgloveDeps, http_error: Any) -> N
             state["sim_viz"] = sim_viz
             deps.record_run(state, sim_viz)
             deps.save_state(state)
+            public_canonical = {k: v for k, v in canonical.items() if k != "local_path"}
+            if "summary" in public_canonical:
+                public_canonical["summary"] = summary
             return {
                 "ok": True,
                 "summary": summary,
-                "canonical": {k: v for k, v in canonical.items() if k != "local_path"},
+                "canonical": public_canonical,
                 "sim_viz": sim_viz,
                 "foxglove": foxglove_status_payload(
                     deps.foxglove_config(state), sim_viz

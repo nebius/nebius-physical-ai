@@ -58,6 +58,7 @@ def test_canonical_input_lease_spans_apply_and_owns_only_its_cleanup(tmp_path, f
         "artifact_key": "reports/sim2real.mcap",
         "s3_uri": "s3://unit/run/reports/sim2real.mcap",
         "local_path": VerifiedRecordingString(own),
+        "summary": {"output": str(own), "message_count": 6},
     }
     if failure == "contract":
         canonical["artifact_key"] = ""
@@ -98,6 +99,13 @@ def test_canonical_input_lease_spans_apply_and_owns_only_its_cleanup(tmp_path, f
     assert held.read_bytes() == b"explicit transport fixture"
     if failure != "contract":
         assert published.read_bytes() == held.read_bytes()
+    if not failure:
+        body = response.json()
+        assert body["summary"] == {"message_count": 6}
+        assert body["canonical"]["summary"] == body["summary"]
+        assert "local_path" not in body["canonical"]
+        assert str(own.parent) not in json.dumps(body)
+        assert canonical["summary"] == {"output": str(own), "message_count": 6}
 
 
 @pytest.fixture()
