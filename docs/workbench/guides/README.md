@@ -1,14 +1,20 @@
 # Choose a Workbench workload
 
-For whole datasets, input diagnostics, private Python/image paths and capacity planning,
-follow [PAIDF dataset batches](paidf-dataset-batches.md).
-
 [Workbench docs](../README.md) · [Cookbooks](../cookbooks/README.md) · [Workflow catalog](../../../workflows/README.md)
 
 Choose the result you want, then follow that guide from inputs to inspected
 artifacts. Complete the [quickstart](../../quickstart.md) and
 [GPU runtime setup](../getting-started.md) before a cloud run. A local preview
 checks the declaration; each guide states what its live validation actually proves.
+
+## Workflow operations
+
+| Task | Guide |
+| --- | --- |
+| Configure, submit, inspect or resume a workflow | [Manual workflow operations](manual-workflow-operations.md) |
+| Batch episodes and choose concurrency | [Dataset batches and capacity](paidf-dataset-batches.md) |
+| Inspect supported quality reports | [Shared report inspection](../insights-reports.md) |
+| Copy selected GCS/S3 objects | [Scoped storage transfers](scoped-storage-transfers.md) |
 
 ## Robot and reconstruction guides
 
@@ -60,7 +66,7 @@ when adapting it:
 
 | Task | Guide |
 | --- | --- |
-| Configure, preflight, submit, and recover | [Sim2Real operator runbook](sim2real-workflow.md) |
+| Configure, preflight, submit, and recover | [Sim2Real operator runbook](sim2real-workflow.md); first confirm the declared data/robot contract, run-scoped S3 storage, a validated plan, image preflight, and the exact execution context |
 | Prepare formats, schemas, and S3 layout | [Data contracts](sim2real-data-contracts.md) |
 | Supply customer data and robot assets | [Customer assets](sim2real-customer-assets.md) · [RobotSpec](sim2real-robot-spec.md) |
 | Understand stages, loops, and parallel execution | [Architecture](sim2real-architecture.md) |
