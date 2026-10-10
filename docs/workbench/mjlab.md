@@ -119,7 +119,18 @@ npa workbench mjlab eval --task Mjlab-Velocity-Flat-Unitree-G1 \
 This uses the same implementation as `EvalRequest(video=True)` in the SDK and
 `POST /eval` with `"video": true` in the authenticated service. Native MuJoCo
 renders the evaluated policy's first complete episode, and Workbench verifies
-that the MP4 decodes before publishing it. The result manifest lists both
+the encoded resolution, frame rate and frame count against that episode.
+Video defaults to **1920 × 1080**, recorded at the simulator's native step rate
+(50 fps for G1), with H.264 CRF 18 encoding and browser-compatible YUV 4:2:0.
+`--video-width` and `--video-height` select other even pixel dimensions; the SDK
+and API use `video_width` and `video_height`. Workbench renders those pixels
+directly rather than enlarging a smaller capture. The HTML page preserves the
+aspect ratio, starts muted with playback controls, and embeds the unchanged MP4.
+It displays the measured dimensions, timing and active OpenGL renderer alongside
+the CUDA simulation GPU. Verify NVIDIA rendering in `rendering.vendor`; CUDA
+simulation alone does not establish which OpenGL implementation rendered frames.
+
+Workbench also verifies that the MP4 decodes before publishing it. The result manifest lists both
 `artifacts["rollout.mp4"]` and `artifacts["rollout.html"]` with S3 URI, SHA-256
 and byte count.
 

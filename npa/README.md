@@ -851,8 +851,12 @@ uses existing storage credentials. See the [MJLab guide](../docs/workbench/mjlab
 for request schemas, deployment Secrets, environment variables, validation and
 image publication status.
 `eval --video` also publishes `rollout.mp4` and a self-contained `rollout.html`
-page alongside the measured evaluation manifest. The SDK and service expose the
-same behavior with `video=True`.
+page alongside the measured evaluation manifest, using native 1920 × 1080
+capture at the simulator step rate (50 fps for G1). `--video-width` and
+`--video-height` select other even dimensions; SDK/API fields are `video_width`
+and `video_height`. The page reports decoded video properties and the active
+OpenGL renderer, preserves aspect ratio and starts muted with controls.
+The SDK and service expose the same behavior with `video=True`.
 
 ### Live MK8s attachment matching
 

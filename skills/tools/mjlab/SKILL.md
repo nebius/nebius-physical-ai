@@ -18,6 +18,11 @@ that implementation. Keep simulator imports inside the isolated worker.
   `--video` publishes the first-episode MP4 and self-contained `rollout.html`
   with measured results and checkpoint/video hashes. `--device cpu` is supported
   for local evaluation.
+  Native video defaults to 1920 × 1080 at the simulator step rate, encoded as
+  H.264 CRF 18. `--video-width` / `--video-height` and the matching request fields
+  accept even dimensions. The runtime checks decoded dimensions, timing and
+  first-episode frame count; HTML reports the measured OpenGL renderer separately
+  from CUDA simulation. Validate NVIDIA OpenGL on the actual rendering GPU.
 - `export`: native ONNX export and checker validation, with task metadata.
 - `list`: query the installed upstream task registry; never hardcode fake suites.
 - `status`, `system-info`: dependency versions; absence is not availability.

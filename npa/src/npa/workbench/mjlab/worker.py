@@ -78,13 +78,7 @@ def _train(request, inputs, outputs):
     }
 
 
-def _policy_environment(request, inputs):
-    from mjlab.envs import ManagerBasedRlEnv
-    from mjlab.rl import MjlabOnPolicyRunner, RslRlVecEnvWrapper
-    from mjlab.tasks.registry import load_runner_cls
-    from mjlab.utils.torch import configure_torch_backends
-
-    configure_torch_backends()
+def _policy_configs(request, inputs):
     env_cfg, agent_cfg = _configs(request, inputs, play=True)
     # Upstream play disables the episode horizon for an interactive viewer.
     # Evaluation restores the training horizon so every measured episode completes.
@@ -92,6 +86,20 @@ def _policy_environment(request, inputs):
     env_cfg.episode_length_s = train_cfg.episode_length_s
     env_cfg.terminations = train_cfg.terminations
     env_cfg.scene.num_envs = min(request.num_envs or 1, getattr(request, "episodes", 1))
+    if getattr(request, "video", False):
+        env_cfg.viewer.width = request.video_width
+        env_cfg.viewer.height = request.video_height
+    return env_cfg, agent_cfg
+
+
+def _policy_environment(request, inputs):
+    from mjlab.envs import ManagerBasedRlEnv
+    from mjlab.rl import MjlabOnPolicyRunner, RslRlVecEnvWrapper
+    from mjlab.tasks.registry import load_runner_cls
+    from mjlab.utils.torch import configure_torch_backends
+
+    configure_torch_backends()
+    env_cfg, agent_cfg = _policy_configs(request, inputs)
     raw = ManagerBasedRlEnv(
         cfg=env_cfg,
         device=request.device,
@@ -123,7 +131,11 @@ def _evaluate(request, inputs, outputs):
         report = measure_episodes(env, policy, request, outputs)
         report["runtime"] = _runtime_provenance(request.device)
         if request.video:
-            report["video_frames"] = _verify_video(outputs / "rollout.mp4")
+            report["video"] = _verify_video(
+                outputs / "rollout.mp4", request, env, report
+            )
+            report["video_frames"] = report["video"]["frames"]
+            report["rendering"] = _rendering_provenance()
             write_video_report(outputs, request, report, inputs["checkpoint"]["sha256"])
         (outputs / "episodes.json").write_text(
             json.dumps(report["episodes"], allow_nan=False)
@@ -148,7 +160,7 @@ def _runtime_provenance(device):
     return runtime
 
 
-def _verify_video(path):
+def _inspect_video(path):
     import imageio_ffmpeg
 
     frames = imageio_ffmpeg.read_frames(str(path))
@@ -159,7 +171,50 @@ def _verify_video(path):
         frames.close()
     if count == 0 or metadata["fps"] <= 0:
         raise MjlabError("Video contains no decodable frames")
-    return count
+    return {
+        "width": metadata["size"][0],
+        "height": metadata["size"][1],
+        "fps": metadata["fps"],
+        "frames": count,
+        "duration_seconds": count / metadata["fps"],
+        "codec": metadata["codec"],
+    }
+
+
+def _verify_video(path, request, env, report):
+    video = _inspect_video(path)
+    if (video["width"], video["height"]) != (request.video_width, request.video_height):
+        raise MjlabError(
+            "Encoded video dimensions differ from the native render request"
+        )
+    expected_fps = 1.0 / env.unwrapped.step_dt
+    if abs(video["fps"] - expected_fps) > 0.01:
+        raise MjlabError("Video timing differs from the simulator step rate")
+    episode = next(
+        row
+        for row in report["episodes"]
+        if row["environment"] == 0 and row["episode"] == 0
+    )
+    if video["frames"] != episode["length"]:
+        raise MjlabError("Video frame count differs from the complete recorded episode")
+    return video
+
+
+def _rendering_provenance():
+    from OpenGL import GL
+
+    rendering = {}
+    for name, constant in (
+        ("vendor", GL.GL_VENDOR),
+        ("renderer", GL.GL_RENDERER),
+        ("version", GL.GL_VERSION),
+    ):
+        value = GL.glGetString(constant)
+        if not value:
+            raise MjlabError("The active OpenGL render context could not be measured")
+        rendering[name] = value.decode("utf-8")
+    rendering["backend"] = os.environ.get("MUJOCO_GL", "")
+    return rendering
 
 
 def _export(request, inputs, outputs):

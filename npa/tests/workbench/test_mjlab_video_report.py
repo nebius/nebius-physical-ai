@@ -31,6 +31,19 @@ def test_page_embeds_exact_video_and_measured_provenance(tmp_path):
     )
     report = {
         "video_frames": 1000,
+        "video": {
+            "width": 1920,
+            "height": 1080,
+            "fps": 50,
+            "frames": 1000,
+            "duration_seconds": 20,
+            "codec": "h264",
+        },
+        "rendering": {
+            "backend": "egl",
+            "vendor": "NVIDIA Corporation",
+            "renderer": "NVIDIA RTX PRO 6000 Blackwell/PCIe/SSE2",
+        },
         "episodes_completed": 1,
         "mean_return": 52.25,
         "mean_episode_length": 1000,
@@ -49,6 +62,9 @@ def test_page_embeds_exact_video_and_measured_provenance(tmp_path):
     video_element = next(attrs for tag, attrs in elements if tag == "video")
     assert base64.b64decode(video_element["src"].split(",", 1)[1]) == video
     assert "controls" in video_element
+    assert video_element["width"] == "1920" and video_element["height"] == "1080"
+    assert "autoplay" in video_element and "muted" in video_element
+    assert "Native 1920 × 1080 · 50 fps · 20 seconds" in html
     assert not any(tag == "script" for tag, _ in elements)
     assert "s3://" not in html
     provenance = json.loads(unescape(html.split("<pre>")[1].split("</pre>")[0]))
@@ -57,6 +73,8 @@ def test_page_embeds_exact_video_and_measured_provenance(tmp_path):
     assert provenance["survival_fraction"] == 0.0
     assert provenance["episodes"] == report["episodes"]
     assert provenance["runtime"] == report["runtime"]
+    assert provenance["video"] == report["video"]
+    assert provenance["rendering"] == report["rendering"]
     assert provenance["task"] == request.task
     policy = next(
         attrs["content"]
