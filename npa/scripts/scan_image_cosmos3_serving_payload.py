@@ -16,10 +16,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from image_payload_credentials import (  # noqa: E402
-    content_credential,
     normalise_member_name,
     path_credential,
 )
+from image_payload_reviews import load_reviews, reviewed_content_credential  # noqa: E402
 
 FORBIDDEN_PATHS = (
     re.compile(r"(?i)(^|/)NGC-DL-CONTAINER-LICENSE$"),
@@ -46,6 +46,8 @@ def scan_tarball(path: Path) -> dict[str, object]:
     hits: list[str] = []
     history_hits: list[str] = []
     credential_hits: list[str] = []
+    reviewed_content: list[dict] = []
+    reviews = load_reviews()
     entries = 0
     with tarfile.open(path) as outer:
         manifest = json.load(outer.extractfile("manifest.json"))  # type: ignore[arg-type]
@@ -87,7 +89,9 @@ def scan_tarball(path: Path) -> dict[str, object]:
                     if kind is None:
                         payload = layer.extractfile(member)
                         if payload is not None:
-                            kind = content_credential(payload)
+                            kind, review = reviewed_content_credential(payload, reviews)
+                            if review is not None:
+                                reviewed_content.append({"path": name, **review})
                     if kind is not None:
                         credential_hits.append(f"{kind}:{name}")
     return {
@@ -97,6 +101,7 @@ def scan_tarball(path: Path) -> dict[str, object]:
         "payload_hits": sorted(set(hits)),
         "history_hits": sorted(set(history_hits)),
         "credential_hits": sorted(set(credential_hits)),
+        "reviewed_nonoperational_content": reviewed_content,
         "verdict": "clean"
         if not hits and not history_hits and not credential_hits
         else "restricted-payload-detected",
