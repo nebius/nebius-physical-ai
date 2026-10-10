@@ -4339,8 +4339,11 @@ def test_workflow_status_treats_successful_empty_queue_as_verified_absence(
 @pytest.mark.parametrize(
     ("stdout", "stderr"),
     [
-        ('The following keys (["allowed_clouds"]) are ignored.\n'
-         '[{"job_id": 42, "status": "RUNNING"}]', ""),
+        (
+            'The following keys (["allowed_clouds"]) are ignored.\n'
+            '[{"job_id": 42, "status": "RUNNING"}]',
+            "",
+        ),
         ('[{"job_id": 42, "status": "RUNNING"}]\n[]', ""),
         ("diagnostic only", ""),
         ("", ""),
@@ -4373,6 +4376,76 @@ def test_workflow_status_preserves_unverified_queue_as_unknown(
     assert result.job_id == "42"
     assert result.stdout == stdout
     assert result.stderr == stderr
+    assert result.error
+    assert not result.ok
+
+
+@pytest.mark.parametrize("status", [None, "", "UNRECOGNIZED"])
+def test_workflow_status_unknown_task_status_is_not_ok(
+    monkeypatch, tmp_path, status
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    stdout = json.dumps([{"job_id": 42, "status": status}])
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 0, stdout, ""),
+    )
+
+    result = workflow_status("42", sky_bin=sky_bin)
+
+    assert result.status == "UNKNOWN"
+    assert not result.ok
+    assert "missing or unrecognized status" in result.error
+
+
+def test_workflow_status_explains_ambiguous_config_warning_without_secrets(
+    monkeypatch, tmp_path
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    stdout = (
+        'The following keys (["allowed_clouds"]) are ignored.\n'
+        'token=synthetic-private-value\n[{"job_id": 42, "status": "RUNNING"}]'
+    )
+    stderr = "https://example.test/request?token=synthetic-url-secret " + "x" * 1000
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 0, stdout, stderr),
+    )
+
+    result = workflow_status("42", sky_bin=sky_bin)
+
+    assert result.status == "UNKNOWN"
+    assert "allowed_clouds" in result.error
+    assert "configuration" in result.error
+    assert "synthetic-private-value" not in result.error
+    assert "synthetic-url-secret" not in result.error
+    assert len(result.error) < 1000
+
+
+@pytest.mark.parametrize("job_id", [42, "42"])
+@pytest.mark.parametrize("group", [False, True])
+def test_workflow_status_accepts_verified_native_member_rows(
+    monkeypatch, tmp_path, job_id, group
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    rows = [
+        {"job_id": job_id, "task_id": index, "is_job_group": group, "status": status}
+        for index, status in enumerate(["SUCCEEDED", "PENDING"])
+    ]
+    stdout = "Warning: optional display unavailable\n" + json.dumps(rows)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 0, stdout, ""),
+    )
+
+    result = workflow_status("42", sky_bin=sky_bin)
+
+    assert result.status == "PENDING"
+    assert result.ok
+    assert result.error == ""
 
 
 @pytest.mark.parametrize("row", [{"job_id": 7}, {"job_id": "7"}, {"id": 7}])

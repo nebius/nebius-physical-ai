@@ -881,6 +881,10 @@ def test_direct_strict_task_query_errors_redact_credentials(mocker, detail):
         (0, "[]", "permission denied"),
         (0, '{"jobs": []}', "error: queue unavailable"),
         (0, "[]\n[]", ""),
+        (0, '[{"job_id": 11, "status": "SUCCEEDED"}, {"status": "RUNNING"}]', ""),
+        (0, '[{"job_id": 11, "status": "SUCCEEDED"}, {"job_id": true}]', ""),
+        (0, '[{"job_id": 11, "status": "SUCCEEDED"}, {"job_id": 7.0}]', ""),
+        (0, '[{"job_id": 11, "status": "SUCCEEDED"}, {"job_id": "07"}]', ""),
     ],
 )
 @pytest.mark.parametrize("surface", ["callback", "json", "watch"])

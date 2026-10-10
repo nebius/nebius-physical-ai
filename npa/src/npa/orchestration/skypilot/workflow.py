@@ -2715,7 +2715,9 @@ def workflow_status(
             returncode=result.returncode,
             stdout=result.stdout,
             stderr=result.stderr,
-            error="SkyPilot queue response does not verify managed-job state",
+            error=_queue_verification_error(
+                result, "malformed rows or conflicting diagnostics"
+            ),
         )
 
     status = _status_from_queue_payload(result.stdout, job_id)
@@ -2739,6 +2741,13 @@ def workflow_status(
         returncode=result.returncode,
         stdout=result.stdout,
         stderr=result.stderr,
+        error=(
+            _queue_verification_error(
+                result, "a matching task has a missing or unrecognized status"
+            )
+            if status == "UNKNOWN"
+            else ""
+        ),
     )
 
 
@@ -2750,10 +2759,15 @@ def _verify_task_queue_result(result: subprocess.CompletedProcess[str]) -> None:
     detail = sanitize_reason(redact_text(_command_detail(result)))
     if result.returncode != 0:
         raise RuntimeError(f"SkyPilot task queue query failed: {detail}")
-    if verified_structured_queue_rows(result) is None:
+    rows = verified_structured_queue_rows(result)
+    if rows is None:
         raise RuntimeError(
             "SkyPilot task queue response is malformed or has conflicting diagnostics: "
             + detail
+        )
+    if any(not _queue_row_job_id(row) for row in rows):
+        raise RuntimeError(
+            "SkyPilot task queue contains malformed managed-job identities: " + detail
         )
 
 
@@ -5359,6 +5373,25 @@ def _queue_row_job_id(row: Mapping[str, Any]) -> str:
     if isinstance(value, str) and re.fullmatch(r"[1-9][0-9]*", value):
         return value
     return ""
+
+
+def _queue_verification_error(
+    result: subprocess.CompletedProcess[str], reason: str
+) -> str:
+    """Expose bounded, redacted diagnostics without treating them as job evidence."""
+
+    from npa.verification import sanitize_reason
+
+    diagnostics = []
+    for stream, output in (("stdout", result.stdout), ("stderr", result.stderr)):
+        if output.strip():
+            diagnostics.append(f"{stream}: {sanitize_reason(output, limit=300)}")
+    detail = "; ".join(diagnostics) or "no queue output"
+    return (
+        f"SkyPilot queue response does not verify managed-job state ({reason}). "
+        "Check SkyPilot client/controller configuration and restore queue access "
+        f"before resuming. {detail}"
+    )
 
 
 def _status_from_queue_payload(output: str, job_id: str) -> str:
