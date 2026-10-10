@@ -1503,9 +1503,9 @@ def default_npa_setup() -> str:
         # SkyPilot supplies uv, but a non-root Ubuntu image can still select a
         # root-owned system Python without pip. Keep control-plane dependencies
         # in a fresh task-local environment; do not replace a vendor venv.
-        "    if \"$npa_setup_python\" -c 'import os, sys, sysconfig; "
+        '    if "$npa_setup_python" -c \'import os, sys, sysconfig; '
         "sys.exit(not (sys.prefix == sys.base_prefix and not "
-        "os.access(sysconfig.get_path(\"purelib\"), os.W_OK)))'; then\n"
+        'os.access(sysconfig.get_path("purelib"), os.W_OK)))\'; then\n'
         '      npa_setup_env="$(mktemp -d /tmp/npa-setup-venv.XXXXXX)" || return\n'
         '      uv venv --python "$npa_setup_python" "$npa_setup_env" || return\n'
         '      npa_setup_python="$npa_setup_env/bin/python"\n'
