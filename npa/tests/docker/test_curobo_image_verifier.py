@@ -100,6 +100,10 @@ def payload():
     receipt = b"Synthetic real benchmark import receipt."
     contract["runtime_import_receipt"].update(sha256=digest(receipt), size=len(receipt))
     entries.append(entry(contract["runtime_import_receipt"]["path"], receipt))
+    for index, row in enumerate(contract["bootstrap_seeds"]["retained"]):
+        data = f"Synthetic replacement seed or source-bound build receipt {index}.".encode()
+        row.update(sha256=digest(data), size=len(data))
+        entries.append(entry(row["path"], data))
     source_manifest = b"Synthetic complete package/source/notice contract."
     notice = b"Synthetic complete distro copyright notice."
     database = b"Synthetic exact package database."
@@ -206,6 +210,67 @@ def verify(tmp_path, payload, layers=None, **kwargs):
 
 def codes(report):
     return {finding["code"] for finding in report["findings"]}
+
+
+def test_bootstrap_seeds_and_build_receipt_are_verified(tmp_path, payload):
+    report = verify(tmp_path, payload)
+    assert report["valid"] is True
+    assert report["verified_bootstrap_seed_payload_count"] == 3
+
+
+@pytest.mark.parametrize("index", range(3))
+@pytest.mark.parametrize("mutation", ["missing", "modified", "symlink"])
+def test_bootstrap_seed_payload_cannot_be_omitted_or_replaced(
+    tmp_path, payload, index, mutation
+):
+    path = payload[0]["bootstrap_seeds"]["retained"][index]["path"]
+    entries = [row for row in payload[1] if row[0] != path]
+    if mutation == "modified":
+        entries.append(entry(path, b"substituted bytes"))
+    elif mutation == "symlink":
+        entries.append(entry(path, kind=tarfile.SYMTYPE, link="other-wheel"))
+    report = verify(tmp_path, payload, [entries])
+    assert report["valid"] is False
+    assert report["verified_bootstrap_seed_payload_count"] == 2
+    assert codes(report) & {"required_payload_missing", "final_payload_hash_mismatch"}
+
+
+@pytest.mark.parametrize("index", range(3))
+def test_modified_bootstrap_bytes_in_ancestor_cannot_be_repaired_away(
+    tmp_path, payload, index
+):
+    path = payload[0]["bootstrap_seeds"]["retained"][index]["path"]
+    report = verify(tmp_path, payload, [[entry(path, b"old bytes")], payload[1]])
+    assert report["valid"] is False
+    assert "retained_payload_hash_mismatch" in codes(report)
+
+
+@pytest.mark.parametrize("index", range(2))
+@pytest.mark.parametrize("hidden", [False, True])
+def test_superseded_seed_is_forbidden_even_if_whiteouted(
+    tmp_path, payload, index, hidden
+):
+    path = payload[0]["bootstrap_seeds"]["forbidden_paths"][index]
+    if hidden:
+        old = Path(path)
+        layers = [
+            [entry(path, b"superseded seed")],
+            [*payload[1], entry(str(old.parent / (".wh." + old.name)))],
+        ]
+    else:
+        layers = [[*payload[1], entry(path, b"superseded seed")]]
+    report = verify(tmp_path, payload, layers)
+    assert report["valid"] is False
+    assert "superseded_bootstrap_seed" in codes(report)
+
+
+@pytest.mark.parametrize("field", ["retained", "forbidden_paths"])
+def test_bootstrap_seed_contract_cannot_drop_required_inventory(
+    tmp_path, payload, field
+):
+    payload[0]["bootstrap_seeds"][field].pop()
+    with pytest.raises(VERIFIER.ImageVerificationError, match="seed"):
+        verify(tmp_path, payload)
 
 
 def clean_root_config(config):
@@ -462,13 +527,13 @@ def test_complete_image_binds_config_all_diff_ids_and_independent_bytes(
     assert report["verified_libgomp_payload_count"] == 3
     assert report["verified_libgomp_soname_link"] is True
     assert report["runtime_import_receipt_verified"] is True
-    assert report["required_payload_count"] == 17
+    assert report["required_payload_count"] == 20
     assert report["verified_distro_database_versions"] == 1
     assert report["verified_distro_copyright_files"] == 1
     assert report["distro_source_manifest_verified"] is True
     assert report["layer_count"] == 1
     assert len(report["verified_layer_diff_ids"]) == 1
-    assert report["regular_files_read"] == 17
+    assert report["regular_files_read"] == 20
     assert report["content_bytes_read"] == sum(len(row[1]) for row in payload[1])
     assert report["docker_save_sha256"] == digest((tmp_path / "image.tar").read_bytes())
 
@@ -989,7 +1054,7 @@ def test_no_member_size_cap_and_no_required_file_sample(tmp_path, payload):
     assert report["content_bytes_read"] == len(data) + sum(
         len(row[1]) for row in payload[1]
     )
-    assert report["regular_files_read"] == 18
+    assert report["regular_files_read"] == 21
 
 
 def test_same_layer_directory_replacement_invalidates_regular_proof(tmp_path, payload):
@@ -1052,7 +1117,7 @@ def test_duplicate_canonical_inner_paths_are_rejected(tmp_path, payload, alias):
     duplicate = entry(("./" if alias else "") + original[0], original[1])
     report = verify(tmp_path, payload, [[*payload[1], duplicate]])
     assert "duplicate_layer_path" in codes(report)
-    assert report["regular_files_read"] == 18  # Duplicate bytes are still scanned.
+    assert report["regular_files_read"] == 21  # Duplicate bytes are still scanned.
     assert report["retained_runtime_count"] == 8
     assert not report["valid"]
 
@@ -1183,7 +1248,7 @@ def test_oci_graph_binds_manifest_and_classic_ids_with_repeated_ordered_blobs(
     assert report["verified_layer_diff_ids"][0] == report["verified_layer_diff_ids"][2]
     assert report["image_config_digest"] == classic_id
     assert report["image_manifest_digest"] == manifest_id
-    assert report["regular_files_read"] == 17
+    assert report["regular_files_read"] == 20
 
 
 def test_repeated_nonempty_blob_is_scanned_for_every_occurrence(tmp_path, payload):
@@ -1192,7 +1257,7 @@ def test_repeated_nonempty_blob_is_scanned_for_every_occurrence(tmp_path, payloa
         archive, expected_image_id=image_id, contract=payload[0]
     )
     assert report["valid"]
-    assert report["regular_files_read"] == 34
+    assert report["regular_files_read"] == 40
     assert report["content_bytes_read"] == 2 * sum(len(row[1]) for row in payload[1])
 
 
@@ -1312,8 +1377,8 @@ def test_reviewed_torch_adapter_bytes_and_complete_license_pass(
     report = verify(tmp_path, adapter_payload)
     assert report["valid"]
     assert report["verified_torch_adapter_count"] == 52
-    assert report["required_payload_count"] == 167
-    assert report["regular_files_read"] == 167
+    assert report["required_payload_count"] == 170
+    assert report["regular_files_read"] == 170
 
 
 @pytest.mark.parametrize(

@@ -236,6 +236,23 @@ def verify_image(
     }
     runtime_import_receipt = contract["runtime_import_receipt"]
     expected[_path(runtime_import_receipt["path"])] = runtime_import_receipt
+    seeds = contract["bootstrap_seeds"]
+    seed_payload = {_path(row["path"]): row for row in seeds["retained"]}
+    if len(seeds["retained"]) != 3 or set(seed_payload) != {
+        "usr/share/python-wheels/pip-26.2.1+npa.1-py3-none-any.whl",
+        "usr/share/python-wheels/setuptools-84.0.0-py3-none-any.whl",
+        "usr/share/doc/npa-curobo/secure-pip-build.json",
+    }:
+        raise ImageVerificationError(
+            "expected both replacement seeds and build receipt"
+        )
+    forbidden_seeds = {_path(path) for path in seeds["forbidden_paths"]}
+    if forbidden_seeds != {
+        "usr/share/python-wheels/pip-24.0-py3-none-any.whl",
+        "usr/share/python-wheels/setuptools-68.1.2-py3-none-any.whl",
+    }:
+        raise ImageVerificationError("expected complete superseded seed inventory")
+    expected.update(seed_payload)
     distro = contract["distro_source_closure"]
     distro_manifest = distro["manifest"]
     expected[_path(distro_manifest["path"])] = distro_manifest
@@ -420,6 +437,10 @@ def verify_image(
                 for entry_index, entry in enumerate(layer):
                     entries_read += 1
                     path = _path(entry.name)
+                    # A later whiteout cannot remove bytes from an exported ancestor.
+                    # Reject every entry type at superseded seed paths in every layer.
+                    if path in forbidden_seeds:
+                        issue("superseded_bootstrap_seed", layer_index, entry_index)
                     if path in seen_paths:
                         issue("duplicate_layer_path", layer_index, entry_index)
                     seen_paths.add(path)
@@ -633,6 +654,9 @@ def verify_image(
         "verified_libgomp_payload_count": sum(
             row["path"] in observed and observed[row["path"]]["matches"]
             for row in libgomp_payload
+        ),
+        "verified_bootstrap_seed_payload_count": sum(
+            path in observed and observed[path]["matches"] for path in seed_payload
         ),
         "verified_libgomp_soname_link": (
             libgomp_soname in observed_links

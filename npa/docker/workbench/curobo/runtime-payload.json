@@ -1,4 +1,27 @@
 {
+  "bootstrap_seeds": {
+    "retained": [
+      {
+        "path": "usr/share/python-wheels/pip-26.2.1+npa.1-py3-none-any.whl",
+        "size": 1863653,
+        "sha256": "a71a4e82929d20ecd881f3081749cbaad14875b99f162d6387c3f1889735ae27"
+      },
+      {
+        "path": "usr/share/python-wheels/setuptools-84.0.0-py3-none-any.whl",
+        "size": 818216,
+        "sha256": "51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670"
+      },
+      {
+        "path": "usr/share/doc/npa-curobo/secure-pip-build.json",
+        "size": 8983,
+        "sha256": "8872a2a21a8b673faff33742ea9bd80acecb6b742fcfcc2b0daf9dedaa54191b"
+      }
+    ],
+    "forbidden_paths": [
+      "usr/share/python-wheels/pip-24.0-py3-none-any.whl",
+      "usr/share/python-wheels/setuptools-68.1.2-py3-none-any.whl"
+    ]
+  },
   "distro_source_closure": {
     "manifest": {
       "path": "usr/share/doc/npa-curobo/distro-source-closure.json",
