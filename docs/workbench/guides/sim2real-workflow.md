@@ -477,8 +477,8 @@ npa/.venv/bin/npa workbench workflow artifacts "$RUN_ID" --project "$NPA_PROJECT
 ```
 
 Model loading and Transfer inference can stay quiet between log messages.
-The first Isaac startup can also compile ray-tracing shaders on the CPU while
-GPU utilization stays low. Its log names the Kit log file, where shader
+A cold Isaac renderer startup can also compile ray-tracing shaders on the CPU
+while GPU utilization stays low. Its log names the Kit log file, where shader
 compilation progress is recorded. PPO retains the full RSL-RL training log and
 prints its console tail when a pass finishes, so workflow logs can also stay
 quiet during optimizer updates. Check live status and pod events while waiting.
@@ -491,8 +491,8 @@ Invalid capture needs corrected images and new rollouts, not relabelled metadata
 The [temporal-credit contract](sim2real-data-contracts.md#inner-loop-stages-79)
 enforces action/frame and simulator-episode bindings; playback FPS is not
 physical simulation time. Use measured PPO losses and each pass's own validation
-result; compatibility proxy fields are not optimizer measurements. Gold
-selection does not replace earlier candidate measurements.
+result; compatibility proxy fields are not optimizer measurements. The selected
+checkpoint's score does not replace earlier candidate measurements.
 
 ## Resume and verify
 
@@ -547,6 +547,19 @@ Require verified terminal jobs and no active workers before retiring their
 controller or cluster. If cancellation cannot verify the original controller,
 use [controller recovery](../controller-recovery.md); a new environment's empty
 queue does not prove cleanup.
+
+For the isolated controller configured in this guide, retain the same private
+client settings and retire it after cancellation verifies no active jobs:
+
+```bash
+npa/.venv/bin/npa skypilot cleanup-controller \
+  --project "$NPA_PROJECT" --context "$NPA_CLUSTER" --yes --json
+```
+
+This command checks controller ownership and refuses active jobs. It leaves the
+GPU pool and shared filesystem available to their owner. Follow the
+[owned local workflow API cleanup](../../teardown.md#owned-local-workflow-api)
+instructions after all clients using this run's isolated API have stopped.
 
 Idle GPU clusters keep billing. For a **dedicated project created for this
 run**, preview ordered teardown and review its exact resource inventory:
