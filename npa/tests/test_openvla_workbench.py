@@ -339,9 +339,9 @@ def test_workflow_resources_declare_the_skypilot_task_container() -> None:
         container = pod_spec["containers"][0]
         assert container["name"] == "ray-node", resource_name
         assert container["env"] == expected_storage_env, resource_name
-        # The retained worker diagnostic proves this bounded set can rename
-        # the user-owned bootstrap file into /etc/profile.d without restoring
-        # unrelated audit or ownership capabilities.
+        # The retained worker diagnostic proves why the cross-owner rename
+        # needs DAC_OVERRIDE; a rebuilt image still needs to prove the full
+        # bootstrap behavior without restoring unrelated capabilities.
         assert "allowPrivilegeEscalation" not in container["securityContext"]
         assert container["securityContext"] == {
             "runAsNonRoot": True,
