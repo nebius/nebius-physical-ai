@@ -266,8 +266,8 @@ def test_runtime_http_dependency_retains_fixed_streaming_and_proxy_boundary():
     requirements = DOCKERFILE.with_name("requirements.in").read_text()
     lock = DOCKERFILE.with_name("requirements.lock").read_text()
     # GHSA-vxq7-64xx-v4gw, GHSA-gh4c-6fx4-qh6g and GHSA-8988-9cw3-xx77:
-    # preserve upstream streaming/proxy fixes without changing planner pins.
-    assert "urllib3>=2.8.0,<3" in requirements.splitlines()
+    # preserve upstream streaming/proxy fixes at main's exact safe runtime pin.
+    assert "urllib3==2.8.0" in requirements.splitlines()
     assert "urllib3==2.8.0 \\\n" in lock
     assert (
         "--hash=sha256:0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3"
