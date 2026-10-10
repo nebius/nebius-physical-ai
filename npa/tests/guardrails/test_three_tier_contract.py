@@ -961,6 +961,11 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         "groot",
         "health",
         "insights",
+        # Intrinsic Core probes inspect the local ROS, k3s, and inctl host.
+        # They deliberately have no service tier or npa.workflow toolRef:
+        # a generic workflow pod would inspect itself rather than the Core
+        # host. The host CLI and SDK share one implementation.
+        "intrinsic",
         "isaac-lab",
         "lancedb",
         # Interactive LeIsaac sessions are lifecycle-bearing Kubernetes services:
