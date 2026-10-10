@@ -32,8 +32,32 @@ readonly PYTORCH3D_REPOSITORY="https://github.com/facebookresearch/pytorch3d.git
 readonly PYTORCH3D_REF="88e182f989c80836f4bd744e0d9cb1852762ce01"
 readonly FLASH_ATTN_VERSION="2.8.3"
 
+# Resolve this once, before configure_runtime_hf_cache repoints HF_HOME at this
+# candidate's immutable model closure.  The source/venv cache belongs beside
+# the shared model-cache location selected for the pod, never beneath a later
+# nested HF_HOME value.
+if [[ -z "${NPA_HY_WORLD_RUNTIME_CACHE:-}" ]]; then
+  export NPA_HY_WORLD_RUNTIME_CACHE="${HF_HOME:-/workspace/model-cache/huggingface}/hy-world/runtime"
+fi
+
 cache_root() {
-  printf '%s\n' "${NPA_HY_WORLD_RUNTIME_CACHE:-${HF_HOME:-/workspace/model-cache/huggingface}/hy-world/runtime}"
+  printf '%s\n' "$NPA_HY_WORLD_RUNTIME_CACHE"
+}
+
+runtime_hf_home() {
+  local closure
+  closure="${SOURCE_REF}:${HY_WORLD_MODEL_REF}:${WORLD_STEREO_REF}:${QWEN_IMAGE_REF}:${ZIM_REF}:${GROUNDING_DINO_REF}:${SAM3_REF}:${MOGE_REF}:${UNI3C_REF}"
+  printf '%s/hf-%s\n' "$(cache_root)" \
+    "$(printf '%s' "$closure" | sha256sum | cut -c1-24)"
+}
+
+configure_runtime_hf_cache() {
+  local home
+  home="$(runtime_hf_home)"
+  mkdir -p "$home"
+  export HF_HOME="$home"
+  export HF_HUB_CACHE="$home/hub"
+  export HUGGINGFACE_HUB_CACHE="$home/hub"
 }
 
 source_tree() {
@@ -98,6 +122,7 @@ health() {
   require_command hf
   require_command ffmpeg
   require_command ffprobe
+  require_command sha256sum
   echo "NPA_HY_WORLD_BOOTSTRAP_HEALTH_OK"
 }
 
@@ -109,20 +134,23 @@ status() {
   printf 'runtime_cache=%s\nhf_home=%s\n' "$(cache_root)" "${HF_HOME:-<unset>}"
 }
 
-payload_absence() {
-  local match
-  match="$(find / -xdev \( -iname '*hy-world*' -o -iname 'worldstereo*' -o -iname '*worldmirror*' \) \
-    -type f ! -path '/usr/local/bin/hy-world-runtime' ! -path '/opt/npa/hy-world/*' -print -quit 2>/dev/null || true)"
-  [[ -z "$match" ]] || {
-    echo "npa-hy-world: unexpected payload-shaped file in image: $match" >&2
-    exit "$EX_SOFTWARE"
-  }
-  match="$(find / -xdev \( -name '*.safetensors' -o -name '*.ckpt' \) -type f -print -quit 2>/dev/null || true)"
-  [[ -z "$match" ]] || {
-    echo "npa-hy-world: checkpoint-shaped file baked into image: $match" >&2
-    exit "$EX_SOFTWARE"
-  }
-  echo "NPA_HY_WORLD_ZERO_PAYLOAD_OK"
+bootstrap_integrity() {
+  # A running container includes mutable operator inputs and runtime caches. The
+  # complete-byte OCI scan is the only payload-absence gate; do not inspect the
+  # mutable filesystem and mistake an authorized staged input for an image layer.
+  local required
+  for required in \
+    /opt/npa/hy-world/asset_contract.py \
+    /opt/npa/hy-world/validate_scene.py \
+    /opt/npa/hy-world/hy_world_report.py \
+    /opt/npa/hy-world/workflow_runner.py \
+    /usr/local/bin/hy-world-runtime; do
+    [[ -r "$required" ]] || {
+      echo "npa-hy-world: bootstrap file is absent: $required" >&2
+      exit "$EX_SOFTWARE"
+    }
+  done
+  echo "NPA_HY_WORLD_BOOTSTRAP_INTEGRITY_OK"
 }
 
 source_is_complete() {
@@ -170,6 +198,31 @@ PY
   uv pip freeze --python "$python" | LC_ALL=C sort > "$tree/npa_resolved_inventory.txt"
 }
 
+verify_runtime_layout() {
+  local tree="$1" python stale
+  python="$tree/.venv/bin/python"
+  [[ -x "$python" ]] || {
+    echo "npa-hy-world: runtime virtualenv is absent: $python" >&2
+    exit "$EX_SOFTWARE"
+  }
+  "$python" - "$tree" <<'PY'
+from pathlib import Path
+import sys
+
+tree = Path(sys.argv[1]).resolve()
+expected = tree / ".venv"
+if Path(sys.prefix).resolve() != expected:
+    raise SystemExit(
+        f"runtime virtualenv prefix {Path(sys.prefix).resolve()} does not match {expected}"
+    )
+PY
+  stale="$(grep -RIl -- "$tree.incomplete" "$tree/.venv/bin" 2>/dev/null || true)"
+  [[ -z "$stale" ]] || {
+    echo "npa-hy-world: runtime entrypoint still references staging tree: $stale" >&2
+    exit "$EX_SOFTWARE"
+  }
+}
+
 ensure() {
   health
   local root tree parent tmp lock
@@ -182,9 +235,12 @@ ensure() {
   exec 9>"$lock"
   flock 9
   if source_is_complete; then
+    # A cache created by an older bootstrap may have moved a virtualenv or an
+    # editable install from .incomplete. Never accept it without rechecking.
+    verify_runtime_layout "$tree"
     return
   fi
-  rm -rf -- "$tree.incomplete"
+  rm -rf -- "$tree.incomplete" "$tree"
   tmp="$tree.incomplete"
   mkdir -p "$tmp"
   git -C "$tmp" init -q
@@ -201,10 +257,12 @@ ensure() {
     echo "npa-hy-world: an upstream submodule is missing or not pinned" >&2
     exit "$EX_SOFTWARE"
   fi
-  install_runtime "$tmp"
-  : > "$tmp/.complete"
-  rm -rf -- "$tree"
   mv "$tmp" "$tree"
+  # Python console scripts and editable installs retain absolute paths. Move
+  # only the fetched source, then create the virtualenv at its final location.
+  install_runtime "$tree"
+  verify_runtime_layout "$tree"
+  : > "$tree/.complete"
 }
 
 hub_cache_directory() {
@@ -214,7 +272,7 @@ hub_cache_directory() {
 }
 
 register_hub_main_ref() {
-  local model="$1" ref="$2" cache refs
+  local model="$1" ref="$2" cache refs existing
   cache="$(hub_cache_directory "$model")"
   [[ -d "$cache/snapshots/$ref" ]] || {
     echo "npa-hy-world: pinned Hugging Face snapshot is absent: $model@$ref" >&2
@@ -222,6 +280,14 @@ register_hub_main_ref() {
   }
   refs="$cache/refs"
   mkdir -p "$refs"
+  if [[ -f "$refs/main" ]]; then
+    existing="$(tr -d '\r\n' < "$refs/main")"
+    [[ "$existing" == "$ref" ]] || {
+      echo "npa-hy-world: isolated cache main ref disagrees for $model" >&2
+      exit "$EX_SOFTWARE"
+    }
+    return
+  fi
   printf '%s\n' "$ref" > "$refs/main.tmp"
   mv "$refs/main.tmp" "$refs/main"
 }
@@ -237,10 +303,17 @@ fetch_model_snapshot() {
 }
 
 fetch_models() {
-  local root model_manifest
+  local root model_manifest lock
   validate_runtime_paths
   root="$(cache_root)"
   mkdir -p "$root"
+  configure_runtime_hf_cache
+  # Model IDs in the upstream code resolve `refs/main`. Serialize population of
+  # this immutable component closure so another worker cannot observe a partial
+  # snapshot or rewrite an otherwise identical reference during a cold start.
+  lock="$root/.model-fetch.lock"
+  exec 8>"$lock"
+  flock 8
   # Every model ref is immutable. `HF_HUB_OFFLINE=1` is set only after these
   # downloads so upstream's model-id calls cannot silently resolve a later main.
   fetch_model_snapshot "$HY_WORLD_MODEL" "$HY_WORLD_MODEL_REF"
@@ -419,15 +492,17 @@ main() {
     health) health ;;
     status) status ;;
     terms) terms ;;
-    payload-absence) payload_absence ;;
+    bootstrap-integrity) bootstrap_integrity ;;
     ensure) ensure ;;
     fetch-models) ensure; fetch_models ;;
     run-image-to-world) run_image_to_world ;;
     *)
-      echo "usage: hy-world-runtime {health|status|terms|payload-absence|ensure|fetch-models|run-image-to-world}" >&2
+      echo "usage: hy-world-runtime {health|status|terms|bootstrap-integrity|ensure|fetch-models|run-image-to-world}" >&2
       exit 2
       ;;
   esac
 }
 
-main "$@"
+if [[ "${NPA_HY_WORLD_RUNTIME_LIBRARY:-0}" != 1 ]]; then
+  main "$@"
+fi

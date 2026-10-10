@@ -7,6 +7,10 @@ kind: Workflow
 # secure build and real B200 validation gates.
 metadata:
   name: byof-hy-world
+  # The artifact/provenance contract is enforced by the durable workflow
+  # runtime. This makes runtime execution the default for agents and rejects
+  # an explicit --no-runtime rather than silently selecting a flattened task.
+  executionMode: runtime
   description: >
     Runtime-fetch Tencent HY-World 2.0 image-conditioned world generation:
     Qwen-Image-Edit HY-Pano, WorldNav, WorldStereo, GS-data preparation and 3DGS
@@ -15,14 +19,15 @@ metadata:
 
 config:
   bucket: example-bucket
-  prefix: "oss-solutions/hy-world/{{run.id}}"
+  # This is the one parent for the declared artifacts and the BYOF uploader.
+  # The standard runner appends the run ID exactly once.
+  prefix: "oss-solutions/hy-world"
   input_image_uri: "s3://example-bucket/operator-inputs/image.png"
   prompt: "Expand the supplied image into a coherent, navigable world."
-  # Supply this only from a private run configuration. It is an operator-owned
-  # already-running vLLM endpoint, not a service created by this workflow.
-  llm_addr: ""
+  # NPA_HY_WORLD_LLM_ADDR is a secret environment variable, not configuration:
+  # it is an operator-owned, already-running vLLM endpoint and this workflow
+  # neither creates nor persists that service address.
   llm_port: "8000"
-  llm_name: "Qwen/Qwen3-VL-8B-Instruct"
 
   repo_url: "https://github.com/Tencent-Hunyuan/HY-World-2.0"
   repo_ref: "df9988efb87bfc0f4947eb3889411cf957478b06"
@@ -36,86 +41,12 @@ config:
   smoke_command: |
     set -euo pipefail
     : "${BYOF_IMAGE:?BYOF image digest is required}"
-    export HY_WORLD_INPUT_IMAGE="/workspace/hy-world-input.png"
-    export HY_WORLD_SCENE_DIR="${NPA_SMOKE_OUTPUT_DIR}/scene"
-    export HY_WORLD_RESULT_DIR="${NPA_SMOKE_OUTPUT_DIR}/result"
-    export HY_WORLD_CONTAINER_IMAGE="${BYOF_IMAGE}"
+    : "${NPA_SMOKE_OUTPUT_DIR:?BYOF output directory is required}"
+    : "${NPA_HY_WORLD_LLM_ADDR:?private vLLM address must be passed as a SkyPilot secret}"
     export HY_WORLD_PROMPT_B64="{{config.prompt|base64}}"
     export HY_WORLD_INPUT_IMAGE_URI_B64="{{config.input_image_uri|base64}}"
-    export HY_WORLD_LLM_ADDR_B64="{{config.llm_addr|base64}}"
     export HY_WORLD_LLM_PORT_B64="{{config.llm_port|base64}}"
-    export HY_WORLD_LLM_NAME_B64="{{config.llm_name|base64}}"
-    python3 - "${HY_WORLD_INPUT_IMAGE_URI_B64}" "${HY_WORLD_INPUT_IMAGE}" <<'PY'
-    import base64
-    import os
-    import sys
-    from pathlib import Path
-    from urllib.parse import urlparse
-
-    import boto3
-    from botocore.config import Config
-
-    source_b64, destination = sys.argv[1:]
-    try:
-        source = base64.b64decode(source_b64, validate=True).decode("utf-8")
-    except (ValueError, UnicodeDecodeError) as exc:
-        raise SystemExit(f"input_image_uri is not valid base64 UTF-8: {exc}") from exc
-    parsed = urlparse(source)
-    if parsed.scheme != "s3" or not parsed.netloc or not parsed.path.endswith(".png"):
-        raise SystemExit("input_image_uri must be one private s3:// object ending in .png")
-    endpoint = (os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("NEBIUS_S3_ENDPOINT") or "").strip() or None
-    client = boto3.client("s3", endpoint_url=endpoint, config=Config(s3={"addressing_style": "path"}), region_name=os.environ.get("AWS_DEFAULT_REGION", "us-central1"))
-    client.download_file(parsed.netloc, parsed.path.lstrip("/"), destination)
-    if Path(destination).stat().st_size < 256:
-        raise SystemExit("input image is unexpectedly small")
-    PY
-    export NPA_HY_WORLD_LLM_ADDR="$(python3 - <<'PY'
-    import base64
-    import os
-    import sys
-
-    value = base64.b64decode(os.environ["HY_WORLD_LLM_ADDR_B64"], validate=True).decode("utf-8")
-    if not value:
-        raise SystemExit("private llm_addr is required; this workflow does not create a persistent vLLM service")
-    sys.stdout.write(value)
-    PY
-    )"
-    export NPA_HY_WORLD_LLM_PORT="$(python3 - <<'PY'
-    import base64
-    import os
-    import sys
-
-    try:
-        value = base64.b64decode(os.environ["HY_WORLD_LLM_PORT_B64"], validate=True).decode("ascii")
-    except (KeyError, ValueError, UnicodeDecodeError) as exc:
-        raise SystemExit(f"invalid private llm_port: {exc}") from exc
-    if not value.isdecimal() or not 1 <= int(value) <= 65535:
-        raise SystemExit("private llm_port must be a TCP port number")
-    sys.stdout.write(value)
-    PY
-    )"
-    export NPA_HY_WORLD_LLM_NAME="$(python3 - <<'PY'
-    import base64
-    import os
-    import sys
-
-    try:
-        value = base64.b64decode(os.environ["HY_WORLD_LLM_NAME_B64"], validate=True).decode("utf-8")
-    except (KeyError, ValueError, UnicodeDecodeError) as exc:
-        raise SystemExit(f"invalid private llm_name: {exc}") from exc
-    if not value.strip() or "\x00" in value:
-        raise SystemExit("private llm_name is empty or invalid")
-    sys.stdout.write(value)
-    PY
-    )"
-    ffmpeg -v error -i "${HY_WORLD_INPUT_IMAGE}" -frames:v 1 -f null -
-    hy-world-runtime terms
-    hy-world-runtime health
-    hy-world-runtime payload-absence
-    hy-world-runtime run-image-to-world
-    test -f "${NPA_SMOKE_OUTPUT_DIR}/hy_world_image_to_world.json"
-    test -f "${NPA_SMOKE_OUTPUT_DIR}/reports/hy_world_scene.rrd"
-    test -f "${NPA_SMOKE_OUTPUT_DIR}/reports/hy_world_scene_rrd_manifest.json"
+    exec python3 /opt/npa/hy-world/workflow_runner.py
   solution_name: "hy-world-2.0"
   capability_name: "hy_world_2_image_conditioned_world_generation"
   smoke_artifact_name: "hy_world_image_to_world.json"
@@ -126,11 +57,11 @@ config:
   num_demos: 1
   wait_timeout: "-1"
   poll_interval: "60"
-  output_root: "s3://{{config.bucket}}/oss-solutions/hy-world"
-  summary_uri: "s3://{{config.bucket}}/{{config.prefix}}/npa_byof_summary.json"
-  artifact_uri: "s3://{{config.bucket}}/{{config.prefix}}/hy_world_image_to_world.json"
-  rrd_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/hy_world_scene.rrd"
-  rrd_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/hy_world_scene_rrd_manifest.json"
+  output_root: "s3://{{config.bucket}}/{{config.prefix}}"
+  summary_uri: "s3://{{config.bucket}}/{{config.prefix}}/{{run.id}}/npa_byof_summary.json"
+  artifact_uri: "s3://{{config.bucket}}/{{config.prefix}}/{{run.id}}/hy_world_image_to_world.json"
+  rrd_uri: "s3://{{config.bucket}}/{{config.prefix}}/{{run.id}}/reports/hy_world_scene.rrd"
+  rrd_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/{{run.id}}/reports/hy_world_scene_rrd_manifest.json"
 
 resources:
   gpu:

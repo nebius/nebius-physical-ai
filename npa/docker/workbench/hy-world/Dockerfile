@@ -57,6 +57,7 @@ RUN python3 -m pip install --no-cache-dir \
     && rm -rf /root/.cache
 
 COPY --chmod=0444 src/npa/workbench/hy_world/asset_contract.py /opt/npa/hy-world/asset_contract.py
+COPY --chmod=0555 src/npa/workbench/hy_world/workflow_runner.py /opt/npa/hy-world/workflow_runner.py
 COPY --chmod=0555 docker/workbench/hy-world/validate_scene.py /opt/npa/hy-world/validate_scene.py
 COPY --chmod=0555 docker/workbench/hy-world/hy_world_report.py /opt/npa/hy-world/hy_world_report.py
 COPY --chmod=0755 docker/workbench/hy-world/hy_world_runtime.sh /usr/local/bin/hy-world-runtime
@@ -73,9 +74,10 @@ RUN install -d -m 0755 -o "${NPA_RUNTIME_USER}" -g "${NPA_RUNTIME_USER}" \
     && chmod 0444 /opt/byof/npa_source_metadata.json \
     && chmod 0755 /opt/npa /opt/npa/hy-world /usr/share/doc/npa-hy-world \
     && su "${NPA_RUNTIME_USER}" -s /bin/bash -c 'hy-world-runtime health' \
-    && su "${NPA_RUNTIME_USER}" -s /bin/bash -c 'hy-world-runtime payload-absence' \
+    && su "${NPA_RUNTIME_USER}" -s /bin/bash -c 'hy-world-runtime bootstrap-integrity' \
     && /opt/npa/hy-world/validate_scene.py --help >/dev/null \
     && /opt/npa/hy-world/hy_world_report.py --help >/dev/null \
+    && python3 -m py_compile /opt/npa/hy-world/workflow_runner.py \
     && test -z "$(find /workspace -type f -print -quit)" \
     && test -z "$(find / -xdev -name '*.safetensors' -print -quit)" \
     && test -z "$(find / -xdev \( -name 'torch' -o -name 'nvidia' \) -type d -path '*site-packages*' -print -quit)"

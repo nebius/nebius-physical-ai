@@ -666,6 +666,12 @@ larger training budget / dataset for a sharper, longer-horizon dream.
 
 ### Tencent HY-World 2.0 (`byof-hy-world.yaml`)
 
+The [operator guide](../../docs/workbench/byof-hy-world.md) is the discoverable
+entry point for the declared image-conditioned candidate: its standard
+Workbench runtime lifecycle, private digest receipt, upstream vLLM endpoint
+contract, and Tencent/Meta gating are part of the workflow contract rather than
+a second control plane.
+
 The candidate supports only the released image-conditioned route at
 `Tencent-Hunyuan/HY-World-2.0@df9988efb87bfc0f4947eb3889411cf957478b06`:
 Qwen-image HY-Pano, WorldNav, WorldStereo, GS-data preparation and

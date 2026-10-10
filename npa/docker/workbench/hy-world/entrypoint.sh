@@ -6,7 +6,7 @@ case "${1:-}" in
     shift
     exec /usr/local/bin/hy-world-runtime "$@"
     ;;
-  health|status|terms|payload-absence|ensure|fetch-models|run-image-to-world)
+  health|status|terms|bootstrap-integrity|ensure|fetch-models|run-image-to-world)
     exec /usr/local/bin/hy-world-runtime "$@"
     ;;
   "") exec /bin/bash ;;

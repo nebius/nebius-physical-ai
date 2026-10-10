@@ -44,6 +44,9 @@ HY_WORLD_CONTRACT_PATH = (
 HY_WORLD_REPORT_PATH = (
     ROOT / "npa" / "docker" / "workbench" / "hy-world" / "hy_world_report.py"
 )
+HY_WORLD_WORKFLOW_RUNNER_PATH = (
+    ROOT / "npa" / "src" / "npa" / "workbench" / "hy_world" / "workflow_runner.py"
+)
 SOLUTION_SPECS = sorted(
     path for path in WORKFLOW_DIR.glob("byof-*.yaml") if path.name != "byof.yaml"
 )
@@ -286,6 +289,10 @@ def _smoke_contract(path: Path, config: dict[str, object]) -> str:
         assert config.get("smoke_command") == "robomimic-entrypoint train-smoke"
         return ROBOMIMIC_SMOKE_PATH.read_text(encoding="utf-8")
     smoke = str(config.get("smoke_command") or "")
+    if path.name == "byof-hy-world.yaml":
+        # The shell deliberately delegates values and input staging to the
+        # packaged Python adapter; inspect both halves of the real command.
+        return smoke + "\n" + HY_WORLD_WORKFLOW_RUNNER_PATH.read_text(encoding="utf-8")
     if path.name == "byof-libero.yaml":
         assert smoke == "/opt/npa/libero/smoke.sh"
         return (ROOT / "npa/docker/workbench/libero/libero_smoke.py").read_text(
@@ -336,15 +343,21 @@ def test_byof_solution_smokes_are_not_import_only() -> None:
             continue
         if path.name == "byof-hy-world.yaml":
             runtime = HY_WORLD_RUNTIME_SCRIPT_PATH.read_text(encoding="utf-8")
-            assert "hy-world-runtime run-image-to-world" in smoke
+            runner = HY_WORLD_WORKFLOW_RUNNER_PATH.read_text(encoding="utf-8")
+            assert "exec python3 /opt/npa/hy-world/workflow_runner.py" in smoke
+            assert "NPA_HY_WORLD_LLM_ADDR" in smoke
+            assert "llm_addr" not in config
             for config_name in (
                 "prompt",
                 "input_image_uri",
-                "llm_addr",
                 "llm_port",
-                "llm_name",
             ):
                 assert f"{{{{config.{config_name}|base64}}}}" in smoke
+            assert "HY_WORLD_LLM_NAME_B64" not in smoke
+            assert "QWEN_VLM_MODEL" in runner
+            assert "_check_vllm_endpoint" in runner
+            assert "run-image-to-world" in runner
+            assert "bootstrap-integrity" in runner
             for command in (
                 "pipeline_with_qwen_image.py",
                 "traj_generate.py",
@@ -503,9 +516,10 @@ def test_solution_capability_contracts_match_specs() -> None:
                     HY_WORLD_RUNTIME_SCRIPT_PATH,
                     HY_WORLD_CONTRACT_PATH,
                     HY_WORLD_REPORT_PATH,
+                    HY_WORLD_WORKFLOW_RUNNER_PATH,
                 )
             )
-            assert "hy-world-runtime run-image-to-world" in smoke
+            assert "workflow_runner.py" in smoke
             assert expected["smoke_artifact_name"] in smoke
             for capability in expected["must_exercise"]:
                 assert capability in runtime, (solution, capability)
@@ -514,6 +528,40 @@ def test_solution_capability_contracts_match_specs() -> None:
         assert expected["smoke_artifact_name"] in smoke
         for capability in expected["must_exercise"]:
             assert capability in smoke, (solution, capability)
+
+
+def test_hy_world_nondefault_output_root_agrees_with_argv_and_declarations() -> None:
+    """A prefix override must not make declared artifacts diverge from uploads."""
+
+    from npa.orchestration.npa_workflow import build_plan, load_spec
+
+    spec = load_spec(WORKFLOW_DIR / "byof-hy-world.yaml")
+    spec.config.update(
+        {
+            "bucket": "agent-output-bucket",
+            "prefix": "agent-owned/hy-world-results",
+        }
+    )
+    run_id = "hy-world-nondefault-output"
+    step = build_plan(spec, run_id=run_id).steps[0]
+    output_root = "s3://agent-output-bucket/agent-owned/hy-world-results"
+
+    assert step.argv[step.argv.index("--output-root") + 1] == output_root
+    assert [item["uri"] for item in step.outputs] == [
+        f"{output_root}/{run_id}/npa_byof_summary.json",
+        f"{output_root}/{run_id}/hy_world_image_to_world.json",
+        f"{output_root}/{run_id}/reports/hy_world_scene.rrd",
+        f"{output_root}/{run_id}/reports/hy_world_scene_rrd_manifest.json",
+    ]
+
+
+def test_hy_world_requires_the_standard_durable_workflow_runtime() -> None:
+    """Generic submit selects runtime automatically and rejects --no-runtime."""
+
+    document = yaml.safe_load(
+        (WORKFLOW_DIR / "byof-hy-world.yaml").read_text(encoding="utf-8")
+    )
+    assert document["metadata"]["executionMode"] == "runtime"
 
 
 def test_registry_skill_is_solution_specific_not_taxonomy() -> None:

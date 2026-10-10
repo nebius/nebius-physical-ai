@@ -3,4 +3,4 @@
 set -euo pipefail
 
 hy-world-runtime health
-hy-world-runtime payload-absence
+hy-world-runtime bootstrap-integrity
