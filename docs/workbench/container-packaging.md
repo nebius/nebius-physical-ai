@@ -478,6 +478,12 @@ Then run workload pods against the same volume with `NPA_ISAAC_CACHE_READONLY=1`
 runtime user never needs write access to the cache at all. Other knobs:
 `NPA_ISAAC_CACHE_DIR`, `NPA_ISAAC_INDEX_URL` (point it at an internal mirror; the wheels
 are sha256-pinned, so a mirror is verifiable), `NPA_ISAAC_BOOTSTRAP_OFFLINE=1`.
+Kit itself still needs mutable shader, log, configuration, and portable state.
+`/isaac-sim/python.sh` keeps that state below `NPA_ISAAC_STATE_DIR` (default
+`/tmp/npa-isaac-state`) rather than the dependency cache. Kubernetes workflows
+that mount the dependency cache read-only should back this separate path with a
+pod-local writable `emptyDir` and pass the exported `NPA_ISAAC_KIT_ARGS` to
+`AppLauncher`.
 
 **Why the published image is not "Isaac Sim with Omniverse Kit".** Because it does not
 contain Isaac Sim. That is verified mechanically against the *built* image, not by

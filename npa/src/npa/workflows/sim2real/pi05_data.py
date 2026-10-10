@@ -19,6 +19,7 @@ from npa.workflows.sim2real.pi05_contract import (
     DATASET_SCHEMA,
     Pi05ContractError,
     validate_dense_episode,
+    validate_split_manifest,
 )
 
 
@@ -549,6 +550,7 @@ def export_local(
     report = _dataset_report(
         split_rows, normalization, train_arrays, heldout_arrays, info
     )
+    validate_split_manifest(report)
     (output / "dataset-report.json").write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n"
     )

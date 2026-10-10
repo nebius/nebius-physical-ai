@@ -33,9 +33,12 @@ from npa.workflows.sim2real.pi05_isaac import (
     _finger_controller_target,
     _gripper_width,
     _graphics_preflight,
+    _hand_origin_control_receipt,
+    _launch_camera_app,
     _verify_scene_semantics,
     _physics_randomization,
     _object_asset_geometry,
+    _robot_plant_receipt,
     _proxy_torch,
     _rgb,
     _rgb_receipt,
@@ -52,6 +55,8 @@ from npa.workflows.sim2real.pi05_isaac import (
     configure_surface_goal,
     configure_destination_marker,
     configure_finger_semantics,
+    configure_hand_origin_frames,
+    configure_robot_plant,
     configure_support_surface,
     register_surface_task,
     support_surface_contract,
@@ -510,14 +515,51 @@ def _episode(
     ablation_seed: int,
     object_width_m: float,
 ) -> dict[str, Any]:
-    import numpy as np
-
     native = env.unwrapped
     bridge = _joint_bridge(native)
     settle = _settle_policy_reset(env, bridge)
+    record["hand_origin_control"] = _hand_origin_control_receipt(
+        native, require_ik=False
+    )
+    record["robot_plant"] = _robot_plant_receipt(native)
     initial = _verified_initial_object_position(native, scenario)
     _wrist_mount_receipt(native, record)
-    context = {
+    context = _episode_context(
+        env,
+        native,
+        client,
+        record,
+        bridge,
+        initial,
+        scenario,
+        object_width_m,
+        wrist_mode,
+        ablation_seed,
+    )
+    record["wrist_ablation_mode"] = wrist_mode
+    record["scenario_seed"] = int(scenario["scene_seed"])
+    record["reset_settle"] = settle
+    for decision in range(decisions):
+        if _decision_step(context, decision):
+            break
+    return _finish_episode(record)
+
+
+def _episode_context(
+    env: Any,
+    native: Any,
+    client: Pi05PolicyClient,
+    record: dict[str, Any],
+    bridge: Any,
+    initial: Any,
+    scenario: dict[str, Any],
+    object_width_m: float,
+    wrist_mode: str,
+    ablation_seed: int,
+) -> dict[str, Any]:
+    import numpy as np
+
+    return {
         "env": env,
         "native": native,
         "client": client,
@@ -531,13 +573,6 @@ def _episode(
         "scenario_seed": int(scenario["scene_seed"]),
         "frozen_wrist": None,
     }
-    record["wrist_ablation_mode"] = wrist_mode
-    record["scenario_seed"] = int(scenario["scene_seed"])
-    record["reset_settle"] = settle
-    for decision in range(decisions):
-        if _decision_step(context, decision):
-            break
-    return _finish_episode(record)
 
 
 def _open_joint_target(native: Any) -> Any:
@@ -769,6 +804,7 @@ def _load_gold_protocol(args: argparse.Namespace, work: Path) -> dict[str, Any]:
         raise RuntimeError("gold collection lacks enough physics-qualified scenarios")
     scenarios = scenarios[: args.episodes]
     _validate_gold_scenarios(scenarios, args.seed)
+    robot_plant = _validated_robot_plant(collection.get("robot_plant"))
     protocol = {
         "task": "released_supported_surface_placement_v1",
         "split": args.split,
@@ -779,6 +815,7 @@ def _load_gold_protocol(args: argparse.Namespace, work: Path) -> dict[str, Any]:
         "scene_id": collection.get("scene_id"),
         "destination_marker_contract": collection.get("destination_marker_contract"),
         "support_surface_contract": support,
+        "robot_plant": robot_plant,
         "control_hz": CONTROL_HZ,
         "execution_prefix": EXECUTION_PREFIX,
         "scenarios": scenarios,
@@ -806,6 +843,23 @@ def _protocol_object_fields(
 def _validate_object_source(value: Any) -> None:
     if not isinstance(value, str) or not value:
         raise RuntimeError("gold collection lacks the exact object USD source")
+
+
+def _validated_robot_plant(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise RuntimeError("gold collection lacks the robot plant receipt")
+    if value.get("schema") != "npa.sim2real.pi05.robot_plant.v1":
+        raise RuntimeError("gold collection robot plant schema is invalid")
+    if value.get("source") != "isaaclab_assets.FRANKA_PANDA_HIGH_PD_CFG":
+        raise RuntimeError("gold collection uses an unsupported Franka plant")
+    gravity = value.get("observed_disable_gravity") or {}
+    if (
+        value.get("configured_disable_robot_gravity") is not True
+        or gravity.get("all_bodies_disabled") is not True
+        or not value.get("actuators")
+    ):
+        raise RuntimeError("gold collection robot plant is incomplete")
+    return value
 
 
 def _validate_gold_scenarios(scenarios: list[dict[str, Any]], seed: int) -> None:
@@ -876,9 +930,11 @@ def _configure_eval(
 
     cfg.seed, cfg.sim.dt, cfg.decimation = args.seed, 1.0 / 60.0, 4
     cfg.episode_length_s = 240.0
+    configure_robot_plant(cfg)
     remap_moved_franka_usd(cfg)
     _configure_eval_object(cfg, protocol)
     configure_finger_semantics(cfg)
+    configure_hand_origin_frames(cfg, require_ik=False)
     target = tuple(protocol["scenarios"][0]["target_position_m"])
     if any(
         scenario["target_position_m"] != list(target)
@@ -926,6 +982,15 @@ def _validate_eval_geometry(native: Any, protocol: dict[str, Any]) -> dict[str, 
     string_keys = ("grasp_width_axis", "measurement")
     if any(actual.get(key) != expected.get(key) for key in string_keys):
         raise RuntimeError("evaluator object provenance differs from gold collection")
+    return actual
+
+
+def _validate_eval_robot_plant(native: Any, protocol: dict[str, Any]) -> dict[str, Any]:
+    """Require evaluator runtime dynamics to match the expert collection."""
+
+    actual = _robot_plant_receipt(native)
+    if actual != protocol["robot_plant"]:
+        raise RuntimeError("evaluator robot plant differs from gold collection")
     return actual
 
 
@@ -1112,9 +1177,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             (work / "graphics-preflight.json").write_text(
                 json.dumps(graphics, indent=2, sort_keys=True) + "\n"
             )
-            from isaaclab.app import AppLauncher
-
-            app = AppLauncher(headless=True, enable_cameras=True).app
+            app = _launch_camera_app()
             import gymnasium as gym
             import isaaclab_tasks  # noqa: F401
             from isaaclab_tasks.utils import parse_env_cfg
@@ -1186,6 +1249,7 @@ def _run_evaluation(
     try:
         _verify_scene_semantics(env.unwrapped)
         _validate_eval_geometry(env.unwrapped, protocol)
+        _validate_eval_robot_plant(env.unwrapped, protocol)
         episodes = _evaluate(env, client, args, protocol)
         artifacts = _write_review_artifacts(work, episodes, args.checkpoint_role)
         result = _result(args, episodes, artifacts, protocol, receipt)

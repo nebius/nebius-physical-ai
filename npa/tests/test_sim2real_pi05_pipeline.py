@@ -17,7 +17,7 @@ from npa.workflows.byof.openpi_pipeline import (
     _single_host_runtime_evidence,
 )
 from npa.workflows.byof import openpi_service_lifecycle
-from npa.workflows.sim2real import pi05_closed_loop, pi05_isaac
+from npa.workflows.sim2real import pi05_closed_loop, pi05_data, pi05_isaac
 from npa.workflows.byof.openpi_service_lifecycle import (
     _inject_checkpoint_probe,
     _patch_private_s3_checkpoint,
@@ -29,7 +29,9 @@ from npa.workflows.sim2real.pi05_closed_loop import (
     _settle_policy_reset,
     _success,
     _validate_eval_geometry,
+    _validate_eval_robot_plant,
     _validated_geometry_receipt,
+    _validated_robot_plant,
     _wrist_variant,
 )
 from npa.workflows.sim2real.pi05_contract import EPISODE_SCHEMA, Pi05ContractError
@@ -38,6 +40,7 @@ from npa.workflows.sim2real.pi05_data import OPENPI_SCHEMA, export_local
 from npa.workflows.sim2real.pi05_isaac import (
     _collection_report,
     _new_attempt_buffers,
+    _publish_episode,
     _save_partial_attempt,
     configure_surface_goal,
     support_surface_contract,
@@ -54,6 +57,20 @@ SUCCESS_EVENTS = [
     "support_contact",
     "stable",
 ]
+
+
+def _robot_plant() -> dict:
+    return {
+        "schema": "npa.sim2real.pi05.robot_plant.v1",
+        "source": "isaaclab_assets.FRANKA_PANDA_HIGH_PD_CFG",
+        "configured_disable_robot_gravity": True,
+        "observed_disable_gravity": {
+            "shape": [1, 9],
+            "unique": [1],
+            "all_bodies_disabled": True,
+        },
+        "actuators": {"panda_shoulder": {"stiffness": [400.0]}},
+    }
 
 
 class _FakeJaxTopology:
@@ -217,9 +234,11 @@ def test_surface_task_replaces_airborne_goal_and_exports_exact_scenario() -> Non
         "support_height_m": 0.06,
         "measurement": "UsdGeom.BBoxCache composed runtime prim",
     }
+    plant = _robot_plant()
     report = _collection_report(
-        [attempt], "cube", "", (1.0, 1.0, 1.0), "scene", geometry
+        [attempt], "cube", "", (1.0, 1.0, 1.0), "scene", geometry, plant
     )
+    assert report["robot_plant"] == plant
     assert report["successful_scenarios"] == [
         {
             "scene_seed": 7,
@@ -230,6 +249,25 @@ def test_surface_task_replaces_airborne_goal_and_exports_exact_scenario() -> Non
             "support_surface": support_surface_contract(),
         }
     ]
+
+
+def test_policy_runtime_rejects_a_different_expert_robot_plant(monkeypatch) -> None:
+    plant = _robot_plant()
+    assert _validated_robot_plant(plant) is plant
+    monkeypatch.setattr(
+        pi05_closed_loop,
+        "_robot_plant_receipt",
+        lambda _native: {
+            **plant,
+            "observed_disable_gravity": {
+                **plant["observed_disable_gravity"],
+                "all_bodies_disabled": False,
+            },
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="robot plant differs"):
+        _validate_eval_robot_plant(object(), {"robot_plant": plant})
 
 
 def test_failed_semantic_validation_preserves_only_diagnostic_rgb(tmp_path) -> None:
@@ -254,6 +292,19 @@ def test_failed_semantic_validation_preserves_only_diagnostic_rgb(tmp_path) -> N
     assert np.array_equal(np.load(failed / "diagnostic_workspace.npy"), exterior[None])
     assert np.array_equal(np.load(failed / "diagnostic_wrist.npy"), wrist[None])
     assert not (failed / "obs_workspace.npy").exists()
+
+
+def test_episode_publication_removes_partial_io_failure(tmp_path, monkeypatch) -> None:
+    def fail_after_partial(path, _buffers):
+        (path / "obs_workspace.npy").write_bytes(b"partial")
+        raise OSError("simulated episode write failure")
+
+    monkeypatch.setattr(pi05_isaac, "_write_episode_arrays", fail_after_partial)
+    with pytest.raises(OSError, match="simulated episode write failure"):
+        _publish_episode(tmp_path, 3, _new_attempt_buffers(), {"schema": "test"})
+
+    assert not (tmp_path / "episode-000003").exists()
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_lerobot_preserves_episode_relative_source_timestamps() -> None:
@@ -718,6 +769,34 @@ def test_dense_export_is_split_safe_and_openpi_readable(tmp_path, monkeypatch) -
     assert report["splits"]["gold"][0]["object_identity"] == "cube-gold"
 
 
+def test_exporter_rejects_invalid_canonical_report_before_publication(
+    tmp_path, monkeypatch
+) -> None:
+    roots = {name: tmp_path / name for name in ("train", "validation", "gold")}
+    for index, (name, root) in enumerate(roots.items()):
+        _write_episode(root, f"cube-{name}", f"scene-{index}")
+    monkeypatch.setitem(
+        sys.modules, "npa.adapter.sim_to_lerobot", _fake_lerobot_module()
+    )
+    original = pi05_data._dataset_report
+
+    def invalid_report(*args, **kwargs):
+        report = original(*args, **kwargs)
+        report["normalization"]["source_split"] = "validation"
+        return report
+
+    monkeypatch.setattr(pi05_data, "_dataset_report", invalid_report)
+    output = tmp_path / "output"
+    with pytest.raises(Pi05ContractError, match="computed from train only"):
+        export_local(
+            train_root=roots["train"],
+            validation_root=roots["validation"],
+            gold_root=roots["gold"],
+            output=output,
+        )
+    assert not (output / "dataset-report.json").exists()
+
+
 def test_export_rejects_incompatible_seven_dimensional_targets(
     tmp_path, monkeypatch
 ) -> None:
@@ -1041,6 +1120,10 @@ def test_closed_loop_closes_app_and_temporary_directory_on_failure(
 ) -> None:
     lifecycle = {"app_closed": False, "temp_exited": False}
     _install_closed_loop_test_modules(monkeypatch, lifecycle)
+    state = tmp_path / "kit-state"
+    state.mkdir()
+    monkeypatch.setenv("NPA_ISAAC_STATE_DIR", str(state))
+    monkeypatch.setenv("NPA_ISAAC_KIT_ARGS", f"--portable-root {state / 'kit'}")
     monkeypatch.setattr(
         pi05_closed_loop.tempfile,
         "TemporaryDirectory",

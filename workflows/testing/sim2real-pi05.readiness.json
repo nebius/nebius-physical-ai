@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "2e70e301124bc431778d8474213cef502fc812341066811ecb4e1e2492480969",
+  "workflow_sha256": "042ff338f2f214d4a54f2e97be900e44c1fe657e33689500d07f2dd243a55047",
   "planning": {
     "validation": {
       "status": "verified",
@@ -13,7 +13,7 @@
     },
     "task_fidelity": {
       "status": "unverified",
-      "reason": "Offline contracts and tests prove the absolute-joint/DROID-gripper bridge, dense camera/action alignment, strict packed-semantic rules, measured object geometry, one-body support, split isolation, and released-support metric. Live historical-source diagnostics prove calibrated wrist pose publication and moving post-physics RGB with object and both fingers, but the expert produced zero successes. This revision adds a shared two-control-step reset settle with measured speed/support evidence and a six-axis downward relative-pose IK command whose hand goals use a measured complete-finger-link centroid reference; that reference is not claimed as a pad center and still requires live bilateral-contact qualification.",
+      "reason": "Offline contracts and tests prove the absolute-joint/DROID-gripper bridge, dense camera/action alignment, strict packed-semantic rules, measured object geometry, one-body support, split isolation, and released-support metric. Live historical-source diagnostics prove calibrated wrist pose publication and moving post-physics RGB with object and both fingers, but the expert produced zero successes. This revision adds a shared two-control-step reset settle with measured speed/support evidence and a six-axis downward relative-pose IK command whose hand goals use a measured complete-finger-link centroid reference. It explicitly aligns the frame sensor and differential-IK controlled point at the live panda_hand origin and records their position, orientation, offsets, and errors. Expert and policy select the same pinned high-PD Franka plant and evaluation requires equality with the collection's runtime gravity/stiffness/damping receipt while retaining their different action terms. The link reference is not claimed as a pad center and still requires live bilateral-contact qualification.",
       "evidence": [
         "npa/tests/test_sim2real_pi05_contract.py",
         "npa/tests/test_sim2real_pi05_pipeline.py"

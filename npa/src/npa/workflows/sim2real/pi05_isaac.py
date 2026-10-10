@@ -12,7 +12,10 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import re
+import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -154,6 +157,36 @@ def configure_support_surface(cfg: Any) -> None:
             activate_contact_sensors=True,
         ),
     )
+
+
+def configure_hand_origin_frames(cfg: Any, *, require_ik: bool) -> None:
+    """Make the observed and IK-controlled end-effector frame panda_hand."""
+
+    targets = list(getattr(cfg.scene.ee_frame, "target_frames", ()))
+    if len(targets) != 1 or not str(targets[0].prim_path).endswith("/panda_hand"):
+        raise RuntimeError("ee_frame must expose exactly the panda_hand target")
+    _zero_offset_cfg(targets[0].offset, "ee_frame panda_hand")
+    if require_ik:
+        action = cfg.actions.arm_action
+        if getattr(action, "body_name", None) != "panda_hand":
+            raise RuntimeError("expert IK action must control panda_hand")
+        _zero_offset_cfg(action.body_offset, "expert IK panda_hand")
+
+
+def configure_robot_plant(cfg: Any) -> None:
+    """Use one pinned Franka rigid-body/actuator plant for expert and policy."""
+
+    from isaaclab_assets.robots.franka import FRANKA_PANDA_HIGH_PD_CFG
+
+    prim_path = str(cfg.scene.robot.prim_path)
+    cfg.scene.robot = FRANKA_PANDA_HIGH_PD_CFG.replace(prim_path=prim_path)
+
+
+def _zero_offset_cfg(offset: Any, label: str) -> None:
+    if offset is None:
+        raise RuntimeError(f"{label} does not expose an offset configuration")
+    offset.pos = (0.0, 0.0, 0.0)
+    offset.rot = (0.0, 0.0, 0.0, 1.0)
 
 
 def _tag_spawned_finger_prims(root: Any) -> dict[str, str]:
@@ -619,6 +652,17 @@ def _runtime_stage() -> Any:
     return stage
 
 
+def _scene_cfg_prim_path(native: Any, name: str) -> str:
+    """Resolve an authored prim expression from the environment configuration."""
+
+    scene_cfg = getattr(getattr(native, "cfg", None), "scene", None)
+    asset_cfg = getattr(scene_cfg, name, None)
+    path = str(getattr(asset_cfg, "prim_path", "") or "").strip()
+    if not path:
+        raise RuntimeError(f"scene config lacks a prim path for {name}")
+    return path
+
+
 def _install_finger_semantics(native: Any) -> dict[str, str]:
     """Verify pre-physics finger labels without mutating the live USD schema."""
 
@@ -650,7 +694,7 @@ def _verify_scene_semantics(native: Any) -> dict[str, str]:
         "pi05_destination": DESTINATION_LABEL,
     }
     for name, label in expected.items():
-        prim = find_first_matching_prim(native.scene[name].cfg.prim_path)
+        prim = find_first_matching_prim(_scene_cfg_prim_path(native, name))
         if not prim or not prim.IsValid():
             raise RuntimeError(f"missing prim for semantic tag: {name}")
         if label not in get_labels(prim).get("class", []):
@@ -701,7 +745,7 @@ def _object_asset_geometry(native: Any, scale: tuple[float, ...]) -> dict[str, A
     from isaaclab.sim import find_first_matching_prim
     from pxr import Usd, UsdGeom
 
-    prim = find_first_matching_prim(native.scene["object"].cfg.prim_path)
+    prim = find_first_matching_prim(_scene_cfg_prim_path(native, "object"))
     if not prim or not prim.IsValid():
         raise RuntimeError("object prim is missing from the composed runtime stage")
     cache = UsdGeom.BBoxCache(Usd.TimeCode.Default(), [UsdGeom.Tokens.default_])
@@ -1017,6 +1061,143 @@ def _expert_action_scale(native: Any) -> Any:
     if scale.shape != (6,) or not np.isfinite(scale).all() or (scale <= 0).any():
         raise RuntimeError("expert IK action scale must be six finite positive values")
     return scale
+
+
+def _offset_receipt(offset: Any, label: str) -> dict[str, Any]:
+    import numpy as np
+
+    position = np.asarray(getattr(offset, "pos", ()), dtype=float)
+    quaternion = np.asarray(getattr(offset, "rot", ()), dtype=float)
+    if position.shape != (3,) or not np.allclose(position, 0.0, atol=1.0e-9):
+        raise RuntimeError(f"{label} is not configured at panda_hand origin")
+    if quaternion.shape != (4,) or not np.allclose(
+        np.abs(np.dot(quaternion, [0.0, 0.0, 0.0, 1.0])), 1.0, atol=1.0e-9
+    ):
+        raise RuntimeError(f"{label} rotation is not identity XYZW")
+    return {"position_m": position.tolist(), "quaternion_xyzw": quaternion.tolist()}
+
+
+def _hand_origin_control_receipt(native: Any, *, require_ik: bool) -> dict[str, Any]:
+    """Verify live sensor and configured control points coincide with panda_hand."""
+
+    import numpy as np
+
+    robot = native.scene["robot"]
+    hand_index = list(robot.body_names).index("panda_hand")
+    hand = _proxy_torch(robot.data.body_pos_w)[0, hand_index].detach().cpu().numpy()
+    hand_q = _proxy_torch(robot.data.body_quat_w)[0, hand_index].detach().cpu().numpy()
+    sensor = native.scene["ee_frame"].data
+    sensor_pos = _proxy_torch(sensor.target_pos_w)[0, 0, :3].detach().cpu().numpy()
+    sensor_q = _proxy_torch(sensor.target_quat_w)[0, 0, :4].detach().cpu().numpy()
+    position_error = float(np.linalg.norm(sensor_pos - hand))
+    orientation_error = _quaternion_angle_xyzw(sensor_q, hand_q)
+    if position_error > 1.0e-4 or orientation_error > 1.0e-3:
+        raise RuntimeError("ee_frame sensor does not coincide with live panda_hand")
+    return _control_frame_receipt(
+        native,
+        hand,
+        hand_q,
+        sensor_pos,
+        sensor_q,
+        position_error,
+        orientation_error,
+        require_ik,
+    )
+
+
+def _control_frame_receipt(
+    native: Any,
+    hand: Any,
+    hand_q: Any,
+    sensor: Any,
+    sensor_q: Any,
+    position_error: float,
+    orientation_error: float,
+    require_ik: bool,
+) -> dict[str, Any]:
+    targets = list(native.cfg.scene.ee_frame.target_frames)
+    receipt = {
+        "target_prim_path": str(targets[0].prim_path),
+        "sensor_offset": _offset_receipt(targets[0].offset, "runtime ee_frame"),
+        "live_hand_position_m": hand.tolist(),
+        "live_hand_quaternion_xyzw": hand_q.tolist(),
+        "sensor_position_m": sensor.tolist(),
+        "sensor_quaternion_xyzw": sensor_q.tolist(),
+        "sensor_hand_position_error_m": position_error,
+        "sensor_hand_orientation_error_rad": orientation_error,
+        "controlled_point_world_m": hand.tolist(),
+        "controlled_frame": "panda_hand_origin",
+    }
+    if require_ik:
+        term = native.action_manager.get_term("arm_action")
+        receipt["ik_body_name"] = str(term.cfg.body_name)
+        receipt["ik_body_offset"] = _offset_receipt(
+            term.cfg.body_offset, "runtime expert IK"
+        )
+    return receipt
+
+
+def _actuator_values(value: Any, label: str) -> list[float]:
+    """Read finite unique values from the live actuator tensor."""
+
+    import numpy as np
+
+    tensor = _proxy_torch(value)
+    if tensor is None or not hasattr(tensor, "detach"):
+        raise RuntimeError(f"runtime actuator lacks {label}")
+    values = tensor.detach().cpu().numpy().astype(float).reshape(-1)
+    if not values.size or not np.isfinite(values).all():
+        raise RuntimeError(f"runtime actuator {label} is invalid")
+    return sorted(float(item) for item in np.unique(values))
+
+
+def _robot_plant_receipt(native: Any) -> dict[str, Any]:
+    """Record the actual pi0.5 Franka rigid-body and actuator plant."""
+
+    robot = native.scene["robot"]
+    rigid = robot.cfg.spawn.rigid_props
+    actuators = {
+        name: {
+            "joint_names": list(actuator.joint_names),
+            "stiffness": _actuator_values(actuator.stiffness, f"{name} stiffness"),
+            "damping": _actuator_values(actuator.damping, f"{name} damping"),
+        }
+        for name, actuator in sorted(robot.actuators.items())
+    }
+    if not actuators:
+        raise RuntimeError("runtime Franka exposes no actuators")
+    gravity = _live_gravity_receipt(robot)
+    configured = bool(rigid.disable_gravity)
+    if not configured or not gravity["all_bodies_disabled"]:
+        raise RuntimeError("pi0.5 Franka gravity disabling is not active")
+    return {
+        "schema": "npa.sim2real.pi05.robot_plant.v1",
+        "source": "isaaclab_assets.FRANKA_PANDA_HIGH_PD_CFG",
+        "configured_disable_robot_gravity": configured,
+        "observed_disable_gravity": gravity,
+        "actuators": actuators,
+    }
+
+
+def _live_gravity_receipt(robot: Any) -> dict[str, Any]:
+    """Read per-body disable-gravity flags from the pinned PhysX view."""
+
+    import numpy as np
+
+    view = getattr(robot, "root_physx_view", None)
+    getter = getattr(view, "get_disable_gravities", None)
+    values = _proxy_torch(getter() if callable(getter) else None)
+    if values is None or not hasattr(values, "detach"):
+        raise RuntimeError("runtime Franka lacks PhysX disable-gravity flags")
+    array = values.detach().cpu().numpy()
+    if array.size < 1 or not np.isfinite(array.astype(float)).all():
+        raise RuntimeError("runtime Franka disable-gravity flags are invalid")
+    flags = array.astype(bool)
+    return {
+        "shape": list(flags.shape),
+        "unique": sorted(int(item) for item in np.unique(flags)),
+        "all_bodies_disabled": bool(flags.all()),
+    }
 
 
 def _axis_angle_error_xyzw(current: Any, target: Any) -> Any:
@@ -2109,6 +2290,8 @@ def _episode_metadata(
         "object_width_m": context["object_width_m"],
         "object_height_m": context["object_height_m"],
         "finger_grasp_reference_geometry": context["finger_grasp_reference_geometry"],
+        "hand_origin_control": context["hand_origin_control"],
+        "robot_plant": context["robot_plant"],
         "initial_object_position_m": context["initial_object_position"].tolist(),
         "target_position_m": context["target"].tolist(),
         "active_surface_command_m": context["active_surface_command_m"],
@@ -2144,6 +2327,8 @@ def _scene_digest(context: dict[str, Any], scene_id: str, attempt: int) -> str:
             "finger_grasp_reference_geometry": context[
                 "finger_grasp_reference_geometry"
             ],
+            "hand_origin_control": context["hand_origin_control"],
+            "robot_plant": context["robot_plant"],
             "active_surface_command_m": context["active_surface_command_m"],
             "reset_settle": context["reset_settle"],
             "scene_semantic_tags": dict(
@@ -2194,6 +2379,8 @@ def _attempt_context(
         "object_width_m": object_width_m,
         "object_height_m": object_height_m,
         "finger_grasp_reference_geometry": grasp_geometry,
+        "hand_origin_control": _hand_origin_control_receipt(native, require_ik=True),
+        "robot_plant": _robot_plant_receipt(native),
         "total_dim": total_dim,
         "arm_start": arm_start,
         "grip_start": grip_start,
@@ -2319,14 +2506,32 @@ def _capture_attempt(
     context["active_surface_command_m"] = _bind_surface_command(native, target)
     mounted = _wrist_mount_evidence(native, buffers)
     _run_expert_waypoints(context)
-    episode = output / f"episode-{attempt:06d}"
-    episode.mkdir(parents=True)
-    _write_episode_arrays(episode, buffers)
     metadata = _episode_metadata(context, object_identity, scene_id, attempt, mounted)
-    (episode / "episode.json").write_text(
-        json.dumps(metadata, indent=2, sort_keys=True) + "\n"
-    )
+    _publish_episode(output, attempt, buffers, metadata)
     return metadata
+
+
+def _publish_episode(
+    output: Path,
+    attempt: int,
+    buffers: dict[str, list[Any]],
+    metadata: dict[str, Any],
+) -> None:
+    """Publish one complete episode atomically or leave no success directory."""
+
+    final = output / f"episode-{attempt:06d}"
+    if final.exists():
+        raise RuntimeError(f"episode output already exists: {final.name}")
+    staging = Path(tempfile.mkdtemp(prefix=f".{final.name}-", dir=output))
+    try:
+        _write_episode_arrays(staging, buffers)
+        (staging / "episode.json").write_text(
+            json.dumps(metadata, indent=2, sort_keys=True) + "\n"
+        )
+        staging.replace(final)
+    except Exception:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
 
 
 def _new_attempt_buffers() -> dict[str, list[Any]]:
@@ -2394,9 +2599,7 @@ def _make_environment(
     seed: int, object_usd: str, object_scale: tuple[float, float, float]
 ) -> tuple[Any, Any]:
     _require_isaac_camera_runtime()
-    from isaaclab.app import AppLauncher
-
-    app = AppLauncher(headless=True, enable_cameras=True).app
+    app = _launch_camera_app()
     import gymnasium as gym
     import isaaclab_tasks  # noqa: F401
     from isaaclab_tasks.utils import parse_env_cfg
@@ -2413,6 +2616,53 @@ def _make_environment(
         return app, env
     except Exception as error:
         raise _EnvironmentSetupError(error, app) from error
+
+
+def _validated_kit_args() -> str:
+    """Bind Kit mutable state to the launcher-created writable job directory."""
+
+    state_text = os.environ.get("NPA_ISAAC_STATE_DIR", "").strip()
+    state = Path(state_text)
+    if not state_text or not state.is_absolute() or not state.is_dir():
+        raise RuntimeError("NPA_ISAAC_STATE_DIR must be an existing absolute directory")
+    if not os.access(state, os.W_OK):
+        raise RuntimeError("NPA_ISAAC_STATE_DIR is not writable")
+    raw = os.environ.get("NPA_ISAAC_KIT_ARGS", "").strip()
+    try:
+        argv = shlex.split(raw)
+    except ValueError as error:
+        raise RuntimeError("NPA_ISAAC_KIT_ARGS is malformed") from error
+    roots = _portable_roots(argv)
+    if len(roots) != 1:
+        raise RuntimeError("NPA_ISAAC_KIT_ARGS must declare one --portable-root")
+    portable = Path(roots[0])
+    if not portable.is_absolute():
+        raise RuntimeError("Kit portable root must be absolute")
+    state, portable = state.resolve(strict=True), portable.resolve(strict=False)
+    if portable == state or not portable.is_relative_to(state):
+        raise RuntimeError("Kit portable root must be inside NPA_ISAAC_STATE_DIR")
+    return raw
+
+
+def _portable_roots(argv: list[str]) -> list[str]:
+    roots = []
+    for index, value in enumerate(argv):
+        if value == "--portable-root":
+            if index + 1 >= len(argv) or argv[index + 1].startswith("--"):
+                raise RuntimeError("--portable-root requires a path")
+            roots.append(argv[index + 1])
+        elif value.startswith("--portable-root="):
+            roots.append(value.partition("=")[2])
+    return roots
+
+
+def _launch_camera_app() -> Any:
+    """Launch camera-enabled Kit with the validated mutable-state boundary."""
+
+    kit_args = _validated_kit_args()
+    from isaaclab.app import AppLauncher
+
+    return AppLauncher(headless=True, enable_cameras=True, kit_args=kit_args).app
 
 
 def _graphics_preflight() -> dict[str, Any]:
@@ -2456,6 +2706,7 @@ def _configure_environment(
 
     cfg.seed, cfg.sim.dt, cfg.decimation = seed, 1.0 / 60.0, 4
     cfg.episode_length_s = 240.0
+    configure_robot_plant(cfg)
     remap_moved_franka_usd(cfg)
     if object_usd:
         cfg.scene.object.spawn.usd_path = object_usd
@@ -2463,6 +2714,7 @@ def _configure_environment(
     cfg.scene.object.spawn.semantic_tags = [("class", "pi05_target_object")]
     target = (0.50, 0.18, 0.0)
     configure_finger_semantics(cfg)
+    configure_hand_origin_frames(cfg, require_ik=True)
     configure_support_surface(cfg)
     configure_surface_goal(cfg, target)
     configure_destination_marker(cfg, target)
@@ -2563,6 +2815,7 @@ def _collection_report(
     scale: tuple[float, float, float],
     scene_id: str,
     geometry: Mapping[str, Any],
+    robot_plant: Mapping[str, Any],
     graphics_preflight: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     scenarios = _successful_scenarios(attempts)
@@ -2585,6 +2838,7 @@ def _collection_report(
         "scene_layout_holdout": False,
         "destination_marker_contract": _destination_contract(),
         "support_surface_contract": support_surface_contract(),
+        "robot_plant": dict(robot_plant),
         "graphics_preflight": dict(graphics_preflight or {}),
         "successful_scenarios": scenarios,
     }
@@ -2739,11 +2993,19 @@ def _run_collection(
     graphics: Mapping[str, Any],
 ) -> dict[str, Any]:
     geometry = _object_asset_geometry(env.unwrapped, scale)
+    robot_plant = _robot_plant_receipt(env.unwrapped)
     attempts = _collect_attempts(
         env, work, episodes, seed, identity, scene_id, scale, geometry
     )
     report = _collection_report(
-        attempts, identity, object_usd, scale, scene_id, geometry, graphics
+        attempts,
+        identity,
+        object_usd,
+        scale,
+        scene_id,
+        geometry,
+        robot_plant,
+        graphics,
     )
     (work / "collection.json").write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n"

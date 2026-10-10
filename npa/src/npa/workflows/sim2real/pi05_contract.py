@@ -68,6 +68,11 @@ def _task_contract() -> dict[str, Any]:
                 "pose": "centered_on_declared_target_xy_at_measured_support_surface",
                 "exterior_visibility": "raw_int32_semantic_pixels_required",
             },
+            "robot_plant": {
+                "source": "isaaclab_assets.FRANKA_PANDA_HIGH_PD_CFG",
+                "robot_gravity": "disabled",
+                "expert_policy_parity": "runtime actuator and rigid-body receipt equality",
+            },
         },
         "success": _surface_success_contract(),
     }
@@ -179,6 +184,12 @@ def _action_contract() -> dict[str, Any]:
                 "execute_prefix": EXECUTION_PREFIX,
             },
             "isaac_bridge": "(absolute_target_rad-default_joint_position_rad)/action_scale_rad",
+            "expert_adapter": {
+                "waypoint_frame": "panda_hand_origin",
+                "frame_sensor_offset": "zero_translation_identity_xyzw",
+                "differential_ik_body_offset": "zero_translation_identity_xyzw",
+                "runtime_receipt": "live_hand_sensor_and_control_point_coincidence",
+            },
             "clipping": "forbidden",
         },
     }

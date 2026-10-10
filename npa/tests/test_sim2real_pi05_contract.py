@@ -125,6 +125,9 @@ def test_contract_is_final_byte_bound_and_distinct_from_ppo() -> None:
     assert wrist["mount"] == "calibrated_live_panda_hand_world_pose"
     assert wrist["renderer_bridge"] == "world_usd_and_fabric"
     assert contract["action"]["joint_order"] == list(JOINT_NAMES)
+    expert = contract["action"]["expert_adapter"]
+    assert expert["waypoint_frame"] == "panda_hand_origin"
+    assert expert["differential_ik_body_offset"].startswith("zero_translation")
 
     modified = copy.deepcopy(contract)
     modified["action"]["control_hz"] = 30

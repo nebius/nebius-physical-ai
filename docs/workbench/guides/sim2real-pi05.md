@@ -81,6 +81,18 @@ downward hand orientation. This is explicitly a link-geometry grasp reference,
 not a claimed pad center; live bilateral contact is still required. Contact and
 lower waypoints align that measured reference with the object center rather
 than treating half the cube height as a tool offset.
+The stock task's frame sensor and differential-IK action otherwise use distinct
+nonzero tool offsets from `panda_hand`. This variant explicitly sets both to the
+hand origin before environment construction, applies the same sensor-frame
+definition to policy evaluation, and records live hand/sensor/control-point
+positions, quaternions, configured offsets, and target prim identity. It fails
+before collection if those frames do not coincide.
+Both pi0.5 environments also select the pinned upstream
+`FRANKA_PANDA_HIGH_PD_CFG`: robot gravity is disabled and the upstream
+high-PD actuator plant is shared while the expert retains relative IK and the
+policy retains absolute joint targets. Collection records the live actuator
+joint membership, stiffness, damping, and rigid-body gravity setting; policy
+evaluation rejects a gold protocol unless its runtime plant receipt is equal.
 
 The base and adapted policies use the pinned OpenPI source, Polaris config, and
 checkpoint documented in [the OpenPI pi0.5 guide](../openpi-pi05-polaris.md).
@@ -122,6 +134,13 @@ The checked-in spec is intentionally non-runnable until an operator supplies:
 - anonymous, generation-bound access to the exact public Polaris GCS objects,
   or the operator's own credential and exact-revision payload access if an
   explicitly gated Hugging Face artifact is selected instead.
+
+The Isaac dependency closure remains mounted read-only. Camera-bearing jobs
+separately mount a pod-local writable `emptyDir` at `/tmp/npa-isaac-state` for
+Kit portable state, XDG data, logs, and shader caches. Both collector and gold
+evaluator pass that validated portable root into `AppLauncher`; a path outside
+the job-state mount, an escaped path, or duplicate portable-root option fails
+before Kit starts.
 
 NPA adds no OpenPI/Gemma consent variable. Upstream terms remain the operator's
 responsibility through use. The Isaac expert can be qualified independently

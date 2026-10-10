@@ -26,6 +26,14 @@ STATES = [
     "cleanup-adapted-service",
     "finalize",
 ]
+_ISAAC_STATE_ENV = {
+    "OMNI_USER_DIR": "omni-user",
+    "OMNI_LOG_DIR": "logs",
+    "XDG_RUNTIME_DIR": "xdg-runtime",
+    "XDG_CACHE_HOME": "xdg-cache",
+    "XDG_CONFIG_HOME": "xdg-config",
+    "XDG_DATA_HOME": "xdg-data",
+}
 
 
 def _value(argv: list[str], flag: str) -> str:
@@ -94,7 +102,7 @@ def test_only_isaac_tasks_use_the_configured_graphics_runtime_class() -> None:
     }
     for state in isaac_states:
         pod_spec = tasks[state]["resources"]["kubernetes"]["pod_config"]["spec"]
-        assert pod_spec["runtimeClassName"] == "nvidia"
+        _assert_isaac_state_contract(pod_spec)
 
     for state, task in tasks.items():
         if state in isaac_states:
@@ -106,6 +114,33 @@ def test_only_isaac_tasks_use_the_configured_graphics_runtime_class() -> None:
             .get("spec", {})
         )
         assert "runtimeClassName" not in pod_spec
+        assert not any(
+            item.get("name") == "npa-isaac-job-state"
+            for item in pod_spec.get("volumes", [])
+        )
+
+
+def _assert_isaac_state_contract(pod_spec: dict) -> None:
+    assert pod_spec["runtimeClassName"] == "nvidia"
+    container = pod_spec["containers"][0]
+    mounts = {item["name"]: item for item in container["volumeMounts"]}
+    volumes = {item["name"]: item for item in pod_spec["volumes"]}
+    env = {item["name"]: item.get("value") for item in container["env"]}
+    assert mounts["npa-isaac-runtime-cache"]["readOnly"] is True
+    assert mounts["npa-isaac-job-state"] == {
+        "name": "npa-isaac-job-state",
+        "mountPath": "/tmp/npa-isaac-state",
+    }
+    assert volumes["npa-isaac-job-state"] == {
+        "name": "npa-isaac-job-state",
+        "emptyDir": {},
+    }
+    assert env["NPA_ISAAC_STATE_DIR"] == "/tmp/npa-isaac-state"
+    assert env["NPA_ISAAC_KIT_ARGS"] == "--portable-root /tmp/npa-isaac-state/kit"
+    assert {name: env[name] for name in _ISAAC_STATE_ENV} == {
+        name: f"/tmp/npa-isaac-state/{suffix}"
+        for name, suffix in _ISAAC_STATE_ENV.items()
+    }
 
 
 def test_all_cpu_roles_share_one_exact_source_image() -> None:

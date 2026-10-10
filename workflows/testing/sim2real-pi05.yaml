@@ -154,6 +154,14 @@ resources:
                 - {name: NPA_ISAAC_CACHE_READONLY, value: "1"}
                 - {name: NPA_ISAAC_BOOTSTRAP_OFFLINE, value: "1"}
                 - {name: NPA_BAKED_PYTHON, value: /opt/npa/sim/venv/bin/python}
+                - {name: NPA_ISAAC_STATE_DIR, value: /tmp/npa-isaac-state}
+                - {name: NPA_ISAAC_KIT_ARGS, value: "--portable-root /tmp/npa-isaac-state/kit"}
+                - {name: OMNI_USER_DIR, value: /tmp/npa-isaac-state/omni-user}
+                - {name: OMNI_LOG_DIR, value: /tmp/npa-isaac-state/logs}
+                - {name: XDG_RUNTIME_DIR, value: /tmp/npa-isaac-state/xdg-runtime}
+                - {name: XDG_CACHE_HOME, value: /tmp/npa-isaac-state/xdg-cache}
+                - {name: XDG_CONFIG_HOME, value: /tmp/npa-isaac-state/xdg-config}
+                - {name: XDG_DATA_HOME, value: /tmp/npa-isaac-state/xdg-data}
                 - name: NPA_OPENPI_SERVICE_AUTH_TOKEN
                   valueFrom:
                     secretKeyRef:
@@ -161,9 +169,12 @@ resources:
                       key: auth_token
               volumeMounts:
                 - {name: npa-isaac-runtime-cache, mountPath: /opt/isaac-cache, readOnly: true}
+                - {name: npa-isaac-job-state, mountPath: /tmp/npa-isaac-state}
           volumes:
             - name: npa-isaac-runtime-cache
               persistentVolumeClaim: {claimName: "{{config.isaac_cache_pvc}}", readOnly: true}
+            - name: npa-isaac-job-state
+              emptyDir: {}
   service-control:
     cloud: kubernetes
     cpus: "2"

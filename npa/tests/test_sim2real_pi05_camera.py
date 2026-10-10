@@ -21,8 +21,11 @@ from npa.workflows.sim2real.pi05_isaac import (
     _finger_grasp_reference_geometry,
     _finger_in_frustum,
     _finger_pixel_counts,
+    _hand_origin_control_receipt,
     _multiply_xyzw,
     _object_asset_geometry,
+    _robot_plant_receipt,
+    _launch_camera_app,
     _axis_angle_error_xyzw,
     _expert_waypoints,
     _expert_command,
@@ -35,16 +38,20 @@ from npa.workflows.sim2real.pi05_isaac import (
     _sim_time,
     _sensor_clock_reference,
     _semantic_pixel_count,
+    _verify_scene_semantics,
     _settle_expert_reset,
     _synchronize_wrist_before_capture,
     _target_pixel_count,
     _untransformed_aligned_bounds,
     _validate_capture_ages,
+    _validated_kit_args,
     _wrist_mount_receipt,
     _world_pose_matrix,
     _xyzw_to_wxyz,
     configure_destination_marker,
     configure_finger_semantics,
+    configure_hand_origin_frames,
+    configure_robot_plant,
     configure_support_surface,
 )
 
@@ -185,6 +192,9 @@ class _Prim:
     def GetPath(self) -> str:
         return self.path
 
+    def IsValid(self) -> bool:
+        return True
+
 
 class _LazyCamera:
     def __init__(self, clock: object) -> None:
@@ -269,6 +279,113 @@ def test_destination_marker_is_rendered_semantic_and_noncolliding(monkeypatch) -
     assert marker.spawn.collision_props is None
     assert marker.spawn.semantic_tags == [("class", DESTINATION_LABEL)]
     assert marker.spawn.visual_material.diffuse_color == (0.0, 0.85, 0.85)
+
+
+def test_scene_semantics_use_authored_config_not_runtime_view_cfg(monkeypatch) -> None:
+    paths = {
+        "/World/envs/env_0/Object": _Prim("/World/envs/env_0/Object"),
+        "/World/envs/env_0/Pi05DestinationMarker": _Prim(
+            "/World/envs/env_0/Pi05DestinationMarker"
+        ),
+    }
+    sim = types.ModuleType("isaaclab.sim")
+    sim.find_first_matching_prim = lambda path: paths[path]
+    semantics = types.ModuleType("isaaclab.sim.utils.semantics")
+    semantics.get_labels = lambda prim: {
+        "class": [
+            "pi05_target_object" if prim.GetName() == "Object" else DESTINATION_LABEL
+        ]
+    }
+    monkeypatch.setitem(sys.modules, "isaaclab.sim", sim)
+    monkeypatch.setitem(sys.modules, "isaaclab.sim.utils.semantics", semantics)
+    monkeypatch.setattr(
+        pi05_isaac,
+        "_install_finger_semantics",
+        lambda _native: {"left": "/left", "right": "/right"},
+    )
+    native = SimpleNamespace(
+        scene={"object": object(), "pi05_destination": object()},
+        cfg=SimpleNamespace(
+            scene=SimpleNamespace(
+                object=SimpleNamespace(prim_path="/World/envs/env_0/Object"),
+                pi05_destination=SimpleNamespace(
+                    prim_path="/World/envs/env_0/Pi05DestinationMarker"
+                ),
+            )
+        ),
+    )
+
+    receipt = _verify_scene_semantics(native)
+
+    assert receipt["pi05_target_object"] == "/World/envs/env_0/Object"
+    assert receipt[DESTINATION_LABEL].endswith("/Pi05DestinationMarker")
+
+
+def test_camera_launcher_consumes_writable_portable_state(
+    monkeypatch, tmp_path
+) -> None:
+    state = tmp_path / "kit-state"
+    state.mkdir()
+    monkeypatch.setenv("NPA_ISAAC_STATE_DIR", str(state))
+    args = f"--portable-root {state / 'kit'} --/structuredLog/enable=false"
+    monkeypatch.setenv("NPA_ISAAC_KIT_ARGS", args)
+    calls = []
+    app_module = types.ModuleType("isaaclab.app")
+
+    class AppLauncher:
+        def __init__(self, **kwargs):
+            calls.append(kwargs)
+            self.app = object()
+
+    app_module.AppLauncher = AppLauncher
+    monkeypatch.setitem(sys.modules, "isaaclab.app", app_module)
+
+    _launch_camera_app()
+
+    assert calls == [{"headless": True, "enable_cameras": True, "kit_args": args}]
+
+
+def test_camera_launcher_rejects_readonly_cache_as_portable_root(
+    monkeypatch, tmp_path
+) -> None:
+    state = tmp_path / "state"
+    state.mkdir()
+    monkeypatch.setenv("NPA_ISAAC_STATE_DIR", str(state))
+    monkeypatch.setenv("NPA_ISAAC_KIT_ARGS", "--portable-root /opt/isaac-cache/kit")
+    with pytest.raises(RuntimeError, match="inside NPA_ISAAC_STATE_DIR"):
+        _launch_camera_app()
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    (
+        "--portable-root /tmp/npa-isaac-state/../../opt/isaac-cache",
+        "--portable-root /tmp/npa-isaac-state/kit --portable-root=/tmp/second",
+        "--portable-root=/tmp/npa-isaac-state/kit --portable-root /tmp/second",
+        "--portable-root /tmp/npa-isaac-state",
+    ),
+)
+def test_kit_state_rejects_escape_duplicate_and_root_alias(
+    monkeypatch, tmp_path, arguments
+) -> None:
+    state = tmp_path / "state"
+    state.mkdir()
+    escaped = arguments.replace("/tmp/npa-isaac-state", str(state))
+    monkeypatch.setenv("NPA_ISAAC_STATE_DIR", str(state))
+    monkeypatch.setenv("NPA_ISAAC_KIT_ARGS", escaped)
+    with pytest.raises(RuntimeError, match="portable-root|portable root"):
+        _validated_kit_args()
+
+
+def test_kit_state_accepts_single_equal_form_inside_resolved_root(
+    monkeypatch, tmp_path
+) -> None:
+    state = tmp_path / "state"
+    state.mkdir()
+    value = f"--portable-root={state / 'kit'} --/structuredLog/enable=false"
+    monkeypatch.setenv("NPA_ISAAC_STATE_DIR", str(state))
+    monkeypatch.setenv("NPA_ISAAC_KIT_ARGS", value)
+    assert _validated_kit_args() == value
 
 
 def test_support_surface_is_one_exact_contact_reporting_body(monkeypatch) -> None:
@@ -366,6 +483,150 @@ def test_contact_filters_name_exact_single_bodies(monkeypatch) -> None:
         asset.spawn.activate_contact_sensors
         for asset in (cfg.scene.robot, cfg.scene.object, cfg.scene.table)
     )
+
+
+def test_inherited_sensor_and_ik_tool_offsets_are_zeroed_to_hand_origin() -> None:
+    sensor_offset = SimpleNamespace(pos=(0.0, 0.0, 0.1034), rot=(0, 0, 0, 1))
+    ik_offset = SimpleNamespace(pos=(0.0, 0.0, 0.107), rot=(0, 0, 0, 1))
+    cfg = SimpleNamespace(
+        scene=SimpleNamespace(
+            ee_frame=SimpleNamespace(
+                target_frames=[
+                    SimpleNamespace(
+                        prim_path="{ENV_REGEX_NS}/Robot/panda_hand",
+                        offset=sensor_offset,
+                    )
+                ]
+            )
+        ),
+        actions=SimpleNamespace(
+            arm_action=SimpleNamespace(body_name="panda_hand", body_offset=ik_offset)
+        ),
+    )
+
+    configure_hand_origin_frames(cfg, require_ik=True)
+
+    assert sensor_offset.pos == (0.0, 0.0, 0.0)
+    assert ik_offset.pos == (0.0, 0.0, 0.0)
+    assert sensor_offset.rot == ik_offset.rot == (0.0, 0.0, 0.0, 1.0)
+
+
+def test_expert_and_policy_select_the_same_upstream_high_pd_plant(monkeypatch) -> None:
+    selected = SimpleNamespace(prim_path="")
+    high_pd = SimpleNamespace(
+        replace=lambda *, prim_path: SimpleNamespace(
+            prim_path=prim_path, selected=selected
+        )
+    )
+    franka = types.ModuleType("isaaclab_assets.robots.franka")
+    franka.FRANKA_PANDA_HIGH_PD_CFG = high_pd
+    monkeypatch.setitem(
+        sys.modules, "isaaclab_assets", types.ModuleType("isaaclab_assets")
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "isaaclab_assets.robots",
+        types.ModuleType("isaaclab_assets.robots"),
+    )
+    monkeypatch.setitem(sys.modules, "isaaclab_assets.robots.franka", franka)
+    cfg = SimpleNamespace(
+        scene=SimpleNamespace(robot=SimpleNamespace(prim_path="/Robot"))
+    )
+
+    configure_robot_plant(cfg)
+
+    assert cfg.scene.robot.prim_path == "/Robot"
+    assert cfg.scene.robot.selected is selected
+
+
+def test_runtime_robot_plant_receipt_reads_actual_actuator_tensors() -> None:
+    import torch
+
+    actuator = SimpleNamespace(
+        joint_names=["panda_joint1", "panda_joint2"],
+        stiffness=torch.tensor([[400.0, 400.0]]),
+        damping=torch.tensor([[80.0, 80.0]]),
+    )
+    robot = SimpleNamespace(
+        cfg=SimpleNamespace(
+            spawn=SimpleNamespace(rigid_props=SimpleNamespace(disable_gravity=True))
+        ),
+        actuators={"panda_shoulder": actuator},
+        root_physx_view=SimpleNamespace(
+            get_disable_gravities=lambda: torch.ones((1, 9), dtype=torch.uint8)
+        ),
+    )
+
+    receipt = _robot_plant_receipt(SimpleNamespace(scene={"robot": robot}))
+
+    assert receipt["configured_disable_robot_gravity"] is True
+    assert receipt["observed_disable_gravity"]["all_bodies_disabled"] is True
+    assert receipt["observed_disable_gravity"]["shape"] == [1, 9]
+    assert receipt["actuators"]["panda_shoulder"]["stiffness"] == [400.0]
+    assert receipt["actuators"]["panda_shoulder"]["damping"] == [80.0]
+
+
+def test_runtime_robot_plant_rejects_unapplied_gravity_config() -> None:
+    import torch
+
+    actuator = SimpleNamespace(
+        joint_names=["panda_joint1"],
+        stiffness=torch.tensor([[400.0]]),
+        damping=torch.tensor([[80.0]]),
+    )
+    robot = SimpleNamespace(
+        cfg=SimpleNamespace(
+            spawn=SimpleNamespace(rigid_props=SimpleNamespace(disable_gravity=True))
+        ),
+        actuators={"panda_shoulder": actuator},
+        root_physx_view=SimpleNamespace(
+            get_disable_gravities=lambda: torch.zeros((1, 1), dtype=torch.uint8)
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="gravity disabling is not active"):
+        _robot_plant_receipt(SimpleNamespace(scene={"robot": robot}))
+
+
+def test_live_rotated_hand_sensor_and_ik_control_point_receipt() -> None:
+    import torch
+
+    position = [0.39, -0.02, 0.46]
+    quaternion = [0.0, 0.0, 2**-0.5, 2**-0.5]
+    offset = SimpleNamespace(pos=(0.0, 0.0, 0.0), rot=(0.0, 0.0, 0.0, 1.0))
+    target = SimpleNamespace(prim_path="/World/Robot/panda_hand", offset=offset)
+    term = SimpleNamespace(
+        cfg=SimpleNamespace(body_name="panda_hand", body_offset=offset)
+    )
+    native = SimpleNamespace(
+        scene={
+            "robot": SimpleNamespace(
+                body_names=["panda_hand"],
+                data=SimpleNamespace(
+                    body_pos_w=torch.tensor([[position]], dtype=torch.float64),
+                    body_quat_w=torch.tensor([[quaternion]], dtype=torch.float64),
+                ),
+            ),
+            "ee_frame": SimpleNamespace(
+                data=SimpleNamespace(
+                    target_pos_w=torch.tensor([[position]], dtype=torch.float64),
+                    target_quat_w=torch.tensor([[quaternion]], dtype=torch.float64),
+                )
+            ),
+        },
+        cfg=SimpleNamespace(
+            scene=SimpleNamespace(ee_frame=SimpleNamespace(target_frames=[target]))
+        ),
+        action_manager=SimpleNamespace(get_term=lambda _name: term),
+    )
+
+    receipt = _hand_origin_control_receipt(native, require_ik=True)
+
+    assert receipt["controlled_frame"] == "panda_hand_origin"
+    assert receipt["controlled_point_world_m"] == pytest.approx(position)
+    assert receipt["sensor_position_m"] == pytest.approx(position)
+    assert receipt["live_hand_quaternion_xyzw"] == pytest.approx(quaternion)
+    assert receipt["ik_body_offset"]["position_m"] == pytest.approx([0.0] * 3)
 
 
 def test_camera_contract_is_bound_to_exact_gen3_runtime(monkeypatch) -> None:
@@ -810,7 +1071,10 @@ def test_custom_object_geometry_uses_composed_runtime_extent(monkeypatch) -> Non
     sim.find_first_matching_prim = lambda _path: cube.GetPrim()
     monkeypatch.setitem(sys.modules, "isaaclab.sim", sim)
     native = SimpleNamespace(
-        scene={"object": SimpleNamespace(cfg=SimpleNamespace(prim_path="/Object"))}
+        scene={"object": object()},
+        cfg=SimpleNamespace(
+            scene=SimpleNamespace(object=SimpleNamespace(prim_path="/Object"))
+        ),
     )
 
     geometry = _object_asset_geometry(native, (0.8, 0.9, 1.1))
@@ -836,7 +1100,10 @@ def test_custom_object_geometry_rejects_offset_rigid_origin(monkeypatch) -> None
     sim.find_first_matching_prim = lambda _path: root.GetPrim()
     monkeypatch.setitem(sys.modules, "isaaclab.sim", sim)
     native = SimpleNamespace(
-        scene={"object": SimpleNamespace(cfg=SimpleNamespace(prim_path="/Object"))}
+        scene={"object": object()},
+        cfg=SimpleNamespace(
+            scene=SimpleNamespace(object=SimpleNamespace(prim_path="/Object"))
+        ),
     )
 
     with pytest.raises(RuntimeError, match="centered on its rigid root"):
