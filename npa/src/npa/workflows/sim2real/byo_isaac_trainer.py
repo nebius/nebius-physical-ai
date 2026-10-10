@@ -1417,8 +1417,27 @@ def _validated_bootstrap_round(row, *, index, scenario_count):
             )
 
 
+def _require_literal_bootstrap_evidence(audit, control_contract):
+    """Reject boolean/numeric coercion in native training and control evidence."""
+    if (
+        audit.get("gold_used") is not False
+        or audit.get("training_goals_exact") is not True
+        or type(audit.get("ppo_updates")) is not int
+        or type(audit.get("training_scenarios")) is not int
+        or any(
+            type(audit["robot_control"][name]) is not type(value)
+            for name, value in control_contract.items()
+        )
+    ):
+        raise RuntimeError(
+            "native demonstration audit requires literal training-only evidence"
+        )
+
+
 def _validated_bootstrap_audit(audit, *, profile, checksum, scenario_count):
     """Bind native demonstration evidence to the exact consumed training split."""
+    from npa.workflows.sim2real.isaac_franka_control import franka_control_contract
+
     expected = {
         "schema": "npa.sim2real.franka_bootstrap.v1",
         "profile": profile,
@@ -1427,6 +1446,7 @@ def _validated_bootstrap_audit(audit, *, profile, checksum, scenario_count):
         "inference_composition": "learned_actor_only",
         "ppo_updates": 0,
         "training_goals_exact": True,
+        "robot_control": franka_control_contract(),
         "training_scenarios": scenario_count,
         "training_scenarios_sha256": checksum,
     }
@@ -1434,15 +1454,7 @@ def _validated_bootstrap_audit(audit, *, profile, checksum, scenario_count):
         raise RuntimeError(
             "native demonstration audit differs from the training boundary"
         )
-    if (
-        audit.get("gold_used") is not False
-        or audit.get("training_goals_exact") is not True
-        or type(audit.get("ppo_updates")) is not int
-        or type(audit.get("training_scenarios")) is not int
-    ):
-        raise RuntimeError(
-            "native demonstration audit requires literal training-only evidence"
-        )
+    _require_literal_bootstrap_evidence(audit, expected["robot_control"])
     rounds = audit.get("rounds")
     if not isinstance(rounds, list) or len(rounds) != 2:
         raise RuntimeError("native demonstration audit lacks both supervised rounds")

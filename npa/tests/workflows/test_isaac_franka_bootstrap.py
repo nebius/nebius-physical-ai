@@ -7,6 +7,7 @@ import sys
 import pytest
 
 from npa.workflows.sim2real import isaac_franka_bootstrap as bootstrap
+from npa.workflows.sim2real.isaac_franka_control import franka_control_contract
 from npa.workflows.sim2real.byo_isaac_trainer import (
     _validated_bootstrap_audit,
     _manifest_training_bootstrap,
@@ -157,6 +158,7 @@ def _audit():
         "gold_used": False,
         "ppo_updates": 0,
         "training_goals_exact": True,
+        "robot_control": franka_control_contract(),
         "inference_composition": "learned_actor_only",
         "training_scenarios": 64,
         "training_scenarios_sha256": "a" * 64,
@@ -188,12 +190,23 @@ def test_bootstrap_audit_binds_exact_training_identity_and_zero_ppo_updates():
         ("scope", "gold_heldout"),
         ("training_goals_exact", False),
         ("training_goals_exact", 1),
+        ("robot_control", None),
     ],
 )
 def test_bootstrap_audit_rejects_unbound_or_nonliteral_training_evidence(field, value):
     audit = _audit()
     audit[field] = value
     with pytest.raises(RuntimeError):
+        _validate_audit(audit)
+
+
+@pytest.mark.parametrize(
+    "field,value", [("robot_gravity_compensated", 1), ("decimation", 4.0)]
+)
+def test_bootstrap_control_audit_requires_literal_native_evidence(field, value):
+    audit = _audit()
+    audit["robot_control"][field] = value
+    with pytest.raises(RuntimeError, match="literal"):
         _validate_audit(audit)
 
 
@@ -242,6 +255,24 @@ def test_transport_targets_preserve_measured_cube_to_gripper_offset():
     assert torch.equal(target[1:3], objects[1:3])
     assert torch.equal(target[3], lift_targets[3])
     assert torch.allclose(target[4], goals[4] + offsets[4])
+
+
+def test_failed_demonstrations_report_actual_coverage_before_actor_fitting(monkeypatch):
+    import numpy as np
+
+    successes = np.array([True, False, True, False, False])
+    monkeypatch.setattr(
+        bootstrap,
+        "_training_round",
+        lambda *args, **kwargs: (None, None, successes),
+    )
+
+    def unexpected_fit(*args):
+        pytest.fail("failed demonstrations reached supervised actor fitting")
+
+    monkeypatch.setattr(bootstrap, "_fit_actor", unexpected_fit)
+    with pytest.raises(RuntimeError, match="round 1, 2/5 training scenarios"):
+        bootstrap._bootstrap_round(None, None, None, index=1)
 
 
 def _placement_teacher_fixture(torch):

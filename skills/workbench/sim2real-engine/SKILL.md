@@ -54,6 +54,11 @@ or spawn sibling Jobs.
   the model or upgrading the evaluator contract requires a new run.
 - Train, validation, and gold digests are disjoint. Checkpoint ranking reads
   validation only; Stage 10 reads gold only and preserves exact render lineage.
+- Native stock-Franka scenarios share the attested task-space control profile:
+  upstream arm gains and gravity compensation, 200 Hz physics and 50 Hz policy
+  actions. Training demonstrations initialize the actor; validation and Gold
+  execute that learned actor alone. Physics refinement preserves episode duration
+  and PPO update counts, with the strict placement predicate retained.
 - Temporal rewards remain bounded and simulator-grounded. Strict success remains
   stable placement within 5 cm. Pipeline success and policy quality are distinct.
 - Native rollout actions preserve every reset between sparse samples using

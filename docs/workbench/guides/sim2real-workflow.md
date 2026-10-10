@@ -559,6 +559,21 @@ their training scenarios. The initial actor uses small PPO action noise and
 exact goals, then receives all 2,000 configured PPO updates. Demonstration
 updates remain separate from PPO telemetry.
 
+The stock-Franka scenario task uses Isaac Lab's `FRANKA_PANDA_HIGH_PD_CFG`
+arm gains and robot gravity compensation. Physics runs at 200 Hz with four
+substeps per 50 Hz policy action; episode duration and PPO update counts retain
+their configured values. This finer timestep reduces numerical motion during
+object holding. The object retains gravity and its sealed scenario's friction
+and mass. Training and held-out execution share this configuration,
+and their `robot_control` audit records the actual gains and clock as
+`stock-franka-high-pd-200hz-v1`.
+
+The training teacher commands a downward XYZW `(1, 0, 0, 0)` hand orientation,
+limits each TCP correction to 10 cm and each joint correction to 0.2 rad, and
+uses the native joint limits and action scaling. Collection prints measured
+phase counts and strict training-placement coverage after each episode cycle;
+failed coverage reports its actual count before supervised fitting starts.
+
 `NPA_BYO_ISAAC_BOOTSTRAP=auto` is the default for fresh stock-Franka PPO with a
 consumed training URI. `none` disables initialization; an explicit
 `franka-ik-distillation-v1` rejects other tasks, custom robots, legacy physics,

@@ -177,7 +177,8 @@ held-out rollout eval. The held-out eval is backend-pluggable:
 Select with `--sim-backend`, env `NPA_SIM2REAL_SIM_BACKEND`, or the runbook
 YAML. Both backends emit the identical `npa.sim2real.heldout_eval.v1` per-env
 schema (`env_id`/`score`/`success`/`details`), so `report.json` and the
-outer-loop gate are backend-agnostic. The VLM eval (Cosmos-Reason) is unchanged.
+outer-loop gate are backend-agnostic. Hosted scoring is a separate stage; follow
+the canonical Sim2Real runbook for its current model and request contract.
 
 When Stage 10 has a genuine Isaac trainer checkpoint, object storage, and a
 registry-qualified Isaac image, it selects `byo_isaac_eval`. That vectorized
@@ -190,6 +191,14 @@ Stage 10; `passed=false` means the eval completed below its quality bar and is
 handled by the Stage 11 threshold gate. Stage 14 remains responsible for the
 run-level RRD/MCAP visualization artifacts.
 
+The stock-Franka scenario variant shares `stock-franka-high-pd-200hz-v1`
+between training, validation and Gold. It uses upstream task-space arm gains
+and robot gravity compensation, with 200 Hz physics and a 50 Hz policy clock.
+The native `robot_control` audit verifies the actual drives and timestep.
+Keep the sealed object physics and strict 5 cm / 0.03 m/s / three-step
+placement predicate. Teacher demonstrations are training-only; evaluation
+executes the learned actor alone.
+
 Asset handling mirrors the Genesis no-fallback provenance discipline:
 
 - Stock: the built-in Isaac lift-cube manipuland, recorded as
@@ -199,11 +208,11 @@ Asset handling mirrors the Genesis no-fallback provenance discipline:
   recorded as `asset_source=byo_mesh` with a sha256. A mesh that fails to
   import or load raises; there is no silent fallback to the stock asset.
 
-The Isaac Lab image bakes no `npa` code, and Isaac Sim is only importable via
-its bundled interpreter `/isaac-sim/python.sh`. The eval component injects
-branch `npa` code into that interpreter at start from an S3 source tarball
-(`NPA_SIM2REAL_SOURCE_TARBALL_URI`) or, when the repo is reachable, a git clone
-(`NPA_SOURCE_REPO`/`NPA_SOURCE_REF`), and ensures `boto3` for the S3 client.
+The payload-clean Isaac Lab image bakes source-attested NPA entrypoints under
+`/opt/npa/isaac-runtime`. Native execution reaches Isaac through the runtime-fetch
+shim `/isaac-sim/python.sh` and its verified SDK cache. Select the coherent
+digest-pinned image bundle before submitting the canonical workflow; source
+identity belongs to those immutable image bytes.
 
 Architecture + licensing rationale: `docs/architecture/sim-backend-selection.md`.
 

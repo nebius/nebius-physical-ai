@@ -17,6 +17,10 @@ import os
 from pathlib import Path
 from typing import Any
 
+from npa.workflows.sim2real.isaac_franka_control import (
+    configure_stock_franka_control,
+    stock_franka_control_audit,
+)
 
 SCENARIO_ENV = "NPA_SIM2REAL_SCENARIOS_JSONL"
 SCENARIO_TASK_ID = "NPA-Lift-Cube-Franka-Scenarios-v0"
@@ -1360,7 +1364,17 @@ def install_env_cfg(env_cfg: Any) -> bool:
 
 
 def register_stock() -> str | None:
-    """Register a stock-Franka task variant that consumes curated scenarios."""
+    """Register native stock-Franka scenarios with the shared control profile.
+
+    Args:
+        None.
+    Returns:
+        The registered gym task ID, or None without configured scenarios.
+    Raises:
+        ScenarioContractError: The curated scenario binding is invalid.
+        ValueError: The native stock-Franka policy clock or control profile changed.
+        ImportError: The required Isaac Lab runtime is unavailable.
+    """
 
     rows = scenarios_from_env()
     if not rows:
@@ -1373,51 +1387,77 @@ def register_stock() -> str | None:
     class ScenarioLiftEnvCfg(franka_lift.FrankaCubeLiftEnvCfg):
         def __post_init__(self) -> None:
             super().__post_init__()
+            configure_stock_franka_control(self)
             if not install_env_cfg(self):
                 raise ScenarioContractError(
                     "scenario task registered without scenarios"
                 )
 
     stock_kwargs = gym.spec(STOCK_TASK_ID).kwargs
+    _register_stock_scenario_task(ScenarioLiftEnvCfg, stock_kwargs)
+    return SCENARIO_TASK_ID
+
+
+def _register_stock_scenario_task(config_type, stock_kwargs):
+    """Bind the configured scenario task to the native runner registration."""
+    import gymnasium as gym
+
     gym.register(
         id=SCENARIO_TASK_ID,
         entry_point="isaaclab.envs:ManagerBasedRLEnv",
         disable_env_checker=True,
         kwargs={
-            "env_cfg_entry_point": ScenarioLiftEnvCfg,
+            "env_cfg_entry_point": config_type,
             "rsl_rl_cfg_entry_point": stock_kwargs.get("rsl_rl_cfg_entry_point"),
         },
     )
-    return SCENARIO_TASK_ID
+
+
+def _goal_curriculum_audit(env):
+    """Record the goal curriculum actually consumed by this native environment."""
+    return {
+        "enabled": os.environ.get("NPA_SIM2REAL_ENABLE_GOAL_CURRICULUM", "0") == "1",
+        "full_goal_step": int(
+            os.environ.get("NPA_SIM2REAL_GOAL_CURRICULUM_FULL_STEP", "1") or 1
+        ),
+        "assignment_count": int(
+            getattr(env, "npa_goal_curriculum_assignment_count", 0)
+        ),
+        "true_goal_assignments": int(
+            getattr(env, "npa_goal_curriculum_true_assignments", 0)
+        ),
+        "max_fraction": round(
+            float(getattr(env, "npa_goal_curriculum_max_fraction", 0.0)), 6
+        ),
+    }
 
 
 def runtime_audit(env: Any) -> dict[str, Any]:
+    """Attest actual native scenario consumption, control and curriculum settings.
+
+    Args:
+        env: The unwrapped native scenario environment after execution.
+    Returns:
+        Scenario identities, coverage and the verified stock-Franka control profile.
+    Raises:
+        ValueError: The stock-Franka native control differs from its contract.
+    """
     rows = getattr(env, "npa_scenario_rows", scenarios_from_env())
     counts_tensor = getattr(env, "npa_scenario_applied_counts", None)
     counts = counts_tensor.detach().cpu().tolist() if counts_tensor is not None else []
     seen = sum(1 for count in counts if int(count) > 0)
     return {
         "schema": "npa.sim2real.applied_scenarios.v1",
+        "robot_control": (
+            stock_franka_control_audit(env.cfg)
+            if env.spec.id == SCENARIO_TASK_ID
+            else None
+        ),
         **scenario_contract_summary(rows),
         "applied_unique_config_digests": seen,
         "coverage_rate": round(seen / len(rows), 6) if rows else 0.0,
         "total_reset_assignments": sum(int(count) for count in counts),
-        "goal_curriculum": {
-            "enabled": os.environ.get("NPA_SIM2REAL_ENABLE_GOAL_CURRICULUM", "0")
-            == "1",
-            "full_goal_step": int(
-                os.environ.get("NPA_SIM2REAL_GOAL_CURRICULUM_FULL_STEP", "1") or 1
-            ),
-            "assignment_count": int(
-                getattr(env, "npa_goal_curriculum_assignment_count", 0)
-            ),
-            "true_goal_assignments": int(
-                getattr(env, "npa_goal_curriculum_true_assignments", 0)
-            ),
-            "max_fraction": round(
-                float(getattr(env, "npa_goal_curriculum_max_fraction", 0.0)), 6
-            ),
-        },
+        "goal_curriculum": _goal_curriculum_audit(env),
         "records": [
             {
                 "env_id": row["env_id"],

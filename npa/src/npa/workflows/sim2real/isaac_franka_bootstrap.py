@@ -13,6 +13,8 @@ _PROFILE = "franka-ik-distillation-v1"
 _BOOTSTRAP_ROUNDS = 2
 _FITTING_EPOCHS = 8
 _MINIBATCH_SIZE = 4096
+_TEACHER_TCP_STEP_M = 0.1
+_TEACHER_JOINT_STEP_RAD = 0.2
 
 
 def resolve_training_bootstrap(configured: str, *, eligible: bool) -> str:
@@ -114,7 +116,7 @@ class _FrankaTeacher:
         self.grasp_offsets = torch.zeros((task.num_envs, 3), device=task.device)
         self.lift_targets = torch.zeros_like(self.grasp_offsets)
         self.orientation = torch.tensor(
-            [0.0, 1.0, 0.0, 0.0], device=task.device
+            [1.0, 0.0, 0.0, 0.0], device=task.device
         ).repeat(task.num_envs, 1)
         sensor = task.scene["ee_frame"]
         self.offset = torch.tensor(
@@ -177,7 +179,9 @@ class _FrankaTeacher:
         jacobian = jacobian[:, self.entity.body_ids[0] - 1, :, self.entity.joint_ids]
         joints = _tensor(self.robot.data.joint_pos)[:, self.entity.joint_ids]
         desired = self.controller.compute(pose[:, :3], pose[:, 3:7], jacobian, joints)
-        desired = joints + (desired - joints).clamp(-0.1, 0.1)
+        desired = joints + (desired - joints).clamp(
+            -_TEACHER_JOINT_STEP_RAD, _TEACHER_JOINT_STEP_RAD
+        )
         limits = _tensor(self.robot.data.soft_joint_pos_limits)[
             :, self.entity.joint_ids
         ]
@@ -199,7 +203,8 @@ class _FrankaTeacher:
         delta = target - tcp
         distance = torch.linalg.vector_norm(delta, dim=1, keepdim=True)
         step = delta * torch.minimum(
-            torch.full_like(distance, 0.7), 0.01 / distance.clamp_min(1e-8)
+            torch.full_like(distance, 0.7),
+            _TEACHER_TCP_STEP_M / distance.clamp_min(1e-8),
         )
         return self._joint_labels(tcp + step)
 
@@ -223,7 +228,7 @@ def _training_round(env, actor, *, learner_fraction):
     observations = {name: [] for name in actor.obs_groups}
     targets = []
     with torch.no_grad():
-        for _ in range(steps):
+        for step in range(steps):
             obs = env.get_observations()
             labels = teacher.actions()
             for name in observations:
@@ -232,11 +237,31 @@ def _training_round(env, actor, *, learner_fraction):
             actions = labels
             if learner_fraction:
                 actions = labels.lerp(actor(obs), learner_fraction)
+            if (step + 1) % int(task.max_episode_length) == 0:
+                _report_teacher_progress(teacher, step + 1, steps, learner_fraction)
             _, _, dones, _ = env.step(actions)
             teacher.reset(dones)
     combined = {name: torch.cat(rows) for name, rows in observations.items()}
     batch = TensorDict(combined, batch_size=[steps * task.num_envs])
     return batch, torch.cat(targets), teacher.successful_rows
+
+
+def _report_teacher_progress(teacher, step, total_steps, learner_fraction):
+    """Expose measured collection progress before any supervised fitting starts."""
+    import torch
+
+    progress = {
+        "collection_step": step,
+        "collection_steps": total_steps,
+        "learner_fraction": learner_fraction,
+        "phase_counts": torch.bincount(teacher.phase, minlength=5).tolist(),
+        "training_scenarios": len(teacher.successful_rows),
+        "stable_training_placements": int(teacher.successful_rows.sum()),
+        "gold_used": False,
+    }
+    print(
+        "ROBOT_BOOTSTRAP_PROGRESS " + json.dumps(progress, sort_keys=True), flush=True
+    )
 
 
 def _fit_actor(actor, observations, labels, optimizer):
@@ -287,6 +312,9 @@ def _validate_bootstrap(env, runner, profile, training_split):
         raise RuntimeError(
             "Franka bootstrap requires the native feed-forward RSL-RL actor"
         )
+    from npa.workflows.sim2real.isaac_franka_control import stock_franka_control_audit
+
+    stock_franka_control_audit(task.cfg)
     return task, actor
 
 
@@ -297,7 +325,8 @@ def _bootstrap_round(env, actor, optimizer, *, index):
     count = int(successes.sum())
     if count * 2 < len(successes):
         raise RuntimeError(
-            "native training demonstrations did not establish stable placement"
+            "native training demonstrations did not establish stable placement: "
+            f"round {index}, {count}/{len(successes)} training scenarios"
         )
     fit = _fit_actor(actor, batch, labels, optimizer)
     audit = {
@@ -314,6 +343,7 @@ def _bootstrap_round(env, actor, optimizer, *, index):
 def _publish_bootstrap_audit(task, runner, rounds, profile, output_dir):
     """Keep demonstration learning distinct from measured PPO updates."""
     import isaac_scenario_task
+    from npa.workflows.sim2real.isaac_franka_control import stock_franka_control_audit
 
     if int(runner.current_learning_iteration) != 0:
         raise RuntimeError("training bootstrap changed the PPO update counter")
@@ -325,6 +355,7 @@ def _publish_bootstrap_audit(task, runner, rounds, profile, output_dir):
         "inference_composition": "learned_actor_only",
         "ppo_updates": 0,
         "training_goals_exact": True,
+        "robot_control": stock_franka_control_audit(task.cfg),
         "training_scenarios": len(task.npa_scenario_rows),
         "rounds": rounds,
         "training_scenarios_sha256": hashlib.sha256(
