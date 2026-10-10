@@ -223,3 +223,11 @@ bootstrap checks, finding adjudication, or real CPU/GPU capability proof. These
 synthetic transport tests cannot prove live SSH access, available runner capacity,
 or native Linux scanner execution; the first reviewed dispatch must establish
 those facts and retain its exact image receipts.
+## Retained finding review
+
+Complete hosted scans retain exact authorization and non-secret input evidence
+for a later [private retained-image adjudication](retained-image-adjudication.md).
+That separate default-branch workflow requires a hash-authorized independent
+review of every occurrence, unchanged original image/source/policy bindings,
+and explicit transport identity checks. It preserves the raw scanner verdict
+and never exports policy values or establishes native GPU qualification.

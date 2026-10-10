@@ -621,7 +621,17 @@ def test_receipt_bundle_has_exact_allowlist_and_no_policy_or_authorization(
     for name in Q.RECEIPT_FILES:
         path = private_root / name
         path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
-        Q._write(path, b"synthetic-private-receipt")
+        payload = b"synthetic-private-receipt"
+        if name == "retained/retention.json":
+            payload = Q._json_bytes(
+                {
+                    "schema_version": "npa.image-byte-retained-inputs.v1",
+                    "policy_values_retained": False,
+                    "files": {},
+                    "inputs": [],
+                }
+            )
+        Q._write(path, payload)
     for name in (
         "authorization/confidentiality.json",
         "authorization/authorization.json",
