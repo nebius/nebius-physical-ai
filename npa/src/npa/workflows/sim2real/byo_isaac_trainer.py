@@ -56,8 +56,8 @@ DEFAULT_ENTROPY_COEF = "0.006"
 DEFAULT_ENTROPY_FINAL_COEF = "0.0005"
 DEFAULT_ENTROPY_ANNEAL_FRACTION = "0.6"
 DEFAULT_PPO_OPTIMIZER_LEARNING_RATE = "0.001"
-# A resumed policy has already crossed the reach/grasp/lift exploration wall.
-# Re-applying the first-pass exploration schedule on every inner/outer pass kept
+# Once validation proves consistent grasp/lift, the resumed policy can consolidate.
+# Re-applying the first-pass exploration schedule on every qualified pass kept
 # deterministic placement noisy in live validation. Resume uses a separate,
 # operator-tunable convergence phase: short low-entropy adaptation followed by
 # zero entropy and a smaller PPO optimizer rate.
@@ -688,6 +688,7 @@ def build_isaac_job_manifest(
     success_termination_enabled: bool = False,
     validation_interval: int = 100,
     resume_uri: str = "",
+    resume_phase: str = "convergence",
     resume_sha256: str = "",
     experiment_name: str = DEFAULT_EXPERIMENT_NAME,
     robot_spec: dict[str, Any] | None = None,
@@ -711,6 +712,10 @@ def build_isaac_job_manifest(
     ``seed`` only controls reproducibility and never substitutes for scenario
     application. ``physics`` remains a legacy single-configuration compatibility
     path and is not used by the canonical real-required distribution workflow.
+    ``resume_phase="exploration"`` repeats the training-only goal curriculum;
+    ``convergence`` keeps exact goals. Canonical stages choose it from the resumed
+    checkpoint's simulator validation. The standalone compatibility default
+    remains ``convergence``.
     """
 
     scenarios_uri = scenarios_uri.strip()
@@ -784,7 +789,11 @@ def build_isaac_job_manifest(
         overrides["agent.resume"] = "true"
         overrides["agent.load_run"] = RESUME_RUN_DIR
         overrides["agent.load_checkpoint"] = RESUME_CKPT_NAME
-    goal_curriculum_enabled = not resume_uri and not physics
+    if resume_phase not in {"exploration", "convergence"}:
+        raise ValueError("resume_phase must be exploration or convergence")
+    goal_curriculum_enabled = (
+        not resume_uri or resume_phase == "exploration"
+    ) and not physics
     goal_curriculum_full_step = max(1, int(iterations * steps_per_env * 0.60))
     # shlex.quote each value: scale tuples "(0.8, 0.8, 0.8)" and URLs contain shell
     # metacharacters (parens, spaces) that otherwise break the bash train command.
@@ -1290,6 +1299,24 @@ def s3_object_sha256(uri: str, *, endpoint: str = "") -> str:
     return digest.hexdigest()
 
 
+def _resume_curriculum_audit(
+    checkpoint: str, checksum: str, phase: str
+) -> dict[str, Any] | None:
+    raw = _env("NPA_SIM2REAL_RESUME_CURRICULUM_JSON")
+    if not raw:
+        return None
+    audit = json.loads(raw)
+    if not isinstance(audit, dict) or (
+        audit.get("checkpoint_uri"),
+        audit.get("checkpoint_sha256"),
+        audit.get("phase"),
+    ) != (checkpoint, checksum, phase):
+        raise ValueError(
+            "resume curriculum audit differs from the selected checkpoint or phase"
+        )
+    return audit
+
+
 def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
     """Submit the Isaac sibling Job, wait, and return an update-result dict."""
 
@@ -1522,12 +1549,23 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
                 flush=True,
             )
 
-    # The first pass needs enough exploration to discover reach/grasp/lift. A
-    # resumed pass has already crossed that wall and must instead consolidate a
-    # deterministic, motion-stable placement. Keeping these knobs separate
-    # prevents each inner/outer resume from reintroducing the high exploration
-    # that live validation measured as target fly-through.
+    # A saved checkpoint does not prove grasp/lift discovery. Canonical stages
+    # select exploration or consolidation using that checkpoint's validation.
+    resume_phase = _env("NPA_BYO_ISAAC_RESUME_PHASE", "convergence")
+    if resume_phase not in {"exploration", "convergence"}:
+        raise ValueError(
+            "NPA_BYO_ISAAC_RESUME_PHASE must be exploration or convergence"
+        )
+    resume_convergence = (
+        bool(resume_uri) and not physics and resume_phase == "convergence"
+    )
+    resume_curriculum = _resume_curriculum_audit(
+        resume_uri, resume_sha256, resume_phase
+    )
+    training_phase = "exploration"
     if resume_uri and not physics:
+        training_phase = f"resume_{resume_phase}"
+    if resume_convergence:
         raw_ent = _env(
             "NPA_BYO_ISAAC_RESUME_ENTROPY_COEF",
             DEFAULT_RESUME_ENTROPY_COEF,
@@ -1570,7 +1608,7 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
             "byo_isaac_trainer: PPO entropy curriculum -> "
             f"{entropy_coef} then {entropy_final_coef} after "
             f"{entropy_anneal_fraction} of "
-            f"{'resume convergence' if resume_uri and not physics else 'exploration'}",
+            f"{'resume convergence' if resume_convergence else 'exploration'}",
             flush=True,
         )
     print(
@@ -1609,6 +1647,7 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
         success_termination_enabled=success_termination_enabled,
         validation_interval=validation_interval,
         resume_uri=resume_uri,
+        resume_phase=resume_phase,
         resume_sha256=resume_sha256,
         experiment_name=experiment_name,
         robot_spec=robot_spec_dict,
@@ -1718,9 +1757,7 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
             else "task_default"
         ),
         "convergence_action_noise_frozen": bool(convergence_action_noise_std),
-        "training_phase": (
-            "resume_convergence" if resume_uri and not physics else "exploration"
-        ),
+        "training_phase": training_phase,
         "success_termination_enabled": success_termination_enabled,
         "strict_dwell_training_contract": (
             "sustained_until_episode_end"
@@ -1742,6 +1779,7 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
     )
     result["resume_checkpoint_uri"] = resume_uri if not physics else ""
     result["resume_checkpoint_sha256"] = resume_sha256 if not physics else ""
+    result["resume_curriculum"] = resume_curriculum
     result["embodiment"] = embodiment_evidence(robot_spec_dict)
     return result
 

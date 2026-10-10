@@ -1208,7 +1208,7 @@ def run_isaac_rollout_job(
     checkpoint_uri = _env("NPA_SIM2REAL_POLICY_CHECKPOINT_URI")
     if checkpoint_uri and not checkpoint_uri.startswith("s3://"):
         raise RuntimeError("explicit rollout checkpoint must be an s3:// URI")
-    if not checkpoint_uri:
+    if not checkpoint_uri and _env("NPA_BYO_ISAAC_AUTO_RESUME", "1") != "0":
         checkpoint_uri = latest_checkpoint_uri(
             bucket,
             run_id,

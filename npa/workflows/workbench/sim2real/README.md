@@ -76,6 +76,14 @@ Stage 7 downloads declared camera frames with sixteen concurrent transfers and
 rejects any failed transfer before writing a rollout manifest. Stage 14 also
 loads earlier outer-loop evidence documents so every completed PPO pass appears
 in the final loss curves, without mirroring historical camera trees.
+Resumed rollouts and PPO use the best validation candidate's exact checkpoint.
+The next pass repeats exploration and the training-only goal curriculum until
+at least half of that candidate's validation episodes achieved both stable grasp
+and lift; later passes consolidate placement with low action noise. The decision
+and checkpoint identity are retained in `resume_curriculum`. Stage 9 sets
+`NPA_BYO_ISAAC_RESUME_PHASE` to `exploration` or `convergence` and disables
+unvalidated automatic resume. Direct compatibility callers may set that variable;
+its standalone default remains `convergence`.
 Runtime values are operator inputs; this directory contains no
 tenant, project, registry, bucket, cluster, credential, or run identifier.
 

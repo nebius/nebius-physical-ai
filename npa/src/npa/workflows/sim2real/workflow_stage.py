@@ -437,8 +437,19 @@ def _assert_embodiment_evidence(
     return verify_evidence(root=root, payload=payload, stage=stage)
 
 
+def _prior_training_evidence(args: argparse.Namespace, work: Path) -> dict[str, Any]:
+    outer_iteration = args.outer_iteration
+    if args.inner_iteration == 1:
+        outer_iteration -= 1
+    if outer_iteration < 1:
+        return {}
+    uri = f"{_root(args)}/inner_loop/outer-{outer_iteration:02d}/evidence.json"
+    return read_json(uri, directory=work / "resume-evidence")
+
+
 def _stage7(args: argparse.Namespace) -> None:
     from npa.workflows.sim2real import byo_isaac_policy_rollout
+    from npa.workflows.sim2real.training_curriculum import resume_environment
 
     root, work = _root(args), _work(7)
     output = (
@@ -449,6 +460,7 @@ def _stage7(args: argparse.Namespace) -> None:
     )
     payload_path = work / "rollouts-result.json"
     env = _common_isaac_env(args, split_uri=f"{root}/envs/train/envs.jsonl")
+    env.update(resume_environment(_prior_training_evidence(args, work)))
     env.update(
         {
             "NPA_SIM2REAL_OUTPUT_JSON": payload_path,
@@ -548,6 +560,7 @@ def _stage9(args: argparse.Namespace) -> None:
     from npa.workflows.sim2real import byo_isaac_trainer
     from npa.workflows.sim2real.checkpoint_selection import select_best_checkpoint
     from npa.workflows.sim2real.temporal_credit import convert_evaluation
+    from npa.workflows.sim2real.training_curriculum import resume_environment
 
     root, work = _root(args), _work(9)
     expected_model = args.reason_model
@@ -632,6 +645,7 @@ def _stage9(args: argparse.Namespace) -> None:
     signal_batch.write_text(json.dumps({"signals": signals}, indent=2))
     training_output = work / "training-update.json"
     env = _common_isaac_env(args, split_uri=f"{root}/envs/train/envs.jsonl")
+    env.update(resume_environment(_prior_training_evidence(args, work)))
     env.update(
         {
             "NPA_SIM2REAL_SIGNAL_JSON": signal_batch,

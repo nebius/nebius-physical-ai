@@ -541,14 +541,23 @@ credential store; the submit preflight rejects missing propagation before launch
 The runtime waits without a per-wave deadline so the production PPO passes can
 finish. Keep the runtime driver on an always-on operator VM.
 
-The production training default is 2,000 PPO updates per inner pass. The
-canonical workflow resumes the newest checkpoint from the same run, so its
-three-pass inner loop can cover 6,000 cumulative updates. Validation ranks the
-final checkpoint from each completed pass and selects one for gold evaluation; the selected
-checkpoint can differ from the latest training checkpoint. The validation and
-gold predicates remain fixed. Reduced plumbing proofs may override the update
-count explicitly; effectiveness runs should retain the convergence-capable
-default.
+The production training default is 2,000 PPO updates per inner pass. Validation
+ranks the final checkpoint from each completed pass. Subsequent train rollouts
+and PPO resume the best candidate's exact checkpoint, which can differ from the
+newest training checkpoint; a three-pass loop performs 6,000 new updates while
+retaining stronger validation candidates.
+
+A checkpoint file alone does not prove that the actor learned to grasp. Until
+at least half of its validation episodes achieved both stable grasp and lift,
+resumed PPO retains the exploration schedule and repeats the training-only goal
+curriculum. Once validation proves that milestone, the next pass uses low-noise
+placement consolidation. `resume_curriculum` records the decision, validation
+counts, and exact checkpoint identity. Stage 9 sets
+`NPA_BYO_ISAAC_RESUME_PHASE=exploration|convergence` and disables unvalidated
+automatic resume; direct compatibility callers retain `convergence` as their
+default. Gold is excluded from this decision, and its goals and strict predicates
+remain fixed. Reduced plumbing proofs may override the update count explicitly;
+effectiveness runs should retain the production default.
 
 Stage 7 downloads its declared raw camera frames concurrently and fails before
 manifest publication when any transfer fails. Stage 14 reads every earlier
