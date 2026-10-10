@@ -15,8 +15,7 @@ ISAAC = "registry.example.invalid/npa-isaac-lab@sha256:" + "a" * 64
 CPU = "registry.example.invalid/npa-sonic@sha256:" + "b" * 64
 OVERRIDE = "registry.example.invalid/npa-override@sha256:" + "c" * 64
 WORKFLOW_PATHS = {
-    "rgbd-scan-to-policy-demo": ROOT
-    / "workflows/main/rgbd-scan-to-policy-demo.yaml",
+    "rgbd-scan-to-policy-demo": ROOT / "workflows/main/rgbd-scan-to-policy-demo.yaml",
 }
 
 
