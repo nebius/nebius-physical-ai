@@ -1587,6 +1587,7 @@ def _seal_regen_publication_report(
     journal_uri: str,
     rrd_path: Path | None = None,
     mcap_path: Path | None = None,
+    visual_index_uri: str = "",
 ) -> None:
     report = _read_retained_json(report_path, source="Sim2Real final report")
     _bind_regeneration_output_identity(
@@ -1600,6 +1601,8 @@ def _seal_regen_publication_report(
         "report_uri": report_uri,
         "journal_uri": journal_uri,
     }
+    if visual_index_uri:
+        report["publication"]["visual_index_uri"] = visual_index_uri
     _seal_regen_viewer_links(report, rrd_uri, mcap_uri, report_uri, journal_uri)
     for component in _stage_components(report):
         if component.get("name") == "stage_14_rerun_viz":
@@ -1717,7 +1720,7 @@ def _publish_regen_supporting_artifacts(
         upload_immutable_file(
             storage,
             publication.visual_index_path,
-            f"{publication.prefix}reports/sim2real-visual-index.json",
+            _regen_visual_index_uri(publication),
         )
     if publication.candidate_path.is_file():
         upload_immutable_file(
@@ -1725,6 +1728,14 @@ def _publish_regen_supporting_artifacts(
             publication.candidate_path,
             f"{publication.prefix}checkpoints/candidate/candidate.json",
         )
+
+
+def _regen_visual_index_uri(publication: _RegenPublication) -> str:
+    """Keep derived indexes separate from canonical and prior replay bytes."""
+    if not publication.visual_index_path.is_file():
+        return ""
+    digest = sha256_file(publication.visual_index_path)
+    return f"{publication.generation_prefix}visual-index/{digest}.json"
 
 
 def _assert_current_regen_writer(report: dict[str, Any]) -> None:
@@ -1850,6 +1861,7 @@ def _preflight_regen_final_report(storage, publication, mcap_uri):
         mcap_path=(publication.local_dir / "reports" / "sim2real.mcap")
         if mcap_uri
         else None,
+        visual_index_uri=_regen_visual_index_uri(publication),
     )
     report = _read_retained_json(
         publication.final_report_path, source="sealed Sim2Real final report"
@@ -3267,6 +3279,7 @@ def _read_retained_json(path: Path, *, source: str) -> dict[str, Any]:
 
 def _read_candidate_manifest(local_dir: Path) -> tuple[Path, dict[str, Any]]:
     candidate_path = Path(local_dir) / "checkpoints" / "candidate" / "candidate.json"
+    _assert_safe_candidate_manifest(candidate_path)
     if not candidate_path.is_file():
         return candidate_path, {}
     try:
@@ -3900,7 +3913,17 @@ def _write_candidate_manifest(
     candidate_path: Path,
     candidate: dict[str, Any],
 ) -> None:
+    _assert_safe_candidate_manifest(candidate_path)
     _write_json_artifact(candidate_path, candidate)
+
+
+def _assert_safe_candidate_manifest(candidate_path: Path) -> None:
+    """Refuse redirected candidate reads and recheck before every replacement."""
+    _assert_no_symlinked_ancestors(
+        candidate_path, containment_root=candidate_path.parent
+    )
+    if candidate_path.is_symlink():
+        raise Sim2RealRerunRegenError("candidate manifest must not be a symlink")
 
 
 def _clear_candidate_access(candidate: dict[str, Any]) -> None:

@@ -2,6 +2,7 @@
 
 import json
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -61,13 +62,23 @@ def test_envgen_header_pin_matches_the_frozen_apt_selection(requested, no_downgr
         ).read_text()
     )
     selected = record["selected_version"]
-    # Use Debian's actual version ordering, not PEP 440 or a lexical comparison.
-    result = subprocess.run(
-        ["dpkg", "--compare-versions", requested, "ge", selected], check=False
-    )
-    assert (result.returncode == 0) is no_downgrade
     text = (WORKBENCH / "sim2real-envgen/Dockerfile").read_text()
     assert f"ARG LINUX_LIBC_DEV_VERSION={selected}" in text
     assert "--allow-downgrades" not in text
     assert selected == record["package"]["Version"]
     assert record["fixed_floor"] == "5.15.0-194.204"
+    # Use Debian's actual version ordering, not PEP 440 or a lexical comparison.
+    if shutil.which("dpkg") is None:
+        pytest.skip(
+            "Real Debian version comparison requires dpkg; image build remains mandatory"
+        )
+    result = subprocess.run(
+        ["dpkg", "--compare-versions", requested, "ge", selected], check=False
+    )
+    assert (result.returncode == 0) is no_downgrade
+
+
+def test_header_comparison_without_dpkg_skips_after_static_checks(monkeypatch):
+    monkeypatch.setattr(shutil, "which", lambda _: None)
+    with pytest.raises(pytest.skip.Exception, match="requires dpkg"):
+        test_envgen_header_pin_matches_the_frozen_apt_selection("5.15.0-198.208", True)

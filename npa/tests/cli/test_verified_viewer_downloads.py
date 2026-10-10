@@ -134,9 +134,12 @@ def test_rejected_viewer_download_preserves_exposed_verified_bytes(viewer_contex
     with pytest.raises((context.module.PublicationConflict, HTTPException)):
         _download(context)
     assert path.read_bytes() == context.good
-    assert list(context.directory.iterdir()) == [path]
+    assert list(context.directory.iterdir()) == [path.parent]
     context.store.download_payload = context.good
-    assert _download(context) == path
+    second = _download(context)
+    assert second != path and second.read_bytes() == path.read_bytes()
+    context.module.release_verified_recording(second)
+    assert path.read_bytes() == context.good
 
 
 def test_concurrent_rejected_download_cannot_corrupt_verified_cache(viewer_context):
@@ -147,11 +150,13 @@ def test_concurrent_rejected_download_cannot_corrupt_verified_cache(viewer_conte
     with ThreadPoolExecutor(max_workers=2) as executor:
         accepted = executor.submit(_download, context, _ViewerStore(context))
         hostile = executor.submit(_download, context, rejected)
-        assert accepted.result() == path
+        second = accepted.result()
+        assert second != path and second.read_bytes() == path.read_bytes()
         with pytest.raises((context.module.PublicationConflict, HTTPException)):
             hostile.result()
     assert path.read_bytes() == context.good
-    assert list(context.directory.iterdir()) == [path]
+    context.module.release_verified_recording(second)
+    assert list(context.directory.iterdir()) == [path.parent]
 
 
 def _install_route_inventory(context, monkeypatch):
@@ -212,3 +217,49 @@ def test_both_load_routes_reject_before_viewer_publication(
         handler(body)
     assert rejected.value.status_code == 409
     assert path.read_bytes() == context.good
+
+
+@pytest.mark.parametrize("route", ["run", "artifact"])
+@pytest.mark.parametrize("fail_apply", [False, True])
+def test_load_route_releases_only_its_input_after_apply(
+    viewer_context, monkeypatch, route, fail_apply
+):
+    context = viewer_context
+    held = _download(context)
+    _install_route_inventory(context, monkeypatch)
+    consumed = []
+    published = context.directory / "published.rrd"
+
+    def apply(**kwargs):
+        path = kwargs["local_path"]
+        consumed.append(path)
+        assert path != held and path.read_bytes() == context.good
+        published.write_bytes(path.read_bytes())
+        if fail_apply:
+            raise HTTPException(status_code=422, detail="fixture apply failure")
+        return {}
+
+    monkeypatch.setattr(context.module, "_apply_loaded_artifact", apply)
+    monkeypatch.setattr(context.module, "_sim_viz_load_response", lambda *_a, **_k: {})
+    body = {
+        "run_id": "run-a",
+        "run_ref": context.module.encode_run_ref("demo-bucket", "runs", "run-a"),
+        "resource_bucket": "demo-bucket",
+        "project_id": "fixture-project",
+        "resolved_prefix": "runs",
+        "source_selected": True,
+        "key": context.artifact.key,
+    }
+    handler = (
+        context.module.sim_viz_load_run
+        if route == "run"
+        else context.module.sim_viz_load_artifact
+    )
+    if fail_apply:
+        with pytest.raises(HTTPException):
+            handler(body)
+    else:
+        assert handler(body)["ok"]
+    assert len(consumed) == 1 and not consumed[0].exists()
+    assert held.read_bytes() == context.good
+    assert published.read_bytes() == context.good

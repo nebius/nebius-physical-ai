@@ -12,6 +12,7 @@ from typing import Any, Callable
 from botocore.exceptions import ClientError
 
 from .publication_reader import PublicationConflict, resolve_committed_publication
+from .recording_cache import VerifiedRecordingString, retain_verified_recording
 
 logger = logging.getLogger(__name__)
 
@@ -586,10 +587,6 @@ def prepare_canonical_mcap(
             expected=published_snapshot,
             local_path=local_path,
         )
-        # Never expose unverified staging or replace a different verified generation.
-        verified_path = recordings_dir / f"{cache_name}-{digest}-sim2real.mcap"
-        local_path.replace(verified_path)
-        local_path = verified_path
         if saved_provenance.get("sha256") == digest:
             source = str(saved_provenance.get("source") or source)
             saved_sources = saved_provenance.get("source_artifacts")
@@ -640,6 +637,11 @@ def prepare_canonical_mcap(
                 ContentType="application/json",
             )
         invalidate_cache()
+        # Transfer cleanup ownership only after every fallible remote operation.
+        # The caller retains this unique input through apply, then releases it.
+        local_path = retain_verified_recording(
+            local_path, recordings_dir, f"{cache_name}-{digest}-sim2real.mcap"
+        )
         summary = converted or {
             "output": str(local_path),
             "size_bytes": int(info["size_bytes"]),
@@ -655,7 +657,7 @@ def prepare_canonical_mcap(
         return {
             "artifact_key": published_key,
             "s3_uri": provenance["canonical_s3_uri"],
-            "local_path": str(local_path),
+            "local_path": VerifiedRecordingString(local_path),
             "sha256": digest,
             "size_bytes": int(info["size_bytes"]),
             "source": source,

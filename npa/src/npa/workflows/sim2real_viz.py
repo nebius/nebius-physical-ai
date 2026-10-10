@@ -571,6 +571,8 @@ def _validation_candidates(
         return None
     if _validation_iteration(payload.get("outer_iteration")) != outer:
         raise Sim2RealVizError("Validation outer iteration does not match its evidence")
+    if _legacy_validation_population(payload):
+        return _legacy_validation_candidates(payload, outer)
     candidates = {}
     for candidate in payload["checkpoint_candidates"]:
         iteration = _validation_iteration(candidate.get("inner_iteration"))
@@ -586,6 +588,65 @@ def _validation_candidates(
     ]
     if len(set(expected)) != len(expected) or set(candidates) != set(expected):
         raise Sim2RealVizError("Validation candidates do not cover the exact passes")
+    return candidates
+
+
+def _legacy_validation_population(payload: dict[str, Any]) -> bool:
+    """Recognize retained trainer evidence without relaxing canonical joins."""
+    return payload.get("trainer_source") == "byo_command" and not (
+        _requires_checkpoint_bound_validation(payload, allow_local_only_legacy=True)
+    )
+
+
+def _legacy_validation_candidates(payload, outer):
+    """Join each legacy pass to the exact checkpoint it selected, not latest.pt."""
+    from npa.workflows.sim2real.checkpoint_selection import resolve_selected_checkpoint
+
+    try:
+        resolve_selected_checkpoint(payload)
+        candidates = _legacy_candidate_population(payload["checkpoint_candidates"])
+        selected = {}
+        for record in payload["iterations"]:
+            iteration = _validation_iteration(record.get("iteration"))
+            uri = (record.get("validation_report") or {}).get("policy_checkpoint")
+            candidate = candidates[uri]
+            candidate_outer = candidate["outer_iteration"]
+            if (
+                iteration in selected
+                or candidate_outer > outer
+                or (
+                    candidate_outer == outer
+                    and candidate["inner_iteration"] > iteration
+                )
+            ):
+                raise ValueError("pass references a duplicate or future checkpoint")
+            selected[iteration] = candidate
+        return selected
+    except (KeyError, TypeError, ValueError) as exc:
+        raise Sim2RealVizError(f"Legacy validation identity is invalid: {exc}") from exc
+
+
+def _legacy_candidate_population(population):
+    """Retain periodic/prior-outer candidates while rejecting ambiguous identity."""
+    from npa.workflows.sim2real.checkpoint_selection import (
+        checkpoint_candidate_has_complete_identity,
+    )
+
+    candidates, identities = {}, set()
+    for candidate in population:
+        identity = tuple(
+            _validation_iteration(candidate.get(key))
+            for key in ("outer_iteration", "inner_iteration", "training_iteration")
+        )
+        uri = candidate.get("checkpoint_uri")
+        if (
+            not checkpoint_candidate_has_complete_identity(candidate)
+            or identity in identities
+            or uri in candidates
+        ):
+            raise ValueError("candidate identity is incomplete or ambiguous")
+        identities.add(identity)
+        candidates[uri] = candidate
     return candidates
 
 
@@ -632,9 +693,15 @@ def _all_inner_iteration_records(
             if record.get("mean_reward") is None and record_index < len(reward_trend):
                 record["mean_reward"] = reward_trend[record_index]
             if candidates is not None:
-                validation = _candidate_validation_report(
-                    record, candidates[int(record["iteration"])]
+                candidate = candidates[int(record["iteration"])]
+                # Legacy passes record the best-so-far checkpoint, which may
+                # precede this update. Never relabel its metrics as latest.pt.
+                validation_record = (
+                    {"update": {"checkpoint_path": candidate["checkpoint_uri"]}}
+                    if _legacy_validation_population(payload)
+                    else record
                 )
+                validation = _candidate_validation_report(validation_record, candidate)
                 record = _merge_iteration_evidence(
                     record, {"validation_report": validation}
                 )
@@ -774,8 +841,12 @@ def _log_training_iteration_metrics(
             )
             _bump(counts, "signal/reward_trend")
         telemetry = (record.get("update") or {}).get("ppo_telemetry") or {}
-        checkpoint = str((record.get("update") or {}).get("checkpoint_path") or "")
         validation = record.get("validation_report") or {}
+        checkpoint = str(
+            validation.get("policy_checkpoint")
+            or (record.get("update") or {}).get("checkpoint_path")
+            or ""
+        )
         if checkpoint:
             entity = f"training/checkpoints/outer_{outer:02d}_inner_{iteration:02d}"
             rr.log(

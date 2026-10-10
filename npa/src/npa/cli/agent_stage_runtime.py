@@ -650,6 +650,11 @@ def _committed_publication_artifacts(
     require_complete: bool = True,
     include_snapshot: bool = False,
 ) -> tuple:
+    if not artifacts:
+        # No root or journal was observed. Do not invent a publication conflict
+        # (or an unjournaled authority) for an empty discovery/cursor page.
+        result = (artifacts, None, None, [])
+        return (*result, None) if include_snapshot else result
     keys = [str(item.key or "") for item in artifacts]
     root_key = _run_root_key(artifacts, run_id)
     canonical_report_uri = f"s3://{bucket}/{root_key}/reports/sim2real-report.json"
@@ -766,7 +771,7 @@ def _assert_legacy_publication_snapshot_still_unjournaled(
 ) -> None:
     """Fence mutable-alias reads against the first journal publication."""
 
-    if publication.journaled:
+    if publication is None or publication.journaled:
         return
     if _read_publication_journal(s3, bucket, publication.journal_uri) is not None:
         raise PublicationConflict(

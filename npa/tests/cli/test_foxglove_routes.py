@@ -42,6 +42,64 @@ class _Summary:
         return dict(self._payload)
 
 
+@pytest.mark.parametrize("failure", ["", "apply", "contract"])
+def test_canonical_input_lease_spans_apply_and_owns_only_its_cleanup(tmp_path, failure):
+    from npa.agent_backend.recording_cache import (
+        VerifiedRecordingString,
+        retain_verified_recording,
+    )
+
+    source = tmp_path / "source.mcap"
+    source.write_bytes(b"explicit transport fixture")
+    held = retain_verified_recording(source, tmp_path, "held.mcap")
+    source.write_bytes(b"explicit transport fixture")
+    own = retain_verified_recording(source, tmp_path, "own.mcap")
+    canonical = {
+        "artifact_key": "reports/sim2real.mcap",
+        "s3_uri": "s3://unit/run/reports/sim2real.mcap",
+        "local_path": VerifiedRecordingString(own),
+    }
+    if failure == "contract":
+        canonical["artifact_key"] = ""
+    published = tmp_path / "published.mcap"
+    state = {"sim_viz": {"run_id": "run"}}
+
+    def apply(**kwargs):
+        assert Path(kwargs["canonical"]["local_path"]).read_bytes() == held.read_bytes()
+        published.write_bytes(own.read_bytes())
+        if failure == "apply":
+            raise HTTPException(status_code=422, detail="fixture apply failure")
+        return {"ok": True}
+
+    app = FastAPI()
+    register_foxglove_routes(
+        app,
+        FoxgloveDeps(
+            load_state=lambda: state,
+            save_state=lambda _: None,
+            record_run=lambda *_: None,
+            foxglove_config=lambda *_: {},
+            load_artifact=lambda _: None,
+            convert_run=lambda **_: None,
+            now_iso=lambda: "fixture",
+            validate_run_id=lambda v: v,
+            data_dir=tmp_path,
+            runs_dir=tmp_path,
+            prepare_canonical_mcap=lambda **_: canonical,
+            apply_prepared_canonical=apply,
+        ),
+        HTTPException,
+    )
+    response = TestClient(app).post("/foxglove/convert-run", json={"run_id": "run"})
+    assert response.status_code == (
+        502 if failure == "contract" else 422 if failure else 200
+    )
+    assert not own.exists()
+    assert held.read_bytes() == b"explicit transport fixture"
+    if failure != "contract":
+        assert published.read_bytes() == held.read_bytes()
+
+
 @pytest.fixture()
 def harness(tmp_path: Path):
     """A FastAPI app wired to in-memory fakes, plus the captured state."""

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from botocore.exceptions import BotoCoreError, ClientError
 
 from npa.clients.storage import StorageClient
 from npa.workflows.sim2real.config import artifact_uris_for_run
@@ -19,6 +20,7 @@ from npa.workflows.sim2real.constants import (
     DEFAULT_S3_ENDPOINT,
 )
 from npa.workflows.sim2real.publication import (
+    PublicationConflict,
     assert_legacy_publication_unjournaled,
     read_verified_committed_publication_bytes,
     resolve_committed_publication_snapshot,
@@ -515,6 +517,22 @@ def _stage_artifact_present(
     )
 
 
+def _publication_unavailable(exc: Exception) -> dict[str, str]:
+    """Expose named failure states without leaking provider diagnostics."""
+    return {
+        "publication_state": (
+            exc.publication_state
+            if isinstance(exc, PublicationConflict)
+            else "unavailable"
+        ),
+        "error_code": (
+            "publication_conflict"
+            if isinstance(exc, PublicationConflict)
+            else "storage_unavailable"
+        ),
+    }
+
+
 def _record_completed_at(entry: dict[str, Any], fallback: str) -> str:
     record = entry.get("record") or {}
     payload = record.get("payload") or {}
@@ -704,7 +722,9 @@ def _stage_states(
             completion_index=completion_index,
             spec=spec,
         )
-        if resolved:
+        if spec.name == "report":
+            present, source, tier, completed_at = False, "", "", ""
+        elif resolved:
             present = True
             source = str(resolved.get("source") or "workflow_state")
             tier = str(resolved.get("tier") or "")
@@ -735,6 +755,23 @@ def _stage_states(
             "source": source,
             "completed_at": completed_at,
         }
+
+    # Workflow completion is historical, not authority for the currently
+    # published report. Recheck even when state/workflow_state says completed.
+    try:
+        present = (
+            _resolved_publication_object(
+                client, bucket, f"{run_prefix}/reports/sim2real-report.json"
+            )
+            is not None
+        )
+        stages["report"]["state"] = "SUCCEEDED" if present else "PENDING"
+    except (PublicationConflict, BotoCoreError, ClientError) as exc:
+        stages["report"].update(
+            state="PENDING",
+            source="publication_unavailable",
+            **_publication_unavailable(exc),
+        )
 
     _apply_infer_from_later(stages)
     return stages
@@ -897,6 +934,10 @@ def emit_sim2real_status(result: dict[str, Any], *, json_output: bool = False) -
         return
     print(f"run_id: {result.get('run_id')}")
     print(f"status: {result.get('status')}")
+    if result.get("publication_state"):
+        print(f"publication_state: {result['publication_state']}")
+    if result.get("publication_error"):
+        print(f"publication_error: {result['publication_error']}")
     if result.get("current_stage"):
         print(f"current_stage: {result.get('current_stage')}")
     eval_metrics = result.get("eval_metrics")
@@ -1077,12 +1118,17 @@ def get_sim2real_workflow_status(
     run_prefix = f"{s3_prefix.rstrip('/')}/{run_id}"
     client = StorageClient.from_environment(endpoint_url=endpoint)
     workflow_state = _load_workflow_state(client, bucket, run_prefix)
-    eval_metrics = _extract_eval_metrics(
-        workflow_state=workflow_state,
-        client=client,
-        bucket=bucket,
-        run_prefix=run_prefix,
-    )
+    publication_status = stages.get("report", {})
+    try:
+        eval_metrics = _extract_eval_metrics(
+            workflow_state=workflow_state,
+            client=client,
+            bucket=bucket,
+            run_prefix=run_prefix,
+        )
+    except (PublicationConflict, BotoCoreError, ClientError) as exc:
+        eval_metrics = {}
+        publication_status = _publication_unavailable(exc)
 
     return {
         "run_id": run_id,
@@ -1097,6 +1143,8 @@ def get_sim2real_workflow_status(
             endpoint=endpoint,
         ),
         "eval_metrics": eval_metrics,
+        "publication_state": publication_status.get("publication_state", ""),
+        "publication_error": publication_status.get("error_code", ""),
         "k8s_job": k8s.get("job_name"),
         "k8s_context": context,
         "pod_phase": k8s.get("pod_phase"),

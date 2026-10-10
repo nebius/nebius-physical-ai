@@ -7872,23 +7872,26 @@ def sim_viz_load_run(payload: dict | None = None):
                 preferred,
                 recordings_dir=RECORDINGS_DIR,
             )
-            _assert_legacy_publication_snapshot_still_unjournaled(
-                s3,
-                selected_bucket,
-                publication_snapshot,
-            )
-            state = _load_state()
-            sim_viz = _apply_loaded_artifact(
-                state=state,
-                run_id=resolved_run_id,
-                key=preferred.key,
-                s3_uri=preferred.s3_uri,
-                render=preferred.render,
-                local_path=local_path,
-                source_identity=(selected_bucket, selected_project, selected_prefix),
-                run_ref=resolved_ref,
-                requested_camera=requested_camera,
-            )
+            try:
+                _assert_legacy_publication_snapshot_still_unjournaled(
+                    s3,
+                    selected_bucket,
+                    publication_snapshot,
+                )
+                state = _load_state()
+                sim_viz = _apply_loaded_artifact(
+                    state=state,
+                    run_id=resolved_run_id,
+                    key=preferred.key,
+                    s3_uri=preferred.s3_uri,
+                    render=preferred.render,
+                    local_path=local_path,
+                    source_identity=(selected_bucket, selected_project, selected_prefix),
+                    run_ref=resolved_ref,
+                    requested_camera=requested_camera,
+                )
+            finally:
+                release_verified_recording(local_path)
             return {{
                 "ok": True,
                 "contract": ARTIFACT_DISCOVERY_CONTRACT,
@@ -9122,30 +9125,29 @@ def sim_viz_load_artifact(payload: dict | None = None):
             artifact,
             recordings_dir=RECORDINGS_DIR,
         )
-        render = render_hint_for_object(key=key)
-        state = _load_state()
-        run_summary = build_run_summary(
-            run_id,
-            [],
-            {{}},
-        )
-        learning_summary = run_summary.get("learning")
-        learning_contract = (
-            learning_summary.get("artifact_contract")
-            if isinstance(learning_summary, dict)
-            else None
-        )
-        sim_viz = _apply_loaded_artifact(
-            state=state,
-            run_id=run_id,
-            key=key,
-            s3_uri=s3_uri,
-            render=render,
-            local_path=local_path,
-            source_identity=(source_bucket, source_project, source_prefix),
-            run_ref=resolved_ref,
-            artifact_contract=learning_contract,
-        )
+        try:
+            render = render_hint_for_object(key=key)
+            state = _load_state()
+            run_summary = build_run_summary(run_id, [], {{}})
+            learning_summary = run_summary.get("learning")
+            learning_contract = (
+                learning_summary.get("artifact_contract")
+                if isinstance(learning_summary, dict)
+                else None
+            )
+            sim_viz = _apply_loaded_artifact(
+                state=state,
+                run_id=run_id,
+                key=key,
+                s3_uri=s3_uri,
+                render=render,
+                local_path=local_path,
+                source_identity=(source_bucket, source_project, source_prefix),
+                run_ref=resolved_ref,
+                artifact_contract=learning_contract,
+            )
+        finally:
+            release_verified_recording(local_path)
         return {{"ok": True, "contract": ARTIFACT_DISCOVERY_CONTRACT, "sim_viz": sim_viz, "render": render, "artifact_uri": s3_uri, "run_ref": resolved_ref}}
     except AmbiguousRunError as exc:
         raise HTTPException(

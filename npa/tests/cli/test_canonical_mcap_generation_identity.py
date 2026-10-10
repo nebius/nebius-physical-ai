@@ -105,6 +105,13 @@ def test_committed_mcap_generations_have_distinct_verified_local_paths(
     assert Path(second["local_path"]).read_bytes() == second_bytes
     assert first["summary"]["output"] == first["local_path"]
     assert second["summary"]["output"] == second["local_path"]
+    from npa.agent_backend.recording_cache import release_verified_recording
+
+    release_verified_recording(second["local_path"])
+    assert not Path(second["local_path"]).exists()
+    assert Path(first["local_path"]).read_bytes() == first_bytes
+    release_verified_recording(first["local_path"])
+    assert not list(tmp_path.iterdir())
 
 
 def test_rejected_mcap_replacement_cannot_mutate_verified_cache(tmp_path) -> None:

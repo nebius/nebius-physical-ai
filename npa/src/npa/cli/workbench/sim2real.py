@@ -10,6 +10,7 @@ from typing import Optional
 
 import typer
 
+from npa.agent_backend.publication_reader import PublicationConflict
 from npa.clients.credentials import load_credentials
 from npa.workflows.sim2real.constants import (
     DEFAULT_ACTION_ENV_LIMIT,
@@ -862,7 +863,7 @@ def rerun_serve_command(
         )
         try:
             download_rrd_from_s3(loop_config, dest_path=dest)
-        except Sim2RealRerunRegenError as exc:
+        except (Sim2RealRerunRegenError, PublicationConflict) as exc:
             typer.echo(f"Error: {exc}", err=True)
             raise typer.Exit(1) from exc
         payload["local_rrd_path"] = str(dest)
@@ -923,6 +924,11 @@ def rerun_regen_command(
             upload=upload,
             sync_inputs=not no_sync,
         )
+    except PublicationConflict as exc:
+        typer.echo(
+            "Error: publication conflict; refresh publication state and retry", err=True
+        )
+        raise typer.Exit(1) from exc
     except Sim2RealRerunRegenError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
@@ -991,6 +997,11 @@ def rerun_heldout_only_command(
             outer_iteration=outer_iteration,
             publish=not no_publish,
         )
+    except PublicationConflict as exc:
+        typer.echo(
+            "Error: publication conflict; refresh publication state and retry", err=True
+        )
+        raise typer.Exit(1) from exc
     except Sim2RealRerunRegenError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
@@ -998,10 +1009,11 @@ def rerun_heldout_only_command(
     payload = {
         "run_id": run_id,
         "publication_mode": "local_only" if no_publish else "immutable_attempt",
-        "published_report_uri": report.get("report_uri"),
-        "published_renders_uri": (report.get("render_lineage") or {}).get(
-            "canonical_s3_uri"
-        ),
+        "local_report_path": report.get("report_uri") if no_publish else None,
+        "published_report_uri": None if no_publish else report.get("report_uri"),
+        "published_renders_uri": None
+        if no_publish
+        else (report.get("render_lineage") or {}).get("canonical_s3_uri"),
         "success_rate": report.get("success_rate"),
         "render_manifest_episodes": len(
             (report.get("render_manifest") or {}).get("episodes") or []
@@ -1014,6 +1026,8 @@ def rerun_heldout_only_command(
         return
     typer.echo(f"run_id: {run_id}")
     typer.echo(f"publication_mode: {payload['publication_mode']}")
+    if payload["local_report_path"]:
+        typer.echo(f"local_report_path: {payload['local_report_path']}")
     if payload["published_report_uri"]:
         typer.echo(f"published_report_uri: {payload['published_report_uri']}")
     if payload["published_renders_uri"]:

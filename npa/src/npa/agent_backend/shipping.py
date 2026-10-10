@@ -23,6 +23,7 @@ SHIPPED_BACKEND_MODULES = (
     "improvement_routes",
     "foxglove",
     "publication_reader",
+    "recording_cache",
     "canonical_mcap",
     "foxglove_cloud",
     "foxglove_routes",

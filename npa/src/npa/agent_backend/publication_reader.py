@@ -26,6 +26,10 @@ class PublicationConflict(RuntimeError):
 
     status_code = 409
 
+    def __init__(self, message: str, *, publication_state: str = "unavailable"):
+        super().__init__(message)
+        self.publication_state = publication_state
+
 
 @dataclass(frozen=True)
 class PublicationObject:
@@ -301,7 +305,8 @@ def resolve_committed_publication(
     payload = parse_publication_journal(payload_bytes, lock_uri=journal_uri)
     if payload["state"] != "committed":
         raise PublicationConflict(
-            f"publication generation is not committed: {journal_uri}"
+            f"publication generation is not committed: {journal_uri}",
+            publication_state="publishing",
         )
     objects: dict[str, PublicationObject] = {}
     for item in payload["objects"]:

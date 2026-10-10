@@ -13,8 +13,16 @@ from botocore.exceptions import ClientError
 
 try:
     from agent_backend.publication_reader import canonical_publication_uri
+    from agent_backend.recording_cache import (
+        retain_verified_recording,
+        release_verified_recording as release_verified_recording,
+    )
 except ModuleNotFoundError:
     from npa.agent_backend.publication_reader import canonical_publication_uri
+    from npa.agent_backend.recording_cache import (
+        retain_verified_recording,
+        release_verified_recording as release_verified_recording,
+    )
 
 if TYPE_CHECKING:
     from npa.workflows.artifacts import (
@@ -404,7 +412,9 @@ def _publication_snapshot_for_artifact(s3, run_bucket: str, artifact):
     return publication, publication.target(canonical_uri)
 
 
-def _verified_publication_artifact_body(s3, run_bucket: str, artifact):
+def _verified_publication_artifact_body(
+    s3, run_bucket: str, artifact, *, legacy_range=None
+):
     """Stage and verify the exact reserved bytes that the response will serve."""
 
     publication, target = _publication_snapshot_for_artifact(
@@ -423,13 +433,21 @@ def _verified_publication_artifact_body(s3, run_bucket: str, artifact):
     body = None
     staged = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024, mode="w+b")
     try:
+        range_args = {}
+        if legacy_range is not None:
+            range_args["Range"] = f"bytes={legacy_range[0]}-{legacy_range[1]}"
         response = _get_authorized_artifact_object(
             s3,
             Bucket=run_bucket,
             Key=str(artifact.key),
             **_artifact_read_conditions(artifact, required=not publication.journaled),
+            **range_args,
         )
         body = response["Body"]
+        if legacy_range is not None:
+            _validated_artifact_stream_length(
+                response, legacy_range, int(artifact.size), {}
+            )
         digest = hashlib.sha256()
         size = 0
         while True:
@@ -447,7 +465,12 @@ def _verified_publication_artifact_body(s3, run_bucket: str, artifact):
                 "committed publication object bytes disagree with its journal"
             )
         if not publication.journaled:
-            if size != int(artifact.size or 0):
+            expected_size = (
+                (legacy_range[1] - legacy_range[0] + 1)
+                if legacy_range
+                else int(artifact.size or 0)
+            )
+            if size != expected_size:
                 raise PublicationConflict(
                     "legacy publication alias changed after authorization"
                 )
@@ -463,6 +486,9 @@ def _verified_publication_artifact_body(s3, run_bucket: str, artifact):
                     "publication journal appeared during a legacy alias read"
                 )
         staged.seek(0)
+        # Range buffers start at zero, unlike complete journal-verified bodies.
+        if legacy_range is not None:
+            return staged, int(artifact.size), legacy_range[0]
         return staged, size
     except Exception:
         staged.close()
@@ -574,9 +600,9 @@ def _download_verified_viewer_artifact(
             _assert_viewer_download_matches_body(verified, digest.digest(), size)
         source = hashlib.sha256(f"{run_bucket}/{artifact.key}".encode()).hexdigest()
         suffix = Path(str(artifact.key)).suffix[:16]
-        verified_path = root / f"{source}-{digest.hexdigest()}{suffix}"
-        staged.replace(verified_path)
-        return verified_path
+        return retain_verified_recording(
+            staged, root, f"{source}-{digest.hexdigest()}{suffix}"
+        )
 
 
 def _artifact_file_stream(body, *, start: int = 0, length: int | None = None):
@@ -907,14 +933,17 @@ def _artifact_stream_response(
     range_value = str(request.headers.get("range") or "").strip()
     selected_range = _artifact_requested_range(range_value, context.total)
     try:
-        verified = _verified_publication_artifact_body(s3, run_bucket, artifact)
+        verified = _verified_publication_artifact_body(
+            s3, run_bucket, artifact, legacy_range=selected_range
+        )
     except PublicationConflict as exc:
         raise HTTPException(
             status_code=409,
             detail="the selected publication generation is not committed",
         ) from exc
     if verified is not None:
-        body, actual_total = verified
+        body, actual_total = verified[:2]
+        buffer_offset = verified[2] if len(verified) == 3 else 0
         if actual_total != context.total:
             body.close()
             raise HTTPException(
@@ -931,7 +960,7 @@ def _artifact_stream_response(
             context.headers["Content-Range"] = f"bytes {start}-{end}/{actual_total}"
         context.headers["Content-Length"] = str(length)
         return StreamingResponse(
-            _artifact_file_stream(body, start=start, length=length),
+            _artifact_file_stream(body, start=start - buffer_offset, length=length),
             status_code=status_code,
             media_type=context.content_type,
             headers=context.headers,
