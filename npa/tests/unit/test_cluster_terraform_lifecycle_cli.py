@@ -317,6 +317,11 @@ def test_legacy_rtx_provision_carries_exact_profile_to_terraform(
             platform,
             "--gpu-preset",
             preset,
+            # RTX graphics validation now rejects the quarantined tool default
+            # before Terraform. This legacy-argument test needs an explicit
+            # operator-controlled image to reach its Terraform boundary.
+            "--gpu-graphics-smoke-image",
+            "registry.example/graphics:operator",
         ],
     )
     profiles = [
