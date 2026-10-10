@@ -244,6 +244,10 @@ def _supported_service_account_profile(selected):
         "tenant-id",
     }
     required = ("service-account-id", "public-key-id", "private-key-file-path")
+    credential_file = "service-account-credentials-file-path"
+    if isinstance(selected, dict) and credential_file in selected:
+        fields = (fields - set(required)) | {credential_file}
+        required = (credential_file,)
     if not isinstance(selected, dict) or set(selected) - fields:
         return False
     if selected.get("auth-type") != "service account":
@@ -253,9 +257,9 @@ def _supported_service_account_profile(selected):
     if not all(selected.get(key) for key in required):
         return False
     for key in ("service-account-id", "public-key-id"):
-        if not re.fullmatch(r"[^/\s]+", selected[key]):
+        if key in selected and not re.fullmatch(r"[^/\s]+", selected[key]):
             return False
-    return Path(selected["private-key-file-path"]).is_absolute()
+    return Path(selected[required[-1]]).is_absolute()
 
 
 def _supported_metadata_token_profile(selected):
@@ -328,17 +332,60 @@ def _nebius_config_dir(environment, home):
     return Path(environment.get("NEBIUS_CONFIG_DIR") or home / ".nebius")
 
 
+def _service_account_json_material(selected):
+    path = Path(selected["service-account-credentials-file-path"])
+    contents = path.read_bytes()
+    document = json.loads(contents)
+    subject = (
+        document.get("subject-credentials") if isinstance(document, dict) else None
+    )
+    fields = {"type", "alg", "private-key", "kid", "iss", "sub"}
+    if (
+        not isinstance(document, dict)
+        or _strict_mapping(contents) != document
+        or set(document) != {"subject-credentials"}
+        or not isinstance(subject, dict)
+        or set(subject) != fields
+        or not all(isinstance(value, str) and value for value in subject.values())
+        or subject["type"] != "JWT"
+        or subject["alg"] != "RS256"
+        or subject["iss"] != subject["sub"]
+        or any(not re.fullmatch(r"[^/\s]+", subject[key]) for key in ("iss", "kid"))
+    ):
+        raise ValueError
+    return (
+        subject["iss"],
+        subject["kid"],
+        str(path),
+        contents,
+        subject["private-key"].encode(),
+    )
+
+
+def _service_account_material(selected):
+    if "service-account-credentials-file-path" in selected:
+        return _service_account_json_material(selected)
+    path = Path(selected["private-key-file-path"])
+    contents = path.read_bytes()
+    return (
+        selected["service-account-id"],
+        selected["public-key-id"],
+        str(path),
+        contents,
+        contents,
+    )
+
+
 def _service_account_key_binding(selection, provider_dir):
     from cryptography.exceptions import UnsupportedAlgorithm
     from cryptography.hazmat.primitives.serialization import load_pem_private_key
     from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 
     config_name, config_hash, profile, selected = selection
-    account = selected["service-account-id"]
-    public_key = selected["public-key-id"]
-    key_name = str(Path(selected["private-key-file-path"]))
     try:
-        key_bytes = Path(key_name).read_bytes()
+        account, public_key, key_name, contents, key_bytes = _service_account_material(
+            selected
+        )
         if not isinstance(
             load_pem_private_key(key_bytes, password=None), RSAPrivateKey
         ):
@@ -347,7 +394,7 @@ def _service_account_key_binding(selection, provider_dir):
         raise IsolatedApiError(
             "selected Nebius service account private key cannot be verified"
         ) from None
-    key_hash = hashlib.sha256(key_bytes).hexdigest()
+    key_hash = hashlib.sha256(contents).hexdigest()
     binding = json.dumps(
         [config_name, config_hash, profile, account, public_key, key_name, key_hash]
     )
@@ -413,7 +460,7 @@ def _selected_nebius_identity(
 def _nebius_service_account_identity(
     environment: Mapping[str, str], home: Path, execs: list[dict]
 ) -> dict[Path, str]:
-    """Bind one supported CLI RSA profile and its durable key; never fetch tokens.
+    """Bind one supported CLI RSA profile and its PEM or JSON key source.
 
     CLI --config/--profile override exec environment and default selection.
     CLI 0.12.254 ignores NEBIUS_CONFIG_DIR for this selection and keeps the

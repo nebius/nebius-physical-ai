@@ -19,6 +19,7 @@ lists other affected images and shipped workflows, including the Sim2Real seams.
 | --- | --- |
 | Choose a workload | [Robot and workflow guides](guides/README.md) · [workflow catalog](../../workflows/README.md) |
 | Run or resume a workflow manually | [Manual workflow operations](guides/manual-workflow-operations.md) |
+| Generate twelve PAIDF appearances from MP4 or real ALOHA data | [Manual twelve-profile recipe](guides/paidf-appearance-12.md) |
 | Submit episode batches and choose concurrency | [Dataset batches](guides/paidf-dataset-batches.md) · [capacity planning](guides/paidf-dataset-batches.md#concurrency-and-existing-capacity) |
 | Inspect supported quality reports | [Shared report inspection](insights-reports.md) |
 | Copy selected GCS/S3 inputs or outputs | [Scoped storage transfers](guides/scoped-storage-transfers.md) |
