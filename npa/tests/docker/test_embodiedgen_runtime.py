@@ -134,8 +134,14 @@ def test_runtime_bootstrap_pins_and_probes_validation_dependency_closure(
     assert "import spconv.pytorch" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
     assert "import tifffile" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
     assert "from io import BytesIO" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
-    assert "plyfile.PlyElement.describe(vertex, \"vertex\")" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
-    assert "plyfile.PlyData.read(ply_buffer)[\"vertex\"].count == 1" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
+    assert (
+        'plyfile.PlyElement.describe(vertex, "vertex")'
+        in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
+    )
+    assert (
+        'plyfile.PlyData.read(ply_buffer)["vertex"].count == 1'
+        in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
+    )
     assert 'assert scipy.__version__ == "1.14.1"' in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
     assert (
         'assert tifffile.__version__ == "2024.8.30"'
