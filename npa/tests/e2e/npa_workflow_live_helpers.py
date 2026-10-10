@@ -22,6 +22,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import math
 import os
 import re
 from pathlib import Path
@@ -226,6 +227,7 @@ __all__ = [
     "SPECS_DIR",
     "SUBMIT_LIVE_MATRIX",
     "SubmitLiveCase",
+    "assert_fastwam_k2_live_outputs",
     "assume_decision_for",
     "assert_cli_ok",
     "assert_no_credential_leakage",
@@ -326,6 +328,28 @@ def seed_live_workflow_inputs(
 
     marker = f"{_live_s3_root(run_id)}/{spec_name.replace('.yaml', '')}"
     client = s3_client_for_project(e2e_project, allow_host_creds=True)
+
+    if spec_name == "cosmos3-fastwam-k2-eval.yaml":
+        # This is a protocol request, not fabricated evaluation evidence. The
+        # five native workflow stages publish the only success/latency values.
+        client.put_object(
+            Bucket=bucket,
+            Key=f"{marker}/inputs/evaluation-request.json",
+            Body=json.dumps(
+                {
+                    "protocol": "screening",
+                    "tasks": ["RubiksCubesInBinTask", "StackYellowOnRedTask"],
+                    "num_episodes_adaptive": 200,
+                    "ci_pp_width": 0.14,
+                    "num_envs": 1,
+                    "instruction_type": "default",
+                    "video_mode": "sensor",
+                },
+                sort_keys=True,
+            ).encode(),
+            ContentType="application/json",
+        )
+        return
 
     if spec_name == "encord-roundtrip-smoke.yaml":
         client.put_object(
@@ -1837,6 +1861,211 @@ def assert_nurec_colmap_live_outputs(
         _assert_nurec_downstream_proof(
             local, recording_id=root.rstrip("/").split("/")[-1]
         )
+
+
+def _fastwam_k2_s3_json(client: Any, bucket: str, key: str) -> dict[str, Any]:
+    """Read one FastWAM-K2 JSON publication directly from the run bucket."""
+    with client.get_object(Bucket=bucket, Key=key)["Body"] as body:
+        return json.load(body)
+
+
+def _assert_fastwam_k2_bundle(
+    client: Any,
+    *,
+    bucket: str,
+    key: str,
+    schema: str,
+    body_name: str,
+    destination: Path,
+) -> tuple[dict[str, Any], dict[str, Path]]:
+    """Download and hash-check every artifact named by one final manifest."""
+    manifest = _fastwam_k2_s3_json(client, bucket, key)
+    assert manifest["schema"] == schema
+    assert manifest["status"] == "succeeded"
+    artifacts = manifest.get("artifacts")
+    assert isinstance(artifacts, list) and artifacts, (
+        "missing declared FastWAM-K2 artifacts"
+    )
+    names = [item.get("path") for item in artifacts]
+    assert len(names) == len(set(names)), "duplicate FastWAM-K2 artifact paths"
+    downloaded: dict[str, Path] = {}
+    for item in artifacts:
+        path = str(item.get("path") or "")
+        assert path and not path.startswith("/") and ".." not in Path(path).parts
+        target = destination / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        digest = hashlib.sha256()
+        size = 0
+        with client.get_object(Bucket=bucket, Key=key.rsplit("/", 1)[0] + "/" + path)[
+            "Body"
+        ] as body:
+            with target.open("wb") as stream:
+                for chunk in iter(lambda: body.read(8 * 1024 * 1024), b""):
+                    stream.write(chunk)
+                    digest.update(chunk)
+                    size += len(chunk)
+        assert size == item["bytes"], f"FastWAM-K2 artifact size differs: {path}"
+        assert digest.hexdigest() == item["sha256"], (
+            f"FastWAM-K2 artifact hash differs: {path}"
+        )
+        downloaded[path] = target
+    assert body_name in downloaded, f"missing FastWAM-K2 report body: {body_name}"
+    return manifest, downloaded
+
+
+def _assert_fastwam_k2_metrics(report: dict[str, Any]) -> None:
+    """Require genuine closed-loop task success and finite native latency."""
+    from npa.workbench.cosmos.fastwam_k2 import SCREENING_TASKS
+
+    assert report["screening_only"] is True
+    assert report["benchmark_claim"] is False
+    assert report["physical_robot_tested"] is False
+    topology = report["cuda_topology"]
+    assert topology["visible_cuda_device_count"] >= 1
+    assert topology["policy_server_cuda_visible_devices"] == "0"
+    assert topology["robolab_cuda_device"] in {"0", "1"}
+    assert topology["shared_cuda_device"] is (topology["robolab_cuda_device"] == "0")
+    metrics = report["metrics"]
+    assert set(metrics["tasks"]) == set(SCREENING_TASKS)
+    for task in SCREENING_TASKS:
+        task_metrics = metrics["tasks"][task]
+        assert task_metrics["episodes"] > 0
+        assert 0 <= task_metrics["successes"] <= task_metrics["episodes"]
+        assert 0.0 <= task_metrics["success_rate"] <= 1.0
+        assert math.isfinite(task_metrics["policy_inference_avg_ms"])
+        assert task_metrics["policy_inference_avg_ms"] >= 0.0
+        assert math.isfinite(task_metrics["policy_inference_median_ms"])
+        assert task_metrics["policy_inference_median_ms"] >= 0.0
+    overall = metrics["overall"]
+    assert overall["episodes"] > 0
+    assert math.isfinite(overall["policy_inference_avg_ms"])
+    assert overall["policy_inference_avg_ms"] >= 0.0
+
+
+def assert_fastwam_k2_live_outputs(
+    *, bucket: str, run_id: str, e2e_project: str | None = None
+) -> None:
+    """Independently verify reports, every declared artifact, RRD, and paired MP4s."""
+    import subprocess
+    import sys
+    import tempfile
+
+    from npa.clients.project_credentials import s3_client_for_project
+    from npa.viz.recordings import load_recording
+    from npa.workbench.cosmos.fastwam_k2 import (
+        COMPARISON_SCHEMA,
+        VARIANT_SCHEMA,
+        VISUALIZATION_SCHEMA,
+    )
+
+    root = f"{_live_s3_root(run_id)}/cosmos3-fastwam-k2-eval"
+    client = s3_client_for_project(e2e_project, allow_host_creds=True)
+    with tempfile.TemporaryDirectory(prefix="npa-fastwam-k2-readback-") as temporary:
+        local = Path(temporary)
+        full, full_files = _assert_fastwam_k2_bundle(
+            client,
+            bucket=bucket,
+            key=f"{root}/full-wam/full-wam.json",
+            schema=VARIANT_SCHEMA,
+            body_name="variant-result.json",
+            destination=local / "full-wam",
+        )
+        k2, k2_files = _assert_fastwam_k2_bundle(
+            client,
+            bucket=bucket,
+            key=f"{root}/fastwam-k2/fastwam-k2.json",
+            schema=VARIANT_SCHEMA,
+            body_name="variant-result.json",
+            destination=local / "fastwam-k2",
+        )
+        comparison, comparison_files = _assert_fastwam_k2_bundle(
+            client,
+            bucket=bucket,
+            key=f"{root}/comparison/comparison.json",
+            schema=COMPARISON_SCHEMA,
+            body_name="comparison-result.json",
+            destination=local / "comparison",
+        )
+        visualization, visualization_files = _assert_fastwam_k2_bundle(
+            client,
+            bucket=bucket,
+            key=f"{root}/visualization/visualization.json",
+            schema=VISUALIZATION_SCHEMA,
+            body_name="visualization-result.json",
+            destination=local / "visualization",
+        )
+
+        full_body = json.loads(full_files["variant-result.json"].read_text())
+        k2_body = json.loads(k2_files["variant-result.json"].read_text())
+        comparison_body = json.loads(
+            comparison_files["comparison-result.json"].read_text()
+        )
+        visualization_body = json.loads(
+            visualization_files["visualization-result.json"].read_text()
+        )
+        assert full_body["prepared_sha256"] == k2_body["prepared_sha256"]
+        assert comparison_body["prepared_sha256"] == full_body["prepared_sha256"]
+        assert visualization_body["prepared_sha256"] == full_body["prepared_sha256"]
+        assert full["variant"] == full_body["variant"] == "full-wam"
+        assert k2["variant"] == k2_body["variant"] == "fastwam-k2"
+        _assert_fastwam_k2_metrics(full_body)
+        _assert_fastwam_k2_metrics(k2_body)
+        contract = k2_body["serving_contract"]
+        assert contract["keep_generated_vision_frames"] == 2
+        assert contract["conditioning_latent_frames"] == 1
+        assert contract["denoised_generated_latent_frames"] == 2
+        assert contract["upstream_flag_absent"] is True
+        assert comparison_body["decision_basis"] == (
+            "closed-loop task success; open-loop errors are intentionally excluded"
+        )
+        assert comparison_body["benchmark_claim"] is False
+        assert comparison_body["physical_robot_tested"] is False
+        assert set(comparison_body["paired_task_metrics"]) == set(
+            full_body["metrics"]["tasks"]
+        )
+        assert visualization_body["rrd"] == "fastwam-k2-screening.rrd"
+        assert visualization_body["rrd_recording_id"] == run_id
+        assert visualization_body["rollout_mp4_count"] >= 2
+
+        rrd = visualization_files["fastwam-k2-screening.rrd"]
+        verify = subprocess.run(
+            [str(Path(sys.executable).with_name("rerun")), "rrd", "verify", str(rrd)],
+            capture_output=True,
+            check=False,
+        )
+        assert verify.returncode == 0, "Rerun rejected the FastWAM-K2 recording"
+        printed = subprocess.run(
+            [
+                str(Path(sys.executable).with_name("rerun")),
+                "rrd",
+                "print",
+                "-vv",
+                str(rrd),
+            ],
+            capture_output=True,
+            check=False,
+        )
+        assert printed.returncode == 0, (
+            "Rerun could not decode the FastWAM-K2 recording"
+        )
+        recording = load_recording(rrd)
+        assert recording.application_id() == "npa_cosmos3_fastwam_k2"
+        assert recording.recording_id() == run_id
+        assert list(recording.chunks()), "FastWAM-K2 recording has no decoded chunks"
+
+        videos = sorted(
+            path for name, path in visualization_files.items() if name.endswith(".mp4")
+        )
+        assert len(videos) == visualization_body["rollout_mp4_count"]
+        for video in (videos[0], videos[-1]):
+            probe = subprocess.run(
+                ["ffprobe", "-v", "error", "-show_format", "-show_streams", str(video)],
+                capture_output=True,
+                check=False,
+            )
+            assert probe.returncode == 0, (
+                f"ffprobe rejected published rollout: {video.name}"
+            )
 
 
 def materialize_live_spec(
