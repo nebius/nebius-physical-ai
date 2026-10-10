@@ -456,6 +456,11 @@ wrapper but deletes its wheel-bundled static executable and resolves video work
 through Ubuntu's dynamically packaged `/usr/bin/ffmpeg`. The built-image payload
 scanner fails if that bundled executable returns.
 
+The Isaac Lab 3 OSS closure pins PyJWT 2.14.0, the upstream fix for
+[CVE-2026-102268](https://github.com/jpadilla/pyjwt/security/advisories/GHSA-ffc3-869f-jxw9).
+Dependency-lock changes create a new bootstrap cache stamp. Verify `expected_tree`
+with the selected image before using an existing cache in offline mode.
+
 `pypi.nvidia.com` serves these wheels **anonymously**. The shared bootstrap checks
 the operator's acceptance before fetching the runtime closure; this does not
 change the Lab wheel's BSD license or the separate Sim/runtime terms. NVIDIA
