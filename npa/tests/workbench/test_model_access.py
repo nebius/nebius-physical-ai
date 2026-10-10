@@ -673,3 +673,8 @@ def test_known_public_nvidia_defaults_are_not_marked_gated() -> None:
         "nvidia/PhysicalAI-NuRec-PPISP",
     }:
         assert repo not in gated, f"{repo} should be marked gated=False"
+
+
+def test_sim2real_access_excludes_unrelated_pusht_dataset():
+    assert "lerobot/pusht" not in [asset.repo for asset in assets_for(["sim2real"])]
+    assert "lerobot/pusht" in [asset.repo for asset in assets_for(["lerobot"])]

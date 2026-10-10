@@ -9,7 +9,8 @@ Use the one canonical spec:
 
 `workflows/main/sim2real.yaml`
 
-It is `npa.workflow/v0.0.1`. Always use `npa workbench workflow ... --runtime`;
+It is `npa.workflow/v0.0.1` and declares `executionMode: runtime`. Use
+`npa workbench workflow ... --runtime`;
 there is no direct-Kubernetes Sim2Real submit path. The old materializer and
 `k8s_submit` implementation have been removed; the retained CLI command exits
 with an actionable migration to this canonical spec.
@@ -17,18 +18,16 @@ with an actionable migration to this canonical spec.
 ## Preflight
 
 1. Validate tenant/project/region, bucket, registry, Kubernetes context, Ready
-   RT-core nodes, bounded GPU concurrency, and the read-only Isaac cache PVC.
+   RT-core nodes, GPU concurrency that fits actual capacity, and the read-only Isaac cache PVC.
 2. Require registry-qualified immutable digests for controller, Transfer,
-   EnvGen, Reason, Isaac, and viewer images. Confirm each image attests the exact
+   EnvGen, Isaac, and viewer images. Confirm each image attests the exact
    source SHA; never use source overlays or best-effort bootstrap.
-   The checked-in public resolver fails closed while any Sim2Real component is
-   publication-quarantined. In particular, stale Genesis, LeRobot, Isaac Lab,
-   VLM-RL, loop-eval, and reference-policy releases cannot be made runnable by
-   naming their old public tags. Until repaired releases are accepted, pass one
-   independently scanned immutable digest per affected toolRef with repeated
-   `--image-override TOOL_REF=IMAGE@sha256:DIGEST`, then run
-   `preflight-images` against the exact same override set. A default-resolution
-   failure is expected policy enforcement, not a registry outage.
+   Supply the five canonical image config variables and their common
+   `source_sha`. The historical September 4 bundle predates MiniMax/v5 and
+   concurrent receipt support; select a newly qualified coherent set. Legacy
+   Genesis, LeRobot VLM-RL, and reference-policy images are not stages in this
+   graph. Stage 8 calls Token Factory from the controller image; it needs no
+   separate Reason image or GPU service.
 3. Validate the task-aligned seed manifest, HF/NGC access, S3 read/write, image
    pulls, and primary/side/overhead capture before a full run.
    Inspect the primary frames selected for hosted evaluation for object and
@@ -51,7 +50,7 @@ with an actionable migration to this canonical spec.
    and regenerate the invalid rollouts rather than replaying them as complete.
    Hosted Stage 8 must bind each action to selected primary-frame metadata by
    exact `sim_step`. Sample order and a final context frame are not action
-   timestamps. The v4 evaluator contract requires null camera references, zero
+   timestamps. The v5 evaluator contract requires null camera references, zero
    confidence, neutral tags, and explicit insufficient evidence for unsampled
    actions. Stage 9 must reject older or inconsistent bindings before PPO; do not
    rewrite archived critiques to attach a different frame. Unsupported visual
@@ -60,6 +59,12 @@ with an actionable migration to this canonical spec.
    `prefixItems` entry per action, fixed step/camera fields, and neutral values
    for unsupported events. Verify actual endpoint schema support with real
    rollout input; retain strict parser rejection and never repair model output.
+   Default `evaluation_max_frames=0` sends every declared primary frame;
+   positive values retain deterministic sampling and neutral unsupported
+   actions. `evaluation_concurrency` defaults to 8 and must be positive.
+   Verified per-rollout S3 receipts bind source, endpoint, model, threshold,
+   actions, frame metadata, and frame bytes. Resume reuses only exact matches;
+   malformed receipts or storage denial fail before another paid request.
    Transfer seed frames must use one strict numbered family: canonical
    `camera-<N>.png`, or the seeder-compatible fallback `frame-<N>.png` when no
    camera family exists. Unrelated PNG objects are never admitted as frames.
@@ -75,6 +80,12 @@ with an actionable migration to this canonical spec.
    on the same canonical file.
 
 ## Submit and resume
+
+Compute-only Transfer and EnvGen stages may select `B200:1` through
+`transfer_accelerator` and `envgen_accelerator`. Isaac stages stay on
+`RTXPRO6000:1`. Use available reserved capacity first; an operator-authorized
+preemptible pool is a placement fallback. Set `gpu_concurrency` to the actual
+schedulable GPU count before planning.
 
 Before provisioning or submitting an Isaac state, load
 `skills/atomic/third-party-eula-preflight/SKILL.md`. Isaac acceptance defaults on

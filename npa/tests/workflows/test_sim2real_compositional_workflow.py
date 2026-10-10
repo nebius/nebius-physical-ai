@@ -117,7 +117,7 @@ def test_stage8_scores_every_rollout_once_with_hosted_cosmos3(
     work = tmp_path / "stage8"
     work.mkdir()
 
-    class Store:
+    class Store(_EvaluationStore):
         def download_directory(self, _source, destination):
             destination = Path(destination)
             for index in range(2):
@@ -158,24 +158,11 @@ def test_stage8_scores_every_rollout_once_with_hosted_cosmos3(
     def evaluate(**kwargs):
         calls.append(kwargs["rollout_id"])
         assert kwargs["frame_metadata"][0]["episode_id"] == kwargs["rollout_id"]
-        return {
-            "schema": "npa.sim2real.vlm_eval.v5",
-            "rollout_id": kwargs["rollout_id"],
-            "model": kwargs["model_id"],
-            "provider": "nebius",
-            "backend": "token_factory",
-            "action_count": 1,
-            "per_step": [{"step": 0}],
-            "request": {
-                "request_id": f"request-{len(calls)}",
-                "input_tokens": 10,
-                "output_tokens": 5,
-                "total_tokens": 15,
-                "latency_seconds": 0.25,
-                "retries": 0,
-                "cost_usd": None,
-            },
-        }
+        result = _stage9_replay_fixture()[2]
+        result["rollout_id"] = kwargs["rollout_id"]
+        result["model"] = kwargs["model_id"]
+        result["selected_frame_metadata"][0]["episode_id"] = kwargs["rollout_id"]
+        return result
 
     writes = []
     records = []
@@ -185,7 +172,10 @@ def test_stage8_scores_every_rollout_once_with_hosted_cosmos3(
     monkeypatch.setattr(
         stage8_cosmos3,
         "image_provenance",
-        lambda **kwargs: {"gpu_required": kwargs["require_gpu"]},
+        lambda **kwargs: {
+            "gpu_required": kwargs["require_gpu"],
+            "source_sha": "a" * 40,
+        },
     )
     monkeypatch.setattr(
         stage8_cosmos3,
@@ -205,6 +195,8 @@ def test_stage8_scores_every_rollout_once_with_hosted_cosmos3(
             inner_iteration=1,
             reason_model=model,
             threshold=0.5,
+            evaluation_concurrency=1,
+            evaluation_max_frames=0,
         )
     )
 
@@ -1215,3 +1207,183 @@ def _no_reset_boundary():
         "action_outcome_valid": True,
         "temporal_credit_valid": True,
     }
+
+
+class _EvaluationStore:
+    def __init__(self):
+        self.objects = {}
+
+    def download_file(self, uri, destination):
+        from botocore.exceptions import ClientError
+
+        if uri not in self.objects:
+            raise ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
+        Path(destination).write_text(self.objects[uri])
+
+    def upload_file(self, source, uri):
+        self.objects[uri] = Path(source).read_text()
+
+
+def _hosted_inputs(tmp_path, count=2):
+    paths = []
+    sample = _stage9_replay_fixture()[2]
+    for index in range(count):
+        directory = tmp_path / f"rollout-{index:04d}"
+        directory.mkdir()
+        (directory / "camera-000.png").write_bytes(b"public-test-frame")
+        path = directory / "manifest.json"
+        metadata = [
+            dict(sample["selected_frame_metadata"][0], episode_id=directory.name)
+        ]
+        path.write_text(
+            json.dumps(
+                {
+                    "rollout_id": directory.name,
+                    "camera_observations": ["camera-000.png"],
+                    "camera_frame_metadata": {"primary": metadata},
+                    "actions": [
+                        {
+                            "step": 0,
+                            "sim_step": 0,
+                            "action": [0.0],
+                            "episode_boundary": _no_reset_boundary(),
+                        }
+                    ],
+                    "task_description": "Lift the cube.",
+                }
+            )
+        )
+        paths.append(path)
+    return paths
+
+
+def _hosted_result(request):
+    result = _stage9_replay_fixture()[2]
+    result["rollout_id"] = request["rollout_id"]
+    result["model"] = request["model_id"]
+    result["selected_frame_metadata"][0]["episode_id"] = request["rollout_id"]
+    return result
+
+
+def _evaluate_saved(paths, store, **settings):
+    from npa.workflows.sim2real.hosted_evaluation import evaluate_rollouts
+
+    return evaluate_rollouts(
+        paths,
+        store=store,
+        prefix="s3://unit/run/evaluator",
+        model="MiniMaxAI/MiniMax-M3",
+        threshold=0.5,
+        source_sha="a" * 40,
+        concurrency=2,
+        max_frames=settings.get("max_frames", 0),
+    )
+
+
+def test_hosted_evaluation_concurrency_and_replay(monkeypatch, tmp_path):
+    from threading import Barrier
+    from npa.workbench.cosmos import reason
+
+    paths = _hosted_inputs(tmp_path)
+    store = _EvaluationStore()
+    barrier = Barrier(2)
+    calls = []
+
+    def evaluate(**request):
+        calls.append(request["rollout_id"])
+        assert request["max_frames"] == 1
+        barrier.wait(timeout=5)
+        return _hosted_result(request)
+
+    monkeypatch.setattr(reason, "run_token_factory_rollout_vlm", evaluate)
+    first, reused = _evaluate_saved(paths, store)
+    assert reused == 0 and len(calls) == 2
+    second, reused = _evaluate_saved(paths, store)
+    assert reused == 2 and second == first and len(calls) == 2
+    assert [row["rollout_id"] for row in first] == [path.parent.name for path in paths]
+
+
+def test_hosted_evaluation_resumes_only_incomplete_rollouts(monkeypatch, tmp_path):
+    from npa.workbench.cosmos import reason
+
+    paths = _hosted_inputs(tmp_path)
+    store = _EvaluationStore()
+    calls = []
+
+    def evaluate(**request):
+        calls.append(request["rollout_id"])
+        if request["rollout_id"].endswith("0001") and len(calls) <= 2:
+            raise RuntimeError("provider unavailable")
+        return _hosted_result(request)
+
+    monkeypatch.setattr(reason, "run_token_factory_rollout_vlm", evaluate)
+    with pytest.raises(RuntimeError, match="provider unavailable"):
+        _evaluate_saved(paths, store)
+    assert len(store.objects) == 1
+    results, reused = _evaluate_saved(paths, store)
+    assert len(results) == 2 and reused == 1
+    assert calls.count("rollout-0000") == 1 and calls.count("rollout-0001") == 2
+
+
+@pytest.mark.parametrize(
+    "changed", ["frame", "actions", "model", "threshold", "source", "endpoint"]
+)
+def test_hosted_evaluation_identity_binds_actual_inputs(monkeypatch, tmp_path, changed):
+    from npa.workflows.sim2real.hosted_evaluation import _input_identity, _rollout_input
+
+    path = _hosted_inputs(tmp_path, count=1)[0]
+    request = _rollout_input(path, "MiniMaxAI/MiniMax-M3", 0.5, 0)
+    original = _input_identity(request, "a" * 40)
+    source = "a" * 40
+    if changed == "frame":
+        (path.parent / "camera-000.png").write_bytes(b"different-frame")
+    elif changed == "actions":
+        request["actions"][0]["action"] = [1.0]
+    elif changed == "model":
+        request["model_id"] = "nvidia/Cosmos3-Super-Reasoner"
+    elif changed == "threshold":
+        request["threshold"] = 0.75
+    elif changed == "source":
+        source = "b" * 40
+    else:
+        monkeypatch.setenv("NEBIUS_TOKEN_FACTORY_BASE_URL", "https://example.com/v1")
+    assert _input_identity(request, source) != original
+
+
+def test_hosted_evaluation_rejects_corrupt_receipts(monkeypatch, tmp_path):
+    from npa.workbench.cosmos import reason
+
+    paths = _hosted_inputs(tmp_path, count=1)
+    store = _EvaluationStore()
+    monkeypatch.setattr(
+        reason,
+        "run_token_factory_rollout_vlm",
+        lambda **request: _hosted_result(request),
+    )
+    _evaluate_saved(paths, store)
+    uri = next(iter(store.objects))
+    receipt = json.loads(store.objects[uri])
+    receipt["evaluation"]["score"] = 1.0
+    store.objects[uri] = json.dumps(receipt)
+    with pytest.raises(RuntimeError, match="digest differs"):
+        _evaluate_saved(paths, store)
+
+
+def test_hosted_evaluation_does_not_retry_authorization_failures(monkeypatch, tmp_path):
+    from botocore.exceptions import ClientError
+    from npa.workbench.cosmos import reason
+
+    paths = _hosted_inputs(tmp_path, count=1)
+    store = _EvaluationStore()
+
+    def denied(*args):
+        raise ClientError({"Error": {"Code": "AccessDenied"}}, "GetObject")
+
+    monkeypatch.setattr(store, "download_file", denied)
+    monkeypatch.setattr(
+        reason,
+        "run_token_factory_rollout_vlm",
+        lambda **request: pytest.fail("inference must not run"),
+    )
+    with pytest.raises(ClientError, match="AccessDenied"):
+        _evaluate_saved(paths, store)

@@ -2084,6 +2084,87 @@ def test_down_terminalizes_pre_mutation_operation_without_provider_calls(
     assert not (tf_dir / ".terraform").exists()
 
 
+@pytest.fixture
+def failed_cluster_inventory(monkeypatch, tmp_path):
+    from npa.provisioning_journal import ProvisioningOperation
+
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    directory = tmp_path / "cluster"
+    directory.mkdir()
+    operation = ProvisioningOperation.prepare(
+        command="npa cluster up",
+        project_alias="demo",
+        project_id="project-demo",
+        tenant_id="tenant-demo",
+        region="eu-test1",
+        backend={"kind": "local-state", "terraform_dir": str(directory)},
+        resource_type="cluster",
+        requested_name="failed-cluster",
+        ownership_source="cluster-terraform",
+        resume_command="npa cluster up --project demo --context failed-cluster",
+        destroy_command="npa cluster down --project demo --context failed-cluster --force",
+    )
+    operation.transition("mutating")
+    operation.record_resource(
+        resource_type="managed_kubernetes_cluster",
+        requested_name="failed-cluster",
+        provider_id="cluster-owned",
+        project_id="project-demo",
+        ownership="created_by_this_operation",
+        ownership_source="provider-create",
+    )
+    operation.transition("recovery-required")
+    monkeypatch.setattr(tf_mod, "_clear_local_cluster_state", lambda _context: None)
+    return directory, operation
+
+
+def _inventory_cleanup_args(directory, operation):
+    return [
+        "down",
+        "--terraform-dir",
+        str(directory),
+        "--project-id",
+        "project-demo",
+        "--tenant-id",
+        "tenant-demo",
+        "--region",
+        "eu-test1",
+        "--context",
+        "failed-cluster",
+        "--cluster-id",
+        "cluster-owned",
+        "--operation-id",
+        operation.operation_id,
+        "--force",
+        "--json",
+    ]
+
+
+@pytest.mark.parametrize("deletion_fails", [False, True])
+def test_inventory_cleanup_closes_journal_only_after_verified_deletion(
+    mocker,
+    failed_cluster_inventory,
+    deletion_fails,
+):
+    directory, operation = failed_cluster_inventory
+    client = mocker.patch("npa.cluster.api.MK8sClient").return_value
+    if deletion_fails:
+        client.delete_cluster.side_effect = RuntimeError("provider unavailable")
+    result = runner.invoke(app, _inventory_cleanup_args(directory, operation))
+    assert result.exit_code == (2 if deletion_fails else 0), result.output
+    assert operation.read()["phase"] == (
+        "recovery-required" if deletion_fails else "destroyed"
+    )
+    client.delete_cluster.assert_called_once_with(
+        "cluster-owned", project_id="project-demo"
+    )
+    if deletion_fails:
+        client.wait_for_deleted.assert_not_called()
+    else:
+        client.wait_for_deleted.assert_called_once()
+        assert json.loads(result.output)["verified"] is True
+
+
 def test_down_checksum_mismatch_is_actionable_and_keeps_lock_immutable(
     monkeypatch, tmp_path: Path
 ) -> None:

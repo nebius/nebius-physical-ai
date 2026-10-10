@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -48,62 +47,8 @@ def _aggregate_usage(results: list[dict[str, Any]], *, model: str) -> dict[str, 
     }
 
 
-def run(args: argparse.Namespace) -> None:
-    """Score every Stage 7 rollout and publish the Stage 8 barrier record."""
-
-    from npa.workbench.cosmos.reason import (
-        hosted_rollout_model_family,
-        run_token_factory_rollout_vlm,
-        task_description_from_manifest,
-    )
-
+def _publish(args: argparse.Namespace, payload: dict[str, Any], work: Path) -> None:
     root = str(args.root_uri).rstrip("/")
-    family = hosted_rollout_model_family(args.reason_model)
-    work = Path(tempfile.mkdtemp(prefix="npa-s2r-stage-08-"))
-    source = (
-        f"{root}/actions/train/outer-{args.outer_iteration:02d}/"
-        f"iter-{args.inner_iteration:02d}/"
-    )
-    actions = work / "actions"
-    storage().download_directory(source, str(actions))
-    results: list[dict[str, Any]] = []
-    for manifest_path in sorted(actions.glob("rollout-*/manifest.json")):
-        manifest = json.loads(manifest_path.read_text())
-        observations = list(manifest.get("camera_observations") or [])
-        frames = [manifest_path.parent / str(name) for name in observations]
-        if not frames or any(not path.is_file() for path in frames):
-            raise RuntimeError("Stage 8 requires every declared primary rollout frame")
-        results.append(
-            run_token_factory_rollout_vlm(
-                model_id=args.reason_model,
-                image_paths=frames,
-                frame_metadata=(manifest.get("camera_frame_metadata") or {}).get(
-                    "primary"
-                ),
-                actions=list(manifest.get("actions") or []),
-                task_description=task_description_from_manifest(manifest),
-                rollout_id=str(manifest.get("rollout_id") or manifest_path.parent.name),
-                threshold=args.threshold,
-            )
-        )
-    if not results:
-        raise RuntimeError("Stage 8 found no real Stage 7 rollouts")
-    rollout_ids = [str(item["rollout_id"]) for item in results]
-    if len(set(rollout_ids)) != len(rollout_ids):
-        raise RuntimeError("Stage 8 found duplicate Stage 7 rollout identities")
-    evaluator_usage = _aggregate_usage(results, model=args.reason_model)
-    payload = {
-        "schema": "npa.sim2real.cosmos3_evaluator.v1",
-        "evaluator": "cosmos3",
-        "model": args.reason_model,
-        "reason_family": family,
-        "provider": "nebius",
-        "backend": "token_factory",
-        "evaluations": results,
-        "source_rollout_ids": rollout_ids,
-        "evaluator_usage": evaluator_usage,
-        "provenance": image_provenance(require_gpu=False),
-    }
     output_uri = (
         f"{root}/vlm_eval/train/outer-{args.outer_iteration:02d}/"
         f"iter-{args.inner_iteration:02d}/cosmos3.json"
@@ -120,14 +65,77 @@ def run(args: argparse.Namespace) -> None:
         artifacts={
             "result": output_uri,
             "model": args.reason_model,
-            "reason_family": family,
-            "provider": evaluator_usage["provider"],
+            "reason_family": payload["reason_family"],
+            "provider": "nebius",
             "backend": "token_factory",
-            "evaluator_usage": evaluator_usage,
-            "rollout_count": len(results),
+            "evaluator_usage": payload["evaluator_usage"],
+            "rollout_count": len(payload["evaluations"]),
             "outer_iteration": args.outer_iteration,
             "inner_iteration": args.inner_iteration,
+            "evaluation_execution": payload["evaluation_execution"],
         },
         require_gpu=False,
         execution_provenance=payload["provenance"],
     )
+
+
+def _result_payload(args, results, reused, provenance) -> dict[str, Any]:
+    from npa.workbench.cosmos.reason import hosted_rollout_model_family
+
+    return {
+        "schema": "npa.sim2real.cosmos3_evaluator.v1",
+        "evaluator": "cosmos3",
+        "model": args.reason_model,
+        "reason_family": hosted_rollout_model_family(args.reason_model),
+        "provider": "nebius",
+        "backend": "token_factory",
+        "evaluations": results,
+        "source_rollout_ids": [str(item["rollout_id"]) for item in results],
+        "evaluator_usage": _aggregate_usage(results, model=args.reason_model),
+        "provenance": provenance,
+        "evaluation_execution": {
+            "concurrency": args.evaluation_concurrency,
+            "max_frames": args.evaluation_max_frames,
+            "reused_rollouts": reused,
+            "new_requests": len(results) - reused,
+        },
+    }
+
+
+def run(args: argparse.Namespace) -> None:
+    """Score every rollout with durable receipts, then publish the Stage 8 barrier.
+
+    Args:
+        args: Stage configuration parsed by the canonical workflow adapter.
+    Returns:
+        None.
+    Raises:
+        RuntimeError: No complete rollout set or invalid evaluation evidence.
+        ValueError: Invalid evaluation settings or duplicate rollout identities.
+    """
+    from npa.workbench.cosmos.reason import hosted_rollout_model_family
+    from npa.workflows.sim2real.hosted_evaluation import evaluate_rollouts
+
+    root = str(args.root_uri).rstrip("/")
+    hosted_rollout_model_family(args.reason_model)
+    work = Path(tempfile.mkdtemp(prefix="npa-s2r-stage-08-"))
+    iteration = f"outer-{args.outer_iteration:02d}/iter-{args.inner_iteration:02d}"
+    actions = work / "actions"
+    store = storage()
+    store.download_directory(f"{root}/actions/train/{iteration}/", str(actions))
+    paths = sorted(actions.glob("rollout-*/manifest.json"))
+    if not paths:
+        raise RuntimeError("Stage 8 found no real Stage 7 rollouts")
+    provenance = image_provenance(require_gpu=False)
+    results, reused = evaluate_rollouts(
+        paths,
+        store=store,
+        prefix=f"{root}/vlm_eval/train/{iteration}",
+        model=args.reason_model,
+        threshold=args.threshold,
+        source_sha=provenance["source_sha"],
+        concurrency=args.evaluation_concurrency,
+        max_frames=args.evaluation_max_frames,
+    )
+    payload = _result_payload(args, results, reused, provenance)
+    _publish(args, payload, work)

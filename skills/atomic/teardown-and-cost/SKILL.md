@@ -32,6 +32,11 @@ there is no reason to skip it. `cleanup-controller` refuses while managed jobs
 are in progress and retries that specific refusal after the queue drains; treat
 the refusal as correct, not as something to force.
 
+When `cluster down --operation-id` deletes an exact recovered provider inventory,
+successful verification closes that provisioning journal as `destroyed`. This
+releases the project's lifecycle claim for a replacement deployment. Provider
+errors preserve the nonterminal journal; resolve them before retrying provision.
+
 If exact queue evidence says a recorded non-terminal job is absent, standalone
 workflow cancellation stays non-terminal and exits 2; stale durable state is not
 rewritten as success. An explicit `npa destroy --all --yes` transaction may

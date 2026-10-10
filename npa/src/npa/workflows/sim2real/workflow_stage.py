@@ -964,6 +964,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--rollout-count", type=int, default=1)
     parser.add_argument("--steps-per-rollout", type=int, default=32)
     parser.add_argument("--reason-model", default=DEFAULT_COSMOS3_MODEL)
+    parser.add_argument("--evaluation-concurrency", type=int, default=8)
+    parser.add_argument("--evaluation-max-frames", type=int, default=0)
     parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument("--ppo-num-envs", type=int, default=64)
     parser.add_argument("--ppo-iterations", type=int, default=10)

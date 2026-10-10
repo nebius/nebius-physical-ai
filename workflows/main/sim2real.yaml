@@ -7,6 +7,7 @@ kind: Workflow
 # for execution; the stage adapters fail closed otherwise.
 metadata:
   name: sim2real
+  executionMode: runtime
   description: >
     Compositional 14-stage Sim2Real workflow: validate a task-aligned trigger,
     consume the Isaac task contract, run Cosmos Transfer, parallel EnvGen,
@@ -74,6 +75,13 @@ config:
   # select nvidia/Cosmos3-Super-Reasoner explicitly on an endpoint serving it.
   # Forward a custom endpoint with --secret-env NEBIUS_TOKEN_FACTORY_BASE_URL.
   cosmos3_model: MiniMaxAI/MiniMax-M3
+  # Parallel hosted requests; each worker retains its own transport accounting.
+  evaluation_concurrency: "8"
+  # Zero sends every primary frame. Positive values select a deterministic sample.
+  evaluation_max_frames: "0"
+  # Compute-only stages may use B200; Isaac rendering stays on RTX PRO 6000.
+  transfer_accelerator: RTXPRO6000:1
+  envgen_accelerator: RTXPRO6000:1
 
   # Required live inputs. The controller image is the purpose-built CPU-only
   # stage adapter, never a Genesis/trainer runtime. Empty defaults keep this
@@ -95,7 +103,7 @@ resources:
     image: "{{config.controller_image}}"
   transfer-gpu:
     cloud: kubernetes
-    accelerators: RTXPRO6000:1
+    accelerators: "{{config.transfer_accelerator}}"
     cpus: 16
     memory: 128Gi
     image: "{{config.transfer_image}}"
@@ -115,7 +123,7 @@ resources:
                   value: /tmp/npa-skypilot-xdg-cache
   envgen-gpu:
     cloud: kubernetes
-    accelerators: RTXPRO6000:1
+    accelerators: "{{config.envgen_accelerator}}"
     cpus: 8
     memory: 32Gi
     image: "{{config.envgen_image}}"
@@ -341,7 +349,7 @@ states:
     resources: stage8-cpu
     params: {outer_iteration: "{{loop.outer-loop}}", inner_iteration: "{{loop.inner-loop}}"}
     run:
-      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "8", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --outer-iteration, "{{config.outer_iteration}}", --inner-iteration, "{{config.inner_iteration}}", --reason-model, "{{config.cosmos3_model}}", --threshold, "{{config.threshold}}"]
+      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "8", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --outer-iteration, "{{config.outer_iteration}}", --inner-iteration, "{{config.inner_iteration}}", --reason-model, "{{config.cosmos3_model}}", --threshold, "{{config.threshold}}", --evaluation-concurrency, "{{config.evaluation_concurrency}}", --evaluation-max-frames, "{{config.evaluation_max_frames}}"]
     outputs:
       - {uri: "{{config.root_uri}}/vlm_eval/train/outer-{{loop.outer-loop}}/iter-{{loop.inner-loop}}/cosmos3.json", schema: npa.sim2real.cosmos3_evaluator.v1}
       - {uri: "{{config.root_uri}}/components/stage_08.json", schema: npa.sim2real.component_record.v1}

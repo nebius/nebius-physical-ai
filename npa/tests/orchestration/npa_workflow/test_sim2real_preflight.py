@@ -476,3 +476,14 @@ def test_malformed_node_identity_is_reported_without_traceback(broken):
         {}, runner=lambda _: SimpleNamespace(returncode=0, stdout=json.dumps(payload))
     )
     assert any("placement could not be verified" in issue for issue, _ in issues)
+
+
+@pytest.mark.parametrize(
+    "concurrency,frames", [(0, 0), (-1, 8), (8, -1), ("invalid", 0)]
+)
+def test_hosted_evaluation_settings_refuse_before_launch(concurrency, frames):
+    from npa.orchestration.npa_workflow.sim2real_preflight import _evaluation_issues
+
+    assert _evaluation_issues(
+        {"evaluation_concurrency": concurrency, "evaluation_max_frames": frames}
+    )

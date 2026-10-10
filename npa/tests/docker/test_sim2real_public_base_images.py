@@ -159,13 +159,29 @@ def test_genesis_workflow_runtime_upgrades_fixed_kernel_headers() -> None:
     assert 'linux_libc_dev_version="5.15.0-190.200"' in installer
     assert 'linux_libc_dev_version="6.8.0-139.139"' in installer
     assert '"linux-libc-dev=${linux_libc_dev_version}"' in installer
-    for relative in (
-        "sim2real-envgen/Dockerfile",
-        "sim2real-eval/Dockerfile",
+    for relative, snapshot in (
+        ("sim2real-envgen/Dockerfile", "20261009T000000Z"),
+        ("sim2real-eval/Dockerfile", "20260820T000000Z"),
     ):
         text = (WORKBENCH / relative).read_text(encoding="utf-8")
-        assert "ARG UBUNTU_SNAPSHOT=20260820T000000Z" in text, relative
+        assert f"ARG UBUNTU_SNAPSHOT={snapshot}" in text, relative
         assert "configure_ubuntu_snapshot.sh" in text, relative
+
+
+def test_canonical_sim2real_images_exclude_fixed_critical_dependencies():
+    envgen = (WORKBENCH / "sim2real-envgen/Dockerfile").read_text()
+    pin = re.search(
+        r"^ARG ENVGEN_LINUX_LIBC_DEV_VERSION=(5\.15\.0-\d+\.\d+)$",
+        envgen,
+        re.MULTILINE,
+    )
+    assert pin
+    header_components = tuple(int(part) for part in re.split(r"[.-]", pin.group(1)))
+    assert header_components >= (5, 15, 0, 198, 208)
+    assert '"${UBUNTU_SNAPSHOT}" "${ENVGEN_LINUX_LIBC_DEV_VERSION}"' in envgen
+    isaac = (WORKBENCH / "common/isaac3-oss-deps.txt").read_text()
+    pin = re.search(r"^pyjwt==(\S+)$", isaac, re.MULTILINE)
+    assert pin and Version(pin.group(1)) >= Version("2.14.0")
 
 
 def test_genesis_workflow_images_replace_vulnerable_parent_gitpython() -> None:

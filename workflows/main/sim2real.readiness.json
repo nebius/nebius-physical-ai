@@ -1,10 +1,10 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "c0955cab0fa374734c5dedc50ecb49af7fac9e177db11494ed274c89a0271510",
+  "workflow_sha256": "76b7e4c9dbb3a52f66957affdf22f783bc8097e451682bcb9083bd5bfb6385c6",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "Canonical YAML schema validation and all 111 compositional workflow tests passed.",
+      "reason": "Canonical YAML schema validation, wave planning, and compositional workflow tests verify the runtime and concurrent evaluator configuration.",
       "evidence": [
         "npa workbench workflow validate-spec workflows/main/sim2real.yaml --json",
         "npa/tests/workflows/test_sim2real_compositional_workflow.py"
@@ -36,7 +36,7 @@
     },
     "source_image": {
       "status": "unverified",
-      "reason": "New PR image builds still require coherent five-image release qualification; existing immutable images were used for the private run.",
+      "reason": "The historical September bundle predates MiniMax/v5 and durable concurrent scoring. A newly built coherent five-image set must pass the baked evaluator probe and target runtime qualification.",
       "evidence": []
     },
     "target_runtime": {

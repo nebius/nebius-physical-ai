@@ -8,6 +8,15 @@ Complete the gates in order. A production submit repeats the decisive S3,
 model-access, cluster-object, immutable-image, and image-pull checks before it
 creates a run or launches work.
 
+The YAML selects the durable runtime automatically. For the stock Franka task,
+use the `public-franka-lift` preset and stage it with `workflow trigger
+stage-preset`; customer assets are optional for this preset. The run needs one
+coherent five-image set, project-scoped S3, an RTX PRO 6000 pool, a CPU node,
+and the warmed Isaac cache described below. A successful software run covers
+13 working stages and the explicit external-validation seam. Policy success
+still requires the untouched gold split to meet the strict 5 cm placement
+metric; Stage 12 does not prove deployment on a physical robot.
+
 ## 1. Accept the exact third-party terms
 
 The canonical runtime downloads one gated checkpoint under the operator's
@@ -32,6 +41,20 @@ The hosted endpoint must support the ordered JSON Schema response contract:
 each generated event has a fixed action index and recorded camera reference,
 including explicit neutral values for unsampled actions. Validate this with
 real rollout frames before a full run; invalid responses remain rejected.
+
+Stage 8 defaults to eight concurrent requests and all declared primary frames:
+`evaluation_concurrency=8`, `evaluation_max_frames=0`. The former eight-frame
+sample left many action times without visual evidence. A positive frame count
+still selects a deterministic sample and preserves neutral labels for actions
+without evidence. Keep capture visibility checks even with full frame coverage.
+
+Each completed rollout evaluation is published, read back, and validated in
+an iteration-scoped S3 receipt before the Stage 8 barrier is published. Receipts
+bind the image source, endpoint, model, threshold, actions, metadata, and frame
+bytes. An interrupted Stage 8 resumes verified results and requests only missing
+evaluations. Storage denial and corrupt evidence fail closed. The envelope
+reports `reused_rollouts` and `new_requests` separately from the original
+evaluation usage, so replay does not appear as new inference.
 
 Select the model explicitly with one of these submit overrides:
 
@@ -176,7 +199,7 @@ the CPU profile has no GPU exclusion:
 npa/.venv/bin/npa cluster node-group add-cpu \
   --cluster-name "${NPA_CLUSTER}" \
   --name sim2real-cpu \
-  --platform cpu-e2 \
+  --platform cpu-d3 \
   --preset 16vcpu-64gb \
   --node-count 1 \
   --wait
@@ -191,6 +214,10 @@ capacity, so an `8vcpu-32gb` node cannot fit a pod that requests the full
 controller alone, but not for the canonical Sim2Real CPU states.
 If the preflight reports no fitting CPU node, remove `NoSchedule`/`NoExecute`
 taints that the tasks do not tolerate or add/resize this pool.
+Discover platform/preset availability in the selected project with
+`nebius compute platform list --parent-id "$NPA_PROJECT_ID" --format json`
+before provisioning. The `cpu-d3` example is available in the validated
+US Central project; older `cpu-e2` examples may be rejected by the API.
 
 ### The Isaac GPU pool needs operator-mounted RTX drivers
 
@@ -226,6 +253,15 @@ replace the real graphics-readiness gate or prove that unlabelled drivers work.
 Expected for the Isaac pool: the RTX PRO 6000 rows report
 `gpu.deploy.operands=true`. If they report `driverful=true` instead, reprovision
 that pool with `--gpu-workload-profile rtx-rendering`.
+
+Transfer and EnvGen default to `RTXPRO6000:1` so one reserved RTX pool can run
+the entire graph. On a mixed cluster, pass `--var transfer_accelerator=B200:1`
+and `--var envgen_accelerator=B200:1` to use reserved B200 compute capacity.
+The Isaac resource remains `RTXPRO6000:1` because it requires RT cores and the
+graphics driver stack. Keep `gpu_concurrency` within the selected EnvGen pool's
+actual schedulable GPU count. If reserved placement fails, provision an
+operator-authorized preemptible fallback; application or model-access failures
+require fixing their cause before retrying.
 
 ## 4. Warm Isaac once
 
@@ -315,11 +351,14 @@ for these five config keys:
 | `isaac_image` | `npa-isaac-lab` (same bytes used to warm the cache) |
 | `viewer_image` | `npa-rerun-viewer` |
 
-Relevant build entrypoints are
-`npa/docker/workbench/sim2real-build.sh`,
-`npa/docker/workbench/cosmos2-transfer/build.sh`, and
-`npa/docker/workbench/isaac-lab/build.sh`. Follow
-[build and push](../container-packaging.md) when images are absent.
+For a new source revision, use the trusted **Publish public images** workflow
+with `build_development_tools=sim2real-control,cosmos2-transfer,envgen,isaac-lab,rerun-viewer`
+and the exact full `development_sha`. It builds `dev-<full-sha>` images and
+applies packaging, payload, security, source, and publication gates. Resolve
+the accepted bytes to digests before execution. `dry_run=true` leaves supported
+release aliases unchanged. Follow [build and push](../container-packaging.md)
+for private builds; the historical all-stack build script also includes retired
+components and is not the canonical five-image recipe.
 
 Choose five images built from the same source commit containing the current
 Stage 8/9 hosted evaluator contract. The historical September 4 coherent release
@@ -328,6 +367,11 @@ Stage 8 only accepts Cosmos 3 and fails with the current MiniMax default.
 Anonymous pullability and a matching source SHA alone do not establish evaluator
 compatibility. Do not combine those historical digests with this workflow's
 current evaluator contract.
+
+This is a restriction on that historical image set, rather than a claim that
+the declarative workflow cannot run. Newly built sets must pass the baked
+evaluator probe, which now checks concurrent receipt support as well as the
+selected model and Stage 9 contract.
 
 Resolve the selected release or development tags to immutable digests, record
 their common source SHA, then reproduce the manifest pulls with the same config

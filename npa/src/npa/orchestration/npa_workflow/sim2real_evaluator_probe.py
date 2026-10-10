@@ -24,6 +24,16 @@ def render_evaluator_probe(model: str) -> str:
                 EvaluatorContractError, validate_hosted_evaluator,
             )
             family = hosted_rollout_model_family({model!r})
+            from npa.workflows.sim2real.hosted_evaluation import evaluate_rollouts
+            from npa.workflows.sim2real.workflow_stage import build_parser
+            options = build_parser().parse_args([
+                '--stage', '8', '--root-uri', 's3://probe/run', '--run-id', 'probe',
+                '--evaluation-concurrency', '8', '--evaluation-max-frames', '0',
+            ])
+            if (not callable(evaluate_rollouts) or
+                    options.evaluation_concurrency != 8 or
+                    options.evaluation_max_frames != 0):
+                raise RuntimeError('image lacks concurrent durable rollout evaluation')
             try:
                 validate_hosted_evaluator(
                     stage7={{}}, evaluator={{}}, stage8_record={{}},

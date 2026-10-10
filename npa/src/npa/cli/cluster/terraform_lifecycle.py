@@ -1586,6 +1586,9 @@ def down_cmd(
                     typer.echo(f"Warning: {error}", err=True)
             if errors:
                 raise typer.Exit(code=2)
+            recovery_operation.transition(
+                "destroyed", details={"provider_inventory_cleanup": "verified"}
+            )
             if not keep_local_state:
                 _clear_local_cluster_state(preview_context)
             return

@@ -1,5 +1,23 @@
 # Live storage tests
 
+## Sim2Real hosted evaluation recovery
+
+Use the selected project's storage credentials and Token Factory key. Point
+`NPA_SIM2REAL_EVALUATION_LIVE_S3_PREFIX` to a new private writable S3 prefix:
+
+```bash
+NPA_SIM2REAL_EVALUATION_LIVE_S3_PREFIX="$PRIVATE_EVALUATION_PREFIX" \
+  npa/.venv/bin/python -m pytest \
+  npa/tests/e2e/test_token_factory_e2e.py::test_live_sim2real_evaluation_receipts_resume_without_inference -q
+```
+
+The test makes two real hosted requests with 32 public geometric frames each, reads
+back their S3 receipts, and verifies that a second evaluation reuses both
+results without inference. It writes only the selected prefix and retains
+request accounting in its test artifact. This proves transport and receipt
+recovery; rendered Isaac rollouts and gold policy efficacy require the full
+workflow run. The test skips when the prefix is absent.
+
 ## PAIDF native variant recovery
 
 After executing the reviewed candidate source through the standard PAIDF runtime,

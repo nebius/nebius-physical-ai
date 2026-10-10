@@ -374,7 +374,7 @@ WORKBENCH_ASSETS: tuple[GatedAsset, ...] = (
         note="Hosted text model; verify Token Factory access, not Hugging Face gating.",
     ),
     GatedAsset("Qwen/Qwen2-VL-7B-Instruct", HF, ("vlm_eval",), False),
-    GatedAsset("lerobot/pusht", HF, ("lerobot", "sim2real"), False),
+    GatedAsset("lerobot/pusht", HF, ("lerobot",), False),
     GatedAsset(
         "nvcr.io/nvidia/nre/nre-ga:26.04",
         NGC,
