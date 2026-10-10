@@ -1,4 +1,24 @@
-# Live storage tests
+# Live tests
+
+## Existing cluster adoption and profile selection
+
+Run the profile regression against an existing cluster the operator can read:
+
+```bash
+NPA_INTEGRATION_E2E=1 \
+NPA_E2E_PROJECT='<configured-project-alias>' \
+NPA_E2E_ADOPT_CLUSTER_NAME='<existing-cluster-name>' \
+NPA_NEBIUS_PROFILE='<verified-nebius-profile>' \
+  npa/.venv/bin/python -m pytest npa/tests/e2e/test_cluster_adoption_profile_live.py -q
+```
+
+All four variables are required; the test skips without them. There is no default
+target. The test reads the selected project's configuration and the live cluster,
+then fetches a temporary kubeconfig with a deliberately conflicting
+`NEBIUS_PROFILE`. It verifies that the generated credential plugin retains
+`NPA_NEBIUS_PROFILE`. Child-process NPA state stays under pytest's private
+temporary directory; the test creates no cloud resources or GPU jobs.
+Set `NPA_CONFIG_DIR` to select an isolated operator configuration.
 
 ## PAIDF native variant recovery
 

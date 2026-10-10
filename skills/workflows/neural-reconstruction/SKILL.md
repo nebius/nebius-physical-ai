@@ -653,6 +653,15 @@ GPU with no H100/H200 reference, every stage in the YAML is a real
 
 ## Limitations
 
+For a dedicated RTX PRO 6000 project and offline digital-twin handoff, use
+`npa/examples/fleet/digital-twin.yaml` and `docs/workbench/guides/digital-twin.md`.
+Native renders emit `novel_views/render-evidence.json`, binding the source USDZ
+and rendered image hashes to observed allocated-device GPU telemetry. The HTML
+verifies these bindings and labels missing hardware activity unverified. Do not
+describe device-wide telemetry as process attestation or recorded-view playback
+as live free-camera/XR rendering. Keep exact infrastructure identities in private
+runtime configuration, never in the HTML or reusable spec.
+
 - **Linux x86_64 + NVIDIA RT-core GPU only.** aarch64 is unsupported upstream.
 - **NGC entitlement.** Only the `-ga` repositories are pullable with a standard
   key.

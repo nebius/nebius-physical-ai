@@ -32,6 +32,8 @@ PLACEHOLDER = re.compile(r"\{\{[^}]+\}\}")
 #: Modules whose CLI parser is reachable. A module without one cannot be checked, and is
 #: listed here so adding a module toolRef without an entry point is a visible choice.
 PARSER_FACTORIES = {
+    "npa.workflows.policy_training": "build_parser",
+    "npa.workflows.policy_training.turnkey": "build_parser",
     "npa.workflows.video_sweep": "build_parser",
     "npa.workflows.xr1_antioch.training": "build_parser",
     "npa.workflows.lerobot_transfer": "build_parser",
@@ -50,6 +52,7 @@ PARSER_FACTORIES = {
     "npa.workflows.byof.newton_pipeline": "build_parser",
     "npa.workflows.byof.openpi_full_droid": "build_parser",
     "npa.workflows.byof.openpi_service": "build_parser",
+    "npa.workflows.byof.ros2_pipeline": "build_parser",
     "npa.workflows.content_agents": "build_parser",
     "npa.workflows.paidf_native": "build_parser",
 }
