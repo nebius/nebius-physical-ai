@@ -53,8 +53,8 @@ from .npa_workflow_live_helpers import (
     assert_lerobot_subtask_live_outputs,
     assert_no_credential_leakage,
     assert_nurec_colmap_live_outputs,
+    assert_parallel_run,
     assume_decision_for,
-    concurrency_overlaps,
     live_bucket,
     live_credential_markers,
     materialize_live_spec,
@@ -576,45 +576,7 @@ def test_npa_workflow_runtime_live_reaches_terminal(
         )
 
     if case.expected_parallel_tasks > 1:
-        parallel_waves = [wave for wave in waves if wave["kind"] == "parallel"]
-        assert parallel_waves, (
-            f"{case.spec} declared a parallel group but ran none: {waves}"
-        )
-        launched = sum(len(wave["states"]) for wave in parallel_waves)
-        assert launched == case.expected_parallel_tasks
-        # Two independent concurrency signals: live RUNNING observations taken
-        # while polling, and overlapping submitted/end intervals afterwards.
-        observed = max(
-            wave.get("max_concurrent_observed", 0) for wave in parallel_waves
-        )
-        overlaps = concurrency_overlaps(parallel_waves[0].get("tasks") or [])
-        assert observed >= 2 or overlaps, (
-            "parallel wave never showed concurrent tasks: "
-            f"observed={observed} tasks={parallel_waves[0].get('tasks')}"
-        )
-        # Barrier: the waves *after* the group were submitted only once every
-        # member of the group had finished. Indexing off the group's position keeps
-        # this correct for specs that also have serial waves BEFORE the fan-out.
-        last_parallel_index = max(
-            index for index, wave in enumerate(waves) if wave["kind"] == "parallel"
-        )
-        group_end = max(
-            float(task.get("end_at") or 0.0)
-            for wave in waves[: last_parallel_index + 1]
-            if wave["kind"] == "parallel"
-            for task in wave.get("tasks") or []
-        )
-        downstream_starts = [
-            float(task.get("start_at") or task.get("submitted_at") or 0.0)
-            for wave in waves[last_parallel_index + 1 :]
-            for task in wave.get("tasks") or []
-            if float(task.get("start_at") or task.get("submitted_at") or 0.0) > 0
-        ]
-        assert downstream_starts, "no barrier task timings recorded"
-        assert min(downstream_starts) >= group_end - 1.0, (
-            f"barrier task started before the parallel group finished: "
-            f"group_end={group_end} starts={downstream_starts}"
-        )
+        assert_parallel_run(waves, case.expected_parallel_tasks)
 
 
 def _assert_transfer_variant(

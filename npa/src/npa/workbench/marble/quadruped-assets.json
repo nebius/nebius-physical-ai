@@ -1,0 +1,106 @@
+[
+  {
+    "repository": "unitreerobotics/unitree_ros",
+    "revision": "5994d4faef0a9cadd3287f8de0199a67eeb2a259",
+    "path": "LICENSE",
+    "file": "robot-assets/unitree_ros/LICENSE",
+    "sha256": "84aac59fd3246e3ddc49d1387644e8fcf43b0def4f0b9fe687f372e90446df2d",
+    "bytes": 1558
+  },
+  {
+    "repository": "unitreerobotics/unitree_ros",
+    "revision": "5994d4faef0a9cadd3287f8de0199a67eeb2a259",
+    "path": "robots/go1_description/meshes/calf.dae",
+    "file": "robot-assets/unitree_ros/robots/go1_description/meshes/calf.dae",
+    "sha256": "30b3cb8a2c50c4236cddfd4b3c15969a09b554bf95b9f8920c3d917fe984008b",
+    "bytes": 2344345
+  },
+  {
+    "repository": "unitreerobotics/unitree_ros",
+    "revision": "5994d4faef0a9cadd3287f8de0199a67eeb2a259",
+    "path": "robots/go1_description/meshes/depthCamera.dae",
+    "file": "robot-assets/unitree_ros/robots/go1_description/meshes/depthCamera.dae",
+    "sha256": "4f11e7c84debe4dcba533b9ac5bb8cf143b5a855b682dc7aef79b1e265cb94a1",
+    "bytes": 78670
+  },
+  {
+    "repository": "unitreerobotics/unitree_ros",
+    "revision": "5994d4faef0a9cadd3287f8de0199a67eeb2a259",
+    "path": "robots/go1_description/meshes/hip.dae",
+    "file": "robot-assets/unitree_ros/robots/go1_description/meshes/hip.dae",
+    "sha256": "a7474253eb20c243e216ee6b5eddd4b38b7c145c4353af94a83b3a93e7901407",
+    "bytes": 2436525
+  },
+  {
+    "repository": "unitreerobotics/unitree_ros",
+    "revision": "5994d4faef0a9cadd3287f8de0199a67eeb2a259",
+    "path": "robots/go1_description/meshes/thigh.dae",
+    "file": "robot-assets/unitree_ros/robots/go1_description/meshes/thigh.dae",
+    "sha256": "612cb3be91c98111417dea0b2c8044218ca524f90e8611395e0e74f054bc15ea",
+    "bytes": 1250695
+  },
+  {
+    "repository": "unitreerobotics/unitree_ros",
+    "revision": "5994d4faef0a9cadd3287f8de0199a67eeb2a259",
+    "path": "robots/go1_description/meshes/thigh_mirror.dae",
+    "file": "robot-assets/unitree_ros/robots/go1_description/meshes/thigh_mirror.dae",
+    "sha256": "9b41987afef98fad93b273aaf1ad3397acbbfa6c1308e6ff29a35e9786b0e98d",
+    "bytes": 1538494
+  },
+  {
+    "repository": "unitreerobotics/unitree_ros",
+    "revision": "5994d4faef0a9cadd3287f8de0199a67eeb2a259",
+    "path": "robots/go1_description/meshes/trunk.dae",
+    "file": "robot-assets/unitree_ros/robots/go1_description/meshes/trunk.dae",
+    "sha256": "3afb2e637a031156c92a4c9bdcb44586f1433cdd55a80fdf5d1ad380889efd1b",
+    "bytes": 64274993
+  },
+  {
+    "repository": "unitreerobotics/unitree_ros",
+    "revision": "5994d4faef0a9cadd3287f8de0199a67eeb2a259",
+    "path": "robots/go1_description/meshes/ultraSound.dae",
+    "file": "robot-assets/unitree_ros/robots/go1_description/meshes/ultraSound.dae",
+    "sha256": "f863b0cc35e358d328f9cf9c79ebb0419c2440a7659c21cc559ec143d96a41c9",
+    "bytes": 281841
+  },
+  {
+    "repository": "unitreerobotics/unitree_ros",
+    "revision": "5994d4faef0a9cadd3287f8de0199a67eeb2a259",
+    "path": "robots/go1_description/urdf/go1.urdf",
+    "file": "robot-assets/unitree_ros/robots/go1_description/urdf/go1.urdf",
+    "sha256": "8c4c22e581b549027c1918259627bb5172afdf56ab970814b0c6f62ecf5604ff",
+    "bytes": 62096
+  },
+  {
+    "repository": "google-deepmind/mujoco_playground",
+    "revision": "d59156e099a8785dd58fbce2e25a6ee1f7b5800c",
+    "path": "LICENSE",
+    "file": "robot-assets/mujoco_playground/LICENSE",
+    "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "bytes": 11358
+  },
+  {
+    "repository": "google-deepmind/mujoco_playground",
+    "revision": "d59156e099a8785dd58fbce2e25a6ee1f7b5800c",
+    "path": "mujoco_playground/_src/locomotion/go1/xmls/go1_mjx.xml",
+    "file": "robot-assets/mujoco_playground/mujoco_playground/_src/locomotion/go1/xmls/go1_mjx.xml",
+    "sha256": "5bbda65402791a610e884ffdae46c7175502460cc5f5a0b32f93585457212514",
+    "bytes": 11969
+  },
+  {
+    "repository": "google-deepmind/mujoco_playground",
+    "revision": "d59156e099a8785dd58fbce2e25a6ee1f7b5800c",
+    "path": "mujoco_playground/experimental/sim2sim/onnx/go1_policy.onnx",
+    "file": "robot-assets/mujoco_playground/mujoco_playground/experimental/sim2sim/onnx/go1_policy.onnx",
+    "sha256": "386cde6a1eac679e2f2a313ade2b395d9f26905b151ee3b019c2c4163d49b6f2",
+    "bytes": 772916
+  },
+  {
+    "repository": "google-deepmind/mujoco_playground",
+    "revision": "d59156e099a8785dd58fbce2e25a6ee1f7b5800c",
+    "path": "mujoco_playground/experimental/sim2sim/play_go1_joystick.py",
+    "file": "robot-assets/mujoco_playground/mujoco_playground/experimental/sim2sim/play_go1_joystick.py",
+    "sha256": "f422e041e9382d96a6b4d60f7a9065f2bc849599dadbd57939fd03677292abb9",
+    "bytes": 3653
+  }
+]

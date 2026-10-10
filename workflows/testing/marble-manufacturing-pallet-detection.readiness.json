@@ -1,0 +1,64 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "bbe47a65acd1d1819edf9dc4a06a29c4e7edfc5bd71d41908fbb2c0f470aa6ad",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Schema validation, resolved CLI plan, and rendered SkyPilot graph passed. CPU/GPU boundaries and required token were tested.",
+      "evidence": [
+        "npa/tests/workbench/test_marble_manufacturing.py",
+        "npa/tests/cli/test_marble_cli.py",
+        "npa/tests/workflows/test_marble_workflows.py"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Real World API acquisition and gsplat capture feed the existing Faster R-CNN trainer/evaluator. Equal update counts, disjoint real test data, exact composite boxes, and negative AP outcomes are enforced.",
+      "evidence": [
+        "npa/tests/workbench/test_marble_manufacturing.py",
+        "npa/tests/cli/test_marble_cli.py",
+        "npa/tests/workflows/test_marble_workflows.py"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "The example-bucket destination must be overridden with the operator project storage; this new workflow has not written live artifacts.",
+      "evidence": [
+        "docs/workbench/marble-manufacturing.md"
+      ]
+    },
+    "worker_input": {
+      "status": "blocked",
+      "reason": "No operator real pallet training/evaluation dataset or RGBA cutouts were supplied. The actual input reader was tested with isolated unit fixtures; the documentation example is not a dataset.",
+      "evidence": [
+        "npa/tests/workbench/test_marble_manufacturing.py",
+        "npa/tests/cli/test_marble_cli.py",
+        "npa/tests/workflows/test_marble_workflows.py"
+      ]
+    },
+    "credentials": {
+      "status": "blocked",
+      "reason": "WLT_API_KEY is absent from the environment/private credentials. A funded World API key is required; missing-token refusal before remote setup is tested.",
+      "evidence": [
+        "npa/tests/cli/test_marble_cli.py",
+        "docs/workbench/marble-manufacturing.md"
+      ]
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "Routing uses existing EnvGen and detection-training images with staged source. The newly composed benchmark has not been executed inside the detector image.",
+      "evidence": [
+        "npa/tests/workflows/test_marble_workflows.py"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "The new manufacturing workflow has not run on a live GPU. Earlier generic Marble CUDA demos do not validate its training/evaluation outcome.",
+      "evidence": [
+        "docs/workbench/marble-manufacturing.md"
+      ]
+    }
+  }
+}

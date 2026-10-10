@@ -1,0 +1,110 @@
+{
+  "validated_on": "2026-10-03",
+  "world_source": "sample-hobbit",
+  "generated_this_run": false,
+  "hosted_generation": "requires funded API key; not executed",
+  "workflows": [
+    {
+      "workflow": "marble-world-capture",
+      "status": "succeeded",
+      "stages": [
+        {
+          "states": [
+            "acquire"
+          ],
+          "status": "succeeded",
+          "sky_status": "SUCCEEDED"
+        },
+        {
+          "states": [
+            "capture"
+          ],
+          "status": "succeeded",
+          "sky_status": "SUCCEEDED"
+        },
+        {
+          "states": [
+            "report"
+          ],
+          "status": "succeeded",
+          "sky_status": "SUCCEEDED"
+        }
+      ],
+      "workflow_sha256": "67db83860abdb21993c931674f2aa5d3e908b330b2c1a26287f9c388c69f6365",
+      "gpu": {
+        "name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+        "cuda": "13.0",
+        "torch": "2.9.0+cu130",
+        "compute_capability": [
+          12,
+          0
+        ],
+        "torch_peak_allocated_bytes": 666000384
+      },
+      "frames": 120,
+      "median_cuda_ms": 1.019872009754181,
+      "result_sha256": "1ce3610b715b7824512c3233db4c0bbed3d46fb9573537476d7e13745d91ca84",
+      "artifact_hashes": "all verified",
+      "jpeg_frames": "all decoded and dimensions verified"
+    },
+    {
+      "workflow": "marble-spatial-scan",
+      "status": "succeeded",
+      "stages": [
+        {
+          "states": [
+            "acquire"
+          ],
+          "status": "succeeded",
+          "sky_status": "SUCCEEDED"
+        },
+        {
+          "states": [
+            "scan"
+          ],
+          "status": "succeeded",
+          "sky_status": "SUCCEEDED"
+        },
+        {
+          "states": [
+            "report"
+          ],
+          "status": "succeeded",
+          "sky_status": "SUCCEEDED"
+        }
+      ],
+      "workflow_sha256": "1ba307d9e97a69c2b6516584a8f8f6473365ec4540c5de70aed0ecc615db01bd",
+      "gpu": {
+        "name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+        "cuda": "13.0",
+        "torch": "2.9.0+cu130",
+        "compute_capability": [
+          12,
+          0
+        ],
+        "torch_peak_allocated_bytes": 0
+      },
+      "frames": 120,
+      "median_cuda_ms": 0.2648159861564636,
+      "result_sha256": "f9951d70811dd606e67e1d74a0d6f4538055bda96614a734d53109a8c98954ef",
+      "artifact_hashes": "all verified",
+      "jpeg_frames": "all decoded and dimensions verified"
+    }
+  ],
+  "browser_checks": {
+    "desktop": true,
+    "mobile_no_overflow": true,
+    "playback": true,
+    "scrubbing": true,
+    "spark_world": true,
+    "scan_points": true,
+    "downloads": true,
+    "javascript_errors": 0
+  },
+  "remaining_marble_worker_pods": 0,
+  "known_limitations": [
+    "Funded World API key required for new generation; hosted generation not executed.",
+    "Standalone workflow status selected a different controller; terminal submit records and exact-context worker audit verify completed runs."
+  ],
+  "evidence_scope": "Historical completed imported-world runs; current-main integration has local validation only. Hosted generation and manufacturing training were not executed."
+}

@@ -2,6 +2,13 @@
 
 [Workbench docs](README.md)
 
+[Marble workflows](marble.md) reuse the existing EnvGen CUDA/compiler image
+for gsplat and Warp consumers, with pinned dependencies installed at runtime.
+The manufacturing pallet experiment additionally reuses the existing
+`detection-training` image for Faster R-CNN training and real-image evaluation.
+There is no separately published Marble image, and Marble generation runs on
+the World Labs API. This integration adds no image to the public inventory.
+
 Repository-selected runtime images use the public mirror by default:
 
 ```text

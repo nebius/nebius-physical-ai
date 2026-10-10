@@ -1,0 +1,75 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: marble-go1-shipyard
+  executionMode: runtime
+  description: >-
+    Record inspection approaches beside hull sections and dock equipment for outdoor visual navigation testing.
+    Generate a Marble site, collect with a simulated Unitree Go1 on one Nebius
+    RTX PRO 6000, and publish a standalone HTML replay. No new policy training.
+
+config:
+  source_overlay: true
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/marble-go1-shipyard"
+  world_source: generate
+  world_model: marble-1.1
+  world_prompt: >-
+    A photorealistic dry shipyard maintenance area beside a large ship hull on supports, steel sections, cable reels and dockside maintenance equipment. A continuous dry flat concrete service lane at least ten meters long and three meters wide, clear turning areas at both ends, camera centered on the lane close to floor level. The hull, supports and equipment remain outside the lane. No people, robots, moving cranes, water on the route, stairs or floor holes. Overcast daylight.
+  frames: 750
+  width: 1280
+  height: 720
+  sensor_hz: 25
+  speed_mps: 0.7
+  motion_profile: turnaround
+  samples: 32
+
+  world_uri: "s3://{{config.bucket}}/{{config.prefix}}/world/"
+  results_uri: "s3://{{config.bucket}}/{{config.prefix}}/results/"
+  reports_uri: "s3://{{config.bucket}}/{{config.prefix}}/report/"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+  gpu:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+    cpus: 8
+    memory: 64Gi
+
+initial: acquire
+states:
+  acquire:
+    description: Generate this site through the World Labs API and publish hashed world assets.
+    toolRef: workbench.marble.acquire
+    resources: cpu
+    outputs:
+      - uri: "{{config.world_uri}}world.json"
+        schema: npa.marble.world.v1
+    next: collect
+  collect:
+    description: Run Go1 torque dynamics and the pretrained policy on CPU; collect gsplat/Warp CUDA sensors and Cycles CUDA robot rendering.
+    toolRef: workbench.marble.quadruped_collect
+    resources: gpu
+    inputs:
+      - uri: "{{config.world_uri}}world.json"
+        schema: npa.marble.world.v1
+    outputs:
+      - uri: "{{config.results_uri}}result.json"
+        schema: npa.marble.result.v1
+      - uri: "{{config.results_uri}}trajectory.json"
+        schema: application/json
+    next: report
+  report:
+    description: Verify this collection and publish its standalone offline HTML replay.
+    toolRef: workbench.marble.report
+    resources: cpu
+    inputs:
+      - uri: "{{config.results_uri}}result.json"
+        schema: npa.marble.result.v1
+    outputs:
+      - uri: "{{config.reports_uri}}index.html"
+        schema: text/html
+    terminal: true

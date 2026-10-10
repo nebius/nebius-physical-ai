@@ -1,0 +1,276 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: marble-go1-five-sites
+  executionMode: runtime
+  description: >-
+    Generate five distinct Marble sites, fan out five simulated Go1 collectors
+    on one RTX PRO 6000 each, and publish five standalone HTML replays.
+    Three native parallel waves preserve separate world, collection and report artifacts.
+
+config:
+  source_overlay: true
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/marble-go1-five-sites"
+  preset_count: 5
+  world_source: generate
+  world_model: marble-1.1
+  width: 1280
+  height: 720
+  sensor_hz: 25
+  motion_profile: turnaround
+  samples: 32
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+  gpu:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+    cpus: 8
+    memory: 64Gi
+
+initial: acquire-sites
+states:
+  acquire-sites:
+    description: Generate this site through the World Labs API and publish hashed world assets.
+    parallel: [acquire-warehouse, acquire-shipyard, acquire-home, acquire-factory, acquire-utility]
+    parallelCount: "{{config.preset_count}}"
+    next: collect-sites
+  acquire-warehouse:
+    description: Warehouse aisle patrol — acquire.
+    toolRef: workbench.marble.acquire
+    resources: cpu
+    params:
+      world_prompt: >-
+        A photorealistic modern distribution warehouse, tall pallet racks, wrapped cartons and loading bays. A continuous flat concrete central aisle at least ten meters long and three meters wide, clear space at both ends for a quadruped to turn, camera at the center of the aisle close to floor level. No people, robots, forklifts in motion, stairs or floor holes. Pallets and equipment remain outside the aisle. Realistic overhead industrial lighting.
+      world_uri: "s3://{{config.bucket}}/{{config.prefix}}/warehouse/world/"
+      results_uri: "s3://{{config.bucket}}/{{config.prefix}}/warehouse/results/"
+      reports_uri: "s3://{{config.bucket}}/{{config.prefix}}/warehouse/report/"
+    outputs:
+      - uri: "{{config.world_uri}}world.json"
+        schema: npa.marble.world.v1
+  acquire-shipyard:
+    description: Shipyard service-lane inspection — acquire.
+    toolRef: workbench.marble.acquire
+    resources: cpu
+    params:
+      world_prompt: >-
+        A photorealistic dry shipyard maintenance area beside a large ship hull on supports, steel sections, cable reels and dockside maintenance equipment. A continuous dry flat concrete service lane at least ten meters long and three meters wide, clear turning areas at both ends, camera centered on the lane close to floor level. The hull, supports and equipment remain outside the lane. No people, robots, moving cranes, water on the route, stairs or floor holes. Overcast daylight.
+      world_uri: "s3://{{config.bucket}}/{{config.prefix}}/shipyard/world/"
+      results_uri: "s3://{{config.bucket}}/{{config.prefix}}/shipyard/results/"
+      reports_uri: "s3://{{config.bucket}}/{{config.prefix}}/shipyard/report/"
+    outputs:
+      - uri: "{{config.world_uri}}world.json"
+        schema: npa.marble.world.v1
+  acquire-home:
+    description: Home hallway survey — acquire.
+    toolRef: workbench.marble.acquire
+    resources: cpu
+    params:
+      world_prompt: >-
+        A photorealistic spacious single-story accessible home with a long hallway opening into a living room, sofa, dining furniture and bookshelves. A continuous level matte wood floor along a central route at least ten meters long and two meters wide, open turning space at both ends, camera centered on the route close to floor level. All furniture stays beside the route. No people, pets, robots, rugs, loose cables, door thresholds or stairs. Natural soft window lighting.
+      world_uri: "s3://{{config.bucket}}/{{config.prefix}}/home/world/"
+      results_uri: "s3://{{config.bucket}}/{{config.prefix}}/home/results/"
+      reports_uri: "s3://{{config.bucket}}/{{config.prefix}}/home/report/"
+    outputs:
+      - uri: "{{config.world_uri}}world.json"
+        schema: npa.marble.world.v1
+  acquire-factory:
+    description: Factory machine-row inspection — acquire.
+    toolRef: workbench.marble.acquire
+    resources: cpu
+    params:
+      world_prompt: >-
+        A photorealistic clean manufacturing workshop with rows of closed CNC machine enclosures, control cabinets and tool storage beside a marked inspection aisle. A continuous flat concrete aisle at least ten meters long and three meters wide, unobstructed turning space at both ends, camera centered on the aisle close to floor level. Enclosures and cabinets are outside the aisle. No people, robots, moving machinery, loose cables, stairs or floor holes. Neutral industrial ceiling lighting.
+      world_uri: "s3://{{config.bucket}}/{{config.prefix}}/factory/world/"
+      results_uri: "s3://{{config.bucket}}/{{config.prefix}}/factory/results/"
+      reports_uri: "s3://{{config.bucket}}/{{config.prefix}}/factory/report/"
+    outputs:
+      - uri: "{{config.world_uri}}world.json"
+        schema: npa.marble.world.v1
+  acquire-utility:
+    description: Utility pump-room inspection — acquire.
+    toolRef: workbench.marble.acquire
+    resources: cpu
+    params:
+      world_prompt: >-
+        A photorealistic utility pump room with stationary pump housings, pipe manifolds, valve wheels and electrical cabinets along the walls. A continuous dry level concrete service aisle at least ten meters long and three meters wide, open turning areas at both ends, camera centered on the aisle close to floor level. Pipes, valves and equipment remain outside the aisle. No people, robots, moving machinery, steps, trenches, puddles or floor holes. Realistic overhead service lighting.
+      world_uri: "s3://{{config.bucket}}/{{config.prefix}}/utility/world/"
+      results_uri: "s3://{{config.bucket}}/{{config.prefix}}/utility/results/"
+      reports_uri: "s3://{{config.bucket}}/{{config.prefix}}/utility/report/"
+    outputs:
+      - uri: "{{config.world_uri}}world.json"
+        schema: npa.marble.world.v1
+  collect-sites:
+    description: Run Go1 torque dynamics and the pretrained policy on CPU; collect gsplat/Warp CUDA sensors and Cycles CUDA robot rendering.
+    parallel: [collect-warehouse, collect-shipyard, collect-home, collect-factory, collect-utility]
+    parallelCount: "{{config.preset_count}}"
+    next: report-sites
+  collect-warehouse:
+    description: Warehouse aisle patrol — collect.
+    toolRef: workbench.marble.quadruped_collect
+    resources: gpu
+    params:
+      frames: 500
+      speed_mps: 1.2
+      world_uri: "s3://{{config.bucket}}/{{config.prefix}}/warehouse/world/"
+      results_uri: "s3://{{config.bucket}}/{{config.prefix}}/warehouse/results/"
+      reports_uri: "s3://{{config.bucket}}/{{config.prefix}}/warehouse/report/"
+    inputs:
+      - uri: "{{config.world_uri}}world.json"
+        schema: npa.marble.world.v1
+    outputs:
+      - uri: "{{config.results_uri}}result.json"
+        schema: npa.marble.result.v1
+      - uri: "{{config.results_uri}}trajectory.json"
+        schema: application/json
+  collect-shipyard:
+    description: Shipyard service-lane inspection — collect.
+    toolRef: workbench.marble.quadruped_collect
+    resources: gpu
+    params:
+      frames: 750
+      speed_mps: 0.7
+      world_uri: "s3://{{config.bucket}}/{{config.prefix}}/shipyard/world/"
+      results_uri: "s3://{{config.bucket}}/{{config.prefix}}/shipyard/results/"
+      reports_uri: "s3://{{config.bucket}}/{{config.prefix}}/shipyard/report/"
+    inputs:
+      - uri: "{{config.world_uri}}world.json"
+        schema: npa.marble.world.v1
+    outputs:
+      - uri: "{{config.results_uri}}result.json"
+        schema: npa.marble.result.v1
+      - uri: "{{config.results_uri}}trajectory.json"
+        schema: application/json
+  collect-home:
+    description: Home hallway survey — collect.
+    toolRef: workbench.marble.quadruped_collect
+    resources: gpu
+    params:
+      frames: 1000
+      speed_mps: 0.35
+      world_uri: "s3://{{config.bucket}}/{{config.prefix}}/home/world/"
+      results_uri: "s3://{{config.bucket}}/{{config.prefix}}/home/results/"
+      reports_uri: "s3://{{config.bucket}}/{{config.prefix}}/home/report/"
+    inputs:
+      - uri: "{{config.world_uri}}world.json"
+        schema: npa.marble.world.v1
+    outputs:
+      - uri: "{{config.results_uri}}result.json"
+        schema: npa.marble.result.v1
+      - uri: "{{config.results_uri}}trajectory.json"
+        schema: application/json
+  collect-factory:
+    description: Factory machine-row inspection — collect.
+    toolRef: workbench.marble.quadruped_collect
+    resources: gpu
+    params:
+      frames: 1000
+      speed_mps: 0.5
+      world_uri: "s3://{{config.bucket}}/{{config.prefix}}/factory/world/"
+      results_uri: "s3://{{config.bucket}}/{{config.prefix}}/factory/results/"
+      reports_uri: "s3://{{config.bucket}}/{{config.prefix}}/factory/report/"
+    inputs:
+      - uri: "{{config.world_uri}}world.json"
+        schema: npa.marble.world.v1
+    outputs:
+      - uri: "{{config.results_uri}}result.json"
+        schema: npa.marble.result.v1
+      - uri: "{{config.results_uri}}trajectory.json"
+        schema: application/json
+  collect-utility:
+    description: Utility pump-room inspection — collect.
+    toolRef: workbench.marble.quadruped_collect
+    resources: gpu
+    params:
+      frames: 1000
+      speed_mps: 0.5
+      world_uri: "s3://{{config.bucket}}/{{config.prefix}}/utility/world/"
+      results_uri: "s3://{{config.bucket}}/{{config.prefix}}/utility/results/"
+      reports_uri: "s3://{{config.bucket}}/{{config.prefix}}/utility/report/"
+    inputs:
+      - uri: "{{config.world_uri}}world.json"
+        schema: npa.marble.world.v1
+    outputs:
+      - uri: "{{config.results_uri}}result.json"
+        schema: npa.marble.result.v1
+      - uri: "{{config.results_uri}}trajectory.json"
+        schema: application/json
+  report-sites:
+    description: Verify this collection and publish its standalone offline HTML replay.
+    parallel: [report-warehouse, report-shipyard, report-home, report-factory, report-utility]
+    parallelCount: "{{config.preset_count}}"
+    terminal: true
+  report-warehouse:
+    description: Warehouse aisle patrol — report.
+    toolRef: workbench.marble.report
+    resources: cpu
+    params:
+      world_uri: "s3://{{config.bucket}}/{{config.prefix}}/warehouse/world/"
+      results_uri: "s3://{{config.bucket}}/{{config.prefix}}/warehouse/results/"
+      reports_uri: "s3://{{config.bucket}}/{{config.prefix}}/warehouse/report/"
+    inputs:
+      - uri: "{{config.results_uri}}result.json"
+        schema: npa.marble.result.v1
+    outputs:
+      - uri: "{{config.reports_uri}}index.html"
+        schema: text/html
+  report-shipyard:
+    description: Shipyard service-lane inspection — report.
+    toolRef: workbench.marble.report
+    resources: cpu
+    params:
+      world_uri: "s3://{{config.bucket}}/{{config.prefix}}/shipyard/world/"
+      results_uri: "s3://{{config.bucket}}/{{config.prefix}}/shipyard/results/"
+      reports_uri: "s3://{{config.bucket}}/{{config.prefix}}/shipyard/report/"
+    inputs:
+      - uri: "{{config.results_uri}}result.json"
+        schema: npa.marble.result.v1
+    outputs:
+      - uri: "{{config.reports_uri}}index.html"
+        schema: text/html
+  report-home:
+    description: Home hallway survey — report.
+    toolRef: workbench.marble.report
+    resources: cpu
+    params:
+      world_uri: "s3://{{config.bucket}}/{{config.prefix}}/home/world/"
+      results_uri: "s3://{{config.bucket}}/{{config.prefix}}/home/results/"
+      reports_uri: "s3://{{config.bucket}}/{{config.prefix}}/home/report/"
+    inputs:
+      - uri: "{{config.results_uri}}result.json"
+        schema: npa.marble.result.v1
+    outputs:
+      - uri: "{{config.reports_uri}}index.html"
+        schema: text/html
+  report-factory:
+    description: Factory machine-row inspection — report.
+    toolRef: workbench.marble.report
+    resources: cpu
+    params:
+      world_uri: "s3://{{config.bucket}}/{{config.prefix}}/factory/world/"
+      results_uri: "s3://{{config.bucket}}/{{config.prefix}}/factory/results/"
+      reports_uri: "s3://{{config.bucket}}/{{config.prefix}}/factory/report/"
+    inputs:
+      - uri: "{{config.results_uri}}result.json"
+        schema: npa.marble.result.v1
+    outputs:
+      - uri: "{{config.reports_uri}}index.html"
+        schema: text/html
+  report-utility:
+    description: Utility pump-room inspection — report.
+    toolRef: workbench.marble.report
+    resources: cpu
+    params:
+      world_uri: "s3://{{config.bucket}}/{{config.prefix}}/utility/world/"
+      results_uri: "s3://{{config.bucket}}/{{config.prefix}}/utility/results/"
+      reports_uri: "s3://{{config.bucket}}/{{config.prefix}}/utility/report/"
+    inputs:
+      - uri: "{{config.results_uri}}result.json"
+        schema: npa.marble.result.v1
+    outputs:
+      - uri: "{{config.reports_uri}}index.html"
+        schema: text/html

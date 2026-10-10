@@ -1,0 +1,88 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: marble-navigation-rl
+  executionMode: runtime
+  description: >-
+    Prepare an existing World Labs API warehouse collider, train native ANYmal-C
+    navigation with Isaac GPU physics and RSL-RL PPO, then reload the exact
+    checkpoint and evaluate held-out goals. Source world acquisition is a
+    separate reusable Workbench operation. Native GPU acceptance is recorded separately.
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/marble-navigation"
+  source_overlay: true
+  # Required: the verified world bundle from npa workbench marble acquire.
+  world_uri: ""
+  # Required: an operator-qualified Isaac runtime at an immutable image digest.
+  # The retired public Isaac release must not be selected as an implicit default.
+  isaac_image: ""
+  num_envs: 4000
+  iterations: 500
+  episode_steps: 300
+  sampling_radius_m: 8.0
+  seed: 42
+
+  prepared_uri: "s3://{{config.bucket}}/{{config.prefix}}/prepared/"
+  training_uri: "s3://{{config.bucket}}/{{config.prefix}}/training/"
+  evaluation_uri: "s3://{{config.bucket}}/{{config.prefix}}/evaluation/"
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+  isaac:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+    cpus: 16
+    memory: 64Gi
+    image: "{{config.isaac_image}}"
+initial: prepare
+states:
+  prepare:
+    description: Hash-check the Marble world, preserve exact collision triangles, and seal supported train/evaluation goals.
+    toolRef: workbench.marble.navigation_prepare
+    resources: cpu
+    inputs:
+      - uri: "{{config.world_uri}}/world.json"
+        schema: npa.marble.world.v1
+    outputs:
+      - uri: "{{config.prepared_uri}}completion.json"
+        schema: npa.navigation.publication.v1
+    next: train
+  train:
+    description: Run native physical controls, Isaac GPU simulation, policy inference, and PPO gradient updates.
+    resources: isaac
+    run:
+      argv:
+        - /opt/npa/sim/venv/bin/python
+        - -c
+        - "import sys; from npa.workflows.navigation.stages import run_stage; run_stage(*sys.argv[1:])"
+        - train
+        - "{{config.prepared_uri}}"
+        - "{{config.training_uri}}"
+    inputs:
+      - uri: "{{config.prepared_uri}}completion.json"
+        schema: npa.navigation.publication.v1
+    outputs:
+      - uri: "{{config.training_uri}}completion.json"
+        schema: npa.navigation.publication.v1
+    next: evaluate
+  evaluate:
+    description: Reload the trained checkpoint, repeat physical controls, and gate measured success on separate goal locations.
+    resources: isaac
+    run:
+      argv:
+        - /opt/npa/sim/venv/bin/python
+        - -c
+        - "import sys; from npa.workflows.navigation.stages import run_stage; run_stage(*sys.argv[1:])"
+        - evaluate
+        - "{{config.training_uri}}"
+        - "{{config.evaluation_uri}}"
+    inputs:
+      - uri: "{{config.training_uri}}completion.json"
+        schema: npa.navigation.publication.v1
+    outputs:
+      - uri: "{{config.evaluation_uri}}completion.json"
+        schema: npa.navigation.publication.v1
+    terminal: true

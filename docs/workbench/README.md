@@ -29,6 +29,7 @@ lists other affected images and shipped workflows, including the Sim2Real seams.
 | Use FA4 in your own RTX PRO 6000 container | [RTX PRO 6000 adoption guide: base → application → validation → deployment](guides/rtx6000-fa4.md) |
 | Compare FA2 and FA4 on RTX PRO 6000 | [Build and tuning guide](guides/fa2-fa4-comparison.md) · [Latest speeds, cold-start cost and actual renders](fa4-rtx-optimization.md) |
 | Author and submit | [Workflow guide](npa-workflow-guide.md) · [toolRef catalog](npa-workflow-tool-catalog.md) |
+| Train navigation from a Marble world | [Marble → native ANYmal PPO guide](guides/marble-navigation-rl.md): GPU physics and learning, with explicit runtime and validation requirements |
 | Integrate from Python or HTTP | [CLI / SDK walkthrough](cli-sdk-yaml-walkthrough.md) · [SDK errors](../sdk/errors.md) |
 | Diagnose or recover a run | [Run lifecycle](../run-lifecycle.md) · [controller recovery](controller-recovery.md) · [troubleshooting](troubleshooting/known-footguns.md) · [CLI errors](../cli-errors.md) |
 | Curate media with Encord | [S3 registration, pull, roundtrip verification, and a local MP4 demo](encord.md) |
@@ -66,6 +67,11 @@ a standalone HTML report.
 | Motion planning | [cuRobo](curobo.md) |
 | BEHAVIOR 2026 household challenge | [Start here: one-file DEV setup](challenge-onboarding.md); [evaluation rules and runtime](behavior-challenge.md); [reusable campaigns and TRAIN recording](behavior-campaign.md); [CPU simulator source inspection](behavior-simulator-source-inspect.md); [matched π0.5 training results and limits](behavior-matched-results-2026-09-19.md); requires licensed runtime and fixed policy |
 | OpenArm simulation and RL | [OpenArm with MuJoCo and Isaac Lab](openarm.md) |
+| Generated worlds and GPU spatial datasets | [Marble to Nebius walkthrough](guides/marble-to-nebius.md) · [reference](marble.md) |
+| Wheel-driven warehouse collection with CUDA RGB and depth | [Marble inspection rover](guides/marble-warehouse-rover.md) |
+| Detailed walking quadruped with GPU materials and shadows | [Marble Go1 collection](guides/marble-warehouse-quadruped.md) |
+| Generate and collect in a new robot environment | [Five Go1 presets](guides/marble-robot-presets.md) · [Add a new world](guides/marble-robot-presets.md#add-a-new-world) · [Testing workflow table](../../workflows/testing/README.md#generation-and-reconstruction) |
+| Factory-background augmentation and real pallet detector evaluation | [Marble manufacturing experiment](marble-manufacturing.md) |
 | Isaac Lab versions | [Isaac Lab 3](isaac-lab-3.md) |
 | Policy evaluation in Isaac Lab | [Isaac Arena](isaac-arena.md) |
 
