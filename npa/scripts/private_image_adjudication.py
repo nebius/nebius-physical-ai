@@ -325,7 +325,12 @@ def main(argv=None):
     try:
         return _run(args)
     except (
-        OSError, ValueError, KeyError, TypeError, Q._QualificationError, tarfile.TarError
+        OSError,
+        ValueError,
+        KeyError,
+        TypeError,
+        Q._QualificationError,
+        tarfile.TarError,
     ):
         print('{"status":"failed","accepted":false}')
         return 1

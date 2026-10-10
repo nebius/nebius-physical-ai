@@ -887,7 +887,9 @@ def test_original_input_retention_failure_cannot_leave_a_successful_status(
     private_root, export, monkeypatch, capsys, scan_status
 ):
     monkeypatch.setattr(
-        Q, "_qualification_steps", lambda *_args: {"status": scan_status, "complete": True}
+        Q,
+        "_qualification_steps",
+        lambda *_args: {"status": scan_status, "complete": True},
     )
 
     def fail_capture(*_args):

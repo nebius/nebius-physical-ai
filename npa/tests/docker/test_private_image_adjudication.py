@@ -188,7 +188,9 @@ def test_actual_receipt_child_and_late_signals_preserve_failed_acceptance(
     selector, request, *_ = transport_case
     root = private_root / "hosted"
     root.mkdir(mode=0o700)
-    args = SimpleNamespace(scanner_root=private_root, request_sha256=selector, run_id="124-1")
+    args = SimpleNamespace(
+        scanner_root=private_root, request_sha256=selector, run_id="124-1"
+    )
 
     def complete(*_args):
         Q._write(root / "request.json", Q._json_bytes(request))
@@ -206,7 +208,12 @@ def test_actual_receipt_child_and_late_signals_preserve_failed_acceptance(
     assert H._execute_adjudication(args, root, []) == int(bool(signals))
     summary = json.loads(capsys.readouterr().out.splitlines()[-1])
     assert summary["accepted"] is (not signals)
-    receipt = private_root / Q.RECEIPT_ROOT / request["image_manifest_sha256"] / "124-1/result.tar"
+    receipt = (
+        private_root
+        / Q.RECEIPT_ROOT
+        / request["image_manifest_sha256"]
+        / "124-1/result.tar"
+    )
     assert Q._sha(receipt.read_bytes()) == summary["receipt_sha256"]
     if signals:
         assert summary["failure_code"] == "qualification_cancelled"
@@ -218,14 +225,18 @@ def test_real_upload_child_failure_cannot_report_acceptance(
     selector, request, *_ = transport_case
     root = private_root / "hosted"
     root.mkdir(mode=0o700)
-    args = SimpleNamespace(scanner_root=private_root, request_sha256=selector, run_id="125-1")
+    args = SimpleNamespace(
+        scanner_root=private_root, request_sha256=selector, run_id="125-1"
+    )
 
     def complete(*_args):
         Q._write(root / "request.json", Q._json_bytes(request))
         return {"status": "passed", "accepted": True}
 
     monkeypatch.setattr(H, "_steps", complete)
-    monkeypatch.setattr(Q, "_remote_command", lambda *_: [sys.executable, "-c", "raise SystemExit(7)"])
+    monkeypatch.setattr(
+        Q, "_remote_command", lambda *_: [sys.executable, "-c", "raise SystemExit(7)"]
+    )
     assert H._execute_adjudication(args, root, []) == 1
     summary = json.loads(capsys.readouterr().out.splitlines()[-1])
     assert summary["accepted"] is False
@@ -239,7 +250,9 @@ def test_malformed_tar_is_sanitized_and_original_failure_retained(
     selector, request, *_ = transport_case
     root = private_root / "hosted"
     root.mkdir(mode=0o700)
-    args = SimpleNamespace(scanner_root=private_root, request_sha256=selector, run_id="126-1")
+    args = SimpleNamespace(
+        scanner_root=private_root, request_sha256=selector, run_id="126-1"
+    )
 
     def malformed(*_args):
         Q._write(root / "request.json", Q._json_bytes(request))
@@ -252,7 +265,12 @@ def test_malformed_tar_is_sanitized_and_original_failure_retained(
     summary = json.loads(output.splitlines()[-1])
     assert summary["accepted"] is False
     assert "synthetic-private-text" not in output
-    receipt = private_root / Q.RECEIPT_ROOT / request["image_manifest_sha256"] / "126-1/result.tar"
+    receipt = (
+        private_root
+        / Q.RECEIPT_ROOT
+        / request["image_manifest_sha256"]
+        / "126-1/result.tar"
+    )
     with tarfile.open(receipt) as archive:
         assert json.load(archive.extractfile("summary.json"))["accepted"] is False
 
