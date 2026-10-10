@@ -1,11 +1,11 @@
-# Scan-only: secrets and image bytes never become public Actions artifacts.
-name: Private image qualification
+# Private adjudication only; raw verdicts and policy values never become public artifacts.
+name: Private image adjudication
 
 on:
   workflow_dispatch:
     inputs:
-      manifest_sha256:
-        description: SHA-256 of the immutable task export manifest
+      request_sha256:
+        description: SHA-256 of the independently reviewed retained-adjudication request
         type: string
         required: true
 
@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 jobs:
-  qualify:
+  adjudicate:
     if: github.event_name == 'workflow_dispatch' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
     steps:
@@ -27,7 +27,7 @@ jobs:
       - name: Check out reviewed immutable scanner
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Generic OCI verification is reviewed here and is not yet on main.
+          # Exact implementation of original-graph and retained-input checks.
           ref: e99f5f2de8224b0d7c21eea1fdfb2c369ec04f0b
           path: scanner
           persist-credentials: false
@@ -39,9 +39,9 @@ jobs:
       - name: Prepare isolated Python interpreter
         run: python3 -m venv interface/npa/.venv
 
-      - name: Qualify exact bytes and retain private receipts
+      - name: Verify reviewed occurrences and retain the private acceptance receipt
         env:
-          MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}
+          REQUEST_SHA256: ${{ inputs.request_sha256 }}
           QUALIFICATION_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
           CUSTOMER_DENYLIST: ${{ secrets.CUSTOMER_DENYLIST }}
           INFRA_DENYLIST: ${{ secrets.INFRA_DENYLIST }}
@@ -53,8 +53,8 @@ jobs:
         run: |
           set -euo pipefail
           umask 077
-          interface/npa/.venv/bin/python interface/npa/scripts/private_image_qualification.py run \
-            --manifest-sha256 "$MANIFEST_SHA256" \
+          interface/npa/.venv/bin/python interface/npa/scripts/private_image_adjudication.py \
+            --request-sha256 "$REQUEST_SHA256" \
             --run-id "$QUALIFICATION_RUN_ID" \
             --scanner-root "$GITHUB_WORKSPACE/scanner" \
             --work-parent "$RUNNER_TEMP"

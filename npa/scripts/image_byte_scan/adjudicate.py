@@ -19,6 +19,7 @@ import stat
 import subprocess
 import sys
 import tarfile
+from contextlib import nullcontext
 from pathlib import Path
 
 if __package__ in {None, ""}:
@@ -510,6 +511,8 @@ def context(
     image_source_sha,
     scanner_source_sha,
 ):
+    from image_byte_scan import retained_inputs as retained
+
     return {
         "authorization_sha256": W.sha(W.canonical(authorization)),
         "authorization_file_sha256": authorization_file_hash,
@@ -525,14 +528,21 @@ def context(
         "scanner_source_sha": scanner_source_sha,
         "report_sha256": report_hash,
         "records_sha256": records_hash,
+        **retained.transport_context(),
     }
 
 
 def image_revision(authorization, verification, report):
-    """Read the config of a Docker save graph accepted by core.graph.
+    """Read the exact runtime config from a fully verified Docker or OCI graph.
 
-    Like core.graph, this requires manifest.json. OCI-only layout directories
-    are not an input format for this command.
+    Args:
+        authorization: Exact scan authorization with its original image identity.
+        verification: Accepted original graph verification receipt.
+        report: Complete scan population bound to the same original graph.
+    Returns:
+        The source revision declared by the digest-bound runtime config.
+    Raises:
+        ScanError: The config, original graph, population or revision is invalid.
     """
     with W.bound_open(authorization["archive"], secret=True) as (_path, fd, info):
         layers = W.graph(
@@ -544,8 +554,12 @@ def image_revision(authorization, verification, report):
             os.fdopen(os.dup(fd), "rb") as stream,
             tarfile.open(fileobj=stream, mode="r:") as archive,
         ):
-            manifest = decode(archive.extractfile("manifest.json").read())
-            payload = archive.extractfile(manifest[0]["Config"]).read()
+            if verification["schema_version"] == "npa.image.oci-verification.v1":
+                config_name = "blobs/sha256/" + verification["image_config_digest"][7:]
+            else:
+                manifest = decode(archive.extractfile("manifest.json").read())
+                config_name = manifest[0]["Config"]
+            payload = archive.extractfile(config_name).read()
             W.require(
                 "sha256:" + W.sha(payload) == verification["image_config_digest"],
                 "adjudication_config_changed",
@@ -566,7 +580,7 @@ def committed_sources(authorization):
     ).strip()
     W.require(re.fullmatch(r"[0-9a-f]{40}", sha), "adjudication_scanner_revision")
     W.require(
-        authorization["sources"] == W.source_bindings(),
+        W.source_bindings_match(authorization["sources"]),
         "adjudication_source_population",
     )
     for name, binding in authorization["sources"].items():
@@ -785,7 +799,11 @@ def verify(args):
     W.require(
         verification.get("valid") is True
         and verification.get("schema_version")
-        in ("npa.curobo.image-verification.v1", "npa.robotwin.image-verification.v1"),
+        in (
+            "npa.curobo.image-verification.v1",
+            "npa.robotwin.image-verification.v1",
+            "npa.image.oci-verification.v1",
+        ),
         "adjudication_verification_failed",
     )
     W.bound_file(authorization["archive"], secret=True)
@@ -818,10 +836,9 @@ def verify(args):
         and policy_receipt(authorization) == report.get("confidentiality_policy"),
         "adjudication_artifact_binding",
     )
-    expected_snapshots = [
-        {"role": role, "sha256": spec["sha256"], "stat": list(before)}
-        for role, spec, _secret, _path, before in snapshots
-    ]
+    from image_byte_scan import retained_inputs as retained
+
+    expected_snapshots = retained.snapshot_receipts(snapshots)
     W.require(
         report.get("input_snapshot_receipts") == expected_snapshots,
         "adjudication_scan_inputs_changed",
@@ -868,7 +885,7 @@ def verify(args):
         committed_sources(authorization) == scanner_source_sha,
         "adjudication_scanner_head_changed",
     )
-    return {
+    result = {
         "schema_version": SCHEMA,
         "accepted": True,
         "context": actual,
@@ -879,6 +896,16 @@ def verify(args):
         "manifest_sha256": args.manifest_sha256,
         "review_sha256": args.review_sha256,
     }
+    if retained.transport_context():
+        result["transport"] = {
+            **retained.transport_context(),
+            "current_input_snapshot_receipts": [
+                {"role": role, "sha256": spec["sha256"], "stat": list(before)}
+                for role, spec, _secret, _path, before in snapshots
+            ],
+            "original_snapshot_receipts_preserved": True,
+        }
+    return result
 
 
 def main(argv=None):
@@ -897,10 +924,28 @@ def main(argv=None):
         parser.add_argument("--" + option, type=Path, required=True)
     for option in ("manifest-sha256", "review-sha256"):
         parser.add_argument("--" + option, required=True)
+    for option in ("retention", "archive", "policy", "evidence-root"):
+        parser.add_argument("--" + option, type=Path)
+    parser.add_argument("--retention-sha256")
     args = parser.parse_args(argv)
     try:
         with W.authorized_roots(args.analysis_root, args.trusted_root):
-            result = verify(args)
+            from image_byte_scan import retained_inputs as retained
+
+            transport_args = (
+                args.retention,
+                args.retention_sha256,
+                args.archive,
+                args.policy,
+            )
+            W.require(
+                all(transport_args) or not any(transport_args), "transport_arguments"
+            )
+            transport = (
+                retained.relocated(args) if all(transport_args) else nullcontext()
+            )
+            with transport:
+                result = verify(args)
             output, fd = W.create_output(args.output_dir)
             try:
                 write_result(output, fd, result)
