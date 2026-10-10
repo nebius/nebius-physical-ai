@@ -53,6 +53,7 @@ def test_standalone_rtx_harness_requires_graphics_image_before_health(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _configure_rtx_environment(monkeypatch, tmp_path)
+    monkeypatch.delenv("NPA_E2E_MK8S_GRAPHICS_SMOKE_IMAGE", raising=False)
     test = _harness()["test_rtx_rendering_profile_passes_live_graphics_readiness_gate"]
 
     def unexpected_health(*_args, **_kwargs):
