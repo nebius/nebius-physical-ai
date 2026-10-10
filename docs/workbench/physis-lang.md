@@ -106,7 +106,13 @@ valid JSON; malformed responses are not repaired into success.
 `prepared/` stores the frozen recipe and original model responses. `seed-a/`
 and `seed-b/` store every original MP4, native generation receipts, and logs.
 `report/` contains `report.json`, `judgments.json`, raw judge responses,
-`index.html`, and all 36 original videos. Each stage has a SHA-256 manifest;
+`index.html`, and all 36 original videos. The HTML embeds every original MP4,
+so downloading only `index.html` is sufficient for offline playback; no server,
+network, or sibling files are needed. It groups the three prompt arms by scenario
+and matched seed, with measured scores, assertion evidence, prompts, native GPU
+settings, and SHA-256 receipts. Embedding verifies each clip against both its
+generation and evaluation receipt. Separate MP4s remain available for analysis.
+Each stage has a SHA-256 manifest;
 publication is verified by full storage readback. Completed stages record their
 invocation in `stage.json`; retrying the same stage verifies and reuses its
 completed destination before running a model. Changed requests, conflicting

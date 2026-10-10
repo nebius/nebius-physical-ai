@@ -80,6 +80,14 @@ GPU receipt remains evidence for the dated generation run; it is not a claim
 that these later recovery changes ran on GPUs. Native generation settings,
 conditioning, scoring, and the workflow YAML remain unchanged.
 
+On 2026-10-10, the standalone HTML renderer was exercised against these retained
+GPU artifacts. All stage manifests were verified again, all 2,916 frames decoded,
+and the 36 embedded MP4 hashes matched both generation and evaluation receipts.
+The resulting 24,332,878-byte HTML was opened alone with Chromium networking
+disabled: all 36 clips loaded and played at 1280×720, with no external requests
+or page errors. Desktop and mobile layouts were checked. This is a new offline
+rendering check using the original GPU outputs, not another GPU generation run.
+
 The tested implementation passed the
 [complete hosted candidate CI](https://github.com/nebius/nebius-physical-ai/actions/runs/36965743360),
 including the full Python 3.12 coverage suite, browser tests, Python 3.10/3.14
