@@ -7,6 +7,17 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+### Distinct known-count frame sampling
+
+- Keep `sequence` as uniform full-span sampling and make `keyframes` allocate
+  half its budget to the final 10% or a wider unique terminal window. This is
+  deterministic temporal stratification, not pixel-aware event detection.
+  Short sources return every frame; unknown-count video fallback is unchanged.
+- Preserve the original six-call hosted negative result: neither strategy
+  improved the declared labels, and one rationale hallucinated absent objects.
+  This result remains a failed model-improvement gate, separately from the
+  sampler's deterministic source/provenance contract.
+
 ### Breaking: authoritative Kubernetes GPU product aliases
 
 - Existing-capacity preflight now treats `nvidia.com/gpu.product` as
@@ -28,17 +39,6 @@ a versioned heading when a release is cut.
   retain its NVIDIA/NPA environment, non-root launch, cache volume and health
   contract. Add source-bound clean-root qualification alongside the unchanged
   complete-layer payload scan; source checks do not qualify new image bytes.
-
-### Distinct known-count frame sampling
-
-- Keep `sequence` as uniform full-span sampling and make `keyframes` allocate
-  half its budget to the final 10% or a wider unique terminal window. This is
-  deterministic temporal stratification, not pixel-aware event detection.
-  Short sources return every frame; unknown-count video fallback is unchanged.
-- Preserve the original six-call hosted negative result: neither strategy
-  improved the declared labels, and one rationale hallucinated absent objects.
-  This result remains a failed model-improvement gate, separately from the
-  sampler's deterministic source/provenance contract.
 
 ### VLM benchmarks distinguish outcome from agency
 

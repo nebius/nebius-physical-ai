@@ -1968,6 +1968,7 @@ def _scan(authorization, directory, detector_type=Detector, *, record_observer=N
     try:
         encoded_transport_only = verification["schema_version"] in (
             "npa.curobo.image-verification.v1",
+            "npa.docker-save.image-verification.v1",
             "npa.seedvr2.direct-manifest-verification.v1",
         )
         require(

@@ -3,6 +3,7 @@
 from functools import partial
 import io
 import json
+from uuid import UUID
 
 from botocore.exceptions import (
     ClientError,
@@ -181,3 +182,90 @@ def test_actual_probe_publication_service_failure(
         assert "private-canary" not in response.text
         assert client.get("/status", headers=headers).json() == {"busy": False}
     assert len(provider.writes) == int(boundary == "readback")
+
+
+def _evidence_snapshot(directory):
+    return {
+        path: (path.stat().st_ino, path.read_bytes() if path.is_file() else None)
+        for path in [directory, *directory.rglob("*")]
+    }
+
+
+def _retained_evidence(tmp_path, verb):
+    directories = list((tmp_path / "runs").iterdir())
+    assert len(directories) == 1
+    directory = directories[0]
+    evidence = _evidence_snapshot(directory)
+    if verb == "restore":
+        assert json.loads((directory / "failure.json").read_text())["error"] == (
+            "SeedVR2StorageUnavailable"
+        )
+    return directory, evidence
+
+
+def _assert_retry_preserved_evidence(tmp_path, directory, evidence, provider, collide):
+    assert directory.is_dir()
+    assert _evidence_snapshot(directory) == evidence
+    assert len(list((tmp_path / "runs").iterdir())) == (1 if collide else 2)
+    assert len(provider.bodies) == (1 if collide else 2)
+    assert all(body.closed for body in provider.bodies)
+    assert not provider.writes
+
+
+@pytest.mark.parametrize("verb", ["probe", "restore"])
+@pytest.mark.parametrize("collide", [False, True], ids=["fresh-directory", "collision"])
+def test_identical_failed_service_retry_preserves_evidence(
+    monkeypatch, tmp_path, verb, collide
+):
+    provider, payload = _wire_storage(monkeypatch, tmp_path, verb, "truncated")
+    if collide:
+        # Deterministically exercise a UUID collision without bypassing mkdir.
+        monkeypatch.setattr(runtime, "uuid4", lambda: UUID(int=0))
+    headers = {"Authorization": "Bearer fixture-token"}
+    service = create_app(
+        token="fixture-token", allowed_s3_roots=["s3://example-bucket/"]
+    )
+    with TestClient(service) as client:
+        assert client.post("/" + verb, headers=headers, json=payload).status_code == 503
+        assert client.get("/status", headers=headers).json() == {"busy": False}
+        directory, evidence = _retained_evidence(tmp_path, verb)
+        response = client.post("/" + verb, headers=headers, json=payload)
+        assert response.status_code == (400 if collide else 503)
+        assert ("use a NEW run ID" in response.json()["detail"]) == collide
+        assert "private-canary" not in response.text
+        assert client.get("/status", headers=headers).json() == {"busy": False}
+        _assert_retry_preserved_evidence(
+            tmp_path, directory, evidence, provider, collide
+        )
+        # A new ID remains usable even when the UUID source keeps colliding.
+        response = client.post(
+            "/" + verb, headers=headers, json={**payload, "run_id": "new-run"}
+        )
+        assert response.status_code == 503
+        assert client.get("/status", headers=headers).json() == {"busy": False}
+
+
+@pytest.mark.parametrize("verb", ["probe", "restore"])
+@pytest.mark.parametrize("collide", [False, True], ids=["fresh-directory", "collision"])
+def test_identical_failed_cli_retry_preserves_evidence(
+    monkeypatch, tmp_path, verb, collide
+):
+    provider, payload = _wire_storage(monkeypatch, tmp_path, verb, "truncated")
+    if collide:
+        monkeypatch.setattr(runtime, "uuid4", lambda: UUID(int=0))
+    argv = ["workbench", "seedvr2", verb]
+    for key, value in payload.items():
+        argv.extend(["--" + key.replace("_", "-"), value])
+    runner = CliRunner()
+    first = runner.invoke(app, argv)
+    assert first.exit_code == 1
+    assert "SeedVR2 failed: object storage" in first.stderr
+    directory, evidence = _retained_evidence(tmp_path, verb)
+    repeated = runner.invoke(app, argv)
+    assert repeated.exit_code == 1
+    assert "SeedVR2 failed:" in repeated.stderr
+    assert ("use a NEW run ID" in repeated.stderr) == collide
+    assert "Traceback" not in repeated.output
+    assert "private-canary" not in repeated.output
+    assert json.loads(repeated.stdout)["result"] == "error"
+    _assert_retry_preserved_evidence(tmp_path, directory, evidence, provider, collide)

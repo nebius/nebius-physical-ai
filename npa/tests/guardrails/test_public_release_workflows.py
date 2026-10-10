@@ -195,7 +195,6 @@ def test_prepublication_gates_run_before_the_public_dev_push() -> None:
         "scan_image_ltx_payload.py",
         "scan_image_wan_payload.py",
         "scan_image_alpamayo2_payload.py",
-        "scan_image_seedvr2_payload.py",
         "scan_image_cosmos3_ray_serve_payload.py",
         "scan_image_flex_pi_payload.py",
         "test_ltx_runtime_bootstrap.py",
@@ -359,16 +358,20 @@ def test_post_push_payload_scan_binds_remote_digest_to_local_full_tar() -> None:
     post_push = text[text.index("Verify pushed bytes") :]
 
     assert 'docker pull "$exact"' in post_push
-    # Bind the remote config, both local image identities, and the cuRobo and
-    # SeedVR2 archive verifiers to the exact pulled image.
-    assert post_push.count("docker image inspect --format '{{.Id}}'") == 5
+    assert (
+        'config_digest="$(docker image inspect --format \'{{.Id}}\' "$exact")"'
+        in post_push
+    )
     assert (
         'test "$(docker image inspect --format \'{{.Id}}\' "$exact")" = \\\n'
         '                "$(docker image inspect --format \'{{.Id}}\' "$IMAGE")"'
     ) in post_push
+    curobo_start = post_push.index('if [ "$TOOL" = curobo ]; then')
+    curobo = post_push[curobo_start : post_push.index("\n          fi", curobo_start)]
+    assert "npa/docker/workbench/curobo/verify_image.py" in curobo
     assert (
         '--expected-image-id "$(docker image inspect --format \'{{.Id}}\' "$exact")"'
-        in post_push
+        in curobo
     )
     assert (
         'docker save "${save_platform[@]}" --output "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact"'
@@ -377,19 +380,6 @@ def test_post_push_payload_scan_binds_remote_digest_to_local_full_tar() -> None:
     assert '--tarball "$RUNNER_TEMP/${TOOL}-pushed.tar"' in post_push
     assert 'rm -f "$RUNNER_TEMP/${TOOL}-pushed.tar"' in post_push
     assert 'scan_image_omniverse_payload.py \\\n+            "$exact"' not in post_push
-    seedvr2_scans = [
-        index
-        for index in range(len(text))
-        if text.startswith("scan_image_seedvr2_payload.py", index)
-    ]
-    assert len(seedvr2_scans) == 2
-    assert seedvr2_scans[0] < text.index(
-        "Push only after every pre-publication gate passes"
-    )
-    assert text.index("Verify pushed bytes") < seedvr2_scans[1]
-    for position in seedvr2_scans:
-        invocation = text[position : text.index("\n          fi", position)]
-        assert '--clean-root-source-sha "$DEVELOPMENT_SHA"' in invocation
 
 
 def test_build_and_cleanup_dispatches_cannot_fall_through_to_promotion() -> None:

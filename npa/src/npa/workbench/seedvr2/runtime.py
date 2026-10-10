@@ -193,7 +193,12 @@ def _create_work_directory(run_id: str) -> Path:
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     root.chmod(0o700)
     directory = root / _safe_run_name(run_id)
-    directory.mkdir(mode=0o700)
+    try:
+        directory.mkdir(mode=0o700)
+    except FileExistsError as exc:
+        raise SeedVR2Error(
+            "this run directory already has retained private evidence; use a NEW run ID"
+        ) from exc
     return directory
 
 

@@ -112,6 +112,15 @@ def run(argv: list[str], *, cwd: Path, env: dict[str, str]) -> None:
 
 
 def build(work: Path, output: Path) -> Path:
+    # Reject pre-existing roots before any environment-specific preflight.  A
+    # caller must never mistake a retained prior build for a fresh derivative,
+    # including on a host that cannot perform the pinned Python 3.11 build.
+    if work.exists():
+        raise FileExistsError(f"Refusing to reuse secure-pip work directory: {work}")
+    if output.exists():
+        raise FileExistsError(
+            f"Refusing to reuse secure-pip output directory: {output}"
+        )
     if sys.version_info < (3, 11):
         raise RuntimeError("The pinned vendoring build tool requires Python 3.11+")
     manifest = json.loads((HERE / "inputs.json").read_text())
