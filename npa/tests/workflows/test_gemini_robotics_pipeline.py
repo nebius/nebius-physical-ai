@@ -298,7 +298,9 @@ def test_pipeline_stages_reject_missing_config_before_storage_or_http(
     if missing != "api_key":
         monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
     if missing != "api_base_url":
-        monkeypatch.setenv("GEMINI_ROBOTICS_BASE_URL", "https://provider.example.invalid")
+        monkeypatch.setenv(
+            "GEMINI_ROBOTICS_BASE_URL", "https://provider.example.invalid"
+        )
 
     config = _config(model="" if missing == "model" else "operator-selected-model")
     with pytest.raises(GeminiRoboticsPipelineError):
