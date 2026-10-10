@@ -191,6 +191,26 @@ The checked-in spec is intentionally non-runnable until an operator supplies:
   or the operator's own credential and exact-revision payload access if an
   explicitly gated Hugging Face artifact is selected instead.
 
+On a fresh Kubernetes cluster, the configured SkyPilot worker ServiceAccount
+must exist before image-pull preflight. SkyPilot 0.12.2 uses
+`skypilot-service-account` by default and installs its standard RBAC during
+native bootstrap. If that account is absent, create it in the selected target:
+
+```bash
+kubectl --context '<selected-context>' --namespace '<selected-namespace>' \
+  create serviceaccount skypilot-service-account
+```
+
+The policy authentication token enters camera-bearing pods through
+`valueFrom.secretKeyRef`. Submission receipts retain the Secret name and key;
+the token remains in the operator-managed Secret. The ledger accepts validated
+selectors and rejects malformed selectors or embedded credential fields.
+
+The `source_sha` variable must match the code baked into all three runtime
+images. Record the operator-side submission client's revision separately when
+updating the submission manager, and retain the runtime images' signed source
+provenance.
+
 The Isaac dependency closure remains mounted read-only. Camera-bearing jobs
 separately mount a pod-local writable `emptyDir` at `/tmp/npa-isaac-state` for
 Kit portable state, XDG data, logs, and shader caches. Both collector and gold

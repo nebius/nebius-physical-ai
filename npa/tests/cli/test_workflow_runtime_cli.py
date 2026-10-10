@@ -34,6 +34,36 @@ PAIDF_COSMOS3 = REPO_ROOT / "workflows" / "main" / "paidf-cosmos3.yaml"
 RUNNER = CliRunner()
 
 
+def test_pi05_runtime_receipt_preserves_secret_references_without_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from npa.cli.workbench.workflow import _runtime_submission_receipt
+    from npa.orchestration.npa_workflow.spec import load_spec
+    from npa.orchestration.npa_workflow.submission_state import update_submission_state
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    spec = load_spec(SPECS / "sim2real-pi05.yaml")
+    spec.config.update(
+        {
+            "cpu_image": "registry.example.invalid/viewer@sha256:" + "0" * 64,
+            "runtime_image": "registry.example.invalid/openpi@sha256:" + "0" * 64,
+            "isaac_image": "registry.example.invalid/isaac@sha256:" + "0" * 64,
+            "service_auth_secret": "operator-policy-auth",
+            "base_service_account": "base-controller",
+            "adapted_service_account": "adapted-controller",
+            "isaac_cache_pvc": "operator-isaac-cache",
+        }
+    )
+
+    receipt = _runtime_submission_receipt(spec, "pi05-reference-receipt", "")
+    payload = update_submission_state(
+        "demo", "pi05-reference-receipt", {"workflow": receipt}
+    )
+
+    assert len(payload["workflow"]["steps"]) == 14
+    assert "operator-policy-auth" in json.dumps(payload)
+
+
 def _selected_storage_credentials():
     from npa.orchestration.npa_workflow.submit_credentials import (
         SubmitCredentialContext,
