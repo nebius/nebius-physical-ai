@@ -5,6 +5,9 @@ boundary. Administrators create persistent local accounts, assign local groups
 and explicit allocations, and operate the service. Users keep using the
 existing CLI, HTTP API, or Python SDK with a personal access-key file.
 
+For the short operator and user workflow, start with the
+[shared-access quickstart](shared-workbench-quickstart.md).
+
 This is deliberately not a standalone Workbench portal or browser-login
 product. There is no self-service signup, browser session, cloud-account
 provisioning, or direct user access to the private scheduler.
