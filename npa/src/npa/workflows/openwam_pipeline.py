@@ -16,6 +16,8 @@ import time
 from typing import Any, Iterable, Mapping
 from urllib.parse import urlparse
 
+import yaml
+
 
 OPENWAM_REPOSITORY = "https://github.com/OpenWAM-Official/OpenWAM"
 OPENWAM_SOURCE_REF = "48bd67b89d489b14d03b8d92bc66e65d306df32e"
@@ -279,21 +281,50 @@ def _checkpoint_files(root: Path) -> list[Path]:
     return values
 
 
+def _normalization_required(config: Path) -> bool:
+    """Mirror the pinned OpenWAM loader's saved-config normalization contract."""
+
+    try:
+        document = yaml.safe_load(config.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise OpenWAMPipelineError(
+            f"OpenWAM checkpoint config is not valid YAML: {config}"
+        ) from exc
+    if not isinstance(document, dict):
+        raise OpenWAMPipelineError(
+            f"OpenWAM checkpoint config is not a mapping: {config}"
+        )
+    dataloader = document.get("dataloader")
+    if dataloader is None:
+        return False
+    if not isinstance(dataloader, dict):
+        raise OpenWAMPipelineError(
+            f"OpenWAM checkpoint dataloader config is not a mapping: {config}"
+        )
+    return dataloader.get("normalize_mode") not in (None, "", "none", "null")
+
+
 def _checkpoint_record(root: Path) -> dict[str, Any]:
     checkpoint = _checkpoint_files(root)[-1]
     config = checkpoint.parent / "config.yaml"
-    normalization = checkpoint.parent / "normalization_stats.npy"
-    if not config.is_file() or not normalization.is_file():
-        raise OpenWAMPipelineError(
-            "OpenWAM checkpoint is missing config or normalization statistics"
-        )
-    return {
+    if not config.is_file():
+        raise OpenWAMPipelineError("OpenWAM checkpoint is missing config.yaml")
+    record: dict[str, Any] = {
         "relative_checkpoint": str(checkpoint.relative_to(root)),
         "sha256": _sha256_file(checkpoint),
         "size_bytes": checkpoint.stat().st_size,
         "config_sha256": _sha256_file(config),
-        "normalization_sha256": _sha256_file(normalization),
+        "normalization_required": _normalization_required(config),
     }
+    if record["normalization_required"]:
+        normalization = checkpoint.parent / "normalization_stats.npy"
+        if not normalization.is_file():
+            raise OpenWAMPipelineError(
+                "OpenWAM checkpoint enables action normalization but is missing "
+                "normalization_stats.npy"
+            )
+        record["normalization_sha256"] = _sha256_file(normalization)
+    return record
 
 
 def _command(

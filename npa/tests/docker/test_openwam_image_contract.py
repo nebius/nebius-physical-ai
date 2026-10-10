@@ -28,20 +28,23 @@ def test_openwam_uses_system_ffmpeg_not_wheel_bundled_executables() -> None:
         "-m npa.workflows.openwam_pipeline" in dockerfile
     )
     assert "sudo -u ubuntu" not in dockerfile
-    # The upstream resolver installs 4.21.1. The final client install must
-    # deliberately replace it with the compatibility-probed fixed release.
+    # The upstream resolver installs obsolete transformers and hydra-core.
+    # The final client install must deliberately replace both after that resolver.
     assert "transformers==4.36.0" in dockerfile
     assert "transformers==4.21.1" not in dockerfile
+    assert "hydra-core==1.3.7" in dockerfile
+    assert "hydra-core==1.2.0" not in dockerfile
     libero_requirements = (
         "/opt/openwam-libero/bin/python -m pip install --no-cache-dir "
         "-r /opt/openwam-libero-source/requirements.txt"
     )
-    fixed_transformers = (
+    fixed_dependencies = (
         "/opt/openwam-libero/bin/python -m pip install --no-cache-dir "
-        "--upgrade transformers==4.36.0"
+        "--upgrade transformers==4.36.0 hydra-core==1.3.7"
     )
-    assert dockerfile.index(libero_requirements) < dockerfile.index(fixed_transformers)
+    assert dockerfile.index(libero_requirements) < dockerfile.index(fixed_dependencies)
     assert 'm.version("transformers") == "4.36.0"' in dockerfile
+    assert 'm.version("hydra-core") == "1.3.7"' in dockerfile
 
 
 def test_openwam_removes_observed_base_image_critical_footprint() -> None:

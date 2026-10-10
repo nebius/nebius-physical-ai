@@ -71,9 +71,9 @@ RUN git clone --filter=blob:none --no-checkout "${OPENWAM_SOURCE_URL}" /opt/open
 # This follows the pinned upstream CUDA-12.8 resolver: its lock remains the
 # dependency authority and no checkpoint or benchmark payload is part of a
 # layer.  The second environment is deliberately isolated for OpenWAM's own
-# documented LIBERO client dependency set.  Its requirements resolver
-# downgrades transformers to 4.21.1, so the fixed compatibility-probed 4.36.0
-# release is deliberately installed after that resolver.
+# documented LIBERO client dependency set. Its requirements resolver downgrades
+# transformers and hydra-core, so the fixed compatibility-probed releases are
+# deliberately installed after that resolver.
 RUN python3 -m venv /opt/openwam-venv \
     && /opt/openwam-venv/bin/python -m pip install --no-cache-dir --upgrade pip setuptools wheel \
     && /opt/openwam-venv/bin/python -m pip install --no-cache-dir --no-deps \
@@ -100,18 +100,18 @@ RUN git clone --filter=blob:none --no-checkout "${LIBERO_SOURCE_URL}" /opt/openw
     && /opt/openwam-libero/bin/python -m pip install --no-cache-dir --upgrade pip==26.2.1 setuptools==84.0.0 wheel==0.48.0 \
     && /opt/openwam-libero/bin/python -m pip install --no-cache-dir \
       --extra-index-url https://download.pytorch.org/whl/cpu \
-      hydra-core==1.2.0 numpy==1.22.4 wandb==0.13.1 easydict==1.9 \
+      hydra-core==1.3.7 numpy==1.22.4 wandb==0.13.1 easydict==1.9 \
       opencv-python==4.6.0.66 robomimic==0.2.0 \
       einops==0.4.1 thop==0.1.1.post2209072238 robosuite==1.4.0 \
       bddl==1.0.1 future==0.18.2 matplotlib==3.5.3 cloudpickle==2.1.0 \
       gym==0.25.2 torch==2.7.1+cpu mujoco==3.3.2 imageio==2.37.4 \
       imageio-ffmpeg==0.6.0 PyYAML==6.0.3 websockets==13.1 \
     && /opt/openwam-libero/bin/python -m pip install --no-cache-dir -r /opt/openwam-libero-source/requirements.txt \
-    && /opt/openwam-libero/bin/python -m pip install --no-cache-dir --upgrade transformers==4.36.0 \
+    && /opt/openwam-libero/bin/python -m pip install --no-cache-dir --upgrade transformers==4.36.0 hydra-core==1.3.7 \
     && /opt/openwam-libero/bin/python -m pip install --no-cache-dir --no-deps -e /opt/openwam-libero-source \
     && printf '%s\n' /opt/openwam-libero-source > "$(/opt/openwam-libero/bin/python -c 'import site; print(site.getsitepackages()[0])')/libero_source.pth" \
     && /opt/openwam-libero/bin/python -m pip check \
-    && /opt/openwam-libero/bin/python -c 'import importlib.metadata as m; assert m.version("transformers") == "4.36.0"' \
+    && /opt/openwam-libero/bin/python -c 'import importlib.metadata as m; assert m.version("transformers") == "4.36.0"; assert m.version("hydra-core") == "1.3.7"' \
     && find /opt/openwam-libero -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
     && /opt/openwam-libero/bin/python -c 'import imageio_ffmpeg, libero, mujoco; assert imageio_ffmpeg.get_ffmpeg_exe() == "/usr/bin/ffmpeg"; assert mujoco.__version__ == "3.3.2"; assert libero is not None' \
     && rm -rf /tmp/openwam-uv-cache
