@@ -201,6 +201,7 @@ export TF_VAR_filesystem_csi_chart_repository='<operator-approved-filesystem-csi
 CLUSTER_ARGS=(
   --project "$NPA_PROJECT" --cluster-name "$NPA_CLUSTER"
   --gpu-workload-profile rtx-rendering
+  --gpu-graphics-smoke-image "$ISAAC_IMAGE"
   --cpu-nodes 1 --cpu-platform cpu-e2 --cpu-preset 16vcpu-64gb
   --sky-smoke
 )
@@ -221,6 +222,9 @@ and [driver contract](../mk8s-gpu-driver-strategy.md#rtx-rendering-workload-prof
 
 Expected: provisioning completes node stability, CUDA, graphics, and SkyPilot
 smoke checks and writes the kubeconfig. Do not skip those checks.
+The graphics probe uses the selected immutable Isaac image. The governed SONIC
+default may be quarantined; select this verified workflow image explicitly
+instead of bypassing the image gate.
 
 ### Using a cluster `provision-if-absent` did not create
 
@@ -252,7 +256,7 @@ repeating `provision-if-absent` readiness. If its default StorageClass is
 shell settings. Otherwise the validator expects `compute-csi-default-sc` and
 waits for a configuration that does not describe this cluster. Use the exact
 existing CPU/GPU node counts and shapes, its adopted context and kubeconfig,
-and `--gpu-workload-profile rtx-rendering --sky-smoke --skip-s3`. The cached
+and `--gpu-workload-profile rtx-rendering --gpu-graphics-smoke-image "$ISAAC_IMAGE" --sky-smoke --skip-s3`. The cached
 kubeconfig is reused; the command checks stability, CUDA, graphics, and actual
 SkyPilot GPU dispatch. Inspect `--dry-run` first and require
 `provider_mutation=false`. This does not replace adoption or create a missing
