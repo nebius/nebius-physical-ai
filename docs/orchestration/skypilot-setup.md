@@ -173,7 +173,23 @@ default, and the renewable token cache remains `HOME/.nebius/credentials.yaml`.
 retain the incoming CLI home configuration. For a verified RSA service-account
 profile, normal cache refresh, creation, and pruning preserve API identity;
 the effective profile file, account, key, and explicit credential sources remain
-bound. Unsupported or mixed authentication formats remain byte-strict.
+bound. Both split RSA-key profiles and the CLI's
+`service-account-credentials-file-path` profile are supported. The latter binds
+the absolute JSON file path and its complete bytes, verifies the native
+`subject-credentials` RSA/RS256 format, and binds the account and public-key
+identity. An optional profile `name` remains part of the bound configuration.
+No token is fetched to calculate this identity. Unknown cache entries, OAuth,
+mixed authentication settings, relative credential paths, and explicit bearer
+aliases retain full-byte verification.
+To verify this route with the actual CLI, run
+`npa/tests/e2e/test_nebius_json_sa_identity.py` with `NPA_INTEGRATION_E2E=1`,
+`NPA_E2E_NEBIUS_JSON_SA_CONFIG` set to the absolute owner-only CLI configuration,
+and `NPA_E2E_NEBIUS_JSON_SA_PROFILE` set to its selected JSON service-account
+profile. `NPA_E2E_NEBIUS_CLI` optionally selects an absolute CLI executable;
+otherwise the test uses `nebius` from `PATH`. The contract targets CLI
+`0.12.254`. It reads the selected config and credentials without changing them,
+mints into a fresh private test home, verifies the full durable binding before
+and after native cache creation, and starts no API, controller, or cloud job.
 The native attached-VM profile is also supported when it contains exactly
 `endpoint`, `parent-id`, `tenant-id`, and the provider's standard metadata
 `token-endpoint`. Its unchanged profile selects the attached identity while
