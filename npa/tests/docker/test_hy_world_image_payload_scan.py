@@ -98,7 +98,7 @@ def test_build_time_fetch_is_rejected(tmp_path: Path) -> None:
     assert "runtime_bootstrap_at_build" in _kinds(findings)
 
 
-def test_source_metadata_history_does_not_count_as_a_build_time_fetch(
+def test_separate_history_instructions_cannot_form_a_build_time_fetch(
     tmp_path: Path,
 ) -> None:
     findings = scanner.scan(
@@ -107,10 +107,16 @@ def test_source_metadata_history_does_not_count_as_a_build_time_fetch(
             "history": [
                 {
                     "created_by": (
+                        "RUN curl -fsSL https://developer.download.nvidia.com/"
+                        "compute/cuda/repos/ubuntu2404/key.pub -o key.pub"
+                    )
+                },
+                {
+                    "created_by": (
                         "RUN printf '%s' "
                         "https://github.com/Tencent-Hunyuan/HY-World-2.0"
                     )
-                }
+                },
             ]
         },
     )
@@ -132,6 +138,16 @@ def test_actual_hy_source_fetch_history_is_rejected(tmp_path: Path) -> None:
         },
     )
     assert "hy_world_fetch_at_build" in _kinds(findings)
+
+
+def test_credential_metadata_remains_rejected_outside_history_matching(
+    tmp_path: Path,
+) -> None:
+    findings = scanner.scan(
+        _tar(tmp_path / "metadata-secret.tar", {"opt/npa/hy-world/app.py": b""}),
+        {"config": {"Env": ["HF_TOKEN=not-a-real-token"]}, "history": []},
+    )
+    assert "credential_metadata" in _kinds(findings)
 
 
 def test_declared_cuda_base_accepts_only_its_exact_ordered_layers(

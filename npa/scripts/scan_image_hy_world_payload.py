@@ -242,15 +242,32 @@ def _scan_layers(
 
 
 def _scan_history(config: dict[str, Any]) -> list[base.walker.Finding]:
-    """Scan OCI metadata once under the HY policy after every layer is checked."""
+    """Scan instructions independently and the complete config for credentials."""
 
-    with base.walker.payload_policy(
-        forbidden_paths=FORBIDDEN_PATHS,
-        forbidden_history=FORBIDDEN_HISTORY,
-        audited_secret_files=RUNTIME_AUDITED_SECRET_LITERAL_FILE_SHA256,
-        audited_libraries=RUNTIME_AUDITED_LITERAL_LIBRARY_SHA256,
-    ):
-        return base.walker.scan_tars([], config)
+    findings: list[base.walker.Finding] = []
+    history = config.get("history")
+    instructions = (
+        [item.get("created_by", "") for item in history if isinstance(item, dict)]
+        if isinstance(history, list)
+        else []
+    )
+    for kind, pattern in FORBIDDEN_HISTORY:
+        if any(isinstance(item, str) and pattern.search(item) for item in instructions):
+            findings.append(
+                base.walker.Finding(
+                    kind, "<image-history>", "forbidden build history instruction"
+                )
+            )
+    metadata = json.dumps(config, sort_keys=True, default=str).encode("utf-8")
+    if any(pattern.search(metadata) for pattern in base.walker.SECRET_CONTENT):
+        findings.append(
+            base.walker.Finding(
+                "credential_metadata",
+                "<oci-config>",
+                "secret-like bytes in image configuration or history",
+            )
+        )
+    return findings
 
 
 def _verified_layer_diff_ids(
@@ -300,6 +317,23 @@ def _scan_bound_layers(tars: list[Path], base_count: int) -> list[base.walker.Fi
     return findings
 
 
+def _verify_declared_cuda_base(
+    actual_diff_ids: tuple[str, ...],
+) -> list[base.walker.Finding] | None:
+    """Require the exact declared CUDA base before applying its narrow policy."""
+
+    base_prefix = DECLARED_CUDA_BASE_DIFF_IDS
+    if actual_diff_ids[: len(base_prefix)] == base_prefix:
+        return None
+    return [
+        base.walker.Finding(
+            "declared_cuda_base_mismatch",
+            "<oci-config>",
+            "CUDA bytes are not bound to the declared pinned CUDA base",
+        )
+    ]
+
+
 def scan_tars(
     tars: list[Path],
     config: dict[str, Any],
@@ -326,21 +360,10 @@ def scan_tars(
     actual_diff_ids = _verified_layer_diff_ids(tars, configured_diff_ids)
     if isinstance(actual_diff_ids, list):
         return actual_diff_ids
-    base_count = len(DECLARED_CUDA_BASE_DIFF_IDS)
-    if actual_diff_ids[:base_count] != DECLARED_CUDA_BASE_DIFF_IDS:
-        return [
-            base.walker.Finding(
-                "declared_cuda_base_mismatch",
-                "<oci-config>",
-                "CUDA bytes are not bound to the declared pinned CUDA base",
-            )
-        ]
-
-    # CUDA is allowed only for exact inherited base layers.  All base files,
-    # including deleted Nsight ancestor bytes, still receive path, secret and
-    # nested-archive inspection.  CUDA ELF linkage is the one base-specific
-    # semantic that is expected from this compiler/runtime closure.
-    findings = _scan_bound_layers(tars, base_count)
+    base_error = _verify_declared_cuda_base(actual_diff_ids)
+    if base_error:
+        return base_error
+    findings = _scan_bound_layers(tars, len(DECLARED_CUDA_BASE_DIFF_IDS))
     findings.extend(_scan_history(config))
     return findings
 
