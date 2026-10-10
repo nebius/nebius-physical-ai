@@ -100,6 +100,58 @@ with the exact project's saved credentials, verifies their bytes, and requires
 a successful policy load from the current evaluator. Keep this configuration
 and all concrete artifact references outside Git.
 
+## RSL-RL throughput and physics validity
+
+RSL-RL's `Perf/total_fps` counts aggregate environment transitions per second:
+`num_envs * num_steps_per_env * world_size / (collection_time + learning_time)`.
+It includes rollout collection and PPO learning inside those timers. It excludes
+startup, asset loading, checkpoint writing, and other work outside the timers;
+it does not count rendered frames or individual physics substeps. Compare the
+same task, environment count, rollout length, PPO settings, seeds, GPU count,
+runtime versions, and host CPU before attributing a difference to the GPU.
+Increasing `num_envs` changes the PPO batch and can improve utilization without
+establishing better policy quality or a matched hardware speedup.
+
+Large environment counts can exhaust fixed PhysX buffers while the trainer
+continues, writes a finite checkpoint, and exits zero. A log containing
+`PhysX error` or `simulation will miss interactions` rejects the result.
+Standalone `npa workbench isaac-lab train` records `physics_valid` and
+`physics_error_count` in its summary and checkpoint manifest, reports failure,
+and removes the promoted checkpoint alias when native physics fails. Raw logs
+and training checkpoints remain diagnostic artifacts. The current client embeds
+the validator into its training command, so this check also reaches older
+containers. Raw upstream commands and BYOF resource profiles require their own
+log validation.
+
+The pinned generation 3 config uses `env.sim.physics`. Buffer-capacity overrides
+allocate memory; they do not change solver iterations or the simulation timestep.
+For a headless G1 scaling experiment inside a reviewed GPU container, use:
+
+```bash
+/isaac-sim/python.sh /workspace/isaaclab/scripts/benchmarks/benchmark_rsl_rl.py \
+  --task Isaac-Velocity-Rough-G1-v0 --num_envs 16384 --seed 42 \
+  --max_iterations 500 --visualizer none --device cuda:0 \
+  --logger tensorboard --benchmark_backend json --output_path /tmp/isaac-benchmark \
+  env.sim.physics.gpu_total_aggregate_pairs_capacity=8388608 \
+  env.sim.physics.gpu_found_lost_pairs_capacity=8388608 \
+  env.sim.physics.gpu_max_rigid_patch_count=1048576
+```
+
+Retain the full process log, effective `env.yaml` and `agent.yaml`, raw performance
+tags, checkpoint, and GPU telemetry. Inspect native errors throughout the run;
+these example capacities do not guarantee adequacy for other tasks or counts.
+Exclude warmup consistently and aggregate total transitions over total timed
+seconds rather than averaging iteration FPS. Verify the same protocol on both
+GPUs before comparing their rates. See the [RSL-RL logger](https://github.com/leggedrobotics/rsl_rl/blob/v5.0.1/rsl_rl/utils/logger.py)
+and [PhysX configuration API](https://isaac-sim.github.io/IsaacLab/v2.3.0/source/api/lab/isaaclab.sim.html#isaaclab.sim.PhysxCfg).
+
+The read-only live test `test_isaac_training_validity_live.py` uses
+`NPA_ISAAC_TRAINING_VALIDITY_VERIFY_CONFIG` to read an owner-private JSON config
+with `project_id` and `provenance_uri`. The provenance binds the current validator
+source hash and byte hashes for native zero-exit training logs, checkpoints, and
+completion records, including both clean physics and dropped-interaction cases.
+Keep concrete artifact references and project identity outside Git.
+
 ## Generation 2 comparison
 
 The reproducible comparison uses the public 2.3.2 baseline and the 3.0 beta

@@ -12,6 +12,13 @@ and follow [installation](../docs/install.md) and
 The [command reference](../docs/cli/workbench.md) lists the installed tools;
 `npa workbench <tool> --help` exposes each tool's actual commands.
 
+Standalone `npa workbench isaac-lab train` rejects native PhysX errors even when
+the trainer exits zero and writes a checkpoint. Its summary and checkpoint
+manifest expose `physics_valid` and `physics_error_count`; invalid runs retain
+diagnostics and remove the promoted checkpoint alias. See the
+[Isaac Lab throughput guide](../docs/workbench/isaac-lab-3.md#rsl-rl-throughput-and-physics-validity)
+for the RSL-RL metric, buffer sizing, and matched GPU comparisons.
+
 `npa workbench vlm-eval review-visual` and its SDK write a separate private rich
 visual audit. Choose an exact hosted model, neutral task, and fresh output path;
 optional `--baseline-path` compares both sources in both A/B orders. See the
