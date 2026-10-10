@@ -977,7 +977,11 @@ def _successful_audit_orders(report: dict, summary: dict) -> bool:
 
 def _prepare_evidence_directory(root: Path, path: Path) -> Path:
     try:
-        target = path.resolve()
+        try:
+            target = path.resolve(strict=True)
+        except FileNotFoundError:
+            # Outputs may be new, but existing prefixes must resolve without loops.
+            target = path.resolve()
     except RuntimeError as exc:
         # Python 3.12 reports symlink loops as RuntimeError, not OSError.
         # Normalize only that pathlib failure, not arbitrary runtime bugs.

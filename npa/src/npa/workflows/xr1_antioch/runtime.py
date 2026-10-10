@@ -132,6 +132,14 @@ def _optimizer_proof() -> None:
         )
 
 
+def _artifact_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _publish(root: Path, destination: str) -> None:
     import boto3
 
@@ -148,8 +156,7 @@ def _publish(root: Path, destination: str) -> None:
     manifest = {}
     for path in paths:
         name = str(path.relative_to(root))
-        with path.open("rb") as stream:
-            digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        digest = _artifact_sha256(path)
         client.upload_file(
             str(path),
             location.netloc,
