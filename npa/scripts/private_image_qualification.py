@@ -586,6 +586,7 @@ class _RunObserver:
         self.phase = "manifest-transfer"
         self.child = None
         self.signum = None
+        self.force = False
         self.retaining = False
 
     def event(self, event, **details):
@@ -598,10 +599,18 @@ class _RunObserver:
         print(json.dumps(value, sort_keys=True), flush=True)
 
     def cancel(self, signum, _frame):
+        self.force = self.signum is not None
         self.signum = self.signum or signum
         # The trusted child's own cancellation protocol joins its helpers.
-        # Do not interrupt the final private receipt transfer with a second signal.
+        # A repeated cancellation explicitly forces only the owned child.
+        # Do not interrupt the final private receipt transfer with another signal.
         if not self.retaining and self.child is not None:
+            self.stop_child()
+
+    def stop_child(self):
+        if self.force:
+            self.child.kill()
+        else:
             self.child.terminate()
 
 
@@ -650,7 +659,7 @@ def _child(command, **options):
         if observer is not None:
             observer.child = process
             if observer.signum is not None and not observer.retaining:
-                process.terminate()
+                observer.stop_child()
         yield process
     finally:
         if process is not None:

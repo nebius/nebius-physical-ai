@@ -198,6 +198,11 @@ and SIGINT mark the run cancelled, notify its owned child, and wait for the
 child's existing cleanup protocol before attempting final private retention.
 A signal during child creation is forwarded once its handle is available;
 unrelated processes are not signalled. No workload deadline is added.
+If the child does not cooperate, a subsequent SIGTERM or SIGINT forces that
+exact child to stop before it is joined. This escalation requires another
+signal; there is no cleanup timer. Repeated signals do not interrupt the final
+private receipt transfer. A kernel task stuck in uninterruptible I/O can still
+delay joining even after a forced stop request.
 Cancellation always fails qualification, including a signal received during
 receipt transfer. Acceptance requires the successful job and final public
 summary as well as the bound private scanner report; an earlier private summary

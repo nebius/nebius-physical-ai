@@ -451,29 +451,49 @@ raise SystemExit(Q._qualify(Path({str(runner)!r}),Path({str(runner)!r}),transpor
 """
 
 
-def _signal_child_script(path):
-    path.write_text("""import json,os,signal,sys
+def _signal_child_script(path, *, ignore_termination=False):
+    path.write_text(
+        f"IGNORE_TERMINATION={ignore_termination!r}\n"
+        + """import json,os,signal,sys
 from pathlib import Path
 def terminate(number,frame):
  print('synthetic-private-child-terminated',flush=True)
+ if IGNORE_TERMINATION:
+  marker.with_suffix('.ignored').write_bytes(b'')
+  return
  raise SystemExit(2)
 signal.signal(signal.SIGTERM,terminate)
 print('synthetic-private-child-stdout',flush=True)
 print('synthetic-private-child-stderr',file=sys.stderr,flush=True)
 marker=Path(sys.argv[1]);temporary=marker.with_suffix('.tmp')
 temporary.write_text(json.dumps({'pid':os.getpid()}));temporary.replace(marker)
-signal.pause()
-""")
+while True:signal.pause()
+"""
+    )
 
 
-@pytest.mark.parametrize("target", ["parent", "child"])
+def _send_termination(parent, marker, target):
+    while not marker.exists() and parent.poll() is None:
+        time.sleep(0.01)
+    assert marker.exists()
+    child_pid = json.loads(marker.read_bytes())["pid"]
+    os.kill(child_pid if target == "child" else parent.pid, signal.SIGTERM)
+    if target == "repeat-parent":
+        while not marker.with_suffix(".ignored").exists() and parent.poll() is None:
+            time.sleep(0.01)
+        assert marker.with_suffix(".ignored").exists() and parent.poll() is None
+        os.kill(parent.pid, signal.SIGINT)
+    return child_pid
+
+
+@pytest.mark.parametrize("target", ["parent", "child", "repeat-parent"])
 def test_real_termination_joins_child_and_retains_private_diagnostics(
     private_root, export, target
 ):
     runner = private_root / "signal-runner"
     runner.mkdir(mode=0o700)
     marker, script = private_root / "child.json", private_root / "child.py"
-    _signal_child_script(script)
+    _signal_child_script(script, ignore_termination=target == "repeat-parent")
     program = _signalled_qualification_program(runner, marker, script, export[1])
     environment = dict(os.environ, HOME=str(private_root))
     with subprocess.Popen(
@@ -487,11 +507,7 @@ def test_real_termination_joins_child_and_retains_private_diagnostics(
                 stderr=subprocess.PIPE,
                 start_new_session=True,
             ) as parent:
-                while not marker.exists() and parent.poll() is None:
-                    time.sleep(0.01)
-                assert marker.exists()
-                child_pid = json.loads(marker.read_bytes())["pid"]
-                os.kill(parent.pid if target == "parent" else child_pid, signal.SIGTERM)
+                child_pid = _send_termination(parent, marker, target)
                 stdout, stderr = parent.communicate(timeout=20)
                 assert parent.returncode == 1 and stderr == b""
             assert sibling.poll() is None
@@ -505,9 +521,7 @@ def test_real_termination_joins_child_and_retains_private_diagnostics(
 def _assert_signal_receipt(root, selector, target, stdout):
     assert b"synthetic-private-child" not in stdout
     summary = json.loads(stdout.splitlines()[-1])
-    expected = (
-        "qualification_cancelled" if target == "parent" else "helper_build_failed"
-    )
+    expected = "helper_build_failed" if target == "child" else "qualification_cancelled"
     assert summary["status"] == "failed" and summary["failure_code"] == expected
     assert summary["failure_stage"] == "helper-build"
     receipt = root / Q.RECEIPT_ROOT / selector / "321-1/result.tar"
@@ -518,17 +532,22 @@ def _assert_signal_receipt(root, selector, target, stdout):
         assert b"synthetic-private-child-stderr" in diagnostic
         assert b"synthetic-private-child-terminated" in diagnostic
         events = [json.loads(line) for line in archive.extractfile("phases.jsonl")]
-        assert any(item.get("exit_code") == 2 for item in events)
+        expected_exit = -signal.SIGKILL if target == "repeat-parent" else 2
+        assert any(item.get("exit_code") == expected_exit for item in events)
         retained = json.load(archive.extractfile("summary.json"))
         assert retained["failure_code"] == expected
 
 
-def test_signal_during_spawn_is_forwarded_to_owned_child(private_root, monkeypatch):
+@pytest.mark.parametrize("signal_count", [1, 2])
+def test_signal_during_spawn_is_forwarded_to_owned_child(
+    private_root, monkeypatch, signal_count
+):
     original = Q.subprocess.Popen
 
     def spawn(*args, **kwargs):
         child = original(*args, **kwargs)
-        os.kill(os.getpid(), signal.SIGTERM)
+        for _ in range(signal_count):
+            os.kill(os.getpid(), signal.SIGTERM)
         return child
 
     monkeypatch.setattr(Q.subprocess, "Popen", spawn)
@@ -539,6 +558,7 @@ def test_signal_during_spawn_is_forwarded_to_owned_child(private_root, monkeypat
                 phase="helper-build",
             )
         assert observer.child is None and observer.signum == signal.SIGTERM
+        assert observer.force == (signal_count > 1)
     assert signal.getsignal(signal.SIGTERM) != observer.cancel
 
 
@@ -794,7 +814,7 @@ def _local_transport():
     ]
 
 
-@pytest.mark.parametrize("cancel_during_retention", [False, True])
+@pytest.mark.parametrize("cancel_during_retention", [0, 1, 2])
 def test_synthetic_transport_executes_remote_reader_and_retains_exact_receipt(
     export, private_root, monkeypatch, capsys, cancel_during_retention
 ):
@@ -814,12 +834,13 @@ def test_synthetic_transport_executes_remote_reader_and_retains_exact_receipt(
         retain = Q._retain
 
         def interrupted_retention(*args):
-            os.kill(os.getpid(), signal.SIGTERM)
+            for _ in range(cancel_during_retention):
+                os.kill(os.getpid(), signal.SIGTERM)
             return retain(*args)
 
         monkeypatch.setattr(Q, "_retain", interrupted_retention)
     assert Q._qualify(private_root, runner, local_transport, export[1], "456-1") == int(
-        cancel_during_retention
+        bool(cancel_during_retention)
     )
     receipt = private_root / Q.RECEIPT_ROOT / export[1] / "456-1/result.tar"
     output = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
