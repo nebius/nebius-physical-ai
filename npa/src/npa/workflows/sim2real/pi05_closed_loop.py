@@ -1316,6 +1316,8 @@ def _checkpoint_provenance(receipt: dict[str, Any]) -> dict[str, Any]:
     keys = (
         "source_commit",
         "config_name",
+        "base_config_name",
+        "selected_policy",
         "checkpoint_role",
         "checkpoint_sha256",
         "checkpoint_manifest_sha256",

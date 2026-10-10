@@ -240,6 +240,13 @@ decodes, and removes a synthetic MP4/Rerun pair in its own interpreter. The
 workflow's non-Kit evaluator parent also reads back the declared report and
 rejects a missing, failure-schema, or incomplete result even if Kit exits zero.
 
+The service receipt records both the upstream base configuration and the actual
+selected LoRA configuration. The final comparison admits their different names
+only with proof of the selected load, the expected LoRA architecture and action
+horizon, and saved normalization verified against training-only data. Source,
+image, task protocol, camera, noise, physics, and checkpoint checks still apply.
+The report exposes both configuration names and rejects unsupported comparisons.
+
 ## One or two eight-GPU RTX PRO 6000 nodes
 
 The default spec is **not** an RTX-only qualification. It routes OpenPI

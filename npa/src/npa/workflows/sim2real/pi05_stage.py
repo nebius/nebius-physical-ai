@@ -143,14 +143,52 @@ def _protocols_match(baseline: dict, adapted: dict) -> bool:
 def _runtime_provenance_matches(baseline: dict, adapted: dict) -> bool:
     before = baseline.get("checkpoint_provenance") or {}
     after = adapted.get("checkpoint_provenance") or {}
-    runtime_keys = ("source_commit", "config_name", "image_digest")
+    runtime_keys = ("source_commit", "image_digest")
     same_runtime = all(before.get(key) == after.get(key) for key in runtime_keys)
     distinct_checkpoint = before.get("checkpoint_sha256") != after.get(
         "checkpoint_sha256"
     ) and before.get("checkpoint_manifest_sha256") != after.get(
         "checkpoint_manifest_sha256"
     )
-    return same_runtime and distinct_checkpoint
+    return (
+        same_runtime
+        and distinct_checkpoint
+        and _policy_configurations_match(before, after)
+    )
+
+
+def _policy_configurations_match(before: dict, after: dict) -> bool:
+    """Admit a verified LoRA training configuration within its base family.
+
+    Args:
+        before: Baseline checkpoint provenance.
+        after: Adapted checkpoint provenance with actual selected-load evidence.
+    Returns:
+        Whether the configuration identity supports the intended comparison.
+    Raises:
+        None.
+    """
+    if before.get("config_name") == after.get("config_name"):
+        return True
+    selected = after.get("selected_policy") or {}
+    digest = selected.get("dataset_archive_sha256")
+    step = selected.get("saved_step")
+    return bool(
+        before.get("config_name") == after.get("base_config_name")
+        and selected.get("loaded") is True
+        and selected.get("config_name") == after.get("config_name")
+        and selected.get("paligemma_variant") == "gemma_2b_lora"
+        and selected.get("action_expert_variant") == "gemma_300m_lora"
+        and selected.get("action_horizon") == 15
+        and selected.get("normalization_source")
+        == "selected_step_assets_verified_against_training_only"
+        and isinstance(step, int)
+        and not isinstance(step, bool)
+        and step > 0
+        and isinstance(digest, str)
+        and len(digest) == 64
+        and all(char in "0123456789abcdef" for char in digest)
+    )
 
 
 def _comparison(baseline: dict, adapted: dict) -> dict[str, object]:
@@ -170,6 +208,10 @@ def _comparison(baseline: dict, adapted: dict) -> dict[str, object]:
             "adapted": adapted_error,
         },
         "comparison_metric": "fresh_wrist_released_surface_placement_success_rate",
+        "policy_configuration_names": {
+            role: (report.get("checkpoint_provenance") or {}).get("config_name")
+            for role, report in (("baseline", baseline), ("adapted", adapted))
+        },
         "baseline_success_rate": before,
         "adapted_success_rate": after,
         "measured_improvement": improvement,

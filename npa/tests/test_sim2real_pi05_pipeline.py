@@ -702,6 +702,44 @@ def test_final_comparison_uses_validated_fresh_wrist_metric() -> None:
     assert comparison["improvement_claimed"] is True
 
 
+@pytest.mark.parametrize("mutation", [None, "normalization", "base_family", "load"])
+def test_final_comparison_binds_changed_lora_configuration_to_actual_load(
+    mutation,
+) -> None:
+    baseline = _effectiveness_report("base", {})
+    adapted = _effectiveness_report("adapted", {"fresh": {20281007}})
+    provenance = adapted["checkpoint_provenance"]
+    provenance.update(
+        config_name="npa_pi05_franka_mini_lora",
+        base_config_name="pi05_droid",
+        selected_policy={
+            "loaded": True,
+            "saved_step": 1000,
+            "config_name": "npa_pi05_franka_mini_lora",
+            "dataset_archive_sha256": "a" * 64,
+            "paligemma_variant": "gemma_2b_lora",
+            "action_expert_variant": "gemma_300m_lora",
+            "action_horizon": 15,
+            "normalization_source": "selected_step_assets_verified_against_training_only",
+        },
+    )
+    if mutation == "normalization":
+        provenance["selected_policy"]["normalization_source"] = "base_asset"
+    elif mutation == "base_family":
+        provenance["base_config_name"] = "unrelated_policy"
+    elif mutation == "load":
+        provenance["selected_policy"]["loaded"] = False
+
+    comparison = pi05_stage._comparison(baseline, adapted)
+
+    assert comparison["comparison_protocol_identical"] is (mutation is None)
+    assert comparison["improvement_claimed"] is (mutation is None)
+    assert comparison["measured_improvement"] == (0.5 if mutation is None else None)
+    assert (
+        comparison["policy_configuration_names"]["adapted"] == provenance["config_name"]
+    )
+
+
 def _mutate_effectiveness_report(report: dict, mutation: str) -> dict:
     invalid = copy.deepcopy(report)
     if mutation == "execution":

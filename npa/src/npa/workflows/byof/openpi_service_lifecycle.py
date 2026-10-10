@@ -304,6 +304,7 @@ def _start_result(
         "checkpoint_manifest_sha256": checkpoint.get("checkpoint_manifest_sha256"),
         "source_commit": SOURCE_REF,
         "config_name": selected.get("config_name", args.config_name),
+        "base_config_name": args.config_name,
         "selected_policy": selected,
         "image_digest": args.runtime_image.rsplit("@sha256:", 1)[-1],
         "service_host": host,
