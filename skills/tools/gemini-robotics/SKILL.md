@@ -21,7 +21,10 @@ establish live provider availability.
 
 ## Interfaces
 
-- CLI: `npa workbench gemini-robotics <plan|eval> --help`
+- CLI: `npa workbench gemini-robotics <plan|eval|distill> --help`
+- `distill`: teacher-student loop - ER-2 plans, MuJoCo generates demos,
+  PyTorch behavior-clones a student policy (CUDA when available; run on a
+  Nebius GPU job), MuJoCo evaluates closed-loop. One command, no stubs.
 - Python SDK (workbench-first): `npa.workbench.gemini_robotics`
   (`plan`, `eval` — aliases of `run_er_planning_stage`,
   `run_eval_stage`)
