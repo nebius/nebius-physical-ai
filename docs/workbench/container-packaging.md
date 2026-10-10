@@ -87,6 +87,52 @@ never a tag. Image-byte licensing scans remain mandatory before registry push.
 For a multi-tool spec, repeat `--image-override TOOL_REF=IMAGE` to select each
 tool's artifact independently; the preflight and renderer share that same map.
 
+## Cosmos3 Ray payload finding evidence
+
+`scan_image_cosmos3_ray_serve_payload.py` keeps credential findings blocking and
+reports byte identities for investigation. Its full JSON has
+`report_scope: full` and includes `archive_sha256` and `config_sha256`, plus
+`credential_members` with each blocked stored file's
+`path`, `kind`, `size`, `sha256`, `layer_index`, `layer_sha256`, and
+`member_index`. `detection_reason` identifies the existing path or
+member-content rule that produced the finding. These fields contain no
+credential content excerpts and do not establish that a value is usable, a key
+is parseable, or a match is harmless. A member hash and exact size are still a
+content commitment: someone with a guessed file can confirm it offline. The
+v1 report format permits these additive evidence fields; future consumers must
+ignore unknown fields.
+
+The scan covers every stored layer. Repeated paths retain separate member
+records, including overwritten or deleted ancestor files; the existing
+`credential_hits` list remains deduplicated. Member hashes cover the complete
+file even when credential detection stops at an early match. `layer_sha256` is
+the hash of the stored Docker-save layer entry, not a declared rootfs `diff_id`.
+`archive_sha256` identifies this scan's Docker-save input stream, not a stable
+image identity across independent saves. Compare a member hash with
+independently obtained exact source or package bytes before classifying a
+finding. Hash equality is evidence of byte identity and does not waive any
+publication gate or establish GPU capability acceptance.
+
+Stdout is redacted by default with `report_scope: redacted-summary`; `--json`
+writes the full metadata report only to its requested file. Use
+`--full-stdout` only for local operator attribution, never a public log. The
+ordinary publication workflow keeps member hashes and sizes out of Actions logs.
+The scanner exits 0 for a clean archive, 1 for a blocked finding or scan/archive
+error, and 2 when a requested private report cannot be written or command-line
+usage is invalid; it refuses a symlink report target. Treat every nonzero exit
+as blocking: a report-write failure returns 2 even when the completed scan
+verdict is itself blocking.
+For a report-write failure, stderr JSON identifies only the portable errno class
+(for example, `ELOOP`) so an operator can distinguish a refusal from runner
+capacity without exposing a path or report content.
+With an explicit local `--full-stdout` opt-in, that write failure still prints
+the completed full report so the archive need not be scanned again.
+Do not publish raw layers, extracted credential bytes, or a failed image archive
+as public Actions artifacts. The workflow writes the full report as a private
+temporary runner file and removes it with the scanned archive; rerun the scanner
+against an operator-controlled archive when later attribution is needed. An
+unresolved finding still exits nonzero and blocks push.
+
 ## Inventory
 
 The Sim2Real controller and Rerun viewer builds use the October 2, 2026 Debian

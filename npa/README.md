@@ -687,6 +687,19 @@ scan; archives and temporary scan data are cleaned after each entry. The require
 inventory aggregate fails when any applicable entry fails or does not finish.
 This baseline check does not replace complete image scans before publication.
 
+The Cosmos3 Ray payload scanner records archive/config and blocked-member
+hashes, sizes, layer locations, and rule kinds in its JSON report while
+preserving blocking verdicts. Stdout is redacted by default, and `--json` writes
+the full report to the requested file, so a publication log cannot expose member
+commitments; `--full-stdout` is only for local operator attribution. See the
+[payload finding evidence](../docs/workbench/container-packaging.md#cosmos3-ray-payload-finding-evidence)
+contract. It exits 0 for clean, 1 for blocked findings or scan/archive errors,
+or 2 when the private report cannot be written (including a symlink target) or
+command-line usage is invalid. On a report-write failure, stderr has a safe
+errno-class diagnostic; any nonzero is blocking, including 2 after a blocked
+scan.
+A metadata report does not accept the image or its GPU capability.
+
 Use an **absolute** interpreter path: the recipes change into `npa/` before
 running. Without an override, Make prefers the contributor environment
 `npa/.venv/bin/python`, then `python3` on `PATH`. Live and GPU tests are
