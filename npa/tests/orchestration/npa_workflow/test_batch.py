@@ -120,7 +120,9 @@ def test_duplicate_yaml_keys_rejected(manifest):
 def children(tmp_path, monkeypatch):
     script = tmp_path / "submit.py"
     journal = tmp_path / "children.json"
-    journal.write_text(json.dumps({"active": 0, "maximum": 0, "calls": []}))
+    journal.write_text(
+        json.dumps({"active": 0, "maximum": 0, "calls": [], "observations": []})
+    )
     script.write_text("""
 import fcntl, json, os, sys, time
 from pathlib import Path
@@ -139,11 +141,42 @@ def update(delta):
         handle.seek(0)
         json.dump(state, handle)
         handle.truncate()
+def record_observation(saw_preterminal):
+    with path.open('r+') as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        state = json.load(handle)
+        state['observations'].append({
+            'run_id': run_id,
+            'saw_preterminal': saw_preterminal,
+        })
+        handle.seek(0)
+        json.dump(state, handle)
+        handle.truncate()
 update(1)
 time.sleep(0.3)
 failure = os.getenv('BATCH_TEST_FAILURE') == run_id and not resume
-if failure:
-    time.sleep(float(os.getenv('BATCH_TEST_FAILURE_DELAY', '0')))
+state_file = os.getenv('BATCH_TEST_STATE_FILE')
+handshake_run = os.getenv('BATCH_TEST_HANDSHAKE_RUN_ID')
+if state_file and run_id == handshake_run and not failure and not resume:
+    failure_run = os.environ['BATCH_TEST_FAILURE']
+    deadline = time.monotonic() + 5
+    saw_preterminal = False
+    while True:
+        try:
+            record = json.loads(Path(state_file).read_text()).get('runs', {}).get(
+                failure_run, {}
+            )
+        except (FileNotFoundError, json.JSONDecodeError):
+            record = {}
+        if record.get('status') == 'reconcile-required':
+            if record.get('returncode') == 1:
+                record_observation(saw_preterminal)
+                break
+            saw_preterminal = True
+        if time.monotonic() >= deadline:
+            print('timed out waiting for failed child return code', file=sys.stderr)
+            sys.exit(2)
+        time.sleep(0.01)
 update(-1)
 if failure:
     print('lost response')
@@ -186,18 +219,19 @@ def test_failure_stops_admission_and_resume_reconciles_first(
     manifest, children, tmp_path, monkeypatch
 ):
     monkeypatch.setenv("BATCH_TEST_FAILURE", "test-batch-item-0")
-    # Let the successful sibling free a slot before item-0 reports its
-    # failure.  A driver must not use that slot to admit item-2 yet.
-    monkeypatch.setenv("BATCH_TEST_FAILURE_DELAY", "0.3")
+    monkeypatch.setenv(
+        "BATCH_TEST_STATE_FILE", str(tmp_path / "state/test-batch/state.json")
+    )
+    monkeypatch.setenv("BATCH_TEST_HANDSHAKE_RUN_ID", "test-batch-item-1")
     result = batch.run_batch(
         manifest[0], state_dir=tmp_path / "state", max_concurrent_runs=2
     )
     assert result["runs"]["test-batch-item-0"]["status"] == "reconcile-required"
     assert result["runs"]["test-batch-item-2"]["status"] == "pending"
-    initial_calls = json.loads(children.read_text())["calls"]
-    assert [call["run_id"] for call in initial_calls] == [
-        "test-batch-item-0",
-        "test-batch-item-1",
+    evidence = json.loads(children.read_text())
+    assert len(evidence["calls"]) == 2
+    assert evidence["observations"] == [
+        {"run_id": "test-batch-item-1", "saw_preterminal": True}
     ]
     result = batch.run_batch(
         manifest[0], state_dir=tmp_path / "state", max_concurrent_runs=2, resume=True
