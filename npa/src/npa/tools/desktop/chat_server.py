@@ -12,6 +12,7 @@ try:
     from .chat_rpc import CodexConnection
     from .chat_history import owned_elsewhere
     from .chat_models import available_models, model_selection
+    from .chat_permissions import settings_metadata
     from .chat_delivery import Deliveries
     from .chat_session import authorized as _authorized, mobile_session, session_key
     from .chat_pwa import public_asset
@@ -19,6 +20,7 @@ except ImportError:
     from chat_rpc import CodexConnection
     from chat_history import owned_elsewhere
     from chat_models import available_models, model_selection
+    from chat_permissions import settings_metadata
     from chat_delivery import Deliveries
     from chat_session import authorized as _authorized, mobile_session, session_key
     from chat_pwa import public_asset
@@ -40,7 +42,16 @@ def _update_created_threads(created, message):
     thread = created.get(identifier)
     if thread is not None and message["method"] == "thread/settings/updated":
         settings = params["threadSettings"]
-        thread.update(model=settings["model"], reasoningEffort=settings["effort"])
+        thread.update(settings_metadata(settings))
+
+
+def _update_settings(server, message):
+    if message["method"] != "thread/settings/updated":
+        return
+    params = message["params"]
+    server.settings.setdefault(params["threadId"], {}).update(
+        settings_metadata(params["threadSettings"])
+    )
 
 
 def _thread_list_entry(thread):
@@ -312,12 +323,19 @@ class ChatHandler(BaseHTTPRequestHandler):
 
     def _thread(self, identifier):
         created = self.server.created.get(identifier)
-        if created is not None:
-            return {**created, "archived": self._archived(created)}
-        thread = self.server.rpc.call(
-            "thread/read", {"threadId": identifier, "includeTurns": False}
-        )["thread"]
-        return {**thread, "archived": self._archived(thread)}
+        thread = (
+            created
+            if created is not None
+            else self.server.rpc.call(
+                "thread/read", {"threadId": identifier, "includeTurns": False}
+            )["thread"]
+        )
+        return {
+            **thread,
+            **getattr(self.server, "settings", {}).get(identifier, {}),
+            **settings_metadata(thread),
+            "archived": self._archived(thread),
+        }
 
     @staticmethod
     def _archived(thread):
@@ -475,6 +493,7 @@ class ChatHandler(BaseHTTPRequestHandler):
                 "Choose an existing project directory on the execution host."
             )
         result = self.server.rpc.call("thread/start", {"cwd": str(cwd.resolve())})
+        self._remember_settings(result)
         self.server.attached.add(result["thread"]["id"])
         if self.server.config.get("backend") != "native":
             self.server.created[result["thread"]["id"]] = result["thread"]
@@ -488,15 +507,18 @@ class ChatHandler(BaseHTTPRequestHandler):
             raise ValueError("Close this session in the older Codex client first.")
         params = model_selection(self.server.rpc, body, resumed["thread"])
         self.server.rpc.call("thread/settings/update", params)
+        self._remember_settings({"thread": {"id": body["id"]}, **params})
         created = self.server.created.get(body["id"])
         if created is not None:
-            created.update(model=params["model"], reasoningEffort=params["effort"])
-            if "serviceTier" in params:
-                created["serviceTier"] = params["serviceTier"]
-            if "collaborationMode" in params:
-                created["collaborationMode"] = params["collaborationMode"]
-                created["mode"] = params["collaborationMode"]["mode"]
+            created.update(settings_metadata(params))
         return {"model": params["model"], "effort": params["effort"]}
+
+    def _remember_settings(self, result):
+        if not hasattr(self.server, "settings"):
+            self.server.settings = {}
+        metadata = settings_metadata(result)
+        self.server.settings.setdefault(result["thread"]["id"], {}).update(metadata)
+        result["thread"].update(metadata)
 
     def _resume(self, identifier):
         created = self.server.created.get(identifier)
@@ -515,8 +537,10 @@ class ChatHandler(BaseHTTPRequestHandler):
         )
         result["thread"] = {
             **result["thread"],
+            **settings_metadata(result),
             "archived": self._archived(result["thread"]),
         }
+        self._remember_settings(result)
         self.server.attached.add(identifier)
         return result
 
@@ -584,10 +608,12 @@ def main(config_path):
     server.config = config
     server.attached = set()
     server.created = {}
+    server.settings = {}
     server.deliveries = Deliveries(Path(config_path).parent / "deliveries.sqlite")
 
     def notify(message):
         _update_created_threads(server.created, message)
+        _update_settings(server, message)
 
     if config.get("backend") == "native":
         try:

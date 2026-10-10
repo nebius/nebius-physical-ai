@@ -697,6 +697,19 @@ def test_guardrail_gate_matches_the_make_target() -> None:
     assert "-n auto --dist worksteal" in ci_guardrails
 
 
+@pytest.mark.parametrize(
+    ("workflow", "job"),
+    [("harness-guardrails.yml", "guardrails"), ("test.yml", "test")],
+)
+def test_provenance_guards_have_full_main_history(workflow: str, job: str) -> None:
+    """Both guardrail runners must resolve image source commits in origin/main."""
+    steps = _load_workflow(workflow)["jobs"][job]["steps"]
+    checkout = next(
+        step for step in steps if "actions/checkout@" in step.get("uses", "")
+    )
+    assert checkout.get("with", {}).get("fetch-depth") == "0"
+
+
 def _npa_bin_chosen_by_docs_target(python: str) -> str:
     """What `make docs-check PYTHON=<python>` would hand build_docs.sh as NPA_BIN."""
 

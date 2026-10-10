@@ -15,8 +15,11 @@ The catalog keeps the three principal pipelines in `workflows/main/`:
 `sim2real.yaml`, `paidf-cosmos3.yaml`, and `nurec-reconstruct.yaml`.
 Partner integrations live in `workflows/partners/<partner>/`; general reference
 workflows, component tests, and fixtures live in `workflows/testing/`.
-Keep catalog documentation in `workflows/README.md` and partner runbooks beside
-their specs.
+Keep the catalog overview in `workflows/README.md`. Maintain a
+`Workflow | Guide | Purpose` table in `workflows/main/README.md` and
+`workflows/testing/README.md`, beside the YAMLs. Link to the existing guide
+location instead of copying or moving it; label CLI or general-guide fallbacks
+explicitly. Keep partner indexes and runbooks beside their specs.
 
 ## When To Use
 
@@ -80,6 +83,17 @@ to finish missing report files. Reject different bytes without overwriting
 evidence; report recovery must not change eligibility or consume final cases.
 
 ## Current Reference YAMLs
+
+For Lyra, `workflows/testing/lyra-reconstruction.yaml` is the standalone
+captured-video reconstruction workflow. The dedicated `npa-lyra2` recipe is at
+`npa/docker/workbench/lyra2/`; its model, source and inference environment are
+runtime fetches. The workflow pins the RTX PRO 6000-qualified public release digest and
+baked NPA revision without a source overlay. Preserve the completed
+Gaussian/video/geometry/HTML outputs and
+the pinned model provenance. The earlier image retains separate B200 evidence;
+do not transfer that claim to the repaired image. A reconstruction result does not qualify the
+separate `lyra-scene-actions.yaml` physics or wrist-camera path. Follow the
+[Lyra guide](../../../docs/workbench/guides/lyra-physical-augmentation.md).
 
 For a first BEHAVIOR DEV evaluation, use
 [the one-file onboarding guide](../../../docs/workbench/challenge-onboarding.md)
