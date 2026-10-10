@@ -32,6 +32,8 @@ from npa.workbench.robocasa.capabilities import (
     WORKER_TEMP_ROOT_ENV,
     RoboCasaError,
     RoboCasaMatchError,
+    ROBOCASA_STATE_KEYS,
+    ROBOCASA_STATE_DIM,
     _assets_root,
     _parse_env_ids,
     compute_manifest_sha256,
@@ -518,7 +520,10 @@ def _run_capability(
             error = outcome.error
             if outcome.failure_diagnostics and retained_output is not None:
                 try:
-                    diagnostics = pair_diagnostics.validate_directory(retained_output)
+                    diagnostics = pair_diagnostics.validate_directory(
+                        retained_output, requested_pairs=body.num_envs
+                    )
+                    _validate_failure_request_binding(body, diagnostics)
                     upload_output(
                         retained_output,
                         body.output_uri.rstrip("/") + "/failure-diagnostics",
@@ -1079,6 +1084,7 @@ def _retain_failure_diagnostics(
         report = pair_diagnostics.snapshot_directory(
             worker_output / pair_diagnostics.DIRECTORY,
             retained,
+            requested_pairs=body.num_envs,
         )
         _validate_failure_request_binding(body, report)
         ready = True
@@ -1128,6 +1134,34 @@ def _validate_failure_request_binding(
         or report["env_id"] != heldout[episode % len(heldout)]
     ):
         raise ValueError("failure diagnostics request or pair binding differs")
+    _validate_prefix_request_binding(body, report, heldout, seed)
+
+
+def _validate_prefix_request_binding(body, report, heldout, seed) -> None:
+    for field in ("image_source_sha", "image_manifest_digest"):
+        expected = getattr(body, f"expected_{field}")
+        if expected and report[field] != expected:
+            raise ValueError("failure diagnostics runtime image binding differs")
+    if report["schema_version"] == "npa.robocasa.pair-failure.v1":
+        return  # Historical single-failed-pair records make no prefix claim.
+    parsed = pair_diagnostics.PairFailureWithPrefix.model_validate(report)
+    if parsed.requested_pairs != body.num_envs:
+        raise ValueError("failure diagnostics requested population differs")
+    for pair in parsed.completed_pairs:
+        if (
+            pair.seed != seed + pair.episode_index
+            or pair.env_id != heldout[pair.episode_index % len(heldout)]
+        ):
+            raise ValueError("completed prefix pair binding differs")
+        for arm in (pair.policy, pair.random_baseline):
+            if (
+                not 1 <= arm.steps <= body.iterations
+                or arm.state_keys != list(ROBOCASA_STATE_KEYS)
+                or arm.state_dim != ROBOCASA_STATE_DIM
+            ):
+                raise ValueError(
+                    "completed prefix outcome differs from request contract"
+                )
 
 
 def _receive_worker_message(receiver: Any) -> dict[str, Any]:

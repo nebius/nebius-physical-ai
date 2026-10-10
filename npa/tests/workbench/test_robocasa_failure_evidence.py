@@ -82,7 +82,7 @@ def test_operation_retains_exact_failed_pair_not_matched_result(
     refused_pair,
 ):
     directory = _failed_directory(tmp_path, request_body)
-    report = diag.validate_directory(directory)
+    report = diag.validate_directory(directory, requested_pairs=request_body.num_envs)
     assert report["status"] == "failed"
     assert (report["episode_index"], report["seed"], report["env_id"]) == (
         0,
@@ -142,7 +142,7 @@ def test_refuses_untrusted_diagnostic_population(
         directory.rename(other)
         directory.symlink_to(other, target_is_directory=True)
     with pytest.raises((ValueError, OSError)):
-        diag.validate_directory(directory)
+        diag.validate_directory(directory, requested_pairs=request_body.num_envs)
 
 
 def test_stopped_worker_retains_only_failure_snapshot(
@@ -166,7 +166,12 @@ def test_stopped_worker_retains_only_failure_snapshot(
             diag.REPORT,
             *diag.MEDIA,
         }
-        assert diag.validate_directory(outcome.output_dir)["seed"] == 42
+        assert (
+            diag.validate_directory(
+                outcome.output_dir, requested_pairs=request_body.num_envs
+            )["seed"]
+            == 42
+        )
     finally:
         if outcome.output_dir:
             shutil.rmtree(outcome.output_dir)
@@ -202,7 +207,12 @@ def test_real_http_run_status_remains_failed_after_diagnostic_publication(
     def upload(directory, uri, report):
         assert not list(tmp_path.glob("robocasa-worker-*"))
         assert uri == "s3://example/run/failure-diagnostics"
-        assert diag.validate_directory(directory)["status"] == "failed"
+        assert (
+            diag.validate_directory(directory, requested_pairs=request_body.num_envs)[
+                "status"
+            ]
+            == "failed"
+        )
         published.append(directory)
         if upload_failure:
             raise OSError("private provider details must not be echoed")
@@ -234,7 +244,7 @@ def test_real_http_run_status_remains_failed_after_diagnostic_publication(
         assert status["result"]["status"] == "failed"
         assert status["result"]["seed"] == 42
         assert status["result"]["policy"]["steps"] == 100
-        diag.PairFailure.model_validate(status["result"])
+        diag.PairFailureWithPrefix.model_validate(status["result"])
         retained_report = json.loads(
             storage.objects["run/failure-diagnostics/failure.json"][0]
         )
@@ -348,7 +358,7 @@ def test_changed_pixels_refused_even_with_updated_file_hash(
     payload["files"]["policy.png"] = diag.file_evidence(directory / "policy.png")
     (directory / diag.REPORT).write_text(json.dumps(payload))
     with pytest.raises(ValueError, match="initial pixels differ"):
-        diag.validate_directory(directory)
+        diag.validate_directory(directory, requested_pairs=request_body.num_envs)
 
 
 def test_failure_ancestor_symlink_refused(tmp_path, request_body, refused_pair):
@@ -357,7 +367,7 @@ def test_failure_ancestor_symlink_refused(tmp_path, request_body, refused_pair):
     worker.rename(tmp_path / "relocated")
     worker.symlink_to(tmp_path / "relocated", target_is_directory=True)
     with pytest.raises(OSError):
-        diag.validate_directory(directory)
+        diag.validate_directory(directory, requested_pairs=request_body.num_envs)
 
 
 def test_failure_request_binding_mismatch_cleans_all_scratch(
@@ -441,7 +451,7 @@ def test_parent_binds_exact_round_robin_environment_and_default_seed(
         update={"seed": None, "heldout_env_ids": "robocasa/Heldout,robocasa/Other"}
     )
     directory = _failed_directory(tmp_path / "worker", body)
-    report = diag.validate_directory(directory)
+    report = diag.validate_directory(directory, requested_pairs=body.num_envs)
     service._validate_failure_request_binding(body, report)
     report["env_id"] = "robocasa/Other"
     with pytest.raises(ValueError, match="pair binding"):

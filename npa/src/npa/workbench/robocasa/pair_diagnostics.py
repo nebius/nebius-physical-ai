@@ -1,8 +1,8 @@
 """Allowlisted evidence for refused RoboCasa policy/random comparisons.
 
-Only the failed pair's two initial workspace PNGs, two videos and typed report
-may survive worker cleanup. Checkpoints, credentials and arbitrary scratch files
-are never part of this diagnostic publication.
+The failed pair and already completed pairs retain exactly two initial workspace
+PNGs and two videos each, with typed outcomes under an overall failed report.
+Checkpoints, credentials and arbitrary scratch never enter this publication.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ import stat
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 import numpy as np
 
 from npa.workbench.robocasa.asset_paths import hold_asset_directory
@@ -50,7 +50,83 @@ class FileEvidence(_StrictModel):
     bytes: Annotated[int, Field(gt=0)]
 
 
-class PairFailure(_StrictModel):
+class CompletedArm(ArmEvidence):
+    """Observed completed arm, not an aggregate or a claim of task success."""
+
+    reward_sum: Annotated[float, Field(allow_inf_nan=False)]
+    max_reward: Annotated[float, Field(allow_inf_nan=False)]
+    success: bool
+    success_sources: list[
+        Literal[
+            "info.success",
+            "info.is_success",
+            "info.goal_reached",
+            "environment._check_success",
+            "binary_reward",
+        ]
+    ]
+    terminated: bool
+    truncated: bool
+    state_keys: list[
+        Literal[
+            "state.base_position",
+            "state.base_rotation",
+            "state.end_effector_position_relative",
+            "state.end_effector_rotation_relative",
+            "state.gripper_qpos",
+        ]
+    ]
+    state_dim: Annotated[int, Field(gt=0)]
+    terminal_state_sha256: Digest
+    terminal_workspace_sha256: Digest
+    action_count: Annotated[int, Field(ge=0)]
+    action_clipping_applied: bool
+    action_out_of_bounds_steps: Annotated[int, Field(ge=0)]
+    max_action_bound_violation: Annotated[float, Field(ge=0, allow_inf_nan=False)]
+    video_sha256: Digest
+    video_bytes: Annotated[int, Field(gt=0)]
+    video_frames: Annotated[int, Field(gt=0)]
+
+    @model_validator(mode="after")
+    def _consistent_counts(self):
+        if (
+            self.action_count != self.steps
+            or self.video_frames != self.steps + 1
+            or self.action_out_of_bounds_steps > self.steps
+            or self.action_clipping_applied != (self.action_out_of_bounds_steps > 0)
+        ):
+            raise ValueError("completed arm counts differ")
+        return self
+
+
+class EvidenceBinding(_StrictModel):
+    """Immutable run, checkpoint bytes and runtime identity shared by every pair."""
+
+    checkpoint_sha256: Digest
+    artifact_tree_sha256: Digest
+    request_manifest_sha256: Digest
+    image_source_sha: Annotated[str, Field(pattern=r"^(?:[0-9a-f]{40})?$")]
+    image_manifest_digest: Annotated[str, Field(pattern=r"^(?:sha256:[0-9a-f]{64})?$")]
+
+
+class CompletedPair(EvidenceBinding):
+    """A contiguous completed pair sharing its enclosing run/source bindings."""
+
+    episode_index: Annotated[int, Field(ge=0)]
+    env_id: Annotated[str, Field(pattern=r"^robocasa/[A-Za-z0-9_-]+$")]
+    seed: Annotated[int, Field(ge=0)]
+    policy: CompletedArm
+    random_baseline: CompletedArm
+
+    @model_validator(mode="after")
+    def _matched(self):
+        for field in ("initial_state_sha256", "initial_workspace_sha256"):
+            if getattr(self.policy, field) != getattr(self.random_baseline, field):
+                raise ValueError("completed pair does not satisfy the matching guard")
+        return self
+
+
+class PairFailure(EvidenceBinding):
     """Failure-only record, deliberately excluding free-form logs and paths."""
 
     schema_version: Literal["npa.robocasa.pair-failure.v1"]
@@ -64,12 +140,62 @@ class PairFailure(_StrictModel):
     state_scope: Literal["robot_observation; simulator hash unavailable when null"]
     policy: ArmEvidence
     random_baseline: ArmEvidence
-    checkpoint_sha256: Digest
-    artifact_tree_sha256: Digest
-    request_manifest_sha256: Digest
-    image_source_sha: Annotated[str, Field(pattern=r"^(?:[0-9a-f]{40})?$")]
-    image_manifest_digest: Annotated[str, Field(pattern=r"^(?:sha256:[0-9a-f]{64})?$")]
     files: dict[str, FileEvidence]
+
+
+class PairFailureWithPrefix(PairFailure):
+    """Failed run plus completed prefix; never a final population success rate.
+
+    Checkpoint, artifact tree, request and image bindings on the enclosing record
+    apply to every arm. Every completed pair repeats the same bindings; differing
+    bindings and free-form metadata are forbidden.
+    """
+
+    schema_version: Literal["npa.robocasa.pair-failure.v2"]
+    requested_pairs: Annotated[int, Field(gt=0)]
+    unattempted_pairs: Annotated[int, Field(ge=0)]
+    completed_pairs: list[CompletedPair]
+
+    @model_validator(mode="after")
+    def _contiguous_prefix(self):
+        if (
+            len(self.completed_pairs) != self.episode_index
+            or any(
+                pair.episode_index != index
+                for index, pair in enumerate(self.completed_pairs)
+            )
+            or self.unattempted_pairs != self.requested_pairs - self.episode_index - 1
+        ):
+            raise ValueError("completed prefix or requested population differs")
+        for pair in self.completed_pairs:
+            if any(
+                getattr(pair, key) != getattr(self, key)
+                for key in EvidenceBinding.model_fields
+            ):
+                raise ValueError(
+                    "completed pair source/checkpoint/request binding differs"
+                )
+        return self
+
+
+def media_names(report: dict) -> tuple[str, ...]:
+    """Enumerate the only publishable media, never paths supplied by a worker.
+
+    Args:
+        report: Validated failure report.
+    Returns:
+        Four fixed filenames per completed pair followed by the failed media.
+    Raises:
+        KeyError: A completed pair lacks its index.
+    """
+    return (
+        tuple(
+            f"completed-{pair['episode_index']:04d}-{name}"
+            for pair in report.get("completed_pairs", [])
+            for name in MEDIA
+        )
+        + MEDIA
+    )
 
 
 def _regular_file(info: os.stat_result) -> None:
@@ -129,11 +255,12 @@ def copy_evidence(source: Path, destination: Path) -> None:
         raise ValueError("diagnostic source changed while copying")
 
 
-def validate_directory(directory: Path) -> dict:
+def validate_directory(directory: Path, *, requested_pairs: int | None = None) -> dict:
     """Validate the complete failure-only population before retaining/uploading it.
 
     Args:
         directory: Diagnostic root, not the entire worker workspace.
+        requested_pairs: Admitted request population, required for v2 records.
     Returns:
         Validated failure report.
     Raises:
@@ -142,22 +269,52 @@ def validate_directory(directory: Path) -> dict:
     """
     if directory.is_symlink() or not directory.is_dir():
         raise ValueError("diagnostic root must be a real directory")
-    if {path.name for path in directory.iterdir()} != {REPORT, *MEDIA}:
+    parsed = _read_report(directory / REPORT, requested_pairs)
+    report = parsed.model_dump(mode="json")
+    names = media_names(report)
+    if {path.name for path in directory.iterdir()} != {REPORT, *names}:
         raise ValueError("unexpected or missing diagnostic files")
-    report = directory / REPORT
-    with _open_regular(report) as stream:
-        raw = stream.read(64 * 1024 + 1)
-    if len(raw) > 64 * 1024:
-        raise ValueError("diagnostic report exceeds its schema envelope")
-    parsed = PairFailure.model_validate_json(raw)
-    if set(parsed.files) != set(MEDIA):
+    if set(parsed.files) != set(names):
         raise ValueError("diagnostic report must name exactly the fixed media")
     for name, expected in parsed.files.items():
         if file_evidence(directory / name) != expected.model_dump():
             raise ValueError("diagnostic media identity changed")
     for role in ROLES:
         _verify_initial_pixels(directory / f"{role}.png", getattr(parsed, role))
-    return parsed.model_dump(mode="json")
+    for pair in getattr(parsed, "completed_pairs", []):
+        _verify_completed_media(directory, pair, parsed.files)
+    return report
+
+
+def _read_report(path: Path, requested_pairs: int | None):
+    if requested_pairs is not None and (
+        type(requested_pairs) is not int or requested_pairs < 1
+    ):
+        raise ValueError("invalid admitted diagnostic population")
+    # Only the admitted caller can enlarge the old single-pair envelope. Never
+    # use child metadata or a file's advertised size as allocation authority.
+    limit = 64 * 1024 * (requested_pairs or 1)
+    with _open_regular(path) as stream:
+        raw = stream.read(limit + 1)
+    if len(raw) > limit:
+        raise ValueError("diagnostic report exceeds its schema envelope")
+    payload = json.loads(raw)
+    if payload.get("schema_version") == "npa.robocasa.pair-failure.v2":
+        parsed = PairFailureWithPrefix.model_validate(payload)
+        if requested_pairs is None or parsed.requested_pairs != requested_pairs:
+            raise ValueError("diagnostic population differs from admitted request")
+        return parsed
+    return PairFailure.model_validate(payload)
+
+
+def _verify_completed_media(directory: Path, pair: CompletedPair, files: dict) -> None:
+    for role in ROLES:
+        arm = getattr(pair, role)
+        stem = f"completed-{pair.episode_index:04d}-{role}"
+        _verify_initial_pixels(directory / f"{stem}.png", arm)
+        video = files[f"{stem}.mp4"]
+        if video.sha256 != arm.video_sha256 or video.bytes != arm.video_bytes:
+            raise ValueError("completed outcome video identity differs")
 
 
 def _verify_initial_pixels(path: Path, arm: ArmEvidence) -> None:
@@ -175,40 +332,44 @@ def _verify_initial_pixels(path: Path, arm: ArmEvidence) -> None:
             raise ValueError("diagnostic initial pixels differ from the observed hash")
 
 
-def snapshot_directory(directory: Path, destination: Path) -> dict:
+def snapshot_directory(
+    directory: Path, destination: Path, *, requested_pairs: int | None = None
+) -> dict:
     """Copy only validated failure evidence after all worker descendants stop.
 
     Args:
         directory: Failed worker's diagnostic root.
         destination: Fresh parent-owned directory.
+        requested_pairs: Admitted parent request population, not child metadata.
     Returns:
         Validated report bound to the copied bytes.
     Raises:
         OSError: A file cannot be safely copied.
         ValueError: Validation or copy integrity fails.
     """
-    report = validate_directory(directory)
-    for name in (REPORT, *MEDIA):
+    report = validate_directory(directory, requested_pairs=requested_pairs)
+    for name in (REPORT, *media_names(report)):
         copy_evidence(directory / name, destination / name)
-    if validate_directory(destination) != report:
+    if validate_directory(destination, requested_pairs=requested_pairs) != report:
         raise ValueError("diagnostic snapshot identity changed")
     return report
 
 
-def write_report(directory: Path, payload: dict) -> None:
+def write_report(directory: Path, payload: dict, *, requested_pairs: int) -> None:
     """Seal a typed failure report; no arbitrary worker metadata is accepted.
 
     Args:
-        directory: Owned diagnostic directory containing the four media files.
+        directory: Owned diagnostic directory containing enumerated media files.
         payload: Failure-only fields with exact media/source/request bindings.
+        requested_pairs: Population from the admitted operation request.
     Returns:
         None.
     Raises:
         OSError: Evidence cannot be written or safely reopened.
         ValueError: Schema or file validation fails.
     """
-    report = PairFailure.model_validate(payload)
+    report = PairFailureWithPrefix.model_validate(payload)
     (directory / REPORT).write_text(
         json.dumps(report.model_dump(mode="json"), indent=2, sort_keys=True) + "\n"
     )
-    validate_directory(directory)
+    validate_directory(directory, requested_pairs=requested_pairs)

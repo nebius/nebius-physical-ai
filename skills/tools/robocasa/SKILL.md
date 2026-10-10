@@ -182,7 +182,7 @@ turn a zero or negative delta into a policy-improvement claim.
 
 A refused initial-state match stays `failed`. Before cleanup, the producer
 captures each arm's initial workspace PNG before action 0. Once the containment
-supervisor proves all descendants stopped, the service retains only the failed
+supervisor proves all descendants stopped, the service retains the failed
 pair's two initial PNGs, two completed arm videos, and typed `failure.json` under
 the run's `failure-diagnostics/` output prefix. The record identifies the pair,
 seed, robot-state/workspace hashes, optional full simulator-state hash, action
@@ -191,6 +191,15 @@ An unavailable or unsupported simulator-state accessor yields `null`, not an
 empty or fabricated state. An observed non-finite simulator state still fails
 the run. The parent independently checks the retained episode index, seed and
 held-out environment against the requested episode plan.
+The v2 failure record also preserves the contiguous completed prefix, with strict
+per-arm native outcomes and exactly four media per completed pair named
+`completed-XXXX-{policy,random_baseline}.{png,mp4}`. Every completed pair binds the
+same checkpoint/tree, request and runtime image/source. The parent checks indices,
+seeds, held-out tasks, horizon and the full requested population; report read bounds
+come from that admitted request, never the worker's self-declared population.
+`requested_pairs` and `unattempted_pairs` keep missing cases explicit. These are
+partial outcomes under an overall failed status, not a final success rate or a
+completed evaluation. Historical v1 failure-only records remain readable.
 No scratch tree, environment dump or checkpoint is retained with these artifacts.
 Diagnostic publication uses the same immutable byte/readback commit as successful
 outputs, but its commit only establishes delivery of failure evidence; it does

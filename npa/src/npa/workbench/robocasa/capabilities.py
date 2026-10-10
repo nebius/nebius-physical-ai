@@ -104,9 +104,16 @@ class RoboCasaError(RuntimeError):
 class RoboCasaMatchError(RoboCasaError):
     """A refused pair with allowlisted evidence, never a successful result."""
 
-    def __init__(self, message: str, evidence: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        message: str,
+        evidence: dict[str, Any],
+        *,
+        completed_pairs: list | None = None,
+    ) -> None:
         super().__init__(message)
         self.evidence = evidence
+        self.completed_pairs = completed_pairs or []
         self.diagnostics_ready = False
 
 
@@ -2459,7 +2466,9 @@ def _run_matched_eval_pairs(
             _require_matched_initial_state(policy_result, baseline)
         except RoboCasaError as exc:
             raise RoboCasaMatchError(
-                str(exc), _pair_failure_evidence(identity, policy_result, baseline)
+                str(exc),
+                _pair_failure_evidence(identity, policy_result, baseline),
+                completed_pairs=pairs,
             ) from exc
         policy_result.update(identity)
         baseline.update(identity)
@@ -2651,20 +2660,10 @@ def _persist_match_failure(
         directory = _copy_pair_failure_media(
             output_dir, failure.evidence["episode_index"]
         )
-        runtime = _runtime_identity()
-        evidence = {
-            **failure.evidence,
-            "request_manifest_sha256": compute_manifest_sha256(
-                "run", request.model_dump(mode="json")
-            ),
-            "image_source_sha": runtime.image_source_sha,
-            "image_manifest_digest": runtime.image_manifest_digest,
-            "files": {
-                name: pair_diagnostics.file_evidence(directory / name)
-                for name in pair_diagnostics.MEDIA
-            },
-        }
-        pair_diagnostics.write_report(directory, evidence)
+        evidence = _match_failure_payload(request, output_dir, directory, failure)
+        pair_diagnostics.write_report(
+            directory, evidence, requested_pairs=request.num_envs
+        )
         failure.diagnostics_ready = True
         if upload:
             upload_output(
@@ -2679,6 +2678,34 @@ def _persist_match_failure(
         ) from failure
 
 
+def _match_failure_payload(request, output_dir, directory, failure) -> dict:
+    runtime = _runtime_identity()
+    binding = {
+        "checkpoint_sha256": failure.evidence["checkpoint_sha256"],
+        "artifact_tree_sha256": failure.evidence["artifact_tree_sha256"],
+        "request_manifest_sha256": compute_manifest_sha256(
+            "run", request.model_dump(mode="json")
+        ),
+        "image_source_sha": runtime.image_source_sha,
+        "image_manifest_digest": runtime.image_manifest_digest,
+    }
+    evidence = {
+        **failure.evidence,
+        **binding,
+        "schema_version": "npa.robocasa.pair-failure.v2",
+        "requested_pairs": request.num_envs,
+        "unattempted_pairs": request.num_envs - failure.evidence["episode_index"] - 1,
+        "completed_pairs": _copy_completed_pair_evidence(
+            output_dir, directory, failure.completed_pairs, binding
+        ),
+    }
+    evidence["files"] = {
+        name: pair_diagnostics.file_evidence(directory / name)
+        for name in pair_diagnostics.media_names(evidence)
+    }
+    return evidence
+
+
 def _copy_pair_failure_media(output_dir: Path, episode_index: int) -> Path:
     directory = output_dir / pair_diagnostics.DIRECTORY
     directory.mkdir(mode=0o700)
@@ -2689,6 +2716,34 @@ def _copy_pair_failure_media(output_dir: Path, episode_index: int) -> Path:
                 episode / f"{stem}.{suffix}", directory / f"{role}.{suffix}"
             )
     return directory
+
+
+def _copy_completed_pair_evidence(
+    output_dir: Path, directory: Path, pairs: list, binding: dict
+) -> list:
+    completed = []
+    identity_fields = ("episode_index", "env_id", "seed")
+    for pair in pairs:
+        record = {**binding, **{key: pair[key] for key in identity_fields}}
+        for role in pair_diagnostics.ROLES:
+            record[role] = {
+                key: value
+                for key, value in pair[role].items()
+                if key not in identity_fields
+            }
+        parsed = pair_diagnostics.CompletedPair.model_validate(record)
+        episode = output_dir / f"episode_{parsed.episode_index:04d}"
+        for role, stem in (
+            ("policy", "rollout"),
+            ("random_baseline", "random_baseline"),
+        ):
+            for suffix in ("png", "mp4"):
+                pair_diagnostics.copy_evidence(
+                    episode / f"{stem}.{suffix}",
+                    directory / f"completed-{parsed.episode_index:04d}-{role}.{suffix}",
+                )
+        completed.append(parsed.model_dump(mode="json"))
+    return completed
 
 
 def _provenance_environment_ids(
