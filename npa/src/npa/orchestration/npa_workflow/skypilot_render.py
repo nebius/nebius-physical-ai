@@ -146,13 +146,14 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     # This entry explicitly disables the parent Cosmos3 hint: the public Nano
     # checkpoint is downloaded anonymously and this toolRef passes --no-guardrails.
     "workbench.cosmos3.text_to_image": (),
-    # The DROID derivative has a separately verified public checkpoint closure:
-    # its immutable derivative shards and the two card-pinned auxiliary payloads
-    # accept anonymous reads.  Keep this scoped override ahead of the generic
-    # Cosmos3 hint, whose guardrail-backed generation path remains gated.
+    # The DROID derivative shards and its two card-pinned auxiliary payloads
+    # accept anonymous reads, but the upstream native prediction invocation
+    # also fetches its pinned Cosmos-Guardrail1 payload.  Forward an existing
+    # operator-scoped read token only to the two inference steps so that
+    # guardrails stay enabled and the request is not made anonymously.
     "workbench.cosmos3.droid_fd_prepare": (),
-    "workbench.cosmos3.droid_fd_predict": (),
-    "workbench.cosmos3.droid_fd_controls": (),
+    "workbench.cosmos3.droid_fd_predict": ("HF_TOKEN",),
+    "workbench.cosmos3.droid_fd_controls": ("HF_TOKEN",),
     "workbench.cosmos3.droid_fd_evaluate": (),
     "workbench.cosmos3.droid_fd_visualize": (),
     "workbench.cosmos3.super_benchmark": (

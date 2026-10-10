@@ -753,7 +753,7 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
         "cosmos3-droid-forward-dynamics.yaml",
         "gpu",
-        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         image_tool="cosmos3",
         plan_only=True,
         plan_only_justification=(
@@ -763,8 +763,10 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
         notes=(
             "Native true-action and matched shuffled/zero-action control inference on one "
-            "held-out 17-frame DROID window; emits measured visual-error/action-sensitivity "
-            "artifacts and a verified RRD. Plan-only is not live qualification."
+            "held-out 17-frame DROID window. The native upstream predictor keeps its pinned "
+            "Guardrail1 fetch enabled, so it forwards the operator's scoped HF_TOKEN; emits "
+            "measured visual-error/action-sensitivity artifacts and a verified RRD. Plan-only "
+            "is not live qualification."
         ),
     ),
     SubmitLiveCase(

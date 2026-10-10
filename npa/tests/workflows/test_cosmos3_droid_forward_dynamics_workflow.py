@@ -62,8 +62,8 @@ def test_droid_forward_dynamics_has_five_connected_substantive_stages() -> None:
     assert "evaluation.json" in str(states["visualize"]["inputs"])
 
 
-def test_droid_forward_dynamics_has_no_generic_cosmos_hf_token_hint() -> None:
-    """Keep the public DROID checkpoint closure distinct from guarded Cosmos3."""
+def test_droid_forward_dynamics_forwards_hf_token_only_to_native_inference() -> None:
+    """Keep the anonymous DROID checkpoint closure distinct from its guardrail fetch."""
 
     path = (
         Path(__file__).parents[3]
@@ -71,7 +71,17 @@ def test_droid_forward_dynamics_has_no_generic_cosmos_hf_token_hint() -> None:
     )
     plan = build_plan(load_spec(path), run_id="droid-public-closure")
 
-    assert secret_env_hints_for_plan(plan.steps) == ()
+    assert secret_env_hints_for_plan(plan.steps) == ("HF_TOKEN",)
+    hints_by_stage = {
+        step.state: secret_env_hints_for_plan([step]) for step in plan.steps
+    }
+    assert hints_by_stage == {
+        "prepare": (),
+        "predict_true": ("HF_TOKEN",),
+        "predict_controls": ("HF_TOKEN",),
+        "evaluate": (),
+        "visualize": (),
+    }
 
 
 def test_droid_forward_dynamics_keeps_the_immutable_checkpoint_and_rerun_output() -> (
