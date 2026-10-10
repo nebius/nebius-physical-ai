@@ -10,8 +10,11 @@ def _training_compatibility_probe() -> str:
     return textwrap.dedent("""\
         from npa.workflows.sim2real.byo_isaac_trainer import _RESUME_PHASES
         from npa.workflows.sim2real.isaac_job_io import upload_capture
+        from npa.workflows.sim2real.isaac_franka_bootstrap import bootstrap_franka_actor
         if 'transport' not in _RESUME_PHASES or not callable(upload_capture):
             raise RuntimeError('image lacks goal transport and complete camera publication')
+        if not callable(bootstrap_franka_actor):
+            raise RuntimeError('image lacks native Franka training bootstrap')
         """)
 
 

@@ -549,6 +549,28 @@ retaining stronger validation candidates. Strict success and placement rank
 first, followed by stable grasp and lift achieved in the same episode. Extra
 lifts without stable grasp cannot displace a stronger paired-skill candidate.
 
+Fresh canonical stock-Franka training initializes the actor with
+`franka-ik-distillation-v1` before PPO. A native Isaac differential-IK teacher
+collects demonstrations across the consumed training scenarios; supervised
+updates fit the same eight-action RSL-RL actor that PPO and evaluation use. A
+second round mixes that actor's actions into collection to expose its own state
+errors. Both rounds must establish strict stable placement on at least half of
+their training scenarios. The initial actor uses small PPO action noise and
+exact goals, then receives all 2,000 configured PPO updates. Demonstration
+updates remain separate from PPO telemetry.
+
+`NPA_BYO_ISAAC_BOOTSTRAP=auto` is the default for fresh stock-Franka PPO with a
+consumed training URI. `none` disables initialization; an explicit
+`franka-ik-distillation-v1` rejects other tasks, custom robots, legacy physics,
+or resumed checkpoints. Existing entropy, learning-rate, and action-noise
+settings retain their operator overrides. The native job receives
+`ROBOT_BOOTSTRAP_PROFILE`, and its `bootstrap-audit.json` binds the profile,
+training-scenario SHA-256, demonstration successes, supervised fitting losses,
+and zero PPO updates at initialization. The adapter rejects missing or
+contradictory audit evidence. Validation and Gold execute the saved learned
+actor alone; they do not run the demonstration teacher or a post-actor
+controller. Training demonstration success does not establish held-out quality.
+
 A checkpoint file alone does not prove that the actor learned to grasp. Until
 at least half of its validation episodes achieved both stable grasp and lift,
 resumed PPO retains the exploration schedule and repeats the training-only goal

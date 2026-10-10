@@ -2,8 +2,9 @@
 
 Stage 9 of ``workflows/main/sim2real.yaml`` executes this adapter inside its
 already admitted SkyPilot GPU task, using the immutable Isaac image. The adapter
-runs ``scripts/reinforcement_learning/rsl_rl/train.py`` on
-``Isaac-Lift-Cube-Franka-v0``, uploads actual ``model_*.pt`` checkpoints, and
+runs the baked native Isaac wrapper on ``Isaac-Lift-Cube-Franka-v0``, initializes
+fresh stock-Franka actors from training-only demonstrations, runs the full PPO
+pass, uploads actual ``model_*.pt`` checkpoints, and
 selects the checkpoint with validation data. Canonical execution reports
 ``npa_workflow_skypilot_task`` and creates no sibling Kubernetes Job.
 
@@ -700,6 +701,7 @@ def build_isaac_job_manifest(
     scenarios_jsonl: str = "",
     scenarios_uri: str = "",
     scenarios_sha256: str = "",
+    bootstrap_profile: str = "none",
 ) -> dict[str, Any]:
     """Build the Isaac-Lab RSL-RL training Job manifest (proven by recon).
 
@@ -794,9 +796,19 @@ def build_isaac_job_manifest(
         overrides["agent.load_checkpoint"] = RESUME_CKPT_NAME
     if resume_phase not in _RESUME_PHASES:
         raise ValueError("resume_phase must be exploration, transport or convergence")
+    bootstrap_profile = _manifest_training_bootstrap(
+        bootstrap_profile,
+        task,
+        robot_spec,
+        physics,
+        resume_uri,
+        bool(scenarios_uri or scenarios_jsonl),
+    )
     goal_curriculum_enabled = (
-        not resume_uri or resume_phase == "exploration"
-    ) and not physics
+        (not resume_uri or resume_phase == "exploration")
+        and not physics
+        and bootstrap_profile == "none"
+    )
     goal_curriculum_full_step = max(1, int(iterations * steps_per_env * 0.60))
     # shlex.quote each value: scale tuples "(0.8, 0.8, 0.8)" and URLs contain shell
     # metacharacters (parens, spaces) that otherwise break the bash train command.
@@ -916,6 +928,9 @@ def build_isaac_job_manifest(
             + entropy_schedule_block
             + "export ROBOT_REWARD_OVERRIDES_JSON="
             + shlex.quote(json.dumps(reward_overrides or {}, sort_keys=True))
+            + "\n"
+            + "export ROBOT_BOOTSTRAP_PROFILE="
+            + shlex.quote(bootstrap_profile)
             + "\n"
             + "export ROBOT_PPO_LEARNING_RATE="
             + shlex.quote(str(ppo_optimizer_learning_rate or ""))
@@ -1321,6 +1336,121 @@ def _resume_schedule_defaults(phase: str) -> dict[str, str]:
     }
 
 
+def _manifest_training_bootstrap(profile, task, spec, physics, resume_uri, scenarios):
+    """Scope demonstrations to fresh curated stock-Franka training."""
+    from npa.workflows.sim2real.isaac_franka_bootstrap import resolve_training_bootstrap
+    from npa.workflows.sim2real.isaac_scenario_task import (
+        STOCK_TASK_ID,
+        SCENARIO_TASK_ID,
+    )
+
+    eligible = (
+        task in {STOCK_TASK_ID, SCENARIO_TASK_ID}
+        and (spec or {}).get("robot_source") == "stock_franka"
+        and not physics
+        and not resume_uri
+        and scenarios
+    )
+    return resolve_training_bootstrap(profile, eligible=bool(eligible))
+
+
+def _bootstrap_schedule() -> dict[str, str]:
+    """Use small PPO exploration around the demonstration-trained actor mean."""
+    schedule = {
+        "entropy": _env("NPA_BYO_ISAAC_ENTROPY_COEF", DEFAULT_RESUME_ENTROPY_COEF),
+        "final_entropy": _env(
+            "NPA_BYO_ISAAC_ENTROPY_FINAL_COEF", DEFAULT_RESUME_ENTROPY_FINAL_COEF
+        ),
+        "fraction": _env(
+            "NPA_BYO_ISAAC_ENTROPY_ANNEAL_FRACTION",
+            DEFAULT_RESUME_ENTROPY_ANNEAL_FRACTION,
+        ),
+        "learning_rate": _env(
+            "NPA_BYO_ISAAC_PPO_LEARNING_RATE",
+            DEFAULT_RESUME_PPO_OPTIMIZER_LEARNING_RATE,
+        ),
+        "initial_noise": _env(
+            "NPA_BYO_ISAAC_INIT_NOISE_STD", DEFAULT_RESUME_CONVERGENCE_ACTION_NOISE_STD
+        ),
+        "noise": _env(
+            "NPA_BYO_ISAAC_RESUME_CONVERGENCE_ACTION_NOISE_STD",
+            DEFAULT_RESUME_CONVERGENCE_ACTION_NOISE_STD,
+        ),
+    }
+    for key in ("entropy", "initial_noise", "noise"):
+        if schedule[key].lower() in _STOCK_ENTROPY_SENTINELS:
+            schedule[key] = ""
+    if not schedule["entropy"]:
+        for key in ("final_entropy", "fraction", "noise"):
+            schedule[key] = ""
+    return schedule
+
+
+def _validated_bootstrap_round(row, *, index, scenario_count):
+    """Require measured placement demonstrations and finite supervised updates."""
+    integer_fields = (
+        "round",
+        "training_scenarios",
+        "teacher_stable_placements",
+        "examples",
+        "optimizer_updates",
+    )
+    if not isinstance(row, dict) or any(
+        type(row.get(name)) is not int for name in integer_fields
+    ):
+        raise RuntimeError(
+            "native demonstration round requires literal integer evidence"
+        )
+    if (
+        row["round"] != index
+        or row["training_scenarios"] != scenario_count
+        or not scenario_count / 2 <= row["teacher_stable_placements"] <= scenario_count
+        or row["examples"] <= 0
+        or row["optimizer_updates"] <= 0
+    ):
+        raise RuntimeError("native demonstration round is incomplete or unsuccessful")
+    for name in ("first_loss", "last_loss"):
+        loss = row.get(name)
+        if type(loss) not in (float, int) or not math.isfinite(loss) or loss < 0:
+            raise RuntimeError(
+                "native demonstration round lacks measured finite fitting loss"
+            )
+
+
+def _validated_bootstrap_audit(audit, *, profile, checksum, scenario_count):
+    """Bind native demonstration evidence to the exact consumed training split."""
+    expected = {
+        "schema": "npa.sim2real.franka_bootstrap.v1",
+        "profile": profile,
+        "scope": "sealed_training_only",
+        "gold_used": False,
+        "inference_composition": "learned_actor_only",
+        "ppo_updates": 0,
+        "training_goals_exact": True,
+        "training_scenarios": scenario_count,
+        "training_scenarios_sha256": checksum,
+    }
+    if any(audit.get(name) != value for name, value in expected.items()):
+        raise RuntimeError(
+            "native demonstration audit differs from the training boundary"
+        )
+    if (
+        audit.get("gold_used") is not False
+        or audit.get("training_goals_exact") is not True
+        or type(audit.get("ppo_updates")) is not int
+        or type(audit.get("training_scenarios")) is not int
+    ):
+        raise RuntimeError(
+            "native demonstration audit requires literal training-only evidence"
+        )
+    rounds = audit.get("rounds")
+    if not isinstance(rounds, list) or len(rounds) != 2:
+        raise RuntimeError("native demonstration audit lacks both supervised rounds")
+    for index, row in enumerate(rounds):
+        _validated_bootstrap_round(row, index=index, scenario_count=scenario_count)
+    return audit
+
+
 def _resume_curriculum_audit(
     checkpoint: str, checksum: str, phase: str
 ) -> dict[str, Any] | None:
@@ -1624,6 +1754,24 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
     else:
         convergence_action_noise_std = ""
 
+    bootstrap_profile = _manifest_training_bootstrap(
+        _env("NPA_BYO_ISAAC_BOOTSTRAP", "auto"),
+        task,
+        robot_spec_dict,
+        physics,
+        resume_uri,
+        bool(train_envs_uri),
+    )
+    if bootstrap_profile != "none":
+        schedule = _bootstrap_schedule()
+        entropy_coef = schedule["entropy"]
+        entropy_final_coef = schedule["final_entropy"]
+        entropy_anneal_fraction = schedule["fraction"]
+        ppo_optimizer_learning_rate = schedule["learning_rate"]
+        init_noise_std = schedule["initial_noise"]
+        convergence_action_noise_std = schedule["noise"]
+        training_phase = "franka_ik_bootstrap"
+
     raw_success_termination = _env("NPA_BYO_ISAAC_ENABLE_SUCCESS_TERMINATION", "0")
     if raw_success_termination not in {"0", "1"}:
         raise ValueError("NPA_BYO_ISAAC_ENABLE_SUCCESS_TERMINATION must be 0 or 1")
@@ -1681,6 +1829,7 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
         scenarios_jsonl="" if train_envs_uri else scenarios_jsonl,
         scenarios_uri=train_envs_uri,
         scenarios_sha256=scenarios_sha256,
+        bootstrap_profile=bootstrap_profile,
     )
     start = time.time()
     if _env("NPA_SIM2REAL_INLINE_TASK") == "1":
@@ -1806,6 +1955,16 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
     result["resume_checkpoint_sha256"] = resume_sha256 if not physics else ""
     result["resume_curriculum"] = resume_curriculum
     result["embodiment"] = embodiment_evidence(robot_spec_dict)
+    result["training_bootstrap"] = {"profile": bootstrap_profile}
+    if bootstrap_profile != "none":
+        audit_uri = s3_output + "bootstrap-audit.json"
+        result["training_bootstrap"] = _validated_bootstrap_audit(
+            _load_s3_json(audit_uri, endpoint=endpoint),
+            profile=bootstrap_profile,
+            checksum=scenarios_sha256,
+            scenario_count=len(train_envs),
+        )
+        result["training_bootstrap"]["audit_uri"] = audit_uri
     return result
 
 
