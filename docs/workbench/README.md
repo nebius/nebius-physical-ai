@@ -89,6 +89,7 @@ qualification, hosted evaluation, and runtime prerequisites.
 | Select images | [Public catalog](container-image-catalog.md) · [GPU compatibility](image-gpu-compatibility-matrix.md) · [SONIC variants](sonic-image-catalog.md) |
 | Use Blackwell | [B200 / B300](blackwell-datacenter-image-compatibility.md) · [RTX PRO 6000](sm120-image-catalog.md) · [RTX FA4 adoption](guides/rtx6000-fa4.md) · [FA4 evidence](flash-attention.md) · [Full-model rendering validation](fa4-sdxl-validation.md) |
 | Configure nodes and caches | [GPU driver strategy](mk8s-gpu-driver-strategy.md) · [model-weight cache](model-weight-cache.md) · [preemptible VMs](preemptible-vms.md) |
+| Plan a GPU launch | [Quota and capacity](gpu-capacity-quota-plan.md) |
 | Reproduce benchmarks and demos | [Benchmarks](../../benchmark/README.md) · [Cookbooks](cookbooks/README.md) · [validation scope](solutions-validation.md) · [performance/reliability validation](workbench-improvements-validation.md) |
 | Add or package a solution | [Contributing](../../CONTRIBUTING.md) · [containerized solutions](contributing-a-containerized-solution.md) · [OSS catalog](oss-solution-catalog.md) · [packaging contract](container-packaging.md) · [FiftyOne image validation](../../npa/docker/workbench/fiftyone/RELEASE.md#validate-a-local-candidate) |
 

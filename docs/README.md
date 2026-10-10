@@ -42,6 +42,7 @@ prepare its project and compute, then inspect the result.
 | Compare standalone FA2 and tuned FA4 | [RTX PRO 6000 measurements and actual renders](workbench/fa2-fa4-validation.md) |
 | Reuse model downloads | [Model-weight cache](workbench/model-weight-cache.md) |
 | Use preemptible VMs | [Preemptible capacity](workbench/preemptible-vms.md) |
+| Plan a GPU launch | [Quota and capacity](workbench/gpu-capacity-quota-plan.md) |
 | Reproduce a workload | [Cookbooks](workbench/cookbooks/README.md) |
 
 ## Contribute and verify
