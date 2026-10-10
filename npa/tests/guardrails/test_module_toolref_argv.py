@@ -55,6 +55,7 @@ PARSER_FACTORIES = {
     "npa.workflows.byof.ros2_pipeline": "build_parser",
     "npa.workflows.content_agents": "build_parser",
     "npa.workflows.paidf_native": "build_parser",
+    "npa.workflows.openwam_pipeline": "build_parser",
 }
 
 

@@ -136,6 +136,109 @@ def test_failed_preparation_never_returns_a_scan_target(
     assert error.value.returncode == 17
 
 
+def test_retryable_buildkit_bootstrap_failure_uses_a_fresh_owned_builder(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Retry only the hosted-runner mirror bootstrap failure after cleanup.
+
+    Args:
+        monkeypatch: Isolated subprocess replacement.
+        tmp_path: Private export directory.
+        capsys: Captured retry diagnostics.
+    Returns:
+        None.
+    Raises:
+        AssertionError: A retry reuses a builder or masks the failed attempt.
+    """
+
+    entry = next(item for item in _entries() if item["upgrade_os"] is True)
+    calls: list[list[str]] = []
+    builders: set[str] = set()
+    build_attempts = 0
+
+    def run(command, **arguments):
+        nonlocal build_attempts
+        calls.append(command)
+        if command[:3] == ["docker", "buildx", "create"]:
+            builders.add(command[command.index("--name") + 1])
+            return subprocess.CompletedProcess(command, 0)
+        if command[:3] == ["docker", "buildx", "build"]:
+            build_attempts += 1
+            assert command[command.index("--builder") + 1] in builders
+            if build_attempts == 1:
+                return subprocess.CompletedProcess(
+                    command,
+                    1,
+                    stdout="bootstrapping scanner builder\n",
+                    stderr=(
+                        "#1 [internal] booting buildkit\n"
+                        "error pulling image configuration: unknown blob\n"
+                    ),
+                )
+            archive = Path(command[command.index("--output") + 1].split("dest=", 1)[1])
+            archive.write_bytes(b"complete archive")
+            return subprocess.CompletedProcess(command, 0)
+        if command[:3] == ["docker", "buildx", "rm"]:
+            builders.remove(command[-1])
+            return subprocess.CompletedProcess(command, 0)
+        pytest.fail(f"unexpected command: {command}")
+
+    monkeypatch.setattr(scanner.subprocess, "run", run)
+    assert scanner.prepare_target(entry, tmp_path) == tmp_path / "image.tar"
+    assert build_attempts == scanner._BUILDKIT_BOOTSTRAP_ATTEMPTS
+    create = [call for call in calls if call[:3] == ["docker", "buildx", "create"]]
+    remove = [call for call in calls if call[:3] == ["docker", "buildx", "rm"]]
+    assert len(create) == len(remove) == scanner._BUILDKIT_BOOTSTRAP_ATTEMPTS
+    assert len({call[call.index("--name") + 1] for call in create}) == 2
+    assert not builders
+    captured = capsys.readouterr()
+    assert "retrying once with a fresh scan-owned builder" in captured.err
+    assert "bootstrapping scanner builder" in captured.out
+
+
+def test_base_image_failure_with_unknown_blob_does_not_retry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Keep an image-resolution error fail closed even when its text overlaps.
+
+    Args:
+        monkeypatch: Isolated subprocess replacement.
+        tmp_path: Private export directory.
+    Returns:
+        None.
+    Raises:
+        AssertionError: A base-image error is retried as BuildKit bootstrap.
+    """
+
+    entry = next(item for item in _entries() if item["upgrade_os"] is True)
+    calls: list[list[str]] = []
+    builders: set[str] = set()
+
+    def run(command, **arguments):
+        calls.append(command)
+        if command[:3] == ["docker", "buildx", "create"]:
+            builders.add(command[command.index("--name") + 1])
+            return subprocess.CompletedProcess(command, 0)
+        if command[:3] == ["docker", "buildx", "build"]:
+            return subprocess.CompletedProcess(
+                command,
+                1,
+                stderr="failed to resolve base image configuration: unknown blob\n",
+            )
+        if command[:3] == ["docker", "buildx", "rm"]:
+            builders.remove(command[-1])
+            return subprocess.CompletedProcess(command, 0)
+        pytest.fail(f"unexpected command: {command}")
+
+    monkeypatch.setattr(scanner.subprocess, "run", run)
+    with pytest.raises(subprocess.CalledProcessError):
+        scanner.prepare_target(entry, tmp_path)
+    assert (
+        len([call for call in calls if call[:3] == ["docker", "buildx", "build"]]) == 1
+    )
+    assert not builders
+
+
 def _record_package_commands(tmp_path: Path, failed_command: str) -> None:
     for name in ("apt-get", "dpkg", "rm"):
         executable = tmp_path / name

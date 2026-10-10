@@ -156,6 +156,7 @@ _ROS2_PIPELINE = ["python3", "-m", "npa.workflows.byof.ros2_pipeline"]
 _MOLMOACT_PIPELINE = ["python3", "-m", "npa.workflows.byof.molmoact_pipeline"]
 _OPENVLA_PIPELINE = ["python3", "-m", "npa.workflows.byof.openvla_pipeline"]
 _NEWTON_PIPELINE = ["python3", "-m", "npa.workflows.byof.newton_pipeline"]
+_OPENWAM_PIPELINE = ["python3", "-m", "npa.workflows.openwam_pipeline"]
 
 _CONTENT_AGENTS_PIPELINE = [
     "python3",
@@ -168,6 +169,159 @@ _PAIDF_NATIVE_PIPELINE = ["python3", "-m", "npa.workflows.paidf_native"]
 _HABITAT_SIM_SMOKE = ["python3", "-m", "npa.workflows.habitat_sim_smoke"]
 
 TOOL_CATALOG: dict[str, ToolEntry] = {
+    "workflow.openwam.prepare": ToolEntry(
+        name="workflow.openwam.prepare",
+        description=(
+            "Fetch exact public OpenWAM-alpha, Wan 2.2, and LIBERO inputs and "
+            "persist a checksummed source/asset archive."
+        ),
+        argv_template=[
+            *_OPENWAM_PIPELINE,
+            "prepare",
+            "--run-id",
+            "{{run.id}}",
+            "--runtime-image",
+            "{{config.runtime_image}}",
+            "--openwam-root",
+            "{{config.openwam_root}}",
+            "--work-dir",
+            "{{config.prepare_work_dir}}",
+            "--archive-uri",
+            "{{config.prepared_archive_uri}}",
+            "--output-uri",
+            "{{config.prepared_assets_uri}}",
+        ],
+    ),
+    "workflow.openwam.fine_tune": ToolEntry(
+        name="workflow.openwam.fine_tune",
+        description=(
+            "Run the upstream OpenWAM LIBERO fine-tuner in configured production "
+            "or explicit diagnostic mode and persist its trained checkpoint."
+        ),
+        argv_template=[
+            *_OPENWAM_PIPELINE,
+            "fine-tune",
+            "--run-id",
+            "{{run.id}}",
+            "--runtime-image",
+            "{{config.runtime_image}}",
+            "--openwam-root",
+            "{{config.openwam_root}}",
+            "--work-dir",
+            "{{config.training_work_dir}}",
+            "--prepared-assets-uri",
+            "{{config.prepared_assets_uri}}",
+            "--checkpoint-archive-uri",
+            "{{config.training_checkpoint_archive_uri}}",
+            "--output-uri",
+            "{{config.training_uri}}",
+            "--gpu-count",
+            "{{config.gpu_count}}",
+            "--training-mode",
+            "{{config.training_mode}}",
+        ],
+    ),
+    "workflow.openwam.rollout": ToolEntry(
+        name="workflow.openwam.rollout",
+        description=(
+            "Serve the trained OpenWAM checkpoint and execute a real LIBERO "
+            "trial range through OpenWAM's upstream evaluation bridge."
+        ),
+        argv_template=[
+            *_OPENWAM_PIPELINE,
+            "rollout",
+            "--run-id",
+            "{{run.id}}",
+            "--runtime-image",
+            "{{config.runtime_image}}",
+            "--openwam-root",
+            "{{config.openwam_root}}",
+            "--work-dir",
+            "{{config.rollout_work_dir}}",
+            "--prepared-assets-uri",
+            "{{config.prepared_assets_uri}}",
+            "--training-uri",
+            "{{config.training_uri}}",
+            "--output-uri",
+            "{{config.rollout_uri}}",
+            "--port",
+            "{{config.policy_port}}",
+            "--suite",
+            "{{config.rollout_suite}}",
+            "--task-id",
+            "{{config.rollout_task_id}}",
+            "--trial-start",
+            "{{config.rollout_trial_start}}",
+            "--num-trials",
+            "{{config.rollout_num_trials}}",
+        ],
+    ),
+    "workflow.openwam.evaluate": ToolEntry(
+        name="workflow.openwam.evaluate",
+        description=(
+            "Independently execute a held-out LIBERO trial range through "
+            "the deployed trained OpenWAM policy and persist its numerical result."
+        ),
+        argv_template=[
+            *_OPENWAM_PIPELINE,
+            "evaluate",
+            "--run-id",
+            "{{run.id}}",
+            "--runtime-image",
+            "{{config.runtime_image}}",
+            "--openwam-root",
+            "{{config.openwam_root}}",
+            "--work-dir",
+            "{{config.evaluation_work_dir}}",
+            "--prepared-assets-uri",
+            "{{config.prepared_assets_uri}}",
+            "--training-uri",
+            "{{config.training_uri}}",
+            "--rollout-uri",
+            "{{config.rollout_uri}}",
+            "--output-uri",
+            "{{config.evaluation_uri}}",
+            "--port",
+            "{{config.policy_port}}",
+            "--suite",
+            "{{config.evaluation_suite}}",
+            "--task-id",
+            "{{config.evaluation_task_id}}",
+            "--trial-start",
+            "{{config.evaluation_trial_start}}",
+            "--num-trials",
+            "{{config.evaluation_num_trials}}",
+        ],
+    ),
+    "workflow.openwam.visualize": ToolEntry(
+        name="workflow.openwam.visualize",
+        description=(
+            "Emit and independently inspect a factual Rerun recording from the "
+            "trained checkpoint and actual LIBERO rollout/evaluation metrics."
+        ),
+        argv_template=[
+            *_OPENWAM_PIPELINE,
+            "visualize",
+            "--run-id",
+            "{{run.id}}",
+            "--runtime-image",
+            "{{config.runtime_image}}",
+            "--openwam-root",
+            "{{config.openwam_root}}",
+            "--work-dir",
+            "{{config.visualization_work_dir}}",
+            "--training-uri",
+            "{{config.training_uri}}",
+            "--rollout-uri",
+            "{{config.rollout_uri}}",
+            "--evaluation-uri",
+            "{{config.evaluation_uri}}",
+            "--rrd-uri",
+            "{{config.rrd_uri}}",
+            "--output-uri",
+            "{{config.visualization_uri}}",
+        ],
+    ),
     "workflow.policy_public.prepare": ToolEntry(
         name="workflow.policy_public.prepare",
         description="Fetch pinned public LeRobot/LIBERO data and decode episode previews.",

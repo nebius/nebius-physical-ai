@@ -241,6 +241,15 @@ def _image_identity(render_options: SkypilotRenderOptions) -> str:
             "image_variant": str(render_options.image_variant),
             "registry": str(render_options.registry),
             "schema": "npa.workflow.image-selection/v3",
+            **(
+                {
+                    "image_pull_secret_names": list(
+                        render_options.image_pull_secret_names
+                    )
+                }
+                if render_options.image_pull_secret_names
+                else {}
+            ),
         },
         ensure_ascii=False,
         separators=(",", ":"),

@@ -1,0 +1,57 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "df19ec9b5951fb5bb428a799b361f69418ce0a0c05d79e9defd1822deb178d31",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "The five-state workflow passed schema validation and rendered all five native OpenWAM/LIBERO/Rerun commands with run-scoped artifact URIs, including explicit suite, task, and non-overlapping trial-range controls. Planning did not execute a workload.",
+      "evidence": [
+        "npa/.venv/bin/python -m npa workbench workflow validate-spec workflows/testing/openwam-libero-four-stage.yaml --json",
+        "npa/.venv/bin/python -m npa workbench workflow plan-spec workflows/testing/openwam-libero-four-stage.yaml --run-id openwam-libero-authoring-continuation --json",
+        "sha256:df19ec9b5951fb5bb428a799b361f69418ce0a0c05d79e9defd1822deb178d31 workflows/testing/openwam-libero-four-stage.yaml"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Focused tests bind the immutable upstream revisions, five connected stages, native train/deploy/evaluator entrypoints, explicit suite/task/trial controls, distinct Python 3.10 LIBERO client, safe archive restore, and decoded Rerun artifact contract. Test-only RRD inputs are not benchmark evidence.",
+      "evidence": [
+        "npa/tests/workflows/test_openwam_pipeline.py: 8 passed",
+        "focused workflow, argv, matrix, and packaging suite: 774 passed"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "The checked-in bucket is intentionally a placeholder; no task-owned writable bucket was created or probed.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "The public foundation, Wan backbone, and OpenWAM-format LIBERO data are pinned for runtime fetch, but no target worker fetched their exact revisions.",
+      "evidence": [
+        "docs/workbench/openwam.md"
+      ]
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "Nebius control-plane preflight succeeded during authoring, but no task-owned storage/image pull or target-worker runtime was exercised.",
+      "evidence": [
+        "npa workbench health preflight --checks nebius"
+      ]
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "A local, operator-private candidate can be built and tested, but the workflow retains a non-routable placeholder until an exact private registry digest has passed the required built-byte review and pull preflight. It is not a published image.",
+      "evidence": [
+        "npa/docker/workbench/openwam/Dockerfile",
+        "npa/docker/workbench/openwam/REDISTRIBUTION.md"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "The workflow is explicitly routed to RTX PRO 6000 sm_120 rather than B200/B300, but no NPA/SkyPilot/Kubernetes job has executed its five stages with an exact-current private image digest. No numerical LIBERO result, RRD, MP4, convergence result, or robot result is claimed.",
+      "evidence": []
+    }
+  }
+}

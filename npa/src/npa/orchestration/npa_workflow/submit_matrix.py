@@ -1558,6 +1558,23 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "openwam-libero-four-stage.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        plan_only=True,
+        plan_only_justification=(
+            "The checked-in spec deliberately retains an invalid private image "
+            "digest and bucket placeholder. An operator-private image pull, "
+            "run-scoped output prefix, and native workflow execution must be "
+            "qualified before this entry can become a live matrix case."
+        ),
+        notes=(
+            "Five connected native stages: pinned runtime input preparation, "
+            "OpenWAM LIBERO fine-tuning, checkpoint reload and policy rollout, "
+            "a non-overlapping held-out trial range, and verified RRD emission."
+        ),
+    ),
+    SubmitLiveCase(
         "byof-maniskill.yaml",
         "multi",
         plan_only=True,

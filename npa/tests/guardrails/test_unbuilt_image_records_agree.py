@@ -134,7 +134,13 @@ def test_neutral_unbuilt_candidate_has_no_ordinary_supported_tag() -> None:
     for tool in NEUTRAL_UNBUILT_CANDIDATE_TOOLS:
         assert tool not in SUPPORTED_TOOL_VERSIONS
         assert supported_tool_version(tool).endswith("-unbuilt")
-        assert containers[tool]["golden_eval"]["status"] != "ready"
+        if tool in CONTAINER_IMAGE_NAMES:
+            assert containers[tool]["golden_eval"]["status"] != "ready"
+        else:
+            # A workflow-only private candidate must not grow a fake container
+            # golden eval. Its executable acceptance gate is the declared
+            # native workflow with an explicit private digest instead.
+            assert tool not in containers
 
 
 def test_capability_listing_accepts_neutral_unbuilt_display_sentinel() -> None:

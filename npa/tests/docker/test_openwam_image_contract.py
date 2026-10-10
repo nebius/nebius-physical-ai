@@ -1,0 +1,138 @@
+"""Static contract checks for the operator-private OpenWAM image recipe."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from npa.deploy import images
+
+
+ROOT = Path(__file__).resolve().parents[3]
+
+
+def test_openwam_uses_system_ffmpeg_not_wheel_bundled_executables() -> None:
+    dockerfile = (
+        ROOT / "npa" / "docker" / "workbench" / "openwam" / "Dockerfile"
+    ).read_text(encoding="utf-8")
+
+    assert "ffmpeg git git-lfs" in dockerfile
+    assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in dockerfile
+    assert dockerfile.count("*/imageio_ffmpeg/binaries/ffmpeg*' -delete") == 2
+    assert 'imageio_ffmpeg.get_ffmpeg_exe() == "/usr/bin/ffmpeg"' in dockerfile
+    assert "UV_CACHE_DIR=/tmp/openwam-uv-cache" in dockerfile
+    assert "rm -rf /tmp/openwam-uv-cache" in dockerfile
+    assert "COPY --chmod=0755 src/npa /opt/npa/src/npa" in dockerfile
+    assert (
+        "runuser -u ubuntu -- env -u PYTHONPATH HOME=/home/ubuntu /opt/openwam-venv/bin/python "
+        "-m npa.workflows.openwam_pipeline" in dockerfile
+    )
+    assert "sudo -u ubuntu" not in dockerfile
+    # The upstream resolver installs obsolete transformers and hydra-core.
+    # The final client install must deliberately replace both after that resolver.
+    assert "transformers==4.36.0" in dockerfile
+    assert "transformers==4.21.1" not in dockerfile
+    assert "hydra-core==1.3.7" in dockerfile
+    assert "hydra-core==1.2.0" not in dockerfile
+    assert "PyYAML==6.0.3" in dockerfile
+    libero_requirements = (
+        "/opt/openwam-libero/bin/python -m pip install --no-cache-dir "
+        "-r /opt/openwam-libero-source/requirements.txt"
+    )
+    fixed_dependencies = (
+        "/opt/openwam-libero/bin/python -m pip install --no-cache-dir "
+        "--upgrade transformers==4.36.0 hydra-core==1.3.7"
+    )
+    assert dockerfile.index(libero_requirements) < dockerfile.index(fixed_dependencies)
+    assert 'm.version("transformers") == "4.36.0"' in dockerfile
+    assert 'm.version("hydra-core") == "1.3.7"' in dockerfile
+    assert 'm.version("PyYAML") == "6.0.3"' in dockerfile
+
+
+def test_openwam_exposes_exact_source_without_incomplete_npa_metadata() -> None:
+    """Keep the runtime module importable without bypassing dependency closure."""
+
+    dockerfile = (
+        ROOT / "npa" / "docker" / "workbench" / "openwam" / "Dockerfile"
+    ).read_text(encoding="utf-8")
+
+    source_path = "npa-exact-source.pth"
+    assert source_path in dockerfile
+    assert "pip install --no-cache-dir --no-deps /opt/npa" not in dockerfile
+    assert dockerfile.index(
+        "/opt/openwam-venv/bin/python -m pip check"
+    ) < dockerfile.index(source_path)
+    assert (
+        "env -u PYTHONPATH /opt/openwam-venv/bin/python "
+        "-m npa.workflows.openwam_pipeline --help"
+    ) in dockerfile
+    dependency_import = (
+        "env -u PYTHONPATH /opt/openwam-venv/bin/python -c "
+        "'import boto3, huggingface_hub'"
+    )
+    assert dependency_import in dockerfile
+    assert dockerfile.index(dependency_import) < dockerfile.index(
+        "-m npa.workflows.openwam_pipeline --help"
+    )
+    assert (
+        "runuser -u ubuntu -- env -u PYTHONPATH HOME=/home/ubuntu "
+        "/opt/openwam-venv/bin/python -m npa.workflows.openwam_pipeline"
+    ) in dockerfile
+
+
+def test_openwam_removes_observed_base_image_critical_footprint() -> None:
+    """Keep the exact private-image scan remediation from silently regressing."""
+
+    dockerfile = (
+        ROOT / "npa" / "docker" / "workbench" / "openwam" / "Dockerfile"
+    ).read_text(encoding="utf-8")
+
+    assert (
+        "apt-get install -y --no-install-recommends --only-upgrade linux-libc-dev"
+        in dockerfile
+    )
+    assert "rm -rf /opt/nvidia/nsight-compute" in dockerfile
+
+
+def test_openwam_recipe_retains_runtime_fetch_and_private_quarantine() -> None:
+    dockerfile = (
+        ROOT / "npa" / "docker" / "workbench" / "openwam" / "Dockerfile"
+    ).read_text(encoding="utf-8")
+    contract = (
+        ROOT / "npa" / "docker" / "workbench" / "packaging-contract.yaml"
+    ).read_text(encoding="utf-8")
+
+    assert 'npa.weights="operator-runtime-fetch"' in dockerfile
+    assert 'npa.dataset="operator-runtime-fetch"' in dockerfile
+    assert 'org.nebius.npa.redistribution="unvalidated-operator-private"' in dockerfile
+    assert "openwam:\n    dockerfile: openwam/Dockerfile" in contract
+    assert (
+        "redistribution: unvalidated"
+        in contract.split("  openwam:", 1)[1].split("  libero:", 1)[0]
+    )
+
+
+def test_openwam_datacenter_manifest_does_not_claim_a_device_result() -> None:
+    manifest = json.loads(
+        (ROOT / "npa" / "docker" / "workbench" / "blackwell-dc-images.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    entry = next(item for item in manifest["images"] if item["name"] == "npa-openwam")
+
+    assert entry["dockerfile"] == "openwam/Dockerfile"
+    assert entry["verdict"] == "unknown"
+    assert entry["validation"] == "pending-gpu"
+    assert entry["redistribution"] == "unvalidated"
+    assert (
+        "RTX evidence must never be treated as B200/B300 equivalence" in entry["notes"]
+    )
+
+
+def test_openwam_is_private_neutral_until_a_public_release_is_accepted() -> None:
+    """A private candidate does not authorize a public or generic image route."""
+
+    assert "openwam" in images.NEUTRAL_UNBUILT_CANDIDATE_TOOLS
+    assert images.supported_tool_version("openwam") == "operator-private-unbuilt"
+    assert not images.is_publicly_redistributable("openwam")
+    assert "openwam" not in images.CONTAINER_IMAGE_NAMES

@@ -342,7 +342,10 @@ def test_render_steps_yaml_dispatches(parallel_spec) -> None:
         execution="serial",
     )
     assert "execution: parallel" in parallel_text
-    assert "execution: serial" in serial_text
+    serial_docs = [doc for doc in yaml.safe_load_all(serial_text) if doc]
+    assert len(serial_docs) == 1
+    assert serial_docs[0]["name"] == "join"
+    assert serial_docs[0]["run"]
 
 
 def test_serial_renderer_still_rejects_parallel_option(parallel_spec) -> None:

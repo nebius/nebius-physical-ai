@@ -557,6 +557,8 @@ def test_submit_runtime_passes_per_tool_image_override(
             "--image-pull-timeout-seconds",
             str(pull_timeout),
             "--runtime",
+            "--image-pull-secret",
+            "operator-registry",
             "--tool-image",
             f"workbench.token_factory.caption={image}",
             "--var",
@@ -570,8 +572,10 @@ def test_submit_runtime_passes_per_tool_image_override(
         "workbench.token_factory.caption": image,
     }
     assert options.image_digest_pins == pins
+    assert options.image_pull_secret_names == ("operator-registry",)
     checked = preflight.call_args.kwargs["options"]
     assert checked.image_overrides == options.image_overrides
+    assert checked.image_pull_secret_names == ("operator-registry",)
     assert preflight.call_args.kwargs["image_pull_timeout_seconds"] == pull_timeout
     wave = tmp_path / "next-wave.yaml"
     wave.write_text("name: next-wave\nrun: echo next\n")
@@ -579,6 +583,10 @@ def test_submit_runtime_passes_per_tool_image_override(
     assert preflight.call_count == 2
     assert all(
         call.kwargs["image_pull_timeout_seconds"] == pull_timeout
+        for call in preflight.call_args_list
+    )
+    assert all(
+        call.kwargs["options"].image_pull_secret_names == ("operator-registry",)
         for call in preflight.call_args_list
     )
 
@@ -599,6 +607,25 @@ def test_submit_rejects_malformed_per_tool_image_override() -> None:
 
     assert result.exit_code == 1
     assert "TOOL_REF=IMAGE" in result.output
+
+
+def test_submit_plan_only_refuses_explicit_pull_secret() -> None:
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--plan-only",
+            "--image-pull-secret",
+            "operator-registry",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "cannot be combined with --plan-only" in result.output
+    assert "operator-registry" not in result.output
 
 
 @pytest.mark.parametrize(
@@ -1174,13 +1201,15 @@ def test_submit_without_runtime_uses_the_one_shot_path(
     runtime_driver = mocker.patch(
         "npa.orchestration.npa_workflow.runtime.run_workflow_runtime"
     )
-    submitted: dict[str, object] = {}
+    submitted: dict[str, object] = {"contents": []}
     submit_calls = 0
 
     def fake_submit(path, run_id, **kwargs):
         nonlocal submit_calls
         submit_calls += 1
-        submitted["content"] = Path(path).read_text(encoding="utf-8")
+        content = Path(path).read_text(encoding="utf-8")
+        submitted["content"] = content
+        submitted["contents"].append(content)
         if submit_calls == 1:
             raise SkyPilotSubmitError(
                 "synthetic indeterminate launch", launch_attempted=True
@@ -1207,6 +1236,8 @@ def test_submit_without_runtime_uses_the_one_shot_path(
             "one-shot-1",
             "--image",
             "none",
+            "--image-pull-secret",
+            "operator-pull-reference",
             "--var",
             "bucket=rt-bucket",
         ],
@@ -1226,11 +1257,20 @@ def test_submit_without_runtime_uses_the_one_shot_path(
     assert recovery_argv[recovery_argv.index("--resume-run") + 1] == "one-shot-1"
     assert "--no-runtime" in recovery_argv
     assert recovery_argv[recovery_argv.index("--var") + 1] == "bucket=rt-bucket"
+    assert [
+        value
+        for flag, value in zip(recovery_argv, recovery_argv[1:])
+        if flag == "--image-pull-secret"
+    ] == ["operator-pull-reference"]
 
     resumed = RUNNER.invoke(app, recovery_argv[1:])
     assert resumed.exit_code == 0, resumed.output
     assert "status: SUBMITTED" in resumed.output
     assert submit_mock.call_count == 2
+    assert len(submitted["contents"]) == 2
+    assert all(
+        "operator-pull-reference" in content for content in submitted["contents"]
+    )
     final = json.loads(journal_path.read_text(encoding="utf-8"))
     assert final["phase"] == "committed"
     assert final["resume_count"] == 1

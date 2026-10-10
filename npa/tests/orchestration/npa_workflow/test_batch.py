@@ -136,12 +136,35 @@ def update(delta):
         state['maximum'] = max(state['maximum'], state['active'])
         if delta > 0:
             state['calls'].append({'run_id': run_id, 'resume': resume, 'args': args})
+        elif state['active'] == 0:
+            state.pop('rendezvous_released', None)
         handle.seek(0)
         json.dump(state, handle)
         handle.truncate()
+
+def rendezvous_released(parties):
+    with path.open('r+') as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        state = json.load(handle)
+        if state['active'] >= parties:
+            state['rendezvous_released'] = True
+            handle.seek(0)
+            json.dump(state, handle)
+            handle.truncate()
+        return state.get('rendezvous_released', False)
+
 update(1)
-time.sleep(0.3)
-update(-1)
+try:
+    rendezvous_parties = int(os.getenv('BATCH_TEST_RENDEZVOUS_PARTIES', '0'))
+    if rendezvous_parties:
+        while True:
+            if rendezvous_released(rendezvous_parties):
+                break
+            time.sleep(0.01)
+    else:
+        time.sleep(0.3)
+finally:
+    update(-1)
 if os.getenv('BATCH_TEST_FAILURE') == run_id and not resume:
     print('lost response')
     sys.exit(1)
@@ -155,28 +178,112 @@ print(json.dumps({'status': 'succeeded', 'run_id': run_id}))
     return journal
 
 
+class _BatchAdmissionObserver:
+    def __init__(self, launch, clock):
+        self._launch = launch
+        self._clock = clock
+        self.children = []
+        self._start = 0
+        self._expected = None
+        self.admissions_at_first_yield = None
+
+    def arm(self, expected_admissions):
+        self._start = len(self.children)
+        self._expected = expected_admissions
+        self.admissions_at_first_yield = None
+
+    def launch(self, *args):
+        process = self._launch(*args)
+        self.children.append(process)
+        return process
+
+    def sleep(self, delay):
+        if self.admissions_at_first_yield is None:
+            self.admissions_at_first_yield = len(self.children) - self._start
+            if self.admissions_at_first_yield != self._expected:
+                raise RuntimeError(
+                    f"scheduler admitted {self.admissions_at_first_yield} real children"
+                )
+        self._clock.sleep(delay)
+
+
+@pytest.fixture
+def admission_observer(monkeypatch):
+    observer = _BatchAdmissionObserver(batch._launch, batch.time)
+    monkeypatch.setattr(batch, "_launch", observer.launch)
+    monkeypatch.setattr(batch, "time", observer)
+    return observer
+
+
 def test_real_children_obey_limit_and_completed_resume_reverifies(
-    manifest, children, tmp_path
+    manifest, children, tmp_path, monkeypatch, admission_observer
 ):
+    monkeypatch.setenv("BATCH_TEST_RENDEZVOUS_PARTIES", "3")
+    admission_observer.arm(expected_admissions=3)
     result = batch.run_batch(
-        manifest[0], state_dir=tmp_path / "state", max_concurrent_runs=3
+        manifest[0],
+        state_dir=tmp_path / "state",
+        max_concurrent_runs=3,
     )
     assert all(record["status"] == "succeeded" for record in result["runs"].values())
     evidence = json.loads(children.read_text())
     assert evidence["maximum"] == 3
     assert len(evidence["calls"]) == 6
+    assert "rendezvous_released" not in evidence
+    assert admission_observer.admissions_at_first_yield == 3
     assert all("--runtime" in call["args"] for call in evidence["calls"])
     assert all(
         call["args"][call["args"].index("--max-wait-seconds") + 1] == "0"
         for call in evidence["calls"]
     )
-    batch.run_batch(
-        manifest[0], state_dir=tmp_path / "state", max_concurrent_runs=3, resume=True
+    admission_observer.arm(expected_admissions=3)
+    resumed = batch.run_batch(
+        manifest[0],
+        state_dir=tmp_path / "state",
+        max_concurrent_runs=3,
+        resume=True,
     )
     replay = json.loads(children.read_text())
+    assert all(record["status"] == "succeeded" for record in resumed["runs"].values())
     assert len(replay["calls"]) == 12
     assert all(call["resume"] for call in replay["calls"][6:])
     assert replay["maximum"] == 3
+    assert "rendezvous_released" not in replay
+    assert admission_observer.admissions_at_first_yield == 3
+
+
+def test_scheduler_maximum_two_fails_at_first_yield_and_reaps_children(
+    manifest, children, tmp_path, monkeypatch, admission_observer
+):
+    monkeypatch.setenv("BATCH_TEST_RENDEZVOUS_PARTIES", "3")
+    scheduler_maximum = 2
+
+    def admit_at_most_two(plan, directory, state, concurrency, report, lock_fd):
+        batch._drive(
+            plan,
+            plan["runs"][:scheduler_maximum],
+            directory,
+            state,
+            concurrency,
+            report,
+            lock_fd,
+        )
+
+    monkeypatch.setattr(batch, "_run_phases", admit_at_most_two)
+    admission_observer.arm(expected_admissions=3)
+    with pytest.raises(RuntimeError, match="scheduler admitted 2 real children"):
+        batch.run_batch(
+            manifest[0],
+            state_dir=tmp_path / "state",
+            max_concurrent_runs=3,
+        )
+    assert admission_observer.admissions_at_first_yield == 2
+    assert len(admission_observer.children) == 2
+    assert len({process.pid for process in admission_observer.children}) == 2
+    assert all(
+        process.returncode is not None for process in admission_observer.children
+    )
+    assert all(process.returncode < 0 for process in admission_observer.children)
 
 
 def test_failure_stops_admission_and_resume_reconciles_first(

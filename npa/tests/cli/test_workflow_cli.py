@@ -422,6 +422,25 @@ def test_recovery_preserves_explicit_image_pull_timeout(pull_timeout: int) -> No
     assert _recovery_option(argv, "--image-pull-timeout-seconds") == str(pull_timeout)
 
 
+def test_recovery_preserves_image_pull_secret_names_without_secret_values() -> None:
+    """Replay retains Kubernetes Secret references, never registry credentials."""
+    from npa.cli.workbench import workflow
+    from npa.provisioning_journal import operation_contains_secret
+
+    argv = workflow._workflow_submit_recovery_argv(
+        Path("workflow.yaml"),
+        alias="synthetic",
+        run_id="declarative-run",
+        is_npa_spec=True,
+        arguments={"image_pull_secret": ("test-pull-a", "test-pull-b")},
+    )
+
+    assert [
+        value for flag, value in zip(argv, argv[1:]) if flag == "--image-pull-secret"
+    ] == ["test-pull-a", "test-pull-b"]
+    assert not operation_contains_secret(argv)
+
+
 @pytest.mark.parametrize("command", ["submit", "preflight-images"])
 def test_negative_image_pull_timeout_fails_cli_validation(command: str) -> None:
     result = runner.invoke(

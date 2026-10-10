@@ -12,6 +12,7 @@ from queue import Empty, Queue
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from uuid import uuid4
 
@@ -20,6 +21,7 @@ _BUILDKIT_IMAGE = (
     "mirror.gcr.io/moby/buildkit:v0.33.0@sha256:"
     "6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3"
 )
+_BUILDKIT_BOOTSTRAP_ATTEMPTS = 2
 _NAME_PATTERN = re.compile(r"[a-z0-9][a-z0-9-]+")
 _PATCH_DOCKERFILE = """\
 ARG BASE_IMAGE
@@ -148,6 +150,65 @@ def _create_builder(builder: str, root: Path) -> dict[str, str]:
     return environment
 
 
+def _is_retryable_buildkit_bootstrap_failure(
+    error: subprocess.CalledProcessError,
+) -> bool:
+    """Recognize the narrow registry-mirror failure before BuildKit starts."""
+
+    output = "\n".join(
+        part for part in (error.stdout, error.stderr) if isinstance(part, str)
+    )
+    return all(
+        marker in output
+        for marker in (
+            "[internal] booting buildkit",
+            "error pulling image configuration",
+            "unknown blob",
+        )
+    )
+
+
+def _run_preparation_build(command: list[str], environment: dict[str, str]) -> None:
+    """Run one archive export while retaining BuildKit diagnostics in CI logs."""
+
+    result = subprocess.run(
+        command,
+        input=_PATCH_DOCKERFILE,
+        text=True,
+        env=environment,
+        check=False,
+        capture_output=True,
+    )
+    if result.stdout:
+        sys.stdout.write(result.stdout)
+    if result.stderr:
+        sys.stderr.write(result.stderr)
+    if result.returncode:
+        raise subprocess.CalledProcessError(
+            result.returncode,
+            command,
+            output=result.stdout,
+            stderr=result.stderr,
+        )
+
+
+def _prepare_target_once(entry: dict[str, object], root: Path) -> Path:
+    """Create, use, and remove one scan-owned BuildKit builder."""
+
+    builder = f"npa-base-scan-{uuid4().hex}"
+    archive = root / "image.tar"
+    context = root / "context"
+    command = preparation_command(entry, builder, archive, context)
+    assert command is not None
+    context.mkdir(mode=0o700, exist_ok=True)
+    environment = _create_builder(builder, root)
+    try:
+        _run_preparation_build(command, environment)
+    finally:
+        _remove_builder(builder, environment, root)
+    return archive
+
+
 def prepare_target(entry: dict[str, object], root: Path) -> str | Path:
     """Free an entry's isolated builder before scanning its archive.
 
@@ -161,21 +222,24 @@ def prepare_target(entry: dict[str, object], root: Path) -> str | Path:
         _BuilderCleanupError: Owned builder cleanup fails.
     """
 
-    builder = f"npa-base-scan-{uuid4().hex}"
-    archive = root / "image.tar"
-    context = root / "context"
-    command = preparation_command(entry, builder, archive, context)
-    if command is None:
+    if not entry["purge_linux_libc_dev"] and not entry["upgrade_os"]:
         return _docker_hub_mirror_reference(str(entry["image"]))
-    context.mkdir(mode=0o700)
-    environment = _create_builder(builder, root)
-    try:
-        subprocess.run(
-            command, input=_PATCH_DOCKERFILE, text=True, env=environment, check=True
-        )
-    finally:
-        _remove_builder(builder, environment, root)
-    return archive
+    for attempt in range(_BUILDKIT_BOOTSTRAP_ATTEMPTS):
+        try:
+            return _prepare_target_once(entry, root)
+        except subprocess.CalledProcessError as error:
+            if (
+                attempt + 1 == _BUILDKIT_BOOTSTRAP_ATTEMPTS
+                or not _is_retryable_buildkit_bootstrap_failure(error)
+            ):
+                raise
+            (root / "image.tar").unlink(missing_ok=True)
+            print(
+                "BuildKit bootstrap hit an unknown registry blob; retrying once "
+                "with a fresh scan-owned builder.",
+                file=sys.stderr,
+            )
+    raise AssertionError("BuildKit bootstrap attempts exhausted without a result")
 
 
 @contextmanager
