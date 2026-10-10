@@ -1,23 +1,17 @@
-"""BYO held-out eval: roll the TRAINED Isaac policy for a real success_rate.
+"""Evaluate the selected learned Isaac policy on sealed Sim2Real scenarios.
 
-Wired in via ``sim2real run --byo-eval-command 'python3 -m
-npa.workflows.sim2real.byo_isaac_eval'``. Satisfies ``run_heldout_eval``'s
-contract: write ``NPA_SIM2REAL_OUTPUT_JSON`` with a ``per_env`` list of
-``{env_id, score, success}``; the engine's ``_normalize_heldout_report``
-computes ``success_rate`` from it.
+Stage 10 of ``workflows/main/sim2real.yaml`` executes this adapter inside its
+already admitted SkyPilot GPU task. It downloads the exact validation-selected
+checkpoint, verifies its SHA and size, and evaluates the learned actor alone on
+``Isaac-Lift-Cube-Franka-v0``. Success requires measured object-to-goal distance
+and stable placement; rendered footage records the checkpoint lineage.
 
-Unlike the reference/stub held-out payload (which scores synthetic rollouts and
-does NOT load any trained policy), this loads the **trained checkpoint** (from
-the inner-loop evidence's ``update.checkpoint_path``) and rolls it in Isaac on
-``Isaac-Lift-Cube-Franka-v0``, deriving per-env success from the task's own
-object-to-goal metric.
-
-Runs in the orchestrator pod (no Isaac), so it submits an Isaac sibling k8s Job
-that downloads the checkpoint, plays the policy, writes per-env scores to S3;
-this process reads them back and writes the output JSON.
-
-``NPA_BYO_ISAAC_DRYRUN=1`` skips the Kubernetes API/S3 and emits a deterministic per-env
-report for unit tests / wiring checks.
+The component writes ``NPA_SIM2REAL_OUTPUT_JSON`` with actual ``per_env`` scores,
+boolean success, physical measurements, and inference provenance. Canonical
+execution reports ``npa_workflow_skypilot_task`` and creates no sibling Kubernetes
+Job. The older command-hook and typed Kubernetes launcher remain finite
+compatibility paths. ``NPA_BYO_ISAAC_DRYRUN=1`` supplies deterministic unit-test
+reports and is not learned-policy efficacy evidence.
 """
 
 from __future__ import annotations
@@ -983,28 +977,20 @@ except Exception as e:
     traceback.print_exc()
     dump([0.5]*N, "rollout_failed:%s" % e)
 # With enable_cameras the Isaac app hangs on exit (even app.close() blocks), so the
-# post-script bash upload never runs. Upload distances + renders HERE from boto3,
-# then hard-exit the process so nothing hangs.
+# post-script bash upload never runs. Publish the camera tree before metrics,
+# then hard-exit the process with an upload failure reflected in its exit code.
 try:
-    import boto3
-    from urllib.parse import urlparse
-    s3 = boto3.client("s3", endpoint_url=os.environ.get("AWS_ENDPOINT_URL") or None)
-    ou = urlparse(os.environ["EVAL_OUT_S3"])
-    s3.upload_file(OUT, ou.netloc, ou.path.lstrip("/"))
+    from pathlib import Path
+    from npa.workflows.sim2real.isaac_job_io import upload_capture
+    upload_capture(Path(os.environ.get("EVAL_RENDERS_DIR", "/tmp/evalwork/renders")),
+                   os.environ.get("EVAL_RENDERS_S3", ""), Path(OUT),
+                   os.environ["EVAL_OUT_S3"])
     print("UPLOADED_DISTANCES", os.environ["EVAL_OUT_S3"], flush=True)
-    ru = urlparse(os.environ.get("EVAL_RENDERS_S3", ""))
-    if ru.netloc:
-        import glob
-        base = ru.path.lstrip("/").rstrip("/")
-        n = 0
-        for pat in ("**/*.png", "**/*.npz"):
-            for p in glob.glob(os.environ["EVAL_RENDERS_DIR"] + "/" + pat, recursive=True):
-                rel = os.path.relpath(p, os.environ["EVAL_RENDERS_DIR"])
-                s3.upload_file(p, ru.netloc, base + "/" + rel); n += 1
-        print("UPLOADED_RENDERS", n, os.environ.get("EVAL_RENDERS_S3"), flush=True)
     print("BYO_EVAL_DONE", flush=True)
 except Exception as _e:
     print("inproc_upload_err", repr(_e), flush=True)
+    sys.stdout.flush(); sys.stderr.flush()
+    os._exit(1)
 sys.stdout.flush(); sys.stderr.flush()
 os._exit(0)
 """
@@ -1549,7 +1535,7 @@ def run_isaac_eval_job(
                 flush=True,
             )
         except Exception as e:
-            print("byo_isaac_eval: render sync failed:", repr(e), flush=True)
+            raise RuntimeError("native evaluation camera synchronization failed") from e
     global _RENDER_MANIFEST
     _RENDER_MANIFEST = {
         "schema": "npa.sim2real.heldout_renders.v1",

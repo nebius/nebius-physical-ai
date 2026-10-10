@@ -1,39 +1,28 @@
-"""BYO policy rollout: roll the CURRENT trained policy in Isaac for the VLM.
+"""Capture the current Isaac policy for hosted Sim2Real visual evaluation.
 
-Wired in via ``sim2real run --byo-policy-command 'python3 -m
-npa.workflows.sim2real.byo_isaac_policy_rollout'``. This closes the sim2real
-loop: instead of the synthetic ``generate_action_rollouts`` fallback (random
-actions + procedural PPM frames), the inner loop rolls the **current policy** in
-Isaac on ``Isaac-Lift-Cube-Franka-v0`` and captures the policy's *actual*
-behavior as RGB frames + actions. The Cosmos-Reason VLM then critiques those
-real frames, and that critique shapes the next training step's reward — a
-genuine closed loop rather than a critique of synthetic rollouts.
+Stage 7 of ``workflows/main/sim2real.yaml`` runs this adapter inside its
+already admitted SkyPilot GPU task. It rolls ``Isaac-Lift-Cube-Franka-v0`` and
+captures primary, side, and overhead RGB frames with actual actions and simulation
+timestamps. Stage 8 evaluates the primary images through Token Factory; its
+temporal critique supplies training signals for Stage 9.
 
-Contract (``run_policy_rollout_component`` → ``_run_policy_rollouts_via_command``):
-read ``NPA_SIM2REAL_OUTPUT_DIR`` (where rollout dirs go) and
-``NPA_SIM2REAL_ROLLOUT_COUNT`` / ``NPA_SIM2REAL_STEPS_PER_ROLLOUT``; write each
-rollout as ``<output_dir>/rollout-NNNN/`` with ``camera-NNN.png`` frames and a
-``manifest.json`` (schema ``npa.sim2real.action_rollout.v1``); write
-``NPA_SIM2REAL_OUTPUT_JSON`` with ``{"rollout_dirs": [...]}``. The engine uses
-those dirs (else falls back to synthetic).
+The component reads ``NPA_SIM2REAL_OUTPUT_DIR``, ``NPA_SIM2REAL_ROLLOUT_COUNT``,
+and ``NPA_SIM2REAL_STEPS_PER_ROLLOUT``. It writes ``rollout-NNNN/manifest.json``
+with schema ``npa.sim2real.action_rollout.v1`` and camera PNGs, then publishes
+``NPA_SIM2REAL_OUTPUT_JSON`` with ``{"rollout_dirs": [...]}``. The first inner
+iteration rolls an untrained RSL-RL actor; later iterations load the run's current
+checkpoint and record its byte provenance.
 
-**Which policy?** The current policy = the most-recent ``model_latest.pt`` the
-BYO trainer has uploaded for this run (``s3://<bucket>/sim2real-b/<run_id>/
-byo-trainer/.../model_latest.pt``). On the very first inner iteration none
-exists yet, so an **untrained** rsl_rl policy is rolled — that is the correct RL
-loop (critique the initial policy → shape training → re-roll the improved one).
-
-Runs in the orchestrator pod (no Isaac), so it submits an Isaac sibling Job that
-rolls the policy, captures per-env frames + actions, and uploads them to S3;
-this process downloads them into the local rollout dirs.
-
-``NPA_BYO_ISAAC_DRYRUN=1`` skips the Kubernetes API/S3 and emits deterministic rollout dirs
-(procedural frames) for unit tests / wiring checks without a GPU.
+Canonical execution reports ``npa_workflow_skypilot_task`` and creates no sibling
+Kubernetes Job. The older command-hook and typed Kubernetes launcher remain
+finite compatibility paths. ``NPA_BYO_ISAAC_DRYRUN=1`` generates procedural
+unit-test fixtures and does not establish rendered policy behavior.
 """
 
 from __future__ import annotations
 
 import copy
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import sys
@@ -309,19 +298,16 @@ def upload_and_exit(rollouts, note, applied=None):
     json.dump(meta, open("/tmp/rollwork/rollouts.json", "w"))
     print("ROLLOUT_WROTE", note, "rollouts", len(rollouts), flush=True)
     try:
-        import boto3, glob
-        from urllib.parse import urlparse
-        s3 = boto3.client("s3", endpoint_url=os.environ.get("AWS_ENDPOINT_URL") or None)
-        u = urlparse(OUT_S3); base = u.path.lstrip("/").rstrip("/")
-        s3.upload_file("/tmp/rollwork/rollouts.json", u.netloc, base + "/rollouts.json")
-        n = 0
-        for p in glob.glob(FRAMES_DIR + "/**/*.png", recursive=True):
-            rel = os.path.relpath(p, FRAMES_DIR)
-            s3.upload_file(p, u.netloc, base + "/" + rel); n += 1
-        print("ROLLOUT_UPLOADED", n, OUT_S3, flush=True)
+        from pathlib import Path
+        from npa.workflows.sim2real.isaac_job_io import upload_capture
+        upload_capture(Path(FRAMES_DIR), OUT_S3, Path("/tmp/rollwork/rollouts.json"),
+                       OUT_S3.rstrip("/") + "/rollouts.json")
+        print("ROLLOUT_UPLOADED", OUT_S3, flush=True)
         print("BYO_ROLLOUT_DONE", flush=True)
     except Exception as e:
         print("rollout_upload_err", repr(e), flush=True)
+        sys.stdout.flush(); sys.stderr.flush()
+        os._exit(1)
     sys.stdout.flush(); sys.stderr.flush()
     os._exit(0)
 try:
@@ -988,6 +974,19 @@ def _expected_camera_frame_count(capture: dict[str, Any]) -> int:
     return len(captured)
 
 
+def _download_rollout_frames(s3, bucket, prefix, directory, names) -> None:
+    targets = [safe_s3_download_target(directory, name, "") for name in names]
+    for target in targets:
+        target.parent.mkdir(parents=True, exist_ok=True)
+    with ThreadPoolExecutor(max_workers=16) as executor:
+        downloads = [
+            executor.submit(s3.download_file, bucket, f"{prefix}/{name}", str(target))
+            for name, target in zip(names, targets, strict=True)
+        ]
+        for download in downloads:
+            download.result()
+
+
 def materialize_rollout_dirs(
     output_dir: Path,
     meta: dict[str, Any],
@@ -996,13 +995,30 @@ def materialize_rollout_dirs(
     checkpoint_uri: str,
     s3_endpoint: str,
 ) -> list[str]:
-    """Download per-env frames from S3 and write local action_rollout.v1 dirs."""
+    """Download complete camera sets before publishing local rollout manifests.
+
+    Args:
+        output_dir: Directory receiving the real rollout inputs.
+        meta: Simulator-produced rollout and camera metadata.
+        out_s3_prefix: Run-scoped source frame prefix.
+        checkpoint_uri: Exact policy checkpoint used for capture.
+        s3_endpoint: Operator object storage endpoint.
+    Returns:
+        Complete local rollout directories in simulator order.
+    Raises:
+        RuntimeError: Simulator status, policy, or camera coverage is inconsistent.
+        StorageError: A declared output path escapes its rollout directory.
+        ClientError: A source camera frame cannot be downloaded.
+    """
 
     import boto3
+    from botocore.config import Config
     from urllib.parse import urlparse
     from npa.workflows.sim2real.episode_boundaries import validate_episode_sequence
 
-    s3 = boto3.client("s3", endpoint_url=s3_endpoint or None)
+    s3 = boto3.client(
+        "s3", endpoint_url=s3_endpoint or None, config=Config(max_pool_connections=16)
+    )
     u = urlparse(out_s3_prefix)
     base = u.path.lstrip("/").rstrip("/")
     is_trained = bool(meta.get("policy_trained"))
@@ -1078,16 +1094,7 @@ def materialize_rollout_dirs(
         all_frames = list(
             dict.fromkeys(frame for frames in view_frames.values() for frame in frames)
         )
-        for name in all_frames:
-            target = safe_s3_download_target(rdir, name, "")
-            target.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                s3.download_file(u.netloc, f"{base}/{rid}/{name}", str(target))
-            except Exception as exc:  # pragma: no cover - network
-                print(
-                    f"byo_isaac_policy_rollout: frame download failed {rid}/{name}: {exc!r}",
-                    flush=True,
-                )
+        _download_rollout_frames(s3, u.netloc, f"{base}/{rid}", rdir, all_frames)
         manifest = build_rollout_manifest(
             rollout_id=rid,
             frames=roll.get("frames", []),
@@ -1198,7 +1205,7 @@ def run_isaac_rollout_job(
     checkpoint_uri = _env("NPA_SIM2REAL_POLICY_CHECKPOINT_URI")
     if checkpoint_uri and not checkpoint_uri.startswith("s3://"):
         raise RuntimeError("explicit rollout checkpoint must be an s3:// URI")
-    if not checkpoint_uri:
+    if not checkpoint_uri and _env("NPA_BYO_ISAAC_AUTO_RESUME", "1") != "0":
         checkpoint_uri = latest_checkpoint_uri(
             bucket,
             run_id,

@@ -1719,6 +1719,15 @@ try:
                 f"dimensions {actual_observation_dim}/{actual_action_dim}: {exc}"
             ) from exc
         print("ROBOT_RESUME_LOADED", resume_ckpt, flush=True)
+    bootstrap_profile = os.environ.get("ROBOT_BOOTSTRAP_PROFILE", "none")
+    if bootstrap_profile != "none":
+        if resume_ckpt:
+            raise RuntimeError("training bootstrap cannot replace an exact resume checkpoint")
+        from npa.workflows.sim2real.isaac_franka_bootstrap import bootstrap_franka_actor
+        bootstrap = bootstrap_franka_actor(
+            env, runner, profile=bootstrap_profile, training_split="train", output_dir=OUT,
+        )
+        print("ROBOT_TRAINING_BOOTSTRAP " + json.dumps(bootstrap, sort_keys=True), flush=True)
     if ENT_FINAL and ITERS > 1:
         exploration_iterations = max(1, min(ITERS - 1, int(round(ITERS * float(ENT_FRACTION)))))
         convergence_iterations = ITERS - exploration_iterations

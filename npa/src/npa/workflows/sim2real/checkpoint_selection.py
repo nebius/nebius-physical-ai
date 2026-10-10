@@ -67,6 +67,22 @@ def _strict_rate(report: dict[str, Any]) -> float:
     return rate
 
 
+def _paired_lift_rate(report: dict[str, Any]) -> float:
+    """Prefer lifts accompanied by stable grasp in the same native episode."""
+    pairs = [
+        (
+            (row.get("details") or {}).get("stable_grasp"),
+            (row.get("details") or {}).get("lift"),
+        )
+        for row in report.get("per_env") or []
+    ]
+    if not pairs or all(grasp is None and lift is None for grasp, lift in pairs):
+        return 0.0
+    if any(type(grasp) is not bool or type(lift) is not bool for grasp, lift in pairs):
+        raise ValueError("paired checkpoint skill requires literal grasp/lift verdicts")
+    return sum(grasp and lift for grasp, lift in pairs) / len(pairs)
+
+
 def _mean_distance(summary: dict[str, Any]) -> float:
     """Read the mean object-to-goal distance, or the missing-data sentinel.
 
@@ -96,6 +112,13 @@ def checkpoint_rank_key(candidate: dict[str, Any]) -> tuple[Any, ...]:
 
     Earlier checkpoints win a fully equal numeric tie. This explicitly avoids
     quietly preferring ``model_latest.pt`` when validation proves no difference.
+
+    Args:
+        candidate: Checkpoint identity and its simulator validation report.
+    Returns:
+        Comparable strict success, paired skill, distance, and identity evidence.
+    Raises:
+        ValueError: A present metric or paired episode verdict is invalid.
     """
 
     report = dict(candidate.get("validation_report") or {})
@@ -104,6 +127,7 @@ def checkpoint_rank_key(candidate: dict[str, Any]) -> tuple[Any, ...]:
     return (
         _strict_rate(report),
         _rate(report, "place"),
+        _paired_lift_rate(report),
         _rate(report, "lift"),
         _rate(report, "stable_grasp"),
         _rate(report, "reach"),
@@ -118,8 +142,40 @@ def checkpoint_rank_key(candidate: dict[str, Any]) -> tuple[Any, ...]:
     )
 
 
+def _ranked_checkpoint(candidate: dict[str, Any]) -> dict[str, Any]:
+    """Retain the measured skill and identity used for each ranking decision."""
+    report = candidate.get("validation_report") or {}
+    return {
+        "checkpoint_uri": candidate.get("checkpoint_uri"),
+        "checkpoint_sha256": candidate.get("checkpoint_sha256"),
+        "outer_iteration": candidate.get("outer_iteration"),
+        "inner_iteration": candidate.get("inner_iteration"),
+        "training_iteration": candidate.get("training_iteration"),
+        "strict_success_rate": (candidate.get("validation_report") or {}).get(
+            "success_rate", 0.0
+        ),
+        "decomposed_metrics": (candidate.get("validation_report") or {}).get(
+            "decomposed_metrics", {}
+        ),
+        "mean_object_goal_distance_m": (
+            (candidate.get("validation_report") or {}).get("success_summary") or {}
+        ).get("mean_object_goal_distance_m"),
+        "validation_report_uri": candidate.get("validation_report_uri"),
+        "stable_grasp_and_lift_rate": _paired_lift_rate(report),
+        "rank_key": list(checkpoint_rank_key(candidate)),
+    }
+
+
 def select_best_checkpoint(candidates: list[dict[str, Any]]) -> dict[str, Any]:
-    """Select the best exact checkpoint using only a fixed validation split."""
+    """Select the best exact checkpoint using only a fixed validation split.
+
+    Args:
+        candidates: Checkpoint identities and their per-episode validation reports.
+    Returns:
+        Selected candidate with its ranking policy and all candidate comparisons.
+    Raises:
+        ValueError: Evidence is absent, unbound, from another split, or invalid.
+    """
 
     if not candidates:
         raise ValueError("checkpoint selection requires at least one candidate")
@@ -136,31 +192,11 @@ def select_best_checkpoint(candidates: list[dict[str, Any]]) -> dict[str, Any]:
     best = dict(ranked[0])
     best["rank_key"] = list(checkpoint_rank_key(best))
     best["selection_policy"] = (
-        "strict_success,place,lift,stable_grasp,reach,contact,"
+        "strict_success,place,stable_grasp_and_lift,lift,stable_grasp,reach,contact,"
         "lower_mean_final_distance,earlier_checkpoint"
     )
     best["candidate_count"] = len(ranked)
-    best["ranked_candidates"] = [
-        {
-            "checkpoint_uri": item.get("checkpoint_uri"),
-            "checkpoint_sha256": item.get("checkpoint_sha256"),
-            "outer_iteration": item.get("outer_iteration"),
-            "inner_iteration": item.get("inner_iteration"),
-            "training_iteration": item.get("training_iteration"),
-            "strict_success_rate": (item.get("validation_report") or {}).get(
-                "success_rate", 0.0
-            ),
-            "decomposed_metrics": (item.get("validation_report") or {}).get(
-                "decomposed_metrics", {}
-            ),
-            "mean_object_goal_distance_m": (
-                (item.get("validation_report") or {}).get("success_summary") or {}
-            ).get("mean_object_goal_distance_m"),
-            "validation_report_uri": item.get("validation_report_uri"),
-            "rank_key": list(checkpoint_rank_key(item)),
-        }
-        for item in ranked
-    ]
+    best["ranked_candidates"] = [_ranked_checkpoint(candidate) for candidate in ranked]
     return best
 
 

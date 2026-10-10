@@ -17,6 +17,36 @@ def _manifest_script(manifest):
     return decode_compressed_bash_args(container["args"])
 
 
+def test_rollout_frames_download_concurrently_without_changing_paths(tmp_path):
+    from threading import Barrier
+
+    rendezvous = Barrier(2)
+
+    class Storage:
+        def download_file(self, bucket, key, target):
+            rendezvous.wait(timeout=5)
+            Path(target).write_bytes(f"{bucket}/{key}".encode())
+
+    names = ["camera-0000.png", "side/camera-0000.png"]
+    pr._download_rollout_frames(Storage(), "unit", "rollout-0000", tmp_path, names)
+    for name in names:
+        assert (tmp_path / name).read_bytes() == f"unit/rollout-0000/{name}".encode()
+
+
+def test_rollout_frame_storage_failure_prevents_materialization(tmp_path):
+    from botocore.exceptions import ClientError
+
+    class Storage:
+        def download_file(self, *_args):
+            raise ClientError({"Error": {"Code": "AccessDenied"}}, "GetObject")
+
+    with pytest.raises(ClientError, match="AccessDenied"):
+        pr._download_rollout_frames(
+            Storage(), "unit", "rollout-0000", tmp_path, ["camera-0000.png"]
+        )
+    assert not list(tmp_path.rglob("*.png"))
+
+
 def test_build_rollout_manifest_matches_action_rollout_schema():
     m = pr.build_rollout_manifest(
         rollout_id="rollout-0001",
@@ -448,7 +478,10 @@ def test_rollout_manifest_embeds_scenario_and_byo_robot_contract():
     assert "--destination /tmp/npa-byo-robot/customer.usd" in script
 
 
-def test_run_isaac_rollout_job_uses_outer_iteration_artifact_tag(tmp_path, monkeypatch):
+@pytest.mark.parametrize("auto_resume", ["0", "1"])
+def test_run_isaac_rollout_job_uses_outer_iteration_artifact_tag(
+    tmp_path, monkeypatch, auto_resume
+):
     captured: dict[str, str] = {}
 
     class _FakeS3:
@@ -462,6 +495,7 @@ def test_run_isaac_rollout_job_uses_outer_iteration_artifact_tag(tmp_path, monke
     def fake_build(**kwargs):
         captured["job_name"] = kwargs["job_name"]
         captured["out_s3_prefix"] = kwargs["out_s3_prefix"]
+        captured["checkpoint_uri"] = kwargs["checkpoint_uri"]
         return {"kind": "Job"}
 
     monkeypatch.setitem(sys.modules, "boto3", _FakeBoto3())
@@ -499,6 +533,8 @@ def test_run_isaac_rollout_job_uses_outer_iteration_artifact_tag(tmp_path, monke
     monkeypatch.setenv("NPA_SIM2REAL_ISAAC_IMAGE", "reg/npa-isaac-lab:2.3.2.post1")
     monkeypatch.setenv("NPA_SIM2REAL_BUCKET", "bkt")
     monkeypatch.setenv("NPA_SIM2REAL_GPU_SCHEDULING_PROBE_SECONDS", "0")
+    monkeypatch.setenv("NPA_BYO_ISAAC_AUTO_RESUME", auto_resume)
+    monkeypatch.delenv("NPA_SIM2REAL_POLICY_CHECKPOINT_URI", raising=False)
 
     pr.run_isaac_rollout_job(
         tmp_path / "actions" / "train" / "outer-02" / "iter-01",
@@ -509,6 +545,9 @@ def test_run_isaac_rollout_job_uses_outer_iteration_artifact_tag(tmp_path, monke
 
     assert captured["job_name"].endswith("outer-02-iter-01")
     assert captured["out_s3_prefix"].endswith("/byo-rollouts/outer-02-iter-01")
+    assert captured["checkpoint_uri"] == (
+        "s3://b/run/model_latest.pt" if auto_resume == "1" else ""
+    )
 
 
 def test_inline_rollout_provenance_reaches_main_component_record(tmp_path, monkeypatch):

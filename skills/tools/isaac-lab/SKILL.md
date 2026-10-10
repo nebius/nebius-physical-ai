@@ -298,4 +298,13 @@ limits, pinned API references and opt-in live acceptance.
 - Parameter sweep: `workflows/testing/isaac-lab-rl-sweep.yaml`.
 - Runner: `npa/scripts/run_isaac_lab_rl.py`.
 
-E2E is pending the training command fix tracked by `W9-isaac-lab-e2e-fix`.
+For composed Sim2Real training, use `workflows/main/sim2real.yaml` through the
+standard SkyPilot runtime. Its Stage 9 executes native RSL-RL PPO and publishes
+actual checkpoints; validation selects the resume checkpoint and curriculum,
+and the held-out quality gate determines whether the learned policy succeeds.
+See [the operating guide](../../../docs/workbench/guides/sim2real-workflow.md).
+
+The `W9-isaac-lab-e2e-fix` note belongs to the earlier standalone serverless
+experiment in [historical backend checks](../../../docs/archive/workbench-backend-checks.md).
+That recorded no-artifact result does not describe the canonical Sim2Real path
+or qualify a newer standalone serverless command.

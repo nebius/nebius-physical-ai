@@ -353,8 +353,26 @@ Current EnvGen build sources replace the pinned Genesis parent's GitPython
 3.1.57 with 3.1.62 before flattening the published filesystem. This addresses
 the GitPython security findings that blocked a subsequent development build;
 see the [upstream security releases](https://gitpython.readthedocs.io/en/latest/changes.html).
+EnvGen also applies the existing exact-source scikit-image 0.26.0 correction
+before flattening its filesystem. It removes one inert token-bearing recipe,
+preserves the executable loader and primary documentation, updates package
+metadata and bytecode, and refuses unrecognized source bytes. The all-severity
+secret scan remains mandatory.
+
 The shared Genesis requirements own this installation pin. Regression checks
 require EnvGen's installed-version assertion to match that shared pin.
+
+The canonical EnvGen recipe now selects the October 9 Ubuntu snapshot and
+`linux-libc-dev=5.15.0-198.208`, replacing the inherited headers that failed
+the fixed-critical publication gate. The Isaac 3 OSS dependency closure and
+Cosmos Transfer's hash-pinned security overlay select PyJWT 2.15.1, which includes the
+[CVE-2026-102268 fix](https://github.com/jpadilla/pyjwt/security/advisories/GHSA-ffc3-869f-jxw9)
+and the subsequent supported [2.15 security updates](https://github.com/jpadilla/pyjwt/releases).
+These source changes require new exact-image scans and runtime qualification;
+they do not retroactively qualify older image digests.
+The shipped Isaac functional smoke also applies the canonical exact stock-Franka
+asset remap before creating its environment. A rebuilt image must pass this
+unmodified smoke on the target RTX GPU; source inspection does not qualify it.
 Historical image digests retain their original dependency bytes. This source
 update does not change the accepted release pins above.
 

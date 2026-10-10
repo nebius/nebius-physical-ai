@@ -25,6 +25,11 @@ def metadata_live_contract() -> dict[str, object]:
 # These specialized suites intentionally remain operator-invoked. The reason is
 # machine-reviewed here instead of letting an environment gate silently rot.
 MANUAL_GATES = {
+    "NPA_SIM2REAL_EVALUATION_LIVE_S3_PREFIX": (
+        "paid hosted rollout evaluation and durable replay require operator-owned "
+        "Token Factory credentials and a private writable S3 prefix; "
+        "run with npa/tests/e2e/README.md"
+    ),
     "NPA_POLICY_PUBLIC_RESULTS": (
         "verifies same-run training, both gates, independent GPU serving and standalone HTML; "
         "collect the standard runtime artifacts with the public policy workflow cookbook"

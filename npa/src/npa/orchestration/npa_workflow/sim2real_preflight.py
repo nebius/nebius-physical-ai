@@ -54,6 +54,23 @@ def _is_source_sha(value: str) -> bool:
     return len(value) == 40 and all(char in "0123456789abcdef" for char in value)
 
 
+def _evaluation_issues(config: Mapping[str, Any]) -> list[Issue]:
+    try:
+        concurrency = int(str(config.get("evaluation_concurrency", "8")))
+        max_frames = int(str(config.get("evaluation_max_frames", "0")))
+        if concurrency > 0 and max_frames >= 0:
+            return []
+    except (TypeError, ValueError):
+        pass
+    return [
+        (
+            "Sim2Real hosted evaluation settings are invalid",
+            "set evaluation_concurrency to a positive integer and evaluation_max_frames "
+            "to a nonnegative integer; zero sends every declared primary frame",
+        )
+    ]
+
+
 def _source_sha_issues(config: Mapping[str, Any]) -> list[Issue]:
     """Mirror the renderer's two independent ``config.source_sha`` gates.
 
@@ -116,6 +133,7 @@ def static_prerequisites(
         )
 
     issues.extend(_source_sha_issues(config))
+    issues.extend(_evaluation_issues(config))
 
     pvc = str(config.get("isaac_cache_pvc") or "").strip()
     if not pvc:

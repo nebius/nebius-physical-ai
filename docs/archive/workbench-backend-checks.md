@@ -6,6 +6,12 @@ This preserves the earlier guide-index evidence. It does not describe current
 capacity or establish new end-to-end validation. Use the current guide for
 your selected tool and GPU.
 
+The `sim_to_real.local_smoke` entry describes a retired local path. Current
+[Sim2Real](../workbench/guides/sim2real-workflow.md) runs the canonical
+14-stage SkyPilot graph with native Isaac PPO; it has no local LeRobot
+installation requirement. The `W9-isaac-lab-e2e-fix` entry below records the
+standalone serverless experiment, which is a separate execution path.
+
 ## Recorded backend checks
 
 These entries record earlier checks against local and live backends. Each result

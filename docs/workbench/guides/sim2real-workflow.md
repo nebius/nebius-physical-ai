@@ -8,6 +8,15 @@ Complete the gates in order. A production submit repeats the decisive S3,
 model-access, cluster-object, immutable-image, and image-pull checks before it
 creates a run or launches work.
 
+The YAML selects the durable runtime automatically. For the stock Franka task,
+use the `public-franka-lift` preset and stage it with `workflow trigger
+stage-preset`; customer assets are optional for this preset. The run needs one
+coherent five-image set, project-scoped S3, an RTX PRO 6000 pool, a CPU node,
+and the warmed Isaac cache described below. A successful software run covers
+13 working stages and the explicit external-validation seam. Policy success
+still requires the untouched gold split to meet the strict 5 cm placement
+metric; Stage 12 does not prove deployment on a physical robot.
+
 ## 1. Accept the exact third-party terms
 
 The canonical runtime downloads one gated checkpoint under the operator's
@@ -32,6 +41,20 @@ The hosted endpoint must support the ordered JSON Schema response contract:
 each generated event has a fixed action index and recorded camera reference,
 including explicit neutral values for unsampled actions. Validate this with
 real rollout frames before a full run; invalid responses remain rejected.
+
+Stage 8 defaults to eight concurrent requests and all declared primary frames:
+`evaluation_concurrency=8`, `evaluation_max_frames=0`. The former eight-frame
+sample left many action times without visual evidence. A positive frame count
+still selects a deterministic sample and preserves neutral labels for actions
+without evidence. Keep capture visibility checks even with full frame coverage.
+
+Each completed rollout evaluation is published, read back, and validated in
+an iteration-scoped S3 receipt before the Stage 8 barrier is published. Receipts
+bind the image source, endpoint, model, threshold, actions, metadata, and frame
+bytes. An interrupted Stage 8 resumes verified results and requests only missing
+evaluations. Storage denial and corrupt evidence fail closed. The envelope
+reports `reused_rollouts` and `new_requests` separately from the original
+evaluation usage, so replay does not appear as new inference.
 
 Select the model explicitly with one of these submit overrides:
 
@@ -176,7 +199,7 @@ the CPU profile has no GPU exclusion:
 npa/.venv/bin/npa cluster node-group add-cpu \
   --cluster-name "${NPA_CLUSTER}" \
   --name sim2real-cpu \
-  --platform cpu-e2 \
+  --platform cpu-d3 \
   --preset 16vcpu-64gb \
   --node-count 1 \
   --wait
@@ -191,6 +214,10 @@ capacity, so an `8vcpu-32gb` node cannot fit a pod that requests the full
 controller alone, but not for the canonical Sim2Real CPU states.
 If the preflight reports no fitting CPU node, remove `NoSchedule`/`NoExecute`
 taints that the tasks do not tolerate or add/resize this pool.
+Discover platform/preset availability in the selected project with
+`nebius compute platform list --parent-id "$NPA_PROJECT_ID" --format json`
+before provisioning. The `cpu-d3` example is available in the validated
+US Central project; older `cpu-e2` examples may be rejected by the API.
 
 ### The Isaac GPU pool needs operator-mounted RTX drivers
 
@@ -227,6 +254,15 @@ Expected for the Isaac pool: the RTX PRO 6000 rows report
 `gpu.deploy.operands=true`. If they report `driverful=true` instead, reprovision
 that pool with `--gpu-workload-profile rtx-rendering`.
 
+Transfer and EnvGen default to `RTXPRO6000:1` so one reserved RTX pool can run
+the entire graph. On a mixed cluster, pass `--var transfer_accelerator=B200:1`
+and `--var envgen_accelerator=B200:1` to use reserved B200 compute capacity.
+The Isaac resource remains `RTXPRO6000:1` because it requires RT cores and the
+graphics driver stack. Keep `gpu_concurrency` within the selected EnvGen pool's
+actual schedulable GPU count. If reserved placement fails, provision an
+operator-authorized preemptible fallback; application or model-access failures
+require fixing their cause before retrying.
+
 ## 4. Warm Isaac once
 
 The canonical workflow relies on SkyPilot and the Kubernetes scheduler directly;
@@ -251,11 +287,22 @@ PVC is `Bound` with `RWX`. Exit 78 means acceptance was explicitly disabled;
 image pull failures are handled in the next gate. See
 [runtime-fetch packaging](../container-packaging.md#runtime-fetched-isaac-sim-why-the-isaac-images-are-publishable).
 
+The current Isaac Sim 6 wheel closure occupies about 18 GiB before runtime
+outputs. The template requests 64 GiB so a new pinned tree can be installed beside
+the previous tree. Cold installation depends on download bandwidth and shared
+filesystem metadata throughput; the historical 111-second estimate is obsolete.
+The warm job sets `PIP_COMPILE=0` to avoid precompiling the SDK's Python modules.
+Ordinary workload pods execute the verified tree with read-only/offline access.
+
 After changing the image, check `isaac-bootstrap status` from that exact digest
 against the PVC: its `expected_tree` must report `ready=yes`. The cache stamp
 also includes the bootstrap script, so matching wheel versions alone are not
 enough. Warm a missing version alongside existing trees before resuming a run
 that uses read-only/offline cache access.
+
+The shipped Isaac functional smoke uses the same exact stock-Franka asset remap
+as the workflow. It redirects the retired Panda USD path to NVIDIA's relocated
+`Legacy` asset and preserves explicitly supplied robot assets.
 
 Before evaluating rollouts, inspect the first and last frames from primary,
 side, and overhead cameras. Confirm that all views render the actual scene, then
@@ -315,11 +362,14 @@ for these five config keys:
 | `isaac_image` | `npa-isaac-lab` (same bytes used to warm the cache) |
 | `viewer_image` | `npa-rerun-viewer` |
 
-Relevant build entrypoints are
-`npa/docker/workbench/sim2real-build.sh`,
-`npa/docker/workbench/cosmos2-transfer/build.sh`, and
-`npa/docker/workbench/isaac-lab/build.sh`. Follow
-[build and push](../container-packaging.md) when images are absent.
+For a new source revision, use the trusted **Publish public images** workflow
+with `build_development_tools=sim2real-control,cosmos2-transfer,envgen,isaac-lab,rerun-viewer`
+and the exact full `development_sha`. It builds `dev-<full-sha>` images and
+applies packaging, payload, security, source, and publication gates. Resolve
+the accepted bytes to digests before execution. `dry_run=true` leaves supported
+release aliases unchanged. Follow [build and push](../container-packaging.md)
+for private builds; the historical all-stack build script also includes retired
+components and is not the canonical five-image recipe.
 
 Choose five images built from the same source commit containing the current
 Stage 8/9 hosted evaluator contract. The historical September 4 coherent release
@@ -328,6 +378,11 @@ Stage 8 only accepts Cosmos 3 and fails with the current MiniMax default.
 Anonymous pullability and a matching source SHA alone do not establish evaluator
 compatibility. Do not combine those historical digests with this workflow's
 current evaluator contract.
+
+This is a restriction on that historical image set, rather than a claim that
+the declarative workflow cannot run. Newly built sets must pass the baked
+evaluator probe, which now checks concurrent receipt support as well as the
+selected model and Stage 9 contract.
 
 Resolve the selected release or development tags to immutable digests, record
 their common source SHA, then reproduce the manifest pulls with the same config
@@ -486,14 +541,62 @@ credential store; the submit preflight rejects missing propagation before launch
 The runtime waits without a per-wave deadline so the production PPO passes can
 finish. Keep the runtime driver on an always-on operator VM.
 
-The production training default is 2,000 PPO updates per inner pass. The
-canonical workflow resumes the newest checkpoint from the same run, so its
-three-pass inner loop can cover 6,000 cumulative updates. Validation ranks the
-completed checkpoints and selects one for gold evaluation; the selected
-checkpoint can differ from the latest training checkpoint. The validation and
-gold predicates remain fixed. Reduced plumbing proofs may override the update
-count explicitly; effectiveness runs should retain the convergence-capable
-default.
+The production training default is 2,000 PPO updates per inner pass. Validation
+ranks the final checkpoint from each completed pass. Subsequent train rollouts
+and PPO resume the best candidate's exact checkpoint, which can differ from the
+newest training checkpoint; a three-pass loop performs 6,000 new updates while
+retaining stronger validation candidates. Strict success and placement rank
+first, followed by stable grasp and lift achieved in the same episode. Extra
+lifts without stable grasp cannot displace a stronger paired-skill candidate.
+
+Fresh canonical stock-Franka training initializes the actor with
+`franka-ik-distillation-v1` before PPO. A native Isaac differential-IK teacher
+collects demonstrations across the consumed training scenarios; supervised
+updates fit the same eight-action RSL-RL actor that PPO and evaluation use. A
+second round mixes that actor's actions into collection to expose its own state
+errors. Both rounds must establish strict stable placement on at least half of
+their training scenarios. The initial actor uses small PPO action noise and
+exact goals, then receives all 2,000 configured PPO updates. Demonstration
+updates remain separate from PPO telemetry.
+
+`NPA_BYO_ISAAC_BOOTSTRAP=auto` is the default for fresh stock-Franka PPO with a
+consumed training URI. `none` disables initialization; an explicit
+`franka-ik-distillation-v1` rejects other tasks, custom robots, legacy physics,
+or resumed checkpoints. Existing entropy, learning-rate, and action-noise
+settings retain their operator overrides. The native job receives
+`ROBOT_BOOTSTRAP_PROFILE`, and its `bootstrap-audit.json` binds the profile,
+training-scenario SHA-256, demonstration successes, supervised fitting losses,
+and zero PPO updates at initialization. The adapter rejects missing or
+contradictory audit evidence. Validation and Gold execute the saved learned
+actor alone; they do not run the demonstration teacher or a post-actor
+controller. Training demonstration success does not establish held-out quality.
+
+A checkpoint file alone does not prove that the actor learned to grasp. Until
+at least half of its validation episodes achieved both stable grasp and lift,
+resumed PPO retains the exploration schedule and repeats the training-only goal
+curriculum. Once validation proves that milestone, the next pass learns transport
+toward the exact goals while keeping action noise trainable. Low-noise placement
+consolidation begins only after at least half of validation episodes also bring
+the grasped, lifted object within 8 cm of the goal. That 8 cm milestone selects a
+training phase; strict success still requires the unchanged 5 cm distance,
+0.03 m/s speed, and three consecutive stable steps. Missing distance evidence
+keeps the transport phase. `resume_curriculum` records the decision, paired-skill
+and approach counts, and exact checkpoint identity. Stage 9 sets
+`NPA_BYO_ISAAC_RESUME_PHASE=exploration|transport|convergence` and disables unvalidated
+automatic resume; direct compatibility callers retain `convergence` as their
+default. Gold is excluded from this decision, and its goals and strict predicates
+remain fixed. Reduced plumbing proofs may override the update count explicitly;
+effectiveness runs should retain the production default.
+
+Native Isaac rollout and evaluation jobs upload camera and point-cloud files
+with 16 file workers, then publish completion metadata. Typed storage transport
+and service failures retry without a run deadline; a rejected upload fails the
+job and stops sibling retries. Evaluation also fails if a declared camera file
+cannot be synchronized locally. Stage 7 downloads its declared raw camera frames
+concurrently and fails before manifest publication when any transfer fails.
+Stage 14 reads every earlier
+outer-loop evidence document to retain all completed PPO curves, while limiting
+camera downloads to the final outer loop and its selected Gold footage.
 
 For Isaac PPO runs, Rerun plots measured optimizer losses from
 `training/ppo/value_loss` and `training/ppo/surrogate_loss`. It omits the

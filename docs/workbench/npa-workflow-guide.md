@@ -644,10 +644,12 @@ returning YAML.
   passes, grade threshold, caption limits, and Cosmos Curator clip settings. Its
   graph invokes real Cosmos Transfer, Cosmos Evaluator, Cosmos Curator,
   FiftyOne, and Rerun stages.
-- Sim-to-real supports robot/backend/task and input URIs, generated environment
-  counts/splits, loop and rollout counts, held-out success threshold, and seed.
-  It invokes `workbench.sim2real.run`, the maintained staged engine, instead of
-  the legacy demo toolRefs.
+- Sim-to-real drafting loads the canonical 14-stage
+  [`sim2real.yaml`](../../workflows/main/sim2real.yaml) graph and applies its
+  exposed input URIs, environment counts/splits, loop and rollout counts,
+  held-out success threshold, and seed. Its native Isaac states require an
+  RT-core GPU. Use the [Sim2Real operating guide](guides/sim2real-workflow.md)
+  to stage the public Franka preset and qualify the five immutable images.
 - On a bootstrapped agent, `config.bucket`, Kubernetes target, and accelerator
   come from staged `~/.npa/config.yaml` and agent S3 settings. A user-requested
   accelerator that contradicts the configured profile fails closed. Missing S3
@@ -658,8 +660,8 @@ Examples:
 
 ```text
 Create PAIDF YAML for my robot clips: 6 variants on 4 GPUs, grade threshold 70%.
-Create sim-to-real YAML for UR5e on Genesis with 12000 environments, 4 inner
-iterations, 2 outer iterations, and an 82% held-out success threshold.
+Create sim-to-real YAML for the public Franka lift task with 12000 environments,
+4 inner iterations, 2 outer iterations, and an 82% held-out success threshold.
 ```
 
 ## Verify (same gates as CI / agent skill)

@@ -216,9 +216,12 @@ move.
 
 Rendering cannot. `workbench.isaac_lab.capture_frames` launches with
 `enable_cameras=True`, and the Sim2Real Isaac backend rasterizes; both need RT
-cores that datacenter Blackwell does not have. The Sim2Real GPU fallback encodes
-this by admitting only L40S and RTX PRO 6000, and that is correct rather than
-conservative.
+cores that datacenter Blackwell does not have. The canonical
+[`workflows/main/sim2real.yaml`](../../workflows/main/sim2real.yaml) graph selects
+RTX PRO 6000 for its Isaac states. Its compute-only Cosmos Transfer and EnvGen
+states can select B200 independently; that does not make Isaac camera rendering
+available on B200. The retained GPU fallback belongs to legacy compatibility,
+not the canonical workflow's submission path.
 
 The CLI used to encode more than that. A single RT-core gate covered every Isaac
 Lab submit, so headless state-based training was refused on H100/H200/B200 even

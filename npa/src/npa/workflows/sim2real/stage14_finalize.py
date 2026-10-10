@@ -69,6 +69,11 @@ def download_plan(
             False,
         ),
     ]
+    # Earlier passes need only their small evidence documents for complete PPO
+    # curves; keep historical camera trees out of the finalizer's local mirror.
+    for prior_outer in range(1, outer_iteration):
+        relative = f"inner_loop/outer-{prior_outer:02d}/evidence.json"
+        entries.append((f"{root}/{relative}", relative, False))
     for item in evidence.get("iterations") or []:
         inner_iteration = int(item.get("iteration") or 0)
         if inner_iteration < 1:

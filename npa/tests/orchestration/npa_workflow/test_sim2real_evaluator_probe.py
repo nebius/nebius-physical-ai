@@ -53,6 +53,21 @@ def test_probe_refuses_an_evaluator_that_accepts_an_empty_boundary():
     assert "accepted an empty Stage 8 boundary" in result.stderr
 
 
+@pytest.mark.parametrize(
+    "preparation",
+    [
+        "from npa.workflows.sim2real import byo_isaac_trainer\n"
+        "byo_isaac_trainer._RESUME_PHASES = {'exploration', 'convergence'}\n",
+        "from npa.workflows.sim2real import isaac_job_io\n"
+        "isaac_job_io.upload_capture = None\n",
+    ],
+)
+def test_old_training_or_camera_publication_fails_before_gpu_submission(preparation):
+    result = _run_probe("MiniMaxAI/MiniMax-M3", preparation=preparation)
+    assert result.returncode != 0
+    assert "image lacks goal transport and complete camera publication" in result.stderr
+
+
 def test_unsupported_model_is_not_substituted():
     result = _run_probe("unsupported/model")
     assert result.returncode != 0

@@ -11,7 +11,10 @@ candidates by immutable digest while the historical releases remain
 quarantined. See the [PAIDF image-selection notes](guides/physical-ai-data-factory.md)
 for validation scope and operator overrides.
 The [public default quarantine audit](validation/public-default-quarantine-impact-20261005.md)
-lists other affected images and shipped workflows, including the Sim2Real seams.
+lists other affected images and shipped workflows. Canonical Sim2Real uses an
+explicit coherent five-image set, independently of legacy public defaults;
+follow its [operator runbook](guides/sim2real-workflow.md) for current image
+qualification, hosted evaluation, and runtime prerequisites.
 
 ## Start and operate a run
 

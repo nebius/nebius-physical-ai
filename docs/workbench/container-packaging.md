@@ -132,7 +132,7 @@ All first-class images live under `npa/docker/workbench/`:
 | `npa-robotwin` | `robotwin/Dockerfile` | neutral development bootstrap; supported release quarantined; CPU refusal verified |
 | `npa-retargeting` | `retargeting/Dockerfile` | job shell |
 | `npa-foxglove-embed` | `foxglove-embed/Dockerfile` | static host `:8099` (Foxglove embed SDK + MCAP data) |
-| Sim2Real stack | `sim2real-*/`, `cosmos3-reason/`, `lerobot-vlm-rl/` | workflow modules |
+| Canonical Sim2Real | `sim2real-control/`, `cosmos2-transfer/`, `sim2real-envgen/`, `isaac-lab/`, `rerun-viewer/` | 14-stage workflow; hosted evaluator runs in the CPU controller |
 | Base CUDA 13 | `base/cuda13-blackwell/Dockerfile` | build base only |
 | PAIDF AnomalyGen Sky compatibility (restricted) | `paidf-anomalygen-sky/Dockerfile` | operator-built job shell; never public GHCR |
 | PAIDF Qwen Image Edit Sky compatibility (restricted) | `paidf-image-edit-sky/Dockerfile` | operator-built worker shell over the pinned upstream runtime; never public GHCR |
@@ -471,7 +471,7 @@ pod pay its generation's cold fetch. Warm a **shared** volume once instead:
 
 ```bash
 kubectl apply -f npa/docker/workbench/common/warm-isaac-cache.yaml
-kubectl wait --for=condition=complete job/npa-warm-isaac-cache --timeout=30m
+kubectl wait --for=condition=complete job/npa-warm-isaac-cache --timeout=-1s
 ```
 
 Then run workload pods against the same volume with `NPA_ISAAC_CACHE_READONLY=1`, so the

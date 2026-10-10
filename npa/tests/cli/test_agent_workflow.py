@@ -1363,7 +1363,16 @@ def test_vlm_rl_draft_keeps_canonical_resource_profiles_without_live_infra() -> 
     # chat does not rewrite its named lane profiles into the retired single
     # generic `gpu` resource. Runtime backend selection is carried separately.
     assert "gpu" not in spec["resources"]
-    assert spec["resources"]["transfer-gpu"]["accelerators"] == "RTXPRO6000:1"
+    assert spec["config"]["transfer_accelerator"] == "RTXPRO6000:1"
+    assert spec["config"]["envgen_accelerator"] == "RTXPRO6000:1"
+    assert (
+        spec["resources"]["transfer-gpu"]["accelerators"]
+        == "{{config.transfer_accelerator}}"
+    )
+    assert (
+        spec["resources"]["envgen-gpu"]["accelerators"]
+        == "{{config.envgen_accelerator}}"
+    )
     assert spec["resources"]["isaac-gpu"]["accelerators"] == "RTXPRO6000:1"
 
 
