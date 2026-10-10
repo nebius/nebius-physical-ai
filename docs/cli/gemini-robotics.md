@@ -5,13 +5,13 @@
 ```text
 Usage: npa workbench gemini-robotics [OPTIONS] COMMAND [ARGS]...
 
-Gemini Robotics API-backed toolRef (plan, eval). Provisional adapter: API base URL and model id must be supplied explicitly; no live access has been validated.
+Gemini Robotics hosted planning and evaluation (plan, eval). Provisional adapter: API base URL and model id must be supplied explicitly; no live access has been validated.
 
 Options
 --help  Show this message and exit.
 Commands
-plan  Run ER embodied-reasoning planning via the Gemini API.
-eval  Evaluate a plan against a rubric via the Gemini API.
+plan  Run advisory ER planning and publish one immutable S3 receipt.
+eval  Evaluate one durable plan/rubric input and publish an S3 receipt.
 ```
 
 ## Options
@@ -24,8 +24,8 @@ eval  Evaluate a plan against a rubric via the Gemini API.
 
 | Command | Description |
 | --- | --- |
-| `plan` | Run ER embodied-reasoning planning via the Gemini API. |
-| `eval` | Evaluate a plan against a rubric via the Gemini API. |
+| `plan` | Run advisory ER planning and publish one immutable S3 receipt. |
+| `eval` | Evaluate one durable plan/rubric input and publish an S3 receipt. |
 
 ## Examples
 

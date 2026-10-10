@@ -1,10 +1,10 @@
-"""Gemini Robotics 2 API-backed BYOF pipeline.
+"""Gemini Robotics hosted planning and evaluation workflow stages.
 
-Orchestrates the ``workbench.gemini_robotics`` stages — ER planning and
-rubric evaluation — and writes content-addressed
-receipts for every artifact.  The Gemini API is closed-weight, so all stages
-are zero-GPU: the client is injected (real ``GeminiRoboticsClient`` in
-production, a fake in tests) and no heavy imports happen at module load.
+The Gemini API is closed-weight, so these CPU stages use the default NPA image.
+Their public workflow handoff is deliberately narrow: every input and receipt is
+an exact S3 object, and a receipt is published with a conditional create. A
+caller must supply the API base URL and model id explicitly because neither
+provisional identifier has been accepted against a live endpoint.
 """
 
 from __future__ import annotations
@@ -15,8 +15,13 @@ import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, Protocol, Sequence
 
+from npa.cli.path_contract import (
+    PathContractError,
+    validate_read_path,
+    validate_write_path,
+)
 from npa.cli.workbench.gemini_robotics import (
     EVAL_RECEIPT_SCHEMA,
     PLAN_RECEIPT_SCHEMA,
@@ -26,30 +31,71 @@ from npa.cli.workbench.gemini_robotics import (
     PlanResult,
     resolve_config,
 )
-
-PIPELINE_RECEIPT_SCHEMA = "npa.gemini_robotics.pipeline-receipt.v1"
+from npa.clients.storage import StorageClient, StorageError
 
 
 class GeminiRoboticsPipelineError(RuntimeError):
-    """Raised when a pipeline stage or bookkeeping invariant fails."""
+    """Raised when a Gemini workflow stage cannot safely run or publish."""
+
+
+class ArtifactStorage(Protocol):
+    """The small storage boundary needed by Gemini workflow stages."""
+
+    def put_bytes_conditional(
+        self,
+        payload: bytes,
+        bucket_uri: str,
+        *,
+        if_none_match: bool = False,
+        content_type: str = "application/octet-stream",
+    ) -> str:
+        """Create an object only when it does not already exist."""
+
+    def read_bytes_with_etag(self, bucket_uri: str) -> tuple[bytes, str] | None:
+        """Read one exact object and its storage version."""
 
 
 @dataclass
 class GeminiRoboticsPipelineConfig:
-    """Inputs for one Gemini Robotics pipeline run."""
+    """Inputs for one hosted Gemini stage.
+
+    ``output_path`` is an exact, previously unused ``s3://`` receipt URI. Image
+    paths are internal, materialized files used only after a caller has validated
+    and downloaded its public S3 inputs.
+    """
 
     task: str
-    output_dir: str
+    output_path: str
     images: list[str] = field(default_factory=list)
     model: str = ""
-    rubric_path: str = ""
 
-    def resolved_model(self, default: str) -> str:
-        return self.model or default
+    def require_model(self) -> str:
+        """Return an explicit model id or fail before creating an API client."""
 
+        model = self.model.strip()
+        if not model:
+            raise GeminiRoboticsPipelineError(
+                "Gemini Robotics requires an explicit model id; the provisional "
+                "model is documentation only and is never selected implicitly."
+            )
+        return model
 
-def _canonical_json(value: Any) -> bytes:
-    return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    def require_output_path(self) -> str:
+        """Validate the durable receipt target before the hosted request."""
+
+        try:
+            output_path = validate_write_path(
+                self.output_path,
+                tool="gemini-robotics",
+                required=True,
+            )
+        except PathContractError as exc:
+            raise GeminiRoboticsPipelineError(str(exc)) from exc
+        if output_path.endswith("/"):
+            raise GeminiRoboticsPipelineError(
+                "gemini-robotics --output-path must name one receipt object, not an S3 prefix."
+            )
+        return output_path
 
 
 def _sha256_bytes(value: bytes) -> str:
@@ -60,129 +106,198 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _write_json(path: Path, payload: Mapping[str, Any]) -> str:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    raw = json.dumps(payload, indent=2, sort_keys=True) + "\n"
-    path.write_text(raw, encoding="utf-8")
-    return _sha256_bytes(raw.encode("utf-8"))
+def _receipt_bytes(payload: Mapping[str, Any]) -> bytes:
+    return json.dumps(payload, indent=2, sort_keys=True).encode("utf-8") + b"\n"
+
+
+def _storage_or_default(storage: ArtifactStorage | None) -> ArtifactStorage:
+    if storage is not None:
+        return storage
+    try:
+        return StorageClient.from_environment()
+    except StorageError as exc:
+        raise GeminiRoboticsPipelineError(str(exc)) from exc
 
 
 def _client_or_default(client: GeminiRoboticsClient | None) -> GeminiRoboticsClient:
     if client is not None:
         return client
     try:
-        config = resolve_config()
+        return GeminiRoboticsClient(resolve_config())
     except GeminiRoboticsError as exc:
         raise GeminiRoboticsPipelineError(str(exc)) from exc
-    return GeminiRoboticsClient(config)
+
+
+def _write_receipt(
+    storage: ArtifactStorage, output_path: str, payload: Mapping[str, Any]
+) -> tuple[str, str]:
+    raw = _receipt_bytes(payload)
+    try:
+        etag = storage.put_bytes_conditional(
+            raw,
+            output_path,
+            if_none_match=True,
+            content_type="application/json",
+        )
+    except StorageError as exc:
+        raise GeminiRoboticsPipelineError(
+            f"could not conditionally publish receipt at {output_path!r}: {exc}"
+        ) from exc
+    return _sha256_bytes(raw), etag
+
+
+def read_eval_input(
+    input_path: str, storage: ArtifactStorage | None = None
+) -> tuple[dict[str, Any], str, str, str]:
+    """Load the exact S3 JSON object containing ``plan_text`` and ``rubric``."""
+
+    try:
+        input_path = validate_read_path(
+            input_path,
+            tool="gemini-robotics eval",
+            option="--input-path",
+            allow_hf=False,
+        )
+    except PathContractError as exc:
+        raise GeminiRoboticsPipelineError(str(exc)) from exc
+    if input_path.endswith("/"):
+        raise GeminiRoboticsPipelineError(
+            "gemini-robotics eval --input-path must name one JSON object, not an S3 prefix."
+        )
+    active_storage = _storage_or_default(storage)
+    try:
+        source = active_storage.read_bytes_with_etag(input_path)
+    except StorageError as exc:
+        raise GeminiRoboticsPipelineError(
+            f"could not read eval input at {input_path!r}: {exc}"
+        ) from exc
+    if source is None:
+        raise GeminiRoboticsPipelineError(
+            f"gemini-robotics eval input does not exist: {input_path!r}"
+        )
+    raw, etag = source
+    try:
+        payload = json.loads(raw)
+    except (TypeError, ValueError) as exc:
+        raise GeminiRoboticsPipelineError(
+            "gemini-robotics eval input must be a JSON object with non-empty "
+            "plan_text and rubric strings."
+        ) from exc
+    if not isinstance(payload, dict):
+        raise GeminiRoboticsPipelineError(
+            "gemini-robotics eval input must be a JSON object with non-empty "
+            "plan_text and rubric strings."
+        )
+    plan_text = payload.get("plan_text")
+    rubric = payload.get("rubric")
+    if not isinstance(plan_text, str) or not plan_text.strip():
+        raise GeminiRoboticsPipelineError(
+            "gemini-robotics eval input requires a non-empty plan_text string."
+        )
+    if not isinstance(rubric, str) or not rubric.strip():
+        raise GeminiRoboticsPipelineError(
+            "gemini-robotics eval input requires a non-empty rubric string."
+        )
+    return payload, input_path, etag, _sha256_bytes(raw)
 
 
 def run_er_planning_stage(
     config: GeminiRoboticsPipelineConfig,
     client: GeminiRoboticsClient | None = None,
+    storage: ArtifactStorage | None = None,
 ) -> dict[str, Any]:
-    """Run the ER planning stage and persist its receipt."""
-    from npa.cli.workbench.gemini_robotics import PROVISIONAL_MODEL_ID
+    """Run ER planning and conditionally publish its durable receipt."""
 
+    model = config.require_model()
+    output_path = config.require_output_path()
+    active_storage = _storage_or_default(storage)
     active = _client_or_default(client)
     try:
         result: PlanResult = active.plan(
             task=config.task,
-            images=[Path(p) for p in config.images],
-            model=config.resolved_model(PROVISIONAL_MODEL_ID),
+            images=[Path(path) for path in config.images],
+            model=model,
         )
-    except GeminiRoboticsError as exc:
+    except (GeminiRoboticsError, OSError) as exc:
         raise GeminiRoboticsPipelineError(f"ER planning stage failed: {exc}") from exc
-    receipt: dict[str, Any] = {
+    payload: dict[str, Any] = {
         "schema": PLAN_RECEIPT_SCHEMA,
         "task": config.task,
         "model": result.model,
         "plan_text": result.text,
-        "safety_calls": result.safety_calls,
+        "model_function_calls": result.model_function_calls,
         "finish_reason": result.finish_reason,
         "created_at": _utc_now(),
+        "advisory_only": True,
     }
-    plan_path = Path(config.output_dir) / "plan.json"
-    digest = _write_json(plan_path, receipt)
-    receipt["artifact_path"] = str(plan_path)
-    receipt["artifact_sha256"] = digest
-    return receipt
+    digest, etag = _write_receipt(active_storage, output_path, payload)
+    payload["artifact_path"] = output_path
+    payload["artifact_sha256"] = digest
+    payload["artifact_etag"] = etag
+    return payload
 
 
 def run_eval_stage(
     config: GeminiRoboticsPipelineConfig,
     plan_receipt: Mapping[str, Any],
+    rubric: str,
     client: GeminiRoboticsClient | None = None,
+    storage: ArtifactStorage | None = None,
+    *,
+    input_path: str = "",
+    input_etag: str = "",
+    input_sha256: str = "",
 ) -> dict[str, Any]:
-    """Run the rubric-eval stage against a plan receipt and persist it."""
-    from npa.cli.workbench.gemini_robotics import PROVISIONAL_MODEL_ID
+    """Evaluate a durable plan input and conditionally publish the receipt."""
 
-    if not config.rubric_path:
-        raise GeminiRoboticsPipelineError("Eval stage requires rubric_path to be set.")
+    model = config.require_model()
+    output_path = config.require_output_path()
+    plan_text = plan_receipt.get("plan_text")
+    if not isinstance(plan_text, str) or not plan_text.strip():
+        raise GeminiRoboticsPipelineError("Eval stage requires non-empty plan_text.")
+    if not rubric.strip():
+        raise GeminiRoboticsPipelineError("Eval stage requires a non-empty rubric.")
+    if any((input_path, input_etag, input_sha256)) and not all(
+        (input_path, input_etag, input_sha256)
+    ):
+        raise GeminiRoboticsPipelineError(
+            "Eval stage input provenance must include path, ETag, and SHA-256 together."
+        )
+    active_storage = _storage_or_default(storage)
     active = _client_or_default(client)
-    rubric = Path(config.rubric_path).read_text(encoding="utf-8")
     try:
         result: EvalResult = active.eval_plan(
-            plan_text=str(plan_receipt.get("plan_text", "")),
+            plan_text=plan_text,
             rubric=rubric,
-            model=config.resolved_model(PROVISIONAL_MODEL_ID),
+            model=model,
         )
-    except (GeminiRoboticsError, OSError) as exc:
+    except GeminiRoboticsError as exc:
         raise GeminiRoboticsPipelineError(f"Eval stage failed: {exc}") from exc
-    receipt: dict[str, Any] = {
+    payload: dict[str, Any] = {
         "schema": EVAL_RECEIPT_SCHEMA,
         "model": result.model,
         "scores": result.scores,
         "summary": result.summary,
         "created_at": _utc_now(),
+        "advisory_only": True,
     }
-    eval_path = Path(config.output_dir) / "eval.json"
-    digest = _write_json(eval_path, receipt)
-    receipt["artifact_path"] = str(eval_path)
-    receipt["artifact_sha256"] = digest
-    return receipt
-
-
-def run_pipeline(
-    config: GeminiRoboticsPipelineConfig,
-    client: GeminiRoboticsClient | None = None,
-) -> dict[str, Any]:
-    """Run plan → eval and write the pipeline receipt."""
-    stages: dict[str, Any] = {}
-    plan_receipt = run_er_planning_stage(config, client)
-    stages["plan"] = {
-        "artifact_path": plan_receipt["artifact_path"],
-        "artifact_sha256": plan_receipt["artifact_sha256"],
-    }
-    if config.rubric_path:
-        eval_receipt = run_eval_stage(config, plan_receipt, client)
-        stages["eval"] = {
-            "artifact_path": eval_receipt["artifact_path"],
-            "artifact_sha256": eval_receipt["artifact_sha256"],
-        }
-    receipt: dict[str, Any] = {
-        "schema": PIPELINE_RECEIPT_SCHEMA,
-        "task": config.task,
-        "stages": stages,
-        "created_at": _utc_now(),
-    }
-    receipt_path = Path(config.output_dir) / "pipeline_receipt.json"
-    digest = _write_json(receipt_path, receipt)
-    receipt["artifact_path"] = str(receipt_path)
-    receipt["artifact_sha256"] = digest
-    return receipt
+    if input_path:
+        payload["input_path"] = input_path
+        payload["input_etag"] = input_etag
+        payload["input_sha256"] = input_sha256
+    digest, etag = _write_receipt(active_storage, output_path, payload)
+    payload["artifact_path"] = output_path
+    payload["artifact_sha256"] = digest
+    payload["artifact_etag"] = etag
+    return payload
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Build the pipeline CLI parser.
+    """Build the workflow-stage parser with exact S3 handoff flags."""
 
-    The API base URL and model ids are override-required: there are no
-    defaults because the provisional guesses have never been validated
-    against a live endpoint.
-    """
     parser = argparse.ArgumentParser(
         prog="gemini_robotics_pipeline",
-        description="Gemini Robotics BYOF pipeline stages (provisional API adapter).",
+        description="Gemini Robotics hosted workflow stages (provisional API adapter).",
     )
     parser.add_argument(
         "--api-base-url",
@@ -196,51 +311,63 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    plan_p = sub.add_parser("plan", help="Run ER planning and write the receipt.")
+    plan_p = sub.add_parser("plan", help="Run ER planning and publish one receipt.")
     plan_p.add_argument("--task", required=True)
-    plan_p.add_argument("--image", action="append", default=[])
     plan_p.add_argument("--model", required=True, help="Gemini model id (required).")
-    plan_p.add_argument("--output-dir", required=True)
+    plan_p.add_argument("--output-path", required=True, help="Exact S3 receipt URI.")
 
-    eval_p = sub.add_parser("eval", help="Evaluate a plan against a rubric.")
-    eval_p.add_argument("--plan-path", required=True)
-    eval_p.add_argument("--rubric-path", required=True)
+    eval_p = sub.add_parser("eval", help="Evaluate one plan/rubric input object.")
+    eval_p.add_argument("--input-path", required=True, help="Exact S3 JSON input URI.")
     eval_p.add_argument("--model", required=True, help="Gemini model id (required).")
-    eval_p.add_argument("--output-dir", required=True)
+    eval_p.add_argument("--output-path", required=True, help="Exact S3 receipt URI.")
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    """Run one pipeline stage against an explicitly configured API endpoint."""
-    args = build_parser().parse_args(argv)
+def _configured_client(args: argparse.Namespace) -> GeminiRoboticsClient:
     try:
-        api_config = resolve_config(
-            api_key=args.api_key or None, base_url=args.api_base_url
+        return GeminiRoboticsClient(
+            resolve_config(api_key=args.api_key or None, base_url=args.api_base_url)
         )
     except GeminiRoboticsError as exc:
         raise GeminiRoboticsPipelineError(str(exc)) from exc
-    client = GeminiRoboticsClient(api_config)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Run one hosted stage with prevalidated durable handoff paths."""
+
+    args = build_parser().parse_args(argv)
     if args.command == "plan":
-        pipeline_config = GeminiRoboticsPipelineConfig(
+        config = GeminiRoboticsPipelineConfig(
             task=args.task,
-            output_dir=args.output_dir,
-            images=list(args.image or []),
+            output_path=args.output_path,
             model=args.model,
         )
-        receipt = run_er_planning_stage(pipeline_config, client)
+        config.require_model()
+        config.require_output_path()
+        storage = _storage_or_default(None)
+        receipt = run_er_planning_stage(config, _configured_client(args), storage)
     elif args.command == "eval":
-        pipeline_config = GeminiRoboticsPipelineConfig(
-            task=args.plan_path,
-            output_dir=args.output_dir,
+        config = GeminiRoboticsPipelineConfig(
+            task=args.input_path,
+            output_path=args.output_path,
             model=args.model,
-            rubric_path=args.rubric_path,
         )
-        plan_receipt = {
-            "plan_text": Path(args.plan_path).read_text(encoding="utf-8"),
-            "artifact_path": args.plan_path,
-            "artifact_sha256": "",
-        }
-        receipt = run_eval_stage(pipeline_config, plan_receipt, client)
+        config.require_model()
+        config.require_output_path()
+        storage = _storage_or_default(None)
+        plan_receipt, input_path, input_etag, input_sha256 = read_eval_input(
+            args.input_path, storage
+        )
+        receipt = run_eval_stage(
+            config,
+            plan_receipt,
+            str(plan_receipt["rubric"]),
+            _configured_client(args),
+            storage,
+            input_path=input_path,
+            input_etag=input_etag,
+            input_sha256=input_sha256,
+        )
     else:  # pragma: no cover - argparse restricts commands
         raise GeminiRoboticsPipelineError(f"unknown command {args.command!r}")
     print(
@@ -248,6 +375,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             {
                 "artifact_path": receipt["artifact_path"],
                 "artifact_sha256": receipt["artifact_sha256"],
+                "artifact_etag": receipt["artifact_etag"],
             },
             indent=2,
         )

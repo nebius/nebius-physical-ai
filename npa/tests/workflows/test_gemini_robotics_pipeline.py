@@ -1,47 +1,75 @@
-"""Unit tests for the Gemini Robotics BYOF pipeline (issue #503).
+"""Unit tests for the hosted Gemini Robotics workflow stages.
 
-Uses a fake client — no HTTP, no key.
+The client and storage boundaries are both faked: these prove local contracts,
+not provider acceptance.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
 import pytest
 import yaml
 
-from npa.cli.workbench.gemini_robotics import (
-    EvalResult,
-    PlanResult,
-)
+from npa.cli.workbench.gemini_robotics import EvalResult, PlanResult
 from npa.workflows.byof.gemini_robotics_pipeline import (
     GeminiRoboticsPipelineConfig,
+    GeminiRoboticsPipelineError,
+    read_eval_input,
     run_er_planning_stage,
     run_eval_stage,
-    run_pipeline,
 )
+
+
+class FakeStorage:
+    def __init__(self) -> None:
+        self.objects: dict[str, bytes] = {}
+        self.writes: list[str] = []
+
+    def put_bytes_conditional(
+        self,
+        payload: bytes,
+        uri: str,
+        *,
+        if_none_match: bool = False,
+        content_type: str = "application/octet-stream",
+    ) -> str:
+        assert if_none_match is True
+        assert content_type == "application/json"
+        if uri in self.objects:
+            raise AssertionError(f"attempted to overwrite {uri}")
+        self.objects[uri] = payload
+        self.writes.append(uri)
+        return f"etag-{len(self.writes)}"
+
+    def read_bytes_with_etag(self, uri: str) -> tuple[bytes, str] | None:
+        payload = self.objects.get(uri)
+        return None if payload is None else (payload, "input-etag")
 
 
 class FakeClient:
     def __init__(self) -> None:
         self.plans = 0
+        self.evals = 0
 
     def plan(self, **kwargs):
         self.plans += 1
         return PlanResult(
             text="1. Approach.\n2. Grasp.",
-            safety_calls=[{"name": "check_safety", "args": {"action": "grasp"}}],
-            model=kwargs.get("model", ""),
+            model_function_calls=[{"name": "unrequested_call", "args": {}}],
+            model=kwargs["model"],
             finish_reason="STOP",
         )
 
     def eval_plan(self, **kwargs):
+        self.evals += 1
         return EvalResult(
             scores={"safety": 9},
             summary="Good.",
             raw_text="{}",
-            model=kwargs.get("model", ""),
+            model=kwargs["model"],
         )
 
 
@@ -54,9 +82,8 @@ def _hosted_workflow_spec(operation: str, tmp_path: Path) -> dict:
             "api_base_url": "https://provider.example.invalid",
             "model_id": "operator-selected-model",
             "task": "inspect the scene",
-            "output_dir": str(tmp_path / "gemini-report"),
-            "plan_path": str(tmp_path / "plan.json"),
-            "rubric_path": str(tmp_path / "rubric.txt"),
+            "input_uri": "s3://example-bucket/input/eval-request.json",
+            "output_uri": "s3://example-bucket/output/receipt.json",
         },
         "resources": {"cpu": {"cloud": "kubernetes", "cpus": 2}},
         "initial": "audit",
@@ -86,58 +113,93 @@ def test_hosted_workflow_renders_cpu_and_declares_google_secret(
         assert "accelerators" not in tasks[1]["resources"]
         assert "image_id" not in tasks[1]["resources"]
         assert "gemini_robotics_pipeline" in tasks[1]["run"]
+        assert "--output-path" in tasks[1]["run"]
     finally:
         prepared.temp_dir.cleanup()
 
 
-def _config(tmp_path: Path, **kwargs) -> GeminiRoboticsPipelineConfig:
-    return GeminiRoboticsPipelineConfig(
-        task="pick up the cup",
-        output_dir=str(tmp_path / "out"),
-        **kwargs,
-    )
+def _config(**kwargs) -> GeminiRoboticsPipelineConfig:
+    values = {
+        "task": "pick up the cup",
+        "output_path": "s3://example-bucket/receipts/plan.json",
+        "model": "operator-selected-model",
+    }
+    values.update(kwargs)
+    return GeminiRoboticsPipelineConfig(**values)
 
 
-def test_planning_stage_writes_receipt(tmp_path: Path) -> None:
-    receipt = run_er_planning_stage(_config(tmp_path), FakeClient())
+def test_planning_stage_writes_conditional_s3_receipt() -> None:
+    storage = FakeStorage()
+    receipt = run_er_planning_stage(_config(), FakeClient(), storage)
     assert receipt["schema"] == "npa.gemini_robotics.plan.v1"
     assert receipt["plan_text"].startswith("1. Approach.")
-    assert receipt["safety_calls"][0]["name"] == "check_safety"
-    plan_path = Path(receipt["artifact_path"])
-    assert plan_path.exists()
-    stored = json.loads(plan_path.read_text())
-    assert stored["plan_text"] == receipt["plan_text"]
+    assert receipt["model_function_calls"] == [{"name": "unrequested_call", "args": {}}]
+    assert receipt["advisory_only"] is True
+    assert receipt["artifact_path"] == "s3://example-bucket/receipts/plan.json"
+    stored = storage.objects[receipt["artifact_path"]]
+    assert hashlib.sha256(stored).hexdigest() == receipt["artifact_sha256"]
+    assert json.loads(stored)["plan_text"] == receipt["plan_text"]
 
 
-def test_eval_stage_writes_receipt(tmp_path: Path) -> None:
-    rubric = tmp_path / "rubric.txt"
-    rubric.write_text("safety first")
-    plan_receipt = run_er_planning_stage(_config(tmp_path), FakeClient())
+def test_eval_stage_writes_conditional_s3_receipt() -> None:
+    storage = FakeStorage()
+    plan_receipt = {"plan_text": "1. Approach.\n2. Grasp."}
     receipt = run_eval_stage(
-        _config(tmp_path, rubric_path=str(rubric)), plan_receipt, FakeClient()
+        _config(output_path="s3://example-bucket/receipts/eval.json"),
+        plan_receipt,
+        "safety first",
+        FakeClient(),
+        storage,
+        input_path="s3://example-bucket/inputs/eval.json",
+        input_etag="input-etag",
+        input_sha256="a" * 64,
     )
     assert receipt["schema"] == "npa.gemini_robotics.eval.v1"
     assert receipt["scores"] == {"safety": 9}
+    assert receipt["artifact_etag"] == "etag-1"
+    assert receipt["input_path"] == "s3://example-bucket/inputs/eval.json"
+    assert receipt["input_etag"] == "input-etag"
+    assert receipt["input_sha256"] == "a" * 64
 
 
-def test_full_pipeline_plan_and_eval(tmp_path: Path) -> None:
-    rubric = tmp_path / "rubric.txt"
-    rubric.write_text("safety first")
-    receipt = run_pipeline(_config(tmp_path, rubric_path=str(rubric)), FakeClient())
-    assert receipt["schema"] == "npa.gemini_robotics.pipeline-receipt.v1"
-    assert set(receipt["stages"]) == {"plan", "eval"}
-    for stage in receipt["stages"].values():
-        assert Path(stage["artifact_path"]).exists()
-        assert len(stage["artifact_sha256"]) == 64
+def test_eval_input_requires_s3_json_plan_and_rubric() -> None:
+    storage = FakeStorage()
+    source_uri = "s3://example-bucket/inputs/eval.json"
+    storage.objects[source_uri] = json.dumps(
+        {"plan_text": "plan", "rubric": "safety first"}
+    ).encode()
+    payload, input_uri, etag, digest = read_eval_input(source_uri, storage)
+    assert input_uri == source_uri
+    assert etag == "input-etag"
+    assert digest == hashlib.sha256(storage.objects[source_uri]).hexdigest()
+    assert payload == {"plan_text": "plan", "rubric": "safety first"}
 
 
-def _toolref_stage_argv(name: str) -> "list[str]":
+@pytest.mark.parametrize("output_path", ["", "/tmp/receipt.json", "s3://bucket/"])
+def test_planning_rejects_invalid_output_before_client(output_path: str) -> None:
+    client = FakeClient()
+    with pytest.raises(GeminiRoboticsPipelineError):
+        run_er_planning_stage(_config(output_path=output_path), client, FakeStorage())
+    assert client.plans == 0
+
+
+def test_planning_requires_explicit_model_before_client() -> None:
+    client = FakeClient()
+    with pytest.raises(GeminiRoboticsPipelineError, match="explicit model"):
+        run_er_planning_stage(_config(model=""), client, FakeStorage())
+    assert client.plans == 0
+
+
+def _toolref_stage_argv(name: str) -> list[str]:
     import re
 
     from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
 
     entry = TOOL_CATALOG[name]
-    return [re.sub(r"{{(.*?)}}", r"DUMMY", a) for a in entry.argv_template]
+    return [
+        re.sub(r"{{(.*?)}}", r"s3://example-bucket/DUMMY", arg)
+        for arg in entry.argv_template
+    ]
 
 
 def test_toolref_argv_parses_against_pipeline() -> None:
@@ -155,9 +217,8 @@ def test_toolref_argv_parses_against_pipeline() -> None:
         ]
         args = pipe.build_parser().parse_args(argv[3:])
         assert args.command == command
-        # Override-required: the template must carry an explicit base URL slot
-        # and the stage must carry an explicit model slot.
-        assert args.api_base_url == "DUMMY"
+        assert args.api_base_url == "s3://example-bucket/DUMMY"
+        assert args.output_path == "s3://example-bucket/DUMMY"
 
 
 def test_toolref_descriptions_state_provisional() -> None:
@@ -173,12 +234,10 @@ def test_toolref_descriptions_state_provisional() -> None:
 
 
 def test_pipeline_main_rejects_missing_overrides() -> None:
-    import pytest
-
     from npa.workflows.byof import gemini_robotics_pipeline as pipe
 
     with pytest.raises(SystemExit):
-        pipe.main(["plan", "--task", "t", "--model", "m", "--output-dir", "o"])
+        pipe.main(["plan", "--task", "t", "--model", "m", "--output-path", "s3://b/o"])
     with pytest.raises(SystemExit):
         pipe.main(
             [
@@ -187,7 +246,7 @@ def test_pipeline_main_rejects_missing_overrides() -> None:
                 "plan",
                 "--task",
                 "t",
-                "--output-dir",
-                "o",
+                "--output-path",
+                "s3://b/o",
             ]
         )

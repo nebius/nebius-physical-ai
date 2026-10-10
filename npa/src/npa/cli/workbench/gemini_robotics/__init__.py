@@ -5,7 +5,8 @@ so no local containerization is possible.  This module follows the same
 API-gateway posture as ``token_factory`` and ``vlm_eval``: it calls the hosted
 Gemini API for
 
-- ``plan`` — ER embodied-reasoning planning, with safety tool calls;
+- ``plan`` — ER embodied-reasoning planning; its output is advisory and is not
+  an execution or safety-approval decision;
 - ``eval`` — rubric-scored evaluation of a plan.
 
 Credentials come from the ``GOOGLE_API_KEY`` environment variable (overrideable
@@ -20,6 +21,7 @@ import base64
 import json
 import mimetypes
 import os
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -48,32 +50,9 @@ ER_SYSTEM_INSTRUCTION = (
     "Given a task and optional scene observations, produce a safe, step-by-step "
     "whole-body manipulation plan. Prefer conservative, reversible motions. When any "
     "step carries physical risk (contact with people, fragile objects, high forces), "
-    "request a safety review by calling the check_safety tool with the proposed "
-    "action before finalizing the plan."
+    "identify the risk and recommend human review. Do not claim that a safety review "
+    "was performed, and do not present the response as authorization to execute."
 )
-
-SAFETY_TOOL_DECLARATIONS: list[dict[str, Any]] = [
-    {
-        "name": "check_safety",
-        "description": (
-            "Request a safety review of a proposed physical action before execution."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "description": "Natural-language description of the proposed action.",
-                },
-                "reason": {
-                    "type": "string",
-                    "description": "Why this step was flagged for review.",
-                },
-            },
-            "required": ["action"],
-        },
-    },
-]
 
 PLAN_RECEIPT_SCHEMA = "npa.gemini_robotics.plan.v1"
 EVAL_RECEIPT_SCHEMA = "npa.gemini_robotics.eval.v1"
@@ -81,7 +60,7 @@ EVAL_RECEIPT_SCHEMA = "npa.gemini_robotics.eval.v1"
 app = typer.Typer(
     name="gemini-robotics",
     help=(
-        "Gemini Robotics API-backed toolRef (plan, eval). "
+        "Gemini Robotics hosted planning and evaluation (plan, eval). "
         "Provisional adapter: API base URL and model id must be supplied "
         "explicitly; no live access has been validated."
     ),
@@ -151,7 +130,7 @@ class PlanResult:
     """Parsed ER planning response."""
 
     text: str
-    safety_calls: list[dict[str, Any]] = field(default_factory=list)
+    model_function_calls: list[dict[str, Any]] = field(default_factory=list)
     model: str = ""
     finish_reason: str = ""
 
@@ -254,7 +233,6 @@ class GeminiRoboticsClient:
         model: str,
         temperature: float = 0.2,
         max_output_tokens: int = 2048,
-        safety_tools: Sequence[Mapping[str, Any]] = SAFETY_TOOL_DECLARATIONS,
     ) -> PlanResult:
         """Run ER embodied-reasoning planning for ``task``."""
         parts: list[dict[str, Any]] = [{"text": task}]
@@ -268,8 +246,6 @@ class GeminiRoboticsClient:
                 "maxOutputTokens": max_output_tokens,
             },
         }
-        if safety_tools:
-            payload["tools"] = [{"functionDeclarations": list(safety_tools)}]
         body = self._request(
             "POST", self._config.generate_content_url(model), payload, "ER planning"
         )
@@ -295,7 +271,7 @@ class GeminiRoboticsClient:
             )
         content = (candidates[0] or {}).get("content", {})
         texts: list[str] = []
-        safety_calls: list[dict[str, Any]] = []
+        model_function_calls: list[dict[str, Any]] = []
         for part in content.get("parts", []) or []:
             if not isinstance(part, dict):
                 continue
@@ -303,12 +279,12 @@ class GeminiRoboticsClient:
                 texts.append(str(part["text"]))
             call = part.get("functionCall")
             if isinstance(call, dict):
-                safety_calls.append(
+                model_function_calls.append(
                     {"name": str(call.get("name", "")), "args": call.get("args", {})}
                 )
         return PlanResult(
             text="\n".join(texts).strip(),
-            safety_calls=safety_calls,
+            model_function_calls=model_function_calls,
             model=model,
             finish_reason=str((candidates[0] or {}).get("finishReason", "")),
         )
@@ -381,18 +357,13 @@ def _fail(message: str) -> None:
     raise typer.Exit(1)
 
 
-def _write_receipt(path: Path, receipt: Mapping[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
-
-
 @app.command("plan")
 def plan_cmd(
     task: str = typer.Argument(..., help="Natural-language task for the ER planner."),
     image: list[str] = typer.Option(
-        [], "--image", help="Scene observation image (repeatable)."
+        [],
+        "--image",
+        help="Exact s3:// scene-observation image URI (repeatable).",
     ),
     model: str = typer.Option(
         ..., "--model", help="Gemini API model id (required; no default)."
@@ -402,53 +373,66 @@ def plan_cmd(
         "--api-base-url",
         help=f"Gemini API base URL (or set {BASE_URL_ENV}).",
     ),
-    temperature: float = typer.Option(
-        0.2, "--temperature", help="Sampling temperature."
-    ),
-    max_output_tokens: int = typer.Option(
-        2048, "--max-output-tokens", help="Max output tokens."
-    ),
     output_path: str = typer.Option(
-        "", "--output-path", help="Write the plan receipt JSON here."
-    ),
-    dry_run: bool = typer.Option(
-        False, "--dry-run", help="Do not write the receipt artifact."
+        ..., "--output-path", help="Exact s3:// URI for the plan receipt."
     ),
 ) -> dict[str, Any]:
-    """Run ER embodied-reasoning planning via the Gemini API."""
+    """Run advisory ER planning and publish one immutable S3 receipt."""
     try:
+        from npa.cli.path_contract import validate_read_path, validate_write_path
+        from npa.clients.storage import StorageClient, StorageError
+        from npa.workflows.byof.gemini_robotics_pipeline import (
+            GeminiRoboticsPipelineError,
+            GeminiRoboticsPipelineConfig,
+            run_er_planning_stage,
+        )
+
+        validate_write_path(output_path, tool="gemini-robotics plan", required=True)
+        for image_path in image:
+            validate_read_path(
+                image_path,
+                tool="gemini-robotics plan",
+                option="--image",
+                allow_hf=False,
+            )
+        storage = StorageClient.from_environment()
         config = resolve_config(base_url=api_base_url or None)
         client = GeminiRoboticsClient(config)
-        result = client.plan(
-            task=task,
-            images=[Path(p) for p in image],
-            model=model,
-            temperature=temperature,
-            max_output_tokens=max_output_tokens,
-        )
-    except GeminiRoboticsError as exc:
+        with tempfile.TemporaryDirectory(prefix="npa-gemini-robotics-") as temp_dir:
+            local_images: list[str] = []
+            for index, image_path in enumerate(image):
+                local_path = Path(temp_dir) / f"{index}-{Path(image_path).name}"
+                storage.download_file(image_path, str(local_path))
+                local_images.append(str(local_path))
+            receipt = run_er_planning_stage(
+                GeminiRoboticsPipelineConfig(
+                    task=task,
+                    output_path=output_path,
+                    images=local_images,
+                    model=model,
+                ),
+                client,
+                storage,
+            )
+    except (
+        GeminiRoboticsError,
+        GeminiRoboticsPipelineError,
+        OSError,
+        StorageError,
+        ValueError,
+    ) as exc:
         _fail(str(exc))
         raise  # pragma: no cover - _fail raises
-    receipt: dict[str, Any] = {
-        "schema": PLAN_RECEIPT_SCHEMA,
-        "task": task,
-        "model": result.model,
-        "plan_text": result.text,
-        "safety_calls": result.safety_calls,
-        "finish_reason": result.finish_reason,
-    }
-    if output_path and not dry_run:
-        _write_receipt(Path(output_path), receipt)
-        receipt["written_path"] = output_path
     console.print(json.dumps(receipt, indent=2))
     return receipt
 
 
 @app.command("eval")
 def eval_cmd(
-    plan_path: str = typer.Argument(..., help="Path to a plan receipt or plan text."),
-    rubric_path: str = typer.Option(
-        ..., "--rubric-path", help="Path to the evaluation rubric text."
+    input_path: str = typer.Option(
+        ...,
+        "--input-path",
+        help="Exact s3:// JSON input with non-empty plan_text and rubric strings.",
     ),
     model: str = typer.Option(
         ..., "--model", help="Gemini API model id (required; no default)."
@@ -459,35 +443,49 @@ def eval_cmd(
         help=f"Gemini API base URL (or set {BASE_URL_ENV}).",
     ),
     output_path: str = typer.Option(
-        "", "--output-path", help="Write the eval receipt JSON here."
-    ),
-    dry_run: bool = typer.Option(
-        False, "--dry-run", help="Do not write the receipt artifact."
+        ..., "--output-path", help="Exact s3:// URI for the eval receipt."
     ),
 ) -> dict[str, Any]:
-    """Evaluate a plan against a rubric via the Gemini API."""
+    """Evaluate one durable plan/rubric input and publish an S3 receipt."""
     try:
-        raw_plan = Path(plan_path).read_text(encoding="utf-8")
-        try:
-            plan_text = str(json.loads(raw_plan).get("plan_text", raw_plan))
-        except ValueError:
-            plan_text = raw_plan
-        rubric = Path(rubric_path).read_text(encoding="utf-8")
+        from npa.cli.path_contract import validate_write_path
+        from npa.clients.storage import StorageClient, StorageError
+        from npa.workflows.byof.gemini_robotics_pipeline import (
+            GeminiRoboticsPipelineError,
+            GeminiRoboticsPipelineConfig,
+            read_eval_input,
+            run_eval_stage,
+        )
+
+        validate_write_path(output_path, tool="gemini-robotics eval", required=True)
+        storage = StorageClient.from_environment()
+        plan_receipt, source_uri, source_etag, source_sha256 = read_eval_input(
+            input_path, storage
+        )
         config = resolve_config(base_url=api_base_url or None)
         client = GeminiRoboticsClient(config)
-        result = client.eval_plan(plan_text=plan_text, rubric=rubric, model=model)
-    except (GeminiRoboticsError, OSError) as exc:
+        receipt = run_eval_stage(
+            GeminiRoboticsPipelineConfig(
+                task=input_path,
+                output_path=output_path,
+                model=model,
+            ),
+            plan_receipt,
+            str(plan_receipt["rubric"]),
+            client,
+            storage,
+            input_path=source_uri,
+            input_etag=source_etag,
+            input_sha256=source_sha256,
+        )
+    except (
+        GeminiRoboticsError,
+        GeminiRoboticsPipelineError,
+        OSError,
+        StorageError,
+        ValueError,
+    ) as exc:
         _fail(str(exc))
         raise  # pragma: no cover - _fail raises
-    receipt: dict[str, Any] = {
-        "schema": EVAL_RECEIPT_SCHEMA,
-        "plan_path": plan_path,
-        "model": result.model,
-        "scores": result.scores,
-        "summary": result.summary,
-    }
-    if output_path and not dry_run:
-        _write_receipt(Path(output_path), receipt)
-        receipt["written_path"] = output_path
     console.print(json.dumps(receipt, indent=2))
     return receipt

@@ -9,6 +9,7 @@ import json
 
 import httpx
 import pytest
+from typer.testing import CliRunner
 
 from npa.cli.workbench.gemini_robotics import (
     API_KEY_ENV,
@@ -30,6 +31,20 @@ def _client(handler, **kwargs) -> GeminiRoboticsClient:
 def test_resolve_config_missing_key_fails_closed() -> None:
     with pytest.raises(GeminiRoboticsError, match=API_KEY_ENV):
         resolve_config(environ={})
+
+
+def test_registered_cli_help_exposes_durable_handoff_flags() -> None:
+    from npa.cli.main import app
+
+    runner = CliRunner()
+    plan = runner.invoke(app, ["workbench", "gemini-robotics", "plan", "--help"])
+    eval_result = runner.invoke(app, ["workbench", "gemini-robotics", "eval", "--help"])
+    assert plan.exit_code == 0, plan.output
+    assert "--output-path" in plan.output
+    assert "s3://" in plan.output
+    assert eval_result.exit_code == 0, eval_result.output
+    assert "--input-path" in eval_result.output
+    assert "--output-path" in eval_result.output
 
 
 def test_resolve_config_uses_env_key() -> None:
@@ -93,10 +108,10 @@ def test_plan_formats_request_and_parses_response() -> None:
     assert seen["headers"]["x-goog-api-key"] == "test-key"
     body = seen["body"]
     assert "systemInstruction" in body
-    assert body["tools"][0]["functionDeclarations"][0]["name"] == "check_safety"
+    assert "tools" not in body
     assert body["contents"][0]["parts"][0] == {"text": "pick up the cup"}
     assert result.text == "1. Approach the cup.\n2. Grasp gently."
-    assert result.safety_calls == [
+    assert result.model_function_calls == [
         {"name": "check_safety", "args": {"action": "grasp the cup"}}
     ]
     assert result.model == "test-model"
@@ -244,15 +259,30 @@ def test_workbench_plan_runs_pipeline_stage(tmp_path) -> None:
         def plan(self, **kwargs):
             return PlanResult(
                 text="1. Approach.\n2. Grasp.",
-                safety_calls=[],
+                model_function_calls=[],
                 model=kwargs.get("model", ""),
                 finish_reason="STOP",
             )
 
+    class FakeStorage:
+        def __init__(self) -> None:
+            self.objects: dict[str, bytes] = {}
+
+        def put_bytes_conditional(self, payload, uri, *, if_none_match, content_type):
+            assert if_none_match is True
+            self.objects[uri] = payload
+            return "etag"
+
+        def read_bytes_with_etag(self, uri):
+            return None
+
+    storage = FakeStorage()
     config = GeminiRoboticsPipelineConfig(
-        task="pick up the cup", output_dir=str(tmp_path / "out")
+        task="pick up the cup",
+        output_path="s3://example-bucket/receipts/plan.json",
+        model="operator-selected-model",
     )
-    receipt = gemini_robotics.plan(config, client=FakeClient())
+    receipt = gemini_robotics.plan(config, client=FakeClient(), storage=storage)
     assert receipt["task"] == "pick up the cup"
     assert receipt["plan_text"] == "1. Approach.\n2. Grasp."
-    assert (tmp_path / "out" / "plan.json").exists()
+    assert receipt["artifact_path"] in storage.objects
