@@ -500,11 +500,24 @@ def test_source_only_image_pins_the_distinct_cuda_contract_without_extra_accepta
     assert "Flask==3.1.3" in requirements
     assert "pyarrow==25.0.1" in requirements
     assert not any(line.startswith("libero @ ") for line in active_requirements)
-    assert 'LIBERO_SOURCE_URL="https://github.com/Lifelong-Robot-Learning/LIBERO.git"' in runtime_script
-    assert 'LIBERO_SOURCE_REF="8f1084e3132a39270c3a13ebe37270a43ece2a01"' in runtime_script
-    assert 'git -C "$tmp/libero" checkout --detach "$LIBERO_SOURCE_REF"' in runtime_script
-    assert 'test "$(git -C "$tmp/libero" rev-parse HEAD)" = "$LIBERO_SOURCE_REF"' in runtime_script
-    assert 'pip install --no-cache-dir --no-deps --no-build-isolation "$tmp/libero"' in runtime_script
+    assert (
+        'LIBERO_SOURCE_URL="https://github.com/Lifelong-Robot-Learning/LIBERO.git"'
+        in runtime_script
+    )
+    assert (
+        'LIBERO_SOURCE_REF="8f1084e3132a39270c3a13ebe37270a43ece2a01"' in runtime_script
+    )
+    assert (
+        'git -C "$tmp/libero" checkout --detach "$LIBERO_SOURCE_REF"' in runtime_script
+    )
+    assert (
+        'test "$(git -C "$tmp/libero" rev-parse HEAD)" = "$LIBERO_SOURCE_REF"'
+        in runtime_script
+    )
+    assert (
+        'pip install --no-cache-dir --no-deps --no-build-isolation "$tmp/libero"'
+        in runtime_script
+    )
     assert "lerobot==0.3.3" in runtime_script
     assert "--no-deps" in runtime_script
     assert "torch==2.13.0+cu130" in runtime_script
