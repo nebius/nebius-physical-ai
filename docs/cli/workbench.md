@@ -31,6 +31,7 @@ nurec  NVIDIA Omniverse NuRec / Neural Reconstruction Engine: sensor recordings 
 sonic  NVIDIA GEAR-SONIC whole-body-control workbench.
 mjlab  MJLab GPU robot learning, evaluation and ONNX export.
 gemini-robotics  Gemini Robotics hosted planning and evaluation (plan, eval). Provisional adapter: API base URL and model id must be supplied explicitly; no live access has been validated.
+ros2  ROS 2 Jazzy prerequisite detection and deployment planning (bridge/bag-conversion/fleet execution not implemented).
 namespace  Create or select Kubernetes namespaces.
 molmoact  MolmoAct VLA: validate fine-tune/serve/eval configs (planning only; execution not implemented).
 openvla  OpenVLA: OFT fine-tuning, checkpoint serving, evaluation.
@@ -88,6 +89,7 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 | `sonic` | NVIDIA GEAR-SONIC whole-body-control workbench. |
 | `mjlab` | MJLab GPU robot learning, evaluation and ONNX export. |
 | `gemini-robotics` | Gemini Robotics hosted planning and evaluation (plan, eval). Provisional adapter: API base URL and model id must be supplied explicitly; no live access has been validated. |
+| `ros2` | ROS 2 Jazzy prerequisite detection and deployment planning (bridge/bag-conversion/fleet execution not implemented). |
 | `namespace` | Create or select Kubernetes namespaces. |
 | `molmoact` | MolmoAct VLA: validate fine-tune/serve/eval configs (planning only; execution not implemented). |
 | `openvla` | OpenVLA: OFT fine-tuning, checkpoint serving, evaluation. |

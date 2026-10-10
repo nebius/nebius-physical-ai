@@ -23,6 +23,7 @@ __all__ = [
     "manifest",
     "mjlab",
     "gemini_robotics",
+    "ros2",
     "open3d",
     "molmoact",
     "openvla",
