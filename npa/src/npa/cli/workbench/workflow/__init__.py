@@ -9410,7 +9410,8 @@ def cancel_cmd(
             result.setdefault("errors", []).append(
                 f"durable teardown receipt could not be written: {exc}"
             )
-            result["outcome"] = "partial_cancellation"
+            if result.get("outcome") != "controller_state_lost":
+                result["outcome"] = "partial_cancellation"
         else:
             result.setdefault("diagnostics", []).append(
                 f"teardown receipt unavailable: {exc}"

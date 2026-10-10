@@ -3480,13 +3480,24 @@ def _patch_paidf_cancel_storage(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.parametrize("persisted_status", ["running", "FAILED_CONTROLLER"])
+@pytest.mark.parametrize("receipt_error", [None, OSError, RuntimeError, ValueError])
 def test_controller_state_lost_survives_real_cancellation_cli(
-    monkeypatch, tmp_path, persisted_status
+    monkeypatch, tmp_path, persisted_status, receipt_error
 ):
     from npa.orchestration.skypilot import cleanup as cleanup_module
     from npa.teardown_receipts import list_teardown_receipts
 
     monkeypatch.setenv("NPA_TEARDOWN_RECEIPT_DIR", str(tmp_path / "receipts"))
+    receipt_attempts = []
+    if receipt_error is not None:
+
+        def fail_receipt_write(**event):
+            receipt_attempts.append(event)
+            raise receipt_error("synthetic receipt persistence failure")
+
+        monkeypatch.setattr(
+            "npa.teardown_receipts.record_teardown_event", fail_receipt_write
+        )
 
     fake_s3 = FakeWorkflowS3()
     _patch_workflow_s3(monkeypatch, fake_s3)
@@ -3560,6 +3571,19 @@ def test_controller_state_lost_survives_real_cancellation_cli(
     assert payload["owned_teardown_allowed"] is False
     assert cancelled == ["803"]
     receipts = list_teardown_receipts(project_alias="paidf")
+    if receipt_error is not None:
+        assert receipts == []
+        assert len(receipt_attempts) == 1
+        attempted = receipt_attempts[0]
+        assert attempted["terminal_state"] == "verification_failed"
+        assert attempted["verification"]["outcome"] == "controller_state_lost"
+        assert attempted["verification"]["recovery"] == payload["recovery"]
+        assert payload["errors"] == [
+            *attempted["errors"],
+            "durable teardown receipt could not be written: "
+            "synthetic receipt persistence failure",
+        ]
+        return
     assert len(receipts) == 1
     retained = json.loads(Path(receipts[0]["path"]).read_text())["events"][-1]
     assert retained["terminal_state"] == "verification_failed"
