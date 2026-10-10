@@ -12,6 +12,7 @@ validation scope. Dated measurements apply to the versions and hardware recorded
 | --- | --- |
 | [Public RL improvement](public-rl-improvement-demo.md) | Run scan reconstruction, baseline continuation and paired evaluation; the full coefficient-10.0 experiment retained the baseline after failed quality gates |
 | [GR00T N1.7](groot-1-7-training.md) | Fine-tune, recover the run ID, and inspect checkpoint provenance |
+| [Public VLA training](public-vla-training.md) | Run SmolVLA training, task adaptation and native LIBERO evaluation on MK8s or Slurm |
 | [Isaac Lab BYOF](byof-isaac-lab/README.md) | Run a custom Isaac Lab fork in a container |
 | [SONIC training](sonic-train-runbook.md) | Prepare a single training stage and its runtime |
 | [SONIC locomotion](sonic-locomotion-finetuning.md) | Prepare retarget → train → MJLab resource and artifact contracts |

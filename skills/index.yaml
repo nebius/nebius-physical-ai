@@ -37,6 +37,16 @@ licenses:
     applies_to:
       - neural-reconstruction
 skills:
+  - name: physical-prompt-comparison
+    category: workflows
+    when_to_use: "Compare baseline prompts, physical descriptions, and negative guidance with full Wan 2.1 videos, matched seeds, and blinded video judgments."
+    path: skills/workflows/physical-prompt-comparison/SKILL.md
+    smoke:
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/testing/physical-prompt-comparison.yaml
+      - type: file_exists
+        path: docs/workbench/physical-prompt-comparison.md
   - name: ray-workbench
     category: tools
     when_to_use: "Choose or operate a supported Ray path: native Jobs/Core, guarded Train V2, Cosmos3 native Serve, or fixed CPU KubeRay; identify unsupported Ray libraries."
@@ -275,6 +285,15 @@ skills:
       - type: cli_help
         args: ["provision-if-absent", "--help"]
         contains: "--preemptible"
+  - name: gpu-capacity-quota-plan
+    category: atomic
+    when_to_use: "Before choosing a Nebius region, preset, or allocation type for a GPU VM, requesting a quota change, retrying a GPU launch across regions, classifying QuotaFailure versus NotEnoughResources, or cleaning up VMs, disks, and IP allocations left by failed launches."
+    path: skills/atomic/gpu-capacity-quota-plan/SKILL.md
+    smoke:
+      - type: file_exists
+        path: docs/workbench/gpu-capacity-quota-plan.md
+      - type: file_exists
+        path: npa/src/npa/cli/cluster/capacity.py
   - name: health-preflight
     category: atomic
     when_to_use: "Before any deploy, image build, provisioning, or GPU submit: prove service credentials with `npa workbench health preflight`, request `--checks nebius` before provisioning, and verify gated-model access with `npa workbench health access`."
@@ -527,6 +546,16 @@ skills:
       - type: npa_workflow_yaml
         paths:
           - workflows/testing/robocasa-smoke.yaml
+  - name: ros2
+    category: tools
+    when_to_use: "ROS 2 Jazzy prerequisite detection (ros2 CLI, ROS_DISTRO, rclpy), the ROS 2 bridge / bag-conversion / Open-RMF fleet deployment planning specs, or the npa workbench ros2 CLI."
+    path: skills/tools/ros2/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "ros2", "preflight", "--help"]
+        contains: "Jazzy"
+      - type: file_exists
+        path: skills/tools/ros2/SKILL.md
   - name: openarm
     category: tools
     when_to_use: "Package, run, validate, or troubleshoot Enactic OpenArm v2 workloads through the first-class MuJoCo and NVIDIA Isaac Sim/Isaac Lab surfaces."
