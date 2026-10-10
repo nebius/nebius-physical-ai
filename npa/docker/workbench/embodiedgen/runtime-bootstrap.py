@@ -62,6 +62,7 @@ BOOTSTRAP_REQUIREMENTS = (
     "boto3==1.35.99",
     "defusedxml==0.7.1",
 )
+VALIDATION_SYSTEM_PACKAGES = ("libxrender1",)
 VALIDATION_RUNTIME_PROBE = """from io import BytesIO
 from pathlib import Path
 import tempfile
@@ -71,6 +72,8 @@ import imageio_ffmpeg
 import numpy as np
 import contourpy
 import plyfile
+import pymeshfix
+import pyvista as pv
 import pybullet_data
 import scipy
 import spconv.pytorch
@@ -78,15 +81,18 @@ import tifffile
 import torch
 import trimesh
 import torchvision
+import vtk
 import xformers
 from PIL import Image
 
 assert Path(imageio_ffmpeg.get_ffmpeg_exe()).is_file()
 assert pybullet_data.getDataPath()
 assert contourpy.__version__
+assert pv.__version__ == "0.36.1"
 assert scipy.__version__ == "1.14.1"
 assert tifffile.__version__ == "2024.8.30"
 assert trimesh.__version__
+assert vtk.vtkVersion.GetVTKVersion() == "9.3.1"
 assert Image
 assert torch.__version__.startswith("2.8.0")
 assert torch.version.cuda == "12.8"
@@ -97,6 +103,12 @@ ply_buffer = BytesIO()
 plyfile.PlyData([plyfile.PlyElement.describe(vertex, "vertex")]).write(ply_buffer)
 ply_buffer.seek(0)
 assert plyfile.PlyData.read(ply_buffer)["vertex"].count == 1
+surface = pv.Sphere(theta_resolution=12, phi_resolution=12)
+assert surface.n_points > 0 and surface.n_cells > 0
+faces = surface.faces.reshape(-1, 4)[:, 1:]
+meshfix = pymeshfix.MeshFix(np.asarray(surface.points), faces)
+meshfix.repair(verbose=False)
+assert len(meshfix.v) > 0 and len(meshfix.f) > 0
 with tempfile.TemporaryDirectory() as directory:
     video = Path(directory) / "validation.mp4"
     frame = np.zeros((16, 16, 3), dtype=np.uint8)
@@ -130,6 +142,8 @@ def _read_manifest(path: Path) -> dict[str, Any]:
         raise ValueError("unexpected EmbodiedGen runtime contract")
     if runtime.get("validation_requirements") != list(VALIDATION_REQUIREMENTS):
         raise ValueError("unexpected EmbodiedGen validation dependency contract")
+    if runtime.get("validation_system_packages") != list(VALIDATION_SYSTEM_PACKAGES):
+        raise ValueError("unexpected EmbodiedGen validation system package contract")
     return payload
 
 

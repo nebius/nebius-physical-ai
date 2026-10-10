@@ -69,6 +69,9 @@ def test_manifest_pins_the_selected_upstream_components() -> None:
     assert payload["runtime"]["validation_requirements"] == list(
         BOOTSTRAP.VALIDATION_REQUIREMENTS
     )
+    assert payload["runtime"]["validation_system_packages"] == list(
+        BOOTSTRAP.VALIDATION_SYSTEM_PACKAGES
+    )
     assert payload["runtime"]["baked"] == {
         "source": False,
         "model": False,
@@ -129,6 +132,8 @@ def test_runtime_bootstrap_pins_and_probes_validation_dependency_closure(
     assert "import numpy as np" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
     assert "import contourpy" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
     assert "import plyfile" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
+    assert "import pymeshfix" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
+    assert "import pyvista as pv" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
     assert "import pybullet_data" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
     assert "import scipy" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
     assert "import spconv.pytorch" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
@@ -150,9 +155,16 @@ def test_runtime_bootstrap_pins_and_probes_validation_dependency_closure(
     assert "import torch" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
     assert "import trimesh" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
     assert "import torchvision" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
+    assert "import vtk" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
     assert "import xformers" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
     assert 'torch.version.cuda == "12.8"' in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
     assert "from PIL import Image" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
+    assert "pv.Sphere(theta_resolution=12, phi_resolution=12)" in (
+        BOOTSTRAP.VALIDATION_RUNTIME_PROBE
+    )
+    assert "pymeshfix.MeshFix(np.asarray(surface.points), faces)" in (
+        BOOTSTRAP.VALIDATION_RUNTIME_PROBE
+    )
     assert "iio.imwrite(video, frame, fps=1)" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
     assert "iio.imiter(video)" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
 

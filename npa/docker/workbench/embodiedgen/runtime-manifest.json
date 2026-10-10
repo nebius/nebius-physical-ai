@@ -53,6 +53,7 @@
       "imageio-ffmpeg==0.6.0",
       "pybullet==3.2.7"
     ],
+    "validation_system_packages": ["libxrender1"],
     "credential_envs": ["NEBIUS_TOKEN_FACTORY_KEY", "NPA_TOKEN_FACTORY_API_KEY"],
     "baked": {
       "source": false,
