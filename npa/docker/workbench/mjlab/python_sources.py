@@ -32,7 +32,6 @@ HOSTS = frozenset(
         "code.videolan.org",
         "download.videolan.org",
         "gitlab.com",
-        "downloads.sourceforge.net",
         "bitbucket.org",
         "www.nasm.us",
         "files.pythonhosted.org",
@@ -43,14 +42,6 @@ REDIRECT_HOSTS = frozenset(
     {
         "release-assets.githubusercontent.com",
         "downloads.videolan.org",
-        "master.dl.sourceforge.net",
-        "netix.dl.sourceforge.net",
-        "phoenixnap.dl.sourceforge.net",
-        "psychz.dl.sourceforge.net",
-        "cfhcable.dl.sourceforge.net",
-        "versaweb.dl.sourceforge.net",
-        "deac-riga.dl.sourceforge.net",
-        "newcontinuum.dl.sourceforge.net",
     }
 )
 

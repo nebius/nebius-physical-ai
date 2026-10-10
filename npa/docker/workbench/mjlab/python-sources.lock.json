@@ -111,10 +111,10 @@
     },
     {
       "name": "png",
-      "sha256": "28eb403f51f0f7405249132cecfe82ea5c0ef97f1b32c5a65828814ae0d34775",
-      "url": "https://downloads.sourceforge.net/project/libpng/libpng16/1.6.58/libpng-1.6.58.tar.xz",
-      "filename": "png-libpng-1.6.58.tar.xz",
-      "size": 1070096
+      "sha256": "a9d4df463d36a6e5f9c29bd6f4967312d17e996c1854f3511f833924eb1993cf",
+      "url": "https://deb.debian.org/debian/pool/main/libp/libpng1.6/libpng1.6_1.6.58.orig.tar.gz",
+      "filename": "png-libpng-1.6.58.tar.gz",
+      "size": 1592190
     },
     {
       "name": "webp",

@@ -71,3 +71,8 @@ npa/docker/workbench/mjlab/build-requirements.in --extra mjlab --python-version 
 The constraint file pins `torch==2.13.0+cu130` and requires `setuptools>=83.0.0`.
 These replace the older CUDA 12.8 qualification image's vulnerable Torch and
 setuptools versions; historical GPU records remain bound to their original bytes.
+
+The locked libpng 1.6.58 gzip archive uses the Debian HTTPS mirror to avoid
+regional SourceForge redirects. All 669 archive members (types, link targets,
+and file hashes) were compared with the upstream xz archive and match.
+The gzip archive has its own reviewed size and SHA-256 in the source lock.
