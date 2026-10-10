@@ -110,6 +110,13 @@
       "notes": "CPU-only COLMAP ingestion and NCore V4 reader; no Torch, CUDA or GPU architecture assertion. Public release remains quarantined pending exact-image scans and complete capture conversion evidence. NRE reconstruction is a separate RTX-only downstream image."
     },
     {
+      "name": "npa-molmoact2-jetson-thor",
+      "dockerfile": "molmoact2-jetson-thor/Dockerfile",
+      "verdict": "not-applicable",
+      "validation": "not-required",
+      "notes": "CPU-only evidence worker with no Torch, CUDA, TensorRT engine, model, or target-runtime bytes. Its GPU-agnostic verdict applies only to artifact preparation and verification; target TensorRT execution remains Jetson AGX Thor-only. The current merged image requires a fresh private build, byte scan, pull proof, and real target evidence. No B200, B300, or RTX compatibility is claimed."
+    },
+    {
       "name": "npa-open3d",
       "dockerfile": "open3d/Dockerfile",
       "build_script": "open3d/build.sh",

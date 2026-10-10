@@ -1,0 +1,182 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: molmoact2-jetson-thor-edge
+  description: >-
+    Prepare real LIBERO observations, bind an upstream vla-edge TensorRT
+    qualification made on a Jetson AGX Thor, verify target-device action traces
+    against a Torch reference, calculate exact action/latency metrics, and emit
+    a factual Rerun recording. The target commands must run on the Thor; this
+    workflow deliberately does not represent x86 Kubernetes execution as engine
+    or latency validation.
+config:
+  bucket: example-bucket
+  # The checked-in placeholder is intentionally inert. Before submit, replace
+  # it with an operator-private immutable digest and pass the source commit
+  # that was baked into that digest. This CPU image verifies cloud artifacts;
+  # it never substitutes for the native Thor runtime.
+  runtime_image: "registry.example.invalid/operator/molmoact2-jetson-thor@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  source_sha: ""
+  require_baked_npa: "1"
+  baked_npa_import: npa.workflows.molmoact2_jetson_thor
+  prefix: "molmoact2-jetson-thor/{{run.id}}"
+  observations_uri: "s3://{{config.bucket}}/{{config.prefix}}/input/observations.npz"
+  prepared_uri: "s3://{{config.bucket}}/{{config.prefix}}/prepare/observations.npz"
+  prepared_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/prepare/manifest.json"
+  target_qualification_uri: "s3://{{config.bucket}}/{{config.prefix}}/target/qualification.json"
+  verified_qualification_uri: "s3://{{config.bucket}}/{{config.prefix}}/qualification/verified.json"
+  target_trace_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/target/action-trace.json"
+  verified_trace_uri: "s3://{{config.bucket}}/{{config.prefix}}/trace/verified.json"
+  evaluation_uri: "s3://{{config.bucket}}/{{config.prefix}}/evaluation/metrics.json"
+  rrd_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/molmoact2-jetson-thor.rrd"
+  visualization_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/manifest.json"
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+    image: "{{config.runtime_image}}"
+initial: prepare-observations
+states:
+  prepare-observations:
+    description: >-
+      Decode and validate actual two-camera LIBERO RGB observations, finite
+      eight-value states, instructions, and calibration/evaluation split labels.
+    resources: cpu
+    run:
+      argv:
+        - python3
+        - -m
+        - npa.workflows.molmoact2_jetson_thor
+        - prepare
+        - --observations-uri
+        - "{{config.observations_uri}}"
+        - --prepared-uri
+        - "{{config.prepared_uri}}"
+        - --manifest-uri
+        - "{{config.prepared_manifest_uri}}"
+        - --run-id
+        - "{{run.id}}"
+    inputs:
+      - uri: "{{config.observations_uri}}"
+        schema: npa.molmoact2.jetson_thor.observations.v1
+    outputs:
+      - uri: "{{config.prepared_uri}}"
+        schema: npa.molmoact2.jetson_thor.prepared_observations.v1
+      - uri: "{{config.prepared_manifest_uri}}"
+        schema: application/json
+    next: verify-target-engine
+  verify-target-engine:
+    description: >-
+      Verify a target-produced upstream vla-edge check_compatible plus
+      verify_checksums receipt against the exact Thor, JetPack, TensorRT,
+      source revision, engine-manifest, and prepared-observation identities.
+    resources: cpu
+    run:
+      argv:
+        - python3
+        - -m
+        - npa.workflows.molmoact2_jetson_thor
+        - verify-qualification
+        - --prepared-uri
+        - "{{config.prepared_uri}}"
+        - --qualification-uri
+        - "{{config.target_qualification_uri}}"
+        - --verified-uri
+        - "{{config.verified_qualification_uri}}"
+        - --run-id
+        - "{{run.id}}"
+    inputs:
+      - uri: "{{config.prepared_uri}}"
+        schema: npa.molmoact2.jetson_thor.prepared_observations.v1
+      - uri: "{{config.target_qualification_uri}}"
+        schema: npa.molmoact2.jetson_thor.target_qualification.v1
+    outputs:
+      - uri: "{{config.verified_qualification_uri}}"
+        schema: npa.molmoact2.jetson_thor.verified_qualification.v1
+    next: verify-target-action-trace
+  verify-target-action-trace:
+    description: >-
+      Verify finite action chunks and endpoint timing emitted by upstream
+      vla-edge TensorRT and Torch reference servers on the exact qualified Thor.
+    resources: cpu
+    run:
+      argv:
+        - python3
+        - -m
+        - npa.workflows.molmoact2_jetson_thor
+        - verify-action-trace
+        - --trace-manifest-uri
+        - "{{config.target_trace_manifest_uri}}"
+        - --verified-qualification-uri
+        - "{{config.verified_qualification_uri}}"
+        - --verified-trace-uri
+        - "{{config.verified_trace_uri}}"
+        - --run-id
+        - "{{run.id}}"
+    inputs:
+      - uri: "{{config.verified_qualification_uri}}"
+        schema: npa.molmoact2.jetson_thor.verified_qualification.v1
+      - uri: "{{config.target_trace_manifest_uri}}"
+        schema: npa.molmoact2.jetson_thor.action_trace.v1
+    outputs:
+      - uri: "{{config.verified_trace_uri}}"
+        schema: npa.molmoact2.jetson_thor.verified_action_trace.v1
+    next: evaluate-target-action-trace
+  evaluate-target-action-trace:
+    description: >-
+      Compute exact action MAE/RMSE/max error and target/reference latency
+      percentiles from the verified target-device trace. It does not claim
+      closed-loop LIBERO task success.
+    resources: cpu
+    run:
+      argv:
+        - python3
+        - -m
+        - npa.workflows.molmoact2_jetson_thor
+        - evaluate
+        - --verified-trace-uri
+        - "{{config.verified_trace_uri}}"
+        - --evaluation-uri
+        - "{{config.evaluation_uri}}"
+        - --run-id
+        - "{{run.id}}"
+    inputs:
+      - uri: "{{config.verified_trace_uri}}"
+        schema: npa.molmoact2.jetson_thor.verified_action_trace.v1
+    outputs:
+      - uri: "{{config.evaluation_uri}}"
+        schema: npa.molmoact2.jetson_thor.action_trace_evaluation.v1
+    next: visualize-target-evidence
+  visualize-target-evidence:
+    description: >-
+      Emit a factual, digest-bound Rerun recording with per-observation action
+      error and measured endpoint timing from the exact evaluated trace.
+    resources: cpu
+    run:
+      argv:
+        - python3
+        - -m
+        - npa.workflows.molmoact2_jetson_thor
+        - visualize
+        - --verified-trace-uri
+        - "{{config.verified_trace_uri}}"
+        - --evaluation-uri
+        - "{{config.evaluation_uri}}"
+        - --rrd-uri
+        - "{{config.rrd_uri}}"
+        - --manifest-uri
+        - "{{config.visualization_manifest_uri}}"
+        - --run-id
+        - "{{run.id}}"
+    inputs:
+      - uri: "{{config.verified_trace_uri}}"
+        schema: npa.molmoact2.jetson_thor.verified_action_trace.v1
+      - uri: "{{config.evaluation_uri}}"
+        schema: npa.molmoact2.jetson_thor.action_trace_evaluation.v1
+    outputs:
+      - uri: "{{config.rrd_uri}}"
+        schema: application/vnd.rerun.rrd
+      - uri: "{{config.visualization_manifest_uri}}"
+        schema: npa.molmoact2.jetson_thor.visualization.v1
+    terminal: true

@@ -172,8 +172,21 @@ def test_sonic_public_tag_cannot_override_active_manifest_with_stale_release() -
 @pytest.mark.parametrize("tool", sorted(PUBLICATION_QUARANTINE_TOOLS))
 def test_quarantined_tools_retain_explicit_candidate_paths(tool: str) -> None:
     sha = "a" * 40
-    assert container_image_for_tool(tool, tag=f"dev-{sha}").endswith(f":dev-{sha}")
-    custom_tag = f"dev-{sha}" if tool in {"ncore", "robomimic", "robotwin"} else None
+    candidate_tag = f"dev-{sha}"
+    if tool == "molmoact2-jetson-thor":
+        # Its tag-less display sentinel is planning-only. An explicit candidate
+        # is consumption, and must stay in an operator-private registry.
+        with pytest.raises(ValueError, match="publication-quarantined"):
+            container_image_for_tool(tool, tag=candidate_tag)
+    else:
+        assert container_image_for_tool(tool, tag=candidate_tag).endswith(
+            f":{candidate_tag}"
+        )
+    custom_tag = (
+        candidate_tag
+        if tool in {"molmoact2-jetson-thor", "ncore", "robomimic", "robotwin"}
+        else None
+    )
     assert container_image_for_tool(
         tool, registry="registry.example/operator", tag=custom_tag
     ).startswith("registry.example/operator/")

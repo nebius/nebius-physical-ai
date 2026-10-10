@@ -201,6 +201,7 @@ CONTAINER_IMAGE_NAMES = {
     "mjlab": "npa-mjlab",
     "content-agents": "npa-content-agents",
     "ncore": "npa-ncore",
+    "molmoact2-jetson-thor": "npa-molmoact2-jetson-thor",
     "robotwin": "npa-robotwin",
     "libero": "npa-libero",
 }
@@ -220,6 +221,7 @@ SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
         "paidf-visual-qa-sky",
         "paidf-event-video-sky",
         "paidf-image-edit-sky",
+        "molmoact2-jetson-thor",
         "cosmos2-transfer",
         "cosmos3",
         "cosmos3-reason",
@@ -319,8 +321,10 @@ DEVELOPMENT_BUILD_QUARANTINE_TOOLS: frozenset[str] = frozenset({"gymnasium-robot
 # truthful development-build path; release promotion remains blocked by the
 # development-build quarantine above instead of a pre-registration build refusal.
 PRE_REGISTRATION_PUBLICATION_QUARANTINE_TOOLS: frozenset[str] = frozenset(set())
-NEUTRAL_UNBUILT_CANDIDATE_TOOLS: frozenset[str] = frozenset()
-NEUTRAL_UNBUILT_DISPLAY_TAGS: dict[str, str] = {}
+NEUTRAL_UNBUILT_CANDIDATE_TOOLS: frozenset[str] = frozenset({"molmoact2-jetson-thor"})
+NEUTRAL_UNBUILT_DISPLAY_TAGS: dict[str, str] = {
+    "molmoact2-jetson-thor": "edge-evidence-private-unbuilt"
+}
 # Previously accepted releases whose published bytes no longer satisfy the
 # repository's current security contract. Keep this separate from
 # UNVALIDATED_PUBLICATION_TOOLS: these images were built and capability-tested,
@@ -535,6 +539,7 @@ SUPPORTED_TOOL_VERSIONS = {
 # giving planning and private qualification a fail-closed, visibly unbuilt tag.
 UNBUILT_CANDIDATE_TOOL_VERSIONS: dict[str, str] = {
     "habitat-sim": "0.3.3-public-unbuilt",
+    "molmoact2-jetson-thor": NEUTRAL_UNBUILT_DISPLAY_TAGS["molmoact2-jetson-thor"],
 }
 
 
@@ -2526,12 +2531,26 @@ def container_image_for_tool(
             "image after its source/delivery gates pass; see "
             "docs/workbench/byof-habitat-sim.md."
         )
-    if not is_publicly_redistributable(tool) and public_registry:
+    # A neutral candidate has one public-registry exception: its *implicit*
+    # checked-in sentinel lets planning describe an unbuilt workflow.  Every
+    # explicit tag, including a full-SHA dev candidate, is consumption and must
+    # use an operator-private registry.  In particular, do not let a caller
+    # turn the public default registry into a private-qualification route just
+    # by supplying ``dev-<sha>``.
+    neutral_quarantine_reference = (
+        tool in NEUTRAL_UNBUILT_CANDIDATE_TOOLS and public_unbuilt_planning_ref
+    )
+    if (
+        not is_publicly_redistributable(tool)
+        and public_registry
+        and not neutral_quarantine_reference
+    ):
         raise ValueError(
-            f"{tool!r} is not publicly redistributable and is never distributed from a "
-            f"public registry, so {resolved_registry!r} cannot serve it. Build it into "
-            f"your own registry (npa/docker/workbench/<tool>/build.sh --registry "
-            f"<your-registry> --push) and point NPA_REGISTRY at that registry; see "
+            f"{tool!r} is publication-quarantined, not publicly redistributable, and "
+            f"never distributed from a public registry, so {resolved_registry!r} cannot "
+            f"serve it. Build it into your own registry "
+            f"(npa/docker/workbench/<tool>/build.sh --registry <your-registry> --push) "
+            f"and point NPA_REGISTRY at that registry; see "
             f"docs/workbench/container-packaging.md."
         )
     # SONIC has a capability-aware manifest with independently accepted and

@@ -34,6 +34,40 @@
 format: npa_golden_evals_v1
 
 containers:
+  molmoact2-jetson-thor:
+    image: npa-molmoact2-jetson-thor
+    internal: true
+    default_tag: edge-evidence-private-unbuilt
+    dockerfile: npa/docker/workbench/molmoact2-jetson-thor/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Binds real two-camera observation processing, target qualification,
+        action-trace evaluation, and Rerun provenance for operator-owned
+        MolmoAct2 TensorRT evidence from a Jetson AGX Thor.
+    safety:
+      runs_as: ubuntu
+      base_image: python:3.11-slim-trixie (digest pinned)
+      network: object storage only during a configured operator run
+      external_fetch:
+        - operator-owned observations and target-produced evidence from configured object storage
+      notes: >-
+        This is an internal, unvalidated private worker. Its command is a real
+        preparation operation requiring actual operator observations; it cannot
+        validate a target engine or substitute cloud amd64 execution for Thor.
+    golden_eval:
+      kind: workflow-smoke
+      serverless_gpu: h200
+      command: >-
+        python -m npa.workflows.molmoact2_jetson_thor prepare
+        --observations-uri "$NPA_MOLMOACT2_OBSERVATIONS_URI"
+        --prepared-uri "$NPA_MOLMOACT2_PREPARED_URI"
+        --manifest-uri "$NPA_MOLMOACT2_MANIFEST_URI"
+        --run-id "$NPA_MOLMOACT2_RUN_ID"
+      gpu: none
+      timeout_seconds: 300
+      status: blocked-on-upstream
+
   robotwin:
     image: npa-robotwin
     dockerfile: npa/docker/workbench/robotwin/Dockerfile
