@@ -353,10 +353,9 @@ def test_only_one_authenticated_control_transport_owns_mode_changes(
 
 
 def test_server_lease_replaces_half_open_transport_and_forged_clock_cannot_steal(
-    monkeypatch,
+    monkeypatch, tmp_path: Path
 ) -> None:
-    runtime = _runtime_module()
-    monkeypatch.setenv("NPA_LEISAAC_RUN_ID", RUN_ID)
+    runtime = _prepare_runtime(monkeypatch, tmp_path)
     runtime.CONTROL_OWNER.update(token="", client_id="", lease_id="")
     released: list[dict[str, object]] = []
     monkeypatch.setattr(runtime, "_append_inputs", lambda rows: released.extend(rows))
@@ -1005,7 +1004,14 @@ def _short_event_socket_path(tmp_path: Path) -> Path:
     """Return a unique test socket path that fits Unix-domain socket limits."""
 
     digest = hashlib.sha256(os.fspath(tmp_path).encode()).hexdigest()[:16]
-    return Path(tempfile.gettempdir()) / f"npa-leisaac-{digest}.sock"
+    filename = f"npa-leisaac-{digest}.sock"
+    temporary_directory = Path(tempfile.gettempdir())
+    fallback_directory = Path(os.path.sep) / "tmp"
+    for directory in dict.fromkeys((temporary_directory, fallback_directory)):
+        candidate = directory / filename
+        if len(os.fsencode(candidate)) < 108:
+            return candidate
+    raise RuntimeError("no supported Unix-domain socket path is short enough")
 
 
 def _prepare_runtime(monkeypatch, tmp_path: Path):
@@ -1050,6 +1056,20 @@ def _prepare_runtime(monkeypatch, tmp_path: Path):
     runtime.APPLIED_ACK_OFFSET = 0
     runtime.MODE_OWNER["client_id"] = ""
     return runtime
+
+
+def test_runtime_lifespan_falls_back_from_an_overlong_tmpdir(
+    monkeypatch, tmp_path: Path
+) -> None:
+    overlong_tmpdir = tmp_path / ("x" * 120)
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: os.fspath(overlong_tmpdir))
+    runtime = _prepare_runtime(monkeypatch, tmp_path)
+
+    assert runtime.IPC_EVENT_PATH.parent == Path(os.path.sep) / "tmp"
+    assert len(os.fsencode(runtime.IPC_EVENT_PATH)) < 108
+    with TestClient(runtime.build_app()):
+        assert runtime.IPC_EVENT_PATH.is_socket()
+    assert not runtime.IPC_EVENT_PATH.exists()
 
 
 def _runtime_headers() -> dict[str, str]:

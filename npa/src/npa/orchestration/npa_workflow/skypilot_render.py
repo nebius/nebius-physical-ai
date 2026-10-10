@@ -128,6 +128,11 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     # fetch can exceed the anonymous Hub rate limit. Forward an operator token
     # only through the workflow secret channel when one is available.
     "workbench.flex_pi": ("HF_TOKEN",),
+    # The OFT base model and official suite checkpoints are public at their
+    # pinned immutable revisions. Runtime fetch remains explicit, but an
+    # optional Hub token must not become a workflow prerequisite.
+    # Object-store credentials remain standard NPA runtime plumbing.
+    "workbench.openvla": (),
     "workbench.token_factory": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "workbench.vlm_eval.compare_preference": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "workbench.vlm_eval.compare_judges": ("NEBIUS_TOKEN_FACTORY_KEY",),
@@ -2519,6 +2524,10 @@ def _build_skypilot_task_doc(
             separators=(",", ":"),
         ),
     }
+    if spec.name == "openvla-oft-libero":
+        # The execution preflight accepts the template's task-owned storage
+        # Secret only for its exact OpenVLA stage surface.
+        envs["NPA_WORKFLOW_TOOL_REF"] = tool_ref
     from npa.orchestration.npa_workflow.robotwin_preflight import recognize_contract
 
     if recognize_contract(spec):

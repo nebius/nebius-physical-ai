@@ -34,6 +34,7 @@ SEARCH_ROOTS = (
     "scripts",
 )
 SEARCH_SUFFIXES = {".md", ".py", ".sh", ".toml", ".yaml", ".yml"}
+GENERATED_DOCS_STAGE_PREFIXES = (".cli-stage-", ".cli-prev-")
 
 # The declarative catalog plus the guarded raw-task/resource-profile locations
 # that remain after retirement: burst, NuRec, and BYOF profiles.
@@ -53,6 +54,17 @@ RETIRED_WORKFLOW_SHORTHAND = re.compile(
 PLACEHOLDER_MARKERS = ("<", "{{", "${", "*")
 
 
+def _is_generated_docs_staging_path(path: Path) -> bool:
+    """Exclude build_docs' unshipped atomic-swap directories from the corpus."""
+    try:
+        relative = path.relative_to(REPO_ROOT / "docs")
+    except ValueError:
+        return False
+    return bool(relative.parts) and relative.parts[0].startswith(
+        GENERATED_DOCS_STAGE_PREFIXES
+    )
+
+
 def _candidate_files() -> list[Path]:
     files = [
         path
@@ -66,7 +78,11 @@ def _candidate_files() -> list[Path]:
         for path in base.rglob("*"):
             if not path.is_file() or path.suffix not in SEARCH_SUFFIXES:
                 continue
-            if path.name in HISTORY_FILES or "__pycache__" in path.parts:
+            if (
+                path.name in HISTORY_FILES
+                or "__pycache__" in path.parts
+                or _is_generated_docs_staging_path(path)
+            ):
                 continue
             files.append(path)
     return sorted(set(files))
@@ -172,6 +188,23 @@ def test_guard_scans_top_level_operator_markdown() -> None:
 
     assert REPO_ROOT / "README.md" in candidates
     assert REPO_ROOT / "CONTRIBUTING.md" in candidates
+
+
+@pytest.mark.parametrize("prefix", GENERATED_DOCS_STAGE_PREFIXES)
+def test_guard_ignores_generated_cli_documentation_staging(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, prefix: str
+) -> None:
+    generated = tmp_path / "docs" / f"{prefix}abc123" / "storage.md"
+    generated.parent.mkdir(parents=True)
+    generated.write_text("workflows/testing/missing.yaml\n", encoding="utf-8")
+    shipped = tmp_path / "docs" / "guide.md"
+    shipped.write_text("workflows/testing/example.yaml\n", encoding="utf-8")
+    monkeypatch.setattr(f"{__name__}.REPO_ROOT", tmp_path)
+
+    candidates = _candidate_files()
+
+    assert generated not in candidates
+    assert shipped in candidates
 
 
 def test_guard_scans_npa_operator_roots_without_virtualenv() -> None:

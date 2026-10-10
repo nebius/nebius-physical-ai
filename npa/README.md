@@ -12,6 +12,12 @@ and follow [installation](../docs/install.md) and
 The [command reference](../docs/cli/workbench.md) lists the installed tools;
 `npa workbench <tool> --help` exposes each tool's actual commands.
 
+`npa workbench workflow stage-src --no-persist` stages source without changing
+project configuration, preserving an existing isolated runtime's configuration
+identity. The default still saves the source URI. See the
+[workflow guide](../docs/workbench/npa-workflow-guide.md#source-staging-and-run-ids)
+for passing the returned URI and selecting the same project across commands.
+
 `npa workbench vlm-eval review-visual` and its SDK write a separate private rich
 visual audit. Choose an exact hosted model, neutral task, and fresh output path;
 optional `--baseline-path` compares both sources in both A/B orders. See the

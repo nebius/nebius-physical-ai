@@ -963,6 +963,24 @@ def test_wan_submit_cases_need_storage_but_not_hf_or_runtime_consent(spec: str) 
     }
 
 
+def test_openvla_oft_submit_case_needs_storage_but_not_an_hf_token() -> None:
+    """Public immutable OFT payloads must not create a token prerequisite."""
+    case = next(
+        (
+            candidate
+            for candidate in SUBMIT_LIVE_MATRIX
+            if candidate.spec == "openvla-oft-libero.yaml"
+        ),
+        None,
+    )
+
+    assert case is not None
+    assert set(case.secret_envs) == {
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+    }
+
+
 def test_robocasa_data_policy_submit_case_forwards_its_service_token() -> None:
     case = _case("robocasa-data-policy.yaml")
 

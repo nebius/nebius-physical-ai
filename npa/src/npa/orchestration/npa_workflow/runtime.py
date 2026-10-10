@@ -3661,7 +3661,12 @@ def secret_env_names(
     """Environment variable names worth forwarding to every wave."""
 
     names: list[str] = []
-    for name in [*extra, "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"]:
+    for name in [
+        *extra,
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+    ]:
         if (
             name
             and name not in names

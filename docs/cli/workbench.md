@@ -32,7 +32,7 @@ sonic  NVIDIA GEAR-SONIC whole-body-control workbench.
 mjlab  MJLab GPU robot learning, evaluation and ONNX export.
 namespace  Create or select Kubernetes namespaces.
 molmoact  MolmoAct VLA: validate fine-tune/serve/eval configs (planning only; execution not implemented).
-openvla  OpenVLA: OFT fine-tuning, checkpoint serving, evaluation.
+openvla  OpenVLA-OFT LIBERO preparation, training, rollout, and evidence.
 openarm  Enactic OpenArm simulation with real MuJoCo and Isaac Sim/Isaac Lab.
 open3d  Open3D point-cloud registration and surface reconstruction.
 robocasa  RoboCasa kitchen-task simulation workbench.
@@ -88,7 +88,7 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 | `mjlab` | MJLab GPU robot learning, evaluation and ONNX export. |
 | `namespace` | Create or select Kubernetes namespaces. |
 | `molmoact` | MolmoAct VLA: validate fine-tune/serve/eval configs (planning only; execution not implemented). |
-| `openvla` | OpenVLA: OFT fine-tuning, checkpoint serving, evaluation. |
+| `openvla` | OpenVLA-OFT LIBERO preparation, training, rollout, and evidence. |
 | `openarm` | Enactic OpenArm simulation with real MuJoCo and Isaac Sim/Isaac Lab. |
 | `open3d` | Open3D point-cloud registration and surface reconstruction. |
 | `robocasa` | RoboCasa kitchen-task simulation workbench. |

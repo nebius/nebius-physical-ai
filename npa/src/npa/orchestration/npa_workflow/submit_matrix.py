@@ -392,19 +392,22 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
-        "openvla-train.yaml",
+        "openvla-oft-libero.yaml",
         "gpu",
+        # The exact model and official OFT suite checkpoint payloads are public
+        # at their immutable revisions.  Do not require a token that the native
+        # runtime neither consumes nor needs for those downloads.
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         plan_only=True,
         plan_only_justification=(
-            "OpenVLA workbench pipeline stages are stubs in this release: "
-            "train prints an upstream argv plan (not implemented), so the "
-            "spec exercises config validation and the toolRef argv only."
+            "The native OFT stages are executable, but this checked-in template "
+            "requires an operator-selected immutable private runtime image and "
+            "real staged RLDS input before it can be submitted."
         ),
         notes=(
-            "Anchors the openvla/train three-tier contract "
-            "(CLI <-> SDK <-> spec); real OpenVLA-OFT fine-tuning lands with "
-            "nebius/nebius-physical-ai#500. Base weights resolve at runtime "
-            "through the HF Hub cache."
+            "Five connected OFT stages: RLDS normalization, upstream fine-tuning, "
+            "closed-loop LIBERO rollout, numerical evaluation, and comparison "
+            "artifacts. Source/model/checkpoint bytes are runtime-only."
         ),
     ),
     SubmitLiveCase(

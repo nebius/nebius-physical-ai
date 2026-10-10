@@ -121,6 +121,13 @@ npa workbench workflow list \
 When tasks need source, submission automatically stages a content-addressed
 archive and persists its identity. A manually staged `NPA_SRC_S3_URI` or explicit
 image remains an override; it is not a prerequisite for the ordinary path.
+Standalone `npa workbench workflow stage-src` saves the returned source URI in
+project configuration by default. Use `--project <alias> --no-persist` when
+staging for an existing isolated runtime: the upload and custom-prefix staging
+receipt still complete, while configuration bytes stay unchanged. Pass the
+printed `NPA_SRC_S3_URI` to the subsequent submit, and use the same explicit
+project for staging, submission, status and logs. This option does not repair
+an existing isolated API whose configuration identity has already changed.
 Resume the exact run using the command NPA prints, or `--resume-run <id>` with
 the original specification and target. See [run identity](../run-lifecycle.md#run-identity).
 

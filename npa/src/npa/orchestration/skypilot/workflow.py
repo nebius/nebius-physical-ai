@@ -176,6 +176,31 @@ class ManagedJobEvidence:
     workload_observable: bool = True
     workload_evidence: str = ""
     error: str = ""
+    job_name: str = ""
+
+
+def _is_runtime_wave_job_name(run_id: str, candidate: str) -> bool:
+    """Return whether ``candidate`` is this runtime's canonical wave name.
+
+    Runtime waves append an ordered sequence and state label to the sanitized
+    run ID.  Accepting that shape only with an immutable managed-job ID lets
+    cancellation recover a wave before its durable runtime ledger is written,
+    without accepting an arbitrary similarly prefixed job name.
+    """
+
+    normalized_run_id = (
+        "".join(char if char.isalnum() or char in "-_" else "-" for char in run_id)
+        .strip("-_")
+        .lower()
+    )
+    pattern = rf"{re.escape(normalized_run_id)}-\d{{2,}}-[a-z0-9][a-z0-9_-]*"
+    return bool(re.fullmatch(pattern, candidate))
+
+
+def _job_name_matches_exact_run(run_id: str, candidate: str) -> bool:
+    """Return whether a queue-reported job name belongs to one exact run."""
+
+    return candidate == run_id or _is_runtime_wave_job_name(run_id, candidate)
 
 
 def _managed_job_workload_markers(row: Mapping[str, Any]) -> set[str]:
@@ -1138,6 +1163,44 @@ def _preflight_prepared_submission(
     return env, libero_submission
 
 
+def _replace_configured_secret_values(
+    documents: Sequence[dict[str, Any]],
+    environment: Mapping[str, str],
+    secret_envs: Sequence[str] | None,
+) -> None:
+    """Keep requested task secrets out of scheduler-persisted YAML.
+
+    Execution preflight resolves storage credentials so it can verify the exact
+    target, and it can temporarily add those values to an in-memory task
+    document. SkyPilot must receive them only through its native ``--secret``
+    transport, so persisted task YAML carries a reference rather than a value.
+    A declared secret without a transport value is refused instead of falling
+    back to an inline task value.
+    """
+    names = tuple(
+        dict.fromkeys(
+            name.strip()
+            for name in secret_envs or ()
+            if isinstance(name, str) and name.strip()
+        )
+    )
+    if not names:
+        return
+    for document in documents:
+        envs = document.get("envs")
+        if not isinstance(envs, dict):
+            continue
+        for name in names:
+            if name not in envs:
+                continue
+            if not str(environment.get(name) or ""):
+                raise SkyPilotSubmitError(
+                    f"configured secret {name} has no native secret transport value",
+                    launch_attempted=False,
+                )
+            envs[name] = f"${{{name}}}"
+
+
 def _prepare_workflow_submission(
     yaml_path,
     run_id,
@@ -1151,6 +1214,7 @@ def _prepare_workflow_submission(
     extra_env=None,
     project="",
     execution_target=None,
+    secret_envs: Sequence[str] | None = None,
 ):
     runtime = resolve_config(
         sky_bin=sky_bin,
@@ -1187,6 +1251,7 @@ def _prepare_workflow_submission(
         extra_env=extra_env,
         target=execution_target,
     )
+    _replace_configured_secret_values(docs, env, secret_envs)
     # Refuse and sanitize before any submission artifact exists.
     directory = _submission_dir(
         submission_id if submission_id is not None else run_id,
@@ -1730,6 +1795,7 @@ def submit_workflow(
                 extra_env=extra_env,
                 project=project,
                 execution_target=execution_target,
+                secret_envs=secret_envs,
             )
             runtime_config = prepared.runtime_config
             docs, env = prepared.docs, prepared.env
@@ -1986,10 +2052,20 @@ def submit_workflow(
                 yaml.safe_dump_all(docs, sort_keys=False), encoding="utf-8"
             )
             _chmod_owner_only(prepared_yaml)
-        from npa.execution_preflight import LIBERO_SKYPILOT_SECRET_ENV_NAMES
+        from npa.execution_preflight import (
+            KUBERNETES_STORAGE_SECRET_ENV_NAMES,
+            LIBERO_SKYPILOT_SECRET_ENV_NAMES,
+            libero_kubernetes_storage_secret_name,
+            openvla_oft_kubernetes_storage_secret_name,
+        )
 
         libero_submission = (
             prepared.libero_submission if robotwin_authorization is None else False
+        )
+        native_storage_secret = (
+            libero_kubernetes_storage_secret_name(docs)
+            if libero_submission
+            else openvla_oft_kubernetes_storage_secret_name(docs)
         )
         workflow_identity = _private_file_identity(prepared_yaml)
         config_identity = _private_file_identity(generated_config_path)
@@ -2009,6 +2085,12 @@ def submit_workflow(
         if infra and robotwin_authorization is None:
             cmd[-1:-1] = ["--infra", infra]
         selected_secret_envs = list(secret_envs or ())
+        if native_storage_secret:
+            selected_secret_envs = [
+                name
+                for name in selected_secret_envs
+                if name not in KUBERNETES_STORAGE_SECRET_ENV_NAMES
+            ]
         from npa.workflows.byof.libero_customer import (
             selected as customer_selected,
             SECRET_NAMES,
@@ -2023,11 +2105,20 @@ def submit_workflow(
                 launch_attempted=False,
             )
         if libero_submission:
-            # This is mandatory even for direct SDK callers.  The preflight has
-            # removed these values from prepared YAML, so omitting ``--secret``
-            # must never silently launch a credentialless or inline-secret task.
+            # Direct callers either use SkyPilot's secret channel or, when its
+            # actual client artifacts cannot safely carry it, an already
+            # validated Kubernetes secretKeyRef on every task container.
             selected_secret_envs.extend(
-                SECRET_NAMES if customer_run else LIBERO_SKYPILOT_SECRET_ENV_NAMES
+                SECRET_NAMES
+                if customer_run
+                else [
+                    name
+                    for name in LIBERO_SKYPILOT_SECRET_ENV_NAMES
+                    if not (
+                        native_storage_secret
+                        and name in KUBERNETES_STORAGE_SECRET_ENV_NAMES
+                    )
+                ]
             )
         for secret_name in dict.fromkeys(selected_secret_envs):
             if env.get(secret_name):
@@ -2972,7 +3063,14 @@ def lookup_managed_job(
             continue
         if raw_id.isdigit():
             matching_ids.add(int(raw_id))
-    if wanted_id and declared_job_names and job_name not in declared_job_names:
+    if (
+        wanted_id
+        and declared_job_names
+        and not all(
+            _job_name_matches_exact_run(job_name, candidate)
+            for candidate in declared_job_names
+        )
+    ):
         names = ", ".join(sorted(declared_job_names))
         return ManagedJobEvidence(
             "unavailable",
@@ -3005,6 +3103,7 @@ def lookup_managed_job(
     return ManagedJobEvidence(
         "found",
         job_id=selected,
+        job_name=next(iter(declared_job_names), ""),
         status=_status_from_queue_payload(result.stdout, selected) or "UNKNOWN",
         task_rows=rows,
         workload_observable=bool(markers),

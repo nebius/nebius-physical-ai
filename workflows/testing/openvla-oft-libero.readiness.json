@@ -1,0 +1,65 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "0e36bce71b3477bd518f2ef9c30f0523c444b22f69b72401fcca89afe0770047",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "The five-stage specification passed schema validation and production SkyPilot render planning with all handoff URIs connected. Every Kubernetes resource declares SkyPilot's named non-root ray-node task container, retains RuntimeDefault seccomp and privileged=false, drops all capabilities except the explicit SETGID/SETUID pair required by the platform passwordless-sudo bootstrap before payload execution. Its configured RTX PRO train and rollout profiles retain the same GPU product.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/openvla-oft-libero.yaml --json",
+        "npa workbench workflow plan-spec workflows/testing/openvla-oft-libero.yaml --waves --check-render --json",
+        "npa/tests/test_openvla_workbench.py::test_workflow_resources_declare_the_skypilot_task_container"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Focused tests execute the preparation and verified rollout-to-evaluation-to-visualization artifact chain, bind all five native toolRefs to their real CLI flags, require preparation to invoke the pinned dlimp RLDS decoder, verify the documented upstream torchrun argv and immutable model-cache identity, preserve the training LoRA rank through rollout, and reject stock OpenVLA decoder-only checkpoints.",
+      "evidence": [
+        "npa/tests/test_openvla_workbench.py",
+        "npa/tests/guardrails/test_three_tier_contract.py",
+        "npa/tests/guardrails/test_module_toolref_argv.py"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "Configured health preflight passed, but the template's run-scoped example prefix was not created or independently read back.",
+      "evidence": [
+        "npa workbench health preflight --json"
+      ]
+    },
+    "worker_input": {
+      "status": "verified",
+      "reason": "Authoritative public source, model, suite-checkpoint, and modified LIBERO metadata were inspected; exact-revision access probes succeeded; and the complete staged RLDS source tree was independently verified against its immutable source manifest. The runtime uses the Apache-2.0 kvablack/dlimp revision with the reviewed deterministic one-line override rather than fetching the unlicensed dlimp_openvla fork. OFT runtime execution on a worker remains a separate gate.",
+      "evidence": [
+        "docs/workbench/openvla-oft.md",
+        "npa/tests/test_openvla_workbench.py"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "NPA HF, object-storage, Nebius, and NGC preflight checks passed using existing operator configuration. Exact-revision access probes for the base model, modified LIBERO metadata, and an official action-head component passed. Worker-side runtime fetch remains a separate pending qualification.",
+      "evidence": [
+        "npa workbench health preflight --json",
+        "npa workbench health preflight --checks nebius --json"
+      ]
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "The retained original private bootstrap has complete graph/archive provenance, but its latest complete byte-policy scan ended not-qualified. Exact public-byte provenance for some Debian-library and Python-wheel members establishes origin only; it does not waive findings, and retained original SBOM/provenance subjects prevent that unchanged graph from satisfying current public-byte policy. Preserve the original evidence and publication quarantine. A separately built neutral-subject digest needs complete graph closure, policy qualification, and runtime validation before it can support a private-QA progression or any public-release determination.",
+      "evidence": [
+        "npa/docker/workbench/openvla-oft/build.sh",
+        "operator-private canonical complete-byte policy receipt (retained outside source control)",
+        "docs/workbench/openvla-oft.md"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "The original controlled prepare controller is terminally cancelled after its ray-node exec failed before payload. A target diagnostic showed that dropping all container capabilities prevents the required passwordless-sudo set-id transition; the workflow now drops all capabilities except explicit SETGID and SETUID while retaining nonroot, RuntimeDefault seccomp, privileged=false, and no service-account token. A later pre-admission audit also found that the pinned SkyPilot secret channel persisted storage values in client task artifacts, so this workflow requires a complete task-owned Kubernetes secretKeyRef instead. Re-run exact target preflight and the full controlled workflow before claiming any OFT setup, simulator metric, benchmark, convergence, or physical-robot result.",
+      "evidence": [
+        "docs/workbench/openvla-oft.md"
+      ]
+    }
+  }
+}

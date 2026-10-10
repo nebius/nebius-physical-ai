@@ -2919,16 +2919,12 @@ def submit_cmd(
 
                 if execution_target is not None:
                     import yaml
-                    from npa.execution_preflight import (
-                        verify_execution_target,
-                        verify_worker_environment,
-                    )
 
-                    verify_worker_environment(
+                    _refresh_runtime_execution_target_for_wave(
                         execution_target,
                         list(yaml.safe_load_all(_wave_yaml.read_text())),
+                        execution_preflight_report=execution_preflight_report,
                     )
-                    verify_execution_target(execution_target)
 
                 refreshed_pins = _preflight_submit_images(
                     yaml_path,
@@ -3861,9 +3857,22 @@ def _runtime_submit_environment(
     if endpoint.strip():
         environment.update(dict.fromkeys(STORAGE_ENDPOINT_ENV_NAMES, endpoint.strip()))
     if isolated_config_dir is not None:
-        environment["NPA_SKYPILOT_ISOLATED_CONFIG_DIR"] = str(
-            Path(isolated_config_dir).expanduser().resolve()
-        )
+        isolated_root = Path(isolated_config_dir).expanduser().resolve()
+        environment["NPA_SKYPILOT_ISOLATED_CONFIG_DIR"] = str(isolated_root)
+        # The first accelerator preflight may already have created the owned
+        # isolated API intent.  Runtime waves run after that outer environment
+        # scope is restored, so carry the exact endpoint binding forward rather
+        # than making a later wave re-enter the controller without it.
+        from npa.orchestration.skypilot.cleanup import sky_environment
+
+        isolated_environment = sky_environment(isolated_root)
+        for name in (
+            "SKYPILOT_API_SERVER_ENDPOINT",
+            "NPA_SKYPILOT_ISOLATED_API_DIR",
+        ):
+            value = str(isolated_environment.get(name) or "")
+            if value:
+                environment[name] = value
     if config_path is not None:
         environment["SKYPILOT_GLOBAL_CONFIG"] = str(
             Path(config_path).expanduser().resolve()
@@ -3885,6 +3894,46 @@ def _temporary_runtime_environment(environment: Mapping[str, str] | None):
                 os.environ.pop(name, None)
             else:
                 os.environ[name] = value
+
+
+def _refresh_runtime_execution_target_for_wave(
+    execution_target: Any,
+    documents: Sequence[Mapping[str, Any]],
+    *,
+    execution_preflight_report: Mapping[str, Any],
+) -> None:
+    """Recheck a rendered runtime wave without widening Secret transport scope.
+
+    The initial execution preflight validates the one supported Kubernetes
+    storage Secret transport for either an authorized LIBERO submission or the
+    identified OpenVLA-OFT stages. A runtime wave is re-rendered just before
+    launch, so it must carry that same validated exception into its own worker
+    environment check. All other documents retain the default, literal-free
+    worker-environment policy.
+    """
+    from npa.execution_preflight import (
+        libero_kubernetes_storage_secret_name,
+        openvla_oft_kubernetes_storage_secret_name,
+        verify_execution_target,
+        verify_worker_environment,
+    )
+
+    checks = execution_preflight_report.get("checks")
+    libero_submission = (
+        isinstance(checks, Mapping)
+        and checks.get("libero_customer_authorization_validated") == "validated"
+    )
+    kubernetes_storage_secret = (
+        libero_kubernetes_storage_secret_name(documents)
+        if libero_submission
+        else openvla_oft_kubernetes_storage_secret_name(documents)
+    )
+    verify_worker_environment(
+        execution_target,
+        documents,
+        kubernetes_storage_secret=kubernetes_storage_secret,
+    )
+    verify_execution_target(execution_target)
 
 
 def _run_npa_workflow_runtime(
@@ -9674,6 +9723,11 @@ def stage_src_cmd(
         "--run-id",
         help="Submission ledger key used to make concurrent staging restart-safe.",
     ),
+    persist: bool = typer.Option(
+        True,
+        "--persist/--no-persist",
+        help="Save the source URI in project configuration. Disable for isolated runtimes.",
+    ),
 ) -> None:
     """Upload the local npa package to S3 for image-less workflow steps.
 
@@ -9716,7 +9770,8 @@ def stage_src_cmd(
                 endpoint_url=endpoint,
                 on_status=lambda message: typer.echo(f"  {message}", err=True),
             )
-            persist_workflow_src_s3_uri(uri, project or None)
+            if persist:
+                persist_workflow_src_s3_uri(uri, project or None)
             update_submission_state(
                 project or "default",
                 run_id,
@@ -9732,6 +9787,7 @@ def stage_src_cmd(
             s3_endpoint=endpoint,
             project=project,
             run_id=run_id,
+            persist=persist,
         )
     if not uri:
         return

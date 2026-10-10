@@ -5,14 +5,16 @@
 ```text
 Usage: npa workbench openvla [OPTIONS] COMMAND [ARGS]...
 
-OpenVLA: OFT fine-tuning, checkpoint serving, evaluation.
+OpenVLA-OFT LIBERO preparation, training, rollout, and evidence.
 
 Options
 --help  Show this message and exit.
 Commands
-train  Fine-tune OpenVLA with the OpenVLA-OFT LoRA recipe (stub).
-serve  Serve an OpenVLA checkpoint over HTTP (stub).
-eval  Evaluate an OpenVLA checkpoint (stub).
+prepare  Decode real RLDS trajectories and publish normalization provenance.
+train  Run upstream OFT fine-tuning; no stock-decoder fallback exists.
+rollout  Run upstream closed-loop LIBERO rollouts and retain MP4 evidence.
+evaluate  Compute held-out numerical success from verified raw rollout evidence.
+visualize  Create CSV/SVG comparison artifacts from verified evaluation metrics.
 ```
 
 ## Options
@@ -25,15 +27,17 @@ eval  Evaluate an OpenVLA checkpoint (stub).
 
 | Command | Description |
 | --- | --- |
-| `train` | Fine-tune OpenVLA with the OpenVLA-OFT LoRA recipe (stub). |
-| `serve` | Serve an OpenVLA checkpoint over HTTP (stub). |
-| `eval` | Evaluate an OpenVLA checkpoint (stub). |
+| `prepare` | Decode real RLDS trajectories and publish normalization provenance. |
+| `train` | Run upstream OFT fine-tuning; no stock-decoder fallback exists. |
+| `rollout` | Run upstream closed-loop LIBERO rollouts and retain MP4 evidence. |
+| `evaluate` | Compute held-out numerical success from verified raw rollout evidence. |
+| `visualize` | Create CSV/SVG comparison artifacts from verified evaluation metrics. |
 
 ## Examples
 
 ```bash
 npa workbench openvla --help
-npa workbench openvla train --help
+npa workbench openvla prepare --help
 ```
 
 Regenerate this page with `bash scripts/build_docs.sh` after changing `openvla`.

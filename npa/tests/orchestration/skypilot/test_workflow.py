@@ -1321,6 +1321,111 @@ def test_submit_uses_shared_libero_classification_for_secret_channel(
     assert not any(value in prepared.read_text() for value in secret_values.values())
 
 
+def test_libero_submit_uses_kubernetes_storage_secret_without_skypilot_values(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.execution_preflight import (
+        LIBERO_KUBERNETES_STORAGE_SECRET_ENV_NAMES,
+        LIBERO_SKYPILOT_SECRET_ENV_NAMES,
+    )
+
+    storage_secret = "unit-libero-storage"
+    yaml_path = tmp_path / "libero-kubernetes-secret.yaml"
+    yaml_path.write_bytes(
+        yaml.safe_dump_all(
+            [
+                {
+                    "name": "renamed",
+                    "resources": {
+                        "cloud": "kubernetes",
+                        "kubernetes": {
+                            "pod_config": {
+                                "spec": {
+                                    "containers": [
+                                        {
+                                            "name": "ray-node",
+                                            "env": [
+                                                {
+                                                    "name": name,
+                                                    "valueFrom": {
+                                                        "secretKeyRef": {
+                                                            "name": storage_secret,
+                                                            "key": name,
+                                                            **(
+                                                                {"optional": True}
+                                                                if name
+                                                                == "AWS_SESSION_TOKEN"
+                                                                else {}
+                                                            ),
+                                                        }
+                                                    },
+                                                }
+                                                for name in LIBERO_KUBERNETES_STORAGE_SECRET_ENV_NAMES
+                                            ],
+                                        }
+                                    ]
+                                }
+                            }
+                        },
+                    },
+                    "run": "true",
+                }
+            ],
+            sort_keys=False,
+        ).encode()
+    )
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        workflow_module,
+        "_execution_preflight",
+        lambda *_args, **_kwargs: (
+            None,
+            {"checks": {"libero_customer_authorization_validated": "validated"}},
+            {},
+        ),
+    )
+
+    def fake_run(command, **_kwargs):
+        calls.append(command)
+        if _is_status_cmd(command):
+            return _healthy_status(command)
+        return subprocess.CompletedProcess(
+            command, 0, stdout="Job submitted, ID: 42\n", stderr=""
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    secret_values = {
+        name: f"unit-{index}"
+        for index, name in enumerate(LIBERO_SKYPILOT_SECRET_ENV_NAMES)
+    }
+
+    submit_workflow(
+        yaml_path,
+        "libero-kubernetes-storage-secret-0001",
+        isolated_config_dir=tmp_path / "sky-state",
+        sky_bin=_fake_sky(tmp_path),
+        extra_env=secret_values,
+    )
+
+    launch = next(command for command in calls if "launch" in command)
+    selected = {
+        launch[index + 1] for index, value in enumerate(launch) if value == "--secret"
+    }
+    assert selected == set(LIBERO_SKYPILOT_SECRET_ENV_NAMES) - set(
+        LIBERO_KUBERNETES_STORAGE_SECRET_ENV_NAMES
+    )
+    prepared = (
+        tmp_path
+        / "sky-state"
+        / "submissions"
+        / "libero-kubernetes-storage-secret-0001"
+        / "workflow.yaml"
+    )
+    prepared_text = prepared.read_text(encoding="utf-8")
+    assert not any(value in prepared_text for value in secret_values.values())
+    assert f"name: {storage_secret}" in prepared_text
+
+
 def test_load_base_config_distinguishes_omitted_from_explicit_missing(
     tmp_path: Path,
 ) -> None:
@@ -2526,6 +2631,118 @@ def test_submit_workflow_secrets_can_come_from_extra_env(monkeypatch, tmp_path) 
     assert rendered["kubernetes"]["allowed_contexts"] == ["npa-rtxpro-mk8s"]
     assert rendered["allowed_clouds"] == ["kubernetes", "nebius"]
     assert rendered["nebius"]["capabilities"] == ["storage"]
+
+
+def test_submit_workflow_keeps_configured_secrets_out_of_prepared_yaml(
+    monkeypatch, tmp_path
+) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text("name: demo\n", encoding="utf-8")
+    sky_bin = _fake_sky(tmp_path)
+    access_key = "test-access-key-must-not-be-rendered"
+    secret_key = "test-secret-key-must-not-be-rendered"
+    session_token = "test-session-token-must-not-be-rendered"
+    captured: dict[str, str] = {}
+    calls: list[list[str]] = []
+
+    def preflight(documents, **_kwargs):
+        documents[0].setdefault("envs", {}).update(
+            {
+                "AWS_ACCESS_KEY_ID": access_key,
+                "AWS_SECRET_ACCESS_KEY": secret_key,
+                "AWS_SESSION_TOKEN": session_token,
+                "NPA_S3_BUCKET": "safe-bucket-name",
+            }
+        )
+        return (
+            None,
+            {"checks": {}},
+            {
+                "AWS_ACCESS_KEY_ID": access_key,
+                "AWS_SECRET_ACCESS_KEY": secret_key,
+                "AWS_SESSION_TOKEN": session_token,
+            },
+        )
+
+    def fake_run(cmd, **kwargs):
+        if _is_status_cmd(cmd):
+            return _healthy_status(cmd)
+        calls.append(list(cmd))
+        captured["prepared"] = Path(cmd[-1]).read_text(encoding="utf-8")
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout="Job submitted, ID: 10\n", stderr=""
+        )
+
+    monkeypatch.setattr(workflow_module, "_execution_preflight", preflight)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    submit_workflow(
+        yaml_path,
+        "run-secret-rendering",
+        isolated_config_dir=tmp_path / "sky-state",
+        sky_bin=sky_bin,
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SESSION_TOKEN",
+        ),
+    )
+
+    prepared = captured["prepared"]
+    assert access_key not in prepared
+    assert secret_key not in prepared
+    assert session_token not in prepared
+    environment = yaml.safe_load(prepared)["envs"]
+    assert environment["AWS_ACCESS_KEY_ID"] == "${AWS_ACCESS_KEY_ID}"
+    assert environment["AWS_SECRET_ACCESS_KEY"] == "${AWS_SECRET_ACCESS_KEY}"
+    assert environment["AWS_SESSION_TOKEN"] == "${AWS_SESSION_TOKEN}"
+    assert environment["NPA_S3_BUCKET"] == "safe-bucket-name"
+    launch = calls[0]
+    assert ["--secret", "AWS_ACCESS_KEY_ID"] == launch[
+        launch.index("--secret") : launch.index("--secret") + 2
+    ]
+    second_secret = launch.index("--secret", launch.index("--secret") + 1)
+    assert ["--secret", "AWS_SECRET_ACCESS_KEY"] == launch[
+        second_secret : second_secret + 2
+    ]
+    third_secret = launch.index("--secret", second_secret + 1)
+    assert ["--secret", "AWS_SESSION_TOKEN"] == launch[third_secret : third_secret + 2]
+
+
+def test_submit_workflow_refuses_declared_secret_without_native_transport(
+    monkeypatch, tmp_path
+) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text("name: demo\n", encoding="utf-8")
+    launched: list[list[str]] = []
+
+    def preflight(documents, **_kwargs):
+        documents[0].setdefault("envs", {})["AWS_ACCESS_KEY_ID"] = "inline-value"
+        return None, {"checks": {}}, {}
+
+    def fake_run(cmd, **_kwargs):
+        if _is_status_cmd(cmd):
+            return _healthy_status(cmd)
+        launched.append(list(cmd))
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
+    monkeypatch.setattr(workflow_module, "_execution_preflight", preflight)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(
+        SkyPilotSubmitError,
+        match="configured secret AWS_ACCESS_KEY_ID has no native secret transport value",
+    ):
+        submit_workflow(
+            yaml_path,
+            "run-missing-secret-transport",
+            isolated_config_dir=tmp_path / "sky-state",
+            sky_bin=_fake_sky(tmp_path),
+            secret_envs=("AWS_ACCESS_KEY_ID",),
+        )
+
+    assert launched == []
 
 
 def test_submit_workflow_replaces_stale_kubernetes_context_allowlist(
@@ -6768,6 +6985,57 @@ def test_exact_managed_job_lookup_refuses_ambiguous_name_without_immutable_id(
     assert exact.job_id == "43"
     assert exact.status == "RUNNING"
     assert exact.task_rows[0]["retry_count"] == 2
+
+
+def test_exact_managed_job_lookup_recovers_runtime_wave_name_with_immutable_id(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.orchestration.skypilot.workflow import lookup_managed_job
+
+    sky_bin = _fake_sky(tmp_path)
+    payload = [
+        {
+            "job_id": 43,
+            "job_name": "exact-run-01-prepare",
+            "task_id": 0,
+            "task_name": "prepare",
+            "status": "PENDING",
+        }
+    ]
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps(payload), stderr=""
+        ),
+    )
+
+    evidence = lookup_managed_job("exact-run", job_id="43", sky_bin=sky_bin)
+
+    assert evidence.outcome == "found"
+    assert evidence.job_id == "43"
+    assert evidence.job_name == "exact-run-01-prepare"
+
+
+def test_exact_managed_job_lookup_rejects_noncanonical_wave_name(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.orchestration.skypilot.workflow import lookup_managed_job
+
+    sky_bin = _fake_sky(tmp_path)
+    payload = [{"job_id": 43, "job_name": "exact-run-other", "status": "PENDING"}]
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps(payload), stderr=""
+        ),
+    )
+
+    evidence = lookup_managed_job("exact-run", job_id="43", sky_bin=sky_bin)
+
+    assert evidence.outcome == "unavailable"
+    assert "not exact run" in evidence.error
 
 
 def test_verified_job_id_prefers_the_name_lookup(mocker) -> None:
