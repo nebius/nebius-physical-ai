@@ -1679,12 +1679,12 @@ def default_npa_setup() -> str:
         # The overlay is the freshest tree, so it is the one worth putting on the import path.
         "  npa_record_src_root /tmp/npa-src-overlay\n"
         "fi\n"
-        # Record the interpreter that can actually import npa, i.e. the one pip just
+        # Record the interpreter that can actually import NPA's CLI, i.e. the one pip just
         # installed into (it has npa AND its dependencies). Stage bodies use it via a
         # PATH shim, because a task image's default `python3` may be a different
         # interpreter entirely: SkyPilot's GPU default image ships /usr/bin/python3
         # with no pip, and the Isaac Lab image's PATH python3 is Isaac's kit python.
-        # Record a python COMMAND that can import npa, so stage bodies can be pointed
+        # Record a python COMMAND that can import the NPA CLI, so stage bodies can be pointed
         # at it. Three candidates are tried in order, because each of them is the right
         # answer on some real image:
         #   1. npa_setup_python - the interpreter used and verified above;
@@ -1694,8 +1694,8 @@ def default_npa_setup() -> str:
         #      cannot import its own site-packages unless launched through that
         #      wrapper (live run: "could not record a usable npa interpreter");
         #   4. `type -P python3` - the PATH binary, ignoring any alias.
-        "\"$npa_setup_python\" -c 'import npa' >/dev/null 2>&1 || "
-        "{ echo 'npa is not importable after setup' >&2; exit 1; }\n"
+        "\"$npa_setup_python\" -c 'import npa.cli.main' >/dev/null 2>&1 || "
+        "{ echo 'npa CLI is not importable after setup' >&2; exit 1; }\n"
         'npa_python=""\n'
         'alias_target="$(alias python3 2>/dev/null | sed -e "s/^alias python3=//" '
         '-e "s/^\'//" -e "s/\'$//")"\n'
@@ -1704,7 +1704,7 @@ def default_npa_setup() -> str:
         '2>/dev/null || true)" "$alias_target" "$(type -P python3 2>/dev/null '
         '|| true)"; do\n'
         '  if [ -n "$candidate" ] && [ -x "$candidate" ] && '
-        "\"$candidate\" -c 'import npa' >/dev/null 2>&1; then\n"
+        "\"$candidate\" -c 'import npa.cli.main' >/dev/null 2>&1; then\n"
         '    npa_python="$candidate"\n'
         "    break\n"
         "  fi\n"

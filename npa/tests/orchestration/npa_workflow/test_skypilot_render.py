@@ -496,6 +496,44 @@ def test_vendor_setup_repairs_a_shallow_overlay_before_a_stage_runs(
     assert ready.is_file()
 
 
+def test_default_setup_rejects_interpreter_without_the_npa_cli(
+    tmp_path: Path,
+) -> None:
+    """The recorded stage interpreter must import the same CLI that stage shims use."""
+
+    from npa.orchestration.npa_workflow.skypilot_render import default_npa_setup
+
+    interpreter = tmp_path / "python"
+    receipt = tmp_path / "npa-python"
+    interpreter.write_text(
+        "#!/bin/sh\n"
+        'case "$1:$2" in\n'
+        "  -c:'import npa') exit 0 ;;\n"
+        "  -c:'import npa.cli.main') exit 1 ;;\n"
+        "esac\n"
+        "exit 2\n",
+        encoding="utf-8",
+    )
+    interpreter.chmod(0o700)
+
+    setup = default_npa_setup()
+    record = setup.index('npa_python=""')
+    start = setup.rfind('"$npa_setup_python" -c', 0, record)
+    end = setup.index("if [ ! -x /usr/local/bin/npa ]", start)
+    final_gate = setup[start:end].replace("/tmp/npa-python", str(receipt))
+    result = subprocess.run(
+        ["bash", "-c", "set -e\n" + final_gate],
+        check=False,
+        capture_output=True,
+        env={**os.environ, "npa_setup_python": str(interpreter)},
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "npa CLI is not importable after setup" in result.stderr
+    assert not receipt.exists()
+
+
 def test_sonic_specs_train_with_the_in_job_runtime() -> None:
     # `serverless` (and vm/container) delegate to more infrastructure, which a
     # stage that already holds a GPU cannot provision.
