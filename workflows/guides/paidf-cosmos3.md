@@ -1167,7 +1167,12 @@ before changing that configuration, or use separate NPA configuration stores
 for independently isolated controllers. The check also covers the Nebius CLI
 authentication sources. Normal renewable-cache refresh for a supported RSA
 service-account profile preserves API identity while the effective profile,
-account, key, and explicit credential sources remain unchanged. Nebius CLI
+account, key, and explicit credential sources remain unchanged. Supported forms
+include separate account/key/PEM fields and the CLI's
+`service-account-credentials-file-path` JSON file with RS256 JWT subject
+credentials. The complete JSON credential file remains byte-bound; renewing the
+CLI's bearer-token cache does not replace that identity. Use current code and a
+fresh run/API directory before submitting. Nebius CLI
 `0.12.254` keeps this cache under `HOME/.nebius` even with `--config`;
 `NEBIUS_CONFIG_DIR` does not select a different CLI configuration or cache.
 Unsupported or mixed authentication formats remain byte-strict. Use a dedicated
