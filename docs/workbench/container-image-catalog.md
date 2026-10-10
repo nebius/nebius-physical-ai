@@ -13,6 +13,13 @@ returned anonymous-token HTTP 403, which does not prove absence. See the
 [per-image parity audit](validation/ghcr-image-parity-20261010.md) for the source
 comparison, development inventory, and verification limits.
 
+The [18-image development refresh](validation/ghcr-image-refresh-20261010.md)
+now records 18 anonymously verified immutable images from the newer main snapshot
+`348449e8752e6b3c10e62b072ce599646537f084` plus reviewed build repairs, with
+matching source inputs and 36 independently verified provenance/SBOM signatures.
+Supported release defaults still select their previously qualified digests;
+the GPU chart describes those release digests. MJLab is outside this refresh.
+
 Repository-selected runtime images use the public mirror by default:
 
 ```text

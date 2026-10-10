@@ -1,0 +1,902 @@
+{
+  "schema_version": "npa.ghcr-image-refresh.v1",
+  "checked_at_utc": "2026-10-10T18:00:42.763116+00:00",
+  "base_main_commit": "348449e8752e6b3c10e62b072ce599646537f084",
+  "scope": 18,
+  "verified": 18,
+  "release_pins_promoted": false,
+  "images": [
+    {
+      "tool": "alpamayo2-super",
+      "source_commit": "88ca5a94f94ed77ea5c33b8c8633cfd30afd5d2f",
+      "reference": "ghcr.io/nebius/nebius-physical-ai/npa-alpamayo2-super:dev-88ca5a94f94ed77ea5c33b8c8633cfd30afd5d2f",
+      "digest": "sha256:68ac9e35188bc89eda9d40f3ab8651568a41bfdf87d52a658d0d9b2d16f3388e",
+      "status": "verified",
+      "anonymous_pull": true,
+      "config_digest": "sha256:8463f4e1ebd37750b5e2b157b1fe67b8327e6d97125fc04b7d2c8a2012d7f6dc",
+      "revision": "88ca5a94f94ed77ea5c33b8c8633cfd30afd5d2f",
+      "user": "ubuntu",
+      "architecture": "amd64",
+      "os": "linux",
+      "created": "2026-10-10T17:03:27.279749642Z",
+      "source_input_comparison": {
+        "comparison_commit": "88ca5a94f94ed77ea5c33b8c8633cfd30afd5d2f",
+        "canonical_dockerfile": "npa/docker/workbench/alpamayo2-super/Dockerfile",
+        "declared_inputs_match": true,
+        "scope": "Canonical Dockerfile COPY/ADD sources and recipe directory; this does not prove rebuilt byte equivalence or include later main commits."
+      },
+      "attestations": {
+        "provenance": {
+          "verified": true,
+          "predicate_type": "https://slsa.dev/provenance/v1",
+          "workflow": "https://github.com/nebius/nebius-physical-ai/.github/workflows/publish-public-images.yml@refs/heads/build/ghcr-image-refresh-2026-10-10"
+        },
+        "sbom": {
+          "verified": true,
+          "predicate_type": "https://spdx.dev/Document/v2.3",
+          "workflow": "https://github.com/nebius/nebius-physical-ai/.github/workflows/publish-public-images.yml@refs/heads/build/ghcr-image-refresh-2026-10-10"
+        }
+      },
+      "publication": {
+        "conclusion": "success",
+        "workflow_run": "https://github.com/nebius/nebius-physical-ai/actions/runs/38069511382",
+        "job": "https://github.com/nebius/nebius-physical-ai/actions/runs/38069511382/job/114264172598"
+      },
+      "functional_qualification": "Build and publication contracts passed; new-digest functional qualification is pending"
+    },
+    {
+      "tool": "content-agents",
+      "source_commit": "348449e8752e6b3c10e62b072ce599646537f084",
+      "reference": "ghcr.io/nebius/nebius-physical-ai/npa-content-agents:dev-348449e8752e6b3c10e62b072ce599646537f084",
+      "digest": "sha256:b95c70872e93b72f9d6e46b35fce19e9866ea3a748f0d005d1df2dbf6d6f677c",
+      "status": "verified",
+      "anonymous_pull": true,
+      "config_digest": "sha256:3d49215632219bb128bd232dd367570087dded2d4c2d82b2571db29cacde7b4b",
+      "revision": "348449e8752e6b3c10e62b072ce599646537f084",
+      "user": "ubuntu",
+      "architecture": "amd64",
+      "os": "linux",
+      "created": "2026-10-10T15:05:51.896213368Z",
+      "source_input_comparison": {
+        "comparison_commit": "88ca5a94f94ed77ea5c33b8c8633cfd30afd5d2f",
+        "canonical_dockerfile": "npa/docker/workbench/content-agents/Dockerfile",
+        "declared_inputs_match": true,
+        "scope": "Canonical Dockerfile COPY/ADD sources and recipe directory; this does not prove rebuilt byte equivalence or include later main commits."
+      },
+      "attestations": {
+        "provenance": {
+          "verified": true,
+          "predicate_type": "https://slsa.dev/provenance/v1",
+          "workflow": "https://github.com/nebius/nebius-physical-ai/.github/workflows/publish-public-images.yml@refs/heads/main"
+        },
+        "sbom": {
+          "verified": true,
+          "predicate_type": "https://spdx.dev/Document/v2.3",
+          "workflow": "https://github.com/nebius/nebius-physical-ai/.github/workflows/publish-public-images.yml@refs/heads/main"
+        }
+      },
+      "publication": {
+        "conclusion": "success",
+        "workflow_run": "https://github.com/nebius/nebius-physical-ai/actions/runs/38061728549",
+        "job": "https://github.com/nebius/nebius-physical-ai/actions/runs/38061728549/job/114241467728"
+      },
+      "functional_qualification": "Build and publication contracts passed; new-digest functional qualification is pending"
+    },
+    {
+      "tool": "cosmos2-transfer",
+      "source_commit": "1fa22c19a19102b1df68110ab65a49d38478a388",
+      "reference": "ghcr.io/nebius/nebius-physical-ai/npa-cosmos2-transfer:dev-1fa22c19a19102b1df68110ab65a49d38478a388",
+      "digest": "sha256:50b914df30f68c4954f94e290ac553b4108922362e919fea710866d5a1ae3ab4",
+      "status": "verified",
+      "anonymous_pull": true,
+      "config_digest": "sha256:328c9a3aaad3bdebec1723359cac86cf05c7acdca9a2607457459c7928ccc024",
+      "revision": "1fa22c19a19102b1df68110ab65a49d38478a388",
+      "user": "ubuntu",
+      "architecture": "amd64",
+      "os": "linux",
+      "created": "2026-10-10T15:17:06.097983498Z",
+      "source_input_comparison": {
+        "comparison_commit": "88ca5a94f94ed77ea5c33b8c8633cfd30afd5d2f",
+        "canonical_dockerfile": "npa/docker/workbench/cosmos2-transfer/Dockerfile",
+        "declared_inputs_match": true,
+        "scope": "Canonical Dockerfile COPY/ADD sources and recipe directory; this does not prove rebuilt byte equivalence or include later main commits."
+      },
+      "attestations": {
+        "provenance": {
+          "verified": true,
+          "predicate_type": "https://slsa.dev/provenance/v1",
+          "workflow": "https://github.com/nebius/nebius-physical-ai/.github/workflows/publish-public-images.yml@refs/heads/build/ghcr-image-refresh-2026-10-10"
+        },
+        "sbom": {
+          "verified": true,
+          "predicate_type": "https://spdx.dev/Document/v2.3",
+          "workflow": "https://github.com/nebius/nebius-physical-ai/.github/workflows/publish-public-images.yml@refs/heads/build/ghcr-image-refresh-2026-10-10"
+        }
+      },
+      "publication": {
+        "conclusion": "success",
+        "workflow_run": "https://github.com/nebius/nebius-physical-ai/actions/runs/38062275093",
+        "job": "https://github.com/nebius/nebius-physical-ai/actions/runs/38062275093/job/114243083569"
+      },
+      "functional_qualification": "Build and publication contracts passed; new-digest functional qualification is pending"
+    },
+    {
+      "tool": "cosmos3-serving",
+      "source_commit": "57a47bc4600c3e52f15a17f3097914294456925e",
+      "reference": "ghcr.io/nebius/nebius-physical-ai/npa-cosmos3-serving:dev-57a47bc4600c3e52f15a17f3097914294456925e",
+      "digest": "sha256:b8eda0eb3457acc6d845dfd8f0432c5c8baa6ce9cfbce3c89ec9fa0d36f44ab8",
+      "status": "verified",
+      "anonymous_pull": true,
+      "config_digest": "sha256:ad32457f4b27396f0fdcb7ccfdb0bde2a1f3c3f38804ddbf086ecdfcb285d183",
+      "revision": "57a47bc4600c3e52f15a17f3097914294456925e",
+      "user": "ubuntu",
+      "architecture": "amd64",
+      "os": "linux",
+      "created": "2026-10-10T15:53:17.361304086Z",
+      "source_input_comparison": {
+        "comparison_commit": "88ca5a94f94ed77ea5c33b8c8633cfd30afd5d2f",
+        "canonical_dockerfile": "npa/docker/workbench/cosmos3-serving/Dockerfile",
+        "declared_inputs_match": true,
+        "scope": "Canonical Dockerfile COPY/ADD sources and recipe directory; this does not prove rebuilt byte equivalence or include later main commits."
+      },
+      "attestations": {
+        "provenance": {
+          "verified": true,
+          "predicate_type": "https://slsa.dev/provenance/v1",
+          "workflow": "https://github.com/nebius/nebius-physical-ai/.github/workflows/publish-public-images.yml@refs/heads/build/ghcr-image-refresh-2026-10-10"
+        },
+        "sbom": {
+          "verified": true,
+          "predicate_type": "https://spdx.dev/Document/v2.3",
+          "workflow": "https://github.com/nebius/nebius-physical-ai/.github/workflows/publish-public-images.yml@refs/heads/build/ghcr-image-refresh-2026-10-10"
+        }
+      },
+      "publication": {
+        "conclusion": "success",
+        "workflow_run": "https://github.com/nebius/nebius-physical-ai/actions/runs/38065075422",
+        "job": "https://github.com/nebius/nebius-physical-ai/actions/runs/38065075422/job/114251302114"
+      },
+      "functional_qualification": "Build and publication contracts passed; new-digest functional qualification is pending"
+    },
+    {
+      "tool": "detection-training",
+      "source_commit": "348449e8752e6b3c10e62b072ce599646537f084",
+      "reference": "ghcr.io/nebius/nebius-physical-ai/npa-detection-training:dev-348449e8752e6b3c10e62b072ce599646537f084",
+      "digest": "sha256:0dde62cafe3652f531a54fdeb2860eaaecd8031113f8f67e25acb48e9bdef4d6",
+      "status": "verified",
+      "anonymous_pull": true,
+      "config_digest": "sha256:d1481a1f3cc6b75e6bc50b08a163197f68607467e5625eb0ff59f08b8c956f3a",
+      "revision": "348449e8752e6b3c10e62b072ce599646537f084",
+      "user": "ubuntu",
+      "architecture": "amd64",
+      "os": "linux",
+      "created": "2026-10-10T15:05:07.524837294Z",
+      "source_input_comparison": {
+        "comparison_commit": "88ca5a94f94ed77ea5c33b8c8633cfd30afd5d2f",
+        "canonical_dockerfile": "npa/docker/workbench/detection-training/Dockerfile",
+        "declared_inputs_match": true,
+        "scope": "Canonical Dockerfile COPY/ADD sources and recipe directory; this does not prove rebuilt byte equivalence or include later main commits."
+      },
+      "attestations": {
+        "provenance": {
+          "verified": true,
+          "predicate_type": "https://slsa.dev/provenance/v1",
+          "workflow": "https://github.com/nebius/nebius-physical-ai/.github/workflows/publish-public-images.yml@refs/heads/main"
+        },
+        "sbom": {
+          "verified": true,
+          "predicate_type": "https://spdx.dev/Document/v2.3",
+          "workflow": "https://github.com/nebius/nebius-physical-ai/.github/workflows/publish-public-images.yml@refs/heads/main"
+        }
+      },
+      "publication": {
+        "conclusion": "success",
+        "workflow_run": "https://github.com/nebius/nebius-physical-ai/actions/runs/38061728549",
+        "job": "https://github.com/nebius/nebius-physical-ai/actions/runs/38061728549/job/114241467737"
+      },
+      "functional_qualification": "Build and publication contracts passed; new-digest functional qualification is pending"
+    },
+    {
+      "tool": "diffusers",
+      "source_commit": "b0e9dddb74d349c6e6d532d699f0a8e990171570",
+      "reference": "ghcr.io/nebius/nebius-physical-ai/npa-diffusers:dev-b0e9dddb74d349c6e6d532d699f0a8e990171570",
+      "digest": "sha256:daabe1ec816eed2d3f4fd8697ef26f072eee1be0298d71d293199e9d21eb84b4",
+      "status": "verified",
+      "anonymous_pull": true,
+      "config_digest": "sha256:6641b7a1068c899d4337ce0a6624964453b9b4a173dfa73ae8aa09620c17a55b",
+      "revision": "b0e9dddb74d349c6e6d532d699f0a8e990171570",
+      "user": "ubuntu",
+      "architecture": "amd64",
+      "os": "linux",
+      "created": "2026-10-10T15:20:09.220948993Z",
+      "source_input_comparison": {
+        "comparison_commit": "88ca5a94f94ed77ea5c33b8c8633cfd30afd5d2f",
+        "canonical_dockerfile": "npa/docker/workbench/diffusers/Dockerfile",
+        "declared_inputs_match": true,
+        "scope": "Canonical Dockerfile COPY/ADD sources and recipe directory; this does not prove rebuilt byte equivalence or include later main commits."
+      },
+      "attestations": {
+        "provenance": {
+          "verified": true,
+          "predicate_type": "https://slsa.dev/provenance/v1",
+          "workflow": "https://github.com/nebius/nebius-physical-ai/.github/workflows/publish-public-images.yml@refs/heads/build/ghcr-image-refresh-2026-10-10"
+        },
+        "sbom": {
+          "verified": true,
+          "predicate_type": "https://spdx.dev/Document/v2.3",
+          "workflow": "https://github.com/nebius/nebius-physical-ai/.github/workflows/publish-public-images.yml@refs/heads/build/ghcr-image-refresh-2026-10-10"
+        }
+      },
+      "publication": {
+        "conclusion": "success",
+        "workflow_run": "https://github.com/nebius/nebius-physical-ai/actions/runs/38062887743",
+        "job": "https://github.com/nebius/nebius-physical-ai/actions/runs/38062887743/job/114244858778"
+      },
+      "functional_qualification": "Build and publication contracts passed; new-digest functional qualification is pending"
+    },
+    {
+      "tool": "envgen",
+      "source_commit": "1fa22c19a19102b1df68110ab65a49d38478a388",
+      "reference": "ghcr.io/nebius/nebius-physical-ai/npa-envgen:dev-1fa22c19a19102b1df68110ab65a49d38478a388",
+      "digest": "sha256:d7f774ee20f1edae4f776a4b2af151bd88bdb8a2a3e12b28268791aa5f4556ab",
+      "status": "verified",
+      "anonymous_pull": true,
+      "config_digest": "sha256:05ebc82c7da4666a527d966ce7bf1d1e7e16f7e2a8832dace5caea2efb78dbd3",
+      "revision": "1fa22c19a19102b1df68110ab65a49d38478a388",
+      "user": "ubuntu",
+      "architecture": "amd64",
+      "os": "linux",
+      "created": "2026-10-10T15:17:08.016626421Z",
+      "source_input_comparison": {
+        "comparison_commit": "88ca5a94f94ed77ea5c33b8c8633cfd30afd5d2f",
+        "canonical_dockerfile": "npa/docker/workbench/sim2real-envgen/Dockerfile",
+        "declared_inputs_match": true,
+        "scope": "Canonical Dockerfile COPY/ADD sources and recipe directory; this does not prove rebuilt byte equivalence or include later main commits."
+      },
+      "attestations": {
+        "provenance": {
+          "verified": true,
+          "predicate_type": "https://slsa.dev/provenance/v1",
+          "workflow": "https://github.com/nebius/nebius-physical-ai/.github/workflows/publish-public-images.yml@refs/heads/build/ghcr-image-refresh-2026-10-10"
+        },
+        "sbom": {
+          "verified": true,
+          "predicate_type": "https://spdx.dev/Document/v2.3",
+          "workflow": "https://github.com/nebius/nebius-physical-ai/.github/workflows/publish-public-images.yml@refs/heads/build/ghcr-image-refresh-2026-10-10"
+        }
+      },
+      "publication": {
+        "conclusion": "success",
+        "workflow_run": "https://github.com/nebius/nebius-physical-ai/actions/runs/38062275093",
+        "job": "https://github.com/nebius/nebius-physical-ai/actions/runs/38062275093/job/114243083619"
+      },
+      "functional_qualification": "Build and publication contracts passed; new-digest functional qualification is pending"
+    },
+    {
+      "tool": "fiftyone",
+      "source_commit": "010646731c10e22e8161c77447274e62ff010c4a",
+      "reference": "ghcr.io/nebius/nebius-physical-ai/npa-fiftyone:dev-010646731c10e22e8161c77447274e62ff010c4a",
+      "digest": "sha256:5b947cef34be21601bdda732c7f50fb341d78759cfd85bffd7ec4970069e97a0",
+      "status": "verified",
+      "anonymous_pull": true,
+      "config_digest": "sha256:59dad36aa1a5995a5a169fbf5ad6f686d8c2a1419960af8af9ba436550b81c09",
+      "revision": "010646731c10e22e8161c77447274e62ff010c4a",
+      "user": "ubuntu",
+      "architecture": "amd64",
+      "os": "linux",
+      "created": "2026-10-10T16:35:40.084456888Z",
+      "source_input_comparison": {
+        "comparison_commit": "88ca5a94f94ed77ea5c33b8c8633cfd30afd5d2f",
+        "canonical_dockerfile": "npa/docker/workbench/fiftyone/Dockerfile",
+        "declared_inputs_match": true,
+        "scope": "Canonical Dockerfile COPY/ADD sources and recipe directory; this does not prove rebuilt byte equivalence or include later main commits."
+      },
+      "attestations": {
+        "provenance": {
+          "verified": true,
+          "predicate_type": "https://slsa.dev/provenance/v1",
+          "workflow": "https://github.com/nebius/nebius-physical-ai/.github/workflows/publish-public-images.yml@refs/heads/build/ghcr-image-refresh-2026-10-10"
+        },
+        "sbom": {
+          "verified": true,
+          "predicate_type": "https://spdx.dev/Document/v2.3",
+          "workflow": "https://github.com/nebius/nebius-physical-ai/.github/workflows/publish-public-images.yml@refs/heads/build/ghcr-image-refresh-2026-10-10"
+        }
+      },
+      "cpu_validation": {
+        "status": "passed",
+        "image_id": "sha256:59dad36aa1a5995a5a169fbf5ad6f686d8c2a1419960af8af9ba436550b81c09",
+        "source_archive_sha256": "dea12424fa0e955dd9bf5718159514b8bbc8f40f29aa3c466ccfe7a01ddde3f3",
+        "phases": [
+          {
+            "phase": "bare",
+            "checks": [
+              {
+                "name": "entrypoint",
+                "passed": true
+              },
+              {
+                "name": "initial-source-absence",
+                "passed": true
+              },
+              {
+                "name": "mongodb-source-annex",
+                "passed": true
+              },
+              {
+                "name": "bare-pip-check",
+                "passed": true
+              },
+              {
+                "name": "bare-packages",
+                "passed": true
+              },
+              {
+                "name": "bare-environment",
+                "passed": true,
+                "checks_passed": 4,
+                "checks_total": 4
+              },
+              {
+                "name": "bare-functional",
+                "passed": true,
+                "checks_passed": 5,
+                "checks_total": 5
+              },
+              {
+                "name": "bare-app-access",
+                "passed": true
+              },
+              {
+                "name": "bare-dataset-builder-identity",
+                "passed": true
+              },
+              {
+                "name": "bare-dataset-roundtrip-containment",
+                "passed": true
+              },
+              {
+                "name": "skypilot-bootstrap",
+                "passed": true
+              },
+              {
+                "name": "bare-final-pip-check",
+                "passed": true
+              }
+            ]
+          },
+          {
+            "phase": "initial-install",
+            "checks": [
+              {
+                "name": "initial-source-absence",
+                "passed": true
+              },
+              {
+                "name": "install-source-receipt-owner",
+                "passed": true
+              },
+              {
+                "name": "install-before-pip-check",
+                "passed": true
+              },
+              {
+                "name": "default-setup-extraction",
+                "passed": true
+              },
+              {
+                "name": "initial-default-npa-setup",
+                "passed": true
+              },
+              {
+                "name": "install-pip-check",
+                "passed": true
+              },
+              {
+                "name": "install-packages",
+                "passed": true
+              },
+              {
+                "name": "npa-version",
+                "passed": true
+              },
+              {
+                "name": "npa-fiftyone-command",
+                "passed": true
+              }
+            ]
+          },
+          {
+            "phase": "post-install",
+            "checks": [
+              {
+                "name": "post-pip-check",
+                "passed": true
+              },
+              {
+                "name": "post-packages",
+                "passed": true
+              },
+              {
+                "name": "post-environment",
+                "passed": true,
+                "checks_passed": 4,
+                "checks_total": 4
+              },
+              {
+                "name": "post-functional",
+                "passed": true,
+                "checks_passed": 5,
+                "checks_total": 5
+              },
+              {
+                "name": "post-app-access",
+                "passed": true
+              },
+              {
+                "name": "post-dataset-builder-identity",
+                "passed": true
+              },
+              {
+                "name": "post-dataset-roundtrip-containment",
+                "passed": true
+              },
+              {
+                "name": "post-final-pip-check",
+                "passed": true
+              }
+            ]
+          }
+        ],
+        "environment_checks": [
+          {
+            "phase": "bare",
+            "checks": [
+              {
+                "name": "import fiftyone",
+                "passed": true
+              },
+              {
+                "name": "check fiftyone CLI help",
+                "passed": true
+              },
+              {
+                "name": "check app server configuration",
+                "passed": true
+              },
+              {
+                "name": "check LeRobot temporal API",
+                "passed": true
+              }
+            ]
+          },
+          {
+            "phase": "post-install",
+            "checks": [
+              {
+                "name": "import fiftyone",
+                "passed": true
+              },
+              {
+                "name": "check fiftyone CLI help",
+                "passed": true
+              },
+              {
+                "name": "check app server configuration",
+                "passed": true
+              },
+              {
+                "name": "check LeRobot temporal API",
+                "passed": true
+              }
+            ]
+          }
+        ],
+        "owned_cleanup": {
+          "containers_removed": 2,
+          "verified": true
+        }
+      },
+      "publication": {
+        "conclusion": "success",
+        "workflow_run": "https://github.com/nebius/nebius-physical-ai/actions/runs/38067878475",
+        "job": "https://github.com/nebius/nebius-physical-ai/actions/runs/38067878475/job/114259473414"
+      },
+      "functional_qualification": "CPU bare-image and exact-source bootstrap qualification passed"
+    },
+    {
+      "tool": "flex-pi",
+      "source_commit": "348449e8752e6b3c10e62b072ce599646537f084",
+      "reference": "ghcr.io/nebius/nebius-physical-ai/npa-flex-pi:dev-348449e8752e6b3c10e62b072ce599646537f084",
+      "digest": "sha256:0420399bf9c4df2f01f7486d13cd45643814c3ef1ddc31cf3083215a211b9c13",
+      "status": "verified",
+      "anonymous_pull": true,
+      "config_digest": "sha256:d7a3c280d682d945ed99f897d5776f070f50ca7bd147cf9afef685b79a6e5095",
+      "revision": "348449e8752e6b3c10e62b072ce599646537f084",
+      "user": "ubuntu",
+      "architecture": "amd64",
+      "os": "linux",
+      "created": "2026-10-10T15:07:12.55393552Z",
+      "source_input_comparison": {
+        "comparison_commit": "88ca5a94f94ed77ea5c33b8c8633cfd30afd5d2f",
+        "canonical_dockerfile": "npa/docker/workbench/flex-pi/Dockerfile",
+        "declared_inputs_match": true,
+        "scope": "Canonical Dockerfile COPY/ADD sources and recipe directory; this does not prove rebuilt byte equivalence or include later main commits."
+      },
+      "attestations": {
+        "provenance": {
+          "verified": true,
+          "predicate_type": "https://slsa.dev/provenance/v1",
+          "workflow": "https://github.com/nebius/nebius-physical-ai/.github/workflows/publish-public-images.yml@refs/heads/main"
+        },
+        "sbom": {
+          "verified": true,
+          "predicate_type": "https://spdx.dev/Document/v2.3",
+          "workflow": "https://github.com/nebius/nebius-physical-ai/.github/workflows/publish-public-images.yml@refs/heads/main"
+        }
+      },
+      "publication": {
+        "conclusion": "success",
+        "workflow_run": "https://github.com/nebius/nebius-physical-ai/actions/runs/38061728549",
+        "job": "https://github.com/nebius/nebius-physical-ai/actions/runs/38061728549/job/114241467744"
+      },
+      "functional_qualification": "Build and publication contracts passed; new-digest functional qualification is pending"
+    },
+    {
+      "tool": "lingbot-world",
+      "source_commit": "b0e9dddb74d349c6e6d532d699f0a8e990171570",
+      "reference": "ghcr.io/nebius/nebius-physical-ai/npa-lingbot-world:dev-b0e9dddb74d349c6e6d532d699f0a8e990171570",
+      "digest": "sha256:6a2a6ef5a0587b289f3b74521a2ddf7836887e2c4709bdc2910e0cd62cd18877",
+      "status": "verified",
+      "anonymous_pull": true,
+      "config_digest": "sha256:2b3d8b6d6c24ed2f8cd6ee401873078d63d85d1bfc8d47b7217ce410a5d582cb",
+      "revision": "b0e9dddb74d349c6e6d532d699f0a8e990171570",
+      "user": "ubuntu",
+      "architecture": "amd64",
+      "os": "linux",
+      "created": "2026-10-10T15:19:32.151319159Z",
+      "source_input_comparison": {
+        "comparison_commit": "88ca5a94f94ed77ea5c33b8c8633cfd30afd5d2f",
+        "canonical_dockerfile": "npa/docker/workbench/lingbot-world/Dockerfile",
+        "declared_inputs_match": true,
+        "scope": "Canonical Dockerfile COPY/ADD sources and recipe directory; this does not prove rebuilt byte equivalence or include later main commits."
+      },
+      "attestations": {
+        "provenance": {
+          "verified": true,
+          "predicate_type": "https://slsa.dev/provenance/v1",
+          "workflow": "https://github.com/nebius/nebius-physical-ai/.github/workflows/publish-public-images.yml@refs/heads/build/ghcr-image-refresh-2026-10-10"
+        },
+        "sbom": {
+          "verified": true,
+          "predicate_type": "https://spdx.dev/Document/v2.3",
+          "workflow": "https://github.com/nebius/nebius-physical-ai/.github/workflows/publish-public-images.yml@refs/heads/build/ghcr-image-refresh-2026-10-10"
+        }
+      },
+      "publication": {
+        "conclusion": "success",
+        "workflow_run": "https://github.com/nebius/nebius-physical-ai/actions/runs/38062887743",
+        "job": "https://github.com/nebius/nebius-physical-ai/actions/runs/38062887743/job/114244858740"
+      },
+      "functional_qualification": "Build and publication contracts passed; new-digest functional qualification is pending"
+    },
+    {
+      "tool": "ltx2",
+      "source_commit": "348449e8752e6b3c10e62b072ce599646537f084",
+      "reference": "ghcr.io/nebius/nebius-physical-ai/npa-ltx2:dev-348449e8752e6b3c10e62b072ce599646537f084",
+      "digest": "sha256:aff04b7a68acf99bc6ad58d8cfdcac65d97f2c1350e3741ba6589cf86f7bda47",
+      "status": "verified",
+      "anonymous_pull": true,
+      "config_digest": "sha256:efe73869e64871624ce289a1cde74df70d9b4ae8718c1222ec41ebaf007bff43",
+      "revision": "348449e8752e6b3c10e62b072ce599646537f084",
+      "user": "ubuntu",
+      "architecture": "amd64",
+      "os": "linux",
+      "created": "2026-10-10T15:02:59.466398039Z",
+      "source_input_comparison": {
+        "comparison_commit": "88ca5a94f94ed77ea5c33b8c8633cfd30afd5d2f",
+        "canonical_dockerfile": "npa/docker/workbench/ltx2/Dockerfile",
+        "declared_inputs_match": true,
+        "scope": "Canonical Dockerfile COPY/ADD sources and recipe directory; this does not prove rebuilt byte equivalence or include later main commits."
+      },
+      "attestations": {
+        "provenance": {
+          "verified": true,
+          "predicate_type": "https://slsa.dev/provenance/v1",
+          "workflow": "https://github.com/nebius/nebius-physical-ai/.github/workflows/publish-public-images.yml@refs/heads/main"
+        },
+        "sbom": {
+          "verified": true,
+          "predicate_type": "https://spdx.dev/Document/v2.3",
+          "workflow": "https://github.com/nebius/nebius-physical-ai/.github/workflows/publish-public-images.yml@refs/heads/main"
+        }
+      },
+      "publication": {
+        "conclusion": "success",
+        "workflow_run": "https://github.com/nebius/nebius-physical-ai/actions/runs/38061728549",
+        "job": "https://github.com/nebius/nebius-physical-ai/actions/runs/38061728549/job/114241467713"
+      },
+      "functional_qualification": "Build and publication contracts passed; new-digest functional qualification is pending"
+    },
+    {
+      "tool": "lyra2",
+      "source_commit": "1fa22c19a19102b1df68110ab65a49d38478a388",
+      "reference": "ghcr.io/nebius/nebius-physical-ai/npa-lyra2:dev-1fa22c19a19102b1df68110ab65a49d38478a388",
+      "digest": "sha256:3e4fdbaf597046ba47fcce16c671495355da0384aa6a0922431e330a6a424c0b",
+      "status": "verified",
+      "anonymous_pull": true,
+      "config_digest": "sha256:b97a1c674f786abeb691b23bb28593fb2ed19b31198721c2c77c8945830868d4",
+      "revision": "1fa22c19a19102b1df68110ab65a49d38478a388",
+      "user": "ubuntu",
+      "architecture": "amd64",
+      "os": "linux",
+      "created": "2026-10-10T15:13:35.859168775Z",
+      "source_input_comparison": {
+        "comparison_commit": "88ca5a94f94ed77ea5c33b8c8633cfd30afd5d2f",
+        "canonical_dockerfile": "npa/docker/workbench/lyra2/Dockerfile",
+        "declared_inputs_match": true,
+        "scope": "Canonical Dockerfile COPY/ADD sources and recipe directory; this does not prove rebuilt byte equivalence or include later main commits."
+      },
+      "attestations": {
+        "provenance": {
+          "verified": true,
+          "predicate_type": "https://slsa.dev/provenance/v1",
+          "workflow": "https://github.com/nebius/nebius-physical-ai/.github/workflows/publish-public-images.yml@refs/heads/build/ghcr-image-refresh-2026-10-10"
+        },
+        "sbom": {
+          "verified": true,
+          "predicate_type": "https://spdx.dev/Document/v2.3",
+          "workflow": "https://github.com/nebius/nebius-physical-ai/.github/workflows/publish-public-images.yml@refs/heads/build/ghcr-image-refresh-2026-10-10"
+        }
+      },
+      "publication": {
+        "conclusion": "success",
+        "workflow_run": "https://github.com/nebius/nebius-physical-ai/actions/runs/38062275093",
+        "job": "https://github.com/nebius/nebius-physical-ai/actions/runs/38062275093/job/114243083596"
+      },
+      "functional_qualification": "Build and publication contracts passed; new-digest functional qualification is pending"
+    },
+    {
+      "tool": "openarm",
+      "source_commit": "57a47bc4600c3e52f15a17f3097914294456925e",
+      "reference": "ghcr.io/nebius/nebius-physical-ai/npa-openarm:dev-57a47bc4600c3e52f15a17f3097914294456925e",
+      "digest": "sha256:4fb518acdacf0f649e081466a72695395eda03d3bb1d5a60ce4dd07819c4c47d",
+      "status": "verified",
+      "anonymous_pull": true,
+      "config_digest": "sha256:0d72de95a109758be4672ca7fc362019f0ef2bc3de882f414d5dbaa484326c90",
+      "revision": "57a47bc4600c3e52f15a17f3097914294456925e",
+      "user": "ubuntu",
+      "architecture": "amd64",
+      "os": "linux",
+      "created": "2026-10-10T15:58:52.572509225Z",
+      "source_input_comparison": {
+        "comparison_commit": "88ca5a94f94ed77ea5c33b8c8633cfd30afd5d2f",
+        "canonical_dockerfile": "npa/docker/workbench/openarm/Dockerfile",
+        "declared_inputs_match": true,
+        "scope": "Canonical Dockerfile COPY/ADD sources and recipe directory; this does not prove rebuilt byte equivalence or include later main commits."
+      },
+      "attestations": {
+        "provenance": {
+          "verified": true,
+          "predicate_type": "https://slsa.dev/provenance/v1",
+          "workflow": "https://github.com/nebius/nebius-physical-ai/.github/workflows/publish-public-images.yml@refs/heads/build/ghcr-image-refresh-2026-10-10"
+        },
+        "sbom": {
+          "verified": true,
+          "predicate_type": "https://spdx.dev/Document/v2.3",
+          "workflow": "https://github.com/nebius/nebius-physical-ai/.github/workflows/publish-public-images.yml@refs/heads/build/ghcr-image-refresh-2026-10-10"
+        }
+      },
+      "publication": {
+        "conclusion": "success",
+        "workflow_run": "https://github.com/nebius/nebius-physical-ai/actions/runs/38065075422",
+        "job": "https://github.com/nebius/nebius-physical-ai/actions/runs/38065075422/job/114251302156"
+      },
+      "functional_qualification": "Build and publication contracts passed; new-digest functional qualification is pending"
+    },
+    {
+      "tool": "rerun-viewer",
+      "source_commit": "348449e8752e6b3c10e62b072ce599646537f084",
+      "reference": "ghcr.io/nebius/nebius-physical-ai/npa-rerun-viewer:dev-348449e8752e6b3c10e62b072ce599646537f084",
+      "digest": "sha256:d826fd7ccb6dee00fcaedafa54e99980cdac6cdc91c9c0a626029f57b7534ed3",
+      "status": "verified",
+      "anonymous_pull": true,
+      "config_digest": "sha256:d8413790dda79066f98ad788311dad9ae86287a7309e074a9a2ffb707eb94e9b",
+      "revision": "348449e8752e6b3c10e62b072ce599646537f084",
+      "user": "ubuntu",
+      "architecture": "amd64",
+      "os": "linux",
+      "created": "2026-10-10T15:03:45.2449938Z",
+      "source_input_comparison": {
+        "comparison_commit": "88ca5a94f94ed77ea5c33b8c8633cfd30afd5d2f",
+        "canonical_dockerfile": "npa/docker/workbench/rerun-viewer/Dockerfile",
+        "declared_inputs_match": true,
+        "scope": "Canonical Dockerfile COPY/ADD sources and recipe directory; this does not prove rebuilt byte equivalence or include later main commits."
+      },
+      "attestations": {
+        "provenance": {
+          "verified": true,
+          "predicate_type": "https://slsa.dev/provenance/v1",
+          "workflow": "https://github.com/nebius/nebius-physical-ai/.github/workflows/publish-public-images.yml@refs/heads/main"
+        },
+        "sbom": {
+          "verified": true,
+          "predicate_type": "https://spdx.dev/Document/v2.3",
+          "workflow": "https://github.com/nebius/nebius-physical-ai/.github/workflows/publish-public-images.yml@refs/heads/main"
+        }
+      },
+      "publication": {
+        "conclusion": "success",
+        "workflow_run": "https://github.com/nebius/nebius-physical-ai/actions/runs/38061728549",
+        "job": "https://github.com/nebius/nebius-physical-ai/actions/runs/38061728549/job/114241467699"
+      },
+      "functional_qualification": "Build and publication contracts passed; new-digest functional qualification is pending"
+    },
+    {
+      "tool": "sam2",
+      "source_commit": "b0e9dddb74d349c6e6d532d699f0a8e990171570",
+      "reference": "ghcr.io/nebius/nebius-physical-ai/npa-sam2:dev-b0e9dddb74d349c6e6d532d699f0a8e990171570",
+      "digest": "sha256:0eaf4beb6cfec4670d21766d03d4df6dd2943aa47f5ffbbb7de1bf3c6527e05f",
+      "status": "verified",
+      "anonymous_pull": true,
+      "config_digest": "sha256:b75caa527217e9702a01b1b4f5b0070d01a4270e543f129b83c099191d21ccbf",
+      "revision": "b0e9dddb74d349c6e6d532d699f0a8e990171570",
+      "user": "ubuntu",
+      "architecture": "amd64",
+      "os": "linux",
+      "created": "2026-10-10T15:20:40.69701537Z",
+      "source_input_comparison": {
+        "comparison_commit": "88ca5a94f94ed77ea5c33b8c8633cfd30afd5d2f",
+        "canonical_dockerfile": "npa/docker/workbench/sam2/Dockerfile",
+        "declared_inputs_match": true,
+        "scope": "Canonical Dockerfile COPY/ADD sources and recipe directory; this does not prove rebuilt byte equivalence or include later main commits."
+      },
+      "attestations": {
+        "provenance": {
+          "verified": true,
+          "predicate_type": "https://slsa.dev/provenance/v1",
+          "workflow": "https://github.com/nebius/nebius-physical-ai/.github/workflows/publish-public-images.yml@refs/heads/build/ghcr-image-refresh-2026-10-10"
+        },
+        "sbom": {
+          "verified": true,
+          "predicate_type": "https://spdx.dev/Document/v2.3",
+          "workflow": "https://github.com/nebius/nebius-physical-ai/.github/workflows/publish-public-images.yml@refs/heads/build/ghcr-image-refresh-2026-10-10"
+        }
+      },
+      "publication": {
+        "conclusion": "success",
+        "workflow_run": "https://github.com/nebius/nebius-physical-ai/actions/runs/38062887743",
+        "job": "https://github.com/nebius/nebius-physical-ai/actions/runs/38062887743/job/114244858794"
+      },
+      "functional_qualification": "Build and publication contracts passed; new-digest functional qualification is pending"
+    },
+    {
+      "tool": "sim2real-control",
+      "source_commit": "348449e8752e6b3c10e62b072ce599646537f084",
+      "reference": "ghcr.io/nebius/nebius-physical-ai/npa-sim2real-control:dev-348449e8752e6b3c10e62b072ce599646537f084",
+      "digest": "sha256:629e342deda13f2b04000fac6205b007fdc529543f6af9266d1008d2f094ae38",
+      "status": "verified",
+      "anonymous_pull": true,
+      "config_digest": "sha256:ee5c46d42af1f5286a3356c5e1b25639561fc09f25f9f91978a142a4251e1d78",
+      "revision": "348449e8752e6b3c10e62b072ce599646537f084",
+      "user": "ubuntu",
+      "architecture": "amd64",
+      "os": "linux",
+      "created": "2026-10-10T15:03:00.02216519Z",
+      "source_input_comparison": {
+        "comparison_commit": "88ca5a94f94ed77ea5c33b8c8633cfd30afd5d2f",
+        "canonical_dockerfile": "npa/docker/workbench/sim2real-control/Dockerfile",
+        "declared_inputs_match": true,
+        "scope": "Canonical Dockerfile COPY/ADD sources and recipe directory; this does not prove rebuilt byte equivalence or include later main commits."
+      },
+      "attestations": {
+        "provenance": {
+          "verified": true,
+          "predicate_type": "https://slsa.dev/provenance/v1",
+          "workflow": "https://github.com/nebius/nebius-physical-ai/.github/workflows/publish-public-images.yml@refs/heads/main"
+        },
+        "sbom": {
+          "verified": true,
+          "predicate_type": "https://spdx.dev/Document/v2.3",
+          "workflow": "https://github.com/nebius/nebius-physical-ai/.github/workflows/publish-public-images.yml@refs/heads/main"
+        }
+      },
+      "publication": {
+        "conclusion": "success",
+        "workflow_run": "https://github.com/nebius/nebius-physical-ai/actions/runs/38061728549",
+        "job": "https://github.com/nebius/nebius-physical-ai/actions/runs/38061728549/job/114241467752"
+      },
+      "functional_qualification": "Build and publication contracts passed; new-digest functional qualification is pending"
+    },
+    {
+      "tool": "sonic-mujoco",
+      "source_commit": "1fa22c19a19102b1df68110ab65a49d38478a388",
+      "reference": "ghcr.io/nebius/nebius-physical-ai/npa-sonic-mujoco:dev-1fa22c19a19102b1df68110ab65a49d38478a388",
+      "digest": "sha256:a2839731e873561fe08d71fc93f559f15f709665dabdf2969c1c9a25e81e6ade",
+      "status": "verified",
+      "anonymous_pull": true,
+      "config_digest": "sha256:a9133741d569a75ab6886535c66166c4734cd613c6176e7d72c9b47bff2cb986",
+      "revision": "1fa22c19a19102b1df68110ab65a49d38478a388",
+      "user": "ubuntu",
+      "architecture": "amd64",
+      "os": "linux",
+      "created": "2026-10-10T15:12:03.221937733Z",
+      "source_input_comparison": {
+        "comparison_commit": "88ca5a94f94ed77ea5c33b8c8633cfd30afd5d2f",
+        "canonical_dockerfile": "npa/docker/workbench/sonic/Dockerfile.mujoco",
+        "declared_inputs_match": true,
+        "scope": "Canonical Dockerfile COPY/ADD sources and recipe directory; this does not prove rebuilt byte equivalence or include later main commits."
+      },
+      "attestations": {
+        "provenance": {
+          "verified": true,
+          "predicate_type": "https://slsa.dev/provenance/v1",
+          "workflow": "https://github.com/nebius/nebius-physical-ai/.github/workflows/publish-public-images.yml@refs/heads/build/ghcr-image-refresh-2026-10-10"
+        },
+        "sbom": {
+          "verified": true,
+          "predicate_type": "https://spdx.dev/Document/v2.3",
+          "workflow": "https://github.com/nebius/nebius-physical-ai/.github/workflows/publish-public-images.yml@refs/heads/build/ghcr-image-refresh-2026-10-10"
+        }
+      },
+      "publication": {
+        "conclusion": "success",
+        "workflow_run": "https://github.com/nebius/nebius-physical-ai/actions/runs/38062275093",
+        "job": "https://github.com/nebius/nebius-physical-ai/actions/runs/38062275093/job/114243083559"
+      },
+      "functional_qualification": "Build and publication contracts passed; new-digest functional qualification is pending"
+    },
+    {
+      "tool": "wan2-2",
+      "source_commit": "348449e8752e6b3c10e62b072ce599646537f084",
+      "reference": "ghcr.io/nebius/nebius-physical-ai/npa-wan2-2:dev-348449e8752e6b3c10e62b072ce599646537f084",
+      "digest": "sha256:4e5fe7932f66fab3ff036090f66d4a9d915e9eb6fab3ee2e7633ca1c68363cf0",
+      "status": "verified",
+      "anonymous_pull": true,
+      "config_digest": "sha256:691030f67dcae79cb12ea2ecd3135329ebdca95c8f15dd37bc24c7fe6f96d44d",
+      "revision": "348449e8752e6b3c10e62b072ce599646537f084",
+      "user": "ubuntu",
+      "architecture": "amd64",
+      "os": "linux",
+      "created": "2026-10-10T15:03:48.150683572Z",
+      "source_input_comparison": {
+        "comparison_commit": "88ca5a94f94ed77ea5c33b8c8633cfd30afd5d2f",
+        "canonical_dockerfile": "npa/docker/workbench/wan2-2/Dockerfile",
+        "declared_inputs_match": true,
+        "scope": "Canonical Dockerfile COPY/ADD sources and recipe directory; this does not prove rebuilt byte equivalence or include later main commits."
+      },
+      "attestations": {
+        "provenance": {
+          "verified": true,
+          "predicate_type": "https://slsa.dev/provenance/v1",
+          "workflow": "https://github.com/nebius/nebius-physical-ai/.github/workflows/publish-public-images.yml@refs/heads/main"
+        },
+        "sbom": {
+          "verified": true,
+          "predicate_type": "https://spdx.dev/Document/v2.3",
+          "workflow": "https://github.com/nebius/nebius-physical-ai/.github/workflows/publish-public-images.yml@refs/heads/main"
+        }
+      },
+      "publication": {
+        "conclusion": "success",
+        "workflow_run": "https://github.com/nebius/nebius-physical-ai/actions/runs/38061728549",
+        "job": "https://github.com/nebius/nebius-physical-ai/actions/runs/38061728549/job/114241467688"
+      },
+      "functional_qualification": "Build and publication contracts passed; new-digest functional qualification is pending"
+    }
+  ],
+  "attestations_verified": 36,
+  "source_inputs_match": 18,
+  "source_comparison_commit": "88ca5a94f94ed77ea5c33b8c8633cfd30afd5d2f",
+  "qualification": "Development publication; supported release pins were not promoted",
+  "limitations": [
+    "This batch covers the frozen main snapshot and its reviewed build repairs, not subsequent main commits.",
+    "Anonymous manifest/config verification complements the publication workflow registry-byte readback; the audit does not independently download every layer.",
+    "GPU compatibility coverage on the existing chart belongs to accepted release digests, not these new development digests."
+  ],
+  "accepted_release_reverification": {
+    "verified_at_utc": "2026-10-10T17:16:47.915245+00:00",
+    "release_count": 27,
+    "verified": 27
+  }
+}
