@@ -24,8 +24,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(forwarded)
     environment = dict(os.environ)
     environment["NPA_PI05_CLOSED_LOOP_CHILD"] = "1"
+    # Kit needs the runtime-fetched SDK, while report readback stays outside Kit.
     command = [
-        sys.executable,
+        "/isaac-sim/python.sh",
         "-m",
         "npa.workflows.sim2real.pi05_closed_loop",
         *forwarded,

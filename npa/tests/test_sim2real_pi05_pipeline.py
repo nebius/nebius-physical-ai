@@ -47,7 +47,11 @@ from npa.workflows.sim2real.pi05_closed_loop import (
     _wrist_variant,
 )
 from npa.workflows.sim2real.pi05_contract import EPISODE_SCHEMA, Pi05ContractError
-from npa.workflows.sim2real.pi05_collect_all import SPLITS, _collector_argv
+from npa.workflows.sim2real.pi05_collect_all import (
+    SPLITS,
+    _collector_argv,
+    _run_collector,
+)
 from npa.workflows.sim2real.pi05_data import OPENPI_SCHEMA, export_local
 from npa.workflows.sim2real.pi05_isaac import (
     _collection_report,
@@ -1043,7 +1047,7 @@ def test_each_split_collector_runs_in_a_fresh_isaac_process() -> None:
     )
     argv = _collector_argv(args, "gold")
     assert argv[:3] == [
-        sys.executable,
+        "/isaac-sim/python.sh",
         "-m",
         "npa.workflows.sim2real.pi05_isaac",
     ]
@@ -1055,6 +1059,32 @@ def test_each_split_collector_runs_in_a_fresh_isaac_process() -> None:
     assert custom[custom.index("--object-identity") + 1] == (
         "operator-custom-usd-scale-100"
     )
+
+
+def test_collector_propagates_isaac_launcher_failure(monkeypatch) -> None:
+    args = Namespace(
+        output_root_uri="s3://example/experts",
+        episodes_per_split=3,
+        seed=41,
+        object_usd="",
+    )
+    commands = []
+
+    def run(command, **kwargs):
+        commands.append(command)
+        return Namespace(returncode=69, stderr="no ready Isaac cache", stdout="")
+
+    monkeypatch.setattr(subprocess, "run", run)
+    with pytest.raises(
+        RuntimeError, match="train collector failed: no ready Isaac cache"
+    ):
+        _run_collector(args, "train")
+    assert len(commands) == 1
+    assert commands[0][:3] == [
+        "/isaac-sim/python.sh",
+        "-m",
+        "npa.workflows.sim2real.pi05_isaac",
+    ]
 
 
 def test_gold_evaluator_reuses_exact_custom_usd_and_scale() -> None:
@@ -2221,4 +2251,29 @@ def test_closed_loop_entry_accepts_only_complete_readback(
     )
     assert pi05_closed_loop_entry.main(["--fixture"]) == 0
     assert captured["env"]["NPA_PI05_CLOSED_LOOP_CHILD"] == "1"
-    assert captured["command"][2] == "npa.workflows.sim2real.pi05_closed_loop"
+    assert captured["command"] == [
+        "/isaac-sim/python.sh",
+        "-m",
+        "npa.workflows.sim2real.pi05_closed_loop",
+        "--fixture",
+    ]
+
+
+def test_closed_loop_entry_propagates_isaac_launcher_failure(monkeypatch) -> None:
+    args = _closed_loop_report_args()
+    commands = []
+    monkeypatch.setattr(pi05_closed_loop_entry, "parse_args", lambda _argv: args)
+
+    def run(command, **kwargs):
+        commands.append(command)
+        return Namespace(returncode=69)
+
+    def read_report(*_args, **_kwargs):
+        pytest.fail("failed Isaac bootstrap must not read a previous success report")
+
+    monkeypatch.setattr(pi05_closed_loop_entry.subprocess, "run", run)
+    monkeypatch.setattr(pi05_closed_loop_entry, "read_json", read_report)
+    with pytest.raises(RuntimeError, match="Kit evaluator failed with exit 69"):
+        pi05_closed_loop_entry.main(["--fixture"])
+    assert len(commands) == 1
+    assert commands[0][0] == "/isaac-sim/python.sh"

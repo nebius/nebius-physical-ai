@@ -218,6 +218,13 @@ evaluator pass that validated portable root into `AppLauncher`; a path outside
 the job-state mount, an escaped path, or duplicate portable-root option fails
 before Kit starts.
 
+The outer collection and evaluation commands run in the image's baked NPA
+interpreter. Each Isaac child must launch through `/isaac-sim/python.sh`, which
+selects the verified SDK cache interpreter and applies Kit privacy and writable
+state settings. Reusing the parent's `sys.executable` bypasses that handoff and
+cannot load Isaac Lab. A failed launcher stops the stage; the evaluator also
+requires a complete successful report read back by its outer process.
+
 The reference held-out model evaluation uses batch size one. This deliberately
 covers every exported validation sample, including the observed 695-sample
 corpus, without dropping or padding a tail batch. An operator override may use a

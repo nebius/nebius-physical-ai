@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
-import sys
 from typing import Any
 
 from npa.workflows.sim2real.workflow_io import publish_component_record
@@ -50,8 +49,9 @@ def _collector_argv(args: argparse.Namespace, split: str) -> list[str]:
     if args.object_usd:
         percent = round(float(config["object_scale"][0]) * 100)
         identity = f"operator-custom-usd-scale-{percent:03d}"
+    # The outer NPA interpreter excludes Isaac; the shim selects its verified cache.
     return [
-        sys.executable,
+        "/isaac-sim/python.sh",
         "-m",
         "npa.workflows.sim2real.pi05_isaac",
         "--output-uri",
