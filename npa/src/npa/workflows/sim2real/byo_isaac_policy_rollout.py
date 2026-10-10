@@ -298,19 +298,16 @@ def upload_and_exit(rollouts, note, applied=None):
     json.dump(meta, open("/tmp/rollwork/rollouts.json", "w"))
     print("ROLLOUT_WROTE", note, "rollouts", len(rollouts), flush=True)
     try:
-        import boto3, glob
-        from urllib.parse import urlparse
-        s3 = boto3.client("s3", endpoint_url=os.environ.get("AWS_ENDPOINT_URL") or None)
-        u = urlparse(OUT_S3); base = u.path.lstrip("/").rstrip("/")
-        s3.upload_file("/tmp/rollwork/rollouts.json", u.netloc, base + "/rollouts.json")
-        n = 0
-        for p in glob.glob(FRAMES_DIR + "/**/*.png", recursive=True):
-            rel = os.path.relpath(p, FRAMES_DIR)
-            s3.upload_file(p, u.netloc, base + "/" + rel); n += 1
-        print("ROLLOUT_UPLOADED", n, OUT_S3, flush=True)
+        from pathlib import Path
+        from npa.workflows.sim2real.isaac_job_io import upload_capture
+        upload_capture(Path(FRAMES_DIR), OUT_S3, Path("/tmp/rollwork/rollouts.json"),
+                       OUT_S3.rstrip("/") + "/rollouts.json")
+        print("ROLLOUT_UPLOADED", OUT_S3, flush=True)
         print("BYO_ROLLOUT_DONE", flush=True)
     except Exception as e:
         print("rollout_upload_err", repr(e), flush=True)
+        sys.stdout.flush(); sys.stderr.flush()
+        os._exit(1)
     sys.stdout.flush(); sys.stderr.flush()
     os._exit(0)
 try:

@@ -8,12 +8,15 @@ import glob
 import hashlib
 import os
 import time
+from concurrent.futures import CancelledError, ThreadPoolExecutor, as_completed
 from functools import partial
 from pathlib import Path
-from typing import Callable, TypeVar
+from threading import Event
+from typing import Callable, Iterator, TypeVar
 from urllib.parse import urlparse
 
 import boto3
+from boto3.exceptions import S3UploadFailedError
 from botocore.exceptions import (
     ClientError,
     ConnectionClosedError,
@@ -74,25 +77,39 @@ def _retryable_client_error(exc: ClientError) -> bool:
     )
 
 
+def _retry_failure(exc: BaseException) -> tuple[str, int, str] | None:
+    """Classify typed SDK failures, including the managed-transfer wrapper."""
+    if isinstance(exc, S3UploadFailedError):
+        cause = exc.__cause__ or exc.__context__
+        if cause is None:
+            return None
+        exc = cause
+    if isinstance(exc, _TRANSPORT_EXCEPTIONS):
+        return type(exc).__name__, 0, ""
+    if isinstance(exc, ClientError) and _retryable_client_error(exc):
+        status, code = _structured_client_error(exc)
+        return type(exc).__name__, status, code
+    return None
+
+
 def _with_transport_recovery(
     operation: str,
     action: Callable[[], _ResultT],
+    cancelled: Event | None = None,
 ) -> _ResultT:
     """Retry only structured transport/service failures, without a run budget."""
 
     attempt = 1
     while True:
+        if cancelled is not None and cancelled.is_set():
+            raise CancelledError("another upload failed")
         try:
             return action()
-        except _TRANSPORT_EXCEPTIONS as exc:
-            classification = type(exc).__name__
-            status = 0
-            code = ""
-        except ClientError as exc:
-            if not _retryable_client_error(exc):
+        except (*_TRANSPORT_EXCEPTIONS, ClientError, S3UploadFailedError) as exc:
+            failure = _retry_failure(exc)
+            if failure is None:
                 raise
-            status, code = _structured_client_error(exc)
-            classification = type(exc).__name__
+            classification, status, code = failure
         delay = _retry_delay(attempt)
         print(
             "S3_IO_HEARTBEAT "
@@ -101,7 +118,10 @@ def _with_transport_recovery(
             f"error_code={code or '-'} next_delay_seconds={delay:g}",
             flush=True,
         )
-        time.sleep(delay)
+        if cancelled is None:
+            time.sleep(delay)
+        elif cancelled.wait(delay):
+            raise CancelledError("another upload failed")
         attempt += 1
 
 
@@ -140,35 +160,117 @@ def upload(source: Path, uri: str) -> None:
     print(f"UPLOADED uri={uri} bytes={source.stat().st_size}")
 
 
-def upload_tree(root: Path, uri: str) -> None:
+def _upload_paths(
+    paths: list[Path], action: Callable[[Path], None], max_workers: int
+) -> Iterator[Path]:
+    """Stop sibling retries when a file encounters a terminal failure."""
+    if max_workers == 1:
+        for path in paths:
+            _with_transport_recovery("upload-tree", partial(action, path))
+            yield path
+        return
+    cancelled = Event()
+
+    def upload_one(path: Path) -> Path | None:
+        try:
+            _with_transport_recovery("upload-tree", partial(action, path), cancelled)
+            return path
+        except CancelledError:
+            return None
+        except BaseException:
+            cancelled.set()
+            raise
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(upload_one, path) for path in paths]
+        try:
+            for future in as_completed(futures):
+                path = future.result()
+                if path is not None:
+                    yield path
+        finally:
+            cancelled.set()
+            for future in futures:
+                future.cancel()
+
+
+def _upload_tree_inputs(
+    root: Path, uri: str, max_workers: int
+) -> tuple[list[Path], str, str]:
+    """Validate the destination and enumerate the complete artifact tree."""
     parsed = urlparse(uri)
     if parsed.scheme != "s3" or not parsed.netloc:
         raise ValueError(f"expected s3:// prefix, got {uri!r}")
-    prefix = parsed.path.lstrip("/").rstrip("/")
+    if max_workers < 1:
+        raise ValueError("upload workers must be positive")
+    paths = [path for path in sorted(root.rglob("*")) if path.is_file()]
+    if not paths:
+        raise RuntimeError(f"upload tree contains no files: {root}")
+    return paths, parsed.netloc, parsed.path.lstrip("/").rstrip("/")
+
+
+def upload_tree(root: Path, uri: str, *, max_workers: int = 1) -> None:
+    """Upload every file, retrying transport failures and rejecting partial trees.
+
+    Args:
+        root: Directory containing the complete artifact tree.
+        uri: Destination S3 prefix.
+        max_workers: Concurrent file uploads; one preserves serial ordering.
+
+    Returns:
+        None.
+
+    Raises:
+        ValueError: The URI or worker count is invalid.
+        RuntimeError: The tree contains no files.
+        ClientError: Storage rejects an upload without a retryable response.
+        S3UploadFailedError: A managed transfer rejects an upload.
+    """
+    paths, bucket, prefix = _upload_tree_inputs(root, uri, max_workers)
     count = 0
     byte_count = 0
     s3 = _s3()
-    for path in sorted(root.rglob("*")):
-        if path.is_file():
-            relative = path.relative_to(root)
-            _with_transport_recovery(
-                "upload-tree",
-                partial(
-                    s3.upload_file, str(path), parsed.netloc, f"{prefix}/{relative}"
-                ),
+
+    def upload_one(path: Path) -> None:
+        key = "/".join(
+            part for part in (prefix, path.relative_to(root).as_posix()) if part
+        )
+        s3.upload_file(str(path), bucket, key)
+
+    for path in _upload_paths(paths, upload_one, max_workers):
+        count += 1
+        byte_count += path.stat().st_size
+        if count == 1 or count % 100 == 0:
+            print(
+                "S3_IO_HEARTBEAT "
+                f"operation=upload-tree state=progress files={count} bytes={byte_count}",
+                flush=True,
             )
-            count += 1
-            byte_count += path.stat().st_size
-            if count == 1 or count % 100 == 0:
-                print(
-                    "S3_IO_HEARTBEAT "
-                    f"operation=upload-tree state=progress files={count} "
-                    f"bytes={byte_count}",
-                    flush=True,
-                )
-    if count == 0:
-        raise RuntimeError(f"upload tree contains no files: {root}")
     print(f"UPLOADED_TREE uri={uri} files={count}")
+
+
+def upload_capture(
+    root: Path, tree_uri: str, metadata: Path, metadata_uri: str
+) -> None:
+    """Publish native camera files before their completion metadata.
+
+    Args:
+        root: Camera and point-cloud artifact directory.
+        tree_uri: Destination prefix; empty disables camera publication.
+        metadata: Completed native rollout or evaluation JSON.
+        metadata_uri: Exact destination object URI.
+
+    Returns:
+        None.
+
+    Raises:
+        RuntimeError: A requested camera tree is empty or metadata is missing.
+        ClientError: Storage rejects any artifact or metadata upload.
+        S3UploadFailedError: A managed transfer rejects an upload.
+    """
+    if tree_uri:
+        upload_tree(root, tree_uri, max_workers=16)
+    upload(metadata, metadata_uri)
 
 
 def upload_training(checkpoint: Path, output_dir: Path, uri: str) -> None:

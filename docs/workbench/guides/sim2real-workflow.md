@@ -559,8 +559,13 @@ default. Gold is excluded from this decision, and its goals and strict predicate
 remain fixed. Reduced plumbing proofs may override the update count explicitly;
 effectiveness runs should retain the production default.
 
-Stage 7 downloads its declared raw camera frames concurrently and fails before
-manifest publication when any transfer fails. Stage 14 reads every earlier
+Native Isaac rollout and evaluation jobs upload camera and point-cloud files
+with 16 file workers, then publish completion metadata. Typed storage transport
+and service failures retry without a run deadline; a rejected upload fails the
+job and stops sibling retries. Evaluation also fails if a declared camera file
+cannot be synchronized locally. Stage 7 downloads its declared raw camera frames
+concurrently and fails before manifest publication when any transfer fails.
+Stage 14 reads every earlier
 outer-loop evidence document to retain all completed PPO curves, while limiting
 camera downloads to the final outer loop and its selected Gold footage.
 

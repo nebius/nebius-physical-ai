@@ -977,28 +977,20 @@ except Exception as e:
     traceback.print_exc()
     dump([0.5]*N, "rollout_failed:%s" % e)
 # With enable_cameras the Isaac app hangs on exit (even app.close() blocks), so the
-# post-script bash upload never runs. Upload distances + renders HERE from boto3,
-# then hard-exit the process so nothing hangs.
+# post-script bash upload never runs. Publish the camera tree before metrics,
+# then hard-exit the process with an upload failure reflected in its exit code.
 try:
-    import boto3
-    from urllib.parse import urlparse
-    s3 = boto3.client("s3", endpoint_url=os.environ.get("AWS_ENDPOINT_URL") or None)
-    ou = urlparse(os.environ["EVAL_OUT_S3"])
-    s3.upload_file(OUT, ou.netloc, ou.path.lstrip("/"))
+    from pathlib import Path
+    from npa.workflows.sim2real.isaac_job_io import upload_capture
+    upload_capture(Path(os.environ.get("EVAL_RENDERS_DIR", "/tmp/evalwork/renders")),
+                   os.environ.get("EVAL_RENDERS_S3", ""), Path(OUT),
+                   os.environ["EVAL_OUT_S3"])
     print("UPLOADED_DISTANCES", os.environ["EVAL_OUT_S3"], flush=True)
-    ru = urlparse(os.environ.get("EVAL_RENDERS_S3", ""))
-    if ru.netloc:
-        import glob
-        base = ru.path.lstrip("/").rstrip("/")
-        n = 0
-        for pat in ("**/*.png", "**/*.npz"):
-            for p in glob.glob(os.environ["EVAL_RENDERS_DIR"] + "/" + pat, recursive=True):
-                rel = os.path.relpath(p, os.environ["EVAL_RENDERS_DIR"])
-                s3.upload_file(p, ru.netloc, base + "/" + rel); n += 1
-        print("UPLOADED_RENDERS", n, os.environ.get("EVAL_RENDERS_S3"), flush=True)
     print("BYO_EVAL_DONE", flush=True)
 except Exception as _e:
     print("inproc_upload_err", repr(_e), flush=True)
+    sys.stdout.flush(); sys.stderr.flush()
+    os._exit(1)
 sys.stdout.flush(); sys.stderr.flush()
 os._exit(0)
 """
@@ -1543,7 +1535,7 @@ def run_isaac_eval_job(
                 flush=True,
             )
         except Exception as e:
-            print("byo_isaac_eval: render sync failed:", repr(e), flush=True)
+            raise RuntimeError("native evaluation camera synchronization failed") from e
     global _RENDER_MANIFEST
     _RENDER_MANIFEST = {
         "schema": "npa.sim2real.heldout_renders.v1",
