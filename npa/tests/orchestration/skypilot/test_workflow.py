@@ -4115,6 +4115,19 @@ def test_sky_environment_keeps_one_explicit_repo_source_path(
     assert env["PYTHONPATH"] == f"{repo_src}{os.pathsep}other-source"
 
 
+def test_sky_environment_preserves_an_empty_pythonpath_entry(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.orchestration.skypilot import cleanup
+
+    repo_src = str(Path(cleanup.__file__).resolve().parents[3])
+    monkeypatch.setenv("PYTHONPATH", f"{repo_src}{os.pathsep}{repo_src}{os.pathsep}")
+
+    env = cleanup.sky_environment(tmp_path / "isolated")
+
+    assert env["PYTHONPATH"] == f"{repo_src}{os.pathsep}"
+
+
 def test_sky_environment_preserves_nebius_exec_auth_without_copying(
     monkeypatch, tmp_path
 ) -> None:
