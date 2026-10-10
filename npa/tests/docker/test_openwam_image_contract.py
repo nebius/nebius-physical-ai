@@ -66,6 +66,14 @@ def test_openwam_exposes_exact_source_without_incomplete_npa_metadata() -> None:
         "env -u PYTHONPATH /opt/openwam-venv/bin/python "
         "-m npa.workflows.openwam_pipeline --help"
     ) in dockerfile
+    dependency_import = (
+        "env -u PYTHONPATH /opt/openwam-venv/bin/python -c "
+        "'import boto3, huggingface_hub'"
+    )
+    assert dependency_import in dockerfile
+    assert dockerfile.index(dependency_import) < dockerfile.index(
+        "-m npa.workflows.openwam_pipeline --help"
+    )
     assert (
         "runuser -u ubuntu -- env -u PYTHONPATH HOME=/home/ubuntu "
         "/opt/openwam-venv/bin/python -m npa.workflows.openwam_pipeline"

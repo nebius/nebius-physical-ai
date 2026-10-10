@@ -128,6 +128,7 @@ COPY --chmod=0755 src/npa /opt/npa/src/npa
 RUN /opt/openwam-venv/bin/python -c \
       "import site; from pathlib import Path; Path(site.getsitepackages()[0], 'npa-exact-source.pth').write_text('/opt/npa/src\\n', encoding='utf-8')" \
     && test -z "$(find /opt/openwam-venv /opt/openwam-libero -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)" \
+    && env -u PYTHONPATH /opt/openwam-venv/bin/python -c 'import boto3, huggingface_hub' \
     && env -u PYTHONPATH /opt/openwam-venv/bin/python -m npa.workflows.openwam_pipeline --help >/dev/null \
     && runuser -u ubuntu -- env -u PYTHONPATH HOME=/home/ubuntu /opt/openwam-venv/bin/python -m npa.workflows.openwam_pipeline --help >/dev/null \
     && /opt/openwam-venv/bin/rerun rrd --help >/dev/null \
