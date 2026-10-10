@@ -1,0 +1,325 @@
+"""Reject false physical labels and broken action/image transition alignment."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+from npa.workflows.physical_augmentation_contract import (
+    LiftController,
+    accepted_steps,
+    longest_hold,
+    make_recipe,
+    read_recipe,
+)
+from npa.workflows.physical_augmentation_report import verify_episode
+
+
+ISAAC_IMAGE = "registry.example.invalid/npa-isaac-lab@sha256:" + "a" * 64
+
+
+def test_workflow_argv_matches_stage_parser_and_gpu_requirement():
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.spec import load_spec
+    from npa.orchestration.npa_workflow.submit import merge_config_overrides
+    from npa.workflows.physical_augmentation import build_parser
+
+    path = (
+        Path(__file__).resolve().parents[3]
+        / "workflows/testing/physical-augmentation.yaml"
+    )
+    spec = merge_config_overrides(load_spec(path), {"isaac_image": ISAAC_IMAGE})
+    plan = build_plan(spec, run_id="test-physical")
+    assert [step.state for step in plan.steps] == ["prepare", "collect", "report"]
+    for step in plan.steps:
+        args = build_parser().parse_args(step.argv[3:])
+        assert args.stage == step.state
+        assert all(
+            output["uri"].startswith(args.output_path) for output in step.outputs
+        )
+    assert plan.steps[1].resources_profile["accelerators"] == "RTXPRO6000:1"
+
+
+def test_controller_recomputes_actions_for_displaced_object_and_limits_speed():
+    tcp = np.array([0.5, 0.0, 0.3])
+    cube = np.array([0.5, 0.0, 0.025])
+    controller = LiftController(0.02)
+    quaternion = np.array([1.0, 0.0, 0.0, 0.0])
+    nominal = controller.action(tcp, cube, quaternion)
+    shifted = controller.action(tcp, cube + [0.04, 0.08, 0], quaternion)
+    assert not np.array_equal(nominal, shifted)
+    assert np.linalg.norm(shifted[:3] - nominal[:3]) <= 0.003001
+    assert shifted[-1] == 1.0
+    assert controller.phase == 0  # Elapsed calls alone cannot certify reaching.
+
+
+def test_controller_aligns_downward_before_descending_and_bounds_rotation():
+    controller = LiftController(0.02)
+    cube = np.array([0.5, 0.0, 0.025])
+    tcp = cube + [0, 0, 0.12]
+    tilted = np.array([np.cos(0.4), 0, np.sin(0.4), 0])
+    previous = tilted
+    for _ in range(30):
+        action = controller.action(tcp, cube, tilted)
+        current = action[3:7].astype(float)
+        cosine = np.dot(previous, current) / (
+            np.linalg.norm(previous) * np.linalg.norm(current)
+        )
+        angle = 2 * np.arccos(np.clip(cosine, -1, 1))
+        assert 0 < angle <= 0.01601
+        assert np.linalg.norm(action[3:7]) == pytest.approx(1)
+        previous = current
+    assert controller.phase == 0
+    for _ in range(8):
+        controller.action(tcp, cube, np.array([1, 0, 0, 0]))
+    assert controller.phase == 1
+
+
+def test_tracking_lag_does_not_erase_trajectory_progress():
+    controller = LiftController(0.02)
+    cube = np.array([0.5, 0.0, 0.025])
+    tcp = np.array([0.5, 0.0, 0.4])
+    quaternion = np.array([1.0, 0.0, 0.0, 0.0])
+    previous = tcp.copy()
+    # A lagged actuator must still reach the measured approach waypoint. Targets
+    # rebased on each measurement advance only ~4.5cm during this experiment.
+    for _ in range(150):
+        action = controller.action(tcp, cube, quaternion)
+        assert np.linalg.norm(action[:3] - previous) <= 0.003001
+        tcp += 0.1 * (action[:3] - tcp)
+        previous = action[:3].copy()
+    assert controller.phase >= 1
+    assert tcp[2] < 0.15
+
+
+def test_configuration_aligns_sensor_with_actual_ik_offset():
+    from types import SimpleNamespace as NS
+    from npa.workflows.physical_augmentation_runtime import _align_tool_frame
+
+    offset = NS(pos=[0, 0, 0.107], rot=[0, 0, 0, 1])
+    frame = NS(offset=NS(pos=[0, 0, 0.1034], rot=[0, 0, 0, 1]))
+    config = NS(
+        actions=NS(arm_action=NS(body_name="panda_hand", body_offset=offset)),
+        scene=NS(ee_frame=NS(target_frames=[frame])),
+    )
+    _align_tool_frame(config, make_recipe("test", 0, 1, 600))
+    assert frame.offset.pos == tuple(offset.pos)
+    config.actions.arm_action.body_offset.pos = [0, 0, 0.2]
+    with pytest.raises(ValueError, match="tool frame"):
+        _align_tool_frame(config, make_recipe("test", 0, 1, 600))
+
+
+def test_native_fault_is_retained_before_launcher_consumes_exception(
+    tmp_path, monkeypatch
+):
+    from npa.workflows import physical_augmentation_runtime as runtime
+    from npa.workflows.franka_rl_validity import SimulationValidityError
+
+    evidence = {"constraint": "native_limit_exceeded", "joint_name": "panda_joint1"}
+
+    def fail(*args):
+        raise SimulationValidityError(evidence)
+
+    monkeypatch.setattr(runtime, "_collect", fail)
+    with pytest.raises(SimulationValidityError):
+        runtime._collect_with_fault_record(None, {}, "displaced", tmp_path)
+    assert (
+        json.loads((tmp_path / "simulation-validity-failure.json").read_text())
+        == evidence
+    )
+
+
+def test_hold_requires_consecutive_contact_geometry_and_low_velocity():
+    recipe = make_recipe("test", 0, 1, 600)
+    arrays = {
+        "next_object": np.tile([0.5, 0.0, 0.2], (60, 1)),
+        "next_tcp": np.tile([0.5, 0.0, 0.2], (60, 1)),
+        "next_velocity": np.zeros((60, 3)),
+        "actions": np.tile([0.5, 0.0, 0.2, 1, 0, 0, 0, -1], (60, 1)),
+    }
+    arrays["next_velocity"][29] = [0, 0, 1]  # A launched cube breaks the streak.
+    arrays["actions"][59, -1] = 1  # Opening the gripper breaks it again.
+    mask = accepted_steps(arrays, np.array([0.5, 0.0, 0.025]), recipe["success"])
+    assert longest_hold(mask) == 29
+    arrays["next_tcp"][:] += 0.2  # A distant, unsupported object cannot qualify.
+    assert not accepted_steps(
+        arrays, np.array([0.5, 0, 0.025]), recipe["success"]
+    ).any()
+
+
+@pytest.fixture
+def recording(tmp_path):
+    count = 32
+    state = np.arange((count + 1) * 9, dtype=np.float32).reshape(count + 1, 9) / 1000
+    rgb = np.zeros((count, 720, 1280, 3), dtype=np.uint8)
+    rgb[:, :20, :20] = 200
+    rgb[:, 100:120, 100:120, 0] = np.arange(count)[:, None, None]
+    arrays = {
+        "state": state[:-1],
+        "next_state": state[1:],
+        "rgb": rgb,
+        "actions": np.tile([0.5, 0.0, 0.2, 1, 0, 0, 0, -1], (count, 1)),
+        "next_object": np.tile([0.5, 0.0, 0.2], (count, 1)),
+        "object": np.tile([0.5, 0.0, 0.2], (count, 1)),
+        "tcp": np.tile([0.5, 0.0, 0.2], (count, 1)),
+        "next_tcp": np.tile([0.5, 0.0, 0.2], (count, 1)),
+        "next_velocity": np.zeros((count, 3)),
+        "timestamp": np.arange(count) * 0.02,
+    }
+    arrays["object"][0, 2] = 0.025
+    for name, value in arrays.items():
+        np.save(tmp_path / f"{name}.npy", value)
+    result = {
+        "condition": "nominal",
+        "attempt": 0,
+        "seed": 0,
+        "length": count,
+        "terminated": False,
+        "initial_object_m": [0.5, 0, 0.025],
+        "success": True,
+        "longest_hold_steps": count,
+    }
+    (tmp_path / "result.json").write_text(json.dumps(result))
+    return tmp_path, make_recipe("test", 0, 1, 600)
+
+
+def test_verified_recording_retains_measured_outcome_and_hashes(recording):
+    root, recipe = recording
+    result = verify_episode(root, recipe, 0.02)
+    assert result["success"]
+    assert set(result["files"]) == {
+        "rgb.npy",
+        "state.npy",
+        "actions.npy",
+        "next_state.npy",
+        "object.npy",
+        "tcp.npy",
+        "next_object.npy",
+        "next_tcp.npy",
+        "next_velocity.npy",
+        "timestamp.npy",
+    }
+    assert all(len(value) == 64 for value in result["files"].values())
+
+
+@pytest.mark.parametrize(
+    "channel,mutation,expected",
+    [
+        ("state", "reset", "discontinuous"),
+        ("object", "reset", "discontinuous"),
+        ("timestamp", "offset", "Timestamps"),
+        ("next_velocity", "nan", "Nonfinite"),
+        ("actions", "short", "misaligned"),
+        ("actions", "quaternion", "quaternion"),
+        ("rgb", "frozen", "frozen"),
+        ("next_velocity", "flying", "outcome"),
+    ],
+)
+def test_tampered_capture_fails_closed(recording, channel, mutation, expected):
+    root, recipe = recording
+    path = root / f"{channel}.npy"
+    data = np.load(path)
+    if mutation == "short":
+        data = data[:-1]
+    elif mutation == "frozen":
+        data[:] = data[0]
+    elif mutation == "quaternion":
+        data[:, 3:7] = 0
+    elif mutation == "nan":
+        data[0, 0] = np.nan
+    elif mutation == "flying":
+        data[:, 2] = 1
+    else:
+        data[1] += 1
+    np.save(path, data)
+    with pytest.raises(ValueError, match=expected):
+        verify_episode(root, recipe, 0.02)
+
+
+def test_terminated_attempt_cannot_be_exported_as_success(recording):
+    root, recipe = recording
+    path = root / "result.json"
+    result = json.loads(path.read_text())
+    result["terminated"] = True
+    path.write_text(json.dumps(result))
+    with pytest.raises(ValueError, match="outcome"):
+        verify_episode(root, recipe, 0.02)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("conditions", {"../../outside": {}}),
+        ("task", "unqualified-task"),
+        ("success", {"hold_steps": 0}),
+        ("episodes_per_condition", True),
+    ],
+)
+def test_recipe_cannot_change_paths_task_or_acceptance(tmp_path, field, value):
+    recipe = make_recipe("test", 0, 1, 600)
+    recipe[field] = value
+    path = tmp_path / "recipe.json"
+    path.write_text(json.dumps(recipe))
+    with pytest.raises(ValueError):
+        read_recipe(path)
+
+
+def test_zero_exit_without_native_receipt_cannot_publish_completion(
+    tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+    from npa.workflows import physical_augmentation
+
+    monkeypatch.setattr(
+        physical_augmentation.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=0),
+    )
+    with pytest.raises(RuntimeError, match="completion record"):
+        physical_augmentation._collect_condition(tmp_path, tmp_path, "nominal")
+
+
+def test_zero_success_retains_attempts_without_completed_report(tmp_path, monkeypatch):
+    from npa.workflows import physical_augmentation_report
+
+    recipe = make_recipe("test", 0, 1, 600)
+    (tmp_path / "recipe.json").write_text(json.dumps(recipe))
+    attempts = [
+        {"condition": condition, "success": False} for condition in recipe["conditions"]
+    ]
+    monkeypatch.setattr(
+        physical_augmentation_report, "_verified_attempts", lambda *args: (attempts, {})
+    )
+    output = tmp_path / "output"
+    with pytest.raises(ValueError, match="No physically accepted"):
+        physical_augmentation_report.report_results(tmp_path, output)
+    assert json.loads((output / "attempts.json").read_text())["attempted"] == 4
+    assert not (output / "report.json").exists()
+
+
+def test_failed_stage_uses_physical_augmentation_identity(tmp_path):
+    from npa.workflows.physical_augmentation import main
+
+    destination = tmp_path / "prepared"
+    with pytest.raises(ValueError):
+        main(
+            [
+                "prepare",
+                "--run-id",
+                "test",
+                "--episodes-per-condition",
+                "0",
+                "--output-path",
+                str(destination),
+            ]
+        )
+    failures = list(tmp_path.glob("prepared-failures/*/failure.json"))
+    assert len(failures) == 1
+    assert (
+        json.loads(failures[0].read_text())["schema"]
+        == "npa.physical-augmentation.stage-failure.v1"
+    )
+    assert not destination.exists()

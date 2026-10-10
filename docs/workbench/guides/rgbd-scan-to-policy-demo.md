@@ -1,6 +1,6 @@
 # Run the public scan-to-policy demo
 
-The [sample workflow](../../../workflows/testing/rgbd-scan-to-policy-demo.yaml)
+The [sample workflow](../../../workflows/main/rgbd-scan-to-policy-demo.yaml)
 downloads the complete public TUM `fr3/long_office_household` RGB-D sequence,
 reconstructs its measured surfaces, packages matching Isaac collision geometry,
 measures valid navigation resets, trains a policy, evaluates held-out goals, and
@@ -8,7 +8,8 @@ writes an offline HTML report. There is no manual capture conversion, case JSON,
 checkpoint preparation, or cross-branch assembly.
 
 Use an existing configured Workbench project with writable object storage and
-an RTX PRO 6000 Kubernetes execution target. Select independently qualified CPU
+an RTX PRO 6000 Kubernetes execution target with the NVIDIA graphics runtime.
+Select independently qualified CPU
 and Isaac images first; set `NPA_SCAN_CPU_IMAGE` and `NPA_SCAN_ISAAC_IMAGE` to
 digest-only `registry/repository@sha256:<64-hex-digest>` references:
 
@@ -23,11 +24,11 @@ The shared demo launcher performs normal workflow preflight and stages this
 checkout. The underlying workflow can also be submitted directly:
 
 ```bash
-npa workbench workflow validate-spec workflows/testing/rgbd-scan-to-policy-demo.yaml
-npa workbench workflow plan-spec workflows/testing/rgbd-scan-to-policy-demo.yaml \
+npa workbench workflow validate-spec workflows/main/rgbd-scan-to-policy-demo.yaml
+npa workbench workflow plan-spec workflows/main/rgbd-scan-to-policy-demo.yaml \
   --run-id preview --var "assembly_image=$NPA_SCAN_CPU_IMAGE" \
   --var "isaac_image=$NPA_SCAN_ISAAC_IMAGE"
-npa workbench workflow submit workflows/testing/rgbd-scan-to-policy-demo.yaml \
+npa workbench workflow submit workflows/main/rgbd-scan-to-policy-demo.yaml \
   --run-id '<unique-run-id>' --project '<project-alias>' --runtime \
   --infra 'k8s/<rtx-context>' --stage-src --var 'bucket=<your-bucket>' \
   --var "assembly_image=$NPA_SCAN_CPU_IMAGE" \
@@ -37,7 +38,7 @@ npa workbench workflow submit workflows/testing/rgbd-scan-to-policy-demo.yaml \
 
 The configured project, credentials, GPU capacity, and applicable Isaac runtime
 access must be ready. The workflow fetches the public sample itself; it requires
-no Hugging Face token. The CPU image must supply `/opt/npa/venv/bin/python` and
+no Hugging Face token. The CPU image must supply `/opt/npa/sim/venv/bin/python` and
 the Open3D/SciPy stack. USD assembly adds `usd-core==26.8` into an isolated
 temporary site directory. The Isaac image must support the native physics,
 training, and renderer workload. `reconstruction_image` defaults to the supplied
@@ -51,6 +52,19 @@ An immutable reference binds provenance; it does not establish image acceptance.
 Follow the [image qualification procedure](../container-image-catalog.md)
 before selecting replacement bytes. Historical GPU results below qualify the
 recorded source and images only.
+
+Provision new targets with `--gpu-workload-profile rtx-rendering`, or verify an
+existing target's GLX/EGL library mounts and NVIDIA Vulkan device before running.
+The GPU pods select `runtimeClassName: nvidia` and request all driver capabilities.
+CUDA availability alone does not establish rendering support: training can finish
+on a compute-only target while the final camera-based evaluation fails.
+
+The recorded promotion run selected repaired development images for SONIC and
+Isaac Lab. Their publication checks and the native qualification below remain
+historical evidence. This workflow now requires explicitly supplied immutable
+operator images; neither that record nor an image digest promotes a replacement
+to a supported release. The historical images used by the earlier public demo
+remain quarantined.
 
 ## What it runs
 
@@ -123,12 +137,35 @@ transfer, four-camera policy learning, or physical-robot performance. Use the
 [generic calibrated capture workflow](rgbd-scan-to-isaac.md) for other sensor
 captures; the measured sample reset preset intentionally rejects another scan.
 
-The prior component GPU evidence is described in that guide. The combined run's
-[archived readiness record](../evidence/workflow-defaults-807/rgbd-scan-to-policy-demo.readiness.json)
-remains bound to its original workflow bytes. The
-[current readiness record](../../../workflows/testing/rgbd-scan-to-policy-demo.readiness.json)
-awaits replacement-image workload qualification; validating or planning does not
-establish native execution success.
+## Recorded full-run qualification
+
+The [fresh promotion evidence](../evidence/rgbd-scan-to-policy-promotion.json)
+records 500 PPO updates, 4,000 environments and 16 million transitions, followed
+by 3,386 successful held-out routes out of 4,000 (84.65%). The success gate stayed
+at 80%. Every episode reached its terminal outcome by step 20 within the configured
+300-step maximum. Both training and evaluation passed their four native controls;
+independent process observations bound the running CUDA process and container to
+the recorded Isaac image digest. This is historical qualification for the
+recorded source and development-image inputs, not qualification of this
+operator-override workflow or any replacement image.
+
+The first seven stages completed on a CUDA-capable RTX target. Its evaluation
+failed before scoring because Vulkan graphics were unavailable. A separate
+evaluation recovery used the exact sealed checkpoint, recipe and source bundle
+on an RTX target that passed GLX, EGL and NVIDIA Vulkan checks. It wrote fresh
+evaluation/report prefixes and preserved the failed attempt. The workflow
+explicitly selects the NVIDIA graphics runtime. This was a recovered
+pipeline, not a single uninterrupted successful run.
+
+The standalone HTML preserves the native report's measurements and eight frames
+of the scored focal episode. Offline playback, desktop/mobile layout, native
+frame inspection and confidentiality checks passed. It demonstrates held-out
+navigation within this reconstructed scene. The [earlier public demo](../evidence/public-demos/real-to-sim.json)
+is separate historical evidence. See the
+[readiness record](../../../workflows/main/rgbd-scan-to-policy-demo.readiness.json)
+for the source and runtime scope. Each new run still requires current storage,
+credentials, explicit image qualification, and GPU preflight; local validation
+and planning do not establish those prerequisites.
 
 ## Sample attribution
 

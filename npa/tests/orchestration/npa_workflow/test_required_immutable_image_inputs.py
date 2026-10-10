@@ -31,6 +31,12 @@ EXACT_INPUT_SPECS = (
 GOVERNED_SPECS = ("franka-rl-transfer.yaml",)
 
 
+def _workflow_path(name):
+    """Return the catalog location for an exact-image workflow fixture."""
+    directory = "main" if name == "rgbd-scan-to-policy-demo.yaml" else "testing"
+    return ROOT / "workflows" / directory / name
+
+
 def _spec(tmp_path, config):
     path = tmp_path / "images.yaml"
     path.write_text(
@@ -197,13 +203,13 @@ def test_tagged_digest_explains_the_required_canonical_form(tmp_path):
 
 @pytest.mark.parametrize("name", EXACT_INPUT_SPECS)
 def test_shipped_exact_image_consumers_require_operator_input_before_planning(name):
-    spec = load_spec(ROOT / "workflows/testing" / name)
+    spec = load_spec(_workflow_path(name))
     with pytest.raises(NpaWorkflowError, match="requires an explicit.*--var"):
         interpreter.build_plan(spec, run_id="missing-images")
 
 
 def _supplied_spec(name):
-    spec = load_spec(ROOT / "workflows/testing" / name)
+    spec = load_spec(_workflow_path(name))
     images = {
         "isaac_image": ISAAC,
         "navigation_image": ISAAC,
@@ -364,9 +370,7 @@ def test_no_shipped_workflow_automatically_selects_withdrawn_isaac_or_sonic_byte
 def test_historical_records_remain_bound_and_current_records_await_workload_proof(name):
     archived = ROOT / "docs/workbench/evidence/workflow-defaults-807" / name
     old = load_readiness_record(archived.with_suffix(".readiness.json"))
-    current = load_readiness_record(
-        (ROOT / "workflows/testing" / name).with_suffix(".readiness.json")
-    )
+    current = load_readiness_record(_workflow_path(name).with_suffix(".readiness.json"))
     assert old["workflow_sha256"] != current["workflow_sha256"]
     assert current["planning"]["task_fidelity"]["status"] == "unverified"
     assert current["prerequisites"]["source_image"]["status"] == "unverified"
