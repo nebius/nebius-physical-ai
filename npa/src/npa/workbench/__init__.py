@@ -22,6 +22,7 @@ __all__ = [
     "lerobot",
     "manifest",
     "mjlab",
+    "ros2",
     "open3d",
     "molmoact",
     "openvla",
