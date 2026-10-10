@@ -47,6 +47,7 @@ Generated from `npa --help`. Run `bash scripts/build_docs.sh` after CLI changes.
 - [npa workbench lerobot](lerobot.md)
 - [npa workbench lichtblick](lichtblick.md)
 - [npa workbench ltx2](ltx2.md)
+- [npa workbench marble](marble.md)
 - [npa workbench mjlab](mjlab.md)
 - [npa workbench molmoact](molmoact.md)
 - [npa workbench namespace](namespace.md)
