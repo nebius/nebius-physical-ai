@@ -1,8 +1,8 @@
 # EmbodiedGen V2: image to rigid object
 
 EmbodiedGen is a Tier-1, operator-private BYOF workflow, not a persistent
-service or a new `npa workbench embodiedgen` command. The reusable control-plane
-surface is [`byof-embodiedgen.yaml`](../../workflows/testing/byof-embodiedgen.yaml):
+service or a dedicated Workbench subcommand. The reusable control-plane surface
+is [`byof-embodiedgen.yaml`](../../workflows/testing/byof-embodiedgen.yaml):
 the generic `npa workbench workflow` CLI plans, renders, submits, monitors, and
 cancels it through SkyPilot; the generic workflow SDK reads its durable state.
 This avoids a parallel orchestration path while keeping the workflow usable by a
