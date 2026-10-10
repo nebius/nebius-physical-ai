@@ -17,6 +17,9 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 
 | Workflow | Guide | Purpose |
 | --- | --- | --- |
+| [`physical-prompt-comparison.yaml`](physical-prompt-comparison.yaml) | [Guide](../../docs/workbench/physical-prompt-comparison.md) | Compare baseline prompts, physical descriptions, and negative guidance across six scenarios and two seeds, with full Wan 2.1 14B videos, blinded judgments, and standalone HTML. |
+| [`digital-twin-campus-render.yaml`](digital-twin-campus-render.yaml) | [Campus rendering guide](../../docs/workbench/guides/digital-twin.md#render-the-industrial-campus-on-rtx) | Authored industrial campus rendered with native RTX OptiX, recoverable immutable publication and offline HTML |
+| [`digital-twin-cuda-render.yaml`](digital-twin-cuda-render.yaml) | [CUDA rendering guide](../../docs/workbench/guides/digital-twin.md#render-the-authored-cuda-reference-scene) | Authored factory cell rendered with native Cycles CUDA, OpenUSD/glTF and offline HTML |
 | [`content-agents-rigid-object.yaml`](content-agents-rigid-object.yaml) | [Guide](../../docs/workbench/content-agents.md) | NVIDIA Content Agents with a public image and runtime-fetched OVRTX: source USD → real Material/Physics Agents + OVRTX → upstream validation → rigid Isaac object USDZ/adapter |
 | [`cosmos-fetch.yaml`](cosmos-fetch.yaml) | [Access setup](../../docs/workbench/cosmos3-access-preflight.md) | Check Cosmos source/checkpoint access and materialize a local cache |
 | [`cosmos-synth-fanout-curation.yaml`](cosmos-synth-fanout-curation.yaml) | [General workflow guide](../../docs/workbench/npa-workflow-guide.md) | Cosmos synth fan-out + curation |

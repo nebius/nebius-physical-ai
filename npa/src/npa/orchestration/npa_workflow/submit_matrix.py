@@ -72,6 +72,33 @@ class SubmitLiveCase:
 
 SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
+        "physical-prompt-comparison.yaml",
+        "multi",
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "NEBIUS_TOKEN_FACTORY_KEY",
+        ),
+        runtime=True,
+        requires_token_factory=True,
+        expected_parallel_tasks=2,
+        notes="Full Wan 2.1 physical-prompt comparison: six scenarios, two seeds, three arms, blinded video judgment.",
+    ),
+    SubmitLiveCase(
+        "digital-twin-campus-render.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        notes="RTX OptiX campus rendering, native geometry counts, four camera routes and private offline HTML.",
+    ),
+    SubmitLiveCase(
+        "digital-twin-cuda-render.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        notes="Native Blender Cycles CUDA reference scene, OpenUSD/glTF export, and offline HTML with bound rendering evidence.",
+    ),
+    SubmitLiveCase(
         "video-variant-sweep.yaml",
         "multi",
         runtime=True,
