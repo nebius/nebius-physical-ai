@@ -538,3 +538,20 @@ For an offline illustration of the policy concepts, see the
 [team-access example](../demos/team-access.html). It is clearly simulated,
 contains no live endpoint or credential, makes no network request, and is not a
 product interface or deployment proof.
+
+## Maintainer: preserve the execution identity contract
+
+The service reuses the canonical workflow runtime and its SkyPilot executor.
+The [engine adapter](../../npa/src/npa/workbench/team/engine.py) supplies policy,
+ownership, storage, and durable run state; SkyPilot remains the workload
+orchestrator.
+
+The adapter intentionally disables the runtime's legacy job-name lookup.
+That lookup protects callers that parse job IDs from CLI output. Shared
+execution instead obtains structured job IDs from `sky.get(request_id)` through
+the [SDK bridge](../../npa/src/npa/workbench/team/sky_bridge.py). The
+[backend](../../npa/src/npa/workbench/team/sky_backend.py) records those IDs
+against a server-issued wave ID and returns that wave ID to the runtime.
+Status and cancellation resolve through the recorded mapping. Replacing this
+path with text-parsed IDs requires restoring an equivalent identity check;
+the disabled legacy lookup must not be carried over without one.
