@@ -50,7 +50,8 @@ def list_presets_cmd(
 
     from npa.orchestration.npa_workflow.presets import available_presets
 
-    payload = {"presets": list(available_presets()), "count": len(available_presets())}
+    presets = available_presets("sim2real")
+    payload = {"presets": list(presets), "count": len(presets)}
     _emit(payload, output_format)
 
 

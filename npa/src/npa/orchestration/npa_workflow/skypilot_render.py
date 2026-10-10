@@ -36,6 +36,21 @@ API_ONLY_VLM_AUDIT_TOOLS = frozenset(
 # SkyPilot's k8s apt-ssh runtime setup fails inside npa-cosmos. Use the default
 # SkyPilot image and stage npa via NPA_SRC_S3_URI (or an image override).
 TOOL_REF_IMAGE_TOOL: dict[str, str | None] = {
+    "workbench.marble.capture": "envgen",
+    "workbench.marble.scan": "envgen",
+    "workbench.marble.rover_collect": "envgen",
+    "workbench.marble.quadruped_collect": "envgen",
+    "workbench.marble.pallet_benchmark": "detection-training",
+    "workflow.policy_public.prepare": "fiftyone",
+    "workflow.policy_public.curate": "fiftyone",
+    "workflow.policy_public.split": "fiftyone",
+    "workflow.policy_public.train": "lerobot",
+    "workflow.policy_public.evaluate": "lerobot",
+    "workflow.policy_public.gate": "fiftyone",
+    "workflow.policy_public.export": "fiftyone",
+    "workflow.policy_public.serve": "lerobot",
+    "workflow.policy_public.report": "fiftyone",
+    "workflow.policy_training.curate": "fiftyone",
     "workflow.video_sweep.generate": "cosmos2-transfer",
     "workflow.video_sweep.generate_cosmos3": "cosmos3",
     "workflow.habitat_sim.smoke": "habitat-sim",
@@ -105,6 +120,9 @@ HABITAT_SIM_ACCELERATOR = "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
 OPENPI_TERMS_ENV = "NPA_OPENPI_ACCEPT_GEMMA_TERMS"
 
 SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
+    "workbench.marble.pallet_preflight": ("WLT_API_KEY",),
+    "workflow.policy_public": ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+    "workflow.policy_training": ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
     "workflow.video_sweep.prepare": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "workflow.video_sweep.review": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "workflow.video_sweep.generate": ("HF_TOKEN",),
@@ -194,6 +212,46 @@ DECLARATIVE_PIP_EXTRAS = frozenset({"viz"})
 #: `huggingface_hub`, and the interpreter running npa in a vendor image is not the vendor's own
 #: venv, so the library is not necessarily importable there (live job 244).
 TOOL_REF_PIP_REQUIREMENTS: dict[str, tuple[tuple[str, str], ...]] = {
+    "workbench.marble.report": (("python:imageio_ffmpeg", "imageio-ffmpeg==0.6.0"),),
+    "workbench.marble.quadruped_collect": (
+        ("python:gsplat", "gsplat==1.5.3"),
+        (
+            'python:spz;assert(hasattr(spz,"load_spz"))',
+            "spz @ git+https://github.com/nianticlabs/spz.git@affd0ecea7fbb4c265ee119475af7ee5b2997482",
+        ),
+        ('python:warp;assert(warp.__version__=="1.17.0")', "warp-lang==1.17.0"),
+        ('python:trimesh;assert(trimesh.__version__=="4.12.2")', "trimesh==4.12.2"),
+        ("python:pybullet", "pybullet==3.2.7"),
+        ("python:collada", "pycollada==0.9.3"),
+        ("python:defusedxml", "defusedxml==0.7.1"),
+        ("python:onnxruntime", "onnxruntime==1.23.2"),
+    ),
+    "workbench.marble.navigation_prepare": (
+        ('python:trimesh;assert(trimesh.__version__=="4.12.2")', "trimesh==4.12.2"),
+        ("python:pybullet", "pybullet==3.2.7"),
+        ("python:pxr.Usd;assert(pxr.Usd.GetVersion()==(0,26,8))", "usd-core==26.8"),
+    ),
+    "workbench.marble.rover_collect": (
+        ("python:gsplat", "gsplat==1.5.3"),
+        (
+            'python:spz;assert(hasattr(spz,"load_spz"))',
+            "spz @ git+https://github.com/nianticlabs/spz.git@affd0ecea7fbb4c265ee119475af7ee5b2997482",
+        ),
+        ('python:warp;assert(warp.__version__=="1.17.0")', "warp-lang==1.17.0"),
+        ('python:trimesh;assert(trimesh.__version__=="4.12.2")', "trimesh==4.12.2"),
+        ("python:pybullet", "pybullet==3.2.7"),
+    ),
+    "workbench.marble.capture": (
+        ("python:gsplat", "gsplat==1.5.3"),
+        (
+            'python:spz;assert(hasattr(spz,"load_spz"))',
+            "spz @ git+https://github.com/nianticlabs/spz.git@affd0ecea7fbb4c265ee119475af7ee5b2997482",
+        ),
+    ),
+    "workbench.marble.scan": (
+        ('python:warp;assert(warp.__version__=="1.17.0")', "warp-lang==1.17.0"),
+        ('python:trimesh;assert(trimesh.__version__=="4.12.2")', "trimesh==4.12.2"),
+    ),
     "workbench.lerobot.transfer_prepare": (
         ("python:huggingface_hub", "huggingface_hub>=0.23,<1.0"),
         ("python:pyarrow", "pyarrow>=15,<22"),
@@ -275,6 +333,15 @@ PYTHON_MODULE_PROBE = "python:"
 #: When a candidate exists, setup installs npa INTO it and records it as the stage interpreter,
 #: so the tool and the vendor library share one environment.
 TOOL_REF_VENDOR_INTERPRETERS: dict[str, tuple[str, ...]] = {
+    "workflow.policy_public.prepare": ("/opt/fiftyone/venv/bin/python",),
+    "workflow.policy_public.curate": ("/opt/fiftyone/venv/bin/python",),
+    "workflow.policy_public.split": ("/opt/fiftyone/venv/bin/python",),
+    "workflow.policy_public.train": ("/opt/lerobot/venv/bin/python",),
+    "workflow.policy_public.evaluate": ("/opt/lerobot/venv/bin/python",),
+    "workflow.policy_public.gate": ("/opt/fiftyone/venv/bin/python",),
+    "workflow.policy_public.export": ("/opt/fiftyone/venv/bin/python",),
+    "workflow.policy_public.serve": ("/opt/lerobot/venv/bin/python",),
+    "workflow.policy_public.report": ("/opt/fiftyone/venv/bin/python",),
     "workbench.mjlab": ("/usr/local/bin/python",),
     # The XR1 spec pins the upstream PyTorch CUDA image explicitly. Its adapter
     # creates a separate vendor venv before installing XR1's pinned packages.
@@ -1506,7 +1573,11 @@ def default_npa_setup() -> str:
         "    return 1\n"
         "  fi\n"
         "}\n"
-        "if ! command -v npa >/dev/null 2>&1; then\n"
+        # An explicit staged overlay is the complete source of truth. Thin vendor
+        # images may contain a partial /opt/npa tree without the build hook; do
+        # not try installing it before the requested overlay can be fetched.
+        "if ! command -v npa >/dev/null 2>&1 && { "
+        '[ "$NPA_SRC_OVERLAY" != "1" ] || [ -z "$NPA_SRC_S3_URI" ]; }; then\n'
         # The active runtime-fetch images intentionally ship the installable
         # project under /opt/npa but not a shell-visible `npa` launcher. Recording
         # that tree alone is insufficient: the first task then skips the legacy
@@ -1858,6 +1929,22 @@ def _habitat_sim_setup(config: Mapping[str, Any]) -> str:
     return HABITAT_SIM_IMMUTABLE_SETUP
 
 
+def _marble_runtime_setup() -> str:
+    """Keep staged Marble dependencies writable while inheriting baked CUDA libraries."""
+    return (
+        "set -e\n"
+        "/opt/npa/venv/bin/python -m venv --system-site-packages /tmp/npa-marble-venv\n"
+        "/opt/npa/venv/bin/python - <<'PY'\n"
+        "import pathlib, site, subprocess\n"
+        "target = subprocess.check_output(['/tmp/npa-marble-venv/bin/python', '-c', "
+        "'import site; print(site.getsitepackages()[0])'], text=True).strip()\n"
+        "pathlib.Path(target, 'baked-cuda.pth').write_text('\\n'.join(site.getsitepackages()))\n"
+        "PY\n"
+        "export PATH=/tmp/npa-marble-venv/bin:$PATH\n"
+        "export NPA_BAKED_PYTHON=/tmp/npa-marble-venv/bin/python\n"
+    )
+
+
 def render_setup_for_tool(
     tool_ref: str,
     *,
@@ -1983,7 +2070,15 @@ def render_setup_for_tool(
         )
     from npa.orchestration.npa_workflow.nurec_setup import render_nurec_adapter_setup
 
-    parts = [render_nurec_adapter_setup(tool_ref), default_npa_setup()]
+    parts = [render_nurec_adapter_setup(tool_ref)]
+    if tool_ref in {
+        "workbench.marble.capture",
+        "workbench.marble.scan",
+        "workbench.marble.rover_collect",
+        "workbench.marble.quadruped_collect",
+    }:
+        parts.append(_marble_runtime_setup())
+    parts.append(default_npa_setup())
     if tool_ref == "workbench.token_factory.robot_sdg":
         parts.append(
             'if [ "$(id -u)" = 0 ]; then\n'
@@ -2540,6 +2635,15 @@ def _build_skypilot_task_doc(
             ],
             separators=(",", ":"),
         )
+    if tool_ref.startswith("workflow.policy_public."):
+        from npa.orchestration.npa_workflow.runtime import _workflow_identity
+
+        envs["NPA_WORKFLOW_SHA256"] = _workflow_identity(spec)
+        envs["NPA_BAKED_PYTHON"] = tool_vendor_interpreters(tool_ref)[0]
+        envs["NVIDIA_DRIVER_CAPABILITIES"] = "all"
+        envs["MUJOCO_GL"] = "egl"
+        envs["PYOPENGL_PLATFORM"] = "egl"
+        envs["FIFTYONE_DO_NOT_TRACK"] = "true"
     attempt_id = str(options.execution_attempt_id or "").strip()
     if not attempt_id:
         material = "\0".join((spec.name, run_id, str(scheduler_task["name"]))).encode(
