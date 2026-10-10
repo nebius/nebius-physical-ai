@@ -1764,6 +1764,26 @@ def submit_cmd(
     except Exception as exc:
         _fail(str(exc))
         return
+    if plan_only and not is_npa_spec:
+        # Raw SkyPilot YAML has no NPA renderer.  Unlike npa.workflow planning,
+        # it must not fall through to durable-state instrumentation or the
+        # provisioning transaction: SkyPilot has no dry-run launch API.
+        planned_payload = {
+            "status": "PLANNED",
+            "lifecycle_state": "PLAN_ONLY",
+            "submission_state": "NOT_SUBMITTED",
+            "run_id": resolved_run_id,
+            "workflow": "raw-skypilot-yaml",
+        }
+        if output_format == OutputFormat.json:
+            typer.echo(json.dumps(planned_payload, indent=2, sort_keys=True))
+        else:
+            typer.echo("status: PLANNED")
+            typer.echo("lifecycle_state: PLAN_ONLY")
+            typer.echo("submission_state: NOT_SUBMITTED")
+            typer.echo(f"run_id: {resolved_run_id}")
+            typer.echo("workflow: raw-skypilot-yaml")
+        return
     routes_at_isaac = False
     if not plan_only and not accept_eula:
         routes_at_isaac = (
