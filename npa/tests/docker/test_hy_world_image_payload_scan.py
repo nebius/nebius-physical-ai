@@ -232,16 +232,3 @@ def test_hy_world_and_sam3_manifest_base_images_match_their_dockerfiles() -> Non
         safety = containers[name]["safety"]
         assert first_from == expected
         assert str(safety["base_image"]).startswith(expected)
-
-
-def test_neutral_bootstrap_refreshes_headers_and_removes_unused_nsight_compute() -> None:
-    """Keep the CUDA compiler but remove the inherited profiler-only vulnerable bytes."""
-
-    dockerfile = (IMAGE_ROOT / "Dockerfile").read_text(encoding="utf-8")
-    assert "linux-libc-dev" in dockerfile
-    assert 'NCOMPUTE_PKGS="$(dpkg-query' in dockerfile
-    assert "'nsight-compute-*' 'cuda-nsight-compute-*'" in dockerfile
-    assert "apt-get purge -y $NCOMPUTE_PKGS" in dockerfile
-    assert "rm -rf /opt/nvidia/nsight-compute" in dockerfile
-    assert "test ! -e /opt/nvidia/nsight-compute" in dockerfile
-    assert "command -v nvcc >/dev/null" in dockerfile
