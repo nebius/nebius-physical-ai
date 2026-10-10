@@ -214,6 +214,7 @@ def test_observable_shadow_or_mutation_never_qualifies_the_option_binding(
         b'import typer\n# ngc_api_key: str = typer.Option("", "--ngc-api-key")\n',
         b'import typer\ndef command(ngc_api_key: str = typer.Option("", "--ngc-api-key")):\n    INVALID !\n',
         b'import typer\n\xff\ndef command(ngc_api_key: str = typer.Option("", "--ngc-api-key")):\n    pass\n',
+        b'import typer\n\x00\ndef command(ngc_api_key: str = typer.Option("", "--ngc-api-key")):\n    pass\n',
         b'def command(ngc_api_key: str = typer.Option("", "--ngc-api-key")):\n    pass\nimport typer\n',
     ],
 )

@@ -520,7 +520,7 @@ def _option_value(data: bytes, separator: bytes) -> bool:
                 and _option_call(statement.value)
             ):
                 return True
-        except (UnicodeDecodeError, SyntaxError, RecursionError):
+        except (UnicodeDecodeError, SyntaxError, RecursionError, ValueError):
             pass
         if not candidate.endswith((b")", b"]", b"}")):
             return False
@@ -646,7 +646,7 @@ def _option_parameter_offsets(data: bytes) -> set[int]:
         return set()
     try:
         tree = ast.parse(data.decode("utf-8"))
-    except (UnicodeDecodeError, SyntaxError, RecursionError):
+    except (UnicodeDecodeError, SyntaxError, RecursionError, ValueError):
         return set()
     imported = _typer_binding(tree)
     if imported is None:
@@ -767,7 +767,7 @@ def _nonliteral_value(data: bytes, separator: bytes) -> bool:
                 expression = None
             else:
                 expression = ast.parse(source, mode="eval").body
-        except (UnicodeDecodeError, SyntaxError, RecursionError):
+        except (UnicodeDecodeError, SyntaxError, RecursionError, ValueError):
             expression = None
         if _source_reference(expression):
             return True
