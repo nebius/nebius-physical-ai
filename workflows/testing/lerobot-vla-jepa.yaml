@@ -1,0 +1,136 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: lerobot-vla-jepa
+  description: >-
+    Five connected native LeRobot VLA-JEPA stages: task-disjoint LIBERO data
+    preparation, upstream fine-tuning, held-out simulator rollouts, numerical
+    evaluation, and factual Rerun/checkpoint provenance. This is not a physical
+    robot, convergence, or paper-benchmark claim.
+
+config:
+  bucket: example-bucket
+  prefix: "lerobot-vla-jepa/{{run.id}}"
+  # This sentinel is intentionally non-routable. Operators must supply the
+  # separately built immutable private candidate with --image-override; the
+  # generic LeRobot 0.5.1/0.6.0 images do not contain this VLA-JEPA capability.
+  vla_jepa_image: "registry.invalid/npa-lerobot-vla-jepa@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  # This candidate ships the NPA adapter and its LeRobot vendor runtime.  Operators
+  # must bind source_sha to the exact commit attested by their immutable digest.
+  require_baked_npa: true
+  # Deliberately empty: rendering rejects this baked workflow until the operator
+  # supplies --var source_sha=<exact-40-hex-commit> for the candidate image.
+  source_sha: ""
+  dataset_repo: HuggingFaceVLA/libero
+  dataset_revision: 86958911c0f959db2bbbdb107eb3e17c5f9c798e
+  heldout_task_ids: "[0, 1]"
+  train_fraction: "0.95"
+  seed: "42"
+  train_steps: "30000"
+  train_batch_size: "32"
+  num_workers: "4"
+  libero_suite: libero_spatial
+  rollout_episodes: "10"
+  rollout_batch_size: "5"
+  rollout_seed: "1000"
+
+  prepared_uri: "s3://{{config.bucket}}/{{config.prefix}}/prepared/"
+  training_uri: "s3://{{config.bucket}}/{{config.prefix}}/training/"
+  rollout_uri: "s3://{{config.bucket}}/{{config.prefix}}/rollouts/"
+  evaluation_uri: "s3://{{config.bucket}}/{{config.prefix}}/evaluation/"
+  report_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 32Gi
+    image: "{{config.vla_jepa_image}}"
+  gpu:
+    cloud: kubernetes
+    # The verified private target supplies RTX PRO 6000 Blackwell GPUs.  The
+    # exact candidate's CUDA closure is separately required to prove sm_120 at
+    # runtime; this request must not mislabel that qualification as B200.
+    accelerators: RTXPRO6000:1
+    cpus: 16
+    memory: 96Gi
+    image: "{{config.vla_jepa_image}}"
+
+initial: prepare
+
+states:
+  prepare:
+    description: Fetch the pinned LIBERO dataset, keep held-out tasks out of training, and seal training-only numeric statistics.
+    toolRef: workbench.lerobot.vla_jepa.prepare
+    resources: cpu
+    outputs:
+      - uri: "{{config.prepared_uri}}prepare.json"
+        schema: npa.lerobot-vla-jepa.prepare.v1
+      - uri: "{{config.prepared_uri}}checksums.json"
+        schema: npa.checksums.sha256.v1
+    next: train
+
+  train:
+    description: Fine-tune the exact public VLA-JEPA pretraining checkpoint through the upstream LeRobot v0.6.1 CLI.
+    toolRef: workbench.lerobot.vla_jepa.train
+    resources: gpu
+    inputs:
+      - uri: "{{config.prepared_uri}}checksums.json"
+    outputs:
+      - uri: "{{config.training_uri}}training.json"
+        schema: npa.lerobot-vla-jepa.training.v1
+      - uri: "{{config.training_uri}}checkpoint/model.safetensors"
+        schema: application/safetensors
+      - uri: "{{config.training_uri}}checksums.json"
+        schema: npa.checksums.sha256.v1
+    next: rollout
+
+  rollout:
+    description: Run native VLA-JEPA policy rollouts only on the prepared stage's held-out LIBERO task ids and decode produced MP4s.
+    toolRef: workbench.lerobot.vla_jepa.rollout
+    resources: gpu
+    inputs:
+      - uri: "{{config.prepared_uri}}checksums.json"
+      - uri: "{{config.training_uri}}checksums.json"
+    outputs:
+      - uri: "{{config.rollout_uri}}rollout.json"
+        schema: npa.lerobot-vla-jepa.rollout.v1
+      - uri: "{{config.rollout_uri}}native-eval/videos"
+        schema: video/mp4
+      - uri: "{{config.rollout_uri}}checksums.json"
+        schema: npa.checksums.sha256.v1
+    next: evaluate
+
+  evaluate:
+    description: Validate checkpoint-to-rollout lineage and report bounded held-out native simulator success without a proxy benchmark claim.
+    toolRef: workbench.lerobot.vla_jepa.evaluate
+    resources: cpu
+    inputs:
+      - uri: "{{config.prepared_uri}}checksums.json"
+      - uri: "{{config.training_uri}}checksums.json"
+      - uri: "{{config.rollout_uri}}checksums.json"
+    outputs:
+      - uri: "{{config.evaluation_uri}}heldout-evaluation.json"
+        schema: npa.lerobot-vla-jepa.heldout-evaluation.v1
+      - uri: "{{config.evaluation_uri}}checksums.json"
+        schema: npa.checksums.sha256.v1
+    next: report
+
+  report:
+    description: Emit exact checkpoint provenance and a decoded factual Rerun recording of the native held-out metric.
+    toolRef: workbench.lerobot.vla_jepa.report
+    resources: cpu
+    inputs:
+      - uri: "{{config.training_uri}}checksums.json"
+      - uri: "{{config.evaluation_uri}}checksums.json"
+    outputs:
+      - uri: "{{config.report_uri}}report.json"
+        schema: npa.lerobot-vla-jepa.report.v1
+      - uri: "{{config.report_uri}}vla-jepa.rrd"
+        schema: application/vnd.rerun.rrd
+      - uri: "{{config.report_uri}}vla-jepa.inspection.txt"
+        schema: text/plain
+      - uri: "{{config.report_uri}}checksums.json"
+        schema: npa.checksums.sha256.v1
+    terminal: true

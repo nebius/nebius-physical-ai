@@ -259,6 +259,32 @@ def test_nonzero_sender_exit_does_not_qualify_exact_bytes(private_root, monkeypa
         )
 
 
+def test_nonzero_sender_exit_precedes_manifest_parsing(private_root, monkeypatch):
+    """Empty SSH stdout is a transport failure, never a manifest diagnosis."""
+    monkeypatch.setattr(
+        Q,
+        "_remote_command",
+        lambda *_args: [sys.executable, "-c", "import sys; sys.exit(1)"],
+    )
+    with pytest.raises(Q._QualificationError, match="ssh_transfer_failed"):
+        Q._fetch([], "a" * 64, "manifest", private_root / "bad")
+
+
+def test_oversized_manifest_is_rejected_before_sender_wait(private_root, monkeypatch):
+    """Keep the bounded pipe-read path rather than waiting on untrusted output."""
+    monkeypatch.setattr(
+        Q,
+        "_remote_command",
+        lambda *_args: [
+            sys.executable,
+            "-c",
+            f"import sys; sys.stdout.buffer.write(b'x' * {Q.MANIFEST_BYTES + 1})",
+        ],
+    )
+    with pytest.raises(Q._QualificationError, match="manifest_size"):
+        Q._fetch([], "a" * 64, "manifest", private_root / "bad")
+
+
 def test_remote_shell_command_roundtrips_quoted_source_and_arguments(monkeypatch):
     special = "$(touch bad);'\nprivate"
     command = Q._remote_command(["ssh", "synthetic-host"], "fetch", special, "manifest")
@@ -589,6 +615,19 @@ def test_private_receipt_transport_failure_prevents_success(
     )
     with pytest.raises(Q._QualificationError, match="private_receipt_not_retained"):
         Q._retain([], private_root, export[1], "789-1")
+
+
+def test_receipt_digest_supports_python310(private_root, monkeypatch):
+    monkeypatch.delattr(Q.hashlib, "file_digest", raising=False)
+    summary = b'{"status":"passed"}\n'
+    Q._write(private_root / "summary.json", summary)
+
+    path, size, digest = Q._bundle(private_root)
+
+    assert size == path.stat().st_size
+    assert digest == Q._sha(path.read_bytes())
+    with tarfile.open(path) as archive:
+        assert archive.extractfile("summary.json").read() == summary
 
 
 def test_private_failure_receipt_distinguishes_capacity_and_hides_exception_text(

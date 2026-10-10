@@ -16,6 +16,7 @@ from npa.deploy.images import (
     default_workbench_image,
     development_tag,
     execution_container_registry,
+    NEUTRAL_UNBUILT_CANDIDATE_TOOLS,
     PUBLICATION_QUARANTINE_TOOLS,
     public_release_tag_for_tool,
     registry_from_env,
@@ -83,6 +84,7 @@ def test_quarantined_public_release_metadata_fails_closed(tool: str) -> None:
         PUBLICATION_QUARANTINE_TOOLS
         - {"sonic"}
         - UNBUILT_CANDIDATE_TOOL_VERSIONS.keys()
+        - NEUTRAL_UNBUILT_CANDIDATE_TOOLS
     ),
 )
 def test_quarantined_public_releases_fail_closed_for_consumers(tool: str) -> None:
@@ -169,7 +171,9 @@ def test_sonic_public_tag_cannot_override_active_manifest_with_stale_release() -
         container_image_for_tool("sonic", tag="0.1.2")
 
 
-@pytest.mark.parametrize("tool", sorted(PUBLICATION_QUARANTINE_TOOLS))
+@pytest.mark.parametrize(
+    "tool", sorted(PUBLICATION_QUARANTINE_TOOLS - NEUTRAL_UNBUILT_CANDIDATE_TOOLS)
+)
 def test_quarantined_tools_retain_explicit_candidate_paths(tool: str) -> None:
     sha = "a" * 40
     assert container_image_for_tool(tool, tag=f"dev-{sha}").endswith(f":dev-{sha}")
@@ -177,6 +181,28 @@ def test_quarantined_tools_retain_explicit_candidate_paths(tool: str) -> None:
     assert container_image_for_tool(
         tool, registry="registry.example/operator", tag=custom_tag
     ).startswith("registry.example/operator/")
+
+
+@pytest.mark.parametrize("tool", sorted(NEUTRAL_UNBUILT_CANDIDATE_TOOLS))
+def test_neutral_unbuilt_candidates_never_have_public_candidate_paths(
+    tool: str,
+) -> None:
+    """Neutral candidates require an operator-private immutable image."""
+    sha = "a" * 40
+    public_refusal = "not publicly redistributable and is never distributed"
+
+    with pytest.raises(ValueError, match=public_refusal):
+        container_image_for_tool(tool)
+    with pytest.raises(ValueError, match=public_refusal):
+        container_image_for_tool(tool, tag=f"dev-{sha}")
+    with pytest.raises(ValueError, match="no official public development image"):
+        development_image_for_tool(tool, git_sha=sha)
+    with pytest.raises(ValueError, match="requires an explicit dev-<full-source-sha>"):
+        container_image_for_tool(tool, registry="registry.example/operator")
+
+    assert container_image_for_tool(
+        tool, registry="registry.example/operator", tag=f"dev-{sha}"
+    ).endswith(f":dev-{sha}")
 
 
 def test_repository_image_defaults_ignore_ambient_private_registry(monkeypatch) -> None:

@@ -110,6 +110,7 @@ likewise predates its current coherent release.
 | `npa-base` | supported | **verified** [22] | **verified** [23] | **verified** [20] | **verified** [21] |
 | `npa-workbench-cuda-base` | supported | supported | supported | supported | supported |
 | `npa-lerobot` | supported | **verified** [41] | **verified** [42] | **verified** [39], optional 0.6.0 [68] | **verified** [40] |
+| `npa-lerobot-vla-jepa` (private unbuilt candidate) | not built; not validated | not built; not validated | not built; required RTX PRO 6000 route is unvalidated | not built; no B200 claim | not built; no B300 claim |
 | `npa-lerobot-policy` | supported | supported | supported | supported | supported |
 | `npa-lancedb` | supported | **verified** [26] | **verified** [27] | **verified** [24] | **verified** [25] |
 | `npa-detection-training` | supported | **historical evidence** [29] | **verified** [current release evidence](#current-detection-runtime-evidence) | **historical evidence** [28] | **historical evidence** [31] |
