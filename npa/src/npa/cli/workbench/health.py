@@ -642,12 +642,16 @@ def sim2real_command(
             f"unknown check(s): {', '.join(unknown)}. Choices: {', '.join(ALL_CHECKS)}."
         )
 
+    project = project.strip()
+    if project and "s3" not in selected:
+        raise typer.BadParameter("--project requires --checks s3.")
+
     credentials = None
     project_storage_failure: CheckResult | None = None
-    if project.strip() and "s3" in selected:
+    if project:
         credentials = load_credentials()
         try:
-            credentials = _project_credentials(project.strip(), credentials)
+            credentials = _project_credentials(project, credentials)
             if not s3_bucket.strip():
                 # CredentialsConfig keeps a URI because it is also consumed by
                 # credential preflight.  The execution config, however, owns a

@@ -592,6 +592,26 @@ def test_image_free_checks_reject_unused_execution_overrides(
     assert "--checks config or registry" in result.output
 
 
+def test_project_requires_s3_check(diagnostic_spies: SimpleNamespace) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "health",
+            "sim2real",
+            "--checks",
+            "tokens",
+            "--project",
+            "selected-project",
+        ],
+    )
+    assert result.exit_code == 2
+    assert "--project requires --checks s3" in result.output
+    diagnostic_spies.execution.assert_not_called()
+    diagnostic_spies.defaults.assert_not_called()
+    diagnostic_spies.loaded.assert_not_called()
+
+
 def test_empty_checks_fail_before_any_config_or_credentials(
     diagnostic_spies: SimpleNamespace,
 ) -> None:
