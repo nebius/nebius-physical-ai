@@ -15,7 +15,8 @@ from typer.testing import CliRunner
 from npa.clients.gemini_robotics import (
     API_KEY_ENV,
     BASE_URL_ENV,
-    PROVISIONAL_API_BASE_URL,
+    DEFAULT_API_BASE_URL,
+    DEFAULT_MODEL_ID,
     GeminiRoboticsClient,
     GeminiRoboticsConfig,
     GeminiRoboticsError,
@@ -24,7 +25,7 @@ from npa.clients.gemini_robotics import (
 
 
 def _client(handler, **kwargs) -> GeminiRoboticsClient:
-    config = GeminiRoboticsConfig(PROVISIONAL_API_BASE_URL, "test-key", 5.0)
+    config = GeminiRoboticsConfig(DEFAULT_API_BASE_URL, "test-key", 5.0)
     http = httpx.Client(transport=httpx.MockTransport(handler))
     return GeminiRoboticsClient(config, http_client=http, **kwargs)
 
@@ -104,16 +105,22 @@ def test_resolve_config_hides_malformed_saved_credential_details(
     assert "not-valid" not in str(exc.value)
 
 
-def test_resolve_config_missing_base_url_fails_closed() -> None:
-    """The provisional base URL is never used implicitly."""
-    with pytest.raises(GeminiRoboticsError, match=BASE_URL_ENV):
-        resolve_config(environ={API_KEY_ENV: "secret"})
-    with pytest.raises(GeminiRoboticsError, match="api-base-url"):
-        resolve_config(base_url="", environ={API_KEY_ENV: "secret"})
+def test_resolve_config_base_url_defaults_to_validated_endpoint() -> None:
+    """The base URL defaults to the live-validated endpoint; overrides win."""
+    config = resolve_config(environ={API_KEY_ENV: "secret"})
+    assert config.base_url == DEFAULT_API_BASE_URL
+    config = resolve_config(
+        environ={API_KEY_ENV: "secret", BASE_URL_ENV: "https://example.test"}
+    )
+    assert config.base_url == "https://example.test"
+    config = resolve_config(
+        base_url="https://override.test", environ={API_KEY_ENV: "secret"}
+    )
+    assert config.base_url == "https://override.test"
 
 
 @pytest.mark.parametrize("command", ["plan", "eval"])
-@pytest.mark.parametrize("missing", ["api_key", "api_base_url", "model"])
+@pytest.mark.parametrize("missing", ["api_key"])
 def test_cli_rejects_missing_config_before_storage_or_http(
     monkeypatch: pytest.MonkeyPatch, tmp_path, command: str, missing: str
 ) -> None:
@@ -185,11 +192,9 @@ def test_cli_rejects_missing_config_before_storage_or_http(
     }
 
 
-def test_provisional_constants_are_documented_as_unvalidated() -> None:
-    assert PROVISIONAL_API_BASE_URL.startswith("https://")
-    # The provisional guesses exist; entry points must not use them implicitly.
-    with pytest.raises(GeminiRoboticsError):
-        resolve_config(environ={API_KEY_ENV: "secret"})
+def test_validated_defaults_are_sane() -> None:
+    assert DEFAULT_API_BASE_URL.startswith("https://")
+    assert DEFAULT_MODEL_ID == "gemini-robotics-er-2-preview"
 
 
 def test_plan_formats_request_and_parses_response() -> None:
@@ -225,7 +230,7 @@ def test_plan_formats_request_and_parses_response() -> None:
     result = _client(handler).plan(task="pick up the cup", model="test-model")
 
     assert seen["url"] == (
-        f"{PROVISIONAL_API_BASE_URL}/v1beta/models/test-model:generateContent"
+        f"{DEFAULT_API_BASE_URL}/v1beta/models/test-model:generateContent"
     )
     assert seen["headers"]["x-goog-api-key"] == "test-key"
     body = seen["body"]

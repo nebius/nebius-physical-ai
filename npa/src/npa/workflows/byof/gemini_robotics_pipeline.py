@@ -4,7 +4,7 @@ The Gemini API is closed-weight, so these CPU stages use the default NPA image.
 Their public workflow handoff is deliberately narrow: every input and receipt is
 an exact S3 object, and a receipt is published with a conditional create. A
 caller must supply the API base URL and model id explicitly because neither
-provisional identifier has been accepted against a live endpoint.
+validated default model id, live-verified 2026-10-10.
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ from npa.cli.path_contract import (
     validate_write_path,
 )
 from npa.clients.gemini_robotics import (
+    DEFAULT_MODEL_ID,
     EVAL_RECEIPT_SCHEMA,
     PLAN_RECEIPT_SCHEMA,
     EvalResult,
@@ -70,15 +71,9 @@ class GeminiRoboticsPipelineConfig:
     model: str = ""
 
     def require_model(self) -> str:
-        """Return an explicit model id or fail before creating an API client."""
+        """Return the model id, defaulting to the live-validated endpoint model."""
 
-        model = self.model.strip()
-        if not model:
-            raise GeminiRoboticsPipelineError(
-                "Gemini Robotics requires an explicit model id; the provisional "
-                "model is documentation only and is never selected implicitly."
-            )
-        return model
+        return self.model.strip() or DEFAULT_MODEL_ID
 
     def require_output_path(self) -> str:
         """Validate the durable receipt target before the hosted request."""
@@ -297,12 +292,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(
         prog="gemini_robotics_pipeline",
-        description="Gemini Robotics hosted workflow stages (provisional API adapter).",
+        description="Gemini Robotics hosted workflow stages (live-validated API adapter).",
     )
     parser.add_argument(
         "--api-base-url",
-        required=True,
-        help="Gemini API base URL (required; the provisional guess is never used).",
+        default="",
+        help="Gemini API base URL (default: live-validated endpoint).",
     )
     parser.add_argument(
         "--api-key",
@@ -313,12 +308,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     plan_p = sub.add_parser("plan", help="Run ER planning and publish one receipt.")
     plan_p.add_argument("--task", required=True)
-    plan_p.add_argument("--model", required=True, help="Gemini model id (required).")
+    plan_p.add_argument(
+        "--model", default="", help="Gemini model id (default: live-validated)."
+    )
     plan_p.add_argument("--output-path", required=True, help="Exact S3 receipt URI.")
 
     eval_p = sub.add_parser("eval", help="Evaluate one plan/rubric input object.")
     eval_p.add_argument("--input-path", required=True, help="Exact S3 JSON input URI.")
-    eval_p.add_argument("--model", required=True, help="Gemini model id (required).")
+    eval_p.add_argument(
+        "--model", default="", help="Gemini model id (default: live-validated)."
+    )
     eval_p.add_argument("--output-path", required=True, help="Exact S3 receipt URI.")
     return parser
 

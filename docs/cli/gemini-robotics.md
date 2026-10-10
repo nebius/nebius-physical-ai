@@ -5,7 +5,7 @@
 ```text
 Usage: npa workbench gemini-robotics [OPTIONS] COMMAND [ARGS]...
 
-Gemini Robotics hosted planning and evaluation (plan, eval). Provisional adapter: API base URL and model id must be supplied explicitly; no live access has been validated.
+Gemini Robotics hosted planning and evaluation (plan, eval). Live-validated adapter: API base URL and model id must be supplied explicitly; no live access has been validated.
 
 Options
 --help  Show this message and exit.

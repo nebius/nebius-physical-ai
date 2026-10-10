@@ -13,6 +13,7 @@ from rich.console import Console
 from npa.cli.path_contract import validate_read_path, validate_write_path
 from npa.clients.gemini_robotics import (
     BASE_URL_ENV,
+    DEFAULT_MODEL_ID,
     GeminiRoboticsClient,
     GeminiRoboticsError,
     resolve_config,
@@ -30,8 +31,8 @@ app = typer.Typer(
     name="gemini-robotics",
     help=(
         "Gemini Robotics hosted planning and evaluation (plan, eval). "
-        "Provisional adapter: API base URL and model id must be supplied "
-        "explicitly; no live access has been validated."
+        "Bring your own GOOGLE_API_KEY; model and base URL default to the "
+        "live-validated endpoint."
     ),
     no_args_is_help=True,
 )
@@ -52,7 +53,9 @@ def plan_cmd(
         help="Exact s3:// scene-observation image URI (repeatable).",
     ),
     model: str = typer.Option(
-        ..., "--model", help="Gemini API model id (required; no default)."
+        DEFAULT_MODEL_ID,
+        "--model",
+        help=f"Gemini API model id (default: {DEFAULT_MODEL_ID}).",
     ),
     api_base_url: str = typer.Option(
         "",
@@ -116,7 +119,9 @@ def eval_cmd(
         help="Exact s3:// JSON input with non-empty plan_text and rubric strings.",
     ),
     model: str = typer.Option(
-        ..., "--model", help="Gemini API model id (required; no default)."
+        DEFAULT_MODEL_ID,
+        "--model",
+        help=f"Gemini API model id (default: {DEFAULT_MODEL_ID}).",
     ),
     api_base_url: str = typer.Option(
         "",

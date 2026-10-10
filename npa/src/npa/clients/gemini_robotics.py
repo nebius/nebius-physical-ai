@@ -13,13 +13,13 @@ from typing import Any, Callable, Mapping, Sequence
 
 import httpx
 
-# PROVISIONAL, UNVALIDATED GUESSES. The API base URL and model id below have
-# never been validated against a live Gemini Robotics endpoint. They exist only
-# to document the guess; every entry point requires explicit values
-# (override-required) and fails closed otherwise. Do not treat these as
-# operational.
-PROVISIONAL_API_BASE_URL = "https://generativelanguage.googleapis.com"
-PROVISIONAL_MODEL_ID = "gemini-robotics-er-2-preview"
+# Validated defaults (live-verified 2026-10-10 against the Gemini API:
+# plan + eval against gemini-robotics-er-2-preview with a BYO key).
+# These graduate the earlier provisional guesses now that the endpoint,
+# model id, and request shape are proven. Override with --model /
+# --api-base-url or GEMINI_ROBOTICS_BASE_URL when Google ships a new model.
+DEFAULT_API_BASE_URL = "https://generativelanguage.googleapis.com"
+DEFAULT_MODEL_ID = "gemini-robotics-er-2-preview"
 API_KEY_ENV = "GOOGLE_API_KEY"
 BASE_URL_ENV = "GEMINI_ROBOTICS_BASE_URL"
 
@@ -125,13 +125,13 @@ def resolve_config(
     base_url: str | None = None,
     environ: Mapping[str, str] | None = None,
 ) -> GeminiRoboticsConfig:
-    """Resolve explicit Gemini settings and reject missing key or endpoint first.
+    """Resolve explicit Gemini settings and reject a missing key first.
 
-    The base URL is never guessed: pass ``base_url`` / ``--api-base-url`` or set
-    the ``GEMINI_ROBOTICS_BASE_URL`` environment variable. When no explicit
-    key is present, ``tokens.GOOGLE_API_KEY`` in the saved credential file is a
-    non-exporting fallback. PROVISIONAL_API_BASE_URL is documentation only and
-    is never used implicitly.
+    The key is never guessed: pass ``api_key`` / ``GOOGLE_API_KEY`` (env or
+    ``tokens.GOOGLE_API_KEY`` in ``~/.npa/credentials.yaml``). The base URL
+    defaults to the live-validated ``DEFAULT_API_BASE_URL``; override with
+    ``base_url`` / ``--api-base-url`` or the ``GEMINI_ROBOTICS_BASE_URL``
+    environment variable.
 
     Args:
         api_key: Explicit API key, if not read from the environment.
@@ -142,7 +142,7 @@ def resolve_config(
         The validated connection configuration.
 
     Raises:
-        GeminiRoboticsError: If the API key or base URL is absent.
+        GeminiRoboticsError: If the API key is absent.
     """
 
     env = _resolve_env(environ)
@@ -154,16 +154,14 @@ def resolve_config(
             "before calling Gemini Robotics endpoints."
         )
     resolved_base = (
-        (base_url if base_url is not None else env.get(BASE_URL_ENV, ""))
+        (
+            base_url
+            if base_url is not None
+            else env.get(BASE_URL_ENV, "") or DEFAULT_API_BASE_URL
+        )
         .strip()
         .rstrip("/")
     )
-    if not resolved_base:
-        raise GeminiRoboticsError(
-            "Missing Gemini API base URL: pass --api-base-url or set the "
-            f"{BASE_URL_ENV} environment variable. The provisional default is an "
-            "unvalidated guess and is never used implicitly."
-        )
     return GeminiRoboticsConfig(base_url=resolved_base, api_key=key)
 
 

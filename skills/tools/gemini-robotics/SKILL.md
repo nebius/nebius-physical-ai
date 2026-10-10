@@ -9,8 +9,8 @@ Gemini Robotics is the closed-weight VLA tool for ER (embodied reasoning)
 planning and rubric evaluation, all served through the
 hosted Gemini API (``GOOGLE_API_KEY`` required).
 
-The toolRefs are a provisional override-required API adapter: every stage
-requires an explicit ``--model`` (no default). The provisional model identifier
+The toolRefs are a live-validated API adapter: every stage
+requires an explicit ``--model`` (no default). The validated model identifier
 is documentation only and is never selected by the implementation.
 
 Workflow tasks use the default CPU image with staged NPA source because the

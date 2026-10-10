@@ -57,6 +57,7 @@ class FakeClient:
 
     def plan(self, **kwargs):
         self.plans += 1
+        self.last_model = kwargs.get("model")
         return PlanResult(
             text="1. Approach.\n2. Grasp.",
             model_function_calls=[{"name": "unrequested_call", "args": {}}],
@@ -198,11 +199,13 @@ def test_planning_rejects_invalid_output_before_client(
     assert client.plans == 0
 
 
-def test_planning_requires_explicit_model_before_client() -> None:
+def test_planning_uses_validated_default_model() -> None:
+    from npa.clients.gemini_robotics import DEFAULT_MODEL_ID
+
     client = FakeClient()
-    with pytest.raises(GeminiRoboticsPipelineError, match="explicit model"):
-        run_er_planning_stage(_config(model=""), client, FakeStorage())
-    assert client.plans == 0
+    run_er_planning_stage(_config(model=""), client, FakeStorage())
+    assert client.plans == 1
+    assert client.last_model == DEFAULT_MODEL_ID
 
 
 def _toolref_stage_argv(name: str) -> list[str]:
@@ -248,27 +251,20 @@ def test_toolref_descriptions_state_provisional() -> None:
         assert "no live access has been validated" in description
 
 
-def test_pipeline_main_rejects_missing_overrides() -> None:
+def test_pipeline_main_rejects_missing_key() -> None:
     from npa.workflows.byof import gemini_robotics_pipeline as pipe
+    from npa.workflows.byof.gemini_robotics_pipeline import (
+        GeminiRoboticsPipelineError,
+    )
 
-    with pytest.raises(SystemExit):
-        pipe.main(["plan", "--task", "t", "--model", "m", "--output-path", "s3://b/o"])
-    with pytest.raises(SystemExit):
-        pipe.main(
-            [
-                "--api-base-url",
-                "https://example.test",
-                "plan",
-                "--task",
-                "t",
-                "--output-path",
-                "s3://b/o",
-            ]
-        )
+    # Model and base URL default to the live-validated endpoint; only the
+    # key remains required.
+    with pytest.raises(GeminiRoboticsPipelineError, match="GOOGLE_API_KEY"):
+        pipe.main(["plan", "--task", "t", "--output-path", "s3://b/o"])
 
 
 @pytest.mark.parametrize("stage", ["plan", "eval"])
-@pytest.mark.parametrize("missing", ["api_key", "api_base_url", "model"])
+@pytest.mark.parametrize("missing", ["api_key"])
 def test_pipeline_stages_reject_missing_config_before_storage_or_http(
     monkeypatch: pytest.MonkeyPatch, tmp_path, stage: str, missing: str
 ) -> None:
@@ -317,7 +313,7 @@ def test_pipeline_stages_reject_missing_config_before_storage_or_http(
             "GEMINI_ROBOTICS_BASE_URL", "https://provider.example.invalid"
         )
 
-    config = _config(model="" if missing == "model" else "operator-selected-model")
+    config = _config(model="operator-selected-model")
     with pytest.raises(GeminiRoboticsPipelineError):
         if stage == "plan":
             run_er_planning_stage(config, client=None, storage=None)
@@ -340,7 +336,7 @@ def test_pipeline_stages_reject_missing_config_before_storage_or_http(
 
 
 @pytest.mark.parametrize("command", ["plan", "eval"])
-@pytest.mark.parametrize("missing", ["api_key", "api_base_url", "model"])
+@pytest.mark.parametrize("missing", ["api_key"])
 def test_pipeline_main_rejects_missing_config_before_storage_or_http(
     monkeypatch: pytest.MonkeyPatch, tmp_path, command: str, missing: str
 ) -> None:
