@@ -389,8 +389,8 @@ Require the same quota and node-health gates. This topology needs 1,023 GiB of
 network SSD capacity with the default GPU boot disk. Keep the selected options
 for apply and verify; do not switch topology inside an interrupted operation.
 
-The default boot disks require 1,151 GiB of network SSD capacity: 128 GiB for the
-CPU node and 1,023 GiB for the GPU node. Disk-count quota is separate. If the
+The separate CPU/GPU pools require 1,151 GiB of network SSD capacity: 128 GiB
+for the CPU node and 1,023 GiB for the GPU node. Disk-count quota is separate. If the
 preview blocks on disk capacity, obtain enough quota or size the disks for your
 workload. Account for compressed and expanded image layers, model weights and
 runtime caches, generated media, the operating system, and free working space.
@@ -1328,15 +1328,28 @@ EVIDENCE_DIR="$(mktemp -d "./paidf-evidence/${RUN_ID}.XXXXXX")"
     grade/cosmos_evaluator.json grade/decision.json; do
     aws s3 cp "$RUN_URI/$artifact" "$EVIDENCE_DIR/$artifact" --profile nebius
   done
-  aws s3 cp "$RUN_URI/cosmos_augmented/" "$EVIDENCE_DIR/cosmos_augmented/" \
-    --recursive --exclude '*' --include 'variant-*/augmented_video.mp4' \
-    --include 'variant-*/metadata.json' --include 'variant-*/transfer.json' \
-    --include 'variant-*/source_edges.mkv' --profile nebius
+  jq -e '.status == "executed" and (.variants | length) == .variant_count' \
+    "$EVIDENCE_DIR/cosmos_augmented/manifest.json" >/dev/null
+  while IFS= read -r video_uri; do
+    case "$video_uri" in
+      "$RUN_URI/cosmos_augmented/variant-"*/augmented_video.mp4) ;;
+      *) printf 'Unexpected published video URI\n' >&2; exit 1 ;;
+    esac
+    relative="${video_uri#"$RUN_URI/cosmos_augmented/"}"
+    source_dir="${video_uri%/*}"
+    destination="$EVIDENCE_DIR/cosmos_augmented/${relative%/*}"
+    mkdir -p "$destination"
+    for file in augmented_video.mp4 metadata.json transfer.json source_edges.mkv; do
+      aws s3 cp "$source_dir/$file" "$destination/$file" --profile nebius
+    done
+  done < <(jq -r '.variants[].augmented_video_uri' "$EVIDENCE_DIR/cosmos_augmented/manifest.json")
 )
 ```
 
 A missing object can identify an earlier failed stage; stop and inspect its logs
-instead of treating a partial download as complete evidence. Confirm the manifest's
+instead of treating a partial download as complete evidence. The loop follows
+published video URIs and handles native publication directories automatically;
+immutable files from earlier refinement passes remain in S3. Confirm the manifest's
 `run_id`, variant list, and lineage match the intended run; compare the evaluator's
 `augment_uri` and disposition's `evaluator_report_uri` with that same prefix.
 Also correlate the runtime waves, variant `attempt` values, and evaluator

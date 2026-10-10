@@ -290,16 +290,26 @@ aws s3 cp "$RUN_URI/cosmos_augmented/manifest.json" "$EVIDENCE_DIR/manifest.json
   --profile nebius
 aws s3 cp "$RUN_URI/configs/manifest.json" "$EVIDENCE_DIR/appearance-configs.json" \
   --profile nebius
-aws s3 cp "$RUN_URI/cosmos_augmented/" "$EVIDENCE_DIR/cosmos_augmented/" \
-  --recursive --exclude '*' --include 'variant-*/augmented_video.mp4' \
-  --include 'variant-*/metadata.json' --include 'variant-*/raw_model_video.mp4' \
-  --include 'variant-*/transfer.json' \
-  --include 'variant-*/raw_model_metadata.json' \
-  --include 'variant-*/_native/*/*/augmented_video.mp4' \
-  --include 'variant-*/_native/*/*/metadata.json' \
-  --include 'variant-*/_native/*/*/raw_model_video.mp4' \
-  --include 'variant-*/_native/*/*/transfer.json' \
-  --include 'variant-*/_native/*/*/raw_model_metadata.json' --profile nebius
+jq -e '.status == "executed" and .variant_count == 12 and (.variants | length) == 12' \
+  "$EVIDENCE_DIR/manifest.json" >/dev/null || exit 1
+while IFS= read -r video_uri; do
+  case "$video_uri" in
+    "$RUN_URI/cosmos_augmented/variant-"*/augmented_video.mp4) ;;
+    *) printf 'Unexpected published video URI\n' >&2; exit 1 ;;
+  esac
+  relative="${video_uri#"$RUN_URI/cosmos_augmented/"}"
+  source_dir="${video_uri%/*}"
+  destination="$EVIDENCE_DIR/cosmos_augmented/${relative%/*}"
+  mkdir -p "$destination"
+  for file in augmented_video.mp4 metadata.json transfer.json; do
+    aws s3 cp "$source_dir/$file" "$destination/$file" --profile nebius || exit 1
+  done
+  if jq -e '.padding_preservation != null' "$destination/metadata.json" >/dev/null; then
+    for file in raw_model_video.mp4 raw_model_metadata.json; do
+      aws s3 cp "$source_dir/$file" "$destination/$file" --profile nebius || exit 1
+    done
+  fi
+done < <(jq -r '.variants[].augmented_video_uri' "$EVIDENCE_DIR/manifest.json")
 aws s3 cp "$RUN_URI/grade/cosmos_evaluator.json" "$EVIDENCE_DIR/cosmos_evaluator.json" \
   --profile nebius
 aws s3 cp "$RUN_URI/grade/quality_disposition.json" "$EVIDENCE_DIR/quality_disposition.json" \
@@ -320,8 +330,10 @@ jq '{status, passed, score, clip_count, passed_clips,
   "$EVIDENCE_DIR/cosmos_evaluator.json"
 ```
 
-A completed generation manifest should report twelve published variants. For a
-LeRobot input, also verify `source_kind: lerobot_dataset`, the exact camera and
+A completed generation manifest should report twelve published variants.
+Immutable files from earlier refinement passes remain in S3; the download
+loop follows the final manifest and retrieves only its twelve published videos.
+For a LeRobot input, also verify `source_kind: lerobot_dataset`, the exact camera and
 episode in `provenance.json`; for the cups example, verify 192 decoded frames
 at 24 fps in each published video. Read `quality_disposition.json` for the
 batch decision. Both accepted and rejected batches retain `quality-evidence.rrd`;
