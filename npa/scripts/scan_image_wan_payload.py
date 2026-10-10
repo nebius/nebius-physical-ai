@@ -171,7 +171,7 @@ class _NestedArchiveBudget:
 # path exclusion: inserting a real credential into any of these locations must
 # fail the publication scan.  A dependency/base refresh fails closed until the
 # replacement bytes have been independently audited.
-AUDITED_SECRET_LITERAL_FILE_SHA256: dict[str, str] = {
+AUDITED_SECRET_LITERAL_FILE_SHA256: dict[str, str | frozenset[str]] = {
     "opt/wan-base/lib/python3.10/site-packages/PIL/ImageFont.py": (
         "24fa5feeb91b4bf63eaad0ebba08a8161e9c889d9fd056a37c928134097b9649"
     ),
@@ -239,8 +239,13 @@ AUDITED_SECRET_LITERAL_FILE_SHA256: dict[str, str] = {
     "usr/lib/x86_64-linux-gnu/libssh-gcrypt.so.4.9.6": (
         "6733636aeb1c5d541aa06c578a95d12c2253c4e99fc85623595341905d3d6221"
     ),
-    "usr/lib/x86_64-linux-gnu/libssh2.so.1.0.1": (
-        "e481655791a9b75f4d5957e40101d7d0b5d9c13a18d1ca233731d03365ad0aec"
+    # The two reviewed Bookworm rebuilds retain only key-format literals.  Keep
+    # both complete public-package hashes rather than widening this path rule.
+    "usr/lib/x86_64-linux-gnu/libssh2.so.1.0.1": frozenset(
+        {
+            "e481655791a9b75f4d5957e40101d7d0b5d9c13a18d1ca233731d03365ad0aec",
+            "66f751ec9d3d5bff254a498e020d37f9bbde8e0193ba11d1b78f29153ffe694a",
+        }
     ),
     "usr/sbin/sshd": "9f6cdc787a2d5144f3189e850fc104aa7d8ab12593a3d4e902c692a38794716e",
     "usr/lib/x86_64-linux-gnu/libunistring.so.2.2.0": (
@@ -264,10 +269,20 @@ AUDITED_LITERAL_LIBRARY_SHA256: dict[str, str] = {
 }
 
 
+def _matches_audited_hash(
+    expected: str | frozenset[str] | None, sha256: str | None
+) -> bool:
+    """Match one literal against its exact audited byte hash or hash set."""
+
+    if expected is None or sha256 is None:
+        return False
+    return sha256 == expected if isinstance(expected, str) else sha256 in expected
+
+
 def _is_audited_literal_library(path: str, sha256: str | None) -> bool:
     """Whether path and bytes equal one independently audited Debian library."""
 
-    return sha256 is not None and AUDITED_LITERAL_LIBRARY_SHA256.get(path) == sha256
+    return _matches_audited_hash(AUDITED_LITERAL_LIBRARY_SHA256.get(path), sha256)
 
 
 def _contains_secret(stream: IO[bytes]) -> bool:
@@ -572,18 +587,17 @@ def _scan_file_stream(
             copy_to=captured,
         )
         audited_literal_library = _is_audited_literal_library(path, sha256)
-        audited_secret_literal = (
-            audited_secret_sha256 is not None and sha256 == audited_secret_sha256
-        )
+        audited_secret_literal = _matches_audited_hash(audited_secret_sha256, sha256)
         expected_audited_sha256 = audited_secret_sha256 or audited_library_sha256
-        if expected_audited_sha256 is not None and sha256 != expected_audited_sha256:
-            findings.append(
-                Finding(
-                    "audited_literal_byte_drift",
-                    path,
-                    f"audited literal bytes changed in {source}",
+        if not _matches_audited_hash(expected_audited_sha256, sha256):
+            if expected_audited_sha256 is not None:
+                findings.append(
+                    Finding(
+                        "audited_literal_byte_drift",
+                        path,
+                        f"audited literal bytes changed in {source}",
+                    )
                 )
-            )
         if elf_dependency and not audited_literal_library:
             findings.append(
                 Finding(
@@ -713,7 +727,7 @@ def payload_policy(
     *,
     forbidden_paths: tuple[tuple[str, re.Pattern[str]], ...] | None = None,
     forbidden_history: tuple[tuple[str, re.Pattern[str]], ...] | None = None,
-    audited_secret_files: dict[str, str] | None = None,
+    audited_secret_files: dict[str, str | frozenset[str]] | None = None,
     audited_libraries: dict[str, str] | None = None,
     secret_content: tuple[re.Pattern[bytes], ...] | None = None,
     forbidden_elf_dependency: re.Pattern[bytes] | None = None,

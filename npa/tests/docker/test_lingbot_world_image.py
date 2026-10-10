@@ -36,15 +36,34 @@ def test_lingbot_defaults_to_immutable_public_parent_but_allows_private_requalif
     assert "FROM ${WAN_BASE_IMAGE}" in dockerfile
 
 
-def test_lingbot_model_runtime_includes_pyav_for_predecessor_video_validation() -> None:
-    """The CUDA runtime executes both generation stages and decodes their handoff."""
+def test_lingbot_model_runtime_builds_pyav_against_audited_system_ffmpeg() -> None:
+    """The runtime decodes both generation handoffs without wheel-bundled FFmpeg."""
 
     dockerfile = DOCKERFILE.read_text(encoding="utf-8")
 
+    assert "FROM ${WAN_BASE_IMAGE} AS pyav-wheel-builder" in dockerfile
+    assert "--no-binary=av --wheel-dir /opt/npa-pyav-wheel av==17.1.0" in dockerfile
+    for package in (
+        "build-essential",
+        "pkg-config",
+        "libavcodec-dev",
+        "libavdevice-dev",
+        "libavfilter-dev",
+        "libavformat-dev",
+        "libavutil-dev",
+        "libswresample-dev",
+        "libswscale-dev",
+    ):
+        assert package in dockerfile
     assert (
-        "/opt/wan-base/bin/python -m pip install --no-cache-dir --no-deps" in dockerfile
+        "COPY --from=pyav-wheel-builder /opt/npa-pyav-wheel /opt/npa-pyav-wheel"
+        in dockerfile
     )
-    assert "protobuf==6.33.6 scipy==1.15.3 av==17.1.0" in dockerfile
+    assert (
+        "protobuf==6.33.6 scipy==1.15.3 /opt/npa-pyav-wheel/av-17.1.0-*.whl"
+        in dockerfile
+    )
+    assert "protobuf==6.33.6 scipy==1.15.3 av==17.1.0" not in dockerfile
 
 
 def test_lingbot_upgrades_fixable_parent_perl_security_packages() -> None:
