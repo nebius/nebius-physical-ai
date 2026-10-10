@@ -396,6 +396,39 @@ def test_preflight_resume_allows_provider_progress_for_the_same_requested_shape(
     assert len(operation.read()["preflight_evaluations"]) == 2
 
 
+def test_cpu_quota_demand_decreases_when_a_partial_cluster_resumes(
+    journal_root: Path,
+) -> None:
+    from npa.provisioning_preflight import (
+        build_whole_path_plan,
+        resolve_topology,
+        QuotaObservation,
+    )
+
+    operation = _prepare()
+
+    def plan(existing_cpu_nodes):
+        return build_whole_path_plan(
+            project_alias="prod",
+            project_id="project-a",
+            tenant_id="tenant-a",
+            region="eu-north1",
+            topology=resolve_topology(existing_cpu_nodes=existing_cpu_nodes),
+            mutation=True,
+            quota_reader=lambda _tenant, _region, names: {
+                name: QuotaObservation(name=name, state="unbounded") for name in names
+            },
+        ).to_dict()
+
+    original = plan(0)
+    converged = plan(1)
+    assert original["topology"]["required_cpu_vcpus"] == 8
+    assert converged["topology"]["required_cpu_vcpus"] == 0
+    operation.record_preflight_plan(original)
+    operation.record_preflight_plan(converged)
+    assert operation.read()["preflight_plan"] == converged
+
+
 def test_authoritative_region_can_be_corrected_only_before_resource_creation(
     journal_root: Path,
 ) -> None:

@@ -17,10 +17,10 @@ import tempfile
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from image_payload_credentials import (  # noqa: E402
-    content_credential,
     normalise_member_name,
     path_credential,
 )
+from image_payload_reviews import load_reviews, reviewed_content_credential  # noqa: E402
 
 
 @dataclass(frozen=True)
@@ -68,8 +68,11 @@ def _is_application_content(name: str) -> bool:
     )
 
 
-def _scan_layer_archive(archive: tarfile.TarFile, *, layer: str) -> list[Finding]:
+def _scan_layer_archive(
+    archive: tarfile.TarFile, *, layer: str, reviewed_content: list | None = None
+) -> list[Finding]:
     findings: list[Finding] = []
+    reviews = load_reviews()
     for member in archive:
         name = normalise_member_name(member.name)
         if not member.isdir():
@@ -103,11 +106,16 @@ def _scan_layer_archive(archive: tarfile.TarFile, *, layer: str) -> list[Finding
             if kind is None:
                 if scanned_as_application:
                     # Already in memory; do not extract the member twice.
-                    kind = content_credential(io.BytesIO(payload))
+                    kind, review = reviewed_content_credential(
+                        io.BytesIO(payload), reviews
+                    )
                 else:
                     stream = archive.extractfile(member)
+                    review = None
                     if stream is not None:
-                        kind = content_credential(stream)
+                        kind, review = reviewed_content_credential(stream, reviews)
+                if review is not None and reviewed_content is not None:
+                    reviewed_content.append({"layer": layer, "path": name, **review})
             if kind is not None:
                 findings.append(Finding(kind, layer, name))
     return findings
@@ -120,7 +128,9 @@ def scan_layer(path: Path, *, layer: str) -> list[Finding]:
         return _scan_layer_archive(archive, layer=layer)
 
 
-def scan_saved_image(image_tar: Path) -> tuple[list[Finding], int]:
+def scan_saved_image(
+    image_tar: Path, *, reviewed_content: list | None = None
+) -> tuple[list[Finding], int]:
     """Scan every layer in a docker-save archive."""
 
     findings: list[Finding] = []
@@ -145,7 +155,11 @@ def scan_saved_image(image_tar: Path) -> tuple[list[Finding], int]:
             if layer_stream is None:
                 raise RuntimeError(f"docker-save archive has no layer {relative}")
             with tarfile.open(fileobj=layer_stream, mode="r|*") as layer_archive:
-                findings.extend(_scan_layer_archive(layer_archive, layer=relative))
+                findings.extend(
+                    _scan_layer_archive(
+                        layer_archive, layer=relative, reviewed_content=reviewed_content
+                    )
+                )
     return findings, layers
 
 
@@ -156,10 +170,11 @@ def main() -> int:
     args = parser.parse_args()
     if bool(args.image) == bool(args.tarball):
         parser.error("provide exactly one image or --tarball")
+    reviewed_content: list[dict] = []
     if args.tarball:
         tarball = args.tarball
         source = str(tarball)
-        findings, layers = scan_saved_image(tarball)
+        findings, layers = scan_saved_image(tarball, reviewed_content=reviewed_content)
     else:
         source = args.image
         with tempfile.TemporaryDirectory(prefix="npa-alpamayo2-image-") as scratch:
@@ -167,7 +182,9 @@ def main() -> int:
             subprocess.run(
                 ["docker", "save", args.image, "-o", str(tarball)], check=True
             )
-            findings, layers = scan_saved_image(tarball)
+            findings, layers = scan_saved_image(
+                tarball, reviewed_content=reviewed_content
+            )
     report = {
         "format": "npa_alpamayo2_payload_scan_v1",
         "source": source,
@@ -175,6 +192,7 @@ def main() -> int:
         "layers_scanned": layers,
         "verdict": "clean" if not findings else "runtime-only-payload-detected",
         "findings": [asdict(item) for item in findings],
+        "reviewed_nonoperational_content": reviewed_content,
     }
     print(json.dumps(report, indent=2, sort_keys=True))
     return 0 if not findings else 1

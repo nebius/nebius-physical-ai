@@ -17,6 +17,9 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 
 | Workflow | Guide | Purpose |
 | --- | --- | --- |
+| [`physical-prompt-comparison.yaml`](physical-prompt-comparison.yaml) | [Guide](../../docs/workbench/physical-prompt-comparison.md) | Compare baseline prompts, physical descriptions, and negative guidance across six scenarios and two seeds, with full Wan 2.1 14B videos, blinded judgments, and standalone HTML. |
+| [`digital-twin-campus-render.yaml`](digital-twin-campus-render.yaml) | [Campus rendering guide](../../docs/workbench/guides/digital-twin.md#render-the-industrial-campus-on-rtx) | Authored industrial campus rendered with native RTX OptiX, recoverable immutable publication and offline HTML |
+| [`digital-twin-cuda-render.yaml`](digital-twin-cuda-render.yaml) | [CUDA rendering guide](../../docs/workbench/guides/digital-twin.md#render-the-authored-cuda-reference-scene) | Authored factory cell rendered with native Cycles CUDA, OpenUSD/glTF and offline HTML |
 | [`content-agents-rigid-object.yaml`](content-agents-rigid-object.yaml) | [Guide](../../docs/workbench/content-agents.md) | NVIDIA Content Agents with a public image and runtime-fetched OVRTX: source USD → real Material/Physics Agents + OVRTX → upstream validation → rigid Isaac object USDZ/adapter |
 | [`cosmos-fetch.yaml`](cosmos-fetch.yaml) | [Access setup](../../docs/workbench/cosmos3-access-preflight.md) | Check Cosmos source/checkpoint access and materialize a local cache |
 | [`cosmos-synth-fanout-curation.yaml`](cosmos-synth-fanout-curation.yaml) | [General workflow guide](../../docs/workbench/npa-workflow-guide.md) | Cosmos synth fan-out + curation |
@@ -83,6 +86,7 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | [`rl-policy-training-sim-success.yaml`](rl-policy-training-sim-success.yaml) | [Isaac Lab CLI](../../docs/cli/isaac-lab.md) | Isaac Lab RL train (partial) |
 | [`robocasa-data-policy.yaml`](robocasa-data-policy.yaml) | [RoboCasa CLI](../../docs/cli/robocasa.md) | Native multi-task PandaOmron trajectories → LeRobotDataset v3 → real ACT training → exact-checkpoint evaluation on disjoint RoboCasa tasks → insights |
 | [`robocasa-smoke.yaml`](robocasa-smoke.yaml) | [RoboCasa CLI](../../docs/cli/robocasa.md) | Native RoboCasa workbench: task registration, asset availability, headless EGL reset, and a real random rollout with video through the npa-robocasa service |
+| [`robot-policy-train-and-serve.yaml`](robot-policy-train-and-serve.yaml) | [Guide](../../docs/workbench/cookbooks/robot-policy-train-and-serve.md) | One standard runtime: public LeRobot data → FiftyOne selection → grouped split → continued SmolVLA training and fine-tuning with two measured gates → portable export → independent GPU HTTP serving and native simulation → standalone HTML/MP4. |
 | [`shared-scene-navigation.yaml`](shared-scene-navigation.yaml) | [Contract and runbook](../../docs/workbench/guides/shared-scene-navigation.md) | Native Isaac public quadruped reference or BYOF navigation with shared-scene physics/perception probes, checkpoint resume and held-out evaluation. Public bundle builder supplies a cluttered warehouse; reconstructed scenes require measured resets. GPU acceptance unverified. |
 | [`sonic-eval.yaml`](sonic-eval.yaml) | [Evaluation runbook](../../docs/workbench/cookbooks/sonic-eval-runbook.md) | SONIC eval |
 | [`sonic-export-eval.yaml`](sonic-export-eval.yaml) | [Evaluation runbook](../../docs/workbench/cookbooks/sonic-eval-runbook.md) | Export → eval |

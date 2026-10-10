@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import tempfile
 
+from npa.exception_notes import add_exception_note
 from npa.workflows.navigation.artifacts import (
     file_sha256,
     materialize,
@@ -95,8 +96,9 @@ def _publish_interruption(output, output_path, stage, interruption):
         _record_failure(output, stage)
         publish(output, output_path)
     except BaseException as evidence_error:
-        interruption.add_note(
-            f"Interrupted-stage publication failed: {type(evidence_error).__name__}"
+        add_exception_note(
+            interruption,
+            f"Interrupted-stage publication failed: {type(evidence_error).__name__}",
         )
 
 

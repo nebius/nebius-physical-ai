@@ -1,0 +1,1325 @@
+<!doctype html>
+<!-- Present measured reference-run evidence and deterministic trajectory playback. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>Policy Lab · From data to an earned release</title>
+    <style>
+      :root {
+        --bg: #091418;
+        --panel: #102126;
+        --line: #263b40;
+        --muted: #8ca5ad;
+        --white: #edf5f3;
+        --lime: #c4f777;
+        --mint: #53dabc;
+        --amber: #ffbc78;
+        --red: #fa9384;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--white);
+        font:
+          15px -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+      }
+      button,
+      input {
+        font: inherit;
+      }
+      button {
+        cursor: pointer;
+      }
+      button:focus-visible,
+      input:focus-visible {
+        outline: 2px solid var(--lime);
+        outline-offset: 4px;
+      }
+      button {
+        color: inherit;
+      }
+      a {
+        color: var(--lime);
+      }
+      .screen {
+        height: 810px;
+        max-width: 1600px;
+        margin: auto;
+        padding: 24px 38px 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 17px;
+      }
+      .top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 32px;
+      }
+      .brand {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        font-weight: 760;
+        letter-spacing: 1.6px;
+        font-size: 15px;
+      }
+      .mark {
+        width: 29px;
+        height: 29px;
+        border: 2px solid var(--lime);
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        color: var(--lime);
+      }
+      .breadcrumb {
+        font-weight: 400;
+        color: var(--muted);
+        margin-left: 18px;
+        font-size: 12px;
+        letter-spacing: 1.2px;
+      }
+      .pill {
+        font-size: 11px;
+        border: 1px solid #3b5352;
+        padding: 8px 12px;
+        border-radius: 20px;
+        letter-spacing: 1.5px;
+        color: var(--lime);
+      }
+      .dot {
+        display: inline-block;
+        width: 6px;
+        height: 6px;
+        background: var(--lime);
+        border-radius: 50%;
+        margin-right: 7px;
+      }
+      .hero {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-end;
+        height: 79px;
+        padding-bottom: 4px;
+      }
+      .eyebrow {
+        color: var(--mint);
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 2px;
+        text-transform: uppercase;
+        margin-bottom: 9px;
+      }
+      h1 {
+        font-size: 35px;
+        font-weight: 550;
+        letter-spacing: -1.5px;
+        margin: 0;
+      }
+      .hero-note {
+        font-size: 12px;
+        line-height: 1.7;
+        color: var(--muted);
+        text-align: right;
+        max-width: 320px;
+      }
+      .hero-note b {
+        color: var(--white);
+        font-weight: 500;
+      }
+      .pipeline {
+        display: grid;
+        grid-template-columns: repeat(6, 1fr);
+        gap: 10px;
+        height: 90px;
+      }
+      .node {
+        position: relative;
+        text-align: left;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--panel);
+        padding: 13px 14px;
+      }
+      .node::after {
+        content: "→";
+        position: absolute;
+        right: -9px;
+        top: 34px;
+        z-index: 2;
+        color: var(--muted);
+        background: var(--bg);
+        font-size: 13px;
+      }
+      .node:last-child::after {
+        display: none;
+      }
+      .node .number {
+        font-size: 10px;
+        color: var(--muted);
+        letter-spacing: 1px;
+      }
+      .node strong {
+        display: block;
+        font-size: 14px;
+        font-weight: 550;
+        margin: 6px 0 5px;
+      }
+      .node small {
+        color: var(--muted);
+        font-size: 10px;
+      }
+      .node.active {
+        background: #27352b;
+        border-color: var(--lime);
+      }
+      .node.active .number,
+      .node.active small {
+        color: var(--lime);
+      }
+      .node .loop {
+        position: absolute;
+        right: 13px;
+        top: 12px;
+        font-size: 15px;
+        color: var(--mint);
+      }
+      .main {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 310px;
+        gap: 17px;
+        min-height: 0;
+        flex: 1;
+      }
+      .stage {
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        overflow: hidden;
+        position: relative;
+        background: radial-gradient(
+          ellipse at 50% 80%,
+          #16333a,
+          var(--panel) 70%
+        );
+      }
+      .stage-head {
+        position: absolute;
+        left: 22px;
+        right: 22px;
+        top: 18px;
+        display: flex;
+        justify-content: space-between;
+        z-index: 1;
+      }
+      .stage-head b {
+        font-size: 12px;
+        font-weight: 500;
+        letter-spacing: 0.5px;
+      }
+      .stage-head span {
+        font-size: 10px;
+        color: var(--muted);
+        letter-spacing: 1.5px;
+      }
+      .stage canvas {
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+      .stage-caption {
+        position: absolute;
+        bottom: 18px;
+        left: 22px;
+        right: 22px;
+        display: flex;
+        justify-content: space-between;
+        font-size: 10px;
+        color: var(--muted);
+      }
+      .side {
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--panel);
+        padding: 23px 22px;
+        display: flex;
+        flex-direction: column;
+      }
+      .side h2 {
+        font-size: 21px;
+        font-weight: 550;
+        letter-spacing: -0.5px;
+        margin: 0 0 12px;
+      }
+      .side .desc {
+        font-size: 12px;
+        color: var(--muted);
+        line-height: 1.6;
+        min-height: 43px;
+        margin: 0;
+      }
+      .big {
+        font-size: 62px;
+        letter-spacing: -3px;
+        line-height: 1.1;
+        color: var(--lime);
+        margin: 14px 0 3px;
+        font-weight: 500;
+      }
+      .metric-label {
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .history {
+        margin-top: 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .bar-row {
+        display: grid;
+        grid-template-columns: 57px 1fr 36px;
+        gap: 7px;
+        align-items: center;
+        font-size: 10px;
+        color: var(--muted);
+      }
+      .track {
+        height: 6px;
+        border-radius: 3px;
+        background: #2d4146;
+        overflow: hidden;
+      }
+      .fill {
+        height: 100%;
+        background: var(--amber);
+        border-radius: 3px;
+      }
+      .bar-row.pass .fill {
+        background: var(--lime);
+      }
+      .bar-row.pass {
+        color: var(--lime);
+      }
+      .verdict {
+        margin-top: auto;
+        padding-top: 15px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        color: var(--mint);
+        font-size: 11px;
+        border-top: 1px solid var(--line);
+      }
+      .verdict .badge {
+        border: 1px solid #3d5d4c;
+        padding: 5px 7px;
+        border-radius: 4px;
+        font-size: 9px;
+        letter-spacing: 1px;
+      }
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 17px;
+        height: 75px;
+      }
+      .stat {
+        border-top: 1px solid var(--line);
+        padding: 13px 2px;
+        display: flex;
+        gap: 15px;
+        align-items: center;
+      }
+      .stat strong {
+        font-size: 27px;
+        font-weight: 500;
+        letter-spacing: -1px;
+        color: var(--white);
+      }
+      .stat span {
+        font-size: 10px;
+        line-height: 1.6;
+        color: var(--muted);
+      }
+      .stat b {
+        display: block;
+        color: var(--white);
+        font-weight: 500;
+        font-size: 11px;
+      }
+      .controls {
+        display: flex;
+        align-items: center;
+        gap: 13px;
+        height: 31px;
+      }
+      .play {
+        border: 1px solid #496250;
+        background: var(--lime);
+        color: #13251a;
+        width: 34px;
+        height: 30px;
+        border-radius: 6px;
+        font-size: 12px;
+      }
+      .time {
+        font-size: 10px;
+        color: var(--muted);
+        font-variant-numeric: tabular-nums;
+        min-width: 57px;
+      }
+      .scrubber {
+        flex: 1;
+        accent-color: var(--lime);
+        height: 3px;
+        cursor: pointer;
+      }
+      .chapter {
+        font-size: 10px;
+        color: var(--white);
+        min-width: 154px;
+        text-align: right;
+      }
+      .scope {
+        font-size: 9px;
+        color: #6f8d95;
+        letter-spacing: 0.15px;
+        display: flex;
+        justify-content: space-between;
+      }
+      .trial {
+        background: transparent;
+        border: 1px solid var(--line);
+        padding: 5px 8px;
+        border-radius: 4px;
+        font-size: 10px;
+        color: var(--muted);
+      }
+      .details {
+        max-width: 1364px;
+        margin: 45px auto 70px;
+        padding: 0 38px;
+        border-top: 1px solid var(--line);
+      }
+      .details h2 {
+        font-weight: 500;
+        font-size: 27px;
+        letter-spacing: -0.6px;
+        margin: 34px 0 12px;
+      }
+      .details p {
+        color: var(--muted);
+        line-height: 1.7;
+        max-width: 940px;
+        font-size: 14px;
+      }
+      .evidence-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 24px;
+        margin: 28px 0;
+      }
+      .evidence-card {
+        border: 1px solid var(--line);
+        padding: 24px;
+        border-radius: 12px;
+      }
+      .evidence-card h3 {
+        font-weight: 500;
+        font-size: 16px;
+        margin: 0 0 18px;
+      }
+      .evidence-card p {
+        font-size: 12px;
+      }
+      .mono {
+        font:
+          11px ui-monospace,
+          SFMono-Regular,
+          Consolas,
+          monospace;
+        word-break: break-all;
+        color: var(--mint);
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+      th {
+        text-align: left;
+        color: var(--muted);
+        font-weight: 400;
+      }
+      td,
+      th {
+        padding: 10px 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .download {
+        display: inline-block;
+        text-decoration: none;
+        border: 1px solid var(--line);
+        padding: 10px 14px;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--lime);
+        font-size: 12px;
+        margin-right: 8px;
+      }
+      @media (max-width: 1000px) {
+        .screen {
+          padding: 18px;
+          height: auto;
+          min-height: 100vh;
+        }
+        .hero {
+          height: auto;
+          gap: 20px;
+          padding: 12px 0;
+        }
+        .hero-note {
+          display: none;
+        }
+        h1 {
+          font-size: 28px;
+        }
+        .pipeline {
+          height: auto;
+          grid-template-columns: repeat(3, 1fr);
+        }
+        .node {
+          min-height: 82px;
+        }
+        .node:nth-child(3)::after {
+          display: none;
+        }
+        .main {
+          grid-template-columns: 1fr;
+        }
+        .stage {
+          height: 390px;
+        }
+        .side {
+          min-height: 320px;
+        }
+        .stats {
+          height: auto;
+        }
+        .stat strong {
+          font-size: 23px;
+        }
+        .breadcrumb {
+          display: none;
+        }
+        .details {
+          padding: 0 20px;
+        }
+        .evidence-grid {
+          grid-template-columns: 1fr;
+        }
+        .scope {
+          line-height: 1.8;
+          gap: 20px;
+        }
+        .chapter {
+          min-width: 110px;
+        }
+      }
+      body.capture .details {
+        display: none;
+      }
+      body.capture .screen {
+        width: 1440px;
+        height: 810px;
+      }
+      body.capture .trial {
+        visibility: hidden;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="screen">
+      <header class="top">
+        <div class="brand">
+          <span class="mark">↗</span> POLICY LAB
+          <span class="breadcrumb">NEBIUS PHYSICAL AI / WORKBENCH</span>
+        </div>
+        <span class="pill"
+          ><span class="dot"></span>MEASURED REFERENCE RUN</span
+        >
+      </header>
+      <div class="hero">
+        <div>
+          <div class="eyebrow" id="eyebrow">01 / Curate the signal</div>
+          <h1 id="headline">A policy has to earn its release.</h1>
+        </div>
+        <div class="hero-note">
+          One workflow. Two independent holdouts.<br /><b
+            >Every promotion backed by a measured gate.</b
+          >
+        </div>
+      </div>
+      <nav class="pipeline" aria-label="Demo chapters">
+        <button class="node" data-time="0">
+          <span class="number">01 / DATA</span><strong>Curate</strong
+          ><small>FiftyOne · quality filters</small>
+        </button>
+        <button class="node" data-time="6">
+          <span class="number">02 / PARTITIONS</span
+          ><strong>Split 90 / 5 / 5</strong
+          ><small>Source groups stay together</small>
+        </button>
+        <button class="node" data-time="12">
+          <span class="number">03 / LEARN</span><span class="loop">↻</span
+          ><strong>Pretrain + gate</strong
+          ><small>Holdout 1 · two conditions</small>
+        </button>
+        <button class="node" data-time="23">
+          <span class="number">04 / REFINE</span><span class="loop">↻</span
+          ><strong>Fine-tune + gate</strong
+          ><small>Holdout 2 · slow actuator</small>
+        </button>
+        <button class="node" data-time="34">
+          <span class="number">05 / VERIFY</span
+          ><strong>Test approved policy</strong
+          ><small>Exact checkpoint retained</small>
+        </button>
+        <button class="node" data-time="40">
+          <span class="number">06 / REVIEW</span
+          ><strong>Inspect evidence</strong
+          ><small>Metrics · hashes · trajectories</small>
+        </button>
+      </nav>
+      <div class="main">
+        <section
+          class="stage"
+          aria-label="Generated data and measured trajectory playback"
+        >
+          <div class="stage-head">
+            <b id="view-title">Generated demonstrations</b
+            ><span id="view-meta">LEROBOT V3 / 132 EPISODES</span>
+          </div>
+          <canvas
+            id="scene"
+            width="1020"
+            height="440"
+            aria-label="Policy trajectory visualization"
+          ></canvas>
+          <div class="stage-caption">
+            <span id="view-caption"
+              >Original generated inputs. Actual FiftyOne selection.</span
+            ><button class="trial" id="next-trial">
+              Next held-out trial →
+            </button>
+          </div>
+        </section>
+        <aside class="side">
+          <div class="eyebrow" id="side-kicker">Dataset quality</div>
+          <h2 id="side-title">Keep the usable signal.</h2>
+          <p class="desc" id="side-desc"></p>
+          <div class="big" id="score"></div>
+          <div class="metric-label" id="score-label"></div>
+          <div class="history" id="history"></div>
+          <div class="verdict">
+            <span id="verdict"></span><span class="badge" id="badge"></span>
+          </div>
+        </aside>
+      </div>
+      <section class="stats" aria-label="Run evidence">
+        <div class="stat">
+          <strong id="stat-data"></strong
+          ><span
+            ><b>Curated source episodes</b>Generated data · real FiftyOne
+            query</span
+          >
+        </div>
+        <div class="stat">
+          <strong id="stat-attempts"></strong
+          ><span
+            ><b>Measured training attempts</b>Retries resume the previous
+            checkpoint</span
+          >
+        </div>
+        <div class="stat">
+          <strong id="stat-final"></strong
+          ><span
+            ><b>Terminal policy-test successes</b>Same hash as the approved
+            candidate</span
+          >
+        </div>
+      </section>
+      <div class="controls">
+        <button class="play" id="play" aria-label="Play or pause walkthrough">
+          ▶</button
+        ><span class="time" id="time">00:00 / 00:45</span
+        ><input
+          id="scrubber"
+          class="scrubber"
+          type="range"
+          min="0"
+          max="44.99"
+          step="0.01"
+          value="0"
+          aria-label="Walkthrough time"
+        /><span class="chapter" id="chapter">Curate the signal</span>
+      </div>
+      <footer class="scope">
+        <span
+          >Generated data · local CPU reference · analytical reaching
+          environment. Slurm, foundation-model scale, and robot hardware are not
+          exercised.</span
+        ><span>45-second evidence walkthrough · sound off</span>
+      </footer>
+    </main>
+    <section class="details">
+      <div class="eyebrow" style="margin-top: 34px">Inspect the run</div>
+      <h2>Every green gate has a trail.</h2>
+      <p>
+        This report embeds actual checkpoint identities, success counts,
+        training losses, and end-effector trajectories from the completed
+        reference run. The same workflow interpreter, FiftyOne curation,
+        partitioner, batch-result validation, and retry gates run in the Slurm
+        pipeline. The local reference uses a small NumPy behavior-cloning policy
+        and generated LeRobot v3 data.
+      </p>
+      <div class="evidence-grid">
+        <div class="evidence-card">
+          <h3>What ran</h3>
+          <table id="stage-table">
+            <thead>
+              <tr>
+                <th>Stage</th>
+                <th>Executions</th>
+                <th>Observed time</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="evidence-card">
+          <h3>Approved checkpoint</h3>
+          <div id="checkpoint" class="mono"></div>
+          <p>
+            SHA256 verified against numeric checkpoint bytes before evaluation
+            and policy test. Both holdouts remain evaluation-only. Fine-tuning
+            adapts the training demonstrations to a simulated actuator with half
+            the nominal gain.
+          </p>
+          <h3>How success is measured</h3>
+          <p>
+            Reach within 4 cm of a held-out target after 16 control steps. Each
+            holdout has six independent source episodes, each tested from four
+            initial-state variations (24 correlated trials). The two pretraining
+            conditions use the same evaluator with different actuator gains.
+            Gates require at least 90% success per condition.
+          </p>
+          <p>
+            Robot links illustrate measured Cartesian motion using inverse
+            kinematics. This analytical environment does not model contacts,
+            collisions, or real robot dynamics. Preview labels come from the
+            generator; no object detector is run.
+          </p>
+        </div>
+      </div>
+      <button class="download" id="download">
+        Download embedded evidence JSON
+      </button>
+      <p>
+        All media and evidence are embedded. This page makes no network
+        requests. The complete local run also writes an MP4, a poster, and
+        artifact checksums.
+      </p>
+    </section>
+    <script id="evidence" type="application/json">
+      __DEMO_EVIDENCE__
+    </script>
+    <script>
+      /* Render the embedded measurements without fetching or exposing private run records. */
+      const D = JSON.parse(document.getElementById("evidence").textContent);
+      const $ = (id) => document.getElementById(id),
+        canvas = $("scene"),
+        ctx = canvas.getContext("2d");
+      const capture = new URLSearchParams(location.search).has("capture");
+      if (capture) document.body.classList.add("capture");
+      const previews = D.previews.map((data) => {
+        const image = new Image();
+        image.src = "data:image/png;base64," + data;
+        return image;
+      });
+      const chapters = [0, 6, 12, 23, 34, 40],
+        names = [
+          "Curate the signal",
+          "Protect the holdouts",
+          "Learn, measure, retry",
+          "Adapt, measure, retry",
+          "Test the approved policy",
+          "Review the evidence",
+        ];
+      const headings = [
+        "Start with data worth learning from.",
+        "Holdouts stay out of the training loop.",
+        "A failed gate sends the policy back.",
+        "A new actuator demands a better policy.",
+        "Only the approved checkpoint moves forward.",
+        "A release backed by inspectable evidence.",
+      ];
+      let story = 0,
+        playing = false,
+        last = 0,
+        trialOffset = 0,
+        section = -1;
+      const percent = (value) => Math.round(value * 100) + "%";
+      const text = (
+        value,
+        x,
+        y,
+        size = 14,
+        color = "#edf5f3",
+        align = "left",
+      ) => {
+        ctx.fillStyle = color;
+        ctx.font = `${size}px -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif`;
+        ctx.textAlign = align;
+        ctx.fillText(value, x, y);
+      };
+      function box(x, y, w, h, fill, stroke, r = 10) {
+        ctx.beginPath();
+        ctx.roundRect(x, y, w, h, r);
+        if (fill) {
+          ctx.fillStyle = fill;
+          ctx.fill();
+        }
+        if (stroke) {
+          ctx.strokeStyle = stroke;
+          ctx.lineWidth = 1;
+          ctx.stroke();
+        }
+      }
+      function line(points, color, width = 1, dash = []) {
+        ctx.beginPath();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = width;
+        ctx.setLineDash(dash);
+        points.forEach((p, i) => (i ? ctx.lineTo(...p) : ctx.moveTo(...p)));
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      function circle(x, y, r, fill, stroke) {
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        if (fill) {
+          ctx.fillStyle = fill;
+          ctx.fill();
+        }
+        if (stroke) {
+          ctx.strokeStyle = stroke;
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+        }
+      }
+      function evidenceRows(items) {
+        $("history").replaceChildren();
+        items.forEach(({ name, value, label, pass }) => {
+          const row = document.createElement("div");
+          row.className = "bar-row" + (pass ? " pass" : "");
+          const title = document.createElement("span");
+          title.textContent = name;
+          const track = document.createElement("div");
+          track.className = "track";
+          const fill = document.createElement("div");
+          fill.className = "fill";
+          fill.style.width = value * 100 + "%";
+          track.append(fill);
+          const end = document.createElement("span");
+          end.textContent = label;
+          row.append(title, track, end);
+          $("history").append(row);
+        });
+      }
+      function setPanel(kicker, title, desc, score, label, verdict, badge) {
+        $("side-kicker").textContent = kicker;
+        $("side-title").textContent = title;
+        $("side-desc").textContent = desc;
+        $("score").textContent = score;
+        $("score-label").textContent = label;
+        $("verdict").textContent = verdict;
+        $("badge").textContent = badge;
+      }
+      function setSection(index) {
+        section = index;
+        $("eyebrow").textContent =
+          String(index + 1).padStart(2, "0") + " / " + names[index];
+        $("headline").textContent = headings[index];
+        $("chapter").textContent = names[index];
+        document
+          .querySelectorAll(".node")
+          .forEach((node, i) => node.classList.toggle("active", i === index));
+        if (index === 0) setQualityPanel();
+        else if (index === 1) setSplitPanel();
+        else setTrainingPanel(index);
+        $("view-title").textContent = [
+          "Generated demonstrations",
+          "Immutable source-group partitions",
+          "Before / after · holdout 1",
+          "Before / after · holdout 2",
+          "Approved checkpoint · policy test",
+          "Measured trajectories · release evidence",
+        ][index];
+        $("view-meta").textContent =
+          index < 2
+            ? "LEROBOT V3 / GENERATED INPUTS"
+            : "ANALYTICAL SIMULATION / METERS";
+        $("view-caption").textContent =
+          index < 2
+            ? "Actual selection and split from this run."
+            : "Same held-out target and initial state · interpolated playback of measured positions";
+      }
+      function setQualityPanel() {
+        setPanel(
+          "Real FiftyOne curation",
+          "Keep the usable signal.",
+          "Brightness, sharpness, and provided labels determine which previews pass.",
+          D.curation.selected_count,
+          "of " + D.curation.input_count + " episodes selected",
+          "Dark previews rejected",
+          "MEASURED",
+        );
+        evidenceRows([
+          {
+            name: "Selected",
+            value: D.curation.selected_count / D.curation.input_count,
+            label: D.curation.selected_count,
+            pass: true,
+          },
+          {
+            name: "Rejected",
+            value: 1 - D.curation.selected_count / D.curation.input_count,
+            label: D.curation.input_count - D.curation.selected_count,
+            pass: false,
+          },
+        ]);
+      }
+      function setSplitPanel() {
+        setPanel(
+          "Lineage-aware partitioning",
+          "Separate before learning.",
+          "A stable source-group split keeps related demonstrations in one partition.",
+          "90 / 5 / 5",
+          "percent of curated source groups",
+          "Training reads only train",
+          "ISOLATED",
+        );
+        evidenceRows(
+          Object.entries(D.splits).map(([name, count]) => ({
+            name: name.replace("holdout_", "Holdout "),
+            value: count / D.curation.selected_count,
+            label: count,
+            pass: true,
+          })),
+        );
+      }
+      function setTrainingPanel(index) {
+        const phase = index === 2 ? "pretrain" : "finetune",
+          history = D[phase],
+          final = history.at(-1),
+          system = index === 2 ? "perturbed" : "slow-actuator";
+        const count = final.systems[system],
+          retries = history.filter((a) => a.decision === "loop_back").length;
+        setPanel(
+          index === 2
+            ? "Holdout 1 / two conditions"
+            : "Holdout 2 / slow actuator",
+          index >= 4 ? "Approved, then verified." : "Measure. Retry. Promote.",
+          index === 2
+            ? "Nominal and perturbed actuator conditions must each clear the 90% gate."
+            : "The actuator moves half as far per action. Fine-tuning uses only training data.",
+          percent(final.rates[system]),
+          `${count.successes} / ${count.trials} trials · ${system}`,
+          `${retries} measured ${retries === 1 ? "retry" : "retries"} before promotion`,
+          index >= 4 ? "VERIFIED" : "GATE PASSED",
+        );
+        evidenceRows(
+          history.map((a) => ({
+            name: "Attempt " + a.iteration,
+            value: Math.min(...Object.values(a.rates)),
+            label: percent(Math.min(...Object.values(a.rates))),
+            pass: a.decision === "promote_checkpoint",
+          })),
+        );
+      }
+      function drawPreview(image, i, x, y, card) {
+        box(x, y, card, 200, "#172b31", "#30474d");
+        ctx.drawImage(image, x + 11, y + 11, card - 22, card - 22);
+        text(
+          i === 3 ? "LOW EXPOSURE" : "SOURCE " + String(i + 1).padStart(2, "0"),
+          x + 12,
+          y + 186,
+          10,
+          "#9bb3b9",
+        );
+        box(x + 9, y - 15, 83, 27, i === 3 ? "#5a3631" : "#324a31", null, 5);
+        text(
+          i === 3 ? "REJECTED" : "SELECTED",
+          x + 50,
+          y + 3,
+          10,
+          i === 3 ? "#ffbcab" : "#c4f777",
+          "center",
+        );
+      }
+      function drawQuality(t) {
+        const w = canvas.width,
+          h = canvas.height,
+          gap = 18,
+          card = 174,
+          total = card * 4 + gap * 3,
+          left = (w - total) / 2,
+          y = 99;
+        previews.forEach((image, i) =>
+          drawPreview(image, i, left + i * (card + gap), y, card),
+        );
+        text("Brightness", left, y + 241, 12, "#8ca5ad");
+        text("Sharpness", left + 210, y + 241, 12, "#8ca5ad");
+        text("Provided labels", left + 420, y + 241, 12, "#8ca5ad");
+        text("FiftyOne view", left + 630, y + 241, 12, "#c4f777");
+        const p = Math.min(1, t / 4);
+        line(
+          [
+            [left, y + 263],
+            [left + total * p, y + 263],
+          ],
+          "#53dabc",
+          2,
+        );
+      }
+      function drawSplitCards(left, y, span, groups) {
+        const labels = [
+          ["train", "Training", "Pretrain + fine-tune"],
+          ["holdout_1", "Holdout 1", "Two evaluation conditions"],
+          ["holdout_2", "Holdout 2", "Actuator adaptation gate"],
+        ];
+        labels.forEach(([key, label, desc], i) => {
+          const x = left + (i * span) / 3;
+          box(x, y + 94, span / 3 - 15, 100, "#152b31", "#30474d");
+          text(D.splits[key], x + 17, y + 132, 26, groups[i][2]);
+          text(label, x + 65, y + 122, 13);
+          text(desc, x + 65, y + 147, 10, "#8ca5ad");
+        });
+      }
+      function drawPartitionBar(left, y, span, groups) {
+        let cursor = left;
+        groups.forEach(([name, label, color]) => {
+          const width = (D.splits[name] / D.curation.selected_count) * span;
+          box(cursor, y, width - 5, 64, color, null, 7);
+          text(
+            label,
+            cursor + (width - 5) / 2,
+            y + 38,
+            width > 100 ? 15 : 10,
+            "#112225",
+            "center",
+          );
+          cursor += width;
+        });
+      }
+      function drawSplit() {
+        const w = canvas.width,
+          y = 123,
+          left = 55,
+          span = w - 110;
+        text(
+          D.curation.selected_count + " CURATED SOURCE GROUPS",
+          left,
+          93,
+          11,
+          "#8ca5ad",
+        );
+        const groups = [
+          ["train", "TRAIN", "#c4f777"],
+          ["holdout_1", "H1", "#53dabc"],
+          ["holdout_2", "H2", "#c2adf5"],
+        ];
+        drawPartitionBar(left, y, span, groups);
+        drawSplitCards(left, y, span, groups);
+        text(
+          "No source group appears in more than one partition.",
+          w / 2,
+          y + 232,
+          12,
+          "#9bb3b9",
+          "center",
+        );
+      }
+      function trialPair(index) {
+        const phase = index === 2 ? "pretrain" : "finetune",
+          system = index === 2 ? "perturbed" : "slow-actuator";
+        const before = D[phase][0].rollouts[system],
+          after = D[phase].at(-1).rollouts[system];
+        let worst = before.reduce(
+          (best, trial, i) =>
+            trial.distance > before[best].distance ? i : best,
+          0,
+        );
+        worst = (worst + trialOffset) % before.length;
+        return [before[worst], after[worst]];
+      }
+      function drawGrid(x, y, w, h) {
+        for (let i = 0; i < 9; i++)
+          line(
+            [
+              [x + (i * w) / 8, y],
+              [x + (i * w) / 8, y + h],
+            ],
+            "#1e363e",
+          );
+        for (let i = 0; i < 6; i++)
+          line(
+            [
+              [x, y + (i * h) / 5],
+              [x + w, y + (i * h) / 5],
+            ],
+            "#1e363e",
+          );
+      }
+      function drawRobot(point, project, color) {
+        const length = 0.8,
+          distance = Math.min(1.599, Math.hypot(...point));
+        const angle = Math.atan2(point[1], point[0]),
+          bend = Math.acos(distance / (2 * length));
+        const elbow = [
+          length * Math.cos(angle + bend),
+          length * Math.sin(angle + bend),
+        ];
+        const base = project([0, 0]),
+          joint = project(elbow),
+          end = project(point);
+        line([base, joint, end], "#08151b", 20);
+        line([base, joint, end], "#8cabb8", 13);
+        line([base, joint, end], "#bed0d6", 5);
+        [base, joint].forEach((p) => {
+          circle(...p, 11, "#2d4856", "#b4cbd4");
+          circle(...p, 4, "#8fb0bd");
+        });
+        circle(...end, 8, color, "#deeeea");
+        box(base[0] - 21, base[1] - 3, 42, 14, "#344e59", "#8aa1aa", 4);
+        line(
+          [
+            [end[0] - 9, end[1] + 5],
+            [end[0] - 9, end[1] + 16],
+          ],
+          color,
+          3,
+        );
+        line(
+          [
+            [end[0] + 9, end[1] + 5],
+            [end[0] + 9, end[1] + 16],
+          ],
+          color,
+          3,
+        );
+      }
+      function drawGoal(target, project, scale) {
+        const goal = project(target);
+        circle(...goal, scale * 0.04, null, "#e3bc78");
+        circle(...goal, 14, null, "#66563d");
+        line(
+          [
+            [goal[0] - 21, goal[1]],
+            [goal[0] + 21, goal[1]],
+          ],
+          "#bba472",
+          1,
+        );
+        line(
+          [
+            [goal[0], goal[1] - 21],
+            [goal[0], goal[1] + 21],
+          ],
+          "#bba472",
+          1,
+        );
+      }
+      function drawTrialStatus(trial, x, w, h, done) {
+        const status = done
+          ? trial.success
+            ? "SUCCESS ≤ 4 CM"
+            : "GATE RETRIES"
+          : "POLICY ROLLOUT";
+        box(x + 24, h - 86, w - 48, 25, "#0c1c22", null, 4);
+        text(
+          status,
+          x + 34,
+          h - 69,
+          9,
+          done ? (trial.success ? "#c4f777" : "#ffbc78") : "#8ca5ad",
+        );
+        text(
+          "episode " + trial.episode + " / variation " + trial.variation,
+          x + w - 34,
+          h - 69,
+          9,
+          "#7d9ba4",
+          "right",
+        );
+      }
+      function drawTrial(trial, x, w, progress, label, color) {
+        const h = canvas.height,
+          scale = Math.min(w * 0.35, (h - 150) / 1.6),
+          base = [x + w / 2, h - 115];
+        const project = (p) => [base[0] + p[0] * scale, base[1] - p[1] * scale];
+        drawGrid(x + 20, 87, w - 40, h - 202);
+        text(label, x + 24, 72, 11, color);
+        drawGoal(trial.target, project, scale);
+        const frames = trial.positions.length - 1,
+          position = Math.min(frames, progress * frames),
+          step = Math.floor(position),
+          fraction = position - step;
+        const a = trial.positions[step],
+          b = trial.positions[Math.min(step + 1, frames)],
+          current = a.map((n, i) => n + (b[i] - n) * fraction);
+        line(trial.positions.map(project), "#3c5860", 1, [3, 5]);
+        line(
+          [...trial.positions.slice(0, step + 1), current].map(project),
+          color,
+          2,
+        );
+        drawRobot(current, project, color);
+        const distance = Math.hypot(
+          current[0] - trial.target[0],
+          current[1] - trial.target[1],
+        );
+        text(
+          (distance * 100).toFixed(1) + " cm",
+          x + w - 25,
+          72,
+          14,
+          color,
+          "right",
+        );
+        drawTrialStatus(trial, x, w, h, progress >= 1);
+      }
+      function drawRollouts(t, index) {
+        const [before, after] = trialPair(index),
+          w = canvas.width / 2;
+        const start = chapters[index],
+          elapsed = (t - start) % 6,
+          progress = Math.min(1, Math.max(0, elapsed / 3.4));
+        line(
+          [
+            [w, 62],
+            [w, canvas.height - 35],
+          ],
+          "#2c4147",
+        );
+        drawTrial(before, 0, w, progress, "FIRST CANDIDATE", "#ffbc78");
+        drawTrial(after, w, w, progress, "APPROVED CANDIDATE", "#c4f777");
+      }
+      /** Render an evidence-backed walkthrough frame.
+       * @param {number} t Walkthrough time in seconds.
+       * @returns {void} No return value.
+       * @throws {Error} If required embedded evidence is malformed.
+       */
+      window.setStoryTime = function (t) {
+        story = Math.max(0, Math.min(44.99, t));
+        const index = chapters.reduce(
+          (found, start, i) => (story >= start ? i : found),
+          0,
+        );
+        if (index !== section) setSection(index);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        if (index === 0) drawQuality(story);
+        else if (index === 1) drawSplit();
+        else drawRollouts(story, index);
+        $("scrubber").value = story;
+        $("time").textContent =
+          "00:" + String(Math.floor(story)).padStart(2, "0") + " / 00:45";
+      };
+      function fillEvidence() {
+        $("stat-data").textContent =
+          D.curation.selected_count + " / " + D.curation.input_count;
+        $("stat-attempts").textContent = D.pretrain.length + D.finetune.length;
+        const terminal = Object.values(D.deployment.systems)[0];
+        $("stat-final").textContent =
+          terminal.successes + " / " + terminal.trials;
+        $("checkpoint").textContent = D.deployment.checkpoint;
+        const stages = {};
+        D.steps.forEach((s) => {
+          stages[s.state] ??= { count: 0, seconds: 0 };
+          stages[s.state].count++;
+          stages[s.state].seconds += s.seconds;
+        });
+        Object.entries(stages).forEach(([name, stage]) => {
+          const row = document.createElement("tr");
+          [name, stage.count, stage.seconds.toFixed(1) + " s"].forEach(
+            (value) => {
+              const cell = document.createElement("td");
+              cell.textContent = value;
+              row.append(cell);
+            },
+          );
+          $("stage-table").querySelector("tbody").append(row);
+        });
+      }
+      function animate(now) {
+        if (playing) {
+          window.setStoryTime((story + (now - last) / 1000) % 45);
+        }
+        last = now;
+        requestAnimationFrame(animate);
+      }
+      $("play").onclick = () => {
+        playing = !playing;
+        last = performance.now();
+        $("play").textContent = playing ? "Ⅱ" : "▶";
+      };
+      $("scrubber").oninput = (event) => {
+        playing = false;
+        $("play").textContent = "▶";
+        window.setStoryTime(Number(event.target.value));
+      };
+      document
+        .querySelectorAll(".node")
+        .forEach(
+          (node) =>
+            (node.onclick = () =>
+              window.setStoryTime(Number(node.dataset.time))),
+        );
+      $("next-trial").onclick = () => {
+        trialOffset++;
+        window.setStoryTime(story);
+      };
+      $("download").onclick = () => {
+        const url = URL.createObjectURL(
+          new Blob([JSON.stringify(D, null, 2)], { type: "application/json" }),
+        );
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = "policy-demo-evidence.json";
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      };
+      Promise.all(previews.map((image) => image.decode())).then(() => {
+        fillEvidence();
+        window.setStoryTime(capture ? 0 : 38);
+        window.demoReady = true;
+        document.body.dataset.ready = "true";
+        if (!capture) requestAnimationFrame(animate);
+      });
+    </script>
+  </body>
+</html>

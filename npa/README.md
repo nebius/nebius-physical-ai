@@ -380,6 +380,16 @@ output or raise CLI exits and do not guarantee typed response objects.
 The [walkthrough](../docs/workbench/cli-sdk-yaml-walkthrough.md) explains these
 differences with a detection-training service example.
 
+For public-data GPU training and deployment, use the single
+[`robot-policy-train-and-serve.yaml`](../workflows/testing/robot-policy-train-and-serve.yaml).
+The [operator cookbook](../docs/workbench/cookbooks/robot-policy-train-and-serve.md)
+covers prerequisites and standard `npa workbench workflow` validation, submission,
+monitoring, resume and cancellation. Catalog stages run pinned public LeRobot data
+through FiftyOne curation, native SmolVLA continued training, both measured
+promotion gates, export, independent GPU HTTP serving and native simulation.
+The same run produces standalone HTML/MP4 proof. This qualified recipe uses
+managed Kubernetes plus torchrun and needs no private trainer scripts.
+
 For artifact conversion and sharing, see the
 [CLI / SDK walkthrough](../docs/workbench/cli-sdk-yaml-walkthrough.md),
 [Foxglove export](../docs/workbench/foxglove-export.md), and
@@ -587,7 +597,7 @@ gate; some optional checks also use Node, tmux, or Docker.
 
 Pull requests run the full Python 3.12 suite,
 dedicated Cypress job, focused Python 3.10/3.14 checks, and security gates.
-Five duration-balanced coverage shards run with xdist and cached constrained
+Six duration-balanced coverage shards run with xdist and cached constrained
 installs, then enforce the merged coverage floor. Full suites include smoke
 and CLI install checks without a duplicate subsystem job. The queue verifies
 this evidence against its combined latest-main candidate. Recognized prose-only
@@ -608,7 +618,17 @@ on all three supported versions. Every full Python 3.12 run publishes module
 timings, with merged profiles from successful runs for reviewed rebalancing.
 The focused compatibility check runs before CPU tensor dependencies are
 installed, so async cancellation and isolated SkyPilot fixture regressions
-surface before merge. Run it locally with:
+surface before merge. The existing browser compatibility job also checks
+portable checksums and exception notes, SQLite failure fixtures, and VLM path
+errors on Python 3.10 and 3.14. These focused regressions keep the full
+compatibility matrix in scheduled audits without adding queue shards.
+Run the stdlib compatibility guard locally with:
+
+```bash
+npa/.venv/bin/python -m pytest npa/tests/test_python_compatibility.py -q
+```
+
+Run the early compatibility checks locally with:
 
 ```bash
 npa/.venv/bin/python -m pytest \
