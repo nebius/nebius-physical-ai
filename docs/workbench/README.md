@@ -59,6 +59,7 @@ lists other affected images and shipped workflows, including the Sim2Real seams.
 | OpenArm simulation and RL | [OpenArm with MuJoCo and Isaac Lab](openarm.md) |
 | Generated worlds and GPU spatial datasets | [Marble to Nebius walkthrough](guides/marble-to-nebius.md) · [reference](marble.md) |
 | Wheel-driven warehouse collection with CUDA RGB and depth | [Marble inspection rover](guides/marble-warehouse-rover.md) |
+| Detailed walking quadruped with GPU materials and shadows | [Marble Go1 collection](guides/marble-warehouse-quadruped.md) |
 | Factory-background augmentation and real pallet detector evaluation | [Marble manufacturing experiment](marble-manufacturing.md) |
 | Isaac Lab versions | [Isaac Lab 3](isaac-lab-3.md) |
 | Policy evaluation in Isaac Lab | [Isaac Arena](isaac-arena.md) |

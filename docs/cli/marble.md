@@ -10,6 +10,7 @@ World Labs Marble worlds, CUDA camera datasets, and spatial scans.
 Options
 --help  Show this message and exit.
 Commands
+quadruped-collect  Collect policy-driven Go1 observations and Cycles GPU robot imagery.
 navigation-prepare  Prepare a Marble collider for native ANYmal navigation learning.
 rover-collect  Collect RGB, depth, actions, and contact states from a wheel-driven rover.
 acquire  Acquire a hosted world or the explicitly attributed upstream example.
@@ -31,6 +32,7 @@ pallet-report  Publish the measured pallet comparison as static JSON and HTML.
 
 | Command | Description |
 | --- | --- |
+| `quadruped-collect` | Collect policy-driven Go1 observations and Cycles GPU robot imagery. |
 | `navigation-prepare` | Prepare a Marble collider for native ANYmal navigation learning. |
 | `rover-collect` | Collect RGB, depth, actions, and contact states from a wheel-driven rover. |
 | `acquire` | Acquire a hosted world or the explicitly attributed upstream example. |
@@ -45,7 +47,7 @@ pallet-report  Publish the measured pallet comparison as static JSON and HTML.
 
 ```bash
 npa workbench marble --help
-npa workbench marble navigation-prepare --help
+npa workbench marble quadruped-collect --help
 ```
 
 Regenerate this page with `bash scripts/build_docs.sh` after changing `marble`.

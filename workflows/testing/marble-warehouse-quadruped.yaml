@@ -1,0 +1,55 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: marble-warehouse-quadruped
+  executionMode: runtime
+  description: Walk a detailed Unitree Go1 through an existing Marble warehouse using a pretrained policy, collect CUDA RGB/depth, and render the articulated robot with Cycles CUDA on one Nebius GPU.
+config:
+  source_overlay: true
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/marble-quadruped"
+  # Required existing World API bundle; acquire once using WLT_API_KEY.
+  world_uri: ""
+  frames: 500
+  width: 1280
+  height: 720
+  sensor_hz: 25
+  speed_mps: 0.35
+  samples: 32
+  results_uri: "s3://{{config.bucket}}/{{config.prefix}}/results/"
+  reports_uri: "s3://{{config.bucket}}/{{config.prefix}}/report/"
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+    cpus: 8
+    memory: 64Gi
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+initial: collect
+states:
+  collect:
+    description: Run torque-driven Go1 physics and the pretrained policy on CPU, gsplat/Warp CUDA sensors, and Cycles CUDA articulated rendering.
+    toolRef: workbench.marble.quadruped_collect
+    resources: gpu
+    inputs:
+      - uri: "{{config.world_uri}}/world.json"
+        schema: npa.marble.world.v1
+    outputs:
+      - uri: "{{config.results_uri}}result.json"
+        schema: npa.marble.result.v1
+      - uri: "{{config.results_uri}}trajectory.json"
+        schema: application/json
+    next: report
+  report:
+    description: Verify recorded artifacts and publish a standalone offline HTML replay.
+    toolRef: workbench.marble.report
+    resources: cpu
+    inputs:
+      - uri: "{{config.results_uri}}result.json"
+    outputs:
+      - uri: "{{config.reports_uri}}index.html"
+        schema: text/html
+    terminal: true

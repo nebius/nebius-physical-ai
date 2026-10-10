@@ -107,6 +107,38 @@ def test_sample_workflow_does_not_require_provider_key():
     assert marble_secret_names(spec) == ()
 
 
+def test_quadruped_reuses_world_and_keeps_gpu_work_in_native_worker(monkeypatch):
+    from npa.orchestration.npa_workflow.spec import load_spec
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.marble_credentials import marble_secret_names
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        SkypilotRenderOptions,
+        render_skypilot_yaml,
+    )
+
+    spec = load_spec(ROOT / "workflows/testing/marble-warehouse-quadruped.yaml")
+    spec.config["world_uri"] = "s3://example-bucket/world"
+    assert marble_secret_names(spec) == ()
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/source")
+    rendered = render_skypilot_yaml(
+        spec,
+        build_plan(spec, run_id="test-go1"),
+        run_id="test-go1",
+        options=SkypilotRenderOptions(
+            registry="registry.example", materialize_registry_secrets=False
+        ),
+    )
+    jobs = [doc for doc in yaml.safe_load_all(rendered) if doc and "run" in doc]
+    assert len(jobs) == 2
+    assert jobs[0]["resources"]["accelerators"] == "RTXPRO6000:1"
+    assert "quadruped-collect" in jobs[0]["run"]
+    assert "--sensor-hz 25" in jobs[0]["run"] and "--samples 32" in jobs[0]["run"]
+    assert "onnxruntime==1.23.2" in jobs[0]["setup"]
+    assert "pycollada==0.9.3" in jobs[0]["setup"]
+    assert "accelerators" not in jobs[1]["resources"]
+    assert "imageio-ffmpeg==0.6.0" in jobs[1]["setup"]
+
+
 def test_rover_workflow_routes_both_sensors_to_one_real_gpu_stage(monkeypatch):
     from npa.orchestration.npa_workflow.spec import load_spec
     from npa.orchestration.npa_workflow.interpreter import build_plan

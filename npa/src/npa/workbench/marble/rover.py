@@ -102,9 +102,10 @@ def _metrics(capture, depth, observer, physics):
 
 
 def _save_result(root, result):
-    result["limitations"] = (
-        "Synthetic warehouse and approximate metric geometry. CPU rigid-body simulation; GPU RGB and depth. No physical robot, trained policy, or measured sim-to-real success."
-    )
+    if result["kind"] == "rover":
+        result["limitations"] = (
+            "Synthetic warehouse and approximate metric geometry. CPU rigid-body simulation; GPU RGB and depth. No physical robot, trained policy, or measured sim-to-real success."
+        )
     result["files"] = {
         str(path.relative_to(root)): {
             "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),

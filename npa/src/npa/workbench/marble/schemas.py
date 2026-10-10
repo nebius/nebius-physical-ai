@@ -78,6 +78,35 @@ class RoverRequest(RunRequest):
         return value
 
 
+class QuadrupedRequest(RunRequest):
+    """Configure articulated Go1 collection and Cycles GPU rendering.
+
+    Args: World/result paths, image dimensions, sensor rate, walking speed, samples.
+    Returns: Validated capture settings with synchronized physics and cameras.
+    Raises: ValueError when the sensor rate does not divide the 250 Hz physics rate.
+    """
+
+    frames: int = Field(default=500, ge=2)
+    width: int = Field(default=1280, ge=32)
+    height: int = Field(default=720, ge=32)
+    sensor_hz: int = Field(default=25, ge=1, le=250)
+    speed_mps: float = Field(default=0.35, gt=0, le=0.7)
+    samples: int = Field(default=32, ge=1)
+
+    @field_validator("sensor_hz")
+    @classmethod
+    def physics_divisor(cls, value):
+        """Validate an exact number of physics steps per observation.
+
+        Args: Sensor frequency in Hz.
+        Returns: The accepted frequency.
+        Raises: ValueError for a fractional physics step count.
+        """
+        if 250 % value:
+            raise ValueError("sensor_hz must divide the 250 Hz physics frequency")
+        return value
+
+
 class NavigationRequest(BaseModel):
     """Configure native navigation preparation from an existing generated world.
 

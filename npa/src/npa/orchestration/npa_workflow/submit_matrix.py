@@ -72,6 +72,15 @@ class SubmitLiveCase:
 
 SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
+        "marble-warehouse-quadruped.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        rotation_skip=True,
+        skip_reason="Requires an operator-owned generated Marble warehouse bundle.",
+        notes="Pretrained Go1 CPU control and articulated physics; gsplat/Warp CUDA sensors and Cycles CUDA robot rendering on one RTX PRO 6000.",
+    ),
+    SubmitLiveCase(
         "marble-navigation-rl.yaml",
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),

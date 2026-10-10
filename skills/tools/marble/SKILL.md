@@ -5,6 +5,19 @@ description: Generate or import World Labs Marble worlds into NPA and run native
 
 # Marble
 
+For detailed quadruped collection, use
+`workflows/testing/marble-warehouse-quadruped.yaml` and
+`docs/workbench/guides/marble-warehouse-quadruped.md`. Reuse an existing generated
+warehouse: no new World API request is needed. The runtime verifies pinned
+official Unitree Go1 meshes and a Google MuJoCo Playground ONNX policy. PyBullet
+torque dynamics and ONNX inference execute on CPU; gsplat RGB, Warp depth, and
+Cycles CUDA articulated rendering use one RTX PRO 6000. OpenImageDenoise runs
+on CPU; CPU path tracing is rejected. This is pretrained-policy collection, not new RL training or a
+physical robot connection. Preserve upstream licenses, actual link poses,
+per-foot contact forces, raw depth, and per-frame renderer evidence in the
+standalone HTML and collection bundle. Verify the completed run and browser
+playback before claiming live acceptance.
+
 For GPU learning beyond rendering, use `workflows/testing/marble-navigation-rl.yaml`
 and `docs/workbench/guides/marble-navigation-rl.md`. The
 `workbench.marble.navigation_prepare` adapter preserves a generated world's

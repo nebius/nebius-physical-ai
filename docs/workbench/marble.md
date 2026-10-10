@@ -18,6 +18,7 @@ requires hosted generation and compares real-image detector accuracy.
 | [World Capture](../../workflows/testing/marble-world-capture.yaml) | gsplat Gaussian rasterization | RGB camera dataset, camera matrices, CUDA timings, interactive HTML |
 | [Spatial Scan](../../workflows/testing/marble-spatial-scan.yaml) | NVIDIA Warp ray/triangle intersection | raw depth NPZ, sampled hit cloud, camera matrices, CUDA timings, interactive HTML |
 | [Warehouse Rover](../../workflows/testing/marble-warehouse-rover.yaml) | gsplat RGB and Warp depth along actual wheel-driven motion | synchronized observations, actions, joints, contacts, poses, and standalone offline HTML |
+| [Warehouse Go1](../../workflows/testing/marble-warehouse-quadruped.yaml) | gsplat RGB, Warp depth, and Cycles CUDA robot rendering | pretrained-policy walking with measured joints/contacts and a standalone three-video HTML replay |
 | [Navigation RL](../../workflows/testing/marble-navigation-rl.yaml) | native Isaac physics, ANYmal navigation inference and RSL-RL PPO updates | sealed scene/cases, policy checkpoint and held-out evaluation; new adapter GPU acceptance pending |
 
 Capture and scan use `acquire → capture/scan → report`, S3 handoffs, and one RTX PRO 6000
@@ -29,6 +30,12 @@ Capture and scan execute gsplat or Warp. The rover combines both consumers
 with PyBullet CPU rigid-body dynamics in the same one-GPU worker; see the
 [headless collection guide](guides/marble-warehouse-rover.md).
 No Marble image or model weights are published.
+
+For a detailed articulated quadruped, use the [Go1 collection guide](guides/marble-warehouse-quadruped.md).
+It reuses a generated warehouse and downloads pinned official robot meshes and
+a pretrained locomotion checkpoint at runtime. Physics and policy inference run
+on CPU; the three renderers run on the allocated Nebius GPU. This collection
+does not train a new policy.
 
 For GPU work beyond rendering, use the [navigation learning guide](guides/marble-navigation-rl.md).
 It reuses an existing generated world and the native navigation trainer, exposes

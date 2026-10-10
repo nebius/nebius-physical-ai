@@ -5,10 +5,12 @@ from npa.workbench.marble.schemas import (
     AcquireRequest,
     NavigationRequest,
     PalletBenchmarkRequest,
+    QuadrupedRequest,
     RunRequest,
     RoverRequest,
 )
 from npa.workbench.marble.rover import rover_collect
+from npa.workbench.marble.quadruped import quadruped_collect
 from npa.workbench.marble.navigation import navigation_prepare
 from npa.workbench.marble.pallet_data import pallet_preflight
 from npa.workbench.marble.pallet_benchmark import pallet_benchmark
@@ -20,6 +22,8 @@ __all__ = [
     "navigation_prepare",
     "RunRequest",
     "RoverRequest",
+    "QuadrupedRequest",
+    "quadruped_collect",
     "rover_collect",
     "PalletBenchmarkRequest",
     "acquire",

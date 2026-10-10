@@ -53,6 +53,7 @@ skills:
           - workflows/testing/marble-spatial-scan.yaml
           - workflows/testing/marble-manufacturing-pallet-detection.yaml
           - workflows/testing/marble-navigation-rl.yaml
+          - workflows/testing/marble-warehouse-quadruped.yaml
   - name: ray-workbench
     category: tools
     when_to_use: "Choose or operate a supported Ray path: native Jobs/Core, guarded Train V2, Cosmos3 native Serve, or fixed CPU KubeRay; identify unsupported Ray libraries."

@@ -11,6 +11,7 @@ from npa.workbench.marble.schemas import (
     AcquireRequest,
     NavigationRequest,
     PalletBenchmarkRequest,
+    QuadrupedRequest,
     RunRequest,
     RoverRequest,
 )
@@ -19,6 +20,44 @@ app = typer.Typer(
     help="World Labs Marble worlds, CUDA camera datasets, and spatial scans.",
     no_args_is_help=True,
 )
+
+
+@app.command("quadruped-collect")
+@json_stdout_contract
+def quadruped_collect_cmd(
+    input_path: str = typer.Option(..., "--input-path"),
+    output_path: str = typer.Option(..., "--output-path"),
+    run_id: str = typer.Option(..., "--run-id"),
+    frames: int = typer.Option(500, "--frames"),
+    width: int = typer.Option(1280, "--width"),
+    height: int = typer.Option(720, "--height"),
+    sensor_hz: int = typer.Option(25, "--sensor-hz"),
+    speed_mps: float = typer.Option(0.35, "--speed-mps"),
+    samples: int = typer.Option(32, "--samples"),
+    output_format: str = typer.Option("json", "--output-format"),
+):
+    """Collect policy-driven Go1 observations and Cycles GPU robot imagery.
+
+    Args: World/output paths, identity, image size, sensor rate, speed, and samples.
+    Returns: None; emits actual collection and GPU evidence as JSON.
+    Raises: typer.Exit on asset, policy, physical, rendering, or storage failure.
+    """
+    from npa.workbench.marble.quadruped import quadruped_collect
+
+    _call(
+        quadruped_collect,
+        QuadrupedRequest(
+            input_path=input_path,
+            output_path=output_path,
+            run_id=run_id,
+            frames=frames,
+            width=width,
+            height=height,
+            sensor_hz=sensor_hz,
+            speed_mps=speed_mps,
+            samples=samples,
+        ),
+    )
 
 
 @app.command("navigation-prepare")

@@ -1,0 +1,135 @@
+"""Guard physical robot import, upstream policy inputs, and truthful GPU reports."""
+
+import xml.etree.ElementTree as ET
+
+import numpy as np
+import pytest
+
+from npa.workbench.marble.api import MarbleError
+from npa.workbench.marble.quadruped_assets import _description, acquire_robot
+from npa.workbench.marble.quadruped_control import DEFAULT_ANGLES, observe
+from npa.workbench.marble.quadruped_report import _data
+from npa.workbench.marble.schemas import QuadrupedRequest
+
+
+def test_robot_import_preserves_dynamic_trunk_and_massless_optical_frames(tmp_path):
+    source = tmp_path / "robot-assets"
+    (source / "urdf").mkdir(parents=True)
+    (source / "urdf/go1.urdf").write_text("""<robot name="go1">
+      <link name="base"/><joint name="floating_base" type="fixed"><parent link="base"/><child link="trunk"/></joint>
+      <link name="trunk"><inertial><mass value="5.204"/></inertial>
+      <visual><geometry><mesh filename="package://go1_description/meshes/trunk.dae"/></geometry></visual></link>
+      <link name="camera_optical_face"/>
+      <joint name="optical" type="fixed"><parent link="trunk"/><child link="camera_optical_face"/></joint></robot>""")
+    path = _description(source, tmp_path / "go1.urdf")
+    tree = ET.parse(path)
+    assert tree.find("link[@name='base']") is None
+    assert tree.find("joint[@name='floating_base']") is None
+    assert tree.find("link[@name='trunk']/inertial/mass").get("value") == "5.204"
+    assert (
+        tree.find("link[@name='camera_optical_face']/inertial/mass").get("value") == "0"
+    )
+    assert tree.find(".//mesh").get("filename") == "robot-assets/meshes/trunk.dae"
+
+
+def test_upstream_policy_observation_protocol_uses_measured_local_state():
+    class Physics:
+        def getBasePositionAndOrientation(self, robot):
+            return [0, 0, 0.3], [0, 0, 0, 1]
+
+        def getBaseVelocity(self, robot):
+            return [1, 2, 3], [4, 5, 6]
+
+        def getMatrixFromQuaternion(self, quaternion):
+            return [0, -1, 0, 1, 0, 0, 0, 0, 1]
+
+        def getJointStates(self, robot, joints):
+            return [
+                (float(angle) + 0.2, index, (), 0)
+                for index, angle in enumerate(DEFAULT_ANGLES)
+            ]
+
+    observation, _, _ = observe(
+        Physics(), 1, list(range(12)), np.arange(12) / 10, [0.35, 0, 0.1]
+    )
+    np.testing.assert_allclose(observation[:9], [2, -1, 3, 5, -4, 6, 0, 0, -1])
+    np.testing.assert_allclose(observation[9:21], 0.2)
+    np.testing.assert_allclose(observation[21:33], np.arange(12))
+    np.testing.assert_allclose(observation[33:45], np.arange(12) / 10)
+    np.testing.assert_allclose(observation[45:], [0.35, 0, 0.1])
+    assert observation.shape == (48,) and observation.dtype == np.float32
+
+
+def test_unverified_policy_bytes_are_rejected_before_loading(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "npa.workbench.marble.quadruped_assets._download",
+        lambda url: b"changed-upstream",
+    )
+    with pytest.raises(MarbleError, match="hash mismatch"):
+        acquire_robot(tmp_path)
+
+
+def test_cpu_actor_render_cannot_be_presented_as_gpu_evidence(tmp_path):
+    result = {
+        "metrics": {
+            "physics": {},
+            "observer": {
+                "actor": {
+                    "frame_wall_seconds": [1],
+                    "device_type": "CPU",
+                    "cpu_render_fallback": True,
+                    "devices": [],
+                }
+            },
+        }
+    }
+    with pytest.raises(MarbleError, match="CUDA"):
+        _data(tmp_path, result)
+
+
+def test_sensor_clock_requires_exact_physics_alignment():
+    settings = {
+        "input_path": "s3://example-bucket/world",
+        "output_path": "s3://example-bucket/capture",
+        "run_id": "go1-test",
+    }
+    assert QuadrupedRequest(**settings).sensor_hz == 25
+    with pytest.raises(ValueError, match="250 Hz"):
+        QuadrupedRequest(**settings, sensor_hz=24)
+
+
+def test_blender_script_failure_surfaces_diagnostic_even_with_zero_exit(
+    monkeypatch, tmp_path
+):
+    from types import SimpleNamespace
+    from npa.workbench.marble import quadruped_render
+
+    monkeypatch.setattr(quadruped_render, "_blender", lambda root: root / "blender")
+
+    def failed_render(command, stdout, stderr):
+        assert command[command.index("--python-exit-code") + 1] == "1"
+        stdout.write("RuntimeError: missing renderer device")
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(quadruped_render.subprocess, "run", failed_render)
+    with pytest.raises(MarbleError, match="missing renderer device"):
+        quadruped_render._render_part(tmp_path / "blender", tmp_path, 0, 1)
+
+
+def test_renderer_batches_reject_gaps_and_cpu_fallback():
+    from npa.workbench.marble.quadruped_render import _merge_parts
+
+    first = {
+        "frame_start": 0,
+        "frame_stop": 2,
+        "frame_wall_seconds": [1.2, 1.1],
+        "device_type": "CUDA",
+        "cpu_render_fallback": False,
+        "devices": ["test-device"],
+    }
+    second = dict(first, frame_start=2, frame_stop=4)
+    assert _merge_parts([first, second], 4)["frame_wall_seconds"] == [1.2, 1.1] * 2
+    with pytest.raises(MarbleError, match="incomplete"):
+        _merge_parts([first, dict(second, frame_start=3)], 4)
+    with pytest.raises(MarbleError, match="incomplete"):
+        _merge_parts([first, dict(second, cpu_render_fallback=True)], 4)

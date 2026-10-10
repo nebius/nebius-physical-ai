@@ -167,6 +167,8 @@ dev = [
     "imageio-ffmpeg==0.6.0",
     # Isaac Arena replay validation and its unit fixtures use real HDF5 bytes.
     "h5py==3.16.0",
+    # Marble collider preparation and robot mesh regression fixtures.
+    "trimesh==4.12.2",
     # Selected-policy fixtures exercise real BF16 checkpoint bytes.
     "ml-dtypes>=0.5.1",
     # Exercise the OpenPI simulator's real wire codec in the finite-loop tests.
@@ -195,6 +197,7 @@ dev = [
     # Mirrors project.optional-dependencies.dev for `uv sync --group dev`.
     "imageio-ffmpeg==0.6.0",
     "h5py==3.16.0",
+    "trimesh==4.12.2",
     "ml-dtypes>=0.5.1",
     "msgpack>=1.1.1,<2",
     "pytest>=9.0.3",

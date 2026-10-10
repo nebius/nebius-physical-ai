@@ -110,7 +110,11 @@ def report(request):
         root = Path(directory)
         result = _materialize(request.input_path, "result.json", root)
         validate_result(result, request.run_id)
-        if result.get("kind") == "rover":
+        if result.get("kind") == "quadruped":
+            from .quadruped_report import write_quadruped_report
+
+            write_quadruped_report(root, result)
+        elif result.get("kind") == "rover":
             from .rover_report import write_rover_report
 
             write_rover_report(root, result)
