@@ -755,17 +755,34 @@ def reconstruct_stage_job_attribution(
                     "_order": index,
                 }
             )
+        latest_wave_key = str(attempts[-1].get("wave_key") or "") if attempts else ""
         attempts.sort(
             key=lambda item: (
                 int(item.get("attempt") or 1),
                 int(item.get("_order") or 0),
             )
         )
+        final_scope = attempts
+        if latest_wave_key and all(
+            item.get("provenance") == "runtime_wave" and item.get("wave_key")
+            for item in attempts
+        ):
+            previous = [
+                item for item in attempts if item["wave_key"] != latest_wave_key
+            ]
+            current = [item for item in attempts if item["wave_key"] == latest_wave_key]
+            if previous and all(
+                item["state"] in TERMINAL_STEP_STATES for item in previous
+            ):
+                # Rebatching changes wave keys and restarts their attempt counters.
+                # Retain history, but compare attempt IDs within the latest wave.
+                attempts = previous + current
+                final_scope = current
         final = attempts[-1] if attempts else {}
         final_attempt = int(final.get("attempt") or 0)
         final_ids = {
             str(item.get("job_id") or "")
-            for item in attempts
+            for item in final_scope
             if int(item.get("attempt") or 0) == final_attempt
             and str(item.get("job_id") or "")
         }

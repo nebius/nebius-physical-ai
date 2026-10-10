@@ -6710,7 +6710,18 @@ def _durable_workflow_status(
             for item in job_observations.values()
             if str(item.get("status") or "").strip()
         ]
-        if any(item.startswith("FAILED") for item in observed_states):
+        active_wave_status = str(
+            job_observations.get(resolution.job_id, {}).get("status") or ""
+        ).upper()
+        if runtime_waves and active_wave_status in {
+            "RUNNING",
+            "STARTING",
+            "PENDING",
+            "RECOVERING",
+        }:
+            # A resumed wave can run while other stages retain failed history.
+            live_status = active_wave_status
+        elif any(item.startswith("FAILED") for item in observed_states):
             live_status = "FAILED"
         elif any(item == "CANCELLED" for item in observed_states):
             live_status = "CANCELLED"

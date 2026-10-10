@@ -99,6 +99,39 @@ def test_empty_manifest_queries_each_observed_job(observed_status):
     assert resolution.manifest["steps"] == []
 
 
+@pytest.mark.parametrize("current_status", ["running", "starting", "failed"])
+@pytest.mark.parametrize("prior_status", ["cancelled", "failed"])
+def test_rebatched_resume_reports_current_job_not_old_cancelled_batch(
+    observed_status, current_status, prior_status
+):
+    resolution, jobs = observed_status
+    resolution.job_id = "21"
+    resolution.runtime_state["waves"] = [
+        {
+            "key": "002|collect|collect:collect-a:-,collect:collect-b:-",
+            "states": ["collect-a", "collect-b"],
+            "attempt": 1,
+            "job_id": "20",
+            "status": prior_status,
+        },
+        {
+            "key": "003|collect|collect:collect-a:-",
+            "states": ["collect-a"],
+            "attempt": 1,
+            "job_id": "21",
+            "status": current_status,
+        },
+    ]
+
+    payload = _durable_workflow_status("run-test")
+
+    assert [call.args[0] for call in jobs.call_args_list] == ["20", "21"]
+    assert payload["status"] == current_status.upper()
+    assert payload["stages"]["collect-a"]["managed_job_id"] == "21"
+    assert payload["stages"]["collect-b"]["managed_job_id"] == "20"
+    assert payload["verification_status"] == "VERIFIED"
+
+
 @pytest.mark.parametrize("cached", [False, True])
 def test_supervisor_snapshot_does_not_inherit_live_status_trust(
     observed_status, mocker, cached

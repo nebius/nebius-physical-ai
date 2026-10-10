@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from npa.orchestration.npa_workflow.run_state import (
     RunManifest,
     RuntimeRunState,
@@ -217,3 +219,55 @@ def test_conflicting_final_attempt_ids_are_exposed_as_ambiguous() -> None:
 
     assert info["managed_job_id"] == ""
     assert info["attribution"] == "ambiguous"
+
+
+@pytest.mark.parametrize("prior_attempt", [1, 3])
+def test_rebatched_wave_uses_its_own_attempt_counter(prior_attempt) -> None:
+    manifest = RunManifest(
+        workflow="collection",
+        run_id="resume-batch",
+        api_version="npa.workflow/v0.0.1",
+        steps=[
+            {"state": name, "status": "submitted"}
+            for name in ("collect-a", "collect-b")
+        ],
+    )
+    previous = {
+        "key": "002|collect|collect:collect-a:-,collect:collect-b:-",
+        "states": ["collect-a", "collect-b"],
+        "attempt": prior_attempt,
+        "job_id": "20",
+        "status": "cancelled",
+    }
+    resumed = {
+        "key": "003|collect|collect:collect-a:-",
+        "states": ["collect-a"],
+        "attempt": 1,
+        "job_id": "21",
+        "status": "running",
+    }
+
+    stages = reconstruct_stage_job_attribution(
+        manifest, runtime_waves=[previous, resumed]
+    )
+
+    assert stages["collect-a"]["managed_job_id"] == "21"
+    assert stages["collect-a"]["active_attempt"] == 1
+    assert stages["collect-a"]["attribution"] == "runtime_wave"
+    assert {item["job_id"] for item in stages["collect-a"]["attempts"]} == {"20", "21"}
+    assert stages["collect-b"]["managed_job_id"] == "20"
+
+
+def test_different_wave_keys_do_not_hide_an_unfinished_conflicting_attempt() -> None:
+    manifest = RunManifest(
+        workflow="collection",
+        run_id="conflicting-waves",
+        api_version="npa.workflow/v0.0.1",
+        steps=[{"state": "collect", "status": "submitted"}],
+    )
+    waves = [_wave(1, "collect", "20"), _wave(2, "collect", "21")]
+
+    [stage] = reconstruct_stage_job_attribution(manifest, runtime_waves=waves).values()
+
+    assert stage["attribution"] == "ambiguous"
+    assert stage["managed_job_id"] == ""
