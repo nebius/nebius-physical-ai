@@ -9,6 +9,10 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
+from npa.orchestration.npa_workflow.image_inputs import (
+    IMMUTABLE_IMAGE_REFERENCE_PATTERN,
+)
+
 Number = Annotated[float, Field(allow_inf_nan=False)]
 Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 
@@ -132,7 +136,7 @@ class Recipe(BaseModel):
     task: Annotated[str, Field(pattern=r"^[A-Za-z0-9_-]+$")]
     adapter_module: Annotated[str, Field(pattern=r"^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$")]
     adapter_sha256: Digest
-    image: Annotated[str, Field(pattern=r"^[a-zA-Z0-9./:_-]+@sha256:[0-9a-f]{64}$")]
+    image: Annotated[str, Field(pattern=rf"^{IMMUTABLE_IMAGE_REFERENCE_PATTERN}$")]
     scene_file: str
     scene_sha256: Digest
     scene_prim: Annotated[str, Field(pattern=r"^/World/[A-Za-z0-9_/]+$")]

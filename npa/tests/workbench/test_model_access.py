@@ -264,6 +264,7 @@ def test_sim2real_access_includes_cosmos_transfer_runtime_dependencies() -> None
     assert tokenizer.probe_path == "tokenizer.pth"
 
     assert guardrail.gated and tokenizer.gated
+    assert assets["lerobot/pusht"].repo_type == "dataset"
 
 
 @pytest.mark.parametrize(

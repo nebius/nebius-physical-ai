@@ -1,0 +1,104 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: franka-rl-transfer
+  description: >-
+    Real Franka Panda, UR10e/Robotiq, or Kinova JACO2 parts-handling PPO with sealed collision-bearing USD assets,
+    randomized physics, validation-only checkpoint selection, paired held-out
+    physics shifts, and blinded Token Factory visual evaluation of actual RTX
+    rollouts exported to LeRobotDataset and Rerun. A compact reference derived
+    from the Sim2Real training, held-out evaluation, and visualization stages.
+    Measures simulation transfer readiness; physical robot execution is unverified.
+
+config:
+  bucket: example-bucket
+  prefix: "franka-rl-transfer/{{run.id}}"
+  source_overlay: "1"
+  seed: "42"
+  iterations: "1500"
+  num_envs: "4096"
+  eval_episodes: "128"
+  minimum_success: "0.7"
+  asset: spool
+  embodiment: franka
+  learning_recipe: adaptive-bounded-exploration
+  vlm_model: MiniMaxAI/MiniMax-M3
+  prepared_uri: "s3://{{config.bucket}}/{{config.prefix}}/prepared/"
+  training_uri: "s3://{{config.bucket}}/{{config.prefix}}/training/"
+  evaluation_uri: "s3://{{config.bucket}}/{{config.prefix}}/evaluation/"
+  visual_uri: "s3://{{config.bucket}}/{{config.prefix}}/visual/"
+  report_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+    image: ghcr.io/nebius/nebius-physical-ai/npa-lerobot@sha256:8d513f8558253fc484808a1e53a63a5da5a0c280ff973c4e590dd3e04b228643
+  isaac:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+    cpus: 16
+    memory: 96Gi
+    image: ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:bb735577809f9b427493fda78efebc543dcf02e3deac2ec8a36ac019bff8ee46
+
+initial: prepare
+
+states:
+  prepare:
+    description: Seal original USD parts and fixture, selected embodiment, physics, reset streams, and visual/physical criteria.
+    resources: cpu
+    run:
+      argv: [python3, -m, npa.workflows.franka_rl, prepare, --run-id, "{{run.id}}", --seed, "{{config.seed}}", --iterations, "{{config.iterations}}", --num-envs, "{{config.num_envs}}", --eval-episodes, "{{config.eval_episodes}}", --minimum-success, "{{config.minimum_success}}", --asset, "{{config.asset}}", --embodiment, "{{config.embodiment}}", --learning-recipe, "{{config.learning_recipe}}", --vlm-model, "{{config.vlm_model}}", --output-path, "{{config.prepared_uri}}"]
+    outputs:
+      - {uri: "{{config.prepared_uri}}recipe.json", schema: npa.franka-rl.recipe.v1}
+    next: train
+
+  train:
+    description: Train native RSL-RL PPO on the selected Isaac articulation; retain initial and periodic weights.
+    resources: isaac
+    run:
+      argv: [python3, -m, npa.workflows.franka_rl, train, --input-path, "{{config.prepared_uri}}", --output-path, "{{config.training_uri}}"]
+    inputs:
+      - {uri: "{{config.prepared_uri}}", schema: npa.franka-rl.recipe.v1}
+    outputs:
+      - {uri: "{{config.training_uri}}training.json", schema: npa.franka-rl.training.v1}
+    next: evaluate
+
+  evaluate:
+    description: Select on validation, compare exact weights on untouched test resets, and capture paired initial/trained rollouts.
+    resources: isaac
+    run:
+      argv: [python3, -m, npa.workflows.franka_rl, evaluate, --input-path, "{{config.training_uri}}", --output-path, "{{config.evaluation_uri}}"]
+    inputs:
+      - {uri: "{{config.training_uri}}", schema: npa.franka-rl.training.v1}
+    outputs:
+      - {uri: "{{config.evaluation_uri}}evaluation.json", schema: npa.franka-rl.evaluation.v1}
+    next: visual-evaluate
+
+  visual-evaluate:
+    description: Judge each timestamped rollout through Token Factory, then compare blinded visual claims with physics.
+    resources: cpu
+    run:
+      argv: [python3, -m, npa.workflows.franka_rl, visual-evaluate, --input-path, "{{config.evaluation_uri}}", --output-path, "{{config.visual_uri}}"]
+    inputs:
+      - {uri: "{{config.evaluation_uri}}", schema: npa.franka-rl.evaluation.v1}
+    outputs:
+      - {uri: "{{config.visual_uri}}visual-evaluation.json", schema: npa.franka-rl.visual-evaluation.v1}
+    next: report
+
+  report:
+    description: Publish measured qualification, paired uncertainty, LeRobot rollout data, and a factual Rerun recording.
+    resources: cpu
+    run:
+      argv: [python3, -m, npa.workflows.franka_rl, report, --input-path, "{{config.evaluation_uri}}", --vlm-path, "{{config.visual_uri}}", --output-path, "{{config.report_uri}}"]
+    inputs:
+      - {uri: "{{config.evaluation_uri}}", schema: npa.franka-rl.evaluation.v1}
+      - {uri: "{{config.visual_uri}}", schema: npa.franka-rl.visual-evaluation.v1}
+    outputs:
+      - {uri: "{{config.report_uri}}report.json", schema: npa.franka-rl.report.v1}
+      - {uri: "{{config.report_uri}}visual-evaluation.json", schema: npa.franka-rl.visual-evaluation.v1}
+      - {uri: "{{config.report_uri}}lerobot/meta/info.json", schema: lerobot.dataset.v3}
+      - {uri: "{{config.report_uri}}{{config.embodiment}}.rrd", schema: application/vnd.rerun.rrd}
+    terminal: true

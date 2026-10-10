@@ -16,6 +16,9 @@ from npa.orchestration.npa_workflow.demos import (
     list_demos,
     prepare_demo,
 )
+from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+from npa.orchestration.npa_workflow.interpreter import build_plan
+from npa.orchestration.npa_workflow.submit import load_spec_for_submit
 
 app = typer.Typer(
     help="Run complete public sample workflows and view their results.",
@@ -61,15 +64,9 @@ def list_cmd(
 @intent_boundary(OperationIntent.ENSURE_PRESENT)
 @json_stdout_contract
 def run_cmd(
-    name: str = typer.Argument(
-        help="real-to-sim, synthetic-data, rl-improvement, or nurec."
-    ),
+    name: str = typer.Argument(help="Public demo name; see demo list."),
     project: str = typer.Option("", "--project", "-p"),
-    infra: str = typer.Option(
-        "",
-        "--infra",
-        help="RTX Kubernetes target; otherwise use the configured project.",
-    ),
+    infra: str = typer.Option("", "--infra", help="Optional RTX Kubernetes target."),
     run_id: str = typer.Option("", "--run-id"),
     resume_run: str = typer.Option(
         "", "--resume-run", help="Resume the exact previous run and its durable state."
@@ -78,6 +75,11 @@ def run_cmd(
         False,
         "--plan-only",
         help="Show the standard submission plan without launching.",
+    ),
+    var: list[str] = typer.Option(
+        [],
+        "--var",
+        help="Workflow config override as KEY=VALUE; repeat for each input.",
     ),
     output_format: OutputFormat = typer.Option(OutputFormat.text, "--output-format"),
 ) -> None:
@@ -90,19 +92,44 @@ def run_cmd(
         run_id: Fresh run identity; otherwise generated.
         resume_run: Previously printed identity, mutually exclusive with run_id.
         plan_only: Render without execution.
+        var: Workflow config overrides, including exact operator image inputs.
         output_format: Human-readable or JSON output.
     Returns:
         None.
     Raises:
         typer.Exit: Selection or standard workflow submission failed.
     """
+    _run_demo(name, project, infra, run_id, resume_run, plan_only, var, output_format)
+
+
+def _run_demo(name, project, infra, run_id, resume_run, plan_only, var, output_format):
     if run_id and resume_run:
         _fail("Use either --run-id or --resume-run.", output_format)
     try:
         selection = prepare_demo(name, project=project, run_id=resume_run or run_id)
-    except (ValueError, ConfigError) as exc:
+        _validate_demo_plan(selection, var)
+    except (ValueError, ConfigError, NpaWorkflowError) as exc:
         _fail(str(exc), output_format)
     _submit(selection, infra, resume_run, plan_only, output_format)
+
+
+def _validate_demo_plan(selection, variables):
+    from npa.cli.workbench.workflow import _parse_submit_vars
+
+    overrides = _parse_submit_vars(variables, error_type=NpaWorkflowError)
+    if {"bucket", "prefix"} & overrides.keys():
+        raise NpaWorkflowError(
+            "Demo storage is selected by --project. Use workflow submit for "
+            "custom --var bucket or prefix values."
+        )
+    selection["var"] = [*selection.get("var", []), *variables]
+    spec = load_spec_for_submit(
+        selection["yaml_path"],
+        config_overrides=_parse_submit_vars(
+            selection["var"], error_type=NpaWorkflowError
+        ),
+    )
+    build_plan(spec, run_id=selection["run_id"])
 
 
 def _submit(selection, infra, resume_run, plan_only, output_format):
@@ -199,6 +226,6 @@ def _fail(message: str, output_format: OutputFormat) -> None:
     typer.echo(
         json.dumps({"error": message})
         if output_format == OutputFormat.json
-        else message
+        else f"Error: {message}"
     )
     raise typer.Exit(1)

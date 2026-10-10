@@ -140,12 +140,15 @@ properties and its own task/controller binding.
 
 Submit the [scene action workflow](../../../workflows/testing/lyra-scene-actions.yaml)
 with the three matching bundles. It collects native actions, exports reports,
-and generates the combined HTML automatically:
+and generates the combined HTML automatically. Supply an independently qualified
+digest-only image as `NPA_LYRA_ISAAC_IMAGE`; the imported-scene qualification
+does not accept a replacement image by identity alone:
 
 ```bash
 npa workbench workflow submit workflows/testing/lyra-scene-actions.yaml \
   --project "$NPA_PROJECT" --infra "k8s/$NPA_RTX_CLUSTER" --stage-src \
   --run-id "$NPA_ACTION_RUN_ID" --var "bucket=$NPA_S3_BUCKET" \
+  --var "isaac_image=$NPA_LYRA_ISAAC_IMAGE" \
   --var "prepared_uri=$NPA_LYRA_PREPARED_URI" \
   --var "reconstruction_uri=$NPA_LYRA_RECONSTRUCTION_URI" \
   --var "geometry_uri=$NPA_LYRA_GEOMETRY_URI" \

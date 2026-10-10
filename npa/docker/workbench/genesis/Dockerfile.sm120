@@ -49,9 +49,16 @@ RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu; \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends --fix-broken
 
+COPY docker/workbench/curobo/remove_scikit_image_recipe.py \
+    /opt/genesis/remove-scikit-image-recipe.py
+
+# This additive recipe keeps its CUDA 13 parent's Python 3.11 environment.
+# Correct the reviewed dependency before the installation layer commits.
 RUN python -m pip install --upgrade pip setuptools wheel \
-    && python -m pip install \
+    && python -m pip install --no-binary imageio-ffmpeg \
       "genesis-world==${GENESIS_VERSION}" \
+      "imageio-ffmpeg==0.6.0" \
+      "scikit-image==0.26.0" \
       "rsl-rl-lib==${RSL_RL_VERSION}" \
       "moviepy @ https://github.com/Zulko/moviepy/archive/97316f37f6a8d3843abfb53eba8f3bb0ea46a008.tar.gz#sha256=6bef8575b091f6a7342ed271ff5dba97dbb07255df0a5b81fec38f8248b143d9" \
       "pillow>=12.3.0,<13.0" \
@@ -65,11 +72,13 @@ RUN python -m pip install --upgrade pip setuptools wheel \
       "boto3==1.42.91" \
       "jinja2==3.1.6" \
       "pyarrow==23.0.1" \
-    && find /opt/npa/venv -type f \
-      -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
     && test -z "$(find /opt/npa/venv -type f \
       -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)" \
-    && python -c 'import imageio_ffmpeg; assert imageio_ffmpeg.get_ffmpeg_exe() == "/usr/bin/ffmpeg"'
+    && python -c 'import imageio_ffmpeg; assert imageio_ffmpeg.get_ffmpeg_exe() == "/usr/bin/ffmpeg"' \
+    && python /opt/genesis/remove-scikit-image-recipe.py \
+      --site-packages /opt/npa/venv/lib/python3.11/site-packages \
+      --capability genesis \
+      > /opt/genesis/dependency-source-correction.json
 
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa

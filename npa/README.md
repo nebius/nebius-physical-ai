@@ -12,6 +12,21 @@ and follow [installation](../docs/install.md) and
 The [command reference](../docs/cli/workbench.md) lists the installed tools;
 `npa workbench <tool> --help` exposes each tool's actual commands.
 
+Sim2Real's `rerun regen` and `rerun serve --local-record` operate on existing
+artifacts without resolving execution image defaults. Regeneration therefore
+remains available after an old runtime is quarantined. Executing new workloads,
+including `rerun heldout-only`, still requires qualified component images.
+For `rerun regen` and `rerun heldout-only`, explicit `--s3-bucket` and
+`--s3-endpoint` override their corresponding project coordinates. With
+`--project`, a complete isolated project record supplies the remaining bucket,
+endpoint, and client credentials; an unknown or incomplete record refuses rather
+than falling back to host credentials or environment settings. Without
+`--project`, the existing Sim2Real environment settings apply. For `workbench
+health sim2real`, `--project` applies when the selected checks include `s3`: it
+supplies the reachability-probe target and isolated credentials unless the
+corresponding S3 flag is explicit. It has no effect on selections without `s3`.
+See the [Sim2Real guide](../docs/workbench/guides/sim2real-workflow.md).
+
 `npa workbench vlm-eval review-visual` and its SDK write a separate private rich
 visual audit. Choose an exact hosted model, neutral task, and fresh output path;
 optional `--baseline-path` compares both sources in both A/B orders. See the
@@ -339,6 +354,13 @@ Managed workbench teardown reuses the saved Terraform backend. See
 [Terraform state](../docs/configuration.md#terraform-state-for-managed-workbenches)
 for its storage path and permissions.
 
+Genesis, Isaac Lab, and LeRobot container deployment resolves the selected image
+before bootstrapping an environment, provisioning a VM, or writing service
+credentials. A quarantined default fails with an actionable CLI error even in
+`--dry-run`; supply `--image` with an independently qualified operator image.
+Isaac Lab and LeRobot infrastructure-only deployment, and all teardown paths,
+do not need a runnable app image.
+
 ## SDK examples
 
 Plan a workflow from Python without credentials or cloud resources. Run this
@@ -410,6 +432,10 @@ SDK; previously published container pins retain their recorded build versions.
 - `npa.server`: FastAPI checkpoint-serving and inference server
 - `npa.adapter`: sim demo -> LeRobotDataset v3 conversion
 - `npa.genesis`: teacher training, demo generation, student evaluation
+  The [public Genesis image contract](docker/workbench/genesis/README.md) explains
+  its rigid workload, ACT dependencies and `NPA_GENESIS_SUPPORTED_STUDENT_POLICIES`
+  capability declaration; additional student policies require a qualified
+  operator image.
 
   Genesis teacher training uses RSL-RL 5.5.1 actor/critic models. The loader
   retains legacy ActorCritic checkpoint support and validates saved dimensions

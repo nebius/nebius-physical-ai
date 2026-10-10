@@ -15,6 +15,7 @@ config:
   bucket: example-bucket
   prefix: "franka-rl-transfer/{{run.id}}"
   source_overlay: "1"
+  isaac_image: tool://isaac-lab
   seed: "42"
   iterations: "1500"
   num_envs: "4096"
@@ -41,7 +42,7 @@ resources:
     accelerators: RTXPRO6000:1
     cpus: 16
     memory: 96Gi
-    image: ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:bb735577809f9b427493fda78efebc543dcf02e3deac2ec8a36ac019bff8ee46
+    image: "{{config.isaac_image}}"
 
 initial: prepare
 

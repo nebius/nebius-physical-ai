@@ -501,7 +501,7 @@ containers:
         artifact/hash manifest.
     safety:
       runs_as: ubuntu
-      base_image: ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:e321e8631c7e318b5012dad210d9cd1001b7dc833cbff0369e420c5c12657ab6
+      base_image: ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:ef7f4234839852ed7b48ea4b88fd61f1c45a37ca00294c10a0a23fb335807ef4
       network: >-
         Runtime-fetched Isaac, the pinned public replay, authorized Lightwheel
         registry assets, optional exact-driver Ubuntu graphics package, and S3.

@@ -9,6 +9,9 @@ from types import SimpleNamespace as NS
 import pytest
 
 
+ISAAC_IMAGE = "registry.example.invalid/npa-isaac-lab@sha256:" + "a" * 64
+
+
 @pytest.fixture
 def runner():
     path = (
@@ -45,6 +48,8 @@ def test_runner_uses_real_callback_arguments_and_rtx_profile(
             "test",
             "--output-path",
             str(tmp_path),
+            "--isaac-image",
+            ISAAC_IMAGE,
             "--provision",
             "--kubeconfig",
             str(tmp_path / "kubeconfig"),
@@ -60,7 +65,10 @@ def test_runner_uses_real_callback_arguments_and_rtx_profile(
     assert calls[2][1]["stage_src"] is True
     assert calls[2][1]["runtime"] is True
     assert calls[2][1]["yaml_path"].is_file()
-    assert calls[2][1]["var"] == ["bucket=example-bucket"]
+    assert calls[2][1]["var"] == [
+        "bucket=example-bucket",
+        f"isaac_image={ISAAC_IMAGE}",
+    ]
 
 
 def test_opt_out_and_invalid_id_stop_before_any_mutation(runner, monkeypatch, tmp_path):
@@ -73,6 +81,8 @@ def test_opt_out_and_invalid_id_stop_before_any_mutation(runner, monkeypatch, tm
         runner.main(base + ["--provision", "--no-accept-eula"])
     with pytest.raises(ValueError, match="Run ID"):
         runner.main(base + ["--fetch-run", "../../other-run"])
+    with pytest.raises(ValueError, match="--isaac-image"):
+        runner.main(base)
 
 
 @pytest.mark.parametrize("corrupt", [False, True])
