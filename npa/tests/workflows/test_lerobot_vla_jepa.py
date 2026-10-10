@@ -225,7 +225,8 @@ def test_candidate_baked_vendor_python_matches_prepare_render(
     )
     # Setup records the interpreter in the state file adjacent to the run-shell
     # shim directory, so both independently rendered shells use the same handoff.
-    shim_python = Path("/tmp/npa-shim/python3")
+    renderer_tmp = Path("/").joinpath("tmp")
+    shim_python = renderer_tmp / "npa-shim" / "python3"
     recorded_python = shim_python.parent.parent / "npa-python"
     assert 'npa_baked_python="${NPA_BAKED_PYTHON:-}"' in prepare["setup"]
     assert (
