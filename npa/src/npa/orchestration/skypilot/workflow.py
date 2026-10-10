@@ -2707,7 +2707,17 @@ def workflow_status(
             error=result.stderr.strip() or result.stdout.strip(),
         )
 
-    status = _status_from_queue_payload(result.stdout, job_id)
+    jobs = verified_structured_queue_rows(result)
+    if jobs is None:
+        return WorkflowResult(
+            status="UNKNOWN",
+            job_id=job_id,
+            returncode=result.returncode,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            error="SkyPilot queue returned malformed, ambiguous, or schema-invalid JSON",
+        )
+    status = _status_from_queue_rows(jobs, job_id)
     if not status:
         # A successful queue response is authoritative: if the recorded id is
         # absent, the managed-jobs controller has lost (or garbage-collected) its
@@ -5343,8 +5353,14 @@ def _status_from_queue_payload(output: str, job_id: str) -> str:
     jobs = queue_rows_from_output(output)
     if jobs is None:
         return ""
+    return _status_from_queue_rows(jobs, job_id)
+
+
+def _status_from_queue_rows(jobs: list[dict[str, Any]], job_id: str) -> str:
+    """Return the aggregate state for one job in verified SkyPilot queue rows."""
+
     statuses = []
-    for job in jobs or []:
+    for job in jobs:
         current_id = str(job.get("job_id") or job.get("id") or "")
         if current_id == str(job_id):
             status = str(job.get("status", "")).upper()
