@@ -10,6 +10,7 @@ Multi-stage training workflow orchestration.
 Options
 --help  Show this message and exit.
 Commands
+schema  Print the authoritative workflow JSON Schema as one JSON document.
 prepare-run  Prepare a project/workflow-scoped fresh or explicit-resume run ID.
 submit  Submit a SkyPilot or npa.workflow/v0.0.1 YAML through the NPA controller.
 run  Run a named workflow end-to-end.
@@ -46,6 +47,7 @@ challenge  Prepare a BEHAVIOR DEV evaluation from one setup file.
 
 | Command | Description |
 | --- | --- |
+| `schema` | Print the authoritative workflow JSON Schema as one JSON document. |
 | `prepare-run` | Prepare a project/workflow-scoped fresh or explicit-resume run ID. |
 | `submit` | Submit a SkyPilot or npa.workflow/v0.0.1 YAML through the NPA controller. |
 | `run` | Run a named workflow end-to-end. |
@@ -75,7 +77,7 @@ challenge  Prepare a BEHAVIOR DEV evaluation from one setup file.
 
 ```bash
 npa workbench workflow --help
-npa workbench workflow prepare-run --help
+npa workbench workflow schema --help
 ```
 
 Regenerate this page with `bash scripts/build_docs.sh` after changing `workflow`.
