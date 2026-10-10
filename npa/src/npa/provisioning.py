@@ -18,7 +18,9 @@ from npa.clients.config import EnvironmentConfig, StorageConfig
 from npa.cluster.gpu_driver import DEFAULT_MANAGED_DRIVER_PRESET
 from npa.cluster.gpu_health import (
     DEFAULT_CUDA_SMOKE_IMAGE,
+    DEFAULT_GRAPHICS_SMOKE_IMAGE,
     DEFAULT_STABILIZATION_SECONDS,
+    resolve_graphics_smoke_image,
 )
 from npa.cluster.gpu_workload_profile import resolve_gpu_workload_profile
 from npa.cluster.state import kubeconfig_file, load_cluster_state
@@ -107,6 +109,7 @@ def _provision_recovery_argv(
         ("gpu_workload_profile", "--gpu-workload-profile"),
         ("managed_driver_preset", "--managed-driver-preset"),
         ("gpu_cuda_smoke_image", "--gpu-cuda-smoke-image"),
+        ("gpu_graphics_smoke_image", "--gpu-graphics-smoke-image"),
         ("capacity_block_group", "--capacity-block-group"),
         ("accelerator", "--accelerator"),
         ("sky_bin", "--sky-bin"),
@@ -357,6 +360,7 @@ def provision_if_absent(
     gpu_health_timeout_minutes: int = 60,
     gpu_cuda_smoke: bool = True,
     gpu_cuda_smoke_image: str = DEFAULT_CUDA_SMOKE_IMAGE,
+    gpu_graphics_smoke_image: str = DEFAULT_GRAPHICS_SMOKE_IMAGE,
     mig_enabled: bool = False,
     mig_strategy: str = "mixed",
     mig_config: str = "all-balanced",
@@ -387,6 +391,10 @@ def provision_if_absent(
     gpu_platform = workload.gpu_platform
     gpu_preset = workload.gpu_preset
     gpu_driver_mode = workload.gpu_driver_mode
+    if validate and not skip_k8s and not dry_run and workload.graphics_smoke:
+        gpu_graphics_smoke_image = resolve_graphics_smoke_image(
+            gpu_graphics_smoke_image
+        )
     context = context_name.strip() or cluster_name
     kubeconfig_path = kubeconfig or kubeconfig_file(context)
     actions: list[str] = []
@@ -532,6 +540,7 @@ def provision_if_absent(
                     gpu_health_timeout_minutes=gpu_health_timeout_minutes,
                     gpu_cuda_smoke=gpu_cuda_smoke,
                     gpu_cuda_smoke_image=gpu_cuda_smoke_image,
+                    gpu_graphics_smoke_image=gpu_graphics_smoke_image,
                     mig=MigSpec(enabled=True, strategy=mig_strategy, config=mig_config),
                 )
                 kubectl_bin = os.environ.get("NPA_KUBECTL_BIN") or "kubectl"
@@ -572,6 +581,7 @@ def provision_if_absent(
                     gpu_cuda_smoke=gpu_cuda_smoke,
                     gpu_cuda_smoke_image=gpu_cuda_smoke_image,
                     gpu_graphics_smoke=workload.graphics_smoke,
+                    gpu_graphics_smoke_image=gpu_graphics_smoke_image,
                 )
                 actions.append("k8s:validated stable GPU health and CUDA vectorAdd")
                 if workload.graphics_smoke:
@@ -623,6 +633,7 @@ def provision_if_absent(
             gpu_health_timeout_minutes=gpu_health_timeout_minutes,
             gpu_cuda_smoke=gpu_cuda_smoke,
             gpu_cuda_smoke_image=gpu_cuda_smoke_image,
+            gpu_graphics_smoke_image=gpu_graphics_smoke_image,
             gpu_workload_profile=workload.profile,
             infiniband_fabric=infiniband_fabric,
             mig=(
@@ -710,6 +721,7 @@ def provision_if_absent(
                 gpu_health_stabilization_seconds=(gpu_health_stabilization_seconds),
                 gpu_cuda_smoke=gpu_cuda_smoke,
                 gpu_cuda_smoke_image=gpu_cuda_smoke_image,
+                gpu_graphics_smoke_image=gpu_graphics_smoke_image,
                 mig_enabled=mig_enabled,
                 mig_strategy=mig_strategy,
                 mig_config=mig_config,

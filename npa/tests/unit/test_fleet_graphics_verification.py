@@ -23,6 +23,7 @@ def _cluster(name="render", count=2):
             preset="8gpu-192vcpu-1744gb",
         ),
         gpu_workload_profile="rtx-rendering",
+        gpu_graphics_smoke_image="registry.example/graphics:operator",
     )
 
 

@@ -14,6 +14,7 @@
 
 **[Quickstart](docs/quickstart.md)** ·
 **[Guides](docs/workbench/guides/README.md)** ·
+**[Manual workflows](docs/workbench/guides/manual-workflow-operations.md)** ·
 **[Workbench docs](docs/workbench/README.md)** ·
 **[Benchmarks](benchmark/README.md)** ·
 **[Operator tools](docs/tools/README.md)** ·
@@ -289,7 +290,12 @@ of policy convergence. See also the
 ## Documentation
 
 Use the [documentation index](docs/README.md) to find setup, operations, and
-contributor references. Report a broken example with its command, `npa` version,
+contributor references. For workflow operations, start with
+[manual runs](docs/workbench/guides/manual-workflow-operations.md),
+[episode batches and capacity](docs/workbench/guides/paidf-dataset-batches.md), or
+[quality reports](docs/workbench/insights-reports.md).
+
+Report a broken example with its command, `npa` version,
 and redacted error in [GitHub Issues](https://github.com/nebius/nebius-physical-ai/issues).
 Keep credentials and private infrastructure identifiers out of issue text.
 
