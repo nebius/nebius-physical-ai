@@ -12,14 +12,17 @@ readonly EX_SOFTWARE=70
 CACHE_ROOT="${NPA_LINGBOT_VA_RUNTIME_CACHE:-/workspace/.cache/npa/lingbot-va/runtime}"
 REQUIREMENTS="${NPA_LINGBOT_VA_RUNTIME_REQUIREMENTS:-/opt/npa/lingbot-va/runtime-requirements.txt}"
 OFFLINE="${NPA_LINGBOT_VA_RUNTIME_OFFLINE:-0}"
+LIBERO_SOURCE_URL="https://github.com/Lifelong-Robot-Learning/LIBERO.git"
+LIBERO_SOURCE_REF="8f1084e3132a39270c3a13ebe37270a43ece2a01"
 
 die() { printf 'lingbot-va-runtime: %s\n' "$*" >&2; exit "$1"; }
 
 stamp() {
-  local abi requirement_sha
+  local abi requirement_sha script_sha
   abi="$(python3 -c 'import sys,sysconfig; print(f"{sys.version_info.major}.{sys.version_info.minor}-{sysconfig.get_platform()}")')"
   requirement_sha="$(sha256sum "$REQUIREMENTS" | cut -d' ' -f1)"
-  printf '%s|%s' "$abi" "$requirement_sha" | sha256sum | cut -c1-16
+  script_sha="$(sha256sum "${BASH_SOURCE[0]}" | cut -d' ' -f1)"
+  printf '%s|%s|%s' "$abi" "$requirement_sha" "$script_sha" | sha256sum | cut -c1-16
 }
 
 ready() { [[ -x "$1/venv/bin/python" && -f "$1/.complete" ]]; }
@@ -102,6 +105,15 @@ ensure() {
     "$tmp/venv/bin/python" -m pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cu130 \
       'torch==2.13.0+cu130' 'torchvision==0.28.0+cu130'
     "$tmp/venv/bin/python" -m pip install --no-cache-dir -r "$REQUIREMENTS"
+    # LIBERO is a source-only public dependency rather than a wheel. Fetch its
+    # reviewed commit explicitly so the runtime cache records no mutable branch
+    # or unverified VCS requirement, then install only its package bytes.
+    command -v git >/dev/null
+    git clone --filter=blob:none --no-checkout "$LIBERO_SOURCE_URL" "$tmp/libero"
+    git -C "$tmp/libero" checkout --detach "$LIBERO_SOURCE_REF"
+    test "$(git -C "$tmp/libero" rev-parse HEAD)" = "$LIBERO_SOURCE_REF"
+    "$tmp/venv/bin/python" -m pip install --no-cache-dir --no-deps --no-build-isolation "$tmp/libero"
+    rm -rf -- "$tmp/libero"
     # Upstream explicitly installs this historical LeRobot revision with
     # --no-deps because its package metadata caps Torch below LingBot-VA's
     # required 2.9.0. Its non-Torch dependencies are listed above and resolved

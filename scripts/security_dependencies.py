@@ -25,16 +25,8 @@ _MOVIEPY_SOURCE_URL = (
     "97316f37f6a8d3843abfb53eba8f3bb0ea46a008.tar.gz"
     "#sha256=6bef8575b091f6a7342ed271ff5dba97dbb07255df0a5b81fec38f8248b143d9"
 )
-_LIBERO_SOURCE_URL = (
-    "git+https://github.com/Lifelong-Robot-Learning/LIBERO.git@"
-    "8f1084e3132a39270c3a13ebe37270a43ece2a01"
-)
-# The exact MoviePy archive's pyproject declares 2.2.1, and the exact LIBERO
-# revision's setup.py declares 0.1.0. Both source identities are pinned.
-_DIRECT_SOURCE_PINS = {
-    ("libero", _LIBERO_SOURCE_URL): "0.1.0",
-    ("moviepy", _MOVIEPY_SOURCE_URL): "2.2.1",
-}
+# The exact archive's pyproject declares 2.2.1; its commit and bytes are pinned.
+_DIRECT_SOURCE_PINS = {("moviepy", _MOVIEPY_SOURCE_URL): "2.2.1"}
 
 
 def _run(arguments: list[str], directory: Path) -> None:
