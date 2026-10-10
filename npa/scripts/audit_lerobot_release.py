@@ -63,6 +63,67 @@ PYPI_JSON = "https://pypi.org/pypi/lerobot/{version}/json"
 # (module, symbol, call-site provenance). symbol=None checks the module only.
 IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
     (
+        "lerobot.datasets.lerobot_dataset",
+        "LeRobotDataset",
+        ("npa/src/npa/workflows/policy_training/turnkey_holdout.py",),
+    ),
+    (
+        "lerobot.policies.factory",
+        "make_pre_post_processors",
+        (
+            "npa/src/npa/workflows/policy_training/turnkey_holdout.py",
+            "npa/src/npa/workflows/policy_training/turnkey_server.py",
+        ),
+    ),
+    (
+        "lerobot.policies.smolvla.modeling_smolvla",
+        "SmolVLAPolicy",
+        (
+            "npa/src/npa/workflows/policy_training/turnkey_holdout.py",
+            "npa/src/npa/workflows/policy_training/turnkey_server.py",
+        ),
+    ),
+    (
+        "lerobot.datasets.dataset_metadata",
+        "LeRobotDatasetMetadata",
+        ("npa/src/npa/workflows/policy_training/turnkey_holdout.py",),
+    ),
+    (
+        "lerobot.datasets.factory",
+        "resolve_delta_timestamps",
+        ("npa/src/npa/workflows/policy_training/turnkey_holdout.py",),
+    ),
+    (
+        "lerobot.envs.libero",
+        "LiberoEnv",
+        ("npa/src/npa/workflows/policy_training/turnkey_client.py",),
+    ),
+    (
+        "lerobot.envs.utils",
+        "preprocess_observation",
+        ("npa/src/npa/workflows/policy_training/turnkey_client.py",),
+    ),
+    (
+        "lerobot.processor",
+        "LiberoProcessorStep",
+        ("npa/src/npa/workflows/policy_training/turnkey_client.py",),
+    ),
+    (
+        "lerobot.envs.libero",
+        None,
+        ("npa/src/npa/workflows/policy_training/public_vla_eval.py",),
+    ),
+    (
+        "lerobot.scripts.lerobot_eval",
+        None,
+        ("npa/src/npa/workflows/policy_training/public_vla_eval.py",),
+    ),
+    (
+        "lerobot.scripts.lerobot_train",
+        None,
+        ("npa/src/npa/workflows/policy_training/public_vla_train.py",),
+    ),
+    (
         "lerobot.envs.configs",
         "PushtEnv",
         ("npa/src/npa/workflows/lerobot_transfer_eval.py",),
@@ -90,6 +151,7 @@ IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
             "npa/src/npa/workflows/behavior_challenge/comet_training_data.py",
             "npa/src/npa/workflows/lerobot_dataset.py",
             "npa/src/npa/workflows/byof/molmoact2_pipeline.py",
+            "npa/src/npa/workflows/policy_training/public_vla_verify.py",
         ),
     ),
     (
@@ -173,6 +235,7 @@ IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
             "npa/src/npa/genesis/eval_student.py",
             "npa/src/npa/server/app.py",
             "npa/src/npa/workbench/robocasa/capabilities.py",
+            "npa/src/npa/workflows/policy_training/public_vla_verify.py",
             "research/lerobot-deploy/training/profile_train.py",
         ),
     ),
@@ -211,7 +274,10 @@ IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
     (
         "lerobot.policies.smolvla.modeling_smolvla",
         "SmolVLAPolicy",
-        ("npa/src/npa/genesis/eval_student.py",),
+        (
+            "npa/src/npa/genesis/eval_student.py",
+            "npa/src/npa/workflows/policy_training/public_vla_verify.py",
+        ),
     ),
     (
         "lerobot.optim.factory",
@@ -233,6 +299,18 @@ IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
 # Parameters this repo passes by keyword. Upstream may append parameters freely;
 # it may not remove one of these without breaking a call site.
 CALLABLE_PARAMS: tuple[tuple[str, str, tuple[str, ...], str], ...] = (
+    (
+        "lerobot/policies/smolvla/modeling_smolvla.py",
+        "SmolVLAPolicy._get_action_chunk",
+        ("batch",),
+        "npa/workflows/policy_training/turnkey_server.py",
+    ),
+    (
+        "lerobot/envs/libero.py",
+        "LiberoEnv._format_raw_obs",
+        ("raw_obs",),
+        "npa/workflows/policy_training/turnkey_client.py",
+    ),
     (
         "lerobot/policies/factory.py",
         "make_policy",
