@@ -216,9 +216,12 @@ def test_partial_project_pair_fails_before_submit(monkeypatch, tmp_path):
 
 def _real_plan_selection(monkeypatch, name):
     definition = demos.select_demo(name)
+    directory = (
+        "main" if definition.workflow == "rgbd-scan-to-policy-demo.yaml" else "testing"
+    )
     selection = {
         "name": name,
-        "yaml_path": _ROOT / "workflows/testing" / definition.workflow,
+        "yaml_path": _ROOT / "workflows" / directory / definition.workflow,
         "run_id": "operator-images",
         "project": "example",
         "var": [

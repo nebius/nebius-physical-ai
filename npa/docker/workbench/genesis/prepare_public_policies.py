@@ -19,9 +19,7 @@ SOURCE_HASHES = {
     "lerobot/policies/factory.py": "79caf2df45cce4d1b1551a156063f2098b5fa29ffc9e3ed62de60fc64d5f1c95",
 }
 UNSUPPORTED = "This public Genesis image supports native ACT only; use a qualified operator image for other policy families."
-POLICY_MODIFICATION_NOTICE = (
-    "# Modified by Nebius: restricts this public Genesis runtime to native ACT policies.\n"
-)
+POLICY_MODIFICATION_NOTICE = "# Modified by Nebius: restricts this public Genesis runtime to native ACT policies.\n"
 
 
 def _statement(source: str) -> ast.stmt:
