@@ -986,6 +986,9 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         # CLI and SDK share team.client; team tests exercise its HTTP boundary.
         "access",
         "team",
+        # Stateless hosted API + CUDA consumers; request-model SDK contract is
+        # exercised by test_marble_cli and test_marble_workflows.
+        "marble",
         # NuRec verbs take repeatable options (--camera-id, --override) and Hydra
         # passthrough, so the inspect-based CapabilityContract cannot express them.
         # CLI <-> SDK <-> YAML coherence is enforced instead by

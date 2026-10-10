@@ -1,0 +1,60 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "6b27d08cdcf859baf7b45b8eb4c098a2b55211a4351ba71eb311dd278825428f",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "All five selections pass native validate-spec and plan-spec; each resolves three sequential stages with one GPU collector.",
+      "evidence": [
+        "npa/tests/workflows/test_marble_presets.py"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "The five selected stage argv and resource requests exactly match the corresponding previously qualified single-site configurations. There is no fanout or all preset.",
+      "evidence": [
+        "npa/tests/workflows/test_marble_presets.py",
+        "docs/workbench/validation/marble-go1-presets-continuous-20261010.json"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "A new operator must supply and preflight a writable bucket; the example bucket is a placeholder.",
+      "evidence": [
+        "docs/workbench/guides/marble-robot-presets.md"
+      ]
+    },
+    "worker_input": {
+      "status": "verified",
+      "reason": "All five world prompts previously produced real API-generated scenes that passed collection checks. Each newly generated scene must independently pass route and motion checks.",
+      "evidence": [
+        "docs/workbench/validation/marble-go1-five-sites-20261010.json"
+      ]
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "Requires the submitting operator's funded WLT_API_KEY and Nebius/S3 credentials. Prior successful generation does not establish future credit.",
+      "evidence": [
+        "docs/workbench/guides/marble-robot-presets.md"
+      ]
+    },
+    "source_image": {
+      "status": "verified",
+      "reason": "Native rendering retains the qualified EnvGen CUDA image, bootstrap and source overlay. Collector argv/resources match prior evidence; gallery packaging and preset selection add no collector changes.",
+      "evidence": [
+        "npa/tests/workflows/test_marble_presets.py",
+        "docs/workbench/validation/marble-go1-five-sites-20261010.json"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "The single preset-selectable entrypoint has not been newly submitted on live infrastructure. Its five collection parameterizations have prior native GPU evidence. A new operator must verify an available RTX PRO 6000 and exact context.",
+      "evidence": [
+        "docs/workbench/validation/marble-go1-five-sites-20261010.json",
+        "docs/workbench/guides/marble-robot-presets.md"
+      ]
+    }
+  }
+}
