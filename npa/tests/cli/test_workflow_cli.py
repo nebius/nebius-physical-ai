@@ -3749,16 +3749,33 @@ def test_ordinary_workflow_missing_manifest_remains_an_error(monkeypatch) -> Non
     assert payload["verification"] == "conclusively_absent"
 
 
-def test_verified_never_submitted_status_after_later_sources_are_absent(
+def test_verified_current_unlaunched_status_bypasses_provider_lookup(
     monkeypatch, tmp_path: Path
 ) -> None:
     from npa.orchestration.npa_workflow.submission_state import update_submission_state
 
     monkeypatch.setenv("HOME", str(tmp_path))
-    update_submission_state("demo", "reserved-run", {"launch_state": "reserved"})
-    fake_s3 = FakeWorkflowS3()
-    _patch_workflow_s3(monkeypatch, fake_s3)
-    _patch_managed_job_absent(monkeypatch)
+    update_submission_state(
+        "demo",
+        "reserved-run",
+        {
+            "launch_state": "reserved",
+            "workflow": {"name": "physical-ai-data-factory"},
+            "planning": {"state": "durable"},
+        },
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow_state.resolve_project_storage",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("no-launch status must not query storage")
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.run_resolution.lookup_managed_job",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("no-launch status must not query managed jobs")
+        ),
+    )
 
     result = runner.invoke(
         app,
@@ -3769,8 +3786,6 @@ def test_verified_never_submitted_status_after_later_sources_are_absent(
             "reserved-run",
             "--project",
             "demo",
-            "--s3-bucket",
-            "bucket",
             "--json",
         ],
     )
@@ -3779,6 +3794,7 @@ def test_verified_never_submitted_status_after_later_sources_are_absent(
     payload = json.loads(result.output)
     assert payload["status"] == "NOT_SUBMITTED"
     assert payload["verification_status"] == "VERIFIED"
+    assert payload["resolution_source"] == "durable_submission_receipt"
 
 
 def test_prepare_run_persists_current_schema_plan_only_evidence(

@@ -480,7 +480,11 @@ def resolve_run(
     explicit_uri = workflow_s3_uri or (
         run_id if str(run_id).startswith("s3://") else ""
     )
-    planned_only_candidate = False
+    from npa.orchestration.npa_workflow.first_run_state import terminal_run_evidence
+
+    terminal_evidence = terminal_run_evidence(
+        project=ledger_project, run_id=resolved_id
+    )
     receipt_read = inspect_submission_state(ledger_project, resolved_id)
     if receipt_read.outcome == "found":
         result.receipt = receipt_read.payload
@@ -554,17 +558,22 @@ def resolve_run(
         launch = _receipt_launch(result.receipt)
         if (
             allow_local_not_submitted
+            and not explicit_uri
             and not exact_job_id
+            and not terminal_evidence
             and submission_proves_never_launched(
                 result.receipt, project=ledger_project, run_id=resolved_id
             )
         ):
-            planned_only_candidate = True
             result.checks[-1] = ResolutionCheck(
                 "durable_submission_receipt",
                 "found",
-                "durable local ledger has no launch transition; checking later durable sources",
+                "current exact ledger has no launch transition; provider lookup skipped",
             )
+            result.not_submitted = True
+            result.source = "durable_submission_receipt"
+            result.workflow_name = str(workflow.get("name") or "")
+            return result
         launch_status = str(launch.get("status") or "").lower()
         receipt_proves_run = bool(
             workflow
@@ -635,11 +644,6 @@ def resolve_run(
             result.source = result.source or "durable_submission_receipt"
             result.manifest_pending = True
 
-    from npa.orchestration.npa_workflow.first_run_state import terminal_run_evidence
-
-    terminal_evidence = terminal_run_evidence(
-        project=ledger_project, run_id=resolved_id
-    )
     if terminal_evidence:
         result.found = True
         result.source = "project_run_terminal_ledger"
@@ -826,23 +830,6 @@ def resolve_run(
             )
             result.verification_unavailable = True
 
-    if (
-        planned_only_candidate
-        and not result.found
-        and not result.verification_unavailable
-    ):
-        later_checks = [
-            check
-            for check in result.checks
-            if check.source != "durable_submission_receipt"
-        ]
-        if all(
-            check.outcome in {"absent", "not_supplied", "skipped"}
-            for check in later_checks
-        ):
-            result.not_submitted = True
-            result.source = "durable_submission_receipt"
-            return result
     result.conclusively_absent = not result.verification_unavailable and all(
         check.outcome in {"absent", "not_supplied", "skipped"}
         for check in result.checks

@@ -194,6 +194,27 @@ def test_new_plan_proves_no_launch_and_rejects_identity_change(tmp_path, monkeyp
     assert load_submission_state("demo", "run-1") == receipt
 
 
+def test_runtime_location_without_launch_does_not_prove_never_launched(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    receipt = update_submission_state(
+        "demo",
+        "legacy-runtime-location",
+        {
+            "launch_state": "planned",
+            "workflow": {
+                "name": "sim2real",
+                "run_prefix_uri": "s3://example/legacy-runtime-location",
+            },
+        },
+    )
+
+    assert not submission_proves_never_launched(
+        receipt, project="demo", run_id="legacy-runtime-location"
+    )
+
+
 def test_submission_state_is_owner_only_and_restart_safe(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -1192,15 +1192,20 @@ def test_stale_planned_receipt_cannot_override_terminal_s3_manifest(
             )
         ] = b"{}"
 
-    resolved = resolve_run(run_id, project="paidf", allow_local_not_submitted=True)
+    resolved = resolve_run(
+        run_id,
+        project="paidf",
+        workflow_s3_uri=f"s3://alias-bucket/physical-ai-data-factory/{run_id}/npa-workflow",
+        allow_local_not_submitted=True,
+    )
     assert resolved.found is True
     assert resolved.not_submitted is False
     assert resolved.manifest is not None
     assert resolved.manifest["status"] == "SUCCEEDED"
 
 
-def test_planned_receipt_is_not_not_submitted_when_later_evidence_unavailable(
-    resolver_env: ExactS3,
+def test_current_unlaunched_ledger_skips_unavailable_provider_lookup(
+    resolver_env: ExactS3, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     run_id = "planned-but-storage-unavailable"
     update_submission_state(
@@ -1213,10 +1218,46 @@ def test_planned_receipt_is_not_not_submitted_when_later_evidence_unavailable(
         },
     )
     resolver_env.failure = PermissionError("eventual consistency / auth outage")
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.run_resolution.lookup_managed_job",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("no-launch ledger must bypass managed-job lookup")
+        ),
+    )
 
     resolved = resolve_run(run_id, project="paidf", allow_local_not_submitted=True)
+    assert resolved.not_submitted is True
+    assert resolved.verification_unavailable is False
+    assert resolved.source == "durable_submission_receipt"
+    assert resolver_env.queries == []
+
+
+def test_current_unlaunched_ledger_does_not_override_terminal_record(
+    resolver_env: ExactS3, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_id = "planned-with-terminal-record"
+    update_submission_state(
+        "paidf",
+        run_id,
+        {
+            "launch_state": "planned",
+            "workflow": {"name": "physical-ai-data-factory"},
+            "planning": {"state": "durable"},
+        },
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.first_run_state.terminal_run_evidence",
+        lambda **_kwargs: {
+            "last_known_state": "FAILED",
+            "workflow_identity": "physical-ai-data-factory",
+        },
+    )
+
+    resolved = resolve_run(run_id, project="paidf", allow_local_not_submitted=True)
+
     assert resolved.not_submitted is False
-    assert resolved.verification_unavailable is True
+    assert resolved.found is True
+    assert resolved.source == "project_run_terminal_ledger"
 
 
 def test_pending_manifest_lookup_uses_selected_durable_credentials(

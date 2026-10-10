@@ -108,9 +108,14 @@ def submission_proves_never_launched(
     # failed, or ID-less launch record means launch may have been attempted.
     if "launch" in payload:
         return False
+    workflow = payload.get("workflow")
+    if isinstance(workflow, Mapping) and str(workflow.get("run_prefix_uri") or ""):
+        # A pre-current receipt may retain a runtime location without recording
+        # the launch transition. It must still be resolved through that location.
+        return False
     state = str(payload.get("launch_state") or "").strip().lower()
     return state in {"planned", "reserved", "staged", "not_submitted"} or isinstance(
-        payload.get("workflow"), Mapping
+        workflow, Mapping
     )
 
 
