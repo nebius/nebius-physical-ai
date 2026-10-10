@@ -2274,7 +2274,6 @@ def submit_cmd(
                 from npa.clients.token_factory import validate_model_access
                 from npa.clients.kube import run_kubectl
                 from npa.orchestration.npa_workflow.sim2real_preflight import (
-                    kubernetes_prerequisites,
                     static_prerequisites,
                 )
 
@@ -2325,14 +2324,12 @@ def submit_cmd(
                     )
                 else:
                     missing.extend(
-                        kubernetes_prerequisites(
+                        _sim2real_kubernetes_prerequisites_for_submit(
                             spec_config,
                             runner=_run_sim2real_kubectl,
+                            context=infra_context,
+                            kubeconfig=kubeconfig,
                             isaac_placements=isaac_placements,
-                            namespace=(
-                                os.environ.get("NPA_SIM2REAL_K8S_NAMESPACE", "").strip()
-                                or "default"
-                            ),
                         )
                     )
             if missing:
@@ -4477,6 +4474,54 @@ def _image_preflight_steps(
             run_id=run_id,
             assume_decision=assume_decision,
         ).steps
+    )
+
+
+def _sim2real_cache_namespace(context, kubeconfig):
+    """Resolve the explicit legacy cache override or the selected context.
+
+    Args:
+        context: Selected Kubernetes context.
+        kubeconfig: Selected authenticated kubeconfig.
+    Returns:
+        Validated cache namespace.
+    Raises:
+        ValueError: The namespace or selected context cannot be verified.
+    """
+    from npa.clients.kubernetes_namespace import context_namespace, validate_namespace
+
+    namespace = os.environ.get("NPA_SIM2REAL_K8S_NAMESPACE", "").strip()
+    if namespace:
+        return validate_namespace(namespace)
+    return context_namespace(context=context, kubeconfig=kubeconfig)
+
+
+def _sim2real_kubernetes_prerequisites_for_submit(
+    config, *, runner, context, kubeconfig, isaac_placements
+):
+    """Check the Isaac cache in the namespace selected for this submission.
+
+    Args:
+        config: Resolved Sim2Real configuration.
+        runner: Exact-context Kubernetes reader.
+        context: Selected Kubernetes context.
+        kubeconfig: Selected authenticated kubeconfig.
+        isaac_placements: Effective Isaac render placement constraints.
+    Returns:
+        Missing prerequisites, including unreadable namespace evidence.
+    Raises:
+        None.
+    """
+    from npa.orchestration.npa_workflow.sim2real_preflight import (
+        kubernetes_prerequisites,
+    )
+
+    try:
+        namespace = _sim2real_cache_namespace(context, kubeconfig)
+    except ValueError:
+        namespace = None
+    return kubernetes_prerequisites(
+        config, runner=runner, namespace=namespace, isaac_placements=isaac_placements
     )
 
 
@@ -10186,6 +10231,18 @@ def preflight_images_cmd(
     spec = merge_config_overrides(
         _load_npa_workflow(yaml_path), _parse_submit_vars(var)
     )
+    if spec.name == "sim2real":
+        from npa.orchestration.npa_workflow.sim2real_preflight import (
+            image_prerequisites,
+        )
+
+        issues = image_prerequisites(spec.config)
+        if issues:
+            _fail(
+                "Sim2Real image preflight blocked: "
+                + "; ".join(f"{reason}; fix: {remedy}" for reason, remedy in issues)
+            )
+            return
     image_overrides: dict[str, str] = {}
     if image.strip():
         image_overrides["*"] = image.strip()
