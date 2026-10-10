@@ -7429,6 +7429,1261 @@
       "record_kind": "layer_regular_content",
       "record_sha256": "e743775cbd6ff9caf3d705479110c09a5e3423fea55ab4b156532e412bbffd63",
       "semantic_role": "public-source-symbol"
+    },
+    {
+      "lexical_source_context": [
+        {
+          "constant_declarations": [
+            {
+              "binary_range": [
+                1640512,
+                1642187
+              ],
+              "declaration_sha256": "34651db37630d68ebd82c9842e6a984777e76f2a4a49fdfcb6550a8f1b9e974e",
+              "decoded_bytes": 1675,
+              "decoded_value_sha256": "f4b1de2f94f1df2d588ff6c18290e0f7f5091267b9ef0da8433c622bad3d127a",
+              "source_range": [
+                1317,
+                3167
+              ],
+              "storage": "static const",
+              "symbol": "rsa_2048_privkey"
+            },
+            {
+              "binary_range": [
+                1639296,
+                1640508
+              ],
+              "declaration_sha256": "a8b3c3b6f4c2c766695f0d99ae9f48a6697056652e098f6f05259ea2b012f7cb",
+              "decoded_bytes": 1212,
+              "decoded_value_sha256": "80ec06e06b06635bcad5c71b0e9e7a3516c02133c682a2369b09599addb8d7f3",
+              "source_range": [
+                4334,
+                5686
+              ],
+              "storage": "static const",
+              "symbol": "dsa_2048_privkey"
+            },
+            {
+              "binary_range": [
+                1638624,
+                1638851
+              ],
+              "declaration_sha256": "9eac8717372650f154f6b129d6c36f2d8972a3b5b54c3597b632222e317e319a",
+              "decoded_bytes": 227,
+              "decoded_value_sha256": "d653005e4d23cf91e3572fe8148ab6db2e474924d9711838521d3ba352b193f5",
+              "source_range": [
+                6034,
+                6333
+              ],
+              "storage": "static const",
+              "symbol": "ecdsa_secp256r1_privkey"
+            },
+            {
+              "binary_range": [
+                1639104,
+                1639294
+              ],
+              "declaration_sha256": "f649a1beabe68334345da2e5acde326ef35cc7b92d6fa85828355ef4b805c1bb",
+              "decoded_bytes": 190,
+              "decoded_value_sha256": "934b3e9bfd9936c5e30c7f0ed7d36a05e2044f755c0aa433e1d6bef6a68d1391",
+              "source_range": [
+                6756,
+                7013
+              ],
+              "storage": "static const",
+              "symbol": "ecdsa_secp192r1_privkey"
+            },
+            {
+              "binary_range": [
+                1638880,
+                1639082
+              ],
+              "declaration_sha256": "6ad255068648c50a1acfa2209eb731acad11550ec963d8aae914e83684a34d06",
+              "decoded_bytes": 202,
+              "decoded_value_sha256": "a0b9679665e29ac220dfb0b366317e1b9dd5fe31e9def8b2e511669a041389ae",
+              "source_range": [
+                7332,
+                7601
+              ],
+              "storage": "static const",
+              "symbol": "ecdsa_secp224r1_privkey"
+            },
+            {
+              "binary_range": [
+                1638336,
+                1638618
+              ],
+              "declaration_sha256": "dcf4ea9bf931abc765cd034b45c4bf39f4c3d1d798627f071040ab54525e8499",
+              "decoded_bytes": 282,
+              "decoded_value_sha256": "293216817f0d585f0b54f225582f59e7b2e2a795b5f8002e2d71c5e3d49ce9b0",
+              "source_range": [
+                7963,
+                8316
+              ],
+              "storage": "static const",
+              "symbol": "ecdsa_secp384r1_privkey"
+            },
+            {
+              "binary_range": [
+                1637952,
+                1638306
+              ],
+              "declaration_sha256": "b7fbd13f7a95098dcce18163c22d9c2482b9867d980b7bedf42826b7a2edba97",
+              "decoded_bytes": 354,
+              "decoded_value_sha256": "f8766749b0c6f9b5661364568226af0ba7ae8d87c0073df24e440de4417521cd",
+              "source_range": [
+                8843,
+                9272
+              ],
+              "storage": "static const",
+              "symbol": "ecdsa_secp521r1_privkey"
+            },
+            {
+              "binary_range": [
+                1637792,
+                1637944
+              ],
+              "declaration_sha256_hex_parts": [
+                "e0013064",
+                "bff8a6f0b35e2933de6b7bf46e56c6a325fc7fa9bed8da9455c012da"
+              ],
+              "decoded_bytes": 152,
+              "decoded_value_sha256": "b8369cc647a1e1e8f8e420b6b8580c36223f89b0f8e70281732d028aebf15fac",
+              "source_range": [
+                9934,
+                10144
+              ],
+              "storage": "static const",
+              "symbol": "gost01_privkey"
+            },
+            {
+              "binary_range": [
+                1637632,
+                1637788
+              ],
+              "declaration_sha256": "43b846c74b41ceba8b2e003407d744107266bc37d41863f84b1afba6c7cbf503",
+              "decoded_bytes": 156,
+              "decoded_value_sha256": "3de5d1d9ca9af8e24d29bab925c3d500c2cdd11a06c4a2c6a6b336e73bb3ad56",
+              "source_range": [
+                10174,
+                10392
+              ],
+              "storage": "static const",
+              "symbol": "gost12_256_privkey"
+            },
+            {
+              "binary_range": [
+                1637408,
+                1637609
+              ],
+              "declaration_sha256": "92a2c28662b04e1a47c39dc3274ba3c45831d471a36c0869832c28eb8e664a24",
+              "decoded_bytes": 201,
+              "decoded_value_sha256": "c72070fc1ffb2df729650b949157c85ec03d8ec9743ba7956c03e21d385bce4e",
+              "source_range": [
+                10422,
+                10690
+              ],
+              "storage": "static const",
+              "symbol": "gost12_512_privkey"
+            }
+          ],
+          "function_definitions": [
+            {
+              "bytes": 2024,
+              "name": "test_rsa_enc",
+              "sha256": "74bf72f586395d397ce42d9a3de819e882821b921dcb0f6b24fc2fc7ac77c3c0",
+              "source_range": [
+                10691,
+                12715
+              ]
+            },
+            {
+              "bytes": 4102,
+              "name": "test_sig",
+              "sha256": "8fe4585df8b7c46189282990253dbdf45765ceada6972fc1281ce4fb6eea9788",
+              "source_range": [
+                12717,
+                16819
+              ]
+            },
+            {
+              "bytes": 3039,
+              "name": "test_known_sig",
+              "sha256": "6d14b48b1933d0026f36c0057055f5d7c1bb4e65960bcad48275cbc30672491e",
+              "source_range": [
+                16821,
+                19860
+              ]
+            },
+            {
+              "bytes": 4564,
+              "name": "gnutls_pk_self_test",
+              "sha256": "160854c2c434372b3d848baeed18310131938cd880d6d93529ec380da5cfff1a",
+              "source_range": [
+                32658,
+                37222
+              ]
+            }
+          ],
+          "native_captures": [
+            {
+              "capture_byte_range": [
+                1637408,
+                1637608
+              ],
+              "capture_sha256": "a4d138d7ef9748464117b44fb9c0a4b5b85a1599a127d02690abaa96d03c16e6",
+              "native_coordinate": {
+                "end_line": 4730,
+                "rule_id": "private-key",
+                "start_line": 4726
+              },
+              "patched_source_declaration_sha256": "92a2c28662b04e1a47c39dc3274ba3c45831d471a36c0869832c28eb8e664a24",
+              "patched_source_symbol": "gost12_512_privkey"
+            },
+            {
+              "capture_byte_range": [
+                1637632,
+                1637787
+              ],
+              "capture_sha256": "fa0b06a72461ec0a963dcfccb8d5b61bd88a6074fc7271573bff68ab86b8c1af",
+              "native_coordinate": {
+                "end_line": 4734,
+                "rule_id": "private-key",
+                "start_line": 4731
+              },
+              "patched_source_declaration_sha256": "43b846c74b41ceba8b2e003407d744107266bc37d41863f84b1afba6c7cbf503",
+              "patched_source_symbol": "gost12_256_privkey"
+            },
+            {
+              "capture_byte_range": [
+                1637792,
+                1637943
+              ],
+              "capture_sha256": "ef237ea8db4f2ae9ee100e8ced96d29b5dceb0e6a948443e6b8a00b1791f9ec9",
+              "native_coordinate": {
+                "end_line": 4738,
+                "rule_id": "private-key",
+                "start_line": 4735
+              },
+              "patched_source_declaration_sha256_hex_parts": [
+                "e0013064",
+                "bff8a6f0b35e2933de6b7bf46e56c6a325fc7fa9bed8da9455c012da"
+              ],
+              "patched_source_symbol": "gost01_privkey"
+            },
+            {
+              "capture_byte_range": [
+                1637952,
+                1638306
+              ],
+              "capture_sha256": "f8766749b0c6f9b5661364568226af0ba7ae8d87c0073df24e440de4417521cd",
+              "native_coordinate": {
+                "end_line": 4739,
+                "rule_id": "private-key",
+                "start_line": 4739
+              },
+              "patched_source_declaration_sha256": "b7fbd13f7a95098dcce18163c22d9c2482b9867d980b7bedf42826b7a2edba97",
+              "patched_source_symbol": "ecdsa_secp521r1_privkey"
+            },
+            {
+              "capture_byte_range": [
+                1638336,
+                1638618
+              ],
+              "capture_sha256": "293216817f0d585f0b54f225582f59e7b2e2a795b5f8002e2d71c5e3d49ce9b0",
+              "native_coordinate": {
+                "end_line": 4739,
+                "rule_id": "private-key",
+                "start_line": 4739
+              },
+              "patched_source_declaration_sha256": "dcf4ea9bf931abc765cd034b45c4bf39f4c3d1d798627f071040ab54525e8499",
+              "patched_source_symbol": "ecdsa_secp384r1_privkey"
+            },
+            {
+              "capture_byte_range": [
+                1638624,
+                1638850
+              ],
+              "capture_sha256": "91ea1699ff6b1a34b4a1d500a9c75a808441e47b9ea68da6fb0195e01ce1dc61",
+              "native_coordinate": {
+                "end_line": 4743,
+                "rule_id": "private-key",
+                "start_line": 4739
+              },
+              "patched_source_declaration_sha256": "9eac8717372650f154f6b129d6c36f2d8972a3b5b54c3597b632222e317e319a",
+              "patched_source_symbol": "ecdsa_secp256r1_privkey"
+            },
+            {
+              "capture_byte_range": [
+                1638880,
+                1639082
+              ],
+              "capture_sha256": "a0b9679665e29ac220dfb0b366317e1b9dd5fe31e9def8b2e511669a041389ae",
+              "native_coordinate": {
+                "end_line": 4744,
+                "rule_id": "private-key",
+                "start_line": 4744
+              },
+              "patched_source_declaration_sha256": "6ad255068648c50a1acfa2209eb731acad11550ec963d8aae914e83684a34d06",
+              "patched_source_symbol": "ecdsa_secp224r1_privkey"
+            },
+            {
+              "capture_byte_range": [
+                1639104,
+                1639294
+              ],
+              "capture_sha256": "934b3e9bfd9936c5e30c7f0ed7d36a05e2044f755c0aa433e1d6bef6a68d1391",
+              "native_coordinate": {
+                "end_line": 4744,
+                "rule_id": "private-key",
+                "start_line": 4744
+              },
+              "patched_source_declaration_sha256": "f649a1beabe68334345da2e5acde326ef35cc7b92d6fa85828355ef4b805c1bb",
+              "patched_source_symbol": "ecdsa_secp192r1_privkey"
+            },
+            {
+              "capture_byte_range": [
+                1639296,
+                1640507
+              ],
+              "capture_sha256": "7c4c63ee462e0e700cd9e29c8e0f730b3f1b484c4abdd83f1e69fcd477c061fa",
+              "native_coordinate": {
+                "end_line": 4763,
+                "rule_id": "private-key",
+                "start_line": 4744
+              },
+              "patched_source_declaration_sha256": "a8b3c3b6f4c2c766695f0d99ae9f48a6697056652e098f6f05259ea2b012f7cb",
+              "patched_source_symbol": "dsa_2048_privkey"
+            },
+            {
+              "capture_byte_range": [
+                1640512,
+                1642186
+              ],
+              "capture_sha256": "d039c8119a029ab9f9c83c04d67002d887b6bc6026c4264402ab27cdf24cf138",
+              "native_coordinate": {
+                "end_line": 4790,
+                "rule_id": "private-key",
+                "start_line": 4764
+              },
+              "patched_source_declaration_sha256": "34651db37630d68ebd82c9842e6a984777e76f2a4a49fdfcb6550a8f1b9e974e",
+              "patched_source_symbol": "rsa_2048_privkey"
+            }
+          ],
+          "patched_source_member": "gnutls-3.8.3/lib/crypto-selftests-pk.c",
+          "patched_source_sha256": "0199a5b05732d825e235001455afa1d54178d8508da1fd2e0eb8a5ef271405b8",
+          "proof_kind": "exact-ubuntu-patched-cryptographic-self-test"
+        }
+      ],
+      "modeled_source_context": [],
+      "reason": "All ten exact native matches are complete static private-key constants in the exact Ubuntu-patched GnuTLS cryptographic self-test translation unit. The bounded consumers construct temporary test objects, exercise fixed signature/encryption checks and deinitialize them; they do not configure runtime authentication or trust.",
+      "record_kind": "layer_regular_content",
+      "record_sha256": "ddbae2995750875c07bc218d12a062d73f8250678f54dedda7e9be5068781c98",
+      "semantic_role": "cryptographic-self-test"
+    },
+    {
+      "lexical_source_context": [
+        {
+          "containers": [
+            {
+              "bytes": 8147744,
+              "container_index": 165,
+              "decoded_members": [
+                {
+                  "bytes": 9024128,
+                  "format": ".cubin",
+                  "sha256": "18582d1fe01ebb0d34283b3ae5021b6817d0eac53f840d92bf99b670110e890e"
+                },
+                {
+                  "bytes": 9006376,
+                  "format": ".cubin",
+                  "sha256": "41c6988be61095a1ac4eb6fa2e532570a4a2e827c9e7dd9d91f93761a3322444"
+                },
+                {
+                  "bytes": 5571280,
+                  "format": ".cubin",
+                  "sha256": "5e95b6ace61079077d4c1c4759fc6f6def1ec6647cea0143410d5c2e0f60794e"
+                },
+                {
+                  "bytes": 5572432,
+                  "format": ".cubin",
+                  "sha256": "74d54bcc3c95c480034f6eb97569864e8e9b01f60a31f7faee34ddb920e1d674"
+                },
+                {
+                  "bytes": 5683200,
+                  "format": ".cubin",
+                  "sha256": "7eab8c5ac5f1cb97ab07fbe5d6ce1d7f2bcd5474e78ecbda0ea58d232fd4a2c6"
+                },
+                {
+                  "bytes": 5734352,
+                  "format": ".cubin",
+                  "sha256": "9d1d811ef8d5ed8cd09eb83028e1313f9fe19baad644dfaec0153bc2a7234af1"
+                },
+                {
+                  "bytes": 9006376,
+                  "format": ".cubin",
+                  "sha256": "a57ac241038da72a02f8074072facb4556159521d02a3b28450d9291d8ed5f57"
+                },
+                {
+                  "bytes": 5571664,
+                  "format": ".cubin",
+                  "sha256": "babab57a86346af46e13d71776eda2a33e126fcbe576d244ce85758889bad83c"
+                },
+                {
+                  "bytes": 6183544,
+                  "format": ".cubin",
+                  "sha256": "e3a06fba681f26622eb38a56ad1c69fc11f6f9c0cc106e7a8ae2d98e38e3577c"
+                },
+                {
+                  "bytes": 5032360,
+                  "format": ".ptx",
+                  "sha256": "2e2310e70afffd3a5bfaabfa09401f07c7441d83dfeab2fb0cdf81843d62a14c"
+                }
+              ],
+              "end": 103885736,
+              "fatbin_sha256": "086ffa2d518715bb2b987473633e92b6717c7b5aef94c04306747c8674a1fc02",
+              "header_bytes": 16,
+              "native_captures": [
+                {
+                  "byte_range": [
+                    102559767,
+                    102559817
+                  ],
+                  "native_coordinate": {
+                    "end_line": 334787,
+                    "rule_id": "nebius-generic-id",
+                    "start_line": 334787
+                  },
+                  "sha256": "f27bbb19d41e357854b8fc1414b2cf8fcace50faf9e0337c4abbcdbddac6a2d8"
+                }
+              ],
+              "offset": 95737992,
+              "original_native_pattern_survives_decoding": false,
+              "payload_bytes": 8147728,
+              "version": 1
+            }
+          ],
+          "decoder_public_artifact": {
+            "artifact_bytes": 242604,
+            "artifact_sha256": "bd624dcb2089842add8f293efab1d21aa076c98b36d8dcb64347fe08fb03315d",
+            "artifact_url": "https://developer.download.nvidia.com/compute/cuda/redist/cuda_cuobjdump/linux-x86_64/cuda_cuobjdump-linux-x86_64-13.0.85-archive.tar.xz",
+            "executable_bytes": 700576,
+            "executable_sha256": "1763b5367167e73939c853f6c71bdec7be0ea4a1cfb6625e4c81d7c7a1f801ae",
+            "manifest_bytes": 47788,
+            "manifest_sha256": "fce66717a81c510ffeb89ecc3e79849ab34af3b80139f750876d9033e31d71c2",
+            "manifest_url": "https://developer.download.nvidia.com/compute/cuda/redist/redistrib_13.0.2.json",
+            "version": "13.0.85"
+          },
+          "proof_kind": "bounded-CUDA-fatbin-container-decoding",
+          "reproduction": "Partition the complete .nv_fatbin section at every 0xba55ed50 header, bind each native span to exactly one complete container, decode that container with the pinned vendor utility, hash every complete ELF/PTX member, and require the original native pattern to be absent from every decoded member.",
+          "section": {
+            "bytes": 126906656,
+            "container_count": 226,
+            "name": ".nv_fatbin",
+            "offset": 12389312,
+            "sha256": "3a3e724acd70723c240056b45b9454f9d5831428d32f06464de354ac271c3c8d"
+          }
+        }
+      ],
+      "modeled_source_context": [],
+      "reason": "Every exact raw identifier-shaped span is structurally inside one complete CUDA .nv_fatbin container from the exact locked wheel member. The pinned vendor decoder produced the recorded complete ELF/PTX members, none of which retains the native pattern.",
+      "record_kind": "layer_regular_content",
+      "record_sha256": "c571d524fc5571e6c8a5784d51f75fbe8cf17590463c397a06e48428cb926c48",
+      "semantic_role": "encoded-device-payload"
+    },
+    {
+      "lexical_source_context": [
+        {
+          "containers": [
+            {
+              "bytes": 6937800,
+              "container_index": 24,
+              "decoded_members": [
+                {
+                  "bytes": 10568576,
+                  "format": ".cubin",
+                  "sha256": "06e3dd1162402dd76a651b033a3704631446b54a514c8dcec923358a8299e5a3"
+                },
+                {
+                  "bytes": 6178664,
+                  "format": ".cubin",
+                  "sha256": "3e4a8242faaa19c51d784d7163a92a74d7209b2e9d80fb8b7aa2e93faeb8a02e"
+                },
+                {
+                  "bytes": 7942808,
+                  "format": ".cubin",
+                  "sha256": "4501699bd87831231635fb615f754961137c86be729237d350c21acdb071d850"
+                },
+                {
+                  "bytes": 10631200,
+                  "format": ".cubin",
+                  "sha256": "4e29e37d2c94938db4a0a3debef3467f8c5ff27c7dbf846b2db648ca859e3525"
+                },
+                {
+                  "bytes": 7316072,
+                  "format": ".cubin",
+                  "sha256": "5466c67d8d34bab4418f6d6080a0372a079dcc683be5d09fa3894bf0b3ac9513"
+                },
+                {
+                  "bytes": 7315176,
+                  "format": ".cubin",
+                  "sha256": "8790706e1347e6a0625072d19a1f145fa0d0952e13ac41a9f2e005254de8e63d"
+                },
+                {
+                  "bytes": 7591784,
+                  "format": ".cubin",
+                  "sha256": "bb30e93052d748587756494be0c1e153290a337d02ae16a6971e2984ffe9ceca"
+                },
+                {
+                  "bytes": 9466504,
+                  "format": ".cubin",
+                  "sha256": "dc27ed83a85bffcf7081453d99a07552718b67ccb8d8e2b86731917764a05ea7"
+                },
+                {
+                  "bytes": 11624836,
+                  "format": ".ptx",
+                  "sha256": "d7a7f1df2eec8ee0bc8c287623a469e17402fb2bbff9957b491390e67a2c9f49"
+                }
+              ],
+              "end": 80433760,
+              "fatbin_sha256": "ccdd755a239bc4ffacf0913126543c949be3481b26a8f2ce70d8932917eae609",
+              "header_bytes": 16,
+              "native_captures": [
+                {
+                  "byte_range": [
+                    79424254,
+                    79424303
+                  ],
+                  "native_coordinate": {
+                    "end_line": 284993,
+                    "rule_id": "nebius-generic-id",
+                    "start_line": 284993
+                  },
+                  "sha256": "f88622c812188776b7449f8ac44c50f2ee1592050bac18e9713e28fc53167799"
+                }
+              ],
+              "offset": 73495960,
+              "original_native_pattern_survives_decoding": false,
+              "payload_bytes": 6937784,
+              "version": 1
+            },
+            {
+              "bytes": 4856496,
+              "container_index": 27,
+              "decoded_members": [
+                {
+                  "bytes": 5730464,
+                  "format": ".cubin",
+                  "sha256": "02d4d4dd3cab15385d166f7e126e48fb82db60883dd65b3e4091800cd8e62911"
+                },
+                {
+                  "bytes": 3897880,
+                  "format": ".cubin",
+                  "sha256": "35e74afc2084916df9ea6ae64580d2489c5ff02e1572fc8b9d16204f8f5a845e"
+                },
+                {
+                  "bytes": 4915200,
+                  "format": ".cubin",
+                  "sha256": "428872f134016ccda939ad371e700a540884a519ecaf7c9c65fa8e408322fddf"
+                },
+                {
+                  "bytes": 3878944,
+                  "format": ".cubin",
+                  "sha256": "4bcb3e31fe56c8eec37ac50c5002c23335fdc2eca9190a571125e2a3435b9373"
+                },
+                {
+                  "bytes": 3606816,
+                  "format": ".cubin",
+                  "sha256": "c62d97cbbefa7af8bc2cf1b8442f8b70179dad66c03eda2f3a675f3714c6c55e"
+                },
+                {
+                  "bytes": 3576096,
+                  "format": ".cubin",
+                  "sha256": "c6eb005f29f24686f162fb5fabff5a85c2f111dc3fca5bd7ea266be68b32eeab"
+                },
+                {
+                  "bytes": 3582880,
+                  "format": ".cubin",
+                  "sha256": "e5ac90cbe785b953515d5164ceda299c8e2f84fd988c69b79cab68090e13ef4b"
+                },
+                {
+                  "bytes": 5677448,
+                  "format": ".cubin",
+                  "sha256": "e67be0da8348942dc118b1c2fde9413391f25e3e50af86308f58ae048f0b205e"
+                },
+                {
+                  "bytes": 8147221,
+                  "format": ".ptx",
+                  "sha256": "400f0d229512462518ff7aeba389d1e50ec1a31454b722809a0f2ab0defe1979"
+                }
+              ],
+              "end": 97282824,
+              "fatbin_sha256": "a922a4fa4b8ade71774a88c56d38963e5ab632f669ee065539e392187865a78b",
+              "header_bytes": 16,
+              "native_captures": [
+                {
+                  "byte_range": [
+                    96694679,
+                    96694732
+                  ],
+                  "native_coordinate": {
+                    "end_line": 344173,
+                    "rule_id": "nebius-generic-id",
+                    "start_line": 344173
+                  },
+                  "sha256": "ec3105d7da71c98590ff47df7196755fff2a280f3a3f1f8d81de9cdd03ed8686"
+                }
+              ],
+              "offset": 92426328,
+              "original_native_pattern_survives_decoding": false,
+              "payload_bytes": 4856480,
+              "version": 1
+            }
+          ],
+          "decoder_public_artifact": {
+            "artifact_bytes": 242604,
+            "artifact_sha256": "bd624dcb2089842add8f293efab1d21aa076c98b36d8dcb64347fe08fb03315d",
+            "artifact_url": "https://developer.download.nvidia.com/compute/cuda/redist/cuda_cuobjdump/linux-x86_64/cuda_cuobjdump-linux-x86_64-13.0.85-archive.tar.xz",
+            "executable_bytes": 700576,
+            "executable_sha256": "1763b5367167e73939c853f6c71bdec7be0ea4a1cfb6625e4c81d7c7a1f801ae",
+            "manifest_bytes": 47788,
+            "manifest_sha256": "fce66717a81c510ffeb89ecc3e79849ab34af3b80139f750876d9033e31d71c2",
+            "manifest_url": "https://developer.download.nvidia.com/compute/cuda/redist/redistrib_13.0.2.json",
+            "version": "13.0.85"
+          },
+          "proof_kind": "bounded-CUDA-fatbin-container-decoding",
+          "reproduction": "Partition the complete .nv_fatbin section at every 0xba55ed50 header, bind each native span to exactly one complete container, decode that container with the pinned vendor utility, hash every complete ELF/PTX member, and require the original native pattern to be absent from every decoded member.",
+          "section": {
+            "bytes": 134500440,
+            "container_count": 134,
+            "name": ".nv_fatbin",
+            "offset": 25835656,
+            "sha256": "72ead8e89ef5b54cb5ca33ecc2ecf60d72578d21afadbf0a416203aec217ba68"
+          }
+        }
+      ],
+      "modeled_source_context": [],
+      "reason": "Every exact raw identifier-shaped span is structurally inside one complete CUDA .nv_fatbin container from the exact locked wheel member. The pinned vendor decoder produced the recorded complete ELF/PTX members, none of which retains the native pattern.",
+      "record_kind": "layer_regular_content",
+      "record_sha256": "09339f848f60bb1111a61ee0fe91ed0c25132b7ff63298244d7ac14e61b58466",
+      "semantic_role": "encoded-device-payload"
+    },
+    {
+      "lexical_source_context": [
+        {
+          "bounded_source_context": {
+            "ast_context": [
+              {
+                "end": 146325,
+                "end_line": 3121,
+                "line": 3121,
+                "node": "keyword",
+                "sha256": "8fb05d33a913dd45b5c154219a0340c2294d5c030b55867c50e8df25d7eeaa48",
+                "start": 146284
+              },
+              {
+                "end": 146343,
+                "end_line": 3122,
+                "line": 3119,
+                "node": "Call",
+                "sha256": "5924395a132182e267114817502bbb0fdedbce24e47f5bc5e09d5004ddfcdda0",
+                "start": 146108
+              },
+              {
+                "end": 146343,
+                "end_line": 3122,
+                "line": 3119,
+                "node": "keyword",
+                "sha256": "fc46ba05021030c0170db62dc083330755a9f4c5333955c7fc008a0895bdde38",
+                "start": 146094
+              },
+              {
+                "end": 146660,
+                "end_line": 3127,
+                "line": 3115,
+                "node": "Call",
+                "sha256": "42d5b944dc809e72043c8a6dd72c0bf09ddf57e491ae749104b633d1be451b11",
+                "start": 145765
+              },
+              {
+                "end": 146661,
+                "end_line": 3127,
+                "line": 3114,
+                "node": "Call",
+                "sha256": "644d7ab7acc9bfd3417088505db99258ea702ec3e22fd5614c17c2877727e549",
+                "start": 145737
+              },
+              {
+                "end": 146661,
+                "end_line": 3127,
+                "line": 3114,
+                "node": "Expr",
+                "sha256": "644d7ab7acc9bfd3417088505db99258ea702ec3e22fd5614c17c2877727e549",
+                "start": 145737
+              },
+              {
+                "end": 147567,
+                "end_line": 3145,
+                "line": 3109,
+                "node": "For",
+                "sha256": "950f39583a91ef00b6d9e2384b589c01de6fe756a6582055f846ac67bc94bd01",
+                "start": 145395
+              },
+              {
+                "end": 147586,
+                "end_line": 3146,
+                "line": 3103,
+                "node": "FunctionDef",
+                "sha256": "c908fa8678ece969573e708369aec952e6070997dac5dd2eadb0c13f3a97cce4",
+                "start": 144903
+              }
+            ]
+          },
+          "native_coordinate": {
+            "end_line": 3120,
+            "rule_id": "generic-api-key",
+            "start_line": 3120
+          },
+          "source_capture_byte_range": [
+            146284,
+            146325
+          ],
+          "source_capture_sha256": "8fb05d33a913dd45b5c154219a0340c2294d5c030b55867c50e8df25d7eeaa48",
+          "source_coordinate": {
+            "end_column": 105,
+            "end_line": 3121,
+            "start_column": 43,
+            "start_line": 3121
+          },
+          "source_match_byte_range": [
+            146262,
+            146325
+          ],
+          "source_match_sha256": "83327cd8df1ea064c9e7d0e222e8d387e6642da201c5552c1b05872b0b794195"
+        },
+        {
+          "bounded_source_context": {
+            "ast_context": [
+              {
+                "end": 147533,
+                "end_line": 3143,
+                "line": 3143,
+                "node": "keyword",
+                "sha256": "8fb05d33a913dd45b5c154219a0340c2294d5c030b55867c50e8df25d7eeaa48",
+                "start": 147492
+              },
+              {
+                "end": 147551,
+                "end_line": 3144,
+                "line": 3141,
+                "node": "Call",
+                "sha256": "ceaffded9c03a8a0f982a55fb1be697ab7b794d7028efd732f444e73058b7dae",
+                "start": 147346
+              },
+              {
+                "end": 147551,
+                "end_line": 3144,
+                "line": 3141,
+                "node": "keyword",
+                "sha256": "4089201abcb659b60ec9bd0328d9828b56337ad6197097f01f30086a1fab586a",
+                "start": 147332
+              },
+              {
+                "end": 147566,
+                "end_line": 3145,
+                "line": 3137,
+                "node": "Call",
+                "sha256": "5cfc7ffe86a824366514f45a1012cabab5a3de8bf7757157bc8ca83f059b4c1b",
+                "start": 147003
+              },
+              {
+                "end": 147567,
+                "end_line": 3145,
+                "line": 3136,
+                "node": "Call",
+                "sha256": "f3f68b203644c190772a9635184510308c0dd125eeee72da5f40c5130a51e85c",
+                "start": 146975
+              },
+              {
+                "end": 147567,
+                "end_line": 3145,
+                "line": 3136,
+                "node": "Expr",
+                "sha256": "f3f68b203644c190772a9635184510308c0dd125eeee72da5f40c5130a51e85c",
+                "start": 146975
+              },
+              {
+                "end": 147567,
+                "end_line": 3145,
+                "line": 3109,
+                "node": "For",
+                "sha256": "950f39583a91ef00b6d9e2384b589c01de6fe756a6582055f846ac67bc94bd01",
+                "start": 145395
+              },
+              {
+                "end": 147586,
+                "end_line": 3146,
+                "line": 3103,
+                "node": "FunctionDef",
+                "sha256": "c908fa8678ece969573e708369aec952e6070997dac5dd2eadb0c13f3a97cce4",
+                "start": 144903
+              }
+            ]
+          },
+          "native_coordinate": {
+            "end_line": 3142,
+            "rule_id": "generic-api-key",
+            "start_line": 3142
+          },
+          "source_capture_byte_range": [
+            147492,
+            147533
+          ],
+          "source_capture_sha256": "8fb05d33a913dd45b5c154219a0340c2294d5c030b55867c50e8df25d7eeaa48",
+          "source_coordinate": {
+            "end_column": 105,
+            "end_line": 3143,
+            "start_column": 43,
+            "start_line": 3143
+          },
+          "source_match_byte_range": [
+            147470,
+            147533
+          ],
+          "source_match_sha256": "83327cd8df1ea064c9e7d0e222e8d387e6642da201c5552c1b05872b0b794195"
+        }
+      ],
+      "modeled_source_context": [],
+      "reason": "The exact locked Torch source member and bounded Python AST prove each capture is an ordinary keyword/name assignment in executable source, not a quoted credential literal or authentication default.",
+      "record_kind": "layer_regular_content",
+      "record_sha256": "707a84f218ac88c75c7a82164cd74ec85684dace82e015d2dc49b4b356f3a54c",
+      "semantic_role": "public-source-symbol"
+    },
+    {
+      "lexical_source_context": [
+        {
+          "bounded_source_context": {
+            "ast_context": [
+              {
+                "end": 91554,
+                "end_line": 2254,
+                "line": 2254,
+                "node": "keyword",
+                "sha256": "a041eb1bdd4b3543dc549cc5c07ecf4aa77fbba9660eb879b3cdf36ba3dc4e90",
+                "start": 91520
+              },
+              {
+                "end": 91572,
+                "end_line": 2255,
+                "line": 2253,
+                "node": "Call",
+                "sha256": "64b3a93b95dfed50c6eca7427efc95e51aaa468d55b1d41f9ffe392aff833350",
+                "start": 91444
+              },
+              {
+                "end": 91572,
+                "end_line": 2255,
+                "line": 2253,
+                "node": "Assign",
+                "sha256": "444cf9a3f301fcf2777f1c4dd4b1ead9b82820a5ea1277c2ed2bb86695e13e1e",
+                "start": 91433
+              },
+              {
+                "end": 91672,
+                "end_line": 2257,
+                "line": 2239,
+                "node": "If",
+                "sha256": "5fd862526ffbe8fcc56504eb5211b98456edd48a66981ef0499ae415c5f54376",
+                "start": 90717
+              },
+              {
+                "end": 91752,
+                "end_line": 2258,
+                "line": 2217,
+                "node": "FunctionDef",
+                "sha256": "5e2bfa10db6a7209c6d031480f093958bc53e4b43644abf5a7d04b4191548aaa",
+                "start": 89542
+              },
+              {
+                "end": 93150,
+                "end_line": 2292,
+                "line": 2024,
+                "node": "FunctionDef",
+                "sha256": "405e757bf33928ed80c4ec90785c4e2450bc6e19e5d007a1c8d9aef6d55824b1",
+                "start": 79755
+              },
+              {
+                "end": 112852,
+                "end_line": 2784,
+                "line": 1311,
+                "node": "ClassDef",
+                "sha256": "aea61c7c340a6c52d923271c21bd5e067f552c4a42b6719812dc8c1fc8ad310c",
+                "start": 51577
+              }
+            ]
+          },
+          "native_coordinate": {
+            "end_line": 2253,
+            "rule_id": "generic-api-key",
+            "start_line": 2253
+          },
+          "source_capture_byte_range": [
+            91520,
+            91554
+          ],
+          "source_capture_sha256": "a041eb1bdd4b3543dc549cc5c07ecf4aa77fbba9660eb879b3cdf36ba3dc4e90",
+          "source_coordinate": {
+            "end_column": 79,
+            "end_line": 2254,
+            "start_column": 37,
+            "start_line": 2254
+          },
+          "source_match_byte_range": [
+            91511,
+            91554
+          ],
+          "source_match_sha256": "de55650d8c68d04b597b49313174a68601a109ea790094891749adc5a95a8863"
+        }
+      ],
+      "modeled_source_context": [],
+      "reason": "The exact locked Torch source member and bounded Python AST prove each capture is an ordinary keyword/name assignment in executable source, not a quoted credential literal or authentication default.",
+      "record_kind": "layer_regular_content",
+      "record_sha256": "e12607320178caa224182665d31c28501194573ece6d104d2cd7ccdea6439dc7",
+      "semantic_role": "public-source-symbol"
+    },
+    {
+      "lexical_source_context": [
+        {
+          "bounded_source_context": {
+            "ast_context": [
+              {
+                "end": 70180,
+                "end_line": 1666,
+                "line": 1663,
+                "node": "Constant",
+                "sha256": "4d85ace8d7e7d78a397f0cea4fe06cef9d33edc40ec82bad47849f8e8e535bdd",
+                "start": 69940
+              },
+              {
+                "end": 70180,
+                "end_line": 1666,
+                "line": 1663,
+                "node": "JoinedStr",
+                "sha256": "cae97552164b6af540d7b56dc0fa035073abc419a9aaceaab40dbab26f928386",
+                "start": 69874
+              },
+              {
+                "end": 70190,
+                "end_line": 1667,
+                "line": 1662,
+                "node": "Call",
+                "sha256": "b8eefe10f2217247e3874513222755123ae944729b151a231477a33326b11986",
+                "start": 69850
+              },
+              {
+                "end": 70190,
+                "end_line": 1667,
+                "line": 1662,
+                "node": "Expr",
+                "sha256": "b8eefe10f2217247e3874513222755123ae944729b151a231477a33326b11986",
+                "start": 69850
+              },
+              {
+                "end": 70205,
+                "end_line": 1668,
+                "line": 1589,
+                "node": "If",
+                "sha256": "af5ba5cb9d596d06db7d250a2b491299ca4d09042b243ea4f44853fbaec1090f",
+                "start": 66411
+              },
+              {
+                "end": 82788,
+                "end_line": 1948,
+                "line": 1090,
+                "node": "FunctionDef",
+                "sha256": "9f1b5eaf4a8b5ee6d7b32623292387deaa5088660554b414572b0f267d0b7206",
+                "start": 44473
+              }
+            ]
+          },
+          "native_coordinate": {
+            "end_line": 1665,
+            "rule_id": "generic-api-key",
+            "start_line": 1665
+          },
+          "source_capture_byte_range": [
+            70127,
+            70142
+          ],
+          "source_capture_sha256": "2a8ed59e9dc020c9e6a26f7cb3b4d0ab85088df17c679e5c738b68bcf9534370",
+          "source_coordinate": {
+            "end_column": 46,
+            "end_line": 1666,
+            "start_column": 15,
+            "start_line": 1666
+          },
+          "source_match_byte_range": [
+            70111,
+            70143
+          ],
+          "source_match_sha256": "1f9369405ad9ce6ed059e9c26c950f9f8af419fb3f0690b29f2265b45138ea8e"
+        }
+      ],
+      "modeled_source_context": [],
+      "reason": "Both layer occurrences are byte-identical to the exact public Git member. The bounded AST proves the capture is ordinary prose in a static no-op cleanup diagnostic describing API calls that were not invoked; it contains no key, identity or credential value.",
+      "record_kind": "layer_regular_content",
+      "record_sha256": "404ccd5811e79ed47c95dc7d5ab6f6d66c15cc2ee576a5150f224db28c07a01f",
+      "semantic_role": "public-source-symbol"
+    },
+    {
+      "lexical_source_context": [
+        {
+          "bytecode_capture_byte_range": [
+            58908,
+            58923
+          ],
+          "bytecode_capture_sha256": "2a8ed59e9dc020c9e6a26f7cb3b4d0ab85088df17c679e5c738b68bcf9534370",
+          "bytecode_match_byte_range": [
+            58892,
+            58924
+          ],
+          "bytecode_match_sha256": "1f9369405ad9ce6ed059e9c26c950f9f8af419fb3f0690b29f2265b45138ea8e",
+          "header": {
+            "computed_source_hash_hex": "f9504fa6be06da83",
+            "header_sha256": "dc89ae8d4f3bcab20e46361624eac205cd4dd55f3375f1cd9e2dfb9d8010cdcf",
+            "invalidation_flags": 3,
+            "magic_hex": "cb0d0d0a",
+            "source_hash_hex": "f9504fa6be06da83",
+            "source_hash_matches_exact_source": true
+          },
+          "marshal": {
+            "bytes": 170450,
+            "canonical_structure_bytes": 288116,
+            "full_structure_sha256": "ca84211180ef1e091e83f2eda4fac8ec5a364467cf39b7385ab76c77f64f6e74",
+            "recursive_code_objects": 117,
+            "recursive_non_code_constants": 1595,
+            "roundtrip_equal": true,
+            "sha256": "e23f9a9011eb08600247dd9ab05464eaf5633dc33580296efedf384ca2e7bde9",
+            "version": 4
+          },
+          "native_coordinate": {
+            "end_line": 222,
+            "rule_id": "generic-api-key",
+            "start_line": 222
+          },
+          "proof_kind": "exact-checked-hash-bytecode-whole-file-equality",
+          "source_record_sha256": "404ccd5811e79ed47c95dc7d5ab6f6d66c15cc2ee576a5150f224db28c07a01f",
+          "source_semantic_context": {
+            "bounded_source_context": {
+              "ast_context": [
+                {
+                  "end": 70180,
+                  "end_line": 1666,
+                  "line": 1663,
+                  "node": "Constant",
+                  "sha256": "4d85ace8d7e7d78a397f0cea4fe06cef9d33edc40ec82bad47849f8e8e535bdd",
+                  "start": 69940
+                },
+                {
+                  "end": 70180,
+                  "end_line": 1666,
+                  "line": 1663,
+                  "node": "JoinedStr",
+                  "sha256": "cae97552164b6af540d7b56dc0fa035073abc419a9aaceaab40dbab26f928386",
+                  "start": 69874
+                },
+                {
+                  "end": 70190,
+                  "end_line": 1667,
+                  "line": 1662,
+                  "node": "Call",
+                  "sha256": "b8eefe10f2217247e3874513222755123ae944729b151a231477a33326b11986",
+                  "start": 69850
+                },
+                {
+                  "end": 70190,
+                  "end_line": 1667,
+                  "line": 1662,
+                  "node": "Expr",
+                  "sha256": "b8eefe10f2217247e3874513222755123ae944729b151a231477a33326b11986",
+                  "start": 69850
+                },
+                {
+                  "end": 70205,
+                  "end_line": 1668,
+                  "line": 1589,
+                  "node": "If",
+                  "sha256": "af5ba5cb9d596d06db7d250a2b491299ca4d09042b243ea4f44853fbaec1090f",
+                  "start": 66411
+                },
+                {
+                  "end": 82788,
+                  "end_line": 1948,
+                  "line": 1090,
+                  "node": "FunctionDef",
+                  "sha256": "9f1b5eaf4a8b5ee6d7b32623292387deaa5088660554b414572b0f267d0b7206",
+                  "start": 44473
+                }
+              ]
+            },
+            "native_coordinate": {
+              "end_line": 1665,
+              "rule_id": "generic-api-key",
+              "start_line": 1665
+            },
+            "source_capture_byte_range": [
+              70127,
+              70142
+            ],
+            "source_capture_sha256": "2a8ed59e9dc020c9e6a26f7cb3b4d0ab85088df17c679e5c738b68bcf9534370",
+            "source_coordinate": {
+              "end_column": 46,
+              "end_line": 1666,
+              "start_column": 15,
+              "start_line": 1666
+            },
+            "source_match_byte_range": [
+              70111,
+              70143
+            ],
+            "source_match_sha256": "1f9369405ad9ce6ed059e9c26c950f9f8af419fb3f0690b29f2265b45138ea8e"
+          },
+          "whole_file_reproduction": {
+            "compiled_bytes": 170466,
+            "compiled_sha256": "80d4c51e0d3ace8f28f108c7c7f9ac984e9a636da7833e3aa41cf0fa93bec8b1",
+            "observed_bytes": 170466,
+            "observed_sha256": "80d4c51e0d3ace8f28f108c7c7f9ac984e9a636da7833e3aa41cf0fa93bec8b1",
+            "whole_file_equal": true
+          }
+        }
+      ],
+      "modeled_source_context": [],
+      "reason": "The complete observed checked-hash pyc is byte-for-byte equal to output regenerated from the exact public source by the exact signed-package CPython compiler. The checked source hash, full marshal payload/structure and every header byte are bound; the only native capture is the same inert source diagnostic proven in the source record.",
+      "record_kind": "layer_regular_content",
+      "record_sha256": "80d4c51e0d3ace8f28f108c7c7f9ac984e9a636da7833e3aa41cf0fa93bec8b1",
+      "semantic_role": "public-source-symbol"
+    },
+    {
+      "lexical_source_context": [
+        {
+          "debug_crc32_hex": "924a189d",
+          "debug_filename": {
+            "byte_range": [
+              694320,
+              694364
+            ],
+            "bytes": 44,
+            "sha256": "bb66bd1514c4f1e31f891b03af601145706052507c69939805cf357cf35ed51b"
+          },
+          "elf": {
+            "class": 64,
+            "endianness": "little",
+            "section_count": 29,
+            "section_header_entry_bytes": 64,
+            "section_header_offset": 694656
+          },
+          "native_capture": {
+            "byte_range": [
+              694320,
+              694358
+            ],
+            "bytes": 38,
+            "native_coordinate": {
+              "end_line": 4474,
+              "rule_id": "nebius-generic-id",
+              "start_line": 4474
+            },
+            "sha256": "03701a3dee9dff6308671ed67a3b90eefd69bc59bd2a50b53eb37a5b5a6d32c5"
+          },
+          "proof_kind": "bounded-ELF-gnu-debuglink",
+          "section": {
+            "bytes": 52,
+            "name": ".gnu_debuglink",
+            "offset": 694320,
+            "sha256": "c2f2191641771ca6d4077c896258dffda20a1e8584acb39e8717cd0c0509df85"
+          }
+        }
+      ],
+      "modeled_source_context": [],
+      "reason": "The sole exact identifier-shaped capture is wholly inside the bounded .gnu_debuglink filename metadata of the exact signed Ubuntu library member. The section, filename bytes and GNU debug CRC are bound; this is a public detached-debug lookup key, not an operational Nebius identifier.",
+      "record_kind": "layer_regular_content",
+      "record_sha256": "8e49cebd373d90b55f3626da71dd97fe8e95c68dc4c064d8962b27907690736e",
+      "semantic_role": "package-integrity-metadata"
+    },
+    {
+      "lexical_source_context": [
+        {
+          "control_member": {
+            "bytes": 75,
+            "member": "triggers",
+            "sha256": "0f1eda96d7595190cc2d40a06fafff8def651d19ceb635292ae6104de50de218"
+          },
+          "derivation": {
+            "algorithm": "var/lib/dpkg/info/{binary-package}:{architecture}.{control-member-basename}",
+            "bytes": 49,
+            "sha256": "fb46c104e3ef44f1353c323c847b2ed7e224eb3d23b1e7df90ec0253f10f9270"
+          },
+          "native_coordinate": {
+            "end_line": 0,
+            "rule_id": "generic-api-key",
+            "start_line": 0
+          },
+          "path_capture_byte_range": [
+            35,
+            49
+          ],
+          "path_capture_sha256": "c25fcc48806b3d8a1cd1fbb62195d5c77f9eb52d3461e6882f4769eb2b0f9dc4",
+          "path_match_byte_range": [
+            18,
+            49
+          ],
+          "path_match_sha256": "6718f0ebe8772137ae0170ac1612a38bbb3e69b58d908234353bb0fe3111234f",
+          "proof_kind": "exact-dpkg-control-path-derivation"
+        }
+      ],
+      "modeled_source_context": [],
+      "reason": "The complete record is the deterministic dpkg metadata path derived from the exact signed binary package name, architecture and exact control-member basename. The generic-api-key capture is path syntax; there is no value field or credential literal.",
+      "record_kind": "logical_tar_path",
+      "record_sha256": "fb46c104e3ef44f1353c323c847b2ed7e224eb3d23b1e7df90ec0253f10f9270",
+      "semantic_role": "public-package-path-metadata"
+    },
+    {
+      "lexical_source_context": [
+        {
+          "control_member": {
+            "bytes": 75,
+            "member": "triggers",
+            "sha256": "0f1eda96d7595190cc2d40a06fafff8def651d19ceb635292ae6104de50de218"
+          },
+          "derivation": {
+            "algorithm": "var/lib/dpkg/info/{binary-package}:{architecture}.{control-member-basename}",
+            "bytes": 45,
+            "sha256": "e03287709e8e16898a6834541beaf96414631cae385a54a63fcfb55826381725"
+          },
+          "native_coordinate": {
+            "end_line": 0,
+            "rule_id": "generic-api-key",
+            "start_line": 0
+          },
+          "path_capture_byte_range": [
+            31,
+            45
+          ],
+          "path_capture_sha256": "c25fcc48806b3d8a1cd1fbb62195d5c77f9eb52d3461e6882f4769eb2b0f9dc4",
+          "path_match_byte_range": [
+            18,
+            45
+          ],
+          "path_match_sha256": "a437058e7f0dd5e4e646f7ae3b29708058e93d633f0be952dd135d442a3b8514",
+          "proof_kind": "exact-dpkg-control-path-derivation"
+        }
+      ],
+      "modeled_source_context": [],
+      "reason": "The complete record is the deterministic dpkg metadata path derived from the exact signed binary package name, architecture and exact control-member basename. The generic-api-key capture is path syntax; there is no value field or credential literal.",
+      "record_kind": "logical_tar_path",
+      "record_sha256": "e03287709e8e16898a6834541beaf96414631cae385a54a63fcfb55826381725",
+      "semantic_role": "public-package-path-metadata"
     }
   ],
   "reproduction": "Obtain the exact public artifacts and verify each archive/member hash. Locate every pinned native occurrence using the pinned detector and the zero-based LF convention. Verify the complete source or decoded structural context described per record. A filename or public origin alone does not establish semantics. Bytecode requires exact source and compiler identities, flags3 checked-hash header, full marshal structure and entire observed output equality. Any missing, changed or ambiguous proof requires a new independent review.",

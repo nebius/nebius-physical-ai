@@ -1,15 +1,31 @@
+# Only the derivative wheel/receipt and hash-locked full seed cross this boundary.
+# Old bootstrap wheels and build-tool dependencies are never final ancestors.
+FROM python:3.12-slim@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48e70534b94cd8ebbe06a9 AS secure-pip-builder
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY docker/workbench/common/secure_pip /opt/secure-pip-builder
+RUN python /opt/secure-pip-builder/build.py \
+    --work-dir /opt/secure-pip-work --output-dir /opt/secure-pip-wheels
+COPY docker/workbench/curobo/setuptools-seed.lock /opt/setuptools-seed.lock
+RUN python -m pip --isolated download --no-cache-dir --no-deps \
+    --only-binary=:all: --require-hashes --index-url https://pypi.org/simple \
+    --requirement /opt/setuptools-seed.lock --dest /opt/setuptools-seed
+
 # Pinned Apache-2.0 cuRobo V2 plus MIT/BSD benchmark data; no model weights.
-FROM nvidia/cuda:13.0.2-base-ubuntu24.04@sha256:2ab6381d970b211fb93853796dc6707eb8a72575a375c422b17cf4d8b2641701
+FROM nvidia/cuda:13.0.2-base-ubuntu24.04@sha256:2ab6381d970b211fb93853796dc6707eb8a72575a375c422b17cf4d8b2641701 AS runtime-producer
 
 # cuRobo V2 uses the pinned cuda.core/NVRTC and Warp wheel compilers.
 # A runtime-only base avoids unused profiler binaries and development headers.
 ARG NPA_SOURCE_SHA
 # Build-only commit epoch makes pip emit reproducible PEP 552 checked-hash pyc.
 ARG SOURCE_DATE_EPOCH
+# Keep the complete Ubuntu package closure immutable. Changing this date changes
+# public image bytes and requires a new complete-byte policy review.
+ARG UBUNTU_SNAPSHOT=20260920T000000Z
 LABEL npa.tool="curobo" \
       npa.version="0.8.0-cuda13-blackwell-unbuilt" \
       org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
-      org.opencontainers.image.licenses="Apache-2.0 AND MIT AND BSD-3-Clause"
+      org.opencontainers.image.licenses="Apache-2.0 AND MIT AND BSD-3-Clause AND GPL-2.0-or-later AND GPL-3.0-or-later AND LGPL-2.1-or-later AND (GPL-3.0-or-later WITH GCC-exception-3.1) AND LicenseRef-NPA-cuRobo-Other-Notices"
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
@@ -24,25 +40,50 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 USER root
+COPY docker/workbench/curobo/security-apt.lock.json /opt/security-apt.lock.json
+COPY docker/workbench/curobo/install_security_apt.py /opt/install_security_apt.py
 RUN [[ "$NPA_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] \
-    && [[ "$SOURCE_DATE_EPOCH" =~ ^[1-9][0-9]*$ ]]
-RUN rm -f /etc/apt/sources.list.d/*.list \
+    && [[ "$SOURCE_DATE_EPOCH" =~ ^[1-9][0-9]*$ ]] \
+    && [[ "$UBUNTU_SNAPSHOT" == "20260920T000000Z" ]]
+RUN --mount=type=bind,from=secure-pip-builder,source=/opt/secure-pip-wheels,target=/opt/secure-pip-wheels,ro \
+    --mount=type=bind,from=secure-pip-builder,source=/opt/setuptools-seed/setuptools-84.0.0-py3-none-any.whl,target=/opt/setuptools-84.0.0-py3-none-any.whl,ro \
+    rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources \
+    && printf '%s\n' \
+       'Types: deb' \
+       "URIs: https://snapshot.ubuntu.com/ubuntu/${UBUNTU_SNAPSHOT}/" \
+       'Suites: noble noble-updates noble-security' \
+       'Components: main universe restricted multiverse' \
+       'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
+       'Check-Valid-Until: no' \
+       > /etc/apt/sources.list.d/ubuntu.sources \
     && apt-get update \
     && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends \
-       ca-certificates curl python3.12 python3.12-venv \
-       openssh-server rsync sudo \
+       ca-certificates curl fuse gcc netcat-openbsd python3.12 python3.12-venv \
+       libgomp1=14.2.0-4ubuntu2~24.04.1 \
+       openssh-server patch pciutils rsync sudo wget \
+    && python3.12 /opt/install_security_apt.py /opt/security-apt.lock.json \
+    && dpkg-query -W \
+       curl fuse gcc netcat-openbsd openssh-server patch pciutils rsync wget \
     && rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
     && (id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu) \
     && printf '%s\n' 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/npa-runtime \
     && chmod 0440 /etc/sudoers.d/npa-runtime \
+    && python3.12 -c 'import hashlib,json,pathlib; p=pathlib.Path("/opt/secure-pip-wheels"); r=json.loads((p/"build-receipt.json").read_text()); w=p/r["wheel"]; assert w.name == "pip-26.2.1+npa.1-py3-none-any.whl"; assert hashlib.sha256(w.read_bytes()).hexdigest() == r["sha256"]' \
+    && echo '51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670  /opt/setuptools-84.0.0-py3-none-any.whl' | sha256sum -c - \
+    && python3.12 -c 'from pathlib import Path; p=Path("/usr/share/python-wheels"); assert {f.name for f in p.glob("*.whl")} == {"pip-24.0-py3-none-any.whl", "setuptools-68.1.2-py3-none-any.whl"}' \
+    && rm /usr/share/python-wheels/pip-24.0-py3-none-any.whl /usr/share/python-wheels/setuptools-68.1.2-py3-none-any.whl \
+    && install -m 0444 /opt/secure-pip-wheels/pip-26.2.1+npa.1-py3-none-any.whl /usr/share/python-wheels/ \
+    && install -m 0444 /opt/setuptools-84.0.0-py3-none-any.whl /usr/share/python-wheels/ \
     && python3.12 -m venv /opt/npa-venv \
-    && /opt/npa-venv/bin/python -m pip install --no-cache-dir --upgrade 'pip==26.2.1'
+    && /opt/npa-venv/bin/python -c 'import pip; from pip._vendor import urllib3,msgpack; assert pip.__version__ == "26.2.1+npa.1"; assert urllib3.__version__ == "2.8.0"; assert msgpack.__version__ == "1.2.1"'
+COPY --from=secure-pip-builder --chmod=0444 /opt/secure-pip-wheels/build-receipt.json /usr/share/doc/npa-curobo/secure-pip-build.json
 
 COPY docker/workbench/curobo/requirements.lock /opt/curobo-requirements.lock
 COPY docker/workbench/curobo/filter_cudnn_runtime.py /opt/filter_cudnn_runtime.py
 COPY docker/workbench/curobo/remove_scikit_image_recipe.py /opt/remove_scikit_image_recipe.py
+COPY docker/workbench/curobo/verify_runtime_imports.py /opt/verify_runtime_imports.py
 # The current cuDNN supplement permits runtime-only redistribution. Use that
 # narrower boundary even though this wheel embeds older, broader header terms.
 # The non-cuDNN base contains none; filter the wheel in this SAME RUN before a
@@ -83,15 +124,60 @@ COPY pyproject.toml README.md /opt/npa-src/
 # The build entrypoint stages the supported catalog into the archived package.
 COPY src/npa /opt/npa-src/src/npa
 RUN pip install --no-deps --no-build-isolation --no-cache-dir /opt/npa-src \
+    && pip check \
     && python -c 'import torch; assert {"sm_100", "sm_120"} <= set(torch._C._cuda_getArchFlags().split())' \
-    && rm -rf /root/.cache /tmp/pip-*
+    && PYTHONDONTWRITEBYTECODE=1 \
+       MPLCONFIGDIR=/tmp/npa-curobo-import-cache/matplotlib \
+       XDG_CACHE_HOME=/tmp/npa-curobo-import-cache \
+       python /opt/verify_runtime_imports.py \
+    && rm -rf /root/.cache /tmp/pip-* /tmp/npa-curobo-import-cache
 
 COPY --chmod=0444 docker/workbench/curobo/REDISTRIBUTION.md /usr/share/doc/npa-curobo/REDISTRIBUTION.md
+COPY --chmod=0444 docker/workbench/curobo/distro-source-closure.json /usr/share/doc/npa-curobo/distro-source-closure.json
 COPY --chmod=0755 docker/workbench/curobo/entrypoint.sh /usr/local/bin/curobo-entrypoint
-RUN install -d -m 0755 -o ubuntu -g ubuntu /workspace /workspace/.cache
+RUN install -d -m 0755 -o ubuntu -g ubuntu /workspace /workspace/.cache \
+    && chmod 0755 /usr/share/doc/npa-curobo
 WORKDIR /workspace
 USER ubuntu
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)"]
+ENTRYPOINT ["curobo-entrypoint"]
+CMD ["serve"]
+
+# Export only the repaired filesystem, never the superseded vendor/base layers.
+# COPY retains original runtime and licence bytes; config is explicit because a
+# scratch stage inherits neither CUDA driver requirements nor launch metadata.
+FROM scratch AS runtime
+ARG NPA_SOURCE_SHA
+COPY --from=runtime-producer / /
+LABEL npa.tool="curobo" \
+      npa.version="0.8.0-cuda13-blackwell-unbuilt" \
+      org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
+      org.opencontainers.image.base.name="nvidia/cuda:13.0.2-base-ubuntu24.04" \
+      org.opencontainers.image.base.digest="sha256:2ab6381d970b211fb93853796dc6707eb8a72575a375c422b17cf4d8b2641701" \
+      org.opencontainers.image.licenses="Apache-2.0 AND MIT AND BSD-3-Clause AND GPL-2.0-or-later AND GPL-3.0-or-later AND LGPL-2.1-or-later AND (GPL-3.0-or-later WITH GCC-exception-3.1) AND LicenseRef-NPA-cuRobo-Other-Notices"
+ENV \
+    PATH="/opt/npa-venv/bin:/usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+    NVARCH="x86_64" \
+    NVIDIA_REQUIRE_CUDA="cuda>=13.0 brand=unknown,driver>=535,driver<536 brand=grid,driver>=535,driver<536 brand=tesla,driver>=535,driver<536 brand=nvidia,driver>=535,driver<536 brand=quadro,driver>=535,driver<536 brand=quadrortx,driver>=535,driver<536 brand=nvidiartx,driver>=535,driver<536 brand=vapps,driver>=535,driver<536 brand=vpc,driver>=535,driver<536 brand=vcs,driver>=535,driver<536 brand=vws,driver>=535,driver<536 brand=cloudgaming,driver>=535,driver<536 brand=unknown,driver>=550,driver<551 brand=grid,driver>=550,driver<551 brand=tesla,driver>=550,driver<551 brand=nvidia,driver>=550,driver<551 brand=quadro,driver>=550,driver<551 brand=quadrortx,driver>=550,driver<551 brand=nvidiartx,driver>=550,driver<551 brand=vapps,driver>=550,driver<551 brand=vpc,driver>=550,driver<551 brand=vcs,driver>=550,driver<551 brand=vws,driver>=550,driver<551 brand=cloudgaming,driver>=550,driver<551 brand=unknown,driver>=565,driver<566 brand=grid,driver>=565,driver<566 brand=tesla,driver>=565,driver<566 brand=nvidia,driver>=565,driver<566 brand=quadro,driver>=565,driver<566 brand=quadrortx,driver>=565,driver<566 brand=nvidiartx,driver>=565,driver<566 brand=vapps,driver>=565,driver<566 brand=vpc,driver>=565,driver<566 brand=vcs,driver>=565,driver<566 brand=vws,driver>=565,driver<566 brand=cloudgaming,driver>=565,driver<566 brand=unknown,driver>=570,driver<571 brand=grid,driver>=570,driver<571 brand=tesla,driver>=570,driver<571 brand=nvidia,driver>=570,driver<571 brand=quadro,driver>=570,driver<571 brand=quadrortx,driver>=570,driver<571 brand=nvidiartx,driver>=570,driver<571 brand=vapps,driver>=570,driver<571 brand=vpc,driver>=570,driver<571 brand=vcs,driver>=570,driver<571 brand=vws,driver>=570,driver<571 brand=cloudgaming,driver>=570,driver<571 brand=unknown,driver>=575,driver<576 brand=grid,driver>=575,driver<576 brand=tesla,driver>=575,driver<576 brand=nvidia,driver>=575,driver<576 brand=quadro,driver>=575,driver<576 brand=quadrortx,driver>=575,driver<576 brand=nvidiartx,driver>=575,driver<576 brand=vapps,driver>=575,driver<576 brand=vpc,driver>=575,driver<576 brand=vcs,driver>=575,driver<576 brand=vws,driver>=575,driver<576 brand=cloudgaming,driver>=575,driver<576" \
+    NV_CUDA_CUDART_VERSION="13.0.96-1" \
+    CUDA_VERSION="13.0.2" \
+    LD_LIBRARY_PATH="/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/local/cuda/lib64" \
+    NVIDIA_VISIBLE_DEVICES="all" \
+    NVIDIA_DRIVER_CAPABILITIES="compute,utility" \
+    DEBIAN_FRONTEND="noninteractive" \
+    PYTHONUNBUFFERED="1" \
+    NPA_BAKED_PYTHON="/opt/npa-venv/bin/python" \
+    NPA_IMAGE_SOURCE_SHA="${NPA_SOURCE_SHA}" \
+    NPA_CUROBO_SOURCE="/opt/curobo" \
+    NPA_CUROBO_WORK_DIR="/workspace" \
+    MPLCONFIGDIR="/workspace/.cache/matplotlib" \
+    XDG_CACHE_HOME="/workspace/.cache" \
+    CUDA_HOME="/usr/local/cuda"
+SHELL ["/bin/bash","-o","pipefail","-c"]
+WORKDIR /workspace
+USER ubuntu
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD ["python","-c","import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)"]
 ENTRYPOINT ["curobo-entrypoint"]
 CMD ["serve"]

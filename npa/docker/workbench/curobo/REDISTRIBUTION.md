@@ -1,8 +1,86 @@
 # cuRobo V2 packaging record
 
-This candidate is eligible for public redistribution but remains in publication
-quarantine until exact-image scans and actual GPU capability validation pass.
-No published image or measured performance is claimed by this record.
+This candidate remains in publication quarantine. The records below identify
+component-specific permissions and obligations, not completed redistribution
+compliance: equivalent corresponding-source delivery, all built-layer notices,
+exact-image scans and actual GPU capability validation must pass before release.
+No published image or measured performance is claimed by this record. The OCI
+license expression names separate copyleft components; it does not extend GCC's
+runtime exception to the compiler, shell tools, or their dependencies.
+
+## Distro closure, including ancestor versions
+
+The current recipe adds a separate `FROM scratch` final stage that copies the
+repaired runtime filesystem without the producer's superseded layers. This is
+an intended packaging repair, not an assertion that a new image has passed its
+gates. All historical images, findings and the four-database source census below
+remain as-issued. The final artifact contract requires one filesystem layer,
+only the measured final package database, and the 164 final notices. The measured
+BuildKit export also emits a terminal `WORKDIR` metadata layer: exactly 32 gzip
+bytes decoding to 1024 zero bytes and no tar entries. Only that optional tail's
+exact compressed hash, size and uncompressed diff ID are permitted; arbitrary
+empty archives, hidden gzip metadata, extra layers and whiteouts are rejected.
+The original one-layer-only verifier refusal is retained, not relabeled as a
+pass. The contract rejects
+the earlier databases/notices if reintroduced as distributed ancestor bytes.
+`clean-root-config.json` pins the measured producer's CUDA environment, driver
+requirements, interpreter, non-root user and launch behavior; the verifier
+checks those fields and the source-revision binding on the saved final image.
+The NVIDIA/Ubuntu provenance remains in the pinned producer and base labels,
+not a claim that NVIDIA maintains or qualifies the resulting NPA image.
+Actual rebuilt-byte, configuration, bootstrap, security and GPU checks are
+still required. The unchanged source census deliberately remains a superset:
+excluding superseded binaries from a future artifact does not erase their
+historical provenance or already incurred source-conveyance obligations.
+
+The immutable census below describes the measured security-refresh reference
+image `sha256:5d34001b80585269a0825acfba62ae4718da7576d38d0f0e8b59c70814df9a6d`,
+not automatic acceptance of a successor. The current recipe installs
+the two OpenSSL `3.0.13-0ubuntu3.16` security binaries from the separately signed
+`20261004T000000Z` snapshot, inside the original apt RUN before a layer is
+exported. `security-apt.lock.json` binds both binary files, the signed release and
+indexes, and all three corresponding-source archives; all five artifacts were
+downloaded and hash-checked. Other distro packages keep the original snapshot.
+`install_security_apt.py` verifies downloaded bytes, package control identities
+and the installed versions without resolving an unrelated package upgrade.
+The reference's four actual package databases and all 164 resolved notice files
+are bound below. Its inherited OpenSSL `3.0.13-0ubuntu3.6` bytes remain recorded;
+replacing active packages does not remove those ancestor bytes or establish their
+security acceptance. Recheck the exact rebuilt-image closure before accepting a
+successor; these pins do not substitute for the image and vulnerability gates.
+
+`distro-source-closure.json`, also delivered under `/usr/share/doc/npa-curobo/`,
+binds all 250 distinct binary package/version pairs from four actual layer
+package databases, including 29 source versions superseded in later layers.
+It records 143 Ubuntu source/version closures and every `.dsc`, original archive
+and packaging archive with exact public snapshot URL, size and SHA256. All were
+downloaded anonymously and checked against Ubuntu-signed source indexes; this
+does not by itself establish recipients' required source access at release.
+Keep the complete corresponding sources, patches/build scripts and applicable
+notices available with the conveyed binaries under each package's terms. A
+broken source link, incomplete ancestor closure or missing notice blocks release.
+Neither a generic source-repository link nor the GCC14 libgomp source suffices
+for the other executables. These controls also cover ordinary distro dependencies
+such as libc, GnuTLS and binutils, not only explicitly installed package names.
+
+The actual image installs GCC13 (`13.3.0-6ubuntu2~24.04.1`), not a guessed GCC14
+compiler closure. GCC's compiler/driver, binutils, patch, wget and rsync retain
+their own GPL obligations without the runtime-library exception; fuse and
+pciutils include GPL2-family components and shared libraries have their own LGPL
+or other terms. Netcat-openbsd is BSD-licensed, not a GPL substitute. The exact
+installed copyright texts, including additional OpenSSL and documentation terms,
+remain authoritative. The historical layered-image verifier bound 164 final
+copyright files, their retained ancestor versions, all four package-database
+hashes and this source manifest. The clean-root contract keeps all final notice
+identities and the source manifest, but refuses superseded versions in the
+exported artifact. An unknown historical version, modified notice,
+missing final notice or changed package database fails validation.
+
+`LicenseRef-NPA-cuRobo-Other-Notices` refers to the additional package-specific
+grants in those retained copyright files and the vendor/Python records below;
+it is not a new blanket license grant or a claim that the short OCI expression
+enumerates every bundled component. Source eligibility remains separate from
+accepted whole-image byte/security review and supported-image release.
 
 - Source: NVIDIA cuRobo V2, revision
   `8e734f3ced1df898990bcd92de40abce475907db`, Apache-2.0. The image retains its
@@ -33,14 +111,74 @@ No published image or measured performance is claimed by this record.
   PyTorch 2.13.0 CUDA 13 wheels, NVIDIA cuda-core/runtime, Warp, Pinocchio, Rerun and
   NPA. CUDA's Linux-specific supplement (section 2.3) permits redistribution of
   Linux components with unmodified object code; Attachment A also enumerates
-  runtime/JIT libraries and runtime compilation headers. NVIDIA drivers are
-  host-injected. CUDA and container license notices remain intact.
+  runtime/JIT libraries and runtime compilation headers. The kernel driver is
+  host-provided, but the inspected base also bakes `cuda-compat-13-0`
+  `580.95.05-0ubuntu1`: user-mode forward-compatibility libraries from the
+  `nvidia-graphics-drivers-580` source package. Its complete NVIDIA Driver License
+  Agreement (February25,2025) and separate notices remain under
+  `/usr/share/doc/cuda-compat-13-0/copyright`, SHA256
+  `89b836340d5217ad1aca3097c0c7d00c85de24a2cc956361f755e08ae91df26e`.
+  The image must preserve unmodified vendor bytes and that agreement under its
+  NVIDIA-platform and distribution terms; GPL source URLs do not cover this
+  proprietary binary package. `cuda-cudart` is likewise covered by CUDA's terms,
+  not an invented Ubuntu corresponding-source package. CUDA and container
+  license notices remain intact. See NVIDIA's
+  [forward-compatibility package description](https://docs.nvidia.com/deploy/cuda-compatibility/latest/forward-compatibility.html).
   The minimal `base` image supplies cudart; pinned cuda.core/NVRTC, CUDA header
   wheels and Warp provide runtime compilation. The upstream CUDA-core backend
   discovers cudart/NVRTC headers through cuda-pathfinder. The image does not
   install the optional pybind backend or need the full CUDA development image,
   its unused Nsight profiler, or operating-system development headers. Native
   GPU execution remains a required qualification gate.
+- OpenMP runtime: Pinocchio requires `libgomp.so.1`, so the image installs
+  Ubuntu Noble `libgomp1=14.2.0-4ubuntu2~24.04.1` from the same immutable
+  `20260920T000000Z` snapshot as the rest of the distro closure. The exact
+  `libgomp1` deb is 148062 bytes with SHA256
+  `e8a95ec58125b4933597f30ff56c2ae10edf90f287262e366d4b6edea3019144`;
+  its 352304-byte `libgomp.so.1.0.0` has SHA256
+  `135f3c8f006d2fe5e68e51281c7974cb991a03de3bfb3593d68d174dfcf854d1`.
+  The final-image verifier also requires `libgomp.so.1` to remain an exact
+  symbolic link to `libgomp.so.1.0.0`.
+  Its exact `gcc-14-base` dependency is 51014 bytes with SHA256
+  `b95c172411a7fdae70307cf33a9f5320ba5e056b556454543dd5b679d5ce1c4f`.
+  The matching `gcc-14-base` copyright file is retained at
+  `/usr/share/doc/gcc-14-base/copyright` (69004 bytes, SHA256
+  `20390f8a6f3b1e4d7cb45dd8652dabb259bbef688cbad839bcdb0b9ba7252f79`)
+  together with `/usr/share/common-licenses/GPL-3` (35149 bytes, SHA256
+  `3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986`).
+  libgomp is `GPL-3.0-or-later WITH GCC-exception-3.1`. Matching corresponding
+  source remains available from that immutable snapshot as
+  [the upstream archive](https://snapshot.ubuntu.com/ubuntu/20260920T000000Z/pool/main/g/gcc-14/gcc-14_14.2.0.orig.tar.gz)
+  (SHA256 `768c314c11eeab56ccebb91eb42ec4a41122fa94f0d83400126401942622197b`),
+  [Ubuntu packaging](https://snapshot.ubuntu.com/ubuntu/20260920T000000Z/pool/main/g/gcc-14/gcc-14_14.2.0-4ubuntu2~24.04.1.debian.tar.xz)
+  (SHA256 `cfece214c2fb790ef5f3baffb9a53e40618e7ae12d053610b251e94d77d08ade`)
+  and [the source descriptor](https://snapshot.ubuntu.com/ubuntu/20260920T000000Z/pool/main/g/gcc-14/gcc-14_14.2.0-4ubuntu2~24.04.1.dsc)
+  (SHA256 `50950080874a6ec6780dd60c243e21d9cda9d736bb32bca98d16095d27cc01b5`).
+  Public release remains blocked if those source or license bytes cannot be
+  delivered. `runtime-payload.json` and the complete-layer verifier bind these
+  identities; the image build additionally imports the real upstream benchmark
+  through Pinocchio and checks all 800 MotionBenchMaker and 1800 MPiNets rows.
+- Bootstrap installer repair: `common/secure_pip` builds a source-identified
+  `26.2.1+npa.1` derivative with repaired vendored dependencies and retained
+  notices. The isolated builder's original bootstrap and tools do not cross
+  into final ancestors. The final apt RUN replaces the exact old system pip and
+  setuptools seed wheels before export, then exercises standard Python3.12
+  `venv`/ensurepip and checks the actual installed derivative versions. The
+  service installer remains available to SkyPilot; it is not replaced by a
+  shim. Actual wheel hash and complete provenance are retained under
+  `/usr/share/doc/npa-curobo/secure-pip-build.json` and inside the wheel. This
+  changes Ubuntu-owned wheel files without pretending their original dpkg
+  package versions changed; preserve original package notices and both source
+  identities. The complete setuptools seed is separately locked to the same
+  MIT-licensed 84.0.0 wheel as the service runtime. Its fixed Unicode-normalized
+  manifest exclusions prevent the demonstrated NFC/NFD filename bypass present
+  in the former full 80.9.0 seed. This does not change the installer's separately
+  reviewed, limited `pkg_resources` donor or claim that all 80.9.0 code was
+  removed from that derivative. The isolated builder hash-checks the complete
+  wheel, and the final apt RUN replaces the old seed before export; a later-layer
+  deletion would leave vulnerable bytes in an ancestor. Exact built-layer
+  vulnerability, byte, license and bootstrap qualification remain mandatory,
+  independent of installer unit controls.
 - Reproducible Python bytecode: the build helper and trusted workflow pass the
   exact source commit epoch as a build-only `SOURCE_DATE_EPOCH` argument. The
   pinned CPython compiler then uses PEP 552 checked-hash bytecode for newly

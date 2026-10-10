@@ -19,6 +19,7 @@ INPUTS = {
     "npa/README.md",
     "npa/.dockerignore",
     "npa/docker/workbench/curobo",
+    "npa/docker/workbench/common/secure_pip",
     "workflows/main",
     "workflows/testing",
 }
@@ -56,10 +57,12 @@ elif args[0] == "show":
 elif args[0] == "cat-file":
     sys.exit(1 if mode == "missing-dockerfile" else 0)
 elif args[0] == "diff":
-    changed = mode in {"dirty-source", "staged-source", "dirty-catalog", "staged-catalog", "dirty-unrelated"}
+    changed = mode in {"dirty-source", "staged-source", "dirty-catalog", "staged-catalog", "dirty-helper", "staged-helper", "dirty-unrelated"}
     if changed:
         path = "docs/unrelated.md" if mode == "dirty-unrelated" else (
-            "workflows/testing/curobo-benchmark.yaml" if mode.endswith("catalog") else "npa/src/npa/malicious.py"
+            "workflows/testing/curobo-benchmark.yaml" if mode.endswith("catalog") else (
+                "npa/docker/workbench/common/secure_pip/build.py" if mode.endswith("helper") else "npa/src/npa/malicious.py"
+            )
         )
         scopes = args[args.index("--") + 1:]
         applies = any(path == p or path.startswith(p + "/") for p in scopes)
@@ -71,6 +74,8 @@ elif args[0] == "ls-files":
         print("npa/src/npa/untracked_payload.py")
     elif mode == "untracked-catalog":
         print("workflows/testing/untracked.yaml")
+    elif mode == "untracked-helper":
+        print("npa/docker/workbench/common/secure_pip/untracked.py")
     elif mode == "untracked-read-failure":
         sys.exit(1)
 elif args[0] == "archive":
@@ -80,6 +85,7 @@ elif args[0] == "archive":
     with tarfile.open(fileobj=sys.stdout.buffer, mode="w|") as archive:
         for name, payload in {
             "npa/docker/workbench/curobo/Dockerfile": b"FROM committed-base\\n",
+            "npa/docker/workbench/common/secure_pip/build.py": b"# committed helper\\n",
             "npa/src/npa/committed.py": b"COMMITTED = True\\n",
             "npa/pyproject.toml": b"[project]\\nname = 'synthetic'\\n",
             "npa/src/npa/workflow_build.py": (
@@ -178,6 +184,7 @@ def test_only_exact_commit_snapshot_reaches_docker(build_boundary, mode):
     assert docker["files"] == sorted(
         [
             "docker/workbench/curobo/Dockerfile",
+            "docker/workbench/common/secure_pip/build.py",
             "pyproject.toml",
             "src/npa/committed.py",
             "src/npa/workflow_build.py",
@@ -227,9 +234,12 @@ def test_only_exact_commit_snapshot_reaches_docker(build_boundary, mode):
         ("staged-source", "Commit the cuRobo build input changes"),
         ("dirty-catalog", "Commit the cuRobo build input changes"),
         ("staged-catalog", "Commit the cuRobo build input changes"),
+        ("dirty-helper", "Commit the cuRobo build input changes"),
+        ("staged-helper", "Commit the cuRobo build input changes"),
         ("diff-read-failure", "Commit the cuRobo build input changes"),
         ("untracked-source", "Untracked cuRobo build inputs"),
         ("untracked-catalog", "Untracked cuRobo build inputs"),
+        ("untracked-helper", "Untracked cuRobo build inputs"),
         ("untracked-read-failure", ""),
         ("archive-failure", ""),
         ("staging-failure", "staging failed"),
