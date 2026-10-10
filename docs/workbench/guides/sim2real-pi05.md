@@ -131,8 +131,21 @@ They are evaluated with the same gold object, scenario seeds, instruction,
 15 Hz absolute-joint controller, and eight-action receding-horizon prefix. A
 continuous policy gripper value is explicitly thresholded at `>0.5`, matching
 the upstream DROID execution example, then checked against both physical finger
-controller targets. The final report permits an improvement claim only when the
+controller targets. Finite model scores outside `[0, 1]` remain valid inputs to
+that binary threshold and are retained without clamping; the measured
+observation and training state remain strictly normalized to `[0, 1]`. The
+final report permits an improvement claim only when the
 two gold protocol digests and checkpoint train/reload hashes agree.
+
+The pinned Isaac joint action is an affine bridge, `raw * scale + offset`; its
+stock configuration has no raw-action clip. The adapter therefore admits any
+finite inverse-affine value whose resulting absolute target stays within the
+physical Franka joint limits. It rejects a configured SDK clip instead of
+inventing a normalized `[-1, 1]` range or silently changing a learned target.
+Each model response and action hash is recorded before controller execution,
+then marked completed or failed with attempted and verified prefix lengths.
+Incomplete execution remains failure evidence and is ineligible for a matched
+wrist-effectiveness claim.
 
 Each closed-loop checkpoint evaluation can run matched `fresh`, `frozen`, and
 deterministic `pixel_channel_shuffle` wrist arms from the same held-out scenario

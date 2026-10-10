@@ -186,15 +186,44 @@ def test_absolute_bridge_and_physical_gripper_roundtrip() -> None:
     [
         ([0.0] * 7, "exactly 8"),
         ([9.0, *TARGET[1:]], "physical limits"),
-        ([*TARGET[:7], 1.5], r"in \[0, 1\]"),
-        ([1.0, *TARGET[1:]], "configured Isaac action range"),
+        ([*TARGET[:7], float("inf")], "finite"),
+        ([float("nan"), *TARGET[1:]], "finite"),
     ],
 )
-def test_absolute_bridge_rejects_padding_clipping_and_ambiguous_gripper(
-    target, error
-) -> None:
+def test_absolute_bridge_rejects_malformed_or_unsafe_targets(target, error) -> None:
     with pytest.raises(Pi05ContractError, match=error):
         absolute_to_isaac_action(target, defaults=DEFAULTS, scales=SCALES)
+
+
+def test_absolute_bridge_supports_unclipped_teacher_affine_domain() -> None:
+    defaults = [0.0, -0.569, 0.0, -2.810, 0.0, 3.037, 0.741]
+    target = [0.1, 0.632708, 0.2, -2.1, 0.3, 2.1, 0.8, 0.0]
+
+    rendered = absolute_to_isaac_action(target, defaults=defaults, scales=[0.5] * 7)
+
+    assert rendered[1] == pytest.approx(2.403416)
+    assert [rendered[i] * 0.5 + defaults[i] for i in range(7)] == pytest.approx(
+        target[:7]
+    )
+
+
+def test_gripper_score_is_thresholded_without_clamping() -> None:
+    open_target = [*TARGET[:7], -0.2]
+    opened = absolute_to_isaac_action(open_target, defaults=DEFAULTS, scales=SCALES)
+    closed = absolute_to_isaac_action(
+        [*TARGET[:7], 1.2], defaults=DEFAULTS, scales=SCALES
+    )
+    proof = verify_controller_roundtrip(
+        open_target,
+        defaults=DEFAULTS,
+        scales=SCALES,
+        controller_target=TARGET[:7],
+        finger_controller_target_m=[0.04, 0.04],
+    )
+
+    assert opened[7] == 1.0
+    assert closed[7] == -1.0
+    assert proof["gripper_prediction_score"] == -0.2
 
 
 def test_dense_episode_requires_real_aligned_wrist_and_ordered_physics_evidence() -> (

@@ -134,6 +134,15 @@ def _action_scale(value: Any, size: int) -> list[float]:
     return scales
 
 
+def _reject_configured_action_clip(arm: Any) -> None:
+    cfg_clip = getattr(getattr(arm, "cfg", None), "clip", None)
+    runtime_clip = getattr(arm, "_clip", None)
+    if cfg_clip is not None or runtime_clip is not None:
+        raise RuntimeError(
+            "pi0.5 absolute targets require an unclipped Isaac affine action term"
+        )
+
+
 def _joint_bridge(native: Any) -> tuple[list[float], list[float], int, int, int]:
     names = list(native.action_manager.active_terms)
     dimensions = [int(value) for value in native.action_manager.action_term_dim]
@@ -145,6 +154,7 @@ def _joint_bridge(native: Any) -> tuple[list[float], list[float], int, int, int]
             "policy task must expose seven joint actions and one gripper"
         )
     arm = native.action_manager.get_term("arm_action")
+    _reject_configured_action_clip(arm)
     offset, scale = getattr(arm, "_offset", None), getattr(arm, "_scale", None)
     if offset is None or scale is None:
         raise RuntimeError("arm action term does not expose configured offsets/scales")
@@ -488,9 +498,10 @@ def _query_policy(
     return actions, inference, timing
 
 
-def _execute_prefix(context: dict[str, Any], actions: Any) -> list[dict[str, Any]]:
-    applied, bridge = [], context["bridge"]
-    for target in actions[:EXECUTION_PREFIX]:
+def _execute_prefix(context: dict[str, Any], actions: Any, query: dict) -> bool:
+    bridge = context["bridge"]
+    for index, target in enumerate(actions[:EXECUTION_PREFIX]):
+        query["attempted_prefix"] = index + 1
         proof = _apply_target(
             context["env"],
             target,
@@ -500,7 +511,8 @@ def _execute_prefix(context: dict[str, Any], actions: Any) -> list[dict[str, Any
             arm_start=bridge[3],
             grip_start=bridge[4],
         )
-        applied.append(proof)
+        query["controller_proofs"].append(proof)
+        query["executed_prefix"] = len(query["controller_proofs"])
         context["record"]["physics_trace"].append(
             _physics_sample(
                 context["native"],
@@ -511,23 +523,52 @@ def _execute_prefix(context: dict[str, Any], actions: Any) -> list[dict[str, Any
             )
         )
         if proof["terminated"] or proof["truncated"]:
-            break
-    return applied
+            return True
+    return False
+
+
+def _action_receipt(actions: Any) -> dict[str, Any]:
+    import numpy as np
+
+    value = np.ascontiguousarray(actions)
+    scores = value[:, 7].tolist()
+    return {
+        "sha256": hashlib.sha256(value.tobytes()).hexdigest(),
+        "shape": list(value.shape),
+        "dtype": str(value.dtype),
+        "gripper_scores": scores,
+        "thresholded_gripper_commands": [int(score > 0.5) for score in scores],
+    }
+
+
+def _execution_error(error: Exception) -> str:
+    import re
+
+    message = f"{type(error).__name__}: {error}"
+    return re.sub(r"\b(?:s3|gs|https?)://[^\s'\"\\]+", "<redacted-uri>", message)
 
 
 def _decision_step(context: dict[str, Any], decision: int) -> bool:
     actions, inference, timing = _query_policy(context, decision)
-    applied = _execute_prefix(context, actions)
-    context["record"]["queries"].append(
-        {
-            "decision": decision,
-            **timing,
-            "inference": inference,
-            "executed_prefix": len(applied),
-            "controller_proofs": applied,
-        }
-    )
-    return bool(applied and (applied[-1]["terminated"] or applied[-1]["truncated"]))
+    query = {
+        "decision": decision,
+        **timing,
+        "inference": inference,
+        "action_receipt": _action_receipt(actions),
+        "execution_status": "pending",
+        "attempted_prefix": 0,
+        "executed_prefix": 0,
+        "controller_proofs": [],
+    }
+    context["record"]["queries"].append(query)
+    try:
+        terminal = _execute_prefix(context, actions, query)
+    except Exception as error:
+        query["execution_status"] = "failed"
+        query["execution_error"] = _execution_error(error)
+        raise
+    query["execution_status"] = "completed"
+    return terminal
 
 
 def _finish_episode(record: dict[str, Any]) -> dict[str, Any]:
@@ -544,7 +585,7 @@ def _finish_episode(record: dict[str, Any]) -> dict[str, Any]:
     record["measured_requery_sim_seconds"] = [b - a for a, b in zip(times, times[1:])]
     record["receding_horizon"] = {
         "model_horizon": 15,
-        "executed_prefix": EXECUTION_PREFIX,
+        "configured_execute_prefix": EXECUTION_PREFIX,
     }
     return record
 
@@ -771,10 +812,10 @@ def _decode_artifacts(mp4: Path, rrd: Path) -> tuple[dict[str, Any], str]:
     import subprocess
     import sys
 
-    rerun = str(Path(sys.executable).with_name("rerun"))
-    subprocess.run([rerun, "rrd", "verify", str(rrd)], check=True)
+    rerun = [sys.executable, "-m", "rerun"]
+    subprocess.run([*rerun, "rrd", "verify", str(rrd)], check=True)
     decoded = subprocess.run(
-        [rerun, "rrd", "print", "-v", str(rrd)],
+        [*rerun, "rrd", "print", "-v", str(rrd)],
         check=True,
         capture_output=True,
         text=True,
@@ -823,6 +864,32 @@ def _write_review_artifacts(
             "decoded_expected_entity": True,
         },
     }
+
+
+def _persist_partial_episodes(work: Path, episodes: list[dict[str, Any]]) -> None:
+    receipts = [
+        {
+            key: value
+            for key, value in episode.items()
+            if key not in {"_exterior_frames", "_wrist_frames"}
+        }
+        for episode in episodes
+    ]
+    (work / "partial-episodes.json").write_text(
+        json.dumps(receipts, indent=2, sort_keys=True, default=_json_value) + "\n"
+    )
+
+
+def _json_value(value: Any) -> Any:
+    if hasattr(value, "detach"):
+        value = value.detach()
+    if hasattr(value, "cpu"):
+        value = value.cpu()
+    if hasattr(value, "tolist"):
+        return value.tolist()
+    if hasattr(value, "item"):
+        return value.item()
+    raise TypeError(f"unsupported partial-evidence value: {type(value).__name__}")
 
 
 def _sha(payload: Any) -> str:
@@ -1066,7 +1133,7 @@ def _evaluate(
                     {
                         "wrist_ablation_mode": mode,
                         "success": {"released_supported_surface_placement": False},
-                        "failure": f"{type(exc).__name__}: {exc}",
+                        "failure": _execution_error(exc),
                         "partial_rollout_preserved": bool(
                             record.get("_exterior_frames")
                             or record.get("_wrist_frames")
@@ -1161,24 +1228,45 @@ def _sampler_noise_pairing(episodes: list[dict], modes: list[str]) -> dict[str, 
             identities.setdefault(key, []).append(
                 query["inference"].get("sampler_noise_sha256")
             )
-    complete = bool(identities) and all(
+    noise_complete = bool(identities) and all(
         len(values) == len(modes) and None not in values and len(set(values)) == 1
         for values in identities.values()
     )
+    execution_complete = bool(episodes) and all(
+        episode.get("queries")
+        and not episode.get("failure")
+        and all(_query_execution_complete(query) for query in episode["queries"])
+        for episode in episodes
+    )
+    complete = noise_complete and execution_complete
     return {
         "sampling_noise_controlled": complete,
         "sampler_noise_identity_verified": complete,
+        "controller_execution_complete": execution_complete,
         "sampler_noise_identity_receipt_count": sum(
             value is not None for values in identities.values() for value in values
         ),
         "sampling_noise_limitation": (
             None
             if complete
-            else "scoped service did not return a complete paired explicit-noise identity"
+            else "paired noise or complete controller execution evidence is absent"
         ),
         "same_state_action_sensitivity_only": True,
         "closed_loop_states_and_exterior_diverge_after_different_actions": True,
     }
+
+
+def _query_execution_complete(query: dict[str, Any]) -> bool:
+    proofs = query.get("controller_proofs") or []
+    return bool(
+        query.get("execution_status") == "completed"
+        and query.get("attempted_prefix") == EXECUTION_PREFIX
+        and query.get("executed_prefix") == EXECUTION_PREFIX
+        and len(proofs) == EXECUTION_PREFIX
+        and not any(
+            proof.get("terminated") or proof.get("truncated") for proof in proofs
+        )
+    )
 
 
 def _persist_evaluation(
@@ -1296,8 +1384,12 @@ def _run_evaluation(
         _validate_eval_geometry(env.unwrapped, protocol)
         _validate_eval_robot_plant(env.unwrapped, protocol)
         episodes = _evaluate(env, client, args, protocol)
-        artifacts = _write_review_artifacts(work, episodes, args.checkpoint_role)
-        result = _result(args, episodes, artifacts, protocol, receipt)
+        try:
+            artifacts = _write_review_artifacts(work, episodes, args.checkpoint_role)
+            result = _result(args, episodes, artifacts, protocol, receipt)
+        except Exception:
+            _persist_partial_episodes(work, episodes)
+            raise
         _persist_evaluation(args, work, result, protocol)
         return result
     finally:

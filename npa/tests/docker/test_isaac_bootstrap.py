@@ -720,6 +720,10 @@ def test_isaac3_image_gates_pi05_native_client_and_artifact_runtime() -> None:
     assert "pi05_closed_loop_entry import build_parser" in smoke
     assert "msgpack.packb" in smoke
     assert '{"additional_headers", "compression", "max_size"}' in smoke
+    closed_loop = (
+        REPO_ROOT / "npa/src/npa/workflows/sim2real/pi05_closed_loop.py"
+    ).read_text(encoding="utf-8")
+    assert '[sys.executable, "-m", "rerun"]' in closed_loop
 
 
 def test_baked_imageio_uses_snapshot_ffmpeg_without_nested_executable() -> None:

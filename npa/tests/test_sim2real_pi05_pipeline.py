@@ -165,7 +165,7 @@ class _ActionProxy:
 
 
 def _policy_action_native(offset: object, scale: object) -> Namespace:
-    term = Namespace(_offset=offset, _scale=scale)
+    term = Namespace(_offset=offset, _scale=scale, cfg=Namespace(clip=None))
     manager = Namespace(
         active_terms=["arm_action", "gripper_action"],
         action_term_dim=[7, 1],
@@ -219,6 +219,14 @@ def test_joint_bridge_rejects_zero_per_joint_scale() -> None:
     )
 
     with pytest.raises(RuntimeError, match="finite and nonzero"):
+        pi05_closed_loop._joint_bridge(native)
+
+
+def test_joint_bridge_rejects_configured_sdk_action_clipping() -> None:
+    native = _policy_action_native(_ActionProxy([[0.1] * 7]), 0.5)
+    native.action_manager.get_term("arm_action").cfg.clip = {".*": (-1.0, 1.0)}
+
+    with pytest.raises(RuntimeError, match="unclipped Isaac affine"):
         pi05_closed_loop._joint_bridge(native)
 
 
@@ -283,13 +291,76 @@ def test_closed_loop_wrist_ablation_is_deterministic() -> None:
     )
 
 
+class _FailSecondControllerStep:
+    calls = 0
+
+    def __call__(self, *_args, **_kwargs):
+        self.calls += 1
+        if self.calls == 2:
+            raise RuntimeError("controller rejected gs://private/location")
+        return {"terminated": False, "truncated": False}
+
+
+def _partial_execution_context(record: dict) -> dict:
+    return {
+        "record": record,
+        "bridge": ([0.0] * 7, [0.5] * 7, 8, 0, 7),
+        "env": object(),
+        "native": object(),
+        "initial_z": 0.024,
+        "target_xy": np.asarray([0.5, 0.18]),
+        "object_width_m": 0.048,
+    }
+
+
+def test_policy_query_receipt_survives_partial_controller_failure(monkeypatch) -> None:
+    actions = np.zeros((15, 8), dtype=np.float64)
+    actions[:, 7] = -0.2
+    record = {"queries": [], "physics_trace": []}
+    context = _partial_execution_context(record)
+    monkeypatch.setattr(
+        pi05_closed_loop,
+        "_query_policy",
+        lambda _context, _decision: (
+            actions,
+            {"sampler_noise_sha256": "a" * 64},
+            {"observation_time_s": 0.0},
+        ),
+    )
+    monkeypatch.setattr(pi05_closed_loop, "_apply_target", _FailSecondControllerStep())
+    monkeypatch.setattr(pi05_closed_loop, "_physics_sample", lambda *_args: {})
+
+    with pytest.raises(RuntimeError, match="controller rejected"):
+        pi05_closed_loop._decision_step(context, 0)
+
+    query = record["queries"][0]
+    assert query["action_receipt"]["shape"] == [15, 8]
+    assert query["action_receipt"]["gripper_scores"] == [-0.2] * 15
+    assert query["action_receipt"]["thresholded_gripper_commands"] == [0] * 15
+    assert query["execution_status"] == "failed"
+    assert query["attempted_prefix"] == 2
+    assert query["executed_prefix"] == 1
+    assert len(query["controller_proofs"]) == 1
+    assert (
+        query["execution_error"] == "RuntimeError: controller rejected <redacted-uri>"
+    )
+
+
 def test_effectiveness_rejects_absent_sampler_identity() -> None:
     def episode(mode: str, identity: str | None) -> dict:
+        proofs = [{"terminated": False, "truncated": False}] * 8
         return {
             "scenario_seed": 9,
             "wrist_ablation_mode": mode,
             "queries": [
-                {"decision": 0, "inference": {"sampler_noise_sha256": identity}}
+                {
+                    "decision": 0,
+                    "execution_status": "completed",
+                    "attempted_prefix": 8,
+                    "executed_prefix": 8,
+                    "controller_proofs": proofs,
+                    "inference": {"sampler_noise_sha256": identity},
+                }
             ],
         }
 
@@ -298,6 +369,57 @@ def test_effectiveness_rejects_absent_sampler_identity() -> None:
     assert absent["sampler_noise_identity_verified"] is False
     paired = _sampler_noise_pairing([episode(mode, "a" * 64) for mode in modes], modes)
     assert paired["sampler_noise_identity_verified"] is True
+
+    failed = [episode(mode, "a" * 64) for mode in modes]
+    failed[0]["queries"][0]["execution_status"] = "failed"
+    assert (
+        _sampler_noise_pairing(failed, modes)["sampler_noise_identity_verified"]
+        is False
+    )
+
+    terminal = [episode(mode, "a" * 64) for mode in modes]
+    terminal[0]["queries"][0]["controller_proofs"][0] = {
+        "terminated": True,
+        "truncated": False,
+    }
+    assert not _sampler_noise_pairing(terminal, modes)[
+        "sampler_noise_identity_verified"
+    ]
+
+
+def test_episode_failure_redacts_query_and_top_level_uri(monkeypatch) -> None:
+    def fail(*args):
+        record = args[3]
+        record["queries"].append({"execution_error": "already redacted"})
+        raise RuntimeError("controller rejected gs://private/location")
+
+    monkeypatch.setattr(pi05_closed_loop, "_episode", fail)
+    args = Namespace(
+        wrist_ablation_modes=["fresh"], episodes=1, seed=1, decisions=1, ablation_seed=2
+    )
+    env = Namespace(reset=lambda **_kwargs: None)
+    protocol = {"scenarios": [{}], "object_width_m": 0.048}
+
+    result = pi05_closed_loop._evaluate(env, object(), args, protocol)[0]
+
+    assert result["failure"] == "RuntimeError: controller rejected <redacted-uri>"
+    assert "private/location" not in json.dumps(result)
+
+
+def test_partial_episode_receipt_retains_query_without_raw_frames(
+    tmp_path: Path,
+) -> None:
+    episode = {
+        "queries": [{"execution_status": "failed", "action_receipt": {"sha256": "a"}}],
+        "_exterior_frames": [np.zeros((2, 2, 3), dtype=np.uint8)],
+        "_wrist_frames": [np.zeros((2, 2, 3), dtype=np.uint8)],
+    }
+
+    pi05_closed_loop._persist_partial_episodes(tmp_path, [episode])
+
+    receipt = json.loads((tmp_path / "partial-episodes.json").read_text())[0]
+    assert receipt["queries"] == episode["queries"]
+    assert "_exterior_frames" not in receipt
 
 
 def test_pi05_mesh_is_single_host_and_rejects_uninitialized_second_node() -> None:

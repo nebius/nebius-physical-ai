@@ -19,8 +19,8 @@ DATASET_SCHEMA = "npa.sim2real.pi05.dense_dataset.v1"
 EPISODE_SCHEMA = "npa.sim2real.pi05.episode.v1"
 TASK_ID = "Isaac-Surface-PickPlace-Franka-OpenPI-v0"
 JOINT_NAMES = tuple(f"panda_joint{i}" for i in range(1, 8))
-# Franka limits from the stock articulation.  Keep a small boundary margin so
-# a predicted target cannot be accepted and then clipped invisibly by Isaac.
+# Franka limits from the stock articulation.  These physical limits, rather
+# than an invented normalized-action interval, bound absolute policy targets.
 JOINT_LIMITS_RAD = (
     (-2.8973, 2.8973),
     (-1.7628, 1.7628),
@@ -204,7 +204,8 @@ def _action_contract() -> dict[str, Any]:
             "gripper": {
                 "open": 0.0,
                 "closed": 1.0,
-                "prediction_range": [0.0, 1.0],
+                "prediction_domain": "finite_score_thresholded_without_clamping",
+                "observation_and_dataset_range": [0.0, 1.0],
                 "close_threshold": ">0.5",
                 "physical_width_m": [MAX_GRIPPER_WIDTH_M, 0.0],
                 "isaac_finger_targets_m": {"open": [0.04, 0.04], "closed": [0.0, 0.0]},
@@ -216,13 +217,15 @@ def _action_contract() -> dict[str, Any]:
                 "execute_prefix": EXECUTION_PREFIX,
             },
             "isaac_bridge": "(absolute_target_rad-default_joint_position_rad)/action_scale_rad",
+            "raw_action_domain": "unclipped_affine_subject_to_physical_joint_limits",
+            "configured_action_clip": "must_be_absent",
             "expert_adapter": {
                 "waypoint_frame": "panda_hand_origin",
                 "frame_sensor_offset": "zero_translation_identity_xyzw",
                 "differential_ik_body_offset": "zero_translation_identity_xyzw",
                 "runtime_receipt": "live_hand_sensor_and_control_point_coincidence",
             },
-            "clipping": "forbidden",
+            "clipping": "forbidden; configured SDK clipping is rejected",
         },
     }
 
@@ -335,12 +338,6 @@ def absolute_to_isaac_action(
         (value - offset) / gain
         for value, offset, gain in zip(action[:7], default, scale, strict=True)
     ]
-    if any(abs(value) > 1.0 for value in arm):
-        raise Pi05ContractError(
-            "absolute target is outside the configured Isaac action range; clipping is forbidden"
-        )
-    if not 0.0 <= action[7] <= 1.0:
-        raise Pi05ContractError("DROID gripper prediction must be in [0, 1]")
     # The pinned upstream robot example explicitly binarizes policy output at
     # >0.5. Stock Isaac uses negative=close and positive=open.
     return [*arm, -1.0 if action[7] > 0.5 else 1.0]
@@ -416,7 +413,7 @@ def _roundtrip_evidence(
         "joint_order": list(JOINT_NAMES),
         "max_controller_target_error_rad": target_error,
         "max_bridge_roundtrip_error_rad": bridge_error,
-        "gripper_prediction_normalized": requested[7],
+        "gripper_prediction_score": requested[7],
         "gripper_close_threshold": ">0.5",
         "thresholded_gripper_target": 1.0 if requested[7] > 0.5 else 0.0,
         "finger_controller_target_m": fingers,
