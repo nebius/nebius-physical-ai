@@ -181,7 +181,7 @@ def test_canonical_sim2real_images_exclude_fixed_critical_dependencies():
     assert '"${UBUNTU_SNAPSHOT}" "${ENVGEN_LINUX_LIBC_DEV_VERSION}"' in envgen
     isaac = (WORKBENCH / "common/isaac3-oss-deps.txt").read_text()
     pin = re.search(r"^pyjwt==(\S+)$", isaac, re.MULTILINE)
-    assert pin and Version(pin.group(1)) >= Version("2.14.0")
+    assert pin and Version(pin.group(1)) >= Version("2.15.1")
 
 
 def test_genesis_workflow_images_replace_vulnerable_parent_gitpython() -> None:

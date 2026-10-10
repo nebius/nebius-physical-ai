@@ -355,8 +355,9 @@ require EnvGen's installed-version assertion to match that shared pin.
 The canonical EnvGen recipe now selects the October 9 Ubuntu snapshot and
 `linux-libc-dev=5.15.0-198.208`, replacing the inherited headers that failed
 the fixed-critical publication gate. The Isaac 3 OSS dependency closure selects
-PyJWT 2.14.0, which fixes
-[CVE-2026-102268](https://github.com/jpadilla/pyjwt/security/advisories/GHSA-ffc3-869f-jxw9).
+PyJWT 2.15.1, which includes the
+[CVE-2026-102268 fix](https://github.com/jpadilla/pyjwt/security/advisories/GHSA-ffc3-869f-jxw9)
+and the subsequent supported [2.15 security updates](https://github.com/jpadilla/pyjwt/releases).
 These source changes require new exact-image scans and runtime qualification;
 they do not retroactively qualify older image digests.
 Historical image digests retain their original dependency bytes. This source

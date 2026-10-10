@@ -661,11 +661,11 @@ def test_live_sim2real_evaluation_receipts_resume_without_inference(
 ) -> None:
     """Verify full frame coverage, concurrent hosted scoring, and S3 replay."""
     _require_key()
-    prefix = os.environ.get("NPA_SIM2REAL_EVALUATION_LIVE_S3_PREFIX")
-    if not prefix:
+    if not os.environ.get("NPA_SIM2REAL_EVALUATION_LIVE_S3_PREFIX"):
         pytest.skip(
             "Set NPA_SIM2REAL_EVALUATION_LIVE_S3_PREFIX to a private writable prefix"
         )
+    prefix = os.environ["NPA_SIM2REAL_EVALUATION_LIVE_S3_PREFIX"]
     from npa.clients.storage import StorageClient
     from npa.workflows.sim2real.hosted_evaluation import evaluate_rollouts
 
