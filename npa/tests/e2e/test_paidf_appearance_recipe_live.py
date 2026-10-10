@@ -77,8 +77,12 @@ def _audit_profiles(configuration, recipe):
     assert profiles == expected and len(profiles) == 12
 
 
-def _audit_variant(client, root, clip, source, destination, recipe, frames):
-    relative = "cosmos_augmented/" + clip + "/"
+def _audit_variant(client, root, variant, source, destination, recipe, frames):
+    clip = variant["clip"]
+    video_uri = variant["augmented_video_uri"]
+    assert video_uri.startswith(root.rstrip("/") + "/cosmos_augmented/" + clip + "/")
+    assert video_uri.endswith("/augmented_video.mp4")
+    relative = video_uri[len(root.rstrip("/")) + 1 :].rsplit("/", 1)[0] + "/"
     metadata = _read(client, root, relative + "metadata.json")
     receipt = _read(client, root, relative + "transfer.json")
     video = _download(client, root, relative + "augmented_video.mp4", destination)
@@ -171,20 +175,21 @@ def test_twelve_profile_outputs_and_quality_accounting(case, tmp_path):
     _audit_profiles(configuration, recipe)
     manifest = _read(client, root, "cosmos_augmented/manifest.json")
     assert manifest["status"] == "executed" and manifest["variant_count"] == 12
-    clips = {item["clip"] for item in manifest["variants"]}
-    assert clips == {f"variant-{index:04d}" for index in range(12)}
+    variants = {item["clip"]: item for item in manifest["variants"]}
+    assert len(manifest["variants"]) == len(variants) == 12
+    assert set(variants) == {f"variant-{index:04d}" for index in range(12)}
     source = _download(client, root, "input/source.mp4", tmp_path / "source.mp4")
     hashes = {
         clip: _audit_variant(
             client,
             root,
-            clip,
+            variants[clip],
             source,
             tmp_path / (clip + ".mp4"),
             recipe,
             case["expected_frames"],
         )
-        for clip in sorted(clips)
+        for clip in sorted(variants)
     }
     assert len(set(hashes.values())) == 12
     _audit_completion(client, root, hashes)
