@@ -1068,8 +1068,8 @@ def submit_cmd(
         "",
         "--preset",
         help=(
-            "Explicit shipped workflow seed/config preset. Preset-owned dataset, "
-            "task, and trigger keys cannot be replaced with --var."
+            "Explicit shipped workflow seed/config preset. Preset-owned settings "
+            "cannot be replaced with --var."
         ),
     ),
     assume_decision: str = typer.Option(

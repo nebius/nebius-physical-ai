@@ -72,47 +72,12 @@ class SubmitLiveCase:
 
 SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
-        "marble-go1-warehouse.yaml",
+        "marble-go1-inspection.yaml",
         "gpu",
         secret_envs=("WLT_API_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         runtime=True,
-        notes="Real World API generation and Go1 collection; generated route qualification is required. Preset GPU acceptance is recorded separately.",
-    ),
-    SubmitLiveCase(
-        "marble-go1-shipyard.yaml",
-        "gpu",
-        secret_envs=("WLT_API_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
-        runtime=True,
-        notes="Real World API generation and Go1 collection; generated route qualification is required. Preset GPU acceptance is recorded separately.",
-    ),
-    SubmitLiveCase(
-        "marble-go1-home.yaml",
-        "gpu",
-        secret_envs=("WLT_API_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
-        runtime=True,
-        notes="Real World API generation and Go1 collection; generated route qualification is required. Preset GPU acceptance is recorded separately.",
-    ),
-    SubmitLiveCase(
-        "marble-go1-factory.yaml",
-        "gpu",
-        secret_envs=("WLT_API_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
-        runtime=True,
-        notes="Real World API generation and Go1 collection; generated route qualification is required. Preset GPU acceptance is recorded separately.",
-    ),
-    SubmitLiveCase(
-        "marble-go1-utility.yaml",
-        "gpu",
-        secret_envs=("WLT_API_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
-        runtime=True,
-        notes="Real World API generation and Go1 collection; generated route qualification is required. Preset GPU acceptance is recorded separately.",
-    ),
-    SubmitLiveCase(
-        "marble-go1-five-sites.yaml",
-        "multi",
-        secret_envs=("WLT_API_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
-        runtime=True,
-        expected_parallel_tasks=5,
-        notes="Real World API generation and Go1 collection; generated route qualification is required. Preset GPU acceptance is recorded separately.",
+        preset="warehouse",
+        notes="One selected situation: real hosted generation, one Go1 CUDA collector and continuous standalone HTML. All five preset commands have recorded GPU evidence.",
     ),
     SubmitLiveCase(
         "marble-warehouse-quadruped.yaml",

@@ -5,20 +5,20 @@ description: Generate or import World Labs Marble worlds into NPA and run native
 
 # Marble
 
-For five generated-site Go1 presets, use
-`docs/workbench/guides/marble-robot-presets.md` and
-`workflows/testing/marble-go1-five-sites.yaml`. Individual site YAMLs select
-warehouse, shipyard, home, factory or utility. Each includes hosted generation
-with `WLT_API_KEY`, GPU collection and standalone HTML reporting. The combined
-spec runs three native parallel waves of five tasks, with one RTX PRO 6000 per
-collector and separate S3 paths. These are Go1 presets, not ANYmal or Spot.
-All five generated-site parameterizations completed native collection and
-standalone reporting with `--max-concurrency 4` (four collectors, then one).
-See the guide's live-acceptance section and sanitized validation record. This
-does not qualify default five-way concurrency or five independent single-site
-submissions. New generated routes still need their own acceptance. Do not
-advertise thermal inspection, defect detection, household manipulation or
-RL training.
+For generated-site Go1 inspection, use one workflow:
+`workflows/testing/marble-go1-inspection.yaml` with exactly one native
+`--preset warehouse|shipyard|home|factory|utility` selection. Omission defaults
+to warehouse. Each submission runs one hosted generation using `WLT_API_KEY`,
+one RTX PRO 6000 collection and one continuous 25 FPS standalone HTML report.
+It never fans out across situations. The guide is
+`docs/workbench/guides/marble-robot-presets.md`; for a custom world, omit
+`--preset` and override `world_prompt` and `workflow_preset` on the same YAML.
+Use the native `write_quadruped_gallery` to combine completed reports into an
+offline situation selector retaining every original video and trajectory row.
+All five parameterizations have prior native GPU evidence from the retired
+combined workflow; distinguish that evidence from new-entrypoint submissions.
+These are Go1 presets, not ANYmal or Spot. Do not advertise thermal inspection,
+defect detection, household manipulation or new RL training.
 
 For detailed quadruped collection, use
 `workflows/testing/marble-warehouse-quadruped.yaml` and

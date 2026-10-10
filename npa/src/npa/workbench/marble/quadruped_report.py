@@ -1,6 +1,7 @@
 """Package verified Go1 collection videos and telemetry into one offline HTML file."""
 
 import base64
+from collections.abc import Mapping
 import hashlib
 import json
 import math
@@ -111,3 +112,55 @@ def write_quadruped_report(root, result):
             )
     data["notices"] = notices
     return _write_html(root, data)
+
+
+def _read_standalone_capture(path):
+    marker = '<script type="application/json" id="capture-data">'
+    try:
+        encoded = path.read_text().split(marker, 1)[1].split("</script>", 1)[0]
+        data = json.loads(encoded)
+    except (IndexError, json.JSONDecodeError) as exc:
+        raise MarbleError("Expected a native standalone Go1 report") from exc
+    if not isinstance(data, dict) or not isinstance(data.get("videos"), dict):
+        raise MarbleError("Expected one complete recorded capture per report")
+    videos = data["videos"]
+    names = {"observer", "frames", "depth-frames"}
+    if set(videos) != names or any(
+        not isinstance(video, str) or not video.startswith("data:video/mp4;base64,")
+        for video in videos.values()
+    ):
+        raise MarbleError("Every report must embed all three recorded MP4 videos")
+    frames, trajectory = data.get("frames"), data.get("trajectory")
+    if (
+        not isinstance(frames, int)
+        or isinstance(frames, bool)
+        or frames <= 0
+        or not isinstance(trajectory, list)
+        or len(trajectory) != frames
+    ):
+        raise MarbleError("The recorded trajectory must cover every video frame")
+    return data
+
+
+def write_quadruped_gallery(root: Path, reports: Mapping[str, Path]) -> Path:
+    """Package native continuous recordings with a situation selector.
+
+    Args:
+        root: Existing local output directory.
+        reports: Display labels mapped to completed native standalone HTML files.
+
+    Returns:
+        The standalone index.html containing every original video and trajectory.
+
+    Raises:
+        MarbleError: Reports are empty or omit embedded videos or trajectory rows.
+        OSError: A source report cannot be read or the destination cannot be written.
+        ValueError: A report contains nonfinite JSON values.
+    """
+    if not reports or any(not str(label).strip() for label in reports):
+        raise MarbleError("A gallery requires named recorded situations")
+    captures = [
+        {"label": label, "data": _read_standalone_capture(path)}
+        for label, path in reports.items()
+    ]
+    return _write_html(root, {"captures": captures})
