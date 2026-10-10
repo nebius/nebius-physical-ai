@@ -1,0 +1,32 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: mujoco-manip-run
+  description: >-
+    Run N episodes of a scripted policy on a MuJoCo contact-rich manipulation
+    task (real MuJoCo stepping, programmatic MJCF scenes) and write a
+    trajectories + metrics report. Exercises the workbench.mujoco.run toolRef
+    and anchors the mujoco/run three-tier contract (CLI <-> SDK <-> spec).
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/mujoco-manip-run"
+  task: "peg_insertion"
+  policy: "scripted:expert"
+  episodes: 10
+  seed: 0
+  max_steps: 500
+  output_path: "s3://{{config.bucket}}/{{config.prefix}}/report.json"
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 8Gi
+initial: run
+states:
+  run:
+    toolRef: workbench.mujoco.run
+    resources: cpu
+    outputs:
+      - uri: "{{config.output_path}}"
+        schema: npa.workbench.mujoco_manip.run.v1
+    terminal: true

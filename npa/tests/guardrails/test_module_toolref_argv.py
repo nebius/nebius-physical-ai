@@ -48,6 +48,8 @@ PARSER_FACTORIES = {
     "npa.workflows.byof.molmoact_pipeline": "build_parser",
     "npa.workflows.byof.openvla_pipeline": "build_parser",
     "npa.workflows.byof.newton_pipeline": "build_parser",
+    "npa.workflows.byof.eval_harness_pipeline": "build_parser",
+    "npa.workflows.byof.mujoco_pipeline": "build_parser",
     "npa.workflows.byof.openpi_full_droid": "build_parser",
     "npa.workflows.byof.openpi_service": "build_parser",
     "npa.workflows.content_agents": "build_parser",

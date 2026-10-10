@@ -87,6 +87,7 @@ def _full_app() -> typer.Typer:
     from npa.cli.workbench.dataset import app as dataset_app
     from npa.cli.workbench.detection_training import app as detection_training_app
     from npa.cli.workbench.encord import app as encord_app
+    from npa.cli.workbench.eval_harness import app as eval_harness_app
     from npa.cli.workbench.flex_pi import app as flex_pi_app
     from npa.cli.workbench.foxglove import app as foxglove_app
     from npa.cli.workbench.golden_eval import app as golden_eval_app
@@ -100,7 +101,7 @@ def _full_app() -> typer.Typer:
     from npa.cli.workbench.ltx2 import app as ltx2_app
     from npa.cli.workbench.mjlab import app as mjlab_app
     from npa.cli.workbench.open3d import app as open3d_app
-
+    from npa.cli.workbench.mujoco import app as mujoco_app
     from npa.cli.workbench.namespace import app as namespace_app
     from npa.cli.workbench.molmoact import app as molmoact_app
     from npa.cli.workbench.openvla import app as openvla_app
@@ -156,6 +157,8 @@ def _full_app() -> typer.Typer:
     full.add_typer(open3d_app, name="open3d")
     full.add_typer(robocasa_app, name="robocasa")
     full.add_typer(newton_app, name="newton")
+    full.add_typer(eval_harness_app, name="eval-harness")
+    full.add_typer(mujoco_app, name="mujoco")
     full.add_typer(lichtblick_app, name="lichtblick")
     full.add_typer(ltx2_app, name="ltx2")
     full.add_typer(alpamayo2_super_app, name="alpamayo2-super")
