@@ -147,10 +147,21 @@ def _transactional_provision(function):
         from npa.lifecycle_intent import forbid_destructive_provisioning
 
         forbid_destructive_provisioning("provision_if_absent")
-        if current_operation() is not None:
-            return function(*args, **kwargs)
         bound = signature.bind_partial(*args, **kwargs)
         bound.apply_defaults()
+        if (
+            not bound.arguments.get("dry_run")
+            and not bound.arguments.get("skip_k8s")
+            and (
+                str(bound.arguments.get("accelerator") or "").strip()
+                or bound.arguments.get("sky_smoke")
+            )
+        ):
+            from npa.orchestration.skypilot import local_api
+
+            local_api._require_linux_host()
+        if current_operation() is not None:
+            return function(*args, **kwargs)
         requested_project = bound.arguments.get("project")
         alias, environment, storage, _registry = _resolve_project_runtime(
             requested_project
