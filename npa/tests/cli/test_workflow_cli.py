@@ -65,6 +65,19 @@ def test_workflow_command_help(command: str) -> None:
     assert "Usage:" in result.output
 
 
+def test_raw_plan_only_help_discloses_its_non_submission_contract() -> None:
+    result = runner.invoke(
+        app, ["workbench", "workflow", "submit", "--help"], terminal_width=200
+    )
+
+    assert result.exit_code == 0
+    assert "raw SkyPilot" in result.output
+    assert "PLANNED" in result.output
+    assert "NOT_SUBMITTED" in result.output
+    assert "lifecycle state" in result.output
+    assert "submission" in result.output
+
+
 def test_raw_submit_preflight_rejects_explicit_missing_config(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

@@ -1063,7 +1063,8 @@ def submit_cmd(
         "--plan-only/--no-plan-only",
         help=(
             "For npa.workflow specs: render the SkyPilot YAML and print it, "
-            "but do not submit."
+            "but do not submit. For raw SkyPilot YAML: PLANNED with "
+            "NOT_SUBMITTED state; no lifecycle state or submission."
         ),
     ),
     accept_eula: bool = typer.Option(
