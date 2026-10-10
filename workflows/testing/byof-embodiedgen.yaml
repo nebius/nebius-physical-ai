@@ -17,7 +17,9 @@ config:
   build_command: ""
   workload: solution-smoke
   smoke_command: |
-    export NPA_EMBODIEDGEN_INPUT_URI="{{config.input_uri}}"
+    set -euo pipefail
+    NPA_EMBODIEDGEN_INPUT_URI="$(printf '%s' '{{config.input_uri|base64}}' | base64 --decode)"
+    export NPA_EMBODIEDGEN_INPUT_URI
     exec /usr/local/bin/npa-embodiedgen-entrypoint run-smoke
   solution_name: embodiedgen
   capability_name: img3d-cli_trellis_image_to_urdf_pybullet
@@ -31,8 +33,13 @@ config:
   wait_timeout: -1
   poll_interval: 30
   output_root: s3://{{config.bucket}}/oss-solutions/embodiedgen
-  summary_uri: "{{config.output_root}}/{{run.id}}/npa_byof_summary.json"
-  artifact_uri: "{{config.output_root}}/{{run.id}}/embodiedgen_image_to_rigid_object.json"
+  run_output_uri: "{{config.output_root}}/{{run.id}}"
+  summary_uri: "{{config.run_output_uri}}/npa_byof_summary.json"
+  artifact_uri: "{{config.run_output_uri}}/embodiedgen_image_to_rigid_object.json"
+  generated_asset_uri: "{{config.run_output_uri}}/generated_asset.tar.gz"
+  mjcf_asset_uri: "{{config.run_output_uri}}/mjcf_asset.tar.gz"
+  view_png_uri: "{{config.run_output_uri}}/pybullet_view.png"
+  view_mp4_uri: "{{config.run_output_uri}}/pybullet_settle.mp4"
 resources:
   gpu:
     cloud: kubernetes
@@ -68,9 +75,20 @@ states:
       physical metadata is explicitly reported as estimated, not calibrated.
     toolRef: workbench.byof.repo
     resources: gpu
+    inputs:
+      - uri: "{{config.input_uri}}"
+        schema: image/*
     outputs:
       - uri: "{{config.summary_uri}}"
         schema: npa.workbench.byof.summary.v1
       - uri: "{{config.artifact_uri}}"
         schema: npa.embodiedgen.image-to-rigid-object.v1
+      - uri: "{{config.generated_asset_uri}}"
+        schema: application/gzip
+      - uri: "{{config.mjcf_asset_uri}}"
+        schema: application/gzip
+      - uri: "{{config.view_png_uri}}"
+        schema: image/png
+      - uri: "{{config.view_mp4_uri}}"
+        schema: video/mp4
     terminal: true

@@ -1,5 +1,9 @@
 # Portable security updates above the immutable upstream model lock.
 # Keep accelerator and model-library versions in the upstream lock.
+# Regenerate from the repository root with `uv pip compile --no-deps
+# --generate-hashes --no-header --no-annotate --output-file
+# npa/docker/workbench/openpi/security-upgrades-requirements.txt
+# npa/docker/workbench/openpi/security-upgrades-requirements.in`.
 aiosignal==1.4.0
 aiohttp==3.14.3
 click==8.3.3
@@ -7,7 +11,7 @@ deepdiff==8.6.2
 filelock==3.32.5
 flask==3.1.3
 gdown==5.2.2
-gitpython==3.1.61
+gitpython==3.1.62
 idna==3.19
 lxml==6.1.3
 markdown==3.10.3
@@ -20,6 +24,6 @@ requests==2.34.2
 sentencepiece==0.2.2
 setuptools==84.0.0
 soupsieve==2.9.2
-urllib3==2.7.0
-werkzeug==3.1.8
+urllib3==2.8.0
+werkzeug==3.1.9
 wheel==0.48.0

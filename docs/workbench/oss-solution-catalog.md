@@ -23,7 +23,7 @@ unique and must be tested with its own upstream-named capabilities.
 | ManiSkill | `mani-skill/ManiSkill` `v3.0.1` | `gymnasium_pickcube_registration` | `maniskill_pickcube_step.json` | `byof-maniskill.yaml` |
 | MuJoCo Playground | `google-deepmind/mujoco_playground` `v0.2.0` | `mjx_cartpole_step` (+ CheetahRun) | `mujoco_playground_cartpole_step.json` | `byof-mujoco-playground.yaml` |
 | Gymnasium-Robotics | `Farama-Foundation/Gymnasium-Robotics` `4d1ebecb…` | `HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1` | `gymnasium-robotics-smoke.json` | `byof-gymnasium-robotics.yaml` |
-| EmbodiedGen V2 (**operator-private CUDA candidate**) | `HorizonRobotics/EmbodiedGen` `f0124197…` + TRELLIS `55a8e816…` | `img3d-cli_trellis_image_to_urdf_pybullet` | generated mesh/URDF/collision records + `embodiedgen_image_to_rigid_object.json` + decoded PyBullet MP4 | `byof-embodiedgen.yaml` |
+| [EmbodiedGen V2](embodiedgen.md) (**operator-private CUDA candidate**) | `HorizonRobotics/EmbodiedGen` `f0124197…` + TRELLIS `55a8e816…` | `img3d-cli_trellis_image_to_urdf_pybullet` | generated URDF/collision and MJCF bundles + `embodiedgen_image_to_rigid_object.json` + decoded PyBullet PNG/MP4 | [`byof-embodiedgen.yaml`](../../workflows/testing/byof-embodiedgen.yaml) |
 | RoboCasa | `robocasa/robocasa` `v1.0` | `kitchen_task_registration` | `robocasa_kitchen_env_reset.json` | `byof-robocasa.yaml` |
 | Enactic OpenArm (**accepted public image; Isaac runtime fetch**) | `enactic/openarm_mujoco` `2.2.0` + `enactic/openarm_isaac_lab` `bad82e…` | `openarm_mujoco_bimanual_rollout` + `Isaac-Reach-OpenArm-v0` | MuJoCo/Isaac trajectories and RSL-RL checkpoint | `openarm-simulators.yaml` |
 | RoboTwin 2.0 (**operator BYOF candidate; normal submit blocked**) | `RoboTwin-Platform/RoboTwin` `96c1feab…` | `beat_block_hammer_successful_seed_replay_collection` | operator evidence: `robotwin-smoke.json` + native HDF5 + MP4; registry admission deferred | `byof-robotwin.yaml` |
@@ -97,7 +97,10 @@ cache, and output are runtime-scoped. The sole workflow uses the real upstream
 `img3d-cli --image3d_model TRELLIS` path, converts its generated URDF to the
 upstream MuJoCo/Genesis MJCF handoff, and loads that exact URDF in PyBullet. It
 records mesh/collision hashes, conversion facts, physical settling, and a
-decoded viewable MP4 in `embodiedgen_image_to_rigid_object.json`.
+decoded viewable MP4 in `embodiedgen_image_to_rigid_object.json`. It also
+declares run-scoped generated-URDF/collision and MJCF handoff bundles plus the
+PNG/MP4 evidence; see the [operator guide](embodiedgen.md) for the exact
+artifact and lifecycle contract.
 
 | Capability | Status | Upstream basis |
 | --- | --- | --- |

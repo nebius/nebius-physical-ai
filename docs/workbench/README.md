@@ -1,10 +1,20 @@
 # Workbench documentation
 
+For dataset submission, robot input diagnosis and private processing, see
+[PAIDF dataset batches](guides/paidf-dataset-batches.md).
+
 [All docs](../README.md) · [Quickstart](../quickstart.md) · [CLI reference](../cli/workbench.md)
 
 Use `npa workbench <tool> <command>` for a capability and
 `npa workbench workflow` for a pipeline. Tools exchange artifacts through S3;
 Python and HTTP access follow each tool's documented contract.
+
+PAIDF workflows select repaired public Cosmos3, Evaluator, and Curator
+candidates by immutable digest while the historical releases remain
+quarantined. See the [PAIDF image-selection notes](guides/physical-ai-data-factory.md)
+for validation scope and operator overrides.
+The [public default quarantine audit](validation/public-default-quarantine-impact-20261005.md)
+lists other affected images and shipped workflows, including the Sim2Real seams.
 
 ## Start and operate a run
 
@@ -33,6 +43,7 @@ Python and HTTP access follow each tool's documented contract.
 | Train and evaluate a Cosmos 3 robot policy | [Experimental native LIBERO model-factory workflow](cosmos3-policy-model-factory.md) |
 | Measure Cosmos 3 WAM training across B200 nodes | [Experimental Slurm recipe](cookbooks/cosmos3-wam-slurm.md) · [Measured 8/16-GPU results](evidence/cosmos3-wam-scaling/README.md) |
 | Scene reconstruction | [NuRec](guides/neural-reconstruction.md) · [living-lab fan-out](guides/living-lab-nurec-fanout.md) |
+| Image to rigid-object generation | [EmbodiedGen V2](embodiedgen.md) — operator-private TRELLIS → generated URDF/collision bundle → PyBullet evidence; live qualification pending |
 | USD object preparation | [Content Agents](content-agents.md) |
 | Other video models | [Wan 2.2](wan2.2.md) · [LTX-2](ltx2.md) |
 

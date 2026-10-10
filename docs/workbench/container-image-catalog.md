@@ -32,7 +32,7 @@ TRELLIS extensions; it carries no upstream source, model, input, cache, output,
 or credential bytes. Its CUDA distribution terms do not establish anonymous
 registry delivery, so only a private digest may be used for qualification.
 
-The accepted-release manifest contains **38 release references**, including
+The September 18 accepted-release manifest contained **38 release references**, including
 Flex-Pi r2, Isaac Arena and OpenArm. The incoming Flex-Pi qualification records
 an anonymous digest audit on **2026-09-18** and retained `linux/amd64` runtime
 metadata. Flex-Pi r2 was independently built, scanned and run on both required
@@ -80,9 +80,9 @@ complete SDXL generations. The opt-in FA4 inference profile improves selected
 attention calls; complete-model performance is effectively tied with FA2.
 These candidates do not change the accepted images listed below.
 
-The current source inventory has **60 packaging entries** (51 redistribution-eligible
-and nine restricted) and **51 mapped tools**: 26 public-release members, two
-restricted tools, and 23 quarantined tools. These counts come from
+The current source inventory has **62 packaging entries** (53 redistribution-eligible
+and nine restricted) and **53 mapped tools**: 27 public-release members, two
+restricted tools, and 24 quarantined tools. These counts come from
 `packaging-contract.yaml` and `npa.deploy.images`;
 the seven restricted PAIDF images have no mapped tool entry. These counts do not
 constitute acceptance of the quarantined images.
@@ -360,6 +360,12 @@ require EnvGen's installed-version assertion to match that shared pin.
 Historical image digests retain their original dependency bytes. This source
 update does not change the accepted release pins above.
 
+Current source also moves the controller and viewer to the October 2 Debian
+snapshot with fixed `perl-base` bytes, and clears inherited EnvGen source before
+copying the selected revision. These changes are build prerequisites for new
+images; the accepted public digests above retain their earlier bytes until a
+new image set passes qualification and release promotion.
+
 ## 2026-09-02 private-registry isolation audit
 
 All 31 accepted release tags and recorded digests resolved through anonymous
@@ -478,6 +484,22 @@ package-generated keys in the same build layer. Replacements and derivatives
 must pass exact-image scanning and capability evaluation before any of the six
 re-enters this table.
 
+PAIDF workflow rendering separately selects repaired immutable development
+candidates for `npa-cosmos3`, `npa-cosmos-evaluator`, and `npa-cosmos-curate`.
+Their exact source and digest pins are recorded in
+[`public_release_manifest.json`](../../npa/src/npa/deploy/public_release_manifest.json),
+validated and selected by [`images.py`](../../npa/src/npa/deploy/images.py).
+Each candidate passed its trusted publication job, including image-security and
+anonymous manifest checks. This is candidate-selection evidence, not a supported
+release promotion or completed PAIDF workflow acceptance; these candidates do
+not re-enter the accepted-release table below. Explicit operator registries and
+image overrides remain supported.
+
+The [default-workflow impact audit](validation/public-default-quarantine-impact-20261005.md)
+checks all shipped plans without image overrides and records the remaining
+blocked workflows and derivative images. It distinguishes canonical Sim2Real's
+required operator images from legacy automatic public-image selection.
+
 ## 2026-09-24 OCI metadata and runtime-user quarantine
 
 Exact-config inspection found that six more previously accepted releases no
@@ -520,6 +542,7 @@ image scanning, and capability evaluation before re-entering this table.
 | LingBot World v1 | `npa-lingbot-world` | `a43bec7-rtfetch-20260916` | 2026-09-16 | Camera-conditioned video generation, qualified on four B200s with positive attention/all-to-all execution on every rank and 161 decoded frames. Authored camera poses; no robot-action or calibrated-geometry claim. |
 | SAM 2.1 Small | `npa-sam2` | `2.1-rtfetch-20260916` | 2026-09-16 | Native CUDA video-mask propagation from a first-frame box; raw arrays and color-preserving visualization qualified on B200. Predicted masks are not ground truth. |
 | Enactic OpenArm | `npa-openarm` | `2.2.0-isaac0.1.0-rtfetch` | 2026-09-15 | OpenArm v2 bimanual MuJoCo simulation plus upstream OpenArm Isaac Lab reach rollout and RSL-RL training. Apache-2.0 OpenArm source and simulator assets are baked; Isaac Sim/Lab are exact runtime fetches after the operator's EULA decision. The exact release digest passed byte/supply-chain gates and a complete RTX PRO 6000 dual-simulator workflow with independently checked traces, rendered video, checkpoint, and qualification report. See [OpenArm](openarm.md). |
+| Lyra 2 reconstruction | `npa-lyra2` | `2.0-rtfetch2` | 2026-10-09 | Dedicated CUDA/Python/NPA bootstrap with baked SkyPilot startup packages and runtime-fetched Lyra source, inference dependencies and weights. Exact-digest reconstruction on preemptible RTX PRO 6000 produced 8.66 million Gaussians, predicted geometry, 320 decoded video frames and offline HTML. See the [guide](guides/lyra-physical-augmentation.md) and [RTX qualification](validation/lyra2-rtx-20261009.json). |
 
 ## External PAIDF runtime images
 
@@ -762,16 +785,16 @@ this chart is generated from that table and the publishing plan:
 
 ![Published GHCR images against every Nebius GPU platform](../assets/image-gpu-coverage.svg)
 
-All 26 currently accepted release references resolved anonymously to their
-recorded digests again on 2026-09-29. Twelve previously accepted tags remain pullable
+All 27 currently accepted release references resolved anonymously to their
+recorded digests again on 2026-10-08. Twelve previously accepted tags remain pullable
 but are excluded by the two security quarantines above. The chart groups
 the current publishing plan three ways:
 
-- **14 GPU images have no known blocked platform**: `npa-alpamayo2-super`,
+- **15 GPU images have no known blocked platform**: `npa-alpamayo2-super`,
   `npa-cosmos3-reason`,
   `npa-detection-training`, `npa-envgen`, `npa-flex-pi`, `npa-groot`,
   `npa-lancedb`, `npa-lerobot-policy`,
-  `npa-ltx2`, `npa-sonic-mujoco`,
+  `npa-ltx2`, `npa-lyra2`, `npa-sonic-mujoco`,
   `npa-wan2-2`, `npa-diffusers`, `npa-lingbot-world`, and `npa-sam2`. This band does not mean every cell has a current-release run:
   the matrix distinguishes verified, historical, supported, and unverified
   cells.
@@ -859,6 +882,15 @@ table. The independently rebuilt `sonic-mujoco:0.2.0-runtime` and zero-payload
 `cosmos3-serving:0.2.0-oss` each have their own accepted public-plan row.
 
 ## Verification scope
+
+`npa-lyra2:2.0-rtfetch2` promotes the exact scanned development digest that
+completed native reconstruction on one preemptible RTX PRO 6000, with independent
+artifact readback and offline desktop/mobile HTML checks. The earlier
+`2.0-rtfetch1` tag retains its [B200 evidence](validation/lyra2-b200-20261008.json);
+that qualification does not transfer to the repaired rtfetch2 bytes.
+Its CUDA compiler and hash-locked NPA environment are independent of Isaac Lab;
+Lyra source, inference dependencies and model weights are fetched at runtime.
+See the [Lyra packaging record](../../npa/docker/workbench/lyra2/REDISTRIBUTION.md).
 
 The earlier catalog inspections checked tag spelling, anonymous manifest and
 config access, content hashes, platform metadata, selected OCI labels, exposed

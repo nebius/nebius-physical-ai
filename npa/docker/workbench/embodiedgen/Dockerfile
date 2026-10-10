@@ -46,7 +46,8 @@ COPY --chmod=0444 docker/workbench/embodiedgen/runtime-manifest.json \
      docker/workbench/embodiedgen/REDISTRIBUTION.md \
      docker/workbench/embodiedgen/THIRD_PARTY_NOTICES.md /opt/npa/embodiedgen/
 COPY --chmod=0555 docker/workbench/embodiedgen/runtime-bootstrap.py \
-     docker/workbench/embodiedgen/capability_smoke.py /opt/npa/embodiedgen/
+    docker/workbench/embodiedgen/capability_smoke.py \
+    docker/workbench/embodiedgen/asset_bundle.py /opt/npa/embodiedgen/
 COPY --chmod=0555 docker/workbench/embodiedgen/entrypoint.sh \
      /usr/local/bin/npa-embodiedgen-entrypoint
 

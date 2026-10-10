@@ -41,6 +41,8 @@ dependencies = [
     # Official API client matched to the production Kubernetes 1.33 cluster.
     # Sim2Real uses typed Job/Pod conditions instead of parsing kubectl prose.
     "kubernetes==36.0.3",
+    # Exclude OAuth transport versions affected by CVE-2026-49264/49265.
+    "oauthlib>=4.0.0",
     "numpy>=1.24",
     "pyarrow>=23.0.1",
     "pillow>=12.3.0,<13.0",
@@ -75,6 +77,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+video-sweep = ["psycopg[binary]>=3.2,<4"]
 mjlab = ["mjlab==1.6.0", "torch>=2.13.0", "uvicorn>=0.52.4"]
 encord = ["encord>=0.1.202,<0.2", "av>=14.0", "Pillow>=10.0"]
 studio = ["edge-tts==7.2.8"]
@@ -213,6 +216,7 @@ npa = "npa.cli.entry:main"
 npa-openpi-live-deploy = "npa.workflows.byof.openpi_live:main"
 
 [tool.npa.supported-tools]
+lyra2 = "2.0-rtfetch2"
 antioch = "0.1.0-cli0.4.289"
 openpi = "pi05-full-droid-rlds-cu128-unbuilt"
 # Default LeRobot image release. Selectable package versions and their image tags

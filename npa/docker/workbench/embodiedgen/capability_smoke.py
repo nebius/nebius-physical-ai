@@ -10,11 +10,13 @@ import math
 import os
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.parse
 from pathlib import Path
 from typing import Any
 
+from asset_bundle import archive_asset_tree
 from defusedxml import ElementTree as ET
 import imageio.v3 as iio
 import numpy as np
@@ -353,20 +355,32 @@ def file_record(path: Path, root: Path) -> dict[str, Any]:
 
 def _generate_and_validate(
     output: Path, source: Path
-) -> tuple[str, Path, list[dict[str, Any]], dict[str, Any], dict[str, Any], float]:
-    input_path, input_hash = require_input(output)
+) -> tuple[
+    str,
+    Path,
+    list[dict[str, Any]],
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any],
+    float,
+]:
     generated = output / "generated"
-    started = time.time()
-    run_upstream(source, input_path, generated)
+    with tempfile.TemporaryDirectory(prefix="npa-embodiedgen-input-") as staging:
+        input_path, input_hash = require_input(Path(staging))
+        started = time.time()
+        run_upstream(source, input_path, generated)
     urdf = locate_urdf(generated)
     collisions = collision_meshes(urdf)
     mjcf = convert_to_mjcf(urdf, output)
+    generated_bundle = archive_asset_tree(generated, output / "generated_asset.tar.gz")
+    mjcf["bundle"] = archive_asset_tree(output / "mjcf", output / "mjcf_asset.tar.gz")
     physics = pybullet_validation(urdf, output)
     return (
         input_hash,
         urdf,
         collisions,
         mjcf,
+        generated_bundle,
         physics,
         time.time() - started,
     )
@@ -398,9 +412,15 @@ def _report(
     output: Path,
     input_hash: str,
     urdf: Path,
-    details: tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any], float],
+    details: tuple[
+        list[dict[str, Any]],
+        dict[str, Any],
+        dict[str, Any],
+        dict[str, Any],
+        float,
+    ],
 ) -> dict[str, Any]:
-    collisions, mjcf, physics, elapsed = details
+    collisions, mjcf, generated_bundle, physics, elapsed = details
     artifacts = [
         file_record(path, output)
         for path in sorted(output.rglob("*"))
@@ -416,6 +436,7 @@ def _report(
                 "physical_property_semantics": "VLM_estimated_not_calibrated_ground_truth",
             },
             "mjcf_conversion": mjcf,
+            "generated_asset_bundle": generated_bundle,
             "collision_geometry": collisions,
             "physics": physics,
             "artifacts": artifacts,
@@ -429,10 +450,15 @@ def main() -> int:
     output = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"]).resolve()
     source = Path(os.environ["NPA_EMBODIEDGEN_SOURCE_ROOT"]).resolve()
     output.mkdir(parents=True, exist_ok=True)
-    input_hash, urdf, collisions, mjcf, physics, elapsed = _generate_and_validate(
+    input_hash, urdf, collisions, mjcf, generated_bundle, physics, elapsed = _generate_and_validate(
         output, source
     )
-    report = _report(output, input_hash, urdf, (collisions, mjcf, physics, elapsed))
+    report = _report(
+        output,
+        input_hash,
+        urdf,
+        (collisions, mjcf, generated_bundle, physics, elapsed),
+    )
     atomic_json(output / "embodiedgen_image_to_rigid_object.json", report)
     return 0
 
