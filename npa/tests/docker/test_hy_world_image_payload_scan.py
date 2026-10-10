@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import gzip
 import importlib.util
+import hashlib
 import io
 import subprocess
 import sys
@@ -46,6 +48,26 @@ def _kinds(findings) -> set[str]:
     return {finding.kind for finding in findings}
 
 
+def _diff_id(path: Path) -> str:
+    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _bound_config(*layers: Path) -> dict[str, object]:
+    return {
+        "rootfs": {
+            "type": "layers",
+            "diff_ids": [_diff_id(layer) for layer in layers],
+        },
+        "history": [],
+    }
+
+
+def _gzip_layer(path: Path) -> Path:
+    compressed = path.with_suffix(".tar.gz")
+    compressed.write_bytes(gzip.compress(path.read_bytes(), mtime=0))
+    return compressed
+
+
 def test_runtime_fetch_plumbing_is_not_payload(tmp_path: Path) -> None:
     rootfs = {
         "usr/local/bin/hy-world-runtime": b"hf download tencent/HY-World-2.0\n",
@@ -74,6 +96,160 @@ def test_build_time_fetch_is_rejected(tmp_path: Path) -> None:
         {"history": [{"created_by": "RUN hy-world-runtime ensure"}]},
     )
     assert "runtime_bootstrap_at_build" in _kinds(findings)
+
+
+def test_source_metadata_history_does_not_count_as_a_build_time_fetch(
+    tmp_path: Path,
+) -> None:
+    findings = scanner.scan(
+        _tar(tmp_path / "metadata.tar", {"opt/byof/npa_source_metadata.json": b"{}"}),
+        {
+            "history": [
+                {
+                    "created_by": (
+                        "RUN printf '%s' "
+                        "https://github.com/Tencent-Hunyuan/HY-World-2.0"
+                    )
+                }
+            ]
+        },
+    )
+    assert "hy_world_fetch_at_build" not in _kinds(findings)
+
+
+def test_actual_hy_source_fetch_history_is_rejected(tmp_path: Path) -> None:
+    findings = scanner.scan(
+        _tar(tmp_path / "fetch.tar", {"usr/local/bin/hy-world-runtime": b""}),
+        {
+            "history": [
+                {
+                    "created_by": (
+                        "RUN git clone https://github.com/Tencent-Hunyuan/"
+                        "HY-World-2.0 /runtime/HY-World-2.0"
+                    )
+                }
+            ]
+        },
+    )
+    assert "hy_world_fetch_at_build" in _kinds(findings)
+
+
+def test_declared_cuda_base_accepts_only_its_exact_ordered_layers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cuda_base = _tar(
+        tmp_path / "base.tar",
+        {"usr/local/cuda-12.8/lib64/libcudart.so.12": b"declared cuda base"},
+    )
+    clean_runtime = _tar(tmp_path / "runtime.tar", {"opt/npa/hy-world/app.py": b""})
+    monkeypatch.setattr(scanner, "DECLARED_CUDA_BASE_DIFF_IDS", (_diff_id(cuda_base),))
+
+    assert (
+        scanner.scan_tars(
+            [cuda_base, clean_runtime], _bound_config(cuda_base, clean_runtime)
+        )
+        == []
+    )
+
+    injected_cuda = _tar(
+        tmp_path / "runtime-cuda.tar",
+        {"usr/local/cuda-12.8/lib64/libcudart.so.12": b"later CUDA injection"},
+    )
+    findings = scanner.scan_tars(
+        [cuda_base, injected_cuda], _bound_config(cuda_base, injected_cuda)
+    )
+    assert "cuda_library" in _kinds(findings)
+
+
+def test_declared_cuda_base_binds_compressed_docker_save_layers_by_uncompressed_diff_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base_layer = _tar(
+        tmp_path / "base.tar",
+        {"usr/local/cuda-12.8/lib64/libcudart.so.12": b"declared cuda base"},
+    )
+    runtime_layer = _tar(tmp_path / "runtime.tar", {"opt/npa/hy-world/app.py": b""})
+    config = _bound_config(base_layer, runtime_layer)
+    monkeypatch.setattr(scanner, "DECLARED_CUDA_BASE_DIFF_IDS", (_diff_id(base_layer),))
+
+    assert (
+        scanner.scan_tars([_gzip_layer(base_layer), _gzip_layer(runtime_layer)], config)
+        == []
+    )
+
+
+def test_corrupt_compressed_layer_fails_closed_before_identity_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base_layer = _tar(
+        tmp_path / "base.tar",
+        {"usr/local/cuda-12.8/lib64/libcudart.so.12": b"declared cuda base"},
+    )
+    runtime_layer = _tar(tmp_path / "runtime.tar", {"opt/npa/hy-world/app.py": b""})
+    compressed_base = _gzip_layer(base_layer)
+    corrupted = bytearray(compressed_base.read_bytes())
+    corrupted[-1] ^= 1
+    compressed_base.write_bytes(corrupted)
+    monkeypatch.setattr(scanner, "DECLARED_CUDA_BASE_DIFF_IDS", (_diff_id(base_layer),))
+
+    with pytest.raises(gzip.BadGzipFile):
+        scanner.scan_tars(
+            [compressed_base, _gzip_layer(runtime_layer)],
+            _bound_config(base_layer, runtime_layer),
+        )
+
+
+@pytest.mark.parametrize(
+    "base_members,runtime_members,expected_kind",
+    (
+        (
+            {"opt/runtime/HY-World-2.0/hyworld2/worldgen/video_gen.py": b"source"},
+            {"opt/npa/hy-world/app.py": b""},
+            "hy_world_source_tree",
+        ),
+        (
+            {"usr/local/cuda-12.8/lib64/libcudart.so.12": b"base"},
+            {"etc/hy-secret": b"-----BEGIN RSA PRIVATE KEY-----"},
+            "credential_content",
+        ),
+        (
+            {"usr/local/cuda-12.8/lib64/libcudart.so.12": b"base"},
+            {
+                "opt/runtime/HY-World-2.0/hyworld2/worldgen/video_gen.py": b"source",
+                "opt/runtime/HY-World-2.0/hyworld2/worldgen/.wh.video_gen.py": b"",
+            },
+            "hy_world_source_tree",
+        ),
+    ),
+)
+def test_declared_cuda_base_still_scans_source_credentials_and_deleted_ancestors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    base_members: dict[str, bytes],
+    runtime_members: dict[str, bytes],
+    expected_kind: str,
+) -> None:
+    base_layer = _tar(tmp_path / "base.tar", base_members)
+    runtime_layer = _tar(tmp_path / "runtime.tar", runtime_members)
+    monkeypatch.setattr(scanner, "DECLARED_CUDA_BASE_DIFF_IDS", (_diff_id(base_layer),))
+
+    findings = scanner.scan_tars(
+        [base_layer, runtime_layer], _bound_config(base_layer, runtime_layer)
+    )
+    assert expected_kind in _kinds(findings)
+
+
+def test_declared_cuda_base_requires_a_matching_oci_diff_id_prefix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base_layer = _tar(tmp_path / "base.tar", {"usr/local/cuda/bin/nvcc": b"base"})
+    runtime_layer = _tar(tmp_path / "runtime.tar", {"opt/npa/hy-world/app.py": b""})
+    config = _bound_config(base_layer, runtime_layer)
+    monkeypatch.setattr(scanner, "DECLARED_CUDA_BASE_DIFF_IDS", ("sha256:" + "0" * 64,))
+
+    assert "declared_cuda_base_mismatch" in _kinds(
+        scanner.scan_tars([base_layer, runtime_layer], config)
+    )
 
 
 def test_candidate_build_helper_refuses_direct_push() -> None:
