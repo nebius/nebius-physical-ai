@@ -527,19 +527,30 @@ URIs; it does not rewrite videos or rerun the VLM.
 The unchanged recipe was run on episode 0, camera
 `observation.images.cam_high`, seconds 0–8 of
 [`lerobot/aloha_static_cups_open`](https://huggingface.co/datasets/lerobot/aloha_static_cups_open/tree/d793c969cf716001dcca18a0842c3d7e9de9e41b).
-The prepared reference and each output contain 192 frames at 24 fps. Both
-generation passes produced all twelve separate videos, with full decoding and
-timestamp alignment verified. Results recorded on October 7–8, 2026 using the
-original full-frame evaluator:
+The manual terminal replay on October 9–10, 2026 used a fresh owned cluster
+with one RTX PRO 6000 GPU, automatic padding preservation and scene-only
+evaluation. The prepared reference and each output contain 192 frames at 24
+fps. Both generation passes produced all twelve separate videos. The unchanged
+recipe used these settings and produced these results without evaluator warnings:
 
 | Generation pass | Guidance / steps | Mean score | Clips passing gate | Temporal advisory passes | Appearance advisory passes | Batch decision |
 |---|---|---|---|---|---|---|
-| Initial | 5.0 / 35 | 0.722930 | 2/12 | 0/12 | 3/12 | Rejected |
-| Canonical refinement | 4.5 / 39 | 0.708905 | 2/12 | 0/12 | 3/12 | Rejected |
+| Initial | 5.0 / 35 | 0.789001 | 2/12 | 0/12 | 3/12 | Rejected |
+| Canonical refinement | 4.5 / 39 | 0.812726 | 4/12 | 0/12 | 3/12 | Rejected |
 
-This demonstrates twelve-profile execution, not an accepted training dataset.
-Refinement did not improve this batch's measured result. Matched-frame review
-found visible lighting and material variation, but also incomplete surface
-coverage, artificial material boundaries, color spill onto robot parts and
-changes to small task details. More profiles increase requested diversity;
-they do not guarantee realism, preservation or a higher acceptance rate.
+Initial generation took 4h18m26s and refinement took 4h43m11s; evaluation took
+9m11s and 9m16s respectively. These are measured stage durations for this input
+and GPU. Keep submit running through both passes and the final evidence and
+quality-routing stages. The workflow finished at its deliberate `reject-quality`
+stage and retained all twelve final videos plus `quality-evidence.rrd`.
+
+Refinement increased the mean score and passing clip count; eight final clips
+still failed the unchanged gate. Use the retained-run audit above to verify
+complete decoding, timestamp alignment, requested profiles, control receipts,
+padding pixels and final evaluator hashes against downloaded artifacts.
+
+The temporal advisory results remain 0/12. Review motion, contacts, task details
+and appearance coverage in the retained outputs before using them. This rejected
+batch supplies review evidence and does not produce an accepted training dataset.
+More profiles increase requested diversity; they do not guarantee realism,
+preservation or a higher acceptance rate.
