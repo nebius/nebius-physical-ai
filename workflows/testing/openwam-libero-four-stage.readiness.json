@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "11f0e63ea4aab5c67e41dbdaad480c8a1b9588a75d9c73ea590fe4798c63b75f",
+  "workflow_sha256": "df19ec9b5951fb5bb428a799b361f69418ce0a0c05d79e9defd1822deb178d31",
   "planning": {
     "validation": {
       "status": "verified",
@@ -8,7 +8,7 @@
       "evidence": [
         "npa/.venv/bin/python -m npa workbench workflow validate-spec workflows/testing/openwam-libero-four-stage.yaml --json",
         "npa/.venv/bin/python -m npa workbench workflow plan-spec workflows/testing/openwam-libero-four-stage.yaml --run-id openwam-libero-authoring-continuation --json",
-        "sha256:11f0e63ea4aab5c67e41dbdaad480c8a1b9588a75d9c73ea590fe4798c63b75f workflows/testing/openwam-libero-four-stage.yaml"
+        "sha256:df19ec9b5951fb5bb428a799b361f69418ce0a0c05d79e9defd1822deb178d31 workflows/testing/openwam-libero-four-stage.yaml"
       ]
     },
     "task_fidelity": {
