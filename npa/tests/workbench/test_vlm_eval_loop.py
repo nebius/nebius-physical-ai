@@ -14,16 +14,34 @@ import json
 from pathlib import Path
 
 import pytest
+import httpx
 from PIL import Image
+from typer.testing import CliRunner
+
+from npa.cli.main import app
+from npa.workbench import vlm_eval
 
 from npa.workbench.vlm_eval import (
+    DEFAULT_MODEL,
+    LEGACY_RESULT_FILENAME,
     LOOP_REPORT_FILENAME,
+    RESULT_FILENAME,
     VlmEvalError,
     VlmLoopRollout,
     aggregate_loop_report,
     discover_rollouts,
     evaluate_rollout_set,
     loop_report_uri_for,
+)
+
+_LOOP_LIMITATIONS = [
+    "task_success is a mean-score gate, not a per-rollout success rate.",
+    "Selected frames cannot verify unobserved intervals or continuous task stability.",
+    "The visual gate does not establish physical correctness or safety.",
+]
+_LOOP_STUB_LIMITATION = (
+    "Stub scores are wiring inputs; no VLM call occurred, so they are not model "
+    "or policy evidence."
 )
 
 
@@ -35,6 +53,84 @@ def _write_rollout(root: Path, name: str, frames: int = 2) -> Path:
             rollout / f"frame_{index:03d}.png"
         )
     return rollout
+
+
+@pytest.mark.parametrize("backend", ["api", "self-hosted"])
+@pytest.mark.parametrize("interface", ["core", "cli"])
+def test_incomplete_second_rollout_aborts_without_an_aggregate_or_fake_score(
+    tmp_path: Path, monkeypatch, backend: str, interface: str
+) -> None:
+    root = tmp_path / "rollouts"
+    for name in ("episode_000", "episode_001"):
+        _write_rollout(root, name, frames=1)
+    output = tmp_path / "scores"
+    calls = []
+
+    def forbidden_network(*_args, **_kwargs):
+        pytest.fail("This is a hermetic completion-control test, not inference")
+
+    def completion(**kwargs):
+        calls.append(kwargs["request"])
+        return {
+            "model": kwargs["request"]["model"],
+            "choices": [
+                {
+                    "finish_reason": "stop" if len(calls) == 1 else "length",
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "success": True,
+                                "score": 0.9,
+                                "rationale": "Synthetic transport control only.",
+                            }
+                        )
+                    },
+                }
+            ],
+        }
+
+    monkeypatch.setattr(httpx.Client, "send", forbidden_network)
+    monkeypatch.setattr(vlm_eval, "_resolve_api_key", lambda **_: "")
+    monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", completion)
+    model = "MiniMaxAI/MiniMax-M3"
+    if interface == "core":
+        with pytest.raises(VlmEvalError, match="finish_reason=stop"):
+            evaluate_rollout_set(
+                input_path=str(root),
+                output_path=str(output),
+                backend=backend,
+                model=model,
+                endpoint_url="https://example.test/v1",
+            )
+    else:
+        invocation = CliRunner().invoke(
+            app,
+            [
+                "workbench",
+                "vlm-eval",
+                "loop",
+                "--input-path",
+                str(root),
+                "--output-path",
+                str(output),
+                "--backend",
+                backend,
+                "--model",
+                model,
+                "--endpoint-url",
+                "https://example.test/v1",
+                "--output",
+                "json",
+            ],
+        )
+        assert invocation.exit_code == 1
+        assert "finish_reason=stop" in invocation.output
+    assert len(calls) == 2
+    first = output / "rollouts" / "episode_000" / RESULT_FILENAME
+    assert json.loads(first.read_text())["score"] == 0.9
+    assert not (output / "rollouts" / "episode_001" / RESULT_FILENAME).exists()
+    assert not (output / LOOP_REPORT_FILENAME).exists()
+    assert list(output.rglob("*.json")) == [first]
 
 
 # ------------------------------------------------------------------------- discovery
@@ -77,7 +173,7 @@ def _rollout(rollout_id: str, score: float, success: bool) -> VlmLoopRollout:
         rationale="because",
         status="passed" if success else "needs_iteration",
         frame_count=2,
-        result_uri=f"s3://b/{rollout_id}/vlm_eval_stub.json",
+        result_uri=f"s3://b/{rollout_id}/{RESULT_FILENAME}",
     )
 
 
@@ -97,6 +193,8 @@ def test_aggregate_matches_the_templates_jq_report() -> None:
     assert report["mean_score"] == pytest.approx(0.8)
     # The gate is the MEAN score, not the pass rate: 0.8 >= 0.8.
     assert report["task_success"] is True
+    assert report["independent_human_label_calibration_established"] is False
+    assert report["limitations"] == _LOOP_LIMITATIONS
     assert [item["rollout_id"] for item in report["rollouts"]] == ["a", "b"]
 
 
@@ -128,6 +226,29 @@ def test_aggregate_handles_an_empty_set_without_dividing_by_zero() -> None:
     assert report["success_rate"] == 0.0
     assert report["mean_score"] == 0.0
     assert report["task_success"] is False
+
+
+def test_aggregate_materializes_fresh_limitations_for_each_report() -> None:
+    first = aggregate_loop_report(
+        [],
+        model="m",
+        frame_selection="keyframes",
+        success_threshold=0.8,
+        output_dir="first",
+        backend="stub",
+    )
+    second = aggregate_loop_report(
+        [],
+        model="m",
+        frame_selection="keyframes",
+        success_threshold=0.8,
+        output_dir="second",
+        backend="stub",
+    )
+
+    assert first["limitations"] == [*_LOOP_LIMITATIONS, _LOOP_STUB_LIMITATION]
+    first["limitations"].append("caller mutation")
+    assert second["limitations"] == [*_LOOP_LIMITATIONS, _LOOP_STUB_LIMITATION]
 
 
 # ----------------------------------------------------------------------- report path
@@ -171,16 +292,30 @@ def test_loop_scores_every_rollout_and_writes_both_artifact_levels(
         "episode_001",
         "episode_002",
     }
+    assert report["independent_human_label_calibration_established"] is False
+    assert report["limitations"] == [*_LOOP_LIMITATIONS, _LOOP_STUB_LIMITATION]
     # One result per rollout ...
     for name in ("episode_000", "episode_001", "episode_002"):
-        assert (scores / "rollouts" / name).is_dir()
-        written = list((scores / "rollouts" / name).glob("*.json"))
-        assert written, f"no per-rollout result for {name}"
+        rollout_scores = scores / "rollouts" / name
+        written = rollout_scores / RESULT_FILENAME
+        assert written.is_file()
+        assert not (rollout_scores / LEGACY_RESULT_FILENAME).exists()
+        result_payload = json.loads(written.read_text(encoding="utf-8"))
+        assert result_payload["model"] == DEFAULT_MODEL
+        assert result_payload["served_model"] is None
+        assert (
+            result_payload["independent_human_label_calibration_established"] is False
+        )
+        assert result_payload["limitations"][-1].startswith(
+            "This score is a stub or caller-supplied"
+        )
     # ... plus the aggregate report the sim-to-real loop gates on.
     report_path = scores / LOOP_REPORT_FILENAME
     assert report_path.is_file()
     on_disk = json.loads(report_path.read_text(encoding="utf-8"))
     assert on_disk["total_rollouts"] == 3
+    assert on_disk["rollouts"] == report["rollouts"]
+    assert on_disk["limitations"] == [*_LOOP_LIMITATIONS, _LOOP_STUB_LIMITATION]
     assert report["report_uri"] == str(report_path)
     assert "latency_s" in report
 

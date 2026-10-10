@@ -265,3 +265,28 @@ def test_workflow_plans_full_parallel_gpu_comparison():
         argv = spec["states"][name]["run"]["argv"]
         assert argv[2:4] == ["npa.workflows.physis_lang", "generate"]
         assert "--seed" in argv and "--input-path" in argv and "--output-path" in argv
+
+
+@pytest.mark.parametrize(
+    "response", [completion("{", finish="length"), completion("{}")]
+)
+def test_rejected_judge_response_is_preserved(monkeypatch, tmp_path, response):
+    class Client:
+        def chat_completion(self, **kwargs):
+            return response
+
+    monkeypatch.setattr(evaluation, "_frames", lambda *args: ([], [0]))
+    case = recipe()["cases"][0]
+    with pytest.raises(ValueError):
+        evaluation._judge(
+            Client(),
+            "test-model",
+            case,
+            {"relative_video": "clip/video.mp4"},
+            tmp_path / "video.mp4",
+            16,
+            tmp_path,
+        )
+    saved = list((tmp_path / "responses").glob("*.json"))
+    assert len(saved) == 1
+    assert json.loads(saved[0].read_text()) == response

@@ -69,8 +69,16 @@ workflow bytes were subsequently verified against commit
 hashes, workflow hash, image digest, pinned weight revision, recipe hash, report
 hash, and all video hashes are recorded in the linked evidence. After merging
 new main changes, the Physis runtime modules, workflow YAML, and focused tests
-still matched the tested bytes; the workflow registration conflict was resolved
+still matched the tested bytes at `698745e84`; the workflow registration conflict was resolved
 by retaining both main's new entries and this experiment.
+
+The subsequent review fixes change artifact publication/recovery and preserve
+rejected judge responses before validation. They are covered by local failure
+injection tests for interrupted uploads, failed readback, repeated publication,
+conflicting writers, and storage failure during error reporting. The original
+GPU receipt remains evidence for the dated generation run; it is not a claim
+that these later recovery changes ran on GPUs. Native generation settings,
+conditioning, scoring, and the workflow YAML remain unchanged.
 
 The tested implementation passed the
 [complete hosted candidate CI](https://github.com/nebius/nebius-physical-ai/actions/runs/36965743360),

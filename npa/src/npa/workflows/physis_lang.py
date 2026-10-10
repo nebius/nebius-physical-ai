@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 
-from npa.workflows.physis_lang_artifacts import materialize, publish, write_json
+from npa.workflows.physis_lang_artifacts import materialize, publish, seal, write_json
+from npa.workflows.physis_lang_recovery import preserve_failure, reuse_completed
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -27,6 +30,11 @@ def _parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--input-path", action="append", required=True)
     evaluate.add_argument("--model", required=True)
     evaluate.add_argument("--output-path", required=True)
+    recover = stages.add_parser(
+        "publish", help="Publish retained completed output without rerunning models"
+    )
+    recover.add_argument("--input-path", required=True)
+    recover.add_argument("--output-path", required=True)
     return parser
 
 
@@ -72,6 +80,28 @@ def _run(args, temporary: Path, output: Path) -> None:
         evaluate(roots, output, args.model)
 
 
+def _execute(args, root: Path) -> None:
+    if args.stage == "publish":
+        output = materialize(args.input_path, root / "input")
+        receipt = output / "stage.json"
+        if not receipt.is_file():
+            raise ValueError("Recovery requires completed stage output")
+        if json.loads(receipt.read_text())["output_path"].rstrip(
+            "/"
+        ) != args.output_path.rstrip("/"):
+            raise ValueError("Recovery destination differs from the original stage")
+        publish(output, args.output_path)
+        return
+    if reuse_completed(args, root):
+        return
+    output = root / "output"
+    output.mkdir()
+    _run(args, root, output)
+    write_json(output / "stage.json", vars(args))
+    seal(output)
+    publish(output, args.output_path)
+
+
 def main(argv: list[str] | None = None) -> None:
     """Run a stage, preserving failure evidence without publishing success.
 
@@ -84,24 +114,17 @@ def main(argv: list[str] | None = None) -> None:
         RuntimeError: Model inference, validation or publication fails.
     """
     args = _parser().parse_args(argv)
-    with tempfile.TemporaryDirectory(prefix="npa-physis-") as temporary:
-        root = Path(temporary)
-        output = root / "output"
-        output.mkdir()
-        try:
-            _run(args, root, output)
-        except Exception as error:
-            write_json(
-                output / "failure.json",
-                {
-                    "status": "failed",
-                    "stage": args.stage,
-                    "error_type": type(error).__name__,
-                },
-            )
-            publish(output, args.output_path.rstrip("/") + "-failed/")
-            raise
-        publish(output, args.output_path)
+    # Retain this private directory only when failure evidence cannot reach storage.
+    root = Path(tempfile.mkdtemp(prefix="npa-physis-"))
+    retain = False
+    try:
+        _execute(args, root)
+    except Exception as error:
+        retain = preserve_failure(args, root, error)
+        raise
+    finally:
+        if not retain:
+            shutil.rmtree(root, ignore_errors=True)
     print(f"Physis {args.stage} completed and artifacts verified", flush=True)
 
 

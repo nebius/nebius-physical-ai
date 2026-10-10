@@ -132,6 +132,41 @@ dependency or empty host cache masks the denial and privacy assertions. Preserve
 those assertions; never prime a real cache or download vendor data to make a
 hermetic test pass.
 
+### Optional Third-Party Library Validation
+
+Some exported artifact is only truly valid if the upstream library will load it,
+and asserting on the bytes we wrote cannot prove that. Those tests use
+`pytest.importorskip` and skip by default, because the library (`lerobot` pulls
+in torch) is not a test dependency. Put the `importorskip` in an `autouse`
+fixture, not mid-test, so a skip does not first pay for the fixture work it will
+throw away.
+
+A skipped test proves nothing, so run it against the real library when you touch
+the exporter. `npa/tests/test_adapter.py::TestLeRobotLibraryLoad` covers the
+sim-to-LeRobot export; give it its own virtualenv rather than adding torch to
+the shared one:
+
+Current NPA and LeRobot 0.5.1 pin incompatible AV and Rerun versions. Validate
+this adapter's source in a separate reader environment; do not co-install the
+complete NPA client there or weaken its dependency pins:
+
+```bash
+npa/.venv/bin/python -m venv /tmp/npa-lerobot-reader
+/tmp/npa-lerobot-reader/bin/python -m pip install \
+  --index-url https://download.pytorch.org/whl/cpu \
+  torch==2.10.0 torchvision==0.25.0 torchcodec==0.10.0
+/tmp/npa-lerobot-reader/bin/python -m pip install \
+  lerobot==0.5.1 pytest pytest-mock pytest-timeout pytest-cov pytest-xdist \
+  httpx typer pyyaml platformdirs boto3 paramiko requests rich
+PYTHONPATH="$PWD/npa/src" /tmp/npa-lerobot-reader/bin/python -m pytest \
+  npa/tests/test_adapter.py -k 'LeRobotLibraryLoad or native_lerobot_reader' -q -rs
+```
+
+Use Python 3.12 or later and `ffmpeg` on `PATH` to decode the exported videos.
+On Linux, building `evdev` needs matching Python and Linux kernel headers. This
+proves reader interoperability with the source adapter, not that the full NPA
+and LeRobot application dependency closures can share one environment.
+
 ## Live-Infra Testing Is A Priority (not optional)
 
 Smoke + mocked-unit tests are necessary but **not sufficient**. Any change to an

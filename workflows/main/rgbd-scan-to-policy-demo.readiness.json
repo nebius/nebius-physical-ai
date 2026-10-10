@@ -1,0 +1,57 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "182e87fef09fcdd7d081ba4b843d90c150a2ac9a8f74a62e3f05156b2c81d7c8",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "validate-spec and plan-spec --run-id preview pass; eight executable states.",
+      "evidence": [
+        "npa/tests/orchestration/npa_workflow/test_scan_to_policy_demo.py"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Fresh native execution completed 500 PPO updates and 16 million transitions, then passed 3,386/4,000 held-out routes (84.65%) against the unchanged 80% gate. The first evaluation failed before scoring on a compute-only target; recovery reused the exact sealed checkpoint, recipe and source on a graphics-qualified RTX target. Eight logical stages completed across the original run and recovery. This qualifies navigation in the reconstructed scene, not unseen-site or physical-robot transfer.",
+      "evidence": [
+        "docs/workbench/guides/rgbd-scan-to-policy-demo.md",
+        "docs/workbench/evidence/rgbd-scan-to-policy-promotion.json"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "A configured project and writable run-scoped bucket must pass submission preflight.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "verified",
+      "reason": "The public TUM capture was fetched with its expected archive hash and consumed by the complete workflow. Measured reconstruction used 1,984 integration frames and 501 withheld depth frames; 501 native PhysX rays verified the 921,561-triangle collision scene. Future input overrides require their own geometry and calibration checks.",
+      "evidence": [
+        "npa/tests/workbench/test_nurec_navigation_sample.py",
+        "docs/workbench/guides/rgbd-scan-to-policy-demo.md",
+        "docs/workbench/evidence/public-demos/real-to-sim.json",
+        "docs/workbench/evidence/rgbd-scan-to-policy-promotion.json"
+      ]
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "Runtime requires configured object-storage credentials and access to the pinned Isaac image. Public TUM sample needs no model token.",
+      "evidence": []
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "The selected immutable SONIC and Isaac development images were exercised by the fresh pipeline. Independent observations bound both native main CUDA processes and their running containers to the exact Isaac digest. These workflow pins do not promote either image to a supported release; each future run still needs image and source preflight.",
+      "evidence": [
+        "docs/workbench/evidence/rgbd-scan-to-policy-promotion.json"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "The full 4,000-environment, 500-update training and 4,000-case evaluation completed on RTX PRO 6000 Blackwell. Evaluation required a graphics-qualified target; CUDA availability alone was insufficient. Each new target must verify the NVIDIA runtime class, GLX/EGL mounts, NVIDIA Vulkan device and GPU/runtime/scratch health.",
+      "evidence": [
+        "docs/workbench/evidence/rgbd-scan-to-policy-promotion.json"
+      ]
+    }
+  }
+}

@@ -1,8 +1,9 @@
 """Live Nebius Token Factory API tests.
 
 These are first-class live tests: they hit the real Token Factory endpoint and
-require a real ``NEBIUS_TOKEN_FACTORY_KEY``. They self-skip when no key is configured, so
-they are safe to leave in the suite. Run explicitly with:
+require a real Token Factory key from the environment or NPA credential store.
+They self-skip when no key is configured, so they are safe to leave in the
+suite. Run explicitly with:
 
     NEBIUS_TOKEN_FACTORY_KEY=... npa/.venv/bin/python -m pytest \
         npa/tests/e2e/test_token_factory_e2e.py -v
@@ -13,6 +14,7 @@ They live under ``tests/e2e`` (excluded from the default unit run via
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from contextlib import redirect_stdout
@@ -25,7 +27,6 @@ from PIL import Image, ImageDraw
 from npa.clients.token_factory import (
     DEFAULT_REASONER_MODEL,
     DEFAULT_TEXT_MODEL,
-    DEFAULT_VISION_MODEL,
     TokenFactoryClient,
     resolve_config,
 )
@@ -93,6 +94,7 @@ def test_live_list_models_authenticates() -> None:
     models = TokenFactoryClient().list_models()
     assert isinstance(models, list)
     assert models, "Token Factory returned no models for this key"
+    assert "MiniMaxAI/MiniMax-M3" in models
 
 
 def test_live_text_chat_completion() -> None:
@@ -120,7 +122,7 @@ def test_live_default_reasoner_scene_plan(tmp_path: Path) -> None:
     )
 
     assert result.status == "completed"
-    assert result.model == DEFAULT_REASONER_MODEL
+    assert result.model == "MiniMaxAI/MiniMax-M3"
     assert result.image_count == 1
     assert result.analysis.strip(), "reasoner returned an empty analysis"
 
@@ -311,7 +313,7 @@ def test_live_caption_and_reason_saved_artifacts(tmp_path: Path) -> None:
         assert result.exit_code == 0, result.output
         payload = json.loads(target.read_text())
         assert payload["status"] == "completed"
-        assert payload["model"] == DEFAULT_VISION_MODEL
+        assert payload["model"] == "MiniMaxAI/MiniMax-M3"
         assert payload["image_count"] == 3
         texts = (
             [row["caption"] for row in payload["captions"]]
@@ -325,31 +327,126 @@ def test_live_caption_and_reason_saved_artifacts(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("inside", [True, False])
+@pytest.mark.parametrize("model", ["MiniMaxAI/MiniMax-M3", "moonshotai/Kimi-K3"])
 def test_live_visual_judge_distinguishes_completion(
-    tmp_path: Path, inside: bool
+    tmp_path: Path, inside: bool, model: str
 ) -> None:
     _require_key()
-    from npa.workbench.vlm_eval import evaluate_vlm, write_result
+    from npa.workbench import vlm_eval
+    from npa.workflows.data_factory_stages import grade_gate
+    from npa.workflows.vlm_grade_evidence import vlm_grade_block_details
     from dataclasses import asdict
 
     frames = tmp_path / "rollout"
     for index, state in enumerate((False, False, inside)):
         _shape_frame(frames / f"frame-{index:03d}.png", red_inside=state)
-    output = tmp_path / "evaluation.json"
-    result = evaluate_vlm(
+    output_dir = tmp_path / "scores"
+    output = output_dir / vlm_eval.RESULT_FILENAME
+    result = vlm_eval.evaluate_vlm(
         input_path=str(frames),
-        output_path=str(output),
+        output_path=str(output_dir),
         backend="api",
+        model=model,
         task="Move the red square fully inside the green rectangular outline by the final frame.",
         frame_selection="sequence",
     )
-    write_result(asdict(result), result_uri=result.result_uri)
+    written = vlm_eval.write_result(asdict(result), result_uri=result.result_uri)
+    assert written == str(output)
+    assert not (output_dir / vlm_eval.LEGACY_RESULT_FILENAME).exists()
     saved = json.loads(output.read_text())
-    assert saved["model"] == DEFAULT_VISION_MODEL
-    assert saved["served_model"] == DEFAULT_VISION_MODEL
+    assert saved["result_uri"] == str(output)
+    assert saved["model"] == model
+    assert saved["served_model"] == model
     assert saved["frame_count"] == 3
     assert saved["passed"] is inside
     assert saved["rationale"].strip()
+    _assert_hosted_judge_claims(saved)
+    _assert_visual_judge_evidence(saved, frames, model)
+    assert vlm_grade_block_details(saved) == {}
+    decision = grade_gate(
+        str(output_dir), str(tmp_path / "decision.json"), saved["success_threshold"]
+    )
+    assert decision == ("promote_checkpoint" if inside else "loop_back")
+
+
+def _assert_visual_judge_evidence(saved: dict, frames: Path, model: str) -> None:
+    from npa.workbench.vlm_eval import select_rollout_frames
+
+    evidence = saved["evidence"]
+    assert evidence["schema_version"] == "npa_vlm_eval_evidence_v2"
+    assert evidence["request"]["endpoint_role"] == "hosted-api"
+    frame_evidence = evidence["request"]["frames"]
+    assert [frame["source_kind"] for frame in frame_evidence] == ["image-sequence"] * 3
+    assert [frame["source_index"] for frame in frame_evidence] == [0, 1, 2]
+    assert [frame["source_count"] for frame in frame_evidence] == [3, 3, 3]
+    assert [frame["source_timestamp_s"] for frame in frame_evidence] == [None] * 3
+    assert evidence["request"]["request_manifest"]["sampling"] == {
+        "strategy": "sequence",
+        "max_frames": 4,
+        "selected_count": 3,
+        "source_kind": "image-sequence",
+        "source_count": 3,
+        "selected_indices": [0, 1, 2],
+        "selected_timestamps_s": [None, None, None],
+        "coverage_complete": True,
+        "timestamps_complete": None,
+    }
+    submitted = select_rollout_frames(frames, frame_selection="sequence", max_frames=4)
+    assert [frame["sha256"] for frame in evidence["request"]["frames"]] == [
+        hashlib.sha256(frame.data).hexdigest() for frame in submitted
+    ]
+    manifest = json.dumps(
+        evidence["request"]["request_manifest"],
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    assert (
+        evidence["request"]["request_manifest_sha256"]
+        == hashlib.sha256(manifest.encode()).hexdigest()
+    )
+    raw_response = evidence["provider"]["raw_response"]
+    assert (
+        evidence["provider"]["raw_response_sha256"]
+        == hashlib.sha256(raw_response.encode()).hexdigest()
+    )
+    assert evidence["provider"]["finish_reason"] == "stop"
+    if model == "moonshotai/Kimi-K3":
+        assert evidence["request"]["request_manifest"]["generation_parameters"] == {
+            "reasoning_effort": "low",
+            "response_format": {"type": "json_object"},
+        }
+
+
+def _assert_hosted_judge_claims(saved: dict) -> None:
+    from npa.workbench.vlm_eval import _build_prompt, _parse_api_structured_response
+
+    evidence = saved["evidence"]
+    response = json.loads(evidence["provider"]["raw_response"])
+    verdict = _parse_api_structured_response(
+        response["choices"][0]["message"]["content"], served_model=response["model"]
+    )
+    assert saved["score"] == round(verdict.score, 4)
+    assert saved["passed"] is (saved["score"] >= saved["success_threshold"])
+    assert saved["status"] == ("passed" if saved["passed"] else "needs_iteration")
+    assert saved["provider_success"] is verdict.provider_success
+    assert saved["provider_success_matches_score_gate"] is (
+        verdict.provider_success == saved["passed"]
+    )
+    prompt = _build_prompt(
+        **{
+            field: saved[field]
+            for field in ("task", "rubric", "frame_selection", "frame_count")
+        }
+    )
+    assert (
+        evidence["request"]["prompt_sha256"]
+        == hashlib.sha256(prompt.encode()).hexdigest()
+    )
+    assert (
+        evidence["request"]["rubric_sha256"]
+        == hashlib.sha256(saved["rubric"].encode()).hexdigest()
+    )
 
 
 def test_live_attribute_question_and_vision_chain(tmp_path: Path) -> None:
@@ -369,10 +466,143 @@ def test_live_attribute_question_and_vision_chain(tmp_path: Path) -> None:
     )
     (tmp_path / "attributes.json").write_text(json.dumps(asdict(result), indent=2))
     assert result.question_model == DEFAULT_TEXT_MODEL
-    assert result.vlm_model == DEFAULT_VISION_MODEL
+    assert result.vlm_model == "MiniMaxAI/MiniMax-M3"
     assert result.total_checks == result.passed_checks == 2
     assert result.passed
     assert all(
         check.question and check.vlm_answer and not check.error
         for check in result.checks
     )
+
+
+def _benchmark_diagram_dataset(tmp_path: Path) -> Path:
+    items = []
+    for inside in (True, False):
+        item_id = "inside" if inside else "outside"
+        frame = _shape_frame(tmp_path / f"{item_id}.png", red_inside=inside)
+        items.append({"id": item_id, "rollout": frame.name, "expected_label": inside})
+    dataset = tmp_path / "benchmark.json"
+    dataset.write_text(json.dumps({"items": items}))
+    return dataset
+
+
+def _assert_live_benchmark_case(case: dict, threshold: float) -> None:
+    from npa.workbench.vlm_eval import select_rollout_frames
+
+    assert case["score_source"] == "api"
+    assert case["predicted_label"] is case["passed"]
+    assert case["passed"] is (case["score"] >= threshold)
+    assert case["expected_label"] is (case["item_id"] == "inside")
+    evidence = case["evidence"]
+    assert evidence["request"]["endpoint_role"] == "hosted-api"
+    submitted = select_rollout_frames(
+        case["rollout"], frame_selection="final", max_frames=1
+    )
+    assert [frame["sha256"] for frame in evidence["request"]["frames"]] == [
+        hashlib.sha256(frame.data).hexdigest() for frame in submitted
+    ]
+    manifest = json.dumps(
+        evidence["request"]["request_manifest"],
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    assert (
+        evidence["request"]["request_manifest_sha256"]
+        == hashlib.sha256(manifest.encode()).hexdigest()
+    )
+    _assert_live_benchmark_provider(evidence["provider"], case)
+
+
+def _assert_live_benchmark_provider(provider: dict, case: dict) -> None:
+    from npa.workbench.vlm_eval import parse_structured_response
+
+    raw = provider["raw_response"]
+    assert provider["raw_response_sha256"] == hashlib.sha256(raw.encode()).hexdigest()
+    response = json.loads(raw)
+    assert provider["returned_model"] == response["model"] == "MiniMaxAI/MiniMax-M3"
+    assert provider["status_code"] == 200 and provider["finish_reason"] == "stop"
+    assert response["choices"][0]["finish_reason"] == "stop"
+    message = response["choices"][0]["message"]
+    assert message.get("refusal") in (None, "")
+    structured = parse_structured_response(message["content"])
+    assert case["score"] == round(structured.score, 4)
+    assert case["provider_success"] is structured.provider_success
+    assert case["provider_success_matches_score_gate"] is (
+        structured.provider_success == case["passed"]
+    )
+
+
+def _assert_benchmark_error_rates(metrics: dict, expected_counts: dict) -> None:
+    for error, correct in (
+        ("false_positive", "true_negative"),
+        ("false_negative", "true_positive"),
+    ):
+        denominator = expected_counts[error] + expected_counts[correct]
+        expected_rate = (
+            round(expected_counts[error] / denominator, 4) if denominator else None
+        )
+        assert metrics[f"{error}_rate"] == expected_rate
+
+
+def _assert_live_benchmark_confusion(config: dict) -> None:
+    cases = config["results"]
+    assert [case["item_id"] for case in cases] == ["inside", "outside"]
+    metrics = config["metrics"]
+    matrix = metrics["confusion_matrix"]
+    expected_counts = {}
+    for actual, actual_name in ((True, "positive"), (False, "negative")):
+        for predicted, predicted_name in ((True, "positive"), (False, "negative")):
+            matching = [
+                case["item_id"]
+                for case in cases
+                if case["expected_label"] is actual
+                and case["predicted_label"] is predicted
+            ]
+            assert matrix[f"actual_{actual_name}"][
+                f"predicted_{predicted_name}"
+            ] == len(matching)
+            outcome = f"{'true' if actual == predicted else 'false'}_{predicted_name}"
+            expected_counts[outcome] = len(matching)
+            assert metrics[f"{outcome}s"] == len(matching)
+            if actual != predicted:
+                assert metrics[f"{outcome}_item_ids"] == matching
+    assert metrics["total"] == len(cases) == 2
+    assert sum(expected_counts.values()) == metrics["total"]
+    _assert_benchmark_error_rates(metrics, expected_counts)
+
+
+def test_live_benchmark_confusion_preserves_provider_evidence(tmp_path: Path) -> None:
+    """Check real hosted report arithmetic on diagrams, without qualifying a judge."""
+    _require_key()
+    from dataclasses import asdict
+    from npa.sdk.workbench.vlm_eval import benchmark
+    from npa.workbench.vlm_eval import write_benchmark_report
+
+    report = benchmark(
+        dataset=str(_benchmark_diagram_dataset(tmp_path)),
+        backend="api",
+        models=("MiniMaxAI/MiniMax-M3",),
+        thresholds=(0.5, 0.8),
+        task=(
+            "Describe the red square and green rectangular outline in this synthetic "
+            "diagram, then judge whether the red square is fully inside the outline."
+        ),
+        frame_selection="final",
+        max_frames=1,
+        use_fixture_scores=False,
+    )
+    output = tmp_path / "benchmark-report.json"
+    write_benchmark_report(asdict(report), output_path=str(output))
+    saved = json.loads(output.read_text())
+    assert saved["schema_version"] == "npa_vlm_eval_benchmark_report_v2"
+    assert saved["sweep"]["fixture_scores"] is False
+    assert saved["best_config"] == saved["ranked_configs"][0]
+    assert {row["config"]["success_threshold"] for row in saved["ranked_configs"]} == {
+        0.5,
+        0.8,
+    }
+    for config in saved["ranked_configs"]:
+        _assert_live_benchmark_confusion(config)
+        for case in config["results"]:
+            _assert_live_benchmark_case(case, config["config"]["success_threshold"])

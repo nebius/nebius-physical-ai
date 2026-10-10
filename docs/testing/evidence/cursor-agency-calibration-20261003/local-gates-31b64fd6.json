@@ -1,0 +1,69 @@
+{
+  "schema": "npa.sanitized-local-gates/v1",
+  "pr": 829,
+  "execution_head": "31b64fd6150eb5e4925993c80b0ec69330455ddf",
+  "execution_tree": "2967c4560187081fc821308df02593afe6c8c1db",
+  "tested_main": "f1ecd4255131374c417cdbb1f6c3e0d84b2a3514",
+  "full_gate": {
+    "verdict": "PASS",
+    "passed": 39905,
+    "skipped": 193,
+    "unexpected_passed": 1,
+    "warnings": 339,
+    "seconds": 1015.31,
+    "coverage_percent": 77.56,
+    "unchanged_coverage_floor": 60,
+    "junit_population": 40099,
+    "stdout_sha256": "40c11494675af527301cfdc0bf0da6580f8dad50c74635fa082804aefc2f558c",
+    "junit_sha256": "fc4e7e75a60bfa7931305a6a1d3d25edbd381eb87377c3d41f8e70d89782e7e7",
+    "coverage_database_sha256": "9b66eadd6305073dbb1b616f736a159b25ccf2f92e67d001e23d9a6e633fe524",
+    "before_observed_at": "2026-10-03T18:01:28.721208+00:00",
+    "after_observed_at": "2026-10-03T18:18:30.522515+00:00",
+    "source_environment_stable": true,
+    "execution": "Task-owned loopback network namespace, normal user/groups, eight CPU workers, single-threaded BLAS/OMP, real FFmpeg prerequisites, isolated private scratch",
+    "observations": "Exact head/tree, clean tracked state, source hashes, imported own module/venv binding, selected nonsecret environment, CPU-only torch and 165-distribution fingerprint matched before/after",
+    "unexpected_pass_node": "tests/cli/test_lancedb_cli.py::test_lancedb_registered_under_workbench",
+    "unexpected_pass_provenance": "Reconstructed from the sole immutable unconditional xfail decorator, passing JUnit node and summary count one. Quiet original stdout/JUnit did not directly emit per-node wasxfail identity. No new execution or xfail-policy change.",
+    "skips": "All 193 individual JUnit skip/collection identities and reasons retained privately. Optional dependencies and opt-in live/GPU/container workloads were not converted to passes."
+  },
+  "fresh_required_local_gates": {
+    "security_files": 21,
+    "security_passed": 898,
+    "security_seconds": 194.79,
+    "smoke_passed": 118,
+    "smoke_seconds": 37.58,
+    "source_environment_stable": true,
+    "before_observed_at": "2026-10-03T18:23:29.272421+00:00",
+    "after_observed_at": "2026-10-03T18:27:25.914305+00:00"
+  },
+  "prior_distinct_attempts": [
+    {
+      "execution_head": "c5e092d819061d4734d034362449c748e1c1d660",
+      "verdict": "FAILED",
+      "failed": 12,
+      "passed": 39893,
+      "skipped": 193,
+      "unexpected_passed": 1,
+      "warnings": 339,
+      "seconds": 1276.79,
+      "coverage_percent": 77.56,
+      "classification": "Eleven single-class test fixtures; one fixed-loopback address-in-use failure. Controlled held/released-port execution establishes the collision mechanism, not the original holder identity. Production fencing and port semantics unchanged."
+    },
+    {
+      "execution_head": "31b64fd6150eb5e4925993c80b0ec69330455ddf",
+      "verdict": "SETUP FAILED; FULL NOT EXECUTED",
+      "classification": "Optional package snapshot attempted unavailable pip before pytest. Original launcher/stdout/stderr/source/environment packets preserved. Successor uses standard-library package metadata; no dependency installation or source mutation."
+    }
+  ],
+  "fixture_successor": "One test file only; distinct negative-class control added, all original provider-claim and score assertions retained. Both label classes and unique IDs remain required before provider work.",
+  "new_provider_calls": 0,
+  "original_proof_commit": "6efa5e3b08b0653082173f4a547d98f1de56e624",
+  "limits": [
+    "This local receipt is not current-head GitHub CI, final independent readiness or merge-queue execution.",
+    "Original provider calls retain their original execution source identities; no model calls were repeated for this fixture-only successor.",
+    "Kimi false agency acceptance, default-pair false rejection and unsupported rationales remain unchanged.",
+    "Illustrative stylized images are not rendered Isaac, calibrated model quality, robot-policy or safety qualification.",
+    "Private wider-interface composition is separate from this standalone execution.",
+    "Native Claude was measured unavailable; independent Codex is not human approval."
+  ]
+}

@@ -47,6 +47,7 @@ from npa.clients.token_factory import (
     TokenFactoryClient,
     TokenFactoryError,
     split_reasoning,
+    thinking_chat_extra,
 )
 
 if TYPE_CHECKING:
@@ -55,6 +56,11 @@ if TYPE_CHECKING:
 DEFAULT_CAPTION_INSTRUCTION = (
     "Describe this image in one or two sentences. Focus on the objects, the "
     "scene, and any action taking place. Be concrete and factual."
+)
+CAPTION_IMAGE_UNAVAILABLE_SENTINEL = "NO IMAGE RECEIVED."
+CAPTION_AVAILABILITY_DIRECTIVE = (
+    "If you cannot see the image pixels, respond exactly: "
+    f"{CAPTION_IMAGE_UNAVAILABLE_SENTINEL}"
 )
 DEFAULT_GENERATE_SYSTEM_PROMPT = (
     "You are a helpful assistant generating concise, high-quality text for a "
@@ -97,12 +103,46 @@ class TokenFactoryToolError(ValueError):
 
 @dataclass(frozen=True)
 class CaptionItem:
+    """Record one attempted image caption.
+
+    Args:
+        image: Input image label.
+        caption: Visible model answer.
+        status: ``completed`` or ``image_unavailable``.
+    Returns:
+        A frozen per-image caption record.
+    Raises:
+        None.
+    """
+
     image: str
     caption: str
+    status: str = "completed"
 
 
 @dataclass(frozen=True)
 class CaptionResult:
+    """Record a captioning request and every attempted image.
+
+    Args:
+        status: ``completed`` unless an image was unavailable.
+        input_path: Source path supplied by the caller.
+        output_path: Requested artifact destination.
+        result_uri: Resolved caption artifact URI.
+        model: Requested Token Factory model.
+        instruction: Original effective caption instruction.
+        image_count: Number of images attempted.
+        generated_at: Result timestamp.
+        captions: Per-image caption records.
+        failed_count: Number of unavailable-image records.
+        availability_directive: Exact no-image instruction sent to the model.
+        request_instruction: Combined instruction sent with each image.
+    Returns:
+        A frozen aggregate caption result.
+    Raises:
+        None.
+    """
+
     status: str
     input_path: str
     output_path: str
@@ -112,6 +152,9 @@ class CaptionResult:
     image_count: int
     generated_at: str
     captions: list[CaptionItem] = field(default_factory=list)
+    failed_count: int = 0
+    availability_directive: str = CAPTION_AVAILABILITY_DIRECTIVE
+    request_instruction: str = ""
 
 
 @dataclass(frozen=True)
@@ -188,6 +231,8 @@ class ReasonResult:
 __all__ = [
     "BatchResult",
     "BatchUsage",
+    "CAPTION_AVAILABILITY_DIRECTIVE",
+    "CAPTION_IMAGE_UNAVAILABLE_SENTINEL",
     "CaptionItem",
     "CaptionResult",
     "GenerateResult",
@@ -230,16 +275,39 @@ def caption_images(
     max_images: int = DEFAULT_MAX_IMAGES,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     temperature: float = 0.2,
+    thinking: bool | None = None,
     client: TokenFactoryClient | None = None,
 ) -> CaptionResult:
-    """Caption every image under ``input_path`` with a hosted vision model."""
+    """Caption each image with an optional explicit reasoning control.
+
+    Args:
+        input_path: Local or S3 image path.
+        output_path: Destination for the caption artifact.
+        model: Hosted vision model ID.
+        instruction: Instruction applied to every image.
+        max_images: Maximum images to process.
+        max_tokens: Output allowance for each provider request.
+        temperature: Provider sampling temperature.
+        thinking: Literal boolean override, or None to retain model defaults.
+        client: Optional configured client.
+
+    Returns:
+        Every attempted caption and aggregate image-availability status.
+
+    Raises:
+        TokenFactoryToolError: If input or reasoning control is invalid, or a
+            provider call produces no usable caption.
+    """
 
     _require(input_path, "input_path")
     _require(output_path, "output_path")
     if max_images <= 0:
         raise TokenFactoryToolError("--max-images must be positive")
+    if thinking is not None and not isinstance(thinking, bool):
+        raise TokenFactoryToolError("thinking must be a literal boolean or None")
     effective_model = model or DEFAULT_VISION_MODEL
     effective_instruction = (instruction or DEFAULT_CAPTION_INSTRUCTION).strip()
+    request_instruction = _caption_request_instruction(effective_instruction)
     active = client or _default_client()
 
     with _materialized_input(input_path) as local_input:
@@ -249,41 +317,138 @@ def caption_images(
                 f"No images found in {input_path}. Expected files with suffixes: "
                 f"{', '.join(sorted(IMAGE_SUFFIXES))}."
             )
-        captions: list[CaptionItem] = []
-        for image_path in image_paths:
-            label = _relative_label(image_path, local_input)
-            data_url = _image_to_data_url(image_path)
-            try:
-                text = active.chat_completion_text(
-                    model=effective_model,
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": effective_instruction},
-                                {"type": "image_url", "image_url": {"url": data_url}},
-                            ],
-                        }
-                    ],
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                )
-            except TokenFactoryError as exc:
-                raise TokenFactoryToolError(
-                    f"captioning {label} failed: {exc}"
-                ) from exc
-            captions.append(CaptionItem(image=label, caption=text.strip()))
+        captions = [
+            _caption_image(
+                image_path,
+                local_input=local_input,
+                model=effective_model,
+                request_instruction=request_instruction,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                client=active,
+                thinking=thinking,
+            )
+            for image_path in image_paths
+        ]
 
+    return _caption_result(
+        input_path,
+        output_path,
+        effective_model,
+        effective_instruction,
+        request_instruction,
+        captions,
+    )
+
+
+def _caption_result(
+    input_path: str,
+    output_path: str,
+    model: str,
+    instruction: str,
+    request_instruction: str,
+    captions: list[CaptionItem],
+) -> CaptionResult:
+    failed_count = sum(item.status == "image_unavailable" for item in captions)
     return CaptionResult(
-        status="completed",
+        status="failed" if failed_count else "completed",
         input_path=input_path,
         output_path=output_path,
         result_uri=caption_result_uri_for(output_path),
-        model=effective_model,
-        instruction=effective_instruction,
+        model=model,
+        instruction=instruction,
         image_count=len(captions),
         generated_at=_now(),
         captions=captions,
+        failed_count=failed_count,
+        availability_directive=CAPTION_AVAILABILITY_DIRECTIVE,
+        request_instruction=request_instruction,
+    )
+
+
+def _caption_request_instruction(instruction: str) -> str:
+    return f"{instruction}\n\n{CAPTION_AVAILABILITY_DIRECTIVE}"
+
+
+_CAPTION_AVAILABILITY_WRAPPERS = (
+    ("**", "**"),
+    ("__", "__"),
+    ("*", "*"),
+    ("_", "_"),
+    ("'", "'"),
+    ('"', '"'),
+    ("‘", "’"),
+    ("“", "”"),
+)
+
+
+def _is_image_unavailable_answer(caption: str) -> bool:
+    """Match nested closed whole-answer presentations of the no-image sentinel."""
+
+    normalized = caption
+    while True:
+        for opening, closing in _CAPTION_AVAILABILITY_WRAPPERS:
+            if (
+                len(normalized) > len(opening) + len(closing)
+                and normalized.startswith(opening)
+                and normalized.endswith(closing)
+            ):
+                normalized = normalized[len(opening) : -len(closing)].strip()
+                break
+        else:
+            break
+    normalized = normalized.removesuffix(".")
+    sentinel = CAPTION_IMAGE_UNAVAILABLE_SENTINEL.removesuffix(".")
+    return normalized.casefold() == sentinel.casefold()
+
+
+def _caption_image(
+    image_path: Path,
+    *,
+    local_input: Path,
+    model: str,
+    request_instruction: str,
+    max_tokens: int,
+    temperature: float,
+    client: TokenFactoryClient,
+    thinking: bool | None,
+) -> CaptionItem:
+    label = _relative_label(image_path, local_input)
+    content = [
+        {"type": "text", "text": request_instruction},
+        {"type": "image_url", "image_url": {"url": _image_to_data_url(image_path)}},
+    ]
+    try:
+        text = client.chat_completion_text(
+            model=model,
+            messages=[{"role": "user", "content": content}],
+            temperature=temperature,
+            max_tokens=max_tokens,
+            extra=thinking_chat_extra(model, thinking)
+            if thinking is not None
+            else None,
+        )
+    except TokenFactoryError as exc:
+        detail = _caption_failure_detail(str(exc), thinking)
+        raise TokenFactoryToolError(f"captioning {label} failed: {detail}") from exc
+    caption = text.strip()
+    status = (
+        "image_unavailable" if _is_image_unavailable_answer(caption) else "completed"
+    )
+    return CaptionItem(image=label, caption=caption, status=status)
+
+
+def _caption_failure_detail(detail: str, thinking: bool | None) -> str:
+    if "reasoning-only response with no visible answer" not in detail:
+        return detail
+    if thinking is None:
+        return (
+            "Token Factory returned a reasoning-only response with no visible "
+            "caption. Retry with thinking=False (CLI: --no-thinking)."
+        )
+    return (
+        "Token Factory returned a reasoning-only response with no visible "
+        f"caption despite the explicit thinking={thinking} override."
     )
 
 

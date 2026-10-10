@@ -23,9 +23,7 @@ deploy  Deploy or destroy a Cosmos model serving backend.
 teardown  Delete a Cosmos serverless endpoint and remove its local alias.
 reload-env  Propagate local shared credentials into the running Cosmos service env without redeploying.
 serve  Load (pre-warm) the saved Cosmos model so the server is ready to serve.
-finetune  Roadmap placeholder for LoRA or full fine-tuning of Cosmos models on custom datasets.
 train  Submit a Cosmos training job.
-optimize  Roadmap placeholder for TensorRT compilation and quantization of Cosmos models.
 infer  Submit a Cosmos inference job, poll until completion, then download the output.
 status  Check the Cosmos endpoint health.
 system-info  Collect and display system hardware information from the Cosmos VM.
@@ -54,9 +52,7 @@ system-info  Collect and display system hardware information from the Cosmos VM.
 | `teardown` | Delete a Cosmos serverless endpoint and remove its local alias. |
 | `reload-env` | Propagate local shared credentials into the running Cosmos service env without redeploying. |
 | `serve` | Load (pre-warm) the saved Cosmos model so the server is ready to serve. |
-| `finetune` | Roadmap placeholder for LoRA or full fine-tuning of Cosmos models on custom datasets. |
 | `train` | Submit a Cosmos training job. |
-| `optimize` | Roadmap placeholder for TensorRT compilation and quantization of Cosmos models. |
 | `infer` | Submit a Cosmos inference job, poll until completion, then download the output. |
 | `status` | Check the Cosmos endpoint health. |
 | `system-info` | Collect and display system hardware information from the Cosmos VM. |

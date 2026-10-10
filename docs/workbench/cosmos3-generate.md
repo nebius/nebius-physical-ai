@@ -7,6 +7,12 @@ This guide covers the **generation** half as a containerized workbench tool —
 image and video synthesis for Physical AI data — through the CLI, the SDK, and a
 declarative `npa.workflow` spec that all share one implementation.
 
+The historical public release is quarantined. The repaired default introduced
+by #869 is scoped to PAIDF video preparation and variant generation;
+`workbench.cosmos3.generate` still needs an explicit independently qualified
+operator image. Earlier execution evidence below does not accept the withdrawn
+public bytes. See the [default-image impact audit](validation/public-default-quarantine-impact-20261005.md).
+
 | Piece | Path |
 | --- | --- |
 | Image | `npa/docker/workbench/cosmos3/Dockerfile` (`npa-cosmos3`) |
@@ -25,6 +31,15 @@ are documented in [PAIDF with Cosmos 3](guides/paidf-cosmos3.md).
 Modes: `text2image`, `image2image`, `text2video`, `image2video`, `video2video`.
 `image2image`, `image2video`, and `video2video` require `--input-path` (a local
 path, an `http(s)` URL, or an `s3://` URI). Text modes need only the prompt.
+
+The source image recipe applies a hash-verified AnyIO 4.14.2 security overlay
+after the upstream model lock, fixing
+[CVE-2026-63374](https://github.com/agronholm/anyio/security/advisories/GHSA-82r6-8w77-94w6).
+CUDA, Torch and model-library versions remain pinned by the upstream lock.
+This source fix does not qualify a release: the default image remains quarantined
+until rebuilt bytes pass security scans and real GPU acceptance. Validate an
+immutable development digest before promoting it; existing release bytes do not
+inherit the dependency fix.
 
 ## Weights are never in the image
 

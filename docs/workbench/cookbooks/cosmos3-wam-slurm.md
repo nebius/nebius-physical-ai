@@ -132,6 +132,10 @@ node. This uses the pinned Soperator runtime and its mandatory direct CUDA
 creation checks. The cluster requests eight-GPU B200 workers on one InfiniBand
 fabric, STRICT reservation binding, accounting, and a 2 TiB shared jail.
 Check CPU, SSD and filesystem quota as well as GPU reservation headroom.
+The pinned small-cluster configuration needs at least 88 non-GPU vCPUs:
+three 16-vCPU system nodes, one 16-vCPU controller, one 16-vCPU login node,
+and one 8-vCPU accounting node. Verify that free CPU quota before deploying;
+free reserved GPUs do not satisfy the control-plane requirement.
 Two free individual GPUs are not a two-node allocation: two workers need 16
 free reserved B200 GPUs. For the four-node comparison, request four workers and
 verify 32-GPU reservation capacity first.

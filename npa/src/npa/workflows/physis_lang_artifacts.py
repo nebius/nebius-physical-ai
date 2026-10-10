@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import tempfile
@@ -43,9 +44,12 @@ def file_hash(path: Path) -> str:
 
 
 def _hashes(root: Path) -> dict:
+    paths = sorted(root.rglob("*"))
+    if root.is_symlink() or any(path.is_symlink() for path in paths):
+        raise ValueError("Physis artifact trees cannot contain symbolic links")
     return {
         p.relative_to(root).as_posix(): file_hash(p)
-        for p in sorted(root.rglob("*"))
+        for p in paths
         if p.is_file() and p != root / "checksums.json"
     }
 
@@ -74,26 +78,97 @@ def materialize(source: str, destination: Path) -> Path:
     return root
 
 
-def publish(root: Path, destination: str) -> None:
-    """Seal a completed stage and verify remote publication by full readback.
+def _create_object(client, payload: bytes, uri: str) -> None:
+    from npa.clients.storage import StoragePreconditionFailed
+
+    try:
+        client.put_bytes_conditional(payload, uri, if_none_match=True)
+    except StoragePreconditionFailed:
+        existing = client.read_bytes_with_etag(uri)
+        if existing is None or existing[0] != payload:
+            raise ValueError(
+                "Physis publication conflicts with existing bytes"
+            ) from None
+
+
+def _compatible_existing(root: Path, existing: Path) -> None:
+    expected = _hashes(root)
+    observed = _hashes(existing)
+    if any(expected.get(name) != digest for name, digest in observed.items()):
+        raise ValueError("Physis publication conflicts with existing files")
+    manifest = existing / "checksums.json"
+    if (
+        manifest.exists()
+        and manifest.read_bytes() != (root / manifest.name).read_bytes()
+    ):
+        raise ValueError("Physis publication conflicts with an existing manifest")
+
+
+def _publish_s3(root: Path, destination: str) -> None:
+    from npa.clients.storage import StorageClient
+
+    client = StorageClient.from_environment()
+    with tempfile.TemporaryDirectory(prefix="physis-readback-") as temporary:
+        existing = Path(temporary) / "existing"
+        client.download_directory(destination, str(existing))
+        _compatible_existing(root, existing)
+        # Reserve the complete expected manifest first. Competing publishers
+        # cannot mix different generations, even when they both see an empty prefix.
+        names = ["checksums.json", *_hashes(root)]
+        for name in names:
+            _create_object(
+                client, (root / name).read_bytes(), destination.rstrip("/") + "/" + name
+            )
+        materialize(destination, Path(temporary) / "verified")
+
+
+def _create_file(source: Path, target: Path) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=target.parent) as staging:
+        with source.open("rb") as stream:
+            shutil.copyfileobj(stream, staging)
+        staging.flush()
+        try:
+            os.link(staging.name, target)
+        except FileExistsError:
+            if file_hash(target) != file_hash(source):
+                raise ValueError(
+                    "Physis publication conflicts with existing bytes"
+                ) from None
+
+
+def seal(root: Path) -> None:
+    """Record complete artifact hashes before attempting any publication.
 
     Args:
-        root: Completed stage directory.
-        destination: New local directory or run-scoped S3 prefix.
+        root: Finished stage output directory.
     Returns:
         None.
     Raises:
-        ValueError: Published bytes fail verification.
-        OSError: Publication fails or a local destination exists.
+        OSError: Reading artifacts or writing the manifest fails.
     """
     write_json(root / "checksums.json", _hashes(root))
-    if not destination.startswith("s3://"):
-        shutil.copytree(root, destination)
-        return
-    from npa.clients.storage import StorageClient
 
-    StorageClient.from_environment().upload_directory(
-        str(root), destination, require_empty=True
-    )
-    with tempfile.TemporaryDirectory(prefix="physis-readback-") as temporary:
-        materialize(destination, Path(temporary))
+
+def publish(root: Path, destination: str) -> None:
+    """Seal and publish artifacts, safely completing identical partial uploads.
+
+    Args:
+        root: Completed stage directory.
+        destination: Local directory or run-scoped S3 prefix.
+    Returns:
+        None.
+    Raises:
+        ValueError: Existing files conflict or published bytes fail verification.
+        OSError: Publication fails.
+    """
+    seal(root)
+    if not destination.startswith("s3://"):
+        target = Path(destination)
+        _compatible_existing(root, target)
+        target.mkdir(parents=True, exist_ok=True)
+        for name in ["checksums.json", *_hashes(root)]:
+            _create_file(root / name, target / name)
+        materialize(destination, target)
+        return
+    _publish_s3(root, destination)

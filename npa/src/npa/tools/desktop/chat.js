@@ -198,6 +198,13 @@ async function loadSessions(append = false, preserve = false) {
   if (!keepPages) state.sessionCursor = result.nextCursor;
   state.sessions = append ? mergeById(state.sessions, result.data)
     : keepPages ? mergeById(result.data, state.sessions) : result.data;
+  const invalidIds = new Set((result.errors || []).map(error => error.id));
+  state.sessions = state.sessions.filter(thread => !invalidIds.has(thread.id));
+  if (invalidIds.size) notice("Some chats could not be loaded because their archival metadata is invalid.");
+  if (invalidIds.has(state.id)) {
+    state.openFailed = true;
+    updateControls();
+  }
   state.sessionPages = append || keepPages;
   state.sessionQuery = collection;
   if (activityGeneration === state.activityGeneration) {
@@ -244,6 +251,7 @@ function updateSettingControls(readOnly) {
       !state.connected || !state.models.length;
   $("#speed").disabled = $("#model").disabled;
   $("#mode").disabled = $("#model").disabled || !state.modes.length;
+  $("#permissions").disabled = $("#model").disabled;
 }
 function prepareThread(id) {
   saveDraft();
@@ -311,6 +319,7 @@ async function selectThread(id) {
 
 function renderModelControls() {
   renderExtraControls();
+  renderPermissions();
   const current = state.thread?.model;
   const model = state.models.find((model) => model.model === current);
   const select = $("#model");
@@ -474,6 +483,7 @@ function sessionEvent(event) {
       state.thread.serviceTier = params.threadSettings.serviceTier;
     if (params.threadSettings.collaborationMode)
       state.thread.mode = params.threadSettings.collaborationMode.mode;
+    applyPermissions(params.threadSettings);
     renderModelControls();
   }
   if (["thread/status/changed", "turn/started", "turn/completed"].includes(event.method))
@@ -1228,16 +1238,49 @@ async function changeExtraSettings(field, value) {
       effort: state.thread.reasoningEffort, [field]: value});
     if (generation === state.generation) {
       await refreshThread();
-      state.thread[field] = value;
+      if (field !== "permissionMode") state.thread[field] = value;
       renderExtraControls();
+      renderPermissions();
     }
     $("#settings-status").textContent = "Saved to this conversation · applies to the next turn";
   } catch (error) { notice(error.message); }
-  finally { state.changingModel = false; updateControls(); }
+  finally { state.changingModel = false; renderPermissions(); updateControls(); }
 }
 
 $("#speed").onchange = () => changeExtraSettings("serviceTier", $("#speed").value || null);
 $("#mode").onchange = () => changeExtraSettings("mode", $("#mode").value);
+$("#permissions").onchange = () => changeExtraSettings("permissionMode", $("#permissions").value);
+
+function applyPermissions(settings) {
+  const sandbox = settings.sandboxPolicy || settings.sandbox;
+  if (!sandbox || !state.thread) return;
+  state.thread.sandboxPolicy = sandbox;
+  state.thread.approvalPolicy = settings.approvalPolicy;
+  state.thread.permissionMode = permissionMode(settings);
+}
+
+function permissionMode(settings) {
+  const sandbox = settings.sandboxPolicy || settings.sandbox;
+  if (!sandbox) return "unknown";
+  const defaults = {readOnly: {networkAccess: false}, workspaceWrite: {
+    writableRoots: [], networkAccess: false, excludeTmpdirEnvVar: false, excludeSlashTmp: false,
+  }}[sandbox.type] || {};
+  if (Object.entries(sandbox).some(([key, value]) => key !== "type" &&
+      (!Object.hasOwn(defaults, key) || JSON.stringify(value) !== JSON.stringify(defaults[key])))) return "custom";
+  if (settings.approvalPolicy === "on-request")
+    return {readOnly: "read-only", workspaceWrite: "workspace"}[sandbox.type] || "custom";
+  return sandbox.type === "dangerFullAccess" && settings.approvalPolicy === "never" ? "full" : "custom";
+}
+
+function renderPermissions() {
+  const current = state.thread?.permissionMode || permissionMode(state.thread || {});
+  const choices = [["read-only", "Read only"], ["workspace", "Workspace"], ["full", "Full permissions"]];
+  if (!["read-only", "workspace", "full"].includes(current))
+    choices.unshift([current, current === "custom" ? "Custom permissions" : "Choose permissions"]);
+  options($("#permissions"), choices, current);
+  for (const option of $("#permissions").options)
+    if (["unknown", "custom"].includes(option.value)) option.disabled = true;
+}
 $("#attach").onclick = () => $("#image-input").click();
 $("#image-input").onchange = async () => {
   const id = state.id;

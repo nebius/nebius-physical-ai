@@ -107,8 +107,35 @@ valid JSON; malformed responses are not repaired into success.
 and `seed-b/` store every original MP4, native generation receipts, and logs.
 `report/` contains `report.json`, `judgments.json`, raw judge responses,
 `index.html`, and all 36 original videos. Each stage has a SHA-256 manifest;
-publication is verified by full storage readback. Failed stages use a separate
-`-failed/` prefix and return a failing status.
+publication is verified by full storage readback. Completed stages record their
+invocation in `stage.json`; retrying the same stage verifies and reuses its
+completed destination before running a model. Changed requests, conflicting
+bytes, and incomplete destinations fail before expensive work.
+
+Publication reserves the expected checksum manifest and creates objects with
+conditional writes. Repeating publication can fill in missing objects with
+identical bytes, but cannot replace another result. Failed stages preserve
+`failure.json` and the original `output/` under a separate
+`-failed/<attempt>/` prefix and return the original failing status. Rejected
+judge responses are saved before response validation.
+
+If storage also fails, the worker retains its private working directory and
+prints its location. Copy it before deleting the worker; worker-local retention
+does not survive pod or disk deletion. Once storage is available, publish a
+completed stage's retained `output/` without rerunning generation or judging:
+
+```bash
+npa/.venv/bin/python -m npa.workflows.physis_lang publish \
+  --input-path "$RETAINED_OUTPUT" --output-path "$ORIGINAL_OUTPUT_URI"
+```
+
+`RETAINED_OUTPUT` can be the local `failure/output/` directory or the S3
+`-failed/<attempt>/output/` prefix printed in the failure report. Recovery requires
+a verified checksum manifest and the original completed `stage.json`; partial
+model execution cannot be published as completed work. The destination must
+match the original stage request. Then resume the workflow through its normal
+runtime command. Local retained directories can be removed after verified
+publication. Failed evidence is retained separately for inspection.
 
 No Physis-Lang source, paper figures, benchmark data, or trained checkpoint is
 redistributed. The scenario text and adapter code are original NPA work. Wan

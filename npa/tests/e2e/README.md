@@ -1,5 +1,29 @@
 # Live storage tests
 
+## PAIDF native variant recovery
+
+After executing the reviewed candidate source through the standard PAIDF runtime,
+run the read-only receipt audit with `NPA_INTEGRATION_E2E=1` and
+`NPA_PAIDF_VARIANT_RECOVERY_LIVE_CONFIG` pointing to an owner-only JSON file outside
+Git. The configuration has `project`, `run_uri` (the exact run prefix ending in
+`/`), `run_id`, `fresh_after` (an aware UTC timestamp recorded before submission),
+`input_sha256`, `runtime_image` (an immutable reference), `variant_count`, and
+`require_recovery` (a boolean). Set the latter to true to require actual reuse
+after worker recovery. Neither variable has a default target.
+
+```bash
+NPA_INTEGRATION_E2E=1 \
+NPA_PAIDF_VARIANT_RECOVERY_LIVE_CONFIG="$PRIVATE_RECOVERY_CONFIG" \
+  npa/.venv/bin/python -m pytest npa/tests/e2e/test_paidf_variant_recovery_live.py -q
+```
+
+The test reads only that run's exact source, manifest and new per-variant
+receipts. It verifies full video decoding, all object bytes, native controls,
+guardrails, immutable model binding and actual source fingerprints. It does not
+submit, cancel, infer, repair infrastructure or publish objects. Run it from the
+same reviewed checkout staged to the workload. Fixture tests and an audit of an
+older source without these receipts do not establish native recovery acceptance.
+
 Run the Insights storage tests against an explicitly selected project's own
 configured credentials:
 
@@ -39,3 +63,20 @@ host settings and does not replace the deployment's CUDA creation checks.
 `NPA_E2E_SOPERATOR_NAMESPACE` defaults to `soperator`.
 `NPA_E2E_SOPERATOR_EVIDENCE_DIR` optionally names a private output directory for
 a new `userns-live.json` receipt; an existing receipt is never overwritten.
+
+### Provisioning boolean ingress
+
+`test_agent_provision_boolean_live.py` sends malformed boolean fields to all
+three provisioning route aliases on an isolated, authenticated agent. Every
+request must return HTTP 400 with `ok: false`, `status: invalid`, and a field
+error. These rejected requests must not issue confirmations or start provisioning;
+the rendered-backend unit tests separately verify those side-effect boundaries.
+
+Set `NPA_AGENT_PROVISION_BOOLEAN_LIVE_CONFIG` to an owner-only JSON file outside
+the checkout containing `base_url` (the agent API URL ending in `/api/`),
+`username`, and `password`. TLS verification uses system trust; for a private
+certificate authority, set optional `ca_bundle` to its PEM bundle path. This
+variable has no default; the test skips when
+it is absent. Deploy the candidate to a disposable CPU agent in an isolated
+project first, then run with `NPA_INTEGRATION_E2E=1`. Destroy the exact test agent
+and its owned storage after capturing evidence, following the teardown skill.

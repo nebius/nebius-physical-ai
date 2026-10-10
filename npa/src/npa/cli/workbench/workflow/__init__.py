@@ -30,6 +30,8 @@ from npa.orchestration.skypilot.storage_context import call_with_workflow_storag
 from npa.cli.workbench.trigger import app as trigger_app
 from npa.cli._typer_defaults import resolve_typer_defaults
 from npa.cli.workbench.workflow.demo import app as demo_app
+from npa.cli.workbench.workflow.batch import app as batch_app
+from npa.cli.workbench.workflow.input_check import check_input_cmd
 from npa.cli.workbench.workflow.absence_recovery import register as register_absence
 from npa.cli.workbench.workflow.challenge import app as challenge_app
 from npa.cli.workbench.workflow.controller_recovery import (
@@ -67,6 +69,26 @@ MAX_LOG_OUTPUT_CHARS = 262_144
 _SUBMIT_PRIVATE_REDACTIONS: ContextVar[tuple[str, ...]] = ContextVar(
     "npa_submit_private_redactions", default=()
 )
+
+
+@app.command("schema")
+@resolve_typer_defaults
+def schema_cmd() -> None:
+    """Print the authoritative workflow JSON Schema as one JSON document.
+
+    Args:
+        None.
+
+    Returns:
+        None.
+
+    Raises:
+        FileNotFoundError: The bundled schema is unavailable from the installation.
+        ValueError: The bundled schema is not a JSON object.
+    """
+    from npa.orchestration.npa_workflow.schema_export import load_workflow_schema
+
+    typer.echo(json.dumps(load_workflow_schema(), indent=2, sort_keys=True))
 
 
 def _robotwin_render_process(
@@ -2275,16 +2297,44 @@ def submit_cmd(
                         timeout=30,
                     )
 
-                missing.extend(
-                    kubernetes_prerequisites(
-                        spec_config,
-                        runner=_run_sim2real_kubectl,
-                        namespace=(
-                            os.environ.get("NPA_SIM2REAL_K8S_NAMESPACE", "").strip()
-                            or "default"
+                from npa.orchestration.npa_workflow.sim2real_driver_preflight import (
+                    isaac_render_placements,
+                )
+                from npa.orchestration.skypilot._bin import resolve_global_config_path
+                from yaml import YAMLError
+
+                try:
+                    isaac_placements = isaac_render_placements(
+                        merged_npa_spec,
+                        context=infra_context,
+                        global_config_path=resolve_global_config_path(config_path),
+                        allowed_nodes=_skypilot_allowed_nodes(
+                            sky_bin=sky_bin,
+                            config_path=config_path,
+                            isolated_config_dir=isolated_config_dir,
                         ),
                     )
-                )
+                except (OSError, ValueError, RuntimeError, YAMLError):
+                    missing.append(
+                        (
+                            "Isaac render placement configuration could not be verified",
+                            "verify the selected SkyPilot configuration is readable YAML "
+                            "with mapping-valued Kubernetes settings and valid Isaac "
+                            "resource profiles, selectors, affinity, and tolerations",
+                        )
+                    )
+                else:
+                    missing.extend(
+                        kubernetes_prerequisites(
+                            spec_config,
+                            runner=_run_sim2real_kubectl,
+                            isaac_placements=isaac_placements,
+                            namespace=(
+                                os.environ.get("NPA_SIM2REAL_K8S_NAMESPACE", "").strip()
+                                or "default"
+                            ),
+                        )
+                    )
             if missing:
                 _fail_missing_prerequisites(yaml_path, missing)
                 return
@@ -5136,14 +5186,15 @@ def _resolve_submit_accelerators(
 
         context = context_from_infra(infra) or os.environ.get("KUBECONTEXT", "").strip()
         try:
-            resolutions = wait_for_kubernetes_accelerators(
-                requested,
-                context=context,
-                sky_bin=sky_bin or None,
-                timeout=readiness_timeout,
-                poll_interval=readiness_poll_interval,
-                on_status=lambda message: typer.echo(message, err=True),
-            )
+            with _submit_accelerator_session(context, isolated_config_dir):
+                resolutions = wait_for_kubernetes_accelerators(
+                    requested,
+                    context=context,
+                    sky_bin=sky_bin or None,
+                    timeout=readiness_timeout,
+                    poll_interval=readiness_poll_interval,
+                    on_status=lambda message: typer.echo(message, err=True),
+                )
         except (
             KubernetesGpuCatalogError,
             SkyPilotNotInstalledError,
@@ -5162,6 +5213,34 @@ def _resolve_submit_accelerators(
             overrides[accelerator] = resolution.resolved
         typer.echo(f"accelerator-resolve: {resolution.describe()}", err=True)
     return overrides
+
+
+@contextmanager
+def _submit_accelerator_session(context: str, isolated_config_dir: Path | None):
+    """Keep isolated submission discovery inside one owned check-only API."""
+    from npa.orchestration.skypilot._bin import resolve_isolated_config_dir
+    from npa.orchestration.skypilot.cluster_validation import (
+        cluster_validation_session,
+        resolve_validation_target,
+    )
+    from npa.orchestration.skypilot.k8s_gpu_catalog import KubernetesGpuCatalogError
+    from npa.orchestration.skypilot.local_api import IsolatedApiError
+
+    selected = resolve_isolated_config_dir(isolated_config_dir)
+    if selected is None:
+        yield
+        return
+    try:
+        kubeconfig, exact_context = resolve_validation_target(None, context)
+        with cluster_validation_session(
+            kubeconfig,
+            exact_context,
+            isolated_config_dir=selected,
+            check_only=True,
+        ):
+            yield
+    except IsolatedApiError as exc:
+        raise KubernetesGpuCatalogError(str(exc)) from exc
 
 
 def _verify_submit_controller_owner(
@@ -5286,20 +5365,13 @@ def _skypilot_allowed_nodes(
 
     import yaml
 
-    from npa.orchestration.skypilot._bin import resolve_config
+    from npa.orchestration.skypilot._bin import resolve_global_config_path
 
-    resolved = resolve_config(
-        sky_bin=sky_bin or None,
-        global_config_path=config_path,
-        isolated_config_dir=isolated_config_dir,
-    )
-    if resolved.global_config_path is None:
+    resolved_path = resolve_global_config_path(config_path)
+    if resolved_path is None:
         return ()
     try:
-        document = (
-            yaml.safe_load(resolved.global_config_path.read_text(encoding="utf-8"))
-            or {}
-        )
+        document = yaml.safe_load(resolved_path.read_text(encoding="utf-8")) or {}
     except (OSError, yaml.YAMLError) as exc:
         raise RuntimeError(
             "could not read the selected SkyPilot config for allowed_nodes preflight"
@@ -10518,6 +10590,8 @@ def _emit_gpu_discovery_json(inventory, catalog, sky_error, resolutions):
 
 
 app.add_typer(trigger_app, name="trigger")
+app.add_typer(batch_app, name="batch")
+app.command("check-input")(check_input_cmd)
 app.add_typer(demo_app, name="demo")
 app.add_typer(challenge_app, name="challenge")
 register_controller_recovery(app)

@@ -1,0 +1,51 @@
+{
+  "schema": "npa.vlm-disclosures.main-caption-bridge.v1",
+  "scope": "source-and-offline-cpu-integration-only",
+  "source_integration": {
+    "head": "0bbce4bd82a6c4d1af00bf833619a00266922e66",
+    "tree": "78cda82b4b322ca1da3e7610a7f0058aa4b242b0",
+    "parents": [
+      "6709af5ebffcf4709b32b19cd77dff73a365c46e",
+      "89451660193992e1b44ce9c0935675e28c9d8cf4"
+    ]
+  },
+  "integration": {
+    "overlap": "npa/README.md only",
+    "resolution": "retains both VLM disclosure and caption-thinking descriptions",
+    "caption_paths_equal_main894": [
+      {
+        "path": "npa/src/npa/cli/workbench/token_factory.py",
+        "sha256_parts": ["7ba8623f6308cf6c", "ae1ce523a6657b74", "807f923a29d4ddb4", "60fef4024d0993a0"]
+      },
+      {
+        "path": "npa/src/npa/clients/token_factory.py",
+        "sha256_parts": ["5622cf44b6ed00c7", "6b8cce6323aa9253", "2e97e5630e89251d", "2b97b19511f00c44"]
+      },
+      {
+        "path": "npa/src/npa/workbench/token_factory/__init__.py",
+        "sha256_parts": ["271157275009cf01", "d2c9152e22826d5e", "4bdfc0054edc0bd3", "0fc4a67b2b770d49"]
+      }
+    ],
+    "frozen_vlm_contract": {
+      "head": "6709af5ebffcf4709b32b19cd77dff73a365c46e",
+      "declared_consumer_files_equal": 29,
+      "grade_writer_equal": true
+    }
+  },
+  "offline_cpu_bridge": {
+    "tests": 896,
+    "passed": 895,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 1,
+    "skip_scope": "explicit GPU opt-in test",
+    "workers": 8,
+    "network_scope": "fresh loopback-only namespace",
+    "junit_sha256": "e7fac4941db1b0483d6a33599c8f1310700eb5007088ec70634ef28fadff3933"
+  },
+  "limits": [
+    "No hosted provider, native adapter, native CLI, signal, GPU, or full-suite execution was selected.",
+    "The original four hosted responses scored 0/0/0/0 with two false negatives and were not retried.",
+    "This bridge is not a calibrated quality, safety, or readiness acceptance."
+  ]
+}

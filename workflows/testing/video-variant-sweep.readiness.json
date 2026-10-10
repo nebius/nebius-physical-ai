@@ -1,0 +1,63 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "47d2e7762fff07f324d14febaa6b448d15bf7767501db7957d137503fd4e39fa",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Schema validation, wave planning, and scheduler planning passed.",
+      "evidence": [
+        "validate-spec; plan-spec --waves; run-spec --plan-only --scheduler-plan"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Source snapshots, merged prompts, partitioned real Transfer calls, paired review, tracking and accepted-only publication are wired and covered by focused tests. Hosted live tests explicitly use a different model than the reference default.",
+      "evidence": [
+        "npa/tests/workflows/test_video_sweep.py",
+        "npa/tests/e2e/test_video_sweep_live.py"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "verified",
+      "reason": "Project-scoped S3 probe, conditional artifact replay/conflict checks, and publication of one accepted generated clip passed. Deployment destinations still require submit preflight.",
+      "evidence": [
+        "test_private_s3_artifact_roundtrip"
+      ]
+    },
+    "worker_input": {
+      "status": "verified",
+      "reason": "Two concurrent Transfer workers read the exact procedural source snapshots from private S3 and produced distinct 121-frame variants with the requested seeds.",
+      "evidence": [
+        "Procedural SkyPilot generation wave: two complete worker receipts; both videos fully decoded."
+      ]
+    },
+    "credentials": {
+      "status": "blocked",
+      "reason": "Transfer payload access and hosted inference were verified, but the reference Cosmos3 model is absent from the tested account. MiniMax-M3 was explicitly used for hosted component tests.",
+      "evidence": [
+        "health access --capability cosmos2",
+        "test_hosted_description_merge_and_paired_judge"
+      ]
+    },
+    "source_image": {
+      "status": "verified",
+      "reason": "The selected public Transfer release passed pull preflight and real concurrent GPU execution with the submitted NPA source overlay.",
+      "evidence": [
+        "workflow preflight-images"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "A single canonical submission completed preparation, two parallel RTX PRO 6000 generation workers, paired review, and in-pod Postgres/MLflow tracking. Both fresh variants scored 0.30 against threshold 0.80; publication correctly failed without a dataset or next-run inventory. A verified rejection HTML/MP4 export passed. Earlier component execution published one accepted clip at 0.85 and held one at 0.30. A successful single-submit accepted-publication path remains unverified; hosted validation explicitly used MiniMax-M3 instead of the unavailable default Cosmos3 model.",
+      "evidence": [
+        "Canonical runtime: prepare, worker-0, worker-1, review and lineage succeeded; publish failed on all-rejected review.",
+        "Two committed Postgres rows, two finished MLflow runs, and per-variant score/acceptance metrics were independently verified.",
+        "Read-only rejection export: two real 121-frame variants; 554-frame MP4 decoded; offline browser checks passed.",
+        "test_all_rejected_never_publishes_dataset_but_exports_review",
+        "test_failed_run_exports_only_fully_tracked_rejections"
+      ]
+    }
+  }
+}

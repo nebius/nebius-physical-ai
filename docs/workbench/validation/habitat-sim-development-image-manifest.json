@@ -10,6 +10,14 @@
   "trusted_build_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36092335522",
   "dockerfile": "npa/docker/workbench/habitat-sim/Dockerfile.bootstrap",
   "evidence_date": "2026-09-25",
+  "current_source_reuse": {
+    "status": "requires-requalification",
+    "changed_inputs": [
+      "npa/docker/workbench/habitat-sim/requirements-runtime.lock",
+      "npa/src/npa/__init__.py"
+    ],
+    "reason": "The runtime dependency lock and SDK export surface changed after the recorded producer. These historical image hashes and GPU results do not qualify a rebuild from current source."
+  },
   "source_inputs": [
     {
       "path": "npa/docker/workbench/habitat-sim/Dockerfile.bootstrap",

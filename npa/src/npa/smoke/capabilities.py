@@ -9,6 +9,11 @@ from __future__ import annotations
 
 # Each value is an ordered list of concrete checks the golden eval runs.
 GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
+    "lyra2": [
+        "checksummed operator RGB capture and pinned Lyra checkpoint load",
+        "native CUDA reconstruction produces Gaussian geometry and camera poses",
+        "rendered MP4 fully decodes and an offline HTML viewer is produced",
+    ],
     "antioch": [
         "FastAPI service authentication boundary",
         "CPU-only system-info contract",
@@ -63,6 +68,14 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "pinned official NCore V4 reader imports in the NPA interpreter on CPU",
         "native COLMAP converter CLI schema loads with patched trueprice/pycolmap",
         "source inventory hashes match; no functional capture validation claimed",
+    ],
+    "open3d": [
+        "real RANSAC/FPFH global registration refined by Open3D ICP",
+        "recovered transform matches the applied ground-truth pose within 1 deg",
+        "ICP lowers the RANSAC inlier RMSE on every pair",
+        "global_optimization returns a pose graph anchored at node 0",
+        "Poisson reconstruction yields a positive-area surface",
+        "factual RRD artifact passes decoder verification",
     ],
     "habitat-sim": [
         "neutral bootstrap with accompanying Ubuntu source; pinned MIT Habitat-Sim "

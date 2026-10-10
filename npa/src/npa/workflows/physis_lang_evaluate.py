@@ -183,11 +183,11 @@ def _judge(client, model, case, row, video, frame_count, output):
             {"role": "user", "content": content},
         ],
     )
+    anonymous_id = hashlib.sha256(row["relative_video"].encode()).hexdigest()[:20]
+    write_json(output / "responses" / f"{anonymous_id}.json", response)
     verdicts = validate_judgment(
         completion_json(response, model), len(case["assertions"])
     )
-    anonymous_id = hashlib.sha256(row["relative_video"].encode()).hexdigest()[:20]
-    write_json(output / "responses" / f"{anonymous_id}.json", response)
     return {
         "case_id": row["case_id"],
         "seed": row["seed"],

@@ -62,6 +62,22 @@ def test_manifest_does_not_hardcode_a_live_nebius_identifier(manifest: dict) -> 
     assert "${NPA_REGISTRY}" in manifest["registry_ref"]
 
 
+def test_fa2_build_variant_has_its_own_unpublished_rtx_scope(
+    entries: list[dict],
+) -> None:
+    base = next(entry for entry in entries if entry["name"] == "npa-base")
+    variant = base["build_variants"]["fa2"]
+    assert variant["purpose"] == "benchmark-comparison"
+    assert variant["publication"] == "local-only"
+    assert variant["datacenter_validation"] == "not-qualified"
+    assert variant["default_cuda_archs"] == ["sm_120"]
+    assert not any(key.startswith("published_") for key in variant)
+    assert (ROOT / variant["guide"]).is_file()
+    evidence = json.loads((ROOT / variant["source_recipe_evidence"]).read_text())
+    assert evidence["backend"] == "fa2" and evidence["status"] == "passed"
+    assert evidence["environment"]["capability"] == [12, 0]
+
+
 def test_every_entry_is_well_formed(manifest: dict, entries: list[dict]) -> None:
     allowed_verdicts = set(manifest["verdicts"])
     allowed_validation = set(manifest["validation_states"])
@@ -594,7 +610,22 @@ def test_flex_pi_validation_binds_both_blackwell_targets_to_release_bytes(
     assert evidence["validated_tag"] == flex_pi["published_tag"]
     assert evidence["validated_digest"] == flex_pi["published_digest"]
     assert evidence["development_sha"] == flex_pi["development_sha"]
-    assert set(evidence["validated_gpus"]) == {"B200", "RTX PRO 6000"}
+    assert set(evidence["validated_gpus"]) == {"B200", "RTX PRO 6000", "H200"}
+
+    # H200 ran one eager inference in a direct Docker smoke, so it is held to
+    # the inference contract only, not the compiled workflow contract below.
+    hopper = evidence["validated_gpus"]["H200"]
+    assert hopper["platform"] == "gpu-h200-sxm"
+    assert hopper["capability"] == "9.0"
+    assert hopper["result"] == "FLEX_PI_REAL_INFERENCE_PASSED"
+    assert hopper["observed_image_digest"] == evidence["validated_digest"]
+    assert hopper["gpu_count"] == 1
+    assert hopper["torch_compile"] is False
+    assert hopper["finite_action_shape"] == [32, 14]
+    assert hopper["inference_seconds"] > 0
+    assert hopper["peak_memory_bytes"] > 0
+    assert hopper["readback_verified_objects"] == 0
+    assert "not the Workbench workflow" in hopper["execution"]
 
     for gpu, platform, capability in (
         ("B200", "gpu-b200-sxm", "10.0"),

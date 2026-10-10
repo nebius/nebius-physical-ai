@@ -18,8 +18,12 @@ prepare its project and compute, then inspect the result.
 
 | Task | Read |
 | --- | --- |
+| Run or resume a workflow manually | [Manual workflow operations](workbench/guides/manual-workflow-operations.md) |
+| Submit episode batches and choose concurrency | [Dataset batches and capacity](workbench/guides/paidf-dataset-batches.md) |
+| Inspect supported quality reports | [Shared report inspection](workbench/insights-reports.md) |
+| Copy selected GCS/S3 inputs or outputs | [Scoped storage transfers](workbench/guides/scoped-storage-transfers.md) |
 | Author and submit YAML | [Workflow guide](workbench/npa-workflow-guide.md) · [toolRef catalog](workbench/npa-workflow-tool-catalog.md) |
-| Use CLI, Python, or HTTP | [CLI reference](cli/README.md) · [SDK walkthrough](workbench/cli-sdk-yaml-walkthrough.md) · [SDK errors](sdk/errors.md) |
+| Use CLI, Python, or HTTP | [CLI reference](cli/README.md) · [SDK surface](sdk/README.md) · [SDK walkthrough](workbench/cli-sdk-yaml-walkthrough.md) · [SDK errors](sdk/errors.md) |
 | Choose a direct deployment mode | [Runtime modes](workbench/runtime-modes.md) |
 | Understand status and resume | [Run lifecycle](run-lifecycle.md) |
 | View results in a browser | [Agent workbench](agent.md) · [Rerun shares](workbench/rerun-sharing.md) · [Foxglove export](workbench/foxglove-export.md) |
@@ -34,8 +38,11 @@ prepare its project and compute, then inspect the result.
 | Configure workflow scheduling | [SkyPilot setup](orchestration/skypilot-setup.md) |
 | Manage fleets or Slurm | [Cluster backends](cluster-backends.md) · [Fleet storage verification](fleet-storage-verification.md) · [RTX MIG](fleet-rtx-pro-6000-mig.md) |
 | Choose an image and GPU | [Public image catalog](workbench/container-image-catalog.md) · [compatibility matrix](workbench/image-gpu-compatibility-matrix.md) |
+| Adopt FA4 in an RTX PRO 6000 application | [Base naming, image build and model integration](workbench/guides/rtx6000-fa4.md) |
+| Compare standalone FA2 and tuned FA4 | [RTX PRO 6000 measurements and actual renders](workbench/fa2-fa4-validation.md) |
 | Reuse model downloads | [Model-weight cache](workbench/model-weight-cache.md) |
 | Use preemptible VMs | [Preemptible capacity](workbench/preemptible-vms.md) |
+| Plan a GPU launch | [Quota and capacity](workbench/gpu-capacity-quota-plan.md) |
 | Reproduce a workload | [Cookbooks](workbench/cookbooks/README.md) |
 
 ## Contribute and verify

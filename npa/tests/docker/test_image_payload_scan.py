@@ -161,7 +161,7 @@ def test_blackwell_envgen_chain_uses_system_ffmpeg_without_bundled_payload() -> 
         / "docker"
         / "workbench"
         / "base"
-        / "cuda13-b300"
+        / "cuda13-blackwell"
         / "Dockerfile",
         REPO_ROOT / "npa" / "docker" / "workbench" / "genesis" / "Dockerfile.sm120",
         REPO_ROOT / "npa" / "docker" / "workbench" / "sim2real-envgen" / "Dockerfile",
@@ -199,10 +199,11 @@ def test_openpi_uses_system_ffmpeg_without_bundled_payload() -> None:
         "'python-dateutil==2.9.0.post0'",
         "'s3transfer==0.16.0'",
         "'six==1.17.0'",
-        "'urllib3==2.7.0'",
+        "'urllib3==2.8.0'",
     ):
         assert pin in dockerfile
     assert '"boto3":"1.42.91"' in dockerfile
+    assert '"urllib3":"2.8.0"' in dockerfile
     assert "boto3.session.Session()" in dockerfile
     assert "'deepdiff==8.6.2'" in dockerfile
     assert "WANDB_MODE=disabled" in dockerfile
@@ -756,7 +757,7 @@ def test_local_docker_scan_combines_streamed_layers_and_history(monkeypatch) -> 
     monkeypatch.setattr(
         scanner,
         "_iter_docker_save",
-        lambda image: iter(["isaac-sim/kit/libcarb.so"]),
+        lambda image, **_kwargs: iter(["isaac-sim/kit/libcarb.so"]),
     )
     monkeypatch.setattr(
         scanner,
@@ -1166,3 +1167,81 @@ def test_registry_digest_must_be_a_sha256(monkeypatch) -> None:
 
     with pytest.raises(RuntimeError, match="invalid linux/amd64 image digest"):
         scanner._image_history("registry.example/image:tag")
+
+
+@pytest.mark.parametrize("artifact", [False, True])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_scan_reports_only_bound_metadata_descriptors(tmp_path, artifact, reverse):
+    members = _attested_saved_image_members(artifact, None)
+    index = json.loads(members["index.json"])
+    attestation = json.loads(
+        members["blobs/sha256/" + index["manifests"][1]["digest"][7:]]
+    )
+    statement = attestation["layers"][0]
+    # A nested image index must preserve reporting through recursive traversal.
+    inner = members["index.json"]
+    inner_digest = hashlib.sha256(inner).hexdigest()
+    members["blobs/sha256/" + inner_digest] = inner
+    members["index.json"] = json.dumps(
+        {
+            "schemaVersion": 2,
+            "manifests": [{"digest": "sha256:" + inner_digest, "size": len(inner)}],
+        }
+    ).encode()
+    if reverse:
+        members = dict(reversed(list(members.items())))
+    archive = tmp_path / "attested.tar"
+    archive.write_bytes(_tar_bytes(members))
+
+    report = scanner.scan(None, tarball=archive)
+
+    assert report.clean
+    assert report.entries_scanned > 0
+    assert report.to_dict()["validated_metadata_layers"] == [
+        {
+            "member": "blobs/sha256/" + statement["digest"][7:],
+            "media_type": "application/vnd.in-toto+json",
+            "statement_type": "https://in-toto.io/Statement/v0.1",
+        }
+    ]
+
+
+def test_filesystem_scan_does_not_claim_metadata_validation(tmp_path):
+    archive = tmp_path / "runtime.tar"
+    archive.write_bytes(_tar_bytes(_saved_image_members("oci")))
+    assert (
+        scanner.scan(None, tarball=archive).to_dict()["validated_metadata_layers"] == []
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation", ["schema", "subject", "predicate", "runtime-platform", "media-type"]
+)
+def test_invalid_metadata_is_not_reported_as_validated(mutation):
+    records = []
+    members = _attested_saved_image_members(False, mutation)
+    with pytest.raises(RuntimeError, match="image archive"):
+        list(
+            scanner._iter_saved_image(
+                io.BytesIO(_tar_bytes(members)), mode="r|*", attestations=records
+            )
+        )
+    assert records == []
+
+
+@pytest.mark.parametrize(
+    "source,history_only,expected",
+    [
+        ("registry", False, "not-inspected"),
+        ("local-docker-stream", True, "not-inspected"),
+        ("local-docker-stream", False, "saved-image-manifests"),
+        ("tarball", False, "saved-image-manifests"),
+    ],
+)
+def test_metadata_scope_distinguishes_uninspected_manifests(
+    source, history_only, expected
+):
+    report = scanner.ScanReport(
+        image="example", source=source, history_only=history_only
+    )
+    assert report.to_dict()["metadata_validation_scope"] == expected
