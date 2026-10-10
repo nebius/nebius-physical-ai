@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "042ff338f2f214d4a54f2e97be900e44c1fe657e33689500d07f2dd243a55047",
+  "workflow_sha256": "ba98c0d1ad57c3ce7d968139d0105f5996100589f077fa6b296d965e1aba68ca",
   "planning": {
     "validation": {
       "status": "verified",
@@ -12,8 +12,8 @@
       ]
     },
     "task_fidelity": {
-      "status": "unverified",
-      "reason": "Offline contracts and tests prove the absolute-joint/DROID-gripper bridge, dense camera/action alignment, strict packed-semantic rules, measured object geometry, one-body support, split isolation, and released-support metric. An exact-source live expert run retained 734 failed-only rows across eight attempts; independent trace replay reached the complete ordered contact/grasp/lift/transport/release/support/stability sequence every time and the native runtime plant receipt matched the shared high-PD configuration. No episode was admitted because the close wrist view lost both rendered finger masks, with two additional exterior destination-cue occlusions. This revision therefore uses one shared measured-reference side wrist calibration and target-side oblique exterior pose, and binds the inherited reset event to the declared initial XY ranges in both expert and policy. These corrections still require rendered live qualification and the complete-link reference is not claimed as a pad center.",
+      "status": "verified",
+      "reason": "Offline contracts and tests prove the absolute-joint/DROID-gripper bridge, dense camera/action alignment, strict packed-semantic rules, measured object geometry, one-body support, split isolation, and released-support metric. An exact-source live train-size run admitted eight of eight physics-qualified expert demonstrations with 808 dense causal rows. Independent readback verified every saved exterior and wrist RGB hash, all phases retained actual object and both-finger pixels, reset poses stayed inside the declared range, and the strict ordered contact/grasp/lift/transport/release/support/stability evidence passed without threshold changes. This verifies the expert task and camera/control contract, not policy success or held-out size generalization; validation and gold cohorts remain execution prerequisites.",
       "evidence": [
         "npa/tests/test_sim2real_pi05_contract.py",
         "npa/tests/test_sim2real_pi05_pipeline.py"
@@ -30,7 +30,7 @@
     },
     "worker_input": {
       "status": "blocked",
-      "reason": "All 27 authoritative public Polaris checkpoint objects and the separate public tokenizer were downloaded anonymously and integrity-verified at exact generations. A historical corrected image loaded the real checkpoint and ran deterministic fixed-noise inference on an actual post-motion wrist capture, proving model consumption and input sensitivity but not helpful control. Exact-source expert physics now reaches the full ordered manipulation sequence, but all rows remain failed and training-inadmissible until the revised camera calibration proves the required object, two-finger, and destination pixels.",
+      "reason": "All 27 authoritative public Polaris checkpoint objects and the separate public tokenizer were downloaded anonymously and integrity-verified at exact generations. A historical corrected image loaded the real checkpoint and ran deterministic fixed-noise inference on an actual post-motion wrist capture, proving model consumption and input sensitivity but not helpful control. Exact-source train-size expert collection now has eight admitted demonstrations with verified dense camera rows. The full workflow still needs successful validation and gold cohorts plus dataset export/readback before training input is complete.",
       "evidence": [
         "Private public-artifact receipts record 27 complete checkpoint objects and the separate tokenizer payload with exact generation, byte count, authoritative MD5, and computed SHA256 without credentials.",
         "Private live receipts retain real checkpoint load/inference and failed expert/camera attempts without publishing infrastructure identifiers."
@@ -52,7 +52,7 @@
     },
     "target_runtime": {
       "status": "blocked",
-      "reason": "The isolated route has two one-GPU RTX PRO 6000 workers that passed CUDA, GLX/EGL, NVIDIA Vulkan, and 120-second stability checks with runtimeClass nvidia. Exact-source collection completed reset, 734 dense failed-only rows, the native Warp gravity receipt, and the ordered expert physics sequence, but camera admission rejected every attempt. Historical source also loaded the real checkpoint and ran fixed-noise inference, not closed-loop control. Typed capacity evidence records that an eight-GPU node was not placed; no eight-GPU or multi-host training claim is made. Revised source/images have not run live. The interpreter has no finally/on_failure transition, so an owned failure monitor or real failure transition remains required before service operation. No admitted expert dataset, fine-tuning, adapted gold, MP4, or Rerun success result exists.",
+      "reason": "The isolated route has two one-GPU RTX PRO 6000 workers that passed CUDA, GLX/EGL, NVIDIA Vulkan, and 120-second stability checks with runtimeClass nvidia. Exact-source train-size collection admitted eight of eight expert demonstrations and verified 808 dense causal rows, but the run used a separately identified historical Isaac image with a source overlay rather than final same-source image bytes. Historical source also loaded the real checkpoint and ran fixed-noise inference, not closed-loop control. Typed capacity evidence records that an eight-GPU node was not placed; no eight-GPU or multi-host training claim is made. The interpreter has no finally/on_failure transition, so an owned failure monitor or real failure transition remains required before service operation. Validation/gold collection, dataset export, fine-tuning, selected-checkpoint reload, matched closed-loop ablations, MP4 and Rerun outputs remain unverified.",
       "evidence": [
         "Sanitized private helper preflight, image-launch, and reset-failure receipts are retained outside Git; no live resource identifiers are committed."
       ]

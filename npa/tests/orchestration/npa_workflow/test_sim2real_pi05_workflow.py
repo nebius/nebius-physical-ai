@@ -2,10 +2,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from npa.orchestration.npa_workflow.interpreter import build_plan
 from npa.orchestration.npa_workflow.scheduler import build_scheduler_task
 from npa.orchestration.npa_workflow.spec import load_spec
 from npa.orchestration.npa_workflow.submit_matrix import SUBMIT_LIVE_MATRIX
+from npa.workflows.sim2real.pi05_closed_loop import _validate_gold_scenarios
+from npa.workflows.sim2real.pi05_collect_all import SPLITS
+from npa.workflows.sim2real.pi05_isaac import support_surface_contract
 
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -178,6 +183,37 @@ def test_gold_controller_states_share_exact_protocol_inputs() -> None:
     assert _value(base, "--wrist-ablation-modes") == (
         "fresh,frozen,pixel_channel_shuffle"
     )
+
+
+def test_default_split_seeds_match_collector_and_gold_validator() -> None:
+    spec = load_spec(SPEC)
+    plan = {step.state: step for step in build_plan(spec, run_id="split-seeds").steps}
+    expert_seed = int(spec.config["expert_seed"])
+    validation_seed = expert_seed + int(SPLITS["validation"]["seed_offset"])
+    gold_seed = expert_seed + int(SPLITS["gold"]["seed_offset"])
+    scenarios = [_gold_scenario(gold_seed + index) for index in range(8)]
+
+    assert validation_seed == 20271007
+    assert int(spec.config["gold_seed"]) == gold_seed == 20281007
+    assert int(_value(plan["collect-expert"].argv, "--seed")) == expert_seed
+    assert int(_value(plan["evaluate-base-gold"].argv, "--seed")) == gold_seed
+    assert int(_value(plan["evaluate-adapted-gold"].argv, "--seed")) == gold_seed
+    _validate_gold_scenarios(scenarios, gold_seed)
+    with pytest.raises(RuntimeError, match="scenario seed"):
+        _validate_gold_scenarios(scenarios, validation_seed)
+
+
+def _gold_scenario(seed: int) -> dict:
+    return {
+        "scene_seed": seed,
+        "initial_object_position_m": [0.5, -0.1, 0.024],
+        "target_position_m": [0.5, 0.18, 0.024],
+        "destination_marker": {
+            "semantic_label": "pi05_destination_marker",
+            "physics_collision": False,
+        },
+        "support_surface": support_surface_contract(),
+    }
 
 
 def test_declared_outputs_include_real_dataset_checkpoint_video_and_rrd() -> None:

@@ -48,7 +48,7 @@ config:
   expert_seed: "20261007"
   object_usd: ""
   gold_episodes: "8"
-  gold_seed: "20271007"
+  gold_seed: "20281007"
   eval_decisions: "24"
   wrist_ablation_modes: fresh,frozen,pixel_channel_shuffle
   wrist_ablation_seed: "20271008"
