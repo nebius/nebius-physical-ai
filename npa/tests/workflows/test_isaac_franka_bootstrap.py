@@ -2,6 +2,7 @@
 
 from types import SimpleNamespace
 import copy
+import sys
 
 import pytest
 
@@ -241,6 +242,71 @@ def test_transport_targets_preserve_measured_cube_to_gripper_offset():
     assert torch.equal(target[1:3], objects[1:3])
     assert torch.equal(target[3], lift_targets[3])
     assert torch.allclose(target[4], goals[4] + offsets[4])
+
+
+def _placement_teacher_fixture(torch):
+    objects = torch.tensor([[0.049, 0.0, 0.0], [0.05, 0.0, 0.0], [0.049, 0.0, 0.0]])
+    velocities = torch.tensor([[0.029, 0.0, 0.0], [0.0, 0.0, 0.0], [0.03, 0.0, 0.0]])
+    task = SimpleNamespace(
+        scene={
+            "object": SimpleNamespace(
+                data=SimpleNamespace(
+                    root_pos_w=objects,
+                    root_lin_vel_w=velocities,
+                )
+            ),
+            "robot": SimpleNamespace(
+                data=SimpleNamespace(
+                    root_pos_w=torch.zeros(3, 3),
+                    root_quat_w=torch.tensor([[1.0, 0.0, 0.0, 0.0]]).repeat(3, 1),
+                )
+            ),
+            "ee_frame": SimpleNamespace(
+                data=SimpleNamespace(
+                    target_pos_w=objects.unsqueeze(1),
+                )
+            ),
+        },
+        command_manager=SimpleNamespace(
+            get_command=lambda name: {
+                "object_pose": torch.zeros(3, 7),
+            }[name]
+        ),
+        npa_scenario_indices=torch.tensor([2, 4, 0]),
+    )
+    teacher = bootstrap._FrankaTeacher.__new__(bootstrap._FrankaTeacher)
+    teacher.task = task
+    teacher.stable_steps = torch.zeros(3, dtype=torch.long)
+    teacher.successful_rows = torch.zeros(5, dtype=torch.bool)
+    return teacher
+
+
+def test_teacher_uses_shared_strict_placement_state_and_consecutive_dwell(monkeypatch):
+    torch = pytest.importorskip("torch")
+    from npa.workflows.sim2real import isaac_scenario_task
+
+    monkeypatch.setitem(sys.modules, "isaac_scenario_task", isaac_scenario_task)
+    monkeypatch.setitem(
+        sys.modules,
+        "isaaclab.utils.math",
+        SimpleNamespace(
+            combine_frame_transforms=lambda position, rotation, target: (
+                position + target,
+                rotation,
+            ),
+        ),
+    )
+    teacher = _placement_teacher_fixture(torch)
+    teacher._record_stable_placements()
+    teacher._record_stable_placements()
+    assert not teacher.successful_rows.any()
+    teacher.task.scene["object"].data.root_lin_vel_w[0, 0] = 0.04
+    teacher._record_stable_placements()
+    assert teacher.stable_steps.tolist() == [0, 0, 0]
+    teacher.task.scene["object"].data.root_lin_vel_w[0, 0] = 0.029
+    for _ in range(3):
+        teacher._record_stable_placements()
+    assert teacher.successful_rows.tolist() == [False, False, True, False, False]
 
 
 def test_native_rsl_actor_learns_demonstration_actions_without_a_controller(

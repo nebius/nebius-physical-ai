@@ -135,12 +135,18 @@ class _FrankaTeacher:
         import torch
         import isaac_scenario_task
 
-        distance, speed, _, _ = isaac_scenario_task._placement_state(self.task)
-        stable = (distance < 0.05) & (speed < 0.03)
+        distance, speed, _, _ = isaac_scenario_task._placement_state(
+            self.task, command_name="object_pose", object_name="object"
+        )
+        stable = (distance < isaac_scenario_task.STABLE_PLACEMENT_DISTANCE_M) & (
+            speed < isaac_scenario_task.STABLE_PLACEMENT_SPEED_MPS
+        )
         self.stable_steps = torch.where(
             stable, self.stable_steps + 1, torch.zeros_like(self.stable_steps)
         )
-        rows = self.task.npa_scenario_indices[self.stable_steps >= 3]
+        rows = self.task.npa_scenario_indices[
+            self.stable_steps >= isaac_scenario_task.STABLE_PLACEMENT_STEPS
+        ]
         self.successful_rows[rows] = True
 
     def _advance(self, tcp, object_position, target):
