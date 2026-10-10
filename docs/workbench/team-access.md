@@ -305,14 +305,15 @@ scheduler observation is unknown or still active, including driver failures.
 The HTTP API uses the same key as a bearer credential. A raw client should read
 the private file only long enough to make its request, then discard the value.
 For example, a user can retrieve their own run status without receiving access
-to the scheduler:
+to the scheduler. Pass the authorization header on stdin so the key does not
+appear in curl's process arguments:
 
 ```bash
-TEAM_TOKEN="$(<"$TEAM_KEY_FILE")"
-curl --fail-with-body \
-  --header "Authorization: Bearer $TEAM_TOKEN" \
+{
+  printf 'Authorization: Bearer '
+  cat "$TEAM_KEY_FILE"
+} | curl --fail-with-body --header @- \
   "$NPA_TEAM_ENDPOINT/v1/runs/$RUN_ID"
-unset TEAM_TOKEN
 ```
 
 The SDK uses the same `TeamClient` boundary. It does not provide a second
