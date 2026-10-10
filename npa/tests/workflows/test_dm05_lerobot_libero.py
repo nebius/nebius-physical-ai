@@ -481,7 +481,7 @@ def test_opendm_private_runtime_manifest_and_bootstrap_are_exactly_bound():
     assert "checkout --detach 789b87f50d9fadc7663d2e8bac057941221aab81" in instructions
     assert "checkout --detach 8f1084e3132a39270c3a13ebe37270a43ece2a01" in instructions
     assert "apt-get install" not in instructions
-    assert "virtualenv==20.26.6" in instructions
+    assert "virtualenv==21.7.13" in instructions
     assert (
         "python3.10 -m virtualenv --no-download --python=/usr/bin/python3.10 "
         "/opt/opendm-venv"
@@ -492,7 +492,7 @@ def test_opendm_private_runtime_manifest_and_bootstrap_are_exactly_bound():
     ) in instructions
     bootstrap_block = instructions[
         instructions.index(
-            "RUN python3.10 -m pip install --no-cache-dir 'virtualenv==20.26.6'"
+            "RUN python3.10 -m pip install --no-cache-dir 'virtualenv==21.7.13'"
         ) : instructions.index("\n\nUSER ubuntu")
     ]
     opendm_dependencies_block = instructions[
@@ -507,6 +507,8 @@ def test_opendm_private_runtime_manifest_and_bootstrap_are_exactly_bound():
             "\n\n# The pinned parent includes a static, sample-media JWT URL"
         )
     ]
+    assert "'hydra-core==1.3.7'" in libero_dependencies_block
+    assert "hydra-core==1.2.0" not in libero_dependencies_block
     for environment, dependency_block in (
         ("/opt/opendm-venv", opendm_dependencies_block),
         ("/opt/libero-venv", libero_dependencies_block),

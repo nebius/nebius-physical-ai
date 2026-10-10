@@ -10,7 +10,7 @@ USER root
 # explicitly selects EGL below, so create its isolated Python environments with
 # a pinned virtualenv instead of mutating that resolver transaction.  No source,
 # model, or model cache is fetched here.
-RUN python3.10 -m pip install --no-cache-dir 'virtualenv==20.26.6' \
+RUN python3.10 -m pip install --no-cache-dir 'virtualenv==21.7.13' \
     && python3.10 -m virtualenv --no-download --python=/usr/bin/python3.10 /opt/opendm-venv \
     && python3.10 -m virtualenv --no-download --python=/usr/bin/python3.10 /opt/libero-venv \
     && install -d -m 0755 -o ubuntu -g ubuntu /opt/opendm /opt/dexbotic-benchmark \
@@ -68,7 +68,7 @@ RUN /opt/libero-venv/bin/python --version \
       'torch==2.11.0' 'torchvision==0.26.0' --index-url https://download.pytorch.org/whl/cu128 \
     && /opt/libero-venv/bin/python -m pip install --no-cache-dir \
       'bddl==1.0.1' 'cloudpickle==2.1.0' 'easydict==1.9' 'einops==0.4.1' 'future==1.0.0' \
-      'gym==0.25.2' 'hydra-core==1.2.0' 'imageio' 'matplotlib==3.5.3' 'numpy==1.22.4' \
+      'gym==0.25.2' 'hydra-core==1.3.7' 'imageio' 'matplotlib==3.5.3' 'numpy==1.22.4' \
       'omegaconf' 'opencv-python-headless==4.6.0.66' 'Pillow' 'requests' \
       'robomimic==0.2.0' 'robosuite==1.4.0' 'tqdm' \
     && /opt/libero-venv/bin/python -m pip install --no-cache-dir -e /opt/dexbotic-benchmark/libero \
