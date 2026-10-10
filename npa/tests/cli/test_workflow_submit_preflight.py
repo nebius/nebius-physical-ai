@@ -2946,11 +2946,12 @@ def test_sim2real_image_preflight_rejects_incomplete_bundle_before_probes(
 
 @pytest.mark.parametrize("namespace", ["manual-user", None])
 def test_sim2real_cache_preflight_uses_selected_context_namespace(
-    monkeypatch, namespace
+    monkeypatch, tmp_path, namespace
 ) -> None:
     from subprocess import CompletedProcess
 
     calls = []
+    kubeconfig = str(tmp_path / "user-kubeconfig")
     selected = {"namespace": namespace} if namespace else {}
 
     def reader(args, **kwargs):
@@ -2965,14 +2966,14 @@ def test_sim2real_cache_preflight_uses_selected_context_namespace(
         {"isaac_cache_pvc": "npa-isaac-cache"},
         runner=reader,
         context="user-context",
-        kubeconfig="/tmp/user-kubeconfig",
+        kubeconfig=kubeconfig,
         isaac_placements=None,
     )
 
     assert issues
     assert calls[0][1] == {
         "context": "user-context",
-        "kubeconfig": "/tmp/user-kubeconfig",
+        "kubeconfig": kubeconfig,
     }
     lookup, options = calls[-1]
     assert lookup[:3] == ["get", "pvc", "npa-isaac-cache"]
@@ -2980,7 +2981,9 @@ def test_sim2real_cache_preflight_uses_selected_context_namespace(
     assert options == {}
 
 
-def test_sim2real_cache_preflight_refuses_unreadable_context(monkeypatch) -> None:
+def test_sim2real_cache_preflight_refuses_unreadable_context(
+    monkeypatch, tmp_path
+) -> None:
     from subprocess import CompletedProcess
 
     monkeypatch.delenv("NPA_SIM2REAL_K8S_NAMESPACE", raising=False)
@@ -2993,7 +2996,7 @@ def test_sim2real_cache_preflight_refuses_unreadable_context(monkeypatch) -> Non
         {"isaac_cache_pvc": "npa-isaac-cache"},
         runner=calls.append,
         context="user-context",
-        kubeconfig="/tmp/user-kubeconfig",
+        kubeconfig=str(tmp_path / "user-kubeconfig"),
         isaac_placements=None,
     )
 
