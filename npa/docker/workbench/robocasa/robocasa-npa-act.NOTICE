@@ -4,19 +4,26 @@ Upstream: RoboCasa commit 8f3c96ec8d1bfcd8126cad2bca887da98d30e997
 Upstream license: MIT; its LICENSE includes a separate Apache-2.0 notice for
 partial DeepMind MuJoCo code.
 Upstream LICENSE SHA-256: 5da18670b3f00c59847b1ded9c28dee59940d963b1e03b528b0108d9c5a09885
-Local version: 1.0.0+npa3
+Local version: 1.0.0+npa4
 
-The local patch changes setup.py packaging metadata only. It identifies the
+The local patch changes setup.py packaging metadata and one compatibility import.
+It identifies the
 derivative, updates RoboCasa's LeRobot dependency from 0.3.3 to the separately
 reviewed 0.6.1+npa2 NPA ACT derivative, and removes tianshou 0.4.10 from the
 declared closure. Exact-source inspection found tianshou is imported only by
 upstream robocasa/scripts/bench_speed.py, a vectorized speed benchmark outside
 the NPA service and matched ACT rollout path. That upstream benchmark script is
-not qualified by this derivative. The patch changes no RoboCasa implementation,
-assets, task semantics, or simulator behavior. All dependencies used by the
+not qualified by this derivative. The compatibility import resolves write_info
+from lerobot.datasets.io_utils, its location in the pinned LeRobot derivative,
+so the native recorded-action playback module can import its data reader.
+No replay function, action ordering, reset, success predicate, assets, or
+simulator behavior changes. Dataset writing and unrelated upstream tools are
+not qualified by this import repair. All dependencies used by the
 qualified NPA service remain declared and resolver-checked.
 
-Only the repository's matched RoboCasa ACT rollout path is qualified. This does not
+The matched ACT path and native recorded-action reader/import controls are
+checked during image construction; task success still requires actual native
+rollouts. This does not
 claim upstream support for LeRobot 0.6.1 or qualify other RoboCasa policy, training,
 benchmark, or deployment paths.
 

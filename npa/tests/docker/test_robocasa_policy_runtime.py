@@ -242,18 +242,18 @@ def test_robocasa_uses_a_resolver_consistent_act_derivative() -> None:
     assert "ACT accepted a 15-wide state" in verifier
     assert "ACT accepted a checkpoint with missing weights" in verifier
 
-    assert 'npa.robocasa.derivative="1.0.0+npa3"' in dockerfile
+    assert 'npa.robocasa.derivative="1.0.0+npa4"' in dockerfile
     assert (
         'npa.robocasa.license.sha256="5da18670b3f00c59847b1ded9c28dee59940d963b1e03b528b0108d9c5a09885"'
         in dockerfile
     )
     assert (
-        'npa.robocasa.patch.sha256="8d43b8540fcaec6414928da68fbf7b33822b25bcbcf4fb2a8d7c03a57946cf88"'
+        'npa.robocasa.patch.sha256="ea97b69d3db52b23a9ab795347ff23644665dfe5ccbc18f5e5da1bea7cd97d49"'
         in dockerfile
     )
     assert '-        "tianshou==0.4.10",' in robocasa_patch
     assert '+        "lerobot==0.6.1+npa2",' in robocasa_patch
-    assert 'version="1.0.0+npa3"' in robocasa_patch
+    assert 'version="1.0.0+npa4"' in robocasa_patch
     assert "Upstream license: MIT" in robocasa_notice
     assert "partial DeepMind MuJoCo" in robocasa_notice
     assert (
@@ -262,9 +262,15 @@ def test_robocasa_uses_a_resolver_consistent_act_derivative() -> None:
     )
     assert "tianshou is imported only" in robocasa_notice
     assert "benchmark script is\nnot qualified" in robocasa_notice
-    assert robocasa_patch.count("diff --git") == 1
+    assert robocasa_patch.count("diff --git") == 2
     assert "diff --git a/setup.py b/setup.py" in robocasa_patch
-    assert "packaging metadata only" in robocasa_notice
+    assert "one compatibility import" in robocasa_notice
+    assert "+from lerobot.datasets.io_utils import (" in robocasa_patch
+    assert "verify_recorded_action_reader.py" in dockerfile
+    assert (
+        "&& python /opt/robocasa/derivative/verify_recorded_action_reader.py"
+        in dockerfile
+    )
     assert "does not\nclaim upstream support" in robocasa_notice
     robosuite_install = dockerfile.split(
         '"robosuite @ git+https://github.com/ARISE-Initiative/robosuite.git', 1
@@ -274,7 +280,7 @@ def test_robocasa_uses_a_resolver_consistent_act_derivative() -> None:
     )[1]
     assert "--no-deps" not in robosuite_install
     assert "--no-deps" not in robocasa_install
-    assert "version('robocasa') == '1.0.0+npa3'" in dockerfile
+    assert "version('robocasa') == '1.0.0+npa4'" in dockerfile
     assert (
         "5da18670b3f00c59847b1ded9c28dee59940d963b1e03b528b0108d9c5a09885  /opt/robocasa/source/LICENSE"
         in dockerfile

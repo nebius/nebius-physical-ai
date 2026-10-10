@@ -1090,7 +1090,7 @@ containers:
         for partial DeepMind MuJoCo, and Apache-2.0 robosuite (pinned commit) plus the
         exact MuJoCo 3.3.1 / Gymnasium 0.29.1 / PyTorch 2.13 cu129 closure.
         RoboCasa is rebuilt from its exact source as the packaging-only
-        1.0.0+npa3 ACT derivative, binding its declared LeRobot requirement to the
+        1.0.0+npa4 ACT derivative, binding its declared LeRobot requirement to the
         exact upstream LeRobot v0.6.1 source rebuilt as 0.6.1+npa2. Datasets 5.0.1
         supplies the tested folder-metadata path validation. Their
         declared dependency closure matches the installed fixed runtime and passes

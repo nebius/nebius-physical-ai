@@ -82,10 +82,14 @@ The `0.1.1` candidate recipe uses a CUDA 12.9 runtime base without inherited
 cuDNN or development toolkits, with the pinned PyTorch 2.13.0+cu129
 runtime; this is the first available CUDA 12 wheel set that clears the declared
 Torch dependency vulnerabilities. The image rebuilds exact upstream RoboCasa
-and LeRobot sources as locally versioned `1.0.0+npa3` and `0.6.1+npa2`
-derivatives. Their packaging-only patches bind RoboCasa's ACT path to the
+and LeRobot sources as locally versioned `1.0.0+npa4` and `0.6.1+npa2`
+derivatives. Their packaging patches bind RoboCasa's ACT path to the
 reviewed LeRobot derivative and declare the fixed Torch pair and Gymnasium/OpenCV
-closure. Datasets is locked to 5.0.1 for the upstream folder-metadata
+closure. The RoboCasa patch also resolves the native recorded-action reader's
+`write_info` import from LeRobot's `datasets.io_utils`; it changes no replay,
+action ordering, reset, or task-success implementation. This import/reader check
+does not prove GPU replay or qualify upstream dataset writing.
+Datasets is locked to 5.0.1 for the upstream folder-metadata
 path-containment security fix; the derivative's dataset-extra metadata declares
 that compatible major version. The RoboCasa derivative omits tianshou because its sole exact-source
 import is the unqualified vectorized speed-benchmark script; the NPA service and
