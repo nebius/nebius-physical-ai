@@ -1,4 +1,4 @@
-"""npa.workbench.intrinsic - Intrinsic Core workbench toolRef.
+"""Host-local Intrinsic Core read-only validation helpers.
 
 Read-only validation of an Intrinsic Core deployment (Apache 2.0, announced
 at ROSCon 2026): host/runtime preflight, ICON real-time control status, and
@@ -9,7 +9,9 @@ Honest surface: everything here is a probe. Mutating cluster operations —
 and friends — are deliberately not exposed.
 
 The CLI (:mod:`npa.cli.workbench.intrinsic`) is a thin client; this module is
-the primary SDK surface and never goes through ``make_cli_wrapper``.
+the primary SDK surface and never goes through ``make_cli_wrapper``. These
+helpers inspect local host state (k3s, ROS, and ``inctl``), so they are not
+workflow ``toolRef`` stages and must run on the Intrinsic Core host.
 """
 
 from __future__ import annotations
@@ -21,9 +23,6 @@ import shutil
 import socket
 import subprocess
 from typing import Any
-
-#: toolRef identity for this workbench module.
-TOOLREF = "workbench.intrinsic"
 
 #: ROS 2 distribution Intrinsic Core requires.
 SUPPORTED_ROS_DISTRO = "lyrical"
@@ -51,7 +50,17 @@ _ERROR_MARKERS = ("STATE_CODE_ERROR", "ERROR")
 
 
 def resolve_address(address: str | None = None) -> str:
-    """Resolve the Intrinsic ingress address (explicit > env > default)."""
+    """Resolve the Intrinsic ingress address (explicit > env > default).
+
+    Args:
+        address: Optional explicit ``host:port`` address.
+
+    Returns:
+        The stripped explicit, environment, or default address.
+
+    Raises:
+        None.
+    """
     return (address or os.environ.get(ADDRESS_ENV) or DEFAULT_ADDRESS).strip()
 
 
@@ -270,9 +279,16 @@ def _check_service_state(address: str) -> dict[str, Any]:
 def preflight(address: str | None = None) -> dict[str, Any]:
     """Check Intrinsic Core host + runtime prerequisites.
 
-    Returns ``{"ok", "detail", "address", "supported_distro", "checks",
-    "warnings"}``. Never raises for a missing environment — callers decide
-    how to surface the failure (the CLI exits 3 with remediation).
+    Args:
+        address: Optional explicit Intrinsic ingress ``host:port`` address.
+
+    Returns:
+        A mapping with ``ok``, ``detail``, ``address``, ``supported_distro``,
+        ``checks``, and ``warnings``. Missing local prerequisites become failed
+        checks so the CLI can report remediation.
+
+    Raises:
+        None.
     """
     resolved = resolve_address(address)
     checks: list[dict[str, Any]] = []
@@ -321,8 +337,16 @@ def icon_status(
 ) -> dict[str, Any]:
     """Read-only ICON real-time control status via ``inctl icon status``.
 
-    Returns ``{"ok", "detail", "instance", "address", "excerpt"}``. Never
-    raises for a missing environment.
+    Args:
+        address: Optional explicit Intrinsic ingress ``host:port`` address.
+        instance_name: ICON instance passed to ``inctl``.
+
+    Returns:
+        A mapping with ``ok``, ``detail``, ``instance``, ``address``, and an
+        output excerpt. Missing local prerequisites produce ``ok: false``.
+
+    Raises:
+        None.
     """
     resolved = resolve_address(address)
     if not shutil.which("inctl"):
@@ -383,6 +407,16 @@ def world_probe(address: str | None = None) -> dict[str, Any]:
     state and is deliberately not used). This probe checks TCP ingress and
     then looks for a world/ObjectWorld entry in the read-only
     ``inctl service state list`` output. Never mutates state.
+
+    Args:
+        address: Optional explicit Intrinsic ingress ``host:port`` address.
+
+    Returns:
+        A mapping with ``ok``, ``detail``, ``address``, and
+        ``world_service_found``.
+
+    Raises:
+        None.
     """
     resolved = resolve_address(address)
     ingress = _check_ingress(resolved)
@@ -418,7 +452,6 @@ def world_probe(address: str | None = None) -> dict[str, Any]:
 
 
 __all__ = [
-    "TOOLREF",
     "SUPPORTED_ROS_DISTRO",
     "ADDRESS_ENV",
     "DEFAULT_ADDRESS",

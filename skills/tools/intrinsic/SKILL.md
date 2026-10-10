@@ -10,7 +10,7 @@ open industrial-robotics stack: a k3s-packaged local runtime, the ICON
 real-time control engine, motion/grasp planning, FoundationPose 6-DoF
 perception, and ROS 2 interoperability (requires ROS 2 Lyrical Luth).
 
-The toolRef intentionally exposes only what is real and read-only:
+The host-only CLI/SDK intentionally exposes only what is real and read-only:
 
 - `preflight`: host checks (Ubuntu >= 22.04, `ROS_DISTRO=lyrical`, k3s,
   `inctl` on PATH, GPU warning) plus runtime checks (k3s pods, TCP
@@ -28,9 +28,11 @@ The toolRef intentionally exposes only what is real and read-only:
 - CLI: `npa workbench intrinsic preflight --help`
 - Python SDK (workbench-first): `npa.workbench.intrinsic`
   (`preflight`, `icon_status`, `world_probe`)
-- Catalog toolRefs: `workbench.intrinsic.preflight`,
-  `workbench.intrinsic.icon_status`, `workbench.intrinsic.world_probe`
-  (`npa workbench intrinsic <command>`)
+
+These probes are **not** `npa.workflow` toolRefs: they inspect local host
+state (`systemctl`, k3s, ROS, and the local `inctl` installation). Run them
+directly on an Intrinsic Core host. A generic workflow pod would observe its
+own environment rather than the target runtime.
 
 ## Conventions
 

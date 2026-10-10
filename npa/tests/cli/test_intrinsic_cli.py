@@ -1,4 +1,4 @@
-"""Tests for the Intrinsic Core workbench toolRef (issue #816).
+"""Tests for the Intrinsic Core host-only workbench CLI (issue #816).
 
 Honest surface: ``preflight`` (host + runtime probes), ``icon-status``
 (read-only ICON status), and ``world-probe`` (read-only digital-twin
@@ -98,6 +98,7 @@ def test_app_help_is_honest():
     result = runner.invoke(_nested_app(), ["workbench", "intrinsic", "--help"])
     assert result.exit_code == 0, result.output
     assert "preflight" in result.output
+    assert "host-only" in result.output
     assert "not exposed" in result.output
 
 
@@ -115,11 +116,9 @@ def test_workbench_surface_is_first_class():
     assert callable(module.preflight)
     assert callable(module.icon_status)
     assert callable(module.world_probe)
-    assert module.TOOLREF == "workbench.intrinsic"
     assert module.SUPPORTED_ROS_DISTRO == "lyrical"
     assert not hasattr(module.preflight, "__npa_cli_module__")
     assert set(module.__all__) == {
-        "TOOLREF",
         "SUPPORTED_ROS_DISTRO",
         "ADDRESS_ENV",
         "DEFAULT_ADDRESS",
@@ -348,24 +347,13 @@ def test_world_probe_ingress_down(monkeypatch):
     assert payload["ok"] is False
 
 
-def test_toolref_argv_is_exact():
-    from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+def test_host_only_surface_is_not_a_workflow_toolref():
+    from npa.orchestration.npa_workflow.catalog import (
+        PUBLIC_REUSABLE_TOOLREFS,
+        TOOL_CATALOG,
+    )
 
-    assert TOOL_CATALOG["workbench.intrinsic.preflight"].argv_template == [
-        "npa",
-        "workbench",
-        "intrinsic",
-        "preflight",
-    ]
-    assert TOOL_CATALOG["workbench.intrinsic.icon_status"].argv_template == [
-        "npa",
-        "workbench",
-        "intrinsic",
-        "icon-status",
-    ]
-    assert TOOL_CATALOG["workbench.intrinsic.world_probe"].argv_template == [
-        "npa",
-        "workbench",
-        "intrinsic",
-        "world-probe",
-    ]
+    assert not any(name.startswith("workbench.intrinsic.") for name in TOOL_CATALOG)
+    assert not any(
+        name.startswith("workbench.intrinsic.") for name in PUBLIC_REUSABLE_TOOLREFS
+    )

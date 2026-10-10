@@ -1,4 +1,4 @@
-"""Intrinsic Core workbench toolRef: read-only deployment validation.
+"""Host-local Intrinsic Core read-only deployment validation.
 
 This module intentionally exposes only what is real and read-only:
 
@@ -14,7 +14,8 @@ Mutating operations (``inctl world reset``, ``asset install``,
 ``icon clear-faults``, ...) are not implemented and are not exposed.
 
 The CLI is a thin client: probing logic lives in
-:mod:`npa.workbench.intrinsic`.
+:mod:`npa.workbench.intrinsic`. It must run on the Intrinsic Core host; it is
+not an ``npa.workflow`` toolRef because it inspects local host state.
 """
 
 from __future__ import annotations
@@ -32,7 +33,7 @@ console = Console()
 app = typer.Typer(
     name="intrinsic",
     help=(
-        "Intrinsic Core read-only validation: preflight, ICON status, "
+        "Intrinsic Core host-only, read-only validation: preflight, ICON status, "
         "and digital-twin reachability (mutating operations not exposed)."
     ),
     no_args_is_help=True,
@@ -60,7 +61,17 @@ def preflight_cmd(
         DEFAULT_ADDRESS, "--address", envvar=ADDRESS_ENV, help=_ADDRESS_HELP
     ),
 ) -> dict[str, Any]:
-    """Check Intrinsic Core prerequisites; fail fast with remediation if unusable."""
+    """Check local Intrinsic Core prerequisites.
+
+    Args:
+        address: Intrinsic ingress address for read-only runtime probes.
+
+    Returns:
+        The successful preflight payload.
+
+    Raises:
+        typer.Exit: With code 3 after printing remediation for a failed check.
+    """
     payload = intrinsic_workbench.preflight(address=address)
     if payload["ok"]:
         console.print(f"[green]Intrinsic preflight OK:[/green] {payload['detail']}")
@@ -86,7 +97,18 @@ def icon_status_cmd(
         "icon", "--instance-name", help="ICON instance name."
     ),
 ) -> dict[str, Any]:
-    """Report read-only ICON real-time control status."""
+    """Report read-only ICON real-time control status.
+
+    Args:
+        address: Intrinsic ingress address.
+        instance_name: ICON instance name.
+
+    Returns:
+        The successful ICON status payload.
+
+    Raises:
+        typer.Exit: With code 3 after a failed read-only status query.
+    """
     payload = intrinsic_workbench.icon_status(
         address=address, instance_name=instance_name
     )
@@ -108,7 +130,17 @@ def world_probe_cmd(
         DEFAULT_ADDRESS, "--address", envvar=ADDRESS_ENV, help=_ADDRESS_HELP
     ),
 ) -> dict[str, Any]:
-    """Probe digital-twin (world) reachability without mutating state."""
+    """Probe digital-twin (world) reachability without mutating state.
+
+    Args:
+        address: Intrinsic ingress address.
+
+    Returns:
+        The successful world-probe payload.
+
+    Raises:
+        typer.Exit: With code 3 after a failed read-only reachability query.
+    """
     payload = intrinsic_workbench.world_probe(address=address)
     if payload["ok"]:
         console.print(f"[green]World probe OK:[/green] {payload['detail']}")

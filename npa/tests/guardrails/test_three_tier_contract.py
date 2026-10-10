@@ -961,11 +961,10 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         "groot",
         "health",
         "insights",
-        # Intrinsic Core read-only probes (preflight, ICON status,
-        # digital-twin reachability): no service tier and no npa.workflow
-        # stage surface, so there is no YAML env block to keep coherent.
-        # CLI <-> SDK <-> catalog argv coherence is enforced by
-        # test_tool_catalog_argv.py instead.
+        # Intrinsic Core probes inspect the local ROS, k3s, and inctl host.
+        # They deliberately have no service tier or npa.workflow toolRef:
+        # a generic workflow pod would inspect itself rather than the Core
+        # host. The host CLI and SDK share one implementation.
         "intrinsic",
         "isaac-lab",
         "lancedb",
