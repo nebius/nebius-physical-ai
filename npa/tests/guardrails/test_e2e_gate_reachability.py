@@ -25,6 +25,18 @@ def metadata_live_contract() -> dict[str, object]:
 # These specialized suites intentionally remain operator-invoked. The reason is
 # machine-reviewed here instead of letting an environment gate silently rot.
 MANUAL_GATES = {
+    "NPA_POLICY_PUBLIC_RESULTS": (
+        "verifies same-run training, both gates, independent GPU serving and standalone HTML; "
+        "collect the standard runtime artifacts with the public policy workflow cookbook"
+    ),
+    "NPA_PUBLIC_VLA_RESULTS": (
+        "verifies collected artifacts from an operator-launched real SmolVLA GPU training "
+        "and LIBERO evaluation run; use the public VLA cookbook"
+    ),
+    "NPA_E2E_POLICY_DEMO": (
+        "local policy contract demo requires FiftyOne, Playwright Chromium, ffmpeg, "
+        "and an isolated artifact directory; run the cookbook's documented E2E command"
+    ),
     "NPA_PAIDF_VARIANT_RECOVERY_LIVE_CONFIG": (
         "read-only immutable native variant verification requires an owner-selected "
         "completed candidate-source PAIDF run and private fresh-run configuration"

@@ -2766,6 +2766,12 @@ def test_default_npa_setup_has_optin_source_overlay() -> None:
     assert setup.index("PYTHONPATH=/tmp/npa-src-overlay/src") < setup.index(
         "npa_pip_install -e /tmp/npa-src-overlay --no-deps"
     )
+    # A thin image's incomplete source must not fail before the explicitly
+    # selected complete source is downloaded.
+    assert (
+        'if ! command -v npa >/dev/null 2>&1 && { [ "$NPA_SRC_OVERLAY" != "1" ] '
+        '|| [ -z "$NPA_SRC_S3_URI" ]; }; then' in setup
+    )
 
 
 def test_default_npa_setup_installs_the_image_local_runtime_source_first() -> None:
@@ -2783,7 +2789,7 @@ def test_default_npa_setup_installs_the_image_local_runtime_source_first() -> No
     assert (
         setup.index("npa_pip_install -e /opt/npa")
         < setup.index("npa_pip_install -e /opt/nebius-physical-ai/npa")
-        < setup.index("NPA_SRC_S3_URI")
+        < setup.index("uri = os.environ['NPA_SRC_S3_URI']")
     )
 
 
