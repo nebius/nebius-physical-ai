@@ -54,6 +54,14 @@
       "pybullet==3.2.7"
     ],
     "validation_system_packages": ["libxrender1"],
+    "trellis_attention_runtime": {
+      "xformers_version": "0.0.32.post2",
+      "fa3_enabled": false,
+      "dense_backend": "xformers",
+      "sparse_attention_backend": "xformers",
+      "expected_dispatch_prefix": "fa2F",
+      "cuda_capability": [12, 0]
+    },
     "credential_envs": ["NEBIUS_TOKEN_FACTORY_KEY", "NPA_TOKEN_FACTORY_API_KEY"],
     "baked": {
       "source": false,

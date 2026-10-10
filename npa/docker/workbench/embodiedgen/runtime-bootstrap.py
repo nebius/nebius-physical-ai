@@ -31,6 +31,7 @@ UPSTREAM_INSTALL_BASIC_SHA256 = (
 PIP_REQUIREMENT = "pip==24.0"
 CUDA_VARIANT = "cu128"
 TORCH_INDEX_URL = f"https://download.pytorch.org/whl/{CUDA_VARIANT}"
+XFORMERS_VERSION = "0.0.32.post2"
 RUNTIME_CONTRACT = {
     "python": "3.12",
     "pip": PIP_REQUIREMENT,
@@ -38,6 +39,14 @@ RUNTIME_CONTRACT = {
     "torch_index_url": TORCH_INDEX_URL,
     "torch_cuda_arch_list": "12.0",
     "tcnn_cuda_architectures": "120",
+}
+TRELLIS_ATTENTION_RUNTIME_CONTRACT = {
+    "xformers_version": XFORMERS_VERSION,
+    "fa3_enabled": False,
+    "dense_backend": "xformers",
+    "sparse_attention_backend": "xformers",
+    "expected_dispatch_prefix": "fa2F",
+    "cuda_capability": [12, 0],
 }
 
 # EmbodiedGen's pinned requirements.txt names these validation dependencies but
@@ -118,6 +127,121 @@ with tempfile.TemporaryDirectory() as directory:
     assert len(decoded) == 1 and decoded[0].shape == frame.shape
 """
 
+# This runs after the pinned runtime installs and before model bytes are fetched.
+# It imports the patched upstream EmbodiedGen boundary, then executes the exact
+# xFormers dense and BlockDiagonalMask paths TRELLIS selects on the RTX worker.
+TRELLIS_ATTENTION_RUNTIME_PROBE = """import json
+from contextlib import redirect_stdout
+from io import StringIO
+
+import torch
+import torch.nn.functional as functional
+import xformers
+import xformers.ops as xops
+from xformers.ops import fmha
+from xformers.ops.fmha.attn_bias import BlockDiagonalMask
+
+from embodied_gen.utils.monkey_patch.trellis import monkey_path_trellis
+
+
+def sdpa_reference(query, key, value):
+    return functional.scaled_dot_product_attention(
+        query.transpose(1, 2), key.transpose(1, 2), value.transpose(1, 2)
+    ).transpose(1, 2)
+
+
+if not torch.cuda.is_available():
+    raise RuntimeError("TRELLIS attention probe requires a CUDA GPU")
+if xformers.__version__ != "0.0.32.post2":
+    raise RuntimeError("unexpected xFormers version for TRELLIS attention probe")
+
+with redirect_stdout(StringIO()):
+    monkey_path_trellis()
+    from thirdparty.TRELLIS.trellis.modules import attention as dense_attention
+    from thirdparty.TRELLIS.trellis.modules import sparse as sparse_attention
+
+if fmha._get_use_fa3() is not False:
+    raise RuntimeError("EmbodiedGen did not disable xFormers FA3 before TRELLIS imports")
+if dense_attention.BACKEND != "xformers" or sparse_attention.ATTN != "xformers":
+    raise RuntimeError("EmbodiedGen TRELLIS attention backend changed unexpectedly")
+if list(torch.cuda.get_device_capability(0)) != [12, 0]:
+    raise RuntimeError("TRELLIS attention probe requires RTX PRO 6000 capability 12.0")
+
+torch.manual_seed(20261010)
+device = torch.device("cuda")
+dtype = torch.float16
+q_lengths, kv_lengths = [11, 17], [13, 19]
+cases = {
+    "dense_self": (
+        torch.randn((1, 32, 4, 64), device=device, dtype=dtype),
+        torch.randn((1, 32, 4, 64), device=device, dtype=dtype),
+        torch.randn((1, 32, 4, 64), device=device, dtype=dtype),
+        None,
+    ),
+    "dense_cross": (
+        torch.randn((1, 19, 4, 64), device=device, dtype=dtype),
+        torch.randn((1, 27, 4, 64), device=device, dtype=dtype),
+        torch.randn((1, 27, 4, 64), device=device, dtype=dtype),
+        None,
+    ),
+    "block_diagonal": (
+        torch.randn((1, sum(q_lengths), 4, 64), device=device, dtype=dtype),
+        torch.randn((1, sum(kv_lengths), 4, 64), device=device, dtype=dtype),
+        torch.randn((1, sum(kv_lengths), 4, 64), device=device, dtype=dtype),
+        BlockDiagonalMask.from_seqlens(q_lengths, kv_lengths),
+    ),
+}
+dispatches = {}
+finite = {}
+errors = {}
+for name, (query, key, value, bias) in cases.items():
+    dispatches[name] = fmha.dispatch._dispatch_fw(
+        fmha.Inputs(query, key, value, attn_bias=bias), needs_gradient=False
+    ).NAME
+    actual = xops.memory_efficient_attention(query, key, value, attn_bias=bias)
+    torch.cuda.synchronize()
+    finite[name] = bool(torch.isfinite(actual).all().item())
+    if bias is None:
+        reference = sdpa_reference(query, key, value)
+    else:
+        pieces = []
+        q_start = kv_start = 0
+        for q_length, kv_length in zip(q_lengths, kv_lengths, strict=True):
+            pieces.append(
+                sdpa_reference(
+                    query[:, q_start : q_start + q_length],
+                    key[:, kv_start : kv_start + kv_length],
+                    value[:, kv_start : kv_start + kv_length],
+                )
+            )
+            q_start += q_length
+            kv_start += kv_length
+        reference = torch.cat(pieces, dim=1)
+    torch.cuda.synchronize()
+    errors[name] = float((actual.float() - reference.float()).abs().max().item())
+    if not finite[name] or errors[name] > 0.05:
+        raise RuntimeError("TRELLIS xFormers attention did not match synchronized SDPA")
+if any(not name.startswith("fa2F") for name in dispatches.values()):
+    raise RuntimeError("TRELLIS xFormers did not dispatch the FA2 fallback")
+
+print(
+    json.dumps(
+        {
+            "status": "ok",
+            "xformers_version": xformers.__version__,
+            "fa3_enabled": fmha._get_use_fa3(),
+            "dense_backend": dense_attention.BACKEND,
+            "sparse_attention_backend": sparse_attention.ATTN,
+            "capability": list(torch.cuda.get_device_capability(0)),
+            "dispatches": dispatches,
+            "finite": finite,
+            "max_abs_error_vs_sdpa": errors,
+        },
+        sort_keys=True,
+    )
+)
+"""
+
 
 def _read_manifest(path: Path) -> dict[str, Any]:
     payload = json.loads(path.read_text(encoding="utf-8"))
@@ -144,6 +268,8 @@ def _read_manifest(path: Path) -> dict[str, Any]:
         raise ValueError("unexpected EmbodiedGen validation dependency contract")
     if runtime.get("validation_system_packages") != list(VALIDATION_SYSTEM_PACKAGES):
         raise ValueError("unexpected EmbodiedGen validation system package contract")
+    if runtime.get("trellis_attention_runtime") != TRELLIS_ATTENTION_RUNTIME_CONTRACT:
+        raise ValueError("unexpected EmbodiedGen attention runtime contract")
     return payload
 
 
@@ -369,6 +495,38 @@ def _patch_token_factory_image_mime(source: Path) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def _patch_trellis_xformers_fa3(source: Path) -> None:
+    """Disable xFormers FA3 before the pinned upstream imports TRELLIS.
+
+    The selected xFormers wheel dispatches FA3 on capability 12.0 by default,
+    but the Hopper FA3 launch rejects the real TRELLIS shapes on the RTX PRO
+    6000.  Keep EmbodiedGen's existing xFormers dense and sparse backend choice
+    and use its supported version-bound FA2 fallback instead.  This exact-text
+    patch fails closed if the upstream monkey-patch import boundary changes.
+    """
+
+    path = source / "embodied_gen" / "utils" / "monkey_patch" / "trellis.py"
+    text = path.read_text(encoding="utf-8")
+    old = """    sys.path.append(os.path.join(current_dir, "../../.."))
+
+    from thirdparty.TRELLIS.trellis.representations import Gaussian
+"""
+    new = """    sys.path.append(os.path.join(current_dir, "../../.."))
+
+    import xformers
+    from xformers.ops.fmha import _set_use_fa3
+
+    if xformers.__version__ != "0.0.32.post2":
+        raise RuntimeError("unexpected xFormers version for the TRELLIS FA3 guard")
+    _set_use_fa3(False)
+
+    from thirdparty.TRELLIS.trellis.representations import Gaussian
+"""
+    if old not in text:
+        raise RuntimeError("upstream TRELLIS monkey-patch import boundary changed")
+    path.write_text(text.replace(old, new), encoding="utf-8")
+
+
 def _prepare(cache: Path) -> tuple[Path, Path]:
     runtime = cache / RUNTIME_NAME
     source, venv = runtime / "source", runtime / "venv"
@@ -378,6 +536,7 @@ def _prepare(cache: Path) -> tuple[Path, Path]:
     _install_trellis(source)
     _patch_trellis_only_import(source)
     _patch_token_factory_image_mime(source)
+    _patch_trellis_xformers_fa3(source)
     _pin_install_script(source)
     if not (venv / "bin" / "python").is_file():
         _run([sys.executable, "-m", "venv", str(venv)])
@@ -435,6 +594,75 @@ def _verify_validation_runtime(venv: Path, cache: Path) -> None:
         [str(venv / "bin" / "python"), "-c", VALIDATION_RUNTIME_PROBE],
         env=_venv_environment(venv, cache),
     )
+
+
+def _verify_trellis_attention_runtime(source: Path, venv: Path, cache: Path) -> Path:
+    """Prove the patched FA2 dispatch before fetching model bytes."""
+
+    completed = subprocess.run(
+        [str(venv / "bin" / "python"), "-c", TRELLIS_ATTENTION_RUNTIME_PROBE],
+        cwd=source,
+        env=_venv_environment(venv, cache),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode:
+        sys.stdout.write(completed.stdout)
+        sys.stderr.write(completed.stderr)
+        raise subprocess.CalledProcessError(
+            completed.returncode,
+            completed.args,
+            output=completed.stdout,
+            stderr=completed.stderr,
+        )
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError as error:
+        raise RuntimeError(
+            "TRELLIS attention probe did not emit one JSON result"
+        ) from error
+    expected = TRELLIS_ATTENTION_RUNTIME_CONTRACT
+    dispatches = payload.get("dispatches")
+    finite = payload.get("finite")
+    errors = payload.get("max_abs_error_vs_sdpa")
+    if not (
+        payload.get("status") == "ok"
+        and payload.get("xformers_version") == expected["xformers_version"]
+        and payload.get("fa3_enabled") is expected["fa3_enabled"]
+        and payload.get("dense_backend") == expected["dense_backend"]
+        and payload.get("sparse_attention_backend")
+        == expected["sparse_attention_backend"]
+        and payload.get("capability") == expected["cuda_capability"]
+        and isinstance(dispatches, dict)
+        and set(dispatches) == {"dense_self", "dense_cross", "block_diagonal"}
+        and all(
+            isinstance(value, str)
+            and value.startswith(expected["expected_dispatch_prefix"])
+            for value in dispatches.values()
+        )
+        and isinstance(finite, dict)
+        and set(finite) == set(dispatches)
+        and all(value is True for value in finite.values())
+        and isinstance(errors, dict)
+        and set(errors) == set(dispatches)
+        and all(
+            isinstance(value, (int, float)) and value <= 0.05
+            for value in errors.values()
+        )
+    ):
+        raise RuntimeError(
+            "TRELLIS attention probe did not satisfy its runtime contract"
+        )
+    result = cache / RUNTIME_NAME / "trellis-attention-probe.json"
+    result.parent.mkdir(parents=True, exist_ok=True)
+    temporary = result.with_name(f".{result.name}.{uuid.uuid4().hex}")
+    try:
+        temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+        temporary.replace(result)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return result
 
 
 def _venv_file_records(venv: Path) -> list[dict[str, str]]:
@@ -560,7 +788,9 @@ def _verify_model_receipt(model: Path, marker: Path) -> None:
         raise RuntimeError("TRELLIS model cache bytes do not match their receipt")
 
 
-def _runtime_receipt(source: Path, venv: Path, cache: Path) -> Path:
+def _runtime_receipt(
+    source: Path, venv: Path, cache: Path, attention_probe: Path
+) -> Path:
     trellis = source / "thirdparty" / "TRELLIS"
     receipt = {
         "schema": "npa.embodiedgen.runtime-receipt.v1",
@@ -573,6 +803,7 @@ def _runtime_receipt(source: Path, venv: Path, cache: Path) -> Path:
         "trellis_revision": TRELLIS_REVISION,
         "trellis_model_revision": MODEL_REVISION,
         "operator_runtime": RUNTIME_CONTRACT,
+        "trellis_attention_runtime": TRELLIS_ATTENTION_RUNTIME_CONTRACT,
         "validation_requirements": list(VALIDATION_REQUIREMENTS),
         "source_path": str(source),
         "venv_path": str(venv),
@@ -584,6 +815,7 @@ def _runtime_receipt(source: Path, venv: Path, cache: Path) -> Path:
             / "TRELLIS-image-large"
             / ".npa-model-receipt.json"
         ),
+        "trellis_attention_probe_sha256": _sha256(attention_probe),
         "trellis_submodules": subprocess.check_output(
             ["git", "submodule", "status", "--recursive"], cwd=trellis, text=True
         ).splitlines(),
@@ -627,8 +859,9 @@ def command_smoke(args: argparse.Namespace) -> int:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         source, venv = _prepare(cache)
         _install(source, venv, cache)
+        attention_probe = _verify_trellis_attention_runtime(source, venv, cache)
         model = _download_model(venv, cache)
-        receipt = _runtime_receipt(source, venv, cache)
+        receipt = _runtime_receipt(source, venv, cache, attention_probe)
     env = _token_factory_environment(_venv_environment(venv, cache))
     env["NPA_EMBODIEDGEN_RUNTIME_RECEIPT"] = str(receipt)
     env["NPA_EMBODIEDGEN_SOURCE_ROOT"] = str(source)

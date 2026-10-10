@@ -72,6 +72,9 @@ def test_manifest_pins_the_selected_upstream_components() -> None:
     assert payload["runtime"]["validation_system_packages"] == list(
         BOOTSTRAP.VALIDATION_SYSTEM_PACKAGES
     )
+    assert payload["runtime"]["trellis_attention_runtime"] == (
+        BOOTSTRAP.TRELLIS_ATTENTION_RUNTIME_CONTRACT
+    )
     assert payload["runtime"]["baked"] == {
         "source": False,
         "model": False,
@@ -108,6 +111,15 @@ def test_manifest_refuses_a_changed_blackwell_runtime_contract(tmp_path: Path) -
     path = tmp_path / "manifest.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(ValueError, match="runtime contract"):
+        BOOTSTRAP._read_manifest(path)
+
+
+def test_manifest_refuses_a_changed_trellis_attention_contract(tmp_path: Path) -> None:
+    payload = json.loads((IMAGE / "runtime-manifest.json").read_text())
+    payload["runtime"]["trellis_attention_runtime"]["fa3_enabled"] = True
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="attention runtime contract"):
         BOOTSTRAP._read_manifest(path)
 
 
@@ -269,6 +281,165 @@ def test_trellis_only_patch_removes_unselected_sam_import(tmp_path: Path) -> Non
     BOOTSTRAP._patch_trellis_only_import(tmp_path)
     assert "Sam3dInference" not in inference.read_text()
     assert "NPA_EMBODIEDGEN_TRELLIS_MODEL_DIR" in image_to_3d.read_text()
+
+
+def test_trellis_xformers_patch_disables_fa3_before_trellis_import(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source"
+    patch = source / "embodied_gen" / "utils" / "monkey_patch" / "trellis.py"
+    patch.parent.mkdir(parents=True)
+    patch.write_text(
+        "import os\nimport sys\n\n"
+        "def monkey_path_trellis():\n"
+        "    current_file_path = os.path.abspath(__file__)\n"
+        "    current_dir = os.path.dirname(current_file_path)\n"
+        '    sys.path.append(os.path.join(current_dir, "../../.."))\n\n'
+        "    from thirdparty.TRELLIS.trellis.representations import Gaussian\n"
+        "    return Gaussian\n",
+        encoding="utf-8",
+    )
+    sentinel = tmp_path / "fa3-state"
+    xformers = source / "xformers"
+    (xformers / "ops").mkdir(parents=True)
+    (xformers / "__init__.py").write_text('__version__ = "0.0.32.post2"\n')
+    (xformers / "ops" / "__init__.py").write_text("")
+    (xformers / "ops" / "fmha.py").write_text(
+        "import os\nfrom pathlib import Path\n"
+        "def _set_use_fa3(value):\n"
+        '    Path(os.environ["NPA_TEST_FA3_SENTINEL"]).write_text(str(value))\n',
+        encoding="utf-8",
+    )
+    representations = source / "thirdparty" / "TRELLIS" / "trellis" / "representations"
+    representations.mkdir(parents=True)
+    for package in (
+        source / "thirdparty",
+        source / "thirdparty" / "TRELLIS",
+        source / "thirdparty" / "TRELLIS" / "trellis",
+    ):
+        (package / "__init__.py").write_text("")
+    (representations / "__init__.py").write_text(
+        "import os\nfrom pathlib import Path\n"
+        'assert Path(os.environ["NPA_TEST_FA3_SENTINEL"]).read_text() == "False"\n'
+        "class Gaussian:\n    pass\n",
+        encoding="utf-8",
+    )
+    for name in tuple(sys.modules):
+        if name == "xformers" or name.startswith(("xformers.", "thirdparty.")):
+            monkeypatch.delitem(sys.modules, name, raising=False)
+    monkeypatch.syspath_prepend(str(source))
+    monkeypatch.setenv("NPA_TEST_FA3_SENTINEL", str(sentinel))
+
+    BOOTSTRAP._patch_trellis_xformers_fa3(source)
+    patched_spec = importlib.util.spec_from_file_location(
+        "embodiedgen_fa3_patch_fixture", patch
+    )
+    assert patched_spec and patched_spec.loader
+    patched = importlib.util.module_from_spec(patched_spec)
+    patched_spec.loader.exec_module(patched)
+    patched.monkey_path_trellis()
+    assert sentinel.read_text() == "False"
+
+
+def test_trellis_attention_probe_contract_is_recorded_before_model_fetch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    source = tmp_path / "source"
+    venv = tmp_path / "venv"
+    cache = tmp_path / "cache"
+    source.mkdir()
+    venv.mkdir()
+    cache.mkdir()
+    payload = {
+        "status": "ok",
+        "xformers_version": BOOTSTRAP.XFORMERS_VERSION,
+        "fa3_enabled": False,
+        "dense_backend": "xformers",
+        "sparse_attention_backend": "xformers",
+        "capability": [12, 0],
+        "dispatches": {
+            "dense_self": "fa2F@2.5.7-pt",
+            "dense_cross": "fa2F@2.5.7-pt",
+            "block_diagonal": "fa2F@2.5.7-pt",
+        },
+        "finite": {
+            "dense_self": True,
+            "dense_cross": True,
+            "block_diagonal": True,
+        },
+        "max_abs_error_vs_sdpa": {
+            "dense_self": 0.0,
+            "dense_cross": 0.0,
+            "block_diagonal": 0.0,
+        },
+    }
+    captured: dict[str, object] = {}
+
+    def completed(*args, **kwargs):
+        captured["argv"] = args[0]
+        captured["cwd"] = kwargs["cwd"]
+        captured["env"] = kwargs["env"]
+        return SimpleNamespace(
+            returncode=0, stdout=json.dumps(payload), stderr="", args=args[0]
+        )
+
+    monkeypatch.setattr(BOOTSTRAP.subprocess, "run", completed)
+    result = BOOTSTRAP._verify_trellis_attention_runtime(source, venv, cache)
+    assert captured["argv"] == [
+        str(venv / "bin" / "python"),
+        "-c",
+        BOOTSTRAP.TRELLIS_ATTENTION_RUNTIME_PROBE,
+    ]
+    assert captured["cwd"] == source
+    assert captured["env"] == BOOTSTRAP._venv_environment(venv, cache)
+    assert json.loads(result.read_text()) == payload
+
+    payload["fa3_enabled"] = True
+    with pytest.raises(RuntimeError, match="attention probe"):
+        BOOTSTRAP._verify_trellis_attention_runtime(source, venv, cache)
+
+
+def test_smoke_runs_the_attention_probe_before_model_fetch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cache = tmp_path / "cache"
+    source, venv, model = tmp_path / "source", tmp_path / "venv", tmp_path / "model"
+    attention_probe, runtime_receipt = (
+        tmp_path / "attention.json",
+        tmp_path / "runtime.json",
+    )
+    calls: list[str] = []
+    cache.mkdir()
+    monkeypatch.setenv("NEBIUS_TOKEN_FACTORY_KEY", "configured-for-test-only")
+    monkeypatch.setattr(BOOTSTRAP, "_read_manifest", lambda *_: {})
+    monkeypatch.setattr(BOOTSTRAP, "_safe_cache_root", lambda *_: cache)
+    monkeypatch.setattr(BOOTSTRAP, "_prepare", lambda *_: (source, venv))
+    monkeypatch.setattr(BOOTSTRAP, "_install", lambda *_: calls.append("install"))
+    monkeypatch.setattr(
+        BOOTSTRAP,
+        "_verify_trellis_attention_runtime",
+        lambda *_: calls.append("attention") or attention_probe,
+    )
+    monkeypatch.setattr(
+        BOOTSTRAP, "_download_model", lambda *_: calls.append("model") or model
+    )
+    monkeypatch.setattr(
+        BOOTSTRAP,
+        "_runtime_receipt",
+        lambda *_: calls.append("receipt") or runtime_receipt,
+    )
+    monkeypatch.setattr(BOOTSTRAP, "_token_factory_environment", lambda env: env)
+    monkeypatch.setattr(
+        BOOTSTRAP, "_run", lambda *_args, **_kwargs: calls.append("smoke")
+    )
+    args = SimpleNamespace(
+        manifest=IMAGE / "runtime-manifest.json",
+        cache_root=str(cache),
+        smoke=IMAGE / "capability_smoke.py",
+    )
+
+    assert BOOTSTRAP.command_smoke(args) == 0
+    assert calls == ["install", "attention", "model", "receipt", "smoke"]
 
 
 def test_runtime_bootstrap_repairs_a_broken_incomplete_venv_before_installing(
