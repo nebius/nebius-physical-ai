@@ -321,7 +321,7 @@ COPY --chown=ubuntu:ubuntu docker/workbench/groot/entrypoint.sh /opt/npa/docker/
 
 RUN chmod 0755 /opt/npa/docker/workbench/groot/entrypoint.sh
 
-RUN uv pip install --python "${GROOT_VENV}/bin/python" --no-deps -e /opt/npa \
+RUN uv pip install --no-cache --python "${GROOT_VENV}/bin/python" --no-deps -e /opt/npa \
     && "${GROOT_VENV}/bin/python" -c 'from npa.cli.entry import main; main()' \
       workbench groot finetune --help >/dev/null \
     && "${GROOT_VENV}/bin/python" - <<'PY'

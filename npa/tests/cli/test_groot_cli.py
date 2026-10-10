@@ -1007,7 +1007,8 @@ def test_groot_container_dockerfile_pins_runtime_versions() -> None:
     tomli_install = "      tomli==2.4.1 \\\n"
     assert tomli_install in dockerfile
     assert dockerfile.index(tomli_install) < dockerfile.index(
-        'uv pip install --python "${GROOT_VENV}/bin/python" --no-deps -e /opt/npa'
+        'uv pip install --no-cache --python "${GROOT_VENV}/bin/python" '
+        "--no-deps -e /opt/npa"
     )
     assert "workbench groot finetune --help >/dev/null" in dockerfile
     assert '"mcap>=1.3,<2"' in dockerfile
@@ -1032,6 +1033,10 @@ def test_groot_container_scanned_dependency_layers_do_not_commit_package_caches(
     assert (
         "RUN /opt/isaac-lab/venv/bin/python -m pip install "
         "--no-cache-dir --no-deps --upgrade"
+    ) in dockerfile
+    assert (
+        'RUN uv pip install --no-cache --python "${GROOT_VENV}/bin/python" '
+        "--no-deps -e /opt/npa"
     ) in dockerfile
 
 
