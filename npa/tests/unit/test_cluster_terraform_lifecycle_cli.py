@@ -481,11 +481,33 @@ def _successful_stream(tf_dir: Path, calls: list[list[str]]):
     return run
 
 
+@pytest.mark.parametrize("legacy_state", [False, True], ids=["custom", "legacy"])
+@pytest.mark.parametrize("profile_env", [None, "NEBIUS_PROFILE", "NPA_NEBIUS_PROFILE"])
 def test_up_runs_terraform_writes_kubeconfig_and_validates(
-    monkeypatch, tmp_path: Path
+    monkeypatch, tmp_path: Path, legacy_state: bool, profile_env: str | None
 ) -> None:
+    profile_prefix = ["--profile", "selected-profile"] if profile_env else []
+    if profile_env:
+        monkeypatch.setenv(profile_env, "selected-profile")
+    if profile_env == "NPA_NEBIUS_PROFILE":
+        monkeypatch.setenv("NEBIUS_PROFILE", "different-profile")
     tf_dir = tmp_path / "deploy" / "cluster"
     tf_dir.mkdir(parents=True)
+    if legacy_state:
+        (tf_dir / "terraform.tfstate").write_text(
+            json.dumps({"version": 4, "resources": []})
+        )
+        recipe_dir = tf_dir / "vendor" / "nebius-solutions-library" / "k8s-training"
+        recipe_dir.mkdir(parents=True)
+        (recipe_dir / "variables.tf").write_text(
+            'variable "gpu_nodes_driverfull_image" {}\n'
+            'variable "gpu_nodes_driver_preset" {}\n'
+        )
+        (recipe_dir / "main.tf").write_text(
+            "gpu_settings { drivers_preset = var.gpu_nodes_driver_preset }\n"
+        )
+        (recipe_dir / "helm.tf").write_text('module "device-plugin" {}\n')
+        (recipe_dir.parent / "modules").mkdir()
     (tf_dir / "terraform.tfvars").write_text(
         "\n".join(
             [
@@ -520,10 +542,12 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(
         return _completed()
 
     def fake_capture(args, **kwargs):
+        if args == ["nebius", *profile_prefix, "iam", "get-access-token"]:
+            return _completed("token-a\n")
+        if args[:3] == ["nebius", "--profile", "selected-profile"]:
+            args = [args[0], *args[3:]]
         if args[:2] == ["terraform", "version"]:
             return _completed(json.dumps({"terraform_version": "1.12.2"}))
-        if args[:3] == ["nebius", "iam", "get-access-token"]:
-            return _completed("token-a\n")
         if args[:4] == ["nebius", "mk8s", "cluster", "list"]:
             return _completed('{"items":[]}')
         if args[:4] == ["nebius", "quotas", "quota-allowance", "get-by-name"]:
@@ -695,9 +719,16 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(
     assert "capacity_block_group=capacityblockgroup-test" in apply_call
     apply_env = stream_envs[stream_calls.index(apply_call)]
     assert apply_env["TF_VAR_capacity_block_group"] == "capacityblockgroup-test"
+    assert apply_env["TF_VAR_iam_token"] == "token-a"
+    credential_prefix = [
+        "nebius",
+        *profile_prefix,
+        "mk8s",
+        "cluster",
+        "get-credentials",
+    ]
     assert any(
-        call[:4] == ["nebius", "mk8s", "cluster", "get-credentials"]
-        for call in stream_calls
+        call[: len(credential_prefix)] == credential_prefix for call in stream_calls
     )
     assert [state.last_seen_state for state in saved] == ["VALIDATING", "RUNNING"]
     assert saved[-1].cluster_id == "mk8scluster-a"

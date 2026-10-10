@@ -1020,7 +1020,9 @@ def up_cmd(
             operation.transition("state-durable")
 
         kubeconfig_path = kubeconfig or kubeconfig_file(context)
-        _write_kubeconfig(nebius_bin, cluster_id, kubeconfig_path, context)
+        _write_kubeconfig(
+            nebius_bin, cluster_id, kubeconfig_path, context, profile=profile
+        )
         _save_terraform_cluster_state(
             tfvars,
             cluster,
