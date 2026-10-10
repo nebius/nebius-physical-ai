@@ -5,13 +5,12 @@
 # Rebuild the system layer from the exact Debian snapshot audited by the Wan
 # payload scanner. The first stage is used only as a pinned OSS Wan source and
 # CPU-Python closure; none of its operating-system layers enter the final image.
-# The official Python 3.10 image currently has a maintained Trixie variant,
-# while the final Debian testing runtime supplies the maintained package
-# closure for ffmpeg, GLib, OpenSSH, and libxml2.  Copy only CPython's
-# /usr/local tree into the final root; the Python source-stage OS layers do not
-# become image ancestors.
+# The official Python 3.10 image and final runtime both use Debian Trixie, so
+# the copied CPython C extensions share their libc and libffi ABI. Copy only
+# CPython's /usr/local tree into the final root; the Python source-stage OS
+# layers do not become image ancestors.
 ARG PYTHON_RUNTIME_SOURCE=python:3.10-slim-trixie@sha256:7b6bd969dda3ecfca0655524e338b57a8b8cd692a9362e3d55b5a3ef49b07256
-ARG DEBIAN_RUNTIME_BASE=debian:testing-slim@sha256:62215f1aa9472caf9c9ed80f3d11485866eb7f7af47702f93f6e340ac2a4736b
+ARG DEBIAN_RUNTIME_BASE=debian:trixie-slim@sha256:918311b7b6c4c6f68b232ba516584925f6c78ad82b6fd534b98979df6438e483
 ARG WAN_SOURCE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@sha256:5780959ca6c6e7eb77ee7ea7d005fcf0f56db50783ce798dddee2809185eb837
 
 FROM ${WAN_SOURCE_IMAGE} AS wan-source

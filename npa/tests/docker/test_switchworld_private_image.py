@@ -35,8 +35,8 @@ def test_private_recipe_uses_audited_snapshot_and_no_easydict_wheel() -> None:
         "sha256:7b6bd969dda3ecfca0655524e338b57a8b8cd692a9362e3d55b5a3ef49b07256"
     ) in text
     assert (
-        "ARG DEBIAN_RUNTIME_BASE=debian:testing-slim@"
-        "sha256:62215f1aa9472caf9c9ed80f3d11485866eb7f7af47702f93f6e340ac2a4736b"
+        "ARG DEBIAN_RUNTIME_BASE=debian:trixie-slim@"
+        "sha256:918311b7b6c4c6f68b232ba516584925f6c78ad82b6fd534b98979df6438e483"
     ) in text
     assert "FROM ${PYTHON_RUNTIME_SOURCE} AS python-runtime" in text
     assert "FROM ${DEBIAN_RUNTIME_BASE}" in text
