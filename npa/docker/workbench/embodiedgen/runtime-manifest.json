@@ -66,6 +66,12 @@
       "reasoning_prefix": "one_completed_leading_think_block",
       "completion_finish_reason": "stop",
       "max_tokens": 2048,
+      "height_mass_ranges": "finite_positive_ordered",
+      "friction": {
+        "scalar": "finite_nonnegative",
+        "range": "finite_nonnegative_ordered_arithmetic_midpoint",
+        "provenance": "per_field_raw_and_normalized_sidecar"
+      },
       "required_labels": [
         "Category",
         "Description",

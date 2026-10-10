@@ -52,6 +52,12 @@ URDF_PROPERTY_RESPONSE_CONTRACT = {
     "reasoning_prefix": "one_completed_leading_think_block",
     "completion_finish_reason": "stop",
     "max_tokens": 2048,
+    "height_mass_ranges": "finite_positive_ordered",
+    "friction": {
+        "scalar": "finite_nonnegative",
+        "range": "finite_nonnegative_ordered_arithmetic_midpoint",
+        "provenance": "per_field_raw_and_normalized_sidecar",
+    },
     "required_labels": [
         "Category",
         "Description",
@@ -554,7 +560,11 @@ def _patch_urdf_property_response_contract(source: Path) -> None:
     completion status: a syntactically plausible prefix from a length-limited
     response is not a completed property estimate. Query failures, incomplete
     reasoning, non-completed responses, or absent and duplicate final fields
-    fail rather than using upstream fallback defaults.
+    fail rather than using upstream fallback defaults. Height and mass must be
+    finite, positive ordered ranges. Friction may be a finite, non-negative
+    scalar or an ordered range; only the latter is reduced to its arithmetic
+    midpoint, with the raw estimate and derived value retained beside the
+    generated URDF.
     """
 
     path = source / "embodied_gen" / "validators" / "urdf_convertor.py"
@@ -605,6 +615,67 @@ def _patch_urdf_property_response_contract(source: Path) -> None:
         missing = [label for label in field_names.values() if label not in fields]
         if missing:
             raise ValueError("URDF property response misses required final fields")
+
+        def parse_positive_range(label):
+            pieces = fields[label].split("-")
+            if len(pieces) != 2:
+                raise ValueError(f"URDF property {label} must be a range")
+            try:
+                values = [
+                    float(piece.strip().replace(",", "").split()[0])
+                    for piece in pieces
+                ]
+            except (IndexError, ValueError) as error:
+                raise ValueError(f"URDF property {label} has invalid numeric values") from error
+            if not all(math.isfinite(value) and value > 0 for value in values):
+                raise ValueError(f"URDF property {label} must be finite and positive")
+            if values[0] > values[1]:
+                raise ValueError(f"URDF property {label} range is reversed")
+
+        def normalize_friction(label):
+            raw_value = fields[label]
+            pieces = raw_value.split("-")
+            if len(pieces) not in {1, 2}:
+                raise ValueError(f"URDF property {label} has an unsupported numeric form")
+            try:
+                values = [float(piece.strip().replace(",", "")) for piece in pieces]
+            except ValueError as error:
+                raise ValueError(f"URDF property {label} has invalid numeric values") from error
+            if not all(math.isfinite(value) and value >= 0 for value in values):
+                raise ValueError(f"URDF property {label} must be finite and non-negative")
+            if len(values) == 2 and values[0] > values[1]:
+                raise ValueError(f"URDF property {label} range is reversed")
+            value = (
+                values[0]
+                if len(values) == 1
+                else values[0] + (values[1] - values[0]) / 2
+            )
+            if not math.isfinite(value):
+                raise ValueError(f"URDF property {label} has a non-finite normalized value")
+            return {
+                "raw_value": raw_value,
+                "normalization": "scalar" if len(values) == 1 else "arithmetic_midpoint",
+                "value": value,
+            }
+
+        for label in ("Height", "Weight"):
+            parse_positive_range(label)
+        friction = {}
+        for label, name in (
+            ("Static friction coefficient", "static"),
+            ("Dynamic friction coefficient", "dynamic"),
+        ):
+            normalized = normalize_friction(label)
+            # repr() is a finite IEEE-754 round trip.  A precision-limited
+            # display format can round the largest finite float up to ``inf``
+            # when the upstream parser reads it back.
+            fields[label] = repr(normalized["value"])
+            friction[name] = normalized
+        self.property_response_provenance = {
+            "schema": "npa.embodiedgen.urdf-property-response-provenance.v1",
+            "completion_finish_reason": "stop",
+            "friction": friction,
+        }
         response = "\\n".join(
             [f"{label}: {fields[label]}" for label in field_names.values()]
         )
@@ -633,15 +704,34 @@ def _patch_urdf_property_response_contract(source: Path) -> None:
             self.last_completion_finish_reason = choice.finish_reason
             response = choice.message.content
 """
+    provenance_anchor = (
+        "        urdf_path = self.generate_urdf(mesh_path, output_root, asset_attrs)\n"
+    )
+    provenance_replacement = (
+        provenance_anchor
+        + """        provenance = getattr(self, "property_response_provenance", None)
+        if not isinstance(provenance, dict):
+            raise RuntimeError("URDF property response provenance is unavailable")
+        provenance_path = os.path.join(
+            output_root, "urdf_property_response_provenance.json"
+        )
+        with open(provenance_path, "w", encoding="utf-8") as handle:
+            json.dump(provenance, handle, indent=2, sort_keys=True)
+            handle.write("\\n")
+"""
+    )
     if (
         parser_anchor not in text
         or query_anchor not in text
+        or provenance_anchor not in text
         or client_query_anchor not in client_text
         or completion_anchor not in client_text
     ):
         raise RuntimeError("upstream URDF property response boundary changed")
+    text = "import json\nimport math\nimport os\n" + text
     text = text.replace(parser_anchor, parser_prefix + parser_anchor)
     text = text.replace(query_anchor, query_guard)
+    text = text.replace(provenance_anchor, provenance_replacement, 1)
     client_text = client_text.replace(
         client_query_anchor,
         "        self.last_completion_finish_reason = None\n" + client_query_anchor,

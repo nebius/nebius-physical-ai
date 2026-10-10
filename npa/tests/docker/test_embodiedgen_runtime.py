@@ -7,6 +7,7 @@ import base64
 import hashlib
 import importlib.util
 import json
+import math
 import os
 import subprocess
 import sys
@@ -726,7 +727,13 @@ def test_urdf_property_response_patch_uses_only_completed_final_answer(
         "            }\n"
         "        else:\n"
         "            asset_attrs = self.parse_response(response)\n"
-        "        return asset_attrs\n",
+        "        return asset_attrs\n\n"
+        "    def generate_urdf(self, mesh_path, output_root, asset_attrs):\n"
+        "        return output_root + '/asset.urdf'\n\n"
+        "    def __call__(self, mesh_path, output_root):\n"
+        "        asset_attrs = self.resolve()\n"
+        "        urdf_path = self.generate_urdf(mesh_path, output_root, asset_attrs)\n"
+        "        return urdf_path\n",
         encoding="utf-8",
     )
     BOOTSTRAP._patch_urdf_property_response_contract(tmp_path)
@@ -751,27 +758,128 @@ Height: the object is standing
 Category: cup
 Description: a small ceramic cup
 Pose: upright on its base
-Height: 0.08-0.15 m
-Weight: 0.05-0.10 kg
+Height: 0.15-0.20 m
+Weight: 0.1-0.2 kg
 Static friction coefficient: 0.6
 Dynamic friction coefficient: 0.5
 """
     completed_client = client_fixture.GPTclient(completed_response, "stop")
-    attrs = fixture.URDFGenerator(completed_client).resolve()
+    completed_generator = fixture.URDFGenerator(completed_client)
+    attrs = completed_generator.resolve()
     assert completed_client.last_completion_finish_reason == "stop"
     assert completed_client.last_payload == {"max_tokens": 2048}
     assert attrs | {"generate_time": "ignored"} == {
         "category": "cup",
         "description": "a small ceramic cup",
-        "min_height": 0.08,
-        "max_height": 0.15,
-        "min_mass": 0.05,
-        "max_mass": 0.1,
+        "min_height": 0.15,
+        "max_height": 0.2,
+        "min_mass": 0.1,
+        "max_mass": 0.2,
         "mu1": 0.6,
         "mu2": 0.5,
         "version": "test",
         "generate_time": "ignored",
     }
+    generated = tmp_path / "generated"
+    generated.mkdir()
+    assert completed_generator("mesh.obj", str(generated)) == str(
+        generated / "asset.urdf"
+    )
+    assert json.loads(
+        (generated / "urdf_property_response_provenance.json").read_text()
+    ) == {
+        "schema": "npa.embodiedgen.urdf-property-response-provenance.v1",
+        "completion_finish_reason": "stop",
+        "friction": {
+            "static": {
+                "raw_value": "0.6",
+                "normalization": "scalar",
+                "value": 0.6,
+            },
+            "dynamic": {
+                "raw_value": "0.5",
+                "normalization": "scalar",
+                "value": 0.5,
+            },
+        },
+    }
+    for label, attribute in (
+        ("Static friction coefficient", "mu1"),
+        ("Dynamic friction coefficient", "mu2"),
+    ):
+        range_response = completed_response.replace(
+            f"{label}: 0.6", f"{label}: 0.3-0.5"
+        )
+        if label.startswith("Dynamic"):
+            range_response = completed_response.replace(
+                f"{label}: 0.5", f"{label}: 0.3-0.5"
+            )
+        range_generator = fixture.URDFGenerator(
+            client_fixture.GPTclient(range_response, "stop")
+        )
+        assert range_generator.resolve()[attribute] == 0.4
+        assert range_generator.property_response_provenance["friction"][
+            "static" if attribute == "mu1" else "dynamic"
+        ] == {
+            "raw_value": "0.3-0.5",
+            "normalization": "arithmetic_midpoint",
+            "value": 0.4,
+        }
+    overflow_safe_response = completed_response.replace(
+        "Static friction coefficient: 0.6",
+        "Static friction coefficient: 1.7e308-1.7976931348623157e308",
+    )
+    overflow_safe_generator = fixture.URDFGenerator(
+        client_fixture.GPTclient(overflow_safe_response, "stop")
+    )
+    overflow_safe_attrs = overflow_safe_generator.resolve()
+    assert math.isfinite(overflow_safe_attrs["mu1"])
+    assert math.isfinite(
+        overflow_safe_generator.property_response_provenance["friction"]["static"][
+            "value"
+        ]
+    )
+    endpoint_response = completed_response.replace(
+        "Static friction coefficient: 0.6",
+        "Static friction coefficient: 1.7976931348623157e308-1.7976931348623157e308",
+    )
+    endpoint_generator = fixture.URDFGenerator(
+        client_fixture.GPTclient(endpoint_response, "stop")
+    )
+    endpoint_attrs = endpoint_generator.resolve()
+    assert endpoint_attrs["mu1"] == sys.float_info.max
+    assert math.isfinite(endpoint_attrs["mu1"])
+    assert (
+        endpoint_generator.property_response_provenance["friction"]["static"]["value"]
+        == sys.float_info.max
+    )
+    for raw_value, error in (
+        ("nan", "must be finite and non-negative"),
+        ("-0.1", "invalid numeric values"),
+        ("0.5-0.3", "range is reversed"),
+        ("0.1-0.2-0.3", "unsupported numeric form"),
+    ):
+        invalid_response = completed_response.replace(
+            "Static friction coefficient: 0.6",
+            f"Static friction coefficient: {raw_value}",
+        )
+        with pytest.raises(ValueError, match=error):
+            fixture.URDFGenerator(
+                client_fixture.GPTclient(invalid_response, "stop")
+            ).resolve()
+    for label, raw_value, error in (
+        ("Height", "nan-0.2 m", "must be finite and positive"),
+        ("Weight", "0.2-0.1 kg", "range is reversed"),
+        ("Height", "0.2 m", "must be a range"),
+    ):
+        invalid_response = completed_response.replace(
+            f"{label}: 0.15-0.20 m" if label == "Height" else f"{label}: 0.1-0.2 kg",
+            f"{label}: {raw_value}",
+        )
+        with pytest.raises(ValueError, match=error):
+            fixture.URDFGenerator(
+                client_fixture.GPTclient(invalid_response, "stop")
+            ).resolve()
     parseable_prefix_client = client_fixture.GPTclient(
         """Category: cup
 Description: a small ceramic cup
@@ -830,6 +938,70 @@ def test_asset_bundle_preserves_nested_generated_assets_and_rejects_symlinks(
     with pytest.raises(RuntimeError, match="symbolic link"):
         ASSET_BUNDLE.archive_asset_tree(generated, tmp_path / "unsafe.tar.gz")
     assert not (tmp_path / "unsafe.tar.gz").exists()
+
+
+def test_property_response_provenance_is_hashed_and_fail_closed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    asset_bundle = ModuleType("asset_bundle")
+    asset_bundle.archive_asset_tree = lambda *_: {}
+    defusedxml = ModuleType("defusedxml")
+    defusedxml.ElementTree = XML_ET
+    imageio = ModuleType("imageio")
+    imageio.v3 = ModuleType("imageio.v3")
+    monkeypatch.setitem(sys.modules, "asset_bundle", asset_bundle)
+    monkeypatch.setitem(sys.modules, "defusedxml", defusedxml)
+    monkeypatch.setitem(sys.modules, "imageio", imageio)
+    monkeypatch.setitem(sys.modules, "imageio.v3", imageio.v3)
+    monkeypatch.setitem(sys.modules, "pybullet", ModuleType("pybullet"))
+    monkeypatch.setitem(sys.modules, "pybullet_data", ModuleType("pybullet_data"))
+    monkeypatch.setitem(sys.modules, "trimesh", ModuleType("trimesh"))
+    spec = importlib.util.spec_from_file_location(
+        "embodiedgen_property_provenance_smoke", IMAGE / "capability_smoke.py"
+    )
+    assert spec and spec.loader
+    smoke = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(smoke)
+
+    generated = tmp_path / "generated"
+    generated.mkdir()
+    urdf = generated / "input.urdf"
+    urdf.write_text("<robot/>", encoding="utf-8")
+    sidecar = generated / "urdf_property_response_provenance.json"
+    sidecar.write_text(
+        json.dumps(
+            {
+                "schema": "npa.embodiedgen.urdf-property-response-provenance.v1",
+                "completion_finish_reason": "stop",
+                "friction": {
+                    "static": {
+                        "raw_value": "0.3-0.5",
+                        "normalization": "arithmetic_midpoint",
+                        "value": 0.4,
+                    },
+                    "dynamic": {
+                        "raw_value": "0.5",
+                        "normalization": "scalar",
+                        "value": 0.5,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = smoke.property_response_provenance(urdf, tmp_path)
+    assert result["artifact"] == {
+        "path": "generated/urdf_property_response_provenance.json",
+        "sha256": hashlib.sha256(sidecar.read_bytes()).hexdigest(),
+        "bytes": sidecar.stat().st_size,
+    }
+    assert result["friction"]["static"]["value"] == 0.4
+
+    payload = json.loads(sidecar.read_text())
+    payload["friction"]["dynamic"]["value"] = float("nan")
+    sidecar.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="provenance dynamic is invalid"):
+        smoke.property_response_provenance(urdf, tmp_path)
 
 
 def test_pybullet_validation_tracks_the_body_and_keeps_failure_media(

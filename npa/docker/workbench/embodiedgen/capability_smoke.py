@@ -161,6 +161,65 @@ def xml_properties(urdf: Path) -> dict[str, str]:
     return values
 
 
+def _validate_friction_provenance(friction: Any) -> dict[str, dict[str, Any]]:
+    """Validate the two VLM friction-normalization records.
+
+    Args:
+        friction: Decoded sidecar value expected to describe both coefficients.
+
+    Returns:
+        The validated static and dynamic provenance mapping.
+
+    Raises:
+        RuntimeError: If a friction estimate is incomplete or invalid.
+    """
+    if not isinstance(friction, dict) or set(friction) != {"static", "dynamic"}:
+        raise RuntimeError("URDF property provenance has incomplete friction fields")
+    for name, value in friction.items():
+        if not isinstance(value, dict):
+            raise RuntimeError(f"URDF property provenance {name} is malformed")
+        raw_value = value.get("raw_value")
+        normalized = value.get("value")
+        mode = value.get("normalization")
+        if (
+            not isinstance(raw_value, str)
+            or isinstance(normalized, bool)
+            or not isinstance(normalized, (int, float))
+            or not math.isfinite(normalized)
+            or normalized < 0
+            or mode not in {"scalar", "arithmetic_midpoint"}
+        ):
+            raise RuntimeError(f"URDF property provenance {name} is invalid")
+    return friction
+
+
+def property_response_provenance(urdf: Path, output: Path) -> dict[str, Any]:
+    """Read the VLM friction-normalization record written beside the URDF.
+
+    Args:
+        urdf: The generated URDF whose parent contains the sidecar.
+        output: The smoke-output root used for a relative artifact record.
+
+    Returns:
+        The validated estimate-normalization record and its artifact hash.
+
+    Raises:
+        RuntimeError: If the sidecar is absent, malformed, or contradicts its contract.
+    """
+    path = urdf.parent / "urdf_property_response_provenance.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError("missing or invalid URDF property provenance") from error
+    if (
+        payload.get("schema") != "npa.embodiedgen.urdf-property-response-provenance.v1"
+        or payload.get("completion_finish_reason") != "stop"
+    ):
+        raise RuntimeError("unexpected URDF property provenance contract")
+    friction = _validate_friction_provenance(payload.get("friction"))
+    return {"artifact": file_record(path, output), "friction": friction}
+
+
 def collision_meshes(urdf: Path) -> list[dict[str, Any]]:
     root = ET.parse(urdf).getroot()
     records: list[dict[str, Any]] = []
@@ -545,6 +604,9 @@ def _report(
                 "sha256": sha256(urdf),
                 "properties": xml_properties(urdf),
                 "physical_property_semantics": "VLM_estimated_not_calibrated_ground_truth",
+                "property_response_provenance": property_response_provenance(
+                    urdf, output
+                ),
             },
             "mjcf_conversion": mjcf,
             "generated_asset_bundle": generated_bundle,
