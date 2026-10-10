@@ -77,6 +77,24 @@ Every finding occurrence must have exactly one accepted proof and corresponding
 independent review decision. Logical path findings retain their original record
 kind and full occurrence identity.
 
+## Public certificate evidence
+
+The `public-x509-certificate-data` role names independently reviewed public
+certificate bytes; it does not classify a match automatically. Its evidence must
+bind the complete parsed X.509 certificate, the exact matched span within its
+encoding, authoritative public issuer provenance, and the actual verification or
+trust-store consumer. Record the full original content hash and preserve every
+occurrence, including duplicates and certificates inside bundles. Private keys,
+operator-specific certificates, unrelated adjacent bytes and incomplete parsing
+remain outside this role. Public filenames and a successful parser alone do not
+establish acceptance.
+
+The same original image, scanner, policy, report, source and transport bindings
+apply. A role label cannot override a denied independent review, missing evidence
+or an operational-credential classification. Adding a role to a later scanner
+cannot authorize a historical scan made by different source bytes; the retained
+original authorization must still match the selected scanner exactly.
+
 ## Hosted execution and receipts
 
 Dispatch private-image-adjudication.yml on the repository's current default

@@ -34,6 +34,9 @@ MANIFEST_SCHEMA = "npa.image-byte-disposition-manifest.v1"
 REVIEW_SCHEMA = "npa.image-byte-independent-review.v1"
 PROOF_SCHEMA = "npa.image-byte-occurrence-provenance.v1"
 # Roles describe independently reviewed bytes; labels alone never prove safety.
+# Public X.509 data requires a complete parsed certificate, exact public issuer
+# provenance and its verification/trust-store consumer. Private keys, operator
+# certificates and adjacent or unparsed bytes remain outside this role.
 # Static prose excludes runtime values. Protocol identifiers require declared or
 # consumed fields. Debug/unwind numbers and instructions require typed decoding.
 # Public service, hardware and location references require exact authoritative
@@ -62,6 +65,7 @@ ROLES = frozenset(
         "numeric-source-constant",
         "encoded-geometry-data",
         "public-package-reference",
+        "public-x509-certificate-data",
         "encoded-gzip-payload",
         "public-documentation-text",
         "public-protocol-field",

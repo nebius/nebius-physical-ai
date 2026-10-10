@@ -105,7 +105,7 @@ def sample():
     return report, rows
 
 
-def reviewed(tmp_path):
+def reviewed(tmp_path, semantic_role="non-operational-source-example"):
     report, rows = sample()
     population = A.population(report, rows)
     ctx = {
@@ -139,7 +139,7 @@ def reviewed(tmp_path):
             "occurrence_id": key,
             "record_sha256": occurrence["record_sha256"],
             "record_bytes": occurrence["record_bytes"],
-            "semantic_role": "non-operational-source-example",
+            "semantic_role": semantic_role,
             "operational_credential": False,
             "provenance_evidence": [provenance],
             "semantic_evidence": [semantics],
@@ -175,7 +175,13 @@ def check(case):
     return A.dispositions(*case[:6])
 
 
-def test_conserves_identical_native_findings_and_literal_occurrences(tmp_path):
+@pytest.mark.parametrize(
+    "semantic_role",
+    ["non-operational-source-example", "public-x509-certificate-data"],
+)
+def test_conserves_identical_native_findings_and_literal_occurrences(
+    tmp_path, semantic_role
+):
     report, rows = sample()
     raw_before = copy.deepcopy(report)
     found = A.population(report, rows)
@@ -183,7 +189,7 @@ def test_conserves_identical_native_findings_and_literal_occurrences(tmp_path):
     assert (
         len({key for key, value in found.items() if value["record_ordinal"] == 2}) == 3
     )
-    assert check(reviewed(tmp_path)) == 4
+    assert check(reviewed(tmp_path, semantic_role)) == 4
     assert report == raw_before and report["valid"] is False
 
 
@@ -351,10 +357,14 @@ def test_dispositions_need_every_exact_independent_review(tmp_path, mutation):
         "stale_semantics",
     ],
 )
+@pytest.mark.parametrize(
+    "semantic_role",
+    ["non-operational-source-example", "public-x509-certificate-data"],
+)
 def test_independent_acceptance_never_waives_changed_or_unsafe_evidence(
-    tmp_path, mutation
+    tmp_path, mutation, semantic_role
 ):
-    case = reviewed(tmp_path)
+    case = reviewed(tmp_path, semantic_role)
     manifest, review, _population, _ctx, _digest, _loader, proofs, files = case
     first = manifest["dispositions"][0]
     proof = proofs[first["occurrence_id"]]
