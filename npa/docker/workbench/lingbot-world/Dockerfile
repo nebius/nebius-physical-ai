@@ -5,10 +5,9 @@ ARG WAN_BASE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@sha256:5780959ca
 ARG DEBIAN_SNAPSHOT=20261010T000000Z
 ARG DEBIAN_PERL_SECURITY_VERSION=5.36.0-7+deb12u4
 
-# Build PyAV from source against the parent image's audited system FFmpeg.  The
-# PyPI wheel bundles its own FFmpeg-family libraries, including forbidden CUDA
-# linkage and secret-shaped literal bytes that must not enter the final image.
-FROM ${WAN_BASE_IMAGE} AS pyav-wheel-builder
+# Configure the dated Debian archives once so every private derivative stage
+# resolves the same retained package set.
+FROM ${WAN_BASE_IMAGE} AS debian-snapshot-base
 
 ARG DEBIAN_SNAPSHOT
 USER root
@@ -29,8 +28,14 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
       'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg' \
       > /etc/apt/sources.list.d/debian-security.sources \
     && printf 'Acquire::Check-Valid-Until "false";\n' \
-      > /etc/apt/apt.conf.d/99snapshot \
-    && apt-get update \
+      > /etc/apt/apt.conf.d/99snapshot
+
+# Build PyAV from source against the parent image's audited system FFmpeg.  The
+# PyPI wheel bundles its own FFmpeg-family libraries, including forbidden CUDA
+# linkage and secret-shaped literal bytes that must not enter the final image.
+FROM debian-snapshot-base AS pyav-wheel-builder
+
+RUN apt-get update \
     && apt-get install -y --no-install-recommends \
       build-essential \
       pkg-config \
@@ -45,10 +50,9 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
       --no-binary=av --wheel-dir /opt/npa-pyav-wheel av==17.1.0 \
     && test -n "$(find /opt/npa-pyav-wheel -maxdepth 1 -type f -name 'av-17.1.0-*.whl' -print -quit)"
 
-FROM ${WAN_BASE_IMAGE}
+FROM debian-snapshot-base
 
 ARG NPA_SOURCE_SHA
-ARG DEBIAN_SNAPSHOT
 ARG DEBIAN_PERL_SECURITY_VERSION
 LABEL npa.tool="lingbot-world" \
       npa.version="a43bec7f8091c83e9b30b16b912f6fc906236fa6-runtime-fetch" \
@@ -68,25 +72,7 @@ USER root
 # The digest-pinned Wan parent can retain vulnerable Bookworm Perl packages.
 # Use the dated archives so the fixed revision remains available before
 # fetching the pinned LingBot source.
-RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
-      /etc/apt/sources.list.d/*.sources \
-    && printf '%s\n' \
-      'Types: deb' \
-      "URIs: https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}/" \
-      'Suites: bookworm bookworm-updates' \
-      'Components: main' \
-      'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg' \
-      > /etc/apt/sources.list.d/debian.sources \
-    && printf '%s\n' \
-      'Types: deb' \
-      "URIs: https://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}/" \
-      'Suites: bookworm-security' \
-      'Components: main' \
-      'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg' \
-      > /etc/apt/sources.list.d/debian-security.sources \
-    && printf 'Acquire::Check-Valid-Until "false";\n' \
-      > /etc/apt/apt.conf.d/99snapshot \
-    && apt-get update \
+RUN apt-get update \
     && apt-get install -y --no-install-recommends --only-upgrade \
       "perl=${DEBIAN_PERL_SECURITY_VERSION}" \
       "perl-base=${DEBIAN_PERL_SECURITY_VERSION}" \

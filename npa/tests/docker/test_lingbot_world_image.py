@@ -41,7 +41,10 @@ def test_lingbot_model_runtime_builds_pyav_against_audited_system_ffmpeg() -> No
 
     dockerfile = DOCKERFILE.read_text(encoding="utf-8")
 
-    assert "FROM ${WAN_BASE_IMAGE} AS pyav-wheel-builder" in dockerfile
+    assert "FROM ${WAN_BASE_IMAGE} AS debian-snapshot-base" in dockerfile
+    assert "FROM debian-snapshot-base AS pyav-wheel-builder" in dockerfile
+    assert "FROM debian-snapshot-base\n\nARG NPA_SOURCE_SHA" in dockerfile
+    assert dockerfile.count("> /etc/apt/apt.conf.d/99snapshot") == 1
     assert "--no-binary=av --wheel-dir /opt/npa-pyav-wheel av==17.1.0" in dockerfile
     for package in (
         "build-essential",
