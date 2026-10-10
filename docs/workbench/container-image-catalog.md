@@ -976,17 +976,22 @@ MJLab has an anonymously pullable development image, built through the trusted
 publication workflow and qualified on one RTX PRO 6000. It remains excluded
 from the supported-release table and automatic public-release plan.
 
-The immutable `npa-mjlab:dev-06764a544844f93324bdf75a378c1a7139802c9a`
+The immutable `npa-mjlab:dev-d5cfdcc261d586c25caa877d332feab052369a1f`
 tag resolves to
-`sha256:a3d70cf5147253431c349696eaaf0bf37fbc0bb325e0a25afb3962b57da6681f`.
+`sha256:ec8c099dc8ab34c8a390c6076d3cc3c07a88e27818d0eb0b6b6cf819663f242e`.
 Its measured RTX scope covers Cartpole, G1, Go1 and YAM native train/eval/ONNX;
-service resume/auth/scope/concurrency; and decoded G1 video.
+service resume/auth/scope/concurrency; fresh unmodified SkyPilot VM startup;
+and native NVIDIA G1 video at 1920 × 1080 and 50 fps.
 
-The [2026-10-10 image and GPU record](validation/mjlab-public-gpu-20261010.json)
+The [2026-10-10 native HD image and GPU record](validation/mjlab-native-hd-gpu-20261010.json)
 binds those results to the published digest and source commit. The four task
 cycles each trained for two updates and read back 49 artifacts in total; these
-are functional checks, not policy-quality results. The current digest has no
-B200 or multi-GPU qualification. Earlier private CUDA 12.8 acceptance and the
+are functional checks. Separately, the current image re-evaluated a verified
+3,000-update G1 checkpoint across 64 complete episodes, exported checked ONNX,
+and produced an unchanged 20-second native HD MP4. All 1,000 frames decoded;
+standalone HTML passed offline playback, seeking and mobile layout checks.
+The record preserves the original training image identity separately.
+The current digest has no B200 or multi-GPU qualification. Earlier CUDA 12.8 acceptance and the
 [2026-09-25 trained G1 rollout](validation/mjlab-trained-g1-20260925.json) apply
 only to their recorded image bytes.
 

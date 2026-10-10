@@ -283,7 +283,7 @@ open3d = "0.20.0-cpu-20260918"
 
 
 # Public RTX-qualified development candidate; supported-release quarantine remains.
-mjlab = "dev-06764a544844f93324bdf75a378c1a7139802c9a"
+mjlab = "dev-d5cfdcc261d586c25caa877d332feab052369a1f"
 content-agents = "0.5.2-npa2"
 # Source inventory only: use an explicit validated image until release acceptance.
 ncore = "59c698d206da92b406a4f72619fce3b3a2c64bfd-unbuilt"

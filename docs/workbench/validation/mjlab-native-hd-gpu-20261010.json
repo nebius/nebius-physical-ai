@@ -1,0 +1,286 @@
+{
+  "schema_version": "npa.mjlab.native-hd-gpu-image.v1",
+  "verified_date": "2026-10-10",
+  "image": {
+    "reference": "ghcr.io/nebius/nebius-physical-ai/npa-mjlab:dev-d5cfdcc261d586c25caa877d332feab052369a1f",
+    "digest": "sha256:ec8c099dc8ab34c8a390c6076d3cc3c07a88e27818d0eb0b6b6cf819663f242e",
+    "source_sha": "d5cfdcc261d586c25caa877d332feab052369a1f",
+    "config_digest": "sha256:aec975f07f74c1dda6093fe172a6f7bdab8ac28f8070ddba7fd212a4aa64b5ab",
+    "anonymous_verified": true,
+    "attestations_verified": true,
+    "attestations": {
+      "provenance": {
+        "predicate_type": "https://slsa.dev/provenance/v1",
+        "verified": true
+      },
+      "sbom": {
+        "predicate_type": "https://spdx.dev/Document/v2.3",
+        "verified": true
+      },
+      "sbom_packages": 677
+    },
+    "build_run_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/38085606451",
+    "anonymous_pull_verified": true
+  },
+  "build": {
+    "run_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/38085606451",
+    "passed": true,
+    "pre_and_post_publication_payload": "clean",
+    "corresponding_source_verified_before_and_after_publication": true,
+    "critical_vulnerability_license_gate": "passed",
+    "all_severity_secret_gate": "passed",
+    "signed_provenance_verified": true,
+    "signed_spdx_sbom_verified": true,
+    "sbom_packages": 677,
+    "skypilot_bootstrap_contract": "skypilot-0.12.2-v1"
+  },
+  "source_delivery": {
+    "debian_components": 239,
+    "python_native_archives": 23,
+    "python_lock_sha256": "e076cf7e631a48be2b943cb50a828c054123aefee0469b9c30d317e16dd7eb00"
+  },
+  "native_skypilot_startup": {
+    "version": "0.12.2",
+    "fresh_vm": true,
+    "unmodified_runtime": true,
+    "running_container": {
+      "config_digest": "sha256:aec975f07f74c1dda6093fe172a6f7bdab8ac28f8070ddba7fd212a4aa64b5ab",
+      "image": "ghcr.io/nebius/nebius-physical-ai/npa-mjlab@sha256:ec8c099dc8ab34c8a390c6076d3cc3c07a88e27818d0eb0b6b6cf819663f242e",
+      "source_sha": "d5cfdcc261d586c25caa877d332feab052369a1f",
+      "native_skypilot_startup_verified": true,
+      "runtime_repairs": false,
+      "login_home": "/home/ubuntu",
+      "image_digest": "sha256:ec8c099dc8ab34c8a390c6076d3cc3c07a88e27818d0eb0b6b6cf819663f242e",
+      "registry_digest_verified": true,
+      "checked_running_container": true
+    }
+  },
+  "qualification": {
+    "schema_version": "npa.mjlab.gpu-acceptance.v1",
+    "passed": true,
+    "cases": {
+      "cartpole": {
+        "task": "Mjlab-Cartpole-Balance",
+        "gpu_count": 1,
+        "checkpoint_sha256": "6f8d861d4ea55539fa320f34c584e44223ff777bc8ccb05fc8062db47d985838",
+        "iteration": 1,
+        "optimizer_step": 40.0,
+        "episodes_completed": 8,
+        "mean_return": 8.731246044184902,
+        "survival_fraction": 1.0,
+        "video_frames": null,
+        "onnx_sha256": "33d563174360bc80f2cd8f0ba3412b36f75a2b37b31c9388054dd566abe97925",
+        "artifact_hash_readbacks": 11
+      },
+      "g1": {
+        "task": "Mjlab-Velocity-Flat-Unitree-G1",
+        "gpu_count": 1,
+        "checkpoint_sha256": "503bee1fb70ef3faa2efe8a8b29b9651ca2e3bc6d6df1d5e57c2c8822ddc70ec",
+        "iteration": 1,
+        "optimizer_step": 40.0,
+        "episodes_completed": 8,
+        "mean_return": 2.8061502995460614,
+        "survival_fraction": 0.0,
+        "video_frames": 68,
+        "onnx_sha256": "73414b829530c0e4e00393d12ea34794f723981b3fe00454814a4f1e9adf0ae6",
+        "artifact_hash_readbacks": 14
+      },
+      "go1": {
+        "task": "Mjlab-Velocity-Flat-Unitree-Go1",
+        "gpu_count": 1,
+        "checkpoint_sha256": "6801479574eabb6bed3317c8da9062effc76a41826656156cf6ce017d5cf0cd8",
+        "iteration": 1,
+        "optimizer_step": 40.0,
+        "episodes_completed": 8,
+        "mean_return": 77.12327837571502,
+        "survival_fraction": 1.0,
+        "video_frames": null,
+        "onnx_sha256": "0aeb2000df68444bac0d2859e0364ade85c42097fa35688bd9be370f85e67d7d",
+        "artifact_hash_readbacks": 12
+      },
+      "yam": {
+        "task": "Mjlab-Lift-Cube-Yam",
+        "gpu_count": 1,
+        "checkpoint_sha256": "5b91b2b49f076d7f5e512f8c397b96f004e01b57f89f16c3632ecfc4be38266b",
+        "iteration": 1,
+        "optimizer_step": 40.0,
+        "episodes_completed": 8,
+        "mean_return": 12.312698259192985,
+        "survival_fraction": 1.0,
+        "video_frames": null,
+        "onnx_sha256": "14efbbb08529f817b93a563d6f44b4a966ab336759855e6cdc73f07e8ed548c5",
+        "artifact_hash_readbacks": 12
+      }
+    },
+    "hardware": {
+      "devices": [
+        {
+          "name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+          "capability": [
+            12,
+            0
+          ]
+        }
+      ],
+      "torch": "2.13.0+cu130",
+      "torch_cuda": "13.0",
+      "torch_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120"
+      ],
+      "image_source_sha": "d5cfdcc261d586c25caa877d332feab052369a1f",
+      "versions": {
+        "mjlab": "1.6.0",
+        "mujoco": "3.11.0",
+        "mujoco-warp": "3.11.0",
+        "warp-lang": "1.17.0",
+        "torch": "2.13.0+cu130",
+        "rsl-rl-lib": "5.4.2"
+      }
+    },
+    "service": {
+      "unauthenticated_status": 401,
+      "out_of_scope_status": 400,
+      "concurrent_status": 409,
+      "resumed_iteration": 2,
+      "resumed_optimizer_step": 80.0,
+      "episodes_completed": 8
+    }
+  },
+  "trained_policy_evaluation": {
+    "image_digest": "sha256:ec8c099dc8ab34c8a390c6076d3cc3c07a88e27818d0eb0b6b6cf819663f242e",
+    "source_sha": "d5cfdcc261d586c25caa877d332feab052369a1f",
+    "task": "Mjlab-Velocity-Flat-Unitree-G1",
+    "training_updates": 3000,
+    "training_source_sha": "06764a544844f93324bdf75a378c1a7139802c9a",
+    "training_image_digest": "sha256:a3d70cf5147253431c349696eaaf0bf37fbc0bb325e0a25afb3962b57da6681f",
+    "training_num_envs": 4096,
+    "checkpoint_sha256": "b615d9ec669d8b9fa4161e02dbb32942b2091b18b142fc6cdae71b9410c2ccc6",
+    "training_repeated": false,
+    "checkpoint_iteration": 2998,
+    "evaluations": {
+      "43": {
+        "episodes_completed": 32,
+        "mean_return": 95.70909510378533,
+        "mean_episode_length": 982.59375,
+        "score": 0.96875,
+        "runtime": {
+          "device": "cuda:0",
+          "torch": "2.13.0+cu130",
+          "cuda": "13.0",
+          "image_source_sha": "d5cfdcc261d586c25caa877d332feab052369a1f",
+          "gpu_name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+          "compute_capability": [
+            12,
+            0
+          ]
+        }
+      },
+      "44": {
+        "episodes_completed": 32,
+        "mean_return": 99.95590062389965,
+        "mean_episode_length": 1000.0,
+        "score": 1.0,
+        "runtime": {
+          "device": "cuda:0",
+          "torch": "2.13.0+cu130",
+          "cuda": "13.0",
+          "image_source_sha": "d5cfdcc261d586c25caa877d332feab052369a1f",
+          "gpu_name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+          "compute_capability": [
+            12,
+            0
+          ]
+        }
+      }
+    },
+    "video": {
+      "width": 1920,
+      "height": 1080,
+      "fps": 50.0,
+      "frames": 1000,
+      "duration_seconds": 20.0,
+      "codec": "h264"
+    },
+    "rendering": {
+      "vendor": "NVIDIA Corporation",
+      "renderer": "NVIDIA RTX PRO 6000 Blackwell Server Edition/PCIe/SSE2",
+      "version": "4.6.0 NVIDIA 580.173.02",
+      "backend": "egl"
+    },
+    "evaluation_wall_seconds": {
+      "43": 359.5093394500001,
+      "44": 350.23203205999994
+    },
+    "video_render_settings": {
+      "defaults_used": true,
+      "upscaled": false,
+      "crf": 18,
+      "pixel_format": "yuv420p"
+    },
+    "artifact_hashes_verified": 8,
+    "rendered_artifacts": {
+      "rollout.html": {
+        "sha256": "c67d6473e6c74c52cf6c3e58fa800d77852caec79fe8d1da13b8f62448f5b64b",
+        "bytes": 15885921
+      },
+      "rollout.mp4": {
+        "sha256": "b82e684fabc1df5aad81f2041861f8b2826aab3de5f3035fd38885776fd70fc5",
+        "bytes": 11907512
+      }
+    },
+    "onnx_checked": true,
+    "committed_gpu_regression": {
+      "passed": 1,
+      "failed": 0
+    }
+  },
+  "standalone_html": {
+    "html_sha256": "4b85706f8b45fcdb4794c98d8d051a71a83f428022c0e7ae4ed7f2eb6189e1f5",
+    "html_bytes": 15897288,
+    "decoded_frames": 1000,
+    "video_dimensions": [
+      1920,
+      1080
+    ],
+    "fps": 50,
+    "codec": "h264",
+    "pixel_format": "yuv420p",
+    "offline_browser": {
+      "duration": 20,
+      "width": 1920,
+      "height": 1080,
+      "readyState": 4,
+      "error": null,
+      "muted": true
+    },
+    "playback_quality": {
+      "currentTime": 19.480475,
+      "totalVideoFrames": 1026,
+      "droppedVideoFrames": 1
+    },
+    "seek_verified_seconds": [
+      5,
+      10,
+      15
+    ],
+    "mobile_width": 390,
+    "mobile_overflow": false,
+    "external_network_requests": 0,
+    "page_errors": []
+  },
+  "scope": {
+    "gpu_count": 1,
+    "gpu_model": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+    "training_repeated": false,
+    "full_reference_workflow_submitted": false,
+    "native_components_submitted_with_skypilot": true,
+    "supported_release_promoted": false,
+    "b200_and_multi_gpu_current_digest": "unverified",
+    "quality_claim": "Measured trained-policy evaluation; survival means reaching the horizon, not task success."
+  }
+}

@@ -53,26 +53,29 @@ fall back to unsafe pickle.
 ## Workflow and image routing
 
 - `workflows/testing/mjlab-eval.yaml`: existing native checkpoint → measured report.
-- `workflows/testing/mjlab-train-eval.yaml`: native train → eval → ONNX export →
-  independent-seed eval. All stages route to `npa-mjlab`, including repeated eval.
+- `workflows/testing/mjlab-train-eval.yaml`: native train → measured HD MP4/HTML →
+  ONNX export → independent-seed eval. All stages route to the pinned `npa-mjlab`.
 - `workflows/testing/mjlab-render.yaml`: trained checkpoint → measured evaluation,
   MP4 and HTML on RTX PRO 6000 through `workbench.mjlab.render` (`eval --video`).
 - `workbench.mjlab.train`, `.eval`, `.export` use real CLI flags and declared S3
-  outputs. H100 is the state-based workflow default; camera/video workloads need
-  a compatible rendering GPU/runtime.
+  outputs. All three supplied workflows select RTX PRO 6000 and the exact
+  qualified development digest, including the training workflow's video stage.
 - The dedicated Dockerfile has a hash-locked Linux Python 3.12 CUDA wheel closure.
   The current recipe uses Torch 2.13.0/CUDA 13.0 and setuptools >=83 to replace
   vulnerable dependency pins. Historical CUDA 12.8 evidence covers B200 and
   RTX PRO 6000, including eight-GPU training; do not transfer that evidence to
-  different image bytes. The current CUDA 13.0 candidate has a separate trained
+  different image bytes. The historical CUDA 13.0 candidate has a separate trained
   G1 RTX rollout record in `docs/workbench/validation/mjlab-trained-g1-20260925.json`.
   See the guide for exact artifacts and measured scope.
-  The public development digest in `docs/workbench/validation/mjlab-public-gpu-20261010.json`
+  The current public development digest in `docs/workbench/validation/mjlab-native-hd-gpu-20261010.json`
   passed trusted image gates, native Cartpole/G1/Go1/YAM cycles, service checks
-  and decoded G1 rendering on one RTX PRO 6000. Those two-update task smokes do
-  not establish policy quality or current B200/multi-GPU acceptance.
-  Supported-release promotion remains quarantined. Use that explicit digest
-  override or an independently qualified operator image. Do not route to SONIC's image.
+  and fresh unmodified SkyPilot VM startup on one RTX PRO 6000. It separately
+  re-evaluated the verified 3,000-update G1 checkpoint across 64 complete episodes,
+  rendered native NVIDIA 1080p/50 fps video and passed offline HTML playback,
+  seeking and mobile checks. Preserve the original training image identity.
+  Current B200/multi-GPU acceptance remains unverified; release promotion stays
+  quarantined. The examples already pin this qualified RTX digest. Do not route
+  to SONIC's image.
 - Keep orchestration in declarative workflow YAML, not a SONIC Python runner.
 
 ## Validation
