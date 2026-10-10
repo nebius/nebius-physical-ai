@@ -28,6 +28,11 @@ from npa.workflows.sim2real.pi05_contract import (
     EPISODE_SCHEMA,
     JOINT_NAMES,
     MAX_GRIPPER_WIDTH_M,
+    OBJECT_INITIAL_X_RANGE_M,
+    OBJECT_INITIAL_Y_RANGE_M,
+    WRIST_MOUNT_QUATERNION_XYZW,
+    WRIST_MOUNT_TARGET_LOCAL_M,
+    WRIST_MOUNT_TRANSLATION_M,
     build_contract,
     release_width_threshold,
 )
@@ -41,8 +46,8 @@ DESTINATION_RADIUS_M = 0.05
 DESTINATION_LABEL = "pi05_destination_marker"
 SUPPORT_SURFACE_SIZE_M = (1.0, 0.8, 0.05)
 SUPPORT_SURFACE_CENTER_M = (0.5, 0.0, -0.025)
-WRIST_MOUNT_TRANSLATION_M = (0.025, 0.0, 0.035)
-WRIST_MOUNT_QUATERNION_XYZW = (0.0, 0.0, 0.0, 1.0)
+EXTERIOR_CAMERA_POSITION_M = (0.65, 0.65, 0.85)
+EXTERIOR_CAMERA_TARGET_M = (0.50, 0.0, 0.03)
 DOWNWARD_HAND_QUATERNION_XYZW = (1.0, 0.0, 0.0, 0.0)
 RESET_SETTLE_CONTROL_STEPS = 2
 EXPECTED_SEMANTIC_LABELS = frozenset(
@@ -109,6 +114,23 @@ def configure_surface_goal(cfg: Any, target: tuple[float, float, float]) -> None
     command.ranges.pos_x = (target[0], target[0])
     command.ranges.pos_y = (target[1], target[1])
     command.ranges.pos_z = (target[2], target[2])
+
+
+def configure_object_reset(cfg: Any) -> None:
+    """Bind the inherited relative reset event to the declared world XY range."""
+
+    event = cfg.events.reset_object_position
+    params = getattr(event, "params", None)
+    if not isinstance(params, dict) or "pose_range" not in params:
+        raise RuntimeError("reset_object_position lacks a mutable pose range")
+    default = tuple(float(value) for value in cfg.scene.object.init_state.pos[:2])
+    if default != (0.5, 0.0):
+        raise RuntimeError("pi0.5 reset calibration requires the pinned object origin")
+    params["pose_range"] = {
+        "x": tuple(value - default[0] for value in OBJECT_INITIAL_X_RANGE_M),
+        "y": tuple(value - default[1] for value in OBJECT_INITIAL_Y_RANGE_M),
+        "z": (0.0, 0.0),
+    }
 
 
 def configure_destination_marker(
@@ -303,19 +325,20 @@ def _camera_config(env_cfg: Any) -> None:
 
     from isaaclab.sensors import TiledCameraCfg
 
-    exterior_position = (1.25, -1.25, 1.05)
+    exterior_position = EXTERIOR_CAMERA_POSITION_M
     env_cfg.scene.pi05_exterior = TiledCameraCfg(
         prim_path="{ENV_REGEX_NS}/Pi05ExteriorCamera",
         offset=TiledCameraCfg.OffsetCfg(
             pos=exterior_position,
-            rot=_ros_look_at_xyzw(exterior_position, (0.5, 0.0, 0.05)),
+            rot=_ros_look_at_xyzw(exterior_position, EXTERIOR_CAMERA_TARGET_M),
             convention="ros",
         ),
         **_camera_common(),
     )
-    # Panda fingers extend along hand +Z in the selected Franka asset.  ROS
-    # camera +Z is therefore the explicit wrist optical axis; the old Gen2-era
-    # world quaternion aimed Gen3 camera +X toward hand -X and is rejected.
+    # The selected Franka finger-link reference lies near hand-local +Z.  A
+    # side bracket keeps the closest 48/60/72 mm cube faces beyond the 30 mm
+    # near clip and aims ROS +Z at that measured reference so object and both
+    # contact surfaces can coexist in the close-grasp view.
     # Gen3's Isaac RTX renderer reads camera transforms from USD while Fabric
     # owns the moving articulation pose.  A world-pose-driven camera avoids a
     # stale authored hand transform; every capture republishes the calibrated
@@ -1685,11 +1708,12 @@ def _wrist_mount_evidence(native: Any, buffers: dict[str, list[Any]]) -> dict[st
         "runtime_prim_path": receipt["runtime_prim_path"],
         "runtime_parent_prim": receipt["runtime_parent_prim"],
         "mount_translation_m": list(WRIST_MOUNT_TRANSLATION_M),
+        "mount_target_local_m": list(WRIST_MOUNT_TARGET_LOCAL_M),
         "mount_quaternion_xyzw": list(WRIST_MOUNT_QUATERNION_XYZW),
         "quaternion_order": "xyzw",
         "offset_convention": "ros",
         "optical_convention": "ros_forward_positive_z_right_positive_x_down_positive_y",
-        "hand_asset_axis": "panda_fingers_extend_along_hand_positive_z",
+        "hand_asset_axis": "side_bracket_aimed_at_measured_finger_link_reference",
         **_wrist_geometry(native, wrist, camera),
         "latest_pose_updates_enabled": True,
         "renderer_pose_bridge": "live_hand_mount_to_world_usd_and_fabric",
@@ -2744,6 +2768,7 @@ def _configure_environment(
         cfg.scene.object.spawn.usd_path = object_usd
     cfg.scene.object.spawn.scale = object_scale
     cfg.scene.object.spawn.semantic_tags = [("class", "pi05_target_object")]
+    configure_object_reset(cfg)
     target = (0.50, 0.18, 0.0)
     configure_finger_semantics(cfg)
     configure_hand_origin_frames(cfg, require_ik=True)

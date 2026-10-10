@@ -124,6 +124,7 @@ def test_contract_is_final_byte_bound_and_distinct_from_ppo() -> None:
     wrist = contract["observation"]["wrist_image_left"]
     assert wrist["mount"] == "calibrated_live_panda_hand_world_pose"
     assert wrist["renderer_bridge"] == "world_usd_and_fabric"
+    assert wrist["mount_translation_m"] == [0.09, 0.0, 0.015]
     assert contract["action"]["joint_order"] == list(JOINT_NAMES)
     expert = contract["action"]["expert_adapter"]
     assert expert["waypoint_frame"] == "panda_hand_origin"
@@ -133,6 +134,14 @@ def test_contract_is_final_byte_bound_and_distinct_from_ppo() -> None:
     modified["action"]["control_hz"] = 30
     with pytest.raises(Pi05ContractError, match="digest"):
         assert_contract(modified)
+
+
+def test_dense_episode_rejects_initial_pose_outside_configured_reset() -> None:
+    episode = _episode()
+    episode["initial_object_position_m"] = [0.5908, 0.0677, 0.024]
+
+    with pytest.raises(Pi05ContractError, match="configured range"):
+        validate_dense_episode(episode)
 
 
 def test_absolute_bridge_and_physical_gripper_roundtrip() -> None:

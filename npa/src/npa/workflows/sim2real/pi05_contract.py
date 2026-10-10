@@ -34,6 +34,16 @@ MAX_GRIPPER_WIDTH_M = 0.08
 CONTROL_HZ = 15.0
 ACTION_HORIZON = 15
 EXECUTION_PREFIX = 8
+OBJECT_INITIAL_X_RANGE_M = (0.42, 0.55)
+OBJECT_INITIAL_Y_RANGE_M = (-0.25, -0.08)
+WRIST_MOUNT_TRANSLATION_M = (0.09, 0.0, 0.015)
+WRIST_MOUNT_TARGET_LOCAL_M = (0.0, 0.0, 0.0854165984)
+WRIST_MOUNT_QUATERNION_XYZW = (
+    -0.30975410769308215,
+    -0.30975410769308215,
+    0.6356511565058798,
+    0.6356511565058798,
+)
 
 
 class Pi05ContractError(ValueError):
@@ -58,7 +68,14 @@ def _task_contract() -> dict[str, Any]:
             "support_surface": "table",
             "target_xy_m": {"x": [0.42, 0.58], "y": [0.10, 0.25]},
             "target_z": "derived from measured table top plus half object height",
-            "object_initial_xy_m": {"x": [0.42, 0.55], "y": [-0.25, -0.08]},
+            "object_initial_xy_m": {
+                "x": list(OBJECT_INITIAL_X_RANGE_M),
+                "y": list(OBJECT_INITIAL_Y_RANGE_M),
+            },
+            "object_reset": (
+                "isaac_reset_root_state_uniform_relative_to_stock_"
+                "object_initial_state_verified_in_expert_and_policy"
+            ),
             "object_motion": "physics_only_no_teleport_or_direct_object_state_write",
             "destination_marker": {
                 "shape": "noncolliding_rendered_disc",
@@ -106,12 +123,13 @@ def _wrist_observation_contract() -> dict[str, Any]:
         "shape": [224, 224, 3],
         "mount": "calibrated_live_panda_hand_world_pose",
         "renderer_bridge": "world_usd_and_fabric",
-        "mount_translation_m": [0.025, 0.0, 0.035],
-        "mount_quaternion_xyzw": [0.0, 0.0, 0.0, 1.0],
+        "mount_translation_m": list(WRIST_MOUNT_TRANSLATION_M),
+        "mount_target_local_m": list(WRIST_MOUNT_TARGET_LOCAL_M),
+        "mount_quaternion_xyzw": list(WRIST_MOUNT_QUATERNION_XYZW),
         "quaternion_order": "xyzw",
         "offset_convention": "ros",
         "optical_convention": "ros_forward_positive_z",
-        "hand_axis": "panda_fingers_extend_positive_z",
+        "hand_axis": "side_bracket_aimed_at_measured_finger_link_reference",
         "focal_length_mm": 18.0,
         "latest_pose_updates": True,
         "semantic_labels": "int32_little_endian_packed_rgba_metadata_bijection",
@@ -486,11 +504,7 @@ def _validate_episode_header(episode: Mapping[str, Any]) -> None:
             "7D, relative, delta, or unspecified action targets are incompatible"
         )
     _validate_task_target(episode)
-    _finite_vector(
-        episode.get("initial_object_position_m", []),
-        3,
-        "initial_object_position_m",
-    )
+    _validate_initial_position(episode)
     _validate_episode_geometry(episode)
     if not isinstance(episode.get("scene_seed"), int):
         raise Pi05ContractError("scene randomization seed provenance is missing")
@@ -506,6 +520,16 @@ def _validate_episode_header(episode: Mapping[str, Any]) -> None:
         raise Pi05ContractError(
             "destination must be a rendered non-colliding exterior-visible marker"
         )
+
+
+def _validate_initial_position(episode: Mapping[str, Any]) -> None:
+    initial = _finite_vector(
+        episode.get("initial_object_position_m", []), 3, "initial_object_position_m"
+    )
+    inside_x = OBJECT_INITIAL_X_RANGE_M[0] <= initial[0] <= OBJECT_INITIAL_X_RANGE_M[1]
+    inside_y = OBJECT_INITIAL_Y_RANGE_M[0] <= initial[1] <= OBJECT_INITIAL_Y_RANGE_M[1]
+    if not inside_x or not inside_y:
+        raise Pi05ContractError("initial object pose is outside the configured range")
 
 
 def _validate_task_target(episode: Mapping[str, Any]) -> None:

@@ -56,6 +56,7 @@ from npa.workflows.sim2real.pi05_isaac import (
     configure_destination_marker,
     configure_finger_semantics,
     configure_hand_origin_frames,
+    configure_object_reset,
     configure_robot_plant,
     configure_support_surface,
     register_surface_task,
@@ -933,6 +934,7 @@ def _configure_eval(
     configure_robot_plant(cfg)
     remap_moved_franka_usd(cfg)
     _configure_eval_object(cfg, protocol)
+    configure_object_reset(cfg)
     configure_finger_semantics(cfg)
     configure_hand_origin_frames(cfg, require_ik=False)
     target = tuple(protocol["scenarios"][0]["target_position_m"])

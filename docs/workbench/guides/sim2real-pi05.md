@@ -27,14 +27,20 @@ The exact Isaac Lab 3.0 camera contract uses XYZW quaternions, live pose
 updates, and ProxyArray-to-tensor conversion before indexing. Its RTX backend
 consumes USD camera transforms while Fabric owns the moving articulation, so
 the adapter publishes the calibrated live-hand pose to both a world-pose USD
-camera and CameraData before every render. The wrist offset uses ROS optical
-axes: camera +Z follows the Franka hand/finger +Z direction, with a wider 18 mm
-focal length. Runtime evidence must prove the measured optical axis points
+camera and CameraData before every render. The wrist uses a calibrated
+hand-local side bracket at `(0.09, 0, 0.015)` m; its ROS +Z optical axis aims at
+the measured finger-link reference near hand +Z, with an 18 mm focal length.
+This keeps the measured default size variants' closest faces outside the 30 mm
+near clip by construction, but only actual rendered object and bilateral-finger
+pixels qualify it. Runtime evidence must prove the measured optical axis points
 toward USD `ComputeUntransformedBound` finger geometry transformed by current Gen3
 `ArticulationData.body_pos_w/body_quat_w` physics buffers, and that object and
 both fingers have actual semantic pixels in the relevant
-approach-through-release phases. The exterior camera is similarly derived by
-look-at geometry rather than retaining an ambiguous legacy quaternion.
+approach-through-release phases. The exterior camera is similarly derived from
+a target-side oblique static look-at pose, separating the source-side object
+and destination in depth while retaining side faces, rather than retaining an
+ambiguous legacy quaternion. That rationale is geometric only; its object and
+destination pixels still require live qualification.
 Projected finger bounds are labelled only as in-frustum geometry; they are not
 treated as rendered visibility and cannot satisfy the pixel gate.
 
@@ -65,7 +71,10 @@ size/morphology holdout within one
 asset family, not evidence for novel object categories or another robot
 embodiment. All three splits use the same task-owned, single-rigid-body support
 surface layout; this replaces the stock multi-body table so object/support
-contact filtering is body-exact on the pinned PhysX backend. Separate seeds
+contact filtering is body-exact on the pinned PhysX backend. The inherited
+Isaac `reset_root_state_uniform` event is explicitly rebound in both expert
+and policy configs so its relative offsets produce world `x=[0.42,0.55]`,
+`y=[-0.25,-0.08]`; admitted rows must fall inside those ranges. Separate seeds
 exercise the configured pose, mass, and friction randomization; their old
 human-readable scene labels did not create independently authored scenes and
 are no longer represented as such. Source-derived asset diagrams must remain

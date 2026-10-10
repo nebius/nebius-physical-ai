@@ -52,6 +52,7 @@ from npa.workflows.sim2real.pi05_isaac import (
     configure_destination_marker,
     configure_finger_semantics,
     configure_hand_origin_frames,
+    configure_object_reset,
     configure_robot_plant,
     configure_support_surface,
 )
@@ -233,7 +234,7 @@ def test_gen3_camera_config_requests_live_pose_and_integer_semantics(
         assert camera.renderer_cfg.colorize_semantic_segmentation is False
         assert camera.renderer_cfg.semantic_filter == ["class"]
         assert camera.data_types == ["rgb", "semantic_segmentation"]
-    assert cfg.scene.pi05_wrist.offset.rot == (0.0, 0.0, 0.0, 1.0)
+    assert cfg.scene.pi05_wrist.offset.rot == pi05_isaac.WRIST_MOUNT_QUATERNION_XYZW
     assert cfg.scene.pi05_wrist.offset.convention == "ros"
     assert cfg.scene.pi05_wrist.prim_path == "{ENV_REGEX_NS}/Pi05WristCamera"
     assert cfg.scene.pi05_exterior.offset.convention == "ros"
@@ -241,14 +242,65 @@ def test_gen3_camera_config_requests_live_pose_and_integer_semantics(
 
 
 def test_ros_camera_axes_aim_at_declared_geometry() -> None:
-    position = np.asarray([1.25, -1.25, 1.05])
-    target = np.asarray([0.5, 0.0, 0.05])
+    position = np.asarray(pi05_isaac.EXTERIOR_CAMERA_POSITION_M)
+    target = np.asarray(pi05_isaac.EXTERIOR_CAMERA_TARGET_M)
     quaternion = _ros_look_at_xyzw(position, target)
     optical_axis = _rotate_vector(_xyzw_to_wxyz(quaternion), [0.0, 0.0, 1.0])
     expected = (target - position) / np.linalg.norm(target - position)
     assert optical_axis == pytest.approx(expected)
-    wrist_axis = _rotate_vector(_xyzw_to_wxyz([0.0, 0.0, 0.0, 1.0]), [0, 0, 1])
-    assert wrist_axis == pytest.approx([0.0, 0.0, 1.0])
+    wrist_axis = _rotate_vector(
+        _xyzw_to_wxyz(pi05_isaac.WRIST_MOUNT_QUATERNION_XYZW), [0, 0, 1]
+    )
+    wrist_target = np.subtract(
+        pi05_isaac.WRIST_MOUNT_TARGET_LOCAL_M,
+        pi05_isaac.WRIST_MOUNT_TRANSLATION_M,
+    )
+    assert wrist_axis == pytest.approx(wrist_target / np.linalg.norm(wrist_target))
+
+
+def test_exterior_oblique_geometry_contains_source_and_destination() -> None:
+    position = np.asarray(pi05_isaac.EXTERIOR_CAMERA_POSITION_M)
+    quaternion = _ros_look_at_xyzw(position, pi05_isaac.EXTERIOR_CAMERA_TARGET_M)
+    rotation = np.column_stack(
+        [_rotate_vector(_xyzw_to_wxyz(quaternion), axis) for axis in np.eye(3)]
+    )
+    focal_pixels = 18.0 / 20.955 * 224.0
+    pixels = []
+    for point in ([0.42, -0.25, 0.024], [0.55, -0.08, 0.024], [0.5, 0.18, 0.024]):
+        camera = rotation.T @ (np.asarray(point) - position)
+        assert camera[2] > 0.03
+        pixels.append(112.0 + focal_pixels * camera[:2] / camera[2])
+    assert np.allclose(
+        pixels,
+        [[115.409, 80.768], [100.372, 103.640], [120.189, 140.292]],
+        atol=0.002,
+    )
+
+
+def test_side_mount_keeps_default_cube_faces_beyond_near_clip() -> None:
+    camera = np.asarray(pi05_isaac.WRIST_MOUNT_TRANSLATION_M)
+    target = np.asarray(pi05_isaac.WRIST_MOUNT_TARGET_LOCAL_M)
+    center_depth = float(np.linalg.norm(target - camera))
+    assert center_depth - 0.072 / 2 > 0.03
+
+
+def test_object_reset_maps_declared_world_ranges_from_pinned_origin() -> None:
+    cfg = SimpleNamespace(
+        scene=SimpleNamespace(
+            object=SimpleNamespace(init_state=SimpleNamespace(pos=[0.5, 0, 0.055]))
+        ),
+        events=SimpleNamespace(
+            reset_object_position=SimpleNamespace(params={"pose_range": {}})
+        ),
+    )
+
+    configure_object_reset(cfg)
+
+    pose = cfg.events.reset_object_position.params["pose_range"]
+    assert pose["x"] == pytest.approx((-0.08, 0.05))
+    assert pose["y"] == pytest.approx((-0.25, -0.08))
+    assert pose["z"] == (0.0, 0.0)
+    assert tuple(0.5 + value for value in pose["x"]) == pytest.approx((0.42, 0.55))
 
 
 def test_renderer_world_matrix_preserves_pose_in_usd_row_convention() -> None:
@@ -960,8 +1012,8 @@ def test_wrist_mount_repairs_static_fabric_world_pose_with_receipt() -> None:
         "usd_and_fabric_world_pose_synchronized_from_live_hand_mount"
     )
     assert receipt["before"]["camera_data_position_m"] == [0.025, 0.0, 0.035]
-    assert np.allclose(receipt["after"]["camera_data_position_m"], [0.425, 0.0, 0.435])
-    assert np.allclose(receipt["after"]["renderer_usd_position_m"], [0.425, 0.0, 0.435])
+    assert np.allclose(receipt["after"]["camera_data_position_m"], [0.49, 0.0, 0.415])
+    assert np.allclose(receipt["after"]["renderer_usd_position_m"], [0.49, 0.0, 0.415])
     assert receipt["pose_sources"]["camera_live"] == ("FabricFrameView.get_world_poses")
     assert buffers["wrist_mount_receipts"] == [receipt]
     assert buffers["queries"] == []
@@ -985,7 +1037,7 @@ def test_wrist_mount_synchronizes_stale_camera_data_and_renderer() -> None:
     )
     assert native.scene["pi05_wrist"].set_calls == 1
     assert native.scene["pi05_wrist"].update_calls == 1
-    assert np.allclose(receipt["after"]["camera_data_position_m"], [0.425, 0.0, 0.435])
+    assert np.allclose(receipt["after"]["camera_data_position_m"], [0.49, 0.0, 0.415])
 
 
 def test_wrist_mount_rejects_detached_prim_and_preserves_raw_pose() -> None:
@@ -1019,7 +1071,7 @@ def test_verified_wrist_pose_tracks_later_live_hand_motion() -> None:
 
     assert np.allclose(
         native.scene["pi05_wrist"].data.pos_w.torch.value[0],
-        [0.525, -0.1, 0.635],
+        [0.59, -0.1, 0.615],
     )
     assert native.scene["pi05_wrist"].set_calls == 2
     assert native.scene["pi05_wrist"].update_calls == 2
@@ -1034,9 +1086,10 @@ def test_wrist_mount_composes_offset_and_orientation_in_live_hand_frame() -> Non
 
     receipt = _wrist_mount_receipt(native, {"wrist_mount_receipts": []})
 
-    assert np.allclose(receipt["after"]["camera_data_position_m"], [0.375, 0.0, 0.435])
+    assert np.allclose(receipt["after"]["camera_data_position_m"], [0.31, 0.0, 0.415])
     assert np.allclose(
-        receipt["after"]["camera_data_quaternion_xyzw"], [0.0, 0.0, 1.0, 0.0]
+        receipt["after"]["camera_data_quaternion_xyzw"],
+        _multiply_xyzw([0.0, 0.0, 1.0, 0.0], pi05_isaac.WRIST_MOUNT_QUATERNION_XYZW),
     )
 
 
