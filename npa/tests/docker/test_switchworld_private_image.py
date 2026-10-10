@@ -54,6 +54,8 @@ def test_private_recipe_uses_audited_snapshot_and_no_easydict_wheel() -> None:
         "assert lzma.CHECK_CRC64; "
         "assert sqlite3.sqlite_version"
     ) in text
+    assert "libffi8" in text
+    assert text.index("libffi8") < text.index("import ctypes, hashlib, lzma")
     assert "COPY --from=wan-source /opt/byof /opt/byof" in text
     assert "COPY --from=wan-source /opt/wan-base /opt/wan-base" in text
     assert "wan/utils/easydict.py" in text

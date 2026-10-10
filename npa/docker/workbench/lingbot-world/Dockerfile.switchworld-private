@@ -55,9 +55,10 @@ SHELL ["/bin/bash", "-lc"]
 USER root
 
 # The fixed snapshot supplies the exact libssh2 bytes independently audited in
-# ncore/native-bootstrap-lock.json. No package acquisition occurs at pod time.
-RUN python3 -c 'import ctypes, hashlib, lzma, sqlite3, ssl, sys, zlib; assert sys.version_info[:2] == (3, 10); assert ssl.OPENSSL_VERSION; assert hashlib.algorithms_available; assert ctypes.CDLL(None); assert zlib.ZLIB_VERSION; assert lzma.CHECK_CRC64; assert sqlite3.sqlite_version' \
-    && sed -ri \
+# ncore/native-bootstrap-lock.json. Install libffi8 before importing copied
+# CPython extensions; the slim base intentionally does not provide it. No
+# package acquisition occurs at pod time.
+RUN sed -ri \
       -e "s|https?://deb.debian.org/debian-security|https://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}|g" \
       -e "s|https?://deb.debian.org/debian|https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}|g" \
       /etc/apt/sources.list.d/debian.sources \
@@ -65,8 +66,9 @@ RUN python3 -c 'import ctypes, hashlib, lzma, sqlite3, ssl, sys, zlib; assert sy
     && apt-get update \
     && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
-      ca-certificates ffmpeg git git-lfs libgl1 libglib2.0-0 \
+      ca-certificates ffmpeg git git-lfs libffi8 libgl1 libglib2.0-0 \
       openssh-server procps rsync sudo util-linux \
+    && python3 -c 'import ctypes, hashlib, lzma, sqlite3, ssl, sys, zlib; assert sys.version_info[:2] == (3, 10); assert ssl.OPENSSL_VERSION; assert hashlib.algorithms_available; assert ctypes.CDLL(None); assert zlib.ZLIB_VERSION; assert lzma.CHECK_CRC64; assert sqlite3.sqlite_version' \
     && rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
     && useradd -m -s /bin/bash -u 1000 ubuntu \
