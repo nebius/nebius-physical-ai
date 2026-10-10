@@ -113,6 +113,7 @@ RUN /opt/npa/model_source.sh \
     && /opt/wan-base/bin/python -c 'import runpy; cls = runpy.run_path("/opt/byof/wan/utils/easydict.py")["EasyDict"]; assert cls({"nested": {"value": 7}}).nested.value == 7' \
     && /opt/wan-base/bin/python -m pip install --no-cache-dir --no-deps \
       protobuf==6.33.6 scipy==1.15.3 /opt/npa-pyav-wheel/av-17.1.0-*.whl \
+    && /opt/wan-base/bin/python -c 'import av; assert av.__version__ == "17.1.0"' \
     && /opt/wan-base/bin/python -m pip freeze --all > /opt/byof/npa_baked_python_inventory.txt \
     && ! grep -Eiq '^(torch|torchvision|torchaudio|nvidia-)' /opt/byof/npa_baked_python_inventory.txt \
     && find /opt/wan-base -type d -name __pycache__ -prune -exec rm -rf {} + \

@@ -63,6 +63,7 @@ def test_lingbot_model_runtime_builds_pyav_against_audited_system_ffmpeg() -> No
         "protobuf==6.33.6 scipy==1.15.3 /opt/npa-pyav-wheel/av-17.1.0-*.whl"
         in dockerfile
     )
+    assert 'import av; assert av.__version__ == "17.1.0"' in dockerfile
     assert "protobuf==6.33.6 scipy==1.15.3 av==17.1.0" not in dockerfile
 
 
