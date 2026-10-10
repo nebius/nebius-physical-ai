@@ -36,6 +36,14 @@ through `/proc`. WSL2 must remain running throughout the submission.
 ```bash
 git clone https://github.com/nebius/nebius-physical-ai.git
 cd nebius-physical-ai
+```
+
+For the measured development reproduction, select the checkout in the
+[execution receipt](../validation/sim2real-manual-development-20261010.md)
+before creating the virtualenv. It records the execution and cleanup revisions.
+For another image set, use its maintainer's compatible checkout.
+
+```bash
 python3.12 -m venv npa/.venv
 npa/.venv/bin/python -m pip install -e npa
 npa/.venv/bin/npa --version
@@ -54,7 +62,13 @@ Validation proves the declaration, not image availability or a GPU run.
 ## 2. Select a qualified image set before provisioning
 
 The canonical YAML intentionally leaves all five image references and
-`source_sha` empty. Obtain an image-set receipt from your image maintainer:
+`source_sha` empty. Obtain an image-set receipt from your image maintainer or
+use the measured development set below.
+
+The [October 10 development execution receipt](../validation/sim2real-manual-development-20261010.md)
+provides five exact public development pins and their tested operator revisions.
+It records full execution and zero strict placement successes; it does not
+promote the quarantined release defaults.
 
 | Setting | Image and required capability |
 | --- | --- |
@@ -66,7 +80,8 @@ The canonical YAML intentionally leaves all five image references and
 | `SOURCE_SHA` | Common full 40-hex commit baked into all five images as `NPA_IMAGE_SOURCE_SHA` |
 
 Every image must be a complete `repository@sha256:<64-hex-digest>` reference.
-The receipt must name the tested CLI/workflow checkout and establish
+The receipt must name the tested CLI/workflow checkout, record any later
+operator cleanup fixes, and establish
 compatibility with its hosted evaluator contract. Use that checkout when
 reproducing the result; its revision can differ from the common image source
 SHA. Pullability and matching labels alone do not prove those capabilities.
@@ -570,7 +585,10 @@ show explicit endpoint and credential-profile selection. Inspect:
 | `reports/sim2real.mcap` | Non-empty, independently decoded camera and evaluation evidence |
 | `npa-workflow/runtime.json` | Completed graph, not merely some successful jobs |
 
-Open downloaded recordings with the [viewer guides](../rerun-sharing.md).
+The measured development run emitted a 15.4 GB RRD and 10.5 GB MCAP. Inspect
+the artifact sizes and available disk space before downloading both; leave room
+for the selected files and their readers. Open downloaded recordings with the
+[viewer guides](../rerun-sharing.md).
 Completion proves orchestration; report the measured policy result even when it
 misses the threshold. Missing or corrupt finalization outputs mean completion
 is unverified. The [architecture audit](../../architecture/sim2real-compositional-workflow.md)
