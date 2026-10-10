@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import tempfile
 from types import SimpleNamespace
 
 import pytest
@@ -521,7 +522,8 @@ def test_default_setup_rejects_interpreter_without_the_npa_cli(
     record = setup.index('npa_python=""')
     start = setup.rfind('"$npa_setup_python" -c', 0, record)
     end = setup.index("if [ ! -x /usr/local/bin/npa ]", start)
-    final_gate = setup[start:end].replace("/tmp/npa-python", str(receipt))
+    default_receipt = Path(tempfile.gettempdir()) / "npa-python"
+    final_gate = setup[start:end].replace(str(default_receipt), str(receipt))
     result = subprocess.run(
         ["bash", "-c", "set -e\n" + final_gate],
         check=False,
