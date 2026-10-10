@@ -953,7 +953,7 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         # SkyPilot task surface (the viewer runs in the browser / static image).
         "foxglove",
         # Gemini Robotics toolRefs are a provisional override-required API
-        # adapter: ER planning / adaptation / eval run against the hosted
+        # adapter: ER planning / eval run against the hosted
         # Gemini API, so there is no service or YAML env tier to stay
         # coherent with. CLI <-> catalog argv coherence is enforced by
         # test_module_toolref_argv.py instead.

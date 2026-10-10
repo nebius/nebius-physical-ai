@@ -14,7 +14,7 @@ import httpx
 import pytest
 import yaml
 
-from npa.cli.workbench.gemini_robotics import EvalResult, PlanResult
+from npa.clients.gemini_robotics import EvalResult, PlanResult
 from npa.workflows.byof.gemini_robotics_pipeline import (
     GeminiRoboticsPipelineConfig,
     GeminiRoboticsPipelineError,

@@ -22,7 +22,7 @@ from npa.cli.path_contract import (
     validate_read_path,
     validate_write_path,
 )
-from npa.cli.workbench.gemini_robotics import (
+from npa.clients.gemini_robotics import (
     EVAL_RECEIPT_SCHEMA,
     PLAN_RECEIPT_SCHEMA,
     EvalResult,

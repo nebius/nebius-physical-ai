@@ -11,7 +11,7 @@ import httpx
 import pytest
 from typer.testing import CliRunner
 
-from npa.cli.workbench.gemini_robotics import (
+from npa.clients.gemini_robotics import (
     API_KEY_ENV,
     BASE_URL_ENV,
     PROVISIONAL_API_BASE_URL,
@@ -320,8 +320,24 @@ def test_workbench_surface_is_pipeline_first() -> None:
     }
 
 
+def test_cli_and_pipeline_share_the_client_core() -> None:
+    """The workflow must use the core client without importing the CLI adapter."""
+    import inspect
+
+    from npa.cli.workbench import gemini_robotics as cli
+    from npa.clients import gemini_robotics as client_core
+    from npa.workflows.byof import gemini_robotics_pipeline as pipe
+
+    assert cli.GeminiRoboticsClient is client_core.GeminiRoboticsClient
+    assert pipe.GeminiRoboticsClient is client_core.GeminiRoboticsClient
+    assert inspect.getsourcefile(client_core.GeminiRoboticsClient) == inspect.getfile(
+        client_core
+    )
+    assert "npa.cli.workbench.gemini_robotics" not in inspect.getsource(pipe)
+
+
 def test_workbench_plan_runs_pipeline_stage(tmp_path) -> None:
-    from npa.cli.workbench.gemini_robotics import PlanResult
+    from npa.clients.gemini_robotics import PlanResult
     from npa.workbench import gemini_robotics
     from npa.workflows.byof.gemini_robotics_pipeline import (
         GeminiRoboticsPipelineConfig,
