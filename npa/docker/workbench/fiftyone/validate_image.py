@@ -323,6 +323,13 @@ def _public_results(commands: _Commands, result: dict) -> dict:
         if not path.exists():
             continue
         _summarize_phase(summary, json.loads(path.read_text()), phase)
+        if phase in {"bare", "post-install"}:
+            prefix = "bare" if phase == "bare" else "post"
+            smoke = commands.root / directory / f"{prefix}-environment.stdout"
+            if smoke.is_file():
+                summary.setdefault("environment_checks", []).append(
+                    {"phase": phase, "checks": _public_environment_checks(smoke)}
+                )
     summary["owned_cleanup"] = {
         "containers_removed": len(result["cleanup"]),
         "verified": not result["cleanup_errors"],
@@ -331,6 +338,22 @@ def _public_results(commands: _Commands, result: dict) -> dict:
         "runner directory only; excluded from public artifact"
     )
     return summary
+
+
+def _public_environment_checks(path: Path) -> list[dict]:
+    allowed = {
+        "import fiftyone",
+        "check fiftyone CLI help",
+        "check app server configuration",
+        "check LeRobot temporal API",
+    }
+    return [
+        {"name": name, "passed": status == "PASS"}
+        for status, name in re.findall(
+            r"^(PASS|FAIL): ([^\r\n]+)$", path.read_text(), re.MULTILINE
+        )
+        if name in allowed
+    ]
 
 
 def _summarize_phase(summary: dict, record: dict, phase: str) -> None:

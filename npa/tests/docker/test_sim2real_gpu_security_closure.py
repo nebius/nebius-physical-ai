@@ -21,11 +21,11 @@ def test_transfer_security_override_uses_the_verified_fixed_pyjwt_wheel():
     )
     # CVE-2026-101918 and CVE-2026-102275 remain present in 2.14.0.
     assert match and Version(match[1]) >= Version("2.15.0")
-    assert match[1] == "2.15.0"
+    assert match[1] == "2.15.1"
     # The exact wheel hash is filled from a retained full-byte public download,
     # never derived by replacing the version in the old wheel's URL/hash.
     assert (
-        match[2] == "7a3742debf6b879e912dbb9819ceec1594be812452b78c5f2e2dfc56564954f8"
+        match[2] == "42d59d631f7768a1028a64c7ff581a9bf7519804daf91fc5b6c56e30eec5e193"
     )
 
 
@@ -37,14 +37,14 @@ def test_isaac_oss_closure_does_not_retain_vulnerable_pyjwt():
 
 def test_envgen_uses_explicit_fixed_headers_without_changing_other_callers():
     text = (WORKBENCH / "sim2real-envgen/Dockerfile").read_text()
-    assert "ARG UBUNTU_SNAPSHOT=20261002T000000Z" in text
-    assert "ARG LINUX_LIBC_DEV_VERSION=5.15.0-198.208" in text
+    assert "ARG UBUNTU_SNAPSHOT=20261009T000000Z" in text
+    assert "ARG ENVGEN_LINUX_LIBC_DEV_VERSION=5.15.0-198.208" in text
     assert (
-        'install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" "${LINUX_LIBC_DEV_VERSION}"'
+        'install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" "${ENVGEN_LINUX_LIBC_DEV_VERSION}"'
         in text
     )
     assert "dpkg-query --show --showformat='${Version}' linux-libc-dev" in text
-    assert '"${LINUX_LIBC_DEV_VERSION}"' in text
+    assert '"${ENVGEN_LINUX_LIBC_DEV_VERSION}"' in text
     installer = (WORKBENCH / "common/install_workflow_runtime_prereqs.sh").read_text()
     assert 'linux_libc_dev_override="${2:-}"' in installer
     assert 'linux_libc_dev_version="5.15.0-190.200"' in installer
@@ -64,7 +64,7 @@ def test_envgen_header_pin_matches_the_frozen_apt_selection(requested, no_downgr
     )
     selected = record["selected_version"]
     text = (WORKBENCH / "sim2real-envgen/Dockerfile").read_text()
-    assert f"ARG LINUX_LIBC_DEV_VERSION={selected}" in text
+    assert f"ARG ENVGEN_LINUX_LIBC_DEV_VERSION={selected}" in text
     assert "--allow-downgrades" not in text
     assert selected == record["package"]["Version"]
     assert record["fixed_floor"] == "5.15.0-194.204"
