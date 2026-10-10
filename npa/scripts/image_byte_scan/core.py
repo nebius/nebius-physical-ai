@@ -4007,6 +4007,11 @@ def _scan(authorization, directory, detector_type=Detector, *, record_observer=N
         )
     archive_path, fd, initial = open_private_fd(authorization["archive"]["path"])
     try:
+        encoded_transport_only = verification["schema_version"] in (
+            "npa.curobo.image-verification.v1",
+            "npa.docker-save.image-verification.v1",
+            "npa.seedvr2.direct-manifest-verification.v1",
+        )
         require(
             descriptor_digest(fd) == authorization["archive"]["sha256"],
             "input_binding_changed",
@@ -4087,7 +4092,7 @@ def _scan(authorization, directory, detector_type=Detector, *, record_observer=N
         def outer_file(reader, size, name, context):
             offset = reader.tell()
             if name in layer_names:
-                if "oci_graph" in report:
+                if not encoded_transport_only:
                     value = sink.send(reader, size, "outer_regular_content", context)
                 else:
                     digest = hashlib.sha256()
@@ -4118,7 +4123,7 @@ def _scan(authorization, directory, detector_type=Detector, *, record_observer=N
             outer_file,
             encoded_layer_sizes=(
                 {row["name"]: row["size"] for row in layers}
-                if "oci_graph" not in report
+                if encoded_transport_only
                 else None
             ),
         )

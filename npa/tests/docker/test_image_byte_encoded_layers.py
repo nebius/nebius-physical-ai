@@ -146,6 +146,39 @@ def test_large_encoded_layer_does_not_admit_oversized_decoded_file(
     assert report["failure_code"] == "complete_record_limit"
 
 
+@pytest.mark.parametrize("oversized_file", [False, True])
+def test_real_generic_verification_preserves_encoded_and_decoded_record_boundary(
+    tmp_path, monkeypatch, oversized_file
+):
+    from image_byte_scan import docker_save_verification
+
+    limit = 16 * 1024
+    entries = [file(f"opt/file-{index}", b"neutral body") for index in range(32)]
+    if oversized_file:
+        entries.append(file("opt/oversized", b"x" * (limit + 1)))
+    authorization = fixture(tmp_path, codec="raw", entries=entries)
+    # Obtain the real verifier's report before reducing only the scanner record
+    # cap. A graph proof must not exempt any decoded file from that cap.
+    verification = docker_save_verification.verify(
+        Path(authorization["archive"]["path"]), authorization["expected_image_id"]
+    )
+    assert verification["schema_version"] == "npa.docker-save.image-verification.v1"
+    assert verification["valid"] is True
+    authorization["verification_report"] = write(
+        Path(authorization["verification_report"]["path"]), js(verification)
+    )
+    monkeypatch.setattr(W, "COMPLETE_RECORD_LIMIT", limit)
+    report, rows = run(tmp_path, authorization)
+    if oversized_file:
+        assert not report["valid"] and not report["complete"]
+        assert report["failure_code"] == "complete_record_limit"
+    else:
+        assert report["valid"] and report["complete"]
+        assert report["regular_files"] == 32
+        assert report["layers"][0]["decoded_bytes"] > limit
+        assert any(row.get("kind") == "layer_regular_content" for row in rows)
+
+
 @pytest.mark.parametrize("mutation", ["unknown", "size", "digest"])
 def test_encoded_layer_exception_preserves_graph_and_unknown_file_gates(
     tmp_path, monkeypatch, mutation
