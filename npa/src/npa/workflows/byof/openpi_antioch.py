@@ -27,6 +27,7 @@ from npa.workflows.byof.openpi_pipeline import SOURCE_REF
 
 EVIDENCE_SCHEMA = "npa.workbench.openpi.antioch-loop.v1"
 MANAGED_CONTAINER_LABEL = "npa.openpi-antioch.managed=true"
+MANAGED_CONTAINER_OWNER_LABEL = "npa.openpi-antioch.owner"
 DEFAULT_CONTAINER_NAME = "npa-openpi-antioch-pi05"
 REQUIRED_CHECKS = {
     "the jaw travels its stroke",
@@ -65,6 +66,33 @@ class OpenPIAntiochError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class _ContainerIdentity:
+    """Exact identity of one labelled local OpenPI policy container."""
+
+    name: str
+    container_id: str
+    image: str
+    managed: bool
+    owner: str
+    running: bool
+
+
+@dataclass
+class _LiveResources:
+    """Track the exact resources that one live-loop invocation may clean up."""
+
+    container: _ContainerIdentity | None = None
+    scenario_run_id: str | None = None
+    image_id: str | None = None
+    evidence: dict[str, object] | None = None
+    scenario_cleanup: str = "not_requested"
+    scenario_phase: str | None = None
+    scenario_outcome: str | None = None
+    container_cleanup: str = "not_requested"
+    container_absent: bool | None = None
+
+
+@dataclass(frozen=True)
 class LiveLoopConfig:
     """Operator-local inputs for one connected validation run."""
 
@@ -85,6 +113,9 @@ class LiveLoopConfig:
     script: str | None = None
     container_name: str = DEFAULT_CONTAINER_NAME
     cleanup_container: bool = False
+    cleanup_scenario: bool = False
+    resource_owner: str = ""
+    private_receipt_path: Path | None = None
 
 
 def _run(
@@ -112,7 +143,9 @@ def _run(
     return completed
 
 
-def _json_object(text: str, *, label: str) -> dict[str, Any]:
+def _json_value(text: str, *, label: str) -> object:
+    """Parse a complete JSON value or the final structured CLI line."""
+
     try:
         value = json.loads(text)
     except json.JSONDecodeError as exc:
@@ -124,6 +157,13 @@ def _json_object(text: str, *, label: str) -> dict[str, Any]:
             break
         else:
             raise OpenPIAntiochError(f"{label} did not emit valid JSON") from exc
+    return value
+
+
+def _json_object(text: str, *, label: str) -> dict[str, Any]:
+    """Parse one structured CLI object."""
+
+    value = _json_value(text, label=label)
     if not isinstance(value, dict):
         raise OpenPIAntiochError(f"{label} JSON must be an object")
     return value
@@ -198,7 +238,7 @@ def _negative_terms_probe(config: LiveLoopConfig) -> None:
 def _accepted_container_argv(
     config: LiveLoopConfig, *, container_name: str
 ) -> list[str]:
-    return [
+    argv = [
         config.docker_bin,
         "run",
         "--detach",
@@ -208,6 +248,13 @@ def _accepted_container_argv(
         "unless-stopped",
         "--label",
         MANAGED_CONTAINER_LABEL,
+    ]
+    if config.resource_owner:
+        argv.extend(
+            ["--label", f"{MANAGED_CONTAINER_OWNER_LABEL}={config.resource_owner}"]
+        )
+    return [
+        *argv,
         "--gpus",
         "all",
         "--publish",
@@ -235,60 +282,105 @@ def _accepted_container_argv(
     ]
 
 
-def _ensure_policy_container(config: LiveLoopConfig) -> bool:
-    """Start or safely reuse the single task-managed policy container.
-
-    Returns ``True`` when this call created the container. A name collision is
-    accepted only when both the management label and requested image match.
-    """
+def _inspect_policy_container(
+    config: LiveLoopConfig, container: str
+) -> _ContainerIdentity | None:
+    """Return the exact local identity for a container, when it still exists."""
 
     inspected = _run(
         [
             config.docker_bin,
             "inspect",
-            config.container_name,
+            container,
             "--format",
             (
-                '{{index .Config.Labels "npa.openpi-antioch.managed"}} '
-                "{{.Config.Image}} {{.State.Running}}"
+                '{{index .Config.Labels "npa.openpi-antioch.managed"}}\t'
+                '{{index .Config.Labels "npa.openpi-antioch.owner"}}\t'
+                "{{.Config.Image}}\t{{.Id}}\t{{.State.Running}}"
             ),
         ],
         check=False,
     )
-    if inspected.returncode == 0:
-        fields = inspected.stdout.strip().split()
-        if len(fields) != 3 or fields[:2] != ["true", config.image]:
+    if inspected.returncode != 0:
+        return None
+    fields = inspected.stdout.rstrip("\n").split("\t")
+    if len(fields) != 5:
+        raise OpenPIAntiochError("managed container inspection was malformed")
+    managed, owner, image, container_id, running = fields
+    if not container_id:
+        raise OpenPIAntiochError("managed container inspection omitted its identity")
+    return _ContainerIdentity(
+        name=container,
+        container_id=container_id,
+        image=image,
+        managed=managed == "true",
+        owner=owner,
+        running=running == "true",
+    )
+
+
+def _matches_requested_container(
+    config: LiveLoopConfig, container: _ContainerIdentity
+) -> bool:
+    """Return whether a local container belongs to this exact request."""
+
+    owner_matches = (
+        not config.resource_owner or container.owner == config.resource_owner
+    )
+    return container.managed and container.image == config.image and owner_matches
+
+
+def _ensure_policy_container(config: LiveLoopConfig) -> _ContainerIdentity:
+    """Start or safely reuse the exact task-managed policy container.
+
+    A name collision is accepted only when the management label, requested image,
+    and optional task owner match. The returned ID is later used for cleanup.
+    """
+
+    existing = _inspect_policy_container(config, config.container_name)
+    if existing is not None:
+        if not _matches_requested_container(config, existing):
             raise OpenPIAntiochError(
                 f"container name {config.container_name!r} is not the requested "
                 "task-managed OpenPI container"
             )
-        if fields[2] != "true":
+        if not existing.running:
             _run([config.docker_bin, "start", config.container_name])
-        return False
-    _run(_accepted_container_argv(config, container_name=config.container_name))
-    return True
-
-
-def _remove_policy_container(config: LiveLoopConfig) -> None:
-    """Remove only the container carrying the task management label."""
-
-    inspected = _run(
-        [
-            config.docker_bin,
-            "inspect",
-            config.container_name,
-            "--format",
-            '{{index .Config.Labels "npa.openpi-antioch.managed"}}',
-        ],
-        check=False,
-    )
-    if inspected.returncode != 0:
-        return
-    if inspected.stdout.strip() != "true":
-        raise OpenPIAntiochError(
-            f"refusing to remove unlabelled container {config.container_name!r}"
+            existing = _inspect_policy_container(config, existing.container_id)
+            if existing is None or not existing.running:
+                raise OpenPIAntiochError("managed OpenPI container did not start")
+        return _ContainerIdentity(
+            name=config.container_name,
+            container_id=existing.container_id,
+            image=existing.image,
+            managed=existing.managed,
+            owner=existing.owner,
+            running=existing.running,
         )
-    _run([config.docker_bin, "rm", "--force", config.container_name])
+    _run(_accepted_container_argv(config, container_name=config.container_name))
+    created = _inspect_policy_container(config, config.container_name)
+    if created is None or not _matches_requested_container(config, created):
+        raise OpenPIAntiochError(
+            "created OpenPI container lacks the requested identity"
+        )
+    return created
+
+
+def _remove_policy_container(
+    config: LiveLoopConfig, container: _ContainerIdentity
+) -> None:
+    """Remove and verify absence of only the exact task-owned container."""
+
+    current = _inspect_policy_container(config, container.container_id)
+    if current is None:
+        return
+    if not _matches_requested_container(config, current):
+        raise OpenPIAntiochError(
+            f"refusing to remove container {container.name!r} with changed ownership"
+        )
+    _run([config.docker_bin, "rm", "--force", container.container_id])
+    if _inspect_policy_container(config, container.container_id) is not None:
+        raise OpenPIAntiochError("managed OpenPI container remains after cleanup")
 
 
 def _deadline(timeout_s: float, *, operation: str) -> float:
@@ -333,41 +425,57 @@ def _wait_for_policy(config: LiveLoopConfig, *, container_name: str) -> None:
             time.sleep(2)
 
 
-def _scenario_run_id(payload: Mapping[str, Any]) -> str:
-    candidates: list[object] = [payload.get("scenario_run_id"), payload.get("id")]
-    for key in ("items", "runs", "scenario_runs"):
-        value = payload.get(key)
-        if isinstance(value, list) and value and isinstance(value[0], Mapping):
-            candidates.extend([value[0].get("scenario_run_id"), value[0].get("id")])
-    for candidate in candidates:
+def _scenario_run_id(payload: object) -> str:
+    """Extract exactly one scenario ID from an authoritative submission response."""
+
+    response: Mapping[str, Any]
+    if isinstance(payload, Mapping):
+        response = payload
+    elif (
+        isinstance(payload, list)
+        and len(payload) == 1
+        and isinstance(payload[0], Mapping)
+    ):
+        response = payload[0]
+    else:
+        raise OpenPIAntiochError(
+            "Antioch submission did not identify exactly one scenario run"
+        )
+    for key in ("scenario_run_id", "id"):
+        candidate = response.get(key)
         if isinstance(candidate, str) and candidate:
             return candidate
-    raise OpenPIAntiochError("Antioch queue response contained no scenario run ID")
+    raise OpenPIAntiochError("Antioch submission contained no scenario run ID")
 
 
-def _latest_scenario(config: LiveLoopConfig) -> dict[str, Any] | None:
-    listed = _run(
-        [
-            config.antioch_bin,
-            "scenario",
-            "list",
-            "--scenario",
-            config.scenario,
-            "--mine",
-            "--limit",
-            "1",
-            "--json",
-        ],
+def _scenario_payload(config: LiveLoopConfig, scenario_run_id: str) -> dict[str, Any]:
+    """Read one exact scenario record through the supported structured CLI."""
+
+    shown = _run(
+        [config.antioch_bin, "scenario", "show", scenario_run_id, "--json"],
         cwd=config.project_dir,
     )
-    payload = _json_object(listed.stdout, label="Antioch scenario list")
-    items = payload.get("items")
-    if not isinstance(items, list) or not items:
-        return None
-    latest = items[0]
-    if not isinstance(latest, dict):
-        raise OpenPIAntiochError("Antioch scenario list item is not an object")
-    return latest
+    return _json_object(shown.stdout, label="Antioch scenario show")
+
+
+def _scenario_is_terminal(payload: Mapping[str, Any]) -> bool:
+    """Return whether a scenario record proves no active remote execution remains."""
+
+    phase = str(payload.get("phase") or "").lower()
+    outcome = str(payload.get("outcome") or "").lower()
+    return phase in {
+        "completed",
+        "cancelled",
+        "canceled",
+        "failed",
+        "error",
+    } or outcome in {
+        "passed",
+        "cancelled",
+        "canceled",
+        "failed",
+        "error",
+    }
 
 
 def _wait_for_scenario(config: LiveLoopConfig, scenario_run_id: str) -> dict[str, Any]:
@@ -375,21 +483,35 @@ def _wait_for_scenario(config: LiveLoopConfig, scenario_run_id: str) -> dict[str
 
     deadline = _deadline(config.scenario_timeout_s, operation="scenario")
     while True:
-        shown = _run(
-            [
-                config.antioch_bin,
-                "scenario",
-                "show",
-                scenario_run_id,
-                "--json",
-            ],
-            cwd=config.project_dir,
-        )
-        payload = _json_object(shown.stdout, label="Antioch scenario show")
-        if payload.get("phase") == "completed" or payload.get("outcome"):
+        payload = _scenario_payload(config, scenario_run_id)
+        if _scenario_is_terminal(payload):
             return payload
         if time.monotonic() >= deadline:
             raise OpenPIAntiochError("Antioch scenario did not complete before timeout")
+        time.sleep(2)
+
+
+def _cancel_active_scenario(
+    config: LiveLoopConfig, scenario_run_id: str
+) -> tuple[str, dict[str, Any]]:
+    """Cancel one active submitted scenario and verify its terminal provider state."""
+
+    payload = _scenario_payload(config, scenario_run_id)
+    if _scenario_is_terminal(payload):
+        return "already_terminal", payload
+    _run(
+        [config.antioch_bin, "scenario", "cancel", scenario_run_id, "--json"],
+        cwd=config.project_dir,
+    )
+    deadline = _deadline(config.scenario_timeout_s, operation="scenario cleanup")
+    while True:
+        payload = _scenario_payload(config, scenario_run_id)
+        if _scenario_is_terminal(payload):
+            return "terminal_verified", payload
+        if time.monotonic() >= deadline:
+            raise OpenPIAntiochError(
+                "Antioch scenario remained active after cancellation"
+            )
         time.sleep(2)
 
 
@@ -452,9 +574,48 @@ def validate_scenario_evidence(payload: Mapping[str, Any]) -> dict[str, object]:
     }
 
 
+def _require_positive_chunks(chunks: int) -> None:
+    """Reject a chunk count that cannot prove any policy action."""
+
+    if isinstance(chunks, bool) or not isinstance(chunks, int) or chunks < 1:
+        raise OpenPIAntiochError("chunks must be a positive integer")
+
+
+def _positive_chunk_count(value: str) -> int:
+    """Parse a CLI chunk count without permitting a no-op policy loop."""
+
+    try:
+        chunks = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("chunks must be an integer") from error
+    try:
+        _require_positive_chunks(chunks)
+    except OpenPIAntiochError as error:
+        raise argparse.ArgumentTypeError(str(error)) from error
+    return chunks
+
+
+def _validate_live_config(config: LiveLoopConfig) -> None:
+    """Reject unsafe cleanup or evidence settings before an external action."""
+
+    _require_positive_chunks(config.chunks)
+    cleanup_requested = config.cleanup_container or config.cleanup_scenario
+    if cleanup_requested and not config.resource_owner:
+        raise OpenPIAntiochError("task-owned cleanup requires a resource owner")
+    if config.resource_owner and not re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", config.resource_owner
+    ):
+        raise OpenPIAntiochError("resource owner must be a safe task identifier")
+    if config.cleanup_scenario and config.script:
+        raise OpenPIAntiochError("scenario cleanup requires the recorded scenario path")
+    if config.private_receipt_path is not None and not config.resource_owner:
+        raise OpenPIAntiochError("a private receipt requires a resource owner")
+
+
 def validate_run_output(output: str, *, expected_chunks: int) -> dict[str, object]:
     """Validate the measured output of a direct ``antioch run`` Pi loop."""
 
+    _require_positive_chunks(expected_chunks)
     if "FAIL:" in output or "ALL GATES PASSED" not in output:
         raise OpenPIAntiochError(
             "direct Antioch run did not emit its all-gates verdict"
@@ -508,113 +669,240 @@ def validate_run_output(output: str, *, expected_chunks: int) -> dict[str, objec
     }
 
 
-def run_live_loop(config: LiveLoopConfig) -> dict[str, object]:
-    """Run the container, dispatch Antioch, and validate the returned feedback."""
+def _run_direct_loop(config: LiveLoopConfig) -> dict[str, object]:
+    """Run the documented direct harness when no scenario artifact is requested."""
 
+    policy_port = config.policy_port or config.host_port
+    run_argv = [config.antioch_bin, "run"]
+    if config.machine:
+        run_argv.extend(["--machine", config.machine])
+    run_argv.extend(
+        [
+            "--no-stream",
+            config.script or "",
+            "--policy",
+            "--host",
+            config.policy_host,
+            "--port",
+            str(policy_port),
+            "--chunks",
+            str(config.chunks),
+        ]
+    )
+    completed = _run(run_argv, cwd=config.project_dir)
+    return validate_run_output(completed.stdout, expected_chunks=config.chunks)
+
+
+def _submit_scenario(config: LiveLoopConfig) -> str:
+    """Submit one scenario and bind all later work to its returned ID."""
+
+    if config.rerun_from:
+        queued = _run(
+            [
+                config.antioch_bin,
+                "scenario",
+                "rerun",
+                config.rerun_from,
+                "--json",
+            ],
+            cwd=config.project_dir,
+        )
+        return _scenario_run_id(
+            _json_value(queued.stdout, label="Antioch scenario rerun")
+        )
+
+    policy_port = config.policy_port or config.host_port
+    scenario_argv = [
+        config.antioch_bin,
+        "scenario",
+        "run",
+        "--scenario",
+        config.scenario,
+        "--set",
+        f"host={config.policy_host}",
+        "--set",
+        f"port={policy_port}",
+        "--set",
+        f"chunks={config.chunks}",
+    ]
+    if config.machine:
+        scenario_argv.extend(["--machine", config.machine])
+    scenario_argv.extend(["--detach", "--json"])
+    queued = _run(scenario_argv, cwd=config.project_dir)
+    return _scenario_run_id(
+        _json_value(queued.stdout, label="Antioch scenario submission")
+    )
+
+
+def _image_identity(config: LiveLoopConfig) -> str:
+    """Return the exact content-addressed image ID used by this invocation."""
+
+    image_id = _run(
+        [config.docker_bin, "image", "inspect", config.image, "--format", "{{.Id}}"]
+    ).stdout.strip()
+    if not image_id.startswith("sha256:"):
+        raise OpenPIAntiochError("OpenPI image has no content-addressed ID")
+    return image_id
+
+
+def _cleanup_live_resources(
+    config: LiveLoopConfig, resources: _LiveResources
+) -> list[Exception]:
+    """Clean only exact resources, retaining all cleanup failures for disposition."""
+
+    errors: list[Exception] = []
+    if config.cleanup_scenario:
+        if resources.scenario_run_id is None:
+            resources.scenario_cleanup = "not_created"
+        else:
+            try:
+                cleanup, payload = _cancel_active_scenario(
+                    config, resources.scenario_run_id
+                )
+                resources.scenario_cleanup = cleanup
+                resources.scenario_phase = str(payload.get("phase") or "") or None
+                resources.scenario_outcome = str(payload.get("outcome") or "") or None
+            except Exception as error:
+                resources.scenario_cleanup = "failed"
+                errors.append(error)
+    if config.cleanup_container:
+        if resources.container is None:
+            resources.container_cleanup = "not_created"
+        else:
+            try:
+                _remove_policy_container(config, resources.container)
+                resources.container_cleanup = "absent_verified"
+                resources.container_absent = True
+            except Exception as error:
+                resources.container_cleanup = "failed"
+                resources.container_absent = False
+                errors.append(error)
+    return errors
+
+
+def _harness_source_sha() -> str:
+    """Return the exact repository source identity for private live evidence."""
+
+    source_sha = _run(
+        ["git", "rev-parse", "HEAD"], cwd=Path(__file__).parent
+    ).stdout.strip()
+    if not re.fullmatch(r"[0-9a-f]{40}", source_sha):
+        raise OpenPIAntiochError("harness source has no immutable Git identity")
+    return source_sha
+
+
+def _write_private_receipt(
+    config: LiveLoopConfig, resources: _LiveResources, *, status: str
+) -> None:
+    """Atomically retain private bindings and provider-side cleanup evidence."""
+
+    receipt = config.private_receipt_path
+    if receipt is None:
+        return
+    if receipt.parent.is_symlink() or not receipt.parent.is_dir():
+        raise OpenPIAntiochError("private receipt parent must be an owned directory")
+    payload = {
+        "schema": "npa.workbench.openpi.antioch-live-receipt.v1",
+        "status": status,
+        "harness_source_sha": _harness_source_sha(),
+        "openpi_source_ref": SOURCE_REF,
+        "resource_owner": config.resource_owner,
+        "image": config.image,
+        "image_id": resources.image_id,
+        "scenario": config.scenario,
+        "scenario_run_id": resources.scenario_run_id,
+        "container": (
+            None
+            if resources.container is None
+            else {
+                "name": resources.container.name,
+                "id": resources.container.container_id,
+                "image": resources.container.image,
+                "owner": resources.container.owner,
+            }
+        ),
+        "policy": "openpi_pi05_droid",
+        "acceptance": (
+            None
+            if resources.evidence is None
+            else {
+                "action_chunk_shape": resources.evidence.get("action_chunk_shape"),
+                "chunks_run": resources.evidence.get("chunks_run"),
+                "mean_inference_ms": resources.evidence.get("mean_inference_ms"),
+                "max_joint_travel_rad": resources.evidence.get("max_joint_travel_rad"),
+                "jaw_travel_mm": resources.evidence.get("jaw_travel_mm"),
+                "passing_checks": resources.evidence.get("passing_checks"),
+            }
+        ),
+        "scenario_cleanup": {
+            "status": resources.scenario_cleanup,
+            "phase": resources.scenario_phase,
+            "outcome": resources.scenario_outcome,
+        },
+        "container_cleanup": {
+            "status": resources.container_cleanup,
+            "absent_verified": resources.container_absent,
+        },
+    }
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = os.open(receipt, flags, 0o600)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump(payload, stream, indent=2, sort_keys=True)
+            stream.write("\n")
+    except Exception:
+        try:
+            os.unlink(receipt)
+        except OSError:
+            pass
+        raise
+
+
+def run_live_loop(config: LiveLoopConfig) -> dict[str, object]:
+    """Run one owned loop and retain exact, private resource evidence."""
+
+    _validate_live_config(config)
     require_openpi_terms()
     if not config.project_dir.is_dir() or not config.cache_dir.is_dir():
         raise OpenPIAntiochError("project and OpenPI cache directories must exist")
     _run([config.antioch_bin, "auth", "whoami"], cwd=config.project_dir)
     _run([config.antioch_bin, "project", "current"], cwd=config.project_dir)
-    _run([config.docker_bin, "image", "inspect", config.image])
+    resources = _LiveResources(image_id=_image_identity(config))
     _negative_terms_probe(config)
 
     primary_error: BaseException | None = None
+    result: dict[str, object] | None = None
+    status = "failed"
     try:
-        _ensure_policy_container(config)
-        _wait_for_policy(config, container_name=config.container_name)
+        resources.container = _ensure_policy_container(config)
+        _wait_for_policy(config, container_name=resources.container.name)
         if config.script:
-            policy_port = config.policy_port or config.host_port
-            run_argv = [config.antioch_bin, "run"]
-            if config.machine:
-                run_argv.extend(["--machine", config.machine])
-            run_argv.extend(
-                [
-                    "--no-stream",
-                    config.script,
-                    "--policy",
-                    "--host",
-                    config.policy_host,
-                    "--port",
-                    str(policy_port),
-                    "--chunks",
-                    str(config.chunks),
-                ]
-            )
-            completed = _run(run_argv, cwd=config.project_dir)
-            evidence = validate_run_output(
-                completed.stdout, expected_chunks=config.chunks
-            )
-        elif config.rerun_from:
-            queued = _run(
-                [
-                    config.antioch_bin,
-                    "scenario",
-                    "rerun",
-                    config.rerun_from,
-                    "--json",
-                ],
-                cwd=config.project_dir,
-            )
-            run_id = _scenario_run_id(
-                _json_object(queued.stdout, label="Antioch scenario rerun")
-            )
+            evidence = _run_direct_loop(config)
         else:
-            previous = _latest_scenario(config)
-            previous_id = _scenario_run_id(previous) if previous else None
-            policy_port = config.policy_port or config.host_port
-            scenario_argv = [
-                config.antioch_bin,
-                "scenario",
-                "run",
-                "--scenario",
-                config.scenario,
-                "--set",
-                f"host={config.policy_host}",
-                "--set",
-                f"port={policy_port}",
-                "--set",
-                f"chunks={config.chunks}",
-                "--no-stream",
-                "--verbose",
-            ]
-            if config.machine:
-                scenario_argv.extend(["--machine", config.machine])
-            _run(scenario_argv, cwd=config.project_dir)
-            latest = _latest_scenario(config)
-            if latest is None:
-                raise OpenPIAntiochError(
-                    "Antioch completed without saving a scenario result"
-                )
-            run_id = _scenario_run_id(latest)
-            if run_id == previous_id:
-                raise OpenPIAntiochError(
-                    "Antioch completed without creating a fresh scenario result"
-                )
-        if not config.script:
-            result = _wait_for_scenario(config, run_id)
-            evidence = validate_scenario_evidence(result)
-        image_id = _run(
-            [
-                config.docker_bin,
-                "image",
-                "inspect",
-                config.image,
-                "--format",
-                "{{.Id}}",
-            ]
-        ).stdout.strip()
-        return {**evidence, "image_id": image_id}
-    except BaseException as exc:
-        primary_error = exc
-        raise
+            resources.scenario_run_id = _submit_scenario(config)
+            evidence = validate_scenario_evidence(
+                _wait_for_scenario(config, resources.scenario_run_id)
+            )
+        resources.evidence = evidence
+        result = {**evidence, "image_id": resources.image_id}
+        status = "passed"
+    except BaseException as error:
+        primary_error = error
     finally:
-        if config.cleanup_container:
-            try:
-                _remove_policy_container(config)
-            except Exception:
-                if primary_error is None:
-                    raise
+        cleanup_errors = _cleanup_live_resources(config, resources)
+        try:
+            _write_private_receipt(config, resources, status=status)
+        except Exception as error:
+            cleanup_errors.append(error)
+        if primary_error is not None:
+            raise primary_error
+        if cleanup_errors:
+            raise cleanup_errors[0]
+    if result is None:
+        raise OpenPIAntiochError("OpenPI/Antioch loop produced no evidence")
+    return result
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -647,7 +935,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--script",
         help="Project-relative Pi loop for direct `antioch run` execution",
     )
-    live.add_argument("--chunks", type=int, default=3)
+    live.add_argument("--chunks", type=_positive_chunk_count, default=3)
     live.add_argument(
         "--policy-ready-timeout-s",
         type=float,
@@ -666,7 +954,21 @@ def build_parser() -> argparse.ArgumentParser:
     live.add_argument(
         "--cleanup-container",
         action="store_true",
-        help="Remove the labelled policy container after the run instead of keeping it durable",
+        help="Remove only the exact labelled task-owned policy container after the run",
+    )
+    live.add_argument(
+        "--cleanup-scenario",
+        action="store_true",
+        help="Cancel the exact submitted scenario and verify its terminal provider state",
+    )
+    live.add_argument(
+        "--resource-owner",
+        help="Unique task owner recorded on cleanup-eligible local resources",
+    )
+    live.add_argument(
+        "--private-receipt",
+        type=Path,
+        help="Precreated private evidence directory's unique receipt path",
     )
     live.add_argument("--output", type=Path)
     return parser
@@ -711,6 +1013,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     script=args.script,
                     container_name=args.container_name,
                     cleanup_container=args.cleanup_container,
+                    cleanup_scenario=args.cleanup_scenario,
+                    resource_owner=args.resource_owner or "",
+                    private_receipt_path=args.private_receipt,
                 )
             )
             if args.output:

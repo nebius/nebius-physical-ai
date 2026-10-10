@@ -261,16 +261,43 @@ def test_cleanup_failure_does_not_mask_primary_live_loop_error(
         image="local/openpi:test",
         policy_host="policy-host.example",
         cleanup_container=True,
+        cleanup_scenario=True,
+        resource_owner="task-owner",
     )
 
-    def fake_run(argv, **_kwargs):
-        if argv[:2] == ["antioch", "auth"]:
-            raise antioch.OpenPIAntiochError("primary scenario setup failure")
-        raise antioch.OpenPIAntiochError("cleanup failure")
+    monkeypatch.setattr(antioch, "_negative_terms_probe", lambda _config: None)
+    monkeypatch.setattr(
+        antioch, "_image_identity", lambda _config: "sha256:" + "a" * 64
+    )
+    monkeypatch.setattr(
+        antioch,
+        "_ensure_policy_container",
+        lambda _config: antioch._ContainerIdentity(
+            name="exact-container",
+            container_id="container-sha",
+            image="local/openpi:test",
+            managed=True,
+            owner="task-owner",
+            running=True,
+        ),
+    )
+    monkeypatch.setattr(antioch, "_wait_for_policy", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(antioch, "_submit_scenario", lambda _config: "submitted-run")
+    monkeypatch.setattr(
+        antioch,
+        "_wait_for_scenario",
+        lambda *_args: (_ for _ in ()).throw(
+            antioch.OpenPIAntiochError("primary scenario failure")
+        ),
+    )
+    monkeypatch.setattr(
+        antioch,
+        "_cleanup_live_resources",
+        lambda *_args: [antioch.OpenPIAntiochError("cleanup failure")],
+    )
+    monkeypatch.setattr(antioch, "_run", lambda argv, **_kwargs: _completed(list(argv)))
 
-    monkeypatch.setattr(antioch, "_run", fake_run)
-
-    with pytest.raises(antioch.OpenPIAntiochError, match="primary scenario setup"):
+    with pytest.raises(antioch.OpenPIAntiochError, match="primary scenario failure"):
         antioch.run_live_loop(config)
 
 
@@ -366,7 +393,10 @@ def test_reuses_only_matching_managed_container(
 
     def fake_run(argv, **_kwargs):
         calls.append(list(argv))
-        return _completed(list(argv), "true local/openpi:test false\n")
+        running = "true" if argv[1:3] == ["inspect", "container-sha"] else "false"
+        return _completed(
+            list(argv), f"true\t\tlocal/openpi:test\tcontainer-sha\t{running}\n"
+        )
 
     monkeypatch.setattr(antioch, "_run", fake_run)
     created = antioch._ensure_policy_container(
@@ -378,27 +408,115 @@ def test_reuses_only_matching_managed_container(
         )
     )
 
-    assert created is False
-    assert calls[-1] == ["docker", "start", antioch.DEFAULT_CONTAINER_NAME]
+    assert created.container_id == "container-sha"
+    assert created.running is True
+    assert ["docker", "start", antioch.DEFAULT_CONTAINER_NAME] in calls
 
 
-def test_cleanup_refuses_unlabelled_name_collision(
+def test_cleanup_refuses_changed_owner(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(argv, **_kwargs):
+        calls.append(list(argv))
+        return _completed(
+            list(argv), "true\tother-task\tlocal/openpi:test\tcontainer-sha\ttrue\n"
+        )
+
     monkeypatch.setattr(
         antioch,
         "_run",
-        lambda argv, **_kwargs: _completed(list(argv), "\n"),
+        fake_run,
     )
-    with pytest.raises(antioch.OpenPIAntiochError, match="unlabelled"):
+    config = antioch.LiveLoopConfig(
+        project_dir=tmp_path,
+        cache_dir=tmp_path,
+        image="local/openpi:test",
+        policy_host="policy-host.example",
+        resource_owner="task-owner",
+    )
+    with pytest.raises(antioch.OpenPIAntiochError, match="changed ownership"):
         antioch._remove_policy_container(
-            antioch.LiveLoopConfig(
-                project_dir=tmp_path,
-                cache_dir=tmp_path,
+            config,
+            antioch._ContainerIdentity(
+                name="exact-container",
+                container_id="container-sha",
                 image="local/openpi:test",
-                policy_host="policy-host.example",
-            )
+                managed=True,
+                owner="task-owner",
+                running=True,
+            ),
         )
+    assert all("rm" not in call for call in calls)
+
+
+def test_container_cleanup_removes_exact_id_then_verifies_absence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[list[str]] = []
+    inspect_count = 0
+
+    def fake_run(argv, **_kwargs):
+        nonlocal inspect_count
+        command = list(argv)
+        calls.append(command)
+        if command[1] == "inspect":
+            inspect_count += 1
+            if inspect_count == 2:
+                return _completed(command, "", returncode=1)
+            return _completed(
+                command,
+                "true\ttask-owner\tlocal/openpi:test\tcontainer-sha\ttrue\n",
+            )
+        return _completed(command)
+
+    monkeypatch.setattr(antioch, "_run", fake_run)
+    config = antioch.LiveLoopConfig(
+        project_dir=tmp_path,
+        cache_dir=tmp_path,
+        image="local/openpi:test",
+        policy_host="policy-host.example",
+        resource_owner="task-owner",
+    )
+
+    antioch._remove_policy_container(
+        config,
+        antioch._ContainerIdentity(
+            name="exact-container",
+            container_id="container-sha",
+            image="local/openpi:test",
+            managed=True,
+            owner="task-owner",
+            running=True,
+        ),
+    )
+
+    assert calls == [
+        [
+            "docker",
+            "inspect",
+            "container-sha",
+            "--format",
+            (
+                '{{index .Config.Labels "npa.openpi-antioch.managed"}}\t'
+                '{{index .Config.Labels "npa.openpi-antioch.owner"}}\t'
+                "{{.Config.Image}}\t{{.Id}}\t{{.State.Running}}"
+            ),
+        ],
+        ["docker", "rm", "--force", "container-sha"],
+        [
+            "docker",
+            "inspect",
+            "container-sha",
+            "--format",
+            (
+                '{{index .Config.Labels "npa.openpi-antioch.managed"}}\t'
+                '{{index .Config.Labels "npa.openpi-antioch.owner"}}\t'
+                "{{.Config.Image}}\t{{.Id}}\t{{.State.Running}}"
+            ),
+        ],
+    ]
 
 
 def test_live_loop_gates_before_any_external_action(
@@ -420,3 +538,265 @@ def test_live_loop_gates_before_any_external_action(
                 policy_host="policy-host.example",
             )
         )
+
+
+@pytest.mark.parametrize("chunks", [0, -1])
+def test_live_loop_rejects_nonpositive_chunks_before_external_action(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, chunks: int
+) -> None:
+    monkeypatch.setattr(
+        antioch,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail("external command ran before chunk gate"),
+    )
+
+    with pytest.raises(antioch.OpenPIAntiochError, match="positive integer"):
+        antioch.run_live_loop(
+            antioch.LiveLoopConfig(
+                project_dir=tmp_path,
+                cache_dir=tmp_path,
+                image="local/openpi:test",
+                policy_host="policy-host.example",
+                script="direct-loop.py",
+                chunks=chunks,
+            )
+        )
+
+
+@pytest.mark.parametrize("chunks", [0, -1])
+def test_validate_direct_run_output_rejects_nonpositive_chunks(chunks: int) -> None:
+    with pytest.raises(antioch.OpenPIAntiochError, match="positive integer"):
+        antioch.validate_run_output("ALL GATES PASSED\n", expected_chunks=chunks)
+
+
+def test_scenario_submission_binds_the_authoritative_response_not_a_newer_list_item(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv(OPENPI_TERMS_ENV, "YES")
+    calls: list[list[str]] = []
+    waited_for: list[str] = []
+    config = antioch.LiveLoopConfig(
+        project_dir=tmp_path,
+        cache_dir=tmp_path,
+        image="local/openpi:test",
+        policy_host="policy-host.example",
+    )
+
+    def fake_run(argv, **_kwargs):
+        command = list(argv)
+        calls.append(command)
+        if command[:3] == ["antioch", "scenario", "run"]:
+            return _completed(command, '[{"scenario_run_id":"submitted-run"}]\n')
+        if command[:3] == ["antioch", "scenario", "list"]:
+            pytest.fail("a concurrent newer scenario must never be selected")
+        return _completed(command)
+
+    monkeypatch.setattr(antioch, "_run", fake_run)
+    monkeypatch.setattr(antioch, "_negative_terms_probe", lambda _config: None)
+    monkeypatch.setattr(
+        antioch, "_image_identity", lambda _config: "sha256:" + "a" * 64
+    )
+    monkeypatch.setattr(
+        antioch,
+        "_ensure_policy_container",
+        lambda _config: antioch._ContainerIdentity(
+            name="exact-container",
+            container_id="container-sha",
+            image="local/openpi:test",
+            managed=True,
+            owner="",
+            running=True,
+        ),
+    )
+    monkeypatch.setattr(antioch, "_wait_for_policy", lambda *_args, **_kwargs: None)
+
+    def exact_wait(_config, run_id: str):
+        waited_for.append(run_id)
+        return _passed_payload()
+
+    monkeypatch.setattr(antioch, "_wait_for_scenario", exact_wait)
+
+    result = antioch.run_live_loop(config)
+
+    submission = next(
+        call for call in calls if call[:3] == ["antioch", "scenario", "run"]
+    )
+    assert submission[-2:] == ["--detach", "--json"]
+    assert waited_for == ["submitted-run"]
+    assert result["status"] == "passed"
+    assert not any(call[:3] == ["antioch", "scenario", "list"] for call in calls)
+
+
+def test_cancel_active_scenario_cancels_the_exact_id_and_verifies_terminal_state(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[list[str]] = []
+    show_count = 0
+    config = antioch.LiveLoopConfig(
+        project_dir=tmp_path,
+        cache_dir=tmp_path,
+        image="local/openpi:test",
+        policy_host="policy-host.example",
+    )
+
+    def fake_run(argv, **_kwargs):
+        nonlocal show_count
+        command = list(argv)
+        calls.append(command)
+        if command[:3] == ["antioch", "scenario", "show"]:
+            show_count += 1
+            phase = "running" if show_count == 1 else "cancelled"
+            return _completed(command, json.dumps({"phase": phase}) + "\n")
+        return _completed(command, "{}\n")
+
+    monkeypatch.setattr(antioch, "_run", fake_run)
+    state, payload = antioch._cancel_active_scenario(config, "submitted-run")
+
+    assert state == "terminal_verified"
+    assert payload["phase"] == "cancelled"
+    assert calls == [
+        ["antioch", "scenario", "show", "submitted-run", "--json"],
+        ["antioch", "scenario", "cancel", "submitted-run", "--json"],
+        ["antioch", "scenario", "show", "submitted-run", "--json"],
+    ]
+
+
+def test_task_cleanup_cancels_then_removes_only_the_exact_resources(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    operations: list[tuple[str, str]] = []
+    config = antioch.LiveLoopConfig(
+        project_dir=tmp_path,
+        cache_dir=tmp_path,
+        image="local/openpi:test",
+        policy_host="policy-host.example",
+        cleanup_scenario=True,
+        cleanup_container=True,
+        resource_owner="task-owner",
+    )
+    resources = antioch._LiveResources(
+        scenario_run_id="submitted-run",
+        container=antioch._ContainerIdentity(
+            name="exact-container",
+            container_id="container-sha",
+            image="local/openpi:test",
+            managed=True,
+            owner="task-owner",
+            running=True,
+        ),
+    )
+    monkeypatch.setattr(
+        antioch,
+        "_cancel_active_scenario",
+        lambda _config, run_id: (
+            operations.append(("cancel", run_id)) or "terminal_verified",
+            {"phase": "cancelled", "outcome": "cancelled"},
+        ),
+    )
+    monkeypatch.setattr(
+        antioch,
+        "_remove_policy_container",
+        lambda _config, container: operations.append(
+            ("remove", container.container_id)
+        ),
+    )
+
+    assert antioch._cleanup_live_resources(config, resources) == []
+    assert operations == [("cancel", "submitted-run"), ("remove", "container-sha")]
+    assert resources.scenario_cleanup == "terminal_verified"
+    assert resources.container_cleanup == "absent_verified"
+    assert resources.container_absent is True
+
+
+def test_cleanup_error_fails_an_otherwise_successful_live_loop(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv(OPENPI_TERMS_ENV, "YES")
+    config = antioch.LiveLoopConfig(
+        project_dir=tmp_path,
+        cache_dir=tmp_path,
+        image="local/openpi:test",
+        policy_host="policy-host.example",
+        cleanup_scenario=True,
+        resource_owner="task-owner",
+    )
+    monkeypatch.setattr(antioch, "_negative_terms_probe", lambda _config: None)
+    monkeypatch.setattr(
+        antioch, "_image_identity", lambda _config: "sha256:" + "a" * 64
+    )
+    monkeypatch.setattr(
+        antioch,
+        "_ensure_policy_container",
+        lambda _config: antioch._ContainerIdentity(
+            name="exact-container",
+            container_id="container-sha",
+            image="local/openpi:test",
+            managed=True,
+            owner="task-owner",
+            running=True,
+        ),
+    )
+    monkeypatch.setattr(antioch, "_wait_for_policy", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(antioch, "_submit_scenario", lambda _config: "submitted-run")
+    monkeypatch.setattr(antioch, "_wait_for_scenario", lambda *_args: _passed_payload())
+    monkeypatch.setattr(
+        antioch,
+        "_cleanup_live_resources",
+        lambda *_args: [antioch.OpenPIAntiochError("cleanup failure")],
+    )
+    monkeypatch.setattr(antioch, "_run", lambda argv, **_kwargs: _completed(list(argv)))
+
+    with pytest.raises(antioch.OpenPIAntiochError, match="cleanup failure"):
+        antioch.run_live_loop(config)
+
+
+def test_private_receipt_binds_exact_resources_and_cleanup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    receipt = tmp_path / "private-receipt.json"
+    config = antioch.LiveLoopConfig(
+        project_dir=tmp_path,
+        cache_dir=tmp_path,
+        image="local/openpi:test",
+        policy_host="policy-host.example",
+        resource_owner="task-owner",
+        private_receipt_path=receipt,
+    )
+    resources = antioch._LiveResources(
+        scenario_run_id="submitted-run",
+        image_id="sha256:" + "a" * 64,
+        evidence=antioch.validate_scenario_evidence(_passed_payload()),
+        scenario_cleanup="terminal_verified",
+        scenario_phase="cancelled",
+        scenario_outcome="cancelled",
+        container_cleanup="absent_verified",
+        container_absent=True,
+        container=antioch._ContainerIdentity(
+            name="exact-container",
+            container_id="container-sha",
+            image="local/openpi:test",
+            managed=True,
+            owner="task-owner",
+            running=True,
+        ),
+    )
+    monkeypatch.setattr(antioch, "_harness_source_sha", lambda: "b" * 40)
+
+    antioch._write_private_receipt(config, resources, status="passed")
+
+    payload = json.loads(receipt.read_text(encoding="utf-8"))
+    assert payload["harness_source_sha"] == "b" * 40
+    assert payload["image_id"] == "sha256:" + "a" * 64
+    assert payload["scenario_run_id"] == "submitted-run"
+    assert payload["container"]["id"] == "container-sha"
+    assert payload["acceptance"] == {
+        "action_chunk_shape": [15, 8],
+        "chunks_run": 3,
+        "jaw_travel_mm": 84.0,
+        "max_joint_travel_rad": 0.8,
+        "mean_inference_ms": 120.5,
+        "passing_checks": sorted(antioch.REQUIRED_CHECKS),
+    }
+    assert payload["scenario_cleanup"]["phase"] == "cancelled"
+    assert payload["container_cleanup"]["absent_verified"] is True
+    assert receipt.stat().st_mode & 0o777 == 0o600

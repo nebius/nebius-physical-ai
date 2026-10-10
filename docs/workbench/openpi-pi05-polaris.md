@@ -40,6 +40,10 @@ npa/.venv/bin/python -m npa.workflows.byof.openpi_antioch live-loop \
   --cache-dir '<operator-openpi-cache>' \
   --image '<local-image-tag>' \
   --policy-host '<address-reachable-from-the-simulator>' \
+  --container-name '<unique-task-container>' \
+  --resource-owner '<unique-task-owner>' \
+  --cleanup-scenario --cleanup-container \
+  --private-receipt '<private-receipt-path>' \
   --output '<private-evidence.json>'
 ```
 
@@ -47,9 +51,12 @@ The default and preferred topology binds the one labelled policy container
 directly to host port `8000`, with Docker restart policy `unless-stopped`, a
 socket healthcheck, and the operator cache mounted read-only. A matching
 healthy container is reused and remains running after validation. Use
-`--cleanup-container` only when an ephemeral policy endpoint is intentional;
-cleanup refuses to remove a same-named container without the harness label.
-The harness never creates, changes, or persists firewall or NAT rules.
+`--cleanup-scenario --cleanup-container` only for an explicitly task-owned
+ephemeral validation fixture: both require a unique `--resource-owner`, and
+container cleanup re-inspects the exact labelled container ID, image, and owner
+before removing it and then verifies absence. The harness preserves the primary
+execution error if cleanup also fails. It never creates, changes, or persists
+firewall or NAT rules.
 
 The two network paths have different owners and directions:
 
@@ -72,10 +79,11 @@ for pre-existing infrastructure; the harness does not build the indirection.
 For an immutable reproduction of a known completed Antioch environment, add
 `--rerun-from <completed-run-id>`. Antioch creates a distinct fresh run from
 the saved source, image, parameters, and inputs; the harness waits for and
-validates that new run rather than trusting the referenced historical result.
+validates only the new run ID returned by the authoritative submission response,
+never a later owner-wide scenario listing. Machine selectors remain operator
+inputs and never appear in sanitized evidence.
 When several machines are assigned, `--machine <assigned-machine>` prevents a
-stale automatic placement from masking the policy/simulator result. Machine
-selectors remain operator inputs and never appear in sanitized evidence.
+stale automatic placement from masking the policy/simulator result.
 
 For diagnostics, `--script <project-relative-loop.py>` uses Antioch's direct
 `run` surface and enforces the same measured loop gates. It does not replace the
@@ -84,16 +92,22 @@ fresh saved, viewable Antioch result.
 
 The live path first runs an unaccepted child that must exit 64 before the model
 entrypoint. It then starts the accepted GPU container, runs the real Antioch
-scenario, requires a fresh saved result, and fails unless every mechanical and
-feedback gate passes: measured jaw stroke, finite `(15, 8)` action chunks,
-policy-driven arm motion, and stable joint state. Its sanitized output excludes
-project, machine, user, host, and scenario-run identifiers.
+scenario, captures its submitted run identity, and fails unless every mechanical
+and feedback gate passes: measured jaw stroke, finite `(15, 8)` action chunks,
+policy-driven arm motion, and stable joint state. A task-owned cleanup first
+cancels the exact still-active scenario and verifies its terminal provider state,
+then removes only the exact labelled container. The private receipt binds the
+source, OpenPI source reference, image digest, scenario/container IDs, measured
+metrics, and cleanup disposition; sanitized output excludes project, machine,
+user, host, and scenario-run identifiers.
 
 The opt-in regression entrypoint is
 `npa/tests/e2e/test_openpi_antioch_live_e2e.py`. Set
 `NPA_INTEGRATION_E2E=1`, `NPA_OPENPI_ANTIOCH_LIVE=1`, and the operator-local
-project, cache, image, policy-host, and executable variables named in that test.
-No infrastructure address or credential has a repository default.
+project, cache, image, policy-host, unique container, resource-owner, private
+receipt, and executable variables named in that test. The release E2E uses the
+recorded scenario path, not `NPA_OPENPI_ANTIOCH_SCRIPT`. No infrastructure
+address or credential has a repository default.
 
 The builder uses CUDA 12.8, compiles an `sm_100` runtime probe, and retains
 upstream's pinned JAX CUDA 12 stack. A CUDA 13.0 managed-driver MK8s node is
