@@ -80,7 +80,7 @@ LIBERO_X_EVALUATOR_REPOSITORY = "https://github.com/meituan/LIBERO-X.git"
 LIBERO_X_EVALUATOR_REVISION = "f528726421c7211d8eb05fe48e9e5e2535ccc813"
 LIBERO_X_EVALUATOR_LICENSE = "MIT"
 LIBERO_X_EVALUATOR_SOURCE = "https://github.com/meituan/LIBERO-X"
-RUNTIME_READY_SCHEMA = "npa.groot_libero_x.runtime_ready.v3"
+RUNTIME_READY_SCHEMA = "npa.groot_libero_x.runtime_ready.v4"
 SHA256 = re.compile(r"^[a-f0-9]{64}$")
 TASK_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 LIBERO_X_BDDL_LEVELS = frozenset({"LEVEL1", "LEVEL2", "LEVEL3", "LEVEL4"})
@@ -98,6 +98,16 @@ _GIT_LFS_POINTER_VERSION = "version https://git-lfs.github.com/spec/v1"
 GROOT_LFS_TRANSPORT_TIMEOUT_SECONDS = 60.0
 _GITHUB_LFS_BATCH_HOSTS = frozenset({"github.com"})
 _GITHUB_LFS_DOWNLOAD_HOSTS = frozenset({"github-cloud.githubusercontent.com"})
+# LIBERO's upstream Python 3.12 setup installs pandas but no parquet backend.
+# The native rollout loader uses pandas.read_parquet for the evaluation data, so
+# install the same explicitly pinned Arrow release used by the CUDA base image
+# into LIBERO's separate runtime and verify the actual reader before publishing
+# a cache-ready marker.
+LIBERO_PARQUET_ENGINE_PACKAGE = "pyarrow"
+LIBERO_PARQUET_ENGINE_VERSION = "23.0.1"
+LIBERO_PARQUET_ENGINE_REQUIREMENT = (
+    f"{LIBERO_PARQUET_ENGINE_PACKAGE}=={LIBERO_PARQUET_ENGINE_VERSION}"
+)
 # Isaac-GR00T's lock resolves the aarch64 TorchCodec wheel while validating its
 # multi-platform environment, even on an x86_64 worker.  Fetch exactly that
 # upstream LFS object after checking out the reviewed source revision; do not
@@ -1042,6 +1052,66 @@ def _overlay_libero_env(source: Path) -> dict[str, str]:
     }
 
 
+def _verify_libero_parquet_engine(
+    python: Path, *, cwd: Path, env: Mapping[str, str]
+) -> dict[str, str]:
+    """Prove LIBERO's selected interpreter can read rollout parquet inputs."""
+
+    probe = """
+import json
+from pathlib import Path
+import tempfile
+
+import pandas as pd
+import pyarrow
+import pyarrow as pa
+import pyarrow.parquet as pq
+
+with tempfile.TemporaryDirectory() as directory:
+    path = Path(directory) / "npa-libero-parquet-engine-check.parquet"
+    pq.write_table(pa.table({"episode_index": [7]}), path)
+    frame = pd.read_parquet(path)
+    if frame.to_dict(orient="list") != {"episode_index": [7]}:
+        raise RuntimeError("pandas parquet round trip did not preserve evaluation data")
+print(json.dumps({"package": "pyarrow", "version": pyarrow.__version__}))
+"""
+    try:
+        completed = subprocess.run(
+            [str(python), "-c", probe],
+            cwd=cwd,
+            env=dict(env),
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except OSError as exc:
+        raise GrootVisualizationError(
+            "LIBERO Python runtime could not verify parquet evaluation-data support"
+        ) from exc
+    if completed.returncode:
+        detail, _ = _redact_failure_text(completed.stderr or "")
+        suffix = f": {detail}" if detail else ""
+        raise GrootVisualizationError(
+            f"LIBERO Python runtime cannot read parquet evaluation data{suffix}"
+        )
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise GrootVisualizationError(
+            "LIBERO Python runtime emitted invalid parquet-engine provenance"
+        ) from exc
+    expected = {
+        "package": LIBERO_PARQUET_ENGINE_PACKAGE,
+        "version": LIBERO_PARQUET_ENGINE_VERSION,
+    }
+    if payload != expected:
+        raise GrootVisualizationError(
+            "LIBERO Python runtime parquet engine differs from the pinned contract"
+        )
+    return expected
+
+
 def _runtime_readiness_failure(target: Path) -> str | None:
     """Return a stable, non-sensitive reason when a cached runtime is unusable."""
 
@@ -1058,6 +1128,12 @@ def _runtime_readiness_failure(target: Path) -> str | None:
         return "ready_marker_groot_revision_mismatch"
     if payload.get("required_groot_lfs_objects") != _groot_lfs_provenance():
         return "ready_marker_lfs_provenance_mismatch"
+    expected_parquet_engine = {
+        "package": LIBERO_PARQUET_ENGINE_PACKAGE,
+        "version": LIBERO_PARQUET_ENGINE_VERSION,
+    }
+    if payload.get("libero_parquet_engine") != expected_parquet_engine:
+        return "ready_marker_parquet_engine_mismatch"
     evaluator = payload.get("libero_x_evaluator")
     overlay = payload.get("npa_libero_x_overlay")
     if (
@@ -1104,6 +1180,16 @@ def _runtime_readiness_failure(target: Path) -> str | None:
         return "libero_x_registration_overlay_unreadable"
     if not overlay_text.endswith(LIBERO_X_RUNTIME_OVERLAY + "\n"):
         return "libero_x_registration_overlay_invalid"
+    try:
+        actual_parquet_engine = _verify_libero_parquet_engine(
+            libero_python,
+            cwd=source,
+            env=os.environ,
+        )
+    except GrootVisualizationError:
+        return "libero_parquet_engine_unavailable"
+    if actual_parquet_engine != expected_parquet_engine:
+        return "libero_parquet_engine_mismatch"
     return None
 
 
@@ -1285,6 +1371,24 @@ def _materialize_native_runtime(temporary_root: Path) -> dict[str, Any]:
             raise GrootVisualizationError(
                 "upstream LIBERO setup did not create both documented Python runtimes"
             )
+        _run_runtime_command(
+            [
+                uv,
+                "pip",
+                "install",
+                "--no-cache",
+                "--python",
+                str(libero_python),
+                LIBERO_PARQUET_ENGINE_REQUIREMENT,
+            ],
+            cwd=source,
+            env=environment,
+        )
+        parquet_engine = _verify_libero_parquet_engine(
+            libero_python,
+            cwd=source,
+            env=environment,
+        )
         libero_revision = subprocess.run(
             [git, "rev-parse", "HEAD"],
             cwd=source / "external_dependencies/LIBERO",
@@ -1311,6 +1415,7 @@ def _materialize_native_runtime(temporary_root: Path) -> dict[str, Any]:
                 "attribution": "Meituan LIBERO-X authors; Wang et al. (2026)",
             },
             "npa_libero_x_overlay": overlay,
+            "libero_parquet_engine": parquet_engine,
             "python": "3.12",
             "entrypoint": "gr00t.eval.rollout_policy.run_gr00t_sim_policy",
         }

@@ -6,6 +6,7 @@ import fcntl
 import hashlib
 import importlib
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -627,6 +628,10 @@ def test_runtime_readiness_failure_names_missing_documented_runtime(
                 "schema": workflow.RUNTIME_READY_SCHEMA,
                 "isaac_groot_revision": workflow.IMAGE_GROOT_REF,
                 "required_groot_lfs_objects": workflow._groot_lfs_provenance(),
+                "libero_parquet_engine": {
+                    "package": workflow.LIBERO_PARQUET_ENGINE_PACKAGE,
+                    "version": workflow.LIBERO_PARQUET_ENGINE_VERSION,
+                },
                 "libero_x_evaluator": {
                     "repository": workflow.LIBERO_X_EVALUATOR_REPOSITORY,
                     "revision": workflow.LIBERO_X_EVALUATOR_REVISION,
@@ -668,6 +673,102 @@ def test_runtime_post_publish_failure_is_actionable_and_path_free(
         workflow._verified_runtime_or_raise(tmp_path)
 
     assert str(tmp_path) not in str(error.value)
+
+
+def test_libero_parquet_probe_reads_with_selected_interpreter(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import pyarrow
+
+    monkeypatch.setattr(workflow, "LIBERO_PARQUET_ENGINE_VERSION", pyarrow.__version__)
+
+    assert workflow._verify_libero_parquet_engine(
+        Path(sys.executable),
+        cwd=tmp_path,
+        env=os.environ,
+    ) == {
+        "package": workflow.LIBERO_PARQUET_ENGINE_PACKAGE,
+        "version": pyarrow.__version__,
+    }
+
+
+def test_materializer_installs_parquet_engine_before_publishing_runtime(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv("NPA_GROOT_LIBERO_X_RUNTIME_CACHE", raising=False)
+    monkeypatch.delenv("GROOT_DATA_MOUNT", raising=False)
+    source = _native_runtime_cache_target(tmp_path) / "Isaac-GR00T"
+    evaluator = _native_runtime_cache_target(tmp_path) / "LIBERO-X"
+    commands: list[list[str]] = []
+    engine_calls: list[Path] = []
+
+    def runtime_command(command: list[str], *, cwd: Path, env: dict[str, str]) -> None:
+        commands.append(command)
+        if command[-2:] == [workflow.IMAGE_GROOT_REPOSITORY, str(source)]:
+            target = source / "gr00t/eval/sim/LIBERO/libero_env.py"
+            target.parent.mkdir(parents=True)
+            target.write_text("def register_libero_envs():\n    pass\n")
+        elif command[-2:] == [
+            workflow.LIBERO_X_EVALUATOR_REPOSITORY,
+            str(evaluator),
+        ]:
+            (evaluator / "libero/libero_x/bddl").mkdir(parents=True)
+        elif command[1:3] == ["sync", "--python"]:
+            python = cwd / ".venv/bin/python"
+            python.parent.mkdir(parents=True)
+            python.touch()
+        elif command[0] == "bash":
+            python = cwd / "gr00t/eval/sim/LIBERO/libero_uv/.venv/bin/python"
+            python.parent.mkdir(parents=True)
+            python.touch()
+            (cwd / "external_dependencies/LIBERO").mkdir(parents=True)
+
+    def revision(
+        _command: list[str], *, cwd: Path, **_kwargs: Any
+    ) -> subprocess.CompletedProcess[str]:
+        if cwd == source:
+            stdout = workflow.IMAGE_GROOT_REF
+        elif cwd == evaluator:
+            stdout = workflow.LIBERO_X_EVALUATOR_REVISION
+        else:
+            assert cwd == source / "external_dependencies/LIBERO"
+            stdout = "reviewed-libero-submodule"
+        return subprocess.CompletedProcess([], 0, f"{stdout}\n", "")
+
+    expected_engine = {
+        "package": workflow.LIBERO_PARQUET_ENGINE_PACKAGE,
+        "version": workflow.LIBERO_PARQUET_ENGINE_VERSION,
+    }
+
+    def verify(python: Path, **_kwargs: Any) -> dict[str, str]:
+        engine_calls.append(python)
+        return expected_engine
+
+    monkeypatch.setattr(workflow.shutil, "which", lambda _name: "/tool")
+    monkeypatch.setattr(workflow, "_run_runtime_command", runtime_command)
+    monkeypatch.setattr(
+        workflow, "_hydrate_required_groot_lfs_objects", lambda _source: None
+    )
+    monkeypatch.setattr(
+        workflow, "_required_groot_lfs_objects_verified", lambda _source: True
+    )
+    monkeypatch.setattr(workflow.subprocess, "run", revision)
+    monkeypatch.setattr(workflow, "_verify_libero_parquet_engine", verify)
+
+    runtime = workflow._materialize_native_runtime(tmp_path)
+
+    libero_python = source / "gr00t/eval/sim/LIBERO/libero_uv/.venv/bin/python"
+    assert [
+        "/tool",
+        "pip",
+        "install",
+        "--no-cache",
+        "--python",
+        str(libero_python),
+        workflow.LIBERO_PARQUET_ENGINE_REQUIREMENT,
+    ] in commands
+    assert engine_calls == [libero_python, libero_python]
+    assert runtime["provenance"]["libero_parquet_engine"] == expected_engine
 
 
 def _native_runtime_cache_target(temporary_root: Path) -> Path:
