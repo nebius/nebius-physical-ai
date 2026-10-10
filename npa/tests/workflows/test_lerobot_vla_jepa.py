@@ -223,9 +223,15 @@ def test_candidate_baked_vendor_python_matches_prepare_render(
     prepare = next(
         document for document in documents if document["name"].endswith("prepare")
     )
+    # Setup records the interpreter in the state file adjacent to the run-shell
+    # shim directory, so both independently rendered shells use the same handoff.
+    shim_python = Path("/tmp/npa-shim/python3")
+    recorded_python = shim_python.parent.parent / "npa-python"
     assert 'npa_baked_python="${NPA_BAKED_PYTHON:-}"' in prepare["setup"]
-    assert "printf '%s\\n' \"$npa_baked_python\" >" in prepare["setup"]
-    assert "/tmp/npa-shim/python3" in prepare["run"]
+    assert f"printf '%s\\n' \"$npa_baked_python\" > {recorded_python}" in prepare[
+        "setup"
+    ]
+    assert str(shim_python) in prepare["run"]
     assert "python3 -m npa.workflows.lerobot_vla_jepa prepare" in prepare["run"]
 
 
