@@ -35,15 +35,21 @@ the scheduler and workflow policy still permit only enrolled Kubernetes targets.
    authentication; the same renderer grants identical restricted permissions.
    Do not grant cluster-admin or RBAC writes.
    Keep enrollment's operator credential separate from this runtime connection.
-5. Export the runtime policy's connections for both server containers:
+5. Render the updated scheduler policy and export the runtime connections for
+   both server containers:
 
    ```bash
+   npa workbench access render \
+     --config /private/workbench/runtime.yaml \
+     --output-dir /private/workbench/rendered
    npa workbench access export-connections \
      --config /private/workbench/runtime.yaml \
      --output-dir /private/workbench/connections
    ```
 
-   This writes private `team.yaml`, `sky-kubeconfig.yaml`, and one minified
+   `render` writes `sky-server.yaml` alongside reviewable enrollment manifests;
+   retain that scheduler policy for the server. `export-connections` writes
+   private `team.yaml`, `sky-kubeconfig.yaml`, and one minified
    kubeconfig per explicitly configured destination, including future
    destinations without personal allocations. Only allocated destinations get
    scheduler contexts. The export preserves workspace budgets and allocations,
@@ -52,7 +58,8 @@ the scheduler and workflow policy still permit only enrolled Kubernetes targets.
    `/etc/npa-team`. `--server-directory` changes that mount location. Other
    policy paths, including state and workload storage, must already refer to
    the intended server paths. Existing output directories are never overwritten.
-6. Add those files to the installation's existing configuration Secret,
+6. Add the rendered `sky-server.yaml` and exported connection files to the
+   installation's existing configuration Secret,
    preserving its other files, account ownership namespace, and state PVC.
    Restart the server deployment after updating the Secret: its private copy
    is created at startup. Check that no active work requires an uninterrupted

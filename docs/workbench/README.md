@@ -11,7 +11,8 @@ CLI, API, and SDK. Administrators create local users/groups and explicit persona
 GPU allocations and artifact storage; users use revocable personal key files and
 never receive scheduler or cluster credentials. The CPU gateway and private
 SkyPilot service still require live qualification. Start with the
-[shared-access quickstart](shared-workbench-quickstart.md), then use
+[setup and usage guide](shared-workbench-quickstart.md) for operator setup,
+both login paths, command meanings, and coding-agent access, then use
 [local users and personal access keys](team-identity.md) for identity details.
 External identities can be explicitly
 linked later without changing local ownership; there is no standalone portal or

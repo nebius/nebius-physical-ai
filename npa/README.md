@@ -17,6 +17,10 @@ execution through `npa workbench submit`, `runs`, `run`, and `whoami`, and the
 existing `npa.sdk.workbench.team` SDK. Administrators use `npa workbench access`.
 The same commands serve individual and shared installations; `npa workbench team`
 remains a compatibility alias with the same saved accounts and run receipts.
+Use the [setup and usage guide](../docs/workbench/shared-workbench-quickstart.md)
+for the operator installation order, both login methods, coding-agent access,
+and existing clusters. `submit` starts an execution, `runs` lists executions,
+and `run RUN_ID` inspects or manages that one execution.
 Administrators create local users and groups, then assign explicit personal
 namespaces, GPU allocations, and scoped artifact storage. Users receive
 revocable personal key files for submit, status, logs, and artifacts; they do

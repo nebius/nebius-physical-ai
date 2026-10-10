@@ -3,7 +3,8 @@
 Workbench access gives a shared Kubernetes installation a small authenticated execution
 boundary. Administrators create persistent local accounts, assign local groups
 and explicit allocations, and operate the service. Users keep using the
-existing CLI, HTTP API, or Python SDK with a personal access-key file.
+existing CLI, HTTP API, or Python SDK with a personal access-key file or a
+linked Nebius human identity. Coding agents use that same authenticated API.
 
 For the short operator and user workflow, start with the
 [shared-access quickstart](shared-workbench-quickstart.md).
@@ -23,17 +24,21 @@ storage scope needed to submit. Both are required for execution.
 
 ## Responsibilities and boundaries
 
-| Role | Uses | Does not receive |
+| Role | Uses | Authority |
 | --- | --- | --- |
-| Administrator | `npa workbench access account`, policy configuration, enrollment, and service deployment | User keys, worker tokens, or a user-facing portal |
-| User | A personal key file with the CLI, API, or SDK | Scheduler, Kubernetes, or administrator credentials |
-| Team service | TLS gateway, durable ownership ledger, and loopback private scheduler | A public scheduler API or a per-user controller |
+| Administrator | `npa workbench access account`, policy configuration, enrollment, and service deployment | Private server state and explicitly selected cluster administration |
+| User or coding agent | A saved authorized connection with the CLI, API, or SDK | Own runs within current grants and allocations |
+| Workbench service | TLS gateway, durable ownership ledger, and loopback private SkyPilot scheduler | Trusted access to enrolled namespaces and allocated storage |
 
 The gateway authorizes every request against the current local account and
 policy. Users can see and operate only their own runs. A reader can inspect only
 their own existing runs; a runner also needs an allocation before submitting.
 Group membership by itself does not create storage, a namespace, or GPU
 capacity.
+
+Groups are optional: workspace grants can name a local account directly with
+`kind: subject`, or refer to a local group with `kind: group`. Both paths still
+need an explicit per-user allocation to execute a workflow.
 
 The service is a trusted administrator of enrolled worker namespaces. Worker
 isolation protects users from other workers; it does not isolate a compromised
@@ -45,6 +50,31 @@ qualification before production use.
 Set `account_namespace` once when creating an installation. It is the stable
 ownership domain for local accounts, allocations, runs, and explicitly linked
 external identities. Keep it unchanged for the life of the installation.
+
+Account commands read and write `accounts.sqlite3` under the configured
+`state_dir`; they are private operator commands, not remote account-management
+API requests. Run them where the service's authoritative persistent state is
+mounted. A fresh `state_dir` on another machine creates an unrelated database.
+For first setup, preserve the bootstrap account state on the PVC used by the
+server. When the provided Kubernetes renderer is used, `state_dir` must be
+under `/state`, configuration files are mounted at `/etc/npa-team`, and the
+isolated scheduler Python is `/opt/sky/bin/python`.
+
+For an already deployed installation, an operator can create an account in the
+gateway container, which already mounts the correct state. Set `HOST_CONTEXT`
+and `HOST_NAMESPACE` to the hosting cluster's selected context and management
+namespace first:
+
+```bash
+kubectl --context "$HOST_CONTEXT" --namespace "$HOST_NAMESPACE" \
+  exec deployment/npa-team --container gateway -- \
+  npa workbench access account create --config /etc/npa-team/team.yaml \
+    --name researcher-a --group researchers
+```
+
+This requires operator Kubernetes access. It is not an operation end users or
+their coding agents need. Storage provisioning and destination enrollment still
+run in the separately authorized operator environment.
 
 Use private, absolute paths for state and credentials. The placeholders below
 are illustrative and are not an inventory of a real installation.
@@ -83,6 +113,12 @@ contains the generated stable `id`; record it privately and use that exact value
 as the allocation `subject`. The name is a local administration label, not an
 authentication credential.
 
+For a new installation, begin with `allocations: []` in each workspace. Create
+the accounts, then replace that empty list with allocations using the returned
+user IDs and prepared storage grants. The YAML above shows the final shape;
+its placeholders are not runnable values. Prepare at least one allocation
+before exporting the scheduler connections.
+
 ```bash
 npa workbench access account create --config /private/npa-team/team.yaml \
   --name researcher-a --group researchers
@@ -116,6 +152,15 @@ matches the deployment you operate; otherwise provide an equivalently narrow
 storage grant through the private configuration. Workload storage keys are
 separate from personal API access keys.
 
+Account membership updates do not generate or enroll allocations. After changing
+allocation policy, render and enroll the selected destinations, regenerate the
+private SkyPilot configuration and exported connections, and update the existing
+server Secret. The provided deployment copies that Secret at startup, so it
+needs a controlled restart to load those file changes. Retain the same state
+PVC and account namespace. Keep enrollment's administrator credential separate
+from the restricted runtime connection described in the
+[external-cluster guide](external-kubernetes.md#administrator-setup).
+
 ## Issue and deliver a personal key file
 
 Issue a key after the account exists. `issue-key` creates a new file and
@@ -136,7 +181,7 @@ need no Nebius account, Kubernetes credential, or scheduler credential.
 
 Use `npa login` once with a personal key, or choose the
 [Nebius human sign-in path](team-identity.md#sign-in-once-with-npa-login).
-Both save a connection for the CLI and agent-callable SDK:
+Both save a connection for the CLI and agent-callable SDK.
 
 `submit` starts execution and returns a run ID. `run RUN_ID` shows that existing
 run's status; use `--action logs` or `--action artifacts` to read its outputs.
@@ -186,6 +231,30 @@ finally:
 CLI and SDK submissions share placement defaults and the same retry receipts.
 Use `connect()` for a client alone, or `open_connection()` to inspect the saved
 workspace and cluster. Both recheck the saved account before use.
+
+`run --action artifacts` returns an index, not the file contents. After the run
+succeeds, select an artifact identifier from that index and download it through
+the same authenticated client:
+
+```python
+from pathlib import Path
+from npa.sdk.workbench.team import open_connection
+
+run_id = "the-id-returned-by-submit"
+artifact = "the-artifact-name-from-the-index"
+client, session = open_connection()
+try:
+    with Path("result.bin").open("xb") as destination:
+        client.download(run_id, artifact, destination)
+finally:
+    client.close()
+```
+
+For unattended coding agents, create a dedicated local account and key with
+the intended grants and allocation. For an agent acting as a person, use that
+person's authorized saved connection. Both paths retain the same owner checks;
+neither needs cluster credentials or direct access to SkyPilot. Do not share one
+personal key across people if separate ownership and attribution are required.
 
 ### Explicit credentials for existing integrations
 
@@ -277,10 +346,12 @@ finally:
 
 ## Offboarding and key lifecycle
 
-Revoke a specific key when it is lost or replaced. Disable the account to block
-all of its local keys and linked external identities. These actions take effect
-for future requests and new workflow waves; they do not cancel already admitted
-work or rotate workload storage keys.
+Revoke a specific key when it is lost or replaced; that key is rejected on its
+next API request. Disable the account to block all of its local keys and linked
+external identities. Account disablement and permission changes are also
+checked before new workflow waves. Revoking only a key does not withdraw the
+account's permission to continue an already admitted run. Neither action
+automatically cancels admitted work or rotates workload storage keys.
 
 ```bash
 npa workbench access account revoke-key --config /private/npa-team/team.yaml \

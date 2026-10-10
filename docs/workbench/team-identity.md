@@ -27,11 +27,16 @@ sign in without an execution allocation.
 
 Then both authentication methods use the same commands:
 
+`submit` starts execution and returns an ID. Set `RUN_ID` to that returned ID;
+`runs` lists your executions, while `run RUN_ID` inspects one existing execution.
+
 ```bash
 npa workbench whoami
 npa workbench submit --spec workflow.yaml
 npa workbench runs
+npa workbench run "$RUN_ID" --action status
 npa workbench run "$RUN_ID" --action logs
+npa workbench run "$RUN_ID" --action artifacts
 ```
 
 The CLI saves private connection profiles under `$NPA_CONFIG_DIR/team` (default
@@ -81,6 +86,12 @@ Run account administration against the service's authoritative private
 configuration. Repeat `--group` to assign multiple local groups. The generated
 `id` in the `create` response is the value to use in allocation `subject`
 entries in the team policy.
+
+These commands use the database under the configuration's `state_dir`. Run them
+in the operator environment that mounts the service's authoritative persistent
+state; passing a local config file does not remotely administer the service.
+See [initial account setup](team-access.md#administrator-establish-local-accounts-and-policy)
+for the bootstrap order and runtime paths.
 
 ```bash
 npa workbench access account create --config /private/npa-team/team.yaml \
