@@ -14,7 +14,8 @@ config:
   width: 1280
   height: 720
   sensor_hz: 25
-  speed_mps: 0.35
+  speed_mps: 1.2
+  motion_profile: turnaround
   samples: 32
   results_uri: "s3://{{config.bucket}}/{{config.prefix}}/results/"
   reports_uri: "s3://{{config.bucket}}/{{config.prefix}}/report/"

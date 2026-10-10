@@ -33,12 +33,13 @@ def quadruped_collect_cmd(
     height: int = typer.Option(720, "--height"),
     sensor_hz: int = typer.Option(25, "--sensor-hz"),
     speed_mps: float = typer.Option(0.35, "--speed-mps"),
+    motion_profile: str = typer.Option("straight", "--motion-profile"),
     samples: int = typer.Option(32, "--samples"),
     output_format: str = typer.Option("json", "--output-format"),
 ):
     """Collect policy-driven Go1 observations and Cycles GPU robot imagery.
 
-    Args: World/output paths, identity, image size, sensor rate, speed, and samples.
+    Args: World/output paths, identity, image size, sensor rate, speed, profile, samples.
     Returns: None; emits actual collection and GPU evidence as JSON.
     Raises: typer.Exit on asset, policy, physical, rendering, or storage failure.
     """
@@ -55,6 +56,7 @@ def quadruped_collect_cmd(
             height=height,
             sensor_hz=sensor_hz,
             speed_mps=speed_mps,
+            motion_profile=motion_profile,
             samples=samples,
         ),
     )

@@ -132,6 +132,8 @@ def test_quadruped_reuses_world_and_keeps_gpu_work_in_native_worker(monkeypatch)
     assert len(jobs) == 2
     assert jobs[0]["resources"]["accelerators"] == "RTXPRO6000:1"
     assert "quadruped-collect" in jobs[0]["run"]
+    assert "--motion-profile turnaround" in jobs[0]["run"]
+    assert "--speed-mps 1.2" in jobs[0]["run"]
     assert "--sensor-hz 25" in jobs[0]["run"] and "--samples 32" in jobs[0]["run"]
     assert "onnxruntime==1.23.2" in jobs[0]["setup"]
     assert "pycollada==0.9.3" in jobs[0]["setup"]

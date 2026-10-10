@@ -81,7 +81,7 @@ class RoverRequest(RunRequest):
 class QuadrupedRequest(RunRequest):
     """Configure articulated Go1 collection and Cycles GPU rendering.
 
-    Args: World/result paths, image dimensions, sensor rate, walking speed, samples.
+    Args: World/result paths, image dimensions, sensor rate, speed, profile, samples.
     Returns: Validated capture settings with synchronized physics and cameras.
     Raises: ValueError when the sensor rate does not divide the 250 Hz physics rate.
     """
@@ -90,7 +90,8 @@ class QuadrupedRequest(RunRequest):
     width: int = Field(default=1280, ge=32)
     height: int = Field(default=720, ge=32)
     sensor_hz: int = Field(default=25, ge=1, le=250)
-    speed_mps: float = Field(default=0.35, gt=0, le=0.7)
+    speed_mps: float = Field(default=0.35, gt=0, le=1.2)
+    motion_profile: Literal["straight", "turnaround"] = "straight"
     samples: int = Field(default=32, ge=1)
 
     @field_validator("sensor_hz")

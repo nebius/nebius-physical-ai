@@ -133,3 +133,71 @@ def test_renderer_batches_reject_gaps_and_cpu_fallback():
         _merge_parts([first, dict(second, frame_start=3)], 4)
     with pytest.raises(MarbleError, match="incomplete"):
         _merge_parts([first, dict(second, cpu_render_fallback=True)], 4)
+
+
+def test_patrol_brakes_turns_and_resumes_from_measured_heading():
+    from npa.workbench.marble.quadruped_patrol import PatrolController
+
+    class Physics:
+        position = [0, 0, 0.35]
+        yaw = 0.0
+
+        def getBasePositionAndOrientation(self, robot):
+            return self.position, [0, 0, 0, 1]
+
+        def getEulerFromQuaternion(self, orientation):
+            return [0, 0, self.yaw]
+
+    physics = Physics()
+    patrol = PatrolController(
+        {"start": [0, 0, 0.35], "heading": 0, "distance": 8}, 1.2, "turnaround"
+    )
+    assert patrol.command(physics, 1, False)[0] == 0
+    speeds = [patrol.command(physics, 1, True)[0] for _ in range(100)]
+    assert max(np.diff(speeds)) <= 0.016001 and speeds[-1] == pytest.approx(1.2)
+    physics.position = [6.8, 0, 0.35]
+    for _ in range(60):
+        command = patrol.command(physics, 1, True)
+    assert patrol.phase == "turning" and command[0] == 0
+    assert abs(command[2]) == pytest.approx(0.9)
+    physics.yaw = np.pi - 0.18
+    command = patrol.command(physics, 1, True)
+    assert patrol.phase == "inbound" and patrol.turns == 1 and command[0] > 0
+
+
+def test_turnaround_report_rejects_rotation_without_return_travel():
+    from types import SimpleNamespace
+    from npa.workbench.marble.quadruped_physics import _motion_metrics
+
+    rows = [
+        {
+            "linear_velocity_bullet": [0, 0, 0],
+            "heading_radians": yaw,
+            "position_bullet": [0, 0, 0.35],
+            "motion_phase": "turning",
+        }
+        for yaw in np.linspace(0, np.pi, 100)
+    ]
+    request = SimpleNamespace(motion_profile="turnaround", speed_mps=1.2)
+    with pytest.raises(MarbleError, match="two-meter return"):
+        _motion_metrics(rows, request)
+
+
+def test_return_distance_does_not_bridge_separate_patrol_legs():
+    from types import SimpleNamespace
+    from npa.workbench.marble.quadruped_physics import _motion_metrics
+
+    phases = ["inbound", "inbound", "outbound", "inbound", "inbound"]
+    rows = [
+        {
+            "linear_velocity_bullet": [1, 0, 0],
+            "heading_radians": np.pi * index / 4,
+            "position_bullet": [position, 0, 0.35],
+            "motion_phase": phase,
+        }
+        for index, (position, phase) in enumerate(zip([0, 1, 5, 10, 11], phases))
+    ]
+    metrics = _motion_metrics(
+        rows, SimpleNamespace(motion_profile="turnaround", speed_mps=1.2)
+    )
+    assert metrics["return_distance_m"] == pytest.approx(2.0)

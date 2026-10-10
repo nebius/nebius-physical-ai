@@ -308,6 +308,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.sensor_hz}}",
             "--speed-mps",
             "{{config.speed_mps}}",
+            "--motion-profile",
+            "{{config.motion_profile}}",
             "--samples",
             "{{config.samples}}",
         ],

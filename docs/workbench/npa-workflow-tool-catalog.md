@@ -31,7 +31,7 @@ accidental dead entries fail the guardrail. The retired monolithic
 | `workbench.marble.capture` | `npa workbench marble capture` | world bundle and camera dimensions | gsplat CUDA RGB frames, camera poses and timings | no |
 | `workbench.marble.scan` | `npa workbench marble scan` | world collision mesh and scan dimensions | Warp CUDA depth arrays, point cloud and timings | no |
 | `workbench.marble.rover_collect` | `npa workbench marble rover-collect` | generated world, sensor dimensions and frequency | wheel-driven CPU simulation, CUDA RGB/depth, actions, poses and contacts | no |
-| `workbench.marble.quadruped_collect` | `npa workbench marble quadruped-collect` | generated world, sensor dimensions/frequency, speed and samples | pretrained Go1 CPU control/physics, CUDA RGB/depth, CUDA robot rendering, measured joints and contacts | no |
+| `workbench.marble.quadruped_collect` | `npa workbench marble quadruped-collect` | generated world, sensor dimensions/frequency, speed, motion profile and samples | pretrained Go1 CPU control/physics, CUDA RGB/depth, CUDA robot rendering, measured joints and contacts | no |
 | `workbench.marble.navigation_prepare` | `npa workbench marble navigation-prepare` | generated world and exact native training configuration | sealed Isaac collision scene, supported cases, and source lineage | no |
 | `workbench.marble.report` | `npa workbench marble report` | verified GPU results | interactive HTML and downloadable artifacts | no |
 | `workbench.marble.pallet_preflight` | `npa workbench marble pallet-preflight` | World API token and real pallet manifest | verified train/test/cutout snapshot | no |

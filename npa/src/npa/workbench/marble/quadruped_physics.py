@@ -8,6 +8,7 @@ import numpy as np
 from .api import MarbleError
 from .quadruped_assets import policy_path
 from .quadruped_control import DEFAULT_ANGLES, apply_torques, observe, route_command
+from .quadruped_patrol import PatrolController
 from .quadruped_state import cameras, record, validate_motion
 from .rover_physics import _route, _warehouse
 
@@ -56,11 +57,10 @@ def _rollout(bullet, root, warehouse, route, robot, joints, request, policy):
     center, records = np.array(route["start"]), []
     interval = 250 // request.sensor_hz
     settle = 500
+    patrol = PatrolController(route, request.speed_mps, request.motion_profile)
     for step in range(settle + request.frames * interval):
         if step % 5 == 0:
-            command = route_command(
-                bullet, robot, route, request.speed_mps if step >= settle else 0
-            )
+            command = _command(bullet, robot, patrol, step >= settle)
             observation, _, _ = observe(bullet, robot, joints, action, command)
             action = _policy_action(policy, observation)
             target = DEFAULT_ANGLES + 0.5 * action
@@ -86,7 +86,14 @@ def _rollout(bullet, root, warehouse, route, robot, joints, request, policy):
                     (len(records) + 1) / request.sensor_hz,
                 )
             )
+            records[-1]["motion_phase"] = patrol.phase if step >= settle else "settling"
     return records
+
+
+def _command(bullet, robot, patrol, active):
+    if patrol.profile == "turnaround":
+        return patrol.command(bullet, robot, active)
+    return route_command(bullet, robot, patrol.route, patrol.speed if active else 0)
 
 
 def simulate_quadruped(root, world, request):
@@ -136,6 +143,7 @@ def _summary(root, records, route, request):
         "step_seconds": 0.004,
         "sensor_hz": request.sensor_hz,
         "distance_m": distance,
+        **_motion_metrics(records, request),
         "route": route,
         "embodiment": "Unitree Go1",
         "actuated_joints": 12,
@@ -145,4 +153,32 @@ def _summary(root, records, route, request):
         "policy_sha256": hashlib.sha256(policy_path(root).read_bytes()).hexdigest(),
         "trained_in_this_run": False,
         "collision_geometry": "original Marble concave collision triangles",
+    }
+
+
+def _motion_metrics(records, request):
+    speeds = [np.linalg.norm(r["linear_velocity_bullet"][:2]) for r in records]
+    headings = np.unwrap([r["heading_radians"] for r in records])
+    excursion = float(np.degrees(np.ptp(headings)))
+    return_steps = [
+        np.asarray(after["position_bullet"][:2]) - before["position_bullet"][:2]
+        for before, after in zip(records, records[1:])
+        if before["motion_phase"] == after["motion_phase"] == "inbound"
+    ]
+    return_distance = (
+        float(np.linalg.norm(return_steps, axis=1).sum()) if return_steps else 0.0
+    )
+    if request.motion_profile == "turnaround" and (
+        excursion < 150 or return_distance < 2
+    ):
+        raise MarbleError(
+            "Turnaround collection requires a measured U-turn and two-meter return leg"
+        )
+    return {
+        "motion_profile": request.motion_profile,
+        "commanded_speed_mps": request.speed_mps,
+        "peak_speed_mps": float(max(speeds)),
+        "p95_speed_mps": float(np.percentile(speeds, 95)),
+        "heading_excursion_degrees": excursion,
+        "return_distance_m": return_distance,
     }

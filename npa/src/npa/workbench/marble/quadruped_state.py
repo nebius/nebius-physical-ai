@@ -68,10 +68,14 @@ def record(bullet, robot, warehouse, joints, command, action, torques, cameras, 
         if "foot" in name.lower() and name[:2] in feet:
             feet[name[:2]] += contact[9]
     states = bullet.getJointStates(robot, joints)
+    velocity, angular = bullet.getBaseVelocity(robot)
     return {
         "time_seconds": time,
         "position_bullet": list(position),
         "orientation_xyzw_bullet": list(orientation),
+        "linear_velocity_bullet": list(velocity),
+        "angular_velocity_bullet": list(angular),
+        "heading_radians": bullet.getEulerFromQuaternion(orientation)[2],
         "joint_positions": [s[0] for s in states],
         "joint_velocities": [s[1] for s in states],
         "joint_torques": torques.tolist(),
