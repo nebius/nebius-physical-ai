@@ -295,7 +295,9 @@ def _deadline(timeout_s: float, *, operation: str) -> float:
     """Return a monotonic deadline for a bounded external operation."""
 
     if not math.isfinite(timeout_s) or timeout_s <= 0:
-        raise OpenPIAntiochError(f"{operation} timeout must be a positive finite number")
+        raise OpenPIAntiochError(
+            f"{operation} timeout must be a positive finite number"
+        )
     return time.monotonic() + timeout_s
 
 
@@ -325,7 +327,9 @@ def _wait_for_policy(config: LiveLoopConfig, *, container_name: str) -> None:
                     f"OpenPI container exited before websocket readiness: {tail}"
                 )
             if time.monotonic() >= deadline:
-                raise OpenPIAntiochError("OpenPI policy did not become ready before timeout")
+                raise OpenPIAntiochError(
+                    "OpenPI policy did not become ready before timeout"
+                )
             time.sleep(2)
 
 
