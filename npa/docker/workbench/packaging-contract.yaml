@@ -593,6 +593,8 @@ images:
       train/eval/export and service qualification. The CUDA 13.0 candidate has
       separate RTX PRO 6000 G1 training/resume, evaluation, MP4/HTML and ONNX
       evidence in docs/workbench/validation/mjlab-trained-g1-20260925.json.
+      Debian ancestor/runtime source and the locked PyAV native source closure
+      accompany the image and are verified before and after publication.
       Public promotion still requires built-layer license/security and bootstrap
       gates; see mjlab/REDISTRIBUTION.md and docs/workbench/mjlab.md.
   curobo:

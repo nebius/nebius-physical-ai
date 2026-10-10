@@ -3,7 +3,7 @@ FROM python:3.12-slim-bookworm@sha256:a116514e19457bcb7af7efe9c3dd0b9b71e85b3176
 
 ARG NPA_SOURCE_SHA
 ARG SOURCE_DATE_EPOCH
-ARG DEBIAN_SNAPSHOT=20261002T000000Z
+ARG DEBIAN_SNAPSHOT=20261010T000000Z
 LABEL npa.tool="mjlab" \
       npa.version="1.6.0-cuda13" \
       org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
@@ -18,19 +18,32 @@ ENV PYTHONUNBUFFERED=1 \
     XDG_CACHE_HOME=/workspace/.cache
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 USER root
+COPY docker/workbench/habitat-sim/bootstrap_sources.py /opt/mjlab-source/bootstrap_sources.py
+COPY docker/workbench/mjlab/python_sources.py docker/workbench/mjlab/python-sources.lock.json /opt/mjlab-source/
 RUN [[ "$NPA_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] \
     && [[ "$SOURCE_DATE_EPOCH" =~ ^[1-9][0-9]*$ ]] \
+    && install -d -m 0755 /usr/share/doc/npa-mjlab \
+    && cp /var/lib/dpkg/status /usr/share/doc/npa-mjlab/base-status \
     && rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources \
     && printf '%s\n' \
        "deb https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}/ bookworm main" \
        "deb https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}/ bookworm-updates main" \
        "deb https://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}/ bookworm-security main" \
+       "deb-src https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}/ bookworm main" \
+       "deb-src https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}/ bookworm-updates main" \
+       "deb-src https://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}/ bookworm-security main" \
+       "deb-src https://snapshot.debian.org/archive/debian/20260814T000000Z/ bookworm main" \
+       "deb-src https://snapshot.debian.org/archive/debian-security/20260814T000000Z/ bookworm-security main" \
        > /etc/apt/sources.list.d/npa-snapshot.list \
     && printf 'Acquire::Check-Valid-Until "false";\n' > /etc/apt/apt.conf.d/99snapshot \
     && apt-get update && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends \
        ca-certificates curl netcat-openbsd procps rsync sudo openssh-server wget \
        libegl1 libgl1 libglvnd0 libglib2.0-0 ffmpeg git \
+    && cp /var/lib/dpkg/status /usr/share/doc/npa-mjlab/runtime-status \
+    && python3 /opt/mjlab-source/bootstrap_sources.py fetch /usr/share/doc/npa-mjlab \
+    && python3 /opt/mjlab-source/python_sources.py --lock /opt/mjlab-source/python-sources.lock.json \
+       --output /usr/share/doc/npa-mjlab/python-sources \
     && rm -f /etc/ssh/ssh_host_* \
     && install -d -m 0755 /run/sshd /usr/share/doc/npa-mjlab/notices \
     && printf '%s\n' 'PasswordAuthentication no' 'PermitRootLogin no' \
@@ -69,6 +82,9 @@ COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh /usr/lo
 WORKDIR /workspace
 USER ubuntu
 # Prove the declared bootstrap behavior before publishing its OCI attestation.
+# This probe exercises the existing SkyPilot-only passwordless_root_exemption
+# in packaging-contract.yaml; the service disables privilege escalation.
+# trivy:ignore:AVD-DS-0010
 RUN sudo -n true && test -w /tmp && test -w /home/ubuntu \
     && command -v rsync && command -v ssh-keygen && command -v service \
     && sudo ssh-keygen -A && sudo /usr/sbin/sshd -t \

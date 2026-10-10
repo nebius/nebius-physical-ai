@@ -23,6 +23,7 @@ def test_snapshot_build_carries_every_copied_dependency():
     build = (IMAGE / "build.sh").read_text()
     for path in (
         "docker/workbench/curobo/filter_cudnn_runtime.py",
+        "docker/workbench/habitat-sim/bootstrap_sources.py",
         "docker/workbench/open3d/notices/mcap-LICENSE.txt",
         "docker/workbench/common/workflow_runtime_entrypoint.sh",
     ):

@@ -31,6 +31,7 @@ BUILD_INPUTS=(
   npa/src/npa npa/pyproject.toml npa/README.md npa/.dockerignore
   npa/docker/workbench/mjlab
   npa/docker/workbench/curobo/filter_cudnn_runtime.py
+  npa/docker/workbench/habitat-sim/bootstrap_sources.py
   npa/docker/workbench/open3d/notices/mcap-LICENSE.txt
   npa/docker/workbench/common/workflow_runtime_entrypoint.sh
   workflows/main workflows/testing

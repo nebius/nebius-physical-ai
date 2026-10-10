@@ -286,6 +286,8 @@ jobs:
             npa/tests/docker/test_sonic_mujoco_public_image_contract.py \
             npa/tests/docker/test_fiftyone_image_validation.py \
             npa/tests/docker/test_fiftyone_source_delivery.py \
+            npa/tests/docker/test_mjlab_image_contract.py \
+            npa/tests/docker/test_mjlab_source_delivery.py \
             npa/tests/deploy/test_public_publish.py \
             npa/tests/guardrails/test_secure_image_build_skill.py \
             -q
@@ -659,6 +661,11 @@ jobs:
           npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
             --tarball "$RUNNER_TEMP/${TOOL}.tar" \
             --json "$RUNNER_TEMP/${TOOL}-payload.json"
+          if [ "$TOOL" = mjlab ]; then
+            npa/.venv/bin/python npa/docker/workbench/mjlab/verify_sources.py \
+              --image-archive "$RUNNER_TEMP/${TOOL}.tar" \
+              > "$RUNNER_TEMP/${TOOL}-source-delivery.json"
+          fi
           if [ "$TOOL" = habitat-sim ]; then
             npa/.venv/bin/python npa/docker/workbench/habitat-sim/verify_bootstrap.py \
               --docker-save "$RUNNER_TEMP/${TOOL}.tar" \
@@ -1103,6 +1110,11 @@ jobs:
             payload_attempt=$((payload_attempt + 1))
             sleep 5
           done
+          if [ "$TOOL" = mjlab ]; then
+            npa/.venv/bin/python npa/docker/workbench/mjlab/verify_sources.py \
+              --image-archive "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+              > "$RUNNER_TEMP/${TOOL}-pushed-source-delivery.json"
+          fi
           if [ "$TOOL" = robotwin ]; then
             bash npa/docker/workbench/robotwin/byte_gate.sh "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact" post
           fi

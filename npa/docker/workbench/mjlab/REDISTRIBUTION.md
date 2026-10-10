@@ -12,7 +12,7 @@ upstream notices. The robot assets installed by MJLab retain the package's
 per-asset licenses. PyTorch and its NVIDIA CUDA/cuDNN dependency wheels are
 separate runtime license boundaries. The Python base is pinned by digest.
 
-The current recipe pins Debian package resolution to the signed 2026-10-02
+The current recipe pins Debian package resolution to the signed 2026-10-10
 snapshot. Python distributions retain their installed license files and Debian
 packages retain `/usr/share/doc/*/copyright`. The installed cuDNN 9.20.0.48
 wheel uses the same reviewed runtime-only filter as cuRobo before the dependency
@@ -26,6 +26,24 @@ the repository's Open3D and cuRobo recipes. System FFmpeg replaces
 imageio-ffmpeg's bundled executable in the dependency install layer. These
 controls narrow the shipped payload; publication still requires the actual
 built-layer audit and corresponding-source review.
+
+Recipients receive source for every original and installed Debian package under
+`/usr/share/doc/npa-mjlab/ubuntu-sources`, with exact descriptor checksums in
+`bootstrap-sources.json`. The directory names follow the shared bootstrap source
+delivery helper; these are Debian sources fetched through signed snapshot APT
+metadata. The older source-only snapshot covers superseded parent-image packages.
+The source verifier checks the complete saved-image ancestry against that bundle,
+including packages upgraded later.
+
+PyAV 17.1.0 bundles a separate GPL-enabled FFmpeg 8.1.1 build. The image also
+delivers its exact upstream build recipe, all locked native component source
+archives, PyAV source and CPython 3.12.14 source under `python-sources`, retaining
+the archives' original license texts alongside them. The PyAV release pins
+pyav-ffmpeg revision `b84838a003b1626152ef530750d5c3e0022c3db9`; source URLs,
+sizes and hashes are checked in `python-sources.lock.json`. These files give
+recipients the corresponding source rather than a general upstream homepage.
+The original dynamic libraries remain replaceable; the container adds no
+restriction on modification or reverse engineering for debugging changes.
 
 The image contains no trained weights, motion datasets, operator credentials,
 accepted-terms files, or populated model/kernel caches. Training produces native
