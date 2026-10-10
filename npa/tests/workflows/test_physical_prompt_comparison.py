@@ -5,15 +5,19 @@ from pathlib import Path
 
 import pytest
 
-from npa.workflows import physis_lang_contract as contract
-from npa.workflows import physis_lang_evaluate as evaluation
-from npa.workflows import physis_lang_generate as generation
-from npa.workflows.physis_lang_artifacts import materialize, publish, write_json
+from npa.workflows import physical_prompt_comparison_contract as contract
+from npa.workflows import physical_prompt_comparison_evaluate as evaluation
+from npa.workflows import physical_prompt_comparison_generate as generation
+from npa.workflows.physical_prompt_comparison_artifacts import (
+    materialize,
+    publish,
+    write_json,
+)
 
 
 def recipe():
     return {
-        "schema": "npa.physis-lang.recipe.v1",
+        "schema": "npa.physical-prompt-comparison.recipe.v1",
         "solution": contract.SOLUTION,
         "arms": list(contract.ARMS),
         "seeds": [0, 1],
@@ -204,7 +208,7 @@ def test_shards_cannot_substitute_recipes_or_omit_pairs(monkeypatch, tmp_path):
     spec = recipe()
     write_json(tmp_path / "recipe.json", spec)
     manifest = {
-        "schema": "npa.physis-lang.generation.v1",
+        "schema": "npa.physical-prompt-comparison.generation.v1",
         "status": "completed",
         "seed": 0,
         "recipe_sha256": evaluation.file_hash(tmp_path / "recipe.json"),
@@ -257,13 +261,15 @@ def test_workflow_plans_full_parallel_gpu_comparison():
     import yaml
 
     root = Path(__file__).resolve().parents[3]
-    spec = yaml.safe_load((root / "workflows/testing/physis-lang.yaml").read_text())
+    spec = yaml.safe_load(
+        (root / "workflows/testing/physical-prompt-comparison.yaml").read_text()
+    )
     assert spec["metadata"]["executionMode"] == "runtime"
     assert spec["states"]["generate-pairs"]["parallel"] == ["generate-a", "generate-b"]
     assert spec["resources"]["gpu"]["accelerators"] == "RTXPRO6000:1"
     for name in ("generate-a", "generate-b"):
         argv = spec["states"][name]["run"]["argv"]
-        assert argv[2:4] == ["npa.workflows.physis_lang", "generate"]
+        assert argv[2:4] == ["npa.workflows.physical_prompt_comparison", "generate"]
         assert "--seed" in argv and "--input-path" in argv and "--output-path" in argv
 
 

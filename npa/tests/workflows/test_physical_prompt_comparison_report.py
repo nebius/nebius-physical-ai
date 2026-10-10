@@ -6,8 +6,8 @@ from html.parser import HTMLParser
 
 import pytest
 
-from npa.workflows.physis_lang_contract import ARMS, SOLUTION
-from npa.workflows.physis_lang_report import write_gallery
+from npa.workflows.physical_prompt_comparison_contract import ARMS, SOLUTION
+from npa.workflows.physical_prompt_comparison_report import write_gallery
 
 
 class _Document(HTMLParser):
@@ -62,7 +62,7 @@ def comparison(tmp_path):
         "assertions": ["No disappearing objects."],
     }
     recipe = {
-        "schema": "npa.physis-lang.recipe.v1",
+        "schema": "npa.physical-prompt-comparison.recipe.v1",
         "solution": SOLUTION,
         "arms": list(ARMS),
         "seeds": [0],

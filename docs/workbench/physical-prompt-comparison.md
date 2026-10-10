@@ -1,26 +1,21 @@
-# Physis-Lang physical prompting experiment
+# Physical prompt comparison
 
-[Workbench](README.md) · [Workflow](../../workflows/testing/physis-lang.yaml)
+[Workbench](README.md) · [Workflow](../../workflows/testing/physical-prompt-comparison.yaml)
 
 Run a paired physical-prompting experiment on two Nebius RTX PRO 6000 GPUs.
 The workflow prepares descriptions through Token Factory, generates real Wan
 2.1 14B videos, checks every decoded frame, and publishes a comparison gallery
 with blinded vision-model judgments.
 
-This is an **independent NPA implementation inspired by the Physis-Lang paper**.
-The [official repository](https://github.com/Physis-Intelligence/Physis-Lang)
-at `294121a06fa20bbca6bdb644bbae7229d5c88160` contains the project description
-and paper assets, but no implementation. The workflow implements an inference
-prompting experiment related to [the paper](https://arxiv.org/abs/2609.40358).
-It does not implement PhysThinker, PhysCapBench, self-evolving guidelines,
-retrieval, or supervised fine-tuning, and it does not reproduce paper scores.
+This experimental reference workflow compares three ways to prompt the same
+video model: the original scenario, a physical description added to that
+scenario, and the same description with negative guidance. It evaluates
+inference-time prompting; it does not train a model or establish benchmark scores.
 
 | Capability | Implementation and runtime | Evidence / status |
 | --- | --- | --- |
-| Paired physical descriptions and negative conditioning | Original NPA `prepare` → native Diffusers Wan 2.1 generation; two RTX PRO 6000 GPUs | [Qualified](physis-lang-validation.md): all 36 full native videos and 2,916 decoded frames verified |
-| Blinded physical-assertion comparison | Original NPA `evaluate`; CPU decoding plus hosted vision inference | [Qualified](physis-lang-validation.md): 108 verdicts, raw responses, paired scores, hashes, and original-video gallery verified |
-| PhysThinker and self-evolving physical guidelines | Upstream implementation/checkpoints are unreleased at the recorded revision | Deferred; no executable upstream API to onboard |
-| PhysCapBench, retrieval, and fine-tuning | Upstream benchmark/training implementation and artifacts are unreleased at the recorded revision | Deferred; no benchmark or training claim |
+| Paired physical descriptions and negative conditioning | Original NPA `prepare` → native Diffusers Wan 2.1 generation; two RTX PRO 6000 GPUs | [Qualified](physical-prompt-comparison-validation.md): all 36 full native videos and 2,916 decoded frames verified |
+| Blinded physical-assertion comparison | Original NPA `evaluate`; CPU decoding plus hosted vision inference | [Qualified](physical-prompt-comparison-validation.md): 108 verdicts, raw responses, paired scores, hashes, and original-video gallery verified |
 
 ## Experiment
 
@@ -49,10 +44,10 @@ Unknown assertions count as unproven, not passing. Negative experimental results
 are preserved. These sampled-frame judgments cannot establish unobserved contact
 or full physical correctness; review the original videos in the gallery.
 
-The [full GPU qualification](physis-lang-validation.md) measured assertion pass
+The [full GPU qualification](physical-prompt-comparison-validation.md) measured assertion pass
 rates of 72.2% for baseline, 77.8% for physical descriptions, and 72.2% with
 negative guidance. Keep the method experimental; this small comparison does not
-establish a reliable physics improvement or reproduce the paper's scores.
+establish a reliable physics improvement or a benchmark-equivalent score.
 
 ## Run
 
@@ -69,12 +64,12 @@ CUDA runtime are fetched at execution time. The workflow reuses the accepted
 `npa-diffusers` digest in its YAML; it creates no new container image.
 
 ```bash
-npa workbench workflow validate-spec workflows/testing/physis-lang.yaml
-npa workbench workflow plan-spec workflows/testing/physis-lang.yaml \
-  --run-id physis-comparison --check-render --json
-npa workbench workflow submit workflows/testing/physis-lang.yaml \
-  --run-id physis-comparison --project PROJECT --infra k8s/CONTEXT \
-  --isolated-config-dir "$HOME/.npa/physis-comparison" \
+npa workbench workflow validate-spec workflows/testing/physical-prompt-comparison.yaml
+npa workbench workflow plan-spec workflows/testing/physical-prompt-comparison.yaml \
+  --run-id physical-prompt-comparison-run --check-render --json
+npa workbench workflow submit workflows/testing/physical-prompt-comparison.yaml \
+  --run-id physical-prompt-comparison-run --project PROJECT --infra k8s/CONTEXT \
+  --isolated-config-dir "$HOME/.npa/physical-prompt-comparison-run" \
   --var bucket=YOUR_BUCKET --stage-src --runtime --max-wait-seconds 0 \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY \
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
@@ -89,7 +84,7 @@ and `model-runtime ensure` prepares the native GPU interpreter.
 | Configuration | Default / requirement |
 | --- | --- |
 | `bucket` | Required operator-owned output bucket; shipped value is a placeholder |
-| `prefix` | `physis-lang/{{run.id}}`; use a fresh run prefix |
+| `prefix` | `physical-prompt-comparison/{{run.id}}`; use a fresh run prefix |
 | `source_overlay` | `true`; required for this source implementation |
 | `seed_a`, `seed_b` | `0`, `1`; distinct integers in `[0, 2**63)` |
 | `prompt_model` | `nvidia/Nemotron-3_5-Lightning` |
@@ -131,7 +126,7 @@ does not survive pod or disk deletion. Once storage is available, publish a
 completed stage's retained `output/` without rerunning generation or judging:
 
 ```bash
-npa/.venv/bin/python -m npa.workflows.physis_lang publish \
+npa/.venv/bin/python -m npa.workflows.physical_prompt_comparison publish \
   --input-path "$RETAINED_OUTPUT" --output-path "$ORIGINAL_OUTPUT_URI"
 ```
 
@@ -148,10 +143,10 @@ copy survives, start a new workflow with a fresh run ID and output prefix.
 Keep the original partial prefix as failure evidence. Its checksum manifest
 reserves that result; removing the manifest cannot recover missing video bytes.
 
-No Physis-Lang source, paper figures, benchmark data, or trained checkpoint is
-redistributed. The scenario text and adapter code are original NPA work. Wan
+The scenario text and adapter code are original NPA work. No benchmark data or
+trained checkpoint is redistributed. Wan
 and Diffusers retain their upstream Apache-2.0 terms; runtime delivery retains
 the existing [Diffusers redistribution contract](../../npa/docker/workbench/diffusers/REDISTRIBUTION.md).
-GPU generation validity, VLM assertion scores, and upstream reproduction are
-separate claims. See the [readiness record](../../workflows/testing/physis-lang.readiness.json)
+GPU generation validity and VLM assertion scores are separate claims.
+See the [readiness record](../../workflows/testing/physical-prompt-comparison.readiness.json)
 for checked prerequisites and current validation evidence.

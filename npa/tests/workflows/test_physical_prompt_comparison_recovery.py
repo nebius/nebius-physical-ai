@@ -7,8 +7,8 @@ from types import SimpleNamespace
 import pytest
 
 from npa.clients.storage import StorageClient, StoragePreconditionFailed
-from npa.workflows import physis_lang as cli
-from npa.workflows import physis_lang_artifacts as artifacts
+from npa.workflows import physical_prompt_comparison as cli
+from npa.workflows import physical_prompt_comparison_artifacts as artifacts
 
 
 class ObjectStore:
@@ -124,7 +124,9 @@ def test_failed_failure_publication_retains_local_output_and_original_error(
         raise ValueError("original model failure")
 
     monkeypatch.setattr(cli, "_run", broken)
-    monkeypatch.setattr("npa.workflows.physis_lang_recovery.publish", offline)
+    monkeypatch.setattr(
+        "npa.workflows.physical_prompt_comparison_recovery.publish", offline
+    )
     with pytest.raises(ValueError, match="original model failure"):
         cli.main(argv(str(tmp_path / "unused")))
     output = stage[0][0] / "failure/output"
@@ -136,7 +138,9 @@ def test_double_storage_failure_preserves_republishable_complete_output(
     monkeypatch, store, stage
 ):
     monkeypatch.setattr(cli, "publish", offline)
-    monkeypatch.setattr("npa.workflows.physis_lang_recovery.publish", cli.publish)
+    monkeypatch.setattr(
+        "npa.workflows.physical_prompt_comparison_recovery.publish", cli.publish
+    )
     with pytest.raises(OSError, match="storage offline"):
         cli.main(argv())
     output = stage[0][0] / "failure/output"

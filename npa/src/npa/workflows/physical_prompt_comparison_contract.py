@@ -1,15 +1,12 @@
-"""Define the independently implemented Physis-Lang prompting experiment and its inputs."""
+"""Define the physical prompt comparison experiment and its frozen inputs."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
-from npa.workflows.physis_lang_artifacts import write_json
+from npa.workflows.physical_prompt_comparison_artifacts import write_json
 
-UPSTREAM = "https://github.com/Physis-Intelligence/Physis-Lang"
-UPSTREAM_REF = "294121a06fa20bbca6bdb644bbae7229d5c88160"
-PAPER = "https://arxiv.org/abs/2609.40358"
 ARMS = ("baseline", "physics", "physics-negative")
 SOLUTION = "wan2.1-14b"
 PROMPT_INSTRUCTION = """Expand a video scenario into a concise physical description.
@@ -166,12 +163,9 @@ def _physical_cases(output, model):
 
 def _recipe(run_id, seeds, model, cases):
     return {
-        "schema": "npa.physis-lang.recipe.v1",
+        "schema": "npa.physical-prompt-comparison.recipe.v1",
         "run_id": run_id,
-        "implementation": "npa-independent-paper-inspired-inference",
-        "upstream": UPSTREAM,
-        "upstream_ref": UPSTREAM_REF,
-        "paper": PAPER,
+        "implementation": "npa-physical-prompt-comparison",
         "solution": SOLUTION,
         "seeds": seeds,
         "arms": list(ARMS),
@@ -179,14 +173,6 @@ def _recipe(run_id, seeds, model, cases):
         "prompt_model": model,
         "prompt_instruction": PROMPT_INSTRUCTION,
         "evaluation_frames": 16,
-        "deferred": [
-            "upstream-implementation",
-            "PhysThinker",
-            "PhysCapBench",
-            "self-evolving-guidelines",
-            "data-retrieval",
-            "fine-tuning",
-        ],
     }
 
 

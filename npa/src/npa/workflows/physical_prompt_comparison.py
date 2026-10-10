@@ -1,4 +1,4 @@
-"""Execute stateless paper-inspired physical prompting stages through the NPA workflow runtime."""
+"""Execute stateless physical prompt comparison stages through the NPA workflow runtime."""
 
 from __future__ import annotations
 
@@ -10,8 +10,16 @@ import shutil
 import subprocess
 import tempfile
 
-from npa.workflows.physis_lang_artifacts import materialize, publish, seal, write_json
-from npa.workflows.physis_lang_recovery import preserve_failure, reuse_completed
+from npa.workflows.physical_prompt_comparison_artifacts import (
+    materialize,
+    publish,
+    seal,
+    write_json,
+)
+from npa.workflows.physical_prompt_comparison_recovery import (
+    preserve_failure,
+    reuse_completed,
+)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -48,7 +56,7 @@ def _generate(prepared: Path, output: Path, seed: int) -> None:
     argv = [
         str(interpreter),
         "-m",
-        "npa.workflows.physis_lang_generate",
+        "npa.workflows.physical_prompt_comparison_generate",
         "--input-path",
         str(prepared),
         "--output-path",
@@ -62,7 +70,7 @@ def _generate(prepared: Path, output: Path, seed: int) -> None:
 
 def _run(args, temporary: Path, output: Path) -> None:
     if args.stage == "prepare":
-        from npa.workflows.physis_lang_contract import prepare
+        from npa.workflows.physical_prompt_comparison_contract import prepare
 
         prepare(
             output, args.run_id, [int(s) for s in args.seeds.split(",")], args.model
@@ -71,7 +79,7 @@ def _run(args, temporary: Path, output: Path) -> None:
         prepared = materialize(args.input_path, temporary / "input")
         _generate(prepared, output, args.seed)
     else:
-        from npa.workflows.physis_lang_evaluate import evaluate
+        from npa.workflows.physical_prompt_comparison_evaluate import evaluate
 
         roots = [
             materialize(uri, temporary / f"input-{i}")
@@ -115,7 +123,7 @@ def main(argv: list[str] | None = None) -> None:
     """
     args = _parser().parse_args(argv)
     # Retain this private directory only when failure evidence cannot reach storage.
-    root = Path(tempfile.mkdtemp(prefix="npa-physis-"))
+    root = Path(tempfile.mkdtemp(prefix="npa-physical-prompt-comparison-"))
     retain = False
     try:
         _execute(args, root)
@@ -125,7 +133,10 @@ def main(argv: list[str] | None = None) -> None:
     finally:
         if not retain:
             shutil.rmtree(root, ignore_errors=True)
-    print(f"Physis {args.stage} completed and artifacts verified", flush=True)
+    print(
+        f"Physical prompt comparison {args.stage} completed and artifacts verified",
+        flush=True,
+    )
 
 
 if __name__ == "__main__":

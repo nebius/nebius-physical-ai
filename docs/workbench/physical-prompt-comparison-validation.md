@@ -1,6 +1,6 @@
-# Physis-Lang experiment qualification
+# Physical prompt comparison experiment qualification
 
-The complete [physical-prompting workflow](physis-lang.md) passed on Nebius
+The complete [physical-prompting workflow](physical-prompt-comparison.md) passed on Nebius
 on 2026-10-02. All four executable stages completed through the standard
 SkyPilot runtime, and the submit process exited with code 0. Independent
 storage readback verified all 36 original videos, 2,916 decoded frames,
@@ -8,8 +8,8 @@ storage readback verified all 36 original videos, 2,916 decoded frames,
 
 Keep this capability **experimental**. The description-only arm gained two
 passing assertions in this small comparison; adding negative guidance did not
-improve the aggregate pass rate. This is an independent paper-inspired
-implementation, not a reproduction of the unreleased upstream implementation.
+improve the aggregate pass rate. These exploratory results compare inference
+prompts; they do not establish a benchmark-equivalent score or training result.
 
 ## Measured results
 
@@ -26,7 +26,7 @@ denominator and count as unproven.
 The description-only gain was 5.6 percentage points. Its cloth-draping results
 improved, while its ramp-rolling results regressed. Negative guidance had zero
 aggregate gain over baseline and more unknown judgments. The
-[machine-readable evidence](validation/physis-lang.json) retains all paired
+[machine-readable evidence](validation/physical-prompt-comparison.json) retains all paired
 scores, individual verdicts, and original video hashes, including failures.
 
 The judge received 16 chronological frames per video, the original scenario,
@@ -62,15 +62,14 @@ and verified that every gallery MP4 matches its original generation receipt.
 
 ## Provenance and checks
 
-The live run staged the isolated working tree, including its Physis changes,
+The live run staged the isolated working tree, including its prompt-comparison changes,
 from main at `f4eb186ef0e91810b4b8447c7a89f60ad328654c`. Its native module and
 workflow bytes were subsequently verified against commit
 `a364dea310ffb50bdecdac5c87f111f758ac8116`. The source digest, native module
 hashes, workflow hash, image digest, pinned weight revision, recipe hash, report
-hash, and all video hashes are recorded in the linked evidence. After merging
-new main changes, the Physis runtime modules, workflow YAML, and focused tests
-still matched the tested bytes at `698745e84`; the workflow registration conflict was resolved
-by retaining both main's new entries and this experiment.
+hash, and all video hashes are recorded in the linked evidence. Historical
+source hashes are keyed by component role so they retain their original meaning
+after files are renamed; they identify the dated run's bytes, not current files.
 
 The subsequent review fixes change artifact publication/recovery and preserve
 rejected judge responses before validation. They are covered by local failure
@@ -78,12 +77,19 @@ injection tests for interrupted uploads, failed readback, repeated publication,
 conflicting writers, and storage failure during error reporting. The original
 GPU receipt remains evidence for the dated generation run; it is not a claim
 that these later recovery changes ran on GPUs. Native generation settings,
-conditioning, scoring, and the workflow YAML remain unchanged.
+conditioning, and scoring remain unchanged.
+
+The workflow is now named `physical-prompt-comparison`. Its module paths, artifact
+schema names, output prefix, guide, skill, and report labels use this descriptive
+name. The current readiness record binds the renamed YAML to schema and render
+checks. Historical GPU and storage hashes remain unchanged; the rename does not
+claim a new GPU execution or rewrite the original sealed run artifacts. Use a
+fresh run prefix with the renamed schema rather than resuming an older namespace.
 
 On 2026-10-10, the standalone HTML renderer was exercised against these retained
 GPU artifacts. All stage manifests were verified again, all 2,916 frames decoded,
 and the 36 embedded MP4 hashes matched both generation and evaluation receipts.
-The resulting 24,332,878-byte HTML was opened alone with Chromium networking
+The standalone HTML was opened alone with Chromium networking
 disabled: all 36 clips loaded and played at 1280×720, with no external requests
 or page errors. Desktop and mobile layouts were checked. This is a new offline
 rendering check using the original GPU outputs, not another GPU generation run.
@@ -104,8 +110,8 @@ as a successful test.
 Provider tenant membership was verified before launch. Concrete infrastructure
 identities, credentials, raw operational records, and the original gallery stay
 in private operator evidence. The public receipt contains no live infrastructure
-identifiers. Upstream PhysThinker, PhysCapBench, self-evolving guidelines,
-retrieval, and training remain deferred as described in the capability guide.
+identifiers. The capability is limited to inference-time prompt comparisons
+and the measured outputs described in the guide.
 
 Exact-run cancellation checks and controller cleanup passed. The owned local
 API was stopped, and the final residue audit found zero experiment pods while

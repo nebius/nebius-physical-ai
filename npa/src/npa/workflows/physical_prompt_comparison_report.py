@@ -8,8 +8,8 @@ import hashlib
 import html
 from pathlib import Path
 
-from npa.workflows.physis_lang_contract import ARMS
-from npa.workflows.physis_lang_generate import expected_grid
+from npa.workflows.physical_prompt_comparison_contract import ARMS
+from npa.workflows.physical_prompt_comparison_generate import expected_grid
 
 _ARM_LABELS = {
     "baseline": "Baseline",
@@ -154,12 +154,12 @@ def _header(recipe, report, count):
     return (
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
-        f"<title>Physis-inspired GPU comparison</title><style>{_STYLE}</style></head><body>"
-        '<header><p class="eyebrow">Workbench · Physical prompting experiment</p>'
+        f"<title>Physical prompt comparison</title><style>{_STYLE}</style></head><body>"
+        '<header><p class="eyebrow">Workbench · Physical prompt comparison</p>'
         '<h1>From physical descriptions<br>to generated motion</h1><p class="intro">'
         f"{count} original GPU-generated Wan 2.1 14B videos, embedded in this file. "
-        "Open it offline and compare all three prompt arms at matched seeds. "
-        "Independent NPA implementation inspired by Physis-Lang; not an upstream reproduction.</p></header>"
+        "Open it offline to compare baseline prompts, physical descriptions, "
+        "and negative guidance at matched seeds.</p></header>"
         + _overview(recipe, report)
         + "<main>"
     )

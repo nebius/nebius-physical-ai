@@ -1,4 +1,4 @@
-"""Run paired Physis-Lang prompt ablations through the pinned native Wan 2.1 pipeline."""
+"""Run paired prompt ablations through the pinned native Wan 2.1 pipeline."""
 
 from __future__ import annotations
 
@@ -9,8 +9,12 @@ import random
 import re
 
 from npa.solutions.video_generation import generate_video, load_video_pipeline
-from npa.workflows.physis_lang_artifacts import file_hash, write_json
-from npa.workflows.physis_lang_contract import ARMS, SOLUTION, arm_prompts
+from npa.workflows.physical_prompt_comparison_artifacts import file_hash, write_json
+from npa.workflows.physical_prompt_comparison_contract import (
+    ARMS,
+    SOLUTION,
+    arm_prompts,
+)
 
 
 def expected_grid(recipe: dict) -> set[tuple[str, int, str]]:
@@ -24,10 +28,10 @@ def expected_grid(recipe: dict) -> set[tuple[str, int, str]]:
         ValueError: Recipe identities or coverage are invalid.
     """
     if (
-        recipe.get("schema") != "npa.physis-lang.recipe.v1"
+        recipe.get("schema") != "npa.physical-prompt-comparison.recipe.v1"
         or recipe.get("solution") != SOLUTION
     ):
-        raise ValueError("Unsupported Physis recipe")
+        raise ValueError("Unsupported Physical prompt comparison recipe")
     if recipe.get("arms") != list(ARMS):
         raise ValueError("Recipe must retain all three comparison arms")
     cases, seeds = recipe.get("cases", []), recipe.get("seeds", [])
@@ -110,7 +114,7 @@ def generate(prepared: Path, output: Path, seed: int) -> None:
     write_json(
         output / "generation.json",
         {
-            "schema": "npa.physis-lang.generation.v1",
+            "schema": "npa.physical-prompt-comparison.generation.v1",
             "status": "completed",
             "recipe_sha256": file_hash(prepared / "recipe.json"),
             "seed": seed,

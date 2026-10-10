@@ -35,8 +35,17 @@
     "observed_image_digest_matches": true,
     "worker_gpus": 2
   },
+  "historical_source_sha256_by_role": {
+    "artifact_io": "0ca5db778179672fbc164ed398c3e88444410364ca45616ca3fb8933e07a38d4",
+    "evaluation": "2ee336aa57edd49f48eb3354bffc50dbbd718d8fff8dd6a1217cfe76fb829867",
+    "gpu_shard": "242bee053a24a0edfd345745ea257562e5e83f2e2f3a85fd3bd532bd033b1e86",
+    "native_video_generator": "1aace9eeac7625f843f7203bc9a9a59b8348083b0fda62b283015c9075073fbc",
+    "prompt_contract": "f5993337437a4c8fed222b6233123ccc35c32e5c5f6f6ce634a519dcccc7ddd5",
+    "stage_entrypoint": "0583d64c2cf92de227f299871a164d95161130c9c073e11de1dc02d1271eae7e",
+    "workflow_spec": "a12dbabc88cc0a432e32bcacca17cf0b0795a20dba0bbf05fc342110e69e08d2"
+  },
   "image": "ghcr.io/nebius/nebius-physical-ai/npa-diffusers@sha256:6422a062a00c9816a945623b0c83a78977fa5d5cec1777a0e6d44d1d746fc42e",
-  "interpretation": "Exploratory sampled-frame VLM judgments; keep experimental. No upstream reproduction, benchmark-equivalent score, continuous-physics proof, or robot-policy transfer claim.",
+  "interpretation": "Exploratory sampled-frame VLM judgments; keep experimental. No benchmark-equivalent score, continuous-physics proof, training result, or robot-policy transfer claim.",
   "judge_model": "MiniMaxAI/MiniMax-M3",
   "matching_implementation_commit": "a364dea310ffb50bdecdac5c87f111f758ac8116",
   "native_settings": {
@@ -50,15 +59,6 @@
     "revision": "38ec498cb3208fb688890f8cc7e94ede2cbd7f68",
     "steps": 50,
     "width": 1280
-  },
-  "native_source_sha256": {
-    "npa/src/npa/solutions/video_generation.py": "1aace9eeac7625f843f7203bc9a9a59b8348083b0fda62b283015c9075073fbc",
-    "npa/src/npa/workflows/physis_lang.py": "0583d64c2cf92de227f299871a164d95161130c9c073e11de1dc02d1271eae7e",
-    "npa/src/npa/workflows/physis_lang_artifacts.py": "0ca5db778179672fbc164ed398c3e88444410364ca45616ca3fb8933e07a38d4",
-    "npa/src/npa/workflows/physis_lang_contract.py": "f5993337437a4c8fed222b6233123ccc35c32e5c5f6f6ce634a519dcccc7ddd5",
-    "npa/src/npa/workflows/physis_lang_evaluate.py": "2ee336aa57edd49f48eb3354bffc50dbbd718d8fff8dd6a1217cfe76fb829867",
-    "npa/src/npa/workflows/physis_lang_generate.py": "242bee053a24a0edfd345745ea257562e5e83f2e2f3a85fd3bd532bd033b1e86",
-    "workflows/testing/physis-lang.yaml": "a12dbabc88cc0a432e32bcacca17cf0b0795a20dba0bbf05fc342110e69e08d2"
   },
   "paired_scores": [
     {
@@ -192,9 +192,9 @@
     "torch": "2.13.0",
     "transformers": "5.5.0"
   },
-  "schema": "npa.physis-lang.qualification.v1",
+  "schema": "npa.physical-prompt-comparison.qualification.v1",
   "source_overlay_sha256": "cd65f9af138ea52718d91b620977904dfaf626f3e98dbf3477bce510b4b27181",
-  "source_staging": "Isolated working tree with Physis changes; native module and workflow bytes subsequently verified against matching_implementation_commit.",
+  "source_staging": "Isolated working tree at the recorded revision. Historical source digests identify component roles before the descriptive namespace rename; they are not hashes of current renamed files.",
   "stage_checksum_manifest_sha256": {
     "prepared": "a40468724535c90aebdf0db84bb934b77d29f232302e123c54c0d481f2b3bbb4",
     "report": "ba1646687cb29d019fbef7b6eeffc14d3bfc3be76212cb549687c0fffa564220",
@@ -204,9 +204,6 @@
   "staged_checkout_base": "f4eb186ef0e91810b4b8447c7a89f60ad328654c",
   "status": "verified",
   "summed_video_elapsed_seconds": 76374.08704173303,
-  "upstream_ref": "294121a06fa20bbca6bdb644bbae7229d5c88160",
-  "upstream_repo": "https://github.com/Physis-Intelligence/Physis-Lang",
-  "upstream_reproduction": false,
   "video_count": 36,
   "videos": [
     {

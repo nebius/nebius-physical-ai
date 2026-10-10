@@ -1,4 +1,4 @@
-"""Exchange Physis-Lang experiment artifacts with complete SHA-256 verification."""
+"""Exchange physical prompt comparison artifacts with complete SHA-256 verification."""
 
 from __future__ import annotations
 
@@ -46,7 +46,9 @@ def file_hash(path: Path) -> str:
 def _hashes(root: Path) -> dict:
     paths = sorted(root.rglob("*"))
     if root.is_symlink() or any(path.is_symlink() for path in paths):
-        raise ValueError("Physis artifact trees cannot contain symbolic links")
+        raise ValueError(
+            "Physical prompt comparison artifact trees cannot contain symbolic links"
+        )
     return {
         p.relative_to(root).as_posix(): file_hash(p)
         for p in paths
@@ -74,7 +76,9 @@ def materialize(source: str, destination: Path) -> Path:
         root = destination
     expected = json.loads((root / "checksums.json").read_text())
     if not expected or expected != _hashes(root):
-        raise ValueError("Physis stage checksum manifest does not match its files")
+        raise ValueError(
+            "Physical prompt comparison stage checksum manifest does not match its files"
+        )
     return root
 
 
@@ -87,7 +91,7 @@ def _create_object(client, payload: bytes, uri: str) -> None:
         existing = client.read_bytes_with_etag(uri)
         if existing is None or existing[0] != payload:
             raise ValueError(
-                "Physis publication conflicts with existing bytes"
+                "Physical prompt comparison publication conflicts with existing bytes"
             ) from None
 
 
@@ -95,20 +99,26 @@ def _compatible_existing(root: Path, existing: Path) -> None:
     expected = _hashes(root)
     observed = _hashes(existing)
     if any(expected.get(name) != digest for name, digest in observed.items()):
-        raise ValueError("Physis publication conflicts with existing files")
+        raise ValueError(
+            "Physical prompt comparison publication conflicts with existing files"
+        )
     manifest = existing / "checksums.json"
     if (
         manifest.exists()
         and manifest.read_bytes() != (root / manifest.name).read_bytes()
     ):
-        raise ValueError("Physis publication conflicts with an existing manifest")
+        raise ValueError(
+            "Physical prompt comparison publication conflicts with an existing manifest"
+        )
 
 
 def _publish_s3(root: Path, destination: str) -> None:
     from npa.clients.storage import StorageClient
 
     client = StorageClient.from_environment()
-    with tempfile.TemporaryDirectory(prefix="physis-readback-") as temporary:
+    with tempfile.TemporaryDirectory(
+        prefix="physical-prompt-comparison-readback-"
+    ) as temporary:
         existing = Path(temporary) / "existing"
         client.download_directory(destination, str(existing))
         _compatible_existing(root, existing)
@@ -133,7 +143,7 @@ def _create_file(source: Path, target: Path) -> None:
         except FileExistsError:
             if file_hash(target) != file_hash(source):
                 raise ValueError(
-                    "Physis publication conflicts with existing bytes"
+                    "Physical prompt comparison publication conflicts with existing bytes"
                 ) from None
 
 

@@ -1,4 +1,4 @@
-"""Recover completed Physis stages and retain original artifacts when publication fails."""
+"""Recover completed comparison stages and retain artifacts when publication fails."""
 
 from __future__ import annotations
 
@@ -6,7 +6,11 @@ import json
 from pathlib import Path
 import sys
 
-from npa.workflows.physis_lang_artifacts import materialize, publish, write_json
+from npa.workflows.physical_prompt_comparison_artifacts import (
+    materialize,
+    publish,
+    write_json,
+)
 
 
 def reuse_completed(args, temporary: Path) -> bool:
@@ -32,12 +36,14 @@ def reuse_completed(args, temporary: Path) -> bool:
         return False
     if not (existing / "checksums.json").is_file():
         raise ValueError(
-            "Incomplete Physis destination; publish retained output before retrying"
+            "Incomplete Physical prompt comparison destination; publish retained output before retrying"
         )
     materialize(str(existing), existing)
     receipt = existing / "stage.json"
     if not receipt.is_file() or json.loads(receipt.read_text()) != vars(args):
-        raise ValueError("Physis destination belongs to a different stage request")
+        raise ValueError(
+            "Physical prompt comparison destination belongs to a different stage request"
+        )
     return True
 
 
@@ -73,11 +79,13 @@ def preserve_failure(args, root: Path, error: Exception) -> bool:
         publish(failure, destination)
     except Exception:
         print(
-            f"Physis failure evidence retained at {root}", file=sys.stderr, flush=True
+            f"Physical prompt comparison failure evidence retained at {root}",
+            file=sys.stderr,
+            flush=True,
         )
         return True
     print(
-        f"Physis failure evidence verified at {destination}",
+        f"Physical prompt comparison failure evidence verified at {destination}",
         file=sys.stderr,
         flush=True,
     )

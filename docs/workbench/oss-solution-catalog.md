@@ -16,11 +16,10 @@ unique and must be tested with its own upstream-named capabilities.
 
 ## Candidate Matrix
 
-[Physis-Lang physical prompting](physis-lang.md) is an independent NPA
-paper-inspired inference workflow using the existing accepted Diffusers runtime.
-The recorded upstream revision has no released implementation. GPU qualification
-is tracked in its readiness record; this is not registry admission of an upstream
-Physis-Lang image, checkpoint, training recipe, or benchmark reproduction.
+[Physical prompt comparison](physical-prompt-comparison.md) is an NPA reference
+workflow using the existing accepted Diffusers runtime. It compares three prompt
+arms with full video generation and blinded judgments. Its readiness record
+tracks the GPU qualification; the workflow adds no new image or model admission.
 
 | Candidate | Pinned source | Primary (hard-gate) capability | Artifact | NPA workflow |
 | --- | --- | --- | --- | --- |

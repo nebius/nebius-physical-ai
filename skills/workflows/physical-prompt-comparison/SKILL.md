@@ -1,15 +1,15 @@
 ---
-name: physis-lang
-description: Run or review the NPA Physis-Lang-inspired paired physical-prompting experiment with full Wan 2.1 14B generation and blinded video evaluation.
+name: physical-prompt-comparison
+description: Run or review the physical prompt comparison workflow with full Wan 2.1 14B generation, matched prompt arms, and blinded video evaluation.
 ---
 
-# Physis-Lang physical prompting
+# Physical prompt comparison
 
-Use [the guide](../../../docs/workbench/physis-lang.md) and
-[`physis-lang.yaml`](../../../workflows/testing/physis-lang.yaml) for this
-independent inference experiment. Upstream at the recorded revision contains
-paper assets only. Do not describe this implementation as released Physis-Lang,
-PhysThinker, PhysCapBench, guideline evolution, retrieval, or fine-tuning.
+Use [the guide](../../../docs/workbench/physical-prompt-comparison.md) and
+[`physical-prompt-comparison.yaml`](../../../workflows/testing/physical-prompt-comparison.yaml) for this
+inference experiment. It compares baseline prompts, physical descriptions, and
+negative guidance at matched seeds. Treat its sampled-frame scores as exploratory
+measurements, not a physics benchmark, training method, or robot-policy result.
 
 Run through `npa workbench workflow submit` on the supported Linux isolated
 SkyPilot path. Select the operator's project/context and storage explicitly.

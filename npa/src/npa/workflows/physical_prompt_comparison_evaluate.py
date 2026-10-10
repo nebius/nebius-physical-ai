@@ -12,15 +12,15 @@ import statistics
 
 from npa.clients.token_factory import TokenFactoryClient
 from npa.solutions.video_generation import MODELS, validate_video
-from npa.workflows.physis_lang_artifacts import file_hash, write_json
-from npa.workflows.physis_lang_contract import (
+from npa.workflows.physical_prompt_comparison_artifacts import file_hash, write_json
+from npa.workflows.physical_prompt_comparison_contract import (
     ARMS,
     SOLUTION,
     arm_prompts,
     completion_json,
 )
-from npa.workflows.physis_lang_generate import expected_grid
-from npa.workflows.physis_lang_report import write_gallery
+from npa.workflows.physical_prompt_comparison_generate import expected_grid
+from npa.workflows.physical_prompt_comparison_report import write_gallery
 
 RUBRIC = """Evaluate the provided chronological video frames against each assertion.
 Judge only visible evidence. Scenario text states intent, not observed truth.
@@ -56,7 +56,7 @@ def _shard_rows(root, recipe_hash, cases):
     rows = []
     manifest = json.loads((root / "generation.json").read_text())
     if (
-        manifest.get("schema") != "npa.physis-lang.generation.v1"
+        manifest.get("schema") != "npa.physical-prompt-comparison.generation.v1"
         or manifest.get("status") != "completed"
         or manifest.get("recipe_sha256") != recipe_hash
         or file_hash(root / "recipe.json") != recipe_hash
@@ -289,7 +289,7 @@ def evaluate(roots: list[Path], output: Path, model: str) -> None:
     recipe, rows = collect_shards(roots)
     judgments = _judge_videos(recipe, rows, output, model)
     report = {
-        "schema": "npa.physis-lang.report.v1",
+        "schema": "npa.physical-prompt-comparison.report.v1",
         "status": "completed",
         "recipe": recipe,
         "judge_model": model,
@@ -297,7 +297,6 @@ def evaluate(roots: list[Path], output: Path, model: str) -> None:
         "video_count": len(rows),
         "judgments": judgments,
         "summary": summarize(recipe, judgments),
-        "upstream_reproduction": False,
     }
     write_json(output / "report.json", report)
     write_gallery(output, recipe, rows, report)
