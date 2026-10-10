@@ -1036,6 +1036,14 @@ def _train_serverless(
     if not resolved_project_id:
         _fail("LeRobot train --runtime serverless requires a Nebius project ID.")
 
+    platform = _lerobot_gpu_platform(gpu_type)
+    try:
+        resolved_lerobot_version = resolve_lerobot_version(lerobot_version or None)
+        image_tag = resolve_lerobot_image_tag(resolved_lerobot_version)
+        resolved_image = image or container_image_for_tool("lerobot", tag=image_tag)
+    except ValueError as exc:
+        _fail(str(exc))
+        return
     _warn_for_lerobot_gpu_policy(policy_type, gpu_type)
     name = job_name or _lerobot_serverless_job_name(wb_name)
     out = _lerobot_serverless_output_path(proj_alias, wb_name, name, output_path)
@@ -1044,14 +1052,6 @@ def _train_serverless(
         existing = client.get_job(name, resolved_project_id)
     except EndpointNotFoundError:
         existing = None
-    platform = _lerobot_gpu_platform(gpu_type)
-    try:
-        resolved_lerobot_version = resolve_lerobot_version(lerobot_version or None)
-        image_tag = resolve_lerobot_image_tag(resolved_lerobot_version)
-    except LeRobotVersionError as exc:
-        _fail(str(exc))
-        return
-    resolved_image = image or container_image_for_tool("lerobot", tag=image_tag)
     if existing is not None:
         info = existing
         if not submit_only and existing.status not in {
@@ -1272,10 +1272,13 @@ def _profile_train_serverless(
     _warn_for_lerobot_gpu_policy(policy_type, gpu_type)
     name = job_name or _lerobot_serverless_job_name(wb_name)
     out = output_path.rstrip("/") + "/"
-    client = ServerlessClient()
     platform = _lerobot_gpu_platform(gpu_type)
-    resolved_image = image or container_image_for_tool("lerobot")
+    try:
+        resolved_image = image or container_image_for_tool("lerobot")
+    except ValueError as exc:
+        _fail(str(exc))
 
+    client = ServerlessClient()
     try:
         existing = client.get_job(name, resolved_project_id)
     except EndpointNotFoundError:

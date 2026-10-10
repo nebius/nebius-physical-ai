@@ -92,8 +92,8 @@ corresponding-source closure exists. Runtime fetching later changes delivery
 only, not use, derivative, output, or service rights. No accepted release,
 anonymous pull, or current GPU capability is claimed.
 
-LeRobot 0.6.0 is selectable package support with an accepted optional public
-image. The resolver uses the additive `0.6.0-d6-extras-20260912` tag and exact
+LeRobot 0.6.0 is selectable package support with a historical optional public
+image pin. Its version manifest records the additive `0.6.0-d6-extras-20260912` tag and exact
 digest recorded in `lerobot_version_manifest.json`; the `0.6.0` tag is only a
 compatibility alias for those same bytes. The rebuilt image passed the standard
 publication gates plus the checked-in Blackwell validator and real
@@ -101,10 +101,20 @@ publication gates plus the checked-in Blackwell validator and real
 0.5.1 as the current default or add a second `lerobot` row to the default public
 release plan.
 
+Automatic public-image selection currently rejects both versions under
+LeRobot's tool-level quarantine. Optional 0.6.0 requires independent current
+byte and real ACT train/eval qualification before version-scoped consumption
+can be restored. Its Dockerfile now removes the exact reviewed inert
+scikit-image recipe containing a historical token in the installing layer,
+preserving executable behavior and recording the correction. Pip caches are
+disabled so the original dependency archive is not retained in the image.
+This source repair does not accept a new image or lift either version's
+quarantine.
+
 The four-wave [LeRobot transfer experiment](guides/lerobot-transfer.md) selects
 that optional 0.6.0 image by digest and stages its adapters from the checkout.
 It uses the image's non-root runtime user and baked SkyPilot prerequisites;
-no new image publication is required for the experiment.
+the exact selected bytes still require current operator qualification.
 
 SAM 3.1 has a [public GHCR development image](https://github.com/orgs/nebius/packages/container/package/nebius-physical-ai%2Fnpa-sam3).
 Its immutable tag is `dev-f287041cffa5a703270413e1746348dccb8e7591`;
