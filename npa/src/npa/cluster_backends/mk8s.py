@@ -10,6 +10,7 @@ import tempfile
 from typing import Any, Callable
 
 from npa.cluster.gpu_driver import resolve_gpu_driver_strategy
+from npa.cluster.gpu_health import resolve_graphics_smoke_image
 from npa.cluster_backends.base import BackendCapabilities, MaterializedPlan
 from npa.cluster_backends.mk8s_model import (
     MK8sDesired,
@@ -264,6 +265,12 @@ class MK8sBackend:
 
     def apply(self, desired: MK8sDesired, request: MK8sApplyRequest) -> dict[str, Any]:
         desired = as_mk8s_desired(desired)
+        if (
+            request.post_deploy_validation != "skip"
+            and desired.gpu_graphics_smoke
+            and desired.gpu_count() > 0
+        ):
+            resolve_graphics_smoke_image(desired.gpu_graphics_smoke_image)
         if request.terraform_command:
             if desired.kuberay and desired.kuberay.enabled:
                 raise ValueError(
