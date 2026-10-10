@@ -119,7 +119,8 @@ to the retained 2026-09-25 proof: 19 RGB/depth frame pairs, 19 Bullet steps, and
 It records hashes of the raw capability report, artifact manifest, GPU identity,
 byte-pull, attestations and cleanup receipts. Exact infrastructure details stay
 in access-controlled evidence. The recorded input hashes are historical;
-`npa/src/npa/__init__.py` now has a different SDK export surface. Rebuilding
+the runtime lock, SDK export surface and shared signed source-descriptor parser
+now differ from that producer. Rebuilding
 from current source requires fresh image qualification. The retained proof
 continues to describe only the recorded digest. The 19-step result does not establish policy training or
 a long-run benchmark.
