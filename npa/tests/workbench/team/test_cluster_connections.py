@@ -12,7 +12,8 @@ from npa.cli.workbench.team import app
 from npa.workbench.team import cluster_connections as connections
 from npa.workbench.team.deployment import allocations, server_config
 from npa.workbench.team.errors import BackendError
-from npa.workbench.team.models import TeamConfig
+from npa.workbench.team.models import Cluster, TeamConfig
+from npa.workbench.team.scheduler_access import scheduler_access_manifests
 from npa.workbench.team.workflow_policy import prepare_document, worker_context
 
 
@@ -203,3 +204,76 @@ def test_connection_commands_use_shared_implementation(config, tmp_path, monkeyp
     )
     assert exported.exit_code == 0, exported.output
     assert json.loads(exported.stdout) == {"files": ["team.yaml"]}
+
+
+def test_unallocated_connections_are_portable_without_changing_future_budgets(
+    config, tmp_path, monkeypatch
+):
+    unused = Cluster(context="future", kubeconfig=tmp_path / "laptop-only.yaml")
+    config = config.model_copy(
+        update={"clusters": {**config.clusters, "future": unused}}
+    )
+    monkeypatch.setattr(
+        connections,
+        "kubectl",
+        lambda binding, *args: SimpleNamespace(
+            returncode=0, stdout=json.dumps(kubeconfig(binding.cluster))
+        ),
+    )
+    output = tmp_path / "exported"
+    connections.export_connections(config, output)
+    policy = TeamConfig.model_validate(
+        yaml.safe_load((output / "team.yaml").read_text())
+    )
+    assert policy.clusters["future"].kubeconfig == Path(
+        "/etc/npa-team/cluster-future.yaml"
+    )
+    assert "laptop-only.yaml" not in (output / "team.yaml").read_text()
+    assert policy.workspaces == config.workspaces
+    scheduler = yaml.safe_load((output / "sky-kubeconfig.yaml").read_text())
+    assert len(scheduler["contexts"]) == 4
+
+
+@pytest.mark.parametrize(
+    "name", ["AWS_ROLE_ARN", "AWS_WEB_IDENTITY_TOKEN_FILE", "PATH"]
+)
+def test_unsupported_exec_environment_fails_before_writing(
+    config, tmp_path, monkeypatch, name
+):
+    document = kubeconfig("selected")
+    document["users"][0]["user"]["exec"]["env"].append(
+        {"name": name, "value": "private-value"}
+    )
+    monkeypatch.setattr(
+        connections,
+        "kubectl",
+        lambda *args: SimpleNamespace(returncode=0, stdout=json.dumps(document)),
+    )
+    with pytest.raises(BackendError, match="unsupported settings") as error:
+        connections.export_connections(config, tmp_path / "output")
+    assert "private-value" not in str(error.value)
+    assert not (tmp_path / "output").exists()
+
+
+def test_external_iam_group_gets_identical_restricted_scheduler_permissions(binding):
+    service_account = scheduler_access_manifests([binding], "management", "scheduler")
+    group = scheduler_access_manifests(
+        [binding], "management", "external:scheduler", subject_kind="Group"
+    )
+    assert [item["rules"] for item in service_account if "rules" in item] == [
+        item["rules"] for item in group if "rules" in item
+    ]
+    for item in group:
+        if "subjects" in item:
+            assert item["subjects"] == [
+                {
+                    "kind": "Group",
+                    "name": "external:scheduler",
+                    "apiGroup": "rbac.authorization.k8s.io",
+                }
+            ]
+        assert ":" not in item["metadata"]["name"]
+    with pytest.raises(ValueError, match="ServiceAccount or Group"):
+        scheduler_access_manifests(
+            [binding], "management", "scheduler", subject_kind="User"
+        )

@@ -30,9 +30,10 @@ the scheduler and workflow policy still permit only enrolled Kubernetes targets.
 4. Prepare a separate runtime connection with the scheduler's required
    Kubernetes permissions. The existing `scheduler_access_manifests` Python
    function renders read-only cluster discovery plus execution grants in the
-   explicitly allocated namespaces. It accepts a service-account identity;
-   for EKS IAM authentication, bind the equivalent permissions to the selected
-   EKS access-entry Kubernetes group. Do not grant cluster-admin or RBAC writes.
+   explicitly allocated namespaces. Set `subject_kind="Group"` and pass the
+   exact EKS access-entry Kubernetes group as `account` for EKS IAM
+   authentication; the same renderer grants identical restricted permissions.
+   Do not grant cluster-admin or RBAC writes.
    Keep enrollment's operator credential separate from this runtime connection.
 5. Export the runtime policy's connections for both server containers:
 
@@ -43,7 +44,9 @@ the scheduler and workflow policy still permit only enrolled Kubernetes targets.
    ```
 
    This writes private `team.yaml`, `sky-kubeconfig.yaml`, and one minified
-   kubeconfig per enrolled destination. It selects only allocated clusters,
+   kubeconfig per explicitly configured destination, including future
+   destinations without personal allocations. Only allocated destinations get
+   scheduler contexts. The export preserves workspace budgets and allocations,
    embeds certificate files through kubectl's flatten operation, preserves
    separate cluster contexts, and rewrites the gateway's connection paths to
    `/etc/npa-team`. `--server-directory` changes that mount location. Other
@@ -84,6 +87,9 @@ EKS tokens when the Kubernetes clients refresh authentication; short-lived
 source credentials must themselves have an operator-managed refresh mechanism.
 The default image's AWS CLI v1 is suitable for keys and assume-role profiles;
 it does not supply AWS CLI v2 browser SSO or transfer a laptop's SSO session.
+Other plugin environment settings fail export with a configuration error rather
+than being silently dropped. Move role or credential-process configuration into
+the server AWS profile and supply any referenced files or executables there.
 
 The destination API must be reachable from the Nebius server. A public EKS API
 can allow the server's outbound address; a private-only API requires private

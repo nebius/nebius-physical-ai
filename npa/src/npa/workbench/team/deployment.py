@@ -60,10 +60,10 @@ def render_installation(config, output_dir: Path):
     paths = []
     for cluster, documents in grouped.items():
         path = output_dir / f"{cluster}-enrollment.yaml"
-        _write(path, yaml.safe_dump_all(documents, sort_keys=False))
+        write_private_config(path, yaml.safe_dump_all(documents, sort_keys=False))
         paths.append(str(path))
     path = output_dir / "sky-server.yaml"
-    _write(path, yaml.safe_dump(server_config(config), sort_keys=False))
+    write_private_config(path, yaml.safe_dump(server_config(config), sort_keys=False))
     paths.append(str(path))
     return {"files": paths, "credentials_exported": False}
 
@@ -93,7 +93,7 @@ def export_server_kubeconfig(config, output_path: Path):
         if response.returncode:
             raise BackendError("cannot export the selected cluster connection")
         source = json.loads(response.stdout)
-        _append_contexts(merged, source, binding)
+        append_scheduler_contexts(merged, source, binding)
     if not merged["contexts"]:
         raise BackendError("at least one personal cluster allocation is required")
     merged["current-context"] = merged["contexts"][0]["name"]
@@ -163,7 +163,18 @@ def scheduler_workspace(binding):
     return "team-" + scheduler_user(binding)
 
 
-def _append_contexts(merged, source, binding):
+def append_scheduler_contexts(merged, source, binding):
+    """Append one person's scoped scheduler context to a private kubeconfig.
+
+    Args:
+        merged: Destination kubeconfig, mutated in place.
+        source: Minified administrator-selected runtime connection.
+        binding: Authorized personal namespace and cluster allocation.
+    Returns:
+        None.
+    Raises:
+        KeyError, IndexError: Source is not a complete minified kubeconfig.
+    """
     for context_name, namespace in ((worker_context(binding), binding.namespace),):
         cluster, user = (
             copy.deepcopy(source["clusters"][0]),
@@ -184,6 +195,16 @@ def _append_contexts(merged, source, binding):
         )
 
 
-def _write(path, content):
+def write_private_config(path, content):
+    """Create a new owner-only configuration file without replacing existing data.
+
+    Args:
+        path: New private file path.
+        content: Serialized configuration, potentially containing credentials.
+    Returns:
+        None.
+    Raises:
+        OSError: File exists or cannot be created or written.
+    """
     path.touch(mode=0o600, exist_ok=False)
     path.write_text(content)

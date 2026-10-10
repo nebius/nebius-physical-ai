@@ -28,6 +28,7 @@ COPY npa/src /opt/npa/src
 COPY workflows/main /opt/workflows/main
 COPY workflows/testing /opt/workflows/testing
 COPY workflows/partners /opt/workflows/partners
+# EKS exec credentials use cluster_connections.AWS_EXECUTABLE at /opt/sky/bin/aws.
 RUN python -m venv /opt/npa-venv \
     && /opt/npa-venv/bin/pip install --no-cache-dir /opt/npa 'uvicorn>=0.52.4' \
     && python -m venv /opt/sky \

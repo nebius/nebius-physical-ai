@@ -1,30 +1,51 @@
 """Render the trusted scheduler's Kubernetes access without cluster-wide writes."""
 
+import hashlib
+
 from .manifests import WORKER_ACCOUNT
 
 
-def scheduler_access_manifests(bindings, namespace: str, account: str) -> list[dict]:
+def scheduler_access_manifests(
+    bindings, namespace: str, account: str, *, subject_kind: str = "ServiceAccount"
+) -> list[dict]:
     """Bind one installed scheduler account to explicit allocations in one cluster.
 
     Args:
         bindings: Personal allocations belonging to one enrolled cluster.
-        namespace, account: Existing management namespace and service account.
+        namespace, account: Management namespace and service account or group name.
+        subject_kind: ServiceAccount, or Group for an external IAM-mapped identity.
     Returns:
         Read-only discovery and admission access plus namespaced execution grants.
     Raises:
-        ValueError: Allocations are empty or span multiple clusters.
+        ValueError: Allocations span multiple clusters or the subject is invalid.
     """
     bindings = list(bindings)
     if not bindings or len({binding.cluster for binding in bindings}) != 1:
         raise ValueError("select allocations from exactly one cluster")
-    subject = {"kind": "ServiceAccount", "name": account, "namespace": namespace}
-    name = f"{namespace}-{account}-discovery"
+    subject, name = _scheduler_subject(namespace, account, subject_kind)
     documents = _grant(name, None, subject, _discovery_rules())
     for binding in bindings:
         documents.extend(
             _grant("npa-team-scheduler", binding.namespace, subject, _worker_rules())
         )
     return documents
+
+
+def _scheduler_subject(namespace, account, kind):
+    if kind not in ("ServiceAccount", "Group") or not account.strip():
+        raise ValueError("scheduler identity must be a ServiceAccount or Group")
+    if kind == "ServiceAccount":
+        return {
+            "kind": kind,
+            "name": account,
+            "namespace": namespace,
+        }, f"{namespace}-{account}-discovery"
+    identity = hashlib.sha256(account.encode()).hexdigest()[:24]
+    return {
+        "kind": "Group",
+        "name": account,
+        "apiGroup": "rbac.authorization.k8s.io",
+    }, f"npa-scheduler-{identity}-discovery"
 
 
 def _grant(name, namespace, subject, rules):

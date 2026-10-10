@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import copy
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import yaml
 
 from .enrollment import kubectl, verify_enrollment
 from .errors import BackendError, TeamError
+
+AWS_EXECUTABLE = "/opt/sky/bin/aws"
 
 
 def read_connection(binding, server_directory: Path) -> dict:
@@ -53,20 +56,45 @@ def _relocate_eks(user, server_directory):
         arg.startswith("--profile=") for arg in arguments
     ):
         arguments = ["--profile", environment.get("AWS_PROFILE", "default"), *arguments]
+    plugin.update(
+        command=AWS_EXECUTABLE,
+        args=arguments,
+        interactiveMode="Never",
+        env=_eks_environment(environment, server_directory),
+    )
+
+
+def _eks_environment(environment, server_directory):
     # Export a credential reference, never an operator's inline AWS access keys.
-    allowed = ("AWS_PROFILE", "AWS_REGION", "AWS_DEFAULT_REGION")
+    allowed = (
+        "AWS_PROFILE",
+        "AWS_REGION",
+        "AWS_DEFAULT_REGION",
+        "AWS_STS_REGIONAL_ENDPOINTS",
+    )
+    relocated = {
+        "AWS_CONFIG_FILE",
+        "AWS_SHARED_CREDENTIALS_FILE",
+        "AWS_EC2_METADATA_DISABLED",
+    }
+    credentials = {
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "AWS_SECURITY_TOKEN",
+    }
+    if environment.keys() - set(allowed) - relocated - credentials:
+        raise BackendError(
+            "EKS exec environment has unsupported settings; move authentication "
+            "into the server AWS profile before exporting"
+        )
     environment = {key: environment[key] for key in allowed if key in environment}
     environment.update(
         AWS_CONFIG_FILE=str(server_directory / "aws-config"),
         AWS_SHARED_CREDENTIALS_FILE=str(server_directory / "aws-credentials"),
         AWS_EC2_METADATA_DISABLED="true",
     )
-    plugin.update(
-        command="/opt/sky/bin/aws",
-        args=arguments,
-        interactiveMode="Never",
-        env=[{"name": key, "value": value} for key, value in environment.items()],
-    )
+    return [{"name": key, "value": value} for key, value in environment.items()]
 
 
 def export_connections(
@@ -83,7 +111,7 @@ def export_connections(
     Raises:
         TeamError, BackendError, OSError: Selection, export, or private writes fail.
     """
-    from .deployment import allocations, _write
+    from .deployment import allocations, write_private_config
 
     if not server_directory.is_absolute():
         raise TeamError("server configuration directory must be absolute")
@@ -91,15 +119,17 @@ def export_connections(
     if not bindings:
         raise TeamError("at least one personal cluster allocation is required")
     connections = {}
-    for binding in bindings:
-        if binding.cluster not in connections:
-            connections[binding.cluster] = read_connection(binding, server_directory)
+    for name, connection in config.clusters.items():
+        selected = replace(bindings[0], cluster=name, connection=connection)
+        connections[name] = read_connection(selected, server_directory)
     output_dir.mkdir(mode=0o700, parents=True, exist_ok=False)
     policy = config.model_dump(mode="json")
     files = _write_connections(connections, policy, output_dir, server_directory)
     merged = _scheduler_connections(bindings, connections)
-    _write(output_dir / "sky-kubeconfig.yaml", yaml.safe_dump(merged))
-    _write(output_dir / "team.yaml", yaml.safe_dump(policy, sort_keys=False))
+    write_private_config(output_dir / "sky-kubeconfig.yaml", yaml.safe_dump(merged))
+    write_private_config(
+        output_dir / "team.yaml", yaml.safe_dump(policy, sort_keys=False)
+    )
     return {
         "files": files + ["sky-kubeconfig.yaml", "team.yaml"],
         "clusters": list(connections),
@@ -107,7 +137,7 @@ def export_connections(
 
 
 def _scheduler_connections(bindings, connections):
-    from .deployment import _append_contexts
+    from .deployment import append_scheduler_contexts
 
     merged = {
         "apiVersion": "v1",
@@ -117,19 +147,19 @@ def _scheduler_connections(bindings, connections):
         "contexts": [],
     }
     for binding in bindings:
-        _append_contexts(merged, connections[binding.cluster], binding)
+        append_scheduler_contexts(merged, connections[binding.cluster], binding)
     merged["current-context"] = merged["contexts"][0]["name"]
     return merged
 
 
 def _write_connections(connections, policy, output_dir, server_directory):
-    from .deployment import _write
+    from .deployment import write_private_config
 
     files = []
     for name, source in connections.items():
         connection = copy.deepcopy(source)
         filename = f"cluster-{name}.yaml"
-        _write(output_dir / filename, yaml.safe_dump(connection))
+        write_private_config(output_dir / filename, yaml.safe_dump(connection))
         policy["clusters"][name] = {
             "context": connection["contexts"][0]["name"],
             "kubeconfig": str(server_directory / filename),

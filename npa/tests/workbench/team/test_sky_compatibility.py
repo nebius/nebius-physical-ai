@@ -38,8 +38,9 @@ def test_real_aws_cli_eks_exec_authentication_without_aws_access(tmp_path):
 
 def _eks_exec_program():
     return r"""
-import base64, json, os, pathlib, sys, tempfile
+import base64, datetime, json, os, pathlib, sys, tempfile
 from kubernetes import client, config
+from kubernetes.config.kube_config import KubeConfigLoader
 with tempfile.TemporaryDirectory() as directory:
     root = pathlib.Path(directory)
     credentials = root / 'aws-credentials'
@@ -65,7 +66,19 @@ with tempfile.TemporaryDirectory() as directory:
     encoded = token.split('.',1)[1]
     signed = base64.urlsafe_b64decode(encoded + '=' * (-len(encoded) % 4)).decode()
     assert 'test-access-key' in signed and 'ambient-key' not in signed
-    print(json.dumps({'eks_exec_credential_protocol':'passed','aws_api_contacted':False}))
+    wrapper = root / 'aws-exec.py'
+    counter = root / 'calls'
+    wrapper.write_text('import pathlib,subprocess,sys\np=pathlib.Path(sys.argv[1])\np.write_text(str(int(p.read_text())+1) if p.exists() else "1")\nsubprocess.run(sys.argv[2:],check=True)\n')
+    plugin['args'] = [str(wrapper),str(counter),plugin['command'],*plugin['args']]
+    plugin['command'] = sys.executable
+    loader = KubeConfigLoader(config_dict=document)
+    refreshed = client.Configuration()
+    loader.load_and_set(refreshed)
+    assert counter.read_text() == '1'
+    loader.expiry = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=1)
+    assert refreshed.get_api_key_with_prefix('authorization').startswith('Bearer k8s-aws-v1.')
+    assert counter.read_text() == '2', 'Expired credentials must re-invoke the real AWS CLI'
+    print(json.dumps({'eks_exec_credential_protocol':'passed','expired_token_refreshed':True,'aws_api_contacted':False}))
 """
 
 
