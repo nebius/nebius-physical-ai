@@ -14,8 +14,11 @@ except the explicitly public composition primitives `infra.fleet.deploy`,
 `infra.soperator.deploy`, `workbench.cosmos2.transfer`,
 `workbench.curobo.plan`, `workbench.foxglove.convert`, `workbench.insights.record`,
 `workbench.isaac_lab.byof_repo`, `workbench.lerobot.eval`,
-`workbench.vlm_eval.compare_preference`, and `workbench.vlm_eval.compare_judges`. The
-reusable-only list is machine-checked against `PUBLIC_REUSABLE_TOOLREFS`;
+`workbench.vlm_eval.compare_preference`, and `workbench.vlm_eval.compare_judges`.
+The four `workflow.policy_training.*` adapters are also reusable primitives for
+operator-owned batch inputs and scripts; they do not supply another turnkey
+recipe. The single public recipe uses `workflow.policy_public.*` stages.
+The reusable-only list is machine-checked against `PUBLIC_REUSABLE_TOOLREFS`;
 accidental dead entries fail the guardrail. The retired monolithic
 `workbench.sim2real.run` surface is intentionally absent.
 
@@ -51,6 +54,10 @@ accidental dead entries fail the guardrail. The retired monolithic
 | `workbench.alpamayo2_super.sweep` | `npa workbench alpamayo2-super sweep` | scenario indices, seeds, diffusion settings; optional completed baseline report | per-case verified artifacts, ADE/FDE statistics, matched refinement changes, report checksums | no (Ray GPU actors invoke upstream Alpamayo inference; Ray CPU tasks reduce measured results) |
 | `workbench.flex_pi.train` | `npa workbench flex-pi train` | immutable public YAM dataset and initialization manifests; four GPUs, global batch 96, configurable microbatch 1 or 3 | repeated throughput windows, full validation, checkpoint readback and fresh resume evidence | no (real upstream Flex-Pi training model and loss) |
 | `workbench.flex_pi.infer` | `npa workbench flex-pi infer --torch-compile` | pinned public RoboTwin observation manifest, flex-pi checkpoint revision, denoising steps and seed | finite 32x14 action chunk, latency/memory metrics, exact source/input/model provenance under `config.output_uri` | no (real upstream compiled action-only policy inference on one B200 or RTX PRO 6000) |
+| `workflow.policy_training.curate` | `python3 -m npa.workflows.policy_training curate` | episode references and explicit quality policy | real FiftyOne preview quality selection and comparison counts | no |
+| `workflow.policy_training.split` | `python3 -m npa.workflows.policy_training split` | curated episodes and seed | deterministic source-group train/holdout manifests | no |
+| `workflow.policy_training.batch` | `python3 -m npa.workflows.policy_training batch` | private Slurm settings, split, candidate and iteration | completed batch result bound to the exact request | no (operator-provided scripts required) |
+| `workflow.policy_training.gate` | `python3 -m npa.workflows.policy_training gate` | candidate, evaluation, split and thresholds | measured all-system task-success decision | no |
 | `infra.fleet.deploy` | `npa fleet deploy` | `config.fleet_spec` | fleet deploy JSON | no |
 | `infra.soperator.deploy` | `npa soperator deploy` | `config.soperator_spec` | cluster deploy JSON | no |
 | `workflow.paidf.prepare_images` | `python3 -m npa.workflows.paidf_native prepare-images` | operator-authorized image/file prefix | decoded, hashed canonical images and preparation manifest | no |
@@ -233,6 +240,16 @@ render with the established effective `augment_control_weight` of `1.0`,
 `augment_guidance` of `3.0`,
 and optional protection/segmentation disabled. Explicit spec config takes
 precedence over these compatibility defaults.
+
+| `workflow.policy_public.prepare` | `python3 -m npa.workflows.policy_training.turnkey prepare` | immutable public recipe and prior stage | Fetch pinned public LeRobot/LIBERO data and decode episode previews. | no |
+| `workflow.policy_public.curate` | `python3 -m npa.workflows.policy_training.turnkey curate` | immutable public recipe and prior stage | Run real FiftyOne preview quality queries; carry selection into the training corpus. | no |
+| `workflow.policy_public.split` | `python3 -m npa.workflows.policy_training.turnkey split` | immutable public recipe and prior stage | Reserve two independent per-task trajectory-group partitions. | no |
+| `workflow.policy_public.train` | `python3 -m npa.workflows.policy_training.turnkey train` | immutable public recipe and prior stage | Run real native CUDA SmolVLA training with torchrun and durable optimizer recovery. | no |
+| `workflow.policy_public.evaluate` | `python3 -m npa.workflows.policy_training.turnkey evaluate` | immutable public recipe and prior stage | Measure reserved-demo loss and native LIBERO success for the exact checkpoint. | no |
+| `workflow.policy_public.gate` | `python3 -m npa.workflows.policy_training.turnkey gate` | immutable public recipe and prior stage | Compare native integer success counts to the immutable recipe threshold. | no |
+| `workflow.policy_public.export` | `python3 -m npa.workflows.policy_training.turnkey export` | immutable public recipe and prior stage | Export only the exact specialist approved by both measured gates. | no |
+| `workflow.policy_public.serve` | `python3 -m npa.workflows.policy_training.turnkey serve` | immutable public recipe and prior stage | Serve the promoted CUDA policy to an independent NVIDIA-rendered simulation client. | no |
+| `workflow.policy_public.report` | `python3 -m npa.workflows.policy_training.turnkey report` | immutable public recipe and prior stage | Reconcile server/client actions and embed all native videos into standalone HTML/MP4. | no |
 
 ## Tokens
 

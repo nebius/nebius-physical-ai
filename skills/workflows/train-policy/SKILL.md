@@ -55,3 +55,14 @@ npa/.venv/bin/python -m pytest npa/tests/guardrails/test_skills_index.py -q
 
 The smoke test invokes training command help and parses the referenced training
 YAMLs.
+
+## Public training and deployment recipe
+
+Use `workflows/testing/robot-policy-train-and-serve.yaml` and
+`docs/workbench/cookbooks/robot-policy-train-and-serve.md` for real FiftyOne selection,
+continued SmolVLA training, two measured gates, portable export, independent GPU
+HTTP serving and native LIBERO simulation, then same-run standalone HTML/MP4.
+The standard Workbench runtime owns submission, artifact lineage and recovery.
+This recipe uses managed Kubernetes and torchrun. The separate Slurm recipe
+requires operator training scripts. This public baseline does not prove in-house
+foundation pretraining.
