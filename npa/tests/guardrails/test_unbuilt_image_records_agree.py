@@ -28,6 +28,7 @@ import yaml
 
 from npa.deploy.images import (
     CONTAINER_IMAGE_NAMES,
+    GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS,
     LAYER_STALE_PUBLICATION_TOOLS,
     METADATA_STALE_PUBLICATION_TOOLS,
     NEUTRAL_UNBUILT_CANDIDATE_TOOLS,
@@ -212,9 +213,11 @@ def test_ray_serve_catalog_does_not_overstate_layer_stale_bytes() -> None:
     assert re.fullmatch(
         r"sha256:[0-9a-f]{64}", str(entry["historical_validation"]["digest"])
     )
-    assert re.fullmatch(
-        r"sha256:[0-9a-f]{64}", str(entry["historical_publication"]["digest"])
-    )
+    historical_publication = entry["historical_publication"]
+    # These resolver records identify the retained historical bytes; neither
+    # assertion restores current release or publication eligibility.
+    assert historical_publication["tag"] == SUPPORTED_TOOL_VERSIONS[tool]
+    assert historical_publication["digest"] == GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS[tool]
     assert "validated_digest" not in entry
     assert "published_digest" not in entry
 

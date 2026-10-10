@@ -10,6 +10,12 @@ Cosmos3-Nano once is materially better than starting one `cosmos3 generate` job
 per sample. Do not substitute `npa-cosmos3-serving`: that image serves
 Cosmos3-Super through vLLM-Omni and has a different model/API/runtime contract.
 
+> **Current release status:** Cosmos3 Ray Serve has no currently qualified image.
+> The retained historical bytes are quarantined and must not be selected, started,
+> or described as a release. Historical tags, digests, and B200/RTX observations
+> do not qualify a replacement; wait for a separately rebuilt and qualified
+> candidate.
+
 ## Non-negotiable contract
 
 - Run NVIDIA cosmos-framework at pinned commit
@@ -38,9 +44,12 @@ image digest as a stop condition. A token's presence is not model entitlement.
 
 ## Start the service
 
-Run the image by immutable digest, mount `/outputs` and the standard model cache,
-and inject `HF_TOKEN` and `NPA_COSMOS3_RAY_TOKEN` as runtime secrets. The image's
-default entrypoint starts:
+**Do not run this procedure against the retained historical image.** It is
+quarantined and has no current public/default image selection. Once a separately
+rebuilt candidate has passed exact-byte security and capability qualification,
+follow its explicit operator-approved image binding: mount `/outputs` and the
+standard model cache, and inject `HF_TOKEN` and `NPA_COSMOS3_RAY_TOKEN` as
+runtime secrets. That candidate's entrypoint starts:
 
 ```text
 npa workbench cosmos3 ray-serve --world-size 1 --max-batch-size 4
