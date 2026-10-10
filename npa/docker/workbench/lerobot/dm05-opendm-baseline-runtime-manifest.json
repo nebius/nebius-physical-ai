@@ -1,0 +1,24 @@
+{
+  "schema": "npa.dm05_opendm_libero_baseline.runtime.v1",
+  "opendm": {
+    "repository": "https://github.com/dexmal/opendm",
+    "revision": "7d52f1591437332cb0157be3303c1c46da811344",
+    "license": "Apache-2.0",
+    "entrypoint": "playground/dm05_libero.py"
+  },
+  "dexbotic": {
+    "repository": "https://github.com/dexmal/dexbotic-benchmark",
+    "revision": "789b87f50d9fadc7663d2e8bac057941221aab81",
+    "license": "MIT"
+  },
+  "libero": {
+    "repository": "https://github.com/Lifelong-Robot-Learning/LIBERO",
+    "revision": "8f1084e3132a39270c3a13ebe37270a43ece2a01",
+    "license": "MIT"
+  },
+  "checkpoint": {
+    "repository": "Dexmal/DM05-libero",
+    "revision": "25a8e0d38a8eaeaae41a44d7b4a2378fd8ce1088",
+    "license_label": "gemma"
+  }
+}

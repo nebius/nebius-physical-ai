@@ -282,6 +282,22 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Pinned PushT data, matched real ACT training, paired closed-loop shifts, next-demo queue and RRD.",
     ),
     SubmitLiveCase(
+        "dm05-lerobot-libero-comparison.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        plan_only=True,
+        plan_only_justification=(
+            "The comparison requires an operator-private exact DM05 runtime "
+            "digest; a shared matrix run must not fall back to stock LeRobot."
+        ),
+        notes=(
+            "Five-stage matched 200-episode DM05 comparison. The shared matrix "
+            "performs planning only and returns before provider submission. Execute "
+            "only through the dedicated operator-private exact-runtime route; no "
+            "live metric or release claim exists yet."
+        ),
+    ),
+    SubmitLiveCase(
         "byof-mochi-1.yaml",
         "gpu",
         plan_only=True,

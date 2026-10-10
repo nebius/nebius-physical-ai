@@ -105,6 +105,28 @@ the result needs a reproducible coverage gate and a row-level LeRobot proof.
 
 Output is a policy checkpoint on S3.
 
+### DM05-Lerobot-LIBERO checkpoint comparison
+
+`workflows/testing/dm05-lerobot-libero-comparison.yaml` is a five-stage,
+runtime-fetch comparison of Dexmal's public DM05-Lerobot predecessor and
+DM05-Lerobot-LIBERO checkpoint. Preserve the card's non-obvious boundary:
+`use_relative_actions=false` keeps the **model** action representation
+absolute, while `--env.control_mode=relative` configures the **LIBERO
+environment** controller. The published 197/200 is a 40-task × 5-episode
+protocol, not a 2,000-episode result.
+
+This is not an accepted checkpoint capability yet. Checkpoint parity uses the
+Apache-2.0 `hbzfeng/lerobot@6eede4f7d2efe6b4f6a58ddb7b13ed55e2346b9c`
+implementation supplied with closed/superseded upstream LeRobot PR #4051. Build
+the operator-private `Dockerfile.dm05-validation` derivative, which writes a
+manifest for that exact source and rejects another registry implementation
+before native evaluation. Do not substitute the newer PR #4721 implementation
+without its documented processor conversion, call the model-card score a local
+result, or enable remote code. The weights remain runtime-fetched under their
+separate Gemma terms; the private image contains no checkpoint or dataset.
+See `docs/workbench/dm05-lerobot-libero.md` for exact revisions, attribution,
+and the live qualification gate.
+
 ## Validation
 
 - 9/9 E2E serverless tests pass on Nebius (default 0.5.1 image).

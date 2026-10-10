@@ -94,6 +94,7 @@ def wheel(tmp_path: Path) -> Path:
     _write(
         root / "lerobot/policies/factory.py",
         "def make_policy(cfg, ds_meta=None, env_cfg=None, rename_map=None): ...\n"
+        "def get_policy_class(name): ...\n"
         "def make_pre_post_processors(policy_cfg, pretrained_path=None, **kwargs): ...\n",
     )
     _write(
