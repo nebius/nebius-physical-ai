@@ -1,0 +1,214 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: policy-public-training
+  executionMode: runtime
+  description: >-
+    Turnkey public SmolVLA continued training: pinned LeRobot/LIBERO data,
+    real FiftyOne curation, grouped train/two-holdout split, native torchrun
+    multi-task training and task fine-tuning with measured retry gates,
+    promoted checkpoint export, independent GPU HTTP serving and NVIDIA-rendered
+    simulation clients, then standalone HTML/MP4 proof from this same run.
+    Managed Kubernetes plus torchrun; no private model scripts, SDG or robot hardware.
+
+config:
+  bucket: example-bucket
+  source_overlay: true
+  prefix: "policy-public/{{run.id}}"
+  recipe: '{"seed":42,"batch_size":64,"generalist_epochs":1,"specialist_epochs":40,"evaluation_episodes":10,"deployment_state_offset":30,"minimum_success":0.7,"workers":8}'
+  workflow_sha256: ""
+  phase: pretrain
+  iteration: "1"
+  parent_uri: ""
+  prepared_uri: "s3://{{config.bucket}}/{{config.prefix}}/prepared/"
+  curated_uri: "s3://{{config.bucket}}/{{config.prefix}}/curated/"
+  split_uri: "s3://{{config.bucket}}/{{config.prefix}}/split/"
+  phase_uri: "s3://{{config.bucket}}/{{config.prefix}}/pretrain/"
+  stage_input_uri: "{{config.split_uri}}"
+  stage_output_uri: "{{config.prepared_uri}}"
+  decision_uri: "s3://{{config.bucket}}/{{config.prefix}}/pretrain/1/gate/decision.json"
+  export_uri: "s3://{{config.bucket}}/{{config.prefix}}/export/"
+  serving_uri: "s3://{{config.bucket}}/{{config.prefix}}/serving/"
+  report_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+    image: ghcr.io/nebius/nebius-physical-ai/npa-fiftyone@sha256:9ba5e723b2af8bad4e442781f3e09e2e5649499352ae583b7508bfdd902d7119
+  gpu:
+    cloud: kubernetes
+    cpus: 16
+    memory: 64Gi
+    accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
+    image: ghcr.io/nebius/nebius-physical-ai/npa-lerobot@sha256:8d513f8558253fc484808a1e53a63a5da5a0c280ff973c4e590dd3e04b228643
+    kubernetes:
+      pod_config:
+        spec:
+          containers:
+            - name: ray-node
+              volumeMounts:
+                - {name: policy-shm, mountPath: /dev/shm}
+          volumes:
+            - name: policy-shm
+              emptyDir: {medium: Memory, sizeLimit: 16Gi}
+  serving:
+    cloud: kubernetes
+    cpus: 4
+    memory: 24Gi
+    accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
+    num_nodes: 2
+    image: ghcr.io/nebius/nebius-physical-ai/npa-lerobot@sha256:8d513f8558253fc484808a1e53a63a5da5a0c280ff973c4e590dd3e04b228643
+
+initial: prepare
+states:
+  prepare:
+    description: Fetch immutable public LeRobot data and decode every episode preview.
+    toolRef: workflow.policy_public.prepare
+    resources: cpu
+    outputs:
+      - {uri: "{{config.prepared_uri}}", kind: directory}
+    next: curate
+  curate:
+    description: Measure preview brightness/sharpness with real FiftyOne and retain quality flags.
+    toolRef: workflow.policy_public.curate
+    resources: cpu
+    params: {stage_input_uri: "{{config.prepared_uri}}", stage_output_uri: "{{config.curated_uri}}"}
+    inputs:
+      - {uri: "{{config.prepared_uri}}", kind: directory}
+    outputs:
+      - {uri: "{{config.curated_uri}}", kind: directory}
+    next: split
+  split:
+    description: Split selected trajectory groups within each task into train and two reserved sets.
+    toolRef: workflow.policy_public.split
+    resources: cpu
+    params: {stage_input_uri: "{{config.curated_uri}}", stage_output_uri: "{{config.split_uri}}"}
+    inputs:
+      - {uri: "{{config.curated_uri}}", kind: directory}
+    outputs:
+      - {uri: "{{config.split_uri}}", kind: directory}
+    next: pretrain-loop
+  pretrain-loop:
+    loop: {until: promote_checkpoint}
+    sequence: [pretrain, evaluate-pretrain, gate-pretrain]
+    next: finetune-loop
+  pretrain:
+    description: Continue SmolVLA on the curated multi-task training split; recover failed candidates.
+    toolRef: workflow.policy_public.train
+    resources: gpu
+    params:
+      iteration: "{{loop.pretrain-loop}}"
+      stage_output_uri: "s3://{{config.bucket}}/{{config.prefix}}/pretrain/{{loop.pretrain-loop}}/candidate/"
+    inputs:
+      - {uri: "{{config.split_uri}}", kind: directory}
+    outputs:
+      - {uri: "{{config.stage_output_uri}}", kind: directory}
+      - {uri: "{{config.phase_uri}}recovery/{{loop.pretrain-loop}}/", kind: directory}
+  evaluate-pretrain:
+    description: Measure first-holdout demonstration loss and native LIBERO success on states starting at zero.
+    toolRef: workflow.policy_public.evaluate
+    resources: gpu
+    params:
+      stage_input_uri: "s3://{{config.bucket}}/{{config.prefix}}/pretrain/{{loop.pretrain-loop}}/candidate/"
+      stage_output_uri: "s3://{{config.bucket}}/{{config.prefix}}/pretrain/{{loop.pretrain-loop}}/evaluation/"
+    inputs:
+      - {uri: "{{config.stage_input_uri}}", kind: directory}
+    outputs:
+      - {uri: "{{config.stage_output_uri}}", kind: directory}
+  gate-pretrain:
+    description: Promote only measured success meeting the sealed threshold; otherwise repeat pretraining.
+    toolRef: workflow.policy_public.gate
+    resources: cpu
+    writesDecision: true
+    params:
+      stage_input_uri: "s3://{{config.bucket}}/{{config.prefix}}/pretrain/{{loop.pretrain-loop}}/evaluation/"
+      stage_output_uri: "s3://{{config.bucket}}/{{config.prefix}}/pretrain/{{loop.pretrain-loop}}/gate/"
+      decision_uri: "s3://{{config.bucket}}/{{config.prefix}}/pretrain/{{loop.pretrain-loop}}/gate/decision.json"
+    inputs:
+      - {uri: "{{config.stage_input_uri}}", kind: directory}
+    outputs:
+      - {uri: "{{config.stage_output_uri}}", kind: directory}
+      - {uri: "{{config.decision_uri}}", schema: npa.policy.decision.v1}
+  finetune-loop:
+    loop: {until: promote_checkpoint}
+    sequence: [finetune, evaluate-finetune, gate-finetune]
+    next: export
+  finetune:
+    description: Fine-tune only the chosen task's training episodes, starting from the first promoted checkpoint.
+    toolRef: workflow.policy_public.train
+    resources: gpu
+    params:
+      phase: finetune
+      phase_uri: "s3://{{config.bucket}}/{{config.prefix}}/finetune/"
+      iteration: "{{loop.finetune-loop}}"
+      parent_uri: "s3://{{config.bucket}}/{{config.prefix}}/pretrain/{{loop.pretrain-loop}}/gate/"
+      stage_output_uri: "s3://{{config.bucket}}/{{config.prefix}}/finetune/{{loop.finetune-loop}}/candidate/"
+    inputs:
+      - {uri: "{{config.split_uri}}", kind: directory}
+      - {uri: "{{config.parent_uri}}", kind: directory}
+    outputs:
+      - {uri: "{{config.stage_output_uri}}", kind: directory}
+      - {uri: "{{config.phase_uri}}recovery/{{loop.finetune-loop}}/", kind: directory}
+  evaluate-finetune:
+    description: Measure second-holdout task demonstration loss and a disjoint native LIBERO reset set.
+    toolRef: workflow.policy_public.evaluate
+    resources: gpu
+    params:
+      phase: finetune
+      stage_input_uri: "s3://{{config.bucket}}/{{config.prefix}}/finetune/{{loop.finetune-loop}}/candidate/"
+      stage_output_uri: "s3://{{config.bucket}}/{{config.prefix}}/finetune/{{loop.finetune-loop}}/evaluation/"
+    inputs:
+      - {uri: "{{config.stage_input_uri}}", kind: directory}
+    outputs:
+      - {uri: "{{config.stage_output_uri}}", kind: directory}
+  gate-finetune:
+    description: Promote only the second measured gate; failed candidates resume their native recovery state.
+    toolRef: workflow.policy_public.gate
+    resources: cpu
+    writesDecision: true
+    params:
+      stage_input_uri: "s3://{{config.bucket}}/{{config.prefix}}/finetune/{{loop.finetune-loop}}/evaluation/"
+      stage_output_uri: "s3://{{config.bucket}}/{{config.prefix}}/finetune/{{loop.finetune-loop}}/gate/"
+      decision_uri: "s3://{{config.bucket}}/{{config.prefix}}/finetune/{{loop.finetune-loop}}/gate/decision.json"
+    inputs:
+      - {uri: "{{config.stage_input_uri}}", kind: directory}
+    outputs:
+      - {uri: "{{config.stage_output_uri}}", kind: directory}
+      - {uri: "{{config.decision_uri}}", schema: npa.policy.decision.v1}
+  export:
+    description: Export the exact specialist approved by both gates with its portable tokenizer and model dependencies.
+    toolRef: workflow.policy_public.export
+    resources: cpu
+    params:
+      stage_input_uri: "s3://{{config.bucket}}/{{config.prefix}}/finetune/{{loop.finetune-loop}}/gate/"
+      stage_output_uri: "{{config.export_uri}}"
+    inputs:
+      - {uri: "{{config.stage_input_uri}}", kind: directory}
+    outputs:
+      - {uri: "{{config.export_uri}}", kind: directory}
+    next: serve
+  serve:
+    description: Run authenticated model serving and an independent native simulator on two GPU workers; test a third reset set.
+    toolRef: workflow.policy_public.serve
+    resources: serving
+    params: {stage_input_uri: "{{config.export_uri}}", stage_output_uri: "{{config.serving_uri}}"}
+    inputs:
+      - {uri: "{{config.export_uri}}", kind: directory}
+    outputs:
+      - {uri: "{{config.serving_uri}}", kind: directory}
+    next: report
+  report:
+    description: Reconcile all served/applied actions, decode every native video and publish standalone HTML/MP4 proof.
+    toolRef: workflow.policy_public.report
+    resources: cpu
+    params: {stage_input_uri: "{{config.serving_uri}}", stage_output_uri: "{{config.report_uri}}"}
+    inputs:
+      - {uri: "{{config.serving_uri}}", kind: directory}
+    outputs:
+      - {uri: "{{config.report_uri}}demo.html", schema: text/html}
+      - {uri: "{{config.report_uri}}demo.mp4", schema: video/mp4}
+      - {uri: "{{config.report_uri}}proof.json", schema: npa.policy-public.proof.v1}
+      - {uri: "{{config.report_uri}}checksums.json", schema: npa.checksums.sha256.v1}
+    terminal: true

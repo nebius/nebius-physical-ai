@@ -36,6 +36,16 @@ API_ONLY_VLM_AUDIT_TOOLS = frozenset(
 # SkyPilot's k8s apt-ssh runtime setup fails inside npa-cosmos. Use the default
 # SkyPilot image and stage npa via NPA_SRC_S3_URI (or an image override).
 TOOL_REF_IMAGE_TOOL: dict[str, str | None] = {
+    "workflow.policy_public.prepare": "fiftyone",
+    "workflow.policy_public.curate": "fiftyone",
+    "workflow.policy_public.split": "fiftyone",
+    "workflow.policy_public.train": "lerobot",
+    "workflow.policy_public.evaluate": "lerobot",
+    "workflow.policy_public.gate": "fiftyone",
+    "workflow.policy_public.export": "fiftyone",
+    "workflow.policy_public.serve": "lerobot",
+    "workflow.policy_public.report": "fiftyone",
+    "workflow.policy_training.curate": "fiftyone",
     "workflow.video_sweep.generate": "cosmos2-transfer",
     "workflow.video_sweep.generate_cosmos3": "cosmos3",
     "workflow.habitat_sim.smoke": "habitat-sim",
@@ -106,6 +116,8 @@ HABITAT_SIM_ACCELERATOR = "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
 OPENPI_TERMS_ENV = "NPA_OPENPI_ACCEPT_GEMMA_TERMS"
 
 SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
+    "workflow.policy_public": ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+    "workflow.policy_training": ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
     "workflow.video_sweep.prepare": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "workflow.video_sweep.review": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "workflow.video_sweep.generate": ("HF_TOKEN",),
@@ -276,6 +288,15 @@ PYTHON_MODULE_PROBE = "python:"
 #: When a candidate exists, setup installs npa INTO it and records it as the stage interpreter,
 #: so the tool and the vendor library share one environment.
 TOOL_REF_VENDOR_INTERPRETERS: dict[str, tuple[str, ...]] = {
+    "workflow.policy_public.prepare": ("/opt/fiftyone/venv/bin/python",),
+    "workflow.policy_public.curate": ("/opt/fiftyone/venv/bin/python",),
+    "workflow.policy_public.split": ("/opt/fiftyone/venv/bin/python",),
+    "workflow.policy_public.train": ("/opt/lerobot/venv/bin/python",),
+    "workflow.policy_public.evaluate": ("/opt/lerobot/venv/bin/python",),
+    "workflow.policy_public.gate": ("/opt/fiftyone/venv/bin/python",),
+    "workflow.policy_public.export": ("/opt/fiftyone/venv/bin/python",),
+    "workflow.policy_public.serve": ("/opt/lerobot/venv/bin/python",),
+    "workflow.policy_public.report": ("/opt/fiftyone/venv/bin/python",),
     "workbench.mjlab": ("/usr/local/bin/python",),
     # The XR1 spec pins the upstream PyTorch CUDA image explicitly. Its adapter
     # creates a separate vendor venv before installing XR1's pinned packages.
@@ -1507,7 +1528,11 @@ def default_npa_setup() -> str:
         "    return 1\n"
         "  fi\n"
         "}\n"
-        "if ! command -v npa >/dev/null 2>&1; then\n"
+        # An explicit staged overlay is the complete source of truth. Thin vendor
+        # images may contain a partial /opt/npa tree without the build hook; do
+        # not try installing it before the requested overlay can be fetched.
+        "if ! command -v npa >/dev/null 2>&1 && { "
+        '[ "$NPA_SRC_OVERLAY" != "1" ] || [ -z "$NPA_SRC_S3_URI" ]; }; then\n'
         # The active runtime-fetch images intentionally ship the installable
         # project under /opt/npa but not a shell-visible `npa` launcher. Recording
         # that tree alone is insufficient: the first task then skips the legacy
@@ -2548,6 +2573,15 @@ def _build_skypilot_task_doc(
             ],
             separators=(",", ":"),
         )
+    if tool_ref.startswith("workflow.policy_public."):
+        from npa.orchestration.npa_workflow.runtime import _workflow_identity
+
+        envs["NPA_WORKFLOW_SHA256"] = _workflow_identity(spec)
+        envs["NPA_BAKED_PYTHON"] = tool_vendor_interpreters(tool_ref)[0]
+        envs["NVIDIA_DRIVER_CAPABILITIES"] = "all"
+        envs["MUJOCO_GL"] = "egl"
+        envs["PYOPENGL_PLATFORM"] = "egl"
+        envs["FIFTYONE_DO_NOT_TRACK"] = "true"
     attempt_id = str(options.execution_attempt_id or "").strip()
     if not attempt_id:
         material = "\0".join((spec.name, run_id, str(scheduler_task["name"]))).encode(

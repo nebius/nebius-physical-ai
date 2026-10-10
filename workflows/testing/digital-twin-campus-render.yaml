@@ -1,0 +1,49 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: digital-twin-campus-render
+  executionMode: runtime
+  description: Render an authored 18-hectare industrial campus with native RTX OptiX, four camera routes, and verified portable HTML and OpenUSD/glTF artifacts.
+config:
+  bucket: example-bucket
+  prefix: digital-twin-campus-render/{{run.id}}
+  output_uri: s3://{{config.bucket}}/{{config.prefix}}/rendered
+  source_overlay: true
+  runtime_image: ghcr.io/nebius/nebius-physical-ai/npa-sonic@sha256:c9ba0996b28f54b013e36da689638b386a7ef9c0c8c4413fc4b3c72ff1a808bb
+  accelerator: RTXPRO6000:1
+  views: 32
+  samples: 128
+resources:
+  renderer:
+    cloud: kubernetes
+    accelerators: '{{config.accelerator}}'
+    cpus: 12
+    memory: 48Gi
+    disk_size: 100
+    image: '{{config.runtime_image}}'
+initial: render
+states:
+  render:
+    description: Require native OptiX GPU devices, render all four campus routes at 2560x1440, and publish only after scene and media verification.
+    resources: renderer
+    env:
+      NVIDIA_DRIVER_CAPABILITIES: all
+    run:
+      argv:
+        - /opt/npa/venv/bin/python
+        - -m
+        - npa.workflows.digital_twin_render
+        - --output-path
+        - '{{config.output_uri}}'
+        - --views
+        - '{{config.views}}'
+        - --samples
+        - '{{config.samples}}'
+        - --scene
+        - industrial-campus
+        - --gpu-backend
+        - OPTIX
+    outputs:
+      - uri: '{{config.output_uri}}/completion.json'
+        schema: npa.navigation.publication.v1
+    terminal: true

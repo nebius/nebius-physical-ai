@@ -2155,7 +2155,13 @@ def render_novel_views(
         )
 
     gpu_names = _gpu_names_for_receipt(env, run, timeout) if runner is None else ()
-    result = _run(command, env=_nre_env(config, env), run=run, timeout=timeout)
+    from npa.workbench.nurec.render_evidence import (
+        RenderTelemetry,
+        write_render_evidence,
+    )
+
+    with RenderTelemetry() as telemetry:
+        result = _run(command, env=_nre_env(config, env), run=run, timeout=timeout)
     if result.returncode != 0:
         receipt_path = Path(output_dir) / "nre-render.json"
         evidence_path = ""
@@ -2225,6 +2231,14 @@ def render_novel_views(
         evidence_path = str(receipt_path)
     except (NurecEvidenceError, OSError, ValueError) as exc:
         _logger.warning("NRE render evidence was not retained: %s", exc)
+    if not errors:
+        write_render_evidence(
+            Path(output_dir),
+            Path(artifact_path),
+            telemetry,
+            renderer=renderer,
+            novel_view=not replicate_training_views,
+        )
     return NurecRenderResult(
         ok=not errors,
         artifact_path=artifact_path,

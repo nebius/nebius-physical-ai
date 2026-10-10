@@ -811,9 +811,11 @@ def test_staging_the_source_is_inert_for_an_image_that_already_bakes_npa() -> No
     )
 
     setup = default_npa_setup()
-    assert "if ! command -v npa >/dev/null 2>&1; then" in setup
+    assert "if ! command -v npa >/dev/null 2>&1 && {" in setup
     # The baked-image path is tried before any S3 sync.
-    assert setup.index("/opt/nebius-physical-ai/npa") < setup.index("NPA_SRC_S3_URI")
+    assert setup.index("/opt/nebius-physical-ai/npa") < setup.index(
+        "uri = os.environ['NPA_SRC_S3_URI']"
+    )
 
     # And an unrelated tool's setup is unchanged by the NuRec additions.
     other = render_setup_for_tool(
