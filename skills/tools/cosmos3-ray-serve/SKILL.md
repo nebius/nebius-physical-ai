@@ -102,18 +102,20 @@ them. It downloads each returned file, verifies bytes and SHA-256, and publishes
 `request.json`, `response.json`, media under `artifacts/`, and
 `provenance.json` (`npa.cosmos3.ray-serve.provenance.v1`). Use
 `workflows/testing/cosmos3-ray-batch.yaml` for the workflow
-client; the persistent service must already be ready.
+client; submit only to a separately rebuilt and qualified candidate service
+that is ready.
 
 The checks in this paragraph require the updated installed client (for example,
 the checkout's editable `npa/.venv` installation). The reference workflow's
-default accepted service image bundles the older client and does not enable a
-source overlay, so its default client path does not provide these checks.
+retained quarantined historical service image bundles the older client and does
+not enable a source overlay, so it must not be used to perform these checks.
 Updating NPA on the submission host does not update that packaged client.
-The accepted service digest remains wire-compatible with the updated client,
-but does not gain the current source's Ray management authentication, scoped S3
-input staging, or Ray 2.58/Torch 2.13 runtime changes. Revalidate the actual
-service runtime when those integration boundaries change; historical image
-evidence does not exercise replacement source or runtime dependencies.
+The retained quarantined historical digest remains wire-compatible with the
+updated client, but does not gain the current source's Ray management
+authentication, scoped S3 input staging, or Ray 2.58/Torch 2.13 runtime
+changes. Revalidate the actual service runtime when those integration boundaries
+change; historical image evidence does not exercise replacement source or
+runtime dependencies.
 
 The updated client binds the supported schema, model, request ID and every requested
 sample name before downloading. An omitted request ID is generated before POST
