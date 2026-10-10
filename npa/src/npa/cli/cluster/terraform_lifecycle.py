@@ -433,6 +433,14 @@ def up_cmd(
 ) -> None:
     """Create or update the Terraform-managed NPA Kubernetes cluster."""
 
+    if sky_smoke and not mig_enabled:
+        from npa.orchestration.skypilot import local_api
+
+        try:
+            local_api._require_linux_host()
+        except local_api.IsolatedApiError as exc:
+            raise typer.BadParameter(str(exc), param_hint="--sky-smoke") from exc
+
     from npa.cli.cluster.terraform_runtime import (
         isolated_terraform_data_dir,
         record_terraform_inventory,
@@ -846,6 +854,7 @@ def up_cmd(
             *_string_var_args("gpu_nodes_preset", gpu_preset),
             *_string_var_args("gpu_driver_mode", gpu_driver_mode),
             *_string_var_args("managed_driver_preset", managed_driver_preset),
+            *_rtx_driver_profile_var_args(backend_desired),
             *(
                 [
                     "-var",
@@ -2910,6 +2919,16 @@ def _string_var_args(key: str, value: str) -> list[str]:
 
     cleaned = str(value or "").strip()
     return ["-var", f"{key}={cleaned}"] if cleaned else []
+
+
+def _rtx_driver_profile_var_args(cluster: ClusterSpec) -> list[str]:
+    if not cluster.gpu_workload_profile or cluster.gpu_nodes is None:
+        return []
+    profile = {
+        "platform": cluster.gpu_nodes.platform,
+        "preset": cluster.gpu_nodes.preset,
+    }
+    return ["-var", "gpu_operator_rtx_driver_profile=" + json.dumps(profile)]
 
 
 def _preflight_instance_count_quota(

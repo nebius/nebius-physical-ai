@@ -97,6 +97,35 @@ npa cluster up --project "$project_alias" --terraform-dir deploy/cluster \
 The reservation uses strict placement. `TF_VAR_capacity_block_group` is the
 equivalent environment setting; an explicit CLI flag takes precedence.
 
+For RTX rendering, add `--gpu-workload-profile rtx-rendering`. Both the shared
+backend and this direct wrapper forward the exact platform and preset to the
+GPU Operator. Its RTX toolkit configuration reads the containerd file with
+`RUNTIME_CONFIG_SOURCE=file`, preserving the on-disk config schema when
+containerd's command output would migrate it to a newer version.
+
+The default SkyPilot smoke requires a Linux operator host with `/proc` for
+process ownership verification. NPA checks this before provisioning. On another
+host, use `--skip-sky-smoke` for provisioning and run SkyPilot validation from
+the Linux operator host before submitting workflows; the GPU, CUDA, and graphics
+validation gates still run.
+`provision-if-absent` makes the same early check when `--accelerator` or
+`--sky-smoke` requests SkyPilot setup. Its `--dry-run` plans and `--skip-k8s`
+storage operations remain usable on other hosts.
+
+The direct RTX release has a read-only live acceptance test. Keep its JSON
+configuration outside Git with `terraform_state_path`, `kubeconfig_path`,
+`kube_context`, `platform`, `preset`, and `gpu_nodes` for the owned cluster:
+
+```bash
+NPA_INTEGRATION_E2E=1 \
+NPA_CLUSTER_RTX_TOOLKIT_LIVE_CONFIG="$private_verification_config" \
+  npa/.venv/bin/python -m pytest \
+    npa/tests/e2e/test_cluster_rtx_toolkit_live.py -q
+```
+
+It verifies the direct release's configuration revision, the exact RTX driver
+selector, Ready GPU nodes, and Ready toolkit pods using the file schema source.
+
 ## Change the topology
 
 > **Security note: the Kubernetes API endpoint is public by default.**

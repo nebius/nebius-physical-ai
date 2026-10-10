@@ -301,6 +301,92 @@ def _reserved_capacity_plan():
     )
 
 
+@pytest.mark.parametrize(
+    "gpu_request", [{"accelerator": "RTXPRO6000:1"}, {"sky_smoke": True}]
+)
+@pytest.mark.parametrize("nested", [False, True])
+def test_provision_skypilot_host_is_checked_before_runtime_resolution(
+    monkeypatch, gpu_request, nested
+):
+    from npa.orchestration.skypilot import local_api
+
+    def unsupported_host():
+        raise local_api.IsolatedApiError(
+            "SkyPilot setup requires a Linux operator host"
+        )
+
+    monkeypatch.setattr(local_api, "_require_linux_host", unsupported_host)
+    monkeypatch.setattr(
+        provisioning, "current_operation", lambda: object() if nested else None
+    )
+    monkeypatch.setattr(
+        provisioning,
+        "_resolve_project_runtime",
+        lambda *_args: pytest.fail("unsupported host reached runtime resolution"),
+    )
+    with pytest.raises(local_api.IsolatedApiError, match="Linux operator host"):
+        provisioning.provision_if_absent(project="proj", **gpu_request)
+
+
+@pytest.mark.parametrize("flags", [["--accelerator", "RTXPRO6000:1"], ["--sky-smoke"]])
+@pytest.mark.parametrize("output_format", ["text", "json"])
+def test_provision_skypilot_host_failure_has_clean_cli_output(
+    monkeypatch, flags, output_format
+):
+    from npa.cli import provision as provision_cli
+    from npa.orchestration.skypilot import local_api
+
+    def unsupported_host():
+        raise local_api.IsolatedApiError(
+            "SkyPilot setup requires a Linux operator host"
+        )
+
+    monkeypatch.setattr(local_api, "_require_linux_host", unsupported_host)
+    monkeypatch.setattr(
+        provisioning,
+        "_resolve_project_runtime",
+        lambda *_args: pytest.fail("unsupported host reached runtime resolution"),
+    )
+    result = runner.invoke(
+        provision_cli.app,
+        ["--project", "proj", "--output-format", output_format, *flags],
+    )
+    assert result.exit_code == 1
+    assert "Traceback" not in result.output
+    if output_format == "json":
+        import json
+
+        payload = json.loads(result.stdout)
+        assert payload["error"] == "UnexpectedError"
+        assert "Linux operator host" in payload["message"]
+        assert result.stderr == ""
+    else:
+        assert result.stdout == ""
+        assert result.stderr.startswith("Error:")
+        assert "Linux operator host" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "gpu_request", [{"accelerator": "RTXPRO6000:1"}, {"sky_smoke": True}]
+)
+@pytest.mark.parametrize("mode", [{"dry_run": True}, {"skip_k8s": True}])
+def test_provision_planning_and_storage_only_do_not_require_linux(
+    tmp_path, monkeypatch, gpu_request, mode
+):
+    from npa.orchestration.skypilot import local_api
+
+    _write_runtime(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        local_api,
+        "_require_linux_host",
+        lambda: pytest.fail("read-only or storage-only request required Linux"),
+    )
+    result = provisioning.provision_if_absent(
+        project="proj", skip_s3=True, **gpu_request, **mode
+    )
+    assert result.status in {"ready", "ok"}
+
+
 def test_provision_if_absent_dry_run_reports_actions(
     tmp_path: Path, monkeypatch
 ) -> None:
