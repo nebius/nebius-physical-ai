@@ -1,10 +1,10 @@
 apiVersion: npa.workflow/v0.0.1
 kind: Workflow
 
-# Candidate-only HY-World 2.0 image-to-world workflow. It is intentionally
-# plan-only until a manager-held scope record confirms the Tencent territory/MAU
-# condition or a Tencent grant, then an exact candidate digest completes the
-# secure build and real B200 validation gates.
+# Candidate-only HY-World 2.0 image-to-world workflow. Tencent's documented
+# use-based mechanism has no duplicate NPA acceptance or territory/MAU form.
+# Exact provider access, an operator-private digest, and real B200 validation
+# remain independent requirements; the candidate is not publicly published.
 metadata:
   name: byof-hy-world
   # The artifact/provenance contract is enforced by the durable workflow
@@ -80,7 +80,7 @@ states:
       Run the pinned released image-to-world path on one image, validating
       WorldStereo output, upstream cameras, trained 3DGS PLY/SPZ, a generated
       camera-render video, and a Rerun recording. Requires a private pre-existing
-      vLLM endpoint and the operator's resolved Tencent terms/access record.
+      vLLM endpoint and exact provider access for runtime-fetched components.
     toolRef: workbench.byof.repo
     resources: gpu
     inputs:

@@ -63,3 +63,22 @@ def test_hy_world_guide_links_the_private_delivery_and_vllm_contracts() -> None:
     assert '--served-model-name "$MODEL"' in guide
     assert "NPA_HY_WORLD_LLM_ADDR" in guide
     assert "metadata.executionMode: runtime" in guide
+
+
+def test_hy_world_guide_does_not_add_a_duplicate_tencent_acceptance_gate() -> None:
+    """Keep use-based Tencent terms distinct from NPA provider access checks."""
+
+    guide = GUIDE.read_text(encoding="utf-8")
+    workflow = (ROOT / "workflows" / "testing" / "byof-hy-world.yaml").read_text(
+        encoding="utf-8"
+    )
+    runtime = (
+        ROOT / "npa" / "docker" / "workbench" / "hy-world" / "hy_world_runtime.sh"
+    ).read_text(encoding="utf-8")
+
+    for text in (guide, workflow, runtime):
+        assert "private,\nrun-scoped operator record must resolve" not in text
+        assert "manager-held scope record confirms" not in text
+    assert "Use is the documented Tencent acceptance mechanism" in guide
+    assert "no duplicate NPA acceptance or territory/MAU form" in workflow
+    assert "NPA neither collects a\nduplicate acceptance" in runtime

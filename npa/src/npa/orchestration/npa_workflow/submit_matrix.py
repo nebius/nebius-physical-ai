@@ -260,9 +260,9 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         plan_only=True,
         plan_only_justification=(
-            "Tencent HY-WORLD 2.0 territory/MAU eligibility or a Tencent grant is "
-            "not recorded in this private scope; no Tencent material may be fetched "
-            "until that operator fact is supplied."
+            "requires an operator-private image digest, an exact component-access "
+            "preflight, a worker-reachable Qwen3-VL endpoint, and a real private PNG; "
+            "generic CI must not create those stateful inputs or launch eight B200 GPUs."
         ),
         notes=(
             "Candidate-only released image-to-world workflow. It also needs an "

@@ -592,9 +592,10 @@ images:
       unbuilt and publication-quarantined until its complete component closure,
       OCI layers/history/SBOM, secret scan, source/weight absence scan and a
       real exact-digest GPU result are accepted. The runtime has no synthetic
-      acceptance flag: territorial eligibility and the >1M-MAU Tencent-license
-      condition are external operator facts. HY-World output is never sent to a
-      trainer because Section 5(b) forbids using it to improve another AI model.
+      acceptance flag or local territory/MAU attestation: Tencent documents use
+      as its mechanism, and the operator remains responsible for those external
+      facts. HY-World output is never sent to a trainer because Section 5(b)
+      forbids using it to improve another AI model.
   mjlab:
     dockerfile: mjlab/Dockerfile
     tier: service

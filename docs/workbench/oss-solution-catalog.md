@@ -77,7 +77,7 @@ unique and must be tested with its own upstream-named capabilities.
 | Open Dreamer | `dreamer4_dynamics_train_two_gpu` | **accepted** | Same run (`scripts/train_dynamics.py` exit 0, 15000 steps on the Minecraft latents) |
 | Open Dreamer | `dreamer4_action_conditioned_dream_rollout` | **accepted** | Same run (`sample_video` context→dream; dream maintains coherent Minecraft scenery across the 32-frame horizon; dream PSNR 17.3 dB) |
 | Open Dreamer | `world_model_rerun_visualization` | **accepted** | Same run (21 MB `.rrd` = 64 frames × observation/dream/gt_decoded + 10 reconstruction grids, `rerun-sdk==0.31.4`, loaded live into the agent Rerun viewer) |
-| Tencent HY-World 2.0 | `hy_world_2_image_conditioned_world_generation` / `hy_world_2_generated_scene_camera_render` / `hy_world_2_factual_scene_report` | **blocked before Tencent-byte fetch** | Candidate code and neutral bootstrap only. The private assignment record lacks the required territorial/MAU eligibility fact or Tencent grant; no image digest, GPU run, source/weight fetch, or accepted scene artifact is claimed. |
+| Tencent HY-World 2.0 | `hy_world_2_image_conditioned_world_generation` / `hy_world_2_generated_scene_camera_render` / `hy_world_2_factual_scene_report` | **unvalidated runtime-fetch candidate** | Candidate code and neutral bootstrap only. Exact component access, a private image digest, a private Qwen3-VL endpoint, and real GPU evidence remain required; no accepted scene artifact is claimed. |
 | Wan 2.2 TI2V-5B | `wan2.2_ti2v_5b_text_to_video` | **accepted** | exact zero-payload public-dev digest with Torch 2.13.0/CUDA 13.0: native TI2V-5B generation on RTX PRO 6000 Blackwell (`sm_120`) |
 | Wan 2.2 TI2V-5B | `wan2.2_decoded_mp4_validation` | **accepted** | same exact-digest run: 2,807,385-byte H.264 MP4, 1280x704, 17 frames at 24 fps; full decode and non-uniform-content gates passed |
 | Wan 2.2 TI2V-5B | `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | **accepted historical evidence** | prior Torch 2.7.1/CUDA 12.8/NCCL 2.27.7 runtime: one node, 4×B200 (`sm_100`), world size 4, T5/DiT FULL_SHARD FSDP, Ulysses size 4, and official `generate.py`; current NCCL 2.29.7 gate is not yet live-qualified |
@@ -520,19 +520,19 @@ exists.
 
 | Capability | Status | Upstream basis |
 | --- | --- | --- |
-| `hy_world_2_image_conditioned_world_generation` | blocked before Tencent-byte fetch | Actual Qwen-image HY-Pano → WorldNav → WorldStereo → `gen_gs_data.py` → `world_gs_trainer` sequence, not a multi-view reconstruction |
-| `hy_world_2_generated_scene_camera_render` | blocked before Tencent-byte fetch | Validated generated camera render plus WorldStereo output, upstream `camera.json`, nontrivial PLY/SPZ, and output hashes |
-| `hy_world_2_factual_scene_report` | blocked before Tencent-byte fetch | Rerun recording built only after output validation and re-checked with `rerun rrd verify` / `stats` |
+| `hy_world_2_image_conditioned_world_generation` | unvalidated runtime-fetch candidate | Actual Qwen-image HY-Pano → WorldNav → WorldStereo → `gen_gs_data.py` → `world_gs_trainer` sequence, not a multi-view reconstruction |
+| `hy_world_2_generated_scene_camera_render` | unvalidated runtime-fetch candidate | Validated generated camera render plus WorldStereo output, upstream `camera.json`, nontrivial PLY/SPZ, and output hashes |
+| `hy_world_2_factual_scene_report` | unvalidated runtime-fetch candidate | Rerun recording built only after output validation and re-checked with `rerun rrd verify` / `stats` |
 
 The Tencent HY-WORLD 2.0 Community License Agreement dated 2026-04-15 governs
 source/inference code/algorithms/weights, excludes the EU, UK and South Korea,
 and needs a Tencent licence for a covered entity with more than one million MAU
 at release. Its Section 5(b) prohibits training or improving another AI model
-with HY works or outputs. Until the private operator record resolves those facts
-or supplies a Tencent grant, runtime fetching, candidate builds and GPU
-submission are correctly blocked. The output frame is upstream world space and
-its scale is uncalibrated; text-to-world, mesh collision and robot-policy
-simulation remain deferred. See [`byof-hy-world.md`](byof-hy-world.md).
+with HY works or outputs. Use is Tencent's documented mechanism; NPA does not
+duplicate it with a local acceptance or territory/MAU form, and does not claim a
+Tencent grant. The output frame is upstream world space and its scale is
+uncalibrated; text-to-world, mesh collision and robot-policy simulation remain
+deferred. See [`byof-hy-world.md`](byof-hy-world.md).
 
 ### Alibaba Wan 2.2 TI2V-5B
 

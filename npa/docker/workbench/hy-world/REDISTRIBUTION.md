@@ -22,12 +22,16 @@ for EU, UK, or South Korea use, and an entity with more than 1,000,000 MAU at
 release needs a Tencent licence. Section 5(b) forbids using HY-World works or
 Outputs to train or improve another AI model. These are operator facts; an
 `ACCEPT=YES` environment variable would establish none of them and is not used.
+Use is the documented Tencent acceptance mechanism. NPA does not collect a
+duplicate acceptance or territory/MAU attestation, and does not claim that a
+workflow run creates a Tencent grant. The operator remains responsible for
+their use under the Agreement.
 
 ## Six boundaries
 
 | Boundary | Delivery and decision |
 | --- | --- |
-| Tencent source | Not baked. `hy-world-runtime ensure` fetches the exact Git commit and recursive gitlinks into the operator cache only after the private terms preflight. |
+| Tencent source | Not baked. `hy-world-runtime ensure` fetches the exact Git commit and recursive gitlinks into the operator cache after exact component-access checks. |
 | Baked runtime | Digest-pinned CUDA 12.8 development bootstrap, compiler toolchain, ffmpeg, git, uv, Hugging Face client, and NPA-owned validation/report scripts. It contains no Python environment, model, source tree, extension binary, cache, input, or output. The component closure has not yet received a built-byte review, so the candidate is `unvalidated`, not publicly redistributable. |
 | Weights | Tencent HY-World and WorldStereo, Qwen Image, ZIM, Grounding DINO, SAM 3, MoGe, and Uni3C are never baked. Runtime fetch pins exact Hub revisions and switches Hub access offline afterwards. |
 | Data/assets | No input, sample scene, panorama, mesh, or camera data is baked. The operator supplies one image through the declared private S3 input object. |

@@ -44,19 +44,21 @@ Tencent's HY-WORLD 2.0 Community License Agreement dated 2026-04-15 covers the
 source, algorithms, inference/training code, and weights. It excludes the EU,
 UK, and South Korea; an entity over one million MAU at release needs a Tencent
 licence; and Section 5(b) prohibits using HY works or outputs to train or
-improve another AI model. Before Tencent bytes are fetched, a private,
-run-scoped operator record must resolve the territory/MAU condition or cite a
-Tencent grant. There is intentionally no `ACCEPT_TERMS` flag.
+improve another AI model. Use is the documented Tencent acceptance mechanism.
+NPA therefore has no `ACCEPT_TERMS` flag and does not collect a duplicate
+territory/MAU attestation or claim that a workflow run creates a Tencent grant.
+The operator remains responsible for using the components and outputs under the
+Agreement; this workflow has no trainer or policy consumer for its outputs.
 
 `facebook/sam3` is a separate gated Meta/Hugging Face access decision: the
 operator must complete its provider-side terms/contact flow and verify access to
 the exact pinned revision. NPA's current `health access` catalog has no
-`hy-world` capability, so it cannot stand in for either Tencent eligibility or
-the SAM 3 approval. Do not invent an acceptance flag or treat an unrelated HF
-probe as proof of either fact.
+`hy-world` capability, so it cannot stand in for exact runtime component access
+or the SAM 3 approval. Do not invent an acceptance flag or treat an unrelated
+HF probe as proof of either fact.
 
-After the private record and provider approvals exist, select the actual run
-project *before* testing credentials. This makes the S3 probe use that
+After exact provider access is available, select the actual run project *before*
+testing credentials. This makes the S3 probe use that
 project's configured bucket and credentials rather than an ambient default:
 
 ```bash
@@ -68,8 +70,8 @@ npa workbench workflow validate-spec workflows/testing/byof-hy-world.yaml --json
 
 The first command verifies the selected control-plane identity, Hugging Face
 credential, and selected-project S3 access. The second is offline declaration
-validation. Neither checks Tencent eligibility, approves SAM 3, builds an
-image, reserves a GPU, or proves model execution.
+validation. Neither proves exact runtime component access, builds an image,
+reserves a GPU, or proves model execution.
 
 ### Build and privately deliver the neutral bootstrap
 

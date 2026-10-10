@@ -219,10 +219,10 @@ RTX-only and must not route to B200 or B300.
 `npa-hy-world` is likewise unbuilt and has no CUDA, PyTorch, renderer, image
 digest, or hardware evidence. Its 8×B200 workflow profile follows the released
 upstream multi-GPU sequence and is a future validation target, not a claim that
-the bootstrap or any model component can execute on B200. Tencent's
-territory/MAU eligibility fact or a Tencent grant is absent from the assigned
-private scope, so no Tencent source or model bytes have been fetched to measure
-an architecture list or perform a live run.
+the bootstrap or any model component can execute on B200. Tencent's use-based
+mechanism does not create a duplicate NPA territory/MAU form; exact component
+access, an immutable private digest, and a compatible B200 route are still
+required before source/model bytes are fetched or a live run begins.
 
 ### Rendering is not portable across these columns
 

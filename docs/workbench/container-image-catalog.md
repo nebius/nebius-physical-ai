@@ -95,8 +95,8 @@ anonymous pull, or current GPU capability is claimed.
 HY-World 2.0 is another quarantined, neutral runtime-fetch bootstrap. It has no
 public row because no image was built or pushed: Tencent source, weights, model
 caches, inputs and generated scenes are all excluded from its layers. Tencent's
-territory/MAU condition is unresolved in the assigned private operator scope, so
-there is no candidate digest, anonymous pull, GPU evidence, or supported
+use-based mechanism has no duplicate NPA acceptance or territory/MAU form.
+There is no candidate digest, anonymous pull, GPU evidence, or supported
 release. The planned B200 profile is a future exact-digest validation target,
 not a compatibility statement. See [`byof-hy-world.md`](byof-hy-world.md).
 

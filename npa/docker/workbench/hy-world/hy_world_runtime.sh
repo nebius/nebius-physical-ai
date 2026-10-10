@@ -104,10 +104,13 @@ It also forbids using HY-World works or Outputs to train/improve another AI mode
 This bootstrap cannot determine an operator's territory, MAU, vendor grant, or
 downstream use. It deliberately has no ACCEPT_TERMS-style self-certification.
 
-Before `ensure` or `run-image-to-world`, the operator must have a private,
-run-scoped record resolving those facts and complete an exact upstream access
-preflight for every fetched component. This image does not redistribute Tencent
-bytes; it fetches them only into the operator's mounted runtime/model cache.
+Use is Tencent's documented acceptance mechanism. NPA neither collects a
+duplicate acceptance nor asks the operator to self-attest territory or MAU; it
+does not claim to create a Tencent grant. The operator remains responsible for
+using the fetched components and Outputs under the Agreement. Complete exact
+upstream access checks for every fetched component. This image does not
+redistribute Tencent bytes; it fetches them only into the operator's mounted
+runtime/model cache.
 
 The released trajectory stage also loads Meta SAM 3 from Hugging Face. Its
 repository requires the operator to agree to its own access terms and share

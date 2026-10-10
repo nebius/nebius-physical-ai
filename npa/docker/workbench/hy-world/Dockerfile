@@ -1,7 +1,8 @@
 # npa-hy-world is a zero-Tencent-payload bootstrap, not a packaged HY-World
 # distribution. Tencent's Community License covers both its source/inference
-# code and its model weights, so they are fetched only by an eligible operator
-# into a mounted runtime cache after an external terms/access preflight.
+# code and its model weights, so they are fetched by the operator into a mounted
+# runtime cache after exact component-access checks. The image collects no
+# duplicate Tencent acceptance or territory/MAU attestation.
 #
 # This is deliberately a CUDA *devel* image: the released upstream worldgen
 # path compiles its own gsplat, NavMesh, PyTorch3D, and FlashAttention extensions
