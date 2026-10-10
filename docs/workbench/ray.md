@@ -11,16 +11,17 @@ Workbench service, or workflow surface listed below.
 | --- | --- | --- |
 | Edit and run a distributed GPU application | SkyPilot hosts plus native Ray Jobs and Core | [GPU Ray Jobs guide](../testing/fast-source-iteration.md) |
 | Exercise multi-node GPU training and recovery | Guarded Ray Train V2 synthetic reference | [Ray Train reference](../../npa/workflows/workbench/ray-train-synthetic/README.md) |
-| Keep Cosmos3-Nano loaded for repeated batches | `npa workbench cosmos3 ray-serve` and `ray-batch` | [Cosmos3 native Ray Serve](cosmos3-ray-serve.md) |
+| Keep Cosmos3-Nano loaded for repeated batches | Ray Serve source contract; deployment blocked pending a rebuilt qualified candidate | [Cosmos3 native Ray Serve](cosmos3-ray-serve.md) |
 | Provision a fixed CPU RayCluster | `npa fleet` KubeRay policy, then native Ray Jobs | [Fleet KubeRay guide](../fleet-kuberay.md) |
 | Use Ray Data | No first-class Workbench path | Submit your own trusted Ray application through a Jobs path above. |
 | Use Ray Tune | No first-class Workbench path | Submit your own trusted Ray application; Workbench ships no Tune recipe or artifact contract. |
 
 The CLIP and Train examples are guarded application references outside the
 `npa.workflow` catalog. The Cosmos batch client is the only Ray-backed path in a
-checked-in `npa.workflow` spec (`workflows/testing/cosmos3-ray-batch.yaml`), and
-its persistent service must already be ready. KubeRay is infrastructure policy,
-not a workflow runtime or Jobs controller.
+checked-in `npa.workflow` spec (`workflows/testing/cosmos3-ray-batch.yaml`). Its
+persistent service must be a newly qualified candidate, not the quarantined
+historical Ray Serve image. KubeRay is infrastructure policy, not a workflow
+runtime or Jobs controller.
 
 ## Ray version matrix
 
@@ -119,8 +120,11 @@ do not apply Ray Train V1 restore APIs.
 
 ### Ray Serve
 
-Cosmos3-Nano has the only first-class Workbench Ray Serve path. Before starting
-GPU work, verify credentials, model access, and the accepted image definition:
+Cosmos3-Nano has the only first-class Workbench Ray Serve source path, but no
+current accepted deployment image. The historical Ray Serve digest is quarantined
+and must not be started or used for batch submission. After a rebuilt candidate
+passes its exact-image security and capability gates, verify credentials, model
+access, and that accepted candidate definition before starting GPU work:
 
 ```bash
 npa workbench health preflight --checks hf,ngc,s3 --json
@@ -128,8 +132,8 @@ npa workbench health access --capability cosmos3 --json
 npa workbench golden-eval show cosmos3-ray-serve
 ```
 
-Inside the digest-pinned service image, start the model and upstream batching
-implementation with:
+Only inside that rebuilt, digest-pinned qualified candidate, start the model and
+upstream batching implementation with:
 
 ```bash
 npa workbench cosmos3 ray-serve --world-size 1 --max-batch-size 4

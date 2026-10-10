@@ -196,6 +196,29 @@ def test_stale_publications_are_built_releases_awaiting_requalification() -> Non
         assert not SUPPORTED_TOOL_VERSIONS[tool].endswith(UNBUILT_TAG_SUFFIX), tool
 
 
+def test_ray_serve_catalog_does_not_overstate_layer_stale_bytes() -> None:
+    """A quarantined Ray Serve digest cannot advertise current acceptance."""
+
+    tool = "cosmos3-ray-serve"
+    assert tool in LAYER_STALE_PUBLICATION_TOOLS
+    entry = _blackwell_images()[_image_name(tool)]
+
+    assert entry["verdict"] == "quarantined"
+    assert entry["validation"] == PENDING_BUILD
+    assert str(entry["quarantine_reason"]).strip()
+    assert (
+        entry["historical_validation"]["invalidated_by_current_byte_security"] is True
+    )
+    assert re.fullmatch(
+        r"sha256:[0-9a-f]{64}", str(entry["historical_validation"]["digest"])
+    )
+    assert re.fullmatch(
+        r"sha256:[0-9a-f]{64}", str(entry["historical_publication"]["digest"])
+    )
+    assert "validated_digest" not in entry
+    assert "published_digest" not in entry
+
+
 def test_stale_publication_quarantine_propagates_to_derived_images() -> None:
     """A child cannot be accepted while retaining every layer of a stale parent."""
 

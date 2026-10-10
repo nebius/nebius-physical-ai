@@ -8,13 +8,17 @@ uses NVIDIA cosmos-framework 1.2.2's native `OmniModelDeployment`, including its
 real `@ray.serve.batch` → `OmniInference.generate_batch` path. It does not use
 vLLM-Omni.
 
-The service is intended for synthetic-data-generation queues that benefit from
-resident weights and structured Cosmos outputs. The image is a thin derivative
-of the exact accepted `npa-cosmos3` digest: it adds authenticated ingress and the
-NPA S3 client/provenance contract, but no model, VAE, guardrail, credential,
-dataset, or generated output.
+The source recipe is intended for synthetic-data-generation queues that benefit
+from resident weights and structured Cosmos outputs. The retained historical
+image inherits an affected Cosmos3 base and is quarantined: it must not be
+deployed or described as ready. A rebuilt child of a repaired, qualified base
+must pass exact-image security and capability validation before this source
+contract has a deployable image.
 
 ## Runtime contract
+
+This contract describes a future rebuilt, qualified candidate. Do not start the
+retained historical image while it remains quarantined.
 
 The container starts `npa workbench cosmos3 ray-serve`. Important settings:
 
@@ -63,8 +67,9 @@ against `NPA_COSMOS3_RAY_ALLOWED_S3_ROOTS` before staging it into a fresh reques
 directory. HTTP(S), server-local paths, custom defaults files, and decoded S3
 keys that the storage parser would reinterpret (such as encoded query/fragment
 characters or tabs/newlines) are rejected. The updated client checks that same
-S3 key contract before submitting inference. These protections require the
-current server source; the retained accepted image alone predates them.
+S3 key contract before submitting inference. These protections require a rebuilt
+qualified candidate from the current server source; the retained historical image
+is quarantined and is not a substitute.
 
 Do not expose the endpoint to untrusted clients. Limit token distribution to the
 workflow pods that own the generation queue, isolate the service from unrelated
@@ -95,16 +100,13 @@ The submitted samples become concurrent deployment-handle calls; upstream Ray
 Serve performs the actual batching. NPA publishes the original request,
 structured `SampleOutputs`, generated media, hashes, and `provenance.json`.
 
-The declarative example is `workflows/testing/cosmos3-ray-batch.yaml`. Its default
-catalog image is the accepted service image, which still bundles the older
-client, and the example does not enable a source overlay. The integrity checks
-below apply to the updated installed client shown above; the unchanged workflow
-default does not provide them. Updating a host's NPA installation does not update
-the client inside that image. The accepted service digest remains wire-compatible
-with the updated client. It does not acquire the current source's Ray management
-authentication, scoped S3 input staging, or Ray 2.58/Torch 2.13 runtime changes.
-Those require validation of the actual service runtime; the retained two-image
-proof applies only to its original immutable image.
+The declarative example is `workflows/testing/cosmos3-ray-batch.yaml`. Its
+historical default image is quarantined and must not be deployed. After a rebuilt
+candidate is qualified, its packaged client and service runtime must be validated
+as one exact image. Updating a host's NPA installation does not update the client
+inside an image. Historical observations do not qualify a replacement image or
+its Ray management authentication, scoped S3 input staging, or Ray 2.58/Torch
+2.13 runtime changes.
 
 The client assigns a request ID before submission when the input omits one and
 persists that ID in `request.json`. It requires the supported response schema,
@@ -139,8 +141,9 @@ requires `num_outputs=1` per named sample; request several named samples for
 several outputs. Use a new request ID for new inference; the service reserves
 each request directory once.
 
-Run the committed live client check against the current guarded service source
-with an operator-owned S3 output prefix. Configure the service's
+Only after a rebuilt candidate is qualified, run the committed live client check
+against that exact guarded service image with an operator-owned S3 output prefix.
+Do not run it against the retained quarantined image. Configure the service's
 `NPA_COSMOS3_RAY_ALLOWED_S3_ROOTS` and storage credentials to read that prefix:
 
 ```bash
@@ -168,14 +171,12 @@ Before launch, run `npa workbench health preflight --checks hf,ngc,s3 --json`
 and `npa workbench health access --capability cosmos3 --json`. Keep exact cloud
 resource and storage identifiers only in access-controlled validation evidence.
 
-The supported public release is `ray1-cu130`. It and the retained immutable
-development tag `dev-56d8c4f3f05db7aa3b03323441a3e0d7b97ac8da` resolve to
+There is no currently supported public Ray Serve release. The retained
+2026-08-26 evidence records the historical `ray1-cu130` tag and immutable
+development tag `dev-56d8c4f3f05db7aa3b03323441a3e0d7b97ac8da` as resolving to
 `sha256:6e42f553a0d14712dc1ed7fa42c72b0f083f4ae3f89b30eaf0e93cfdf64e820d`.
-On 2026-08-26, that exact digest completed independent guarded two-sample
-text-to-image batches on B200 and RTX PRO 6000. Each run returned two structured
-outputs and two decodable images and persisted five S3 objects (request,
-response, provenance, and media). B200 artifact hashes were
-`3a91a993e19e…` and `8838f93a8831…`; RTX PRO 6000 hashes were
-`357ca45a4121…` and `4345aac2743c…`. The measured runtime was Torch
-2.10.0+cu130 with native `sm_100` and `sm_120` SASS. Concrete service, cluster,
-and storage identifiers remain only in the access-controlled evidence record.
+That retained digest is quarantined after the current archive scan found
+inherited credential material. Its B200 and RTX PRO 6000 two-sample observations
+remain historical evidence only and do not qualify the retained bytes or any
+rebuilt candidate. A replacement must independently satisfy the current security
+and capability gates on each claimed device.
