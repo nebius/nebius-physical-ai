@@ -3755,6 +3755,8 @@ def test_verified_current_unlaunched_status_bypasses_provider_lookup(
     from npa.orchestration.npa_workflow.submission_state import update_submission_state
 
     monkeypatch.setenv("HOME", str(tmp_path))
+    fake_s3 = FakeWorkflowS3()
+    _patch_workflow_s3(monkeypatch, fake_s3)
     update_submission_state(
         "demo",
         "reserved-run",
@@ -3763,12 +3765,6 @@ def test_verified_current_unlaunched_status_bypasses_provider_lookup(
             "workflow": {"name": "physical-ai-data-factory"},
             "planning": {"state": "durable"},
         },
-    )
-    monkeypatch.setattr(
-        "npa.orchestration.skypilot.workflow_state.resolve_project_storage",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("no-launch status must not query storage")
-        ),
     )
     monkeypatch.setattr(
         "npa.orchestration.npa_workflow.run_resolution.lookup_managed_job",
@@ -3786,6 +3782,10 @@ def test_verified_current_unlaunched_status_bypasses_provider_lookup(
             "reserved-run",
             "--project",
             "demo",
+            "--s3-bucket",
+            "bucket",
+            "--s3-endpoint",
+            "https://storage.example",
             "--json",
         ],
     )
@@ -3795,6 +3795,7 @@ def test_verified_current_unlaunched_status_bypasses_provider_lookup(
     assert payload["status"] == "NOT_SUBMITTED"
     assert payload["verification_status"] == "VERIFIED"
     assert payload["resolution_source"] == "durable_submission_receipt"
+    assert fake_s3.get_requests
 
 
 def test_prepare_run_persists_current_schema_plan_only_evidence(

@@ -551,12 +551,13 @@ def resolve_run(
             "durable_submission_receipt", receipt_read.outcome, receipt_read.error
         )
     )
+    local_not_submitted_candidate = False
     if receipt_read.outcome == "unavailable":
         result.verification_unavailable = True
     elif receipt_read.outcome == "found":
         workflow = _receipt_workflow(result.receipt)
         launch = _receipt_launch(result.receipt)
-        if (
+        local_not_submitted_candidate = (
             allow_local_not_submitted
             and not explicit_uri
             and not exact_job_id
@@ -564,16 +565,13 @@ def resolve_run(
             and submission_proves_never_launched(
                 result.receipt, project=ledger_project, run_id=resolved_id
             )
-        ):
+        )
+        if local_not_submitted_candidate:
             result.checks[-1] = ResolutionCheck(
                 "durable_submission_receipt",
                 "found",
-                "current exact ledger has no launch transition; provider lookup skipped",
+                "current exact ledger has no launch transition; S3 discovery required",
             )
-            result.not_submitted = True
-            result.source = "durable_submission_receipt"
-            result.workflow_name = str(workflow.get("name") or "")
-            return result
         launch_status = str(launch.get("status") or "").lower()
         receipt_proves_run = bool(
             workflow
@@ -662,6 +660,7 @@ def resolve_run(
         )
 
     parent: WorkflowS3Config | None = None
+    ordinary_checked = False
     if not explicit_uri and not result.found:
         try:
             parent = _parent_state(
@@ -733,6 +732,61 @@ def resolve_run(
             )
         )
 
+    # A current local receipt with no launch transition can avoid an unneeded
+    # managed-job lookup, but only after every durable S3 convention has had a
+    # chance to contradict it.  In particular, a separate submit process may
+    # have written an ordinary or PAIDF-convention manifest without updating
+    # this local receipt.
+    if (
+        local_not_submitted_candidate
+        and not result.found
+        and not result.verification_unavailable
+    ):
+        try:
+            if parent is None:
+                parent = _parent_state(
+                    run_id=resolved_id,
+                    project=project,
+                    workflow_s3_prefix=workflow_s3_prefix,
+                    s3_bucket=s3_bucket,
+                    s3_endpoint=s3_endpoint,
+                )
+            base = parent.prefix.strip("/")
+            ordinary_prefix = "/".join(part for part in (base, resolved_id) if part)
+            ordinary_state = _child_state(parent, ordinary_prefix)
+            outcome, manifest, detail = _probe_manifest(ordinary_state, resolved_id)
+            result.checks.append(ResolutionCheck("ordinary_workflow", outcome, detail))
+            ordinary_checked = True
+            if outcome == "found" and manifest is not None:
+                return _mark_manifest(
+                    result,
+                    state=ordinary_state,
+                    manifest=manifest,
+                    source="ordinary_workflow",
+                )
+            if outcome == "unavailable":
+                result.verification_unavailable = True
+        except Exception as exc:  # noqa: BLE001
+            result.checks.append(
+                ResolutionCheck(
+                    "ordinary_workflow", "unavailable", redact_text(str(exc))
+                )
+            )
+            ordinary_checked = True
+            result.verification_unavailable = True
+        if not result.verification_unavailable:
+            result.checks.append(
+                ResolutionCheck(
+                    "managed_job",
+                    "skipped",
+                    "current exact ledger and all applicable S3 paths show no launch",
+                )
+            )
+            result.not_submitted = True
+            result.source = "durable_submission_receipt"
+            result.workflow_name = str(workflow.get("name") or "")
+            return result
+
     explicit_route = bool(result.sky_bin or result.isolated_config_dir is not None)
     route_missing = bool(result.job_id) and not (
         result.controller_route_recorded or explicit_route
@@ -785,11 +839,12 @@ def resolve_run(
         result.verification_unavailable = True
 
     if result.found:
-        result.checks.append(
-            ResolutionCheck(
-                "ordinary_workflow", "skipped", f"resolved via {result.source}"
+        if not ordinary_checked:
+            result.checks.append(
+                ResolutionCheck(
+                    "ordinary_workflow", "skipped", f"resolved via {result.source}"
+                )
             )
-        )
         return result
 
     if explicit_uri:
@@ -798,7 +853,7 @@ def resolve_run(
                 "ordinary_workflow", "skipped", "explicit URI was checked exactly"
             )
         )
-    else:
+    elif not ordinary_checked:
         try:
             if parent is None:
                 parent = _parent_state(

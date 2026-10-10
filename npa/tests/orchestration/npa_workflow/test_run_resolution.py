@@ -1195,7 +1195,6 @@ def test_stale_planned_receipt_cannot_override_terminal_s3_manifest(
     resolved = resolve_run(
         run_id,
         project="paidf",
-        workflow_s3_uri=f"s3://alias-bucket/physical-ai-data-factory/{run_id}/npa-workflow",
         allow_local_not_submitted=True,
     )
     assert resolved.found is True
@@ -1204,7 +1203,7 @@ def test_stale_planned_receipt_cannot_override_terminal_s3_manifest(
     assert resolved.manifest["status"] == "SUCCEEDED"
 
 
-def test_current_unlaunched_ledger_skips_unavailable_provider_lookup(
+def test_current_unlaunched_ledger_remains_unavailable_when_s3_is_unavailable(
     resolver_env: ExactS3, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     run_id = "planned-but-storage-unavailable"
@@ -1218,18 +1217,41 @@ def test_current_unlaunched_ledger_skips_unavailable_provider_lookup(
         },
     )
     resolver_env.failure = PermissionError("eventual consistency / auth outage")
+    resolved = resolve_run(run_id, project="paidf", allow_local_not_submitted=True)
+    assert resolved.not_submitted is False
+    assert resolved.verification_unavailable is True
+    assert any(check.source == "canonical_paidf_s3_prefix" for check in resolved.checks)
+    assert any(check.source == "ordinary_workflow" for check in resolved.checks)
+
+
+def test_current_unlaunched_ledger_checks_s3_before_skipping_provider(
+    resolver_env: ExactS3, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_id = "planned-without-remote-state"
+    update_submission_state(
+        "paidf",
+        run_id,
+        {
+            "launch_state": "planned",
+            "workflow": {"name": "physical-ai-data-factory"},
+            "planning": {"state": "durable"},
+        },
+    )
     monkeypatch.setattr(
         "npa.orchestration.npa_workflow.run_resolution.lookup_managed_job",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("no-launch ledger must bypass managed-job lookup")
+            AssertionError("S3 absence should make the local receipt sufficient")
         ),
     )
 
     resolved = resolve_run(run_id, project="paidf", allow_local_not_submitted=True)
+
+    outcomes = {check.source: check.outcome for check in resolved.checks}
     assert resolved.not_submitted is True
     assert resolved.verification_unavailable is False
-    assert resolved.source == "durable_submission_receipt"
-    assert resolver_env.queries == []
+    assert outcomes["canonical_paidf_s3_prefix"] == "absent"
+    assert outcomes["ordinary_workflow"] == "absent"
+    assert outcomes["managed_job"] == "skipped"
 
 
 def test_current_unlaunched_ledger_does_not_override_terminal_record(
