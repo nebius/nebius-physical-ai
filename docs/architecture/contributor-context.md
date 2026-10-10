@@ -28,8 +28,9 @@ nebius-physical-ai/
 │   ├── workbench-yaml-guide.md   # SkyPilot YAML pipeline guide (living doc)
 │   └── demos/                    # Demo runbooks and assets
 ├── workflows/                    # Declarative workflow catalog and README
-│   ├── main/                     # sim2real.yaml, paidf-cosmos3.yaml, nurec-reconstruct.yaml
-│   └── testing/                  # All other catalog workflow specs
+│   ├── main/                     # promoted principal pipelines; see workflows/README.md
+│   ├── testing/                  # General references, component tests, and fixtures
+│   └── partners/<partner>/       # Partner integrations and runbooks
 ├── npa/scripts/                  # Pipeline runner scripts
 ├── skills/                       # Root agent skills manifest and workflow/atomic/tool skills
 ├── .agents/skills                # Compatibility symlink to ../skills

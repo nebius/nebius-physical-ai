@@ -35,7 +35,7 @@ before choosing LeRobot, Isaac Lab, SONIC, or GR00T-specific skills.
   workflow YAMLs are executable references. The parallel sweep is now the
   `npa.workflow` spec `workflows/testing/isaac-lab-rl-sweep.yaml` (`--runtime`); its
   raw template is retired. GR00T N1.7 training uses the real
-  `workflows/testing/groot-1-7-finetune.yaml` toolRef path, with `gpu_count`
+  `workflows/main/groot-1-7-finetune.yaml` toolRef path, with `gpu_count`
   propagated into both H100 resources and the upstream trainer world size.
 
 ## Gotchas
