@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import io
 import json
+import runpy
 from pathlib import Path
 from threading import Barrier, Event
 from types import SimpleNamespace
@@ -265,7 +266,7 @@ def test_capture_without_cameras_uploads_only_metadata(monkeypatch, tmp_path):
     assert [call[2] for call in s3.calls] == ["metrics.json"]
 
 
-def _native_upload_namespace(exit_process):
+def _native_upload_namespace(exit_process, tmp_path):
     return {
         "os": SimpleNamespace(
             _exit=exit_process,
@@ -290,13 +291,13 @@ def _native_upload_namespace(exit_process):
         "SAMPLE_STEPS": [0],
         "PNG_COMPRESS_LEVEL": 1,
         "CAPTURE_FPS": 30,
-        "FRAMES_DIR": "/tmp/rollwork/frames",
+        "FRAMES_DIR": str(tmp_path / "frames"),
         "OUT_S3": "s3://bucket/rollouts",
-        "OUT": "/tmp/evalwork/metrics.json",
+        "OUT": str(tmp_path / "metrics.json"),
     }
 
 
-def _native_upload_invocation(kind, namespace):
+def _native_upload_source(kind):
     from npa.workflows.sim2real import byo_isaac_eval, byo_isaac_policy_rollout
 
     if kind == "rollout":
@@ -306,34 +307,25 @@ def _native_upload_invocation(kind, namespace):
             for node in nodes
             if isinstance(node, ast.FunctionDef) and node.name == "upload_and_exit"
         )
-        exec(compile(ast.Module([function], []), "<native-rollout>", "exec"), namespace)
-
-        def invoke():
-            namespace["upload_and_exit"]([], "test")
-    else:
-        nodes = ast.parse(byo_isaac_eval.ISAAC_EVAL_SCRIPT).body
-        index = next(
-            i
-            for i, node in enumerate(nodes)
-            if isinstance(node, ast.Try)
-            and any(
-                isinstance(item, ast.ImportFrom)
-                and item.module == "npa.workflows.sim2real.isaac_job_io"
-                for item in node.body
-            )
+        return ast.unparse(function) + "\nupload_and_exit([], 'test')\n"
+    nodes = ast.parse(byo_isaac_eval.ISAAC_EVAL_SCRIPT).body
+    index = next(
+        i
+        for i, node in enumerate(nodes)
+        if isinstance(node, ast.Try)
+        and any(
+            isinstance(item, ast.ImportFrom)
+            and item.module == "npa.workflows.sim2real.isaac_job_io"
+            for item in node.body
         )
-        code = compile(ast.Module(nodes[index:], []), "<native-evaluation>", "exec")
-
-        def invoke():
-            exec(code, namespace)
-
-    return invoke
+    )
+    return ast.unparse(ast.Module(nodes[index:], []))
 
 
 @pytest.mark.parametrize("kind", ["rollout", "evaluation"])
 @pytest.mark.parametrize("upload_fails", [False, True])
 def test_native_camera_scripts_exit_unsuccessfully_when_upload_fails(
-    monkeypatch, kind, upload_fails
+    monkeypatch, tmp_path, kind, upload_fails
 ):
     calls = []
 
@@ -346,9 +338,10 @@ def test_native_camera_scripts_exit_unsuccessfully_when_upload_fails(
         raise SystemExit(code)
 
     monkeypatch.setattr(isaac_job_io, "upload_capture", publish)
-    namespace = _native_upload_namespace(exit_process)
-    invoke = _native_upload_invocation(kind, namespace)
+    namespace = _native_upload_namespace(exit_process, tmp_path)
+    script = tmp_path / "native-upload.py"
+    script.write_text(_native_upload_source(kind))
     with pytest.raises(SystemExit) as raised:
-        invoke()
+        runpy.run_path(str(script), init_globals=namespace)
     assert raised.value.code == (1 if upload_fails else 0)
     assert len(calls) == 1

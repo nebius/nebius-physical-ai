@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import runpy
 from pathlib import Path
 import types
 
@@ -49,8 +50,10 @@ def test_native_camera_synchronization_failure_rejects_evaluation(
         "_RENDERS_LOCAL_DIR": tmp_path,
         "safe_s3_download_target": ev.safe_s3_download_target,
     }
+    script = tmp_path / "camera-sync.py"
+    script.write_text(ast.unparse(block))
     with pytest.raises(RuntimeError, match="camera synchronization failed") as raised:
-        exec(compile(ast.Module([block], []), "<camera-sync>", "exec"), namespace)
+        runpy.run_path(str(script), init_globals=namespace)
     assert raised.value.__cause__ is failure
 
 
