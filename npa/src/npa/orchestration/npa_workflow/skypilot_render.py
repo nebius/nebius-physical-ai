@@ -74,6 +74,7 @@ TOOL_REF_IMAGE_TOOL: dict[str, str | None] = {
     "workbench.alpamayo2_super": "alpamayo2-super",
     "workbench.flex_pi": "flex-pi",
     "workbench.curobo": "curobo",
+    "workbench.seedvr2": "seedvr2",
     "workbench.fiftyone": "fiftyone",
     "workbench.rl": "isaac-lab",
     "workbench.isaac_lab": "isaac-lab",

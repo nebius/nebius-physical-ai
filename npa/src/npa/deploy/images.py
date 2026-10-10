@@ -199,6 +199,7 @@ CONTAINER_IMAGE_NAMES = {
     "curobo": "npa-curobo",
     "open3d": "npa-open3d",
     "mjlab": "npa-mjlab",
+    "seedvr2": "npa-seedvr2",
     "content-agents": "npa-content-agents",
     "ncore": "npa-ncore",
     "robotwin": "npa-robotwin",
@@ -306,7 +307,7 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 # Independent OSS catalog additions stay quarantined as soon as their image
 # names are registered. An absent tool is not added to the publication inventory.
 UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
-    {"openpi", "curobo", "ncore", "libero", "sam3"}
+    {"seedvr2", "openpi", "curobo", "ncore", "libero", "sam3"}
 ) | frozenset({"robotwin", "robomimic", "habitat-sim"} & CONTAINER_IMAGE_NAMES.keys())
 VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset(
     {"antioch", "mjlab", "robocasa", "open3d"}
@@ -519,6 +520,7 @@ SUPPORTED_TOOL_VERSIONS = {
     # CPU-only, so this image carries no CUDA tag family.
     "open3d": "0.20.0-cpu-20260918",
     "mjlab": "dev-0202f396fb23f7d066fd452b469578e67151d382",
+    "seedvr2": "0.1.0-cu130-unbuilt",
     "content-agents": "0.5.2-npa2",
     # Source packaging inventory only; no accepted public NCore release exists.
     "ncore": "59c698d206da92b406a4f72619fce3b3a2c64bfd-unbuilt",

@@ -44,7 +44,12 @@ lists other affected images and shipped workflows, including the Sim2Real seams.
 | Measure Cosmos 3 WAM training across B200 nodes | [Experimental Slurm recipe](cookbooks/cosmos3-wam-slurm.md) · [Measured 8/16-GPU results](evidence/cosmos3-wam-scaling/README.md) |
 | Scene reconstruction | [NuRec](guides/neural-reconstruction.md) · [living-lab fan-out](guides/living-lab-nurec-fanout.md) |
 | USD object preparation | [Content Agents](content-agents.md) |
-| Other video models | [Wan 2.2](wan2.2.md) · [LTX-2](ltx2.md) |
+| Video restoration and generation | [SeedVR2](seedvr2.md) · [Wan 2.2](wan2.2.md) · [LTX-2](ltx2.md) |
+
+SeedVR2 keeps H100/sample defaults; [explicit conditioning and hardware controls](seedvr2.md#explicit-conditioning-and-hardware) expose the experimental posterior-mode and qualified B200 paths without claiming quality improvement.
+
+SeedVR2 image maintainers can set `NPA_E2E_SEEDVR_READABILITY_BASE_IMAGE` to an
+existing tagged local SeedVR image ID for the [nonroot packaging check](seedvr2.md#check-nonroot-packaging-locally).
 
 ## Robotics and simulation
 

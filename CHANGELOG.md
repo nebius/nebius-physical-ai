@@ -7,6 +7,18 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+### SeedVR2 clean runtime and full bootstrap seed
+
+- Pin the full system setuptools seed to 84.0.0, separately from pip's limited
+  `pkg_resources` donor. Verify the wheel before replacing Ubuntu's seed in the
+  same image layer, and reject old or modified seed path files. This fixes the
+  seed's Unicode-normalization exclusion mismatch without changing the model
+  environment or treating historical images as repaired.
+- Export the repaired runtime producer into one clean-root layer and explicitly
+  retain its NVIDIA/NPA environment, non-root launch, cache volume and health
+  contract. Add source-bound clean-root qualification alongside the unchanged
+  complete-layer payload scan; source checks do not qualify new image bytes.
+
 ### Distinct known-count frame sampling
 
 - Keep `sequence` as uniform full-span sampling and make `keyframes` allocate
