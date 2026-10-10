@@ -29,7 +29,7 @@ same capability boundary.
 | EmbodiedGen source | `HorizonRobotics/EmbodiedGen@f0124197888c2b733e4eaa65acd81ad9cfda3b79`, Apache-2.0, runtime fetched |
 | TRELLIS source | upstream gitlink `55a8e8164b195bbf927e0978f00e76c835e6011f`, MIT, runtime fetched |
 | TRELLIS model | `microsoft/TRELLIS-image-large@25e0d31ffbebe4b5a97464dd851910efc3002d96`, MIT, runtime fetched and receipt-verified |
-| Validation runtime | upstream `requirements.txt` SHA-256 `acd142fb…af9157`; pinned NumPy/Pillow/trimesh/ImageIO/ImageIO-FFmpeg/PyBullet imports are probed with a real MP4 encode/decode before the smoke |
+| Validation runtime | upstream `requirements.txt` SHA-256 `acd142fb…af9157`; a NumPy-1.26-compatible SciPy/plyfile/tifffile/contourpy closure plus Pillow/trimesh/ImageIO/ImageIO-FFmpeg/PyBullet imports is probed with a real MP4 encode/decode before the smoke |
 | Blackwell bootstrap | exact upstream `install_basic.sh` SHA-256 `2969700d…f84d1`; the non-Conda CPython 3.12 worker restores `pip==24.0` before reuse, selects upstream Torch `cu128`, and probes Torch/CUDA, xformers, and spconv imports before model fetch |
 | Baked image | digest-pinned CUDA/OS bootstrap plus NPA fetch/validation code only; no source, model, task input, Python application dependencies, cache, output, or credential bytes |
 | Input and cache | worker-readable HTTPS or S3 image fetched into a run-local staging directory; fetched runtime cache is outside image layers and checked against receipts |

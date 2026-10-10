@@ -41,13 +41,19 @@ RUNTIME_CONTRACT = {
 }
 
 # EmbodiedGen's pinned requirements.txt names these validation dependencies but
-# leaves several of them unversioned.  Pin the imports used by
+# leaves several of them unversioned. Pin the imports used by
 # capability_smoke.py after the upstream installer so the generated-view and
-# physics checks do not depend on a future resolver result.
+# physics checks do not depend on a future resolver result. The constrained
+# numerical packages keep NumPy 1.26 compatible with packages the upstream
+# installer otherwise resolves to NumPy-2-only releases.
 VALIDATION_REQUIREMENTS = (
     "numpy==1.26.4",
+    "scipy==1.14.1",
     "Pillow==11.3.0",
     "trimesh==4.11.1",
+    "plyfile==1.0.3",
+    "tifffile==2024.8.30",
+    "contourpy==1.3.0",
     "imageio==2.37.4",
     "imageio-ffmpeg==0.6.0",
     "pybullet==3.2.7",
@@ -56,14 +62,19 @@ BOOTSTRAP_REQUIREMENTS = (
     "boto3==1.35.99",
     "defusedxml==0.7.1",
 )
-VALIDATION_RUNTIME_PROBE = """from pathlib import Path
+VALIDATION_RUNTIME_PROBE = """from io import BytesIO
+from pathlib import Path
 import tempfile
 
 import imageio.v3 as iio
 import imageio_ffmpeg
 import numpy as np
+import contourpy
+import plyfile
 import pybullet_data
+import scipy
 import spconv.pytorch
+import tifffile
 import torch
 import trimesh
 import torchvision
@@ -72,12 +83,20 @@ from PIL import Image
 
 assert Path(imageio_ffmpeg.get_ffmpeg_exe()).is_file()
 assert pybullet_data.getDataPath()
+assert contourpy.__version__
+assert scipy.__version__ == "1.14.1"
+assert tifffile.__version__ == "2024.8.30"
 assert trimesh.__version__
 assert Image
 assert torch.__version__.startswith("2.8.0")
 assert torch.version.cuda == "12.8"
 assert torchvision.__version__.startswith("0.23.0")
 assert xformers.__version__ == "0.0.32.post2"
+vertex = np.array([(0.0, 0.0, 0.0)], dtype=[("x", "f4"), ("y", "f4"), ("z", "f4")])
+ply_buffer = BytesIO()
+plyfile.PlyData([plyfile.PlyElement.describe(vertex, "vertex")]).write(ply_buffer)
+ply_buffer.seek(0)
+assert plyfile.PlyData.read(ply_buffer)["vertex"].count == 1
 with tempfile.TemporaryDirectory() as directory:
     video = Path(directory) / "validation.mp4"
     frame = np.zeros((16, 16, 3), dtype=np.uint8)

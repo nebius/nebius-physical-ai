@@ -113,8 +113,12 @@ def test_runtime_bootstrap_pins_and_probes_validation_dependency_closure(
 ) -> None:
     expected = (
         "numpy==1.26.4",
+        "scipy==1.14.1",
         "Pillow==11.3.0",
         "trimesh==4.11.1",
+        "plyfile==1.0.3",
+        "tifffile==2024.8.30",
+        "contourpy==1.3.0",
         "imageio==2.37.4",
         "imageio-ffmpeg==0.6.0",
         "pybullet==3.2.7",
@@ -123,8 +127,20 @@ def test_runtime_bootstrap_pins_and_probes_validation_dependency_closure(
     assert "import imageio.v3 as iio" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
     assert "import imageio_ffmpeg" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
     assert "import numpy as np" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
+    assert "import contourpy" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
+    assert "import plyfile" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
     assert "import pybullet_data" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
+    assert "import scipy" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
     assert "import spconv.pytorch" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
+    assert "import tifffile" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
+    assert "from io import BytesIO" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
+    assert "plyfile.PlyElement.describe(vertex, \"vertex\")" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
+    assert "plyfile.PlyData.read(ply_buffer)[\"vertex\"].count == 1" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
+    assert 'assert scipy.__version__ == "1.14.1"' in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
+    assert (
+        'assert tifffile.__version__ == "2024.8.30"'
+        in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
+    )
     assert "import torch" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
     assert "import trimesh" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE
     assert "import torchvision" in BOOTSTRAP.VALIDATION_RUNTIME_PROBE

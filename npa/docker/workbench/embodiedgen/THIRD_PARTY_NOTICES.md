@@ -6,12 +6,14 @@
 - `openbmb/MiniCPM-V-4_5` — Apache-2.0, hosted runtime request only.
 - NVIDIA CUDA 12.8 development base — NVIDIA CUDA Toolkit EULA; retained only in the operator-private image.
 - Validation runtime closure — `numpy==1.26.4` (BSD-3-Clause),
+  `scipy==1.14.1` (BSD-3-Clause; bundled wheel notices apply),
   `Pillow==11.3.0` (MIT-CMU), `trimesh==4.11.1` (MIT),
-  `imageio==2.37.4` (BSD-2-Clause), `imageio-ffmpeg==0.6.0` (BSD-2-Clause
-  wrapper), and `pybullet==3.2.7` (zlib), all runtime fetched. The pinned
-  ImageIO FFmpeg wheel may carry its platform executable; it remains in the
-  operator runtime cache rather than the image, and its applicable binary terms
-  still govern any redistribution.
+  `plyfile==1.0.3` (GPL-3.0-or-later), `tifffile==2024.8.30` (BSD),
+  `contourpy==1.3.0` (BSD-3-Clause), `imageio==2.37.4` (BSD-2-Clause),
+  `imageio-ffmpeg==0.6.0` (BSD-2-Clause wrapper), and `pybullet==3.2.7`
+  (zlib), all runtime fetched. The pinned ImageIO FFmpeg wheel may carry its
+  platform executable; it remains in the operator runtime cache rather than the
+  image, and its applicable binary terms still govern any redistribution.
 
 The pinned EmbodiedGen `requirements.txt` hash, validation package list, and
 full runtime dependency closure are recorded with each run's receipt.
