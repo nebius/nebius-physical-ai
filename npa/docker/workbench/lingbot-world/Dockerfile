@@ -110,7 +110,7 @@ RUN /opt/npa/model_source.sh \
     && find /opt/wan-base -type d -name __pycache__ -prune -exec rm -rf {} + \
     && rm -rf /opt/npa-pyav-wheel /root/.cache /tmp/pip-*
 
-COPY src/npa/solutions/video_generation.py src/npa/solutions/lingbot_camera.py \
+COPY --chmod=0644 src/npa/solutions/video_generation.py src/npa/solutions/lingbot_camera.py \
      src/npa/solutions/perception_video.py src/npa/solutions/native_image_smoke.py \
      /opt/npa-native/npa/solutions/
 COPY --chmod=0755 docker/workbench/common/model_runtime.sh /usr/local/bin/model-runtime

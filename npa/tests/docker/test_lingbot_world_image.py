@@ -113,3 +113,23 @@ def test_lingbot_upgrades_fixable_parent_perl_security_packages() -> None:
         < source_fetch
     )
     assert "rm -rf /var/lib/apt/lists/*" in dockerfile[security_upgrade:source_fetch]
+
+
+def test_lingbot_copied_current_modules_are_readable_by_the_runtime_user() -> None:
+    """The declared non-root runtime can import every copied current module."""
+
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+
+    copy_start = "COPY --chmod=0644 src/npa/solutions/video_generation.py"
+    copy_end = "COPY --chmod=0755 docker/workbench/common/model_runtime.sh"
+    source_copy = dockerfile[dockerfile.index(copy_start) : dockerfile.index(copy_end)]
+
+    for module in (
+        "video_generation.py",
+        "lingbot_camera.py",
+        "perception_video.py",
+        "native_image_smoke.py",
+    ):
+        assert module in source_copy
+    assert source_copy.startswith(copy_start)
+    assert dockerfile.index(copy_start) < dockerfile.rindex("USER ubuntu")
