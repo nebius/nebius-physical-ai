@@ -850,6 +850,59 @@ def _image_override_matches(selector: str, tool_ref: str) -> bool:
     return tool_ref == selector or tool_ref.startswith(selector + ".")
 
 
+def _embodiedgen_image_reference(
+    spec: NpaWorkflowSpec, options: SkypilotRenderOptions
+) -> str:
+    """Return the effective BYOF image for the EmbodiedGen-only contract."""
+
+    reference = str(spec.config.get("base_image") or "")
+    matches = [
+        (len(str(selector)), str(value))
+        for selector, value in options.image_overrides.items()
+        if str(selector) == "*"
+        or _image_override_matches(str(selector), "workbench.byof.repo")
+    ]
+    if matches:
+        reference = max(matches, key=lambda item: item[0])[1]
+    return reference.strip().removeprefix("docker:")
+
+
+def _validate_embodiedgen_private_image(
+    spec: NpaWorkflowSpec, options: SkypilotRenderOptions
+) -> None:
+    if str(spec.config.get("solution_name") or "").strip().lower() != "embodiedgen":
+        return
+    declared = str(spec.config.get("base_image") or "").strip().removeprefix("docker:")
+    resolved = _embodiedgen_image_reference(spec, options)
+    for reference in (declared, resolved):
+        _validate_embodiedgen_private_reference(reference)
+    if declared != resolved:
+        raise NpaWorkflowRenderError(
+            "EmbodiedGen config.base_image and its image override must name the same "
+            "immutable private image"
+        )
+
+
+def _validate_embodiedgen_private_reference(reference: str) -> None:
+    if re.fullmatch(r"[^\s@]+/npa-embodiedgen@sha256:[0-9a-f]{64}", reference) is None:
+        raise NpaWorkflowRenderError(
+            "EmbodiedGen requires an operator-private immutable image; supply "
+            "--image-override workbench.byof.repo=REGISTRY/npa-embodiedgen@sha256:DIGEST"
+        )
+    from npa.deploy.images import is_public_registry
+
+    registry = reference.split("@", 1)[0].rsplit("/", 1)[0]
+    host = registry.split("/", 1)[0]
+    if host != "localhost" and "." not in host and ":" not in host:
+        raise NpaWorkflowRenderError(
+            "EmbodiedGen requires a fully-qualified private registry host"
+        )
+    if is_public_registry(registry):
+        raise NpaWorkflowRenderError(
+            "EmbodiedGen is runtime-fetch/private and cannot use a public registry image"
+        )
+
+
 def validate_image_override_selectors(
     spec: NpaWorkflowSpec,
     options: SkypilotRenderOptions,
@@ -887,6 +940,7 @@ def validate_image_override_selectors(
             "toolRef, a boundary-safe family prefix without glob characters, or "
             f"the bare '*' selector. Available toolRefs: {available}"
         )
+    _validate_embodiedgen_private_image(spec, options)
 
 
 def resolve_task_image(

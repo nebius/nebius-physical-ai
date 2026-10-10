@@ -1,0 +1,97 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: byof-embodiedgen
+  executionMode: runtime
+  description: >
+    Operator-private EmbodiedGen V2.1.0 image-to-rigid-object workflow. It runs
+    the upstream img3d-cli TRELLIS backend, exports its URDF/collision meshes,
+    and loads that exact result into PyBullet for rigid-body evidence.
+config:
+  bucket: example-bucket
+  repo_url: "https://github.com/HorizonRobotics/EmbodiedGen.git"
+  repo_ref: "f0124197888c2b733e4eaa65acd81ad9cfda3b79"
+  repo_auth: none
+  repo_token_env: GH_TOKEN
+  base_profile: prebuilt
+  base_image: "registry.example.invalid/npa-embodiedgen@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  build_command: ""
+  workload: solution-smoke
+  smoke_command: |
+    set -euo pipefail
+    NPA_EMBODIEDGEN_INPUT_URI="$(printf '%s' '{{config.input_uri|base64}}' | base64 --decode)"
+    export NPA_EMBODIEDGEN_INPUT_URI
+    exec /usr/local/bin/npa-embodiedgen-entrypoint run-smoke
+  solution_name: embodiedgen
+  capability_name: img3d-cli_trellis_image_to_urdf_pybullet
+  smoke_artifact_name: embodiedgen_image_to_rigid_object.json
+  resource_profile_yaml: byof-solution-smoke-embodiedgen-rtxpro-gpu
+  input_uri: "https://raw.githubusercontent.com/HorizonRobotics/EmbodiedGen/f0124197888c2b733e4eaa65acd81ad9cfda3b79/apps/assets/example_image/sample_00.jpg"
+  task: image-to-rigid-object
+  iterations: 1
+  num_envs: 1
+  num_demos: 1
+  wait_timeout: -1
+  poll_interval: 30
+  output_root: s3://{{config.bucket}}/oss-solutions/embodiedgen
+  run_output_uri: "{{config.output_root}}/{{run.id}}"
+  summary_uri: "{{config.run_output_uri}}/npa_byof_summary.json"
+  artifact_uri: "{{config.run_output_uri}}/embodiedgen_image_to_rigid_object.json"
+  generated_asset_uri: "{{config.run_output_uri}}/generated_asset.tar.gz"
+  mjcf_asset_uri: "{{config.run_output_uri}}/mjcf_asset.tar.gz"
+  view_png_uri: "{{config.run_output_uri}}/pybullet_view.png"
+  view_mp4_uri: "{{config.run_output_uri}}/pybullet_settle.mp4"
+resources:
+  gpu:
+    cloud: kubernetes
+    image: "{{config.base_image}}"
+    accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
+    cpus: 16+
+    memory: 96+
+    kubernetes:
+      pod_config:
+        spec:
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: ray-node
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 1000
+                runAsGroup: 1000
+                privileged: false
+                # SkyPilot bootstrap uses the image's constrained sudo contract.
+                # The entrypoint applies no_new_privs before fetched source runs.
+                allowPrivilegeEscalation: true
+                capabilities:
+                  drop: [ALL]
+                  add: [CHOWN, DAC_OVERRIDE, FOWNER, SETUID, SETGID, SYS_CHROOT, NET_BIND_SERVICE]
+initial: byof-run
+states:
+  byof-run:
+    description: >
+      Fetch pinned source, dependencies, and TRELLIS weights only into an
+      operator cache, then validate the generated output in PyBullet. VLM
+      physical metadata is explicitly reported as estimated, not calibrated.
+    toolRef: workbench.byof.repo
+    resources: gpu
+    inputs:
+      - uri: "{{config.input_uri}}"
+        schema: image/*
+    outputs:
+      - uri: "{{config.summary_uri}}"
+        schema: npa.workbench.byof.summary.v1
+      - uri: "{{config.artifact_uri}}"
+        schema: npa.embodiedgen.image-to-rigid-object.v1
+      - uri: "{{config.generated_asset_uri}}"
+        schema: application/gzip
+      - uri: "{{config.mjcf_asset_uri}}"
+        schema: application/gzip
+      - uri: "{{config.view_png_uri}}"
+        schema: image/png
+      - uri: "{{config.view_mp4_uri}}"
+        schema: video/mp4
+    terminal: true

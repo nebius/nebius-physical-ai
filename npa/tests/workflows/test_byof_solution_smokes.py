@@ -45,6 +45,19 @@ ROBOTWIN_PHASE_A_SMOKE = "/opt/npa/robotwin/robotwin-runtime run"
 # Keep in sync with skills/workflows/oss-solution-registry-onboard/SKILL.md
 # and docs/workbench/oss-solution-catalog.md.
 SOLUTION_CAPABILITY_CONTRACTS = {
+    "embodiedgen": {
+        "capability_name": "img3d-cli_trellis_image_to_urdf_pybullet",
+        "smoke_artifact_name": "embodiedgen_image_to_rigid_object.json",
+        "spec": "byof-embodiedgen.yaml",
+        "must_exercise": [
+            "trellis_image_to_mesh_generation",
+            "embodiedgen_urdf_export",
+            "embodiedgen_urdf_to_mjcf_conversion",
+            "collision_geometry_validation",
+            "pybullet_rigid_body_settle",
+            "pybullet_viewable_result",
+        ],
+    },
     "sam2.1": {
         "capability_name": "prompted_video_mask_propagation",
         "smoke_artifact_name": "sam2_1_video_mask_propagation.json",
@@ -272,6 +285,10 @@ def _smoke_contract(path: Path, config: dict[str, object]) -> str:
         return (ROOT / "npa/docker/workbench/libero/libero_smoke.py").read_text(
             encoding="utf-8"
         )
+    if path.name == "byof-embodiedgen.yaml":
+        assert "npa-embodiedgen-entrypoint run-smoke" in smoke
+        packaged = ROOT / "npa/docker/workbench/embodiedgen/capability_smoke.py"
+        return smoke + "\n" + packaged.read_text(encoding="utf-8")
     if path.name != "byof-gymnasium-robotics.yaml":
         return smoke
     expected = "/usr/local/bin/npa-gymnasium-entrypoint run-smoke"

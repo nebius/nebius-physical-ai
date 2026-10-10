@@ -71,6 +71,7 @@ status and evidence recorded in their own rows and catalog records.
 | `npa-alpamayo2-super` | `0.1.0-cu128-r3` (index `sha256:17a3966a6e74…`) | 2.8.0+cu128 | `sm_70 sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` | yes |
 | `npa-flex-pi` | `0.1.0-cu128-r2` (`sha256:e27978b68205…`) | 2.7.1+cu128 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` | yes |
 | `npa-robotwin` (supported release candidate; quarantined) | pending build; not routed or validated | blocked (no RT cores) | pending build; exact-digest qualification not run | blocked (renderer contract is RTX-only) | blocked (renderer contract is RTX-only) |
+| `npa-embodiedgen` (operator-private candidate) | not built; no resolved runtime | CUDA 12.8 bootstrap; Torch/TRELLIS runtime fetch | no measured SASS; exact RTX PRO 6000 capability gate pending | unknown |
 | `npa-paidf-anomalygen-sky` | operator-private child `sha256:5aff3f4b40a4…` | 2.13.0+cu132 / CUDA 13.2 | full wheel architecture list not separately recorded; native CUDA and attention executed on B200 | yes; measured on B200 |
 | `npa-paidf-image-edit-sky` | operator-private child `sha256:ef7450cfc12e…` | 2.11.0+cu130 / CUDA 13.0 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` | yes; measured on B200 |
 | `npa-paidf-event-video-sky` | operator-private child `sha256:277a255e8bce…` | 2.11.0+cu130 / CUDA 13.0 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` | yes; measured on B200 |
@@ -135,6 +136,7 @@ likewise predates its current coherent release.
 | `npa-mjlab` (private candidate) | unverified | unverified | **verified** [CUDA 13 trained G1 rollout](validation/mjlab-trained-g1-20260925.json) | current CUDA 13 unverified; [historical CUDA 12.8 acceptance](validation/mjlab-gpu-20260924.json) (1 and 8 GPUs) | unverified |
 | `npa-sam2` | unverified | unverified | unverified | **verified** [native capability evidence](validation/studio-public-models-20260916.json) | unverified |
 | `npa-robomimic` (quarantined neutral candidate) | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; compatibility unknown; one-B200 hard gate deferred | unbuilt; not validated |
+| `npa-embodiedgen` (operator-private candidate) | not built; no resolved runtime | not built; no resolved runtime | not built; exact-digest RTX PRO 6000 capability gate pending | not built; no resolved runtime | not built; no resolved runtime |
 | `npa-ltx2` | unverified runtime | unverified runtime | **verified** [accepted records](#accepted-release-evidence) | unverified runtime | unverified runtime |
 | `npa-openpi` | blocked (RTX-only runtime contract) | blocked (RTX-only runtime contract) | pending exact-digest full-DROID qualification | blocked (`sm_120`-only probe/runtime contract) | blocked (`sm_120`-only probe/runtime contract) |
 | `npa-lyra2` (`2.0-rtfetch2`) | unverified | unverified | **verified** [native reconstruction](validation/lyra2-rtx-20261009.json) | **historical evidence** [rtfetch1](validation/lyra2-b200-20261008.json); rtfetch2 unverified | unverified |

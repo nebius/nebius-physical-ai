@@ -670,6 +670,26 @@ images:
       use/service claims. Public redistribution and real RTX capability claims
       remain quarantined pending the native-content policy, trusted build,
       complete exact-byte scans, anonymous pull, and exact-digest one-RTX gates.
+  embodiedgen:
+    dockerfile: embodiedgen/Dockerfile
+    tier: job
+    final_user: ubuntu
+    redistribution: restricted
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
+    passwordless_root_exemption: >-
+      SkyPilot Kubernetes bootstrap only. The final workload runs as uid 1000,
+      password and root SSH login are disabled, and no credential is baked.
+    notes: >-
+      Operator-private CUDA development image for upstream EmbodiedGen V2.1.0
+      and its supported TRELLIS backend. The pinned CUDA development base is
+      retained only for operator execution because its distribution terms do
+      not establish anonymous-registry delivery. The CUDA/OS base is baked;
+      EmbodiedGen, TRELLIS, runtime Python application packages, model weights,
+      input images, credentials, caches, generated meshes/URDFs, and simulator
+      outputs are runtime-only.
+      The VLM fills estimated physical metadata; it does not provide calibrated
+      ground truth. No release, public image, articulated-object, or policy
+      improvement capability is asserted by this candidate.
   alpamayo2-super:
     dockerfile: alpamayo2-super/Dockerfile
     tier: service

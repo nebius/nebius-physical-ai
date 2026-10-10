@@ -37,6 +37,16 @@ licenses:
     applies_to:
       - neural-reconstruction
 skills:
+  - name: embodiedgen
+    category: tools
+    when_to_use: "Run or review EmbodiedGen V2 image-to-rigid-object generation through the operator-private TRELLIS runtime, exported URDF/collision geometry, PyBullet validation, and factual view artifacts."
+    path: skills/tools/embodiedgen/SKILL.md
+    smoke:
+      - type: file_exists
+        path: docs/workbench/embodiedgen.md
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/testing/byof-embodiedgen.yaml
   - name: physical-prompt-comparison
     category: workflows
     when_to_use: "Compare baseline prompts, physical descriptions, and negative guidance with full Wan 2.1 videos, matched seeds, and blinded video judgments."

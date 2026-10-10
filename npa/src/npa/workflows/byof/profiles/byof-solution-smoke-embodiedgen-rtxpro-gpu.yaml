@@ -1,0 +1,134 @@
+# One RTX PRO 6000 Blackwell is required for the upstream TRELLIS CUDA path.
+# The private image reference is supplied by the workflow's immutable override.
+name: byof-solution-smoke-embodiedgen-rtxpro-gpu
+execution: serial
+---
+name: byof-solution-smoke-embodiedgen-rtxpro
+resources:
+  cloud: kubernetes
+  accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
+  cpus: 16+
+  memory: 96+
+  disk_size: 200
+  image_id: "docker:<operator-private>/npa-embodiedgen@sha256:<digest>"
+  kubernetes:
+    pod_config:
+      spec:
+        automountServiceAccountToken: false
+        securityContext:
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
+        containers:
+          - name: ray-node
+            securityContext:
+              runAsNonRoot: true
+              runAsUser: 1000
+              runAsGroup: 1000
+              privileged: false
+              # SkyPilot's verified bootstrap needs passwordless sudo before the
+              # runtime command starts. The entrypoint applies no_new_privs to
+              # fetched EmbodiedGen/TRELLIS code before it executes.
+              allowPrivilegeEscalation: true
+              capabilities:
+                drop: [ALL]
+                add: [CHOWN, DAC_OVERRIDE, FOWNER, SETUID, SETGID, SYS_CHROOT, NET_BIND_SERVICE]
+envs:
+  NPA_BYOF_RUN_ID: "<run-id>"
+  BYOF_REPO_ROOT: "/opt/byof"
+  BYOF_SMOKE_COMMAND: ""
+  BYOF_SOLUTION_NAME: "embodiedgen"
+  BYOF_CAPABILITY_NAME: "img3d-cli_trellis_image_to_urdf_pybullet"
+  BYOF_SMOKE_ARTIFACT_NAME: "embodiedgen_image_to_rigid_object.json"
+  BYOF_IMAGE: "<operator-private>/npa-embodiedgen@sha256:<digest>"
+  NPA_EMBODIEDGEN_RUNTIME_CACHE: "/workspace/.cache/npa/embodiedgen"
+  NVIDIA_VISIBLE_DEVICES: all
+  NVIDIA_DRIVER_CAPABILITIES: compute,utility
+  S3_OUTPUT_PREFIX: "s3://${NPA_S3_BUCKET}/oss-solutions/embodiedgen/${NPA_BYOF_RUN_ID}/"
+  AWS_ENDPOINT_URL: "${AWS_ENDPOINT_URL}"
+setup: |
+  set -euo pipefail
+  test -d "${BYOF_REPO_ROOT}"
+  test -f "${BYOF_REPO_ROOT}/npa_source_metadata.json"
+  test -x /usr/local/bin/npa-embodiedgen-entrypoint
+  nvidia-smi --query-gpu=name,compute_cap --format=csv,noheader
+  python3 - <<'PY' || python3 -m pip install --quiet --break-system-packages boto3
+  import boto3
+  PY
+  install -d -m 0700 "${NPA_EMBODIEDGEN_RUNTIME_CACHE}"
+run: |
+  set -euo pipefail
+  OUTPUT_DIR="/workspace/byof-runs/${NPA_BYOF_RUN_ID}"
+  mkdir -p "${OUTPUT_DIR}"
+  export NPA_SMOKE_OUTPUT_DIR="${OUTPUT_DIR}"
+  cp "${BYOF_REPO_ROOT}/npa_source_metadata.json" "${OUTPUT_DIR}/npa_source_metadata.json"
+  nvidia-smi > "${OUTPUT_DIR}/nvidia_smi.txt" 2>&1 || true
+  SMOKE_EXIT_CODE=0
+  set +e
+  /bin/bash -lc "${BYOF_SMOKE_COMMAND}" \
+    > "${OUTPUT_DIR}/solution_smoke_stdout.log" \
+    2> "${OUTPUT_DIR}/solution_smoke_stderr.log"
+  SMOKE_EXIT_CODE=$?
+  set -e
+  if [ "${SMOKE_EXIT_CODE}" -eq 0 ]; then
+    test -s "${OUTPUT_DIR}/${BYOF_SMOKE_ARTIFACT_NAME}"
+  fi
+  export SMOKE_EXIT_CODE
+  python3 <<'PY'
+  import hashlib
+  import json
+  import os
+  from pathlib import Path
+  from urllib.parse import urlparse
+
+  import boto3
+  from botocore.config import Config
+
+  root = Path(os.environ["NPA_SMOKE_OUTPUT_DIR"])
+  metadata = json.loads(
+      (Path(os.environ["BYOF_REPO_ROOT"]) / "npa_source_metadata.json").read_text()
+  )
+  def digest(path):
+      value = hashlib.sha256()
+      with path.open("rb") as handle:
+          for block in iter(lambda: handle.read(1024 * 1024), b""):
+              value.update(block)
+      return value.hexdigest()
+  artifacts = [
+      {"path": str(path.relative_to(root)), "bytes": path.stat().st_size, "sha256": digest(path)}
+      for path in sorted(root.rglob("*")) if path.is_file()
+  ]
+  summary = {
+      "schema": "npa.byof.solution-smoke.v1",
+      "status": "success" if os.environ["SMOKE_EXIT_CODE"] == "0" else "failed",
+      "solution_name": "embodiedgen",
+      "capability_name": os.environ["BYOF_CAPABILITY_NAME"],
+      "run_id": os.environ["NPA_BYOF_RUN_ID"],
+      "image": os.environ["BYOF_IMAGE"],
+      "metadata": metadata,
+      "smoke_artifact_name": os.environ["BYOF_SMOKE_ARTIFACT_NAME"],
+      "smoke_exit_code": int(os.environ["SMOKE_EXIT_CODE"]),
+      "artifacts": artifacts,
+  }
+  (root / "npa_byof_summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
+  destination = urlparse(os.environ["S3_OUTPUT_PREFIX"])
+  if destination.scheme != "s3" or not destination.netloc:
+      raise RuntimeError("S3_OUTPUT_PREFIX must be an s3 URI")
+  endpoint = os.environ.get("AWS_ENDPOINT_URL", "").strip()
+  if endpoint.startswith("${"):
+      endpoint = ""
+  kwargs = {"config": Config(s3={"addressing_style": "path"})}
+  if endpoint:
+      kwargs["endpoint_url"] = endpoint
+  client = boto3.client("s3", **kwargs)
+  prefix = destination.path.lstrip("/")
+  for path in sorted(root.rglob("*")):
+      if path.is_file():
+          client.upload_file(str(path), destination.netloc, prefix + str(path.relative_to(root)))
+  client.head_object(Bucket=destination.netloc, Key=prefix + "npa_byof_summary.json")
+  if os.environ["SMOKE_EXIT_CODE"] == "0":
+      client.head_object(Bucket=destination.netloc, Key=prefix + os.environ["BYOF_SMOKE_ARTIFACT_NAME"])
+  PY
+  if [ "${SMOKE_EXIT_CODE}" -ne 0 ]; then
+    exit "${SMOKE_EXIT_CODE}"
+  fi

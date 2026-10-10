@@ -45,6 +45,9 @@ The source of truth is `skills/index.yaml`. The tree is organized as:
   one frame with real RANSAC/FPFH + ICP, optimize the multiway pose graph,
   reconstruct a Poisson surface, and read the validators that reject a
   plausible-looking but non-rigid result. CPU-only by construction.
+- `skills/tools/embodiedgen/SKILL.md`: operator-private EmbodiedGen V2 TRELLIS
+  image-to-rigid-object generation, exported URDF/collision validation, and
+  factual PyBullet view evidence; VLM properties are estimates, not calibration.
 - `skills/tools/detection-training/SKILL.md`: Faster R-CNN detectors trained from LanceDB materialized views (BDD100K failure-mode slices).
 - `skills/tools/artifact-viz-share/SKILL.md`: sim demos → LeRobotDataset → `.rrd`/MP4, and time-boxed presigned Rerun share links.
 - `skills/workflows/emit-reviewable-rrd/SKILL.md`: derive factual Rerun recordings from actual workflow outputs, declare run-scoped `.rrd` artifacts, and validate their decoded timelines, entities, and provenance before handoff.

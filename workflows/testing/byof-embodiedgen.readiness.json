@@ -1,0 +1,64 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "ad8c793f9308c046adc9887feb69f004504961c0465de6413479ba872c5c1fa1",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "The checked-in workflow requires runtime execution, validates, plans one workbench.byof.repo GPU state, and passes the production SkyPilot renderer without contacting a provider. Generic CLI tests prove the spec selects runtime automatically and refuses incompatible --no-runtime, so the standard runtime owns all-declared-output completion validation.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/byof-embodiedgen.yaml --json",
+        "npa workbench workflow plan-spec workflows/testing/byof-embodiedgen.yaml --run-id embodiedgen-review-plan --check-render --json",
+        "npa/tests/docker/test_embodiedgen_runtime.py",
+        "npa/tests/cli/test_workflow_runtime_cli.py"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Focused tests bind the private immutable-image requirement, literal URI transport through plan/render/BYOF bash, real upstream img3d-cli and EmbodiedGen converter calls, collision validation, PyBullet contact/settling, decoded view generation, and every declared generated asset/view artifact. This is not GPU execution evidence.",
+      "evidence": [
+        "npa/tests/docker/test_embodiedgen_runtime.py",
+        "npa/tests/workflows/test_byof_solution_smokes.py",
+        "sha256:ad8c793f9308c046adc9887feb69f004504961c0465de6413479ba872c5c1fa1 workflows/testing/byof-embodiedgen.yaml"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "The checked-in bucket is a non-writable placeholder; no selected-project S3 upload/readback was attempted during code review.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "The workflow declares a worker-readable HTTPS or S3 image URI and runtime code validates/downloads it, but no selected worker has fetched the default or an operator input in this review.",
+      "evidence": [
+        "npa/docker/workbench/embodiedgen/capability_smoke.py",
+        "docs/workbench/embodiedgen.md"
+      ]
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "TRELLIS is public, while upstream property estimation needs the configured Token Factory credential. No credential value or live access probe is retained in repository evidence.",
+      "evidence": [
+        "npa/docker/workbench/embodiedgen/runtime-bootstrap.py",
+        "npa/scripts/run_byof_container_verify.py"
+      ]
+    },
+    "source_image": {
+      "status": "blocked",
+      "reason": "No private OCI image has been built, scanned, pushed, resolved to a digest, or proved pullable. A future operator build must use the private dev-full-SHA tag and complete exact-digest image gates.",
+      "evidence": [
+        "npa/docker/workbench/embodiedgen/build.sh",
+        "npa/docker/workbench/embodiedgen/REDISTRIBUTION.md"
+      ]
+    },
+    "target_runtime": {
+      "status": "blocked",
+      "reason": "No exact private digest has run on an RTX PRO 6000 Blackwell, and no generated artifact has been read back from a live worker. The required capability remains live-qualification pending.",
+      "evidence": [
+        "npa/src/npa/orchestration/npa_workflow/submit_matrix.py",
+        "docs/workbench/oss-solution-catalog.md#embodiedgen-v2"
+      ]
+    }
+  }
+}

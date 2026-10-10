@@ -457,6 +457,7 @@ def test_rebuilt_surfaces_including_detection_training_are_gpu_accepted() -> Non
     """
     assert RESTRICTED_PUBLICATION_TOOLS == frozenset(
         {
+            "embodiedgen",
             "cosmos3-nano-video",
             "cosmos3-super-benchmark",
             "paidf-anomalygen-sky",
@@ -778,6 +779,7 @@ def test_the_restriction_mechanism_still_exists() -> None:
     assert restricted_image_names() == [
         "cosmos3-nano-video",
         "cosmos3-super-benchmark",
+        "embodiedgen",
         "paidf-anomalygen-sky",
         "paidf-attribute-search-sky",
         "paidf-captioning-sky",

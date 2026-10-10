@@ -26,6 +26,12 @@ cache in its layers. It has no accepted release build and remains release
 quarantined; it has no public image row, but now has a truthful immutable
 development-build path for byte and capability validation.
 
+EmbodiedGen V2 is intentionally absent from the public-image table. Its
+operator-private CUDA development image exists solely to compile the upstream
+TRELLIS extensions; it carries no upstream source, model, input, cache, output,
+or credential bytes. Its CUDA distribution terms do not establish anonymous
+registry delivery, so only a private digest may be used for qualification.
+
 The September 18 accepted-release manifest contained **38 release references**, including
 Flex-Pi r2, Isaac Arena and OpenArm. The incoming Flex-Pi qualification records
 an anonymous digest audit on **2026-09-18** and retained `linux/amd64` runtime
