@@ -5,7 +5,6 @@ import math
 from pathlib import Path
 import sys
 import time
-import xml.etree.ElementTree as ET
 
 import bpy
 from mathutils import Euler, Matrix, Quaternion, Vector
@@ -18,17 +17,8 @@ def _transform(position, orientation):
 
 
 def _origin(visual):
-    origin = visual.find("origin")
-    position = (
-        [float(v) for v in origin.get("xyz", "0 0 0").split()]
-        if origin is not None
-        else [0, 0, 0]
-    )
-    angles = (
-        [float(v) for v in origin.get("rpy", "0 0 0").split()]
-        if origin is not None
-        else [0, 0, 0]
-    )
+    position = [float(v) for v in visual["position"].split()]
+    angles = [float(v) for v in visual["angles"].split()]
     result = Euler(angles, "XYZ").to_matrix().to_4x4()
     result.translation = Vector(position)
     return result
@@ -64,23 +54,18 @@ def _mesh_objects(path):
 
 
 def _primitive(geometry):
-    sphere, box, cylinder = (
-        geometry.find("sphere"),
-        geometry.find("box"),
-        geometry.find("cylinder"),
-    )
-    if sphere is not None:
+    if geometry["kind"] == "sphere":
         bpy.ops.mesh.primitive_uv_sphere_add(
-            segments=32, ring_count=16, radius=float(sphere.get("radius"))
+            segments=32, ring_count=16, radius=float(geometry["radius"])
         )
-    elif box is not None:
+    elif geometry["kind"] == "box":
         bpy.ops.mesh.primitive_cube_add(size=1)
-        bpy.context.object.scale = [float(v) for v in box.get("size").split()]
-    elif cylinder is not None:
+        bpy.context.object.scale = [float(v) for v in geometry["size"].split()]
+    elif geometry["kind"] == "cylinder":
         bpy.ops.mesh.primitive_cylinder_add(
             vertices=48,
-            radius=float(cylinder.get("radius")),
-            depth=float(cylinder.get("length")),
+            radius=float(geometry["radius"]),
+            depth=float(geometry["length"]),
         )
     else:
         raise ValueError("Unsupported robot visual geometry")
@@ -98,39 +83,32 @@ def _link_material(name, body, dark, rubber):
 
 
 def _robot(root):
-    tree = ET.parse(root / "go1.urdf")
+    visuals = json.loads((root / "render-robot.json").read_text())
     body = _material("anodized-silver", (0.52, 0.55, 0.57), 0.4, 0.3)
     dark = _material("motor-housing", (0.028, 0.035, 0.041), 0.2, 0.28)
     rubber = _material("rubber-feet", (0.012, 0.015, 0.019), 0.0, 0.65)
     parts = []
-    for link in tree.findall("link"):
-        name = link.get("name")
-        for visual in link.findall("visual"):
-            geometry = visual.find("geometry")
-            mesh = geometry.find("mesh")
-            objects = (
-                _mesh_objects((root / mesh.get("filename")).with_suffix(".glb"))
-                if mesh is not None
-                else _primitive(geometry)
+    for visual in visuals:
+        name, geometry = visual["link"], visual["geometry"]
+        objects = (
+            _mesh_objects((root / geometry["filename"]).with_suffix(".glb"))
+            if geometry["kind"] == "mesh"
+            else _primitive(geometry)
+        )
+        scale = (
+            [float(v) for v in geometry.get("scale", "1 1 1").split()]
+            if geometry["kind"] == "mesh"
+            else [1, 1, 1]
+        )
+        material = _link_material(name, body, dark, rubber)
+        for obj, transform in objects:
+            obj.data.materials.clear()
+            obj.data.materials.append(material)
+            for polygon in obj.data.polygons:
+                polygon.use_smooth = True
+            parts.append(
+                (name, obj, _origin(visual) @ Matrix.Diagonal((*scale, 1)) @ transform)
             )
-            scale = (
-                [float(v) for v in mesh.get("scale", "1 1 1").split()]
-                if mesh is not None
-                else [1, 1, 1]
-            )
-            material = _link_material(name, body, dark, rubber)
-            for obj, transform in objects:
-                obj.data.materials.clear()
-                obj.data.materials.append(material)
-                for polygon in obj.data.polygons:
-                    polygon.use_smooth = True
-                parts.append(
-                    (
-                        name,
-                        obj,
-                        _origin(visual) @ Matrix.Diagonal((*scale, 1)) @ transform,
-                    )
-                )
     return parts
 
 

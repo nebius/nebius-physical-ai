@@ -117,7 +117,11 @@ The asset manifest pins every upstream revision and SHA-256. Unitree meshes and
 URDF use BSD-3-Clause; the Google MuJoCo Playground checkpoint uses Apache-2.0.
 Their license texts accompany the downloaded assets and HTML. The portable URDF
 removes the massless ROS root frame and gives missing optical frames zero mass,
-preserving the dynamic trunk and original joint inertias. Blender is fetched
+preserving the dynamic trunk and original joint inertias. The collector rejects
+XML document types and entities, then writes `render-robot.json` with the same
+link visuals, origins, dimensions and scales for Blender. The renderer consumes
+that JSON without parsing XML or installing packages into Blender's Python.
+Blender is fetched
 from its official release with a pinned archive hash; binaries are not baked
 into the workbench image or included in the HTML.
 

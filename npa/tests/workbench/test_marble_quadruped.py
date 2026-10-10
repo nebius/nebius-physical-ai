@@ -3,8 +3,9 @@
 import json
 from types import SimpleNamespace
 from unittest.mock import Mock
-import xml.etree.ElementTree as ET
 
+from defusedxml import ElementTree as ET
+from defusedxml.common import DTDForbidden
 import numpy as np
 import pytest
 
@@ -68,6 +69,60 @@ def test_robot_import_preserves_dynamic_trunk_and_massless_optical_frames(tmp_pa
         tree.find("link[@name='camera_optical_face']/inertial/mass").get("value") == "0"
     )
     assert tree.find(".//mesh").get("filename") == "robot-assets/meshes/trunk.dae"
+    visuals = json.loads((tmp_path / "render-robot.json").read_text())
+    assert visuals == [
+        {
+            "link": "trunk",
+            "position": "0 0 0",
+            "angles": "0 0 0",
+            "geometry": {
+                "kind": "mesh",
+                "filename": "robot-assets/meshes/trunk.dae",
+            },
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        '<!DOCTYPE robot [<!ENTITY repeated "expanded">]>',
+        '<!DOCTYPE robot [<!ENTITY external SYSTEM "file:///etc/passwd">]>',
+        '<!DOCTYPE robot SYSTEM "https://example.invalid/robot.dtd">',
+    ],
+)
+def test_robot_description_rejects_dtd_before_writing_artifacts(tmp_path, declaration):
+    source = tmp_path / "robot-assets"
+    (source / "urdf").mkdir(parents=True)
+    (source / "urdf/go1.urdf").write_text(declaration + '<robot name="go1"/>')
+    with pytest.raises(DTDForbidden):
+        _description(source, tmp_path / "go1.urdf")
+    assert not (tmp_path / "go1.urdf").exists()
+    assert not (tmp_path / "render-robot.json").exists()
+
+
+def test_render_visuals_preserve_origins_scales_and_primitive_dimensions(tmp_path):
+    source = tmp_path / "robot-assets"
+    (source / "urdf").mkdir(parents=True)
+    (source / "urdf/go1.urdf").write_text("""<robot name="go1"><link name="trunk">
+      <visual><origin xyz="1 2 3" rpy="0.1 0.2 0.3"/><geometry>
+        <mesh filename="package://go1_description/meshes/trunk.dae" scale="2 3 4"/>
+      </geometry></visual>
+      <visual><geometry><box size="1 2 3"/></geometry></visual>
+      <visual><geometry><sphere radius="0.2"/></geometry></visual>
+      <visual><geometry><cylinder radius="0.3" length="0.5"/></geometry></visual>
+      </link></robot>""")
+    _description(source, tmp_path / "go1.urdf")
+    visuals = json.loads((tmp_path / "render-robot.json").read_text())
+    assert all(item["link"] == "trunk" for item in visuals)
+    assert visuals[0]["position"] == "1 2 3"
+    assert visuals[0]["angles"] == "0.1 0.2 0.3"
+    assert visuals[0]["geometry"]["scale"] == "2 3 4"
+    assert [item["geometry"] for item in visuals[1:]] == [
+        {"kind": "box", "size": "1 2 3"},
+        {"kind": "sphere", "radius": "0.2"},
+        {"kind": "cylinder", "radius": "0.3", "length": "0.5"},
+    ]
 
 
 def test_upstream_policy_observation_protocol_uses_measured_local_state():

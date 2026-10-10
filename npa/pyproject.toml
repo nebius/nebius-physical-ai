@@ -33,6 +33,7 @@ dependencies = [
     "cryptography==50.0.2",
     "bcrypt>=5.0,<6.0",
     "pyyaml>=6.0,<7.0",
+    "defusedxml==0.7.1",
     # Structure-aware edits of owned Terraform provider defaults.
     "python-hcl2>=8.1.4,<9",
     "rich>=13.0,<16.0",

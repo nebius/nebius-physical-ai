@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
+from defusedxml.ElementTree import parse
+
 from .acquisition import _download
 from .api import MarbleError
 
@@ -41,7 +43,7 @@ def _convert_meshes(source):
 
 
 def _description(source, destination):
-    tree = ET.parse(source / "urdf/go1.urdf")
+    tree = parse(source / "urdf/go1.urdf", forbid_dtd=True)
     # The ROS-only dummy root has no inertia. Promote the actual inertial trunk
     # rather than letting Bullet treat a massless root as fixed to the world.
     for element in list(tree.getroot()):
@@ -67,7 +69,34 @@ def _description(source, destination):
                 inertia, "inertia", ixx="0", iyy="0", izz="0", ixy="0", ixz="0", iyz="0"
             )
     tree.write(destination)
+    _write_visuals(tree, destination.with_name("render-robot.json"))
     return destination
+
+
+def _visual(link, visual):
+    origin = visual.find("origin")
+    geometry = visual.find("geometry")
+    for kind in ("mesh", "sphere", "box", "cylinder"):
+        shape = geometry.find(kind)
+        if shape is not None:
+            break
+    else:
+        raise MarbleError("Unsupported robot visual geometry")
+    return {
+        "link": link.get("name"),
+        "position": origin.get("xyz", "0 0 0") if origin is not None else "0 0 0",
+        "angles": origin.get("rpy", "0 0 0") if origin is not None else "0 0 0",
+        "geometry": {"kind": kind, **shape.attrib},
+    }
+
+
+def _write_visuals(tree, destination):
+    # Blender consumes plain visual records; its bundled Python needs no XML parser.
+    visuals = []
+    for link in tree.findall("link"):
+        for visual in link.findall("visual"):
+            visuals.append(_visual(link, visual))
+    destination.write_text(json.dumps(visuals, allow_nan=False))
 
 
 def policy_path(root):

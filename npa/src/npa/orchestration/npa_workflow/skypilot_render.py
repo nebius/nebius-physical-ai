@@ -211,6 +211,7 @@ TOOL_REF_PIP_REQUIREMENTS: dict[str, tuple[tuple[str, str], ...]] = {
         ('python:trimesh;assert(trimesh.__version__=="4.12.2")', "trimesh==4.12.2"),
         ("python:pybullet", "pybullet==3.2.7"),
         ("python:collada", "pycollada==0.9.3"),
+        ("python:defusedxml", "defusedxml==0.7.1"),
         ("python:onnxruntime", "onnxruntime==1.23.2"),
     ),
     "workbench.marble.navigation_prepare": (
