@@ -303,6 +303,8 @@ RUN set -eux; \
     chmod 0755 /opt/cosmos/cosmos-transfer2.5/.venv/bin/npa; \
     env -u PYTHONPATH "${NPA_BAKED_PYTHON}" -c \
       'import npa.cli.entry; import npa.workflows.sim2real.runtime_attestation'; \
+    "${NPA_BAKED_PYTHON}" -c \
+      'import importlib.metadata as m; assert m.version("PyJWT") == "2.15.1"'; \
     /opt/cosmos/cosmos-transfer2.5/.venv/bin/npa \
       workbench cosmos2 transfer --help > /tmp/npa-cosmos2-help.txt; \
     grep -q -- '--control-asset' /tmp/npa-cosmos2-help.txt; \
