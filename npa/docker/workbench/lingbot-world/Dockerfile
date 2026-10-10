@@ -35,8 +35,8 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
 # linkage and secret-shaped literal bytes that must not enter the final image.
 FROM debian-snapshot-base AS pyav-wheel-builder
 
-# PyAV 17.1.0 redeclares a typed local with Cython 3.3; constrain its isolated
-# build dependency until the pinned PyAV source can be upgraded.
+# PyAV 12.1.0 supports the snapshot's FFmpeg 5 headers.  Pin its isolated
+# Cython build dependency so the from-source wheel remains reproducible.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
       build-essential \
@@ -51,8 +51,8 @@ RUN apt-get update \
     && printf '%s\n' 'Cython==3.2.9' > /tmp/npa-pyav-build-constraints.txt \
     && PIP_CONSTRAINT=/tmp/npa-pyav-build-constraints.txt \
       /opt/wan-base/bin/python -m pip wheel --no-cache-dir --no-deps \
-      --no-binary=av --wheel-dir /opt/npa-pyav-wheel av==17.1.0 \
-    && test -n "$(find /opt/npa-pyav-wheel -maxdepth 1 -type f -name 'av-17.1.0-*.whl' -print -quit)" \
+      --no-binary=av --wheel-dir /opt/npa-pyav-wheel av==12.1.0 \
+    && test -n "$(find /opt/npa-pyav-wheel -maxdepth 1 -type f -name 'av-12.1.0-*.whl' -print -quit)" \
     && rm -f /tmp/npa-pyav-build-constraints.txt
 
 FROM debian-snapshot-base
@@ -103,8 +103,8 @@ RUN /opt/npa/model_source.sh \
     && ! grep -Fq '"easydict"' /opt/byof/pyproject.toml \
     && /opt/wan-base/bin/python -c 'import runpy; cls = runpy.run_path("/opt/byof/wan/utils/easydict.py")["EasyDict"]; assert cls({"nested": {"value": 7}}).nested.value == 7' \
     && /opt/wan-base/bin/python -m pip install --no-cache-dir --no-deps \
-      protobuf==6.33.6 scipy==1.15.3 /opt/npa-pyav-wheel/av-17.1.0-*.whl \
-    && /opt/wan-base/bin/python -c 'import av; assert av.__version__ == "17.1.0"' \
+      protobuf==6.33.6 scipy==1.15.3 /opt/npa-pyav-wheel/av-12.1.0-*.whl \
+    && /opt/wan-base/bin/python -c 'import av; assert av.__version__ == "12.1.0"' \
     && /opt/wan-base/bin/python -m pip freeze --all > /opt/byof/npa_baked_python_inventory.txt \
     && ! grep -Eiq '^(torch|torchvision|torchaudio|nvidia-)' /opt/byof/npa_baked_python_inventory.txt \
     && find /opt/wan-base -type d -name __pycache__ -prune -exec rm -rf {} + \

@@ -48,7 +48,7 @@ def test_lingbot_model_runtime_builds_pyav_against_audited_system_ffmpeg() -> No
     assert "'Cython==3.2.9' > /tmp/npa-pyav-build-constraints.txt" in dockerfile
     assert "PIP_CONSTRAINT=/tmp/npa-pyav-build-constraints.txt" in dockerfile
     assert "--no-build-isolation" not in dockerfile
-    assert "--no-binary=av --wheel-dir /opt/npa-pyav-wheel av==17.1.0" in dockerfile
+    assert "--no-binary=av --wheel-dir /opt/npa-pyav-wheel av==12.1.0" in dockerfile
     for package in (
         "build-essential",
         "pkg-config",
@@ -66,11 +66,12 @@ def test_lingbot_model_runtime_builds_pyav_against_audited_system_ffmpeg() -> No
         in dockerfile
     )
     assert (
-        "protobuf==6.33.6 scipy==1.15.3 /opt/npa-pyav-wheel/av-17.1.0-*.whl"
+        "protobuf==6.33.6 scipy==1.15.3 /opt/npa-pyav-wheel/av-12.1.0-*.whl"
         in dockerfile
     )
-    assert 'import av; assert av.__version__ == "17.1.0"' in dockerfile
-    assert "protobuf==6.33.6 scipy==1.15.3 av==17.1.0" not in dockerfile
+    assert 'import av; assert av.__version__ == "12.1.0"' in dockerfile
+    assert "protobuf==6.33.6 scipy==1.15.3 av==12.1.0" not in dockerfile
+    assert "av==17.1.0" not in dockerfile
 
 
 def test_lingbot_upgrades_fixable_parent_perl_security_packages() -> None:
