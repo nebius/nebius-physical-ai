@@ -15,10 +15,11 @@ DEFAULT_RECIPE = {
     "seed": 42,
     "batch_size": 64,
     "generalist_epochs": 1,
-    "specialist_epochs": 10,
+    "specialist_epochs": 40,
     "suite": "libero_spatial",
     "task_id": 0,
     "evaluation_episodes": 10,
+    "deployment_state_offset": 30,
     "minimum_success": 0.7,
     "workers": 8,
     "min_brightness": 0.02,
@@ -68,13 +69,20 @@ def _recipe(args):
         {
             k: v
             for k, v in recipe.items()
-            if k not in {"min_brightness", "max_brightness", "min_sharpness"}
+            if k
+            not in {
+                "min_brightness",
+                "max_brightness",
+                "min_sharpness",
+                "deployment_state_offset",
+            }
         }
     )
     if recipe["evaluation_episodes"] > 16:
         raise ValueError(
             "three disjoint LIBERO initial-state sets require at most 16 episodes"
         )
+    _deployment_partition(recipe)
     from .data import _filter
     import fiftyone as fo
 
@@ -90,6 +98,14 @@ def _recipe(args):
         "training_kind": "continued-pretraining",
         "scheduler": "kubernetes",
     }
+
+
+def _deployment_partition(recipe):
+    # LIBERO supplies 50 initial states. Keep the deployment set disjoint from
+    # both promotion sets, and reject an offset that would silently wrap.
+    offset, trials = recipe["deployment_state_offset"], recipe["evaluation_episodes"]
+    if type(offset) is not int or offset < 2 * trials or offset + trials > 50:
+        raise ValueError("deployment states must be disjoint and fit the LIBERO set")
 
 
 def _workflow_identity(explicit):

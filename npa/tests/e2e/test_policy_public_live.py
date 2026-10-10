@@ -61,7 +61,9 @@ def test_independent_gpu_workers_and_every_applied_http_action(collected):
     assert summary["new_action_chunks"] > 0
     assert summary["simulation_rendering"] == "NVIDIA EGL"
     assert summary["model"]["cuda"] and summary["model"]["gpu"]
-    assert summary["initial_state_offset"] == 2 * summary["trials"]
+    recipe = json.loads((client / "recipe.json").read_text())
+    assert summary["initial_state_offset"] == recipe["deployment_state_offset"]
+    assert summary["initial_state_offset"] >= 2 * summary["trials"]
     roles = [
         json.loads((collected / f"serving/{role}/stage.json").read_text())
         for role in ("server", "client")

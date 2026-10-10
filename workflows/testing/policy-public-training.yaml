@@ -15,7 +15,7 @@ config:
   bucket: example-bucket
   source_overlay: true
   prefix: "policy-public/{{run.id}}"
-  recipe: '{"seed":42,"batch_size":64,"generalist_epochs":1,"specialist_epochs":40,"evaluation_episodes":10,"minimum_success":0.7,"workers":8}'
+  recipe: '{"seed":42,"batch_size":64,"generalist_epochs":1,"specialist_epochs":40,"evaluation_episodes":10,"deployment_state_offset":30,"minimum_success":0.7,"workers":8}'
   workflow_sha256: ""
   phase: pretrain
   iteration: "1"

@@ -22,6 +22,25 @@ SPEC = (
 )
 
 
+@pytest.mark.parametrize("offset", [True, -1, 19, 41])
+def test_deployment_partition_rejects_overlap_and_wrap(offset):
+    from npa.workflows.policy_training.turnkey_data import _deployment_partition
+
+    with pytest.raises(ValueError, match="disjoint"):
+        _deployment_partition(
+            {"deployment_state_offset": offset, "evaluation_episodes": 10}
+        )
+
+
+@pytest.mark.parametrize("offset", [30, 40])
+def test_deployment_partition_accepts_reserved_states(offset):
+    from npa.workflows.policy_training.turnkey_data import _deployment_partition
+
+    _deployment_partition(
+        {"deployment_state_offset": offset, "evaluation_episodes": 10}
+    )
+
+
 def test_standard_runtime_covers_all_stages_and_two_gpu_roles():
     spec = load_spec(SPEC.resolve())
     validate_spec(spec)

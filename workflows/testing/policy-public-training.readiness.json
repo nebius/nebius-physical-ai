@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "899965b651bc3dc8047371530795db5b9f380b7bf3838f504967a079f5f3d699",
+  "workflow_sha256": "1cf8be2723820a7f5031f231c2742faefefd8b45519a44e0f52c0f97e5b8e244",
   "planning": {
     "validation": {
       "status": "verified",
@@ -12,7 +12,7 @@
     },
     "task_fidelity": {
       "status": "unverified",
-      "reason": "The 10-epoch pilot passed both promotion gates but scored 5/10 in independent serving trials; the 40-epoch canonical recipe must complete live qualification.",
+      "reason": "The 10-epoch pilot scored 5/10 in independent serving trials; the 40-epoch recipe reserves fresh deployment states 30\u201339 and must complete live qualification.",
       "evidence": []
     }
   },

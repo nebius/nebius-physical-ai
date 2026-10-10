@@ -35,7 +35,7 @@ def benchmark_client(
     episodes, steps, completed = [], [], False
     try:
         for episode in range(recipe["evaluation_episodes"]):
-            initial = 2 * recipe["evaluation_episodes"] + episode
+            initial = recipe["deployment_state_offset"] + episode
             row, recorded = _episode(
                 environment, session, service, output, recipe, episode, initial
             )
@@ -301,7 +301,7 @@ def _summary(output, recipe, server, episodes, steps):
             "server_ms", [r for r in steps if r["new_action_chunk"]]
         ),
         "minimum_success": recipe["minimum_success"],
-        "initial_state_offset": 2 * recipe["evaluation_episodes"],
+        "initial_state_offset": recipe["deployment_state_offset"],
         "physical_robot_tested": False,
         "simulation_physics": "MuJoCo CPU",
         "simulation_rendering": "NVIDIA EGL",

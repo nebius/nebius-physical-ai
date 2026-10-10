@@ -41,10 +41,18 @@ S3 during execution. Failed gates resume their preceding native candidate and
 add another epoch increment. There is no implicit iteration or cost cap; cancel
 with `npa workbench workflow cancel <run-id> --project "<project>" --json`.
 
-The recipe in YAML controls epochs, batch size, seed, workers, evaluation trials
-and the success threshold. Change it before starting a new run. Three disjoint
-LIBERO initial-state sets require at most 16 trials in each set. The standard
+The recipe in YAML controls epochs, batch size, seed, workers, evaluation trials,
+deployment state offset and the success threshold. Change it before starting a
+new run. The deployment set must follow both promotion sets and fit LIBERO's 50
+initial states; overlapping or wrapping offsets are rejected. The standard
 runtime workflow identity is sealed into the recipe and final proof.
+
+The canonical recipe uses 40 specialist epochs and reserves deployment states
+30–39 before training. Promotion evaluations use states 0–9 and 10–19. An earlier
+10-epoch pilot passed both promotion gates but scored 5/10 on deployment states
+20–29; the unchanged 70% requirement correctly rejected it. That result informed
+the training change, so those earlier deployment states are not used as the
+revised recipe's independent final check.
 
 The split targets 90/5/5 within each task's unique trajectory groups, rounding
 each holdout upward so small tasks retain both reserved sets. Actual episode
@@ -67,7 +75,7 @@ these results qualify the workflow and deployment, not novel-data generalization
 | Fine-tune | Start from the first promoted checkpoint; train only the chosen task's training episodes. |
 | Evaluate / second gate | Measure loss over the reserved task test frames and native simulation completion on the next reset set. Failure returns to fine-tuning. |
 | Export | Require both promotion records and export the exact final specialist with portable model/tokenizer dependencies. |
-| Serve | One GPU runs authenticated HTTP SmolVLA inference; a distinct GPU worker renders native LIBERO while applying returned actions in MuJoCo CPU physics. This third reset set is untouched by model selection. |
+| Serve | One GPU runs authenticated HTTP SmolVLA inference; a distinct GPU worker renders native LIBERO while applying returned actions in MuJoCo CPU physics. The recipe reserves a separate reset set, disjoint from both promotion evaluations. |
 | Report | Reconcile every served/applied action, fully decode every episode video and create `reports/demo.html`, `demo.mp4`, `proof.json` and checksums. Deployment qualification failure preserves the measured proof and fails the workflow. |
 
 The HTML embeds footage, all deployment trials including failures, actual action
@@ -80,7 +88,7 @@ Collect the private run's `reports/` and `serving/{server,client}/` directories
 through the configured artifact transport, then verify the same-run evidence:
 
 ```bash
-NPA_POLICY_PUBLIC_RESULTS="<collected-run-directory>" \
+NPA_INTEGRATION_E2E=1 NPA_POLICY_PUBLIC_RESULTS="<collected-run-directory>" \
   npa/.venv/bin/python -m pytest npa/tests/e2e/test_policy_public_live.py -q
 ```
 
