@@ -5,12 +5,22 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import asdict, dataclass
+import io
 import json
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tarfile
 import tempfile
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from image_payload_credentials import (  # noqa: E402
+    content_credential,
+    normalise_member_name,
+    path_credential,
+)
 
 
 @dataclass(frozen=True)
@@ -61,20 +71,45 @@ def _is_application_content(name: str) -> bool:
 def _scan_layer_archive(archive: tarfile.TarFile, *, layer: str) -> list[Finding]:
     findings: list[Finding] = []
     for member in archive:
-        name = member.name.lstrip("./")
+        name = normalise_member_name(member.name)
         if not member.isdir():
             for kind, pattern in FORBIDDEN_PATHS:
                 if pattern.search(name):
                     findings.append(Finding(kind, layer, name))
-            if (
+            scanned_as_application = (
                 member.isfile()
                 and _is_application_content(name)
                 and member.size <= 16 * 1024**2
-            ):
+            )
+            payload = b""
+            if scanned_as_application:
                 stream = archive.extractfile(member)
                 payload = stream.read() if stream is not None else b""
+                # Retained rather than replaced: this is the narrower legacy
+                # list, and keeping it means the shared rules can only add
+                # findings here, never remove one.
                 if any(pattern.search(payload) for pattern in SECRET_CONTENT):
                     findings.append(Finding("credential_content", layer, name))
+            if not member.isfile():
+                continue
+            # The shared rules run over every file, application content
+            # included. They used to skip it, on the reasoning that the legacy
+            # list above already covered it — but that list is narrower, so an
+            # EC or encrypted key and every declared assignment were rejected
+            # under a non-application path and accepted under an application
+            # one, for identical bytes. Which directory a key sits in is not a
+            # property of the key.
+            kind = path_credential(name)
+            if kind is None:
+                if scanned_as_application:
+                    # Already in memory; do not extract the member twice.
+                    kind = content_credential(io.BytesIO(payload))
+                else:
+                    stream = archive.extractfile(member)
+                    if stream is not None:
+                        kind = content_credential(stream)
+            if kind is not None:
+                findings.append(Finding(kind, layer, name))
     return findings
 
 

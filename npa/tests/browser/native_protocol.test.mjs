@@ -2,6 +2,36 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {protocolCall, pendingRequests} from '../../src/npa/tools/desktop/native/protocol.mjs';
+import {threadSettings, validateSettings} from '../../src/npa/tools/desktop/native/settings.mjs';
+
+test('native permission changes reach the existing owner and return effective settings', async () => {
+  const policy = {approvalPolicy: 'on-request', sandboxPolicy: {type: 'readOnly'}};
+  let received;
+  const context = {handlers: {
+    read: async () => ({id: 'same', model: 'example', effort: 'medium', mode: 'default', ...policy}),
+    configure: async params => { received = params; return {ok: true}; },
+  }};
+  await protocolCall(context, {method: 'thread/settings/update', params: {threadId: 'same', ...policy}});
+  assert.deepEqual(received, {id: 'same', model: 'example', effort: 'medium', mode: 'default', serviceTier: undefined, ...policy});
+  const result = await protocolCall(context, {method: 'thread/read', params: {threadId: 'same'}});
+  assert.deepEqual(result.thread.sandboxPolicy, policy.sandboxPolicy);
+  assert.equal(result.thread.approvalPolicy, policy.approvalPolicy);
+  assert.deepEqual(threadSettings(null, {settings: policy}, {}).sandboxPolicy, policy.sandboxPolicy);
+});
+
+test('native model changes preserve permissions while rejecting unsupported policy mutations', () => {
+  const models = [{model: 'example', supportedReasoningEfforts: [{reasoningEffort: 'medium'}]}];
+  const request = {model: 'example', effort: 'medium', mode: 'default'};
+  const validate = extra => validateSettings({...request, ...extra}, models, [{mode: 'default'}]);
+  assert.equal(Object.hasOwn(validate({}), 'sandboxPolicy'), false);
+  for (const [type, approvalPolicy] of [['readOnly', 'on-request'], ['workspaceWrite', 'on-request'], ['dangerFullAccess', 'never']]) {
+    const policy = {approvalPolicy, sandboxPolicy: {type}};
+    assert.deepEqual(validate(policy).sandboxPolicy, policy.sandboxPolicy);
+  }
+  assert.throws(() => validate({approvalPolicy: 'never'}), /supported permission/);
+  assert.throws(() => validate({approvalPolicy: 'never', sandboxPolicy: {type: 'workspaceWrite'}}), /supported permission/);
+  assert.throws(() => validate({approvalPolicy: 'never', sandboxPolicy: {type: 'dangerFullAccess', extra: true}}), /supported permission/);
+});
 
 test('native prompt carries image and stable message identity to the same owner', async () => {
   let sent;

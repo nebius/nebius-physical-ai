@@ -227,7 +227,12 @@ def _run_stage_payload(args, prepared: Path, output: Path, workspace: Path) -> N
 
 
 def _publish_stage_failure(
-    output: Path, destination: str, error: Exception, *, stage: str = "visual-evaluate"
+    output: Path,
+    destination: str,
+    error: Exception,
+    *,
+    stage: str = "visual-evaluate",
+    schema: str = "npa.franka-rl.stage-failure.v1",
 ) -> None:
     """Retain diagnostic bytes separately without claiming stage completion."""
     try:
@@ -245,7 +250,7 @@ def _publish_stage_failure(
         write_json(
             output / "failure.json",
             {
-                "schema": "npa.franka-rl.stage-failure.v1",
+                "schema": schema,
                 "status": "failed",
                 "stage": stage,
                 "error_type": type(error).__name__,

@@ -145,7 +145,7 @@ Workload verbs are chosen by domain:
 - FiftyOne: `launch`, `load-dataset`, `curate`, `eval`, `open`.
 - Genesis: `train-teacher`, `generate-demos`, `eval-teacher`, `diagnose`, `tune`.
 - Isaac Lab: `train`, `eval`, `export-lerobot`.
-- Cosmos: `serve`, `train`, `finetune`, `optimize`, `infer`.
+- Cosmos: `serve`, `train`, `infer`.
 - GR00T: `download`, `finetune`, `eval`, `serve`, `infer`, `convert`.
 - LanceDB: `import-bdd100k`, `backfill`, `create-mv`, `query-table`.
 - SONIC: `train`, `serve`.
@@ -254,7 +254,7 @@ Build scripts should follow the `--registry` and `--push` shape used by:
 
 - `npa/docker/workbench/lerobot/build.sh`
 - `npa/docker/workbench/groot/build.sh`
-- `npa/docker/workbench/base/cuda13-b300/build.sh`
+- `npa/docker/workbench/base/cuda13-blackwell/build.sh`
 
 Keep image entrypoints explicit. LeRobot runs `python -m npa.server.app`;
 FiftyOne intentionally uses `/bin/bash` because the CLI launches the app command
@@ -371,9 +371,11 @@ call a tool endpoint, and write the next S3 URI. The BDD100K pipeline in
 `workflows/testing/bdd100k-pipeline.yaml` is the worked example.
 ## Workflow YAML Conventions
 The supported, customer-facing workflow catalog is the declarative
-`npa.workflow` spec set under `workflows/`. Keep `workflows/main/` limited to
-`sim2real.yaml`, `paidf-cosmos3.yaml`, and `nurec-reconstruct.yaml`; author new catalog workflows in
-`workflows/testing/`. Keep catalog documentation in `workflows/README.md`.
+`npa.workflow` spec set under `workflows/`. Promoted principal pipelines live in
+`workflows/main/`; see the [main index](workflows/main/README.md) for their guides
+and qualification scope. Author new reference workflows in `workflows/testing/`
+and partner integrations in `workflows/partners/<partner>/`. Keep the
+[catalog](workflows/README.md) and adjacent workflow indexes in sync.
 Do not add raw SkyPilot task templates to
 the package as a workflow catalog; the old catalog path is guardrail-retired.
 Raw SkyPilot YAML is still accepted by the submit wrapper for customer-owned
@@ -982,6 +984,14 @@ Required workflow checks include:
 
 E2E tests live under `npa/tests/e2e/` and are gated by
 `NPA_INTEGRATION_E2E=1`. The gate is implemented in `npa/tests/e2e/conftest.py`.
+The terminal-evidence lane additionally opts in through
+`NPA_VLM_TERMINAL_LIVE_CONFIG`, an operator-owned private configuration with
+reviewed frozen rollout controls. Without it, the lane skips even in the broad
+`make test-e2e` target; a supplied missing, malformed or invalid file fails closed.
+See the [terminal live-check prerequisites](docs/workbench/cookbooks/vlm-eval-loop-runbook.md#terminal-evidence-live-check).
+Run this panel serially. Configured acceptance requires all four cases to pass
+without skips or deselections; an unconfigured skip is not live evidence.
+The nightly hosted smoke runner does not select the terminal-evidence file.
 
 Smoke tests live under `npa/tests/smoke/` or tool-specific CLI test files. Heavy
 smoke tests must skip unless their environment variable is set. See

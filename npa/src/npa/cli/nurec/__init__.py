@@ -807,7 +807,11 @@ def render_cmd(
     )
     payload = result.as_dict()
     if result.ok and not dry_run and output_uri:
-        payload["output_uri"] = _publish(target_dir, output_uri)
+        # Publish exactly the generation the API returned: a reused output
+        # location renders into a fresh generation directory, and publishing
+        # the caller's original target would upload stale media from earlier
+        # renders alongside (or instead of) this invocation's frames.
+        payload["output_uri"] = _publish(Path(result.output_dir), output_uri)
     _finish_nurec_result(payload, output)
 
 
@@ -980,6 +984,13 @@ def _publish_reconstruction(result: Any, output_uri: str) -> str:
     ):
         if local and Path(local).is_file():
             published.append(_publish(Path(local), _join_uri(output_uri, name)))
+    timeline = getattr(result, "photographic_timeline_path", "")
+    if timeline and Path(timeline).is_file():
+        published.append(
+            _publish(
+                Path(timeline), _join_uri(output_uri, "photographic-timeline.json")
+            )
+        )
     val_dir = Path(result.run_dir) / "val"
     if val_dir.is_dir():
         published.append(_publish(val_dir, _join_uri(output_uri, "val")))

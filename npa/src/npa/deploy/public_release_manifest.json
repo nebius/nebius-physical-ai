@@ -2,6 +2,7 @@
   "format": "npa_public_release_manifest_v1",
   "registry": "ghcr.io/nebius/nebius-physical-ai",
   "releases": {
+    "lyra2": {"tag": "2.0-rtfetch2", "published_digest": "sha256:c959e2338409195b8b2082e5f199a84c782ff81f2b2dac794e10c70f233a5bf6", "development_sha": "51be9e81450233d6742489c95b2cd250ed482acc"},
     "cosmos": {"tag": "cu128-torch27-sm100-1.0.9-20260803T002017Z", "published_digest": "sha256:a7d2ba85ea4ad2d2036f6f8575b4e7a801d3f98ff202f6eb575329f1af9a41dd"},
     "cosmos2-transfer": {"tag": "2.5.1-sim2real-coherent-20260904", "published_digest": "sha256:0caddf68ccac1b69bd9fe3fb089bcc325a111059065452d31fdf0576629895d3", "development_sha": "c164fd3480f8a9ea8f9df9ccb9509502fd527996"},
     "cosmos3-reason": {"tag": "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z", "published_digest": "sha256:e708aa32b9247eaedf1a7a5b0d82adbe65b95a9af50721b9d09fddbfd508bbc9"},
@@ -28,6 +29,29 @@
     "sam2": {"tag": "2.1-rtfetch-20260916", "published_digest": "sha256:fbe20454e97452e447e00f79260a267b552deef5538e3bbbc8c3567a3c576f16", "development_sha": "d54eec137d3b2d86ff1acef736e36967b1fad7d3"},
     "openarm": {"tag": "2.2.0-isaac0.1.0-rtfetch", "published_digest": "sha256:c30da0d55de0b1b0528b1481a318bf43ad9d95c7128ae44b5d434203e7d1543a", "development_sha": "01fbf3a554cb7b15066283fd171c5b81f6207eda"},
     "flex-pi": {"tag": "0.1.0-cu128-r2", "published_digest": "sha256:e27978b682056339fb332acfdd0df2369af1f180d93ba1e0fd86772d6649efe6", "development_sha": "8904daf36d0cc9152193b0e87a687bce7e6fca46"}
+  },
+  "workflow_validation_candidates": {
+    "cosmos3": {
+      "development_sha": "6462f27f98e1ded31d17b00944f943db3381ac35",
+      "published_digest": "sha256:1aa6c473d95863709766f02d3e199cf8cf860adbe585b409a23a82bae4a2c37e",
+      "validation_tool_refs": ["workbench.cosmos3.prepare_video_input", "workbench.cosmos3.generate_variants"],
+      "scope_reason": "Temporary PAIDF validation scope; trusted image-security publication and component smokes do not qualify every advertised Cosmos3 action or promote a supported release.",
+      "build_run_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/37378387786"
+    },
+    "cosmos-evaluator": {
+      "development_sha": "bd6145947145f75f9065707e3f5c53f841fab9d3",
+      "published_digest": "sha256:5d1335f58d5cc5e11cb0d4ccd0023cafe6e3b0bcc8af405f1f9d18013a17edfa",
+      "validation_tool_refs": ["workbench.cosmos_evaluator.evaluate"],
+      "scope_reason": "Temporary PAIDF validation scope; a repaired public development image remains separate from supported-release promotion and full workflow acceptance.",
+      "build_run_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/37271661779"
+    },
+    "cosmos-curate": {
+      "development_sha": "bd6145947145f75f9065707e3f5c53f841fab9d3",
+      "published_digest": "sha256:11e596bfb2cb46a6435dfe8013484882b1b0d6c7747ead1edb8c32c94a0581ad",
+      "validation_tool_refs": ["workbench.cosmos_curate.curate"],
+      "scope_reason": "Temporary PAIDF validation scope; a repaired public development image remains separate from supported-release promotion and full workflow acceptance.",
+      "build_run_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/37271661779"
+    }
   },
   "publication_pending": {
     "antioch": "The adapter image is redistribution-eligible but has not yet been published and verified for anonymous pull.",

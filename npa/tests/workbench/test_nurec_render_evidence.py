@@ -10,7 +10,7 @@ from PIL import Image
 import pytest
 
 from npa.workbench.nurec import render_evidence as evidence
-from npa.workbench.nurec.nurec import NurecConfig, NurecError, render_novel_views
+from npa.workbench.nurec.nurec import NurecConfig, render_novel_views
 from npa.workbench.nurec.preview import write_nurec_preview
 
 
@@ -103,19 +103,29 @@ def test_failed_renderer_cannot_publish_success_evidence(tmp_path, monkeypatch):
     assert not (tmp_path / "renders" / evidence.EVIDENCE_FILENAME).exists()
 
 
-def test_stale_frames_refuse_a_new_render_before_execution(tmp_path):
+def test_new_generation_evidence_excludes_and_preserves_stale_frames(tmp_path):
     artifact, output = _run_tree(tmp_path)
+    previous = (output / "frame.png").read_bytes()
 
-    def unexpected(*args, **kwargs):
-        pytest.fail("renderer executed over pre-existing media")
+    def native(command, **kwargs):
+        generation = Path(command[command.index("--output-dir") + 1])
+        assert generation != output
+        Image.new("RGB", (48, 32), "red").save(generation / "new.png")
+        return subprocess.CompletedProcess(command, 0, "", "")
 
-    with pytest.raises(NurecError, match="already contains frames"):
-        render_novel_views(
-            NurecConfig.from_env(environ={}),
-            artifact_path=str(artifact),
-            output_dir=str(output),
-            runner=unexpected,
-        )
+    result = render_novel_views(
+        NurecConfig.from_env(environ={}),
+        artifact_path=str(artifact),
+        output_dir=str(output),
+        runner=native,
+    )
+    assert result.ok
+    generation = Path(result.output_dir)
+    record = json.loads((generation / evidence.EVIDENCE_FILENAME).read_text())
+    assert record["frame_count"] == 1
+    assert record["frames_sha256"] == evidence._media_digest([generation / "new.png"])
+    assert (output / "frame.png").read_bytes() == previous
+    assert not (output / evidence.EVIDENCE_FILENAME).exists()
 
 
 def test_driver_probe_failure_does_not_fabricate_samples(monkeypatch):

@@ -537,8 +537,25 @@ def build_nre_train_args(
         args.append("dataset.lidar_ids=[]")
     elif config.lidar_ids:
         args.append(f"dataset.lidar_ids={_hydra_list(config.lidar_ids)}")
+    args.extend(_object_capture_quality_overrides(config))
     args.extend(config.extra_overrides)
     return args
+
+
+def _object_capture_quality_overrides(config: NurecConfig) -> list[str]:
+    if config.config_name != DEFAULT_CONFIG_NAME:
+        return []
+    # The inherited AV recipe otherwise trains at quarter image resolution and
+    # fits exposure differences into scene geometry instead of camera response.
+    defaults = {
+        "dataset.n_train_sequential_image_subsample": "1",
+        "model/post_processing@model.post_processing.b": "ppisp",
+        "model.strategy.add.max_n_gaussians": "2000000",
+    }
+    explicit = {
+        value.partition("=")[0].lstrip("+~") for value in config.extra_overrides
+    }
+    return [f"{key}={value}" for key, value in defaults.items() if key not in explicit]
 
 
 def build_nre_render_args(
@@ -816,6 +833,7 @@ class NurecReconstructResult:
     output_uri: str = ""
     errors: tuple[str, ...] = ()
     initialization: dict[str, Any] = field(default_factory=dict)
+    photographic_timeline_path: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -829,6 +847,7 @@ class NurecReconstructResult:
             "metrics_path": self.metrics_path,
             "metrics": dict(self.metrics),
             "initialization": dict(self.initialization),
+            "photographic_timeline_path": self.photographic_timeline_path,
             "gt_dir": self.gt_dir,
             "command": list(self.command),
             "output_uri": self.output_uri,
@@ -1697,7 +1716,14 @@ def reconstruct_scene(
     env = dict(environ if environ is not None else os.environ)
     run = runner or subprocess.run
     out_dir = config.resolved_out_dir
-    args = build_nre_train_args(config, ncore_json=ncore_json, out_dir=str(out_dir))
+    from npa.workbench.nurec.photographic_timeline import prepare_photographic_training
+
+    if not dry_run:
+        initialization = export_initialization(ncore_json, initialization)
+    config, training_json, timeline = prepare_photographic_training(
+        config, ncore_json, dry_run=dry_run
+    )
+    args = build_nre_train_args(config, ncore_json=training_json, out_dir=str(out_dir))
     mounts = _default_mounts(config, ncore_json)
     command = nre_command(
         config, args, mounts=mounts, env_names=[config.ngc_api_key_env, "HF_TOKEN"]
@@ -1715,9 +1741,9 @@ def reconstruct_scene(
             metrics_path="",
             command=tuple(command),
             initialization=initialization,
+            photographic_timeline_path=timeline,
         )
 
-    initialization = export_initialization(ncore_json, initialization)
     out_dir.mkdir(parents=True, exist_ok=True)
     result = _run(command, env=_nre_env(config, env), run=run, timeout=timeout)
     if result.returncode != 0:
@@ -1732,6 +1758,7 @@ def reconstruct_scene(
             metrics_path="",
             command=tuple(command),
             initialization=initialization,
+            photographic_timeline_path=timeline,
             errors=(
                 f"NRE reconstruction failed (exit {result.returncode}): "
                 f"{_sanitize(result, config, env)}",
@@ -1753,6 +1780,11 @@ def reconstruct_scene(
             "reconstruction finished but no .usdz artifact was produced; "
             "checkpoint.artifact.enabled must be true"
         )
+
+    if usdz is not None and not errors:
+        from npa.workbench.nurec.capture_trajectory import attach_capture_trajectory
+
+        attach_capture_trajectory(training_json, usdz)
 
     gt_dir = ""
     if export_gt and not errors:
@@ -1789,6 +1821,7 @@ def reconstruct_scene(
         command=tuple(command),
         errors=tuple(errors),
         initialization=initialization,
+        photographic_timeline_path=timeline,
     )
 
 
@@ -1984,6 +2017,8 @@ def render_novel_views(
     run = runner or subprocess.run
     translation = parse_offset(rig_translation_offset, DEFAULT_RIG_TRANSLATION_OFFSET)
     rotation = parse_offset(rig_rotation_offset, DEFAULT_RIG_ROTATION_OFFSET)
+    if not dry_run:
+        output_dir = str(_new_render_generation(Path(output_dir)))
     args = build_nre_render_args(
         config,
         artifact_path=artifact_path,
@@ -2002,6 +2037,14 @@ def render_novel_views(
         video_fps=video_fps,
         video_crf=video_crf,
     )
+    if not replicate_training_views and not custom_rig_trajectory:
+        from npa.workbench.nurec.capture_trajectory import prepare_capture_render
+
+        trajectory = prepare_capture_render(artifact_path, output_dir, dry_run=dry_run)
+        if trajectory:
+            args.extend(["--custom-rig-trajectory", trajectory])
+            args.extend(["--calib-source", "training-rig-poses-per-frame"])
+
     mounts = (
         [
             (str(Path(artifact_path).parent), str(Path(artifact_path).parent)),
@@ -2031,11 +2074,6 @@ def render_novel_views(
         write_render_evidence,
     )
 
-    if count_render_frames(output_dir):
-        raise NurecError(
-            "render output already contains frames; select an empty output directory"
-        )
-    Path(output_dir).mkdir(parents=True, exist_ok=True)
     with RenderTelemetry() as telemetry:
         result = _run(command, env=_nre_env(config, env), run=run, timeout=timeout)
     if result.returncode != 0:
@@ -2078,6 +2116,12 @@ def render_novel_views(
         command=tuple(command),
         errors=tuple(errors),
     )
+
+
+def _new_render_generation(target: Path) -> Path:
+    """Reserve output before concurrent invocations can produce or reuse media."""
+    target.mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.mkdtemp(prefix="gen-", dir=target))
 
 
 def _offset_text(offset: tuple[float, float, float]) -> str:

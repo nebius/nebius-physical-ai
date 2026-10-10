@@ -12,6 +12,19 @@ and follow [installation](../docs/install.md) and
 The [command reference](../docs/cli/workbench.md) lists the installed tools;
 `npa workbench <tool> --help` exposes each tool's actual commands.
 
+`npa workbench vlm-eval review-visual` and its SDK write a separate private rich
+visual audit. Choose an exact hosted model, neutral task, and fresh output path;
+optional `--baseline-path` compares both sources in both A/B orders. See the
+[visual-review guide](../docs/workbench/vlm-visual-review.md) for all options and
+the retained limitations. These records never affect the completion score or gate.
+
+VLM `--frame-selection sequence` samples uniformly. For known-count inputs,
+`keyframes` allocates half its frame budget to a terminal window covering at
+least the final 10%, widening when needed for unique samples. Both include the
+first and final frame when at least two are selected. This is temporal sampling,
+not event detection; unknown-count video compatibility is unchanged. See the
+[sampling evidence](../docs/workbench/evidence/vlm-frame-selection-semantics.md).
+
 The [NuRec sample workflow](../docs/workbench/guides/neural-reconstruction.md)
 and [four-camera warehouse workflow](../docs/workbench/multicamera-rgbd-capture.md)
 download public sample data automatically and publish compact, offline
@@ -72,6 +85,17 @@ implementation functions, and wrappers around CLI callbacks; available imports
 and return types vary by tool. See the
 [CLI / SDK / workflow walkthrough](../docs/workbench/cli-sdk-yaml-walkthrough.md)
 before integrating a tool programmatically.
+
+PAIDF's native Nano structural generation now seals verified per-variant
+receipts so a recovered worker can reuse complete clips from the same run.
+The workflow's immutable `NPA_TASK_IMAGE` enables this path; standalone calls
+without that image identity, mutable image references, and custom checkpoints
+continue fresh generation. Set `variant_recovery=disabled` to intentionally
+regenerate after an operational runtime change.
+`NPA_COSMOS3_NANO_REVISION` is the internal full Hugging Face revision handoff
+from the sealed batch to the native interpreter, with no operator default.
+Let the coordinator set it. See the [recovery contract](../docs/workbench/guides/paidf-cosmos3.md#native-variant-recovery)
+for the source, weight, control and artifact checks and live qualification.
 
 For a first contest evaluation, use the [one-file BEHAVIOR DEV setup](../docs/workbench/challenge-onboarding.md)
 through `npa workbench workflow challenge init`, `check`, and `prepare`.
@@ -178,7 +202,15 @@ cleanup; see [SkyPilot setup](../docs/orchestration/skypilot-setup.md#verify).
 The [PAIDF starter guide](../workflows/guides/paidf-cosmos3.md#audit-a-completed-default-starter-run)
 also provides a read-only live audit using the selected run URI, project, and
 saved pre-submission UTC timestamp. Its test settings are scoped to the audit
-shell and do not submit work. For task-specific augmentation, set the optional
+shell and do not submit work. New Cosmos 3 preparation records the original
+scene rectangle and detects persistent paired black edge bands across the full
+source clip. Publication restores known and detected borders from the source,
+verifies every generated scene pixel survives lossless encoding, and retains
+`raw_model_video.mp4` separately. Evaluator checks exclude verified padding and
+report border changes in `spatial_evidence.padding`. Older outputs without
+region provenance retain full-frame scoring. See the [copy-paste twelve-profile guide](../docs/workbench/guides/paidf-appearance-12.md#apply-the-recipe)
+for updating NPA, running your MP4 and checking the corrected video receipts.
+For task-specific augmentation, set the optional
 `appearance_profiles_json` workflow config to a JSON array of coherent lighting,
 background, color-grade and surface-finish profiles; its empty default retains
 the starter sampler. Cosmos3's `caption_instruction` supplies `augment_subject`
@@ -389,6 +421,16 @@ SDK; previously published container pins retain their recorded build versions.
 
 ## Developing and testing npa
 
+The [served-model VLM sampling lane](../docs/workbench/cookbooks/vlm-eval-loop-runbook.md#served-model-sampling-live-lane)
+extends `npa/scripts/vlm_provenance_live_recheck.py` against an operator-owned GPU
+endpoint. Set `NPA_INTEGRATION_E2E=1` and `NPA_VLM_PROVENANCE_LIVE_CONFIG` to a
+private JSON configuration; both are unset by default. The configuration supplies
+local input/output paths, endpoint and model identities, a task, and optionally
+`api_key_env` (default `VLM_EVAL_API_KEY`). That environment variable must contain
+the endpoint key. The runner retains private per-case evidence outside Git and
+fails unless every inference case executes and passes. The linked runbook covers
+configuration, credential/access checks, provisioning ownership, and cleanup.
+
 Build actual RGB/action robot demonstrations with
 [robot SDG and LeRobot export](../docs/workbench/token-factory-robot-sdg.md).
 `npa workbench token-factory robot-sdg` uses S3 handoffs; the SDK's `robot_sdg`
@@ -425,6 +467,55 @@ make test-smoke PYTHON="$(pwd)/npa/.venv/bin/python"  # onboarding CLI checks
 make precheck  # CI pins, lint, formatting, and CI contract regressions
 npa/.venv/bin/python -m pytest npa/tests/guardrails/test_documentation_examples.py -q
 ```
+
+VLM score, loop, and benchmark artifacts disclose that independent human-label
+calibration is not established. Their ordered limitations distinguish sampled
+observations, mean-score loop gates, and fixture/stub inputs from real provider
+evidence. Direct results also emit `provider_call_made`, which is false for
+stub and score-override paths.
+
+Packaged VLM benchmark samples are four synthetic 2x2 color swatches plus a
+tiny truncated-progress sequence with an omitted terminal outcome. Benchmark
+reports preserve their `illustrative_only` evidence scope and ordered dataset
+limitations; custom manifests without scope metadata remain `unspecified`.
+These sample metrics demonstrate wiring and do not validate physical tasks.
+
+See the
+[VLM runbook](../docs/workbench/cookbooks/vlm-eval-loop-runbook.md#outputs).
+
+Token Factory captions accept `--thinking` and `--no-thinking`; omitting both
+preserves the selected model's defaults. The SDK's `thinking` argument accepts
+a literal boolean or `None`. See the
+[Token Factory guide](../docs/workbench/token-factory.md) for model-specific
+controls and reasoning-only failures.
+
+For GPU VLM provenance, use the
+[operator verification lane](../docs/workbench/cookbooks/vlm-eval-loop-runbook.md#live-provenance-verification).
+It requires `NPA_INTEGRATION_E2E=1`, an owner-only JSON file selected by
+`NPA_VLM_PROVENANCE_LIVE_CONFIG`, local rollout fixtures, and the endpoint key in
+`VLM_EVAL_API_KEY` (or the file's `api_key_env`). Run
+`npa/.venv/bin/python npa/scripts/vlm_provenance_live_recheck.py --evidence-dir "$NPA_PRIVATE_EVIDENCE_DIR"`
+with a fresh private directory outside the checkout. The lane fails on missing
+configuration or skipped inference and leaves endpoint provisioning and cleanup
+to the operator. Hosted Kimi-K3 visual inference runs in the separate
+`token_factory_live_recheck.py` lane with `NEBIUS_TOKEN_FACTORY_KEY`.
+
+The `vlm-eval benchmark --dataset isaac-agency` alias packages six stylized
+frames with a positive elevated-object claim and a negative grasp-and-lift
+claim. Its structural preflight checks the exact bytes before model inference;
+it is an illustrative calibration, not Isaac rendering or policy qualification.
+Use sequence selection with six frames. The
+[agency calibration record](../docs/workbench/evidence/vlm-isaac-agency-calibration.md)
+describes the fixed labels, measurements and limits.
+
+The hosted live test `npa/tests/e2e/test_vlm_agency_calibration_live.py` executes
+both claims once per model and retains the measured confusion counts. It uses
+the configured Token Factory key and defaults to the hosted vision model.
+`NPA_VLM_AGENCY_LIVE_MODELS` accepts comma-separated model IDs;
+`NPA_VLM_AGENCY_EVIDENCE_DIR` selects a new private evidence directory for the
+raw provider reports, defaulting to the test's temporary directory. A passing
+test proves complete, traceable execution; label disagreement remains visible
+in the report and does not establish calibrated model quality.
 
 After committing, run `git fetch origin main` and `make merge-precheck` before
 pushing. This checks committed HEAD's merge with current main for conflicts and
@@ -463,6 +554,32 @@ from recorded final positions, and reruns selection in both candidate orders.
 The input bundle must come from real policy rollouts; this check does not launch
 training, establish policy quality, or claim a complete Sim2Real pipeline run.
 Use `NPA_CONFIG_DIR` to select an isolated operator configuration.
+
+Paired hosted VLM audits have a separate executable lane. Configurations select
+exactly one supported case family; optional `audit_kind: paired` must match it.
+Generated controls require that kind and the exact inside/outside/blank panel:
+`npa/.venv/bin/python npa/scripts/vlm_audit_live_recheck.py --evidence-dir "$NPA_PRIVATE_EVIDENCE_DIR"`.
+Set `NPA_VLM_AUDIT_LIVE_CONFIG` to an owner-only JSON file with the two exact
+model IDs, input fixture, credential environment-variable name, task/rubric, and
+frozen score-gate expectations. The runner sets `NPA_INTEGRATION_E2E=1`, requires
+every audit to execute without skips, and retains reports in a new private
+evidence directory. See [configured audit checks](../docs/testing/vlm-audit-live-contracts.md)
+for configuration, credential checks, fixture preparation, and lifecycle.
+The existing protected nightly workflow also runs this entrypoint with
+`--generated-controls`: three frozen local visual controls and two hosted judges,
+using only its Token Factory key. Receipt acceptance rechecks retained request,
+rubric, response hashes, exact model identity, bare-JSON completion and positive
+integer token usage after test execution; passing test counts alone are insufficient.
+Before child execution, the runner freezes actual normalized inputs and effective
+request settings. Acceptance binds paired judges to the same configured request,
+and preference orders to distinct source identities and exact neutral A/B reversals.
+Changed inputs, internally rehashed requests, or non-audit metadata fail closed.
+The preference lane also reparses both retained responses with its strict five-field
+schema and requires equality with the recorded verdicts. These checks establish
+internal evidence integrity, not provider authentication or promotion.
+It uploads sanitized receipts, not raw visuals
+or provider responses. This lane does not provision a GPU or replace the existing
+hosted nightly suites; registration alone is not a successful live-run claim.
 
 The CPU wheel exercises real checkpoint loading without a GPU. See
 [the CI environment](../.github/workflows/test.yml) for the complete coverage
@@ -567,6 +684,15 @@ running. Without an override, Make prefers the contributor environment
 `npa/.venv/bin/python`, then `python3` on `PATH`. Live and GPU tests are
 deselected from `make test`; `make test-e2e` is the explicit live-infrastructure
 target and needs the relevant credentials and resources.
+The VLM terminal-evidence live lane requires `NPA_INTEGRATION_E2E=1` and
+`NPA_VLM_TERMINAL_LIVE_CONFIG`, an owner-only JSON file defining frozen real
+complete, truncated, ambiguous, and blank controls and a new private output
+directory. There is no default config: without the lane-specific configuration,
+this lane skips even under global integration. A supplied missing, malformed or
+invalid config fails closed. Skips are not live evidence; configured acceptance
+requires all four cases with zero skips or deselections. See the [terminal-evidence live
+check](../docs/workbench/cookbooks/vlm-eval-loop-runbook.md#terminal-evidence-live-check)
+for preparation, credential preflight, execution, and evidence review.
 For the real Cosmos Ray batch check, set `NPA_COSMOS3_RAY_LIVE_OUTPUT_URI`
 to an operator-owned S3 prefix; it has no default. The check requires an existing
 authenticated GPU service and writes two synthetic images plus their provenance.
@@ -647,6 +773,40 @@ same safety block but emit distinct `procfs_unavailable` and
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for the full test layout and PR
 conventions (branch → PR → squash, one approval, never self-approve).
 
+## Workbench specialists
+
+Named operations can opt into `handoff_on_failure` (default `false`) to pass a
+recorded terminal verification failure to the next configured model, retaining
+the failed receipt and existing grants. It never retries an uncertain operation;
+see the [specialist recovery guide](../docs/workbench/specialists.md).
+
+For independently running GLM/DeepSeek agents, install `npa[agent-specialists]`
+and run `npa workbench specialists --config <operator-team.json> serve`.
+The [specialist guide](../docs/workbench/specialists.md) covers explicit model
+endpoints, optional Jev routing, scoped workspaces, durable restart, task controls,
+and the required `NPA_SPECIALISTS_TOKEN` service credential. `NEBIUS_TOKEN_FACTORY_KEY`
+supplies hosted inference; `TYPESAFE_API_KEY` is needed only for optional Jev.
+Configuration contains credential environment names, never credential values.
+Profile `model_router: "token_factory"` uses a declared `routing_model` for one
+structured classification call among `model_criteria` endpoints. It uses the
+existing inference credential and requires no TypeSafe service. Set
+`require_model_route: true` to block generation on unavailable or invalid routing;
+default `false` records a primary-endpoint fallback. Routing usage and durable
+attempts are retained separately. See [model-driven routing](../docs/workbench/specialists.md#model-driven-routing-through-token-factory).
+Profile `model_router: "jev"` chooses among that profile's declared model endpoints
+without changing its workspace or tool grants. Add `require_model_route: true`
+to stop before generation when Jev is unavailable or abstains; the default
+`false` preserves advisory fallback. See the [required Jev stack setup](../docs/workbench/specialists-jev-stack.md).
+Optional `compact_context: true`
+omits superseded observations from inference requests while preserving full
+receipts. Observation operations can declare `wait_for` JSON states so workers
+poll without routine model calls; `SpecialistTeam.wait_for_attention` lets a
+coordinator wait outside its model turn and consume compact evidence reports.
+The [workflow experiment runner](examples/specialists/workflows/README.md) also
+offers `--coordination specialists-first` for predefined assignments with required
+checks: it dispatches those workers directly and invokes Astra only for recovery
+or evidence review. The default `completion` mode retains Astra planning.
+
 ## Workbench Studio
 
 Studio `preview` and `final` can also deliver the finished MP4 with
@@ -689,3 +849,27 @@ live CLI response, proves it matches Terraform state and desired attachment,
 and rejects a changed GPU-cluster ID. It does not replace provisioning's GPU
 health and CUDA validation. Keep configuration, state, and provider responses
 outside Git.
+
+### Blinded VLM preference audits
+
+For a blinded image audit, run `npa workbench vlm-eval compare-preference`
+with `--baseline-path`, `--candidate-path`, `--output-path`, and `--task`.
+It sends metadata-free RGB images under neutral labels in both orders, stores
+complete private evidence, and reports only a bounded console summary. See the
+[VLM evaluation runbook](../docs/workbench/cookbooks/vlm-eval-loop-runbook.md)
+for credentials, rubric options, and recovery without another provider call.
+This hosted API command needs no local GPU and never emits an acceptance gate.
+
+Preference audits default to Nebius Token Factory only when no ambient API base
+URL is set. If `VLM_EVAL_API_BASE_URL`, `OPENAI_BASE_URL`,
+`NEBIUS_TOKEN_FACTORY_BASE_URL`, or `NEBIUS_BASE_URL` is set, supply an explicit
+`--endpoint-url`; these variables never silently redirect preference images.
+Custom endpoints require the key in the exact `--api-key-env` variable (default
+`VLM_EVAL_API_KEY`), with no credential fallback. A custom key variable also
+requires an explicit endpoint. The default Nebius route accepts
+`VLM_EVAL_API_KEY`, or `NEBIUS_TOKEN_FACTORY_KEY` from the environment or the
+configured credentials file. `OPENAI_API_KEY` is never an automatic fallback;
+use an explicit endpoint and `--api-key-env OPENAI_API_KEY` for that route.
+Routing refusals report a fixed reason code and corrective guidance in text or
+JSON output. They happen before transport or journal creation; they do not
+imply that a private evidence bundle exists.

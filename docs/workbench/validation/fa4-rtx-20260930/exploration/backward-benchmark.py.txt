@@ -1,0 +1,32 @@
+"""Measure training candidates separately from qualified runtime images."""
+import argparse
+import hashlib
+import json
+from pathlib import Path
+from types import SimpleNamespace
+
+import torch
+from attention_benchmark_backend import attention_backend, benchmark_environment
+from attention_kernel_benchmark import _cases, _measure
+
+parser=argparse.ArgumentParser()
+parser.add_argument('--backend',required=True)
+parser.add_argument('--output',type=Path,required=True)
+parser.add_argument('--candidate',action='store_true')
+args=parser.parse_args()
+report={'environment':benchmark_environment(args.backend),'candidate':args.candidate,'results':[]}
+if args.candidate:
+    provenance=json.loads(Path('/validation/backward-provenance.json').read_text())
+    for name,digest in provenance['files'].items():
+        if name.startswith('flash_attn/'):
+            actual=Path('/opt/npa/venv/lib/python3.11/site-packages')/name
+            assert hashlib.sha256(actual.read_bytes()).hexdigest()==digest
+    report['runtime_source_overlay']=provenance
+function=attention_backend(args.backend)
+settings=SimpleNamespace(warmup=5,iterations=50,repeats=7)
+for case in _cases():
+    if not case['backward']:continue
+    entry=_measure(torch,function,case,settings,True)
+    report['results'].append(entry)
+    args.output.write_text(json.dumps(report,indent=2)+'\n')
+    print(case['name'],entry['median_wall_ms'],flush=True)

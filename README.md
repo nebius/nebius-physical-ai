@@ -14,6 +14,7 @@
 
 **[Quickstart](docs/quickstart.md)** ·
 **[Guides](docs/workbench/guides/README.md)** ·
+**[Manual workflows](docs/workbench/guides/manual-workflow-operations.md)** ·
 **[Workbench docs](docs/workbench/README.md)** ·
 **[Benchmarks](benchmark/README.md)** ·
 **[Operator tools](docs/tools/README.md)** ·
@@ -210,6 +211,11 @@ does not prove its inputs, credentials, image, or GPU are ready for execution.
 
 For a real run, follow the selected guide's `prepare-run`, image preflight,
 `submit --runtime`, and monitoring instructions with your own project and input.
+Collect executed actions across physical scene variations with the
+[physical augmentation demo](docs/workbench/guides/physical-augmentation.md):
+one launch command produces an offline interactive replay, comparison film,
+and verified action dataset from actual RTX simulation.
+
 See the [workflow catalog](workflows/README.md),
 [authoring guide](docs/workbench/npa-workflow-guide.md), and
 [run lifecycle](docs/run-lifecycle.md). The canonical
@@ -227,6 +233,8 @@ training credit. The older `sim2real/runbook.yaml` is a legacy path.
 | Task | Reference |
 | --- | --- |
 | Discover tools by task | [Workbench docs](docs/workbench/README.md) |
+| Use FA4 in your own RTX PRO 6000 container | [RTX PRO 6000 FA4 adoption guide](docs/workbench/guides/rtx6000-fa4.md) |
+| Compare standalone FA2 and tuned FA4 | [RTX PRO 6000 measurements and actual renders](docs/workbench/fa2-fa4-validation.md) |
 | Find a command or option | [CLI index](docs/cli/README.md), then `npa workbench <tool> --help` |
 | Call a tool from Python or HTTP | [CLI / SDK walkthrough](docs/workbench/cli-sdk-yaml-walkthrough.md) — supported interfaces vary by tool |
 | Develop a native Ray application | [Ray guide](docs/workbench/ray.md) |
@@ -282,7 +290,12 @@ of policy convergence. See also the
 ## Documentation
 
 Use the [documentation index](docs/README.md) to find setup, operations, and
-contributor references. Report a broken example with its command, `npa` version,
+contributor references. For workflow operations, start with
+[manual runs](docs/workbench/guides/manual-workflow-operations.md),
+[episode batches and capacity](docs/workbench/guides/paidf-dataset-batches.md), or
+[quality reports](docs/workbench/insights-reports.md).
+
+Report a broken example with its command, `npa` version,
 and redacted error in [GitHub Issues](https://github.com/nebius/nebius-physical-ai/issues).
 Keep credentials and private infrastructure identifiers out of issue text.
 

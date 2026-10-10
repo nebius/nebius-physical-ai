@@ -387,3 +387,96 @@ def test_nurec_declarative_spec_runs_multi_step_on_real_gpus(tmp_path: Path) -> 
     data = local_rrd.read_bytes()
     assert recording_has_run_entities(data) is True
     assert is_stock_demo_recording(data) is False
+
+
+def test_nurec_default_quality_readback(tmp_path: Path) -> None:
+    """Reject the old blurry default using independently downloaded native metrics."""
+    if os.environ.get("NPA_INTEGRATION_E2E", "") != "1":
+        pytest.skip("set NPA_INTEGRATION_E2E=1 for independent artifact readback")
+    from urllib.parse import urlsplit
+
+    uri = urlsplit(_require("NPA_NUREC_QUALITY_RUN_URI"))
+    assert uri.scheme == "s3" and uri.netloc and uri.path.strip("/")
+    client = _s3_client()
+    paths = _download_quality_artifacts(client, uri, tmp_path)
+    _assert_default_quality(paths)
+    _assert_photographic_training_poses(paths)
+
+
+def _download_quality_artifacts(client, uri, tmp_path):
+    paths = {}
+    for name in (
+        "ncore/manifest.json",
+        "reconstruction/metrics.yaml",
+        "reconstruction/parsed.yaml",
+        "reconstruction/photographic-timeline.json",
+        "reconstruction/last.usdz",
+        "novel_views/render_cli_args.json",
+    ):
+        target = tmp_path / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        client.download_file(uri.netloc, uri.path.strip("/") + "/" + name, str(target))
+        paths[name] = target
+    return paths
+
+
+def _assert_default_quality(paths):
+    import yaml
+    from npa.workbench.nurec.nurec import parse_metrics_yaml
+
+    manifest = json.loads(paths["ncore/manifest.json"].read_text())
+    assert manifest["observed_variant"] == "auto"
+    metrics = parse_metrics_yaml(paths["reconstruction/metrics.yaml"])
+    assert metrics["test/psnr"] >= 28.0, metrics
+    assert metrics["test/ssim"] >= 0.8, metrics
+    assert metrics["test/lpips"] <= 0.3, metrics
+    config = yaml.safe_load(paths["reconstruction/parsed.yaml"].read_text())
+    assert manifest["camera_ids"] == ["camera1", "camera2"]
+    assert config["dataset"]["camera_ids"] == manifest["camera_ids"]
+    assert config["dataset"]["train_camera_ids"] == manifest["camera_ids"]
+    assert config["dataset"]["val_camera_ids"] == manifest["camera_ids"]
+    assert config["dataset"]["poses_component_group"] == "npa_photographic"
+    assert config["dataset"]["n_train_sequential_image_subsample"] == 1
+    assert config["model"]["post_processing"]["b"]["name"] == "ppisp-post-processing"
+    assert config["model"]["strategy"]["add"]["max_n_gaussians"] == 2000000
+    assert config["dataset"]["n_samples_per_epoch"] == 30000
+    assert config["trainer"]["max_epochs"] == 1
+    rendering = json.loads(paths["novel_views/render_cli_args.json"].read_text())[
+        "args"
+    ]
+    assert rendering["image_scale"] == 1.0
+    assert rendering["calib_source"] == "training-rig-poses-per-frame"
+    assert rendering["replicate_training_views"] is False
+    assert rendering["rig_translation_offset"] == [0.0, 0.25, 0.0]
+
+
+def _assert_photographic_training_poses(paths):
+    from zipfile import ZipFile
+    import numpy as np
+
+    timeline = json.loads(
+        paths["reconstruction/photographic-timeline.json"].read_text()
+    )
+    assert timeline["frame_count"] == 59
+    assert timeline["camera_ids"] == ["camera1", "camera2"]
+    with ZipFile(paths["reconstruction/last.usdz"]) as archive:
+        native = json.loads(archive.read("rig_trajectories.json"))
+        assert "npa-capture-trajectory.json" in archive.namelist()
+    rig = native["rig_trajectories"][0]
+    times = np.asarray(rig["T_rig_world_timestamps_us"])
+    poses = np.asarray(rig["T_rig_worlds"])
+    assert len(set(times)) == len(times) == 59
+    for key, calibration in native["camera_calibrations"].items():
+        camera = calibration["logical_sensor_name"]
+        frames = [frame for frame in timeline["frames"] if frame["camera_id"] == camera]
+        requested = np.asarray(rig["cameras_frame_timestamps_us"][key])
+        expected_times = np.asarray(
+            [frame["training_timestamp_us"] for frame in frames]
+        )
+        np.testing.assert_array_equal(
+            requested, np.repeat(expected_times[:, None], 2, axis=1)
+        )
+        np.testing.assert_allclose(calibration["T_sensor_rig"], np.eye(4), atol=1e-6)
+        actual = poses[np.searchsorted(times, expected_times)]
+        expected = np.asarray([frame["T_camera_world"] for frame in frames])
+        np.testing.assert_allclose(actual, expected, atol=1e-5, rtol=0)

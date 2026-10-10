@@ -13,18 +13,32 @@ Catalog reachability is fail-closed: every entry is consumed by a shipped spec
 except the explicitly public composition primitives `infra.fleet.deploy`,
 `infra.soperator.deploy`, `workbench.cosmos2.transfer`,
 `workbench.curobo.plan`, `workbench.foxglove.convert`, `workbench.insights.record`,
-`workbench.isaac_lab.byof_repo`, and `workbench.lerobot.eval`. The
+`workbench.isaac_lab.byof_repo`, `workbench.lerobot.eval`,
+`workbench.vlm_eval.compare_preference`, and `workbench.vlm_eval.compare_judges`. The
 reusable-only list is machine-checked against `PUBLIC_REUSABLE_TOOLREFS`;
 accidental dead entries fail the guardrail. The retired monolithic
 `workbench.sim2real.run` surface is intentionally absent.
 
 | toolRef | CLI / module | Typical inputs | Typical outputs | Stub? |
 | --- | --- | --- | --- | --- |
+| `workflow.video_sweep.prepare` | `python3 -m npa.workflows.video_sweep prepare` | source and variant inventories | source snapshots and merged prompts | no |
+| `workflow.video_sweep.generate` | `python3 -m npa.workflows.video_sweep generate` | fingerprinted plan | conditioned videos and worker receipt | yes |
+| `workflow.video_sweep.generate_cosmos3` | `python3 -m npa.workflows.video_sweep generate` | native generation plan | guarded Cosmos3 videos, actual edge controls and candidate checkpoints | yes |
+| `workflow.video_sweep.review` | `python3 -m npa.workflows.video_sweep review` | complete worker receipts | paired visual scores and acceptance | no |
+| `workflow.video_sweep.lineage` | `python3 -m npa.workflows.video_sweep lineage` | exact reviewed plan | Postgres and MLflow receipt | no |
+| `workflow.video_sweep.publish` | `python3 -m npa.workflows.video_sweep publish` | review and tracking receipts | accepted dataset and next-run inventory | no |
 | `workbench.curobo.prepare` | `npa workbench curobo prepare` | full benchmark mode selection | recipe JSON | no |
 | `workbench.curobo.benchmark` | `npa workbench curobo benchmark` | recipe JSON | all problem statuses, real trajectories and metrics | no |
 | `workbench.curobo.plan` | `npa workbench curobo plan` | Franka start/goal/cuboid manifest | real trajectories and metrics | no |
 | `workbench.curobo.validate` | `npa workbench curobo validate` | result prefix | hash and complete coverage validation | no |
 | `workbench.curobo.visualize` | `npa workbench curobo visualize` | validated result prefix | verified RRD joint/FK recording | no |
+| `workbench.open3d.stage_demo` | `npa workbench open3d stage-demo` | nothing (downloads the upstream `open3d.data` indoor scans) | staged `.ply` scans and a digest-bound `manifest.json` | no |
+| `workbench.open3d.prepare` | `npa workbench open3d prepare` | prefix of operator `.pcd`/`.ply` scans | digest-bound `manifest.json` | no |
+| `workbench.open3d.register` | `npa workbench open3d register` | `manifest.json` | per-pair RANSAC/FPFH + ICP results, aligned clouds, journal | no (real `registration_ransac_based_on_feature_matching` + `registration_icp`) |
+| `workbench.open3d.validate` | `npa workbench open3d validate` | registration result prefix | hash and pair-coverage validation, no native library needed | no |
+| `workbench.open3d.multiway` | `npa workbench open3d multiway` | `manifest.json` | optimized `pose_graph.json` and one fused `.ply` | no (real `global_optimization`) |
+| `workbench.open3d.reconstruct` | `npa workbench open3d reconstruct` | multiway prefix with `fused.ply`, `config.open3d_support_distance_factor` | Poisson `mesh.ply` plus `mesh_uncropped.ply`, manifold/watertight/area facts, and support/coverage measurements before and after the unsupported-surface crop | no (real `create_from_point_cloud_poisson`) |
+| `workbench.open3d.visualize` | `npa workbench open3d visualize` | reconstruct prefix with `mesh.ply` and `mesh_uncropped.ply` | decode-verified `point_cloud.rrd` with a fitted-camera blueprint, independent scan/surface toggles, the cropped surface in its own view, and a manifest | no |
 | `workbench.alpamayo2_super.infer` | `npa workbench alpamayo2-super infer` | pinned model/dataset revisions and PhysicalAI-AV sample index | trajectory JSON, calibrated PNG, immutable provenance under `config.output_uri` | no (real upstream VLM + diffusion expert inference on GPU) |
 | `workbench.encord.push` | `npa workbench encord push` | S3 media prefix, Encord integration and folder, optional dataset and identity sidecar | durable `push_receipt.json` with exact identity and reconciled outcomes | no |
 | `workbench.encord.pull` | `npa workbench encord pull` | Encord collection, dataset, or project | materialized S3 media and durable `manifest.json` | no |
@@ -67,8 +81,10 @@ accidental dead entries fail the guardrail. The retired monolithic
 | `workbench.content_agents.validate` | `python -m npa.workflows.content_agents validate` | rigid-ready USDA | upstream `render_valid` + `physics_sane` result and fresh OVRTX evidence | yes (real upstream `validation-agent validate`) |
 | `workbench.content_agents.package` | `python -m npa.workflows.content_agents package` | validated physics USDA | self-contained USD/USDZ, provenance, reports, narrow Isaac Stage 2 adapter | no |
 | `workbench.vlm_eval.run` | `npa workbench vlm-eval run` | `config.rollouts_uri` | `config.scores_uri` | no |
+| `workbench.vlm_eval.compare_preference` | `npa workbench vlm-eval compare-preference` | `config.baseline_uri`, `config.candidate_uri` | `<scores_uri>/vlm_preference_comparison.json` | no |
+| `workbench.vlm_eval.compare_judges` | `npa workbench vlm-eval compare-judges` | `config.rollouts_uri` | `<scores_uri>/vlm_judge_disagreement.json` | no |
 | `workbench.vlm_eval.benchmark` | `npa workbench vlm-eval benchmark` | `config.benchmark_dataset` | `config.benchmark_output` | no |
-| `workbench.vlm_eval.judge_against_plan` | `npa workbench vlm-eval run --task-from` | `config.rollouts_uri`, `config.plan_uri` | `<scores_uri>/vlm_eval_stub.json` | no |
+| `workbench.vlm_eval.judge_against_plan` | `npa workbench vlm-eval run --task-from` | `config.rollouts_uri`, `config.plan_uri` | `<scores_uri>/vlm_eval.json` | no |
 | `workbench.vlm_eval.loop` | `npa workbench vlm-eval loop` | `config.rollouts_uri` | `config.scores_uri` | no |
 | `workbench.token_factory.reason` | `npa workbench token-factory reason` | `config.scene_uri` | `config.plan_uri` | no |
 | `workbench.token_factory.caption` | `npa workbench token-factory caption` | `config.images_uri`, optional `config.caption_instruction` (empty keeps the tool default) | `config.captions_uri` | no |
@@ -87,7 +103,7 @@ accidental dead entries fail the guardrail. The retired monolithic
 | `workbench.cosmos3.super_benchmark` | `npa workbench cosmos3 super-benchmark` | fixed pinned Cosmos3-Super workload; `config.suite`, `config.topologies`, `config.attempts`, `config.gpu_family`; either one full 8xB200/8xH200 node or one isolated H200 | per-attempt timing/hash/validity records, derived cell metrics, validated MP4s, and hash-verified per-cell resume markers under `config.output_uri` | yes (real vLLM-Omni services in the digest-pinned public Cosmos3 image; `primary` runs the four concurrency-one node topologies, `b200-full` fixes all ten public-record cells/240 attempts, and `h200-single-gpu` fixes one TP-1 service/24 sequential attempts while explicitly refusing a paper-cell claim; failures remain in the shared window with zero output credit) |
 | `workbench.cosmos3.ray_batch` | `npa workbench cosmos3 ray-batch` | `config.input_uri`, authenticated persistent `config.ray_endpoint` | `config.output_uri` | no (CPU client submits all samples concurrently to upstream `OmniModelDeployment`; NVIDIA's native `@ray.serve.batch` owns model batching and the client persists structured outputs/media/provenance through S3) |
 | `workbench.cosmos3.prepare_video_input` | `npa workbench cosmos3 prepare-video-input` | generic MP4 or LeRobot v2/v3 dataset URI plus episode/camera selector | canonical `config.input_uri` video, frames, and provenance | no (strict source selector and media preparation) |
-| `workbench.cosmos3.generate_variants` | `npa workbench cosmos3 generate-variants` | selected source video, original captions, sampled configs, model/seed/guidance/steps/retry knobs, optional native Canny `transfer_edge_threshold` and RGB `transfer_rgb_weight` | canonical `cosmos_augmented/<variant>/` video, frames, metadata, and run manifest | yes (one real source-video-conditioned cosmos-framework inference per variant; retries change parameters) |
+| `workbench.cosmos3.generate_variants` | `npa workbench cosmos3 generate-variants` | selected source video, original captions, sampled configs, model/seed/guidance/steps/retry knobs, optional native Canny `transfer_edge_threshold`, RGB `transfer_rgb_weight`, and `variant_recovery` | canonical `cosmos_augmented/<variant>/` video, frames, metadata, and run manifest | yes (one real source-video-conditioned cosmos-framework inference per variant; verified immutable recovery is automatic or can be deliberately disabled) |
 | `workbench.cosmos3.checkpoint_eval` | `npa workbench cosmos3 checkpoint-eval` | `config.campaign_config_uri`, `config.eval_phase`, `config.top_checkpoint_1`, `config.top_checkpoint_2` | `config.output_uri` | yes (B200-only guarded still-image checkpoint evaluation; weights download at runtime and completed arms publish immediately) |
 | `workbench.cosmos3.reason` | `npa workbench cosmos3 reason` | `config.scene_uri` | `config.reason_uri` | no |
 | `workbench.cosmos_evaluator.evaluate` | `npa workbench cosmos-evaluator evaluate` | `config.rollouts_uri`, `config.input_uri`, `config.configs_uri` | `config.scores_uri` | yes (real NVIDIA Cosmos Evaluator: hallucination + VLM attribute verification) |
@@ -235,3 +251,6 @@ Hosted model selection: `workbench.token_factory.reason` accepts optional
 `.judge_against_plan` accept optional `config.vlm_model`. An omitted or empty
 value leaves model selection to the CLI default for the chosen backend; an
 explicit value is passed as `--model`, including legacy dedicated model IDs.
+The audit-only `workbench.vlm_eval.compare_judges` primitive passes distinct
+`config.primary_vlm_model` and `config.secondary_vlm_model` values and never
+averages their outcomes.

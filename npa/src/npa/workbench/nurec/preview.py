@@ -31,7 +31,7 @@ def _group(title: str, images: list[Path], note: str) -> dict:
                 {
                     "label": f"Image {index + 1} of {len(images)}",
                     "images": [
-                        {"label": title, "data": image_preview(image, width=960)}
+                        {"label": title, "data": image_preview(image, width=1600)}
                     ],
                 }
             )

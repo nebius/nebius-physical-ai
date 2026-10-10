@@ -71,6 +71,17 @@ skills:
       - type: npa_workflow_yaml
         paths:
           - workflows/testing/curobo-benchmark.yaml
+  - name: open3d
+    category: tools
+    when_to_use: "Register overlapping point-cloud scans with real RANSAC/FPFH and ICP, optimize a multiway pose graph, reconstruct a Poisson surface, or review Open3D registration artifacts and their validators."
+    path: skills/tools/open3d/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "open3d", "register", "--help"]
+        contains: "input-path"
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/testing/open3d-registration.yaml
   - name: access-approval
     category: atomic
     when_to_use: "Prepare, verify, or resume operator-owned Hugging Face and NVIDIA NGC access for exact dependencies, including human-bound upstream approvals and consent-gated official pages; treat a successful payload probe as operationally Ready and reuse one bounded run-scoped use declaration without duplicate NPA acceptance prompts."
@@ -579,6 +590,9 @@ skills:
     path: skills/tools/insights/SKILL.md
     smoke:
       - type: cli_help
+        args: ["workbench", "insights", "report", "--help"]
+        contains: "input-path"
+      - type: cli_help
         args: ["workbench", "insights", "query", "--help"]
         contains: "input-path"
       - type: cli_help
@@ -664,7 +678,7 @@ skills:
         contains: "runtime"
       - type: npa_workflow_yaml
         paths:
-          - workflows/testing/groot-1-7-finetune.yaml
+          - workflows/main/groot-1-7-finetune.yaml
   - name: isaac-lab
     category: tools
     when_to_use: "Isaac Lab RL simulation, deployment, calibrated USD RGB-D sensor rigs, SkyPilot workflows, or custom fork support."
@@ -1200,6 +1214,9 @@ skills:
     path: skills/workflows/author-npa-workflow/SKILL.md
     smoke:
       - type: cli_help
+        args: ["workbench", "workflow", "schema", "--help"]
+        contains: "JSON Schema"
+      - type: cli_help
         args: ["workbench", "workflow", "validate-spec", "--help"]
         contains: "npa.workflow"
       - type: npa_workflow_yaml
@@ -1321,6 +1338,9 @@ skills:
     when_to_use: "Author, run, submit, or view the native NVIDIA Physical AI Data Factory VDA, DIG, IAA, and EVG translations or the NPA-specific Cosmos3 VDA alternative on Nebius + SkyPilot."
     path: skills/workflows/physical-ai-data-factory/SKILL.md
     smoke:
+      - type: cli_help
+        args: ["workbench", "cosmos-evaluator", "report", "--help"]
+        contains: "--input-path"
       - type: npa_workflow_yaml
         paths:
           - workflows/testing/physical-ai-data-factory.yaml

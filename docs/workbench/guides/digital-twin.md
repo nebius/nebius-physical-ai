@@ -146,8 +146,9 @@ utilization and memory during execution. These are allocated-device observations
 not process-level or cryptographic hardware attestation. Missing or inactive
 telemetry is explicitly labeled unverified.
 
-Rendering refuses an output directory that already contains frames. Use a fresh
-directory for a new invocation so stale renders cannot produce a success record.
+Rendering reserves a fresh output generation and preserves earlier files. Its
+evidence binds only the new generation, so stale frames cannot produce a success
+record.
 A failed renderer does not publish a success record. The HTML builder verifies
 the scene and media hashes before displaying the record; changed bytes or frame
 counts fail rather than inheriting evidence from another render. Older runs
