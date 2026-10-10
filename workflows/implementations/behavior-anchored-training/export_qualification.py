@@ -26,7 +26,10 @@ def file_identity(path: Path) -> dict[str, Any]:
     if not path.is_file() or path.is_symlink():
         raise ValueError(f"immutable file is absent or unsafe: {path}")
     with path.open("rb") as stream:
-        digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        digest_state = hashlib.sha256()
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest_state.update(chunk)
+        digest = digest_state.hexdigest()
     return {"bytes": path.stat().st_size, "sha256": digest}
 
 

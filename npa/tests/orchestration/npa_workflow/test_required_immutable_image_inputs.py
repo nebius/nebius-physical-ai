@@ -28,6 +28,11 @@ EXACT_INPUT_SPECS = (
     "rgbd-scan-to-isaac.yaml",
     "scan-to-isaac-navigation.yaml",
 )
+OPERATOR_INPUT_SPECS = (
+    *EXACT_INPUT_SPECS,
+    "digital-twin-campus-render.yaml",
+    "digital-twin-cuda-render.yaml",
+)
 GOVERNED_SPECS = ("franka-rl-transfer.yaml",)
 
 
@@ -201,7 +206,7 @@ def test_tagged_digest_explains_the_required_canonical_form(tmp_path):
         interpreter.build_plan(spec)
 
 
-@pytest.mark.parametrize("name", EXACT_INPUT_SPECS)
+@pytest.mark.parametrize("name", OPERATOR_INPUT_SPECS)
 def test_shipped_exact_image_consumers_require_operator_input_before_planning(name):
     spec = load_spec(_workflow_path(name))
     with pytest.raises(NpaWorkflowError, match="requires an explicit.*--var"):
@@ -215,6 +220,7 @@ def _supplied_spec(name):
         "navigation_image": ISAAC,
         "assembly_image": CPU,
         "reconstruction_image": CPU,
+        "runtime_image": ISAAC,
     }
     return merge_config_overrides(
         spec, {key: images[key] for key in spec.config["required_immutable_images"]}
@@ -275,7 +281,7 @@ def test_required_image_binding_rejects_a_digest_pin_replacement():
         )
 
 
-@pytest.mark.parametrize("name", EXACT_INPUT_SPECS)
+@pytest.mark.parametrize("name", OPERATOR_INPUT_SPECS)
 def test_exact_operator_images_reach_real_renderer_and_native_provenance(
     name, monkeypatch
 ):

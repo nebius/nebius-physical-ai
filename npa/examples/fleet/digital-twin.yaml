@@ -1,0 +1,33 @@
+apiVersion: npa.fleet/v0.0.1
+name: digital-twin
+tenant_id: "" # Supply the authorized tenant in a private runtime copy.
+region: us-central1
+profile: ""
+defaults:
+  name: render
+  gpu_workload_profile: rtx-rendering
+  gpu_nodes:
+    count: 1
+    platform: gpu-rtx6000
+    preset: 1gpu-24vcpu-218gb
+    # Optional: set capacity_block_group privately for a strict reservation.
+    # A full reservation never silently switches to another capacity pool.
+  cpu_nodes: {count: 1, platform: cpu-d3, preset: 16vcpu-64gb}
+  enable_gpu_cluster: false
+  enable_filestore: false
+  gpu_driver_package_repositories:
+    ubuntu.sources: |
+      Types: deb
+      URIs: https://archive.ubuntu.com/ubuntu/
+      Suites: noble noble-updates noble-backports
+      Components: main universe restricted multiverse
+      Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+
+      Types: deb
+      URIs: https://security.ubuntu.com/ubuntu/
+      Suites: noble-security
+      Components: main universe restricted multiverse
+      Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+projects:
+  - name: digital-twin
+    project_id: "<your-project-id>"
