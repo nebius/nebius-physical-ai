@@ -24,8 +24,9 @@ preserves Rerun quality evidence and stops before curation.
 
 For **twelve appearance profiles with automatic padding preservation**, complete
 the one-time setup below, then use the
-[copy-paste MP4 recipe guide](../../docs/workbench/guides/paidf-appearance-12.md#apply-the-recipe).
-It includes the full recipe, fresh-run submission, downloads and receipt checks.
+[manual recipe guide](../../docs/workbench/guides/paidf-appearance-12.md#apply-the-recipe).
+It includes the full recipe, local MP4 or pinned real ALOHA cups input,
+fresh-run submission, downloads, receipt checks and cleanup. No agent is required.
 
 > **Validation scope:** All 15 pipeline stages completed on an existing RTX PRO
 > 6000 Blackwell cluster. Setup was exercised on Linux with Python 3.12. See
@@ -62,6 +63,18 @@ overhead, and other running workloads. Nodes also need disk space for container
 images and model weights. The live validation used RTX PRO 6000 Blackwell; S5
 uses that platform for the new-cluster example. Check quota and available
 capacity in your region before provisioning.
+
+Check free space on the operator host before installing. Its checkout, NPA and
+SkyPilot environments, downloaded input and output evidence need local disk
+space independently of the worker boot disks:
+
+```bash
+df -h "$HOME" /tmp
+```
+
+Use a host or filesystem with enough available space for those files. An
+operator-host `No space left on device` during cloning or installation must be
+resolved before continuing; it is not a GPU or workflow failure.
 
 ## P — Prerequisites
 
@@ -215,8 +228,8 @@ describe this process. This key is separate from your Nebius Cloud IAM token.
 ```bash
 git clone https://github.com/nebius/nebius-physical-ai.git
 cd nebius-physical-ai
-python3.12 -m venv .venv
-source .venv/bin/activate
+python3.12 -m venv npa/.venv
+source npa/.venv/bin/activate
 python3.12 -m pip install -e npa/
 npa --version
 npa workbench workflow submit --help
@@ -228,8 +241,8 @@ NPA's version number alone does not identify the installed source revision.
 changing the workflow filename cannot fix it. Follow the
 [installation recovery steps](#if-submit-is-missing) below.
 
-Run the remaining commands from this repository root. This guide uses `.venv`;
-contributor validation tooling uses `npa/.venv` as described in
+Run the remaining commands from this repository root. Keep this checkout's
+`npa/.venv` for setup, the twelve-profile recipe, monitoring and cleanup; see
 the [installation guide](../../docs/install.md).
 
 #### If `submit` is missing
@@ -239,28 +252,28 @@ imports:
 
 ```bash
 type -a npa
-.venv/bin/python -c 'import npa, sys; print(sys.executable); print(npa.__file__)'
+npa/.venv/bin/python -c 'import npa, sys; print(sys.executable); print(npa.__file__)'
 git log -1 --format='%h %s'
-.venv/bin/npa workbench workflow submit --help
+npa/.venv/bin/npa workbench workflow submit --help
 ```
 
-If the explicit `.venv/bin/npa` command works, reactivate that environment and
+If the explicit `npa/.venv/bin/npa` command works, reactivate that environment and
 clear the shell's cached command location:
 
 ```bash
-source .venv/bin/activate
+source npa/.venv/bin/activate
 hash -r
 npa workbench workflow submit --help
 ```
 
 An alias or shell function named `npa` can still shadow the executable; use
-`.venv/bin/npa` directly until that shell customization is corrected. If the
+`npa/.venv/bin/npa` directly until that shell customization is corrected. If the
 explicit executable also lacks `submit`, update this checkout to the intended
 current repository revision and reinstall it into this environment:
 
 ```bash
-.venv/bin/python -m pip install --upgrade -e ./npa
-.venv/bin/npa workbench workflow submit --help
+npa/.venv/bin/python -m pip install --upgrade -e ./npa
+npa/.venv/bin/npa workbench workflow submit --help
 test -f workflows/main/paidf-cosmos3.yaml
 ```
 
@@ -342,7 +355,7 @@ CLUSTER_OPTIONS=(
   --gpu-driver-mode auto --managed-driver-preset cuda13.0
   --on-demand
 )
-npa workbench health preflight --checks nebius
+npa workbench health preflight --project "$PROJECT_ALIAS" --checks nebius
 npa provision-if-absent --project "$PROJECT_ALIAS" --cluster-name "$CLUSTER_NAME" \
   "${CLUSTER_OPTIONS[@]}" --dry-run --output-format json
 ```
@@ -351,8 +364,33 @@ Check `status` and `preflight.decision`: a dry run can exit zero while reporting
 `blocked`. Resolve the listed `preflight.reasons` first; reserved GPU capacity
 does not replace the boot-disk quota required by the cluster.
 
-The default boot disks require 1,151 GiB of network SSD capacity: 128 GiB for the
-CPU node and 1,023 GiB for the GPU node. Disk-count quota is separate. If the
+The CPU pool also needs eight available non-GPU vCPUs under
+`compute.instance.non-gpu.vcpu`. GPU-node vCPUs use the GPU allowance. The
+preview checks the missing CPU-node demand before any cluster resources are
+created; preemptible GPU placement does not remove the CPU quota requirement.
+
+You can explicitly choose a GPU-only cluster when the GPU host has enough
+allocatable CPU and memory for the controller, system services, and the largest
+workflow stage. CPU stages then use that host too. For this sequential recipe,
+the RTX PRO 6000 shape above can be selected without a separate CPU pool:
+
+```bash
+CLUSTER_OPTIONS=(
+  --cpu-nodes 0
+  --gpu-nodes 1 --gpu-platform gpu-rtx6000 --gpu-preset 1gpu-24vcpu-218gb
+  --gpu-driver-mode auto --managed-driver-preset cuda13.0
+  --on-demand
+)
+npa provision-if-absent --project "$PROJECT_ALIAS" --cluster-name "$CLUSTER_NAME" \
+  "${CLUSTER_OPTIONS[@]}" --dry-run --output-format json
+```
+
+Require the same quota and node-health gates. This topology needs 1,023 GiB of
+network SSD capacity with the default GPU boot disk. Keep the selected options
+for apply and verify; do not switch topology inside an interrupted operation.
+
+The separate CPU/GPU pools require 1,151 GiB of network SSD capacity: 128 GiB
+for the CPU node and 1,023 GiB for the GPU node. Disk-count quota is separate. If the
 preview blocks on disk capacity, obtain enough quota or size the disks for your
 workload. Account for compressed and expanded image layers, model weights and
 runtime caches, generated media, the operating system, and free working space.
@@ -379,13 +417,20 @@ Wait for provisioning and node health checks to succeed. Do not proceed with a
 degraded cluster. This creates cloud resources; use the
 [teardown guide](../../docs/teardown.md) when you finish with a cluster you own.
 
+If creation fails partway through, keep the private backend state and operation
+journal. Use the recovery command reported by `npa`, with the exact project,
+context, and `--operation-id` when more than one attempt exists. `npa cluster
+down` can recover a partial native backend from its journal, private sidecar,
+and Terraform state; it does not require a completed kubeconfig. Do not delete
+state files or reconstruct ownership by hand.
+
 Inspect the resulting cluster and set `KUBECONFIG` to the exact path reported
 by provisioning. The default is `~/.npa/clusters/<cluster-name>/kubeconfig`:
 
 ```bash
 npa cluster status --name "$CLUSTER_NAME" --project "$PROJECT_ALIAS"
 export KUBECONFIG='<kubeconfig-path-reported-by-NPA>'
-export KUBE_CONTEXT="$(kubectl config current-context)"
+export KUBE_CONTEXT="$(kubectl --kubeconfig "$KUBECONFIG" config current-context)"
 npa skypilot bind-controller \
   --project "$PROJECT_ALIAS" --context "$KUBE_CONTEXT"
 ```
@@ -404,17 +449,11 @@ export CLUSTER_ID='<your-cluster-id>'
 export CLUSTER_NAME='<your-cluster-name>'
 ```
 
-Fetching Kubernetes credentials alone does not register the cluster with NPA.
-Fetch them, find the exact context name, then record the cluster and bind its
-controller:
+Choose a unique local context name. NPA fetches the credentials, records the
+selected cluster and writes its dedicated kubeconfig:
 
 ```bash
-nebius mk8s cluster get-credentials --id "$CLUSTER_ID" --external
-kubectl config get-contexts
-```
-
-```bash
-export KUBE_CONTEXT='<context-from-the-previous-command>'
+export KUBE_CONTEXT='<unique-context-name>'
 npa cluster kubeconfig \
   --cluster-name "$CLUSTER_NAME" \
   --project "$PROJECT_ALIAS" --context "$KUBE_CONTEXT"
@@ -427,7 +466,7 @@ List [all node groups](https://docs.nebius.com/cli/reference/mk8s/node-group/lis
 in the adopted cluster without changing them:
 
 ```bash
-nebius mk8s node-group list --parent-id "$CLUSTER_ID" --all --format json
+nebius --profile "$NPA_NEBIUS_PROFILE" mk8s node-group list --parent-id "$CLUSTER_ID" --all --format json
 ```
 
 Set the expected CPU and GPU node totals from `spec.fixed_node_count` (or
@@ -454,6 +493,11 @@ For an existing GPU Operator deployment, replace both driver options with
 options in the array. Resolve unknown or mixed driver settings using the
 [driver strategy reference](../../docs/workbench/mk8s-gpu-driver-strategy.md)
 before S6; changing the validation policy does not repair the installed drivers.
+If the cluster uses a shared filesystem, restore its original Terraform
+configuration and pass `--terraform-dir '<original-cluster-configuration>'`
+in `CLUSTER_OPTIONS`. It must include the filesystem attachment and approved
+CSI repository; the no-filesystem default cannot validate a filesystem-backed
+cluster. Do not change the cluster's default StorageClass to match this example.
 
 The Nebius CLI profile supplies cloud authentication, the NPA project alias
 selects saved project credentials, and the Kubernetes context selects the
@@ -581,7 +625,7 @@ project configuration. Use `--no-sync` after the explicit editable install above
 automatic project resolution currently encounters conflicting PyAV requirements
 in the optional GR00T dependency set, even for a PAIDF command. The explicit
 install resolves NPA's required dependencies without selecting that extra.
-For the `.venv` installation from S1, use its
+For the pip installation from S1, use its
 [editable reinstall command](#if-submit-is-missing) after updating Git instead.
 
 **Do I need to sync the bucket again?** No bulk bucket sync or re-upload of an
@@ -615,9 +659,9 @@ for an accepted-path preview with `plan-spec`, `preflight-images`, or
 `submit --plan-only`, as in R2.
 
 After upgrading, repeat R1 and R2 to select an available caption model and
-reserve a fresh run ID with its own SkyPilot directory, then execute R3. With
-`uv`, activate `npa/.venv` instead of `.venv` and prefix those `npa` commands
-with `uv run --project npa --no-sync`. Do not reuse an old run ID or use
+reserve a fresh run ID with its own SkyPilot directory, then execute R3.
+Activate `npa/.venv` and use its `npa` executable for either installation path.
+Do not reuse an old run ID or use
 `--resume-run` to switch an existing run to new code or a changed YAML. Resume
 is for recovery of the original recorded run with its original inputs,
 configuration, and execution identity.
@@ -626,13 +670,13 @@ configuration, and execution identity.
 
 ### R1. Select the project, GPU, and caption model
 
-In a new terminal, return to your checkout and activate `.venv`. Restore the
+In a new terminal, return to your checkout and activate `npa/.venv`. Restore the
 project alias, verified Nebius profile, cluster context, and exact kubeconfig
 path selected above. The profile name can differ from the NPA project alias.
 Set the bucket and accelerator from your setup results:
 
 ```bash
-source .venv/bin/activate
+source npa/.venv/bin/activate
 export PROJECT_ALIAS=paidf
 export NPA_NEBIUS_PROFILE='<your-verified-nebius-profile>'
 export KUBE_CONTEXT='<your-verified-context>'
@@ -670,7 +714,9 @@ npa workbench workflow plan-spec "$SPEC" \
   --run-id "$RUN_ID" --assume-decision promote_checkpoint \
   --var bucket="$BUCKET" --var caption_model="$CAPTION_MODEL" --json
 npa workbench workflow preflight-images "$SPEC" \
-  --assume-decision promote_checkpoint --project "$PROJECT_ALIAS"
+  --assume-decision promote_checkpoint --project "$PROJECT_ALIAS" \
+  --infra "k8s/$KUBE_CONTEXT" \
+  --var bucket="$BUCKET" --var caption_model="$CAPTION_MODEL" --json
 ```
 
 Stop and resolve any failed check. The assumed decision previews the accepted
@@ -1121,7 +1167,12 @@ before changing that configuration, or use separate NPA configuration stores
 for independently isolated controllers. The check also covers the Nebius CLI
 authentication sources. Normal renewable-cache refresh for a supported RSA
 service-account profile preserves API identity while the effective profile,
-account, key, and explicit credential sources remain unchanged. Nebius CLI
+account, key, and explicit credential sources remain unchanged. Supported forms
+include separate account/key/PEM fields and the CLI's
+`service-account-credentials-file-path` JSON file with RS256 JWT subject
+credentials. The complete JSON credential file remains byte-bound; renewing the
+CLI's bearer-token cache does not replace that identity. Use current code and a
+fresh run/API directory before submitting. Nebius CLI
 `0.12.254` keeps this cache under `HOME/.nebius` even with `--config`;
 `NEBIUS_CONFIG_DIR` does not select a different CLI configuration or cache.
 Unsupported or mixed authentication formats remain byte-strict. Use a dedicated
@@ -1282,15 +1333,28 @@ EVIDENCE_DIR="$(mktemp -d "./paidf-evidence/${RUN_ID}.XXXXXX")"
     grade/cosmos_evaluator.json grade/decision.json; do
     aws s3 cp "$RUN_URI/$artifact" "$EVIDENCE_DIR/$artifact" --profile nebius
   done
-  aws s3 cp "$RUN_URI/cosmos_augmented/" "$EVIDENCE_DIR/cosmos_augmented/" \
-    --recursive --exclude '*' --include 'variant-*/augmented_video.mp4' \
-    --include 'variant-*/metadata.json' --include 'variant-*/transfer.json' \
-    --include 'variant-*/source_edges.mkv' --profile nebius
+  jq -e '.status == "executed" and (.variants | length) == .variant_count' \
+    "$EVIDENCE_DIR/cosmos_augmented/manifest.json" >/dev/null
+  while IFS= read -r video_uri; do
+    case "$video_uri" in
+      "$RUN_URI/cosmos_augmented/variant-"*/augmented_video.mp4) ;;
+      *) printf 'Unexpected published video URI\n' >&2; exit 1 ;;
+    esac
+    relative="${video_uri#"$RUN_URI/cosmos_augmented/"}"
+    source_dir="${video_uri%/*}"
+    destination="$EVIDENCE_DIR/cosmos_augmented/${relative%/*}"
+    mkdir -p "$destination"
+    for file in augmented_video.mp4 metadata.json transfer.json source_edges.mkv; do
+      aws s3 cp "$source_dir/$file" "$destination/$file" --profile nebius
+    done
+  done < <(jq -r '.variants[].augmented_video_uri' "$EVIDENCE_DIR/cosmos_augmented/manifest.json")
 )
 ```
 
 A missing object can identify an earlier failed stage; stop and inspect its logs
-instead of treating a partial download as complete evidence. Confirm the manifest's
+instead of treating a partial download as complete evidence. The loop follows
+published video URIs and handles native publication directories automatically;
+immutable files from earlier refinement passes remain in S3. Confirm the manifest's
 `run_id`, variant list, and lineage match the intended run; compare the evaluator's
 `augment_uri` and disposition's `evaluator_report_uri` with that same prefix.
 Also correlate the runtime waves, variant `attempt` values, and evaluator
@@ -1512,7 +1576,7 @@ appears.
 
 | Symptom | What to check | Action |
 | --- | --- | --- |
-| `No such command 'submit'` | Executable, active environment, and installed checkout | Follow [installation recovery](#if-submit-is-missing); verify `.venv/bin/npa workbench workflow submit --help` before setup. |
+| `No such command 'submit'` | Executable, active environment, and installed checkout | Follow [installation recovery](#if-submit-is-missing); verify `npa/.venv/bin/npa workbench workflow submit --help` before setup. |
 | `Runtime-required workflows reject --assume-decision for execution` | Execution is using a planned decision | Use the full R3 runtime command; assumed decisions belong only in offline plans. |
 | Workflow YAML does not exist | Path copied from a previous repository layout | Run from the repository root and use `workflows/main/paidf-cosmos3.yaml`. |
 | Runtime status has no stage rows, or artifacts reports `manifest_pending` | Summary/index publication can lag the runtime record | Read the per-wave record in R4 and inspect stage logs before relaunching. |
