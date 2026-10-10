@@ -896,6 +896,18 @@ func (zeroPayload) Read(data []byte) (int, error) {
 	return len(data), nil
 }
 
+// Whole-record detector working memory is outside the admission budget. Measure
+// both routes with the same warmed detector rather than assuming it allocates
+// nothing for a low-entropy record.
+func wholeRecordAllocations(run func()) uint64 {
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	run()
+	runtime.ReadMemStats(&after)
+	return after.TotalAlloc - before.TotalAlloc
+}
+
 func TestWholeRecordDetectionAvoidsDuplicatePayloadAllocation(t *testing.T) {
 	const size = 16 << 20
 	expected := sha256.New()
@@ -904,25 +916,27 @@ func TestWholeRecordDetectionAvoidsDuplicatePayloadAllocation(t *testing.T) {
 	}
 	expectedDigest := hex.EncodeToString(expected.Sum(nil))
 	detector := scanner()
-	detector.Detect(detect.Fragment{Raw: "\x00", FilePath: recordPath(1)})
+	fragment := detect.Fragment{Raw: strings.Repeat("\x00", size), FilePath: recordPath(1)}
+	detector.Detect(fragment)
+	detectorBytes := wholeRecordAllocations(func() { detector.Detect(fragment) })
 	budget := newByteBudget(size)
-	runtime.GC()
-	var before, after runtime.MemStats
-	runtime.ReadMemStats(&before)
-	job, code := admitOne(zeroPayload{}, detector, budget, 1, size)
-	if code != "" || job == nil {
-		t.Fatalf("whole-record admission failed: code=%q", code)
-	}
-	detectRecord(job, detector, budget)
-	<-job.done
-	runtime.ReadMemStats(&after)
+	var job *scanJob
+	allocated := wholeRecordAllocations(func() {
+		var code string
+		job, code = admitOne(zeroPayload{}, detector, budget, 1, size)
+		if code != "" || job == nil {
+			t.Fatalf("whole-record admission failed: code=%q", code)
+		}
+		detectRecord(job, detector, budget)
+		<-job.done
+	})
 	if job.panicked || job.length != size || job.digest != expectedDigest || len(job.findings) != 0 {
 		t.Fatal("whole-record detection changed the bytes, digest, or result")
 	}
-	allocated := after.TotalAlloc - before.TotalAlloc
-	if allocated > size+size/4+(1<<20) {
-		t.Fatalf("whole-record admission and detection allocated %d bytes for a %d-byte payload", allocated, size)
+	if allocated < detectorBytes || allocated-detectorBytes > size+size/4+(1<<20) {
+		t.Fatalf("whole-record helper allocated %d total bytes with %d detector bytes for a %d-byte payload", allocated, detectorBytes, size)
 	}
+	t.Logf("payload=%d detector=%d pipeline=%d helper=%d bytes", size, detectorBytes, allocated, allocated-detectorBytes)
 	if !reclaimsWholeCapacity(budget, size) {
 		t.Fatal("whole-record detection retained its reservation")
 	}
