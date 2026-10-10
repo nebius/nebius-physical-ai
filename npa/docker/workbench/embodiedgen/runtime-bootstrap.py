@@ -217,6 +217,76 @@ def _patch_trellis_only_import(source: Path) -> None:
     image_to_3d.write_text(text.replace(old, new), encoding="utf-8")
 
 
+def _patch_token_factory_image_mime(source: Path) -> None:
+    """Make the pinned upstream OpenAI image data URL match its encoded bytes."""
+
+    path = source / "embodied_gen" / "utils" / "gpt_clients.py"
+    text = path.read_text(encoding="utf-8")
+    replacements = {
+        "            for img in image_base64:\n                if isinstance(img, Image.Image):\n": (
+            "            for img in image_base64:\n"
+            '                image_mime_type = "image/png"\n'
+            "                if isinstance(img, Image.Image):\n"
+        ),
+        """                if isinstance(img, Image.Image):
+                    buffer = BytesIO()
+                    img.save(buffer, format=img.format or "PNG")
+                    buffer.seek(0)
+                    image_binary = buffer.read()
+                    img = base64.b64encode(image_binary).decode("utf-8")
+""": """                if isinstance(img, Image.Image):
+                    image_format = (img.format or "PNG").upper()
+                    image_mime_type = {
+                        "BMP": "image/bmp",
+                        "GIF": "image/gif",
+                        "JPEG": "image/jpeg",
+                        "JPG": "image/jpeg",
+                        "PNG": "image/png",
+                        "WEBP": "image/webp",
+                    }.get(image_format, "image/png")
+                    buffer = BytesIO()
+                    img.save(buffer, format=image_format if image_mime_type != "image/png" else "PNG")
+                    buffer.seek(0)
+                    image_binary = buffer.read()
+                    img = base64.b64encode(image_binary).decode("utf-8")
+""",
+        """                elif (
+                    len(os.path.splitext(img)) > 1
+                    and os.path.splitext(img)[-1].lower() in self.image_formats
+                ):
+                    if not os.path.exists(img):
+                        raise FileNotFoundError(f"Image file not found: {img}")
+                    with open(img, "rb") as f:
+                        img = base64.b64encode(f.read()).decode("utf-8")
+""": """                elif (
+                    len(os.path.splitext(img)) > 1
+                    and os.path.splitext(img)[-1].lower() in self.image_formats
+                ):
+                    if not os.path.exists(img):
+                        raise FileNotFoundError(f"Image file not found: {img}")
+                    suffix = os.path.splitext(img)[-1].lower()
+                    image_mime_type = {
+                        ".bmp": "image/bmp",
+                        ".gif": "image/gif",
+                        ".jpeg": "image/jpeg",
+                        ".jpg": "image/jpeg",
+                        ".png": "image/png",
+                        ".webp": "image/webp",
+                    }[suffix]
+                    with open(img, "rb") as f:
+                        img = base64.b64encode(f.read()).decode("utf-8")
+""",
+        '"image_url": {"url": f"data:image/png;base64,{img}"},': (
+            '"image_url": {"url": f"data:{image_mime_type};base64,{img}"},'
+        ),
+    }
+    for old, new in replacements.items():
+        if old not in text:
+            raise RuntimeError("upstream Token Factory image adapter changed")
+        text = text.replace(old, new)
+    path.write_text(text, encoding="utf-8")
+
+
 def _prepare(cache: Path) -> tuple[Path, Path]:
     runtime = cache / RUNTIME_NAME
     source, venv = runtime / "source", runtime / "venv"
@@ -225,6 +295,7 @@ def _prepare(cache: Path) -> tuple[Path, Path]:
     _verify_upstream_requirements(source)
     _install_trellis(source)
     _patch_trellis_only_import(source)
+    _patch_token_factory_image_mime(source)
     _pin_install_script(source)
     if not (venv / "bin" / "python").is_file():
         _run([sys.executable, "-m", "venv", str(venv)])

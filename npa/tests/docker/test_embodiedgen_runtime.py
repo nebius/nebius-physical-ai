@@ -216,6 +216,60 @@ def test_trellis_only_patch_removes_unselected_sam_import(tmp_path: Path) -> Non
     assert "NPA_EMBODIEDGEN_TRELLIS_MODEL_DIR" in image_to_3d.read_text()
 
 
+def test_token_factory_mime_patch_emits_a_jpeg_data_url(tmp_path: Path) -> None:
+    source = tmp_path / "embodied_gen" / "utils"
+    source.mkdir(parents=True)
+    client = source / "gpt_clients.py"
+    client.write_text(
+        "import base64\nimport os\n"
+        "class _Image:\n    pass\n"
+        "class Image:\n    Image = _Image\n"
+        "class BytesIO:\n    pass\n"
+        "class Client:\n"
+        "    def __init__(self):\n"
+        '        self.image_formats = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}\n'
+        "    def build(self, image_base64):\n"
+        '        content_user = [{"type": "text", "text": "probe"}]\n'
+        "        if image_base64 is not None:\n"
+        "            if not isinstance(image_base64, list):\n"
+        "                image_base64 = [image_base64]\n"
+        "            for img in image_base64:\n"
+        "                if isinstance(img, Image.Image):\n"
+        "                    buffer = BytesIO()\n"
+        '                    img.save(buffer, format=img.format or "PNG")\n'
+        "                    buffer.seek(0)\n"
+        "                    image_binary = buffer.read()\n"
+        '                    img = base64.b64encode(image_binary).decode("utf-8")\n'
+        "                elif (\n"
+        "                    len(os.path.splitext(img)) > 1\n"
+        "                    and os.path.splitext(img)[-1].lower() in self.image_formats\n"
+        "                ):\n"
+        "                    if not os.path.exists(img):\n"
+        '                        raise FileNotFoundError(f"Image file not found: {img}")\n'
+        '                    with open(img, "rb") as f:\n'
+        '                        img = base64.b64encode(f.read()).decode("utf-8")\n'
+        "                content_user.append(\n"
+        "                    {\n"
+        '                        "type": "image_url",\n'
+        '                        "image_url": {"url": f"data:image/png;base64,{img}"},\n'
+        "                    }\n"
+        "                )\n"
+        "        return content_user\n",
+        encoding="utf-8",
+    )
+    input_path = tmp_path / "input.jpg"
+    image_bytes = b"jpeg input bytes"
+    input_path.write_bytes(image_bytes)
+
+    BOOTSTRAP._patch_token_factory_image_mime(tmp_path)
+    namespace: dict[str, object] = {}
+    exec(client.read_text(encoding="utf-8"), namespace)
+    content = namespace["Client"]().build(str(input_path))
+    url = content[1]["image_url"]["url"]
+    assert url.startswith("data:image/jpeg;base64,")
+    assert base64.b64decode(url.split(",", 1)[1]) == image_bytes
+
+
 def test_asset_bundle_preserves_nested_generated_assets_and_rejects_symlinks(
     tmp_path: Path,
 ) -> None:
