@@ -13,8 +13,9 @@ from urllib.parse import urlsplit
 import pytest
 import yaml
 
-from npa.workflows.paidf_cosmos3_media import verify_pair
+from npa.workflows.paidf_cosmos3_media import verify_pair, video_sha256
 from npa.workflows.paidf_cosmos3 import _validated_quality_status
+from npa.workflows.video_padding_preservation import _pixel_hashes
 
 
 pytestmark = [pytest.mark.e2e, pytest.mark.e2e_skypilot, pytest.mark.gpu]
@@ -77,8 +78,12 @@ def _audit_profiles(configuration, recipe):
     assert profiles == expected and len(profiles) == 12
 
 
-def _audit_variant(client, root, clip, source, destination, recipe, frames):
-    relative = "cosmos_augmented/" + clip + "/"
+def _audit_variant(client, root, variant, source, destination, recipe, frames):
+    clip = variant["clip"]
+    video_uri = variant["augmented_video_uri"]
+    assert video_uri.startswith(root.rstrip("/") + "/cosmos_augmented/" + clip + "/")
+    assert video_uri.endswith("/augmented_video.mp4")
+    relative = video_uri[len(root.rstrip("/")) + 1 :].rsplit("/", 1)[0] + "/"
     metadata = _read(client, root, relative + "metadata.json")
     receipt = _read(client, root, relative + "transfer.json")
     video = _download(client, root, relative + "augmented_video.mp4", destination)
@@ -86,6 +91,7 @@ def _audit_variant(client, root, clip, source, destination, recipe, frames):
     assert alignment["decoded_frames"] == frames
     assert alignment["generated_sha256"] == metadata["published_video_sha256"]
     assert alignment["source_sha256"] == metadata["temporal_alignment"]["source_sha256"]
+    _audit_padding(client, root, relative, source, video, metadata)
     assert metadata["guardrails"] is True and metadata["motion_preservation"] is None
     assert receipt["text_guardrail_passed"] is receipt["video_guardrail_passed"] is True
     assert receipt["control_loader_verified"] is True
@@ -101,6 +107,36 @@ def _audit_variant(client, root, clip, source, destination, recipe, frames):
         recipe["retry_steps_delta"]
     )
     return alignment["generated_sha256"]
+
+
+def _audit_padding(client, root, relative, source, video, metadata):
+    record = metadata.get("source_content_region")
+    receipt = metadata.get("padding_preservation")
+    if record is None:
+        assert receipt is None
+        return
+    if receipt is None:
+        assert record["bounds"] == [0, 0, *record["canvas"]]
+        return
+    assert receipt["status"] == "verified"
+    assert (
+        receipt["padding_matches_source"] is receipt["scene_pixels_unchanged"] is True
+    )
+    raw = _download(
+        client, root, relative + "raw_model_video.mp4", video.with_suffix(".raw.mp4")
+    )
+    for path, key in (
+        (source, "source_sha256"),
+        (raw, "raw_model_sha256"),
+        (video, "published_sha256"),
+    ):
+        assert video_sha256(path) == receipt[key]
+    source_pixels = _pixel_hashes(source, record)
+    raw_pixels = _pixel_hashes(raw, record)
+    published_pixels = _pixel_hashes(video, record)
+    assert source_pixels["padding_rgb_sha256"] == published_pixels["padding_rgb_sha256"]
+    assert raw_pixels["scene_rgb_sha256"] == published_pixels["scene_rgb_sha256"]
+    assert published_pixels == {key: receipt[key] for key in published_pixels}
 
 
 def _audit_terminal(runtime, accepted):
@@ -171,20 +207,21 @@ def test_twelve_profile_outputs_and_quality_accounting(case, tmp_path):
     _audit_profiles(configuration, recipe)
     manifest = _read(client, root, "cosmos_augmented/manifest.json")
     assert manifest["status"] == "executed" and manifest["variant_count"] == 12
-    clips = {item["clip"] for item in manifest["variants"]}
-    assert clips == {f"variant-{index:04d}" for index in range(12)}
+    variants = {item["clip"]: item for item in manifest["variants"]}
+    assert len(manifest["variants"]) == len(variants) == 12
+    assert set(variants) == {f"variant-{index:04d}" for index in range(12)}
     source = _download(client, root, "input/source.mp4", tmp_path / "source.mp4")
     hashes = {
         clip: _audit_variant(
             client,
             root,
-            clip,
+            variants[clip],
             source,
             tmp_path / (clip + ".mp4"),
             recipe,
             case["expected_frames"],
         )
-        for clip in sorted(clips)
+        for clip in sorted(variants)
     }
     assert len(set(hashes.values())) == 12
     _audit_completion(client, root, hashes)
