@@ -2,7 +2,7 @@
 
 The [video variant sweep](guides/video-variant-sweep.md) combines timed VLM source descriptions and user hints into structured LLM-enhanced prompts, then pairs each shared prompt with every configured parameter combination. Cosmos3 full-source edge transfer (or the compatible Transfer 2.5 reference), paired visual review and Postgres/MLflow lineage complete the dataset path. Its operator kit previews the prompt-augmentation flow, prompt reuse, every parameter combination and worker assignment before submission. Direct prompts explicitly bypass augmentation. Completed candidates have verified recovery receipts; native runs export actual controls, a matrix of recorded outcomes, an offline HTML comparison viewer and an MP4 walkthrough.
 
-[Docs](../docs/README.md) · [Authoring guide](../docs/workbench/npa-workflow-guide.md)
+[Docs](../docs/README.md) · [Authoring guide](../docs/workbench/npa-workflow-guide.md) · [Manual operations](../docs/workbench/guides/manual-workflow-operations.md)
 
 These `npa.workflow/v0.0.1` YAML files compose Workbench operations into a state
 graph. NPA validates the graph, renders SkyPilot tasks, and manages run-scoped
@@ -26,11 +26,12 @@ profile; see the [resource preflight guide](../docs/workbench/npa-workflow-guide
 | Generate an image or video | [Cosmos 3](../docs/workbench/cosmos3-generate.md) |
 | Compare Cosmos3-Super serving topologies | [Benchmark results and workflows](../benchmark/cosmos3-super/README.md) |
 | Improve a navigation policy from field failures | [Field failure workflow](testing/field-failure-policy-improvement.yaml) · [native and operator adapter runbook](../docs/workbench/cookbooks/field-failure-policy-improvement.md) — sealed data/runtime required; GPU acceptance pending |
+| Train navigation from a public RGB-D capture | [Scan-to-policy](main/rgbd-scan-to-policy-demo.yaml) · [runbook](../docs/workbench/guides/rgbd-scan-to-policy-demo.md) — automatic sample setup through held-out evaluation |
 | Reconstruct a captured scene | [NuRec](../docs/workbench/guides/neural-reconstruction.md) |
 | Prepare a reconstructed scene for Isaac navigation | [Scan-to-Isaac handoff](../docs/workbench/guides/scan-to-isaac-navigation.md) — supplied collision mesh, portable USDZ, and native PhysX probes |
 | Reconstruct metric RGB-D into a collision scene | [RGB-D scan to Isaac](../docs/workbench/guides/rgbd-scan-to-isaac.md) — measured TSDF surface, held-out depth qualification, colored USDZ, native PhysX; [explicit native-training handoff](../docs/workbench/guides/rgbd-scan-to-isaac.md#continue-into-native-navigation-training) requires the companion navigation implementation |
 | Compose the 14-stage robot loop | [Sim2Real](../docs/workbench/guides/sim2real-workflow.md) |
-| Train a GR00T policy | [GR00T N1.7](../docs/workbench/cookbooks/groot-1-7-training.md) |
+| Fine-tune and inspect a GR00T policy | [GR00T N1.7](main/groot-1-7-finetune.yaml) · [runbook](../docs/workbench/cookbooks/groot-1-7-training.md) — distributed optimizer smoke, held-out action prediction, and synchronized diagnostics |
 | Evaluate a BEHAVIOR 2026 policy | [Start here](../docs/workbench/challenge-onboarding.md) · [Workflow](testing/behavior-challenge-eval.yaml) · [measured scope and limits](../docs/workbench/behavior-campaign.md#scope-and-validation-status) — operator runtime required |
 | Run a live π0.5 robot pickup in Antioch | [OpenPI live pickup](partners/antioch/openpi-live-pickup.md) — pretrained-policy inference, physical success checks, and native recording |
 | Collect Antioch trajectories and train ACT | [Antioch ACT workflow](partners/antioch/antioch-offline-policy-train.yaml) — completed dataset → LeRobot training; [runbook](partners/antioch/README.md#dataset-based-act-training) |
@@ -55,9 +56,10 @@ npa workbench workflow plan-spec workflows/testing/cosmos3-generate.yaml --run-i
 Expect a valid spec and one `generate` stage. Its bucket is a placeholder;
 validation and planning do not verify model access, stage data, or reserve GPUs.
 
-For execution, follow the selected runbook in order:
+For execution, follow the [manual run sequence](../docs/workbench/guides/manual-workflow-operations.md).
+For multiple episodes, use [dataset batches and capacity planning](../docs/workbench/guides/paidf-dataset-batches.md).
 
-1. Configure the project and prepare its input, storage, credentials, and compute.
+1. Configure the project and prepare its input, run-scoped storage, credentials, and compute.
 2. Validate and plan with the configuration overrides you will submit.
 3. Use `prepare-run` to persist a run ID, then check image pullability.
 4. Submit through `submit --runtime` using the same project, context, and values.
@@ -156,7 +158,19 @@ workflow YAMLs remain unchanged from `main`.
 
 ### Main workflows
 
-See the [main workflow and guide table](main/README.md) beside the three principal YAML specs.
+See the [main workflow and guide table](main/README.md) beside the principal YAML specs.
+
+The scan-to-policy and GR00T workflows connect real input preparation,
+learning, independent evaluation, and inspectable outputs. Scan-to-policy
+trains navigation in a measured scene; GR00T validates distributed fine-tuning,
+checkpoint identity, held-out action prediction, and artifact/viewer handoff.
+LeRobot transfer remains in testing.
+
+Catalog promotion does not establish physical-robot transfer. The recorded
+scan-to-policy qualification covers held-out goals in one reconstructed scene.
+GR00T's default four-step optimizer smoke establishes operational behavior;
+it does not establish statistically meaningful learning or closed-loop control.
+Their guides retain the qualification scope and current operator prerequisites.
 
 ### Partner workflows
 

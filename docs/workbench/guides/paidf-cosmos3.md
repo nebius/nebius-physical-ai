@@ -5,6 +5,12 @@ see [PAIDF dataset batches](paidf-dataset-batches.md).
 
 [Guides](README.md)
 
+For the current generic single-run lifecycle and exact installed workflow
+flags, start with [manual workflow operations](manual-workflow-operations.md).
+It covers saved private configuration, `--var` overlays, preflight, durable
+inspection, resume, scoped storage transfers, and the limits of batch and
+multiview claims.
+
 For a complete manual setup and run, start with the
 [PAIDF Cosmos 3 setup and run guide](../../../workflows/guides/paidf-cosmos3.md). It covers
 project setup, new or existing Kubernetes clusters, credential-file formats,

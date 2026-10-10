@@ -1,0 +1,66 @@
+{
+  "boundary": "first production dispatch to final response persisted; validation excluded",
+  "comparison_basis": "cosmos3_super_serving_v1",
+  "concurrency": 1,
+  "dispatch_schedule": "synchronized_rounds",
+  "node_gpu_count": 8,
+  "prompt_hashes": {
+    "negative_prompt": "007a1bdfe1ec3edf3b9a71789ca1999a47ad565560f269a3d78bf9a8dfef9cfd",
+    "prompt": "61c9c4b46b6787d967cc509a2bf323766e70bf5ecf40e09a739362beac135677"
+  },
+  "protocol_version": "v1",
+  "published_workload_match": true,
+  "replica_ports": [
+    8100,
+    8101,
+    8102,
+    8103,
+    8104,
+    8105,
+    8106,
+    8107
+  ],
+  "replicas": 8,
+  "rounds": [
+    {
+      "attempt_index_start": 0,
+      "attempt_index_stop": 1,
+      "finished_utc": "2026-10-05T23:23:18.472456Z",
+      "requests": 8,
+      "round": 0,
+      "started_utc": "2026-10-05T23:19:42.598322Z"
+    },
+    {
+      "attempt_index_start": 1,
+      "attempt_index_stop": 2,
+      "finished_utc": "2026-10-05T23:26:54.696352Z",
+      "requests": 8,
+      "round": 1,
+      "started_utc": "2026-10-05T23:23:18.472470Z"
+    },
+    {
+      "attempt_index_start": 2,
+      "attempt_index_stop": 3,
+      "finished_utc": "2026-10-05T23:30:30.668404Z",
+      "requests": 8,
+      "round": 2,
+      "started_utc": "2026-10-05T23:26:54.696365Z"
+    }
+  ],
+  "topology": "8x1",
+  "validation_completed_utc": "2026-10-05T23:30:45.915351Z",
+  "validation_run_id": "validation-2026-10-05T23:30:30.668837Z",
+  "warmup_rounds": [
+    {
+      "attempt_index_start": 0,
+      "attempt_index_stop": 1,
+      "finished_utc": "2026-10-05T23:19:37.512223Z",
+      "requests": 8,
+      "round": 0,
+      "started_utc": "2026-10-05T23:16:01.096028Z"
+    }
+  ],
+  "window_end_utc": "2026-10-05T23:30:30.668506Z",
+  "window_seconds": 648.070191,
+  "window_start_utc": "2026-10-05T23:19:42.598310Z"
+}

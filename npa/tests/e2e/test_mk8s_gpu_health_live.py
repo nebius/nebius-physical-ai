@@ -34,6 +34,23 @@ def _required(name: str) -> str:
     return value
 
 
+def _required_immutable_graphics_smoke_image() -> str:
+    """Return the exact operator-qualified graphics image for the live RTX gate."""
+    image = _required("NPA_E2E_MK8S_GRAPHICS_SMOKE_IMAGE")
+    repository, separator, digest = image.partition("@sha256:")
+    if (
+        not repository
+        or not separator
+        or len(digest) != 64
+        or any(character not in "0123456789abcdef" for character in digest)
+    ):
+        raise ValueError(
+            "NPA_E2E_MK8S_GRAPHICS_SMOKE_IMAGE must be an operator-qualified "
+            "immutable image reference ending in @sha256:<64-hex-digest>"
+        )
+    return image
+
+
 def test_fresh_reserved_mk8s_gpu_cluster_passes_fail_closed_health_gate(
     tmp_path: Path,
 ) -> None:
@@ -93,6 +110,7 @@ def test_rtx_rendering_profile_passes_live_graphics_readiness_gate(
 ) -> None:
     if os.environ.get("NPA_E2E_MK8S_RTX_RENDERING") != "1":
         pytest.skip("set NPA_E2E_MK8S_RTX_RENDERING=1 to authorize live graphics pods")
+    graphics_smoke_image = _required_immutable_graphics_smoke_image()
     kubeconfig = Path(_required("NPA_E2E_MK8S_GPU_KUBECONFIG")).expanduser()
     assert kubeconfig.is_file(), f"missing exact kubeconfig: {kubeconfig}"
     selection = resolve_gpu_workload_profile(
@@ -122,6 +140,7 @@ def test_rtx_rendering_profile_passes_live_graphics_readiness_gate(
             ),
             cuda_smoke=True,
             graphics_smoke=True,
+            graphics_smoke_image=graphics_smoke_image,
         ),
         evidence_path=tmp_path / "rtx-rendering-health-live.json",
     )

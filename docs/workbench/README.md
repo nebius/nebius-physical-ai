@@ -1,8 +1,5 @@
 # Workbench documentation
 
-For dataset submission, robot input diagnosis and private processing, see
-[PAIDF dataset batches](guides/paidf-dataset-batches.md).
-
 [All docs](../README.md) · [Quickstart](../quickstart.md) · [CLI reference](../cli/workbench.md)
 
 Use `npa workbench <tool> <command>` for a capability and
@@ -21,6 +18,10 @@ lists other affected images and shipped workflows, including the Sim2Real seams.
 | Task | Guide |
 | --- | --- |
 | Choose a workload | [Robot and workflow guides](guides/README.md) · [workflow catalog](../../workflows/README.md) |
+| Run or resume a workflow manually | [Manual workflow operations](guides/manual-workflow-operations.md) |
+| Submit episode batches and choose concurrency | [Dataset batches](guides/paidf-dataset-batches.md) · [capacity planning](guides/paidf-dataset-batches.md#concurrency-and-existing-capacity) |
+| Inspect supported quality reports | [Shared report inspection](insights-reports.md) |
+| Copy selected GCS/S3 inputs or outputs | [Scoped storage transfers](guides/scoped-storage-transfers.md) |
 | Run public samples | [Four workflow demos](guides/public-workflow-demos.md): qualified scan-to-policy, industrial sensors and NuRec; RL comparison with a measured rejection report |
 | Use your coding agent | [First-run prompts](agent-first-run.md) · [workflow operations](agent-workflow-operations.md) |
 | Prepare the runtime | [Workbench setup](getting-started.md) · [Kubernetes](kubernetes.md) · [direct runtime modes](runtime-modes.md) |
@@ -28,7 +29,7 @@ lists other affected images and shipped workflows, including the Sim2Real seams.
 | Compare FA2 and FA4 on RTX PRO 6000 | [Build and tuning guide](guides/fa2-fa4-comparison.md) · [Latest speeds, cold-start cost and actual renders](fa4-rtx-optimization.md) |
 | Author and submit | [Workflow guide](npa-workflow-guide.md) · [toolRef catalog](npa-workflow-tool-catalog.md) |
 | Integrate from Python or HTTP | [CLI / SDK walkthrough](cli-sdk-yaml-walkthrough.md) · [SDK errors](../sdk/errors.md) |
-| Inspect or recover | [Run lifecycle](../run-lifecycle.md) · [controller recovery](controller-recovery.md) · [troubleshooting](troubleshooting/known-footguns.md) · [CLI errors](../cli-errors.md) |
+| Diagnose or recover a run | [Run lifecycle](../run-lifecycle.md) · [controller recovery](controller-recovery.md) · [troubleshooting](troubleshooting/known-footguns.md) · [CLI errors](../cli-errors.md) |
 | Curate media with Encord | [S3 registration, pull, roundtrip verification, and a local MP4 demo](encord.md) |
 | Finish | [Teardown](../teardown.md) |
 
@@ -85,6 +86,7 @@ lists other affected images and shipped workflows, including the Sim2Real seams.
 | Select images | [Public catalog](container-image-catalog.md) · [GPU compatibility](image-gpu-compatibility-matrix.md) · [SONIC variants](sonic-image-catalog.md) |
 | Use Blackwell | [B200 / B300](blackwell-datacenter-image-compatibility.md) · [RTX PRO 6000](sm120-image-catalog.md) · [RTX FA4 adoption](guides/rtx6000-fa4.md) · [FA4 evidence](flash-attention.md) · [Full-model rendering validation](fa4-sdxl-validation.md) |
 | Configure nodes and caches | [GPU driver strategy](mk8s-gpu-driver-strategy.md) · [model-weight cache](model-weight-cache.md) · [preemptible VMs](preemptible-vms.md) |
+| Plan a GPU launch | [Quota and capacity](gpu-capacity-quota-plan.md) |
 | Reproduce benchmarks and demos | [Benchmarks](../../benchmark/README.md) · [Cookbooks](cookbooks/README.md) · [validation scope](solutions-validation.md) · [performance/reliability validation](workbench-improvements-validation.md) |
 | Add or package a solution | [Contributing](../../CONTRIBUTING.md) · [containerized solutions](contributing-a-containerized-solution.md) · [OSS catalog](oss-solution-catalog.md) · [packaging contract](container-packaging.md) · [FiftyOne image validation](../../npa/docker/workbench/fiftyone/RELEASE.md#validate-a-local-candidate) |
 

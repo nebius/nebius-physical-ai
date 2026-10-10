@@ -556,6 +556,31 @@ def test_device_memory_sampler_refuses_wrong_or_multiple_gpus_before_generation(
     assert sampler._thread is None
 
 
+def test_device_memory_sampler_accepts_configured_gpu(monkeypatch):
+    monkeypatch.setenv("NPA_COSMOS3_NANO_VIDEO_EXPECTED_GPU", "H200")
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0")
+    monkeypatch.setattr(
+        video, "_command", lambda _argv: b"NVIDIA H200, 40000, 143771\n"
+    )
+    sampler = video.DeviceMemorySampler()
+    sampler._sample()
+    assert sampler.samples[0]["used_mib"] == 40000
+    assert sampler.stop()["source"] == "nvidia-smi Ray-assigned H200 device memory.used"
+
+
+def test_device_memory_sampler_override_still_refuses_other_gpus(monkeypatch):
+    monkeypatch.setenv("NPA_COSMOS3_NANO_VIDEO_EXPECTED_GPU", "H200")
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0")
+    monkeypatch.setattr(
+        video, "_command", lambda _argv: b"NVIDIA B200, 20000, 180000\n"
+    )
+    sampler = video.DeviceMemorySampler()
+    with pytest.raises(video.NanoVideoError, match="requested H200 device"):
+        sampler.start()
+    assert sampler.samples == []
+    assert sampler._thread is None
+
+
 def test_existing_s3_output_prefix_fails_before_gpu_or_write(tmp_path, monkeypatch):
     called = []
     monkeypatch.setattr(video, "run_batch", lambda **kwargs: called.append(kwargs))

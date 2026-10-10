@@ -1,0 +1,27 @@
+{
+  "prompt_file": "prompts/example_t2v_prompt.json",
+  "negative_file": "prompts/negative_prompt.json",
+  "shape": {
+    "size": "832x480",
+    "num_frames": 189,
+    "fps": 24,
+    "num_inference_steps": 35,
+    "guidance_scale": "6.0",
+    "flow_shift": "10.0",
+    "max_sequence_length": "4096"
+  },
+  "extra_params": {
+    "use_resolution_template": false,
+    "use_duration_template": false,
+    "guardrails": false
+  },
+  "expected": {
+    "width": 832,
+    "height": 480,
+    "fps": 24.0,
+    "frames": 189,
+    "min_seconds": 7.795,
+    "max_seconds": 7.955
+  },
+  "note": "P1 controls at 832x480"
+}

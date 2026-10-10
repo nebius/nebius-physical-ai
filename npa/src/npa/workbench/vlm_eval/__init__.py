@@ -2710,7 +2710,7 @@ def _rubric_from_path(raw_name: str, *, dataset_path: str) -> tuple[str, str] | 
         paths.insert(0, dataset_base / candidate)
     for path in paths:
         try:
-            if path.is_file():
+            if _rubric_regular_file(path):
                 return (path.stem, path.read_text(encoding="utf-8").strip())
         except (OSError, UnicodeError) as exc:
             # Inline rubrics can exceed filesystem component limits; explicit
@@ -2725,6 +2725,14 @@ def _rubric_from_path(raw_name: str, *, dataset_path: str) -> tuple[str, str] | 
     if raw_name.startswith("@"):
         raise VlmEvalError(f"rubric file does not exist: {candidate}")
     return None
+
+
+def _rubric_regular_file(path: Path) -> bool:
+    # is_file suppresses all OS errors on Python 3.14, hiding denied reads.
+    try:
+        return stat.S_ISREG(path.stat().st_mode)
+    except (FileNotFoundError, NotADirectoryError):
+        return False
 
 
 def _normalize_thresholds(thresholds: Sequence[float]) -> list[float]:

@@ -5,6 +5,7 @@ import shutil
 import sys
 
 from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
 from packaging.version import Version
 import pytest
 
@@ -138,6 +139,40 @@ def test_websockets_transport_pins_match_project_dependency() -> None:
         "npa/src/npa/tools/desktop/chat_setup.py",
     ):
         assert pinned in (ci_requirements._ROOT / relative).read_text(), relative
+
+
+def test_application_lock_matches_shared_ci_pins() -> None:
+    """Keep application dependency pairs consistent with the resolved CI closure.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: A shared package has different application and CI pins.
+    """
+    environment = {
+        "python_version": "3.12",
+        "python_full_version": "3.12.0",
+        "sys_platform": "linux",
+    }
+    locks = []
+    for relative in ("requirements-lock.txt", "ci/requirements.txt"):
+        pins = {}
+        for line in (ci_requirements._ROOT / "npa" / relative).read_text().splitlines():
+            if not line or line.startswith(("#", "-")):
+                continue
+            requirement = Requirement(line)
+            if not requirement.marker or requirement.marker.evaluate(environment):
+                pins[canonicalize_name(requirement.name)] = str(requirement.specifier)
+        locks.append(pins)
+    application, ci = locks
+    mismatches = {
+        name: (pin, ci[name])
+        for name, pin in application.items()
+        if name in ci and pin != ci[name]
+    }
+    assert not mismatches, f"Application pins differ from the CI closure: {mismatches}"
 
 
 @pytest.mark.parametrize("version", ["3.10", "3.12", "3.14"])

@@ -12,6 +12,8 @@ metadata:
 
 config:
   bucket: example-bucket
+  source_overlay: true
+  groot_image: ghcr.io/nebius/nebius-physical-ai/npa-groot@sha256:04b3ea970002d40fb2afd54b17e0a4de2ef456a471c25b6f044d07d9a39e2f76
   prefix: "groot-1-7-two-gpu-pipeline/{{run.id}}"
   source_data_uri: "s3://{{config.bucket}}/groot-1-7-finetune/source/data/"
   baseline_checkpoint_uri: "s3://{{config.bucket}}/{{config.prefix}}/checkpoints/baseline/"
@@ -75,16 +77,19 @@ config:
 resources:
   trainer-gpu:
     cloud: kubernetes
+    image: "{{config.groot_image}}"
     accelerators: "{{config.gpu_type}}:{{config.gpu_count}}"
     cpus: 32
     memory: 200Gi
   evaluator-gpu:
     cloud: kubernetes
+    image: "{{config.groot_image}}"
     accelerators: "{{config.gpu_type}}:1"
     cpus: 16
     memory: 96Gi
   artifact-cpu:
     cloud: kubernetes
+    image: "{{config.groot_image}}"
     cpus: 8
     memory: 32Gi
 

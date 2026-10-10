@@ -15,6 +15,29 @@ DEFAULT_PORT = 8793
 DEFAULT_TOKEN_ENV = "INSIGHTS_TOKEN"
 DEFAULT_QUERY_LIMIT = 100
 
+
+class ReportRequest(BaseModel):
+    """Select one exact report artifact for read-only inspection.
+
+    Args:
+        input_path: Nonempty local path or exact S3 report URI.
+    Returns:
+        None.
+    Raises:
+        ValueError: The selected input is empty.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    input_path: str = Field(..., min_length=1)
+
+    @field_validator("input_path")
+    @classmethod
+    def _strip_input(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("input_path must not be empty")
+        return value.strip()
+
+
 # Metric name used for the per-run accelerator (GPU) count extracted from a run
 # manifest's resource profile, plus the label key carrying the accelerator spec.
 GPU_METRIC_NAME = "gpus"
