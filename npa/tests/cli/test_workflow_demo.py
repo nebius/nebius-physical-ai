@@ -14,7 +14,6 @@ from npa.clients.config import StorageConfig
 from npa.orchestration.npa_workflow import demos
 
 _REAL_VALIDATE = demo._validate_demo_plan
-_ROOT = Path(__file__).resolve().parents[3]
 _ISAAC = "registry.example.invalid/npa-isaac-lab@sha256:" + "a" * 64
 _CPU = "registry.example.invalid/npa-sonic@sha256:" + "b" * 64
 
@@ -216,9 +215,11 @@ def test_partial_project_pair_fails_before_submit(monkeypatch, tmp_path):
 
 def _real_plan_selection(monkeypatch, name):
     definition = demos.select_demo(name)
+    spec = demos.resolve_npa_workflow_spec(definition.workflow)
+    assert spec is not None
     selection = {
         "name": name,
-        "yaml_path": _ROOT / "workflows/testing" / definition.workflow,
+        "yaml_path": spec,
         "run_id": "operator-images",
         "project": "example",
         "var": [
