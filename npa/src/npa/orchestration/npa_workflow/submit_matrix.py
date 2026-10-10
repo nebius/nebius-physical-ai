@@ -110,6 +110,19 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Guarded native Cosmos3 full-source transfer workers, paired visual review, and tracked accepted dataset publication.",
     ),
     SubmitLiveCase(
+        "antioch-posttrain.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        notes="Requires a real Antioch recording; preserves the spec's Kubernetes-compatible image digest for prepare, ResNet-18 fine-tune, and held-out evaluation.",
+    ),
+    SubmitLiveCase(
+        "antioch-warehouse.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        image_overrides=(("workbench.isaac_lab.antioch_warehouse", "isaac-lab"),),
+        notes="Antioch-authored warehouse batch on native Isaac, followed by CPU S3 evidence readback.",
+    ),
+    SubmitLiveCase(
         "rgbd-scan-to-policy-demo.yaml",
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),

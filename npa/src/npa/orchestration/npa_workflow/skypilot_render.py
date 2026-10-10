@@ -38,6 +38,7 @@ API_ONLY_VLM_AUDIT_TOOLS = frozenset(
 TOOL_REF_IMAGE_TOOL: dict[str, str | None] = {
     "workflow.video_sweep.generate": "cosmos2-transfer",
     "workflow.video_sweep.generate_cosmos3": "cosmos3",
+    "workflow.antioch_posttrain": "lerobot",
     "workflow.habitat_sim.smoke": "habitat-sim",
     "workbench.nurec.convert_colmap": "ncore",
     # Visualization only needs the prebuilt pinned Rerun runtime, not NuRec.
@@ -194,6 +195,7 @@ DECLARATIVE_PIP_EXTRAS = frozenset({"viz"})
 #: `huggingface_hub`, and the interpreter running npa in a vendor image is not the vendor's own
 #: venv, so the library is not necessarily importable there (live job 244).
 TOOL_REF_PIP_REQUIREMENTS: dict[str, tuple[tuple[str, str], ...]] = {
+    "workflow.antioch_posttrain.prepare": (("python:av", "av>=12,<17"),),
     "workbench.lerobot.transfer_prepare": (
         ("python:huggingface_hub", "huggingface_hub>=0.23,<1.0"),
         ("python:pyarrow", "pyarrow>=15,<22"),
@@ -275,6 +277,7 @@ PYTHON_MODULE_PROBE = "python:"
 #: When a candidate exists, setup installs npa INTO it and records it as the stage interpreter,
 #: so the tool and the vendor library share one environment.
 TOOL_REF_VENDOR_INTERPRETERS: dict[str, tuple[str, ...]] = {
+    "workflow.antioch_posttrain": ("/opt/lerobot/venv/bin/python",),
     "workbench.mjlab": ("/usr/local/bin/python",),
     # The XR1 spec pins the upstream PyTorch CUDA image explicitly. Its adapter
     # creates a separate vendor venv before installing XR1's pinned packages.

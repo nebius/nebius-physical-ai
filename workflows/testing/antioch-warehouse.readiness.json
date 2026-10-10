@@ -1,0 +1,57 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "2476a965d3f412d4ad57163d4b322c4a08df67bf579b9b7521077c69e748939f",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Schema validation and two-stage planning passed; catalog argv and routing checked.",
+      "evidence": [
+        "../../docs/testing/antioch-warehouse.md"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Schema validation and two-stage planning passed; catalog argv and routing checked.",
+      "evidence": [
+        "../../docs/testing/antioch-warehouse.md"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "verified",
+      "reason": "Selected-project object storage read/write preflight passed for the run scope; no completed cross-stage artifact transfer claimed.",
+      "evidence": [
+        "../../docs/testing/antioch-warehouse.md"
+      ]
+    },
+    "worker_input": {
+      "status": "verified",
+      "reason": "Exact candidate NPA source overlay was staged to content-addressed object storage; warehouse assets remain runtime-fetched.",
+      "evidence": [
+        "../../docs/testing/antioch-warehouse.md"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "Selected-project storage and provider ownership preflights passed; no live credentials are included in the repository.",
+      "evidence": [
+        "../../docs/testing/antioch-warehouse.md"
+      ]
+    },
+    "source_image": {
+      "status": "verified",
+      "reason": "Existing Isaac image manifest and bootstrap contract preflight passed; the CPU stage uses staged NPA source.",
+      "evidence": [
+        "../../docs/testing/antioch-warehouse.md"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "Native Isaac simulation and independent CPU verification passed 21 checks; corrected Workbench resubmission was blocked by isolated SkyPilot API identity consistency before launch.",
+      "evidence": [
+        "../../docs/testing/antioch-warehouse.md"
+      ]
+    }
+  }
+}
