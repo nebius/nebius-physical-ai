@@ -1516,14 +1516,28 @@ def _formatter_label_valid(formatter: str, value: str) -> bool:
     return True
 
 
+def _formatter_inventory_labels(
+    inventory: KubernetesGpuInventory,
+) -> tuple[dict[str, str], ...]:
+    """Return one ordered observed-label map per node for formatter mirroring."""
+
+    if inventory.node_labels:
+        return tuple(inventory.node_labels.values())
+    # Production discovery records ``node_labels`` for every named node. The
+    # fallback keeps direct SDK callers and hermetic inventories truthful when
+    # their sole observed label source is the immutable node record.
+    return tuple(dict(node.labels) for node in inventory.nodes)
+
+
 def _select_skypilot_formatter(
     inventory: KubernetesGpuInventory,
 ) -> tuple[str, tuple[str, ...]] | None:
     """Mirror pinned SkyPilot's ordered context formatter discovery."""
 
+    node_labels = _formatter_inventory_labels(inventory)
     for formatter, keys in _SKYPILOT_0122_FORMATTER_KEYS:
         invalid = False
-        for labels in inventory.node_labels.values():
+        for labels in node_labels:
             for key, value in labels.items():
                 if key not in keys:
                     continue
@@ -1584,13 +1598,14 @@ def skypilot_label_ready_nodes(
     if selected is None:
         return ()
     formatter, keys = selected
-    for labels in inventory.node_labels.values():
+    node_labels = _formatter_inventory_labels(inventory)
+    for labels in node_labels:
         for key, value in labels.items():
             if key in keys and not _formatter_label_valid(formatter, value):
                 return ()
     requested = parse_accelerator_request(accelerator).name
     target: tuple[str, str] | None = None
-    for labels in inventory.node_labels.values():
+    for labels in node_labels:
         for key, value in labels.items():
             if key not in keys:
                 continue

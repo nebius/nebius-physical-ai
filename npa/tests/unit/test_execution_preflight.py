@@ -1055,6 +1055,7 @@ def gpu_inventory(monkeypatch):
         allocatable_cpu_millis=16000,
         allocatable_memory_bytes=128 * 10**9,
         allocatable_pods=1,
+        labels=(("skypilot.co/accelerator", "b200"),),
     )
     inventory = KubernetesGpuInventory(
         "unit-context", 1, 1, 1, 1, ("NVIDIA-B200",), {}, nodes=(node,)
@@ -2012,6 +2013,7 @@ def test_sky_resource_units_preserve_exact_gpu_capacity_checks(
                 allocatable_pods=1,
                 allocatable_ephemeral_storage_bytes=100 * 10**9,
                 free_ephemeral_storage_bytes=100 * 10**9 - int(shortfall == "storage"),
+                labels=(("skypilot.co/accelerator", "b200"),),
             ),
         ),
     )
@@ -2088,6 +2090,7 @@ def test_sky_gpu_preflight_accepts_skypilot_allowed_node_names_shape(
                 allocatable_cpu_millis=8000,
                 allocatable_memory_bytes=32 * 10**9,
                 allocatable_pods=1,
+                labels=(("skypilot.co/accelerator", "b200"),),
             ),
         ),
     )
@@ -2394,7 +2397,10 @@ def test_rendered_gpu_wave_respects_placement_and_gang_size(
                 free_cpu_millis=4000,
                 free_memory_bytes=16 * 10**9,
                 free_pod_slots=1,
-                labels=(("pool", "available"),),
+                labels=(
+                    ("pool", "available"),
+                    ("skypilot.co/accelerator", "b200"),
+                ),
                 allocatable_cpu_millis=4000,
                 allocatable_memory_bytes=16 * 10**9,
                 allocatable_pods=1,
