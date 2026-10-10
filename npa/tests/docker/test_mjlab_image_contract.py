@@ -18,6 +18,17 @@ def test_cudnn_sdk_is_removed_in_the_install_layer():
     assert "nvidia-cudnn-cu13==9.20.0.48" in (IMAGE / "requirements.lock").read_text()
 
 
+def test_native_skypilot_ssh_start_is_probed_without_baked_host_keys():
+    text = (IMAGE / "Dockerfile").read_text()
+    assert "ssh-keygen -A' /etc/init.d/ssh" in text
+    probe = text[text.index("RUN sudo -n true") :]
+    assert "test ! -e /etc/ssh/ssh_host_ed25519_key" in probe
+    assert "sudo service ssh start && sudo /usr/sbin/sshd -t" in probe
+    assert "sudo service ssh stop" in probe
+    assert "sudo rm -f /etc/ssh/ssh_host_*" in probe
+    assert "sudo ssh-keygen -A" not in probe
+
+
 def test_snapshot_build_carries_every_copied_dependency():
     dockerfile = (IMAGE / "Dockerfile").read_text()
     build = (IMAGE / "build.sh").read_text()

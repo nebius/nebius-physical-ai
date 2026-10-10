@@ -20,6 +20,8 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 USER root
 COPY docker/workbench/habitat-sim/bootstrap_sources.py /opt/mjlab-source/bootstrap_sources.py
 COPY src/npa/_public_https.py docker/workbench/mjlab/debian_sources.py docker/workbench/mjlab/python_sources.py docker/workbench/mjlab/python-sources.lock.json /opt/mjlab-source/
+# SkyPilot's native VM runner overrides ENTRYPOINT and starts the SSH service.
+# Generate keys at service start while keeping every registry layer keyless.
 RUN [[ "$NPA_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] \
     && [[ "$SOURCE_DATE_EPOCH" =~ ^[1-9][0-9]*$ ]] \
     && install -d -m 0755 /usr/share/doc/npa-mjlab \
@@ -40,6 +42,8 @@ RUN [[ "$NPA_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] \
     && apt-get install -y --no-install-recommends \
        ca-certificates curl netcat-openbsd procps rsync sudo openssh-server wget \
        libegl1 libgl1 libglvnd0 libglib2.0-0 ffmpeg git \
+    && sed -i '/^  start)$/a\    ssh-keygen -A' /etc/init.d/ssh \
+    && grep -Fq 'ssh-keygen -A' /etc/init.d/ssh \
     && cp /var/lib/dpkg/status /usr/share/doc/npa-mjlab/runtime-status \
     && python3 /opt/mjlab-source/debian_sources.py /usr/share/doc/npa-mjlab \
     && python3 /opt/mjlab-source/python_sources.py --lock /opt/mjlab-source/python-sources.lock.json \
@@ -87,7 +91,9 @@ USER ubuntu
 # trivy:ignore:AVD-DS-0010
 RUN sudo -n true && test -w /tmp && test -w /home/ubuntu \
     && command -v rsync && command -v ssh-keygen && command -v service \
-    && sudo ssh-keygen -A && sudo /usr/sbin/sshd -t \
+    && test ! -e /etc/ssh/ssh_host_ed25519_key \
+    && sudo service ssh start && sudo /usr/sbin/sshd -t \
+    && sudo service ssh stop \
     && sudo rm -f /etc/ssh/ssh_host_* \
     && test "$(npa-workflow-entrypoint /bin/sh -c 'printf bootstrap-argv-ok')" = bootstrap-argv-ok
 EXPOSE 8080

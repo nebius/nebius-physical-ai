@@ -76,3 +76,9 @@ The locked libpng 1.6.58 gzip archive uses the Debian HTTPS mirror to avoid
 regional SourceForge redirects. All 669 archive members (types, link targets,
 and file hashes) were compared with the upstream xz archive and match.
 The gzip archive has its own reviewed size and SHA-256 in the source lock.
+
+SkyPilot's native VM runner overrides the OCI entrypoint and starts the SSH
+service directly. The service generates fresh host keys at runtime. The build
+probes that exact service-start path from a keyless state, stops the service,
+and removes generated keys before the layer commits. Private host keys are
+never delivered in the image.
