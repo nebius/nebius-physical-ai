@@ -654,6 +654,26 @@ def runtime_manifest_view(
     return replace(manifest, steps=steps)
 
 
+def _latest_stage_wave_attempts(
+    attempts: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Select the latest numbered invocation; keep uncertain ordering ambiguous."""
+    numbered: dict[int, str] = {}
+    for item in attempts:
+        key = str(item.get("wave_key") or "")
+        parts = key.split("|", 2)
+        if len(parts) != 3 or not parts[0].isdigit() or not all(parts[1:]):
+            return attempts
+        sequence = int(parts[0])
+        if sequence in numbered and numbered[sequence] != key:
+            return attempts
+        numbered[sequence] = key
+    if not numbered:
+        return attempts
+    latest = numbered[max(numbered)]
+    return [item for item in attempts if item.get("wave_key") == latest]
+
+
 def reconstruct_stage_job_attribution(
     manifest: RunManifest,
     *,
@@ -664,6 +684,8 @@ def reconstruct_stage_job_attribution(
     A root job ID is inherited only for the legacy single-managed-job contract
     (no runtime waves).  Conflicts and missing historical evidence remain
     explicit instead of broadcasting the latest discovered job across stages.
+    Repeated numbered waves select the latest invocation; retry counters are
+    scoped to that invocation and all earlier attempts remain in the history.
     """
 
     stages: dict[str, dict[str, Any]] = {}
@@ -755,37 +777,34 @@ def reconstruct_stage_job_attribution(
                     "_order": index,
                 }
             )
-        latest_wave_key = str(attempts[-1].get("wave_key") or "") if attempts else ""
         attempts.sort(
             key=lambda item: (
                 int(item.get("attempt") or 1),
                 int(item.get("_order") or 0),
             )
         )
-        final_scope = attempts
+        current_attempts = _latest_stage_wave_attempts(attempts)
         unresolved_wave_scopes = False
-        if latest_wave_key and all(
-            item.get("provenance") == "runtime_wave" and item.get("wave_key")
-            for item in attempts
-        ):
-            previous = [
-                item for item in attempts if item["wave_key"] != latest_wave_key
-            ]
-            current = [item for item in attempts if item["wave_key"] == latest_wave_key]
-            if previous and all(
-                item["state"] in TERMINAL_STEP_STATES for item in previous
-            ):
-                # Rebatching changes wave keys and restarts their attempt counters.
-                # Retain history, but compare attempt IDs within the latest wave.
-                attempts = previous + current
-                final_scope = current
-            elif previous:
-                unresolved_wave_scopes = True
-        final = attempts[-1] if attempts else {}
+        if all(item.get("provenance") == "runtime_wave" for item in attempts):
+            if current_attempts is attempts:
+                unresolved_wave_scopes = (
+                    len({item.get("wave_key") for item in attempts}) > 1
+                )
+            elif current_attempts:
+                latest_wave_key = current_attempts[0]["wave_key"]
+                previous = [
+                    item for item in attempts if item["wave_key"] != latest_wave_key
+                ]
+                unresolved_wave_scopes = any(
+                    item["state"] not in TERMINAL_STEP_STATES for item in previous
+                )
+                # Each numbered invocation owns its retry counter; keep history.
+                attempts = previous + current_attempts
+        final = current_attempts[-1] if current_attempts else {}
         final_attempt = int(final.get("attempt") or 0)
         final_ids = {
             str(item.get("job_id") or "")
-            for item in final_scope
+            for item in current_attempts
             if int(item.get("attempt") or 0) == final_attempt
             and str(item.get("job_id") or "")
         }

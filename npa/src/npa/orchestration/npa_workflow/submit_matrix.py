@@ -166,6 +166,19 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Real imported Marble collider raycast by NVIDIA Warp CUDA with depth and interactive HTML artifacts.",
     ),
     SubmitLiveCase(
+        "physical-prompt-comparison.yaml",
+        "multi",
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "NEBIUS_TOKEN_FACTORY_KEY",
+        ),
+        runtime=True,
+        requires_token_factory=True,
+        expected_parallel_tasks=2,
+        notes="Full Wan 2.1 physical-prompt comparison: six scenarios, two seeds, three arms, blinded video judgment.",
+    ),
+    SubmitLiveCase(
         "digital-twin-campus-render.yaml",
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),

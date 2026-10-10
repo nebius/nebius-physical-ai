@@ -279,3 +279,89 @@ def test_different_wave_keys_do_not_hide_an_unfinished_conflicting_attempt(
 
     assert stage["attribution"] == "ambiguous"
     assert stage["managed_job_id"] == ""
+
+
+@pytest.mark.parametrize("earlier_attempt", [1, 2])
+def test_refinement_stage_uses_latest_wave_and_retains_prior_attempts(earlier_attempt):
+    manifest = _manifest(root_job="")
+    waves = [
+        _wave(4, "augment", "40", attempt=earlier_attempt, status="succeeded"),
+        _wave(7, "augment", "70", status="running"),
+    ]
+    info = reconstruct_stage_job_attribution(manifest, runtime_waves=waves)["augment"]
+    assert info["managed_job_id"] == "70"
+    assert info["active_attempt"] == 1
+    assert {item["job_id"] for item in info["attempts"]} == {"40", "70"}
+    result = build_actionable_run_status(
+        manifest,
+        runtime_waves=waves,
+        job_observations={"40": {"status": "SUCCEEDED"}, "70": {"status": "RUNNING"}},
+    )
+    assert result["stages"]["augment"]["state"] == "RUNNING"
+
+
+def test_latest_refinement_wave_conflicts_remain_ambiguous():
+    waves = [
+        _wave(4, "augment", "40", attempt=2, status="succeeded"),
+        _wave(7, "augment", "70"),
+        _wave(7, "augment", "71"),
+    ]
+    info = reconstruct_stage_job_attribution(_manifest(), runtime_waves=waves)[
+        "augment"
+    ]
+    assert info["managed_job_id"] == ""
+    assert info["attribution"] == "ambiguous"
+
+
+def test_latest_refinement_wave_without_job_does_not_inherit_previous_success():
+    waves = [_wave(4, "augment", "40", status="succeeded"), _wave(7, "augment", "")]
+    info = reconstruct_stage_job_attribution(_manifest(), runtime_waves=waves)[
+        "augment"
+    ]
+    assert info["managed_job_id"] == ""
+    assert info["attempts"][-1]["job_id"] == ""
+
+
+@pytest.mark.parametrize(
+    "keys",
+    [
+        ("", ""),
+        ("004|serial|:augment:-", "004|other|:augment:-"),
+        ("004||:augment:-", "007||:augment:-"),
+    ],
+)
+def test_missing_or_conflicting_wave_order_remains_ambiguous(keys):
+    waves = [
+        {**_wave(index, "augment", job), "key": key}
+        for index, job, key in zip((4, 7), ("40", "70"), keys, strict=True)
+    ]
+    info = reconstruct_stage_job_attribution(_manifest(), runtime_waves=waves)[
+        "augment"
+    ]
+    assert info["managed_job_id"] == ""
+    assert info["attribution"] == "ambiguous"
+
+
+@pytest.mark.parametrize("earlier_attempt", [1, 3])
+def test_numbered_wave_order_survives_reordered_runtime_history(earlier_attempt):
+    waves = [
+        _wave(7, "augment", "70", status="running"),
+        _wave(4, "augment", "40", attempt=earlier_attempt, status="succeeded"),
+    ]
+    info = reconstruct_stage_job_attribution(_manifest(), runtime_waves=waves)[
+        "augment"
+    ]
+    assert info["managed_job_id"] == "70"
+    assert info["attempts"][-1]["job_id"] == "70"
+
+
+def test_uncertain_wave_order_cannot_choose_a_higher_attempt_from_another_wave():
+    waves = [
+        {**_wave(4, "augment", "40", attempt=3), "key": "004|serial|:augment:-"},
+        {**_wave(7, "augment", "70"), "key": "004|other|:augment:-"},
+    ]
+    info = reconstruct_stage_job_attribution(_manifest(), runtime_waves=waves)[
+        "augment"
+    ]
+    assert info["managed_job_id"] == ""
+    assert info["attribution"] == "ambiguous"
