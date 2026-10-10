@@ -71,6 +71,10 @@ class _ViewerStore:
         assert bucket == "demo-bucket" and object_key == self.context.artifact.key
         Path(destination).write_bytes(self.download_payload)
 
+    def head_object(self, *, Bucket, Key):
+        data = self.context.objects[Key]
+        return {"ContentLength": len(data), "ETag": hashlib.sha256(data).hexdigest()}
+
 
 def _viewer_context(module, tmp_path, journaled):
     good = b"explicit verified transport fixture"
@@ -161,6 +165,25 @@ def test_concurrent_rejected_download_cannot_corrupt_verified_cache(viewer_conte
 
 def _install_route_inventory(context, monkeypatch):
     module = context.module
+    inventory = [context.artifact]
+    if context.journaled:
+        for key, data in context.objects.items():
+            if key == context.artifact.key or key.endswith("/reports/sim2real.rrd"):
+                continue
+            inventory.append(
+                module.Artifact(
+                    run_id="run-a",
+                    key=key,
+                    s3_uri=f"s3://demo-bucket/{key}",
+                    size=len(data),
+                    last_modified="",
+                    render="json",
+                    inline=True,
+                    namespace="runs",
+                    relative_key=key.removeprefix("runs/run-a/"),
+                    source_etag=hashlib.sha256(data).hexdigest(),
+                )
+            )
     monkeypatch.setattr(module, "RECORDINGS_DIR", context.directory)
     monkeypatch.setattr(
         module, "_agent_artifact_s3_client", lambda: (context.store, {})
@@ -176,7 +199,7 @@ def _install_route_inventory(context, monkeypatch):
     monkeypatch.setattr(
         module,
         "_load_selected_run_artifacts",
-        lambda **_: ("demo-bucket", "fixture-project", "runs", [context.artifact]),
+        lambda **_: ("demo-bucket", "fixture-project", "runs", inventory),
     )
     monkeypatch.setattr(
         module,

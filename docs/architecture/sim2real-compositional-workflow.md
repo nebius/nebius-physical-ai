@@ -45,6 +45,16 @@ can recover the complete planned generation from its immutable sources. Legacy
 alias readers remain available only when no journal exists and recheck that
 condition after reading.
 
+Status exposes `publication_state` (`available`, `absent`, `publishing`, or
+`unavailable`) and a typed `publication_error`. Known publication failure cannot
+be hidden by a successful worker: publishing stays nonterminal and unavailable
+storage stays unknown. Missing artifacts and inaccessible artifacts are distinct.
+Legacy recording Range requests retain conditional byte-range transport and the
+post-read no-journal fence. Journaled listings still authenticate actual bytes;
+HEAD metadata alone is not a verified recording. Viewer inputs use request-owned
+leases through apply and release only their own staging, never another reader's
+generation or the published viewer copy.
+
 Canonical archive regeneration separates immutable input authority from its
 current writer. The retained report source and upstream ComponentRecords remain
 unchanged; the input report byte hash and preceding Stage14 history are preserved.
@@ -53,6 +63,12 @@ recording generation and byte hashes, even when its source differs from those
 historical inputs. It does not inherit their execution or device claims. An
 unattested host CLI may emit a local preview but cannot rewrite or publish
 canonical report/ComponentRecord authority.
+
+Regeneration references its derived visual index under a generation-scoped,
+content-addressed key, preserving the existing canonical index across replays.
+Retained legacy visualization joins validation to the checkpoint actually
+evaluated, including periodic and prior-outer candidates; it does not relabel
+best-so-far validation as the latest checkpoint's metrics.
 
 Publication also verifies upstream authority: every ComponentRecord must match
 the workflow source revision, the selected learned checkpoint must match its

@@ -31,7 +31,20 @@ class VerifiedRecordingString(str):
 def retain_verified_recording(
     source: Path, root: Path, name: str
 ) -> VerifiedRecordingPath:
-    """Move verified staging into a unique lease; never expose shared staging."""
+    """Move verified staging into a unique request-owned lease.
+
+    Args:
+        source: Fully verified staging file to transfer, not a published copy.
+        root: Existing private recordings directory.
+        name: Local leaf filename within the unique lease directory.
+
+    Returns:
+        Owned path to retain through synchronous apply, then explicitly release.
+
+    Raises:
+        ValueError: The name is not a safe local leaf.
+        OSError: Private staging creation or transfer fails.
+    """
     if Path(name).name != name or name in {"", ".", ".."}:
         raise ValueError("verified recording requires a local filename")
     owner = tempfile.TemporaryDirectory(prefix=".verified-recording-", dir=root)
@@ -46,6 +59,16 @@ def retain_verified_recording(
 
 
 def release_verified_recording(value) -> None:
-    """Release only an actual lease, never an arbitrary local/public path."""
+    """Release only an actual lease, never an arbitrary local/public path.
+
+    Args:
+        value: Input lease retained through apply, or an unowned value to ignore.
+
+    Returns:
+        None; repeated lease release is harmless.
+
+    Raises:
+        OSError: The owned temporary directory cannot be removed.
+    """
     if isinstance(value, (VerifiedRecordingPath, VerifiedRecordingString)):
         value.release()

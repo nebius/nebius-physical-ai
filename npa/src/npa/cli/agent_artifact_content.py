@@ -450,14 +450,22 @@ def _verified_publication_artifact_body(
             )
         digest = hashlib.sha256()
         size = 0
+        range_limit = legacy_range[1] - legacy_range[0] + 1 if legacy_range else None
         while True:
-            chunk = body.read(1024 * 1024)
+            read_size = (
+                min(1024 * 1024, range_limit + 1 - size)
+                if range_limit is not None
+                else 1024 * 1024
+            )
+            chunk = body.read(read_size)
             if not chunk:
                 break
             material = chunk.encode("utf-8") if isinstance(chunk, str) else bytes(chunk)
             digest.update(material)
             staged.write(material)
             size += len(material)
+            if range_limit is not None and size > range_limit:
+                break
         if publication.journaled and (
             size != int(target.size_bytes) or digest.hexdigest() != str(target.sha256)
         ):

@@ -375,8 +375,16 @@ def _resolved_publication_object(
     resolved_bucket, resolved_key = value.split("/", 1)
     if resolved_bucket != bucket:
         raise ValueError("publication journal resolved outside the selected bucket")
-    if not _s3_object_exists(client, resolved_bucket, resolved_key):
-        return None
+    try:
+        client._s3.head_object(Bucket=resolved_bucket, Key=resolved_key)
+    except ClientError as exc:
+        if str(exc.response.get("Error", {}).get("Code")) in {
+            "404",
+            "NoSuchKey",
+            "NotFound",
+        }:
+            return None
+        raise
     assert_legacy_publication_unjournaled(client, publication)
     return resolved_bucket, resolved_key
 
@@ -765,7 +773,11 @@ def _stage_states(
             )
             is not None
         )
-        stages["report"]["state"] = "SUCCEEDED" if present else "PENDING"
+        stages["report"].update(
+            state="SUCCEEDED" if present else "PENDING",
+            source="s3_artifact" if present else "",
+            publication_state="available" if present else "absent",
+        )
     except (PublicationConflict, BotoCoreError, ClientError) as exc:
         stages["report"].update(
             state="PENDING",
@@ -882,6 +894,15 @@ def _aggregate_status(
     stages: dict[str, dict[str, Any]],
     k8s: dict[str, Any],
 ) -> str:
+    report = stages.get("report", {})
+    if report.get("error_code"):
+        # Worker completion is not proof that publication became readable.
+        # Keep watching recoverable publication states even after worker exit.
+        if k8s.get("phase") == "FAILED" or int(k8s.get("failed") or 0) > 0:
+            return "FAILED"
+        return (
+            "RUNNING" if report.get("publication_state") == "publishing" else "UNKNOWN"
+        )
     if (
         k8s.get("phase") == "SUCCEEDED"
         or stages.get("report", {}).get("state") == "SUCCEEDED"
@@ -1109,12 +1130,6 @@ def get_sim2real_workflow_status(
                 kubeconfig=kcfg,
                 namespace=k8s_namespace,
             )
-    status = _aggregate_status(stages, k8s)
-    if status == "RUNNING":
-        current = _current_stage(stages)
-        if isinstance(stages.get(current), dict):
-            stages[current]["state"] = "RUNNING"
-
     run_prefix = f"{s3_prefix.rstrip('/')}/{run_id}"
     client = StorageClient.from_environment(endpoint_url=endpoint)
     workflow_state = _load_workflow_state(client, bucket, run_prefix)
@@ -1128,7 +1143,17 @@ def get_sim2real_workflow_status(
         )
     except (PublicationConflict, BotoCoreError, ClientError) as exc:
         eval_metrics = {}
-        publication_status = _publication_unavailable(exc)
+        publication_status.update(
+            state="PENDING",
+            source="publication_unavailable",
+            **_publication_unavailable(exc),
+        )
+
+    status = _aggregate_status(stages, k8s)
+    if status == "RUNNING":
+        current = _current_stage(stages)
+        if isinstance(stages.get(current), dict):
+            stages[current]["state"] = "RUNNING"
 
     return {
         "run_id": run_id,
