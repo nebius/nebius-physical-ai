@@ -1,7 +1,7 @@
 # Public source-only job runtime. CUDA and model weights are fetched at runtime.
 # The immutable default is the accepted public Wan parent. A separately scanned,
 # operator-private parent may be supplied only for private qualification.
-ARG WAN_BASE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@sha256:5780959ca6c6e7eb77ee7ea7d005fcf0f56db50783ce798dddee2809185eb837
+ARG WAN_BASE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@sha256:4e5fe7932f66fab3ff036090f66d4a9d915e9eb6fab3ee2e7633ca1c68363cf0
 ARG DEBIAN_SNAPSHOT=20261010T000000Z
 ARG DEBIAN_PERL_SECURITY_VERSION=5.36.0-7+deb12u4
 
