@@ -79,6 +79,10 @@ PHASES = frozenset(
         "scan-authorization",
         "scan-report",
         "scan-input-retention",
+        "review-request",
+        "review-evidence",
+        "review-binding",
+        "adjudication",
         "receipt-retention",
     }
 )
@@ -1104,7 +1108,7 @@ def _qualify(scanner, root, ssh, selector, run):
                 _retain_scan_inputs(scanner, root, run)
             _check_cancelled()
         except (OSError, ValueError, KeyError, TypeError, _QualificationError) as error:
-            summary.update(_failure(error, observer.phase))
+            summary.update(_failure(error, observer.phase), status="failed", complete=False)
         _cancelled_summary(summary, observer)
         cancelled_before_retention = observer.signum
         observer.retaining = True

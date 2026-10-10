@@ -75,6 +75,7 @@ def _read(path):
 
 
 def _request_inputs(ssh, root, selector):
+    Q._phase("review-request")
     _fetch(ssh, selector, "request", root / "request.json")
     request = _read(root / "request.json")
     Q._fetch(ssh, request["image_manifest_sha256"], "manifest", root / "manifest.json")
@@ -85,6 +86,7 @@ def _request_inputs(ssh, root, selector):
         + 2 * (request["scan_receipt_bytes"] + request["review_tar_bytes"])
     )
     Q._require(shutil.disk_usage(root).free >= required, "insufficient_capacity")
+    Q._phase("review-evidence")
     for role, prefix in (("receipt", "scan_receipt"), ("review", "review_tar")):
         _fetch(
             ssh,
@@ -148,11 +150,12 @@ def _adjudicate(scanner, root, request, receipt):
         evidence_root=root / "review",
         output_dir=root / "adjudication",
     )
-    return Q._execute(command)
+    return Q._execute(command, phase="adjudication")
 
 
 def _steps(scanner, root, ssh, selector):
     request, manifest = _request_inputs(ssh, root, selector)
+    Q._phase("review-binding")
     receipt = _retention_binding(root, request, manifest)
     Q._check_policy(scanner)
     Q._require(
@@ -160,6 +163,7 @@ def _steps(scanner, root, ssh, selector):
         >= manifest["archive_bytes"] + request["workspace_bytes"],
         "insufficient_capacity_after_preparation",
     )
+    Q._phase("archive-transfer")
     Q._fetch(
         ssh,
         request["image_manifest_sha256"],
@@ -192,6 +196,7 @@ def _receipt_bundle(root):
         "request.json",
         "summary.json",
         "adjudication/adjudication.json",
+        "diagnostics/adjudication.log",
         "phases.jsonl",
     )
     with (
@@ -239,6 +244,17 @@ def _retain(root, ssh, request, run):
     return {"receipt_sha256": digest, "receipt_bytes": info.st_size}
 
 
+def _retain_summary(root, ssh, run, summary):
+    if not (root / "request.json").exists():
+        return
+    try:
+        summary.update(_retain(root, ssh, _read(root / "request.json"), run))
+    except (OSError, ValueError, Q._QualificationError) as error:
+        summary.update(
+            Q._failure(error, "receipt-retention"), status="failed", accepted=False
+        )
+
+
 def _execute_adjudication(args, root, ssh):
     summary = {
         "status": "failed",
@@ -255,18 +271,16 @@ def _execute_adjudication(args, root, ssh):
             KeyError,
             TypeError,
             Q._QualificationError,
+            tarfile.TarError,
         ) as error:
-            summary.update(Q._failure(error, "adjudication"), accepted=False)
+            summary.update(
+                Q._failure(error, "adjudication"), status="failed", accepted=False
+            )
         Q._cancelled_summary(summary, observer)
         observer.retaining = True
+        Q._phase("receipt-retention")
         Q._write(root / "summary.json", Q._json_bytes(summary))
-        if (root / "request.json").exists():
-            try:
-                summary.update(
-                    _retain(root, ssh, _read(root / "request.json"), args.run_id)
-                )
-            except (OSError, ValueError, Q._QualificationError) as error:
-                summary.update(Q._failure(error, "receipt-retention"), accepted=False)
+        _retain_summary(root, ssh, args.run_id, summary)
         Q._cancelled_summary(summary, observer)
         if summary["status"] != "passed":
             summary["accepted"] = False
@@ -310,7 +324,9 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         return _run(args)
-    except (OSError, ValueError, KeyError, TypeError, Q._QualificationError):
+    except (
+        OSError, ValueError, KeyError, TypeError, Q._QualificationError, tarfile.TarError
+    ):
         print('{"status":"failed","accepted":false}')
         return 1
 

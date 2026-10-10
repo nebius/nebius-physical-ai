@@ -6,8 +6,10 @@ import io
 import json
 import os
 from pathlib import Path
+import signal
 import sys
 import tarfile
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -49,7 +51,8 @@ def transport_case(export, private_root, monkeypatch):
     Q._write(request_dir / "request.json", payload)
     Q._write(request_dir / "review.tar", review)
     original = private_root / Q.RECEIPT_ROOT / export[1] / body["scan_run_id"]
-    original.mkdir(parents=True, mode=0o700)
+    descriptor = Q._directory(original, create=True)
+    os.close(descriptor)
     Q._write(original / "result.tar", scan)
     code = Path(Q.__file__).read_text()
     monkeypatch.setattr(
@@ -176,3 +179,92 @@ def test_hosted_adjudication_is_default_branch_only_and_never_uploads_private_ar
     assert caller["env"]["REQUEST_SHA256"] == "$" + "{{ inputs.request_sha256 }}"
     assert "--request-sha256" in caller["run"]
     assert "private_image_adjudication.py" in caller["run"]
+
+
+@pytest.mark.parametrize("signals", [0, 1, 2])
+def test_actual_receipt_child_and_late_signals_preserve_failed_acceptance(
+    transport_case, private_root, monkeypatch, capsys, signals
+):
+    selector, request, *_ = transport_case
+    root = private_root / "hosted"
+    root.mkdir(mode=0o700)
+    args = SimpleNamespace(scanner_root=private_root, request_sha256=selector, run_id="124-1")
+
+    def complete(*_args):
+        Q._write(root / "request.json", Q._json_bytes(request))
+        return {"status": "passed", "accepted": True}
+
+    original = H._retain
+
+    def retain(*arguments):
+        for _ in range(signals):
+            os.kill(os.getpid(), signal.SIGTERM)
+        return original(*arguments)
+
+    monkeypatch.setattr(H, "_steps", complete)
+    monkeypatch.setattr(H, "_retain", retain)
+    assert H._execute_adjudication(args, root, []) == int(bool(signals))
+    summary = json.loads(capsys.readouterr().out.splitlines()[-1])
+    assert summary["accepted"] is (not signals)
+    receipt = private_root / Q.RECEIPT_ROOT / request["image_manifest_sha256"] / "124-1/result.tar"
+    assert Q._sha(receipt.read_bytes()) == summary["receipt_sha256"]
+    if signals:
+        assert summary["failure_code"] == "qualification_cancelled"
+
+
+def test_real_upload_child_failure_cannot_report_acceptance(
+    transport_case, private_root, monkeypatch, capsys
+):
+    selector, request, *_ = transport_case
+    root = private_root / "hosted"
+    root.mkdir(mode=0o700)
+    args = SimpleNamespace(scanner_root=private_root, request_sha256=selector, run_id="125-1")
+
+    def complete(*_args):
+        Q._write(root / "request.json", Q._json_bytes(request))
+        return {"status": "passed", "accepted": True}
+
+    monkeypatch.setattr(H, "_steps", complete)
+    monkeypatch.setattr(Q, "_remote_command", lambda *_: [sys.executable, "-c", "raise SystemExit(7)"])
+    assert H._execute_adjudication(args, root, []) == 1
+    summary = json.loads(capsys.readouterr().out.splitlines()[-1])
+    assert summary["accepted"] is False
+    assert summary["failure_code"] == "private_receipt_not_retained"
+    assert "receipt_sha256" not in summary
+
+
+def test_malformed_tar_is_sanitized_and_original_failure_retained(
+    transport_case, private_root, monkeypatch, capsys
+):
+    selector, request, *_ = transport_case
+    root = private_root / "hosted"
+    root.mkdir(mode=0o700)
+    args = SimpleNamespace(scanner_root=private_root, request_sha256=selector, run_id="126-1")
+
+    def malformed(*_args):
+        Q._write(root / "request.json", Q._json_bytes(request))
+        Q._write(root / "bad.tar", b"synthetic-private-text")
+        H._unpack(root / "bad.tar", root / "review", review=True)
+
+    monkeypatch.setattr(H, "_steps", malformed)
+    assert H._execute_adjudication(args, root, []) == 1
+    output = capsys.readouterr().out
+    summary = json.loads(output.splitlines()[-1])
+    assert summary["accepted"] is False
+    assert "synthetic-private-text" not in output
+    receipt = private_root / Q.RECEIPT_ROOT / request["image_manifest_sha256"] / "126-1/result.tar"
+    with tarfile.open(receipt) as archive:
+        assert json.load(archive.extractfile("summary.json"))["accepted"] is False
+
+
+def test_review_unpack_refuses_extended_metadata(private_root):
+    output = io.BytesIO()
+    with tarfile.open(fileobj=output, mode="w", format=tarfile.PAX_FORMAT) as archive:
+        entry = tarfile.TarInfo("manifest.json")
+        entry.pax_headers = {"comment": "synthetic unreviewed metadata"}
+        entry.size = 2
+        archive.addfile(entry, io.BytesIO(b"{}"))
+    path = private_root / "extended.tar"
+    Q._write(path, output.getvalue())
+    with pytest.raises(Q._QualificationError):
+        H._unpack(path, private_root / "review", review=True)

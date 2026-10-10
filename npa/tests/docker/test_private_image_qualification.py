@@ -834,6 +834,9 @@ def test_synthetic_transport_executes_remote_reader_and_retains_exact_receipt(
     # The shell consumes the same reviewed remote command as SSH; no network or provider CLI.
     local_transport = _local_transport()
     monkeypatch.setattr(Q, "_prepare_scanner", lambda *_args: None)
+    # This test isolates receipt transfer; retained-input capture has separate
+    # real roundtrip tests and failure controls.
+    monkeypatch.setattr(Q, "_retain_scan_inputs", lambda *_args: None)
 
     monkeypatch.setattr(
         Q,
@@ -879,10 +882,33 @@ def test_private_receipt_transport_failure_prevents_success(
         Q._retain([], private_root, export[1], "789-1")
 
 
+@pytest.mark.parametrize("scan_status", ["passed", "not-qualified"])
+def test_original_input_retention_failure_cannot_leave_a_successful_status(
+    private_root, export, monkeypatch, capsys, scan_status
+):
+    monkeypatch.setattr(
+        Q, "_qualification_steps", lambda *_args: {"status": scan_status, "complete": True}
+    )
+
+    def fail_capture(*_args):
+        Q._phase("scan-input-retention")
+        raise Q._QualificationError("scan_input_retention_failed")
+
+    monkeypatch.setattr(Q, "_retain_scan_inputs", fail_capture)
+    monkeypatch.setattr(Q, "_retain", lambda *_args: {"receipt_sha256": "a" * 64})
+    assert Q._qualify(private_root, private_root, [], export[1], "790-1") == 1
+    summary = json.loads(capsys.readouterr().out.splitlines()[-1])
+    assert summary["status"] == "failed"
+    assert summary["complete"] is False
+    assert summary["failure_code"] == "scan_input_retention_failed"
+    assert summary["failure_stage"] == "scan-input-retention"
+
+
 @pytest.mark.parametrize("original_status", ["failed", "passed"])
 def test_retention_failure_preserves_original_failure(
     private_root, export, monkeypatch, capsys, original_status
 ):
+    monkeypatch.setattr(Q, "_retain_scan_inputs", lambda *_args: None)
     original = {"status": original_status, "complete": original_status == "passed"}
     if original_status == "failed":
         original.update(
