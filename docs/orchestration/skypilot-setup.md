@@ -6,9 +6,14 @@ SkyPilot is an external CLI dependency for NPA orchestration. NPA calls the
 `sky` CLI through subprocess and does not install or import SkyPilot in NPA's
 Python environment.
 
-For a team API that remains reachable across VDI restarts, use the
-[persistent HTTPS LoadBalancer recipe](skypilot-api-loadbalancer.md). That
-operator-owned service is separate from NPA's isolated workflow APIs.
+For the shared Workbench control plane, run
+[`npa workbench team setup`](../workbench/team-access.md#deploy-and-qualify-the-service).
+Server setup creates or reuses its persistent HTTPS LoadBalancer automatically,
+using operator infrastructure credentials without a desktop client or tunnel.
+Workbench exposes its authenticated API and keeps native SkyPilot private.
+The [upstream SkyPilot Helm recipe](skypilot-api-loadbalancer.md) is an optional,
+separate service for direct upstream clients; it does not replace Workbench's
+identity and execution controls.
 
 Isolated workflow execution requires a **Linux operator host with `/proc`**.
 NPA verifies the local API's process lifetime, environment, session, and socket

@@ -1,11 +1,18 @@
-# Persistent team access to the SkyPilot API
+# Optional upstream SkyPilot API deployment
 
 [SkyPilot setup](skypilot-setup.md) · [Docs](../README.md)
 
-Run the team API on CPU nodes in the existing Workbench Kubernetes cluster,
+Shared Workbench installations use
+[`npa workbench team setup`](../workbench/team-access.md#deploy-and-qualify-the-service)
+to create or reuse their persistent HTTPS endpoint as part of server setup.
+Workbench remains the CLI/SDK control plane for agents; its native SkyPilot
+scheduler stays private. No desktop client or tunnel is required for setup.
+
+Use this separate recipe only when direct upstream SkyPilot access is required.
+Run that API on CPU nodes in the existing Workbench Kubernetes cluster,
 in an operator-owned namespace. Use the upstream SkyPilot Helm chart, persistent
 storage, and a maintained HTTPS ingress or Gateway backed by a Nebius
-LoadBalancer. A DNS name provides the endpoint developers use across VDI and
+LoadBalancer. A DNS name provides the endpoint across operator-session and
 API pod restarts. The API does not need a GPU.
 
 This recipe uses **SkyPilot 0.12.2**, matching NPA's isolated client pin. It is
@@ -205,11 +212,13 @@ do not increase replicas on the baseline PVC. See the upstream
 
 ## Prove the endpoint
 
-From a developer machine and the VDI, verify the DNS name, trusted TLS
-certificate, individual-user login, and rejection of unauthenticated access to
+From an authorized management host or CI environment, verify the DNS name,
+trusted TLS certificate, individual-user login, and rejection of unauthenticated access to
 a protected API operation. Verify HTTP is refused or redirects to HTTPS without
 sending credentials to it. `/api/health` may be publicly readable in native-auth
 mode; health alone does not prove authentication or execution readiness.
+No particular user device or operating system is a deployment acceptance
+requirement. Qualify additional client network paths separately when needed.
 
 Use the pinned isolated client from [SkyPilot setup](skypilot-setup.md) and
 upstream [connection instructions](https://docs.skypilot.ai/en/stable/reference/api-server.html).

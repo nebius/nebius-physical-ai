@@ -78,7 +78,7 @@ For these specific tasks, read the matching reference:
    kubeconfig/context and CPU-only selector. Keep the input and receipt private
    and reuse both for retries; select an existing installation by its exact
    public Service and Deployment UIDs. Provisioning requires operator infrastructure credentials,
-   not a personal team key or VDI client. DNS/connectivity qualification can
+   not a personal team key or desktop client. DNS/connectivity qualification can
    remain pending and must never be reported as ready. See
    `docs/workbench/team-access.md#deploy-and-qualify-the-service`.
 

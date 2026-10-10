@@ -119,6 +119,7 @@ def test_no_variable_is_both_redirected_and_excused(name: str) -> None:
 # runtime-fetched model weights.
 EXCUSED_EMPTY_DIRS = {
     "team-configuration": "memory-backed owner-only team credentials copied from Secrets",
+    "https-data": "TLS proxy scratch/config; certificates live in a Secret, not a model cache",
     "rrd-data": "Rerun recordings written by the run, not downloaded weights",
     "fiftyone-data": "dataset app state",
     "openpi-cache": "fallback when no durable cache is configured; redirected when one is",

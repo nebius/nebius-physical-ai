@@ -252,9 +252,10 @@ Shared Workbench setup includes its persistent HTTPS endpoint. Run the operator
 setup command once per installation; it deploys the CPU gateway and private
 SkyPilot sidecar, creates a Nebius LoadBalancer on port 443, and retains its
 address for reuse. Provisioning does not use a personal Workbench key or require
-a VDI client, SSH tunnel, or VDI-specific wrapper. Operators can run it from
-Workbench's management host, CI, or another machine with the selected Nebius
-profile and Kubernetes permissions.
+a desktop client or SSH tunnel. Operators can run it from Workbench's management
+host, CI, or another machine with the selected Nebius profile and Kubernetes
+permissions. No particular operating system or user device is part of endpoint
+provisioning or its acceptance criteria.
 
 Prepare the management namespace, private server configuration Secret, durable
 state PVC, and platform TLS Secret first. Use a certificate for the
@@ -262,6 +263,12 @@ operator-controlled endpoint; set `ca_file` only for an installation CA. Keep
 the setup input and receipt in an owner-only directory outside Git. This
 installs the shared server; `npa configure` remains project and credential
 configuration.
+
+HTTPS is required because authenticated API calls carry bearer credentials and
+workload data; [bearer-token transport requires TLS](https://datatracker.ietf.org/doc/html/rfc6750#section-5.2).
+The setup command configures TLS termination inside the server
+deployment and exposes only port 443. This server-side reverse proxy remains
+part of the installation; users do not need a local proxy or port forwarding.
 
 Save a private `setup.yaml`, replacing placeholders and the CPU selector with
 verified values. The setup rejects a selector that includes GPU nodes.
@@ -315,8 +322,10 @@ receipt path. Keep any receipt that records mutations for recovery.
 Point DNS at the assigned address. Setup exits 2 with `endpoint-awaiting-dns` or
 `endpoint-awaiting-connectivity` when final transport qualification is pending;
 the server and retained address remain recorded for retry. TLS verification is
-never disabled. Optional Mac and VDI user access tests are separate from operator
-provisioning. Endpoint health alone does not prove personal workload readiness;
+never disabled. Accept the installation using its provider allocation, trusted
+HTTPS, authentication boundaries, and retry/recreation checks from an authorized
+management or CI environment. A personal device's network path is not a
+deployment gate. Endpoint health alone does not prove personal workload readiness;
 qualify the account and enrollment boundaries below before production use.
 While the provider assigns an address, setup waits without an imposed time
 limit and fails on reported terminal allocation conditions. Interrupting it
