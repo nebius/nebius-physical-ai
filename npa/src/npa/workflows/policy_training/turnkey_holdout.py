@@ -100,5 +100,6 @@ def _reserved_dataset(workspace, policy, rows):
         episodes=[r["episode_index"] for r in rows],
         video_backend="torchcodec",
         delta_timestamps=resolve_delta_timestamps(policy.config, metadata),
-        return_uint8=True,
+        # SmolVLA's forward expects float images, as after native training's conversion.
+        return_uint8=False,
     )
