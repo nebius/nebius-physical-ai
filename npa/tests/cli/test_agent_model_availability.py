@@ -205,6 +205,21 @@ def transport(monkeypatch, module, payload):
     return calls
 
 
+def test_backend_fixture_reaches_models_without_packaging_repository(
+    monkeypatch, request
+):
+    def refuse_archive():
+        pytest.fail("backend availability fixture must isolate source packaging")
+
+    monkeypatch.setattr("npa.cli.agent._create_agent_source_archive", refuse_archive)
+    backend = request.getfixturevalue("backend")
+    transport(monkeypatch, backend, catalog(rich(routing.CHEAP_MODEL)))
+
+    response = TestClient(backend.app).get("/models")
+    assert response.status_code == 200
+    assert response.json()["default_model"] == routing.CHEAP_MODEL
+
+
 def test_rendered_models_and_session_agree_on_fallback_and_share_observed_cache(
     backend, monkeypatch
 ):
