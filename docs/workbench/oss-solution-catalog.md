@@ -16,6 +16,11 @@ unique and must be tested with its own upstream-named capabilities.
 
 ## Candidate Matrix
 
+[Physical prompt comparison](physical-prompt-comparison.md) is an NPA reference
+workflow using the existing accepted Diffusers runtime. It compares three prompt
+arms with full video generation and blinded judgments. Its readiness record
+tracks the GPU qualification; the workflow adds no new image or model admission.
+
 | Candidate | Pinned source | Primary (hard-gate) capability | Artifact | NPA workflow |
 | --- | --- | --- | --- | --- |
 | Habitat-Sim (**neutral runtime-fetch; development proof only**) | `facebookresearch/habitat-sim` `57ee4941…` | `skokloster_castle_rgb_depth_bullet_traversal` | `habitat-sim-smoke.json` + saved RGB/depth observations | `habitat-sim-smoke.yaml` |
