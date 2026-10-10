@@ -10,14 +10,22 @@ It is not detected or submitted through a Sim2Real-specific controller.
 Each real solution boundary is a workflow state with its own immutable image,
 resource request, inputs, and outputs. CPU contract states surround Cosmos
 Transfer, parallel environment-generation shards, Isaac policy rollouts,
-a CPU-only hosted Cosmos3 evaluator, BYO Isaac RSL-RL PPO, Isaac gold evaluation, and
+a CPU-only hosted vision-language evaluator, BYO Isaac RSL-RL PPO, Isaac gold evaluation, and
 Rerun/MCAP finalization. Stage 12 is intentionally an external `SEAM`; it is
 recorded as such and is never reported as `WORKS`.
 
 The outer and inner loops are ordinary workflow loops. Named `{{loop.*}}`
 tokens scope iteration artifacts, while the standard decision artifact controls
-the outer gate. The reduced merge proof sets both bounds to one and disables
-early exit; higher iteration counts are a post-merge efficacy choice.
+the outer gate. Production defaults allow three inner iterations per outer
+iteration and three outer iterations, with early exit after the strict quality
+threshold passes. Reduced integration runs prove orchestration only; they do
+not qualify policy efficacy.
+
+Stage 8 uses one explicitly selected hosted model. The current default is
+MiniMax-M3 on Token Factory; its results retain that model identity. An
+authorized endpoint may select Cosmos3 explicitly. See the
+[execution guide](../workbench/guides/sim2real-workflow.md) for model access,
+concurrency, full-frame evaluation, and verified per-rollout resume receipts.
 
 ## Artifact and restart contract
 

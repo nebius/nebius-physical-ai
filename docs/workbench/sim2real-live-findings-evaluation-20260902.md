@@ -2,6 +2,13 @@
 
 [Workbench docs](README.md)
 
+This is a historical September 2 audit, including registry and cluster state
+observed on that date. Use the current
+[execution guide](guides/sim2real-workflow.md) for the canonical standard-runtime
+workflow, exact-source image selection, model access, graphics preflight, and
+resume procedure. The failures recorded below are historical evidence rather
+than a statement that the current workflow cannot run.
+
 This document began as an evaluation of five findings reported after the Living
 Lab run against `origin/main` at `e5ddb7d25ef2af5485bb43409579657497220a77`.
 The follow-up on the same branch now implements the repository and provisioning

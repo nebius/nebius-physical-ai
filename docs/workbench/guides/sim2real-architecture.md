@@ -16,7 +16,7 @@ flowchart LR
   EG --> S[5 sealed split]
   S --> M[6 scenario manifest]
   M --> R[7 Isaac rollouts]
-  R --> CR[8 hosted Cosmos3-Super evaluation]
+  R --> CR[8 hosted vision-language evaluation]
   CR --> PPO[9 BYO Isaac PPO + validation]
   PPO --> G[10 untouched gold eval]
   G --> D[11 strict decision record]
@@ -27,8 +27,9 @@ flowchart LR
 
 Stages 7–9 are the inner workflow loop. Stages 7–11 are nested in the outer
 workflow loop. Each state receives its iteration through named `{{loop.*}}`
-tokens and uses iteration-scoped S3 paths. Parallel EnvGen shards and Cosmos
-Reason lanes are ordinary runtime waves with a barrier before their consumer.
+tokens and uses iteration-scoped S3 paths. Parallel EnvGen shards are ordinary
+runtime waves. Stage 8 evaluates rollouts concurrently through the selected
+hosted model and verifies their durable receipts before Stage 9 can consume them.
 
 Every solution boundary has its own immutable task image and resource profile.
 Isaac rollout, training, and evaluation execute inside the admitted workflow
