@@ -147,7 +147,7 @@ def test_pipeline_run_rejects_bad_inputs(tmp_path):
         )
 
 
-def test_cli_run_end_to_end(tmp_path):
+def test_cli_run_rejects_local_output_path(tmp_path):
     # Invoke through a parent group, mirroring how `npa workbench` registers
     # the mujoco app via add_typer(..., name="mujoco"): a single-command Typer
     # app collapses the command name on direct invocation, but the real CLI
@@ -173,6 +173,6 @@ def test_cli_run_end_to_end(tmp_path):
             str(out),
         ],
     )
-    assert result.exit_code == 0, result.output
-    payload = json.loads(out.read_text())
-    assert payload["summary"]["success_rate"] == pytest.approx(1.0)
+    assert result.exit_code != 0
+    assert "S3 handoff contract" in result.output
+    assert not out.exists()
