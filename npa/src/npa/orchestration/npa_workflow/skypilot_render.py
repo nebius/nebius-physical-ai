@@ -114,6 +114,7 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
         "MLFLOW_TRACKING_URI",
         "MLFLOW_EXPERIMENT_ID",
     ),
+    "workbench.gemini_robotics": ("GOOGLE_API_KEY",),
     "workbench.encord": ("ENCORD_SSH_KEY_B64",),
     "workflow.paidf": (),
     "workflow.paidf.run_iaa_augmentation": ("HF_TOKEN", "NEBIUS_TOKEN_FACTORY_KEY"),

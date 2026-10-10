@@ -34,6 +34,7 @@ Generated from `npa --help`. Run `bash scripts/build_docs.sh` after CLI changes.
 - [npa workbench flex-pi](flex-pi.md)
 - [npa workbench foxglove](foxglove.md)
 - [npa workbench gc-artifacts](gc-artifacts.md)
+- [npa workbench gemini-robotics](gemini-robotics.md)
 - [npa workbench genesis](genesis.md)
 - [npa workbench golden-eval](golden-eval.md)
 - [npa workbench groot](groot.md)
