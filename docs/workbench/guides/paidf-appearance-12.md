@@ -235,7 +235,9 @@ INPUT_OPTIONS=(
 ```
 
 Keep this prefix unchanged until the workflow finishes. NPA selects the episode
-and normalizes it to **192 frames at 24 fps** across eight seconds. The output
+and normalizes it to **192 frames at 24 fps** across eight seconds. In the input
+preparation report, `frame_count` counts sampled caption images; check
+`media.decoded_frames` for the video's frame count. The output
 is augmented video and evidence; this workflow does not attach LeRobot action
 or state tables to generated observations or produce a trainable LeRobot dataset.
 
