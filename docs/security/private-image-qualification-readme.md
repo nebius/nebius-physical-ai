@@ -172,10 +172,13 @@ SSH keys and host-trust files have a separate owner-only temporary directory
 outside the image analysis root supplied to scanner children.
 
 Only fixed receipt files are bundled: the manifest, capacity and summary,
-generic graph, raw scan report and records, and native integration receipt.
+generic graph, raw scan report and records, native integration receipt, phase
+journal, and the five named non-policy child diagnostic logs.
 The pinned scanner's report and records store policy hashes and rule locations,
-not policy values or matching text. Authorization, policy, tool logs, image
-bytes, and unknown files are excluded. Exact receipt bytes are streamed back
+not policy values or matching text. Policy-check and authorization command
+output is suppressed even from private diagnostics, because invalid rules may
+appear in that output. Authorization, policy, other tool logs, image bytes,
+and unknown files are excluded. Exact receipt bytes are streamed back
 through the same trusted SSH channel without remote extraction to:
 
 ```text
@@ -188,6 +191,18 @@ success. Public logs contain fixed status and failure codes, bounded exception
 classes, numeric counts, and cryptographic digests only. Private summaries also
 identify the failed stage. Host diagnostics, exception text, and raw scanner
 output stay out of public logs.
+
+Each phase emits a fixed progress event, and each scanner child records its
+exit code. The private phase journal is flushed to disk at each event. SIGTERM
+and SIGINT mark the run cancelled, notify its owned child, and wait for the
+child's existing cleanup protocol before attempting final private retention.
+A signal during child creation is forwarded once its handle is available;
+unrelated processes are not signalled. No workload deadline is added.
+Cancellation always fails qualification, including a signal received during
+receipt transfer. Acceptance requires the successful job and final public
+summary as well as the bound private scanner report; an earlier private summary
+alone cannot establish acceptance after a late cancellation. Forced process
+termination or loss of the hosted runner can still prevent final retention.
 A failed manifest sender is classified before its bytes are parsed or hashed.
 Authentication, host trust, connectivity, and missing or unreadable remote exports
 produce fixed transport codes; raw SSH diagnostics remain private. A successful

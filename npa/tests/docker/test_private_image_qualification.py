@@ -8,10 +8,12 @@ import json
 import os
 from pathlib import Path
 import shlex
+import signal
 import stat
 import subprocess
 import sys
 import tarfile
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -419,6 +421,178 @@ def test_child_stdout_and_stderr_never_reach_public_output(capsys):
     assert capsys.readouterr() == ("", "")
 
 
+def test_policy_child_output_is_never_retained(private_root, monkeypatch, capsys):
+    monkeypatch.setenv("CUSTOMER_DENYLIST", "synthetic-policy-content")
+    command = [
+        sys.executable,
+        "-c",
+        "import os; print(os.environ['CUSTOMER_DENYLIST'])",
+    ]
+    with Q._observe_run(private_root):
+        assert Q._execute(command, policy=True, phase="policy-check") == 0
+    assert not list((private_root / "diagnostics").iterdir())
+    assert "synthetic-policy-content" not in capsys.readouterr().out
+    assert (
+        b"synthetic-policy-content" not in (private_root / "phases.jsonl").read_bytes()
+    )
+
+
+def _signalled_qualification_program(runner, marker, child_script, selector):
+    return f"""import importlib.util,sys
+from pathlib import Path
+spec=importlib.util.spec_from_file_location('qualification', {str(SOURCE)!r})
+Q=importlib.util.module_from_spec(spec);spec.loader.exec_module(Q)
+def prepare(scanner,root):
+ code=Q._execute([sys.executable,{str(child_script)!r},{str(marker)!r}],phase='helper-build')
+ Q._require(code==0,'helper_build_failed')
+Q._prepare_scanner=prepare
+transport=[sys.executable,'-c','import subprocess,sys;sys.exit(subprocess.call(sys.argv[-1],shell=True))']
+raise SystemExit(Q._qualify(Path({str(runner)!r}),Path({str(runner)!r}),transport,{selector!r},'321-1'))
+"""
+
+
+def _signal_child_script(path):
+    path.write_text("""import json,os,signal,sys
+from pathlib import Path
+def terminate(number,frame):
+ print('synthetic-private-child-terminated',flush=True)
+ raise SystemExit(2)
+signal.signal(signal.SIGTERM,terminate)
+print('synthetic-private-child-stdout',flush=True)
+print('synthetic-private-child-stderr',file=sys.stderr,flush=True)
+Path(sys.argv[1]).write_text(json.dumps({'pid':os.getpid()}))
+signal.pause()
+""")
+
+
+@pytest.mark.parametrize("target", ["parent", "child"])
+def test_real_termination_joins_child_and_retains_private_diagnostics(
+    private_root, export, target
+):
+    runner = private_root / "signal-runner"
+    runner.mkdir(mode=0o700)
+    marker, script = private_root / "child.json", private_root / "child.py"
+    _signal_child_script(script)
+    program = _signalled_qualification_program(runner, marker, script, export[1])
+    environment = dict(os.environ, HOME=str(private_root))
+    with subprocess.Popen(
+        [sys.executable, "-c", "import signal;signal.pause()"], start_new_session=True
+    ) as sibling:
+        try:
+            with subprocess.Popen(
+                [sys.executable, "-c", program],
+                env=environment,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                start_new_session=True,
+            ) as parent:
+                while not marker.exists() and parent.poll() is None:
+                    time.sleep(0.01)
+                assert marker.exists()
+                child_pid = json.loads(marker.read_bytes())["pid"]
+                os.kill(parent.pid if target == "parent" else child_pid, signal.SIGTERM)
+                stdout, stderr = parent.communicate(timeout=20)
+                assert parent.returncode == 1 and stderr == b""
+            assert sibling.poll() is None
+            with pytest.raises(ProcessLookupError):
+                os.kill(child_pid, 0)
+        finally:
+            sibling.terminate()
+    _assert_signal_receipt(private_root, export[1], target, stdout)
+
+
+def _assert_signal_receipt(root, selector, target, stdout):
+    assert b"synthetic-private-child" not in stdout
+    summary = json.loads(stdout.splitlines()[-1])
+    expected = (
+        "qualification_cancelled" if target == "parent" else "helper_build_failed"
+    )
+    assert summary["status"] == "failed" and summary["failure_code"] == expected
+    assert summary["failure_stage"] == "helper-build"
+    receipt = root / Q.RECEIPT_ROOT / selector / "321-1/result.tar"
+    assert summary["receipt_sha256"] == Q._sha(receipt.read_bytes())
+    with tarfile.open(receipt) as archive:
+        diagnostic = archive.extractfile("diagnostics/helper-build.log").read()
+        assert b"synthetic-private-child-stdout" in diagnostic
+        assert b"synthetic-private-child-stderr" in diagnostic
+        assert b"synthetic-private-child-terminated" in diagnostic
+        events = [json.loads(line) for line in archive.extractfile("phases.jsonl")]
+        assert any(item.get("exit_code") == 2 for item in events)
+        retained = json.load(archive.extractfile("summary.json"))
+        assert retained["failure_code"] == expected
+
+
+def test_signal_during_spawn_is_forwarded_to_owned_child(private_root, monkeypatch):
+    original = Q.subprocess.Popen
+
+    def spawn(*args, **kwargs):
+        child = original(*args, **kwargs)
+        os.kill(os.getpid(), signal.SIGTERM)
+        return child
+
+    monkeypatch.setattr(Q.subprocess, "Popen", spawn)
+    with Q._observe_run(private_root) as observer:
+        with pytest.raises(Q._QualificationError, match="qualification_cancelled"):
+            Q._execute(
+                [sys.executable, "-c", "import signal;signal.pause()"],
+                phase="helper-build",
+            )
+        assert observer.child is None and observer.signum == signal.SIGTERM
+    assert signal.getsignal(signal.SIGTERM) != observer.cancel
+
+
+def _cancelled_transfer_program(runner, marker, selector):
+    child = (
+        "import json,os,signal,sys;from pathlib import Path;"
+        "signal.signal(signal.SIGTERM,lambda *_:sys.exit(2));"
+        f"Path({str(marker)!r}).write_text(json.dumps({{'pid':os.getpid()}}));"
+        "sys.stdout.buffer.write(b'x');sys.stdout.buffer.flush();signal.pause()"
+    )
+    return f"""import importlib.util,sys
+from pathlib import Path
+spec=importlib.util.spec_from_file_location('qualification', {str(SOURCE)!r})
+Q=importlib.util.module_from_spec(spec);spec.loader.exec_module(Q)
+original=Q._remote_command
+def command(ssh,operation,selector,*values):
+ if operation=='fetch' and values==('archive',):
+  return [sys.executable,'-c',{child!r}]
+ return original(ssh,operation,selector,*values)
+Q._remote_command=command
+Q._prepare_scanner=lambda *_:None
+transport={_local_transport()!r}
+raise SystemExit(Q._qualify(Path({str(runner)!r}),Path({str(runner)!r}),transport,{selector!r},'654-1'))
+"""
+
+
+def test_parent_signal_during_archive_transfer_retains_failure(private_root, export):
+    runner, marker = private_root / "transfer-runner", private_root / "transfer.json"
+    runner.mkdir(mode=0o700)
+    with subprocess.Popen(
+        [sys.executable, "-c", _cancelled_transfer_program(runner, marker, export[1])],
+        env=dict(os.environ, HOME=str(private_root)),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    ) as parent:
+        while not marker.exists() and parent.poll() is None:
+            time.sleep(0.01)
+        assert marker.exists()
+        child_pid = json.loads(marker.read_bytes())["pid"]
+        os.kill(parent.pid, signal.SIGTERM)
+        stdout, stderr = parent.communicate(timeout=20)
+        assert parent.returncode == 1 and stderr == b""
+    with pytest.raises(ProcessLookupError):
+        os.kill(child_pid, 0)
+    summary = json.loads(stdout.splitlines()[-1])
+    assert summary["failure_code"] == "qualification_cancelled"
+    assert summary["failure_stage"] == "archive-transfer"
+    receipt = private_root / Q.RECEIPT_ROOT / export[1] / "654-1/result.tar"
+    assert summary["receipt_sha256"] == Q._sha(receipt.read_bytes())
+    with tarfile.open(receipt) as archive:
+        assert "image.tar" not in archive.getnames()
+        assert json.load(archive.extractfile("summary.json"))["complete"] is False
+
+
 def test_receipt_bundle_has_exact_allowlist_and_no_policy_or_authorization(
     private_root,
 ):
@@ -585,49 +759,71 @@ def test_argument_errors_never_echo_supplied_values(capsys):
     }
 
 
+def _synthetic_scan(root, manifest, payload):
+    assert (root / "image.tar").read_bytes() == payload
+    directory = root / "scan"
+    directory.mkdir(mode=0o700)
+    Q._write(
+        directory / "report.json",
+        Q._json_bytes(
+            {
+                "archive_sha256": manifest["archive_sha256"],
+                "expected_image_id": manifest["expected_image_id"],
+                "records": 1,
+                "scanned_bytes": len(payload),
+                "regular_files": 1,
+                "regular_bytes": len(payload),
+                "findings": 0,
+                "valid": True,
+                "complete": True,
+                "helper_joined": True,
+                "confidentiality_policy": _policy_receipt(),
+            }
+        ),
+    )
+    return 0
+
+
+def _local_transport():
+    return [
+        sys.executable,
+        "-c",
+        "import subprocess,sys; sys.exit(subprocess.call(sys.argv[-1], shell=True))",
+    ]
+
+
+@pytest.mark.parametrize("cancel_during_retention", [False, True])
 def test_synthetic_transport_executes_remote_reader_and_retains_exact_receipt(
-    export, private_root, monkeypatch, capsys
+    export, private_root, monkeypatch, capsys, cancel_during_retention
 ):
     monkeypatch.setenv("HOME", str(private_root))
     runner = private_root / "runner"
     runner.mkdir(mode=0o700)
     # The shell consumes the same reviewed remote command as SSH; no network or provider CLI.
-    local_transport = [
-        sys.executable,
-        "-c",
-        "import subprocess,sys; sys.exit(subprocess.call(sys.argv[-1], shell=True))",
-    ]
+    local_transport = _local_transport()
     monkeypatch.setattr(Q, "_prepare_scanner", lambda *_args: None)
 
-    def synthetic_scan(_scanner, root, manifest):
-        assert (root / "image.tar").read_bytes() == export[3]
-        directory = root / "scan"
-        directory.mkdir(mode=0o700)
-        Q._write(
-            directory / "report.json",
-            Q._json_bytes(
-                {
-                    "archive_sha256": manifest["archive_sha256"],
-                    "expected_image_id": manifest["expected_image_id"],
-                    "records": 1,
-                    "scanned_bytes": len(export[3]),
-                    "regular_files": 1,
-                    "regular_bytes": len(export[3]),
-                    "findings": 0,
-                    "valid": True,
-                    "complete": True,
-                    "helper_joined": True,
-                    "confidentiality_policy": _policy_receipt(),
-                }
-            ),
-        )
-        return 0
+    monkeypatch.setattr(
+        Q,
+        "_scan",
+        lambda scanner, root, manifest: _synthetic_scan(root, manifest, export[3]),
+    )
+    if cancel_during_retention:
+        retain = Q._retain
 
-    monkeypatch.setattr(Q, "_scan", synthetic_scan)
-    assert Q._qualify(private_root, runner, local_transport, export[1], "456-1") == 0
+        def interrupted_retention(*args):
+            os.kill(os.getpid(), signal.SIGTERM)
+            return retain(*args)
+
+        monkeypatch.setattr(Q, "_retain", interrupted_retention)
+    assert Q._qualify(private_root, runner, local_transport, export[1], "456-1") == int(
+        cancel_during_retention
+    )
     receipt = private_root / Q.RECEIPT_ROOT / export[1] / "456-1/result.tar"
     output = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
-    assert output[-1]["status"] == "passed"
+    assert output[-1]["status"] == ("failed" if cancel_during_retention else "passed")
+    if cancel_during_retention:
+        assert output[-1]["failure_code"] == "qualification_cancelled"
     assert output[-1]["receipt_sha256"] == Q._sha(receipt.read_bytes())
     assert output[-1]["receipt_bytes"] == receipt.stat().st_size
     assert str(private_root) not in json.dumps(output)
