@@ -285,7 +285,7 @@ def test_owner_metadata_survives_cancel_verify_and_controller_cleanup_paths(
         return subprocess.CompletedProcess(
             cmd,
             0,
-            stdout='[{"job_id":"job-1","status":"SUCCEEDED"}]',
+            stdout='[{"job_id":1,"status":"SUCCEEDED"}]',
             stderr="",
         )
 
@@ -298,9 +298,9 @@ def test_owner_metadata_survives_cancel_verify_and_controller_cleanup_paths(
     monkeypatch.setattr(workflow.subprocess, "run", workflow_run)
     monkeypatch.setattr(cleanup, "_run", cleanup_run)
 
-    status = workflow.workflow_status("job-1")
+    status = workflow.workflow_status("1")
     cancelled = cleanup._cancel_job(
-        "job-1", isolated_config_dir=None, config_path=None, sky_bin=None
+        "1", isolated_config_dir=None, config_path=None, sky_bin=None
     )
     controller = cleanup._down_jobs_controller(
         "sky-jobs-controller-target",

@@ -564,6 +564,32 @@ exit nonzero, and `--cached` remains
 non-authoritative. Completion and declared artifact validation are separate
 requirements.
 
+If a driver recorded `FAILED_CONTROLLER` while the original managed job later
+finished successfully, an explicit resume can recover that same attempt. It
+requires the original project, workflow, staged source, image selection, launch identity,
+and output declarations, then verifies the exact provider job and every native
+task as `SUCCEEDED` before checking all declared outputs. Missing or conflicting
+evidence blocks recovery, including when payload retries were requested. Success
+retains the original failure evidence and advances without rerunning the completed
+wave. This intentionally tightens older retry behavior: SkyPilot can record
+`FAILED_CONTROLLER` even if its workload cleanup failed, so that status alone
+does not prove the original workload stopped. This includes a phantom queue record
+whose cancellation check returned `FAILED_CONTROLLER`: an earlier unobservable
+snapshot cannot rule out a launch racing with failed cleanup. Existing explicitly
+authorized or transport-verified absent relaunches retain their separate recovery
+path after a fresh exact lookup confirms the original job is still absent.
+Partial-launch reservations are reconciled before completion recovery;
+unconsumed or malformed reservation fields never authorize a generic retry.
+The native queue must explicitly agree on the exact job name; missing or
+conflicting names remain unverifiable, including during partial-launch recovery.
+
+A repaired driver can use the original content-addressed `NPA_SRC_S3_URI` with
+`--no-stage-src`. Completion recovery submits nothing: that URI reproduces the
+recorded source identity for comparison, without fetching or rehashing the archive.
+Confirm the original staged archive remains available and matches its recorded
+digest before later waves consume it. For an image-baked source run, retain its
+original image and source mode instead of introducing a staged archive.
+
 Job aggregates and task rows come from separate queue snapshots. A successful
 task row or durable stage record can therefore coexist with a recognized
 nonterminal job observation. Status retains the incomplete workflow lifecycle

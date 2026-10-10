@@ -3487,8 +3487,10 @@ def test_resume_attaches_to_an_in_flight_job_instead_of_resubmitting(
         assert [call["tasks"] for call in second_submitter.calls] == refreshed
 
 
+@pytest.mark.parametrize("cancel_status", ["CANCELLED", "FAILED_CONTROLLER"])
 def test_resume_cancels_phantom_pending_record_before_new_attempt(
     tmp_path: Path,
+    cancel_status: str,
 ) -> None:
     from npa.orchestration.skypilot.workflow import ManagedJobEvidence
 
@@ -3516,7 +3518,7 @@ def test_resume_cancels_phantom_pending_record_before_new_attempt(
         spec,
         run_id="rt-phantom",
         submitter=submitter,
-        status_fn=FakeStatus(["CANCELLED"]),
+        status_fn=FakeStatus([cancel_status]),
         options=options,
         store=store,
         cancels=cancellations,
@@ -3532,7 +3534,6 @@ def test_resume_cancels_phantom_pending_record_before_new_attempt(
         spec, run_id="rt-phantom", executor=executor, options=options
     )
 
-    assert report.status == "succeeded"
     assert cancellations == [
         {
             "job_id": "125",
@@ -3540,6 +3541,12 @@ def test_resume_cancels_phantom_pending_record_before_new_attempt(
             "cluster": "rt-phantom-01-shards",
         }
     ]
+    if cancel_status == "FAILED_CONTROLLER":
+        assert report.status == "failed"
+        assert "controller completion blocked" in report.error
+        assert submitter.calls == []
+        return
+    assert report.status == "succeeded"
     assert submitter.calls[0]["job_name"].endswith("-a2")
     attempts = [
         item
