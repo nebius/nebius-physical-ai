@@ -30,7 +30,7 @@ def test_lingbot_defaults_to_immutable_public_parent_but_allows_private_requalif
 
     assert (
         "ARG WAN_BASE_IMAGE=ghcr.io/nebius/nebius-physical-ai/"
-        "npa-wan2-2@sha256:5780959ca6c6e7eb77ee7ea7d005fcf0f56db50783ce798dddee2809185eb837"
+        "npa-wan2-2@sha256:4e5fe7932f66fab3ff036090f66d4a9d915e9eb6fab3ee2e7633ca1c68363cf0"
         in dockerfile
     )
     assert "FROM ${WAN_BASE_IMAGE}" in dockerfile
