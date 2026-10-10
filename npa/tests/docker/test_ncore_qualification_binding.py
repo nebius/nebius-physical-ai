@@ -128,7 +128,9 @@ def test_valid_foreign_cleanup_cannot_certify_another_qualification(
 
 def _visual_fixture(monkeypatch, root, *, camera, color_offset, source_sha):
     root.mkdir(mode=0o700)
-    manifest, evidence = synthetic_statement_inputs(root, acceptance.file_sha)
+    manifest, evidence = synthetic_statement_inputs(
+        root, acceptance.file_sha, source_archive_sha256=source_sha
+    )
     media = root / "media"
     media.mkdir(mode=0o700)
     args, calls, storage = _calibrated_schedule(
@@ -180,7 +182,7 @@ def _visual_fixture(monkeypatch, root, *, camera, color_offset, source_sha):
         external_attempt_markers=5,
     )
     manifest["rtx_proof"]["visual_review"] = visual
-    manifest["conversion"]["source_archive_sha256"] = source_sha
+    _refresh_objective(manifest, evidence)
     for path in evidence.rglob("*"):
         path.chmod(0o700 if path.is_dir() else 0o600)
     assert len(calls) == len(storage.objects) == 5
@@ -209,6 +211,9 @@ def test_valid_foreign_visual_schedule_cannot_certify_another_run(
         source_sha="b" * 64 if dimension == "source" else "a" * 64,
     )
     with W.authorized_roots(tmp_path, ROOT):
+        for manifest, evidence in ((manifest_a, evidence_a), (manifest_b, evidence_b)):
+            acceptance.images.validate_ncore_accepted_image_manifest(manifest)
+            assert acceptance._qualification(manifest, evidence, evidence.parent)
         assert acceptance._visual(manifest_a, evidence_a)
         assert acceptance._visual(manifest_b, evidence_b)
         (evidence_b / "vlm").rename(evidence_b / "own-vlm")

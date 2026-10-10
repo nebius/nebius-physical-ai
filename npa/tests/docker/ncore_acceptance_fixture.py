@@ -366,12 +366,13 @@ def _objective(root, manifest, usdz, sha):
     proof["rrd"]["report_sha256"] = sha(objective_path)
 
 
-def synthetic_statement_inputs(root, sha):
+def synthetic_statement_inputs(root, sha, *, source_archive_sha256=None):
     """Create a real-USD, synthetic-GPU fixture for receipt contract integration.
 
     Args:
         root: Private temporary fixture directory.
         sha: Production file hashing function.
+        source_archive_sha256: Optional distinct synthetic source archive identity.
     Returns:
         Manifest and evidence root; these cannot be used as live acceptance proof.
     Raises:
@@ -380,6 +381,8 @@ def synthetic_statement_inputs(root, sha):
     root.chmod(0o700)
     fixture = _module("npa/tests/deploy/test_ncore_publication.py")
     manifest = fixture.accepted.__wrapped__()
+    if source_archive_sha256 is not None:
+        manifest["conversion"]["source_archive_sha256"] = source_archive_sha256
     evidence = root / "evidence"
     readback = evidence / "readback"
     (readback / "reconstruction").mkdir(mode=0o700, parents=True)
