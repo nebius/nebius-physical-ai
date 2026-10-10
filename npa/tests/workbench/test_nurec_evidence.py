@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from PIL import Image
@@ -70,21 +71,25 @@ def test_reconstruction_receipt_binds_real_input_recipe_and_outputs(
     usdz.write_bytes(b"reopenable-usdz")
     target = tmp_path / "nre-reconstruction.json"
 
-    receipt = evidence.write_reconstruction_receipt(
-        receipt_path=target,
-        ncore_json=meta,
-        nre_image=NRE_IMAGE,
-        config_name="configs/experimental/3dgut/3dgut_colmap.yaml",
-        mode="trainval",
-        max_epochs_argument=0,
-        command=["/app/run", "--config-name=3dgut_colmap"],
-        train_exit_code=0,
-        gpu_names=["NVIDIA RTX PRO 6000 Blackwell Server Edition"],
-        parsed_config_path=parsed,
-        metrics_path=metrics,
-        usdz_path=usdz,
-        metrics={"test/psnr": 24.5, "test/ssim": 0.8, "test/lpips": 0.2},
-    )
+    old_umask = os.umask(0)
+    try:
+        receipt = evidence.write_reconstruction_receipt(
+            receipt_path=target,
+            ncore_json=meta,
+            nre_image=NRE_IMAGE,
+            config_name="configs/experimental/3dgut/3dgut_colmap.yaml",
+            mode="trainval",
+            max_epochs_argument=0,
+            command=["/app/run", "--config-name=3dgut_colmap"],
+            train_exit_code=0,
+            gpu_names=["NVIDIA RTX PRO 6000 Blackwell Server Edition"],
+            parsed_config_path=parsed,
+            metrics_path=metrics,
+            usdz_path=usdz,
+            metrics={"test/psnr": 24.5, "test/ssim": 0.8, "test/lpips": 0.2},
+        )
+    finally:
+        os.umask(old_umask)
 
     assert receipt["status"] == "pass"
     assert receipt["requested_nre_digest"] == NRE_IMAGE.split("@", 1)[1]
@@ -98,6 +103,7 @@ def test_reconstruction_receipt_binds_real_input_recipe_and_outputs(
     assert len(receipt["input"]["sequence_members"]) == 3
     assert receipt["input"]["conversion_report_sha256"]
     assert json.loads(target.read_text()) == receipt
+    assert target.stat().st_mode & 0o077 == 0
 
 
 @pytest.mark.parametrize("value", [None, True, False, 0, -1, 30000.0, "30000"])

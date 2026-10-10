@@ -6,8 +6,10 @@ import hashlib
 import json
 import logging
 import math
+import os
 from pathlib import Path
 import re
+import tempfile
 from typing import Any, Mapping, Sequence
 
 from npa.errors import NpaError
@@ -209,6 +211,27 @@ def _file_record(path: Path, *, root: Path | None = None) -> dict[str, Any]:
     }
 
 
+def _write_private_receipt(path: Path, receipt: Mapping[str, Any]) -> None:
+    """Atomically replace a receipt with an owner-only regular file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        dir=path.parent,
+        text=True,
+    )
+    temporary = Path(temporary_name)
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump(receipt, stream, indent=2, sort_keys=True, allow_nan=False)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def _sequence_inventory(ncore_json: Path) -> tuple[list[dict[str, Any]], str]:
     from npa.workbench.nurec.colmap import NcoreConversionError, sequence_members
 
@@ -400,11 +423,7 @@ def write_reconstruction_receipt(
         "observed_metrics": required_metrics,
         "error": str(error),
     }
-    receipt_path.parent.mkdir(parents=True, exist_ok=True)
-    receipt_path.write_text(
-        json.dumps(receipt, indent=2, sort_keys=True, allow_nan=False) + "\n",
-        encoding="utf-8",
-    )
+    _write_private_receipt(receipt_path, receipt)
     return receipt
 
 
@@ -578,9 +597,5 @@ def write_render_receipt(
         },
         "error": str(error),
     }
-    receipt_path.parent.mkdir(parents=True, exist_ok=True)
-    receipt_path.write_text(
-        json.dumps(receipt, indent=2, sort_keys=True, allow_nan=False) + "\n",
-        encoding="utf-8",
-    )
+    _write_private_receipt(receipt_path, receipt)
     return receipt
