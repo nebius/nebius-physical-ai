@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import hashlib
 import json
 from pathlib import Path
@@ -21,8 +22,10 @@ from npa.orchestration.skypilot.k8s_gpu_catalog import (
     label_known_kubernetes_gpus_for_skypilot,
     parse_kubernetes_gpu_catalog,
     preflight_kubernetes_gpu_gang,
+    preflight_skypilot_gpu_gang,
     _recover_idle_validation_scope,
     resolve_kubernetes_accelerator,
+    skypilot_label_ready_nodes,
     spec_accelerators,
     wait_for_kubernetes_accelerators,
 )
@@ -859,6 +862,41 @@ def test_gang_capacity_matches_nvidia_product_label_to_skypilot_name() -> None:
 
     assert evidence["compatible_free_nodes"] == 2
     assert evidence["selected_nodes"] == ["a", "b"]
+
+
+@pytest.mark.parametrize(
+    ("label_key", "product"),
+    [
+        ("nvidia.com/gpu.product", "NVIDIA-B200"),
+        ("nebius.com/gpu-name", "B200"),
+    ],
+)
+def test_skypilot_label_fallback_accepts_native_b200_without_sky_label(
+    label_key: str, product: str
+) -> None:
+    node = replace(
+        _node("native-b200", product=product), labels=((label_key, product),)
+    )
+    inventory = KubernetesGpuInventory(
+        context="exact-context",
+        ready_nodes=1,
+        eligible_gpu_nodes=1,
+        capacity=1,
+        allocatable=1,
+        products=(product,),
+        node_labels={"native-b200": {label_key: product}},
+        nodes=(node,),
+    )
+
+    assert [node.name for node in skypilot_label_ready_nodes(inventory, "B200:1")] == [
+        "native-b200"
+    ]
+    evidence = preflight_skypilot_gpu_gang(
+        inventory, accelerator="B200:1", node_count=1
+    )
+
+    assert evidence["compatible_free_nodes"] == 1
+    assert evidence["selected_nodes"] == ["native-b200"]
 
 
 @pytest.mark.parametrize(

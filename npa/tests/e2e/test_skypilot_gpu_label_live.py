@@ -43,17 +43,10 @@ def test_live_reviewed_gpu_labels_match_effective_task():
     requested = catalog.parse_accelerator_request(config["accelerator"])
     candidates = [
         node
-        for node in inventory.nodes
-        if node.ready
-        and node.schedulable
-        and node.allocatable >= requested.quantity
-        and catalog._known_skypilot_label(dict(node.labels)) == requested.name.lower()
+        for node in catalog.skypilot_label_ready_nodes(inventory, config["accelerator"])
+        if node.ready and node.schedulable and node.allocatable >= requested.quantity
     ]
     assert candidates, "exact reviewed GPU nodes must be Ready and allocatable"
-    assert all(
-        catalog._skypilot_node_label_ready(node, config["accelerator"])
-        for node in candidates
-    )
     source = Path(inspect.getfile(catalog))
     evidence = {
         "scope": "actual read-only node label readiness; no free-placement or workload proof",

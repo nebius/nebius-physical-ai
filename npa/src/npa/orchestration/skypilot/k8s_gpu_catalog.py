@@ -1423,7 +1423,19 @@ def _skypilot_node_label_ready(
     return _reviewed_native_accelerator(labels, label_key) == requested.name.upper()
 
 
-def _skypilot_label_ready_nodes(inventory, accelerator):
+def skypilot_label_ready_nodes(
+    inventory: KubernetesGpuInventory, accelerator: str
+) -> tuple[KubernetesGpuNode, ...]:
+    """Select nodes accepted by SkyPilot's effective context label formatter.
+
+    Args:
+        inventory: Node labels observed in one Kubernetes context.
+        accelerator: The requested SkyPilot accelerator specification.
+    Returns:
+        Nodes whose reviewed labels are compatible with the selected formatter.
+    Raises:
+        None.
+    """
     # SkyPilot selects one formatter for the context, preferring valid Sky labels.
     sky_value = next(
         (
@@ -1467,7 +1479,7 @@ def preflight_skypilot_gpu_gang(
     """
     native_fit = preflight_kubernetes_gpu_gang(inventory, **requirements)
     accelerator = str(requirements["accelerator"])
-    eligible = _skypilot_label_ready_nodes(inventory, accelerator)
+    eligible = skypilot_label_ready_nodes(inventory, accelerator)
     if eligible == inventory.nodes:
         return native_fit
     try:
