@@ -6,6 +6,9 @@ A workflow is a graph of tool calls, S3 artifacts, and transitions. NPA validate
 and plans the YAML, then uses SkyPilot to execute it. This page covers the command
 sequence and format; each workload guide supplies its inputs and resource needs.
 
+For an existing workflow, use the [manual run sequence](guides/manual-workflow-operations.md).
+For multiple episodes, use [dataset batches and capacity planning](guides/paidf-dataset-batches.md).
+
 ## Quick start
 
 From the clone root, inspect a generation workflow locally:
@@ -86,6 +89,24 @@ npa workbench workflow artifacts "$run_id" --project "$project_alias" --json
 Open the generated media and `generate.json`; a successful job alone does not
 prove output quality. Keep the run ID for [recovery](../run-lifecycle.md#restart-safety)
 and follow [teardown](../teardown.md) when finished with owned resources.
+
+## Schema and editor completion
+
+Print the authoritative JSON Schema bundled with the installed NPA package when
+configuring YAML editor completion or validation:
+
+```bash
+npa workbench workflow schema > npa.workflow.schema.json
+```
+
+`schema` is read-only and writes one JSON document to stdout; redirection keeps
+the output location and overwrite decision explicit. Associate the resulting
+file with `npa.workflow` YAML files in your editor. The command exports the
+same schema used by NPA, rather than a hand-maintained copy.
+
+The structural schema does not fully type arbitrary workflow `config` values,
+which depend on the selected tools and their inputs. Editor feedback therefore
+does not replace `validate-spec` and `plan-spec`; run both before submission.
 
 ### Source staging and run IDs
 
