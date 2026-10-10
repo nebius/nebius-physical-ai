@@ -59,7 +59,9 @@ def test_standalone_rtx_harness_requires_graphics_image_before_health(
         pytest.fail("missing operator image must not invoke live health")
 
     monkeypatch.setitem(test.__globals__, "validate_gpu_health", unexpected_health)
-    with pytest.raises(pytest.skip.Exception, match="NPA_E2E_MK8S_GRAPHICS_SMOKE_IMAGE"):
+    with pytest.raises(
+        pytest.skip.Exception, match="NPA_E2E_MK8S_GRAPHICS_SMOKE_IMAGE"
+    ):
         test(tmp_path)
 
 
