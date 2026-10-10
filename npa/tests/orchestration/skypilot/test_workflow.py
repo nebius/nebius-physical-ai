@@ -4100,6 +4100,21 @@ def test_sky_environment_preserves_explicit_user_id(monkeypatch, tmp_path) -> No
     assert env["SKYPILOT_USER_ID"] == "operator-selected"
 
 
+def test_sky_environment_keeps_one_explicit_repo_source_path(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.orchestration.skypilot import cleanup
+
+    repo_src = str(Path(cleanup.__file__).resolve().parents[3])
+    monkeypatch.setenv(
+        "PYTHONPATH", f"{repo_src}{os.pathsep}{repo_src}{os.pathsep}other-source"
+    )
+
+    env = cleanup.sky_environment(tmp_path / "isolated")
+
+    assert env["PYTHONPATH"] == f"{repo_src}{os.pathsep}other-source"
+
+
 def test_sky_environment_preserves_nebius_exec_auth_without_copying(
     monkeypatch, tmp_path
 ) -> None:
