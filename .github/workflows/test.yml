@@ -92,6 +92,7 @@ jobs:
             npa/tests/docker/test_base_image_scan.py \
             npa/tests/orchestration/skypilot/test_workflow_logs.py \
             npa/tests/workbench/test_cosmos3_nano_video_server.py \
+            npa/tests/workbench/test_robocasa_asset_boundaries.py \
             npa/tests/workflows/test_cosmos3_wam_scaling_report.py \
             -q
 

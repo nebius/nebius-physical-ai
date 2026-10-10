@@ -10,6 +10,10 @@ load-bearing part of its ~60-line preamble. The twin dropped it and the stage fa
 from __future__ import annotations
 
 from pathlib import Path
+import json
+import os
+import subprocess
+import sys
 
 import pytest
 import yaml
@@ -26,6 +30,107 @@ from npa.orchestration.npa_workflow.skypilot_render import (
 from npa.orchestration.npa_workflow.spec import load_spec
 
 SPECS = Path(__file__).resolve().parents[4] / "workflows" / "testing"
+
+
+def _uv_setup_tools(binary: Path) -> None:
+    """Create inert installers that exercise the generated shell without network."""
+    scripts = {
+        "python": """import os, sys
+if sys.argv[1:3] == ['-m', 'pip']: sys.exit(1)
+if sys.argv[1] == '-c':
+ import sysconfig
+ sys.prefix = '/vendor' if os.environ['VENDOR'] == '1' else sys.base_prefix
+ os.access = lambda *args: os.environ['WRITABLE'] == '1'
+ exec(sys.argv[2])
+""",
+        "uv": """import json, os, pathlib, sys
+with open(os.environ['CALLS'], 'a') as f: f.write(json.dumps(sys.argv[1:])+'\\n')
+if sys.argv[1] == 'venv':
+ sys.exit(int(os.environ['CREATE_RC']))
+sys.exit(int(os.environ['INSTALL_RC']))
+""",
+        "mktemp": """import os, tempfile
+print(tempfile.mkdtemp(prefix='npa-setup-venv.', dir=os.environ['OWNED_TMP']))
+""",
+    }
+    for name, body in scripts.items():
+        executable = binary / name
+        executable.write_text(f"#!{sys.executable}\n" + body)
+        executable.chmod(0o700)
+
+
+def _run_uv_setup_install(
+    tmp_path: Path,
+    vendor: int,
+    writable: int,
+    create_rc: int,
+    install_rc: int,
+) -> tuple[subprocess.CompletedProcess[str], list[list[str]]]:
+    from npa.orchestration.npa_workflow.skypilot_render import default_npa_setup
+
+    binary = tmp_path / "bin"
+    binary.mkdir()
+    _uv_setup_tools(binary)
+    setup = default_npa_setup()
+    function = setup[
+        setup.index("npa_pip_install() {") : setup.index("if ! command -v npa")
+    ]
+    script = 'set -e\nnpa_setup_python="$TEST_PYTHON"\n' + function
+    script += "npa_pip_install -e /staged/source --no-deps\n"
+    calls = tmp_path / "calls.jsonl"
+    environment = dict(
+        os.environ,
+        PATH=str(binary),
+        TEST_PYTHON=str(binary / "python"),
+        CALLS=str(calls),
+        OWNED_TMP=str(tmp_path),
+        VENDOR=str(vendor),
+        WRITABLE=str(writable),
+        CREATE_RC=str(create_rc),
+        INSTALL_RC=str(install_rc),
+    )
+    result = subprocess.run(
+        ["/bin/bash", "-c", script], env=environment, capture_output=True, text=True
+    )
+    commands = [json.loads(line) for line in calls.read_text().splitlines()]
+    return result, commands
+
+
+@pytest.mark.parametrize(
+    ("vendor", "writable", "create_rc", "install_rc", "expected_rc", "isolated"),
+    [
+        (0, 0, 0, 0, 0, True),
+        (0, 1, 0, 0, 0, False),
+        (1, 0, 0, 0, 0, False),
+        (0, 0, 23, 0, 23, True),
+        (0, 0, 0, 24, 24, True),
+    ],
+)
+def test_uv_setup_isolates_only_unwritable_system_python(
+    tmp_path: Path,
+    vendor: int,
+    writable: int,
+    create_rc: int,
+    install_rc: int,
+    expected_rc: int,
+    isolated: bool,
+) -> None:
+    result, commands = _run_uv_setup_install(
+        tmp_path, vendor, writable, create_rc, install_rc
+    )
+    assert result.returncode == expected_rc, result.stderr
+    assert (commands[0][0] == "venv") is isolated
+    if create_rc:
+        assert len(commands) == 1
+        return
+    assert commands[-1][:4] == ["pip", "install", "-q", "--python"]
+    assert commands[-1][-3:] == ["-e", "/staged/source", "--no-deps"]
+    selected = commands[-1][4]
+    if isolated:
+        assert selected == commands[0][-1] + "/bin/python"
+        assert Path(selected).parent.parent.parent == tmp_path
+    else:
+        assert selected == str(tmp_path / "bin" / "python")
 
 
 def test_requirements_resolve_by_exact_ref_and_by_prefix() -> None:

@@ -160,6 +160,12 @@ _CONTENT_AGENTS_PIPELINE = [
     "-m",
     "npa.workflows.content_agents",
 ]
+_ROBOCASA_RUNTIME_IDENTITY_ARGV = [
+    "--expected-image-source-sha",
+    "{{config.robocasa_expected_image_source_sha}}",
+    "--expected-image-manifest-digest",
+    "{{config.robocasa_expected_image_manifest_digest}}",
+]
 
 _PAIDF_NATIVE_PIPELINE = ["python3", "-m", "npa.workflows.paidf_native"]
 
@@ -3898,6 +3904,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.train_batch_size}}",
             "--device",
             "{{config.policy_device}}",
+            "--training-env-ids",
+            "{{config.train_env_ids}}",
             # The checkpoint AND the run's textual artifacts (configs, logs, metrics) go to
             # the same prefix, so a downstream stage can read the run. The retired template
             # did the second half in a trailing inline-python block.
@@ -3906,6 +3914,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--artifacts-s3-uri",
             "{{config.artifacts_uri}}",
         ],
+        omit_flags_when_empty=("--training-env-ids",),
+        config_defaults={"train_env_ids": ""},
     ),
     "workbench.token_factory.triage": ToolEntry(
         name="workbench.token_factory.triage",
@@ -4858,6 +4868,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.env_id}}",
             "--output-path",
             "{{config.output_uri}}",
+            *_ROBOCASA_RUNTIME_IDENTITY_ARGV,
             "--service",
             "--endpoint",
             "{{config.robocasa_endpoint}}",
@@ -4884,6 +4895,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.env_id}}",
             "--output-path",
             "{{config.output_uri}}",
+            *_ROBOCASA_RUNTIME_IDENTITY_ARGV,
             "--service",
             "--endpoint",
             "{{config.robocasa_endpoint}}",
@@ -4910,6 +4922,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.env_id}}",
             "--output-path",
             "{{config.output_uri}}",
+            *_ROBOCASA_RUNTIME_IDENTITY_ARGV,
             "--service",
             "--endpoint",
             "{{config.robocasa_endpoint}}",
@@ -4940,6 +4953,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.iterations}}",
             "--num-envs",
             "{{config.num_envs}}",
+            *_ROBOCASA_RUNTIME_IDENTITY_ARGV,
             "--service",
             "--endpoint",
             "{{config.robocasa_endpoint}}",
@@ -4957,8 +4971,9 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         description=(
             "Run a batch of real RoboCasa kitchen rollouts across task/env "
             "configs and export per-episode trajectories (workspace/wrist "
-            "images, robot state, actions) plus metadata, metrics, and MP4 "
-            "video to S3 for LeRobotDataset materialization."
+            "images, explicit robot-state layout, actions) plus native outcome "
+            "metadata, metrics, and terminal-inclusive MP4 video to S3 for "
+            "LeRobotDataset materialization."
         ),
         argv_template=[
             "npa",
@@ -4975,6 +4990,9 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.iterations}}",
             "--num-envs",
             "{{config.num_envs}}",
+            "--seed",
+            "{{config.seed}}",
+            *_ROBOCASA_RUNTIME_IDENTITY_ARGV,
             "--service",
             "--endpoint",
             "{{config.robocasa_endpoint}}",
@@ -4991,7 +5009,9 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         name="workbench.robocasa.policy_eval",
         description=(
             "Load the exact produced ACT checkpoint and evaluate it on explicitly "
-            "disjoint held-out RoboCasa tasks and episodes with videos and hashes."
+            "disjoint held-out RoboCasa tasks against matched random-action "
+            "episodes, checking reset frame and robot state and retaining native "
+            "outcomes, videos, selected-checkpoint identity, and hashes."
         ),
         argv_template=[
             "npa",
@@ -5012,6 +5032,9 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.eval_iterations}}",
             "--num-envs",
             "{{config.rollout_episodes}}",
+            "--seed",
+            "{{config.seed}}",
+            *_ROBOCASA_RUNTIME_IDENTITY_ARGV,
             "--service",
             "--endpoint",
             "{{config.robocasa_endpoint}}",

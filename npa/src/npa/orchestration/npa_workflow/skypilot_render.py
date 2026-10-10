@@ -1521,6 +1521,17 @@ def default_npa_setup() -> str:
         '      || "$npa_setup_python" -m pip install -q "$target" "$@" --break-system-packages \\\n'
         '      || "$npa_setup_python" -m pip install -q "$target" "$@" --user\n'
         "  elif command -v uv >/dev/null 2>&1; then\n"
+        # SkyPilot supplies uv, but a non-root Ubuntu image can still select a
+        # root-owned system Python without pip. Keep control-plane dependencies
+        # in a fresh task-local environment; do not replace a vendor venv.
+        '    if "$npa_setup_python" -c \'import os, sys, sysconfig; '
+        "sys.exit(not (sys.prefix == sys.base_prefix and not "
+        'os.access(sysconfig.get_path("purelib"), os.W_OK)))\'; then\n'
+        '      npa_setup_env="$(mktemp -d /tmp/npa-setup-venv.XXXXXX)" || return\n'
+        '      uv venv --python "$npa_setup_python" "$npa_setup_env" || return\n'
+        '      npa_setup_python="$npa_setup_env/bin/python"\n'
+        '      export PATH="$npa_setup_env/bin:$PATH"\n'
+        "    fi\n"
         '    uv pip install -q --python "$npa_setup_python" "$target" "$@"\n'
         "  else\n"
         '    echo "selected python has no pip and uv is unavailable: $npa_setup_python" >&2\n'

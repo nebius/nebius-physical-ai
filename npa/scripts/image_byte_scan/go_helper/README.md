@@ -7,33 +7,36 @@ Gitleaks 8.28.0 `Detector.Detect` API on each complete raw record, including bin
 and empty records. It does not use Gitleaks file discovery, MIME filtering,
 stdin chunking, a baseline, or image-authored ignore files.
 
-Distinct records are detected concurrently, and results are emitted in record
-order. Worker count is sampled from `runtime.GOMAXPROCS(0)` at pipeline startup;
-the pinned Go runtime's default accounts for CPU affinity and Linux cgroup CPU
-quota. The pool does not resize if those limits change during a scan.
+Distinct records are detected concurrently, with at most 64 workers, and results
+are emitted in record order. Admission reserves payload bytes against a 512 MiB
+budget before allocating them, so the bytes held for detection are bounded
+independently of archive size. A record larger than that budget is admitted alone
+up to the derived framed-record ceiling.
 
-Admission reserves raw payload bytes against a 512 MiB budget before allocating
-them; a record larger than the whole budget is admitted alone rather than
-refused, so coverage never depends on a size threshold.
+The helper has a 12 GiB address-space ceiling. Current measurements peak at
+9.85x payload bytes for one record, so admission rounds that observation to 10x,
+retains 4 GiB of fixed/process headroom, and derives a record ceiling of
+858,993,459 bytes (about 819 MiB). The same formula covers the 512 MiB aggregate
+payload budget used by concurrent smaller records. The measurement is not
+treated as a permanent detector constant: `RLIMIT_AS` remains the hard,
+fail-closed backstop if implementation drift uses more memory.
 
-That budget bounds admitted payload bytes, not resident memory: the detector
-holds the raw bytes, a string copy, a lowercased copy and the regexp engine's
-working set. Peak RSS for a single record, read from the helper's `VmHWM` in
-KiB, Linux x86_64, Go toolchain 1.27.1, one record in flight:
+The archive scanner routes a larger regular-file record through an isolated
+one-shot mode, with an independent 1 GiB complete-record ceiling. It prefers
+`O_TMPFILE`; filesystems without it use an `O_EXCL` mode-`0600` name that is
+unlinked immediately inside the private analysis directory. After every byte is
+written, the scanner fsyncs and changes the inode to mode `0400`, reopens it
+read-only through its descriptor, and closes the writer before launching either
+worker. The helper maps that unlinked descriptor read-only, exposes the complete
+mapping to the same single `Detector.Detect` call without a second Go payload
+copy, and hashes and stats it before and after detection. Mapping, detector
+allocation, mutation, unmap, process death, or receipt failure leaves the scan
+incomplete. No chunked or overlap matching path exists.
+The 1 GiB ceiling is a finite hostile-input admission bound, not a promise that
+every admitted byte pattern will fit: the unchanged 12 GiB address-space limit
+still rejects detector-memory exhaustion rather than accepting partial coverage.
 
-| record | peak `VmHWM` | multiple of record size |
-| --- | --- | --- |
-| 16 MiB | 161,440 KiB | 9.85x |
-| 64 MiB | 543,252 KiB | 8.29x |
-| 128 MiB | 1,053,452 KiB | 8.04x |
-
-These are single-record measurements at those three sizes, and the multiple is
-not constant across them. Sizing above 128 MiB by extrapolating it is an
-estimate, not a measurement; larger records have not been measured.
-
-The scanner launches its helper with only `PATH` in the environment to isolate
-it from ambient configuration and credentials. Shell `GOMAXPROCS`, `GOMEMLIMIT`
-and `GODEBUG` settings therefore do not configure a scanner-owned helper.
+## Cgroup memory awareness
 
 Before loading the detector, the helper resolves its cgroup-v2 membership through
 `/proc/self/cgroup` and `/proc/self/mountinfo`. For each readable visible ancestor
@@ -64,15 +67,16 @@ truncated or skipped, and the existing payload admission policy is unchanged.
 If the operating system terminates the helper, the scan fails and cannot
 establish a clean result.
 
-Records above the budget run alone, so a small number of large serialized records
-can limit parallelism; quantifying that limit requires a measured time profile,
-which the helper does not currently emit.
+The address-space ceiling and complete-record admission checks described above
+remain independent hard limits. Cgroup sizing does not weaken those checks.
 
 ## Prepare the helper
 
-Run on **Linux amd64**, from an NPA checkout with its development environment
-installed. The bootstrap downloads its pinned Go toolchain and modules; a local
-Go installation is not required. macOS and ARM hosts are not supported by this
+Run on **Linux amd64 with kernel 5.9 or newer**, from an NPA checkout with its
+development environment installed. Linux 5.9 is required because the
+built-binary TSYNC proof binds the pre-existing thread's `Seccomp_filters`
+counter. The bootstrap downloads its pinned Go toolchain and modules; a local Go
+installation is not required. macOS, ARM, and older kernels are rejected by this
 native preparation path.
 
 Choose a private analysis directory outside the checkout. Replace the three
@@ -91,8 +95,11 @@ directory permits one preparation. Failures retain logs without a success
 receipt; retry in a fresh output directory. `--toolchain-archive` accepts an
 already downloaded archive only when its complete SHA-256 matches the same pin.
 The normal Python test suite never downloads or invokes Go. The explicit command
-runs all Go tests, including real detector, process and inherited-descriptor
-canaries. Hermetic bootstrap tests are collected by normal repository CI and can also run separately:
+runs all Go tests, then executes the built helper's production containment
+startup probe. The probe applies the same installation call as normal scans to
+an already-running locked thread, checks every denied syscall route, and launches
+`/proc/self/exe` to prove that a fresh child inherits the policy. Hermetic
+bootstrap tests are collected by normal repository CI and can also run separately:
 
 ```bash
 npa/.venv/bin/python -m pytest npa/tests/docker/test_image_byte_go_build.py -q
@@ -106,7 +113,11 @@ It uses isolated module, compilation and temporary caches, disables automatic
 Go toolchain switching and workspace discovery, verifies the locked module
 checksums, and builds a source snapshot without changing `go.mod` or `go.sum`.
 The output receipt binds the exact source, trusted `.gitleaks.toml`, binary,
-raw readiness JSON, toolchain, downloaded module closure, notices and tests.
+raw readiness JSON, successful built-binary containment probe, toolchain,
+downloaded module closure, notices and tests.
+The bootstrap holds the built binary and config descriptors across both probes
+and hashes those same held bytes for the receipt; a path replacement or in-place
+mutation fails preparation.
 All path components are opened through descriptors without following symlinks;
 parent traversal is rejected before normalization. Cancellation stops and joins
 the command session owned by the bootstrap, including children that ignore
@@ -122,12 +133,42 @@ Launch with exactly one of `--config PATH` or `--config-fd FD`. The descriptor
 must be inherited, regular, seekable, at offset zero, and greater than 2. The
 helper checks configuration metadata before and after its complete read.
 
+Normal framed mode optionally accepts `--ordinal-base N` so a restarted helper
+retains globally controlled synthetic record paths. One-shot mode requires
+`--config-fd`, `--record-fd`, `--record-length`, and `--record-ordinal`
+together. Its record descriptor must be an owner-only, unlinked, read-only
+regular file of the exact declared length, no larger than 1,073,741,824 bytes.
+It emits the same readiness, actual global ordinal, result, summary, and
+exit-status contract as a one-record framed session.
+
 The helper emits one readiness JSON line, then consumes an unsigned 64-bit
 big-endian byte length followed by exactly that many bytes, repeatedly. It emits
-one JSON result per record, retaining every finding but returning only rule and
-line information, record ordinal, byte count and SHA-256. Clean EOF between
-records produces a final summary. A truncated header or payload is an error.
-The scanner process uses these exit codes:
+one JSON result per record, returning only rule and line information, record
+ordinal, byte count and SHA-256. More than 4,096 findings in one record fails the
+scan before response population; findings are never silently discarded. Clean
+EOF between records produces a final summary. A truncated header or payload is
+an error. The scanner process uses these exit codes:
+
+The caller may keep several records in flight; results are emitted strictly in
+record order, so the response bytes are identical at every depth. Both directions
+are live at once, so a caller must continue reading results while it writes
+records. A caller that blocks in a write without reading deadlocks against a
+helper that has filled its output pipe and stopped reading, which is why
+`core.Detector` transfers record bytes and collects results through one readiness
+wait rather than draining only before each write.
+
+Before reading configuration or records, the Linux amd64 helper installs an
+inherited seccomp policy that forbids changing process group/session membership
+and creating or joining namespaces. Readiness binds that containment policy.
+`clone3` is reported unavailable so ordinary runtime thread creation falls back
+to `clone`; namespace-bearing `clone` calls are still rejected.
+The built-binary probe records the ambient seccomp-filter count on a locked
+pre-existing thread and requires the production TSYNC installation to increase
+that exact thread's count by one.
+The caller sends `SIGKILL` to the isolated helper group after direct exit and
+accepts a terminal result only after stdout reaches EOF and no live member of
+that group remains. A missing policy, retained pipe, surviving member, or policy
+installation failure rejects the scan rather than accepting incomplete cleanup.
 
 The caller may keep several records in flight; results are emitted strictly in
 record order, so the response bytes are identical at every depth. Both directions

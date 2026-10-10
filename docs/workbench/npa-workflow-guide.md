@@ -714,6 +714,12 @@ dependencies separate, and retain the prepared NPA source path when calling NPA.
 If a stage explicitly starts a login shell, its profiles may change the inherited
 environment; verify the interpreter and source path inside that shell.
 
+For non-root images whose system Python has no pip, setup can use SkyPilot's
+uv installer. If that system environment is not writable, setup creates a fresh
+task-local control virtualenv instead of writing system packages. Vendor
+virtualenvs are not redirected by this fallback; an explicitly selected policy
+interpreter keeps its original dependency environment.
+
 Advanced scheduling stays in explicit fields (`parallel`, `maxConcurrency`,
 `params`, `trigger`), never Jinja. `gang` and `foreach` remain unimplemented.
 

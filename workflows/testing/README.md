@@ -84,8 +84,8 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | [`physical-augmentation.yaml`](physical-augmentation.yaml) | [One-command demo](../../docs/workbench/guides/physical-augmentation.md) | Fresh Franka actions across position, mass and friction changes → interactive HD replay, comparison film and accepted LeRobot/Rerun demonstrations. Requires RTX PRO 6000. |
 | [`retargeting.yaml`](retargeting.yaml) | [Retargeting CLI](../../docs/cli/retargeting.md) | Motion retargeting |
 | [`rl-policy-training-sim-success.yaml`](rl-policy-training-sim-success.yaml) | [Isaac Lab CLI](../../docs/cli/isaac-lab.md) | Isaac Lab RL train (partial) |
-| [`robocasa-data-policy.yaml`](robocasa-data-policy.yaml) | [RoboCasa CLI](../../docs/cli/robocasa.md) | Native multi-task PandaOmron trajectories → LeRobotDataset v3 → real ACT training → exact-checkpoint evaluation on disjoint RoboCasa tasks → insights |
-| [`robocasa-smoke.yaml`](robocasa-smoke.yaml) | [RoboCasa CLI](../../docs/cli/robocasa.md) | Native RoboCasa workbench: task registration, asset availability, headless EGL reset, and a real random rollout with video through the npa-robocasa service |
+| [`robocasa-data-policy.yaml`](robocasa-data-policy.yaml) | [RoboCasa CLI](../../docs/cli/robocasa.md) | CPU clients → L40S-hosted seeded random-action PandaOmron baselines with causally aligned trajectories → LeRobotDataset v3 → real ACT training on a separate L40S → matched-seed checkpoint/random evaluation on disjoint RoboCasa tasks → insights; no expert-demonstration or policy-improvement claim |
+| [`robocasa-smoke.yaml`](robocasa-smoke.yaml) | [RoboCasa CLI](../../docs/cli/robocasa.md) | CPU clients of an L40S-hosted RoboCasa service: task registration, asset availability, headless EGL reset, and a real random rollout with video |
 | [`robot-policy-train-and-serve.yaml`](robot-policy-train-and-serve.yaml) | [Guide](../../docs/workbench/cookbooks/robot-policy-train-and-serve.md) | One standard runtime: public LeRobot data → FiftyOne selection → grouped split → continued SmolVLA training and fine-tuning with two measured gates → portable export → independent GPU HTTP serving and native simulation → standalone HTML/MP4. |
 | [`shared-scene-navigation.yaml`](shared-scene-navigation.yaml) | [Contract and runbook](../../docs/workbench/guides/shared-scene-navigation.md) | Native Isaac public quadruped reference or BYOF navigation with shared-scene physics/perception probes, checkpoint resume and held-out evaluation. Public bundle builder supplies a cluttered warehouse; reconstructed scenes require measured resets. GPU acceptance unverified. |
 | [`sonic-eval.yaml`](sonic-eval.yaml) | [Evaluation runbook](../../docs/workbench/cookbooks/sonic-eval-runbook.md) | SONIC eval |
@@ -93,6 +93,19 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | [`sonic-export.yaml`](sonic-export.yaml) | [Evaluation runbook](../../docs/workbench/cookbooks/sonic-eval-runbook.md) | SONIC export |
 | [`sonic-locomotion-finetuning.yaml`](sonic-locomotion-finetuning.yaml) | [Fine-tuning guide](../../docs/workbench/cookbooks/sonic-locomotion-finetuning.md) | Retarget → train → export → native SONIC eval |
 | [`sonic-train.yaml`](sonic-train.yaml) | [Training runbook](../../docs/workbench/cookbooks/sonic-train-runbook.md) | SONIC train |
+
+The LeRobot policy-container training entrypoint chooses its evaluation-cadence
+flag from the installed package version. An explicit `NPA_LEROBOT_VERSION` must
+match that runtime; it cannot relabel an image. The pinned RoboCasa ACT derivative
+`0.6.1+npa2` additionally requires exact metadata, native parser and trainer source
+hashes, and rejects non-ACT policy overrides. This derivative accepts explicit
+ACT hyperparameters, not reward-model configuration, configuration/pretrained
+path indirection, or plugin discovery. Config-file-based resume is consequently
+not qualified on this derivative; ordinary `0.5.1`/`0.6.0` behavior is unchanged.
+This narrow runtime contract does not add a globally supported LeRobot release,
+change workflow image routing, or qualify an image for release. Use only an
+independently accepted immutable image; CPU training controls do not establish GPU
+rollout quality.
 
 ## Data, perception, and scenario analysis
 
