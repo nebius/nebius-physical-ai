@@ -102,6 +102,11 @@ def _observe_checkpoints(save, evidence):
             ],
         }
         publish_checkpoint(root, kwargs["step"], states, evidence / "checkpoints")
+        recovery_uri = os.environ.get("NPA_VLA_RECOVERY_URI")
+        if recovery_uri:
+            from .turnkey_runtime import publish_recovery
+
+            publish_recovery(root, kwargs["step"], recovery_uri)
         return result
 
     return recorded

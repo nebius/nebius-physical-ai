@@ -248,6 +248,18 @@ IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
 # it may not remove one of these without breaking a call site.
 CALLABLE_PARAMS: tuple[tuple[str, str, tuple[str, ...], str], ...] = (
     (
+        "lerobot/policies/smolvla/modeling_smolvla.py",
+        "SmolVLAPolicy._get_action_chunk",
+        ("batch",),
+        "npa/workflows/policy_training/turnkey_server.py",
+    ),
+    (
+        "lerobot/envs/libero.py",
+        "LiberoEnv._format_raw_obs",
+        ("raw_obs",),
+        "npa/workflows/policy_training/turnkey_client.py",
+    ),
+    (
         "lerobot/policies/factory.py",
         "make_policy",
         ("cfg", "env_cfg", "ds_meta"),

@@ -1,0 +1,46 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "9ada0ac769f751fd9c3d6431d1afb967af96835bb49b30860aa5197496f8dac0",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Schema validation and production render preview pass.",
+      "evidence": [
+        "validate-spec",
+        "plan-spec --check-render --assume-decision promote_checkpoint"
+      ]
+    },
+    "task_fidelity": {
+      "status": "unverified",
+      "reason": "Native component contracts are wired; complete live execution is pending.",
+      "evidence": []
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "The selected live run must qualify this prerequisite before turnkey execution is claimed.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "The selected live run must qualify this prerequisite before turnkey execution is claimed.",
+      "evidence": []
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "The selected live run must qualify this prerequisite before turnkey execution is claimed.",
+      "evidence": []
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "The selected live run must qualify this prerequisite before turnkey execution is claimed.",
+      "evidence": []
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "The selected live run must qualify this prerequisite before turnkey execution is claimed.",
+      "evidence": []
+    }
+  }
+}

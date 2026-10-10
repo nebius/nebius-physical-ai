@@ -116,3 +116,14 @@ Output is a policy checkpoint on S3.
   benchmark. See the D3/D6 resolution in
   [the version audit](../../../docs/workbench/lerobot-version-support-audit-20260813.md#060-image-follow-up--2026-09-12)
   and merged [PR #462](https://github.com/nebius/nebius-physical-ai/pull/462).
+
+## Public training and deployment recipe
+
+Use `workflows/testing/policy-public-training.yaml` and
+`docs/workbench/cookbooks/policy-public-training.md` for real FiftyOne selection,
+continued SmolVLA training, two measured gates, portable export, independent GPU
+HTTP serving and native LIBERO simulation, then same-run standalone HTML/MP4.
+The standard Workbench runtime owns submission, artifact lineage and recovery.
+This recipe uses managed Kubernetes and torchrun. The separate Slurm recipe
+requires operator training scripts. This public baseline does not prove in-house
+foundation pretraining.
