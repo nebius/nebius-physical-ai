@@ -5,6 +5,7 @@ from __future__ import annotations
 from importlib import metadata
 import os
 from pathlib import Path, PurePosixPath
+import shutil
 import subprocess
 import sys
 import zipfile
@@ -77,8 +78,15 @@ def test_setup_venv_bootstrap_executes_production_script_offline(
         "PIP_FIND_LINKS": str(tmp_path),
     }
 
+    # Docker installs this executable at a fixed path, then invokes it directly.
+    # Retain the production execution contract here: copy, permission, shebang,
+    # and interpreter selection must all work without a test-side `bash` wrapper.
+    installed_bootstrap = tmp_path / "npa-libero-plus-assets-setup-venv"
+    shutil.copy2(BOOTSTRAP, installed_bootstrap)
+    installed_bootstrap.chmod(0o555)
+
     bootstrapped = subprocess.run(
-        ["bash", str(BOOTSTRAP), str(base_python), str(venv_root)],
+        [str(installed_bootstrap), str(base_python), str(venv_root)],
         check=False,
         capture_output=True,
         text=True,
