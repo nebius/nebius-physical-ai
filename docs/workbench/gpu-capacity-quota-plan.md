@@ -4,8 +4,8 @@
 
 Use this guide before you launch a GPU virtual machine (VM) on Nebius AI Cloud.
 It shows how to check that a region can take the VM, request only the quota you
-are missing, retry across regions without piling up stopped VMs, tell a quota
-failure from a capacity failure, and clean up after failed attempts.
+are missing, retry across approved regions without piling up stopped VMs, tell
+a quota failure from a capacity failure, and clean up after failed attempts.
 
 The commands use the `nebius` CLI and `jq`. For Workbench deploys and their
 preemptible defaults, see [preemptible VMs](preemptible-vms.md); for NPA
@@ -20,9 +20,14 @@ describe is collected in [observed API responses](#observed-api-responses).
   `admin` role
   ([capacity advisor](https://docs.nebius.com/compute/virtual-machines/capacity-advisor),
   [quotas](https://docs.nebius.com/overview/quotas)).
-- Pick a project in each region you want to try. Platforms and presets differ by
-  region and project
+- Pick a project in each region authorized for the search. Platforms and presets
+  differ by region and project
   ([platforms and presets in a project](https://docs.nebius.com/compute/virtual-machines/list-platforms)).
+
+Record the authorized regions, projects, fabrics, platforms, presets, and
+allocation type. Propose alternatives with read-only checks; obtain approval
+before launching outside that scope. Reuse authorization already given for the
+search and its cleanup.
 
 Set the values you are testing:
 
@@ -79,13 +84,22 @@ are name, unit, limit, usage, and description. JSON output leaves out fields
 whose value is zero, so the filter prints a missing usage as `0`. The filter
 prints `none` when a row carries no limit at all.
 
-Headroom is a row's limit minus its usage. Your demand must fit the tenant
-headroom, and also the project headroom for any project row that has a limit.
+Headroom is a row's limit minus its usage. The additional demand of the next
+operation must fit the tenant headroom, and also the project headroom for any
+project row that has a limit.
 Headroom equal to the demand is enough for one VM. Each additional VM you create
 while searching needs its own headroom until it is deleted: VMs count against
 `compute.instance.count` and their disks count against the disk quotas until
 the VM is deleted, even when it is stopped
 ([VM lifecycle](https://docs.nebius.com/compute/virtual-machines/lifecycle)).
+
+For a new VM, count its instance, new disks and IP allocations, and compute
+resources. For a start of a retained stopped VM, its existing instance, disks,
+and retained allocations are already included in usage: do not count them
+again. Check headroom for the compute resources acquired on start, including
+GPUs, and any new resources you add. For example, zero free instance or disk
+quota does not by itself rule out starting a VM that already owns those
+resources.
 
 ## Read capacity advice
 
@@ -110,7 +124,7 @@ types. For each row:
 
 - `available` is the maximum number of VMs you can launch. It decides the
   question: when it is 0 (or missing), a launch is unlikely to succeed, whatever
-  `availability_level` says. If you try anyway, use the bounded retry below.
+  `availability_level` says. If you try anyway, follow the retry procedure below.
 - `limit` is your quota.
 - `availability_level` is `AVAILABILITY_LEVEL_HIGH`, `AVAILABILITY_LEVEL_MEDIUM`,
   `AVAILABILITY_LEVEL_LOW`, or `AVAILABILITY_LEVEL_LIMIT_REACHED` ("launch
@@ -123,21 +137,24 @@ types. For each row:
 Advice describes availability at `effective_at`; it doesn't guarantee capacity
 when you create the VM. If you can't read advice for the tenant, ask someone with
 the `viewer` role for the rows you need, or rely on the quota reads and the
-bounded retry below.
+retry procedure below. Treat unavailable or stale advice as unknown; record
+that limitation before an attempt within the authorized scope.
 
 ## Choose a target
 
-A region is a candidate when every quota you need has enough headroom and its
-fresh advice row shows `available` at or above the number of VMs you need.
+A region is a candidate when the additional demand of the planned create or
+start fits every quota and its fresh advice row shows `available` at or above
+the number of VMs you need. For a start, exclude resources already charged to
+the stopped VM as described in [quota headroom](#read-quota-headroom).
 
 If no region qualifies:
 
 - If quota is the limit, [request more quota](#request-more-quota).
 - If capacity is the limit, try another region or a similar preset, as the
   [Not enough resources](https://docs.nebius.com/compute/virtual-machines/not-enough-resources)
-  page suggests, or contact Nebius sales to reserve capacity. You can also read
-  the advice again on the [retry cadence](#retry-across-regions) and stop when
-  that bound runs out.
+  page suggests, or contact Nebius sales to reserve capacity. Check alternatives
+  against the authorized scope before launching. You can also read advice again
+  during the [retry procedure](#retry-across-regions).
 - Preemptible VMs have their own quota and their own advice rows, and Compute can
   stop them at any time
   ([preemptible VMs](https://docs.nebius.com/compute/virtual-machines/preemptible)).
@@ -154,7 +171,8 @@ current limit, requested limit, and the VMs you plan to run.
 `nebius quotas quota-allowance create --parent-id "$PROJECT_ID" --region "$REGION" --name <quota> --limit <value>`
 sets a project's allowance for one quota. It does not raise the tenant quota.
 
-Request the shortfall for your planned VMs plus any retry margin you choose.
+Request the shortfall for your planned VMs plus any retry margin the operator
+has authorized.
 Nebius can automatically reduce quotas that stay well below their limit for a
 long period, after an email notice and a grace period.
 
@@ -222,26 +240,27 @@ quota nor capacity problems.
 
 ## Retry across regions
 
-A bounded search keeps cost and leftovers under control. The following cadence
-is a recommendation, not a provider requirement:
+Use the operator's retry cadence and any limits they explicitly set. Do not
+introduce time, cost, or attempt limits when none were requested. Keep an
+inventory of attempts and reuse stopped VMs to avoid accumulating resources:
 
 1. Read quota and advice again at the start of each round.
-2. Make one attempt per candidate region per round, one region at a time.
-3. Keep at most one stopped VM per region from earlier attempts, and start it
+2. Work through candidate regions in the authorized scope, one region at a time.
+3. Reuse a stopped VM from an earlier attempt in that region, and start it
    (`nebius compute instance start --id "$INSTANCE_ID"`) instead of creating
-   another. The [Not enough resources](https://docs.nebius.com/compute/virtual-machines/not-enough-resources)
+   another. Check start demand rather than charging its retained resources
+   twice. The [Not enough resources](https://docs.nebius.com/compute/virtual-machines/not-enough-resources)
    page covers restarting a stopped VM. A stopped VM still holds quota, and its
    disks keep billing.
 4. After a `QuotaFailure`, skip that region until the named quota has headroom
    again, through lower usage or a higher limit.
-5. Run at most three rounds, waiting 5 minutes after the first and 10 minutes
-   after the second, unless the person who owns the search sets a longer
-   deadline.
+5. Refresh advice before another attempt, follow the operator's retry cadence,
+   and honor any explicit stop condition or cancellation.
 
-For a longer search, write down the deadline, interval, regions, platform,
-preset, and allocation type before you start. Append one line per attempt with
-the time, region, instance ID, operation ID, and detail code. Run the loop under
-a process supervisor or in a terminal session that stays open; a background
+Write down the interval, authorized regions, platform, preset, allocation type,
+and any operator-supplied limits before you start. Append one line per attempt
+with the time, region, instance ID, operation ID, and detail code. Run the loop
+under a process supervisor or in a terminal session that stays open; a background
 process started from a short-lived session can be killed when that session ends.
 Stop at the first `RUNNING` VM and confirm its state again before you hand it to
 a workload. If attempts ever run in parallel, check every other recorded VM
@@ -250,10 +269,13 @@ running.
 
 ## Clean up after a search
 
-Stopped VMs keep their instance and disk quota, and their disks keep billing
+Keep the successful VM and the resources it needs. Clean up unused attempts
+within the run's authorized scope. Stopped VMs keep their instance and disk
+quota, and their disks keep billing
 ([deleting a VM](https://docs.nebius.com/compute/virtual-machines/delete)). Build
 the list from your attempt log and the run-label listing above, and use IDs, not
-names.
+names. Exclude the successful VM and any other VM still in use, even if they
+carry the run label.
 
 For each VM, run `nebius compute instance get --id "$INSTANCE_ID"` and note:
 
@@ -266,7 +288,11 @@ For each VM, run `nebius compute instance get --id "$INSTANCE_ID"` and note:
   you created the VM stays after the VM is deleted
   ([IP addresses](https://docs.nebius.com/compute/virtual-machines/network)).
 
-Agree the exact list of IDs with the person who owns them, then delete by ID:
+Check the exact IDs against the attempt log and ownership evidence. Use cleanup
+authorization already granted for this search; ask the owner only when an ID
+falls outside that scope or its ownership is unclear. Preserve pre-existing or
+shared disks and allocations unless their deletion was explicitly authorized.
+For resources selected for deletion, delete by ID:
 
 ```bash
 nebius compute instance delete --id "$INSTANCE_ID"
@@ -281,6 +307,8 @@ can't be deleted until protection is off
 allocation you no longer need with
 `nebius vpc allocation delete --id "$ALLOCATION_ID"`.
 
+If one deletion fails, record the error and continue checking the remaining
+owned resources. Do not report cleanup as complete while residue remains.
 Then confirm the cleanup:
 
 - `nebius compute instance get --id "$INSTANCE_ID"` returns NotFound for each
@@ -294,15 +322,19 @@ Then confirm the cleanup:
 
 ## NPA clusters
 
-Before it applies changes, `npa cluster up` checks the planned cluster against
+Before it applies changes, `npa cluster up` uses cumulative whole-path preflight
+to check the additional cluster resources against
 `compute.instance.count`, `compute.disk.count`, `compute.disk.size.network-ssd`,
-and `vpc.ipv4-address.public.count`, and checks GPU quota for on-demand GPU
-pools. When GPU quota is short, it reads capacity advice to suggest a
-preemptible pool. For a direct VM launch, or for other quotas and capacity
-advice, use the steps on this page. `npa workbench health preflight` checks
-credentials only. For NPA-managed clusters, agent VMs, controllers, and buckets,
-clean up with the [teardown and cost](../../skills/atomic/teardown-and-cost/SKILL.md)
-skill.
+and `vpc.ipv4-address.public.count` when public node IPs are requested. It checks
+ordinary GPU-family quota for on-demand GPU pools without a capacity block;
+reservation-backed pools have separate reservation checks. A quota failure
+blocks apply. Read capacity advice separately using this guide before proposing
+an allocation change. A fallback follows the
+[GPU allocation fallback](../../skills/atomic/gpu-allocation-fallback/SKILL.md)
+skill and requires the operator's consent. `npa workbench health preflight`
+checks credentials only. For NPA-managed clusters, agent VMs, controllers, and
+buckets, clean up with the
+[teardown and cost](../../skills/atomic/teardown-and-cost/SKILL.md) skill.
 
 ## Observed API responses
 
