@@ -2783,6 +2783,66 @@ def test_default_npa_setup_source_overlay_guard_is_nounset_safe(
     assert result.returncode == expected_exit
 
 
+@pytest.mark.parametrize(
+    ("tool_ref", "provided", "expected_exit", "expected_message"),
+    (
+        (
+            "workbench.token_factory.caption",
+            {},
+            1,
+            "NEBIUS_TOKEN_FACTORY_KEY is required",
+        ),
+        ("workbench.token_factory.caption", {"NEBIUS_TOKEN_FACTORY_KEY": "fixture"}, 0, ""),
+        (
+            "workbench.encord.annotate",
+            {},
+            1,
+            "ENCORD_SSH_KEY or ENCORD_SSH_KEY_B64 is required",
+        ),
+        ("workbench.encord.annotate", {"ENCORD_SSH_KEY": "fixture"}, 0, ""),
+        ("workbench.encord.annotate", {"ENCORD_SSH_KEY_B64": "fixture"}, 0, ""),
+    ),
+)
+def test_rendered_secret_guards_are_nounset_safe(
+    tool_ref: str,
+    provided: dict[str, str],
+    expected_exit: int,
+    expected_message: str,
+) -> None:
+    """Run the generated missing-secret guard with production nounset semantics."""
+    from npa.orchestration.npa_workflow.skypilot_render import render_setup_for_tool
+
+    setup = render_setup_for_tool(
+        tool_ref,
+        config={},
+        options=SkypilotRenderOptions(),
+    )
+    guard_start = next(
+        index
+        for index, line in enumerate(setup.splitlines())
+        if line.startswith('if [[ -z "${')
+        and ("TOKEN_FACTORY" in line or "ENCORD_SSH_KEY" in line)
+    )
+    guard = "\n".join(setup.splitlines()[guard_start : guard_start + 4])
+    environment = os.environ.copy()
+    for name in ("NEBIUS_TOKEN_FACTORY_KEY", "ENCORD_SSH_KEY", "ENCORD_SSH_KEY_B64"):
+        environment.pop(name, None)
+    environment.update(provided)
+    result = subprocess.run(
+        ["bash", "-c", f"set -euo pipefail\n{guard}\nprintf 'guard-complete\\n'"],
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == expected_exit
+    assert "unbound variable" not in result.stderr
+    if expected_message:
+        assert expected_message in result.stderr
+    else:
+        assert result.stdout == "guard-complete\n"
+
+
 def test_default_npa_setup_installs_the_image_local_runtime_source_first() -> None:
     """Runtime-fetch images may carry /opt/npa without a PATH-visible CLI."""
 

@@ -2021,9 +2021,9 @@ def render_setup_for_tool(
     if tool_ref.startswith("workbench.token_factory") or (
         tool_ref in API_ONLY_VLM_AUDIT_TOOLS
     ):
-        # Avoid ${VAR:-} bash forms so SkyPilot placeholder lint stays clean.
+        # Preserve the friendly missing-secret error when setup runs under nounset.
         parts.append(
-            'if [[ -z "$NEBIUS_TOKEN_FACTORY_KEY" ]]; then\n'
+            'if [[ -z "${NEBIUS_TOKEN_FACTORY_KEY:-}" ]]; then\n'
             "  echo 'NEBIUS_TOKEN_FACTORY_KEY is required. Pass it with --secret-env "
             "NEBIUS_TOKEN_FACTORY_KEY' >&2\n"
             "  exit 1\n"
@@ -2031,7 +2031,7 @@ def render_setup_for_tool(
         )
     if tool_ref.startswith("workbench.encord"):
         parts.append(
-            'if [[ -z "$ENCORD_SSH_KEY" && -z "$ENCORD_SSH_KEY_B64" ]]; then\n'
+            'if [[ -z "${ENCORD_SSH_KEY:-}" && -z "${ENCORD_SSH_KEY_B64:-}" ]]; then\n'
             "  echo 'ENCORD_SSH_KEY or ENCORD_SSH_KEY_B64 is required for Encord stages' >&2\n"
             "  exit 1\n"
             "fi\n"
