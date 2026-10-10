@@ -387,6 +387,9 @@ def test_post_push_payload_scan_binds_remote_digest_to_local_full_tar() -> None:
         "Push only after every pre-publication gate passes"
     )
     assert text.index("Verify pushed bytes") < seedvr2_scans[1]
+    for position in seedvr2_scans:
+        invocation = text[position : text.index("\n          fi", position)]
+        assert '--clean-root-source-sha "$DEVELOPMENT_SHA"' in invocation
 
 
 def test_build_and_cleanup_dispatches_cannot_fall_through_to_promotion() -> None:

@@ -296,6 +296,63 @@ def test_upstream_failure_surfaces_a_bounded_redacted_log_tail(
     assert log_path.stat().st_size > runtime.UPSTREAM_FAILURE_TAIL_BYTES
 
 
+@pytest.mark.parametrize(
+    "field,value", [("driver_version", "581.1"), ("memory_mib", "81000")]
+)
+def test_verify_records_valid_cross_node_inventory_drift(
+    tmp_path, source_video, monkeypatch, field, value
+):
+    result, storage = _restore(tmp_path, source_video, monkeypatch)
+    verifier_gpu = {**result["runtime"]["gpu"], field: value}
+    monkeypatch.setattr(runtime, "SOURCE_REVISION_PATH", artifacts.SOURCE_REVISION_PATH)
+    monkeypatch.setattr(runtime, "_gpu_inventory", lambda: verifier_gpu)
+    monkeypatch.setattr(artifacts, "_runtime_identity", runtime._runtime_identity)
+    verification = artifacts.verify(
+        VideoArtifactRequest(
+            input_path=result["artifacts"]["result"],
+            output_path="s3://example-bucket/run/verification.json",
+            run_id=result["run_id"],
+        ),
+        storage_factory=lambda: storage,
+    )
+    assert verification["verifier_runtime"]["gpu"] == verifier_gpu
+    assert result["runtime"]["gpu"][field] != value
+    published = json.loads(storage.objects["s3://example-bucket/run/verification.json"])
+    assert published == verification
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("name", "NVIDIA H200"),
+        ("compute_capability", "10.0"),
+        ("memory_mib", "10000"),
+        ("mig_mode", "Enabled"),
+        ("count", "2"),
+    ],
+)
+def test_verify_still_rejects_incompatible_verifier_gpu(
+    tmp_path, source_video, monkeypatch, field, value
+):
+    result, storage = _restore(tmp_path, source_video, monkeypatch)
+    monkeypatch.setattr(runtime, "SOURCE_REVISION_PATH", artifacts.SOURCE_REVISION_PATH)
+    monkeypatch.setattr(
+        runtime, "_gpu_inventory", lambda: {**result["runtime"]["gpu"], field: value}
+    )
+    monkeypatch.setattr(artifacts, "_runtime_identity", runtime._runtime_identity)
+    output = "s3://example-bucket/run/verification.json"
+    with pytest.raises(runtime.SeedVR2Error, match="verified H100"):
+        artifacts.verify(
+            VideoArtifactRequest(
+                input_path=result["artifacts"]["result"],
+                output_path=output,
+                run_id=result["run_id"],
+            ),
+            storage_factory=lambda: storage,
+        )
+    assert output not in storage.objects
+
+
 def test_upstream_failure_tail_discards_a_partial_boundary_line(
     tmp_path: Path,
 ) -> None:

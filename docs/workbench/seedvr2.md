@@ -179,6 +179,11 @@ network namespace, so keep the service internal and use pod-level identity and
 egress policy. Verification and review re-read the probe and bind the same
 workflow run, image digest,
 baked source revision, model files, command, media hashes, and artifact URIs.
+Restore and verify may run on different nodes: both must independently satisfy
+the declared full-memory, non-MIG GPU contract and agree on GPU model,
+compute capability and count. Driver version and reported memory totals may
+differ above that contract's memory floor; the complete verifier inventory is
+retained in `verification.json` rather than requiring node-identical readings.
 The verification document proves artifact/runtime consistency, not who
 produced the restore bytes; workload acceptance additionally requires the
 independently retained platform workflow receipt for the actual producer pod.

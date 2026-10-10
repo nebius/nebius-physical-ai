@@ -50,6 +50,28 @@ distribution/controller and native/live compatibility validation. Mock bridge
 tests cannot establish that qualification, and do not qualify RoboTwin's image,
 runtime delivery, rendered capability or RTX workload.
 
+## Authoritative GPU product aliases
+
+Existing-capacity workflow preflight now uses `nvidia.com/gpu.product` as the
+authority for explicit accelerator aliases when that label is present. This is
+a breaking change for all affected submissions, not only SeedVR2: a provider
+nickname such as `nebius.com/gpu-name: H100` cannot override a different GFD
+product. Missing authoritative labels retain the existing product-list match.
+
+Matching ignores punctuation and case. The accepted normalized H100 spellings
+are `h100`, `h10080gb`, and `nvidiah10080gbhbm3` (for example,
+`NVIDIA-H100-80GB-HBM3`). B200 accepts `b200`, `nvidiab200`, and
+`nvidiab200180gb` (for example, `NVIDIA-B200-180GB`). `NVIDIA-H100-PCIe`,
+`NVIDIA-H100-NVL`, and `NVIDIA-HGX-B200` are not implicitly equivalent.
+
+For a preflight refusal, inspect the product labels reported by the scoped
+GPU inventory and the diagnostic's requested accelerator; do not relabel a
+different GPU to bypass the check. To qualify an additional spelling, establish
+its actual SKU, memory and workload compatibility, then add the reviewed alias
+to `_EXPLICIT_ACCELERATOR_ALIASES` in `k8s_gpu_catalog.py` with positive and
+conflicting-label tests. Image/kernel and tool-specific hardware qualification
+remain separate from recognizing a scheduler label.
+
 ## Install SkyPilot
 
 Create or reuse the dedicated virtualenv with the validated SkyPilot pin:

@@ -430,7 +430,7 @@ def verify(
         suffix=".mp4",
     )
     _validate_result_context(result, request, storage, directory)
-    if verifier_runtime != result.get("runtime"):
+    if _execution_identity(verifier_runtime) != _execution_identity(result["runtime"]):
         raise SeedVR2Error(
             "verification GPU/image identity differs from the restore result"
         )
@@ -446,6 +446,24 @@ def verify(
     _publish_verified(storage, target, request.output_path, readback)
     shutil.rmtree(directory)
     return document
+
+
+def _execution_identity(runtime):
+    identity = {
+        key: runtime.get(key)
+        for key in (
+            "image",
+            "image_digest",
+            "npa_source_revision",
+            "sequence_parallel_size",
+            "color_fix",
+        )
+    }
+    identity["gpu"] = {
+        key: runtime["gpu"].get(key)
+        for key in ("status", "name", "compute_capability", "mig_mode", "count")
+    }
+    return identity
 
 
 def _read_verified_video(result, video_uri, storage, directory):

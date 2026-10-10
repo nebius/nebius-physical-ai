@@ -773,6 +773,7 @@ jobs:
           if [ "$TOOL" = seedvr2 ]; then
             npa/.venv/bin/python npa/scripts/scan_image_seedvr2_payload.py \
               --tarball "$RUNNER_TEMP/${TOOL}.tar" \
+              --clean-root-source-sha "$DEVELOPMENT_SHA" \
               --expected-image-id "$(docker image inspect --format '{{.Id}}' "$IMAGE")" \
               > "$RUNNER_TEMP/${TOOL}-seedvr2-payload.json"
           fi
@@ -1247,6 +1248,7 @@ jobs:
           if [ "$TOOL" = seedvr2 ]; then
             npa/.venv/bin/python npa/scripts/scan_image_seedvr2_payload.py \
               --tarball "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+              --clean-root-source-sha "$DEVELOPMENT_SHA" \
               --expected-image-id "$(docker image inspect --format '{{.Id}}' "$exact")" \
               > "$RUNNER_TEMP/${TOOL}-pushed-seedvr2-payload.json"
           fi
