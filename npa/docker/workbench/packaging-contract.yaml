@@ -595,8 +595,12 @@ images:
       evidence in docs/workbench/validation/mjlab-trained-g1-20260925.json.
       Debian ancestor/runtime source and the locked PyAV native source closure
       accompany the image and are verified before and after publication.
-      Public promotion still requires built-layer license/security and bootstrap
-      gates; see mjlab/REDISTRIBUTION.md and docs/workbench/mjlab.md.
+      The 2026-10-10 public development digest passed the trusted built-layer
+      license/security, source, payload, bootstrap, SBOM and provenance gates,
+      plus native Cartpole/G1/Go1/YAM cycles on one RTX PRO 6000. The dated
+      record is docs/workbench/validation/mjlab-public-gpu-20261010.json.
+      Supported release promotion remains quarantined; current-digest B200 and
+      multi-GPU coverage are unverified. See docs/workbench/mjlab.md.
   curobo:
     dockerfile: curobo/Dockerfile
     tier: service
