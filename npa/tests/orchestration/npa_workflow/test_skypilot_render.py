@@ -2792,7 +2792,12 @@ def test_default_npa_setup_source_overlay_guard_is_nounset_safe(
             1,
             "NEBIUS_TOKEN_FACTORY_KEY is required",
         ),
-        ("workbench.token_factory.caption", {"NEBIUS_TOKEN_FACTORY_KEY": "fixture"}, 0, ""),
+        (
+            "workbench.token_factory.caption",
+            {"NEBIUS_TOKEN_FACTORY_KEY": "fixture"},
+            0,
+            "",
+        ),
         (
             "workbench.encord.annotate",
             {},
