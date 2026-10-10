@@ -79,6 +79,7 @@ RUN apt-get update \
         git \
         git-lfs \
         libglu1-mesa \
+        libxt6 \
         linux-libc-dev \
         openssh-server \
         rsync \
