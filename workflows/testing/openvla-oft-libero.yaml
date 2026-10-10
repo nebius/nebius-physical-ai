@@ -76,12 +76,13 @@ resources:
               securityContext:
                 runAsNonRoot: true
                 privileged: false
-                # The retained SkyPilot bootstrap changes uid/gid, persists its
-                # environment under /etc/profile.d, and emits a Linux audit
-                # record through sudo. Keep that exact least-privilege set.
+                # SkyPilot's retained bootstrap must remove its user-owned
+                # environment file from $HOME while persisting it under
+                # /etc/profile.d. DAC_OVERRIDE is the narrow capability for
+                # that cross-owner rename; keep the rest of the bounding set.
                 capabilities:
                   drop: [ALL]
-                  add: [AUDIT_WRITE, SETGID, SETUID]
+                  add: [DAC_OVERRIDE, SETGID, SETUID]
   train:
     cloud: kubernetes
     # The configured NPA route resolves this standard alias to its exact RTX PRO
@@ -121,12 +122,13 @@ resources:
               securityContext:
                 runAsNonRoot: true
                 privileged: false
-                # The retained SkyPilot bootstrap changes uid/gid, persists its
-                # environment under /etc/profile.d, and emits a Linux audit
-                # record through sudo. Keep that exact least-privilege set.
+                # SkyPilot's retained bootstrap must remove its user-owned
+                # environment file from $HOME while persisting it under
+                # /etc/profile.d. DAC_OVERRIDE is the narrow capability for
+                # that cross-owner rename; keep the rest of the bounding set.
                 capabilities:
                   drop: [ALL]
-                  add: [AUDIT_WRITE, SETGID, SETUID]
+                  add: [DAC_OVERRIDE, SETGID, SETUID]
   rollout:
     cloud: kubernetes
     accelerators: RTXPRO6000:1
@@ -163,12 +165,13 @@ resources:
               securityContext:
                 runAsNonRoot: true
                 privileged: false
-                # The retained SkyPilot bootstrap changes uid/gid, persists its
-                # environment under /etc/profile.d, and emits a Linux audit
-                # record through sudo. Keep that exact least-privilege set.
+                # SkyPilot's retained bootstrap must remove its user-owned
+                # environment file from $HOME while persisting it under
+                # /etc/profile.d. DAC_OVERRIDE is the narrow capability for
+                # that cross-owner rename; keep the rest of the bounding set.
                 capabilities:
                   drop: [ALL]
-                  add: [AUDIT_WRITE, SETGID, SETUID]
+                  add: [DAC_OVERRIDE, SETGID, SETUID]
   evidence:
     cloud: kubernetes
     cpus: 4
@@ -204,12 +207,13 @@ resources:
               securityContext:
                 runAsNonRoot: true
                 privileged: false
-                # The retained SkyPilot bootstrap changes uid/gid, persists its
-                # environment under /etc/profile.d, and emits a Linux audit
-                # record through sudo. Keep that exact least-privilege set.
+                # SkyPilot's retained bootstrap must remove its user-owned
+                # environment file from $HOME while persisting it under
+                # /etc/profile.d. DAC_OVERRIDE is the narrow capability for
+                # that cross-owner rename; keep the rest of the bounding set.
                 capabilities:
                   drop: [ALL]
-                  add: [AUDIT_WRITE, SETGID, SETUID]
+                  add: [DAC_OVERRIDE, SETGID, SETUID]
 
 initial: prepare
 

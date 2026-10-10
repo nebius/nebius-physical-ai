@@ -339,14 +339,16 @@ def test_workflow_resources_declare_the_skypilot_task_container() -> None:
         container = pod_spec["containers"][0]
         assert container["name"] == "ray-node", resource_name
         assert container["env"] == expected_storage_env, resource_name
-        # This is the exact retained SkyPilot sudo bootstrap capability set.
+        # The retained worker diagnostic proves this bounded set can rename
+        # the user-owned bootstrap file into /etc/profile.d without restoring
+        # unrelated audit or ownership capabilities.
         assert "allowPrivilegeEscalation" not in container["securityContext"]
         assert container["securityContext"] == {
             "runAsNonRoot": True,
             "privileged": False,
             "capabilities": {
                 "drop": ["ALL"],
-                "add": ["AUDIT_WRITE", "SETGID", "SETUID"],
+                "add": ["DAC_OVERRIDE", "SETGID", "SETUID"],
             },
         }, resource_name
 
