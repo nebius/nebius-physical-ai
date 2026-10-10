@@ -369,6 +369,26 @@ The CPU pool also needs eight available non-GPU vCPUs under
 preview checks the missing CPU-node demand before any cluster resources are
 created; preemptible GPU placement does not remove the CPU quota requirement.
 
+You can explicitly choose a GPU-only cluster when the GPU host has enough
+allocatable CPU and memory for the controller, system services, and the largest
+workflow stage. CPU stages then use that host too. For this sequential recipe,
+the RTX PRO 6000 shape above can be selected without a separate CPU pool:
+
+```bash
+CLUSTER_OPTIONS=(
+  --cpu-nodes 0
+  --gpu-nodes 1 --gpu-platform gpu-rtx6000 --gpu-preset 1gpu-24vcpu-218gb
+  --gpu-driver-mode auto --managed-driver-preset cuda13.0
+  --on-demand
+)
+npa provision-if-absent --project "$PROJECT_ALIAS" --cluster-name "$CLUSTER_NAME" \
+  "${CLUSTER_OPTIONS[@]}" --dry-run --output-format json
+```
+
+Require the same quota and node-health gates. This topology needs 1,023 GiB of
+network SSD capacity with the default GPU boot disk. Keep the selected options
+for apply and verify; do not switch topology inside an interrupted operation.
+
 The default boot disks require 1,151 GiB of network SSD capacity: 128 GiB for the
 CPU node and 1,023 GiB for the GPU node. Disk-count quota is separate. If the
 preview blocks on disk capacity, obtain enough quota or size the disks for your
