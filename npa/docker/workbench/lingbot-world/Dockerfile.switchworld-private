@@ -5,15 +5,25 @@
 # Rebuild the system layer from the exact Debian snapshot audited by the Wan
 # payload scanner. The first stage is used only as a pinned OSS Wan source and
 # CPU-Python closure; none of its operating-system layers enter the final image.
-ARG PYTHON_BASE=python:3.10-slim-bookworm@sha256:019e31cc1f52e4139d338bca44f27b71339a9da261738fd80fab9cf4595152fc
+# The official Python 3.10 image currently has a maintained Trixie variant,
+# while the final Debian testing runtime supplies the maintained package
+# closure for ffmpeg, GLib, OpenSSH, and libxml2.  Copy only CPython's
+# /usr/local tree into the final root; the Python source-stage OS layers do not
+# become image ancestors.
+ARG PYTHON_RUNTIME_SOURCE=python:3.10-slim-trixie@sha256:7b6bd969dda3ecfca0655524e338b57a8b8cd692a9362e3d55b5a3ef49b07256
+ARG DEBIAN_RUNTIME_BASE=debian:testing-slim@sha256:62215f1aa9472caf9c9ed80f3d11485866eb7f7af47702f93f6e340ac2a4736b
 ARG WAN_SOURCE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@sha256:5780959ca6c6e7eb77ee7ea7d005fcf0f56db50783ce798dddee2809185eb837
 
 FROM ${WAN_SOURCE_IMAGE} AS wan-source
 
-FROM ${PYTHON_BASE}
+FROM ${PYTHON_RUNTIME_SOURCE} AS python-runtime
 
-ARG DEBIAN_SNAPSHOT=20260906T183022Z
+FROM ${DEBIAN_RUNTIME_BASE}
+
+ARG DEBIAN_SNAPSHOT=20261009T000000Z
 ARG NPA_SOURCE_SHA=unknown
+
+COPY --from=python-runtime /usr/local /usr/local
 
 LABEL npa.tool="lingbot-world-switchworld-private" \
       npa.version="a43bec7f8091c83e9b30b16b912f6fc906236fa6-switchworld-private" \
@@ -31,6 +41,7 @@ LABEL npa.tool="lingbot-world-switchworld-private" \
       org.opencontainers.image.licenses="Apache-2.0"
 
 ENV DEBIAN_FRONTEND=noninteractive \
+    PATH=/usr/local/bin:${PATH} \
     NPA_WAN_BASE_PYTHON=/opt/wan-base/bin/python \
     NPA_WAN_RUNTIME_REQUIREMENTS=/opt/npa/wan2-2/runtime-requirements.txt \
     NPA_WAN_RUNTIME_CACHE=/workspace/.cache/npa/wan2-2/runtime \
@@ -46,7 +57,8 @@ USER root
 
 # The fixed snapshot supplies the exact libssh2 bytes independently audited in
 # ncore/native-bootstrap-lock.json. No package acquisition occurs at pod time.
-RUN sed -ri \
+RUN python3 -c 'import sys; raise SystemExit(sys.version_info[:2] != (3, 10))' \
+    && sed -ri \
       -e "s|https?://deb.debian.org/debian-security|https://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}|g" \
       -e "s|https?://deb.debian.org/debian|https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}|g" \
       /etc/apt/sources.list.d/debian.sources \

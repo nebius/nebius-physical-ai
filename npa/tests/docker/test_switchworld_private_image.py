@@ -30,8 +30,21 @@ def test_private_recipe_uses_audited_snapshot_and_no_easydict_wheel() -> None:
 
     text = DOCKERFILE.read_text(encoding="utf-8")
 
-    assert "ARG DEBIAN_SNAPSHOT=20260906T183022Z" in text
+    assert (
+        "ARG PYTHON_RUNTIME_SOURCE=python:3.10-slim-trixie@"
+        "sha256:7b6bd969dda3ecfca0655524e338b57a8b8cd692a9362e3d55b5a3ef49b07256"
+    ) in text
+    assert (
+        "ARG DEBIAN_RUNTIME_BASE=debian:testing-slim@"
+        "sha256:62215f1aa9472caf9c9ed80f3d11485866eb7f7af47702f93f6e340ac2a4736b"
+    ) in text
+    assert "FROM ${PYTHON_RUNTIME_SOURCE} AS python-runtime" in text
+    assert "FROM ${DEBIAN_RUNTIME_BASE}" in text
+    assert "COPY --from=python-runtime /usr/local /usr/local" in text
+    assert "PATH=/usr/local/bin:${PATH}" in text
+    assert "ARG DEBIAN_SNAPSHOT=20261009T000000Z" in text
     assert "snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}" in text
+    assert "sys.version_info[:2] != (3, 10)" in text
     assert "COPY --from=wan-source /opt/byof /opt/byof" in text
     assert "COPY --from=wan-source /opt/wan-base /opt/wan-base" in text
     assert "wan/utils/easydict.py" in text
