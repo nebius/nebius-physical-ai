@@ -383,6 +383,16 @@ output or raise CLI exits and do not guarantee typed response objects.
 The [walkthrough](../docs/workbench/cli-sdk-yaml-walkthrough.md) explains these
 differences with a detection-training service example.
 
+For public-data GPU training and deployment, use the single
+[`robot-policy-train-and-serve.yaml`](../workflows/testing/robot-policy-train-and-serve.yaml).
+The [operator cookbook](../docs/workbench/cookbooks/robot-policy-train-and-serve.md)
+covers prerequisites and standard `npa workbench workflow` validation, submission,
+monitoring, resume and cancellation. Catalog stages run pinned public LeRobot data
+through FiftyOne curation, native SmolVLA continued training, both measured
+promotion gates, export, independent GPU HTTP serving and native simulation.
+The same run produces standalone HTML/MP4 proof. This qualified recipe uses
+managed Kubernetes plus torchrun and needs no private trainer scripts.
+
 For artifact conversion and sharing, see the
 [CLI / SDK walkthrough](../docs/workbench/cli-sdk-yaml-walkthrough.md),
 [Foxglove export](../docs/workbench/foxglove-export.md), and

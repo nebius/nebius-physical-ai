@@ -1,0 +1,310 @@
+{
+  "apiVersion": "npa.workflow/v0.0.1",
+  "kind": "Workflow",
+  "metadata": {
+    "name": "policy-training-slurm",
+    "executionMode": "runtime",
+    "description": "Curate LeRobot v3 episode references with FiftyOne, split source-lineage groups into train and two holdouts, then run operator-provided Slurm training, evaluation and policy-test scripts. Each training phase repeats until its measured task-success gate passes. Requires private scripts and runtime settings.\n"
+  },
+  "config": {
+    "bucket": "example-bucket",
+    "prefix": "policy-training/{{run.id}}",
+    "split_seed": "policy-split-v1",
+    "slurm_service_account": "policy-batch-client",
+    "batch_stage": "pretrain",
+    "batch_partition": "train",
+    "batch_input_uri": "",
+    "batch_iteration": "1",
+    "gate_phase": "pretrain",
+    "episodes_uri": "s3://{{config.bucket}}/{{config.prefix}}/input/episodes.json",
+    "curation_policy_uri": "s3://{{config.bucket}}/{{config.prefix}}/input/curation-policy.json",
+    "gate_policy_uri": "s3://{{config.bucket}}/{{config.prefix}}/input/gate-policy.json",
+    "batch_settings_uri": "s3://{{config.bucket}}/{{config.prefix}}/input/batch-settings.json",
+    "curated_uri": "s3://{{config.bucket}}/{{config.prefix}}/curation/episodes.json",
+    "split_uri": "s3://{{config.bucket}}/{{config.prefix}}/splits/index.json",
+    "pretrained_uri": "s3://{{config.bucket}}/{{config.prefix}}/pretrain/candidate.json",
+    "finetuned_uri": "s3://{{config.bucket}}/{{config.prefix}}/finetune/candidate.json",
+    "evaluation_uri": "s3://{{config.bucket}}/{{config.prefix}}/pretrain/evaluation.json",
+    "candidate_uri": "{{config.pretrained_uri}}",
+    "batch_output_uri": "{{config.pretrained_uri}}",
+    "decision_uri": "s3://{{config.bucket}}/{{config.prefix}}/pretrain/decision.json",
+    "final_decision_uri": "s3://{{config.bucket}}/{{config.prefix}}/finetune/decision.json",
+    "final_evaluation_uri": "s3://{{config.bucket}}/{{config.prefix}}/finetune/evaluation.json",
+    "deployment_uri": "s3://{{config.bucket}}/{{config.prefix}}/deployment/result.json"
+  },
+  "resources": {
+    "cpu": {
+      "cloud": "kubernetes",
+      "cpus": 4,
+      "memory": "16Gi"
+    },
+    "slurm-client": {
+      "cloud": "kubernetes",
+      "cpus": 2,
+      "memory": "8Gi",
+      "kubernetes": {
+        "pod_config": {
+          "spec": {
+            "serviceAccountName": "{{config.slurm_service_account}}"
+          }
+        }
+      }
+    }
+  },
+  "initial": "curate",
+  "states": {
+    "curate": {
+      "description": "Wait for the episode manifest and compare FiftyOne quality selection with supplied review labels.",
+      "toolRef": "workflow.policy_training.curate",
+      "resources": "cpu",
+      "trigger": {
+        "uri": "{{config.episodes_uri}}",
+        "pollSeconds": 15,
+        "maxPolls": 0,
+        "minObjects": 1
+      },
+      "inputs": [
+        {
+          "uri": "{{config.episodes_uri}}",
+          "schema": "npa.policy.episodes.v1"
+        },
+        {
+          "uri": "{{config.curation_policy_uri}}",
+          "schema": "npa.policy.curation-policy.v1"
+        }
+      ],
+      "outputs": [
+        {
+          "uri": "{{config.curated_uri}}",
+          "schema": "npa.policy.episodes.v1"
+        }
+      ],
+      "next": "split"
+    },
+    "split": {
+      "description": "Partition source groups approximately 90/5/5 without sharing episodes between partitions.",
+      "toolRef": "workflow.policy_training.split",
+      "resources": "cpu",
+      "inputs": [
+        {
+          "uri": "{{config.curated_uri}}",
+          "schema": "npa.policy.episodes.v1"
+        }
+      ],
+      "outputs": [
+        {
+          "uri": "{{config.split_uri}}",
+          "schema": "npa.policy.split.v1"
+        },
+        {
+          "uri": "s3://{{config.bucket}}/{{config.prefix}}/splits/train.json",
+          "schema": "npa.policy.episodes.v1"
+        },
+        {
+          "uri": "s3://{{config.bucket}}/{{config.prefix}}/splits/holdout_1.json",
+          "schema": "npa.policy.episodes.v1"
+        },
+        {
+          "uri": "s3://{{config.bucket}}/{{config.prefix}}/splits/holdout_2.json",
+          "schema": "npa.policy.episodes.v1"
+        }
+      ],
+      "next": "pretrain-loop"
+    },
+    "pretrain-loop": {
+      "description": "Retry pretraining and first-holdout evaluation until all required systems pass.",
+      "loop": {
+        "until": "promote_checkpoint"
+      },
+      "sequence": [
+        "pretrain",
+        "evaluate-pretrain",
+        "gate-pretrain"
+      ],
+      "next": "finetune-loop"
+    },
+    "pretrain": {
+      "description": "Submit the pretraining batch script; resume the previous candidate on retry.",
+      "toolRef": "workflow.policy_training.batch",
+      "resources": "slurm-client",
+      "params": {
+        "batch_iteration": "{{loop.pretrain-loop}}",
+        "batch_output_uri": "s3://{{config.bucket}}/{{config.prefix}}/pretrain/{{loop.pretrain-loop}}/candidate.json"
+      },
+      "inputs": [
+        {
+          "uri": "{{config.split_uri}}",
+          "schema": "npa.policy.split.v1"
+        },
+        {
+          "uri": "{{config.batch_settings_uri}}",
+          "schema": "npa.policy.batch-settings.v1"
+        }
+      ],
+      "outputs": [
+        {
+          "uri": "{{config.batch_output_uri}}",
+          "schema": "npa.policy.batch-result.v1"
+        }
+      ]
+    },
+    "evaluate-pretrain": {
+      "description": "Evaluate the pretrained checkpoint on holdout one with the configured evaluation systems.",
+      "toolRef": "workflow.policy_training.batch",
+      "resources": "slurm-client",
+      "params": {
+        "batch_stage": "evaluate-pretrain",
+        "batch_partition": "holdout_1",
+        "batch_input_uri": "s3://{{config.bucket}}/{{config.prefix}}/pretrain/{{loop.pretrain-loop}}/candidate.json",
+        "batch_output_uri": "s3://{{config.bucket}}/{{config.prefix}}/pretrain/{{loop.pretrain-loop}}/evaluation.json",
+        "batch_iteration": "{{loop.pretrain-loop}}"
+      },
+      "inputs": [
+        {
+          "uri": "s3://{{config.bucket}}/{{config.prefix}}/pretrain/{{loop.pretrain-loop}}/candidate.json",
+          "schema": "npa.policy.batch-result.v1"
+        }
+      ],
+      "outputs": [
+        {
+          "uri": "{{config.batch_output_uri}}",
+          "schema": "npa.policy.batch-result.v1"
+        }
+      ]
+    },
+    "gate-pretrain": {
+      "description": "Compare each required system's task-success counts against its explicit threshold.",
+      "toolRef": "workflow.policy_training.gate",
+      "resources": "cpu",
+      "writesDecision": true,
+      "params": {
+        "candidate_uri": "s3://{{config.bucket}}/{{config.prefix}}/pretrain/{{loop.pretrain-loop}}/candidate.json",
+        "evaluation_uri": "s3://{{config.bucket}}/{{config.prefix}}/pretrain/{{loop.pretrain-loop}}/evaluation.json",
+        "decision_uri": "s3://{{config.bucket}}/{{config.prefix}}/pretrain/{{loop.pretrain-loop}}/decision.json"
+      },
+      "inputs": [
+        {
+          "uri": "s3://{{config.bucket}}/{{config.prefix}}/pretrain/{{loop.pretrain-loop}}/evaluation.json",
+          "schema": "npa.policy.batch-result.v1"
+        },
+        {
+          "uri": "{{config.gate_policy_uri}}",
+          "schema": "npa.policy.gate-policy.v1"
+        }
+      ],
+      "outputs": [
+        {
+          "uri": "{{config.decision_uri}}",
+          "schema": "npa.policy.decision.v1"
+        }
+      ]
+    },
+    "finetune-loop": {
+      "description": "Refine the approved checkpoint until the second-holdout task-success gate passes.",
+      "loop": {
+        "until": "promote_checkpoint"
+      },
+      "sequence": [
+        "finetune",
+        "evaluate-finetune",
+        "gate-finetune"
+      ],
+      "next": "test-policy"
+    },
+    "finetune": {
+      "description": "Submit fine-tuning from the approved pretraining checkpoint or the previous refinement candidate.",
+      "toolRef": "workflow.policy_training.batch",
+      "resources": "slurm-client",
+      "params": {
+        "batch_stage": "finetune",
+        "batch_input_uri": "s3://{{config.bucket}}/{{config.prefix}}/pretrain/{{loop.pretrain-loop}}/decision.json",
+        "batch_output_uri": "s3://{{config.bucket}}/{{config.prefix}}/finetune/{{loop.finetune-loop}}/candidate.json",
+        "batch_iteration": "{{loop.finetune-loop}}"
+      },
+      "inputs": [
+        {
+          "uri": "s3://{{config.bucket}}/{{config.prefix}}/pretrain/{{loop.pretrain-loop}}/decision.json",
+          "schema": "npa.policy.decision.v1"
+        }
+      ],
+      "outputs": [
+        {
+          "uri": "{{config.batch_output_uri}}",
+          "schema": "npa.policy.batch-result.v1"
+        }
+      ]
+    },
+    "evaluate-finetune": {
+      "description": "Evaluate the refined checkpoint on holdout two through the configured simulation evaluator.",
+      "toolRef": "workflow.policy_training.batch",
+      "resources": "slurm-client",
+      "params": {
+        "batch_stage": "evaluate-finetune",
+        "batch_partition": "holdout_2",
+        "batch_input_uri": "s3://{{config.bucket}}/{{config.prefix}}/finetune/{{loop.finetune-loop}}/candidate.json",
+        "batch_output_uri": "s3://{{config.bucket}}/{{config.prefix}}/finetune/{{loop.finetune-loop}}/evaluation.json",
+        "batch_iteration": "{{loop.finetune-loop}}"
+      },
+      "inputs": [
+        {
+          "uri": "s3://{{config.bucket}}/{{config.prefix}}/finetune/{{loop.finetune-loop}}/candidate.json",
+          "schema": "npa.policy.batch-result.v1"
+        }
+      ],
+      "outputs": [
+        {
+          "uri": "{{config.batch_output_uri}}",
+          "schema": "npa.policy.batch-result.v1"
+        }
+      ]
+    },
+    "gate-finetune": {
+      "description": "Require the second-holdout threshold before allowing the deployment test.",
+      "toolRef": "workflow.policy_training.gate",
+      "resources": "cpu",
+      "writesDecision": true,
+      "params": {
+        "gate_phase": "finetune",
+        "candidate_uri": "s3://{{config.bucket}}/{{config.prefix}}/finetune/{{loop.finetune-loop}}/candidate.json",
+        "evaluation_uri": "s3://{{config.bucket}}/{{config.prefix}}/finetune/{{loop.finetune-loop}}/evaluation.json",
+        "decision_uri": "s3://{{config.bucket}}/{{config.prefix}}/finetune/{{loop.finetune-loop}}/decision.json"
+      },
+      "inputs": [
+        {
+          "uri": "s3://{{config.bucket}}/{{config.prefix}}/finetune/{{loop.finetune-loop}}/evaluation.json",
+          "schema": "npa.policy.batch-result.v1"
+        }
+      ],
+      "outputs": [
+        {
+          "uri": "{{config.decision_uri}}",
+          "schema": "npa.policy.decision.v1"
+        }
+      ]
+    },
+    "test-policy": {
+      "description": "Submit the approved policy to the operator's RTX-class robot-test batch script.",
+      "toolRef": "workflow.policy_training.batch",
+      "resources": "slurm-client",
+      "params": {
+        "batch_stage": "deploy",
+        "batch_partition": "holdout_2",
+        "batch_input_uri": "s3://{{config.bucket}}/{{config.prefix}}/finetune/{{loop.finetune-loop}}/decision.json",
+        "batch_output_uri": "{{config.deployment_uri}}"
+      },
+      "inputs": [
+        {
+          "uri": "s3://{{config.bucket}}/{{config.prefix}}/finetune/{{loop.finetune-loop}}/decision.json",
+          "schema": "npa.policy.decision.v1"
+        }
+      ],
+      "outputs": [
+        {
+          "uri": "{{config.deployment_uri}}",
+          "schema": "npa.policy.batch-result.v1"
+        }
+      ],
+      "terminal": true
+    }
+  }
+}
