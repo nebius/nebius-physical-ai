@@ -1732,6 +1732,54 @@ def _cleanup_kubernetes_pull_probe(
     return "unverified", interrupted
 
 
+def _native_service_account_matches(body: str, namespace: str) -> bool:
+    """Verify the native account's type and exact target without trusting stderr."""
+
+    try:
+        account = json.loads(body)
+        return (
+            account["apiVersion"] == "v1"
+            and account["kind"] == "ServiceAccount"
+            and account["metadata"]["name"] == SKYPILOT_DEFAULT_SERVICE_ACCOUNT_NAME
+            and account["metadata"]["namespace"] == namespace
+        )
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+def _prepare_native_service_account(
+    run: Callable[..., subprocess.CompletedProcess[str]], *, namespace: str
+) -> bool:
+    """Create only SkyPilot's missing native account; retain existing authority."""
+
+    name = SKYPILOT_DEFAULT_SERVICE_ACCOUNT_NAME
+    query = ["get", "serviceaccount", name, "-o", "json", "--ignore-not-found=true"]
+    try:
+        existing = run(query)
+        if existing.returncode != 0:
+            return False
+        if existing.stdout.strip():
+            return _native_service_account_matches(existing.stdout, namespace)
+        manifest = {
+            "apiVersion": "v1",
+            "kind": "ServiceAccount",
+            "metadata": {
+                "name": name,
+                "namespace": namespace,
+                "labels": {"parent": "skypilot"},
+            },
+        }
+        # Create never changes an existing account. A concurrent native launcher
+        # may win the race; only a subsequent exact-target read establishes it.
+        run(["create", "-f", "-", "-o", "json"], input_text=json.dumps(manifest))
+        observed = run(query)
+        return observed.returncode == 0 and _native_service_account_matches(
+            observed.stdout, namespace
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def _service_account_pull_secrets(
     run: Callable[..., subprocess.CompletedProcess[str]],
     *,
@@ -1957,6 +2005,16 @@ def verify_kubernetes_image_pull(
             env=({**os.environ, "KUBECONFIG": kubeconfig} if kubeconfig else None),
         )
 
+    # Native SkyPilot creates this account during launch, after NPA preflight.
+    # Prepare the same identity in a fresh namespace without granting RBAC or
+    # creating custom accounts. Keep it for the subsequent native launch.
+    if (
+        service_account_name == SKYPILOT_DEFAULT_SERVICE_ACCOUNT_NAME
+        and not _prepare_native_service_account(run, namespace=namespace)
+    ):
+        return KubernetesPullCheck(
+            status="service_account_unverified", cleanup_status="not_applicable"
+        )
     expected_pull_secrets = manifest["spec"]["imagePullSecrets"]
     if not expected_pull_secrets:
         expected_pull_secrets = _service_account_pull_secrets(

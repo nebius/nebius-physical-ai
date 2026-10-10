@@ -1741,6 +1741,197 @@ def test_exact_target_pull_probe_verifies_image_id_and_owned_cleanup() -> None:
     assert sum("delete" in cmd for cmd in calls) == 1
 
 
+@pytest.mark.parametrize("secret_names", [(), ("pull-secret",)])
+@pytest.mark.parametrize("concurrent_creator", [False, True])
+def test_fresh_namespace_prepares_native_account_before_exact_pull(
+    secret_names: tuple[str, ...], concurrent_creator: bool
+) -> None:
+    probe, calls = _target_probe_runner(secret_names=secret_names)
+    account_exists = False
+    account_creates = []
+
+    def fresh_namespace(command, **kwargs):  # noqa: ANN001
+        nonlocal account_exists
+        assert command[:5] == [
+            "kubectl",
+            "--context",
+            "target-context",
+            "--namespace",
+            "target-namespace",
+        ]
+        assert kwargs["env"]["KUBECONFIG"] == "/synthetic/owned-kubeconfig"
+        if "serviceaccount" in command and not account_exists:
+            assert "--ignore-not-found=true" in command
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if "create" in command:
+            manifest = json.loads(kwargs["input"])
+            if manifest["kind"] == "ServiceAccount":
+                account_creates.append(manifest)
+                account_exists = True
+                return subprocess.CompletedProcess(
+                    command,
+                    int(concurrent_creator),
+                    "",
+                    "AlreadyExists" if concurrent_creator else "",
+                )
+            assert account_exists, (
+                "A fresh namespace rejects Pods before its account exists"
+            )
+        return probe(command, **kwargs)
+
+    check = verify_kubernetes_image_pull(
+        image=IMAGE,
+        secret_names=secret_names,
+        namespace="target-namespace",
+        context="target-context",
+        timeout_seconds=30,
+        kubeconfig="/synthetic/owned-kubeconfig",
+        runner=fresh_namespace,
+        nonce_factory=lambda: "abc123",
+    )
+    assert check == KubernetesPullCheck(status="verified", digest=DIGEST)
+    assert account_creates == [
+        {
+            "apiVersion": "v1",
+            "kind": "ServiceAccount",
+            "metadata": {
+                "name": "skypilot-service-account",
+                "namespace": "target-namespace",
+                "labels": {"parent": "skypilot"},
+            },
+        }
+    ]
+    assert sum("delete" in command for command in calls) == 1
+    assert all(
+        "serviceaccount" not in command for command in calls if "delete" in command
+    )
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "forbidden",
+        "malformed",
+        "wrong-kind",
+        "wrong-namespace",
+        "create-denied",
+        "readback-missing",
+        "readback-wrong-name",
+        "create-timeout",
+    ],
+)
+def test_native_account_preparation_fails_closed_before_any_pod(failure: str) -> None:
+    calls = []
+    reads = 0
+
+    def unavailable(command, **kwargs):  # noqa: ANN001
+        nonlocal reads
+        calls.append(command)
+        if "create" in command:
+            assert json.loads(kwargs["input"])["kind"] == "ServiceAccount"
+            if failure == "create-timeout":
+                raise subprocess.TimeoutExpired(
+                    command, 30, stderr="synthetic-private-error"
+                )
+            return subprocess.CompletedProcess(
+                command, int(failure == "create-denied"), "", "synthetic-private-error"
+            )
+        assert "serviceaccount" in command
+        reads += 1
+        account = {
+            "apiVersion": "v1",
+            "kind": "ServiceAccount",
+            "metadata": {
+                "name": "skypilot-service-account",
+                "namespace": "target-namespace",
+            },
+        }
+        if failure == "forbidden":
+            return subprocess.CompletedProcess(
+                command, 1, "", "synthetic-private-error"
+            )
+        if failure == "malformed":
+            return subprocess.CompletedProcess(command, 0, "{", "")
+        if failure == "wrong-kind":
+            account["kind"] = "Secret"
+        elif failure == "wrong-namespace":
+            account["metadata"]["namespace"] = "different"
+        elif reads == 1 or failure in {"create-denied", "readback-missing"}:
+            return subprocess.CompletedProcess(command, 0, "", "")
+        else:
+            account["metadata"]["name"] = "different"
+        return subprocess.CompletedProcess(command, 0, json.dumps(account), "")
+
+    check = verify_kubernetes_image_pull(
+        image=IMAGE,
+        secret_names=("pull-secret",),
+        namespace="target-namespace",
+        context="target-context",
+        timeout_seconds=30,
+        runner=unavailable,
+        nonce_factory=lambda: "abc123",
+    )
+    assert check.status == "service_account_unverified"
+    assert check.cleanup_status == "not_applicable"
+    assert "synthetic-private-error" not in repr(check)
+    assert not any("delete" in command for command in calls)
+    if failure in {"forbidden", "malformed", "wrong-kind", "wrong-namespace"}:
+        assert not any("create" in command for command in calls)
+
+
+@pytest.mark.parametrize("name", ["custom-account", "default"])
+def test_missing_custom_account_is_never_created_or_replaced(name: str) -> None:
+    calls = []
+
+    def missing_account(command, **kwargs):  # noqa: ANN001
+        calls.append(command)
+        assert command[5:] == ["get", "serviceaccount", name, "-o", "json"]
+        return subprocess.CompletedProcess(command, 1, "", "NotFound")
+
+    check = verify_kubernetes_image_pull(
+        image=IMAGE,
+        secret_names=(),
+        namespace="target-namespace",
+        context="target-context",
+        service_account_name=name,
+        timeout_seconds=30,
+        runner=missing_account,
+        nonce_factory=lambda: "abc123",
+    )
+    assert check.status == "service_account_unverified"
+    assert len(calls) == 1
+
+
+def test_existing_native_account_and_pull_defaults_are_not_rewritten() -> None:
+    probe, calls = _target_probe_runner(
+        secret_names=(), default_pull_secrets=("existing-secret",)
+    )
+
+    def unchanged_account(command, **kwargs):  # noqa: ANN001
+        if "create" in command:
+            assert json.loads(kwargs["input"])["kind"] == "Pod"
+        assert not any(action in command for action in ("apply", "patch", "replace"))
+        result = probe(command, **kwargs)
+        if "serviceaccount" in command:
+            account = json.loads(result.stdout)
+            account["metadata"]["labels"] = {"existing-owner": "preserve"}
+            account["automountServiceAccountToken"] = False
+            result.stdout = json.dumps(account)
+        return result
+
+    check = verify_kubernetes_image_pull(
+        image=IMAGE,
+        secret_names=(),
+        namespace="target-namespace",
+        context="target-context",
+        timeout_seconds=30,
+        runner=unchanged_account,
+        nonce_factory=lambda: "abc123",
+    )
+    assert check.ok
+    assert sum("create" in command for command in calls) == 1
+
+
 def test_exact_target_pull_probe_reproduces_pod_placement() -> None:
     placement = {
         "nodeSelector": {
@@ -1785,7 +1976,11 @@ def test_admitted_probe_changes_reject_proof_but_preserve_owned_cleanup(
 
     def changed_admission(command, **kwargs):  # noqa: ANN001
         result = run(command, **kwargs)
-        if result.stdout.strip() and (change_on_create or "get" in command):
+        if (
+            result.stdout.strip()
+            and "serviceaccount" not in command
+            and (change_on_create or "get" in command)
+        ):
             payload = json.loads(result.stdout)
             if field == "imagePullPolicy":
                 payload["spec"]["containers"][0][field] = changed_value
@@ -1837,6 +2032,7 @@ def test_empty_pod_pull_secrets_bind_service_account_defaults(
         "skypilot-service-account",
         "-o",
         "json",
+        "--ignore-not-found=true",
     ]
 
 
@@ -1962,7 +2158,7 @@ def test_probe_allows_only_bounded_kubernetes_eviction_toleration_defaults(
 
     def admission_defaults(command, **kwargs):  # noqa: ANN001
         result = run(command, **kwargs)
-        if result.stdout.strip():
+        if result.stdout.strip() and "serviceaccount" not in command:
             pod = json.loads(result.stdout)
             pod["spec"]["tolerations"].extend(additional)
             result.stdout = json.dumps(pod)
@@ -2076,8 +2272,11 @@ def test_cleanup_allows_pod_termination_to_progress_between_observations(
 
 def test_target_pull_probe_bounds_create_exception_text() -> None:
     secret = "synthetic-target-probe-secret"
+    run, _calls = _target_probe_runner()
 
-    def unavailable(*args, **kwargs):  # noqa: ANN002,ANN003
+    def unavailable(command, **kwargs):  # noqa: ANN001
+        if "serviceaccount" in command:
+            return run(command, **kwargs)
         raise OSError(f"Bearer {secret}")
 
     check = verify_kubernetes_image_pull(
@@ -2183,7 +2382,7 @@ def test_cleanup_retries_owned_deletion_after_keyboard_interrupt(
 
     def interrupt_cleanup_once(cmd, **kwargs):  # noqa: ANN001
         nonlocal interrupted, operation_attempts
-        is_cleanup_read = "get" in cmd and "--ignore-not-found=true" in cmd
+        is_cleanup_read = "pod" in cmd and "--ignore-not-found=true" in cmd
         selected = (
             is_cleanup_read
             if interrupted_operation == "identity-read"
@@ -2218,7 +2417,7 @@ def test_cleanup_interrupt_reports_unverified_owned_probe() -> None:
 
     def interrupt_then_timeout_cleanup(cmd, **kwargs):  # noqa: ANN001
         nonlocal cleanup_reads
-        is_cleanup_read = "get" in cmd and "--ignore-not-found=true" in cmd
+        is_cleanup_read = "pod" in cmd and "--ignore-not-found=true" in cmd
         if is_cleanup_read:
             cleanup_reads += 1
             if cleanup_reads == 1:
@@ -2353,7 +2552,7 @@ def test_sidecar_image_id_cannot_satisfy_pull_container_probe() -> None:
 
     def sidecar_first(cmd, **kwargs):  # noqa: ANN001
         result = run(cmd, **kwargs)
-        if not result.stdout.strip():
+        if not result.stdout.strip() or "serviceaccount" in cmd:
             return result
         payload = json.loads(result.stdout)
         payload["spec"]["containers"].insert(
