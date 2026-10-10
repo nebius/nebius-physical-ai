@@ -44,6 +44,7 @@ ltx2  LTX-2.5 licence surface: print the LTX-2.x Community License terms, the pi
 alpamayo2-super  NVIDIA Alpamayo 2 Super trajectory-inference workbench.
 curobo  NVIDIA cuRobo V2 motion planning and complete benchmark evaluation.
 seedvr2  Restore low-resolution video with official ByteDance SeedVR2-3B.
+marble  World Labs Marble worlds, CUDA camera datasets, and spatial scans.
 lancedb  Deploy and query LanceDB vector-search workbenches.
 detection-training  Train Faster R-CNN detectors from LanceDB materialized views.
 encord  Register S3 media with Encord SaaS and materialize curated results.
@@ -101,6 +102,7 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 | `alpamayo2-super` | NVIDIA Alpamayo 2 Super trajectory-inference workbench. |
 | `curobo` | NVIDIA cuRobo V2 motion planning and complete benchmark evaluation. |
 | `seedvr2` | Restore low-resolution video with official ByteDance SeedVR2-3B. |
+| `marble` | World Labs Marble worlds, CUDA camera datasets, and spatial scans. |
 | `lancedb` | Deploy and query LanceDB vector-search workbenches. |
 | `detection-training` | Train Faster R-CNN detectors from LanceDB materialized views. |
 | `encord` | Register S3 media with Encord SaaS and materialize curated results. |

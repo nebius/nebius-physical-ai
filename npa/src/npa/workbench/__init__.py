@@ -27,6 +27,7 @@ __all__ = [
     "molmoact",
     "openvla",
     "newton",
+    "marble",
     "retargeting",
     "robocasa",
     "scenario_gen",
