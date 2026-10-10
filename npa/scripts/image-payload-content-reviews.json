@@ -877,6 +877,27 @@
         "member_sha256": "c3d79122e072177f55dc30a98f68b949c0f36f6159a363aae9512a22a9280ed0",
         "verification": "Every complete PEM self-test key in the reviewed ELF matches an adjacent-string C constant decoded from this official known-answer self-test source."
       }
+    },
+    {
+      "sha256": "7bcf825cd449892db5105ad2aed91dcf94a27b796426600c765720c584c54dd1",
+      "bytes": 1755312,
+      "match_counts": {
+        "aws_access_key_id": 1
+      },
+      "reason": "The sole AWS-shaped substring spans consecutive Unicode name tokens ISAKIA, ISLAND, ISSHAR, and ITALIC in the generated public libunistring name table.",
+      "source": {
+        "url": "https://snapshot.ubuntu.com/ubuntu/20261009T000000Z/pool/main/libu/libunistring/libunistring5_1.1-2build1.1_amd64.deb",
+        "revision": "203d7657b5f54633fba1a9c9b784d556ef83c9f6787b3185ba55a88e07b865a3",
+        "member": "usr/lib/x86_64-linux-gnu/libunistring.so.5.0.0",
+        "package": "libunistring5 1.1-2build1.1"
+      },
+      "supporting_source": {
+        "url": "https://snapshot.debian.org/archive/debian/20261009T000000Z/pool/main/libu/libunistring/libunistring_1.0.orig.tar.xz",
+        "archive_sha256": "5bab55b49f75d77ed26b257997e919b693f29fd4a1bc22e0e6e024c246c72741",
+        "member": "libunistring-1.0/lib/uniname/uninames.h",
+        "member_sha256": "8c95494071c9ef65cd44c2aaa3acef3d4c1820adabf00c38449719c4c9706dae",
+        "verification": "The exact AWS-shaped substring is present in the generated character array reconstructed from consecutive C character literals."
+      }
     }
   ]
 }
