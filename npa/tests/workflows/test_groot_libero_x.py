@@ -559,6 +559,63 @@ def test_native_rollout_uses_fixed_seeded_episode_waves(tmp_path: Path) -> None:
     assert result["completed_episodes"] == 10
 
 
+def test_open_loop_policy_adapts_nested_observation_for_sim_server() -> None:
+    class SimServerClient:
+        def __init__(self) -> None:
+            self.observation: dict[str, Any] | None = None
+            self.options: dict[str, Any] | None = None
+
+        def get_action(
+            self, observation: dict[str, Any], options: dict[str, Any] | None
+        ) -> tuple[dict[str, Any], dict[str, str]]:
+            self.observation = observation
+            self.options = options
+            return {"action.joints": np.array([[1.0]], dtype=np.float32)}, {
+                "server": "sim"
+            }
+
+    client = SimServerClient()
+    policy = native._OpenLoopSimServerPolicy(client)
+    image = np.zeros((1, 1, 2, 2, 3), dtype=np.uint8)
+    state = np.zeros((1, 1, 7), dtype=np.float32)
+
+    actions, info = policy.get_action(
+        {
+            "video": {"image": image},
+            "state": {"joints": state},
+            "language": {"task": [["place the bowl"]]},
+        },
+        {"temperature": 0.0},
+    )
+
+    assert client.observation is not None
+    assert client.observation["video.image"] is image
+    assert client.observation["state.joints"] is state
+    assert client.observation["task"] == ("place the bowl",)
+    assert client.options == {"temperature": 0.0}
+    assert set(actions) == {"joints"}
+    assert np.array_equal(actions["joints"], np.array([[1.0]], dtype=np.float32))
+    assert info == {"server": "sim"}
+
+
+def test_open_loop_policy_refuses_non_simulator_action_keys() -> None:
+    class InvalidServerClient:
+        def get_action(
+            self, _observation: dict[str, Any], _options: dict[str, Any] | None
+        ) -> tuple[dict[str, Any], dict[str, str]]:
+            return {"joints": np.array([[1.0]], dtype=np.float32)}, {}
+
+    policy = native._OpenLoopSimServerPolicy(InvalidServerClient())
+    with pytest.raises(RuntimeError, match="invalid action key"):
+        policy.get_action(
+            {
+                "video": {"image": np.zeros((1, 1, 2, 2, 3), dtype=np.uint8)},
+                "state": {"joints": np.zeros((1, 1, 7), dtype=np.float32)},
+                "language": {"task": [["place the bowl"]]},
+            }
+        )
+
+
 def test_native_evaluator_writes_worker_registration_manifest(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
