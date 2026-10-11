@@ -47,6 +47,7 @@ if TYPE_CHECKING:
         RunStorageLocation,
     )
     from npa.orchestration.npa_workflow.spec import NpaWorkflowSpec
+    from npa.orchestration.npa_workflow.submission_state import SubmissionStateRead
     from npa.orchestration.npa_workflow.submit_credentials import (
         SubmitCredentialContext,
     )
@@ -3753,25 +3754,15 @@ def _workflow_submission_receipt(
     return receipt
 
 
-def _recorded_runtime_store(
-    project: str,
-    run_id: str,
-    *,
-    resume: bool,
-    credentials: SubmitCredentialContext,
-) -> RunStateStore | None:
-    """Return the receipt's exact store so legacy resumes do not move ledgers."""
+def _recorded_resume_prefix(
+    recorded: SubmissionStateRead, *, project: str, run_id: str
+) -> str | None:
+    """Resolve a recorded prefix or prove that this exact run never launched."""
 
-    if not resume:
-        return None
-    from npa.orchestration.npa_workflow.run_state import (
-        store_for_recorded_run_prefix,
-    )
     from npa.orchestration.npa_workflow.submission_state import (
-        inspect_submission_state,
+        submission_proves_never_launched,
     )
 
-    recorded = inspect_submission_state(project or "default", run_id)
     if recorded.outcome == "absent":
         return None
     if recorded.outcome == "unavailable":
@@ -3784,7 +3775,36 @@ def _recorded_runtime_store(
         raise ValueError("resume receipt has no valid workflow record")
     run_prefix_uri = str(workflow.get("run_prefix_uri") or "").strip()
     if not run_prefix_uri:
+        if submission_proves_never_launched(
+            recorded.payload, project=project, run_id=run_id
+        ):
+            return None
         raise ValueError("resume receipt workflow has no recorded run_prefix_uri")
+    return run_prefix_uri
+
+
+def _recorded_runtime_store(
+    project: str,
+    run_id: str,
+    *,
+    resume: bool,
+    credentials: SubmitCredentialContext,
+) -> RunStateStore | None:
+    """Keep the exact resume store; prelaunch plans use current verified storage."""
+
+    if not resume:
+        return None
+    from npa.orchestration.npa_workflow.run_state import (
+        store_for_recorded_run_prefix,
+    )
+    from npa.orchestration.npa_workflow.submission_state import (
+        inspect_submission_state,
+    )
+
+    recorded = inspect_submission_state(project or "default", run_id)
+    run_prefix_uri = _recorded_resume_prefix(recorded, project=project, run_id=run_id)
+    if run_prefix_uri is None:
+        return None
     return store_for_recorded_run_prefix(
         run_prefix_uri,
         endpoint_url=credentials.endpoint_url,
