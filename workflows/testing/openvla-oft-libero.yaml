@@ -76,13 +76,14 @@ resources:
               securityContext:
                 runAsNonRoot: true
                 privileged: false
-                # SkyPilot's retained bootstrap must remove its user-owned
-                # environment file from $HOME while persisting it under
-                # /etc/profile.d. DAC_OVERRIDE is the narrow capability for
-                # that cross-owner rename; keep the rest of the bounding set.
+                # SkyPilot's retained bootstrap moves its user-owned
+                # environment file into /etc/profile.d and then recursively
+                # fixes ~/.ssh ownership. DAC_OVERRIDE and CHOWN are the
+                # narrowly evidenced filesystem capabilities; SETGID/SETUID
+                # remain necessary for the non-root sudo bootstrap.
                 capabilities:
                   drop: [ALL]
-                  add: [DAC_OVERRIDE, SETGID, SETUID]
+                  add: [CHOWN, DAC_OVERRIDE, SETGID, SETUID]
   train:
     cloud: kubernetes
     # The configured NPA route resolves this standard alias to its exact RTX PRO
@@ -122,13 +123,14 @@ resources:
               securityContext:
                 runAsNonRoot: true
                 privileged: false
-                # SkyPilot's retained bootstrap must remove its user-owned
-                # environment file from $HOME while persisting it under
-                # /etc/profile.d. DAC_OVERRIDE is the narrow capability for
-                # that cross-owner rename; keep the rest of the bounding set.
+                # SkyPilot's retained bootstrap moves its user-owned
+                # environment file into /etc/profile.d and then recursively
+                # fixes ~/.ssh ownership. DAC_OVERRIDE and CHOWN are the
+                # narrowly evidenced filesystem capabilities; SETGID/SETUID
+                # remain necessary for the non-root sudo bootstrap.
                 capabilities:
                   drop: [ALL]
-                  add: [DAC_OVERRIDE, SETGID, SETUID]
+                  add: [CHOWN, DAC_OVERRIDE, SETGID, SETUID]
   rollout:
     cloud: kubernetes
     accelerators: RTXPRO6000:1
@@ -165,13 +167,14 @@ resources:
               securityContext:
                 runAsNonRoot: true
                 privileged: false
-                # SkyPilot's retained bootstrap must remove its user-owned
-                # environment file from $HOME while persisting it under
-                # /etc/profile.d. DAC_OVERRIDE is the narrow capability for
-                # that cross-owner rename; keep the rest of the bounding set.
+                # SkyPilot's retained bootstrap moves its user-owned
+                # environment file into /etc/profile.d and then recursively
+                # fixes ~/.ssh ownership. DAC_OVERRIDE and CHOWN are the
+                # narrowly evidenced filesystem capabilities; SETGID/SETUID
+                # remain necessary for the non-root sudo bootstrap.
                 capabilities:
                   drop: [ALL]
-                  add: [DAC_OVERRIDE, SETGID, SETUID]
+                  add: [CHOWN, DAC_OVERRIDE, SETGID, SETUID]
   evidence:
     cloud: kubernetes
     cpus: 4
@@ -207,13 +210,14 @@ resources:
               securityContext:
                 runAsNonRoot: true
                 privileged: false
-                # SkyPilot's retained bootstrap must remove its user-owned
-                # environment file from $HOME while persisting it under
-                # /etc/profile.d. DAC_OVERRIDE is the narrow capability for
-                # that cross-owner rename; keep the rest of the bounding set.
+                # SkyPilot's retained bootstrap moves its user-owned
+                # environment file into /etc/profile.d and then recursively
+                # fixes ~/.ssh ownership. DAC_OVERRIDE and CHOWN are the
+                # narrowly evidenced filesystem capabilities; SETGID/SETUID
+                # remain necessary for the non-root sudo bootstrap.
                 capabilities:
                   drop: [ALL]
-                  add: [DAC_OVERRIDE, SETGID, SETUID]
+                  add: [CHOWN, DAC_OVERRIDE, SETGID, SETUID]
 
 initial: prepare
 
