@@ -1,14 +1,14 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "df19ec9b5951fb5bb428a799b361f69418ce0a0c05d79e9defd1822deb178d31",
+  "workflow_sha256": "9dbf26a842569673854894e6205ce01b03c93b5fcb579d4e1e3008f6bf110254",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "The five-state workflow passed schema validation and rendered all five native OpenWAM/LIBERO/Rerun commands with run-scoped artifact URIs, including explicit suite, task, and non-overlapping trial-range controls. Planning did not execute a workload.",
+      "reason": "The five-state workflow connects all five native OpenWAM/LIBERO/Rerun commands with run-scoped artifact URIs, explicit suite/task/non-overlapping trial controls, and the baked Python interpreter environment required by Kubernetes setup. Schema validation, production rendering, and the baked-entrypoint setup contract remain required for these exact bytes. Planning does not execute a workload.",
       "evidence": [
         "npa/.venv/bin/python -m npa workbench workflow validate-spec workflows/testing/openwam-libero-four-stage.yaml --json",
         "npa/.venv/bin/python -m npa workbench workflow plan-spec workflows/testing/openwam-libero-four-stage.yaml --run-id openwam-libero-authoring-continuation --json",
-        "sha256:df19ec9b5951fb5bb428a799b361f69418ce0a0c05d79e9defd1822deb178d31 workflows/testing/openwam-libero-four-stage.yaml"
+        "sha256:9dbf26a842569673854894e6205ce01b03c93b5fcb579d4e1e3008f6bf110254 workflows/testing/openwam-libero-four-stage.yaml"
       ]
     },
     "task_fidelity": {
