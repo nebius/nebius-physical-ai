@@ -168,9 +168,9 @@ Inspect a failed run's logs and artifacts before deciding on a new run. For
 `recovery_required`, retain the run ID and ask the operator to reconcile its
 existing scheduler state. The operator's `workflow batch` command follows a
 different submission path; it does not use a saved shared Workbench login.
-Fetching logs waits for the scheduler to download the owned wave logs, which
-can take longer than an ordinary status request. Interrupting that read does
-not cancel the workflow.
+Fetching logs reports pending worker state for jobs that are still starting.
+It downloads available owned wave logs, which can take longer than an ordinary
+status request. Interrupting that read does not cancel the workflow.
 
 Verify actual episode provenance, nonempty decoded generated videos, quality
 dispositions, curator outputs, and Rerun evidence. A submission response is
