@@ -43,6 +43,13 @@ it does not create cloud permissions. A source prefix contains an installable
 NPA package, including `pyproject.toml` and `src/`, rather than a tarball. Never
 upload the operator's credentials, CLI cache, or virtual environment.
 
+Publish source updates under a new versioned prefix and change `source_s3_uri`
+for future submissions. Existing runs retain their recorded source version,
+including during recovery; keep that prefix readable. A source update preserves
+access to earlier logs and artifacts while current identity, grants, cluster,
+storage, and shared-input boundaries still apply. Drain acknowledged work before
+restarting the gateway to deploy server code or configuration files.
+
 Check exact gated-model access with the allocated provider credential before
 spending GPU time. Approve a workflow whose accelerator name, CPU request,
 memory, and variant parallelism fit the actual per-node capacity and personal
