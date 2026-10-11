@@ -79,7 +79,6 @@ def test_prepare_reads_actual_rlds_file_and_publishes_normalization(
         lambda python, data_root, dataset_name: {
             "trajectories_read": 1,
             "feature_keys": ["action", "observation"],
-            "step_feature_keys": ["action", "observation"],
             "observation_feature_keys": ["image", "proprio"],
             "action_shape": [2, 7],
         },
@@ -101,7 +100,6 @@ def test_prepare_reads_actual_rlds_file_and_publishes_normalization(
     assert normalization["dlimp_rlds_probe"] == {
         "trajectories_read": 1,
         "feature_keys": ["action", "observation"],
-        "step_feature_keys": ["action", "observation"],
         "observation_feature_keys": ["image", "proprio"],
         "action_shape": [2, 7],
     }
@@ -129,8 +127,7 @@ def test_prepare_selects_only_declared_dataset_tfrecords(
             observed.append((data_root, dataset_name))
             or {
                 "trajectories_read": 1,
-                "feature_keys": ["steps"],
-                "step_feature_keys": ["action", "observation"],
+                "feature_keys": ["action", "observation"],
                 "observation_feature_keys": ["image"],
                 "action_shape": [1, 7],
             }
@@ -171,8 +168,7 @@ def test_dlimp_rlds_probe_uses_declared_tfds_builder_metadata(
         return json.dumps(
             {
                 "trajectories_read": 1,
-                "feature_keys": ["steps"],
-                "step_feature_keys": ["action", "observation"],
+                "feature_keys": ["action", "observation", "traj_metadata"],
                 "observation_feature_keys": ["image"],
                 "action_shape": [1, 7],
             }
@@ -184,8 +180,7 @@ def test_dlimp_rlds_probe_uses_declared_tfds_builder_metadata(
         tmp_path / "python", data_root, "libero_spatial_no_noops"
     ) == {
         "trajectories_read": 1,
-        "feature_keys": ["steps"],
-        "step_feature_keys": ["action", "observation"],
+        "feature_keys": ["action", "observation", "traj_metadata"],
         "observation_feature_keys": ["image"],
         "action_shape": [1, 7],
     }
@@ -194,8 +189,9 @@ def test_dlimp_rlds_probe_uses_declared_tfds_builder_metadata(
     assert "tfds.builder_from_directory" in command[2]
     assert "DLataset.from_rlds" in command[2]
     assert "DLataset.from_tfrecords" not in command[2]
-    assert 'steps.get("observation")' in command[2]
-    assert 'steps.get("action")' in command[2]
+    assert 'sample.get("observation")' in command[2]
+    assert 'sample.get("action")' in command[2]
+    assert 'sample.get("steps")' not in command[2]
     assert '"action_shape"' in command[2]
 
 
@@ -222,8 +218,7 @@ def test_dlimp_rlds_probe_rejects_empty_trajectory_action_contract(
         lambda command, *, text: json.dumps(
             {
                 "trajectories_read": 1,
-                "feature_keys": ["steps"],
-                "step_feature_keys": ["action", "observation"],
+                "feature_keys": ["action", "observation"],
                 "observation_feature_keys": ["image"],
                 "action_shape": [0, 7],
             }
