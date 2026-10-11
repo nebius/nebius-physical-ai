@@ -9,7 +9,10 @@ from pathlib import Path
 import pytest
 import yaml
 
-from npa.deploy.image_build_scope import select_public_image_builds
+from npa.deploy.image_build_scope import (
+    _dockerfile_inputs,
+    select_public_image_builds,
+)
 
 _CONTRACT = "npa/docker/workbench/packaging-contract.yaml"
 _CATALOG = "npa/docker/workbench/blackwell-dc-images.json"
@@ -242,8 +245,14 @@ def test_shared_copy_sources_are_tracked(repository, copy):
     "recipe",
     [
         "FROM scratch\nCOPY ${SOURCE} /app\n",
-        "FROM scratch\nRUN --mount=type=bind,source=src,target=/src build\n",
-        "FROM scratch\nRUN --mount=source=src,target=/src build\n",
+        "FROM scratch\nRUN --mount=type=bind,source=${SOURCE},target=/src build\n",
+        'FROM scratch\nRUN --mount=source="some path",target=/src build\n',
+        "FROM scratch\nRUN --mount=source=src,src=other,target=/src build\n",
+        "FROM scratch\nRUN --mount=source=src,source=other,target=/src build\n",
+        "FROM scratch\nRUN --mount=type=${TYPE},target=/src build\n",
+        "FROM scratch\nRUN --mount=source=../outside,target=/src build\n",
+        "FROM scratch\nCOPY https://example.invalid/input /app\n",
+        "FROM scratch\nADD ${SOURCE} /app\n",
         "# escape=`\nFROM scratch\nCOPY src `/app\n",
         "FROM scratch\nCOPY <<EOF /config\nembedded\nEOF\n",
     ],
@@ -252,6 +261,154 @@ def test_unrecognized_build_inputs_fall_back_to_all(repository, recipe):
     root, _ = repository
     _write(root, "npa/docker/workbench/sam3/Dockerfile", recipe)
     assert _selection(repository) == _PUBLIC
+
+
+@pytest.mark.parametrize("scheme", ["http", "https"])
+def test_remote_add_keeps_local_inputs_and_recipe_changes_scoped(repository, scheme):
+    """Track local files and recipe edits alongside remote downloads.
+
+    Args:
+        repository: Committed image-input fixture.
+        scheme: Explicit remote URL scheme.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Build selection misses inputs or selects unrelated images.
+    """
+    root, _ = repository
+    recipe = (
+        "FROM scratch\n"
+        f"ADD --checksum=sha256:${{DIGEST}} {scheme}://example.invalid/${{VERSION}} /remote\n"
+        "COPY docker/workbench/common/config.json /config.json\n"
+    )
+    _write(root, "npa/docker/workbench/sam3/Dockerfile", recipe)
+    _write(root, "npa/docker/workbench/common/config.json", "{}")
+    before = _commit(root)
+    _write(root, "docs/guide.md", "Prose only\n")
+    assert _selection((root, before)) == []
+    _write(root, "npa/docker/workbench/common/config.json", '{"changed": true}')
+    assert _selection((root, before)) == ["sam3"]
+    before = _git(root, "rev-parse", "HEAD")
+    _write(root, "npa/docker/workbench/sam3/Dockerfile", recipe + "ENV UPDATED=1\n")
+    assert _selection((root, before)) == ["sam3"]
+
+
+@pytest.mark.parametrize(
+    "mount",
+    [
+        "type=bind,source=src,target=/src,readonly",
+        "source=src,target=/src",
+        "src=src,target=/src",
+        "type=bind,target=/src",
+    ],
+)
+def test_bind_mounts_track_local_context_inputs(repository, mount):
+    """Rebuild consumers of a static bind mount when its source changes.
+
+    Args:
+        repository: Committed image-input fixture.
+        mount: Supported bind-mount syntax.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Bind-mount dependencies are selected incorrectly.
+    """
+    root, _ = repository
+    _write(
+        root,
+        "npa/docker/workbench/sam3/Dockerfile",
+        f"FROM scratch\nRUN --mount={mount} build\n",
+    )
+    before = _commit(root)
+    _write(root, "docs/guide.md", "Prose only\n")
+    assert _selection((root, before)) == []
+    _write(root, "npa/src/npa/workbench/runtime.py", "# Updated\n")
+    assert _selection((root, before)) == ["lerobot", "sam3"]
+
+
+def test_non_context_mounts_do_not_hide_local_dependencies(repository):
+    """Retain local stage inputs alongside stage and cache mounts.
+
+    Args:
+        repository: Committed image-input fixture.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Stage inputs disappear from build selection.
+    """
+    root, _ = repository
+    recipe = (
+        "FROM scratch AS source\nCOPY src/npa /source\nFROM scratch\n"
+        "RUN --mount=from=source,source=/source,target=/app build\n"
+        "RUN --mount=type=cache,target=/cache build\n"
+    )
+    _write(root, "npa/docker/workbench/sam3/Dockerfile", recipe)
+    before = _commit(root)
+    _write(root, "npa/src/npa/workbench/runtime.py", "# Updated\n")
+    assert _selection((root, before)) == ["lerobot", "sam3"]
+
+
+def test_robomimic_sources_use_its_actual_nested_build_context(repository):
+    """Resolve robomimic inputs inside the publisher's nested build context.
+
+    Args:
+        repository: Committed image-input fixture.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Dependencies escape or ignore the actual build context.
+    """
+    root, _ = repository
+    contract = yaml.safe_load((root / _CONTRACT).read_text())
+    contract["images"]["robomimic"] = {
+        "dockerfile": "robomimic/Dockerfile",
+        "redistribution": "public",
+    }
+    _write(root, _CONTRACT, yaml.safe_dump(contract))
+    _write(
+        root,
+        "npa/docker/workbench/robomimic/Dockerfile",
+        "FROM scratch\nCOPY . /app\n"
+        "RUN --mount=source=build-inputs,target=/inputs,readonly build\n",
+    )
+    before = _commit(root)
+    _write(root, "npa/src/npa/workbench/runtime.py", "# Updated\n")
+    assert _selection((root, before)) == ["lerobot"]
+    assert _dockerfile_inputs(
+        (root / "npa/docker/workbench/robomimic/Dockerfile").read_text(),
+        "npa/docker/workbench/robomimic",
+    ) == {
+        "npa/docker/workbench/robomimic",
+        "npa/docker/workbench/robomimic/build-inputs",
+    }
+    before = _git(root, "rev-parse", "HEAD")
+    _write(root, "npa/docker/workbench/robomimic/build-inputs/source.tar", "Updated\n")
+    assert _selection((root, before)) == ["robomimic"]
+
+
+def test_shipped_public_recipes_do_not_force_unrelated_full_rebuilds():
+    """Require dependency parsing for every committed eligible public recipe.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        ValueError: A shipped recipe would restore unrelated image builds.
+    """
+    from npa.deploy.image_build_scope import _image_inputs
+    from npa.deploy.images import (
+        CONTAINER_IMAGE_NAMES,
+        DEVELOPMENT_BUILD_QUARANTINE_TOOLS,
+    )
+
+    root = Path(__file__).resolve().parents[3]
+    head = _git(root, "rev-parse", "HEAD")
+    contract = yaml.safe_load((root / _CONTRACT).read_text())
+    eligible = CONTAINER_IMAGE_NAMES.keys() | DEVELOPMENT_BUILD_QUARANTINE_TOOLS
+    for tool, entry in contract["images"].items():
+        if entry.get("redistribution") == "public" and tool in eligible:
+            _image_inputs(root, head, entry["dockerfile"])
 
 
 def test_stage_copy_does_not_hide_original_context_dependencies(repository):

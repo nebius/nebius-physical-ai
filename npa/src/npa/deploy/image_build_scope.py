@@ -24,6 +24,7 @@ _CONTRACT = _WORKBENCH + "packaging-contract.yaml"
 _CATALOG = _WORKBENCH + "blackwell-dc-images.json"
 _SHA = re.compile(r"[0-9a-f]{40}")
 _FULL_REBUILD_INPUTS = {"npa/.dockerignore", "npa/src/npa/workflow_build.py"}
+_BUILD_CONTEXTS = {"robomimic/Dockerfile": _WORKBENCH + "robomimic"}
 # NCore assembles OCI bytes through a Python publisher as well as its Dockerfile.
 _ASSEMBLY_INPUTS = {
     "ncore": {
@@ -118,7 +119,16 @@ def _metadata_tools(root: Path, before: str, head: str, paths: set[str]) -> set[
     }
 
 
-def _copy_sources(arguments: str) -> set[str]:
+def _context_path(source: str, context: str) -> str:
+    if any(marker in source for marker in ("$", "<<", "://")):
+        raise ValueError("Dynamic Dockerfile source")
+    path = PurePosixPath(source)
+    if path.is_absolute() or ".." in path.parts:
+        raise ValueError("Non-relative Dockerfile source")
+    return str(PurePosixPath(context) / path)
+
+
+def _copy_sources(arguments: str, context: str, *, remote_add: bool) -> set[str]:
     while arguments.startswith("--"):
         flag, separator, arguments = arguments.partition(" ")
         if not separator or "=" not in flag and flag not in {"--link", "--parents"}:
@@ -133,18 +143,43 @@ def _copy_sources(arguments: str) -> set[str]:
         raise ValueError("Unsupported Dockerfile COPY operands")
     paths = set()
     for word in words[:-1]:
-        if not isinstance(word, str) or any(
-            marker in word for marker in ("$", "<<", "://")
-        ):
-            raise ValueError("Dynamic Dockerfile source")
-        path = PurePosixPath(word)
-        if path.is_absolute() or ".." in path.parts:
-            raise ValueError("Non-relative Dockerfile source")
-        paths.add("npa" if str(path) == "." else "npa/" + str(path))
+        if not isinstance(word, str):
+            raise ValueError("Unsupported Dockerfile source")
+        # An explicit HTTP scheme stays remote even when its URL contains ARGs.
+        # Recipe changes still select this image through its Dockerfile directory.
+        if remote_add and word.startswith(("http://", "https://")):
+            continue
+        paths.add(_context_path(word, context))
     return paths
 
 
-def _dockerfile_inputs(text: str) -> set[str]:
+def _mount_sources(arguments: str, context: str) -> set[str]:
+    paths = set()
+    for mount in re.findall(r"--mount=([^\s]+)", arguments):
+        if any(marker in mount for marker in ("'", '"', "\\", "$")):
+            raise ValueError("Dynamic or quoted build mount")
+        pairs = [part.split("=", 1) for part in mount.split(",") if "=" in part]
+        fields = dict(pairs)
+        if len(fields) != len(pairs):
+            raise ValueError("Ambiguous build mount fields")
+        if fields.get("type", "bind") not in {
+            "bind",
+            "cache",
+            "tmpfs",
+            "secret",
+            "ssh",
+        }:
+            raise ValueError("Unsupported build mount type")
+        if fields.get("type", "bind") != "bind" or "from" in fields:
+            continue
+        sources = [fields[key] for key in ("source", "src") if key in fields]
+        if len(sources) > 1:
+            raise ValueError("Ambiguous build-context mount")
+        paths.add(_context_path(sources[0] if sources else ".", context))
+    return paths
+
+
+def _dockerfile_inputs(text: str, context: str = "npa") -> set[str]:
     if re.search(r"^\s*#\s*escape\s*=\s*`", text, re.MULTILINE):
         raise ValueError("Unsupported Dockerfile escape directive")
     lines = [line for line in text.splitlines() if not line.lstrip().startswith("#")]
@@ -156,14 +191,13 @@ def _dockerfile_inputs(text: str) -> set[str]:
             continue
         instruction, arguments = parts
         if instruction.upper() in {"COPY", "ADD"}:
-            paths.update(_copy_sources(arguments.lstrip()))
-        if instruction.upper() == "RUN":
-            for mount in re.findall(r"--mount=([^\s]+)", arguments):
-                fields = dict(
-                    part.split("=", 1) for part in mount.split(",") if "=" in part
+            paths.update(
+                _copy_sources(
+                    arguments.lstrip(), context, remote_add=instruction.upper() == "ADD"
                 )
-                if fields.get("type", "bind") == "bind" and "from" not in fields:
-                    raise ValueError("Unmapped build-context mount")
+            )
+        if instruction.upper() == "RUN":
+            paths.update(_mount_sources(arguments, context))
     return paths
 
 
@@ -187,7 +221,9 @@ def _source_paths(paths: set[str]) -> set[str]:
 
 def _image_inputs(root: Path, head: str, dockerfile: str) -> set[str]:
     path = _WORKBENCH + dockerfile
-    sources = _dockerfile_inputs(_read(root, head, path))
+    sources = _dockerfile_inputs(
+        _read(root, head, path), _BUILD_CONTEXTS.get(dockerfile, "npa")
+    )
     return sources | {path, path + ".dockerignore"}
 
 
