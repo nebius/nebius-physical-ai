@@ -2647,7 +2647,9 @@ def _validate_regen_materialized_frames(
         )
         manifest = inputs.heldout_report.get("render_manifest") or {}
         snapshot_dir.mkdir(mode=0o700)
-        destination = snapshot_dir / render_dir.relative_to(work_dir.resolve())
+        destination = snapshot_dir / render_dir.relative_to(
+            Path(os.path.abspath(work_dir))
+        )
         if not modern and not manifest.get("episodes"):
             materialize_safe_render_snapshot(render_dir, destination)
             return snapshot_dir

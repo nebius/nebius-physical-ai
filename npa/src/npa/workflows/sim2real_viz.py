@@ -2770,6 +2770,29 @@ def _heldout_renders_root(
     )
 
 
+def _snapshot_input_root(local_dir: Path, snapshot_root: Path) -> Path:
+    """Check snapshot containment without hiding symlinks below the input root."""
+
+    root = _contained_render_path(
+        local_dir, str(snapshot_root), source="verified held-out root"
+    )
+    lexical_base = Path(local_dir).absolute()
+    base = lexical_base.resolve()
+    current = Path(snapshot_root)
+    current = current.absolute() if current.is_absolute() else lexical_base / current
+    # The caller's input root can use an ancestor alias such as macOS /tmp.
+    # Keep all components below that root lexical so child links are rejected.
+    if current.is_relative_to(lexical_base):
+        current = base / current.relative_to(lexical_base)
+    if not current.is_relative_to(base):
+        raise Sim2RealVizError("verified held-out root must be below local_dir")
+    while current != base:
+        if current.is_symlink():
+            raise Sim2RealVizError("verified held-out root traverses a symlink")
+        current = current.parent
+    return root
+
+
 def _heldout_inputs(
     local_dir: Path,
     report: dict[str, Any] | None,
@@ -2781,18 +2804,7 @@ def _heldout_inputs(
         return local_dir, report
     original = _heldout_renders_root(local_dir, report)
     relative = original.relative_to(Path(local_dir).resolve())
-    root = _contained_render_path(
-        local_dir, str(snapshot_root), source="verified held-out root"
-    )
-    base = Path(local_dir).absolute()
-    current = Path(snapshot_root)
-    current = current.absolute() if current.is_absolute() else base / current
-    if not current.is_relative_to(base):
-        raise Sim2RealVizError("verified held-out root must be below local_dir")
-    while current != base:
-        if current.is_symlink():
-            raise Sim2RealVizError("verified held-out root traverses a symlink")
-        current = current.parent
+    root = _snapshot_input_root(local_dir, snapshot_root)
     snapshot_report = dict(report or {})
     # Legacy absolute aliases are translated only after validating all original
     # aliases and the sealed outer layout. The retained report stays untouched.

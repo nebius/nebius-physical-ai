@@ -170,12 +170,49 @@ def test_regeneration_real_emitters_consume_canonical_snapshot(
     assert state.gold == original_gold
 
 
-@pytest.mark.parametrize(
-    "mutation", ["alias", "outer", "split", "checkpoint", "digest", "symlink"]
-)
-@pytest.mark.parametrize("route", ["stage14", "regen"])
-def test_snapshot_admission_preserves_provenance_guards(tmp_path, mutation, route):
-    state, frame, payload = _state(tmp_path)
+@pytest.mark.parametrize("absolute_alias", [False, True])
+def test_regeneration_snapshot_with_symlinked_work_directory_ancestor(
+    tmp_path, absolute_alias
+):
+    physical = tmp_path / "physical"
+    physical.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(physical, target_is_directory=True)
+    state, frame, _ = _state(alias)
+    if absolute_alias:
+        state.gold["local_renders_dir"] = str(frame.parent.parent)
+    original_gold = copy.deepcopy(state.gold)
+    inputs = regen._RegenInputs(
+        state.evidence,
+        state.gold,
+        alias / "heldout.json",
+        state.local / "reports/sim2real-report.json",
+        {},
+        _decision(state.gold),
+    )
+    snapshot = regen._validate_regen_materialized_frames(
+        _config(),
+        state.local,
+        inputs,
+        snapshot_dir=state.local.resolve() / ".verified-regen",
+    )
+    Image.new("RGB", (2, 2), (201, 202, 203)).save(frame)
+    regen_state = regen._RegenState(
+        state.evidence, state.gold, inputs.report_path, {}, {}, None, snapshot
+    )
+    rrd_path = state.local / "reports/sim2real.rrd"
+    regen._emit_regen_rrd(_config(), state.local, rrd_path, regen_state, [], "")
+    with pytest.raises(regen.Sim2RealRerunRegenError, match="symlinked ancestor"):
+        regen._emit_regen_mcap(state.local, regen_state)
+    assert (
+        regen._emit_regen_mcap(state.local.resolve(), regen_state)["status"]
+        == "written"
+    )
+    _assert_native_pixels(rrd_path, rrd_path.with_suffix(".mcap"))
+    assert state.gold == original_gold
+
+
+def _corrupt_snapshot_provenance(state, frame, payload, tmp_path, mutation):
     if mutation == "alias":
         state.gold["local_renders_dir"] = "eval/other/renders"
     elif mutation == "outer":
@@ -191,6 +228,15 @@ def test_snapshot_admission_preserves_provenance_guards(tmp_path, mutation, rout
         target.write_bytes(payload)
         frame.unlink()
         frame.symlink_to(target)
+
+
+@pytest.mark.parametrize(
+    "mutation", ["alias", "outer", "split", "checkpoint", "digest", "symlink"]
+)
+@pytest.mark.parametrize("route", ["stage14", "regen"])
+def test_snapshot_admission_preserves_provenance_guards(tmp_path, mutation, route):
+    state, frame, payload = _state(tmp_path)
+    _corrupt_snapshot_provenance(state, frame, payload, tmp_path, mutation)
     messages = {
         "alias": "render path sources disagree",
         "outer": "outer iteration",
