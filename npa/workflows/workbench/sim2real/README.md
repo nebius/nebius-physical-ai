@@ -5,7 +5,7 @@
 
 Use the single canonical spec and complete the operator runbook before submit:
 
-- [onboarding, preflight, submit, and remediation](../../../../docs/workbench/guides/sim2real-workflow.md)
+- [manual fresh-checkout setup, image release gate, submit, and resume](../../../../docs/workbench/guides/sim2real-workflow.md)
 - [data and customer-asset contracts](../../../../docs/workbench/guides/sim2real-customer-assets.md)
 - [canonical RobotSpec and URDF example](../../../../docs/workbench/guides/sim2real-robot-spec.md)
 - [architecture and durable resume](../../../../docs/architecture/sim2real-compositional-workflow.md)
@@ -21,7 +21,7 @@ Use the single canonical spec and complete the operator runbook before submit:
 From the repository root, validate the canonical spec locally:
 
 ```bash
-npa workbench workflow validate-spec workflows/main/sim2real.yaml
+npa/.venv/bin/npa workbench workflow validate-spec workflows/main/sim2real.yaml
 ```
 
 This checks the declaration; it does not prove image access, model access, GPU
@@ -29,7 +29,11 @@ placement, or customer-data compatibility. Continue with the operator runbook's
 preflight and complete `submit --runtime` command using your verified inputs.
 Keep the returned run ID for status, logs, artifacts, and durable resume.
 
-## One seam, one value
+## Archived compatibility seams
+
+The table below describes the retained legacy CLI/SDK contract. Canonical
+workflow submissions use the runbook's `--var` arguments and five image keys;
+these legacy `run` flags are not its setup interface.
 
 Every BYO seam is one value addressed four ways. This table is generated from
 the canonical `SIM2REAL_SEAMS` tuple in
@@ -101,3 +105,9 @@ The submit path fails before launch when storage, secret propagation, gated
 model access, the dedicated CPU capacity, Isaac cache PVC,
 immutable images, or real image pulls are not ready. The linked runbook gives
 copy-paste setup, expected results, and remediation without duplicating it here.
+
+`workflow preflight-images` requires all five immutable image inputs and their
+source attestation for Sim2Real; an empty image plan cannot establish readiness.
+Cache checks use the namespace in the selected Kubernetes context, including
+contexts prepared with `workbench namespace context`. An unreadable context
+blocks cache lookup instead of checking another namespace.

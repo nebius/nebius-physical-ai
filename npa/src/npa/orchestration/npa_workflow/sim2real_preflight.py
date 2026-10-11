@@ -105,16 +105,16 @@ def _source_sha_issues(config: Mapping[str, Any]) -> list[Issue]:
     return issues
 
 
-def static_prerequisites(
-    config: Mapping[str, Any],
-    *,
-    requested_secret_envs: Sequence[str],
-    secret_values: Mapping[str, str],
-    hf_validator: Callable[[str, str], Any],
-    token_factory_validator: Callable[[str, str], Any],
-) -> list[Issue]:
-    """Validate immutable inputs, consent, secret forwarding, and gated access."""
+def image_prerequisites(config: Mapping[str, Any]) -> list[Issue]:
+    """Validate the complete immutable Sim2Real image bundle before pull probes.
 
+    Args:
+        config: Resolved workflow configuration.
+    Returns:
+        Missing or invalid image and source-attestation inputs.
+    Raises:
+        None.
+    """
     issues: list[Issue] = []
     invalid_images = [
         key
@@ -133,6 +133,20 @@ def static_prerequisites(
         )
 
     issues.extend(_source_sha_issues(config))
+    return issues
+
+
+def static_prerequisites(
+    config: Mapping[str, Any],
+    *,
+    requested_secret_envs: Sequence[str],
+    secret_values: Mapping[str, str],
+    hf_validator: Callable[[str, str], Any],
+    token_factory_validator: Callable[[str, str], Any],
+) -> list[Issue]:
+    """Validate immutable inputs, consent, secret forwarding, and gated access."""
+
+    issues = image_prerequisites(config)
     issues.extend(_evaluation_issues(config))
 
     pvc = str(config.get("isaac_cache_pvc") or "").strip()
@@ -423,6 +437,14 @@ def _driver_placement_issues(nodes, placements) -> list[Issue]:
 
 
 def _isaac_cache_issues(config, runner, namespace) -> list[Issue]:
+    if namespace is None:
+        return [
+            (
+                "Sim2Real cache namespace could not be verified",
+                "verify the selected Kubernetes context and its namespace; "
+                "do not substitute another namespace's cache",
+            )
+        ]
     issues: list[Issue] = []
     pvc_name = str(config.get("isaac_cache_pvc") or "").strip()
     if pvc_name:
@@ -454,7 +476,7 @@ def kubernetes_prerequisites(
     config: Mapping[str, Any],
     *,
     runner: Callable[[list[str]], Any],
-    namespace: str = "default",
+    namespace: str | None = "default",
     isaac_placements=None,
 ) -> list[Issue]:
     """Validate cluster objects the real Sim2Real/SkyPilot path consumes.
@@ -462,7 +484,7 @@ def kubernetes_prerequisites(
     Args:
         config: Resolved workflow configuration.
         runner: Exact-context Kubernetes reader.
-        namespace: Selected workflow namespace.
+        namespace: Selected workflow namespace; None refuses cache lookup.
         isaac_placements: Effective render stage placement constraints.
     Returns:
         Missing prerequisites and their remediation guidance.

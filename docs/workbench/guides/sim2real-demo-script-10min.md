@@ -1,78 +1,38 @@
-# Sim2Real: ten-minute result walkthrough
+# Present a Sim2Real result in 10 minutes
 
-[Guides](README.md)
+[Guides](README.md) · [Manual setup and execution](sim2real-workflow.md) · [Data contracts](sim2real-data-contracts.md)
 
-Present a verified run of the canonical
-[`workflows/main/sim2real.yaml`](../../../workflows/main/sim2real.yaml).
-The ten minutes describe presentation time, not the workflow's runtime.
-Follow the [execution guide](sim2real-workflow.md) to prepare inputs, select a
-qualified five-image bundle, provision capacity, submit, and resume. Run the
-workflow on an always-on operator VM before the presentation.
+Prepare an actual completed canonical run before the presentation. Use the
+manual runbook for installation, qualified images, access, cluster/cache setup,
+seed staging, submission, and cleanup. A presentation does not require another
+run. If showing a live run alongside completed artifacts, label each run clearly.
 
-## Before presenting
-
-Use artifacts from one actual run. Check its final report, strict policy score,
-image/source identities, split separation, and independently decoded recordings.
-Keep private infrastructure identifiers, credentials, and customer inputs out of
-slides and shared recordings. Follow the
-[artifact sharing guide](../rerun-sharing.md) when sharing is requested.
-
-Inspect durable status and artifact discovery with the same project configuration
-used for submission:
+Retain the completed run's ID and project alias privately. From the checkout
+root, inspect the terminal status and artifact inventory:
 
 ```bash
-npa workbench workflow status "<run-id>" --project "<project-alias>"
-npa workbench workflow artifacts "<run-id>" --project "<project-alias>" --json
+RUN_ID='<completed-run-id>'
+NPA_PROJECT='<local-project-alias>'
+npa/.venv/bin/npa workbench workflow status "$RUN_ID" --project "$NPA_PROJECT"
+npa/.venv/bin/npa workbench workflow artifacts "$RUN_ID" --project "$NPA_PROJECT"
 ```
 
-Download the exact run's `reports/sim2real.rrd` and `reports/sim2real.mcap` to a
-private local directory. Independently inspect the Rerun bytes before opening
-its viewer:
+Download the selected report, validation/gold evidence, checkpoint metadata,
+RRD, and MCAP through the Nebius storage console or your S3 client. The optional
+[AWS CLI examples](scoped-storage-transfers.md) use explicit endpoint/profile selection.
+Decode the recordings before rehearsal. Keep private S3 locations and provider
+identifiers out of shared slides, screenshots, and exported reports.
 
-```bash
-rerun rrd verify /path/to/private-run/sim2real.rrd
-rerun rrd print -vv /path/to/private-run/sim2real.rrd
-rerun /path/to/private-run/sim2real.rrd
-```
-
-A completed report must contain fourteen ordered ComponentRecords: thirteen
-`WORKS` records and the Stage 12 external physical-validation `SEAM`. Stage 14
-must publish both non-empty recordings; missing encoders or artifacts fail the
-stage. A reduced orchestration test can complete with a weak policy. Present the
-measured strict gold result separately from pipeline completion.
-
-## 0:00–1:00: the graph and run identity
-
-Show the [architecture diagram](sim2real-architecture.md) and the selected run's
-final report. Explain that the standard workflow runtime owns state jobs,
-parallel EnvGen waves, nested loops, and recovery. Its durable ledger is
-`npa-workflow/runtime.json` under the run prefix. There is no private launch pack
-or separate Sim2Real controller to reconstruct.
-
-Show the exact source SHA and immutable image digests. Isaac states use RTX PRO
-6000; compute-only Transfer and EnvGen may use available B200 capacity. The
-workflow's `gpu_concurrency` must fit the actual pool.
-
-## 1:00–3:00: inputs, augmentation, and sealed scenarios
-
-| Stage | Evidence to open | What it proves |
+| Time | Show | Explain |
 | --- | --- | --- |
-| 1: trigger | `stage_01_trigger/trigger.json`, `task-dataset-manifest.json` | A task-aligned, verified input dataset |
-| 2: task and assets | `stage_02_assets/task-contract.json`, consumed spec files | Robot, object, physics, camera, and success identities |
-| 3: augmentation | `augment/manifest.json`, actual generated frames | Real Cosmos Transfer output and its lineage |
-| 4: EnvGen | Raw shard manifests and GPU ComponentRecords | Actual generated scenario configurations |
-| 5: curation and split | `envs/manifest/curation-manifest.json`, `split-manifest.json` | Accepted/rejected cases, measured coverage, disjoint train/validation/gold digests |
-| 6: feature lineage | `tokens/manifest.json` | Scenario configurations feed state PPO; pixels remain visualization and VLM evidence |
-
-Show actual accepted and rejected counts. The default raw request is 10,000
-scenarios across eight shards; report the measured retained counts rather than
-assuming all generated cases passed curation.
-
-## 3:00–5:00: rendered rollouts and hosted feedback
-
-Open primary, side, and overhead views from one actual Stage 7 rollout. Show the
-robot, cube, end effector, and intermediate actions. Inspect the primary view
-specifically: Stage 8's hosted evaluator consumes primary frames.
+| 0:00–1:00 | [14-stage graph](sim2real-architecture.md) and terminal runtime status | One standard workflow owns stages, parallel shards, iterations, and durable state |
+| 1:00–2:30 | Trigger manifest, task contract, Transfer manifest, curation and split manifests | Real seed data leads to simulated scenarios; train, validation, and gold remain disjoint |
+| 2:30–4:00 | Actual primary/side/overhead rollout frames and action metadata | Rendered task visibility and exact action/frame/episode bindings establish usable evidence |
+| 4:00–5:30 | Hosted critique, training signal, measured PPO losses | Stage 8 records the actual model/provider; bounded grounded critique shapes real PPO |
+| 5:30–7:00 | Validation selection and gold report | Validation chooses the checkpoint; gold measures strict 5 cm stable placement |
+| 7:00–8:00 | Promotion decision and candidate metadata | Report the measured result, including below-threshold outcomes; completion alone does not prove efficacy |
+| 8:00–9:00 | Stage 12 external seam and Stage 13 retrigger record | Physical-robot validation is external; retrigger requires verified new or corrected data |
+| 9:00–10:00 | Decoded RRD/MCAP timeline and final report | All 14 ComponentRecords and accessible artifacts connect execution to the result |
 
 The current default model is `MiniMaxAI/MiniMax-M3` on Token Factory. An
 explicitly authorized endpoint may select Cosmos3; use the model identity in
@@ -85,43 +45,27 @@ A retry reads back matching receipts before reusing results. Unsupported visual
 actions retain neutral labels and zero confidence; do not describe them as
 observed task success.
 
-## 5:00–7:00: real PPO and validation selection
+Production training uses 1,024 vector environments and 2,000 PPO updates per
+pass. Show actual measured updates, the recurrent policy profile, and the
+training-only actor handoff audit. Validation and Gold run the learned actor
+alone. The quality gate requires at least half of 64 Gold scenarios to satisfy
+the strict 5 cm stable-placement predicate; training handoff success alone does
+not establish that result.
 
-Show the temporal training signal and measured PPO telemetry. Production defaults
-use 1,024 vector environments and 2,000 PPO updates per pass. Report actual
-observed updates and finite loss/reward measurements from the run.
+The final report must show Stage 12 as `SEAM` and the other 13 canonical
+components as `WORKS`. Missing RRD/MCAP is a verification failure, not an optional
+visualization fallback. Playback durations do not establish physical grasp or
+placement duration; use recorded simulation timestamps and measured predicates.
 
-Show each candidate checkpoint's validation result and the deterministic
-selection record. Checkpoint selection uses validation only. Demonstrate the
-exact selected SHA-256 and byte size; avoid choosing a checkpoint using gold
-outcomes. The learned actor alone must perform held-out inference, without a
-scripted controller after its actions.
+If a separate live run is still executing, show its real status/logs and continue
+the artifact tour using the clearly identified completed run. If it failed, show
+the failure honestly. Do not rewrite its decision, switch its checkpoint, or
+present another run's artifacts as that run's result.
 
-## 7:00–9:00: untouched gold and useful recordings
+```bash
+npa/.venv/bin/npa workbench workflow logs "$RUN_ID" --project "$NPA_PROJECT"
+```
 
-Open `eval/gold-heldout/outer-XX/report.json` for the actual selected outer
-iteration. Show the strict result over 64 gold scenarios, its per-environment
-physical measurements, and the selected checkpoint loaded for inference.
-
-Success requires final object-to-goal distance below 5 cm with stable placement.
-The quality threshold is 0.50. Wider distance diagnostics do not replace that
-criterion. Explain the recorded loop decision: production defaults permit three
-inner passes per outer iteration and three outer iterations, with early exit
-when the quality threshold passes.
-
-Use the independently decoded Rerun and MCAP to show actual primary/side/overhead
-gold footage, camera timestamps, policy provenance, critiques, PPO curves, stage
-progress, and held-out scores. Compare decoded metric coverage with the source
-telemetry. A viewer opening alone does not prove artifact completeness.
-
-## 9:00–10:00: recovery and physical handoff
-
-Show the standard runtime's recovery evidence: completed waves and verified
-artifacts were reused, an in-flight job was adopted when present, and incomplete
-work continued under the same run identity. Verified Stage 8 receipts preserve
-completed hosted work across retries.
-
-Stage 12 remains an external physical-validation seam. Stage 13 records the
-next-dataset handoff. State precisely whether the simulation policy passed the
-strict threshold and whether external physical validation has been supplied.
-Do not present simulation success as deployment on a real robot.
+Do not run setup, rebuild images, regenerate invalid footage, or delete shared
+infrastructure during the presentation. Resume and teardown use the exact
+original arguments and the [manual runbook](sim2real-workflow.md#resume-and-verify).

@@ -42,7 +42,8 @@
 #   Measure the selected installed tree and reserve space for two complete versions
 #   plus download/install headroom. The current Isaac Sim 6 closure occupies about 18 GiB;
 #   the 64-GiB PVC below allows a new version beside the existing immutable tree.
-#   A per-pod cache also needs a matching ephemeral-storage request to avoid eviction.
+#   Check backing-filesystem free space before warming: the PVC request alone does not
+#   establish available space. A per-pod cache needs matching ephemeral-storage capacity.
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -93,7 +94,11 @@ spec:
               drop: ["ALL"]
           # Any of the Isaac images works; they share the bootstrap.
           image: ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:<64-hex-digest>
-          command: ["/opt/npa/bin/isaac-bootstrap", "warm"]
+          command: ["/bin/bash", "-ec"]
+          args:
+            - |
+              /opt/npa/bin/isaac-bootstrap warm
+              exec /opt/npa/bin/isaac-bootstrap status
           env:
             # Explicitly documents the default; set empty/N/NO/0/FALSE to opt out.
             - name: ACCEPT_EULA
