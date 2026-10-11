@@ -483,6 +483,9 @@ class SkypilotRenderOptions:
     # Existing operator-managed Kubernetes pull Secrets to attach to rendered
     # Kubernetes tasks and bind into their target-pull preflight path.
     image_pull_secret_names: tuple[str, ...] = ()
+    # None retains CLI source discovery; an explicit value isolates a server run
+    # from process-wide source configuration. Empty disables source injection.
+    source_s3_uri: str | None = None
     # Shared scheduler identity for the current runtime wave attempt.  The
     # runtime supplies its durable logical launch id; offline renders derive a
     # deterministic task-local value below.  Cosmos gang workers combine this
@@ -2898,7 +2901,9 @@ def _build_skypilot_task_doc(
     # the npa package (SkyPilot local file_mounts create new buckets and fail
     # on Nebius). Operators set NPA_SRC_S3_URI=s3://bucket/prefix/npa, or persist
     # it once with `npa configure --src-s3-uri` so the next shell still finds it.
-    src_uri = resolve_src_s3_uri()
+    src_uri = (
+        resolve_src_s3_uri() if options.source_s3_uri is None else options.source_s3_uri
+    )
     if require_baked or immutable_narrow_image:
         # Exact images must contain the full runtime and pinned dependencies. Never
         # inject a source tree or install packages after a task acquires a GPU.
