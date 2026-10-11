@@ -7697,3 +7697,123 @@ def test_job_id_cross_check_preserves_fallback_on_contradictory_queue_streams(
         _verified_job_id("41", "exact-run", env={}, sky_executable="sky", cwd=None)
         == expected
     )
+
+
+@pytest.mark.parametrize(
+    ("stderr", "expected_outcome"),
+    [
+        ("", "absent"),
+        ("PermissionDenied: queue access denied\n", "unavailable"),
+    ],
+)
+def test_exact_managed_job_lookup_requires_noncontradictory_queue_streams(
+    monkeypatch, tmp_path, stderr, expected_outcome
+) -> None:
+    """Only an uncontradicted empty queue can establish managed-job absence."""
+
+    sky_bin = _fake_sky(tmp_path)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout="[]\n", stderr=stderr
+        ),
+    )
+
+    evidence = workflow_module.lookup_managed_job("exact-run", sky_bin=sky_bin)
+
+    assert evidence.outcome == expected_outcome
+    if expected_outcome == "unavailable":
+        assert "malformed, ambiguous, or schema-invalid JSON" in evidence.error
+
+
+@pytest.mark.parametrize("stderr", ["", "PermissionDenied: queue access denied\n"])
+def test_job_id_cross_check_preserves_launch_id_on_contradictory_queue_streams(
+    monkeypatch, stderr
+) -> None:
+    """Conflicting queue output must not replace a launch's parsed job identity."""
+
+    monkeypatch.delenv("NPA_SKYPILOT_VERIFY_JOB_ID", raising=False)
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout='[{"job_id": 42, "job_name": "exact-run"}]',
+            stderr=stderr,
+        ),
+    )
+
+    assert workflow_module._verified_job_id(
+        "41", "exact-run", env={}, sky_executable="sky", cwd=None
+    ) == ("41" if stderr else "42")
+
+
+@pytest.mark.parametrize("stderr", ["", "PermissionDenied: queue access denied\n"])
+def test_libero_launch_binding_requires_noncontradictory_queue_streams(
+    monkeypatch, stderr
+) -> None:
+    """A queue diagnostic cannot bind a successful launch to a managed job."""
+
+    row = {
+        "job_id": 126,
+        "job_name": "exact-run",
+        "status": "RUNNING",
+        "submitted_at": 101.0,
+        "metadata": {"executable_profile_sha256": "a" * 64},
+    }
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps([row]), stderr=stderr
+        ),
+    )
+
+    verified, plausible, error = workflow_module._libero_launch_binding_candidates(
+        "126",
+        "exact-run",
+        env={},
+        sky_executable="sky",
+        cwd="/durable",
+        expected_profile_sha256="a" * 64,
+        launch_started_at=100.0,
+    )
+
+    if stderr:
+        assert verified == ""
+        assert plausible == ("126",)
+        assert "preserving indeterminate state and refusing retry" in error
+    else:
+        assert verified == "126"
+        assert plausible == ()
+        assert error == ""
+
+
+@pytest.mark.parametrize("stderr", ["", "PermissionDenied: queue access denied\n"])
+def test_reconciliation_requires_noncontradictory_queue_streams(
+    monkeypatch, stderr
+) -> None:
+    """Conflicting queue diagnostics keep cleanup reconciliation indeterminate."""
+
+    row = {"job_id": 126, "job_name": "exact-run", "status": "RUNNING"}
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps([row]), stderr=stderr
+        ),
+    )
+
+    evidence = workflow_module._reconcile_managed_job_env(
+        "exact-run", env={}, sky_executable="sky", cwd="/durable"
+    )
+
+    if stderr:
+        assert evidence.state is workflow_module.ReconciliationState.AMBIGUOUS
+        assert evidence.job_id == ""
+        assert not evidence.workload_observable
+    else:
+        assert evidence.state is workflow_module.ReconciliationState.FOUND
+        assert evidence.job_id == "126"
