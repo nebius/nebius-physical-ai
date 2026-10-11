@@ -7,6 +7,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNTIME = ROOT / "docker" / "workbench" / "hy-world" / "hy_world_runtime.sh"
@@ -145,6 +147,120 @@ def test_runtime_contract_retains_the_exact_pytorch_wheel_index(tmp_path: Path) 
     assert result.returncode == 0, result.stderr
     contract = (tree / "npa_runtime_contract.json").read_text(encoding="utf-8")
     assert '"pytorch_wheel_index": "https://download.pytorch.org/whl/cu128"' in contract
+
+
+def test_blackwell_wheel_install_uses_the_reviewed_cu128_selection(
+    tmp_path: Path,
+) -> None:
+    """The bootstrap asks uv for the reviewed CUDA 12.8 torch pair."""
+
+    arguments = tmp_path / "uv-arguments.txt"
+    result = _bash(
+        "\n".join(
+            (
+                f"source {RUNTIME}",
+                'uv() { printf "%s\\n" "$@" > "$NPA_TEST_UV_ARGUMENTS"; }',
+                "install_blackwell_torch_wheels /runtime/python",
+            )
+        ),
+        environment={
+            "NPA_HY_WORLD_RUNTIME_LIBRARY": "1",
+            "NPA_TEST_UV_ARGUMENTS": str(arguments),
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert arguments.read_text(encoding="utf-8").splitlines() == [
+        "pip",
+        "install",
+        "--python",
+        "/runtime/python",
+        "--index-url",
+        "https://download.pytorch.org/whl/cu128",
+        "torch==2.7.1+cu128",
+        "torchvision==0.22.1+cu128",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("torch_requirement", "torchvision_requirement"),
+    (
+        ("torch==2.7.2", "torchvision==0.22.1"),
+        ("torch==2.7.1", "torchvision==0.22.2"),
+    ),
+)
+def test_requirements_torch_or_vision_drift_refuses_before_uv_install(
+    tmp_path: Path,
+    torch_requirement: str,
+    torchvision_requirement: str,
+) -> None:
+    """Unreviewed upstream torch pins cannot silently replace the cu128 pair."""
+
+    tree = tmp_path / "source"
+    tree.mkdir()
+    (tree / "requirements.txt").write_text(
+        f"{torch_requirement}\n{torchvision_requirement}\nkept-package==3.0\n",
+        encoding="utf-8",
+    )
+    invoked = tmp_path / "uv-invoked.txt"
+    result = _bash(
+        "\n".join(
+            (
+                f"source {RUNTIME}",
+                'uv() { printf invoked > "$NPA_TEST_UV_INVOKED"; }',
+                f"install_upstream_requirements {tree} /runtime/python",
+            )
+        ),
+        environment={
+            "NPA_HY_WORLD_RUNTIME_LIBRARY": "1",
+            "NPA_TEST_UV_INVOKED": str(invoked),
+        },
+    )
+
+    assert result.returncode != 0
+    assert "upstream PyTorch requirements drifted" in result.stderr
+    assert not invoked.exists()
+
+
+def test_requirements_install_keeps_non_torch_requirements(tmp_path: Path) -> None:
+    """Removing reviewed torch pins leaves the rest of upstream requirements intact."""
+
+    tree = tmp_path / "source"
+    tree.mkdir()
+    (tree / "requirements.txt").write_text(
+        "torch==2.7.1\ntorchvision==0.22.1\nkept-package==3.0\n",
+        encoding="utf-8",
+    )
+    arguments = tmp_path / "uv-arguments.txt"
+    copied_requirements = tmp_path / "filtered-requirements.txt"
+    result = _bash(
+        "\n".join(
+            (
+                f"source {RUNTIME}",
+                "uv() {",
+                '  printf "%s\\n" "$@" > "$NPA_TEST_UV_ARGUMENTS";',
+                '  cp "$6" "$NPA_TEST_FILTERED_REQUIREMENTS";',
+                "}",
+                f"install_upstream_requirements {tree} /runtime/python",
+            )
+        ),
+        environment={
+            "NPA_HY_WORLD_RUNTIME_LIBRARY": "1",
+            "NPA_TEST_UV_ARGUMENTS": str(arguments),
+            "NPA_TEST_FILTERED_REQUIREMENTS": str(copied_requirements),
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert arguments.read_text(encoding="utf-8").splitlines() == [
+        "pip",
+        "install",
+        "--python",
+        "/runtime/python",
+        "-r",
+        str(tree / "npa_requirements_without_torch.txt"),
+    ]
+    assert copied_requirements.read_text(encoding="utf-8") == "kept-package==3.0\n"
 
 
 def test_layout_rejects_a_completed_cache_with_a_stale_runtime_contract(
