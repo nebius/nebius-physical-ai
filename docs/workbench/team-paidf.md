@@ -57,6 +57,9 @@ confirm all requested episode indices exist. A camera name from another
 dataset may be invalid: ALOHA commonly uses `observation.images.top`, while
 PushT uses `observation.image`. Preserve shared-video timestamps in v3 data;
 renaming an episode's video cannot replace its episode metadata.
+Tailor `augment_subject`, `prompt`, and `appearance_profiles_json` to the visible
+task. Planar pushing and robot-arm manipulation need different scene descriptions
+and appearance profiles; keep the original scene as the visual reference.
 
 Privately deliver the endpoint, workspace and cluster aliases, approved
 workflow, input URI, camera, and either a personal key or an explicit Nebius
@@ -182,6 +185,9 @@ admission evidence; it does not prove successful augmentation. This workflow
 produces augmented videos and reports for the selected camera. It does not
 rebuild a training-ready LeRobot dataset with action/state alignment or prove
 that an appearance variant is suitable for policy training.
+The augment manifest and variant metadata's `frame_count` count sampled preview
+images. Read `temporal_alignment.decoded_frames` and `duration_seconds` for the
+complete video's decoded length, and inspect the embedded video timeline.
 
 ## User: download and inspect the result
 
@@ -234,6 +240,14 @@ generation, or evaluator-service correction. Changing the workflow creates a
 new retry identity; repeating the original inputs recovers the rejected run.
 The [rejection runbook](../../workflows/guides/paidf-cosmos3.md#r6-diagnose-quality-rejection-and-prepare-the-next-run)
 explains the checks and evidence operators can use for diagnosis.
+
+For native edge transfer, `transfer_rgb_weight` adds full source RGB frames as
+model conditioning. Verify the published `transfer.json` RGB loader evidence,
+weight, frame coverage, and control hashes, then compare the generated clips at
+matching times. Keep the quality gates unchanged while testing a specific
+generation correction; inspect each affected episode before adopting a setting
+for the remaining batch. See the runbook's
+[generation settings](../../workflows/guides/paidf-cosmos3.md#r5-find-and-change-generation-and-evaluation-settings).
 
 ## Operator: audit the completed batch
 
