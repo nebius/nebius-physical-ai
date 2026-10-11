@@ -735,8 +735,8 @@ def test_setup_does_not_reinstall_an_importable_baked_entrypoint(
     baked = binaries / "baked-python"
     baked.write_text(
         "#!/bin/sh\n"
-        "printf '%s\\n' \"$*\" >> \"$TRACE\"\n"
-        "case \"$2\" in\n"
+        'printf \'%s\\n\' "$*" >> "$TRACE"\n'
+        'case "$2" in\n'
         "  *'import sys'*|*'from npa.cli.entry import main'*|*'import npa'*) exit 0 ;;\n"
         "esac\n"
         "exit 91\n"

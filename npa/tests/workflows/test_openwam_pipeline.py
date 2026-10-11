@@ -195,20 +195,26 @@ def test_openwam_render_binds_the_baked_python_without_security_override() -> No
         options=SkypilotRenderOptions(materialize_registry_secrets=False),
     )
     tasks = [
-        document for document in yaml.safe_load_all(rendered) if document and "setup" in document
+        document
+        for document in yaml.safe_load_all(rendered)
+        if document and "setup" in document
     ]
 
     assert len(tasks) == 5
     for task in tasks:
         containers = task["config"]["kubernetes"]["pod_config"]["spec"]["containers"]
-        worker = next(container for container in containers if container["name"] == "ray-node")
+        worker = next(
+            container for container in containers if container["name"] == "ray-node"
+        )
         environment = {item["name"]: item["value"] for item in worker["env"]}
 
         assert environment["NPA_BAKED_PYTHON"] == "/opt/openwam-venv/bin/python"
-        assert "securityContext" not in task["config"]["kubernetes"]["pod_config"]["spec"]
+        assert (
+            "securityContext" not in task["config"]["kubernetes"]["pod_config"]["spec"]
+        )
         assert "securityContext" not in worker
         assert "from npa.cli.entry import main" in task["setup"]
-        assert 'npa_baked_entry_available=0' in task["setup"]
+        assert "npa_baked_entry_available=0" in task["setup"]
         assert '"$npa_baked_entry_available" != "1"' in task["setup"]
 
 
