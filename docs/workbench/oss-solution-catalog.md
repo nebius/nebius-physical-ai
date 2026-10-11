@@ -28,7 +28,7 @@ tracks the GPU qualification; the workflow adds no new image or model admission.
 | ManiSkill | `mani-skill/ManiSkill` `v3.0.1` | `gymnasium_pickcube_registration` | `maniskill_pickcube_step.json` | `byof-maniskill.yaml` |
 | MuJoCo Playground | `google-deepmind/mujoco_playground` `v0.2.0` | `mjx_cartpole_step` (+ CheetahRun) | `mujoco_playground_cartpole_step.json` | `byof-mujoco-playground.yaml` |
 | Gymnasium-Robotics | `Farama-Foundation/Gymnasium-Robotics` `4d1ebecb…` | `HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1` | `gymnasium-robotics-smoke.json` | `byof-gymnasium-robotics.yaml` |
-| [EmbodiedGen V2](embodiedgen.md) (**operator-private CUDA candidate**) | `HorizonRobotics/EmbodiedGen` `f0124197…` + TRELLIS `55a8e816…` | `img3d-cli_trellis_image_to_urdf_pybullet` | generated URDF/collision and MJCF bundles + `embodiedgen_image_to_rigid_object.json` + decoded PyBullet PNG/MP4 | [`byof-embodiedgen.yaml`](../../workflows/testing/byof-embodiedgen.yaml) |
+| [EmbodiedGen V2](embodiedgen.md) (**operator-private qualified CUDA workflow**) | `HorizonRobotics/EmbodiedGen` `f0124197…` + TRELLIS `55a8e816…` | `img3d-cli_trellis_image_to_urdf_pybullet` | generated URDF/collision and MJCF bundles + `embodiedgen_image_to_rigid_object.json` + decoded PyBullet PNG/MP4 | [`byof-embodiedgen.yaml`](../../workflows/testing/byof-embodiedgen.yaml) |
 | RoboCasa | `robocasa/robocasa` `v1.0` | `kitchen_task_registration` | `robocasa_kitchen_env_reset.json` | `byof-robocasa.yaml` |
 | Enactic OpenArm (**accepted public image; Isaac runtime fetch**) | `enactic/openarm_mujoco` `2.2.0` + `enactic/openarm_isaac_lab` `bad82e…` | `openarm_mujoco_bimanual_rollout` + `Isaac-Reach-OpenArm-v0` | MuJoCo/Isaac trajectories and RSL-RL checkpoint | `openarm-simulators.yaml` |
 | RoboTwin 2.0 (**operator BYOF candidate; normal submit blocked**) | `RoboTwin-Platform/RoboTwin` `96c1feab…` | `beat_block_hammer_successful_seed_replay_collection` | operator evidence: `robotwin-smoke.json` + native HDF5 + MP4; registry admission deferred | `byof-robotwin.yaml` |
@@ -55,7 +55,7 @@ tracks the GPU qualification; the workflow adds no new image or model admission.
 | MuJoCo Playground | `mjx_cheetah_run_step` | **accepted** | Same runs; CheetahRun reward≈0.0019 |
 | MuJoCo Playground | `train_jax_ppo_cartpole_smoke` | **accepted** | `defcap9-mujoco-playground-20260709-034059` (`brax_ppo_train_api`, jax 0.8.0) |
 | Gymnasium-Robotics | `HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1` | **historical private proof; neutral development build release-quarantined** | The accepted `c308945a` result remains bound to its private digest. The redesigned source has a payload-free development-build path but no accepted release or public image proof; any new private receipt remains owner-only. |
-| EmbodiedGen V2 | `img3d-cli_trellis_image_to_urdf_pybullet` | **implementation complete; live qualification pending** | Requires the exact private CUDA image, public TRELLIS model revision, and configured Token Factory VLM to generate a mesh and URDF, validate collision geometry, settle the generated URDF in PyBullet, and decode its rendered MP4. VLM physical properties are estimates, not calibration. |
+| EmbodiedGen V2 | `img3d-cli_trellis_image_to_urdf_pybullet` | **private live qualification complete; per-run target preflight required** | One exact private CUDA image completed the standard RTX PRO 6000 run with generated mesh/URDF, collision validation, MJCF handoff, PyBullet settling, and decoded MP4. Every new target still needs health/access and exact-image pull checks. VLM physical properties are estimates, not calibration. |
 | RoboCasa | `kitchen_task_registration` | **accepted** | `defcap8-robocasa-20260709-024455` (+ prior `…-011138`) |
 | RoboCasa | `download_kitchen_assets_lw` | **accepted** | `defcap17-robocasa-20260709-060243` (IIFAN fixtures+objects; restored git accessories) |
 | RoboCasa | `kitchen_egl_env_reset` | **accepted** | `defcap17-robocasa-20260709-060243` (post-download subprocess; 58 lightwheel cats; obs dict) |
@@ -93,7 +93,7 @@ tracks the GPU qualification; the workflow adds no new image or model admission.
 
 ### EmbodiedGen V2
 
-The operator-private candidate pins EmbodiedGen V2.1.0 source
+The operator-private qualified workflow pins EmbodiedGen V2.1.0 source
 `f0124197888c2b733e4eaa65acd81ad9cfda3b79`, its upstream-supported TRELLIS
 submodule `55a8e8164b195bbf927e0978f00e76c835e6011f`, and model revision
 `25e0d31ffbebe4b5a97464dd851910efc3002d96`. The CUDA/OS bootstrap is in the
@@ -109,7 +109,7 @@ artifact and lifecycle contract.
 
 | Capability | Status | Upstream basis |
 | --- | --- | --- |
-| `img3d-cli_trellis_image_to_urdf_pybullet` | implementation complete; live qualification pending | EmbodiedGen `img3d-cli` TRELLIS output → its URDF converter/collision decomposition → PyBullet `loadURDF` and gravity/contact validation |
+| `img3d-cli_trellis_image_to_urdf_pybullet` | private live qualification complete; per-run target preflight required | EmbodiedGen `img3d-cli` TRELLIS output → its URDF converter/collision decomposition → PyBullet `loadURDF` and gravity/contact validation |
 
 The generated URDF's category, size, mass, and friction metadata are VLM
 estimates. They are not metrology, calibrated material properties, or ground

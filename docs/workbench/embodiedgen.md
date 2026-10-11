@@ -8,7 +8,7 @@ cancels it through SkyPilot; the generic workflow SDK reads its durable state.
 This avoids a parallel orchestration path while keeping the workflow usable by a
 human or an agent.
 
-The only candidate capability is
+The qualified private capability is
 `img3d-cli_trellis_image_to_urdf_pybullet`: upstream EmbodiedGen V2.1.0's
 `img3d-cli` runs the TRELLIS backend on one image, exports a mesh/URDF and
 collision meshes, converts the URDF to MJCF, then loads that *exact generated
@@ -21,6 +21,110 @@ See the [testing-workflow catalog](../../workflows/testing/README.md#bring-your-
 [OSS capability catalog](oss-solution-catalog.md#embodiedgen-v2), and the
 [EmbodiedGen operator skill](../../skills/tools/embodiedgen/SKILL.md) for the
 same capability boundary.
+
+## Quickstart: run the qualified private workflow
+
+This is turnkey for an operator who has normal NPA project configuration and
+access to the already-qualified private image through the configured private
+delivery path. It is not a public image or a promise that every project,
+bucket, credential, or GPU target is preconfigured. One exact private digest
+completed the full standard workflow on an RTX PRO 6000. The live producer's
+image/runtime/workflow/profile inputs remained unchanged through the historical
+source bridge; this guide is intentionally updated as a later handoff. The
+private digest and the detailed run evidence stay outside this repository.
+
+### One-time operator setup
+
+Configure the private registry credential and namespace-scoped pull Secret,
+standard `skypilot-service-account`, and compatible GPU target through normal
+NPA and SkyPilot configuration. This setup is described in [private registry
+target configuration](#private-registry-target-configuration). It is not a
+consumer image build step, and it must not expose registry values or credentials
+in this repository.
+
+### Each-run values
+
+For each consumer run, provide only a selected project, a worker-readable input
+image, an output bucket, a new run ID, and the configured qualified digest. The
+operator's one-time setup is the private registry credential/pull Secret and a
+compatible target. A new target must still pass its own health, access, and
+exact-image pull preflight; do not assume that the earlier target is available.
+
+```bash
+PROJECT='<configured-project-alias>'
+OUTPUT_BUCKET='<configured-output-bucket>'
+KUBERNETES_CONTEXT='<configured-kubernetes-context>'
+RUN_ID='<new-unique-run-id>'
+INPUT_URI='s3://<worker-readable-bucket>/inputs/<object>.jpg'
+WORKFLOW_STATE_URI="s3://${OUTPUT_BUCKET}/workflow-runs/${RUN_ID}"
+IMAGE_REF='<operator-qualified-private-registry>/npa-embodiedgen@sha256:<64-hex>'
+export SKYPILOT_CONFIG='<task-scoped-private-skypilot-config>'
+
+npa workbench health preflight --project "${PROJECT}" \
+  --checks nebius,token_factory,s3 --json
+npa workbench health access --capability token_factory --json
+
+npa workbench workflow validate-spec workflows/testing/byof-embodiedgen.yaml --json
+npa workbench workflow plan-spec workflows/testing/byof-embodiedgen.yaml \
+  --run-id "${RUN_ID}" \
+  --var "bucket=${OUTPUT_BUCKET}" \
+  --var "input_uri=${INPUT_URI}" \
+  --var "base_image=${IMAGE_REF}" \
+  --check-render --json
+
+npa workbench workflow preflight-images workflows/testing/byof-embodiedgen.yaml \
+  --project "${PROJECT}" --infra "k8s/${KUBERNETES_CONTEXT}" \
+  --config-path "${SKYPILOT_CONFIG}" \
+  --var "bucket=${OUTPUT_BUCKET}" \
+  --var "input_uri=${INPUT_URI}" \
+  --var "base_image=${IMAGE_REF}" \
+  --image-override "workbench.byof.repo=${IMAGE_REF}" --json
+
+npa workbench workflow submit workflows/testing/byof-embodiedgen.yaml \
+  --run-id "${RUN_ID}" --project "${PROJECT}" \
+  --workflow-s3-uri "${WORKFLOW_STATE_URI}" --durable-s3 --runtime \
+  --config-path "${SKYPILOT_CONFIG}" \
+  --var "bucket=${OUTPUT_BUCKET}" \
+  --var "input_uri=${INPUT_URI}" \
+  --var "base_image=${IMAGE_REF}" \
+  --image-override "workbench.byof.repo=${IMAGE_REF}" \
+  --secret-env NEBIUS_TOKEN_FACTORY_KEY
+```
+
+`--secret-env` asks NPA to resolve the named configured credential; never put
+its value in the shell, YAML, or an artifact. `plan-spec --check-render` is a
+local static render and deliberately has no `--config-path`; the same private
+configuration and exact `IMAGE_REF` are required for preflight, submit, and a
+later resume. See [private registry target configuration](#private-registry-target-configuration)
+for the one-time private configuration requirements. After submission, inspect
+the durable run and its declared artifacts with the same project, run ID, and
+workflow state URI:
+
+```bash
+npa workbench workflow status "${RUN_ID}" --project "${PROJECT}" \
+  --workflow-s3-uri "${WORKFLOW_STATE_URI}" --watch --json
+npa workbench workflow artifacts "${RUN_ID}" --project "${PROJECT}" \
+  --workflow-s3-uri "${WORKFLOW_STATE_URI}" --json
+npa studio search --project "${PROJECT}" --bucket "${OUTPUT_BUCKET}" \
+  --prefix "oss-solutions/embodiedgen/${RUN_ID}/" --read-metadata
+```
+
+Read the primary report before unpacking a bundle; view the returned
+`pybullet_view.png` and decoded `pybullet_settle.mp4` from the run-scoped
+artifact inventory. To stop an interrupted run, use the exact generic
+`workflow cancel` command in [monitor, inspect, retry, and clean up](#monitor-inspect-retry-and-clean-up), then use `npa cleanup --json` only as a
+local residue audit. Do not delete a shared controller, cluster, registry, or
+another operator's resources.
+
+The standard runtime automatically fetches the pinned upstream source,
+dependencies, and model into its operator cache; generates the mesh, URDF and
+collision assets; converts the URDF to MJCF; and checks the exact free body in
+PyBullet. It requires all six declared output objects before a wave completes.
+The result is useful generated geometry with VLM-estimated physical properties,
+not calibrated measurement, semantic classification, MuJoCo execution, or
+robot-policy validation. The live sample also demonstrated that the VLM can
+misclassify the input's semantic category, so inspect the primary report rather
+than treating that field as ground truth.
 
 ## Delivery, identities, and access boundary
 
@@ -55,7 +159,7 @@ property-estimation adapter. Supply it through `--secret-env`; never put a
 credential in YAML, a URI, a shell variable committed to a file, or an output
 manifest.
 
-## Prerequisites and values
+## Detailed per-run prerequisites and values
 
 Run these on the Linux operator host that owns the intended run, after resolving
 the project alias, private registry, S3 storage, and Kubernetes context through
@@ -127,12 +231,14 @@ operator-side bootstrap manifest check use the same authority as the worker
 pull Secret; never put them in this config file, workflow variables, rendered
 YAML, logs, or source control.
 
-## Build the private candidate
+## One-time operator image qualification for changed inputs
 
-This is an operational prerequisite, not a claim that the candidate is already
-built or qualified. Do it only after the required secure-image-build checks and
-on a host with enough private build space. The tag binds the full current NPA
-source SHA; resolve it to a digest before using it anywhere else.
+Consumers should use the qualified private digest in the quickstart; they do
+not rebuild it for every run. Use this procedure only when an operator changes
+the image-producing source or needs to qualify a new private image. Do it after
+the required secure-image-build checks and on a host with enough private build
+space. The tag binds the full current NPA source SHA; resolve it to a digest
+before using it anywhere else.
 
 ```bash
 NPA_SOURCE_SHA=$(git rev-parse HEAD)
@@ -291,9 +397,22 @@ artifacts = workflow.artifacts(
 
 ## Qualification status
 
-Implementation, local workflow validation, and render checks are complete only
-when their recorded tests pass. No qualified private digest, actual RTX PRO
-6000 generation, or live artifact is recorded in the public repository. Those
-are separate operational gates. Until they are recorded for one exact private
-digest, this is an implementation-complete, live-qualification-pending
-workflow—not a supported release or a claim of generated model quality.
+One operator-private immutable image built from source producer
+`896821301b53766cc137c0d3f72933764c6b2978` completed the standard durable
+workflow on RTX PRO 6000. The run produced and read back all six declared
+outputs plus 59 hash-verified artifacts, including generated/collision and
+MJCF bundles, four RGB views, a turntable, and a decoded 40-second PyBullet
+video. The image digest, registry, project, storage locations, and detailed
+receipts remain private. The producer's image/runtime/workflow/profile inputs
+were unchanged through historical source
+`81baa4ead67f8d9bbc52548576a43a57b72035d9`; this later guide/readiness handoff
+does not claim guide-byte equivalence and is reviewed as its own source change.
+
+This is live qualification for that exact private image and run, not public
+release approval or a blanket readiness claim. Every new selected target must
+still complete its own project health/access checks and exact-image pull
+preflight, and every consumer must provide an authorized input, output bucket,
+and Token Factory credential. The quality limits above remain: VLM properties
+and category are estimates, the observed astronaut was labeled `book`, and an
+upstream post-export quality warning means no upstream aesthetic-QA claim is
+made.

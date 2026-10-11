@@ -15,7 +15,7 @@ and [OSS capability record](../../../docs/workbench/oss-solution-catalog.md#embo
 
 ## Capability boundary
 
-The only candidate capability is
+The qualified private capability is
 `img3d-cli_trellis_image_to_urdf_pybullet`. The real upstream TRELLIS backend
 runs through EmbodiedGen `img3d-cli`, emits a URDF and collision meshes,
 converts that URDF to MJCF, and validates the exact generated URDF in PyBullet
@@ -34,10 +34,11 @@ supported handoff only; PyBullet is the simulator actually exercised.
 2. Run `npa workbench health preflight --checks nebius,token_factory,s3 --json`
    with the selected project, then `npa workbench health access --capability
    token_factory --json`. TRELLIS is public: do not invent an acceptance flag.
-3. Require an operator-private, immutable
+3. Obtain an operator-private, immutable
    `REGISTRY/npa-embodiedgen@sha256:<64-hex>` image. The tag before resolution
-   must be `dev-<full-40-character-NPA-sha>`. Never publish or use a public
-   registry image.
+   must be `dev-<full-40-character-NPA-sha>` when an operator builds a new
+   image. Consumers use the already-qualified digest from supported configured
+   private delivery; never publish or use a public registry image.
 4. Pass `NEBIUS_TOKEN_FACTORY_KEY` only with `--secret-env`; it is needed by
    upstream property estimation and must never be written to YAML, reports, or
    shell logs.
@@ -48,7 +49,8 @@ supported handoff only; PyBullet is the simulator actually exercised.
 ## Operate through Workbench
 
 Run `validate-spec`, `plan-spec --check-render`, `submit --runtime --plan-only`, target
-`preflight-images`, then submit with one matching `base_image` config value and
+`preflight-images`, then the real `submit --runtime` with one matching `base_image`
+config value and
 `--image-override workbench.byof.repo=<same-digest>`. Reuse the same project,
 run ID, workflow S3 prefix, input URI, bucket, and image digest for status,
 logs, artifacts, cancellation, and any `--resume-run` reconciliation. Do not
@@ -83,7 +85,11 @@ inventory are in `npa/docker/workbench/embodiedgen/REDISTRIBUTION.md` and
 `THIRD_PARTY_NOTICES.md`. Runtime fetch does not grant any source, model, input,
 output, or service right.
 
-This candidate remains live-qualification pending until one exact private
-digest passes the required byte scans and a real RTX PRO 6000 run produces the
-declared artifacts. A plan, container build, local test, or historical evidence
-does not satisfy that gate.
+One exact private digest completed the standard RTX PRO 6000 workflow and all
+six declared outputs were read back with 59 hash-verified artifacts. The
+operator-private evidence has a historical source bridge covering protected
+image/runtime/workflow/profile inputs; later guide and readiness handoff edits
+are reviewed separately. It is not a public release or a claim that an
+arbitrary target is ready. Every new selected target still needs health/access
+checks and exact-image pull preflight, while a new source/image still needs the
+private build and qualification procedure in the operator guide.

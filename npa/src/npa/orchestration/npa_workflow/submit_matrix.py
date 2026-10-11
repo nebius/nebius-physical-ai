@@ -393,12 +393,14 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         requires_token_factory=True,
         plan_only=True,
         plan_only_justification=(
-            "Requires a built private immutable EmbodiedGen image and an isolated "
-            "qualified RTX GPU before its real TRELLIS and PyBullet acceptance run."
+            "The automated matrix intentionally does not replay the qualified private "
+            "GPU run; each operator submission requires its own private image, "
+            "credential, input/output, and fresh target preflight."
         ),
         notes=(
-            "Upstream TRELLIS image-to-mesh generation, EmbodiedGen URDF/MJCF export, "
-            "and PyBullet settling are not yet GPU accepted."
+            "One exact private image completed TRELLIS generation, EmbodiedGen "
+            "URDF/MJCF export, and PyBullet settling on RTX PRO 6000; no public "
+            "image or target-wide readiness is implied."
         ),
     ),
     SubmitLiveCase(

@@ -14,7 +14,7 @@
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "Focused tests bind the private immutable-image requirement, literal URI transport through plan/render/BYOF bash, real upstream img3d-cli and EmbodiedGen converter calls, collision validation, PyBullet contact/settling, decoded view generation, and every declared generated asset/view artifact. This is not GPU execution evidence.",
+      "reason": "Focused tests bind the private immutable-image requirement, literal URI transport through plan/render/BYOF bash, real upstream img3d-cli and EmbodiedGen converter calls, collision validation, PyBullet contact/settling, decoded view generation, and every declared generated asset/view artifact. A separate operator-private run completed that same workflow; its evidence remains outside the repository.",
       "evidence": [
         "npa/tests/docker/test_embodiedgen_runtime.py",
         "npa/tests/workflows/test_byof_solution_smokes.py",
@@ -22,42 +22,60 @@
       ]
     }
   },
+  "live_qualification": {
+    "status": "verified",
+    "reason": "One operator-private immutable image built from source producer 896821301b53766cc137c0d3f72933764c6b2978 completed the standard durable RTX PRO 6000 workflow. All six declared outputs and 59 artifacts were read back and hash-verified. The historical producer-to-source bridge covers only the image/runtime/workflow/profile inputs; this later turnkey handoff deliberately revises documentation and readiness. The digest, registry, project, and artifact locations remain private.",
+    "evidence": [
+      "Operator-private exact-image qualification, target preflight, runtime receipt, durable success record, and artifact readback; identifiers retained outside repository.",
+      "docs/workbench/embodiedgen.md#qualification-status"
+    ],
+    "qualification_scope": {
+      "producer_source_head": "896821301b53766cc137c0d3f72933764c6b2978",
+      "historical_bridge_source_head": "81baa4ead67f8d9bbc52548576a43a57b72035d9",
+      "qualified_workflow_sha256": "ad8c793f9308c046adc9887feb69f004504961c0465de6413479ba872c5c1fa1",
+      "image_runtime_workflow_profile_inputs_unchanged_through_historical_bridge": true,
+      "guide_is_outside_the_historical_equivalence_claim": true,
+      "private_image_digest_retained_outside_repository": true
+    }
+  },
   "prerequisites": {
     "output_storage": {
       "status": "unverified",
-      "reason": "The checked-in bucket is a non-writable placeholder; no selected-project S3 upload/readback was attempted during code review.",
-      "evidence": []
+      "reason": "The qualified run wrote and read back all declared artifacts in one configured private output bucket, but the checked-in bucket is a non-writable placeholder. Each consumer must select and verify a worker-writable bucket for its own run.",
+      "evidence": [
+        "Operator-private durable output readback: all six declared outputs and 59 artifacts hash-verified."
+      ]
     },
     "worker_input": {
       "status": "unverified",
-      "reason": "The workflow declares a worker-readable HTTPS or S3 image URI and runtime code validates/downloads it, but no selected worker has fetched the default or an operator input in this review.",
+      "reason": "The qualified worker fetched its image input and completed generation, but a consumer input is still a per-run requirement: it must be a worker-readable HTTPS or S3 URI, not a local path.",
       "evidence": [
         "npa/docker/workbench/embodiedgen/capability_smoke.py",
-        "docs/workbench/embodiedgen.md"
+        "Operator-private successful worker input staging and artifact readback."
       ]
     },
     "credentials": {
       "status": "unverified",
-      "reason": "TRELLIS is public, while upstream property estimation needs the configured Token Factory credential. No credential value or live access probe is retained in repository evidence.",
+      "reason": "The qualified run resolved a configured Token Factory credential through the standard --secret-env path, but no credential value is retained. Each operator must still pass fresh health/access checks for its selected project and credential.",
       "evidence": [
         "npa/docker/workbench/embodiedgen/runtime-bootstrap.py",
-        "npa/scripts/run_byof_container_verify.py"
+        "Operator-private successful property-estimation stage; credential values are not published."
       ]
     },
     "source_image": {
-      "status": "blocked",
-      "reason": "No private OCI image has been built, scanned, pushed, resolved to a digest, or proved pullable. A future operator build must use the private dev-full-SHA tag and complete exact-digest image gates.",
+      "status": "unverified",
+      "reason": "One exact operator-private image was built, scanned, delivered by immutable digest, pulled by the selected target, and completed the qualified run. A consumer must still obtain and select that exact configured private digest; a new source/image requires the one-time private build and exact-digest qualification procedure.",
       "evidence": [
         "npa/docker/workbench/embodiedgen/build.sh",
-        "npa/docker/workbench/embodiedgen/REDISTRIBUTION.md"
+        "Operator-private exact-image qualification and immutable delivery record; digest and registry remain private."
       ]
     },
     "target_runtime": {
-      "status": "blocked",
-      "reason": "No exact private digest has run on an RTX PRO 6000 Blackwell, and no generated artifact has been read back from a live worker. The required capability remains live-qualification pending.",
+      "status": "unverified",
+      "reason": "One selected RTX PRO 6000 target completed the qualified run, but no arbitrary new target is pre-approved. Before every new submission, verify its project health/access, standard SkyPilot service account and private pull Secret, exact immutable-image pull, and compatible GPU runtime.",
       "evidence": [
         "npa/src/npa/orchestration/npa_workflow/submit_matrix.py",
-        "docs/workbench/oss-solution-catalog.md#embodiedgen-v2"
+        "docs/workbench/embodiedgen.md#quickstart-run-the-qualified-private-workflow"
       ]
     }
   }

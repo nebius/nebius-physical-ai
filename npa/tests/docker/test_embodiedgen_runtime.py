@@ -1392,7 +1392,9 @@ def test_embodiedgen_render_keeps_the_profiled_outer_worker_envelope() -> None:
     )
 
 
-def test_readiness_record_binds_workflow_and_live_blockers() -> None:
+def test_readiness_record_binds_historical_qualification_and_consumer_prerequisites() -> (
+    None
+):
     readiness = json.loads(READINESS.read_text(encoding="utf-8"))
     assert readiness["schema_version"] == "workflow-readiness/v1"
     assert (
@@ -1405,13 +1407,29 @@ def test_readiness_record_binds_workflow_and_live_blockers() -> None:
     )
     assert readiness["planning"]["validation"]["status"] == "verified"
     assert readiness["planning"]["task_fidelity"]["status"] == "verified"
-    assert readiness["prerequisites"]["source_image"]["status"] == "blocked"
-    assert readiness["prerequisites"]["target_runtime"]["status"] == "blocked"
+    assert readiness["live_qualification"]["status"] == "verified"
+    assert "59 artifacts" in readiness["live_qualification"]["reason"]
+    scope = readiness["live_qualification"]["qualification_scope"]
+    assert scope["qualified_workflow_sha256"] == readiness["workflow_sha256"]
+    assert scope[
+        "image_runtime_workflow_profile_inputs_unchanged_through_historical_bridge"
+    ]
+    assert scope["guide_is_outside_the_historical_equivalence_claim"]
+    assert all(
+        prerequisite["status"] == "unverified"
+        for prerequisite in readiness["prerequisites"].values()
+    )
+    assert (
+        "Before every new submission"
+        in readiness["prerequisites"]["target_runtime"]["reason"]
+    )
 
 
-def test_embodiedgen_workflow_is_explicitly_plan_only_until_gpu_accepted() -> None:
+def test_embodiedgen_automatic_submit_matrix_remains_plan_only_after_acceptance() -> (
+    None
+):
     case = next(item for item in SUBMIT_LIVE_MATRIX if item.spec == WORKFLOW.name)
     assert case.tier == "gpu"
     assert case.plan_only
     assert case.requires_token_factory
-    assert "private immutable" in case.plan_only_justification
+    assert "fresh target preflight" in case.plan_only_justification
