@@ -62,9 +62,9 @@ def test_default_runtime_root_is_frozen_before_hf_cache_isolated(
     assert isolated_hf.startswith(f"{root}/hf-")
     assert "/hf-" not in root
     assert main_ref == "d78a16c91c7a56488894a1c8de4f5c7cc28aa8b0"
-    assert (Path(isolated_hf) / "hub/models--tencent--HY-World-2.0/refs/main").read_bytes() == (
-        b"d78a16c91c7a56488894a1c8de4f5c7cc28aa8b0"
-    )
+    assert (
+        Path(isolated_hf) / "hub/models--tencent--HY-World-2.0/refs/main"
+    ).read_bytes() == (b"d78a16c91c7a56488894a1c8de4f5c7cc28aa8b0")
     assert (shared_ref / "main").read_text(encoding="utf-8") == "unrelated-main\n"
 
 
@@ -79,7 +79,7 @@ def test_legacy_matching_hub_ref_is_normalized_to_exact_snapshot_bytes(
             (
                 f"source {RUNTIME}",
                 "configure_runtime_hf_cache",
-                'cache="$(hub_cache_directory \"$HY_WORLD_MODEL\")"',
+                'cache="$(hub_cache_directory "$HY_WORLD_MODEL")"',
                 'mkdir -p "$cache/snapshots/$HY_WORLD_MODEL_REF" "$cache/refs"',
                 'printf "%s\\n" "$HY_WORLD_MODEL_REF" > "$cache/refs/main"',
                 'register_hub_main_ref "$HY_WORLD_MODEL" "$HY_WORLD_MODEL_REF"',
@@ -96,7 +96,9 @@ def test_legacy_matching_hub_ref_is_normalized_to_exact_snapshot_bytes(
     assert result_path.read_bytes() == b"d78a16c91c7a56488894a1c8de4f5c7cc28aa8b0"
 
 
-def test_disagreeing_hub_ref_refuses_without_rewriting_the_cache(tmp_path: Path) -> None:
+def test_disagreeing_hub_ref_refuses_without_rewriting_the_cache(
+    tmp_path: Path,
+) -> None:
     """Only the exact legacy newline form is repairable in the isolated cache."""
 
     main_ref = tmp_path / "main"
@@ -105,10 +107,10 @@ def test_disagreeing_hub_ref_refuses_without_rewriting_the_cache(tmp_path: Path)
             (
                 f"source {RUNTIME}",
                 "configure_runtime_hf_cache",
-                'cache="$(hub_cache_directory \"$HY_WORLD_MODEL\")"',
+                'cache="$(hub_cache_directory "$HY_WORLD_MODEL")"',
                 'mkdir -p "$cache/snapshots/$HY_WORLD_MODEL_REF" "$cache/refs"',
                 'printf "%s" "${HY_WORLD_MODEL_REF%?}1" > "$cache/refs/main"',
-                "trap 'cp \"$cache/refs/main\" \"$NPA_TEST_REF_AFTER\"' EXIT",
+                'trap \'cp "$cache/refs/main" "$NPA_TEST_REF_AFTER"\' EXIT',
                 'register_hub_main_ref "$HY_WORLD_MODEL" "$HY_WORLD_MODEL_REF"',
             )
         ),
@@ -132,7 +134,9 @@ def test_completed_cache_layout_is_checked_for_relocated_console_scripts(
     tree = tmp_path / "runtime" / "source-df9988efb87bfc0f4947eb3889411cf957478b06"
     venv = tree / ".venv"
     subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True)
-    subprocess.run([sys.executable, "-m", "venv", str(tree / ".report-venv")], check=True)
+    subprocess.run(
+        [sys.executable, "-m", "venv", str(tree / ".report-venv")], check=True
+    )
     stale = venv / "bin" / "legacy-console"
     stale.write_text(f"#!{tree}.incomplete/.venv/bin/python\n", encoding="utf-8")
     stale.chmod(0o755)
@@ -206,7 +210,9 @@ def test_runtime_contract_retains_the_exact_pytorch_wheel_index(tmp_path: Path) 
     )
 
     assert result.returncode == 0, result.stderr
-    contract = json.loads((tree / "npa_runtime_contract.json").read_text(encoding="utf-8"))
+    contract = json.loads(
+        (tree / "npa_runtime_contract.json").read_text(encoding="utf-8")
+    )
     assert contract["pytorch_wheel_index"] == "https://download.pytorch.org/whl/cu128"
     assert contract["vgg16_sha256"] == (
         "397923af8e79cdbb6a7127f12361acd7a2f83e06b05044ddf496e83de57a5bf0"
@@ -399,7 +405,9 @@ def test_requirements_native_dependency_drift_refuses_before_uv_install(
     assert not invoked.exists()
 
 
-def test_report_sdk_is_installed_in_a_separate_report_interpreter(tmp_path: Path) -> None:
+def test_report_sdk_is_installed_in_a_separate_report_interpreter(
+    tmp_path: Path,
+) -> None:
     """Rerun uses its own closure and cannot replace native NumPy in-place."""
 
     tree = tmp_path / "runtime" / "source-df9988efb87bfc0f4947eb3889411cf957478b06"
@@ -433,7 +441,9 @@ def test_report_sdk_is_installed_in_a_separate_report_interpreter(tmp_path: Path
     ]
 
 
-def test_upstream_nested_torchrun_resolves_from_the_native_runtime(tmp_path: Path) -> None:
+def test_upstream_nested_torchrun_resolves_from_the_native_runtime(
+    tmp_path: Path,
+) -> None:
     """WorldMirror inherits the native venv executable rather than image PATH."""
 
     tree = tmp_path / "runtime" / "source-df9988efb87bfc0f4947eb3889411cf957478b06"
@@ -448,7 +458,7 @@ def test_upstream_nested_torchrun_resolves_from_the_native_runtime(tmp_path: Pat
             (
                 f"source {RUNTIME}",
                 "prefer_native_runtime_bin",
-                f'command -v torchrun > {result_path}',
+                f"command -v torchrun > {result_path}",
             )
         ),
         environment={
@@ -469,7 +479,9 @@ def test_layout_rejects_a_completed_cache_with_a_stale_runtime_contract(
     tree = tmp_path / "runtime" / "source-df9988efb87bfc0f4947eb3889411cf957478b06"
     venv = tree / ".venv"
     subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True)
-    subprocess.run([sys.executable, "-m", "venv", str(tree / ".report-venv")], check=True)
+    subprocess.run(
+        [sys.executable, "-m", "venv", str(tree / ".report-venv")], check=True
+    )
     (tree / "npa_runtime_contract.json").write_text("{}\n", encoding="utf-8")
 
     result = _bash(
