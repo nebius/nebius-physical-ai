@@ -62,24 +62,27 @@ def _npa_path_attributes() -> list[tuple[str, Path]]:
 def test_no_loaded_module_points_at_the_real_npa_directory() -> None:
     """Fail when a home-derived constant escaped the fixture's repoint list.
 
-    The test compares against the account home rather than the redirected
-    `HOME`. A constant left over from an earlier test's temporary home is a
+    The test compares against the account's actual `.npa` directory rather
+    than all descendants of the account home, which can contain private test
+    homes. It does not use the redirected `HOME`. A constant left over from an
+    earlier test's temporary home is a
     separate and much smaller problem, and failing on it here would report a
     cross-test staleness bug as a credential leak.
 
     Returns:
         None.
     Raises:
-        AssertionError: A loaded module exposes a `.npa` path under the real
-            account home, so a unit test could read or write the operator's
+        AssertionError: A loaded module exposes a path under the real
+            account `.npa` directory, so a unit test could read or write the
+            operator's
             actual configuration and credentials.
     """
 
-    account_home = _account_home()
+    account_npa = _account_home() / ".npa"
     escaped = [
         f"  {name} = {value}"
         for name, value in _npa_path_attributes()
-        if value.is_relative_to(account_home)
+        if value.is_relative_to(account_npa)
     ]
 
     assert not escaped, (
@@ -109,6 +112,29 @@ def test_guard_catches_a_constant_left_pointing_at_the_real_home(
 
     with pytest.raises(AssertionError, match="real ~/.npa"):
         test_no_loaded_module_points_at_the_real_npa_directory()
+
+
+def test_guard_allows_an_isolated_home_under_the_account_home(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Allow a private test home beneath the operator's account directory.
+
+    Args:
+        monkeypatch: Used to expose an isolated configuration path.
+    Returns:
+        None.
+    Raises:
+        AssertionError: The guard mistakes the isolated home for real config.
+    """
+
+    import npa.clients.config as config
+
+    isolated_home = _account_home() / "private-unit-home"
+    monkeypatch.setattr(
+        config, "_ISOLATED_FIXTURE", isolated_home / ".npa", raising=False
+    )
+
+    test_no_loaded_module_points_at_the_real_npa_directory()
 
 
 def test_credentials_path_and_config_path_are_inside_the_test_home() -> None:
