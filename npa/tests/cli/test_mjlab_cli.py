@@ -88,6 +88,37 @@ def test_env_dry_run(monkeypatch):
     assert json.loads(result.stdout)["executed"] is False
 
 
+def test_eval_forwards_native_video_dimensions(monkeypatch):
+    captured = []
+    monkeypatch.setattr(
+        runtime,
+        "evaluate",
+        lambda request, **kwargs: captured.append(request) or {"status": "completed"},
+    )
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "mjlab",
+            "eval",
+            "--checkpoint",
+            "s3://fixture/model.pt",
+            "--output-path",
+            "s3://fixture/out",
+            "--video",
+            "--video-width",
+            "1280",
+            "--video-height",
+            "720",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert captured[0].video and (
+        captured[0].video_width,
+        captured[0].video_height,
+    ) == (1280, 720)
+
+
 def test_invalid_paths_are_errors(tmp_path):
     result = runner.invoke(
         app, ["workbench", "mjlab", "train", "--output-path", str(tmp_path / "model")]
