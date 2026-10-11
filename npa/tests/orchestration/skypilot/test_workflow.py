@@ -4365,6 +4365,17 @@ def test_workflow_status_accepts_pinned_config_notice(
             + '\n[{"job_id": 42, "status": "RUNNING"}]',
             "",
         ),
+        (
+            '[{"job_id": 42, "status": "SUCCEEDED"}]',
+            _ALLOWED_CLOUDS_NOTICE,
+        ),
+        (_ALLOWED_CLOUDS_NOTICE + "\nNo in-progress managed jobs.", ""),
+        (
+            "Warning: optional display unavailable\n"
+            + _ALLOWED_CLOUDS_NOTICE
+            + '\n[{"job_id": 42, "status": "SUCCEEDED"}]',
+            "",
+        ),
     ],
 )
 def test_workflow_status_does_not_infer_absence_from_unverified_queue(
