@@ -55,6 +55,7 @@
   },
   "publication_pending": {
     "antioch": "The adapter image is redistribution-eligible but has not yet been published and verified for anonymous pull.",
+    "hy-world": "The zero-Tencent-payload bootstrap has only operator-private built-byte validation and remains publication-quarantined. A public digest/anonymous inspection and a real exact-digest GPU image-to-world result are absent; exact Tencent component access and separate SAM 3 provider approval remain runtime prerequisites. Tencent documents use as its acceptance mechanism, so NPA does not add a territory/MAU attestation or grant claim.",
     "cosmos-curate": "The previous public release contains package-generated SSH host private keys and remains quarantined until a repaired candidate passes exact-image scanning and capability validation.",
     "cosmos-evaluator": "The previous public release contains package-generated SSH host private keys and remains quarantined until a repaired candidate passes exact-image scanning and capability validation.",
     "cosmos3": "The previous public release contains package-generated SSH host private keys and remains quarantined until a repaired candidate passes exact-image scanning and capability validation.",

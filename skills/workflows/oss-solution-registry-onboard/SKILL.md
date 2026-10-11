@@ -664,6 +664,32 @@ action layout (27 binary / 121 categorical) required by `train_dynamics.py`.
 Follow-up: FVD evaluation (`scripts/eval_fvd.py`, needs I3D weights) and a
 larger training budget / dataset for a sharper, longer-horizon dream.
 
+### Tencent HY-World 2.0 (`byof-hy-world.yaml`)
+
+The [operator guide](../../docs/workbench/byof-hy-world.md) is the discoverable
+entry point for the declared image-conditioned candidate: its standard
+Workbench runtime lifecycle, private digest receipt, upstream vLLM endpoint
+contract, and Tencent/Meta gating are part of the workflow contract rather than
+a second control plane.
+
+The candidate supports only the released image-conditioned route at
+`Tencent-Hunyuan/HY-World-2.0@df9988efb87bfc0f4947eb3889411cf957478b06`:
+Qwen-image HY-Pano, WorldNav, WorldStereo, GS-data preparation and
+`world_gs_trainer` composition. Its hard gate is
+`hy_world_2_image_conditioned_world_generation`, with
+`hy_world_2_generated_scene_camera_render` and
+`hy_world_2_factual_scene_report` exercised only after WorldStereo MP4 decode,
+finite upstream cameras, PLY/SPZ validation and verified RRD output. A
+WorldMirror-only multi-view reconstruction cannot satisfy this gate.
+
+The neutral bootstrap contains no Tencent source, weights, model cache, input,
+or generated scene. Tencent's 2026-04-15 Community License requires a private
+operator determination of its territory/MAU condition or a Tencent grant before
+Tencent material is fetched; no acceptance environment variable substitutes for
+that fact. Until it exists, retain this as plan-only and do not claim an image
+digest, GPU compatibility, text-to-world, calibrated scale, collision, or robot
+simulation capability.
+
 ### Alibaba Wan 2.2 (`byof-wan2.2.yaml`, `byof-wan2.2-multigpu.yaml`)
 
 Pinned official source:

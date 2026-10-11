@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
+import shlex
+import shutil
 from types import SimpleNamespace
 
 import pytest
@@ -217,7 +220,7 @@ def _successful_storage_probe(monkeypatch):
     return resolved_binaries
 
 
-def _write_runtime(tmp_path: Path, monkeypatch) -> None:
+def _write_runtime(tmp_path: Path, monkeypatch, *, region: str = "eu-north1") -> None:
     config_path = tmp_path / ".npa" / "config.yaml"
     credentials_path = tmp_path / ".npa" / "credentials.yaml"
     monkeypatch.setattr(config, "CONFIG_PATH", config_path)
@@ -247,7 +250,7 @@ def _write_runtime(tmp_path: Path, monkeypatch) -> None:
                     "proj": {
                         "project_id": "project-1",
                         "tenant_id": "tenant-1",
-                        "region": "eu-north1",
+                        "region": region,
                         "registry_id": "registry-1",
                         "storage": {
                             "checkpoint_bucket": "s3://bucket/checkpoints/",
@@ -279,6 +282,321 @@ def _capture_mk8s_backend_plan(monkeypatch: pytest.MonkeyPatch) -> dict[str, obj
         cluster_backends, "get_backend", lambda _name: CapturingBackend()
     )
     return seen
+
+
+def _failed_empty_operation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, region: str = "eu-north1"
+):
+    from npa.provisioning_journal import ProvisioningOperation, operation_context
+
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(tmp_path / "operations"))
+    operation = ProvisioningOperation.prepare(
+        command="npa provision-if-absent",
+        project_alias="proj",
+        project_id="project-1",
+        tenant_id="tenant-1",
+        region=region,
+        resource_type="cluster",
+        requested_name="failed-cluster",
+        resume_command="npa provision-if-absent",
+    )
+    with operation_context(operation):
+        operation.record_preflight_plan(
+            {
+                "project_alias": "proj",
+                "project_id": "project-1",
+                "tenant_id": "tenant-1",
+                "region": region,
+                "topology": {
+                    "cluster_name": "failed-cluster",
+                    "cpu_nodes": 1,
+                    "gpu_nodes": 1,
+                    "gpu_platform": "gpu-h200-sxm",
+                    "gpu_preset": "1gpu-16vcpu-200gb",
+                    "accelerator": "H200:1",
+                    "gpu_preemptible": False,
+                    "capacity_block_group": "",
+                },
+            }
+        )
+        operation.transition("mutating")
+        operation.record_failure(RuntimeError("Command failed (1): terraform apply"))
+        operation.transition("recovery-required")
+        operation.record_rollback(
+            attempted=False, completed=False, removed=[], preserved=[]
+        )
+    return operation
+
+
+def _retained_standard_recovery_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    terraform_dir: Path | None = None,
+    region: str = "eu-north1",
+) -> Path:
+    """Create retained material for the one supported failed no-S3 producer."""
+
+    from npa.cluster import state as cluster_state
+
+    cluster_root = tmp_path / ".npa" / "clusters"
+    monkeypatch.setattr(cluster_state, "CLUSTERS_DIR", cluster_root)
+    backend = (
+        cluster_state.cluster_dir("failed-cluster")
+        / "backend-state"
+        / "project-1"
+        / "failed-cluster"
+    )
+    recipe = backend / "k8s-training"
+    repository = _test_repository_root()
+    source = repository / "deploy" / "cluster" / "vendor" / "nebius-solutions-library"
+    shutil.copytree(source / "k8s-training", recipe)
+    shutil.copytree(source / "modules", backend / "modules")
+    _materialize_standard_recipe(recipe, region=region)
+    (backend / ".npa-fleet-env.json").write_text(
+        json.dumps(
+            {
+                "backend": "mk8s",
+                "cluster_name": "failed-cluster",
+                "context": "retained-backend-context",
+                "project_id": "project-1",
+                "tenant_id": "tenant-1",
+                "region": region,
+                "gpu_driver_mode": "managed-image",
+                "managed_driver_preset": "cuda13.0",
+                "status": "provisioning",
+                "subnet_id": "vpcsubnet-retained",
+                "provider_rpc_deadlines": {
+                    "source_sha256": _source_recipe_hashes(source, region=region),
+                    "materialized_provider_sha256": _sha256_file(
+                        recipe / "provider.tf"
+                    ),
+                    "apply_timeout_minutes": 120,
+                    "inserted_defaults": {
+                        "auth_timeout": "120m",
+                        "per_retry_timeout": "120m",
+                        "timeout": "120m",
+                    },
+                    "preserved_operator_fields": [],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (recipe / "terraform.tfvars").write_text(_standard_tfvars(), encoding="utf-8")
+    (recipe / "terraform.tfstate").write_text(
+        json.dumps(_empty_terraform_state()), encoding="utf-8"
+    )
+    (recipe / ".terraform.lock.hcl").write_text("# retained lock\n", encoding="utf-8")
+    (recipe / "README.md").write_text("retained standard recipe\n", encoding="utf-8")
+    selected_dir = terraform_dir or (repository / "deploy" / "cluster")
+    evidence = tmp_path / "retained-events.json"
+    service_dir = tmp_path / "service"
+    service_dir.mkdir()
+    (service_dir / "failed.stderr").write_text(
+        "rpc FailedPrecondition: allocation rejected before resource creation\n",
+        encoding="utf-8",
+    )
+    (service_dir / "failed.stderr").chmod(0o600)
+    command = _recorded_provision_command(selected_dir, service_dir)
+    evidence.write_text(
+        json.dumps({"scope": "retained operator events", "records": [command]}),
+        encoding="utf-8",
+    )
+    evidence.chmod(0o600)
+    return evidence
+
+
+def _test_repository_root() -> Path:
+    """Return the checked-out repository rather than the pytest invocation cwd."""
+
+    repository = Path(__file__).resolve().parents[2]
+    source = repository / "deploy" / "cluster" / "vendor" / "nebius-solutions-library"
+    assert source.is_dir(), f"missing checked-in recovery source: {source}"
+    return repository
+
+
+def _materialize_standard_recipe(recipe: Path, *, region: str) -> None:
+    """Apply the same deterministic source transformations as the producer."""
+
+    from npa.cluster_backends.mk8s_render import (
+        patch_explicit_region_defaults,
+        patch_provider_domain,
+    )
+    from npa.cluster_backends.provider_rpc import _hcl_providers, _materialized_text
+
+    locals_file = recipe / "locals.tf"
+    locals_file.write_text(
+        patch_explicit_region_defaults(locals_file.read_text(encoding="utf-8")),
+        encoding="utf-8",
+    )
+    provider_file = recipe / "provider.tf"
+    provider = patch_provider_domain(provider_file.read_text(encoding="utf-8"), region)
+    provider_file.write_text(
+        _materialized_text(
+            _hcl_providers(provider_file, provider)[0],
+            provider,
+            {"auth_timeout": "120m", "per_retry_timeout": "120m", "timeout": "120m"},
+            {},
+        ),
+        encoding="utf-8",
+    )
+
+
+def _source_recipe_hashes(source: Path, *, region: str) -> dict[str, str]:
+    """Return source hashes before the provider-default materialization."""
+
+    from npa.cluster_backends.mk8s_render import (
+        patch_explicit_region_defaults,
+        patch_provider_domain,
+    )
+
+    hashes = {}
+    for path in sorted((source / "k8s-training").glob("*.tf")):
+        payload = path.read_bytes()
+        if path.name == "locals.tf":
+            payload = patch_explicit_region_defaults(payload.decode("utf-8")).encode()
+        if path.name == "provider.tf":
+            payload = patch_provider_domain(payload.decode("utf-8"), region).encode()
+        hashes[path.name] = _sha256_bytes(payload)
+    return hashes
+
+
+def _sha256_file(path: Path) -> str:
+    """Return a fixture file hash without embedding source literals in a test."""
+
+    return _sha256_bytes(path.read_bytes())
+
+
+def _sha256_bytes(payload: bytes) -> str:
+    """Return a deterministic fixture digest."""
+
+    import hashlib
+
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _standard_tfvars() -> str:
+    """Return the supported standard H200 backend shape as parsed Terraform."""
+
+    values = {
+        "cluster_name": '"failed-cluster"',
+        "ssh_public_key": '"ssh-ed25519 synthetic"',
+        "mk8s_cluster_public_endpoint": "true",
+        "enable_k8s_node_group_sa": "false",
+        "enable_egress_gateway": "false",
+        "cpu_nodes_public_ips": "false",
+        "gpu_nodes_public_ips": "false",
+        "cpu_nodes_preemptible": "false",
+        "gpu_nodes_preemptible": "false",
+        "mig_strategy": '"none"',
+        "gpu_nodes_driverfull_image": "true",
+        "gpu_nodes_driver_preset": '"cuda13.0"',
+        "custom_driver": "false",
+        "cpu_nodes_fixed_count": "1",
+        "cpu_nodes_platform": '"cpu-d3"',
+        "cpu_nodes_preset": '"8vcpu-32gb"',
+        "cpu_disk_size": '"128"',
+        "gpu_nodes_fixed_count_per_group": "1",
+        "gpu_node_groups": "1",
+        "gpu_nodes_platform": '"gpu-h200-sxm"',
+        "gpu_nodes_preset": '"1gpu-16vcpu-200gb"',
+        "gpu_disk_size": '"1023"',
+        "enable_gpu_cluster": "false",
+        "enable_filestore": "false",
+        "existing_filestore": '""',
+        "filestore_disk_size_gibibytes": "1024",
+        "filestore_mount_path": '"/mnt/data"',
+        "filestore_mount_tag": '"data"',
+        "filesystem_csi": '{ chart_version = "0.1.6" }',
+        "enable_nebius_o11y_agent": "false",
+        "enable_grafana": "false",
+        "enable_prometheus": "false",
+        "collectK8sClusterMetrics": "false",
+        "enable_kuberay_cluster": "false",
+        "enable_kuberay_service": "false",
+        "enable_opa_gatekeeper": "false",
+        "loki": "{ enabled = false, replication_factor = 1 }",
+    }
+    return "\n".join(f"{key} = {value}" for key, value in values.items()) + "\n"
+
+
+def _empty_terraform_state() -> dict[str, object]:
+    """Return retained state with no provider resource instances."""
+
+    return {
+        "version": 4,
+        "terraform_version": "1.9.0",
+        "serial": 1,
+        "lineage": "synthetic",
+        "outputs": {},
+        "check_results": None,
+        "resources": [
+            {"mode": "managed", "type": "random_string", "instances": [{}]},
+            {"mode": "managed", "type": "time_static", "instances": [{}]},
+            {
+                "mode": "managed",
+                "type": "nebius_compute_v1_gpu_cluster",
+                "instances": [],
+            },
+        ],
+    }
+
+
+def _recorded_provision_command(
+    terraform_dir: Path, service_dir: Path
+) -> dict[str, object]:
+    """Build a collected failed invocation without executing its shell script."""
+
+    script = "\n".join(
+        [
+            f"service_dir={shlex.quote(str(service_dir))}",
+            "hy-npa-task provision-if-absent --project proj --cluster-name failed-cluster "
+            '--context failed-cluster --kubeconfig "$service_dir/failed.kubeconfig" '
+            f"--terraform-dir {shlex.quote(str(terraform_dir))} --skip-s3 --gpu-nodes 1 "
+            "--gpu-platform gpu-h200-sxm --gpu-preset 1gpu-16vcpu-200gb --on-demand "
+            '--accelerator H200:1 --output-format json > "$service_dir/out" '
+            '2> "$service_dir/failed.stderr"',
+            "exit $provision_rc",
+        ]
+    )
+    return {
+        "command": "/bin/bash -lc " + shlex.quote(script),
+        "exit_code": 2,
+        "status": "failed",
+        "item_id": "synthetic-item",
+        "turn_id": "synthetic-turn",
+        "output": "retained failure",
+    }
+
+
+def _reconciliation_provider_stubs(
+    monkeypatch: pytest.MonkeyPatch, *, region: str = "eu-north1"
+) -> list[str]:
+    from npa.clients import nebius
+    from npa.cluster.api import CompleteClusterInventory, MK8sClient
+
+    calls: list[str] = []
+
+    def project_identity(*_args, **_kwargs) -> SimpleNamespace:
+        calls.append("project")
+        return SimpleNamespace(region=region)
+
+    def cluster_inventory(*_args, **_kwargs) -> CompleteClusterInventory:
+        calls.append("cluster")
+        return CompleteClusterInventory((), "a" * 64)
+
+    monkeypatch.setattr(
+        nebius,
+        "get_project_identity",
+        project_identity,
+    )
+    monkeypatch.setattr(
+        MK8sClient,
+        "list_clusters_complete",
+        cluster_inventory,
+    )
+    return calls
 
 
 def _reserved_capacity_plan():
@@ -321,6 +639,266 @@ def test_provision_if_absent_dry_run_reports_actions(
         for action in result.actions
     )
     assert result.storage_bucket == "s3://bucket/checkpoints/"
+
+
+def test_reconcile_empty_failed_provision_requires_fresh_named_absence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_runtime(tmp_path, monkeypatch)
+    operation = _failed_empty_operation(tmp_path, monkeypatch)
+    evidence = _retained_standard_recovery_evidence(tmp_path, monkeypatch)
+    calls = _reconciliation_provider_stubs(monkeypatch)
+    monkeypatch.setattr(provisioning, "_owner_is_alive", lambda _pid: False)
+
+    result = provisioning.provision_if_absent(
+        project="proj",
+        cluster_name="failed-cluster",
+        context_name="failed-cluster",
+        reconcile_empty_failure=True,
+        recovery_evidence=evidence,
+    )
+
+    payload = operation.read()
+    checkpoint = payload["checkpoints"]["empty-failure-provider-absence"]
+    assert result.status == "reconciled"
+    assert payload["phase"] == "rolled-back"
+    assert payload["last_error"] == "Command failed (1): terraform apply"
+    assert checkpoint["provider_inventory"]["cluster"]["count"] == 0
+    assert len(checkpoint["original_journal_sha256"]) == 64
+    assert checkpoint["retained_producer"]["supported_profile"] == (
+        "standard-no-s3-mk8s-single-gpu"
+    )
+    assert checkpoint["provider_inventory"]["node_group"]["absence_basis"]
+    assert calls == ["project", "cluster"]
+
+
+def test_reconcile_empty_failed_provision_binds_non_eu_recipe_materialization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The retained producer graph includes the selected provider-domain patch."""
+
+    region = "us-central1"
+    _write_runtime(tmp_path, monkeypatch, region=region)
+    operation = _failed_empty_operation(tmp_path, monkeypatch, region=region)
+    evidence = _retained_standard_recovery_evidence(
+        tmp_path, monkeypatch, region=region
+    )
+    _reconciliation_provider_stubs(monkeypatch, region=region)
+    monkeypatch.setattr(provisioning, "_owner_is_alive", lambda _pid: False)
+
+    result = provisioning.provision_if_absent(
+        project="proj",
+        cluster_name="failed-cluster",
+        context_name="failed-cluster",
+        reconcile_empty_failure=True,
+        recovery_evidence=evidence,
+    )
+
+    assert result.status == "reconciled"
+    assert operation.read()["phase"] == "rolled-back"
+
+
+def test_reconcile_empty_failed_provision_refuses_recorded_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_runtime(tmp_path, monkeypatch)
+    operation = _failed_empty_operation(tmp_path, monkeypatch)
+    evidence = _retained_standard_recovery_evidence(tmp_path, monkeypatch)
+    operation.record_config_mutation(store="config", fields=["selected_project"])
+    monkeypatch.setattr(provisioning, "_owner_is_alive", lambda _pid: False)
+    provider_calls = _reconciliation_provider_stubs(monkeypatch)
+
+    with pytest.raises(provisioning.OperationJournalError, match="owned or mutated"):
+        provisioning.provision_if_absent(
+            project="proj",
+            cluster_name="failed-cluster",
+            reconcile_empty_failure=True,
+            recovery_evidence=evidence,
+        )
+
+    assert operation.read()["phase"] == "recovery-required"
+    assert provider_calls == []
+
+
+def test_reconcile_empty_failed_provision_refuses_live_named_cluster(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from npa.cluster.api import CompleteClusterInventory
+    from npa.cluster.api import MK8sClient
+
+    _write_runtime(tmp_path, monkeypatch)
+    operation = _failed_empty_operation(tmp_path, monkeypatch)
+    evidence = _retained_standard_recovery_evidence(tmp_path, monkeypatch)
+    _reconciliation_provider_stubs(monkeypatch)
+    monkeypatch.setattr(provisioning, "_owner_is_alive", lambda _pid: False)
+
+    monkeypatch.setattr(
+        MK8sClient,
+        "list_clusters_complete",
+        lambda *_args, **_kwargs: CompleteClusterInventory(
+            (SimpleNamespace(name="failed-cluster"),), "a" * 64
+        ),
+    )
+
+    with pytest.raises(
+        provisioning.OperationJournalError, match="cluster is still present"
+    ):
+        provisioning.provision_if_absent(
+            project="proj",
+            cluster_name="failed-cluster",
+            reconcile_empty_failure=True,
+            recovery_evidence=evidence,
+        )
+
+    assert operation.read()["phase"] == "recovery-required"
+
+
+def test_reconcile_empty_failed_provision_refuses_journal_change_during_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from npa.cluster.api import CompleteClusterInventory, MK8sClient
+
+    _write_runtime(tmp_path, monkeypatch)
+    operation = _failed_empty_operation(tmp_path, monkeypatch)
+    evidence = _retained_standard_recovery_evidence(tmp_path, monkeypatch)
+    _reconciliation_provider_stubs(monkeypatch)
+    monkeypatch.setattr(provisioning, "_owner_is_alive", lambda _pid: False)
+
+    def change_journal(*_args, **_kwargs) -> CompleteClusterInventory:
+        operation.path.write_text(operation.path.read_text() + "\n", encoding="utf-8")
+        return CompleteClusterInventory((), "a" * 64)
+
+    monkeypatch.setattr(MK8sClient, "list_clusters_complete", change_journal)
+
+    with pytest.raises(provisioning.OperationJournalError, match="changed during"):
+        provisioning.provision_if_absent(
+            project="proj",
+            cluster_name="failed-cluster",
+            reconcile_empty_failure=True,
+            recovery_evidence=evidence,
+        )
+
+    assert operation.read()["phase"] == "recovery-required"
+
+
+def test_reconcile_empty_failed_provision_refuses_retained_network_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A retained VPC ownership record is outside the reused-subnet recovery shape."""
+
+    from npa.cluster import state as cluster_state
+
+    _write_runtime(tmp_path, monkeypatch)
+    operation = _failed_empty_operation(tmp_path, monkeypatch)
+    evidence = _retained_standard_recovery_evidence(tmp_path, monkeypatch)
+    backend = (
+        cluster_state.cluster_dir("failed-cluster")
+        / "backend-state"
+        / "project-1"
+        / "failed-cluster"
+    )
+    (backend.parent / ".npa-fleet-network.json").write_text("{}", encoding="utf-8")
+    calls = _reconciliation_provider_stubs(monkeypatch)
+    monkeypatch.setattr(provisioning, "_owner_is_alive", lambda _pid: False)
+
+    with pytest.raises(provisioning.OperationJournalError, match="network or subnet"):
+        provisioning.provision_if_absent(
+            project="proj",
+            cluster_name="failed-cluster",
+            reconcile_empty_failure=True,
+            recovery_evidence=evidence,
+        )
+
+    assert operation.read()["phase"] == "recovery-required"
+    assert calls == []
+
+
+def test_reconcile_empty_failed_provision_refuses_custom_terraform_event(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A retained custom recipe cannot reuse the standard empty-recovery path."""
+
+    _write_runtime(tmp_path, monkeypatch)
+    operation = _failed_empty_operation(tmp_path, monkeypatch)
+    evidence = _retained_standard_recovery_evidence(
+        tmp_path, monkeypatch, terraform_dir=tmp_path / "custom-recipe"
+    )
+    calls = _reconciliation_provider_stubs(monkeypatch)
+    monkeypatch.setattr(provisioning, "_owner_is_alive", lambda _pid: False)
+
+    with pytest.raises(provisioning.OperationJournalError, match="does not select"):
+        provisioning.provision_if_absent(
+            project="proj",
+            cluster_name="failed-cluster",
+            reconcile_empty_failure=True,
+            recovery_evidence=evidence,
+        )
+
+    assert operation.read()["phase"] == "recovery-required"
+    assert calls == []
+
+
+def test_reconcile_empty_failed_provision_refuses_recipe_graph_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A retained module byte drift blocks recovery before provider inventory."""
+
+    from npa.cluster import state as cluster_state
+
+    _write_runtime(tmp_path, monkeypatch)
+    operation = _failed_empty_operation(tmp_path, monkeypatch)
+    evidence = _retained_standard_recovery_evidence(tmp_path, monkeypatch)
+    module = (
+        cluster_state.cluster_dir("failed-cluster")
+        / "backend-state"
+        / "project-1"
+        / "failed-cluster"
+        / "modules"
+        / "o11y"
+        / "loki.tf"
+    )
+    module.write_text(
+        module.read_text(encoding="utf-8") + "\n# drift\n", encoding="utf-8"
+    )
+    calls = _reconciliation_provider_stubs(monkeypatch)
+    monkeypatch.setattr(provisioning, "_owner_is_alive", lambda _pid: False)
+
+    with pytest.raises(provisioning.OperationJournalError, match="modules differ"):
+        provisioning.provision_if_absent(
+            project="proj",
+            cluster_name="failed-cluster",
+            reconcile_empty_failure=True,
+            recovery_evidence=evidence,
+        )
+
+    assert operation.read()["phase"] == "recovery-required"
+    assert calls == []
+
+
+def test_reconcile_empty_failed_provision_refuses_timeout_provenance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A timeout never proves that a failed create left no provider resources."""
+
+    _write_runtime(tmp_path, monkeypatch)
+    operation = _failed_empty_operation(tmp_path, monkeypatch)
+    evidence = _retained_standard_recovery_evidence(tmp_path, monkeypatch)
+    operation.record_failure(RuntimeError("terraform apply timeout"))
+    calls = _reconciliation_provider_stubs(monkeypatch)
+    monkeypatch.setattr(provisioning, "_owner_is_alive", lambda _pid: False)
+
+    with pytest.raises(
+        provisioning.OperationJournalError, match="completed apply rejection"
+    ):
+        provisioning.provision_if_absent(
+            project="proj",
+            cluster_name="failed-cluster",
+            reconcile_empty_failure=True,
+            recovery_evidence=evidence,
+        )
+
+    assert operation.read()["phase"] == "recovery-required"
+    assert calls == []
 
 
 def test_provision_dry_run_keeps_absent_project_quota_unknown_after_tenant_rbac_denial(
@@ -995,6 +1573,42 @@ def test_provision_if_absent_cli_prints_the_kubeconfig_export(mocker) -> None:
         "export KUBECONFIG=/home/op/.npa/clusters/npa-cluster/kubeconfig"
         in result.output
     )
+
+
+def test_provision_cli_runs_a_successful_empty_failure_reconciliation(mocker) -> None:
+    """The explicit recovery result is terminal, not a partial provision."""
+    from npa.cli.main import app
+
+    reconcile = mocker.patch(
+        "npa.cli.provision.provision_if_absent",
+        return_value=provisioning.ProvisionIfAbsentResult(
+            status="reconciled",
+            project="proj",
+            cluster_name="failed-cluster",
+            actions=["recovery:terminalized failed empty provision"],
+        ),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "provision-if-absent",
+            "--project",
+            "proj",
+            "--cluster-name",
+            "failed-cluster",
+            "--reconcile-empty-failure",
+            "--recovery-evidence",
+            "/private/recovery-evidence.json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert reconcile.call_args.kwargs["reconcile_empty_failure"] is True
+    assert reconcile.call_args.kwargs["recovery_evidence"] == Path(
+        "/private/recovery-evidence.json"
+    )
+    assert "status: reconciled" in result.output
 
 
 def test_provision_blocks_kubernetes_when_storage_reconciliation_fails(

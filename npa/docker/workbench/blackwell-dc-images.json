@@ -132,6 +132,18 @@
       "notes": "Neutral bootstrap runtime-fetches the pinned MIT simulator and native/scientific dependencies. Accompanying exact source covers the Ubuntu bootstrap; payload and one-RTX functional proof remain required. No B200/B300 capability is claimed."
     },
     {
+      "name": "npa-hy-world",
+      "dockerfile": "hy-world/Dockerfile",
+      "build_script": "hy-world/build.sh",
+      "verdict": "unknown",
+      "validation": "pending-build",
+      "redistribution": "public",
+      "smoke": "Run the released Qwen-image HY-Pano -> WorldNav -> WorldStereo -> 3DGS pipeline on one 8xB200 node, then decode generated video and validate PLY/SPZ, cameras, and RRD evidence.",
+      "blocked_reason": "No real HY generated-scene result exists. Private bootstrap validation does not replace Tencent runtime access, separate SAM 3 provider approval, the full B200 pipeline, decoded outputs, or public-release qualification.",
+      "upstream_tracking": "https://github.com/Tencent-Hunyuan/HY-World-2.0/tree/df9988efb87bfc0f4947eb3889411cf957478b06",
+      "notes": "The neutral bootstrap contains no Tencent source, weights, cache, input, or output bytes. An operator-private bootstrap has passed private delivery validation but remains publication-quarantined. Upstream recommends four or more GPUs and tested eight H20s; the planned eight-rank CUDA 12.8 path targets B200 but has no accepted HY B200/B300 capability claim. Headless Gaussian-splat rasterization does not require RT cores."
+    },
+    {
       "name": "npa-libero",
       "dockerfile": "libero/Dockerfile",
       "build_script": "libero/build.sh",

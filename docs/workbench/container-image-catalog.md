@@ -125,6 +125,15 @@ corresponding-source closure exists. Runtime fetching later changes delivery
 only, not use, derivative, output, or service rights. No accepted release,
 anonymous pull, or current GPU capability is claimed.
 
+HY-World 2.0 is a quarantined, neutral runtime-fetch bootstrap. An
+operator-private bootstrap has completed private delivery validation, but it has
+no public row, anonymous pull, or supported release. Tencent source, weights,
+model caches, inputs and generated scenes are excluded from its layers.
+Tencent's use-based mechanism has no duplicate NPA acceptance or territory/MAU
+form. Live HY runtime qualification, including the declared B200 scene output,
+remains pending; private bootstrap validation is not a compatibility or public
+release claim. See [`byof-hy-world.md`](byof-hy-world.md).
+
 LeRobot 0.6.0 is selectable package support with an accepted optional public
 image. The resolver uses the additive `0.6.0-d6-extras-20260912` tag and exact
 digest recorded in `lerobot_version_manifest.json`; the `0.6.0` tag is only a

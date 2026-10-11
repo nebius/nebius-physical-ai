@@ -21,6 +21,20 @@ DEFAULT_NODE_COUNT = 1
 DEFAULT_BOOT_DISK_TYPE = "network_ssd"
 DEFAULT_BOOT_DISK_SIZE_GIB = 128
 DEFAULT_GPU_DRIVER_PRESET = "cuda13.0"
+# A B200:8 HY worker requests 1000G Kubernetes ephemeral storage.  Boot-disk
+# capacity is not allocatable pod storage, so leave headroom for node/runtime
+# reservations; the submit preflight still proves the live allocatable fit.
+B200_NODE_GROUP_BOOT_DISK_GIB = 1280
+B200_BOOT_DISK_TYPES = {
+    "network_ssd",
+    "network_ssd_io_m3",
+    "network_ssd_non_replicated",
+}
+_NINETY_THREE_GIB_DISK_TYPES = {
+    "network_ssd_io_m3",
+    "network_ssd_non_replicated",
+}
+_NINETY_THREE_GIB_DISK_INCREMENT = 93
 
 SUPPORTED_NODE_PRESETS = {
     "cpu-e2": {
@@ -65,9 +79,16 @@ GPU_TYPE_DEFAULTS = {
         "preset": "1gpu-24vcpu-218gb",
         "recommended": False,
     },
+    "b200": {
+        "platform": "gpu-b200-sxm",
+        "preset": "8gpu-160vcpu-1792gb",
+        "boot_disk_size_gib": B200_NODE_GROUP_BOOT_DISK_GIB,
+        "recommended": False,
+    },
 }
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
+_RESOURCE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*$")
 _K8S_VERSION_RE = re.compile(r"^\d+\.\d+$")
 _PROVIDER_K8S_VERSION_RE = re.compile(r"^v?(\d+)\.(\d+)(?:[.-].*)?$")
 _PROJECT_ENV_VARS = (
@@ -139,60 +160,136 @@ class NodeGroupConfig:
     k8s_version: str = DEFAULT_K8S_VERSION
     subnet_id: str = ""
     boot_disk_type: str = DEFAULT_BOOT_DISK_TYPE
-    boot_disk_size_gib: int = DEFAULT_BOOT_DISK_SIZE_GIB
+    boot_disk_size_gib: int = 0
     driver_preset: str = DEFAULT_GPU_DRIVER_PRESET
     platform: str = ""
     capacity_block_group: str = ""
+    gpu_cluster_id: str = ""
 
     def __post_init__(self) -> None:
         validate_cluster_name(self.cluster_name)
-        gpu_type = self.gpu_type.lower().strip()
-        if gpu_type not in GPU_TYPE_DEFAULTS:
-            allowed = ", ".join(sorted(GPU_TYPE_DEFAULTS))
-            raise ClusterConfigError(
-                f"unsupported GPU type '{self.gpu_type}'. Supported: {allowed}"
-            )
-        object.__setattr__(self, "gpu_type", gpu_type)
-
-        name = self.name.strip() or default_node_group_name(self.cluster_name, gpu_type)
-        validate_cluster_name(name)
-        object.__setattr__(self, "name", name)
-
-        platform = self.platform.strip() or GPU_TYPE_DEFAULTS[gpu_type]["platform"]
-        object.__setattr__(self, "platform", platform)
-
-        object.__setattr__(
-            self, "capacity_block_group", self.capacity_block_group.strip()
-        )
-
-        preset = resolve_gpu_preset(gpu_type, self.node_preset)
-        object.__setattr__(self, "node_preset", preset)
-
-        if self.node_count < 1 or self.node_count > 100:
-            raise ClusterConfigError("--node-count must be between 1 and 100")
-        if (self.autoscaling_min is None) != (self.autoscaling_max is None):
-            raise ClusterConfigError(
-                "--autoscaling-min and --autoscaling-max must be provided together"
-            )
-        if self.autoscaling_min is not None and self.autoscaling_max is not None:
-            if self.autoscaling_min < 0:
-                raise ClusterConfigError("--autoscaling-min must be at least 0")
-            if self.autoscaling_max < 1:
-                raise ClusterConfigError("--autoscaling-max must be at least 1")
-            if self.autoscaling_min > self.autoscaling_max:
-                raise ClusterConfigError(
-                    "--autoscaling-min must be less than or equal to --autoscaling-max"
-                )
+        _normalize_gpu_node_group(self)
+        _validate_node_group_scaling(self)
         if not isinstance(self.public_ip, bool):
             raise ClusterConfigError("public_ip must be a boolean")
         if self.timeout_minutes < 1:
             raise ClusterConfigError("--timeout must be at least 1 minute")
         if self.poll_interval_seconds <= 0:
             raise ClusterConfigError("poll interval must be positive")
-        if self.boot_disk_size_gib < 32:
-            raise ClusterConfigError("boot disk size must be at least 32 GiB")
         if not _K8S_VERSION_RE.match(self.k8s_version):
             raise ClusterConfigError("--k8s-version must use <major>.<minor> format")
+        _resolve_node_group_boot_disk(self)
+        _validate_b200_node_group(self)
+
+
+def _normalize_gpu_node_group(config: NodeGroupConfig) -> None:
+    """Normalize GPU aliases and provider attachment inputs in place."""
+
+    gpu_type = config.gpu_type.lower().strip()
+    if gpu_type not in GPU_TYPE_DEFAULTS:
+        allowed = ", ".join(sorted(GPU_TYPE_DEFAULTS))
+        raise ClusterConfigError(
+            f"unsupported GPU type '{config.gpu_type}'. Supported: {allowed}"
+        )
+    object.__setattr__(config, "gpu_type", gpu_type)
+    name = config.name.strip() or default_node_group_name(config.cluster_name, gpu_type)
+    validate_cluster_name(name)
+    object.__setattr__(config, "name", name)
+    defaults = GPU_TYPE_DEFAULTS[gpu_type]
+    object.__setattr__(
+        config, "platform", config.platform.strip() or defaults["platform"]
+    )
+    object.__setattr__(
+        config, "node_preset", resolve_gpu_preset(gpu_type, config.node_preset)
+    )
+    object.__setattr__(
+        config, "capacity_block_group", config.capacity_block_group.strip()
+    )
+    gpu_cluster_id = config.gpu_cluster_id.strip()
+    if gpu_cluster_id and not _RESOURCE_ID_RE.fullmatch(gpu_cluster_id):
+        raise ClusterConfigError("--gpu-cluster-id must be a provider resource ID")
+    object.__setattr__(config, "gpu_cluster_id", gpu_cluster_id)
+
+
+def _validate_node_group_scaling(config: NodeGroupConfig) -> None:
+    """Reject malformed fixed or autoscaled node-group sizing."""
+
+    if config.node_count < 1 or config.node_count > 100:
+        raise ClusterConfigError("--node-count must be between 1 and 100")
+    if (config.autoscaling_min is None) != (config.autoscaling_max is None):
+        raise ClusterConfigError(
+            "--autoscaling-min and --autoscaling-max must be provided together"
+        )
+    if config.autoscaling_min is None or config.autoscaling_max is None:
+        return
+    if config.autoscaling_min < 0:
+        raise ClusterConfigError("--autoscaling-min must be at least 0")
+    if config.autoscaling_max < 1:
+        raise ClusterConfigError("--autoscaling-max must be at least 1")
+    if config.autoscaling_min > config.autoscaling_max:
+        raise ClusterConfigError(
+            "--autoscaling-min must be less than or equal to --autoscaling-max"
+        )
+
+
+def _resolve_node_group_boot_disk(config: NodeGroupConfig) -> None:
+    """Resolve the profile disk default and reject unusable node-group disks."""
+
+    default = GPU_TYPE_DEFAULTS[config.gpu_type].get(
+        "boot_disk_size_gib", DEFAULT_BOOT_DISK_SIZE_GIB
+    )
+    disk_size = config.boot_disk_size_gib or int(default)
+    if disk_size < 32:
+        raise ClusterConfigError("boot disk size must be at least 32 GiB")
+    disk_type = config.boot_disk_type.strip().lower()
+    if not disk_type:
+        raise ClusterConfigError("boot disk type must not be empty")
+    object.__setattr__(config, "boot_disk_type", disk_type)
+    object.__setattr__(config, "boot_disk_size_gib", disk_size)
+
+
+def _validate_b200_node_group(config: NodeGroupConfig) -> None:
+    """Keep the B200 additive surface to the reviewed one-node fabric shape."""
+
+    if config.gpu_type != "b200":
+        if config.gpu_cluster_id:
+            raise ClusterConfigError(
+                "--gpu-cluster-id is currently supported only for b200"
+            )
+        return
+    defaults = GPU_TYPE_DEFAULTS["b200"]
+    if config.node_count != 1 or config.autoscaling_min is not None:
+        raise ClusterConfigError("b200 requires one fixed 8-GPU node")
+    if (
+        config.platform != defaults["platform"]
+        or config.node_preset != defaults["preset"]
+    ):
+        raise ClusterConfigError("b200 requires the reviewed gpu-b200-sxm 8-GPU preset")
+    if not config.gpu_cluster_id:
+        raise ClusterConfigError("b200 requires --gpu-cluster-id for fabric attachment")
+    if not config.wait:
+        raise ClusterConfigError(
+            "b200 requires --wait so NPA can verify the attachment"
+        )
+    if config.boot_disk_size_gib < B200_NODE_GROUP_BOOT_DISK_GIB:
+        raise ClusterConfigError("b200 requires a boot disk of at least 1280 GiB")
+    _validate_b200_boot_disk_type(config)
+
+
+def _validate_b200_boot_disk_type(config: NodeGroupConfig) -> None:
+    """Reject B200 boot-disk shapes unsupported by the reviewed profile."""
+
+    if config.boot_disk_type not in B200_BOOT_DISK_TYPES:
+        allowed = ", ".join(sorted(B200_BOOT_DISK_TYPES))
+        raise ClusterConfigError(f"b200 boot disk type must be one of: {allowed}")
+    if (
+        config.boot_disk_type in _NINETY_THREE_GIB_DISK_TYPES
+        and config.boot_disk_size_gib % _NINETY_THREE_GIB_DISK_INCREMENT
+    ):
+        raise ClusterConfigError(
+            f"{config.boot_disk_type} size must be a multiple of "
+            f"{_NINETY_THREE_GIB_DISK_INCREMENT} GiB"
+        )
 
 
 @dataclass(frozen=True)

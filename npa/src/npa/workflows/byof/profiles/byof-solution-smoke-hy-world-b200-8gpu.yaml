@@ -1,0 +1,99 @@
+# Candidate topology for the released HY-World image-to-world path. The upstream
+# documentation recommends at least four GPUs and reports tests on eight H20s;
+# this selects eight B200s for the released eight-rank commands. It is a planning
+# profile only until the exact candidate digest has a real GPU evidence record.
+name: byof-solution-smoke-hy-world-b200-8gpu
+execution: serial
+---
+name: byof-solution-smoke-hy-world-b200-8gpu
+resources:
+  cloud: kubernetes
+  accelerators: B200:8
+  cpus: 128+
+  memory: 1024+
+  disk_size: 1000
+  image_id: "docker:ghcr.io/nebius/nebius-physical-ai/npa-hy-world:dev-<full-git-sha>"
+envs:
+  NPA_BYOF_RUN_ID: "<your-run-id>"
+  BYOF_REPO_ROOT: "/opt/byof"
+  BYOF_SMOKE_COMMAND: ""
+  BYOF_SOLUTION_NAME: ""
+  BYOF_CAPABILITY_NAME: ""
+  BYOF_SMOKE_ARTIFACT_NAME: ""
+  BYOF_IMAGE: ""
+  NVIDIA_VISIBLE_DEVICES: "all"
+  NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
+  S3_OUTPUT_PREFIX: "s3://${NPA_S3_BUCKET}/byof/${NPA_BYOF_RUN_ID}/"
+  AWS_ENDPOINT_URL: "${AWS_ENDPOINT_URL}"
+setup: |
+  set -euo pipefail
+  test -d "${BYOF_REPO_ROOT}"
+  test -f "${BYOF_REPO_ROOT}/npa_source_metadata.json"
+  python3 - <<'PY' || python3 -m pip install --quiet --break-system-packages boto3 || python3 -m pip install --quiet boto3
+  import boto3
+  PY
+run: |
+  set -euo pipefail
+  OUTPUT_DIR="/workspace/byof-runs/${NPA_BYOF_RUN_ID}"
+  mkdir -p "${OUTPUT_DIR}"
+  export NPA_SMOKE_OUTPUT_DIR="${OUTPUT_DIR}"
+  cp "${BYOF_REPO_ROOT}/npa_source_metadata.json" "${OUTPUT_DIR}/npa_source_metadata.json"
+  nvidia-smi > "${OUTPUT_DIR}/nvidia_smi.txt" 2>&1 || true
+  nvidia-smi -L > "${OUTPUT_DIR}/nvidia_smi_list.txt" 2>&1 || true
+  SMOKE_EXIT_CODE=0
+  if [ -n "${BYOF_SMOKE_COMMAND}" ]; then
+    set +e
+    (
+      cd "${BYOF_REPO_ROOT}"
+      /bin/bash -lc "${BYOF_SMOKE_COMMAND}"
+    ) > "${OUTPUT_DIR}/solution_smoke_stdout.log" 2> "${OUTPUT_DIR}/solution_smoke_stderr.log"
+    SMOKE_EXIT_CODE=$?
+    set -e
+  fi
+  if [ -n "${BYOF_SMOKE_COMMAND}" ] && [ -n "${BYOF_SMOKE_ARTIFACT_NAME}" ] && [ "${SMOKE_EXIT_CODE}" -eq 0 ]; then
+    test -f "${OUTPUT_DIR}/${BYOF_SMOKE_ARTIFACT_NAME}"
+  fi
+  export SMOKE_EXIT_CODE
+  python3 <<'PY'
+  import json
+  import os
+  import time
+  from pathlib import Path
+  from urllib.parse import urlparse
+
+  import boto3
+  from botocore.config import Config
+
+  run_id = os.environ["NPA_BYOF_RUN_ID"]
+  root = Path(f"/workspace/byof-runs/{run_id}")
+  metadata = json.loads((Path(os.environ["BYOF_REPO_ROOT"]) / "npa_source_metadata.json").read_text(encoding="utf-8"))
+  summary = {
+      "status": "success" if int(os.environ.get("SMOKE_EXIT_CODE", "0")) == 0 else "failed",
+      "tool": "byof",
+      "workload": "solution-smoke-hy-world-b200-8gpu",
+      "run_id": run_id,
+      "image": os.environ.get("BYOF_IMAGE", ""),
+      "metadata": metadata,
+      "solution_name": os.environ.get("BYOF_SOLUTION_NAME", ""),
+      "capability_name": os.environ.get("BYOF_CAPABILITY_NAME", ""),
+      "smoke_artifact_name": os.environ.get("BYOF_SMOKE_ARTIFACT_NAME", ""),
+      "smoke_exit_code": int(os.environ.get("SMOKE_EXIT_CODE", "0")),
+      "created_unix": round(time.time(), 3),
+  }
+  (root / "npa_byof_summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+  output = os.environ["S3_OUTPUT_PREFIX"].rstrip("/") + "/"
+  parsed = urlparse(output)
+  if parsed.scheme == "s3" and parsed.netloc:
+      endpoint = (os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("NEBIUS_S3_ENDPOINT") or "").strip() or None
+      kwargs = {"endpoint_url": endpoint, "config": Config(s3={"addressing_style": "path"}), "region_name": os.environ.get("AWS_DEFAULT_REGION", "us-central1")}
+      if os.environ.get("AWS_ACCESS_KEY_ID") and os.environ.get("AWS_SECRET_ACCESS_KEY"):
+          kwargs["aws_access_key_id"] = os.environ["AWS_ACCESS_KEY_ID"]
+          kwargs["aws_secret_access_key"] = os.environ["AWS_SECRET_ACCESS_KEY"]
+      s3 = boto3.client("s3", **kwargs)
+      prefix = parsed.path.lstrip("/")
+      for path in root.rglob("*"):
+          if path.is_file():
+              s3.put_object(Bucket=parsed.netloc, Key=prefix + str(path.relative_to(root)), Body=path.read_bytes(), IfNoneMatch="*")
+      s3.head_object(Bucket=parsed.netloc, Key=prefix + "npa_byof_summary.json")
+  PY
+  if [ "${SMOKE_EXIT_CODE}" -ne 0 ]; then exit "${SMOKE_EXIT_CODE}"; fi

@@ -348,6 +348,22 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Uses a qualified public GHCR image; exact-digest GPU evidence is recorded in the OSS solution catalog.",
     ),
     SubmitLiveCase(
+        "byof-hy-world.yaml",
+        "multi",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        plan_only=True,
+        plan_only_justification=(
+            "requires an operator-private image digest, an exact component-access "
+            "preflight, a worker-reachable Qwen3-VL endpoint, and a real private PNG; "
+            "generic CI must not create those stateful inputs or launch eight B200 GPUs."
+        ),
+        notes=(
+            "Candidate-only released image-to-world workflow. It also needs an "
+            "immutable neutral-bootstrap digest and a private pre-existing Qwen3-VL "
+            "vLLM endpoint before its real eight-B200 GPU gate may run."
+        ),
+    ),
+    SubmitLiveCase(
         "byof-cogvideox-2b.yaml",
         "gpu",
         plan_only=True,

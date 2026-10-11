@@ -175,10 +175,21 @@ def test_the_whole_hugging_face_cache_family_lands_under_one_root() -> None:
         "WAN22_CACHE_DIR",
         "NPA_LTX_MODEL_CACHE",
         "NPA_CONTENT_AGENTS_RUNTIME_CACHE",
+        "NPA_HY_WORLD_RUNTIME_CACHE",
     ],
 )
 def test_every_tool_specific_weight_directory_is_redirected(name: str) -> None:
     assert model_cache_env("/cache")[name].startswith("/cache/")
+
+
+def test_hy_world_runtime_cache_matches_the_image_bootstrap_location() -> None:
+    # The HY-World image defaults this variable below the Hugging Face cache; keep
+    # the workflow-injected durable value identical in shape so the runtime's
+    # source checkout and compiled environment survive a retry.
+    assert (
+        model_cache_env("/cache")["NPA_HY_WORLD_RUNTIME_CACHE"]
+        == "/cache/huggingface/hy-world/runtime"
+    )
 
 
 def test_the_env_allow_list_covers_every_variable_the_module_can_set() -> None:

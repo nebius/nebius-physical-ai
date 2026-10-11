@@ -12,6 +12,7 @@ import typer
 from npa.cli.cluster.scope import CLUSTER_SCOPE_EPILOG
 from npa.cluster.api import ClusterInfo, MK8sClient, NodeGroupInfo, cluster_subnet_id
 from npa.cluster.config import (
+    DEFAULT_BOOT_DISK_TYPE,
     DEFAULT_CPU_NODE_GROUP_PRESET,
     DEFAULT_GPU_DRIVER_PRESET,
     DEFAULT_K8S_VERSION,
@@ -59,7 +60,7 @@ def add_cmd(
         help="NPA node-group profile name. Defaults from cluster target and GPU type.",
     ),
     gpu_type: str = typer.Option(
-        ..., "--gpu-type", help="GPU type: h100, h200, l40s, or rtx6000."
+        ..., "--gpu-type", help="GPU type: b200, h100, h200, l40s, or rtx6000."
     ),
     node_count: int = typer.Option(
         1, "--node-count", help="GPU worker count for this NPA node-group profile."
@@ -68,6 +69,21 @@ def add_cmd(
         "",
         "--node-preset",
         help="Override the NPA default GPU node preset for this profile.",
+    ),
+    boot_disk_size_gib: int = typer.Option(
+        0,
+        "--boot-disk-size-gib",
+        help="Boot disk size per GPU node in GiB; B200:8 defaults to 1280.",
+    ),
+    boot_disk_type: str = typer.Option(
+        DEFAULT_BOOT_DISK_TYPE,
+        "--boot-disk-type",
+        help="Nebius worker boot-disk class; B200 supports reviewed network SSD classes.",
+    ),
+    gpu_cluster_id: str = typer.Option(
+        "",
+        "--gpu-cluster-id",
+        help="Required fabric GPU-cluster attachment for the supported B200:8 profile.",
     ),
     public_ip: bool = typer.Option(
         False,
@@ -144,6 +160,9 @@ def add_cmd(
             cluster_id=cluster.id,
             node_count=node_count,
             node_preset=node_preset,
+            boot_disk_type=boot_disk_type,
+            boot_disk_size_gib=boot_disk_size_gib,
+            gpu_cluster_id=gpu_cluster_id,
             public_ip=public_ip,
             autoscaling_min=autoscaling_min,
             autoscaling_max=autoscaling_max,
@@ -203,6 +222,7 @@ def add_cmd(
                 last_seen_state=node_group.status,
                 node_count=node_group.node_count or state.node_count,
             )
+            _verify_b200_attachment(config, node_group)
             save_node_group_state(state)
 
         typer.echo(f"Node group: {config.name}")
@@ -211,6 +231,11 @@ def add_cmd(
         typer.echo(f"GPU type: {state.gpu_type}")
         typer.echo(f"GPU driver mode: {driver.effective_mode}")
         typer.echo(f"Platform/preset: {state.platform}/{state.preset}")
+        typer.echo(
+            f"Boot disk: {config.boot_disk_type}/{config.boot_disk_size_gib} GiB"
+        )
+        if config.gpu_type == "b200":
+            typer.echo("GPU-cluster attachment: verified")
         typer.echo(f"Nodes: {state.node_count}")
     except (ClusterError, GpuDriverStrategyError) as exc:
         typer.echo(f"Node-group add failed: {exc}", err=True)
@@ -657,6 +682,9 @@ def _state_from_config(
         public_ip=config.public_ip,
         autoscaling_min=config.autoscaling_min,
         autoscaling_max=config.autoscaling_max,
+        boot_disk_type=config.boot_disk_type,
+        boot_disk_size_gib=config.boot_disk_size_gib,
+        gpu_cluster_id=config.gpu_cluster_id,
     )
 
 
@@ -676,6 +704,7 @@ def _cpu_state_from_config(
         public_ip=config.public_ip,
         autoscaling_min=config.autoscaling_min,
         autoscaling_max=config.autoscaling_max,
+        boot_disk_size_gib=config.boot_disk_size_gib,
     )
 
 
@@ -732,6 +761,25 @@ def _row_for_node_group(
             )
         )
     return row
+
+
+def _verify_b200_attachment(config: NodeGroupConfig, node_group: NodeGroupInfo) -> None:
+    """Reject a ready B200 group whose provider attachment or disk drifted."""
+
+    if config.gpu_type != "b200":
+        return
+    if node_group.gpu_cluster_id != config.gpu_cluster_id:
+        raise ClusterConfigError(
+            "provider did not report the requested B200 GPU-cluster attachment"
+        )
+    if node_group.boot_disk_size_gib < config.boot_disk_size_gib:
+        raise ClusterConfigError(
+            "provider reported a B200 boot disk smaller than the requested size"
+        )
+    if node_group.boot_disk_type != config.boot_disk_type:
+        raise ClusterConfigError(
+            "provider did not report the requested B200 boot disk type"
+        )
 
 
 def _local_state_from_remote(cluster: ClusterInfo) -> ClusterState:
