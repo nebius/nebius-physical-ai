@@ -1,0 +1,91 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: physical-prompt-comparison
+  executionMode: runtime
+  description: >-
+    Compare baseline prompts, physical descriptions, and negative guidance
+    using matched seeds and full-length Wan 2.1 14B videos. Freeze the scenarios
+    and assertions before generation, blindly judge decoded frames, and publish
+    measured scores with all original videos in standalone HTML.
+
+config:
+  bucket: example-bucket
+  prefix: "physical-prompt-comparison/{{run.id}}"
+  source_overlay: true
+  seed_a: "0"
+  seed_b: "1"
+  prompt_model: nvidia/Nemotron-3_5-Lightning
+  judge_model: MiniMaxAI/MiniMax-M3
+  runtime_image: ghcr.io/nebius/nebius-physical-ai/npa-diffusers@sha256:6422a062a00c9816a945623b0c83a78977fa5d5cec1777a0e6d44d1d746fc42e
+  prepared_uri: "s3://{{config.bucket}}/{{config.prefix}}/prepared/"
+  shard_a_uri: "s3://{{config.bucket}}/{{config.prefix}}/seed-a/"
+  shard_b_uri: "s3://{{config.bucket}}/{{config.prefix}}/seed-b/"
+  report_uri: "s3://{{config.bucket}}/{{config.prefix}}/report/"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 2
+    memory: 8Gi
+    image: "{{config.runtime_image}}"
+  gpu:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+    cpus: 16
+    memory: 128Gi
+    disk_size: 128
+    image: "{{config.runtime_image}}"
+
+initial: prepare
+
+states:
+  prepare:
+    description: Freeze six original scenarios, assertions and real model-produced physical prompts.
+    resources: cpu
+    run:
+      argv: [/opt/wan-base/bin/python, -m, npa.workflows.physical_prompt_comparison, prepare, --run-id, "{{run.id}}", --seeds, "{{config.seed_a}},{{config.seed_b}}", --model, "{{config.prompt_model}}", --output-path, "{{config.prepared_uri}}"]
+    outputs:
+      - {uri: "{{config.prepared_uri}}recipe.json", schema: npa.physical-prompt-comparison.recipe.v1}
+      - {uri: "{{config.prepared_uri}}checksums.json", schema: npa.physical-prompt-comparison.checksums.v1}
+    next: generate-pairs
+
+  generate-pairs:
+    description: Execute independent paired seed shards on separate GPUs.
+    parallel: [generate-a, generate-b]
+    next: evaluate
+
+  generate-a:
+    resources: gpu
+    run:
+      argv: [/opt/wan-base/bin/python, -m, npa.workflows.physical_prompt_comparison, generate, --seed, "{{config.seed_a}}", --input-path, "{{config.prepared_uri}}", --output-path, "{{config.shard_a_uri}}"]
+    inputs:
+      - {uri: "{{config.prepared_uri}}recipe.json", schema: npa.physical-prompt-comparison.recipe.v1}
+    outputs:
+      - {uri: "{{config.shard_a_uri}}generation.json", schema: npa.physical-prompt-comparison.generation.v1}
+      - {uri: "{{config.shard_a_uri}}checksums.json", schema: npa.physical-prompt-comparison.checksums.v1}
+
+  generate-b:
+    resources: gpu
+    run:
+      argv: [/opt/wan-base/bin/python, -m, npa.workflows.physical_prompt_comparison, generate, --seed, "{{config.seed_b}}", --input-path, "{{config.prepared_uri}}", --output-path, "{{config.shard_b_uri}}"]
+    inputs:
+      - {uri: "{{config.prepared_uri}}recipe.json", schema: npa.physical-prompt-comparison.recipe.v1}
+    outputs:
+      - {uri: "{{config.shard_b_uri}}generation.json", schema: npa.physical-prompt-comparison.generation.v1}
+      - {uri: "{{config.shard_b_uri}}checksums.json", schema: npa.physical-prompt-comparison.checksums.v1}
+
+  evaluate:
+    description: Re-decode every video, verify complete pairs, judge blinded frames, and publish original media.
+    resources: cpu
+    run:
+      argv: [/opt/wan-base/bin/python, -m, npa.workflows.physical_prompt_comparison, evaluate, --input-path, "{{config.shard_a_uri}}", --input-path, "{{config.shard_b_uri}}", --model, "{{config.judge_model}}", --output-path, "{{config.report_uri}}"]
+    inputs:
+      - {uri: "{{config.shard_a_uri}}generation.json", schema: npa.physical-prompt-comparison.generation.v1}
+      - {uri: "{{config.shard_b_uri}}generation.json", schema: npa.physical-prompt-comparison.generation.v1}
+    outputs:
+      - {uri: "{{config.report_uri}}report.json", schema: npa.physical-prompt-comparison.report.v1}
+      - {uri: "{{config.report_uri}}index.html", schema: text/html}
+      - {uri: "{{config.report_uri}}checksums.json", schema: npa.physical-prompt-comparison.checksums.v1}
+    terminal: true
