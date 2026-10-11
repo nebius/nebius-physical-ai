@@ -3156,7 +3156,7 @@ def _reconcile_managed_job_env(
             error=_redact_private_text(detail, redactions),
         )
     else:
-        parsed_rows = queue_rows_from_output(result.stdout)
+        parsed_rows = verified_structured_queue_rows(result)
         if parsed_rows is None:
             return ReconciliationEvidence(
                 ReconciliationState.AMBIGUOUS,
@@ -3438,7 +3438,7 @@ def _libero_launch_binding_candidates(
                 "binding could not be read; preserving indeterminate state and "
                 "refusing retry",
             )
-        rows = queue_rows_from_output(result.stdout)
+        rows = verified_structured_queue_rows(result)
     except Exception:  # noqa: BLE001 - missing confirmation must fail closed
         return (
             "",
