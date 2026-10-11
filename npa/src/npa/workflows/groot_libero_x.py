@@ -81,7 +81,7 @@ LIBERO_X_EVALUATOR_REPOSITORY = "https://github.com/meituan/LIBERO-X.git"
 LIBERO_X_EVALUATOR_REVISION = "f528726421c7211d8eb05fe48e9e5e2535ccc813"
 LIBERO_X_EVALUATOR_LICENSE = "MIT"
 LIBERO_X_EVALUATOR_SOURCE = "https://github.com/meituan/LIBERO-X"
-RUNTIME_READY_SCHEMA = "npa.groot_libero_x.runtime_ready.v5"
+RUNTIME_READY_SCHEMA = "npa.groot_libero_x.runtime_ready.v6"
 SHA256 = re.compile(r"^[a-f0-9]{64}$")
 TASK_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 LIBERO_X_BDDL_LEVELS = frozenset({"LEVEL1", "LEVEL2", "LEVEL3", "LEVEL4"})
@@ -221,6 +221,13 @@ def register_libero_envs():
     _npa_groot_libero_x_original_register_libero_envs()
     _npa_groot_libero_x_register_envs()
 """
+
+NATIVE_VIDEO_LAYOUT_MARKER = "NPA_GROOT_LIBERO_X_VIDEO_LAYOUT_V1"
+NATIVE_VIDEO_LAYOUT_NEEDLE = "video_dir=Path(wrapper_configs.video.video_dir),"
+NATIVE_VIDEO_LAYOUT_REPLACEMENT = (
+    'video_dir=Path(wrapper_configs.video.video_dir) / f"env-{env_idx:03d}", '
+    f"# {NATIVE_VIDEO_LAYOUT_MARKER}"
+)
 
 
 def _json_hash(payload: Mapping[str, Any]) -> str:
@@ -750,16 +757,61 @@ def _snapshot_model(
         raise GrootVisualizationError(
             f"model path is absent after exact download: {model}"
         )
-    files = [item for item in model.rglob("*") if item.is_file()]
+    files = sorted(item for item in model.rglob("*") if item.is_file())
     weights = [item for item in files if item.suffix in {".bin", ".safetensors"}]
     if not weights:
         raise GrootVisualizationError("downloaded model has no checkpoint weight file")
+    checkpoint_files = [
+        {
+            "path": item.relative_to(model).as_posix(),
+            "sha256": _file_sha256(item),
+            "bytes": item.stat().st_size,
+        }
+        for item in weights
+    ]
     return model, {
         "repo": repo,
         "revision": revision,
         "subdir": subdir,
         "files": len(files),
         "weight_bytes": sum(item.stat().st_size for item in weights),
+        "checkpoint_files": checkpoint_files,
+    }
+
+
+def _file_sha256(path: Path) -> str:
+    """Return the SHA-256 digest of a regular local artifact file."""
+
+    if not path.is_file():
+        raise GrootVisualizationError("native artifact is not a regular file")
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _native_input_provenance(protocol: Mapping[str, Any]) -> dict[str, Any]:
+    """Select digest-bound prepared input facts for the native worker."""
+
+    dataset = protocol.get("dataset")
+    if not isinstance(dataset, Mapping):
+        raise GrootVisualizationError("prepared protocol lacks dataset provenance")
+    materialized = dataset.get("materialized")
+    if not isinstance(materialized, Mapping):
+        raise GrootVisualizationError("prepared protocol lacks materialized dataset")
+    return {
+        "protocol_sha256": _require_sha256(
+            protocol.get("protocol_sha256"), field="prepared protocol sha256"
+        ),
+        "evaluation_tasks_sha256": _json_hash(
+            {"evaluation_tasks": protocol.get("evaluation_tasks")}
+        ),
+        "dataset_object_inventory_sha256": _require_sha256(
+            materialized.get("sha256"),
+            field="materialized dataset object inventory sha256",
+        ),
+        "rollout_protocol": _prepared_rollout_protocol(protocol),
     }
 
 
@@ -773,12 +825,72 @@ def _upload_videos(
         relative = source.relative_to(directory).as_posix()
         key = "/".join(part for part in (prefix, relative) if part)
         uri = f"s3://{ref.bucket}/{key}"
-        artifacts.append(
-            _put_bytes(client, uri, source.read_bytes(), content_type="video/mp4")
+        artifact = _put_bytes(
+            client, uri, source.read_bytes(), content_type="video/mp4"
         )
+        artifacts.append({**artifact, "relative_path": relative})
     if not artifacts:
         raise GrootVisualizationError("native LIBERO rollout produced no MP4 evidence")
     return artifacts
+
+
+def _bind_episode_media(
+    native_task: Mapping[str, Any], artifacts: Sequence[Mapping[str, Any]]
+) -> list[dict[str, Any]]:
+    """Bind each native seeded episode to exactly one uploaded final MP4."""
+
+    episodes = native_task.get("episodes")
+    if not isinstance(episodes, list) or not episodes:
+        raise GrootVisualizationError(
+            "native evaluator omitted per-episode video evidence"
+        )
+    by_relative = {
+        str(artifact.get("relative_path") or ""): artifact for artifact in artifacts
+    }
+    if (
+        len(episodes) != len(artifacts)
+        or len(by_relative) != len(artifacts)
+        or set(by_relative)
+        != {
+            str(episode.get("video_relative_path") or "")
+            for episode in episodes
+            if isinstance(episode, Mapping)
+        }
+    ):
+        raise GrootVisualizationError(
+            "native episode evidence does not match uploaded rollout videos"
+        )
+    result: list[dict[str, Any]] = []
+    for episode in episodes:
+        if not isinstance(episode, Mapping):
+            raise GrootVisualizationError("native episode evidence is not an object")
+        relative = str(episode.get("video_relative_path") or "")
+        artifact = by_relative.get(relative)
+        initial_state = episode.get("initial_state")
+        trajectory_ids = episode.get("trajectory_ids")
+        if (
+            artifact is None
+            or not isinstance(episode.get("reset_seed"), int)
+            or not isinstance(initial_state, Mapping)
+            or not str(initial_state.get("protocol") or "")
+            or not isinstance(trajectory_ids, list)
+            or not trajectory_ids
+        ):
+            raise GrootVisualizationError(
+                "native episode evidence lacks video, seed, state, or trajectory proof"
+            )
+        result.append(
+            {
+                **dict(episode),
+                "final_report_member": True,
+                "video": {
+                    "uri": artifact["uri"],
+                    "sha256": artifact["sha256"],
+                    "bytes": artifact["bytes"],
+                },
+            }
+        )
+    return result
 
 
 def _publish_rollout_media_prefix(
@@ -1135,6 +1247,34 @@ def _overlay_libero_env(source: Path) -> dict[str, str]:
     }
 
 
+def _overlay_native_video_layout(source: Path) -> dict[str, str]:
+    """Give each vector environment a distinct video directory for seed binding."""
+
+    target = source / "gr00t/eval/rollout_policy.py"
+    try:
+        original = target.read_text()
+    except OSError as exc:
+        raise GrootVisualizationError(
+            "reviewed Isaac-GR00T checkout lacks its native rollout module"
+        ) from exc
+    if NATIVE_VIDEO_LAYOUT_MARKER in original:
+        raise GrootVisualizationError(
+            "runtime source unexpectedly contains a native video-layout overlay"
+        )
+    if original.count(NATIVE_VIDEO_LAYOUT_NEEDLE) != 1:
+        raise GrootVisualizationError(
+            "reviewed Isaac-GR00T rollout layout differs from the pinned contract"
+        )
+    target.write_text(
+        original.replace(NATIVE_VIDEO_LAYOUT_NEEDLE, NATIVE_VIDEO_LAYOUT_REPLACEMENT)
+    )
+    return {
+        "target": "gr00t/eval/rollout_policy.py",
+        "sha256": hashlib.sha256(NATIVE_VIDEO_LAYOUT_REPLACEMENT.encode()).hexdigest(),
+        "version": "v1",
+    }
+
+
 def _verify_libero_parquet_engine(
     python: Path, *, cwd: Path, env: Mapping[str, str]
 ) -> dict[str, str]:
@@ -1273,6 +1413,7 @@ def _runtime_readiness_failure(target: Path) -> str | None:
         return "ready_marker_torchcodec_mismatch"
     evaluator = payload.get("libero_x_evaluator")
     overlay = payload.get("npa_libero_x_overlay")
+    video_layout = payload.get("npa_native_video_layout")
     if (
         not isinstance(evaluator, dict)
         or evaluator.get("repository") != LIBERO_X_EVALUATOR_REPOSITORY
@@ -1281,6 +1422,9 @@ def _runtime_readiness_failure(target: Path) -> str | None:
         or not isinstance(overlay, dict)
         or overlay.get("sha256")
         != hashlib.sha256(LIBERO_X_RUNTIME_OVERLAY.encode()).hexdigest()
+        or not isinstance(video_layout, dict)
+        or video_layout.get("sha256")
+        != hashlib.sha256(NATIVE_VIDEO_LAYOUT_REPLACEMENT.encode()).hexdigest()
     ):
         return "ready_marker_evaluator_or_overlay_mismatch"
     source_python = source / ".venv/bin/python"
@@ -1317,6 +1461,12 @@ def _runtime_readiness_failure(target: Path) -> str | None:
         return "libero_x_registration_overlay_unreadable"
     if not overlay_text.endswith(LIBERO_X_RUNTIME_OVERLAY + "\n"):
         return "libero_x_registration_overlay_invalid"
+    try:
+        rollout_text = (source / "gr00t/eval/rollout_policy.py").read_text()
+    except OSError:
+        return "native_video_layout_overlay_unreadable"
+    if NATIVE_VIDEO_LAYOUT_REPLACEMENT not in rollout_text:
+        return "native_video_layout_overlay_invalid"
     try:
         actual_parquet_engine = _verify_libero_parquet_engine(
             libero_python,
@@ -1504,6 +1654,7 @@ def _materialize_native_runtime(temporary_root: Path) -> dict[str, Any]:
                 "runtime-fetched LIBERO-X evaluator differs from reviewed source"
             )
         overlay = _overlay_libero_env(source)
+        video_layout = _overlay_native_video_layout(source)
         _run_runtime_command(
             [uv, "sync", "--python", "3.12"], cwd=source, env=environment
         )
@@ -1568,6 +1719,7 @@ def _materialize_native_runtime(temporary_root: Path) -> dict[str, Any]:
                 "attribution": "Meituan LIBERO-X authors; Wang et al. (2026)",
             },
             "npa_libero_x_overlay": overlay,
+            "npa_native_video_layout": video_layout,
             "libero_parquet_engine": parquet_engine,
             "libero_torchcodec": torchcodec,
             "python": "3.12",
@@ -1586,8 +1738,10 @@ def _run_native_evaluator(
     runtime: Mapping[str, Any],
     root: Path,
     model_path: Path,
+    model_identity: Mapping[str, Any],
     dataset_path: Path,
     tasks: list[dict[str, Any]],
+    input_provenance: Mapping[str, Any],
     episodes_per_task: int,
     n_envs: int,
     max_episode_steps: int,
@@ -1595,12 +1749,19 @@ def _run_native_evaluator(
     seed: int,
 ) -> dict[str, Any]:
     runner = Path(__file__).with_name("groot_libero_x_native.py")
+    server_runner = Path(__file__).with_name("groot_libero_x_server.py")
     if not runner.is_file():
         raise GrootVisualizationError(
             "native LIBERO evaluator module is absent from source overlay"
         )
+    if not server_runner.is_file():
+        raise GrootVisualizationError(
+            "native policy-server evidence module is absent from source overlay"
+        )
     config_path = root / "native-evaluator-config.json"
     result_path = root / "native-evaluator-result.json"
+    server_evidence_input = root / "native-policy-server-input.json"
+    server_evidence_path = root / "native-policy-server-evidence.json"
     libero_x_tasks = [
         {
             "task_id": task["task_id"],
@@ -1625,14 +1786,37 @@ def _run_native_evaluator(
             )
             + "\n"
         )
+    server_evidence_input.write_text(
+        json.dumps(
+            {
+                "schema": "npa.groot_libero_x.native_policy_server_input.v1",
+                "model": dict(model_identity),
+                "native_evaluator": {
+                    "sha256": _file_sha256(runner),
+                    "path": runner.name,
+                },
+                "policy_server_wrapper": {
+                    "sha256": _file_sha256(server_runner),
+                    "path": server_runner.name,
+                },
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
     config = {
         "server_python": str(runtime["server_python"]),
-        "server_script": str(
+        "server_script": str(server_runner),
+        "upstream_server_script": str(
             Path(runtime["source"]) / "gr00t/eval/run_gr00t_server.py"
         ),
         "server_log": str(root / "native-server.log"),
+        "server_evidence_input": str(server_evidence_input),
+        "server_evidence_path": str(server_evidence_path),
         "model_path": str(model_path),
         "dataset_path": str(dataset_path),
+        "input_provenance": dict(input_provenance),
         "evaluation_tasks": tasks,
         "episodes_per_task": episodes_per_task,
         "n_envs": n_envs,
@@ -1645,6 +1829,17 @@ def _run_native_evaluator(
         "libero_x_registration_manifest": str(registration_manifest)
         if libero_x_tasks
         else "",
+        "sanitized_server_argv": [
+            "--model-path",
+            "[MODEL_PATH]",
+            "--embodiment-tag",
+            "LIBERO_PANDA",
+            "--use-sim-policy-wrapper",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "[LOOPBACK_PORT]",
+        ],
     }
     config_path.write_text(json.dumps(config, indent=2, sort_keys=True) + "\n")
     environment = dict(os.environ)
@@ -1685,6 +1880,149 @@ def _run_native_evaluator(
             "native LIBERO evaluator emitted an invalid result"
         )
     return result
+
+
+def _valid_worker_file_record(value: Any) -> bool:
+    """Return whether a native provenance file record is digest-bound."""
+
+    return (
+        isinstance(value, Mapping)
+        and bool(str(value.get("path") or ""))
+        and bool(str(value.get("module") or ""))
+        and isinstance(value.get("sha256"), str)
+        and SHA256.fullmatch(value["sha256"]) is not None
+    )
+
+
+def _require_native_worker_provenance(native: Mapping[str, Any]) -> dict[str, Any]:
+    """Fail closed unless the native consumer emitted model and CUDA evidence."""
+
+    provenance = native.get("worker_provenance")
+    if not isinstance(provenance, dict) or provenance.get("schema") != (
+        "npa.groot_libero_x.native_worker_provenance.v1"
+    ):
+        raise GrootVisualizationError("native evaluator omitted worker provenance")
+    policy_server = provenance.get("policy_server")
+    if not isinstance(policy_server, Mapping):
+        raise GrootVisualizationError(
+            "native evaluator omitted policy-server provenance"
+        )
+    device = policy_server.get("device")
+    model = policy_server.get("model")
+    entrypoint = provenance.get("executed_native_entrypoint")
+    checkpoints = model.get("checkpoint_files") if isinstance(model, Mapping) else None
+    imports = policy_server.get("imported_modules")
+    capability = (
+        device.get("selected_device_capability")
+        if isinstance(device, Mapping)
+        else None
+    )
+    if (
+        policy_server.get("model_load_completed") is not True
+        or not isinstance(device, Mapping)
+        or device.get("cuda_available") is not True
+        or not isinstance(device.get("cuda_runtime"), str)
+        or not device["cuda_runtime"]
+        or not isinstance(device.get("torch_version"), str)
+        or not device["torch_version"]
+        or not isinstance(device.get("device_count"), int)
+        or device["device_count"] < 1
+        or not isinstance(device.get("selected_device_index"), int)
+        or not isinstance(device.get("selected_device_name"), str)
+        or not device["selected_device_name"]
+        or not isinstance(capability, list)
+        or len(capability) != 2
+        or not all(isinstance(item, int) and item >= 0 for item in capability)
+        or not str(device.get("selected_model_tensor_device") or "").startswith("cuda")
+        or not isinstance(model, Mapping)
+        or not isinstance(model.get("repo"), str)
+        or not model["repo"]
+        or not isinstance(model.get("revision"), str)
+        or not model["revision"]
+        or not isinstance(checkpoints, list)
+        or not checkpoints
+        or not all(
+            isinstance(item, Mapping)
+            and isinstance(item.get("path"), str)
+            and item["path"]
+            and isinstance(item.get("sha256"), str)
+            and SHA256.fullmatch(item["sha256"]) is not None
+            and isinstance(item.get("bytes"), int)
+            and item["bytes"] > 0
+            for item in checkpoints
+        )
+        or not isinstance(entrypoint, Mapping)
+        or entrypoint.get("module") != "gr00t.eval.rollout_policy.run_gr00t_sim_policy"
+        or not _valid_worker_file_record(entrypoint)
+        or not isinstance(imports, list)
+        or not imports
+        or not all(_valid_worker_file_record(item) for item in imports)
+    ):
+        raise GrootVisualizationError(
+            "native evaluator lacks required CUDA, model, or entrypoint evidence"
+        )
+    inputs = provenance.get("input_provenance")
+    if (
+        not isinstance(inputs, Mapping)
+        or not isinstance(inputs.get("rollout_protocol"), Mapping)
+        or not str(inputs["rollout_protocol"].get("initial_state_protocol") or "")
+        or any(
+            not isinstance(inputs.get(key), str)
+            or SHA256.fullmatch(inputs[key]) is None
+            for key in (
+                "protocol_sha256",
+                "evaluation_tasks_sha256",
+                "dataset_object_inventory_sha256",
+            )
+        )
+    ):
+        raise GrootVisualizationError(
+            "native evaluator lacks digest-bound input provenance"
+        )
+    return provenance
+
+
+def _public_worker_provenance(provenance: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a report-safe summary while detailed worker facts stay private."""
+
+    policy_server = provenance["policy_server"]
+    model = policy_server["model"]
+    entrypoint = provenance["executed_native_entrypoint"]
+    imports = policy_server["imported_modules"]
+    return {
+        "schema": provenance["schema"],
+        "model_load_completed": True,
+        "model": {
+            "repo": model["repo"],
+            "revision": model["revision"],
+            "checkpoint_file_count": len(model["checkpoint_files"]),
+            "checkpoint_inventory_sha256": _json_hash(
+                {"checkpoint_files": model["checkpoint_files"]}
+            ),
+        },
+        "device": {
+            "cuda_available": True,
+            "selected_model_tensor_device_type": "cuda",
+        },
+        "executed_native_entrypoint": {
+            "module": entrypoint["module"],
+            "sha256": entrypoint["sha256"],
+        },
+        "imported_modules": [
+            {"module": item["module"], "sha256": item["sha256"]} for item in imports
+        ],
+        "input_provenance": dict(provenance["input_provenance"]),
+    }
+
+
+def _private_worker_provenance_uri(output_uri: str) -> str:
+    """Name a private sibling artifact without copying route details into reports."""
+
+    ref = _split_s3(output_uri)
+    parent, separator, _leaf = ref.key.rpartition("/")
+    if not separator or not parent:
+        raise GrootVisualizationError("rollout report URI lacks a private stage prefix")
+    return f"s3://{ref.bucket}/{parent}/native-worker-provenance.private.json"
 
 
 def _redact_failure_text(value: str) -> tuple[str, bool]:
@@ -1865,8 +2203,10 @@ def _execute_policy(
             runtime=runtime,
             root=root,
             model_path=model,
+            model_identity=model_identity,
             dataset_path=dataset,
             tasks=protocol["evaluation_tasks"],
+            input_provenance=_native_input_provenance(protocol),
             episodes_per_task=episodes_per_task,
             n_envs=n_envs,
             max_episode_steps=max_episode_steps,
@@ -1874,6 +2214,12 @@ def _execute_policy(
             seed=seed,
         )
         phase["name"] = "validate_native_result"
+        worker_provenance = _require_native_worker_provenance(native)
+        private_worker_provenance = _put_json(
+            client,
+            _private_worker_provenance_uri(output_uri),
+            worker_provenance,
+        )
         action = _numeric_metrics(native.get("open_loop_action_error", {}))
         task_rows: list[dict[str, Any]] = []
         native_tasks = native.get("tasks")
@@ -1895,6 +2241,19 @@ def _execute_policy(
                 native_task.get("task_id") != expected_task["task_id"]
                 or native_task.get("env_name") != expected_task["env_name"]
                 or native_task.get("trajectory_ids") != expected_task["trajectory_ids"]
+                or native_task.get("task_input")
+                != {
+                    "task_id": expected_task["task_id"],
+                    "env_name": expected_task["env_name"],
+                    "trajectory_ids": expected_task["trajectory_ids"],
+                    "libero_x_bddl_path": str(
+                        expected_task.get("libero_x_bddl_path") or ""
+                    ),
+                    "libero_x_bddl_sha256": str(
+                        expected_task.get("libero_x_bddl_sha256") or ""
+                    ),
+                    "language": str(expected_task.get("language") or ""),
+                }
             ):
                 raise GrootVisualizationError(
                     "native LIBERO evaluator did not preserve the prepared task"
@@ -1909,9 +2268,10 @@ def _execute_policy(
                 video_dir,
                 f"{rollout_media_uri.rstrip('/')}/{expected_task['task_id']}",
             )
+            episodes = _bind_episode_media(native_task, artifacts)
             task_rows.append(
                 {key: value for key, value in native_task.items() if key != "video_dir"}
-                | {"videos": artifacts}
+                | {"episodes": episodes, "videos": artifacts}
             )
     phase["name"] = "publish_rollout_media"
     videos = [video for row in task_rows for video in row["videos"]]
@@ -1947,6 +2307,11 @@ def _execute_policy(
             "bootstrap_image_groot_source_revision": bootstrap_ref or "unreported",
             "native_runtime": runtime["provenance"],
             "native_entrypoint": "gr00t.eval.rollout_policy.run_gr00t_sim_policy",
+            "native_worker_provenance": _public_worker_provenance(worker_provenance),
+            "private_native_worker_provenance": {
+                "artifact_sha256": private_worker_provenance["sha256"],
+                "artifact_bytes": private_worker_provenance["bytes"],
+            },
         },
         "open_loop_action_error": action,
         "rollout_media": media_prefix,

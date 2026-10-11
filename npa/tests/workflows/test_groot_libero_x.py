@@ -18,6 +18,7 @@ import pytest
 
 from npa.workflows import groot_libero_x as workflow
 from npa.workflows import groot_libero_x_native as native
+from npa.workflows import groot_libero_x_server as server_evidence
 from npa.workflows.groot_visualization import _split_s3
 
 
@@ -259,6 +260,52 @@ def _rollout(
                     "task_id": "heldout-0",
                     "success_rate": 0.5 if policy == "baseline" else 1.0,
                     "videos": [{"uri": video_uri, "bytes": 9, "sha256": video_sha256}],
+                }
+            ],
+        },
+    }
+
+
+def _native_worker_provenance() -> dict[str, Any]:
+    """Return a complete synthetic worker record for parent-contract tests only."""
+
+    return {
+        "schema": "npa.groot_libero_x.native_worker_provenance.v1",
+        "executed_native_entrypoint": {
+            "module": "gr00t.eval.rollout_policy.run_gr00t_sim_policy",
+            "path": "/private/runtime/gr00t/eval/rollout_policy.py",
+            "sha256": "d" * 64,
+        },
+        "input_provenance": {
+            "protocol_sha256": "a" * 64,
+            "evaluation_tasks_sha256": "b" * 64,
+            "dataset_object_inventory_sha256": "c" * 64,
+            "rollout_protocol": {"initial_state_protocol": "deterministic reset seeds"},
+        },
+        "policy_server": {
+            "model_load_completed": True,
+            "model": {
+                "repo": workflow.BASELINE_REPO,
+                "revision": workflow.BASELINE_REVISION,
+                "checkpoint_files": [
+                    {"path": "model.safetensors", "sha256": "e" * 64, "bytes": 1}
+                ],
+            },
+            "device": {
+                "cuda_available": True,
+                "cuda_runtime": "test-cuda",
+                "torch_version": "test-torch",
+                "device_count": 1,
+                "selected_device_index": 0,
+                "selected_device_name": "mocked-test-gpu",
+                "selected_device_capability": [12, 0],
+                "selected_model_tensor_device": "cuda:0",
+            },
+            "imported_modules": [
+                {
+                    "module": "gr00t.policy.gr00t_policy",
+                    "path": "/private/runtime/gr00t/policy/gr00t_policy.py",
+                    "sha256": "f" * 64,
                 }
             ],
         },
@@ -528,6 +575,11 @@ def test_native_rollout_uses_fixed_seeded_episode_waves(tmp_path: Path) -> None:
 
     def fake_rollout(**kwargs: Any) -> tuple[str, list[bool], dict[str, Any]]:
         calls.append(kwargs)
+        wave_dir = Path(kwargs["video_dir"])
+        for environment_index in range(kwargs["n_episodes"]):
+            video = wave_dir / f"env-{environment_index:03d}" / "rollout.mp4"
+            video.parent.mkdir(parents=True)
+            video.write_bytes(f"episode-{environment_index}".encode())
         return (
             kwargs["env_name"],
             [True] * kwargs["n_episodes"],
@@ -543,6 +595,9 @@ def test_native_rollout_uses_fixed_seeded_episode_waves(tmp_path: Path) -> None:
         policy_host="127.0.0.1",
         policy_port=1,
         video_dir=tmp_path / "videos",
+        task_id="heldout-0",
+        trajectory_ids=[7],
+        initial_state_protocol="deterministic reset seeds",
         task_index=2,
         episodes_per_task=10,
         n_envs=5,
@@ -558,6 +613,96 @@ def test_native_rollout_uses_fixed_seeded_episode_waves(tmp_path: Path) -> None:
         [42, 43, 44, 45, 46],
     ]
     assert result["completed_episodes"] == 10
+    assert [episode["reset_seed"] for episode in result["episodes"]] == list(
+        range(37, 47)
+    )
+    assert all(episode["trajectory_ids"] == [7] for episode in result["episodes"])
+
+
+def test_policy_server_device_evidence_uses_mocked_hardware_only_in_unit_test() -> None:
+    """Mocked CUDA objects test the capture contract; they are not device evidence."""
+
+    class Tensor:
+        device = "cuda:0"
+
+    class Model:
+        def parameters(self) -> list[Tensor]:
+            return [Tensor()]
+
+        def buffers(self) -> list[Tensor]:
+            return []
+
+    class Cuda:
+        @staticmethod
+        def is_available() -> bool:
+            return True
+
+        @staticmethod
+        def current_device() -> int:
+            return 0
+
+        @staticmethod
+        def get_device_properties(_index: int) -> Any:
+            return types.SimpleNamespace(name="test-gpu", major=12, minor=0)
+
+        @staticmethod
+        def device_count() -> int:
+            return 1
+
+    class Torch:
+        cuda = Cuda()
+        version = types.SimpleNamespace(cuda="test-cuda")
+        __version__ = "test-torch"
+
+        @staticmethod
+        def device(value: str) -> Any:
+            return types.SimpleNamespace(
+                type="cuda", index=int(value.rsplit(":", 1)[1])
+            )
+
+    observed = server_evidence._selected_tensor_device(Model(), Torch())
+
+    assert observed["selected_model_tensor_device"] == "cuda:0"
+    assert observed["selected_device_capability"] == [12, 0]
+
+
+def test_policy_server_device_evidence_refuses_missing_cuda_or_model_tensors() -> None:
+    """Native server evidence must not invent CUDA or model-device observations."""
+
+    class NoCuda:
+        class cuda:
+            @staticmethod
+            def is_available() -> bool:
+                return False
+
+    class EmptyModel:
+        def parameters(self) -> list[Any]:
+            return []
+
+        def buffers(self) -> list[Any]:
+            return []
+
+    with pytest.raises(RuntimeError, match="CUDA availability"):
+        server_evidence._selected_tensor_device(EmptyModel(), NoCuda())
+
+
+def test_policy_server_checkpoint_inventory_is_digest_bound(tmp_path: Path) -> None:
+    """The server binds bytes in the selected model directory, not a label."""
+
+    model = tmp_path / "model"
+    checkpoint = model / "nested" / "model.safetensors"
+    checkpoint.parent.mkdir(parents=True)
+    checkpoint.write_bytes(b"actual-checkpoint-bytes")
+
+    inventory = server_evidence._checkpoint_inventory(model)
+
+    assert inventory == [
+        {
+            "path": "nested/model.safetensors",
+            "sha256": hashlib.sha256(b"actual-checkpoint-bytes").hexdigest(),
+            "bytes": len(b"actual-checkpoint-bytes"),
+        }
+    ]
 
 
 def test_open_loop_policy_adapts_nested_observation_for_sim_server() -> None:
@@ -643,8 +788,18 @@ def test_native_evaluator_writes_worker_registration_manifest(
         },
         root=tmp_path,
         model_path=tmp_path / "model",
+        model_identity={
+            "repo": workflow.BASELINE_REPO,
+            "revision": workflow.BASELINE_REVISION,
+            "checkpoint_files": [
+                {"path": "model.safetensors", "sha256": "a" * 64, "bytes": 1}
+            ],
+        },
         dataset_path=tmp_path / "dataset",
         tasks=[_task("heldout-0")],
+        input_provenance={
+            "rollout_protocol": {"initial_state_protocol": "deterministic reset seeds"}
+        },
         episodes_per_task=1,
         n_envs=1,
         max_episode_steps=1,
@@ -668,6 +823,8 @@ def test_native_evaluator_writes_worker_registration_manifest(
         }
     ]
     assert captured["config"]["libero_x_source"] == str(source)
+    assert captured["config"]["server_script"].endswith("groot_libero_x_server.py")
+    assert captured["config"]["sanitized_server_argv"][1] == "[MODEL_PATH]"
 
 
 def test_native_evaluator_exposes_libero_x_namespace_at_checkout_root(
@@ -844,6 +1001,11 @@ def test_runtime_readiness_failure_names_missing_documented_runtime(
                         workflow.LIBERO_X_RUNTIME_OVERLAY.encode()
                     ).hexdigest()
                 },
+                "npa_native_video_layout": {
+                    "sha256": hashlib.sha256(
+                        workflow.NATIVE_VIDEO_LAYOUT_REPLACEMENT.encode()
+                    ).hexdigest()
+                },
             }
         )
     )
@@ -888,6 +1050,24 @@ def test_runtime_readiness_refuses_cache_marker_without_torchcodec(
         workflow._runtime_readiness_failure(target)
         == "ready_marker_torchcodec_mismatch"
     )
+
+
+def test_runtime_video_layout_overlay_binds_videos_to_vector_environments(
+    tmp_path: Path,
+) -> None:
+    """The materialized upstream worker must emit one named directory per env."""
+
+    source = tmp_path / "Isaac-GR00T"
+    target = source / "gr00t/eval/rollout_policy.py"
+    target.parent.mkdir(parents=True)
+    target.write_text(f"before\n{workflow.NATIVE_VIDEO_LAYOUT_NEEDLE}\nafter\n")
+
+    record = workflow._overlay_native_video_layout(source)
+
+    assert record["target"] == "gr00t/eval/rollout_policy.py"
+    assert workflow.NATIVE_VIDEO_LAYOUT_REPLACEMENT in target.read_text()
+    with pytest.raises(workflow.GrootVisualizationError, match="unexpectedly contains"):
+        workflow._overlay_native_video_layout(source)
 
 
 def test_runtime_post_publish_failure_is_actionable_and_path_free(
@@ -967,6 +1147,9 @@ def test_materializer_installs_runtime_dependencies_before_publishing_runtime(
             target = source / "gr00t/eval/sim/LIBERO/libero_env.py"
             target.parent.mkdir(parents=True)
             target.write_text("def register_libero_envs():\n    pass\n")
+            rollout = source / "gr00t/eval/rollout_policy.py"
+            rollout.parent.mkdir(parents=True, exist_ok=True)
+            rollout.write_text(workflow.NATIVE_VIDEO_LAYOUT_NEEDLE)
         elif command[-2:] == [
             workflow.LIBERO_X_EVALUATOR_REPOSITORY,
             str(evaluator),
@@ -1045,6 +1228,7 @@ def test_materializer_installs_runtime_dependencies_before_publishing_runtime(
     ]
     assert runtime["provenance"]["libero_parquet_engine"] == expected_engine
     assert runtime["provenance"]["libero_torchcodec"] == expected_torchcodec
+    assert runtime["provenance"]["npa_native_video_layout"]["version"] == "v1"
 
 
 def _native_runtime_cache_target(temporary_root: Path) -> Path:
@@ -1589,7 +1773,13 @@ def test_policy_stage_requires_native_results_and_uploads_actual_mp4s(
         "_snapshot_model",
         lambda *_args: (
             model,
-            {"repo": workflow.BASELINE_REPO, "revision": workflow.BASELINE_REVISION},
+            {
+                "repo": workflow.BASELINE_REPO,
+                "revision": workflow.BASELINE_REVISION,
+                "checkpoint_files": [
+                    {"path": "model.safetensors", "sha256": "a" * 64, "bytes": 1}
+                ],
+            },
         ),
     )
     monkeypatch.setattr(workflow, "_download_prefix", lambda *_args: None)
@@ -1606,9 +1796,11 @@ def test_policy_stage_requires_native_results_and_uploads_actual_mp4s(
 
     def native_result(**kwargs: Any) -> dict[str, Any]:
         video_dir = kwargs["root"] / "videos" / "heldout-0"
-        video_dir.mkdir(parents=True)
-        (video_dir / "rollout.mp4").write_bytes(b"actual-native-rollout")
+        episode_video = video_dir / "wave-000/env-000/rollout.mp4"
+        episode_video.parent.mkdir(parents=True)
+        episode_video.write_bytes(b"actual-native-rollout")
         return {
+            "worker_provenance": _native_worker_provenance(),
             "open_loop_action_error": {
                 "mse": 0.12,
                 "mae": 0.34,
@@ -1620,12 +1812,36 @@ def test_policy_stage_requires_native_results_and_uploads_actual_mp4s(
                     "task_id": "heldout-0",
                     "env_name": _task("heldout-0")["env_name"],
                     "trajectory_ids": [0],
+                    "task_input": {
+                        "task_id": "heldout-0",
+                        "env_name": _task("heldout-0")["env_name"],
+                        "trajectory_ids": [0],
+                        "libero_x_bddl_path": _task("heldout-0")["libero_x_bddl_path"],
+                        "libero_x_bddl_sha256": _task("heldout-0")[
+                            "libero_x_bddl_sha256"
+                        ],
+                        "language": _task("heldout-0")["language"],
+                    },
                     "native_env_name": _task("heldout-0")["env_name"],
                     "successes": [True],
                     "episode_lengths": [12],
                     "episode_rewards": [1.0],
                     "completed_episodes": 1,
                     "success_rate": 1.0,
+                    "episodes": [
+                        {
+                            "task_id": "heldout-0",
+                            "wave_index": 0,
+                            "environment_index": 0,
+                            "reset_seed": 20261002,
+                            "initial_state": {"protocol": "deterministic reset seeds"},
+                            "trajectory_ids": [0],
+                            "success": True,
+                            "episode_length": 12,
+                            "episode_reward": 1.0,
+                            "video_relative_path": "wave-000/env-000/rollout.mp4",
+                        }
+                    ],
                     "video_dir": str(video_dir),
                 }
             ],
@@ -1651,6 +1867,20 @@ def test_policy_stage_requires_native_results_and_uploads_actual_mp4s(
 
     assert report["closed_loop_verified"] is True
     assert report["runtime"]["native_runtime"]["delivery"] == "runtime-fetch"
+    assert report["runtime"]["native_worker_provenance"]["model_load_completed"] is True
+    assert (
+        "path"
+        not in report["runtime"]["native_worker_provenance"][
+            "executed_native_entrypoint"
+        ]
+    )
+    private_provenance = workflow._read_s3_json(
+        client,
+        "s3://bucket/run/rollouts/baseline/native-worker-provenance.private.json",
+    )
+    assert private_provenance["policy_server"]["device"]["selected_device_name"] == (
+        "mocked-test-gpu"
+    )
     assert report["closed_loop"]["success_rate"] == 1.0
     video = report["closed_loop"]["tasks"][0]["videos"][0]
     assert video["bytes"] == len(b"actual-native-rollout")
@@ -1666,8 +1896,48 @@ def test_policy_stage_requires_native_results_and_uploads_actual_mp4s(
     }
     assert report["rollout_media"]["uri"] == "s3://bucket/run/rollouts/baseline/mp4"
     assert client.head_object(
-        Bucket="bucket", Key="run/rollouts/baseline/mp4/heldout-0/rollout.mp4"
+        Bucket="bucket",
+        Key="run/rollouts/baseline/mp4/heldout-0/wave-000/env-000/rollout.mp4",
     )
+    episode = report["closed_loop"]["tasks"][0]["episodes"][0]
+    assert episode["final_report_member"] is True
+    assert (
+        episode["video"]["sha256"]
+        == hashlib.sha256(b"actual-native-rollout").hexdigest()
+    )
+
+
+def test_policy_stage_refuses_missing_native_worker_provenance() -> None:
+    """A native result cannot infer device or checkpoint proof from its request."""
+
+    with pytest.raises(workflow.GrootVisualizationError, match="worker provenance"):
+        workflow._require_native_worker_provenance({})
+
+
+def test_episode_media_refuses_conflicting_native_video_membership() -> None:
+    """A report cannot bind an episode to a different uploaded MP4."""
+
+    with pytest.raises(workflow.GrootVisualizationError, match="does not match"):
+        workflow._bind_episode_media(
+            {
+                "episodes": [
+                    {
+                        "reset_seed": 1,
+                        "initial_state": {"protocol": "seeded"},
+                        "trajectory_ids": [0],
+                        "video_relative_path": "different.mp4",
+                    }
+                ]
+            },
+            [
+                {
+                    "relative_path": "actual.mp4",
+                    "uri": "s3://bucket/actual.mp4",
+                    "sha256": "a" * 64,
+                    "bytes": 1,
+                }
+            ],
+        )
 
 
 def test_policy_stage_persists_redacted_native_failure(
