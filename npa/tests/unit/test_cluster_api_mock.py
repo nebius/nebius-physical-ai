@@ -191,6 +191,43 @@ def test_list_clusters_parses_items() -> None:
     assert clusters[0].k8s_version == "v1.35.2-nebius-control.1"
 
 
+def test_complete_cluster_inventory_binds_all_pages_response() -> None:
+    calls: list[list[str]] = []
+
+    def run(args, **_kwargs):
+        calls.append(args)
+        return _result({"items": [_cluster()], "next_page_token": ""})
+
+    client = MK8sClient(nebius_bin="nebius", subprocess_runner=run)
+
+    inventory = client.list_clusters_complete("project-a")
+
+    assert [cluster.name for cluster in inventory.clusters] == ["cluster-a"]
+    assert len(inventory.response_sha256) == 64
+    assert calls[0][-3:] == ["--all", "--format", "json"]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        {"items": [], "next_page_token": "next-page"},
+        {"items": [{"metadata": {"id": "cluster-a", "name": "cluster-a"}}]},
+        {"items": None},
+        {"items": [], "unknown": "field"},
+    ),
+)
+def test_complete_cluster_inventory_rejects_incomplete_or_invalid_responses(
+    payload,
+) -> None:
+    client = MK8sClient(
+        nebius_bin="nebius",
+        subprocess_runner=lambda *_args, **_kwargs: _result(payload),
+    )
+
+    with pytest.raises(ClusterError):
+        client.list_clusters_complete("project-a")
+
+
 def test_get_cluster_uses_name_fallback_after_id_miss() -> None:
     calls: list[list[str]] = []
 

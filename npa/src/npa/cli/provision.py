@@ -148,6 +148,19 @@ def provision_if_absent_cmd(
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Resolve settings and print intended actions only."
     ),
+    reconcile_empty_failure: bool = typer.Option(
+        False,
+        "--reconcile-empty-failure",
+        help=(
+            "Terminalize the one supported retained failed provision after fresh "
+            "provider absence checks; never creates or deletes infrastructure."
+        ),
+    ),
+    recovery_evidence: Path | None = typer.Option(
+        None,
+        "--recovery-evidence",
+        help="Private collected producer-event evidence required with --reconcile-empty-failure.",
+    ),
     timeout: int = typer.Option(
         120, "--timeout", help="Terraform apply timeout in minutes."
     ),
@@ -183,6 +196,8 @@ def provision_if_absent_cmd(
         validate=validate,
         sky_smoke=sky_smoke,
         dry_run=dry_run,
+        reconcile_empty_failure=reconcile_empty_failure,
+        recovery_evidence=recovery_evidence,
         timeout=timeout,
         gpu_nodes=gpu_nodes,
         cpu_nodes=cpu_nodes,
@@ -235,7 +250,7 @@ def provision_if_absent_cmd(
             typer.echo(
                 f"For kubectl / sky in this shell: export KUBECONFIG={result.kubeconfig_path}"
             )
-    if not dry_run and result.status not in {"ok", "ready"}:
+    if not dry_run and result.status not in {"ok", "ready", "reconciled"}:
         # Exiting 0 on a partial run made the follow-up submit the place where the
         # missing cluster surfaced, long after the command that was supposed to
         # create it "succeeded". A read-only plan is different: blocked/unknown

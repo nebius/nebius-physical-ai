@@ -417,6 +417,44 @@ recorded identity to be restored or a new run ID to be started.
 export KUBECONFIG="$HOME/.npa/clusters/<context>/kubeconfig"
 ```
 
+### Reconciling a failed empty provision
+
+`provision-if-absent` normally keeps a failed provisioning journal open so a
+later operator can resume or roll back resources it created. Do not delete that
+journal or its project lease by hand. If the original operation is in
+`recovery-required`, recorded no resources, state copies, or configuration
+mutations, and its owner is no longer live, this bounded recovery verifies the
+same project, tenant, region, and named cluster footprint with fresh provider
+inventories before terminalizing that one journal:
+
+```bash
+npa provision-if-absent --project "$PROJECT" \
+  --cluster-name "$CONTEXT" --context "$CONTEXT" \
+  --reconcile-empty-failure --recovery-evidence "$RECOVERY_EVIDENCE" \
+  --output-format json
+```
+
+`RECOVERY_EVIDENCE` is a private, operator-collected command-event document;
+it is not Terraform stdout. The bounded path accepts only the retained
+standard no-S3 managed-Kubernetes single-GPU producer: a canonical
+`deploy/cluster` invocation, an on-demand one-GPU topology, a completed failed
+provider-allocation rejection, and the retained backend recipe/state. It checks
+the command record and private provider stderr, reconstructs the producer's
+regional recipe patches and provider-default materialization from the checked-in
+source graph, compares the complete retained modules tree, and treats retained
+Terraform state only as a contradiction detector.
+
+The accepted profile must have reused an existing subnet: the project-level
+backend root must contain no retained network-ownership marker. Fresh reads
+then verify the exact project/tenant/region and a complete managed-Kubernetes
+cluster inventory; node-group absence follows only from the verified absence of
+its parent cluster. It never creates or deletes infrastructure. Authentication
+failures, malformed or incomplete retained evidence, an active owner, scope or
+recipe mismatch, a network-ownership marker, or a surviving cluster leave the
+journal blocked. The command is intentionally not a general adoption or
+cleanup mechanism; use the normal workflow cancel and owned teardown path for
+resources that were actually created.
+
 A reserved recovery successor retains the provider's verified terminal state
 when its outputs complete the workflow. Logical workflow success can coexist
 with a provider CANCELLED or FAILED state; a SUCCEEDED race remains SUCCEEDED.

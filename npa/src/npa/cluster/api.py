@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shlex
 import shutil
@@ -62,6 +63,23 @@ class ClusterInfo:
     node_group_id: str = ""
     k8s_version: str = ""
     raw: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class CompleteClusterInventory:
+    """A complete project-scoped cluster inventory with its response digest.
+
+    Args:
+        clusters: Provider records returned by the all-pages inventory request.
+        response_sha256: SHA-256 of the exact JSON response used for the inventory.
+    Returns:
+        None.
+    Raises:
+        None.
+    """
+
+    clusters: tuple[ClusterInfo, ...]
+    response_sha256: str
 
 
 class MK8sClient:
@@ -339,6 +357,44 @@ class MK8sClient:
             self._cluster_from_dict(item, fallback_project_id=project_id)
             for item in _as_items(_json_loads(result.stdout))
         ]
+
+    def list_clusters_complete(self, project_id: str) -> CompleteClusterInventory:
+        """Read every cluster in one project and reject an incomplete response.
+
+        Args:
+            project_id: Immutable project ID whose clusters are inventoried.
+        Returns:
+            Parsed cluster records plus a digest of the exact provider response.
+        Raises:
+            ClusterError: The provider response is unavailable, incomplete, or out of scope.
+        """
+
+        result = self._run(
+            [
+                "mk8s",
+                "cluster",
+                "list",
+                "--parent-id",
+                project_id,
+                "--all",
+                "--format",
+                "json",
+            ],
+            timeout=120,
+        )
+        if result.returncode != 0:
+            self._raise_for_error(
+                result, f"complete cluster inventory failed for project {project_id}"
+            )
+        items = _complete_inventory_items(_json_loads(result.stdout), project_id)
+        clusters = tuple(
+            self._cluster_from_dict(item, fallback_project_id=project_id)
+            for item in items
+        )
+        return CompleteClusterInventory(
+            clusters=clusters,
+            response_sha256=hashlib.sha256(result.stdout.encode("utf-8")).hexdigest(),
+        )
 
     def get_cluster(
         self, cluster_id_or_name: str, *, project_id: str = ""
@@ -824,6 +880,31 @@ def _as_items(data: Any) -> list[dict[str, Any]]:
     if isinstance(data, list):
         return [item for item in data if isinstance(item, dict)]
     return []
+
+
+def _complete_inventory_items(data: Any, project_id: str) -> list[dict[str, Any]]:
+    """Validate an all-pages cluster inventory before treating it as complete."""
+
+    if not isinstance(data, dict) or set(data) - {"items", "next_page_token"}:
+        raise ClusterError("cluster inventory response is malformed")
+    token = data.get("next_page_token", "")
+    if token not in (None, ""):
+        raise ClusterError("cluster inventory response is incomplete")
+    items = data.get("items")
+    if not isinstance(items, list) or not all(isinstance(item, dict) for item in items):
+        raise ClusterError("cluster inventory response has invalid items")
+    for item in items:
+        metadata = item.get("metadata")
+        if not isinstance(metadata, dict):
+            raise ClusterError("cluster inventory item has invalid metadata")
+        parent = str(metadata.get("parent_id") or metadata.get("parentId") or "")
+        if (
+            not str(metadata.get("id") or "").strip()
+            or not str(metadata.get("name") or "").strip()
+            or parent != project_id
+        ):
+            raise ClusterError("cluster inventory item has mismatched identity")
+    return items
 
 
 def cluster_subnet_id(cluster: ClusterInfo) -> str:

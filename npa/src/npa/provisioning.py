@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
-import os
 import functools
+import hashlib
 import inspect
+import json
 import logging
+import os
+import re
+import shlex
 import sys
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterator, Mapping
 from urllib.parse import urlparse
 
 from npa.clients import config as config_module
@@ -21,11 +25,13 @@ from npa.cluster.gpu_health import (
     DEFAULT_STABILIZATION_SECONDS,
 )
 from npa.cluster.gpu_workload_profile import resolve_gpu_workload_profile
-from npa.cluster.state import kubeconfig_file, load_cluster_state
+from npa.cluster.state import cluster_dir, kubeconfig_file, load_cluster_state
 from npa.provisioning_journal import (
+    OperationJournalError,
     OperationIdentityError,
     ProvisioningOperation,
     current_operation,
+    deterministic_operation_id,
     emit_recovery_summary,
     operation_context,
 )
@@ -51,6 +57,1147 @@ class ProvisionIfAbsentResult:
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
+
+
+_RECOVERY_VALUE_FLAGS = frozenset(
+    {
+        "--project",
+        "--cluster-name",
+        "--context",
+        "--kubeconfig",
+        "--terraform-dir",
+        "--gpu-nodes",
+        "--gpu-platform",
+        "--gpu-preset",
+        "--accelerator",
+        "--output-format",
+    }
+)
+_RECOVERY_BOOLEAN_FLAGS = frozenset({"--skip-s3", "--on-demand"})
+_STANDARD_TFVARS = frozenset(
+    {
+        "cluster_name",
+        "ssh_public_key",
+        "mk8s_cluster_public_endpoint",
+        "enable_k8s_node_group_sa",
+        "enable_egress_gateway",
+        "cpu_nodes_public_ips",
+        "gpu_nodes_public_ips",
+        "cpu_nodes_preemptible",
+        "gpu_nodes_preemptible",
+        "mig_strategy",
+        "gpu_nodes_driverfull_image",
+        "gpu_nodes_driver_preset",
+        "custom_driver",
+        "cpu_nodes_fixed_count",
+        "cpu_nodes_platform",
+        "cpu_nodes_preset",
+        "cpu_disk_size",
+        "gpu_nodes_fixed_count_per_group",
+        "gpu_node_groups",
+        "gpu_nodes_platform",
+        "gpu_nodes_preset",
+        "gpu_disk_size",
+        "enable_gpu_cluster",
+        "enable_filestore",
+        "existing_filestore",
+        "filestore_disk_size_gibibytes",
+        "filestore_mount_path",
+        "filestore_mount_tag",
+        "filesystem_csi",
+        "enable_nebius_o11y_agent",
+        "enable_grafana",
+        "enable_prometheus",
+        "collectK8sClusterMetrics",
+        "enable_kuberay_cluster",
+        "enable_kuberay_service",
+        "enable_opa_gatekeeper",
+        "loki",
+    }
+)
+_STATE_RESOURCE_TYPES = frozenset(
+    {
+        ("data", "nebius_compute_v1_filesystem"),
+        ("data", "nebius_iam_v1_group"),
+        ("managed", "nebius_compute_v1_filesystem"),
+        ("managed", "nebius_compute_v1_gpu_cluster"),
+        ("managed", "nebius_iam_v1_group_membership"),
+        ("managed", "nebius_iam_v1_service_account"),
+        ("managed", "nebius_iam_v2_access_key"),
+        ("managed", "random_password"),
+        ("managed", "random_string"),
+        ("managed", "terraform_data"),
+        ("managed", "time_static"),
+    }
+)
+
+
+@dataclass(frozen=True)
+class EmptyFailureRecoveryProfile:
+    """Evidence-backed, supported producer shape for one empty recovery."""
+
+    retained_hashes: dict[str, str]
+    topology: dict[str, object]
+    expected_names: dict[str, str]
+
+
+@dataclass(frozen=True)
+class RetainedBackendIdentity:
+    """The recorded recipe identity required to validate retained backend bytes."""
+
+    hashes: dict[str, str]
+    source_hashes: dict[str, str]
+    provider_defaults: dict[str, str]
+
+
+def _journal_sha256(operation: ProvisioningOperation) -> str:
+    """Return a journal byte digest without following a replacement symlink."""
+
+    if operation.path.is_symlink() or not operation.path.is_file():
+        raise OperationJournalError("reconciliation journal is unavailable")
+    return hashlib.sha256(operation.path.read_bytes()).hexdigest()
+
+
+def _sha256(data: bytes) -> str:
+    """Return a stable hash for retained, non-secret recovery evidence."""
+
+    return hashlib.sha256(data).hexdigest()
+
+
+def _require_regular_file(path: Path, label: str, *, private: bool = False) -> bytes:
+    """Read one regular retained file without following links."""
+
+    try:
+        status = path.lstat()
+        valid_mode = not private or not status.st_mode & 0o077
+        _require_reconciliation_value(
+            path.is_file() and not path.is_symlink() and valid_mode,
+            f"{label} is unavailable or insufficiently private",
+        )
+        return path.read_bytes()
+    except OSError as exc:
+        raise OperationJournalError(f"{label} is unavailable") from exc
+
+
+def _json_object(data: bytes, label: str) -> dict[str, Any]:
+    """Parse a retained JSON object or reject it before reconciliation."""
+
+    try:
+        value = json.loads(data)
+    except json.JSONDecodeError as exc:
+        raise OperationJournalError(f"{label} is malformed") from exc
+    _require_reconciliation_value(isinstance(value, dict), f"{label} is not an object")
+    return value
+
+
+def _owner_is_alive(owner_pid: object) -> bool:
+    """Return whether a journal owner can still mutate its operation."""
+
+    try:
+        pid = int(owner_pid)
+    except (TypeError, ValueError):
+        return True
+    if pid <= 0:
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _require_reconciliation_value(condition: bool, message: str) -> None:
+    """Fail closed when a failed provision cannot be safely reconciled."""
+
+    if not condition:
+        raise OperationJournalError(message)
+
+
+def _require_empty_failed_provision(
+    payload: Mapping[str, Any],
+    *,
+    alias: str,
+    environment: EnvironmentConfig,
+    cluster_name: str,
+) -> None:
+    """Require the exact failed, unowned provisioning shape before provider reads."""
+
+    expected = _expected_reconciliation_scope(alias, environment, cluster_name)
+    for key, value in expected.items():
+        _require_reconciliation_value(
+            str(payload.get(key) or "") == str(value or ""),
+            f"reconciliation journal has mismatched {key}",
+        )
+    _require_reconciliation_value(
+        not _owner_is_alive(payload.get("owner_pid")),
+        "reconciliation journal still has a live owner",
+    )
+    _require_no_owned_reconciliation_state(payload)
+    _require_original_preflight_scope(payload, expected, cluster_name)
+    _require_original_failure_provenance(payload)
+
+
+def _expected_reconciliation_scope(
+    alias: str, environment: EnvironmentConfig, cluster_name: str
+) -> dict[str, str]:
+    """Return the immutable journal fields that select one failed provision."""
+
+    return {
+        "command": "npa provision-if-absent",
+        "project_alias": alias,
+        "project_id": environment.project_id,
+        "tenant_id": environment.tenant_id,
+        "region": environment.region,
+        "resource_type": "cluster",
+        "requested_name": cluster_name,
+        "phase": "recovery-required",
+        "lifecycle": "failed",
+    }
+
+
+def _require_no_owned_reconciliation_state(payload: Mapping[str, Any]) -> None:
+    """Reject a recovery when the original operation recorded any mutation."""
+
+    _require_reconciliation_value(
+        not any(
+            payload.get(key)
+            for key in ("resources", "local_state_copies", "config_mutations")
+        ),
+        "reconciliation journal records owned or mutated state",
+    )
+    rollback = payload.get("rollback")
+    _require_reconciliation_value(
+        isinstance(rollback, Mapping)
+        and rollback.get("attempted") is False
+        and rollback.get("completed") is False,
+        "reconciliation journal has an incomplete rollback record",
+    )
+
+
+def _require_original_preflight_scope(
+    payload: Mapping[str, Any], expected: Mapping[str, str], cluster_name: str
+) -> None:
+    """Bind recovery to the original plan instead of a caller-selected topology."""
+
+    plan = payload.get("preflight_plan")
+    topology = plan.get("topology") if isinstance(plan, Mapping) else None
+    scope_keys = {"project_alias", "project_id", "tenant_id", "region"}
+    scope_matches = isinstance(plan, Mapping) and all(
+        str(plan.get(key) or "") == str(value or "")
+        for key, value in expected.items()
+        if key in scope_keys
+    )
+    _require_reconciliation_value(
+        isinstance(topology, Mapping)
+        and str(topology.get("cluster_name") or "") == cluster_name
+        and scope_matches,
+        "reconciliation journal lacks the original exact preflight scope",
+    )
+
+
+def _require_original_failure_provenance(payload: Mapping[str, Any]) -> None:
+    """Require the source failure evidence retained by the original producer."""
+
+    error = str(payload.get("last_error") or "").lower()
+    _require_reconciliation_value(
+        payload.get("last_error_type") == "RuntimeError"
+        and "terraform apply" in error
+        and "timeout" not in error
+        and "interrupt" not in error
+        and isinstance(payload.get("events"), list)
+        and bool(payload.get("events")),
+        "reconciliation journal does not record a completed apply rejection",
+    )
+
+
+def _original_topology(payload: Mapping[str, Any]) -> dict[str, object]:
+    """Return the one single-GPU topology supported by empty recovery."""
+
+    plan = payload.get("preflight_plan")
+    topology = plan.get("topology") if isinstance(plan, Mapping) else None
+    _require_reconciliation_value(
+        isinstance(topology, Mapping), "reconciliation journal lacks topology"
+    )
+    keys = ("gpu_nodes", "cpu_nodes", "gpu_platform", "gpu_preset", "accelerator")
+    values = {key: topology.get(key) for key in keys}
+    _require_reconciliation_value(
+        isinstance(values["gpu_nodes"], int)
+        and values["gpu_nodes"] == 1
+        and isinstance(values["cpu_nodes"], int)
+        and values["cpu_nodes"] == 1
+        and all(str(values[key] or "").strip() for key in keys[2:])
+        and topology.get("gpu_preemptible") is False
+        and not str(topology.get("capacity_block_group") or "").strip(),
+        "reconciliation journal is outside the supported single-GPU profile",
+    )
+    return values
+
+
+def _recorded_provision_options(record: Mapping[str, Any]) -> dict[str, object]:
+    """Parse one saved Bash command without evaluating any of its shell text."""
+
+    command = record.get("command")
+    exit_code = record.get("exit_code")
+    _require_reconciliation_value(
+        isinstance(command, str)
+        and record.get("status") == "failed"
+        and isinstance(exit_code, int)
+        and exit_code != 0,
+        "retained command event is not a failed provision",
+    )
+    outer = shlex.split(command)
+    _require_reconciliation_value(
+        len(outer) == 3 and Path(outer[0]).name == "bash" and outer[1] == "-lc",
+        "retained command event is not a Bash command",
+    )
+    lines = [line for line in outer[2].splitlines() if "provision-if-absent" in line]
+    _require_reconciliation_value(len(lines) == 1, "retained command is ambiguous")
+    tokens = shlex.split(lines[0])
+    index = tokens.index("provision-if-absent")
+    return _parse_recorded_options(tokens[index + 1 :])
+
+
+def _parse_recorded_options(tokens: list[str]) -> dict[str, object]:
+    """Read the bounded option vocabulary of the standard failed producer."""
+
+    parsed: dict[str, object] = {}
+    position = 0
+    while position < len(tokens):
+        token = tokens[position]
+        if token in {">", ">>", "2>", "2>>"}:
+            break
+        _require_reconciliation_value(
+            token.startswith("--"), "retained command has a positional argument"
+        )
+        _require_reconciliation_value(
+            token not in parsed, "retained command repeats an option"
+        )
+        if token in _RECOVERY_BOOLEAN_FLAGS:
+            parsed[token] = True
+            position += 1
+            continue
+        _require_reconciliation_value(
+            token in _RECOVERY_VALUE_FLAGS and position + 1 < len(tokens),
+            "retained command has an unsupported option",
+        )
+        value = tokens[position + 1]
+        _require_reconciliation_value(
+            not value.startswith("--"), "retained command lacks an option value"
+        )
+        parsed[token] = value
+        position += 2
+    return parsed
+
+
+def _matching_retained_event(
+    evidence_path: Path,
+    *,
+    alias: str,
+    cluster_name: str,
+    topology: Mapping[str, object],
+) -> dict[str, str]:
+    """Bind recovery to exactly one collected canonical failed producer event."""
+
+    raw = _require_regular_file(evidence_path, "recovery evidence", private=True)
+    evidence = _json_object(raw, "recovery evidence")
+    records = evidence.get("records")
+    _require_reconciliation_value(
+        set(evidence) == {"scope", "records"}
+        and isinstance(evidence.get("scope"), str)
+        and isinstance(records, list)
+        and all(isinstance(record, Mapping) for record in records),
+        "recovery evidence has an unsupported schema",
+    )
+    matches = [
+        record
+        for record in records
+        if _retained_event_matches(record, alias, cluster_name, topology)
+    ]
+    _require_reconciliation_value(
+        len(matches) == 1, "recovery evidence does not select one supported producer"
+    )
+    return _retained_failure_log_hash(matches[0], evidence_path)
+
+
+def _retained_event_matches(
+    record: Mapping[str, Any],
+    alias: str,
+    cluster_name: str,
+    topology: Mapping[str, object],
+) -> bool:
+    """Return whether a saved event is the exact standard no-S3 producer shape."""
+
+    try:
+        options = _recorded_provision_options(record)
+        from npa.cli.cluster.terraform_lifecycle import _resolve_terraform_dir
+
+        expected = {
+            "--project": alias,
+            "--cluster-name": cluster_name,
+            "--context": cluster_name,
+            "--gpu-nodes": str(topology["gpu_nodes"]),
+            "--gpu-platform": str(topology["gpu_platform"]),
+            "--gpu-preset": str(topology["gpu_preset"]),
+            "--accelerator": str(topology["accelerator"]),
+            "--output-format": "json",
+        }
+        allowed = (
+            set(expected)
+            | {"--kubeconfig", "--terraform-dir"}
+            | set(_RECOVERY_BOOLEAN_FLAGS)
+        )
+        return (
+            set(options) == allowed
+            and all(options.get(key) == value for key, value in expected.items())
+            and options.get("--skip-s3") is True
+            and options.get("--on-demand") is True
+            and bool(str(options.get("--kubeconfig") or "").strip())
+            and Path(str(options.get("--terraform-dir") or "")).resolve()
+            == _resolve_terraform_dir(None)
+        )
+    except (OperationJournalError, OSError, ValueError):
+        return False
+
+
+def _retained_failure_log_hash(
+    record: Mapping[str, Any], evidence_path: Path
+) -> dict[str, str]:
+    """Bind the selected event to its task-local completed provider rejection."""
+
+    command = str(record["command"])
+    script = shlex.split(command)[2]
+    service_dir = _recorded_service_dir(script)
+    line = next(line for line in script.splitlines() if "provision-if-absent" in line)
+    tokens = shlex.split(line)
+    _require_reconciliation_value(
+        "2>" in tokens, "retained command has no provider error log"
+    )
+    target = tokens[tokens.index("2>") + 1]
+    log_path = _recorded_log_path(service_dir, target, evidence_path.parent)
+    log = _require_regular_file(log_path, "retained provider failure log", private=True)
+    _require_completed_allocation_rejection(log)
+    return {
+        "command_event_sha256": _sha256(
+            json.dumps(record, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ),
+        "provider_failure_log_sha256": _sha256(log),
+    }
+
+
+def _require_completed_allocation_rejection(log: bytes) -> None:
+    """Reject timeout-like failures that might leave a create running provider-side."""
+
+    lines = log.decode("utf-8", errors="replace").splitlines()
+    preconditions = [
+        index
+        for index, line in enumerate(lines)
+        if "failedprecondition" in line.lower()
+    ]
+    allocations = [
+        index for index, line in enumerate(lines) if "allocation" in line.lower()
+    ]
+    related = [lines[index].lower() for index in [*preconditions, *allocations]]
+    _require_reconciliation_value(
+        len(preconditions) == 1
+        and len(allocations) == 1
+        and abs(preconditions[0] - allocations[0]) <= 2
+        and not any(
+            token in line
+            for line in related
+            for token in ("timeout", "interrupted", "deadline", "cancelled")
+        ),
+        "retained provider failure is not a completed allocation rejection",
+    )
+
+
+def _recorded_service_dir(script: str) -> Path:
+    """Read the literal task directory assignment from the collected script."""
+
+    lines = [
+        line.strip()
+        for line in script.splitlines()
+        if line.strip().startswith("service_dir=")
+    ]
+    _require_reconciliation_value(
+        len(lines) == 1, "retained command has no unique service directory"
+    )
+    value = shlex.split(lines[0].split("=", 1)[1])
+    _require_reconciliation_value(
+        len(value) == 1 and Path(value[0]).is_absolute(),
+        "retained service directory is invalid",
+    )
+    return Path(value[0]).resolve()
+
+
+def _recorded_log_path(service_dir: Path, target: str, evidence_root: Path) -> Path:
+    """Resolve only the saved service-dir stderr target, never a shell expansion."""
+
+    prefix = "$service_dir/"
+    _require_reconciliation_value(
+        target.startswith(prefix), "retained provider log is not task-local"
+    )
+    path = (service_dir / target.removeprefix(prefix)).resolve()
+    _require_reconciliation_value(
+        path.parent == service_dir and path.is_relative_to(evidence_root.resolve()),
+        "retained provider log escapes task evidence",
+    )
+    return path
+
+
+def _backend_recipe_dir(
+    environment: EnvironmentConfig, cluster_name: str, context_name: str
+) -> Path:
+    """Return the task-local retained standard backend material directory."""
+
+    return (
+        cluster_dir(context_name)
+        / "backend-state"
+        / environment.project_id
+        / cluster_name
+        / "k8s-training"
+    )
+
+
+def _valid_hash(value: object) -> bool:
+    """Return whether a retained source identity is a full SHA-256 digest."""
+
+    return isinstance(value, str) and bool(re.fullmatch(r"[0-9a-f]{64}", value))
+
+
+def _validate_backend_sidecar(
+    sidecar: Mapping[str, Any], environment: EnvironmentConfig, cluster_name: str
+) -> RetainedBackendIdentity:
+    """Validate retained standard-recipe provenance without disclosing its values."""
+
+    _validate_retained_backend_scope(sidecar, environment, cluster_name)
+    return _provider_deadline_identity(sidecar)
+
+
+def _validate_retained_backend_scope(
+    sidecar: Mapping[str, Any], environment: EnvironmentConfig, cluster_name: str
+) -> None:
+    """Require the retained backend's exact scope and reused-subnet input."""
+
+    required = {
+        "backend": "mk8s",
+        "cluster_name": cluster_name,
+        "project_id": environment.project_id,
+        "tenant_id": environment.tenant_id,
+        "region": environment.region,
+        "gpu_driver_mode": "managed-image",
+        "status": "provisioning",
+    }
+    _require_reconciliation_value(
+        all(sidecar.get(key) == value for key, value in required.items())
+        and bool(str(sidecar.get("context") or "").strip())
+        and bool(str(sidecar.get("subnet_id") or "").strip()),
+        "retained backend scope is not the supported producer",
+    )
+
+
+def _provider_deadline_identity(sidecar: Mapping[str, Any]) -> RetainedBackendIdentity:
+    """Extract the validated source and materialized-provider identity."""
+
+    deadlines = sidecar.get("provider_rpc_deadlines")
+    _require_reconciliation_value(
+        isinstance(deadlines, Mapping), "retained provider deadlines are missing"
+    )
+    sources = deadlines.get("source_sha256")
+    defaults = deadlines.get("inserted_defaults")
+    timeout = deadlines.get("apply_timeout_minutes")
+    materialized = deadlines.get("materialized_provider_sha256")
+    _require_provider_source_identity(sources, materialized)
+    _require_provider_deadline_defaults(timeout, defaults, deadlines)
+    return RetainedBackendIdentity(
+        hashes={
+            "provider_source_set_sha256": _sha256(
+                json.dumps(sources, sort_keys=True, separators=(",", ":")).encode(
+                    "utf-8"
+                )
+            ),
+            "materialized_provider_sha256": str(materialized),
+        },
+        source_hashes={str(key): str(value) for key, value in sources.items()},
+        provider_defaults={str(key): str(value) for key, value in defaults.items()},
+    )
+
+
+def _require_provider_source_identity(sources: object, materialized: object) -> None:
+    """Require full hashes for every original source file and materialized provider."""
+
+    _require_reconciliation_value(
+        isinstance(sources, Mapping)
+        and bool(sources)
+        and all(
+            isinstance(key, str) and _valid_hash(value)
+            for key, value in sources.items()
+        )
+        and _valid_hash(materialized),
+        "retained provider source identity is malformed",
+    )
+
+
+def _require_provider_deadline_defaults(
+    timeout: object, defaults: object, deadlines: Mapping[str, Any]
+) -> None:
+    """Require the standard complete set of injected provider RPC defaults."""
+
+    _require_reconciliation_value(
+        isinstance(timeout, int)
+        and timeout > 0
+        and isinstance(defaults, Mapping)
+        and set(defaults) == {"auth_timeout", "per_retry_timeout", "timeout"}
+        and all(value == f"{timeout}m" for value in defaults.values())
+        and deadlines.get("preserved_operator_fields") == [],
+        "retained provider defaults are outside the supported recipe",
+    )
+
+
+def _supported_recipe_root() -> Path:
+    """Return the checked-in source graph for the one accepted producer shape."""
+
+    root = (
+        Path(__file__).resolve().parents[3]
+        / "deploy"
+        / "cluster"
+        / "vendor"
+        / "nebius-solutions-library"
+    )
+    _require_reconciliation_value(
+        root.is_dir() and not root.is_symlink(),
+        "supported Terraform recipe is unavailable",
+    )
+    return root
+
+
+def _expected_recipe_sources(source_root: Path, region: str) -> dict[str, bytes]:
+    """Read reviewed top-level Terraform bytes after their deterministic patch."""
+
+    from npa.cluster_backends.mk8s_render import (
+        patch_explicit_region_defaults,
+        patch_provider_domain,
+    )
+
+    sources: dict[str, bytes] = {}
+    for path in sorted((source_root / "k8s-training").glob("*.tf")):
+        raw = _require_regular_file(path, "supported Terraform source")
+        text = raw.decode("utf-8")
+        if path.name == "locals.tf":
+            raw = patch_explicit_region_defaults(text).encode("utf-8")
+        if path.name == "provider.tf":
+            raw = patch_provider_domain(text, region).encode("utf-8")
+        sources[path.name] = raw
+    _require_reconciliation_value(bool(sources), "supported Terraform source is empty")
+    return sources
+
+
+def _materialized_provider_source(source: bytes, defaults: Mapping[str, str]) -> bytes:
+    """Apply the existing provider-default materializer to reviewed source bytes."""
+
+    from npa.cluster_backends.provider_rpc import _hcl_providers, _materialized_text
+
+    text = source.decode("utf-8")
+    providers = _hcl_providers(Path("provider.tf"), text)
+    _require_reconciliation_value(
+        len(providers) == 1, "supported provider source is not materializable"
+    )
+    return _materialized_text(providers[0], text, dict(defaults), {}).encode("utf-8")
+
+
+def _tree_sha256(root: Path, label: str) -> str:
+    """Hash a regular-file recipe tree with names so extra modules cannot hide."""
+
+    _require_reconciliation_value(
+        root.is_dir() and not root.is_symlink(), f"{label} is unavailable"
+    )
+    entries: list[tuple[str, str]] = []
+    for path in sorted(root.rglob("*")):
+        _require_reconciliation_value(
+            not path.is_symlink(), f"{label} contains a symlink"
+        )
+        if path.is_file():
+            entries.append((str(path.relative_to(root)), _sha256(path.read_bytes())))
+        else:
+            _require_reconciliation_value(
+                path.is_dir(), f"{label} contains a special file"
+            )
+    _require_reconciliation_value(bool(entries), f"{label} is empty")
+    return _sha256(json.dumps(entries, separators=(",", ":")).encode("utf-8"))
+
+
+def _validate_recipe_graph(
+    recipe: Path, identity: RetainedBackendIdentity, region: str
+) -> dict[str, str]:
+    """Bind the retained materialized graph to the checked-in standard recipe."""
+
+    source_root = _supported_recipe_root()
+    expected = _expected_recipe_sources(source_root, region)
+    expected_hashes = {name: _sha256(raw) for name, raw in expected.items()}
+    _require_reconciliation_value(
+        identity.source_hashes == expected_hashes,
+        "retained producer source does not match the supported recipe",
+    )
+    _require_materialized_recipe_match(recipe, expected, identity)
+    source_modules = _tree_sha256(source_root / "modules", "supported module graph")
+    retained_modules = _tree_sha256(recipe.parent / "modules", "retained module graph")
+    _require_reconciliation_value(
+        source_modules == retained_modules,
+        "retained modules differ from the supported graph",
+    )
+    return _recipe_graph_hashes(expected_hashes, source_modules)
+
+
+def _require_materialized_recipe_match(
+    recipe: Path, expected: Mapping[str, bytes], identity: RetainedBackendIdentity
+) -> None:
+    """Require the retained files to equal the reviewed source materialization."""
+
+    retained = {
+        path.name: _require_regular_file(path, "retained Terraform source")
+        for path in recipe.glob("*.tf")
+    }
+    _require_reconciliation_value(
+        set(retained) == set(expected), "retained Terraform source graph is incomplete"
+    )
+    materialized = dict(expected)
+    materialized["provider.tf"] = _materialized_provider_source(
+        expected["provider.tf"], identity.provider_defaults
+    )
+    _require_reconciliation_value(
+        retained == materialized
+        and _sha256(retained["provider.tf"])
+        == identity.hashes["materialized_provider_sha256"],
+        "retained Terraform bytes do not match the supported materialization",
+    )
+
+
+def _recipe_graph_hashes(
+    expected_hashes: Mapping[str, str], module_graph: str
+) -> dict[str, str]:
+    """Return redacted recipe graph identities for the reconciliation receipt."""
+
+    return {
+        "supported_recipe_graph_sha256": _sha256(
+            json.dumps(expected_hashes, sort_keys=True, separators=(",", ":")).encode(
+                "utf-8"
+            )
+        ),
+        "module_graph_sha256": module_graph,
+    }
+
+
+def _validate_standard_tfvars(
+    values: Mapping[str, Any], topology: Mapping[str, object], cluster_name: str
+) -> None:
+    """Reject every Terraform input shape outside the retained standard producer."""
+
+    _require_standard_tfvars_core(values, topology, cluster_name)
+    _require_standard_tfvars_options(values, topology)
+    _require_standard_tfvars_observability(values)
+
+
+def _require_standard_tfvars_core(
+    values: Mapping[str, Any], topology: Mapping[str, object], cluster_name: str
+) -> None:
+    """Require the topology and disabled optional features of the retained profile."""
+
+    disabled = {
+        "enable_k8s_node_group_sa",
+        "enable_egress_gateway",
+        "enable_gpu_cluster",
+        "enable_filestore",
+        "enable_nebius_o11y_agent",
+        "enable_grafana",
+        "enable_prometheus",
+        "collectK8sClusterMetrics",
+        "enable_kuberay_cluster",
+        "enable_kuberay_service",
+        "enable_opa_gatekeeper",
+    }
+    _require_reconciliation_value(
+        set(values) == _STANDARD_TFVARS
+        and all(values.get(key) is False for key in disabled)
+        and values.get("cluster_name") == cluster_name
+        and values.get("gpu_nodes_fixed_count_per_group") == topology["gpu_nodes"]
+        and values.get("gpu_nodes_platform") == topology["gpu_platform"]
+        and values.get("gpu_nodes_preset") == topology["gpu_preset"],
+        "retained Terraform inputs are outside the supported producer",
+    )
+
+
+def _require_standard_tfvars_options(
+    values: Mapping[str, Any], topology: Mapping[str, object]
+) -> None:
+    """Reject retained optional resources beyond the standard one-GPU shape."""
+
+    _require_reconciliation_value(
+        values.get("cpu_nodes_fixed_count") == topology["cpu_nodes"]
+        and values.get("gpu_node_groups") == 1
+        and values.get("cpu_nodes_preemptible") is False
+        and values.get("gpu_nodes_preemptible") is False
+        and values.get("gpu_nodes_driverfull_image") is True
+        and values.get("custom_driver") is False
+        and values.get("existing_filestore") == ""
+        and values.get("mig_strategy") == "none",
+        "retained Terraform inputs have unsupported optional resources",
+    )
+
+
+def _require_standard_tfvars_observability(values: Mapping[str, Any]) -> None:
+    """Require the retained profile's non-resource observability settings."""
+
+    _require_reconciliation_value(
+        bool(str(values.get("ssh_public_key") or "").strip())
+        and bool(str(values.get("filesystem_csi") or "").strip())
+        and bool(
+            re.fullmatch(
+                r"\{\s*enabled\s*=\s*false\s*,\s*replication_factor\s*=\s*1\s*\}",
+                str(values.get("loki") or ""),
+            )
+        ),
+        "retained Terraform inputs have an unsupported observability shape",
+    )
+
+
+def _validate_empty_terraform_state(state: Mapping[str, Any]) -> None:
+    """Use retained state as a contradiction detector, never as absence proof."""
+
+    _require_reconciliation_value(
+        set(state)
+        == {
+            "version",
+            "terraform_version",
+            "serial",
+            "lineage",
+            "outputs",
+            "resources",
+            "check_results",
+        }
+        and state.get("outputs") == {}
+        and isinstance(state.get("resources"), list),
+        "retained Terraform state is unsupported",
+    )
+    for resource in state["resources"]:
+        _require_reconciliation_value(
+            isinstance(resource, Mapping), "retained state has invalid resource"
+        )
+        kind = (str(resource.get("mode") or ""), str(resource.get("type") or ""))
+        instances = resource.get("instances")
+        _require_reconciliation_value(
+            kind in _STATE_RESOURCE_TYPES and isinstance(instances, list),
+            "retained state has an unsupported resource type",
+        )
+        _require_reconciliation_value(
+            not instances
+            or kind in {("managed", "random_string"), ("managed", "time_static")},
+            "retained Terraform state records a possible provider resource",
+        )
+
+
+def _require_reused_subnet(root: Path) -> None:
+    """Accept only the retained shape that reused, rather than created, VPC state."""
+
+    network_state = root / ".npa-fleet-network.json"
+    _require_reconciliation_value(
+        not network_state.exists() and not network_state.is_symlink(),
+        "retained producer may have created network or subnet state",
+    )
+
+
+def _retained_recovery_profile(
+    *,
+    evidence_path: Path,
+    payload: Mapping[str, Any],
+    alias: str,
+    environment: EnvironmentConfig,
+    cluster_name: str,
+    context_name: str,
+) -> EmptyFailureRecoveryProfile:
+    """Load the exact retained inputs that prove the producer's supported shape."""
+
+    topology = _original_topology(payload)
+    event_hashes = _matching_retained_event(
+        evidence_path, alias=alias, cluster_name=cluster_name, topology=topology
+    )
+    recipe = _backend_recipe_dir(environment, cluster_name, context_name)
+    root = recipe.parent
+    sidecar_raw = _require_regular_file(root / ".npa-fleet-env.json", "backend sidecar")
+    tfvars_raw = _require_regular_file(recipe / "terraform.tfvars", "Terraform inputs")
+    state_raw = _require_regular_file(recipe / "terraform.tfstate", "Terraform state")
+    lock_raw = _require_regular_file(recipe / ".terraform.lock.hcl", "Terraform lock")
+    readme_raw = _require_regular_file(recipe / "README.md", "Terraform recipe")
+    sidecar = _json_object(sidecar_raw, "backend sidecar")
+    identity = _validate_backend_sidecar(sidecar, environment, cluster_name)
+    _require_reused_subnet(root.parent)
+    return _complete_retained_profile(
+        recipe,
+        tfvars_raw,
+        state_raw,
+        event_hashes,
+        identity,
+        cluster_name,
+        topology,
+        lock_raw,
+        readme_raw,
+        context_name,
+        environment.region,
+    )
+
+
+def _complete_retained_profile(
+    recipe: Path,
+    tfvars_raw: bytes,
+    state_raw: bytes,
+    event_hashes: Mapping[str, str],
+    identity: RetainedBackendIdentity,
+    cluster_name: str,
+    topology: dict[str, object],
+    lock_raw: bytes,
+    readme_raw: bytes,
+    context_name: str,
+    region: str,
+) -> EmptyFailureRecoveryProfile:
+    """Validate retained Terraform data and construct its redacted recovery profile."""
+
+    from npa.cli.cluster.terraform_lifecycle import _read_tfvars
+
+    try:
+        tfvars = _read_tfvars(recipe)
+    except (OSError, ValueError) as exc:
+        raise OperationJournalError("retained Terraform inputs are malformed") from exc
+    _validate_standard_tfvars(tfvars, topology, cluster_name)
+    _validate_empty_terraform_state(_json_object(state_raw, "Terraform state"))
+    hashes = {
+        **event_hashes,
+        **identity.hashes,
+        **_validate_recipe_graph(recipe, identity, region),
+        "terraform_tfvars_sha256": _sha256(tfvars_raw),
+        "terraform_state_sha256": _sha256(state_raw),
+        "terraform_lock_sha256": _sha256(lock_raw),
+        "terraform_recipe_readme_sha256": _sha256(readme_raw),
+    }
+    return EmptyFailureRecoveryProfile(
+        retained_hashes=hashes,
+        topology=topology,
+        expected_names={
+            "cluster": cluster_name,
+        },
+    )
+
+
+def _verified_empty_provision_footprint(
+    environment: EnvironmentConfig, profile: EmptyFailureRecoveryProfile
+) -> dict[str, object]:
+    """Prove the original cluster footprint is absent under the exact project scope."""
+
+    _verify_reconciliation_project(environment)
+    return _verify_absent_footprint_inventory(environment, profile.expected_names)
+
+
+def _verify_reconciliation_project(environment: EnvironmentConfig) -> None:
+    """Confirm the provider project still exactly matches the original scope."""
+
+    from npa.clients import nebius
+
+    identity = nebius.get_project_identity(
+        environment.project_id, tenant_id=environment.tenant_id
+    )
+    _require_reconciliation_value(identity is not None, "provider project is absent")
+    _require_reconciliation_value(
+        identity.region == environment.region,
+        "provider project region does not match the failed provision",
+    )
+
+
+def _verify_absent_footprint_inventory(
+    environment: EnvironmentConfig, expected_names: Mapping[str, str]
+) -> dict[str, object]:
+    """Reject every surviving resource in the original provision's named footprint."""
+
+    from npa.cluster.api import MK8sClient
+
+    clusters = MK8sClient().list_clusters_complete(environment.project_id)
+    if any(cluster.name == expected_names["cluster"] for cluster in clusters.clusters):
+        raise OperationJournalError(
+            "original managed Kubernetes cluster is still present"
+        )
+    evidence: dict[str, object] = {
+        "cluster": {
+            "count": len(clusters.clusters),
+            "response_sha256": clusters.response_sha256,
+            "matched": False,
+        },
+        "node_group": {
+            "matched": False,
+            "absence_basis": "managed node groups require the absent cluster parent",
+        },
+    }
+    return evidence
+
+
+def _failed_provision_operation(
+    *, alias: str, environment: EnvironmentConfig, cluster_name: str
+) -> ProvisioningOperation:
+    """Load the deterministic original generation without creating a replacement."""
+
+    operation = ProvisioningOperation(
+        deterministic_operation_id(
+            command="npa provision-if-absent",
+            project_id=environment.project_id,
+            project_alias=alias,
+            resource_type="cluster",
+            requested_name=cluster_name,
+        )
+    )
+    if not operation.read():
+        raise OperationJournalError("no exact failed provisioning journal was found")
+    return operation
+
+
+def reconcile_empty_failed_provision(
+    *,
+    project: str | None,
+    cluster_name: str,
+    context_name: str,
+    recovery_evidence: Path,
+) -> ProvisionIfAbsentResult:
+    """Terminalize one failed empty provision after fresh exact provider absence proof.
+
+    Args:
+        project: Configured project alias selecting the original provider scope.
+        cluster_name: Original managed Kubernetes cluster name.
+        context_name: Original Kubernetes context name.
+    Returns:
+        A reconciliation-only result; no resources are created or destroyed.
+    Raises:
+        OperationJournalError: Ownership, journal, or provider absence cannot be proven.
+    """
+
+    alias, environment, storage, registry = _resolve_project_runtime(project)
+    operation = _failed_provision_operation(
+        alias=alias, environment=environment, cluster_name=cluster_name
+    )
+    with operation_context(operation):
+        _reconcile_locked_empty_failed_provision(
+            operation,
+            alias,
+            environment,
+            cluster_name,
+            context_name,
+            recovery_evidence,
+        )
+    return _reconciled_provision_result(
+        alias, storage, registry, cluster_name, context_name, operation
+    )
+
+
+def _reconcile_locked_empty_failed_provision(
+    operation: ProvisioningOperation,
+    alias: str,
+    environment: EnvironmentConfig,
+    cluster_name: str,
+    context_name: str,
+    recovery_evidence: Path,
+) -> None:
+    """Verify absence while locks are held and then terminalize one journal."""
+
+    original = operation.read()
+    _require_empty_failed_provision(
+        original, alias=alias, environment=environment, cluster_name=cluster_name
+    )
+    original_sha256 = _journal_sha256(operation)
+    profile = _retained_recovery_profile(
+        evidence_path=recovery_evidence,
+        payload=original,
+        alias=alias,
+        environment=environment,
+        cluster_name=cluster_name,
+        context_name=context_name,
+    )
+    footprint = _verified_empty_provision_footprint(environment, profile)
+    _require_reconciliation_value(
+        _journal_sha256(operation) == original_sha256,
+        "reconciliation journal changed during provider verification",
+    )
+    _terminalize_empty_failed_provision(
+        operation=operation,
+        environment=environment,
+        cluster_name=cluster_name,
+        context_name=context_name,
+        original_sha256=original_sha256,
+        footprint=footprint,
+        profile=profile,
+    )
+
+
+def _reconciled_provision_result(
+    alias: str,
+    storage: StorageConfig,
+    registry: str,
+    cluster_name: str,
+    context_name: str,
+    operation: ProvisioningOperation,
+) -> ProvisionIfAbsentResult:
+    """Build the non-mutating result for a successfully reconciled journal."""
+
+    return ProvisionIfAbsentResult(
+        status="reconciled",
+        project=alias,
+        cluster_name=cluster_name,
+        context_name=context_name,
+        storage_bucket=storage.checkpoint_bucket,
+        storage_endpoint=storage.endpoint_url,
+        registry=registry,
+        operation_id=operation.operation_id,
+        operation_journal=str(operation.path),
+        actions=[
+            "recovery:terminalized failed empty provision after provider absence proof"
+        ],
+    )
+
+
+def _terminalize_empty_failed_provision(
+    *,
+    operation: ProvisioningOperation,
+    environment: EnvironmentConfig,
+    cluster_name: str,
+    context_name: str,
+    original_sha256: str,
+    footprint: Mapping[str, object],
+    profile: EmptyFailureRecoveryProfile,
+) -> None:
+    """Record fresh absence evidence before terminalizing the original journal."""
+
+    operation.checkpoint(
+        "empty-failure-provider-absence",
+        {
+            "original_journal_sha256": original_sha256,
+            "scope": {
+                "project_id": environment.project_id,
+                "tenant_id": environment.tenant_id,
+                "region": environment.region,
+                "requested_name": cluster_name,
+                "context_name": context_name,
+            },
+            "retained_producer": {
+                "evidence_kind": "collected-command-events-and-backend-material",
+                "supported_profile": "standard-no-s3-mk8s-single-gpu",
+                "hashes": profile.retained_hashes,
+                "topology": profile.topology,
+            },
+            "provider_inventory": dict(footprint),
+        },
+    )
+    operation.record_rollback(
+        attempted=False,
+        completed=True,
+        removed=[],
+        preserved=[],
+        error="fresh provider inventory proved the original provision footprint absent",
+    )
+    operation.transition("rolled-back", details={"reconciliation": "empty-failure"})
 
 
 def _provision_recovery_argv(
@@ -158,6 +1305,32 @@ def _transactional_provision(function):
         cluster_name = str(bound.arguments.get("cluster_name") or "npa-cluster")
         skip_k8s = bool(bound.arguments.get("skip_k8s"))
         context = str(bound.arguments.get("context_name") or "").strip() or cluster_name
+        if bool(bound.arguments.get("reconcile_empty_failure")):
+            if bool(bound.arguments.get("dry_run")):
+                raise ValueError(
+                    "--reconcile-empty-failure requires a live provider absence check"
+                )
+            recovery_evidence = bound.arguments.get("recovery_evidence")
+            if skip_k8s or bool(bound.arguments.get("skip_s3")):
+                raise ValueError(
+                    "--reconcile-empty-failure cannot be combined with skip options"
+                )
+            if not isinstance(recovery_evidence, Path):
+                raise ValueError(
+                    "--reconcile-empty-failure requires --recovery-evidence"
+                )
+            if bound.arguments.get("terraform_dir") or bound.arguments.get(
+                "kubeconfig"
+            ):
+                raise ValueError(
+                    "--reconcile-empty-failure uses retained producer inputs only"
+                )
+            return reconcile_empty_failed_provision(
+                project=requested_project,
+                cluster_name=cluster_name,
+                context_name=context,
+                recovery_evidence=recovery_evidence,
+            )
         kubeconfig = bound.arguments.get("kubeconfig") or kubeconfig_file(context)
         plan = bound.arguments.get("_resolved_plan") or _build_provision_plan(
             alias=alias,
@@ -357,6 +1530,8 @@ def provision_if_absent(
     gpu_readiness_poll_interval: float = 10.0,
     sky_bin: str = "",
     agent_exists: bool = False,
+    reconcile_empty_failure: bool = False,
+    recovery_evidence: Path | None = None,
     output_format: str = "text",
     _resolved_plan=None,
 ) -> ProvisionIfAbsentResult:

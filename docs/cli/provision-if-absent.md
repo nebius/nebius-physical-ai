@@ -41,6 +41,9 @@ Options
 --preemptible  --on-demand  Run the GPU node group as preemptible, matching `npa cluster up`. This changes the capacity pool but not hard
     instance/disk/IP quotas; a reclaim stops the node mid-run.
 --dry-run  Resolve settings and print intended actions only.
+--reconcile-empty-failure  Terminalize the one supported retained failed provision after fresh provider absence checks; never creates or
+    deletes infrastructure.
+--recovery-evidence  <path>  Private collected producer-event evidence required with --reconcile-empty-failure.
 --timeout  <int>  Terraform apply timeout in minutes. [default: 120]
 --accelerator  <str>  Requested SkyPilot accelerator (for example RTXPRO6000:1) to gate readiness.
 --gpu-readiness-timeout  <float>  Seconds to wait for SkyPilot GPU discovery without deleting capacity. [default: 600.0]
@@ -84,6 +87,8 @@ Options
 | `--infiniband-fabric` | <str>  InfiniBand fabric required by NVSwitch GPU clusters, matching `npa cluster up`. |
 | `--preemptible` | --on-demand  Run the GPU node group as preemptible, matching `npa cluster up`. This changes the capacity pool but not hard instance/disk/IP quotas; a reclaim stops the node mid-run. |
 | `--dry-run` | Resolve settings and print intended actions only. |
+| `--reconcile-empty-failure` | Terminalize the one supported retained failed provision after fresh provider absence checks; never creates or deletes infrastructure. |
+| `--recovery-evidence` | <path>  Private collected producer-event evidence required with --reconcile-empty-failure. |
 | `--timeout` | <int>  Terraform apply timeout in minutes. [default: 120] |
 | `--accelerator` | <str>  Requested SkyPilot accelerator (for example RTXPRO6000:1) to gate readiness. |
 | `--gpu-readiness-timeout` | <float>  Seconds to wait for SkyPilot GPU discovery without deleting capacity. [default: 600.0] |
