@@ -11,10 +11,10 @@ It checks image selection; it does not claim GPU execution or acceptance of the
 blocked images. The guardrail compares the table below with actual default
 resolution, so a wildcard image override cannot conceal another regression.
 
-After PAIDF's repaired defaults and MJLab's qualified RTX pins, 30 workflows
-still fail default image planning: 26 select the stale image families withdrawn
-by #807, and four require images
-without an accepted public release. The audit checks every task, including
+After PAIDF's repaired defaults and MJLab's qualified RTX pins, 36 workflows
+still fail default image planning: 30 select quarantined or otherwise unavailable
+public tool images, and six require an operator-selected exact image without an
+accepted public release. The audit checks every task, including
 unbuilt and validation candidates outside the stale-image inventory.
 
 ## Repaired workflow defaults
@@ -136,9 +136,9 @@ access and workload acceptance requirements continue to apply.
 
 The preceding tables preserve the original dated resolver observation. That
 audit missed literal Isaac and SONIC digests, which bypassed tool-default
-quarantine. The follow-up removes those automatic selections. All 133 shipped
-specs now have **41 blocked defaults**: 33 workflows deny quarantined tool-image
-selection, and eight deny missing exact operator image inputs before task
+quarantine. The follow-up removes those automatic selections. Across all 147
+shipped specs, there are **40 blocked default selections**: 30 workflows deny
+quarantined tool-image selection, and ten deny missing exact operator image inputs before task
 expansion. These categories are audited independently: supplying exact operator
 inputs can reveal additional quarantined task-image defaults. This is planning
 evidence only, not fresh image or GPU acceptance.
@@ -161,9 +161,6 @@ evidence only, not fresh image or GPU acceptance.
 | `workflows/testing/isaac-arena-evaluation-b200.yaml` | `isaac-arena` |
 | `workflows/testing/isaac-arena-evaluation-rtxpro.yaml` | `isaac-arena` |
 | `workflows/testing/isaac-franka-capture-reason.yaml` | `isaac-lab` |
-| `workflows/testing/mjlab-eval.yaml` | `mjlab` |
-| `workflows/testing/mjlab-render.yaml` | `mjlab` |
-| `workflows/testing/mjlab-train-eval.yaml` | `mjlab` |
 | `workflows/testing/multicamera-rgbd-capture.yaml` | `isaac-lab` |
 | `workflows/testing/nurec-colmap-reconstruct.yaml` | `ncore` |
 | `workflows/testing/open3d-registration.yaml` | `open3d` |
@@ -190,6 +187,8 @@ still required for the operator-selected bytes.
 
 | Workflow | Required config keys |
 | --- | --- |
+| `workflows/testing/digital-twin-campus-render.yaml` | `runtime_image` |
+| `workflows/testing/digital-twin-cuda-render.yaml` | `runtime_image` |
 | `workflows/testing/field-failure-reference-demo.yaml` | `navigation_image, reconstruction_image` |
 | `workflows/testing/multicamera-rgbd-warehouse.yaml` | `isaac_image` |
 | `workflows/main/rgbd-scan-to-policy-demo.yaml` | `assembly_image, reconstruction_image, isaac_image` |
@@ -202,5 +201,6 @@ default to governed `tool://isaac-lab`, with an operator
 `--var isaac_image=...` override; their resource-only use does not require a
 separate provenance string. The optional LeRobot 0.6 image in Franka and
 LeRobot transfer remains a distinct exact-version qualification scope; the
-default LeRobot 0.5 quarantine is unchanged. Repaired explicit development
-candidates are not accepted public defaults.
+default LeRobot 0.5 quarantine is unchanged. MJLab's exact RTX digest is a
+qualified public default, as documented above; other repaired explicit
+development candidates are not accepted public defaults.

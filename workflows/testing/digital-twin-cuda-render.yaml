@@ -9,7 +9,10 @@ config:
   prefix: digital-twin-cuda-render/{{run.id}}
   output_uri: s3://{{config.bucket}}/{{config.prefix}}/rendered
   source_overlay: true
-  runtime_image: ghcr.io/nebius/nebius-physical-ai/npa-sonic@sha256:c9ba0996b28f54b013e36da689638b386a7ef9c0c8c4413fc4b3c72ff1a808bb
+  # This renderer has no accepted public SONIC default. The operator must bind
+  # the exact compatible image before planning or a GPU submission.
+  required_immutable_images: [runtime_image]
+  runtime_image: ''
   accelerator: B200:1
   views: 24
   samples: 64
