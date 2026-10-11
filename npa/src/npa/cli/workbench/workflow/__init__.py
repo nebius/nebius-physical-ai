@@ -10782,8 +10782,10 @@ def gpus_cmd(
     inventory, catalog, sky_error = _inspect_workflow_gpus(
         project, cluster, resolved_context, sky_bin, isolated_config_dir
     )
-    resolutions = _gpu_spec_resolutions(spec, catalog)
-    _report_gpu_discovery(inventory, catalog, sky_error, resolutions, json_output)
+    resolutions, spec_error = _gpu_spec_resolutions(spec, catalog)
+    _report_gpu_discovery(
+        inventory, catalog, sky_error, resolutions, spec_error, json_output
+    )
 
 
 def _owned_gpu_target(project, cluster, context, sky_bin, isolated_config_dir):
@@ -10866,7 +10868,7 @@ def _gpu_spec_resolutions(spec, catalog):
                 run_id=f"{resolved_spec.name}-gpu-discovery",
             )
         except NpaWorkflowError as exc:
-            return [{"requested": "workflow plan", "error": str(exc)}]
+            return [], str(exc)
         planned_resources = {
             f"step-{index}": step.resources_profile
             for index, step in enumerate(plan.steps)
@@ -10887,12 +10889,14 @@ def _gpu_spec_resolutions(spec, catalog):
                 }
             )
 
-    return resolutions
+    return resolutions, ""
 
 
-def _report_gpu_discovery(inventory, catalog, sky_error, resolutions, json_output):
+def _report_gpu_discovery(
+    inventory, catalog, sky_error, resolutions, spec_error, json_output
+):
     if json_output:
-        _emit_gpu_discovery_json(inventory, catalog, sky_error, resolutions)
+        _emit_gpu_discovery_json(inventory, catalog, sky_error, resolutions, spec_error)
         return
     if sky_error:
         typer.echo(f"skypilot_error: {sky_error}", err=True)
@@ -10921,13 +10925,12 @@ def _report_gpu_discovery(inventory, catalog, sky_error, resolutions, json_outpu
                 f"    export NPA_WORKFLOW_GPU_ACCELERATOR={name}:{quantities[0]}"
             )
     for item in resolutions:
-        if item.get("error"):
-            typer.echo(f"  {item['requested']}: {item['error']}")
-        else:
-            typer.echo(f"  {item['requested']} -> {item['resolved']}")
+        typer.echo(f"  {item['requested']} -> {item['resolved']}")
+    if spec_error:
+        typer.echo(f"spec_error: {spec_error}")
 
 
-def _emit_gpu_discovery_json(inventory, catalog, sky_error, resolutions):
+def _emit_gpu_discovery_json(inventory, catalog, sky_error, resolutions, spec_error):
     typer.echo(
         json.dumps(
             {
@@ -10939,6 +10942,7 @@ def _emit_gpu_discovery_json(inventory, catalog, sky_error, resolutions):
                     for name, quantities in catalog.quantities_by_accelerator.items()
                 },
                 "spec_resolutions": resolutions,
+                "spec_error": spec_error,
             },
             indent=2,
             sort_keys=True,

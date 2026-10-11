@@ -924,6 +924,7 @@ def test_workflow_gpus_json_reports_the_exact_alias_resolution(
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
+    assert payload["spec_error"] == ""
     assert payload["spec_resolutions"] == [
         {
             "requested": "RTXPRO6000:1",
@@ -955,19 +956,8 @@ def test_workflow_gpus_json_reports_missing_required_images_without_traceback(
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
-    assert payload["spec_resolutions"] == [
-        {
-            "requested": "workflow plan",
-            "error": (
-                "Each of config.runtime_image requires an explicit "
-                "registry-qualified immutable image; set --var runtime_image="
-                "<registry>/<repository>@sha256:<64-hex-digest>. Use qualified "
-                "images for this workload; tool:// and tag-only references cannot "
-                "bind their provenance or child launches. Use digest-only references; "
-                "remove any :tag segment before @sha256:."
-            ),
-        }
-    ]
+    assert payload["spec_resolutions"] == []
+    assert "Each of config.runtime_image requires an explicit" in payload["spec_error"]
 
 
 def test_workflow_gpus_text_reports_missing_required_images_with_empty_catalog(
@@ -994,8 +984,8 @@ def test_workflow_gpus_text_reports_missing_required_images_with_empty_catalog(
 
     assert result.exit_code == 0, result.output
     assert "accelerators: none advertised" in result.output
-    assert "workflow plan: Each of config.runtime_image requires an explicit" in (
-        result.output
+    assert (
+        "spec_error: Each of config.runtime_image requires an explicit" in result.output
     )
 
 
@@ -1027,7 +1017,9 @@ def test_workflow_gpus_resolves_templated_accelerator_config(
     )
 
     assert result.exit_code == 0, result.output
-    assert json.loads(result.output)["spec_resolutions"] == [
+    payload = json.loads(result.output)
+    assert payload["spec_error"] == ""
+    assert payload["spec_resolutions"] == [
         {
             "requested": "RTXPRO6000:1",
             "resolved": "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1",
