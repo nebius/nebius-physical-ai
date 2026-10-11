@@ -22,7 +22,10 @@ WORKFLOW_PATHS = {
 @pytest.mark.parametrize(
     "name",
     [
+        "digital-twin-campus-render",
+        "digital-twin-cuda-render",
         "field-failure-reference-demo",
+        "multicamera-rgbd-warehouse",
         "rgbd-scan-to-policy-demo",
         "rgbd-scan-to-isaac",
         "scan-to-isaac-navigation",

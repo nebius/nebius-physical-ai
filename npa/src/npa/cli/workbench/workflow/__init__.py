@@ -10856,13 +10856,17 @@ def _gpu_spec_resolutions(spec, catalog):
     resolutions: list[dict[str, object]] = []
     if spec is not None:
         from npa.orchestration.npa_workflow import build_plan
+        from npa.orchestration.npa_workflow.errors import NpaWorkflowError
         from npa.orchestration.npa_workflow.submit import load_spec_for_submit
 
         resolved_spec = load_spec_for_submit(spec)
-        plan = build_plan(
-            resolved_spec,
-            run_id=f"{resolved_spec.name}-gpu-discovery",
-        )
+        try:
+            plan = build_plan(
+                resolved_spec,
+                run_id=f"{resolved_spec.name}-gpu-discovery",
+            )
+        except NpaWorkflowError as exc:
+            return [{"requested": "workflow plan", "error": str(exc)}]
         planned_resources = {
             f"step-{index}": step.resources_profile
             for index, step in enumerate(plan.steps)

@@ -930,6 +930,43 @@ def test_workflow_gpus_json_reports_the_exact_alias_resolution(
     ]
 
 
+def test_workflow_gpus_json_reports_missing_required_images_without_traceback(
+    monkeypatch: pytest.MonkeyPatch, sky_bin: str, owned_gpu_discovery
+) -> None:
+    monkeypatch.setenv("NPA_SKYPILOT_BIN", sky_bin)
+    _stub_catalog(monkeypatch, CATALOG_OUTPUT)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "gpus",
+            "--context",
+            "npa-cluster",
+            "--spec",
+            str(REPO_ROOT / "workflows/testing/digital-twin-campus-render.yaml"),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["spec_resolutions"] == [
+        {
+            "requested": "workflow plan",
+            "error": (
+                "Each of config.runtime_image requires an explicit "
+                "registry-qualified immutable image; set --var runtime_image="
+                "<registry>/<repository>@sha256:<64-hex-digest>. Use qualified "
+                "images for this workload; tool:// and tag-only references cannot "
+                "bind their provenance or child launches. Use digest-only references; "
+                "remove any :tag segment before @sha256:."
+            ),
+        }
+    ]
+
+
 def test_workflow_gpus_resolves_templated_accelerator_config(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sky_bin: str, owned_gpu_discovery
 ) -> None:
