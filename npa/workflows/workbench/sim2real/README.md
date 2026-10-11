@@ -84,6 +84,8 @@ After each full PPO pass, Stage 9 evaluates all saved 100-update checkpoints
 and the final checkpoint against the same validation split. It retains the
 strongest actor and records that checkpoint's actual completed updates separately
 from the full pass count. Resumed rollouts and PPO use its exact checkpoint.
+Recurrent inference clears each environment's hidden state at its real reset
+boundary, using the same Torch inference context as prediction.
 PPO telemetry counts consecutive updates with measured value and surrogate losses.
 Episode return is recorded only after the native runner finishes an episode;
 `iterations_with_episode_return` records that separate count without inventing

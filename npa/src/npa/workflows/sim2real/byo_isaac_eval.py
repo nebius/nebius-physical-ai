@@ -666,7 +666,8 @@ try:
         ) from exc
     policy = runner.get_inference_policy(device="cuda:0")
     if stock_policy:
-        runner.alg.actor.reset()
+        with torch.inference_mode():
+            runner.alg.actor.reset()
     _pb = int(_pt.shape[0]) if torch.is_tensor(_pt) and _pt.ndim >= 1 else realN
     # N stays the true env count; only WARN if the policy obs batch disagrees so a
     # genuine multi-env mismatch is visible in logs rather than silently collapsing.
@@ -845,7 +846,8 @@ try:
             actions = actions.reshape(N, -1)
         obs, _, dones, extras = env.step(actions)
         if stock_policy:
-            runner.alg.actor.reset(dones)
+            with torch.inference_mode():
+                runner.alg.actor.reset(dones)
         simulation_clock.advance()
         try:
             done_np = dones.detach().cpu().numpy().astype(bool)

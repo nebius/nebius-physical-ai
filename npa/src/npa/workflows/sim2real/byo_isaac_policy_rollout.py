@@ -454,7 +454,8 @@ try:
         print("ROLLOUT_UNTRAINED_POLICY (no checkpoint yet)", flush=True)
     policy = runner.get_inference_policy(device=SIM_DEVICE)
     if stock_policy:
-        runner.alg.actor.reset()
+        with torch.inference_mode():
+            runner.alg.actor.reset()
     realN = int(getattr(env.unwrapped, "num_envs", N) or N)
     try:
         reset_out = env.reset()
@@ -623,7 +624,8 @@ try:
         a_np = actions.detach().cpu().numpy()
         obs, _, dones, extras = env.step(actions)
         if stock_policy:
-            runner.alg.actor.reset(dones)
+            with torch.inference_mode():
+                runner.alg.actor.reset(dones)
         simulation_clock.advance()
         done_np = dones.detach().cpu().numpy().astype(bool)
         episode_boundaries.advance(done_np.tolist(), _step)

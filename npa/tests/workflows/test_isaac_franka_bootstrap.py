@@ -1,6 +1,7 @@
 """Prove training-only bootstrap scope, native action learning, and audit rejection."""
 
 from types import SimpleNamespace
+import ast
 import copy
 import json
 import sys
@@ -17,6 +18,29 @@ from npa.workflows.sim2real.byo_isaac_trainer import (
     build_isaac_job_manifest,
 )
 from npa.workflows.sim2real.isaac_job_payload import decode_compressed_bash_args
+
+
+def _native_inference_reset_program(script):
+    resets = [
+        node
+        for node in ast.walk(ast.parse(script))
+        if isinstance(node, ast.If)
+        and isinstance(node.test, ast.Name)
+        and node.test.id == "stock_policy"
+        and any(
+            isinstance(child, ast.Call)
+            and isinstance(child.func, ast.Attribute)
+            and child.func.attr == "reset"
+            and len(child.args) == 1
+            for child in ast.walk(node)
+        )
+    ]
+    assert len(resets) == 1
+    return compile(
+        ast.fix_missing_locations(ast.Module(body=resets, type_ignores=[])),
+        "native-inference-reset",
+        "exec",
+    )
 
 
 class TestNativeBootstrapCheckpoint:
@@ -126,6 +150,36 @@ class TestNativeBootstrapCheckpoint:
             ),
         )
         return observations
+
+    @pytest.mark.parametrize("consumer", ["evaluation", "rollout"])
+    def test_native_inference_reset_clears_only_completed_environments(
+        self, tmp_path, consumer
+    ):
+        from npa.workflows.sim2real import byo_isaac_eval, byo_isaac_policy_rollout
+
+        script = (
+            byo_isaac_eval.ISAAC_EVAL_SCRIPT
+            if consumer == "evaluation"
+            else byo_isaac_policy_rollout.ISAAC_ROLLOUT_SCRIPT
+        )
+        environment, runner = self._runner(tmp_path)
+        with self.torch.inference_mode():
+            runner.get_inference_policy()(environment.get_observations())
+        hidden = runner.alg.actor.rnn.hidden_state
+        assert self.torch.is_inference(hidden)
+        before = hidden.clone()
+        dones = self.torch.tensor([False, True, False, True])
+        exec(
+            _native_inference_reset_program(script),
+            {
+                "torch": self.torch,
+                "runner": runner,
+                "stock_policy": True,
+                "dones": dones,
+            },
+        )
+        assert self.torch.equal(hidden[:, ~dones], before[:, ~dones])
+        assert not hidden[:, dones].any()
 
     def test_bootstrap_then_real_ppo_save_and_load(self, monkeypatch, tmp_path):
         from npa.workflows.sim2real import isaac_byo_robot_task
