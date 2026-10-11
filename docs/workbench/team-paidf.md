@@ -245,6 +245,18 @@ headless. Scrub the source and generated video timelines and read the quality,
 caption, and curation panels. The recording embeds the videos, so this local
 inspection uses the downloaded file and your desktop viewer.
 
+If `annotate-original` fails with `image_unavailable`, download
+`labeled_original/captions.json` and the named frame under `input/`. Inspect the
+actual pixels and completed captions before changing the workflow. A provider's
+`NO IMAGE RECEIVED` answer can occur for a valid image; it does not prove a missing
+attachment. The [caption command](token-factory.md#generate-and-inspect-artifacts)
+retains partial results and fails the run without a silent retry. Preserve that
+failed run. Ask the operator to review a specific caption correction, such as
+an explicit sampling setting, before submitting a replacement. A changed
+workflow has a new retry identity; use `--new-run` for an intentional retry of
+unchanged inputs. Retain both IDs and verify every selected caption completed
+before continuing the remaining assigned episodes.
+
 If the run stopped with `quality rejected after bounded refinement`, change
 `recording` to `reports/quality-evidence.rrd`. That recording retains the source,
 generated videos, and rejected quality evidence before curation. Use the same
