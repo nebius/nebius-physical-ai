@@ -60,6 +60,9 @@ renaming an episode's video cannot replace its episode metadata.
 Tailor `augment_subject`, `prompt`, and `appearance_profiles_json` to the visible
 task. Planar pushing and robot-arm manipulation need different scene descriptions
 and appearance profiles; keep the original scene as the visual reference.
+Default and custom-profile prompts retain the source video's visual style.
+Requested color and lighting changes should fit that style; a planar dataset
+needs profiles that describe changes to its existing flat surfaces.
 
 Privately deliver the endpoint, workspace and cluster aliases, approved
 workflow, input URI, camera, and either a personal key or an explicit Nebius
@@ -127,6 +130,7 @@ from npa.sdk.workbench.team import open_connection, submit_workflow
 template = yaml.safe_load(Path("paidf-cosmos3.yaml").read_text())
 dataset_uri = os.environ["DATASET_URI"]
 camera = os.environ["INPUT_CAMERA"]
+episodes = range(20)
 
 
 def inspect_run(run_id, action):
@@ -137,7 +141,7 @@ def inspect_run(run_id, action):
         client.close()
 
 
-for episode in range(20):
+for episode in episodes:
     workflow = copy.deepcopy(template)
     workflow["config"].update(
         input_kind="lerobot",
@@ -167,6 +171,12 @@ saved connection's `requests/` receipts and the unchanged template/input values.
 The example reopens the saved connection for each operation so human SSO can
 refresh through the official CLI during a long batch.
 Rerunning the script recovers earlier submissions, including a lost response.
+After changing the template to correct a rejected episode, select that episode
+and the remaining assigned indices explicitly. For a sequential batch rejected
+at episode 4, set `episodes = range(4, 20)`; a split even batch would use
+`range(4, 20, 2)`. Keep earlier successful run IDs in your batch record.
+Rerunning all indices with a changed template creates new retry identities for
+those earlier episodes too.
 Inspect a failed run's logs and artifacts before deciding on a new run. For
 `recovery_required`, retain the run ID and ask the operator to reconcile its
 existing scheduler state. The operator's `workflow batch` command follows a

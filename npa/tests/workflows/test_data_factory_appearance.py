@@ -7,7 +7,10 @@ import json
 import pytest
 
 from npa.workflows import data_factory_stages as stages
-from npa.workflows.data_factory_appearance import parse_appearance_profiles
+from npa.workflows.data_factory_appearance import (
+    generation_prompt,
+    parse_appearance_profiles,
+)
 from npa.workflows.paidf_cosmos3 import _caption_text
 
 
@@ -88,6 +91,33 @@ def test_default_sampling_remains_available(tmp_path):
         in stages.APPEARANCE_PROFILES
         for combo in manifest["augmentations"]
     )
+
+
+@pytest.mark.parametrize("custom", [False, True])
+def test_planar_source_style_reaches_generated_and_effective_prompts(tmp_path, custom):
+    subject = "a flat 2D planar pushing simulation"
+    output = tmp_path / "planar.json"
+    manifest = stages.generate_configs(
+        str(output),
+        augment_subject=subject,
+        augmentation_seed="fixed",
+        appearance_profiles_json=json.dumps(PROFILES) if custom else "",
+    )
+    saved = json.loads(output.read_text())
+    assert saved["scene"] == subject
+    for combo in saved["augmentations"]:
+        effective = generation_prompt(
+            "Preserve the gray T, green target and blue pusher.",
+            "A gray T, green target and blue circular pusher are visible.",
+            combo["prompt"],
+        )
+        assert subject in effective
+        assert "source video's visual style" in effective
+        assert "photorealistic" not in effective.lower()
+        assert "light fixtures" in effective
+        for key in stages.APPEARANCE_VARIABLES:
+            assert combo[key] in effective
+            assert combo[key] in manifest["variables"][key]
 
 
 def test_custom_profiles_reject_anchor_before_read_or_write(monkeypatch, tmp_path):
