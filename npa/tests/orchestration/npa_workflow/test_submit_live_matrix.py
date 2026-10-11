@@ -15,6 +15,8 @@ from npa.orchestration.npa_workflow.blueprints import (
     iter_npa_workflow_specs,
     resolve_npa_workflow_spec,
 )
+from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+from npa.orchestration.npa_workflow.image_inputs import required_immutable_image_inputs
 from npa.orchestration.npa_workflow.spec import load_spec
 from npa.orchestration.npa_workflow.submit_matrix import (
     SUBMIT_LIVE_MATRIX,
@@ -359,6 +361,25 @@ def test_plan_only_cases_have_machine_checked_justifications() -> None:
             assert not case.plan_only_justification, (
                 f"{case.spec} executes live and must not carry a plan-only exemption"
             )
+
+
+def test_unbound_required_images_are_skipped_by_the_daily_rotation() -> None:
+    """Do not schedule a live case that must first receive an operator image."""
+
+    for case in SUBMIT_LIVE_MATRIX:
+        path = resolve_npa_workflow_spec(case.spec)
+        assert path is not None
+        spec = load_spec(path)
+        if "required_immutable_images" not in spec.config:
+            continue
+        try:
+            required_immutable_image_inputs(spec.config)
+        except NpaWorkflowError:
+            assert case.rotation_skip, (
+                f"{case.spec} requires an operator image but remains in the daily "
+                "GPU rotation"
+            )
+            assert case.skip_reason
 
 
 def test_coverage_backfill_cases_are_honestly_plan_only() -> None:
