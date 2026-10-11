@@ -710,6 +710,18 @@ fetch_model_snapshot() {
   register_hub_main_ref "$model" "$ref"
 }
 
+verify_hub_snapshot_files() {
+  local model="$1" ref="$2" snapshot file
+  shift 2
+  snapshot="$(hub_cache_directory "$model")/snapshots/$ref"
+  for file in "$@"; do
+    [[ -f "$snapshot/$file" ]] || {
+      echo "npa-hy-world: pinned Hugging Face snapshot is missing $file: $model@$ref" >&2
+      exit "$EX_SOFTWARE"
+    }
+  done
+}
+
 fetch_models() {
   local root model_manifest lock
   validate_runtime_paths
@@ -729,8 +741,12 @@ fetch_models() {
   fetch_model_snapshot "$WAN_I2V_MODEL" "$WAN_I2V_REF"
   fetch_model_snapshot "$QWEN_IMAGE_MODEL" "$QWEN_IMAGE_REF"
   fetch_model_snapshot "$ZIM_MODEL" "$ZIM_REF" --include 'zim_vit_l_2092/*'
-  fetch_model_snapshot "$GROUNDING_DINO_MODEL" "$GROUNDING_DINO_REF" \
-    --include '*.json' --include '*.txt' --include 'model.safetensors'
+  # The released trajectory loader reads its processor and model metadata in
+  # addition to weights. Fetch the complete immutable repository instead of
+  # relying on repeatable --include parsing by the bootstrap Hub CLI.
+  fetch_model_snapshot "$GROUNDING_DINO_MODEL" "$GROUNDING_DINO_REF"
+  verify_hub_snapshot_files "$GROUNDING_DINO_MODEL" "$GROUNDING_DINO_REF" \
+    config.json preprocessor_config.json model.safetensors
   fetch_model_snapshot "$DINOV2_MODEL" "$DINOV2_REF"
   fetch_model_snapshot "$SAM3_MODEL" "$SAM3_REF"
   fetch_model_snapshot "$MOGE_MODEL" "$MOGE_REF"

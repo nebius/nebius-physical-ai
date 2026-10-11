@@ -126,6 +126,83 @@ def test_disagreeing_hub_ref_refuses_without_rewriting_the_cache(
     assert main_ref.read_bytes() != b"d78a16c91c7a56488894a1c8de4f5c7cc28aa8b0"
 
 
+def test_grounding_dino_fetches_a_full_pinned_snapshot_for_its_consumer(
+    tmp_path: Path,
+) -> None:
+    """The trajectory loader needs processor metadata as well as its weights."""
+
+    arguments = tmp_path / "hf-arguments.txt"
+    result = _bash(
+        "\n".join(
+            (
+                f"source {RUNTIME}",
+                'runtime_python() { printf "%s\\n" "$NPA_TEST_PYTHON"; }',
+                "hf() {",
+                '  printf "%s\\t" "$@" >> "$NPA_TEST_HF_ARGUMENTS"',
+                '  printf "\\n" >> "$NPA_TEST_HF_ARGUMENTS"',
+                '  cache="$(hub_cache_directory "$2")"',
+                '  mkdir -p "$cache/snapshots/$4"',
+                '  if [[ "$2" == "$GROUNDING_DINO_MODEL" ]]; then',
+                '    : > "$cache/snapshots/$4/config.json"',
+                '    : > "$cache/snapshots/$4/preprocessor_config.json"',
+                '    : > "$cache/snapshots/$4/model.safetensors"',
+                "  fi",
+                "}",
+                "fetch_models",
+            )
+        ),
+        environment={
+            "NPA_HY_WORLD_RUNTIME_CACHE": str(tmp_path / "runtime"),
+            "NPA_HY_WORLD_RUNTIME_LIBRARY": "1",
+            "NPA_TEST_HF_ARGUMENTS": str(arguments),
+            "NPA_TEST_PYTHON": sys.executable,
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    downloads = [
+        line.rstrip("\t").split("\t")
+        for line in arguments.read_text(encoding="utf-8").splitlines()
+    ]
+    grounding_dino = next(
+        download
+        for download in downloads
+        if download[1] == "IDEA-Research/grounding-dino-tiny"
+    )
+    assert grounding_dino == [
+        "download",
+        "IDEA-Research/grounding-dino-tiny",
+        "--revision",
+        "a2bb814dd30d776dcf7e30523b00659f4f141c71",
+    ]
+
+
+def test_grounding_dino_snapshot_refuses_missing_processor_metadata(
+    tmp_path: Path,
+) -> None:
+    """A partial cache fails before the upstream trajectory loader executes."""
+
+    result = _bash(
+        "\n".join(
+            (
+                f"source {RUNTIME}",
+                "configure_runtime_hf_cache",
+                'cache="$(hub_cache_directory "$GROUNDING_DINO_MODEL")"',
+                'mkdir -p "$cache/snapshots/$GROUNDING_DINO_REF"',
+                'touch "$cache/snapshots/$GROUNDING_DINO_REF/model.safetensors"',
+                'verify_hub_snapshot_files "$GROUNDING_DINO_MODEL" "$GROUNDING_DINO_REF" config.json preprocessor_config.json model.safetensors',
+            )
+        ),
+        environment={
+            "NPA_HY_WORLD_RUNTIME_CACHE": str(tmp_path / "runtime"),
+            "NPA_HY_WORLD_RUNTIME_LIBRARY": "1",
+        },
+    )
+
+    assert result.returncode != 0
+    assert "pinned Hugging Face snapshot is missing config.json" in result.stderr
+
+
 def test_completed_cache_layout_is_checked_for_relocated_console_scripts(
     tmp_path: Path,
 ) -> None:
