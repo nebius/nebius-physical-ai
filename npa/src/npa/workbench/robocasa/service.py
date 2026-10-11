@@ -1081,8 +1081,13 @@ def _retain_failure_diagnostics(
     error = outcome.error
     ready = False
     try:
+        directory = worker_output / pair_diagnostics.DIRECTORY
+        # Only an absent promotion permits failed-only fallback. An invalid or
+        # linked promoted record must still fail closed, even with a good backup.
+        if not directory.exists() and not directory.is_symlink():
+            directory = worker_output / pair_diagnostics.FAILED_DIRECTORY
         report = pair_diagnostics.snapshot_directory(
-            worker_output / pair_diagnostics.DIRECTORY,
+            directory,
             retained,
             requested_pairs=body.num_envs,
         )

@@ -7,8 +7,11 @@ containment, parent snapshot, HTTP status and immutable upload are real paths.
 from __future__ import annotations
 
 import json
+import errno
 import shutil
+from contextlib import contextmanager
 from copy import deepcopy
+from functools import partial
 from types import SimpleNamespace
 
 import numpy as np
@@ -102,6 +105,47 @@ def _spawned_native_fixture(sender, payload):
         service._capability_worker_entry(sender, payload)
 
 
+def _inject_prefix_failure(patch, mode):
+    original = cap._copy_completed_pair_evidence
+
+    def failed_prefix(output, directory, pairs, binding):
+        failed = output / diag.FAILED_DIRECTORY
+        report = diag.validate_directory(failed)
+        assert report["schema_version"] == "npa.robocasa.pair-failure.v1"
+        assert set(report["files"]) == set(diag.MEDIA)
+        (output.parent / "sealed-failed.json").write_bytes(
+            (failed / diag.REPORT).read_bytes()
+        )
+        if mode == "enospc":
+            (directory / "completed-0000-policy.mp4").write_bytes(b"partial")
+            raise OSError(errno.ENOSPC, "injected prefix disk full")
+        if mode == "missing":
+            (output / "episode_0000/rollout.mp4").unlink()
+        if mode == "schema":
+            pairs = deepcopy(pairs)
+            pairs[0]["policy"]["reward_sum"] = float("nan")
+        return original(output, directory, pairs, binding)
+
+    patch.setattr(cap, "_copy_completed_pair_evidence", failed_prefix)
+    if mode == "report_io":
+        original_write = diag.write_report
+
+        def failed_write(directory, payload, **kwargs):
+            if payload["schema_version"] == "npa.robocasa.pair-failure.v2":
+                (directory / diag.REPORT).write_bytes(b'{"partial":')
+                raise OSError(errno.ENOSPC, "injected prefix report disk full")
+            return original_write(directory, payload, **kwargs)
+
+        patch.setattr(diag, "write_report", failed_write)
+
+
+def _spawned_prefix_failure(sender, payload, *, mode):
+    with pytest.MonkeyPatch.context() as patch:
+        _install_native_fixture(patch)
+        _inject_prefix_failure(patch, mode)
+        service._capability_worker_entry(sender, payload)
+
+
 def _produce(tmp_path, monkeypatch, body, *, fail_after=1):
     _install_native_fixture(monkeypatch, fail_after=fail_after)
     worker = tmp_path / "worker"
@@ -112,8 +156,11 @@ def _produce(tmp_path, monkeypatch, body, *, fail_after=1):
 
 
 @pytest.mark.parametrize("upload_failure", [False, True])
+@pytest.mark.parametrize(
+    "prefix_failure", [None, "enospc", "missing", "schema", "report_io"]
+)
 def test_spawn_http_retains_completed_and_failed_media_then_cleans(
-    tmp_path, monkeypatch, body, upload_failure
+    tmp_path, monkeypatch, body, upload_failure, prefix_failure
 ):
     from test_robocasa import _TransactionalFakeS3
 
@@ -122,11 +169,16 @@ def test_spawn_http_retains_completed_and_failed_media_then_cleans(
     monkeypatch.setattr(service, "verify_runtime_identity", lambda *_: None)
     monkeypatch.setattr(service, "_assets_root", lambda: tmp_path / "assets")
     execute = service._execute_capability_in_worker
+    target = (
+        partial(_spawned_prefix_failure, mode=prefix_failure)
+        if prefix_failure
+        else _spawned_native_fixture
+    )
     monkeypatch.setattr(
         service,
         "_execute_capability_in_worker",
         lambda request, **kw: execute(
-            request, worker_target=_spawned_native_fixture, output_root=tmp_path, **kw
+            request, worker_target=target, output_root=tmp_path, **kw
         ),
     )
     published = []
@@ -139,7 +191,8 @@ def test_spawn_http_retains_completed_and_failed_media_then_cleans(
         if upload_failure:
             raise OSError("synthetic upload refusal")
         cap.upload_output(directory, uri, report)
-        report["completed_pairs"][0]["policy"]["success"] = True
+        if not prefix_failure:
+            report["completed_pairs"][0]["policy"]["success"] = True
 
     monkeypatch.setattr(service, "upload_output", upload)
     client = TestClient(
@@ -155,16 +208,21 @@ def test_spawn_http_retains_completed_and_failed_media_then_cleans(
     assert status["status"] == "failed" and "initial workspace" in status["error"]
     assert len(published) == 1 and not published[0][0].exists()
     report = published[0][1]
-    assert report["requested_pairs"] == 3 and report["unattempted_pairs"] == 1
-    assert (
-        report["episode_index"] == 1
-        and report["completed_pairs"][0]["episode_index"] == 0
-    )
-    assert (
-        "success_rate" not in report
-        and not report["completed_pairs"][0]["policy"]["success"]
-    )
-    assert len(report["files"]) == 8
+    assert report["episode_index"] == 1 and "success_rate" not in report
+    if prefix_failure:
+        assert report == json.loads((tmp_path / "sealed-failed.json").read_bytes())
+        assert report["schema_version"] == "npa.robocasa.pair-failure.v1"
+        assert report["completed_prefix"] == "unavailable; failed-pair evidence only"
+        assert (
+            not {"completed_pairs", "requested_pairs", "unattempted_pairs"}
+            & report.keys()
+        )
+        assert set(report["files"]) == set(diag.MEDIA)
+    else:
+        assert report["requested_pairs"] == 3 and report["unattempted_pairs"] == 1
+        assert report["completed_pairs"][0]["episode_index"] == 0
+        assert not report["completed_pairs"][0]["policy"]["success"]
+        assert len(report["files"]) == 8
     assert [
         json.loads(line)
         for line in (tmp_path / "episode-calls.jsonl").read_text().splitlines()
@@ -181,6 +239,85 @@ def test_spawn_http_retains_completed_and_failed_media_then_cleans(
         assert status["result"] == report
         _assert_uploaded_population(storage, report)
     assert client.get("/health").json()["execution_available"] is True
+
+
+@pytest.mark.parametrize("schema", ["v1", "v2"])
+def test_huge_admitted_population_reads_small_chunks(
+    tmp_path, monkeypatch, body, schema
+):
+    directory, report = _produce(tmp_path, monkeypatch, body)
+    if schema == "v1":
+        directory = directory.parent / diag.FAILED_DIRECTORY
+    else:
+        report.update(requested_pairs=10**100, unattempted_pairs=10**100 - 2)
+        (directory / diag.REPORT).write_text(json.dumps(report))
+    original = diag._open_regular
+    reads = []
+
+    @contextmanager
+    def bounded_open(path):
+        with original(path) as stream:
+            if path.name != diag.REPORT:
+                yield stream
+                return
+
+            class Reader:
+                def read(self, size):
+                    reads.append(size)
+                    assert 0 < size <= 64 * 1024
+                    return stream.read(size)
+
+            yield Reader()
+
+    monkeypatch.setattr(diag, "_open_regular", bounded_open)
+    checked = diag.validate_directory(directory, requested_pairs=10**100)
+    assert checked["schema_version"].endswith(schema) and len(reads) >= 2
+
+
+@pytest.mark.parametrize("damage", ["request", "image", "symlink", "extra"])
+def test_fallback_still_refuses_hostile_parent_binding_or_population(
+    tmp_path, monkeypatch, body, damage
+):
+    _install_native_fixture(monkeypatch)
+    _inject_prefix_failure(monkeypatch, "enospc")
+    worker = tmp_path / "worker"
+    with pytest.raises(cap.RoboCasaMatchError):
+        cap.run_capability_with_output(body, output_dir=worker, upload=False)
+    directory = worker / diag.FAILED_DIRECTORY
+    if damage in {"request", "image"}:
+        report = json.loads((directory / diag.REPORT).read_text())
+        field = "request_manifest_sha256" if damage == "request" else "image_source_sha"
+        report[field] = "9" * (64 if damage == "request" else 40)
+        if damage == "image":
+            body = body.model_copy(update={"expected_image_source_sha": "8" * 40})
+        (directory / diag.REPORT).write_text(json.dumps(report))
+    elif damage == "symlink":
+        (worker / diag.DIRECTORY).symlink_to(worker / "missing-promoted-root")
+    else:
+        (directory / "private.txt").write_text("not allowed")
+    outcome = service._retain_failure_diagnostics(
+        body, worker, service._WorkerOutcome(error="match refusal")
+    )
+    assert outcome.stopped and not outcome.failure_diagnostics
+    assert outcome.output_dir is None and not worker.exists()
+
+
+def test_missing_original_failed_media_cannot_claim_fallback(
+    tmp_path, monkeypatch, body
+):
+    _install_native_fixture(monkeypatch)
+    original = cap._copy_pair_failure_media
+
+    def missing_failed(output, index):
+        (output / f"episode_{index:04d}/rollout.png").unlink()
+        return original(output, index)
+
+    monkeypatch.setattr(cap, "_copy_pair_failure_media", missing_failed)
+    with pytest.raises(cap.RoboCasaError, match="failure diagnostics unavailable"):
+        cap.run_capability_with_output(
+            body, output_dir=tmp_path / "worker", upload=False
+        )
+    assert not list((tmp_path / "worker").rglob(diag.REPORT))
 
 
 def _assert_uploaded_population(storage, report):

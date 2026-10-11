@@ -22,6 +22,7 @@ import numpy as np
 from npa.workbench.robocasa.asset_paths import hold_asset_directory
 
 DIRECTORY = "failure-diagnostics"
+FAILED_DIRECTORY = "failed-pair-diagnostics"
 REPORT = "failure.json"
 ROLES = ("policy", "random_baseline")
 MEDIA = tuple(f"{role}.{suffix}" for role in ROLES for suffix in ("png", "mp4"))
@@ -141,6 +142,7 @@ class PairFailure(EvidenceBinding):
     policy: ArmEvidence
     random_baseline: ArmEvidence
     files: dict[str, FileEvidence]
+    completed_prefix: Literal["unavailable; failed-pair evidence only"] | None = None
 
 
 class PairFailureWithPrefix(PairFailure):
@@ -158,6 +160,8 @@ class PairFailureWithPrefix(PairFailure):
 
     @model_validator(mode="after")
     def _contiguous_prefix(self):
+        if self.completed_prefix is not None:
+            raise ValueError("completed prefix cannot also be unavailable")
         if (
             len(self.completed_pairs) != self.episode_index
             or any(
@@ -270,7 +274,7 @@ def validate_directory(directory: Path, *, requested_pairs: int | None = None) -
     if directory.is_symlink() or not directory.is_dir():
         raise ValueError("diagnostic root must be a real directory")
     parsed = _read_report(directory / REPORT, requested_pairs)
-    report = parsed.model_dump(mode="json")
+    report = _report_payload(parsed)
     names = media_names(report)
     if {path.name for path in directory.iterdir()} != {REPORT, *names}:
         raise ValueError("unexpected or missing diagnostic files")
@@ -295,7 +299,12 @@ def _read_report(path: Path, requested_pairs: int | None):
     # use child metadata or a file's advertised size as allocation authority.
     limit = 64 * 1024 * (requested_pairs or 1)
     with _open_regular(path) as stream:
-        raw = stream.read(limit + 1)
+        raw = bytearray()
+        while len(raw) <= limit:
+            chunk = stream.read(min(64 * 1024, limit + 1 - len(raw)))
+            if not chunk:
+                break
+            raw.extend(chunk)
     if len(raw) > limit:
         raise ValueError("diagnostic report exceeds its schema envelope")
     payload = json.loads(raw)
@@ -305,6 +314,13 @@ def _read_report(path: Path, requested_pairs: int | None):
             raise ValueError("diagnostic population differs from admitted request")
         return parsed
     return PairFailure.model_validate(payload)
+
+
+def _report_payload(report: PairFailure) -> dict:
+    payload = report.model_dump(mode="json")
+    if payload["completed_prefix"] is None:
+        payload.pop("completed_prefix")
+    return payload
 
 
 def _verify_completed_media(directory: Path, pair: CompletedPair, files: dict) -> None:
@@ -368,8 +384,13 @@ def write_report(directory: Path, payload: dict, *, requested_pairs: int) -> Non
         OSError: Evidence cannot be written or safely reopened.
         ValueError: Schema or file validation fails.
     """
-    report = PairFailureWithPrefix.model_validate(payload)
+    model = (
+        PairFailureWithPrefix
+        if payload.get("schema_version") == "npa.robocasa.pair-failure.v2"
+        else PairFailure
+    )
+    report = model.model_validate(payload)
     (directory / REPORT).write_text(
-        json.dumps(report.model_dump(mode="json"), indent=2, sort_keys=True) + "\n"
+        json.dumps(_report_payload(report), indent=2, sort_keys=True) + "\n"
     )
     validate_directory(directory, requested_pairs=requested_pairs)

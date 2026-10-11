@@ -199,7 +199,13 @@ seeds, held-out tasks, horizon and the full requested population; report read bo
 come from that admitted request, never the worker's self-declared population.
 `requested_pairs` and `unattempted_pairs` keep missing cases explicit. These are
 partial outcomes under an overall failed status, not a final success rate or a
-completed evaluation. Historical v1 failure-only records remain readable.
+completed evaluation. A validated failed-only v1 record is sealed before prefix
+staging. If prefix copying, schema validation or report writing fails, this
+original record and exactly its four failed-pair media remain available with
+`completed_prefix: "unavailable; failed-pair evidence only"`; it makes no completed
+prefix claim. The parent still refuses invalid promoted records and hostile
+request bindings rather than downgrading them. Historical v1 records remain
+readable. Report reads use bounded chunks even for large admitted populations.
 No scratch tree, environment dump or checkpoint is retained with these artifacts.
 Diagnostic publication uses the same immutable byte/readback commit as successful
 outputs, but its commit only establishes delivery of failure evidence; it does

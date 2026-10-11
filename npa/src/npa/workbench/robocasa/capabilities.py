@@ -2660,9 +2660,12 @@ def _persist_match_failure(
         directory = _copy_pair_failure_media(
             output_dir, failure.evidence["episode_index"]
         )
-        evidence = _match_failure_payload(request, output_dir, directory, failure)
+        evidence = _failed_pair_payload(request, directory, failure)
         pair_diagnostics.write_report(
             directory, evidence, requested_pairs=request.num_envs
+        )
+        directory, evidence = _try_completed_prefix(
+            request, output_dir, directory, evidence, failure
         )
         failure.diagnostics_ready = True
         if upload:
@@ -2678,7 +2681,7 @@ def _persist_match_failure(
         ) from failure
 
 
-def _match_failure_payload(request, output_dir, directory, failure) -> dict:
+def _failed_pair_payload(request, directory, failure) -> dict:
     runtime = _runtime_identity()
     binding = {
         "checkpoint_sha256": failure.evidence["checkpoint_sha256"],
@@ -2692,12 +2695,8 @@ def _match_failure_payload(request, output_dir, directory, failure) -> dict:
     evidence = {
         **failure.evidence,
         **binding,
-        "schema_version": "npa.robocasa.pair-failure.v2",
-        "requested_pairs": request.num_envs,
-        "unattempted_pairs": request.num_envs - failure.evidence["episode_index"] - 1,
-        "completed_pairs": _copy_completed_pair_evidence(
-            output_dir, directory, failure.completed_pairs, binding
-        ),
+        "schema_version": "npa.robocasa.pair-failure.v1",
+        "completed_prefix": "unavailable; failed-pair evidence only",
     }
     evidence["files"] = {
         name: pair_diagnostics.file_evidence(directory / name)
@@ -2706,8 +2705,52 @@ def _match_failure_payload(request, output_dir, directory, failure) -> dict:
     return evidence
 
 
+def _try_completed_prefix(request, output_dir, failed_directory, failed, failure):
+    # The validated failed-only record is never edited or removed. In particular,
+    # ENOSPC during prefix staging must not require another fallback write.
+    directory = output_dir / "failure-diagnostics-staging"
+    try:
+        directory.mkdir(mode=0o700)
+        for name in pair_diagnostics.MEDIA:
+            pair_diagnostics.copy_evidence(failed_directory / name, directory / name)
+        evidence = _completed_prefix_payload(
+            request, output_dir, directory, failed, failure
+        )
+        pair_diagnostics.write_report(
+            directory, evidence, requested_pairs=request.num_envs
+        )
+        directory.rename(output_dir / pair_diagnostics.DIRECTORY)
+        return output_dir / pair_diagnostics.DIRECTORY, evidence
+    except Exception:
+        # Partial staging stays private until the parent's whole-worker cleanup.
+        # A promoted record is never silently downgraded by parent validation.
+        return failed_directory, failed
+
+
+def _completed_prefix_payload(request, output_dir, directory, failed, failure):
+    binding = {
+        key: failed[key] for key in pair_diagnostics.EvidenceBinding.model_fields
+    }
+    evidence = {
+        key: value for key, value in failed.items() if key != "completed_prefix"
+    }
+    evidence.update(
+        schema_version="npa.robocasa.pair-failure.v2",
+        requested_pairs=request.num_envs,
+        unattempted_pairs=request.num_envs - failure.evidence["episode_index"] - 1,
+        completed_pairs=_copy_completed_pair_evidence(
+            output_dir, directory, failure.completed_pairs, binding
+        ),
+    )
+    evidence["files"] = {
+        name: pair_diagnostics.file_evidence(directory / name)
+        for name in pair_diagnostics.media_names(evidence)
+    }
+    return evidence
+
+
 def _copy_pair_failure_media(output_dir: Path, episode_index: int) -> Path:
-    directory = output_dir / pair_diagnostics.DIRECTORY
+    directory = output_dir / pair_diagnostics.FAILED_DIRECTORY
     directory.mkdir(mode=0o700)
     episode = output_dir / f"episode_{episode_index:04d}"
     for role, stem in (("policy", "rollout"), ("random_baseline", "random_baseline")):
