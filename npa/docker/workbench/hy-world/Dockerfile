@@ -45,7 +45,7 @@ USER root
 # compiler/toolchain required by gsplat, NavMesh, PyTorch3D and FlashAttention.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-      build-essential ca-certificates cmake ffmpeg git libgl1 libglib2.0-0 libzstd-dev \
+      build-essential ca-certificates cmake ffmpeg git libgl1 libglib2.0-0 \
       linux-libc-dev ninja-build pkg-config python3-pip \
       openssh-server procps rsync sudo util-linux zlib1g-dev \
     && NCOMPUTE_PKGS="$(dpkg-query -W -f='${binary:Package}\n' 'nsight-compute-*' 'cuda-nsight-compute-*' 2>/dev/null || true)" \

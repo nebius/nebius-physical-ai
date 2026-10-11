@@ -86,6 +86,89 @@ def test_completed_cache_layout_is_checked_for_relocated_console_scripts(
     assert "still references staging tree" in result.stderr
 
 
+def test_completed_cu126_cache_is_not_accepted_for_the_cu128_runtime(
+    tmp_path: Path,
+) -> None:
+    """A source-matched legacy cache cannot bypass the CUDA wheel contract."""
+
+    tree = tmp_path / "runtime" / "source-df9988efb87bfc0f4947eb3889411cf957478b06"
+    tree.mkdir(parents=True)
+    (tree / ".complete").touch()
+    (tree / "npa_runtime_contract.json").write_text(
+        """{
+  "schema": "npa.hy_world.runtime_contract.v1",
+  "revision": "legacy-cu126",
+  "torch": "2.7.1+cu126",
+  "torchvision": "0.22.1+cu126",
+  "pytorch_wheel_index": "https://download.pytorch.org/whl/cu126"
+}
+""",
+        encoding="utf-8",
+    )
+
+    result = _bash(
+        "\n".join(
+            (
+                f"source {RUNTIME}",
+                'git() { printf "%s\\n" "$SOURCE_REF"; }',
+                "if source_is_complete; then exit 91; fi",
+            )
+        ),
+        environment={
+            "NPA_HY_WORLD_RUNTIME_CACHE": str(tmp_path / "runtime"),
+            "NPA_HY_WORLD_RUNTIME_LIBRARY": "1",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_runtime_contract_retains_the_exact_pytorch_wheel_index(tmp_path: Path) -> None:
+    """The cache contract stores a URL as provenance, not as a normalized path."""
+
+    tree = tmp_path / "runtime" / "source-df9988efb87bfc0f4947eb3889411cf957478b06"
+    subprocess.run([sys.executable, "-m", "venv", str(tree / ".venv")], check=True)
+    result = _bash(
+        "\n".join(
+            (
+                f"source {RUNTIME}",
+                f"write_runtime_contract {tree}",
+                f"verify_runtime_contract {tree}",
+            )
+        ),
+        environment={
+            "NPA_HY_WORLD_RUNTIME_CACHE": str(tmp_path / "runtime"),
+            "NPA_HY_WORLD_RUNTIME_LIBRARY": "1",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    contract = (tree / "npa_runtime_contract.json").read_text(encoding="utf-8")
+    assert '"pytorch_wheel_index": "https://download.pytorch.org/whl/cu128"' in contract
+
+
+def test_layout_rejects_a_completed_cache_with_a_stale_runtime_contract(
+    tmp_path: Path,
+) -> None:
+    """The reuse path verifies the runtime wheel contract as well as venv paths."""
+
+    tree = tmp_path / "runtime" / "source-df9988efb87bfc0f4947eb3889411cf957478b06"
+    venv = tree / ".venv"
+    subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True)
+    (tree / "npa_runtime_contract.json").write_text("{}\n", encoding="utf-8")
+
+    result = _bash(
+        f"source {RUNTIME}; verify_runtime_layout {tree}",
+        environment={
+            "NPA_HY_WORLD_RUNTIME_CACHE": str(tmp_path / "runtime"),
+            "NPA_HY_WORLD_RUNTIME_LIBRARY": "1",
+        },
+    )
+
+    assert result.returncode != 0
+    assert "runtime contract does not match" in result.stderr
+
+
 def test_ensure_revalidates_an_existing_complete_runtime_before_reuse(
     tmp_path: Path,
 ) -> None:
@@ -101,6 +184,7 @@ def test_ensure_revalidates_an_existing_complete_runtime_before_reuse(
                 "validate_runtime_paths() { :; }",
                 "source_is_complete() { return 0; }",
                 f'verify_runtime_layout() {{ printf "%s\\n" "$1" > {checked}; }}',
+                "verify_torch_blackwell_runtime() { :; }",
                 "ensure",
             )
         ),

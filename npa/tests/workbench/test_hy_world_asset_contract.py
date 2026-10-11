@@ -72,6 +72,14 @@ def _metadata() -> dict[str, object]:
             "path": "npa_model_snapshot_revisions.json",
             "sha256": "3" * 64,
         },
+        "runtime_contract": {
+            "path": "npa_runtime_contract.json",
+            "sha256": "4" * 64,
+        },
+        "torch_cuda_probe": {
+            "path": "npa_torch_cuda_probe.json",
+            "sha256": "5" * 64,
+        },
     }
 
 
@@ -187,6 +195,23 @@ def test_runtime_provenance_rejects_missing_gated_sam3_component(
     metadata = _metadata()
     metadata.pop("sam3_model")
     with pytest.raises(contract.HyWorldEvidenceError, match="sam3_model"):
+        contract.build_evidence(
+            scene_dir=scene,
+            result_dir=result,
+            input_image=input_image,
+            runtime_metadata=metadata,
+            image_checker=_image,
+            video_checker=_video,
+        )
+
+
+def test_runtime_provenance_requires_the_torch_cuda_probe(tmp_path: Path) -> None:
+    """Generated-scene evidence must retain the B200 runtime compatibility proof."""
+
+    scene, result, input_image = _fixture(tmp_path)
+    metadata = _metadata()
+    metadata.pop("torch_cuda_probe")
+    with pytest.raises(contract.HyWorldEvidenceError, match="torch_cuda_probe"):
         contract.build_evidence(
             scene_dir=scene,
             result_dir=result,

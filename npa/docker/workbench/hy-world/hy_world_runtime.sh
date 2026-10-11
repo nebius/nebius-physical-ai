@@ -31,6 +31,11 @@ readonly UNI3C_REF="fca895f7fb454f4dfed43956cab09180d0946318"
 readonly PYTORCH3D_REPOSITORY="https://github.com/facebookresearch/pytorch3d.git"
 readonly PYTORCH3D_REF="88e182f989c80836f4bd744e0d9cb1852762ce01"
 readonly FLASH_ATTN_VERSION="2.8.3"
+readonly PYTORCH_WHEEL_INDEX="https://download.pytorch.org/whl/cu128"
+readonly TORCH_VERSION="2.7.1+cu128"
+readonly TORCHVISION_VERSION="0.22.1+cu128"
+readonly RUNTIME_CONTRACT_REVISION="hy-world-cu128-spz-zstd-source-v1"
+readonly RUNTIME_BOOTSTRAP_SHA256="$(sha256sum "${BASH_SOURCE[0]}" | awk '{print $1}')"
 
 # Resolve this once, before configure_runtime_hf_cache repoints HF_HOME at this
 # candidate's immutable model closure.  The source/venv cache belongs beside
@@ -66,6 +71,11 @@ source_tree() {
 
 runtime_python() {
   printf '%s/.venv/bin/python\n' "$(source_tree)"
+}
+
+torch_probe_path() {
+  local tree="$1"
+  printf '%s/npa_torch_cuda_probe.json\n' "$tree"
 }
 
 validate_runtime_paths() {
@@ -159,7 +169,135 @@ bootstrap_integrity() {
 source_is_complete() {
   local tree
   tree="$(source_tree)"
-  [[ -f "$tree/.complete" ]] && [[ "$(git -C "$tree" rev-parse HEAD)" == "$SOURCE_REF" ]]
+  [[ -f "$tree/.complete" ]] \
+    && [[ "$(git -C "$tree" rev-parse HEAD)" == "$SOURCE_REF" ]] \
+    && verify_runtime_contract "$tree" >/dev/null 2>&1
+}
+
+verify_runtime_contract() {
+  local tree="$1" contract
+  contract="$tree/npa_runtime_contract.json"
+  python3 - "$contract" "$RUNTIME_CONTRACT_REVISION" "$TORCH_VERSION" \
+    "$TORCHVISION_VERSION" "$PYTORCH_WHEEL_INDEX" "$RUNTIME_BOOTSTRAP_SHA256" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path, revision, torch, torchvision, wheel_index, bootstrap_sha256 = sys.argv[1:]
+path = Path(path)
+try:
+    observed = json.loads(path.read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError) as exc:
+    raise SystemExit(f"runtime contract is unreadable: {exc}") from exc
+expected = {
+    "schema": "npa.hy_world.runtime_contract.v1",
+    "revision": str(revision),
+    "torch": str(torch),
+    "torchvision": str(torchvision),
+    "pytorch_wheel_index": str(wheel_index),
+    "bootstrap_sha256": str(bootstrap_sha256),
+}
+if observed != expected:
+    raise SystemExit("runtime contract does not match the current bootstrap")
+PY
+}
+
+write_runtime_contract() {
+  local tree="$1" contract
+  contract="$tree/npa_runtime_contract.json"
+  "$(runtime_python)" - "$contract" "$RUNTIME_CONTRACT_REVISION" "$TORCH_VERSION" \
+    "$TORCHVISION_VERSION" "$PYTORCH_WHEEL_INDEX" "$RUNTIME_BOOTSTRAP_SHA256" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path, revision, torch, torchvision, wheel_index, bootstrap_sha256 = sys.argv[1:]
+path = Path(path)
+payload = {
+    "schema": "npa.hy_world.runtime_contract.v1",
+    "revision": str(revision),
+    "torch": str(torch),
+    "torchvision": str(torchvision),
+    "pytorch_wheel_index": str(wheel_index),
+    "bootstrap_sha256": str(bootstrap_sha256),
+}
+temporary = path.with_suffix(path.suffix + ".tmp")
+temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+temporary.replace(path)
+PY
+}
+
+install_blackwell_torch_wheels() {
+  local python="$1"
+  uv pip install --python "$python" --index-url "$PYTORCH_WHEEL_INDEX" \
+    "torch==${TORCH_VERSION}" "torchvision==${TORCHVISION_VERSION}"
+}
+
+install_upstream_requirements() {
+  local tree="$1" python="$2" requirements
+  grep -qx 'torch==2.7.1' "$tree/requirements.txt" \
+    && grep -qx 'torchvision==0.22.1' "$tree/requirements.txt" || {
+      echo "npa-hy-world: upstream PyTorch requirements drifted from the reviewed cu128 selection" >&2
+      exit "$EX_SOFTWARE"
+    }
+  requirements="$tree/npa_requirements_without_torch.txt"
+  sed -E '/^(torch|torchvision)==/d' "$tree/requirements.txt" > "$requirements"
+  uv pip install --python "$python" -r "$requirements"
+}
+
+verify_torch_blackwell_runtime() {
+  local tree="$1" python probe
+  python="$tree/.venv/bin/python"
+  probe="$(torch_probe_path "$tree")"
+  "$python" - "$probe" "$TORCH_VERSION" "$TORCHVISION_VERSION" <<'PY'
+import json
+import sys
+from importlib import metadata
+from pathlib import Path
+
+import torch
+
+probe, expected_torch, expected_torchvision = sys.argv[1:]
+if torch.__version__ != str(expected_torch):
+    raise SystemExit(f"expected torch {expected_torch}, got {torch.__version__}")
+if metadata.version("torchvision") != str(expected_torchvision):
+    raise SystemExit(f"expected torchvision {expected_torchvision}")
+if torch.version.cuda != "12.8":
+    raise SystemExit(f"expected torch CUDA 12.8, got {torch.version.cuda}")
+if not torch.cuda.is_available() or torch.cuda.device_count() != 8:
+    raise SystemExit("HY-World requires eight visible CUDA devices")
+arch_list = sorted(set(torch.cuda.get_arch_list()))
+arch_flags = str(torch._C._cuda_getArchFlags()).split()
+compiled_arches = sorted(set(arch_list) | set(arch_flags))
+if "sm_100" not in compiled_arches:
+    raise SystemExit(f"torch wheel lacks B200 sm_100 support: {compiled_arches}")
+capabilities = [list(torch.cuda.get_device_capability(index)) for index in range(8)]
+if any(capability != [10, 0] for capability in capabilities):
+    raise SystemExit(f"expected B200 capability [10, 0], got {capabilities}")
+reductions = []
+for index in range(8):
+    value = torch.arange(1024, device=f"cuda:{index}", dtype=torch.float32).sum()
+    torch.cuda.synchronize(index)
+    if not torch.isfinite(value).item() or value.item() != 523776.0:
+        raise SystemExit(f"CUDA reduction failed on device {index}")
+    reductions.append(value.item())
+payload = {
+    "schema": "npa.hy_world.torch_cuda_probe.v1",
+    "torch": torch.__version__,
+    "torchvision": metadata.version("torchvision"),
+    "cuda": torch.version.cuda,
+    "get_arch_list": arch_list,
+    "compiled_arches": compiled_arches,
+    "device_capabilities": capabilities,
+    "device_count": torch.cuda.device_count(),
+    "reductions": reductions,
+}
+path = Path(probe)
+temporary = path.with_suffix(path.suffix + ".tmp")
+temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+temporary.replace(path)
+print("NPA_HY_WORLD_TORCH_B200_CUDA_PROBE_PASSED")
+PY
 }
 
 install_runtime() {
@@ -172,7 +310,9 @@ install_runtime() {
   uv python install 3.11
   uv venv --python 3.11 "$tree/.venv"
   python="$tree/.venv/bin/python"
-  uv pip install --python "$python" -r "$tree/requirements.txt"
+  install_blackwell_torch_wheels "$python"
+  install_upstream_requirements "$tree" "$python"
+  verify_torch_blackwell_runtime "$tree"
   # Upstream's requirements_git.txt intentionally leaves PyTorch3D on its
   # default branch. Replace only that mutable line with the reviewed immutable
   # commit while preserving its other exact requirements.
@@ -198,6 +338,7 @@ import gsplat
 import pytorch3d
 import recast
 PY
+  verify_torch_blackwell_runtime "$tree"
   uv pip freeze --python "$python" | LC_ALL=C sort > "$tree/npa_resolved_inventory.txt"
 }
 
@@ -224,6 +365,7 @@ PY
     echo "npa-hy-world: runtime entrypoint still references staging tree: $stale" >&2
     exit "$EX_SOFTWARE"
   }
+  verify_runtime_contract "$tree"
 }
 
 ensure() {
@@ -241,6 +383,7 @@ ensure() {
     # A cache created by an older bootstrap may have moved a virtualenv or an
     # editable install from .incomplete. Never accept it without rechecking.
     verify_runtime_layout "$tree"
+    verify_torch_blackwell_runtime "$tree"
     return
   fi
   rm -rf -- "$tree.incomplete" "$tree"
@@ -264,6 +407,7 @@ ensure() {
   # Python console scripts and editable installs retain absolute paths. Move
   # only the fetched source, then create the virtualenv at its final location.
   install_runtime "$tree"
+  write_runtime_contract "$tree"
   verify_runtime_layout "$tree"
   : > "$tree/.complete"
 }
@@ -394,6 +538,11 @@ if not model_manifest.is_file():
     raise SystemExit("model snapshot revision manifest is absent")
 inventory = tree / "npa_resolved_inventory.txt"
 submodules = tree / "npa_submodules.txt"
+runtime_contract = tree / "npa_runtime_contract.json"
+torch_probe = tree / "npa_torch_cuda_probe.json"
+for required in (inventory, submodules, runtime_contract, torch_probe):
+    if not required.is_file():
+        raise SystemExit(f"required runtime provenance is absent: {required}")
 payload = {
     "pipeline_mode": "image_to_world",
     "stages": ["pano", "traj", "render", "expand", "gs_data", "gs_train"],
@@ -418,11 +567,15 @@ payload = {
     "resolved_python_packages": {"path": "npa_resolved_inventory.txt", "sha256": sha256(inventory)},
     "submodules": {"path": "npa_submodules.txt", "sha256": sha256(submodules)},
     "model_snapshot_revisions": {"path": "npa_model_snapshot_revisions.json", "sha256": sha256(model_manifest)},
+    "runtime_contract": {"path": "npa_runtime_contract.json", "sha256": sha256(runtime_contract)},
+    "torch_cuda_probe": {"path": "npa_torch_cuda_probe.json", "sha256": sha256(torch_probe)},
 }
 out.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 Path(out.parent / "npa_resolved_inventory.txt").write_bytes(inventory.read_bytes())
 Path(out.parent / "npa_submodules.txt").write_bytes(submodules.read_bytes())
 Path(out.parent / "npa_model_snapshot_revisions.json").write_bytes(model_manifest.read_bytes())
+Path(out.parent / "npa_runtime_contract.json").write_bytes(runtime_contract.read_bytes())
+Path(out.parent / "npa_torch_cuda_probe.json").write_bytes(torch_probe.read_bytes())
 PY
 }
 

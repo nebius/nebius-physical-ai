@@ -283,6 +283,8 @@ def _model_provenance(metadata: Mapping[str, Any]) -> dict[str, Any]:
         ("resolved_python_packages", "npa_resolved_inventory.txt"),
         ("submodules", "npa_submodules.txt"),
         ("model_snapshot_revisions", "npa_model_snapshot_revisions.json"),
+        ("runtime_contract", "npa_runtime_contract.json"),
+        ("torch_cuda_probe", "npa_torch_cuda_probe.json"),
     ):
         record = metadata.get(name)
         _require(isinstance(record, Mapping), f"runtime metadata lacks {name}")
