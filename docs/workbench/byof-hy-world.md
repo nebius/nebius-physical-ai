@@ -300,7 +300,11 @@ The ordinary NPA node-group lifecycle creates a task-owned additive group. It
 does not create a cluster, modify the shared control plane, network, GPU
 cluster, or any existing node group. The supported B200 profile is one
 `gpu-b200-sxm` node with the `8gpu-160vcpu-1792gb` preset, managed `cuda13.0`
-drivers, the verified fabric attachment, and a 1280-GiB boot disk. A provider
+drivers, the verified fabric attachment, and a provider-supported boot disk. A
+replicated `network_ssd_io_m3` selection requires a multiple of 93 GiB; the
+1302-GiB shape below satisfies that rule and leaves the reviewed 1280-GiB
+minimum intact. Confirm the selected project's quota for the named disk class
+before creating the group. A provider
 boot-disk size is not Kubernetes allocatable ephemeral storage. Before launch,
 the selected B200 node must report at least `1000000000000` allocatable and
 currently free ephemeral-storage bytes for the workflow's 1000G request; the
@@ -323,7 +327,8 @@ B200_NODE_GROUP="hy-world-b200-8"
 npa cluster node-group add \
   --cluster-name "$HY_CLUSTER_TARGET" --name "$B200_NODE_GROUP" \
   --project-id "$PROJECT_ID" --gpu-type b200 --node-count 1 \
-  --node-preset 8gpu-160vcpu-1792gb --boot-disk-size-gib 1280 \
+  --node-preset 8gpu-160vcpu-1792gb \
+  --boot-disk-type network_ssd_io_m3 --boot-disk-size-gib 1302 \
   --gpu-cluster-id "$GPU_CLUSTER_ID" \
   --gpu-driver-mode managed-image --managed-driver-preset cuda13.0 --wait
 
@@ -334,11 +339,12 @@ npa workbench workflow gpus --project "$PROJECT" --cluster "$HY_CLUSTER_TARGET" 
 ```
 
 The command refuses an unattached B200 group, another preset/count, a disk
-below 1280 GiB, `--no-wait`, and the unsafe operator-driver route. It also
-verifies that the provider reports the requested GPU-cluster attachment and
-disk before recording the group as ready. If either readiness or GPU discovery
-fails, retain the returned provider reason; do not change the cluster, network,
-or an unrelated node group to make the workflow fit.
+below 1280 GiB, an unsupported disk class, a non-93-GiB alternate disk size,
+`--no-wait`, and the unsafe operator-driver route. It also verifies that the
+provider reports the requested GPU-cluster attachment, disk class, and size
+before recording the group as ready. If either readiness or GPU discovery fails,
+retain the returned provider reason; do not change the cluster, network, or an
+unrelated node group to make the workflow fit.
 
 Cancel a run before removing only the group named above. This removes the
 task-owned node group and its matching local NPA state; it never removes the

@@ -12,6 +12,7 @@ import typer
 from npa.cli.cluster.scope import CLUSTER_SCOPE_EPILOG
 from npa.cluster.api import ClusterInfo, MK8sClient, NodeGroupInfo, cluster_subnet_id
 from npa.cluster.config import (
+    DEFAULT_BOOT_DISK_TYPE,
     DEFAULT_CPU_NODE_GROUP_PRESET,
     DEFAULT_GPU_DRIVER_PRESET,
     DEFAULT_K8S_VERSION,
@@ -73,6 +74,11 @@ def add_cmd(
         0,
         "--boot-disk-size-gib",
         help="Boot disk size per GPU node in GiB; B200:8 defaults to 1280.",
+    ),
+    boot_disk_type: str = typer.Option(
+        DEFAULT_BOOT_DISK_TYPE,
+        "--boot-disk-type",
+        help="Nebius worker boot-disk class; B200 supports reviewed network SSD classes.",
     ),
     gpu_cluster_id: str = typer.Option(
         "",
@@ -154,6 +160,7 @@ def add_cmd(
             cluster_id=cluster.id,
             node_count=node_count,
             node_preset=node_preset,
+            boot_disk_type=boot_disk_type,
             boot_disk_size_gib=boot_disk_size_gib,
             gpu_cluster_id=gpu_cluster_id,
             public_ip=public_ip,
@@ -224,7 +231,9 @@ def add_cmd(
         typer.echo(f"GPU type: {state.gpu_type}")
         typer.echo(f"GPU driver mode: {driver.effective_mode}")
         typer.echo(f"Platform/preset: {state.platform}/{state.preset}")
-        typer.echo(f"Boot disk: {config.boot_disk_size_gib} GiB")
+        typer.echo(
+            f"Boot disk: {config.boot_disk_type}/{config.boot_disk_size_gib} GiB"
+        )
         if config.gpu_type == "b200":
             typer.echo("GPU-cluster attachment: verified")
         typer.echo(f"Nodes: {state.node_count}")
@@ -673,6 +682,7 @@ def _state_from_config(
         public_ip=config.public_ip,
         autoscaling_min=config.autoscaling_min,
         autoscaling_max=config.autoscaling_max,
+        boot_disk_type=config.boot_disk_type,
         boot_disk_size_gib=config.boot_disk_size_gib,
         gpu_cluster_id=config.gpu_cluster_id,
     )
@@ -765,6 +775,10 @@ def _verify_b200_attachment(config: NodeGroupConfig, node_group: NodeGroupInfo) 
     if node_group.boot_disk_size_gib < config.boot_disk_size_gib:
         raise ClusterConfigError(
             "provider reported a B200 boot disk smaller than the requested size"
+        )
+    if node_group.boot_disk_type != config.boot_disk_type:
+        raise ClusterConfigError(
+            "provider did not report the requested B200 boot disk type"
         )
 
 

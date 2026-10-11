@@ -42,6 +42,19 @@ def test_b200_defaults_to_reviewed_fabric_shape_and_storage() -> None:
     assert config.gpu_cluster_id == "computegpucluster-test"
 
 
+def test_b200_accepts_a_provider_alternate_replicated_disk_shape() -> None:
+    config = NodeGroupConfig(
+        cluster_name="cluster-a",
+        gpu_type="b200",
+        gpu_cluster_id="computegpucluster-test",
+        boot_disk_type=" NETWORK_SSD_IO_M3 ",
+        boot_disk_size_gib=1302,
+    )
+
+    assert config.boot_disk_type == "network_ssd_io_m3"
+    assert config.boot_disk_size_gib == 1302
+
+
 @pytest.mark.parametrize(
     ("overrides", "message"),
     [
@@ -49,6 +62,14 @@ def test_b200_defaults_to_reviewed_fabric_shape_and_storage() -> None:
         ({"node_count": 2}, "one fixed 8-GPU node"),
         ({"node_preset": "1gpu-20vcpu-224gb"}, "reviewed gpu-b200-sxm"),
         ({"boot_disk_size_gib": 128}, "at least 1280 GiB"),
+        ({"boot_disk_type": "network_hdd"}, "boot disk type"),
+        (
+            {
+                "boot_disk_type": "network_ssd_io_m3",
+                "boot_disk_size_gib": 1280,
+            },
+            "multiple of 93 GiB",
+        ),
         ({"wait": False}, "requires --wait"),
     ],
 )

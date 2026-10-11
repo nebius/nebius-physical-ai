@@ -125,6 +125,7 @@ def test_node_group_state_preserves_b200_attachment_and_disk(tmp_path) -> None:
         preset="8gpu-160vcpu-1792gb",
         node_count=1,
         created_at="2026-05-14T22:46:30Z",
+        boot_disk_type="network_ssd_io_m3",
         boot_disk_size_gib=1280,
         gpu_cluster_id="computegpucluster-test",
     )

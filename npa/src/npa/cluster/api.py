@@ -48,6 +48,7 @@ class NodeGroupInfo:
     public_ip: bool = False
     autoscaling_min: int | None = None
     autoscaling_max: int | None = None
+    boot_disk_type: str = ""
     boot_disk_size_gib: int = 0
     gpu_cluster_id: str = ""
     raw: dict[str, Any] | None = None
@@ -774,6 +775,18 @@ class MK8sClient:
                 ("spec", "template", "bootDisk", "sizeGibibytes"),
             )
         )
+        boot_disk_type = (
+            str(
+                _deep_get(
+                    data,
+                    ("spec", "template", "boot_disk", "type"),
+                    ("spec", "template", "bootDisk", "type"),
+                )
+                or ""
+            )
+            .strip()
+            .lower()
+        )
         gpu_cluster_id = str(
             _deep_get(
                 data,
@@ -797,6 +810,7 @@ class MK8sClient:
             public_ip=public_ip,
             autoscaling_min=autoscaling_min,
             autoscaling_max=autoscaling_max,
+            boot_disk_type=boot_disk_type,
             boot_disk_size_gib=boot_disk_size_gib or 0,
             gpu_cluster_id=gpu_cluster_id,
             raw=data,

@@ -25,6 +25,16 @@ DEFAULT_GPU_DRIVER_PRESET = "cuda13.0"
 # capacity is not allocatable pod storage, so leave headroom for node/runtime
 # reservations; the submit preflight still proves the live allocatable fit.
 B200_NODE_GROUP_BOOT_DISK_GIB = 1280
+B200_BOOT_DISK_TYPES = {
+    "network_ssd",
+    "network_ssd_io_m3",
+    "network_ssd_non_replicated",
+}
+_NINETY_THREE_GIB_DISK_TYPES = {
+    "network_ssd_io_m3",
+    "network_ssd_non_replicated",
+}
+_NINETY_THREE_GIB_DISK_INCREMENT = 93
 
 SUPPORTED_NODE_PRESETS = {
     "cpu-e2": {
@@ -231,6 +241,10 @@ def _resolve_node_group_boot_disk(config: NodeGroupConfig) -> None:
     disk_size = config.boot_disk_size_gib or int(default)
     if disk_size < 32:
         raise ClusterConfigError("boot disk size must be at least 32 GiB")
+    disk_type = config.boot_disk_type.strip().lower()
+    if not disk_type:
+        raise ClusterConfigError("boot disk type must not be empty")
+    object.__setattr__(config, "boot_disk_type", disk_type)
     object.__setattr__(config, "boot_disk_size_gib", disk_size)
 
 
@@ -259,6 +273,23 @@ def _validate_b200_node_group(config: NodeGroupConfig) -> None:
         )
     if config.boot_disk_size_gib < B200_NODE_GROUP_BOOT_DISK_GIB:
         raise ClusterConfigError("b200 requires a boot disk of at least 1280 GiB")
+    _validate_b200_boot_disk_type(config)
+
+
+def _validate_b200_boot_disk_type(config: NodeGroupConfig) -> None:
+    """Reject B200 boot-disk shapes unsupported by the reviewed profile."""
+
+    if config.boot_disk_type not in B200_BOOT_DISK_TYPES:
+        allowed = ", ".join(sorted(B200_BOOT_DISK_TYPES))
+        raise ClusterConfigError(f"b200 boot disk type must be one of: {allowed}")
+    if (
+        config.boot_disk_type in _NINETY_THREE_GIB_DISK_TYPES
+        and config.boot_disk_size_gib % _NINETY_THREE_GIB_DISK_INCREMENT
+    ):
+        raise ClusterConfigError(
+            f"{config.boot_disk_type} size must be a multiple of "
+            f"{_NINETY_THREE_GIB_DISK_INCREMENT} GiB"
+        )
 
 
 @dataclass(frozen=True)

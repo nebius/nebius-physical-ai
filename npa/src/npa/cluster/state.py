@@ -84,6 +84,7 @@ class NodeGroupState:
     public_ip: bool = False
     autoscaling_min: int | None = None
     autoscaling_max: int | None = None
+    boot_disk_type: str = ""
     boot_disk_size_gib: int = 0
     gpu_cluster_id: str = ""
 
@@ -104,6 +105,7 @@ class NodeGroupState:
                 public_ip=public_ip,
                 autoscaling_min=_optional_int(data.get("autoscaling_min")),
                 autoscaling_max=_optional_int(data.get("autoscaling_max")),
+                boot_disk_type=str(data.get("boot_disk_type", "") or ""),
                 boot_disk_size_gib=int(data.get("boot_disk_size_gib", 0) or 0),
                 gpu_cluster_id=str(data.get("gpu_cluster_id", "") or ""),
             )

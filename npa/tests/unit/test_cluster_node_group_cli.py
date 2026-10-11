@@ -73,6 +73,7 @@ def _node_group(state: str = "RUNNING") -> NodeGroupInfo:
 def _b200_node_group(
     state: str = "RUNNING",
     gpu_cluster_id: str = "computegpucluster-test",
+    boot_disk_type: str = "network_ssd",
     boot_disk_size_gib: int = 1280,
 ) -> NodeGroupInfo:
     return NodeGroupInfo(
@@ -85,6 +86,7 @@ def _b200_node_group(
         platform="gpu-b200-sxm",
         preset="8gpu-160vcpu-1792gb",
         gpu_type="b200",
+        boot_disk_type=boot_disk_type,
         boot_disk_size_gib=boot_disk_size_gib,
         gpu_cluster_id=gpu_cluster_id,
     )
@@ -187,7 +189,62 @@ def test_add_b200_node_group_verifies_fabric_attachment(monkeypatch) -> None:
     assert seen_configs[0].boot_disk_size_gib == 1280
     assert seen_configs[0].driver_preset == "cuda13.0"
     assert saved[-1].gpu_cluster_id == "computegpucluster-test"
+    assert saved[-1].boot_disk_type == "network_ssd"
     assert "GPU-cluster attachment: verified" in result.output
+
+
+def test_add_b200_node_group_forwards_and_verifies_alternate_disk_type(
+    monkeypatch,
+) -> None:
+    seen_configs: list[NodeGroupConfig] = []
+
+    class FakeClient:
+        def __init__(self, **kwargs) -> None:
+            pass
+
+        def get_cluster(self, name, *, project_id=""):
+            return _cluster()
+
+        def create_gpu_node_group(self, config, cluster_id):
+            seen_configs.append(config)
+            return _b200_node_group(
+                state="PROVISIONING",
+                boot_disk_type="network_ssd_io_m3",
+                boot_disk_size_gib=1302,
+            )
+
+        def wait_for_node_group_ready(self, cluster_id, name, **kwargs):
+            return _b200_node_group(
+                boot_disk_type="network_ssd_io_m3", boot_disk_size_gib=1302
+            )
+
+    monkeypatch.setattr(node_group_mod, "MK8sClient", FakeClient)
+    monkeypatch.setattr(
+        node_group_mod, "load_cluster_state", lambda name: _cluster_state()
+    )
+    monkeypatch.setattr(node_group_mod, "save_node_group_state", lambda state: None)
+
+    result = runner.invoke(
+        app,
+        [
+            "node-group",
+            "add",
+            "--cluster-name",
+            "cluster-a",
+            "--gpu-type",
+            "b200",
+            "--gpu-cluster-id",
+            "computegpucluster-test",
+            "--boot-disk-type",
+            "network_ssd_io_m3",
+            "--boot-disk-size-gib",
+            "1302",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen_configs[0].boot_disk_type == "network_ssd_io_m3"
+    assert "Boot disk: network_ssd_io_m3/1302 GiB" in result.output
 
 
 def test_add_b200_node_group_rejects_provider_attachment_drift(monkeypatch) -> None:
@@ -264,6 +321,50 @@ def test_add_b200_node_group_rejects_provider_disk_drift(monkeypatch) -> None:
 
     assert result.exit_code == 1
     assert "boot disk smaller" in result.output
+
+
+def test_add_b200_node_group_rejects_provider_disk_type_drift(monkeypatch) -> None:
+    class FakeClient:
+        def __init__(self, **kwargs) -> None:
+            pass
+
+        def get_cluster(self, name, *, project_id=""):
+            return _cluster()
+
+        def create_gpu_node_group(self, config, cluster_id):
+            return _b200_node_group(state="PROVISIONING", boot_disk_size_gib=1302)
+
+        def wait_for_node_group_ready(self, cluster_id, name, **kwargs):
+            return _b200_node_group(
+                boot_disk_type="network_ssd", boot_disk_size_gib=1302
+            )
+
+    monkeypatch.setattr(node_group_mod, "MK8sClient", FakeClient)
+    monkeypatch.setattr(
+        node_group_mod, "load_cluster_state", lambda name: _cluster_state()
+    )
+    monkeypatch.setattr(node_group_mod, "save_node_group_state", lambda state: None)
+
+    result = runner.invoke(
+        app,
+        [
+            "node-group",
+            "add",
+            "--cluster-name",
+            "cluster-a",
+            "--gpu-type",
+            "b200",
+            "--gpu-cluster-id",
+            "computegpucluster-test",
+            "--boot-disk-type",
+            "network_ssd_io_m3",
+            "--boot-disk-size-gib",
+            "1302",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "boot disk type" in result.output
 
 
 def test_add_b200_rejects_unsafe_operator_driver_mode(monkeypatch) -> None:

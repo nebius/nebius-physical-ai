@@ -47,14 +47,16 @@ def _node_group(name: str = "cluster-a-h100-gpu", state: str = "RUNNING") -> dic
     }
 
 
-def _b200_node_group(state: str = "RUNNING") -> dict:
+def _b200_node_group(
+    state: str = "RUNNING", boot_disk_type: str = "network_ssd"
+) -> dict:
     payload = _node_group(name="cluster-a-b200-gpu", state=state)
     template = payload["spec"]["template"]
     template["resources"] = {
         "platform": "gpu-b200-sxm",
         "preset": "8gpu-160vcpu-1792gb",
     }
-    template["boot_disk"] = {"size_gibibytes": "1023", "type": "network_ssd"}
+    template["boot_disk"] = {"size_gibibytes": "1023", "type": boot_disk_type}
     template["gpu_cluster"] = {"id": "computegpucluster-test"}
     return payload
 
@@ -207,6 +209,31 @@ def test_create_b200_node_group_binds_fabric_and_reviewed_disk() -> None:
     assert args[args.index("--template-gpu-cluster-id") + 1] == "computegpucluster-test"
 
 
+def test_create_b200_node_group_forwards_alternate_disk_class() -> None:
+    calls: list[list[str]] = []
+
+    def run(args, **kwargs):
+        calls.append(args)
+        return _result(_b200_node_group(boot_disk_type="network_ssd_io_m3"))
+
+    client = MK8sClient(
+        nebius_bin="nebius", subprocess_runner=run, sleep=lambda _: None
+    )
+    config = NodeGroupConfig(
+        cluster_name="cluster-a",
+        gpu_type="b200",
+        gpu_cluster_id="computegpucluster-test",
+        boot_disk_type="network_ssd_io_m3",
+        boot_disk_size_gib=1302,
+    )
+
+    client.create_gpu_node_group(config, "mk8scluster-a")
+
+    args = calls[0]
+    assert args[args.index("--template-boot-disk-type") + 1] == "network_ssd_io_m3"
+    assert args[args.index("--template-boot-disk-size-gibibytes") + 1] == "1302"
+
+
 def test_parse_b200_node_group_preserves_attachment_and_disk() -> None:
     client = MK8sClient(nebius_bin="nebius")
 
@@ -214,7 +241,17 @@ def test_parse_b200_node_group_preserves_attachment_and_disk() -> None:
 
     assert info.gpu_type == "b200"
     assert info.gpu_cluster_id == "computegpucluster-test"
+    assert info.boot_disk_type == "network_ssd"
     assert info.boot_disk_size_gib == 1023
+
+
+def test_parse_b200_node_group_normalizes_provider_disk_type_enum() -> None:
+    client = MK8sClient(nebius_bin="nebius")
+    payload = _b200_node_group(boot_disk_type="NETWORK_SSD_IO_M3")
+
+    info = client._node_group_from_dict(payload, cluster_id="mk8scluster-a")
+
+    assert info.boot_disk_type == "network_ssd_io_m3"
 
 
 def test_get_node_group_uses_name_fallback_after_id_miss() -> None:
