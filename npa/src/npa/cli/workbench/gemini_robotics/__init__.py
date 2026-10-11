@@ -169,4 +169,3 @@ def eval_cmd(
         raise  # pragma: no cover - _fail raises
     console.print(json.dumps(receipt, indent=2))
     return receipt
-

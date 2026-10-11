@@ -13,6 +13,7 @@ The student runs locally with no API key, no latency, and no per-call cost.
 """
 
 from __future__ import annotations
+import tempfile
 
 import argparse
 import json
@@ -285,10 +286,11 @@ def train_student(
     torch.save(
         {
             "state_dict": policy.state_dict(),
-            "obs_mean": obs_mean,
-            "obs_std": obs_std,
-            "act_mean": act_mean,
-            "act_std": act_std,
+            # Stored as tensors so weights_only=True can load safely.
+            "obs_mean": torch.as_tensor(obs_mean),
+            "obs_std": torch.as_tensor(obs_std),
+            "act_mean": torch.as_tensor(act_mean),
+            "act_std": torch.as_tensor(act_std),
         },
         ckpt_path,
     )
@@ -313,7 +315,11 @@ def eval_student(
         checkpoint = str(ctx["checkpoint"])
     else:
         config = ctx
-    ckpt = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    ckpt = torch.load(checkpoint, map_location="cpu", weights_only=True)
+    # Normalization stats were saved as tensors; convert to numpy.
+    for k in ("obs_mean", "obs_std", "act_mean", "act_std"):
+        if torch.is_tensor(ckpt[k]):
+            ckpt[k] = ckpt[k].numpy()
     policy = nn.Sequential(
         nn.Linear(12, 128),
         nn.ReLU(),
@@ -383,7 +389,8 @@ def _config_from_context(ctx: dict[str, Any]) -> DistillConfig:
         task=str(ctx.get("task", "")),
         images=list(ctx.get("images", [])),
         model=str(ctx.get("model", "")),
-        output_dir=str(ctx.get("output_dir", "/tmp/gemini-distill")),
+        output_dir=str(ctx.get("output_dir", ""))
+        or tempfile.mkdtemp(prefix="gemini-distill-"),
         n_demos=int(ctx.get("n_demos", 200)),
         train_epochs=int(ctx.get("train_epochs", 60)),
         eval_episodes=int(ctx.get("eval_episodes", 20)),

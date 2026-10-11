@@ -35,9 +35,11 @@ def _load_stage(dotted: str):
     return getattr(module, func_name)
 
 
-
-def _submit_nebius_gpu_job(stage: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+def _submit_nebius_gpu_job(
+    stage: dict[str, Any], context: dict[str, Any]
+) -> dict[str, Any]:
     """Submit a GPU stage to Nebius and wait for completion. Returns job logs."""
+    import os
     import subprocess
     import time
 
@@ -53,12 +55,22 @@ def _submit_nebius_gpu_job(stage: dict[str, Any], context: dict[str, Any]) -> di
     command = stage["nebius_command"]
 
     cmd = [
-        "nebius", "--profile", "agent-sa", "ai", "job", "create",
-        "--name", f"workflow-{name}",
-        "--image", image,
-        "--platform", platform,
-        "--preset", "1gpu-16vcpu-200gb",
-        "--subnet-id", "NEBIUS_SUBNET_ID_PLACEHOLDER",
+        "nebius",
+        "--profile",
+        "agent-sa",
+        "ai",
+        "job",
+        "create",
+        "--name",
+        f"workflow-{name}",
+        "--image",
+        image,
+        "--platform",
+        platform,
+        "--preset",
+        "1gpu-16vcpu-200gb",
+        "--subnet-id",
+        os.environ.get("NEBIUS_SUBNET_ID", ""),
     ]
     for f in files:
         cmd += ["--inject-file", f]
@@ -75,16 +87,29 @@ def _submit_nebius_gpu_job(stage: dict[str, Any], context: dict[str, Any]) -> di
         time.sleep(30)
         r = subprocess.run(
             ["nebius", "--profile", "agent-sa", "ai", "job", "list"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         for line in r.stdout.split("\n"):
             if job_id in line:
                 if "COMPLETED" in line:
                     print(f"  job {job_id} COMPLETED")
                     lr = subprocess.run(
-                        ["nebius", "--profile", "agent-sa", "ai", "job", "logs",
-                         job_id, "--tail", "100"],
-                        capture_output=True, text=True, timeout=30,
+                        [
+                            "nebius",
+                            "--profile",
+                            "agent-sa",
+                            "ai",
+                            "job",
+                            "logs",
+                            job_id,
+                            "--tail",
+                            "100",
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
                     )
                     return {"job_id": job_id, "logs": lr.stdout, "platform": platform}
                 elif "FAILED" in line:
