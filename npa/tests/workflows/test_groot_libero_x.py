@@ -188,8 +188,14 @@ def _prepare(client: FakeS3, run_id: str = "groot-libero-x-fixture") -> dict[str
     }
     _put_json(client, training_uri, training)
     _put_json(client, evaluation_uri, evaluation)
+    _put_json(
+        client,
+        "s3://bucket/run/evaluation-data/meta/info.json",
+        {"chunks_size": 1_000},
+    )
     client.seed(
-        "s3://bucket/run/evaluation-data/meta/info.json", b"real-format-metadata"
+        "s3://bucket/run/evaluation-data/data/chunk-000/episode_000000.parquet",
+        b"real-format-parquet",
     )
     inventory = workflow._object_inventory(client, "s3://bucket/run/evaluation-data/")
     _put_json(
@@ -273,8 +279,14 @@ def test_observed_paired_protocol_refuses_held_out_or_generalization_labels() ->
     output_uri = "s3://bucket/run/prepared/observed-protocol.json"
     observed = {"schema": workflow.OBSERVED_TASKS_SCHEMA, "tasks": [_task("seen-0")]}
     _put_json(client, observed_uri, observed)
+    _put_json(
+        client,
+        "s3://bucket/run/evaluation-data/meta/info.json",
+        {"chunks_size": 1_000},
+    )
     client.seed(
-        "s3://bucket/run/evaluation-data/meta/info.json", b"real-format-metadata"
+        "s3://bucket/run/evaluation-data/data/chunk-000/episode_000000.parquet",
+        b"real-format-parquet",
     )
     inventory = workflow._object_inventory(client, "s3://bucket/run/evaluation-data/")
     _put_json(
@@ -307,6 +319,52 @@ def test_observed_paired_protocol_refuses_held_out_or_generalization_labels() ->
     assert protocol["rollout_protocol"]["initial_state_protocol"].startswith(
         "Isaac-GR00T reset seed batches"
     )
+
+
+def test_observed_paired_preparation_refuses_unmaterialized_trajectory() -> None:
+    client = FakeS3()
+    observed_uri = "s3://bucket/run/inputs/observed.json"
+    dataset_uri = "s3://bucket/run/inputs/dataset.json"
+    output_uri = "s3://bucket/run/prepared/observed-protocol.json"
+    observed = {"schema": workflow.OBSERVED_TASKS_SCHEMA, "tasks": [_task("seen-0")]}
+    _put_json(client, observed_uri, observed)
+    _put_json(
+        client,
+        "s3://bucket/run/evaluation-data/meta/info.json",
+        {"chunks_size": 1_000},
+    )
+    client.seed(
+        "s3://bucket/run/evaluation-data/data/chunk-000/episode_000024.parquet",
+        b"different-selected-episode",
+    )
+    inventory = workflow._object_inventory(client, "s3://bucket/run/evaluation-data/")
+    _put_json(
+        client,
+        dataset_uri,
+        {
+            "schema": workflow.DATASET_SCHEMA,
+            "source": {
+                "repo": workflow.LIBERO_X_REPO,
+                "revision": workflow.LIBERO_X_REVISION,
+                "license": "CC-BY-4.0",
+            },
+            "evaluation_task_manifest_sha256": workflow._json_hash(observed),
+            "materialized": {
+                "uri": "s3://bucket/run/evaluation-data/",
+                "object_inventory_sha256": inventory["sha256"],
+            },
+        },
+    )
+
+    with pytest.raises(
+        workflow.GrootVisualizationError,
+        match="omits required trajectory parquet files",
+    ):
+        workflow.prepare_observed_paired_evaluation(
+            observed_uri, dataset_uri, output_uri, "observed-run", s3_client=client
+        )
+
+    assert ("bucket", "run/prepared/observed-protocol.json") not in client.objects
 
 
 def test_observed_paired_tasks_require_direct_bddl_provenance() -> None:

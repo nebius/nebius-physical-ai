@@ -519,6 +519,38 @@ def _validate_dataset_manifest(
     return {"source": dict(dataset), "materialized": inventory}
 
 
+def _validate_materialized_trajectory_files(
+    client: Any, dataset: Mapping[str, Any], tasks: Sequence[Mapping[str, Any]]
+) -> None:
+    """Require each native rollout trajectory parquet before GPU admission."""
+
+    materialized = dataset["materialized"]
+    dataset_uri = str(materialized["uri"])
+    ref = _split_s3(dataset_uri, require_key=False)
+    prefix = ref.key.rstrip("/")
+    object_prefix = f"{prefix}/" if prefix else ""
+    info = _read_s3_json(client, f"s3://{ref.bucket}/{object_prefix}meta/info.json")
+    chunk_size = info.get("chunks_size")
+    if (
+        isinstance(chunk_size, bool)
+        or not isinstance(chunk_size, int)
+        or chunk_size < 1
+    ):
+        raise GrootVisualizationError(
+            "materialized LeRobot dataset has an invalid chunks_size"
+        )
+    expected = {
+        f"data/chunk-{trajectory_id // chunk_size:03d}/episode_{trajectory_id:06d}.parquet"
+        for task in tasks
+        for trajectory_id in task["trajectory_ids"]
+    }
+    available = {str(item["key"]) for item in materialized["objects"]}
+    if not expected.issubset(available):
+        raise GrootVisualizationError(
+            "materialized dataset omits required trajectory parquet files"
+        )
+
+
 def prepare_evaluation(
     training_task_manifest_uri: str,
     evaluation_task_manifest_uri: str,
@@ -553,6 +585,7 @@ def prepare_evaluation(
         _read_s3_json(client, evaluation_dataset_manifest_uri),
         evaluation_hash=evaluation_hash,
     )
+    _validate_materialized_trajectory_files(client, dataset, eval_rows)
     protocol = {
         "schema": PROTOCOL_SCHEMA,
         "status": "prepared",
@@ -611,6 +644,7 @@ def prepare_observed_paired_evaluation(
         _read_s3_json(client, evaluation_dataset_manifest_uri),
         evaluation_hash=task_hash,
     )
+    _validate_materialized_trajectory_files(client, dataset, tasks)
     protocol = {
         "schema": PROTOCOL_SCHEMA,
         "status": "prepared",
