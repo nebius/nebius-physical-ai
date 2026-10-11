@@ -78,10 +78,10 @@ def test_private_recipe_uses_audited_snapshot_and_no_easydict_wheel() -> None:
     assert "from wan.utils.easydict import EasyDict" in text
     assert not re.search(r"pip install[^\n]*easydict", text)
     assert "import easydict" in text  # The build proves that it remains absent.
-    assert "apt-get purge -y --allow-remove-essential --auto-remove" in text
-    assert (
-        "git git-lfs liberror-perl libperl5.36 perl perl-base perl-modules-5.36" in text
-    )
+    assert "apt-get purge -y --auto-remove git git-lfs" in text
+    assert "--allow-remove-essential" not in text
+    assert "libperl5.36" not in text
+    assert "perl-modules-5.36" not in text
     switchworld_source = SWITCHWORLD.read_text(encoding="utf-8")
     assert "codeload.github.com/yizhiqianbi/SwitchWorld/tar.gz/" in switchworld_source
     assert "SWITCHWORLD_ARCHIVE_SHA256" in switchworld_source
