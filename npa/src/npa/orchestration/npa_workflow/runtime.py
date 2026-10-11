@@ -228,6 +228,7 @@ def _image_identity(render_options: SkypilotRenderOptions) -> str:
     bindings = sorted(
         (str(reference), str(resolved))
         for reference, resolved in render_options.image_digest_pins.items()
+        if str(reference) != str(resolved)
     )
     overrides = sorted(
         (str(selector), str(reference))
