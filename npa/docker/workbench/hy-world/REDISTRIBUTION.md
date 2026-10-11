@@ -15,7 +15,7 @@ candidate**. It has no public OCI digest or accepted HY GPU capability result.
 - External trajectory VLM: `Qwen/Qwen3-VL-8B-Instruct@0c351dd01ed87e9c1b53cbc748cba10e6187ff3b` (model card: Apache-2.0), served by an operator-owned vLLM deployment.
 - Trajectory and WorldMirror dependencies: ZIM `naver-iv/zim-anything-vitl@667e2d7c233f6f1cacd12ccc64bdf6cc7b5aa16d` (CC-BY-4.0), Grounding DINO `IDEA-Research/grounding-dino-tiny@a2bb814dd30d776dcf7e30523b00659f4f141c71` (Apache-2.0), DINOv2 `facebook/dinov2-base@f9e44c814b77203eaa57a6bdbbd535f21ede1415` (Apache-2.0), MoGe `Ruicheng/moge-2-vitl-normal@cb0e8bbd6b1e243589717c78e750b1ba4c093acf` (MIT), and Uni3C `ewrfcas/Uni3C@fca895f7fb454f4dfed43956cab09180d0946318` (Apache-2.0).
 - Meta SAM 3: `facebook/sam3@3c879f39826c281e95690f02c7821c4de09afae7` (model card: `other`, gated; the operator must complete Meta/Hugging Face approval separately).
-- Runtime native dependencies: `facebookresearch/pytorch3d@88e182f989c80836f4bd744e0d9cb1852762ce01` (BSD-3-Clause) and `flash-attn==2.8.3` (BSD-3-Clause). The upstream source's custom gsplat and NavMesh extensions are compiled only in the operator cache from the pinned HY-World source and recursively pinned Recast submodule.
+- Runtime native dependencies: `facebookresearch/pytorch3d@88e182f989c80836f4bd744e0d9cb1852762ce01` (BSD-3-Clause), `flash-attn==2.8.3` (BSD-3-Clause), and `rtree==1.4.1` (MIT) for WorldNav's Trimesh spatial index. The upstream source's custom gsplat and NavMesh extensions are compiled only in the operator cache from the pinned HY-World source and recursively pinned Recast submodule.
 - The native trainer's `torchmetrics==1.9.0` LPIPS VGG backbone is fetched to the isolated Torch Hub cache from `https://download.pytorch.org/models/vgg16-397923af.pth`. Its official filename prefix and full SHA-256 `397923af8e79cdbb6a7127f12361acd7a2f83e06b05044ddf496e83de57a5bf0` are checked and recorded per run. Torchmetrics ships its LPIPS linear-layer weights in its package. Rerun reporting is installed separately as `rerun-sdk==0.31.4` because it requires NumPy 2 while upstream native dependencies require `numpy==1.26.4` and `scipy==1.14.1`.
 
 The Tencent agreement defines HY-WORLD 2.0 to include its models, trained
@@ -35,7 +35,7 @@ their use under the Agreement.
 | --- | --- |
 | Tencent source | Not baked. `hy-world-runtime ensure` fetches the exact Git commit and recursive gitlinks into the operator cache after exact component-access checks. |
 | Baked runtime | Digest-pinned CUDA 12.8 development bootstrap, compiler toolchain, ffmpeg, git, uv, Hugging Face client, and NPA-owned validation/report scripts. It contains no Python environment, model, source tree, extension binary, cache, input, or output. Private built-byte validation does not make the candidate publicly redistributable or qualify the HY runtime pipeline. |
-| Weights | Tencent HY-World and WorldStereo, its Wan I2V base, Qwen Image, ZIM, Grounding DINO, DINOv2, SAM 3, MoGe, and Uni3C are never baked. Runtime fetch pins exact Hub revisions and switches Hub access offline afterwards. The separate LPIPS VGG backbone is cached from its pinned official Torch URL with a recorded full digest. |
+| Weights | Tencent HY-World and WorldStereo, its Wan I2V base, Qwen Image, ZIM, Grounding DINO, DINOv2, SAM 3, MoGe, and Uni3C are never baked. Runtime fetch pins exact Hub revisions, switches upstream access offline, maps WorldStereo's declared Wan ID to its local snapshot, and verifies its sharded Diffusers index there. The separate LPIPS VGG backbone is cached from its pinned official Torch URL with a recorded full digest. |
 | Data/assets | No input, sample scene, panorama, mesh, or camera data is baked. The operator supplies one image through the declared private S3 input object. |
 | Caches | Source, virtualenv, checkpoint, and Hub blobs are operator-owned runtime bytes beneath the existing model-cache mount. They never enter OCI layers or output metadata. |
 | Outputs | Generated panoramas, videos, 3DGS PLY/SPZ assets, mesh if emitted, cameras, and RRD remain run artifacts. They may be inspected/rendered, but this workflow has no trainer or robot-policy consumer because Tencent Section 5(b) forbids using Outputs to improve another AI model. |
@@ -57,6 +57,7 @@ scale, mesh collision validity, or robot-policy simulation.
 
 Upstream's dependency files do not provide a complete hash lock for every
 ordinary Python package. This candidate replaces the mutable PyTorch3D source
-line with an immutable commit and pins FlashAttention, then records the full
-resolved package inventory and recursive submodule state from the actual run.
+line with an immutable commit, pins FlashAttention and the WorldNav spatial
+index package `rtree==1.4.1`, then records the full resolved package inventory
+and recursive submodule state from the actual run.
 That is run provenance, not a claim of a fully hash-locked third-party closure.

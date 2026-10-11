@@ -39,6 +39,7 @@ readonly PYTORCH_WHEEL_INDEX="https://download.pytorch.org/whl/cu128"
 readonly TORCH_VERSION="2.7.1+cu128"
 readonly TORCHVISION_VERSION="0.22.1+cu128"
 readonly TORCHMETRICS_VERSION="1.9.0"
+readonly RTREE_VERSION="1.4.1"
 readonly NATIVE_NUMPY_VERSION="1.26.4"
 readonly NATIVE_SCIPY_VERSION="1.14.1"
 readonly RERUN_SDK_VERSION="0.31.4"
@@ -46,7 +47,7 @@ readonly VGG16_WEIGHTS_URL="https://download.pytorch.org/models/vgg16-397923af.p
 readonly VGG16_WEIGHTS_FILENAME="vgg16-397923af.pth"
 readonly VGG16_WEIGHTS_SHA256_PREFIX="397923af"
 readonly VGG16_WEIGHTS_SHA256="397923af8e79cdbb6a7127f12361acd7a2f83e06b05044ddf496e83de57a5bf0"
-readonly RUNTIME_CONTRACT_REVISION="hy-world-hub-ref-report-env-model-closure-v1"
+readonly RUNTIME_CONTRACT_REVISION="hy-world-hub-ref-report-env-model-closure-v2"
 readonly RUNTIME_BOOTSTRAP_SHA256="$(sha256sum "${BASH_SOURCE[0]}" | awk '{print $1}')"
 
 # Resolve this once, before configure_runtime_hf_cache repoints HF_HOME at this
@@ -206,7 +207,7 @@ verify_runtime_contract() {
   contract="$tree/npa_runtime_contract.json"
   python3 - "$contract" "$RUNTIME_CONTRACT_REVISION" "$TORCH_VERSION" \
     "$TORCHVISION_VERSION" "$PYTORCH_WHEEL_INDEX" "$NATIVE_NUMPY_VERSION" \
-    "$NATIVE_SCIPY_VERSION" "$TORCHMETRICS_VERSION" "$RERUN_SDK_VERSION" \
+    "$NATIVE_SCIPY_VERSION" "$TORCHMETRICS_VERSION" "$RTREE_VERSION" "$RERUN_SDK_VERSION" \
     "$VGG16_WEIGHTS_SHA256" "$RUNTIME_BOOTSTRAP_SHA256" <<'PY'
 import json
 import sys
@@ -221,6 +222,7 @@ from pathlib import Path
     native_numpy,
     native_scipy,
     torchmetrics,
+    rtree,
     rerun_sdk,
     vgg16_sha256,
     bootstrap_sha256,
@@ -239,6 +241,7 @@ expected = {
     "native_numpy": str(native_numpy),
     "native_scipy": str(native_scipy),
     "torchmetrics": str(torchmetrics),
+    "rtree": str(rtree),
     "report_rerun_sdk": str(rerun_sdk),
     "vgg16_sha256": str(vgg16_sha256),
     "bootstrap_sha256": str(bootstrap_sha256),
@@ -253,7 +256,7 @@ write_runtime_contract() {
   contract="$tree/npa_runtime_contract.json"
   "$(runtime_python)" - "$contract" "$RUNTIME_CONTRACT_REVISION" "$TORCH_VERSION" \
     "$TORCHVISION_VERSION" "$PYTORCH_WHEEL_INDEX" "$NATIVE_NUMPY_VERSION" \
-    "$NATIVE_SCIPY_VERSION" "$TORCHMETRICS_VERSION" "$RERUN_SDK_VERSION" \
+    "$NATIVE_SCIPY_VERSION" "$TORCHMETRICS_VERSION" "$RTREE_VERSION" "$RERUN_SDK_VERSION" \
     "$VGG16_WEIGHTS_SHA256" "$RUNTIME_BOOTSTRAP_SHA256" <<'PY'
 import json
 import sys
@@ -268,6 +271,7 @@ from pathlib import Path
     native_numpy,
     native_scipy,
     torchmetrics,
+    rtree,
     rerun_sdk,
     vgg16_sha256,
     bootstrap_sha256,
@@ -282,6 +286,7 @@ payload = {
     "native_numpy": str(native_numpy),
     "native_scipy": str(native_scipy),
     "torchmetrics": str(torchmetrics),
+    "rtree": str(rtree),
     "report_rerun_sdk": str(rerun_sdk),
     "vgg16_sha256": str(vgg16_sha256),
     "bootstrap_sha256": str(bootstrap_sha256),
@@ -304,14 +309,15 @@ install_upstream_requirements() {
     && grep -qx 'torchvision==0.22.1' "$tree/requirements.txt" \
     && grep -qx "numpy==${NATIVE_NUMPY_VERSION}" "$tree/requirements.txt" \
     && grep -qx "scipy==${NATIVE_SCIPY_VERSION}" "$tree/requirements.txt" \
-    && grep -qx 'torchmetrics' "$tree/requirements.txt" || {
+    && grep -qx 'torchmetrics' "$tree/requirements.txt" \
+    && ! grep -qE '^rtree([<>=!~].*)?$' "$tree/requirements.txt" || {
       echo "npa-hy-world: upstream native requirements drifted from the reviewed runtime closure" >&2
       exit "$EX_SOFTWARE"
     }
   requirements="$tree/npa_requirements_without_torch.txt"
   sed -E '/^(torch|torchvision)==/d; /^torchmetrics$/d' "$tree/requirements.txt" > "$requirements"
   uv pip install --python "$python" -r "$requirements" \
-    "torchmetrics==${TORCHMETRICS_VERSION}"
+    "torchmetrics==${TORCHMETRICS_VERSION}" "rtree==${RTREE_VERSION}"
 }
 
 install_report_runtime() {
@@ -328,23 +334,25 @@ record_native_dependency_identity() {
   tree="$1"
   python="$tree/.venv/bin/python"
   "$python" - "$tree/npa_native_dependency_identity.json" \
-    "$NATIVE_NUMPY_VERSION" "$NATIVE_SCIPY_VERSION" "$TORCHMETRICS_VERSION" <<'PY'
+    "$NATIVE_NUMPY_VERSION" "$NATIVE_SCIPY_VERSION" "$TORCHMETRICS_VERSION" "$RTREE_VERSION" <<'PY'
 import json
 import sys
 from importlib import metadata
 from pathlib import Path
 
 path = Path(sys.argv[1])
-expected_numpy, expected_scipy, expected_torchmetrics = sys.argv[2:]
+expected_numpy, expected_scipy, expected_torchmetrics, expected_rtree = sys.argv[2:]
 observed = {
     "numpy": metadata.version("numpy"),
     "scipy": metadata.version("scipy"),
     "torchmetrics": metadata.version("torchmetrics"),
+    "rtree": metadata.version("rtree"),
 }
 expected = {
     "numpy": expected_numpy,
     "scipy": expected_scipy,
     "torchmetrics": expected_torchmetrics,
+    "rtree": expected_rtree,
 }
 if observed != expected:
     raise SystemExit(f"native dependency closure drifted: {observed}")
@@ -722,6 +730,158 @@ verify_hub_snapshot_files() {
   done
 }
 
+link_hub_snapshot_alias() {
+  local root="$1" model="$2" ref="$3" snapshot namespace model_alias target
+  [[ "$model" =~ ^[[:alnum:]_.-]+/[[:alnum:]_.-]+$ ]] || {
+    echo "npa-hy-world: unsafe model alias: $model" >&2
+    exit "$EX_SOFTWARE"
+  }
+  snapshot="$(hub_cache_directory "$model")/snapshots/$ref"
+  namespace="$root/${model%%/*}"
+  model_alias="$root/$model"
+  [[ -d "$snapshot" ]] || {
+    echo "npa-hy-world: pinned model snapshot is absent: $model@$ref" >&2
+    exit "$EX_SOFTWARE"
+  }
+  [[ ! -L "$namespace" ]] || {
+    echo "npa-hy-world: upstream model namespace is a symlink: $namespace" >&2
+    exit "$EX_SOFTWARE"
+  }
+  mkdir -p "$namespace"
+  [[ ! -e "$model_alias" || -L "$model_alias" ]] || {
+    echo "npa-hy-world: upstream model alias conflicts with source tree: $model_alias" >&2
+    exit "$EX_SOFTWARE"
+  }
+  target="$(readlink -f "$snapshot")"
+  if [[ -L "$model_alias" ]]; then
+    [[ "$(readlink -f "$model_alias")" == "$target" ]] || {
+      echo "npa-hy-world: upstream model alias disagrees with pinned snapshot: $model" >&2
+      exit "$EX_SOFTWARE"
+    }
+    return
+  fi
+  ln -s "$target" "$model_alias"
+}
+
+verify_worldstereo_base_models() {
+  local snapshot
+  snapshot="$(hub_cache_directory "$WORLD_STEREO_MODEL")/snapshots/$WORLD_STEREO_REF"
+  "$(runtime_python)" - "$snapshot" "$WAN_I2V_MODEL" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+snapshot = Path(sys.argv[1])
+expected = sys.argv[2]
+configs = sorted(snapshot.glob("worldstereo-*/config.json"))
+if not configs:
+    raise SystemExit("WorldStereo snapshot has no model configuration")
+for config in configs:
+    try:
+        base_model = json.loads(config.read_text(encoding="utf-8"))["base_model"]
+    except (OSError, KeyError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"WorldStereo configuration is unreadable: {config}: {exc}") from exc
+    if base_model != str(expected):
+        raise SystemExit(f"WorldStereo base model disagrees with the pinned snapshot: {base_model}")
+PY
+}
+
+prepare_offline_worldstereo_aliases() {
+  local worldgen="$1"
+  verify_worldstereo_base_models
+  link_hub_snapshot_alias "$worldgen" "$WORLD_STEREO_MODEL" "$WORLD_STEREO_REF"
+  link_hub_snapshot_alias "$worldgen" "$WAN_I2V_MODEL" "$WAN_I2V_REF"
+}
+
+verify_offline_wan_sharded_snapshot() {
+  local tree="$1" snapshot receipt
+  snapshot="$(hub_cache_directory "$WAN_I2V_MODEL")/snapshots/$WAN_I2V_REF"
+  receipt="$tree/npa_wan_offline_shard_resolution.json"
+  "$(runtime_python)" - "$snapshot" "$receipt" "$WAN_I2V_MODEL" "$WAN_I2V_REF" <<'PY'
+import hashlib
+import json
+import os
+import sys
+from pathlib import Path
+
+from diffusers.utils.hub_utils import _get_checkpoint_shard_files
+
+snapshot, receipt = map(Path, sys.argv[1:3])
+model, revision = sys.argv[3:]
+if os.environ.get("HF_HUB_OFFLINE") != "1":
+    raise SystemExit("WAN shard validation requires offline Hub mode")
+indices = sorted((snapshot / "transformer").glob("*.safetensors.index.json"))
+if len(indices) != 1:
+    raise SystemExit("WAN snapshot must contain exactly one transformer shard index")
+snapshot_root = snapshot.resolve()
+blob_root = (snapshot.parent.parent / "blobs").resolve()
+def validate_hub_path(path):
+    path = Path(path)
+    for lexical_root in (snapshot, blob_root):
+        try:
+            relative = path.relative_to(lexical_root)
+        except ValueError:
+            continue
+        if ".." in relative.parts:
+            raise SystemExit(f"WAN shard path traverses its snapshot: {path}")
+        break
+    else:
+        raise SystemExit(f"WAN shard path escapes its snapshot: {path}")
+    resolved = path.resolve(strict=True)
+    for root in (snapshot_root, blob_root):
+        try:
+            resolved.relative_to(root)
+            return resolved
+        except ValueError:
+            pass
+    raise SystemExit(f"WAN shard bytes escape the pinned repository cache: {path}")
+validate_hub_path(indices[0])
+shards, metadata = _get_checkpoint_shard_files(
+    str(snapshot), str(indices[0]), local_files_only=True, subfolder="transformer"
+)
+for shard in shards:
+    validate_hub_path(shard)
+digest = hashlib.sha256(indices[0].read_bytes()).hexdigest()
+payload = {
+    "schema": "npa.hy_world.wan_offline_shards.v1",
+    "repository": model,
+    "revision": revision,
+    "index_sha256": digest,
+    "shard_count": len(shards),
+    "weight_map_entries": len(metadata["weight_map"]),
+}
+temporary = receipt.with_suffix(receipt.suffix + ".tmp")
+temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+temporary.replace(receipt)
+PY
+}
+
+verify_worldnav_handoff() {
+  local scene="$1"
+  "$(runtime_python)" - "$scene/navmesh/reconstruct_pairs.json" <<'PY'
+import json
+import math
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+if not path.is_file():
+    raise SystemExit("WorldNav did not write navmesh/reconstruct_pairs.json")
+try:
+    pairs = json.loads(path.read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError) as exc:
+    raise SystemExit(f"WorldNav reconstruct-pairs JSON is unreadable: {exc}") from exc
+if not isinstance(pairs, list) or any(not isinstance(pair, dict) for pair in pairs):
+    raise SystemExit("WorldNav reconstruct-pairs JSON must be a list of objects")
+for pair in pairs:
+    target = pair.get("target_pt")
+    if not isinstance(target, list) or len(target) != 3:
+        raise SystemExit("WorldNav reconstruct pair lacks a 3D target point")
+    if not all(isinstance(value, (int, float)) and math.isfinite(value) for value in target):
+        raise SystemExit("WorldNav reconstruct pair has a non-finite target point")
+PY
+}
+
 fetch_models() {
   local root model_manifest lock
   validate_runtime_paths
@@ -825,6 +985,7 @@ torch_auxiliary_assets = tree / "npa_torch_auxiliary_assets.json"
 submodules = tree / "npa_submodules.txt"
 runtime_contract = tree / "npa_runtime_contract.json"
 torch_probe = tree / "npa_torch_cuda_probe.json"
+wan_shards = tree / "npa_wan_offline_shard_resolution.json"
 for required in (
     inventory,
     report_inventory,
@@ -834,6 +995,7 @@ for required in (
     submodules,
     runtime_contract,
     torch_probe,
+    wan_shards,
 ):
     if not required.is_file():
         raise SystemExit(f"required runtime provenance is absent: {required}")
@@ -858,6 +1020,7 @@ payload = {
         "flash_attn": {"package": "flash-attn", "version": "2.8.3"},
         "gsplat_maskgaussian": {"source_ref": "df9988efb87bfc0f4947eb3889411cf957478b06"},
         "navmesh": {"source_ref": "df9988efb87bfc0f4947eb3889411cf957478b06"},
+        "rtree": {"package": "rtree", "version": "1.4.1"},
     },
     "container_image": str(image),
     "resolved_python_packages": {"path": "npa_resolved_inventory.txt", "sha256": sha256(inventory)},
@@ -869,6 +1032,7 @@ payload = {
     "model_snapshot_revisions": {"path": "npa_model_snapshot_revisions.json", "sha256": sha256(model_manifest)},
     "runtime_contract": {"path": "npa_runtime_contract.json", "sha256": sha256(runtime_contract)},
     "torch_cuda_probe": {"path": "npa_torch_cuda_probe.json", "sha256": sha256(torch_probe)},
+    "wan_offline_shards": {"path": "npa_wan_offline_shard_resolution.json", "sha256": sha256(wan_shards)},
 }
 out.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 Path(out.parent / "npa_resolved_inventory.txt").write_bytes(inventory.read_bytes())
@@ -880,6 +1044,7 @@ Path(out.parent / "npa_submodules.txt").write_bytes(submodules.read_bytes())
 Path(out.parent / "npa_model_snapshot_revisions.json").write_bytes(model_manifest.read_bytes())
 Path(out.parent / "npa_runtime_contract.json").write_bytes(runtime_contract.read_bytes())
 Path(out.parent / "npa_torch_cuda_probe.json").write_bytes(torch_probe.read_bytes())
+Path(out.parent / "npa_wan_offline_shard_resolution.json").write_bytes(wan_shards.read_bytes())
 PY
 }
 
@@ -916,6 +1081,8 @@ run_image_to_world() {
   ln -sfn "$HF_HOME/hub" "$upstream_hub"
   export HOME="$upstream_home"
   export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+  prepare_offline_worldstereo_aliases "$worldgen"
+  verify_offline_wan_sharded_snapshot "$tree"
   "$python" "$tree/hyworld2/panogen/pipeline_with_qwen_image.py" \
     --image "$input" --prompt "$prompt" --seed "${HY_WORLD_SEED:-42}" --save "$scene/panorama.png"
   (
@@ -924,10 +1091,11 @@ run_image_to_world() {
       --llm_addr "$NPA_HY_WORLD_LLM_ADDR" --llm_port "${NPA_HY_WORLD_LLM_PORT:-8000}" \
       --llm_name "${NPA_HY_WORLD_LLM_NAME:-$QWEN_VLM_MODEL}" \
       --apply_nav_traj --apply_up_route --apply_recon_iteration --force_vlm
+    verify_worldnav_handoff "$scene"
     "$tree/.venv/bin/torchrun" --nproc_per_node=8 traj_render.py --target_path "$scene" \
       --llm_addr "$NPA_HY_WORLD_LLM_ADDR" --llm_port "${NPA_HY_WORLD_LLM_PORT:-8000}" \
       --llm_name "${NPA_HY_WORLD_LLM_NAME:-$QWEN_VLM_MODEL}"
-    "$tree/.venv/bin/torchrun" --nproc_per_node=8 video_gen.py --target_path "$scene" --fsdp
+    "$tree/.venv/bin/torchrun" --nproc_per_node=8 video_gen.py --target_path "$scene" --fsdp --local_files_only
     "$tree/.venv/bin/torchrun" --nproc_per_node=8 gen_gs_data.py --root_path "$scene" --save_normal --split_sky
     "$python" -m world_gs_trainer default --data_dir "$scene/gs_data" --result_dir "$result" \
       --max_steps 1500 --save_steps 1500 --eval_steps 1500 --ply_steps 1500 --save_ply --convert_to_spz \

@@ -36,13 +36,21 @@ promoted from this candidate.
 | Trajectory VLM | `Qwen/Qwen3-VL-8B-Instruct@0c351dd01ed87e9c1b53cbc748cba10e6187ff3b` | operator-private vLLM, started with the exact recipe below |
 | Trajectory and WorldMirror components | ZIM `667e2d7…`; Grounding DINO `a2bb814…`; DINOv2 `f9e44c8…`; SAM 3 `3c879f3…`; MoGe `cb0e8bb…`; Uni3C `fca895f…` | operator runtime fetch |
 | Trainer LPIPS VGG backbone | `https://download.pytorch.org/models/vgg16-397923af.pth` SHA-256 `397923af8e79cdbb6a7127f12361acd7a2f83e06b05044ddf496e83de57a5bf0` | isolated operator Torch Hub cache; official URL prefix and complete digest checked |
-| Native runtime dependencies | PyTorch3D `88e182f989c80836f4bd744e0d9cb1852762ce01`; `flash-attn==2.8.3` | compiled in operator cache |
+| Native runtime dependencies | PyTorch3D `88e182f989c80836f4bd744e0d9cb1852762ce01`; `flash-attn==2.8.3`; `rtree==1.4.1` for the released WorldNav spatial index | compiled/resolved in operator cache |
 
 The image contains none of Tencent source, weights, runtime source tree,
 extension binary, input, cache, or generated output. A run records the selected
 image digest, source/component revisions, separate native/report Python
 inventories, cached LPIPS VGG digest, camera and generated-asset hashes in
 `hy_world_image_to_world.json`.
+
+The runtime maps every released WorldStereo configuration's pinned Wan base
+model ID to its exact local Hub snapshot and resolves the sharded Diffusers
+index in offline mode before inference. It never falls back to a mutable Hub
+revision or an online model lookup. It also requires the released WorldNav
+handoff `navmesh/reconstruct_pairs.json`: camera trajectories alone do not
+prove NavMesh completion. An empty reconstruct-pair list is retained as the
+factual no-target result, not a navigability or robot-policy claim.
 
 ## Prerequisites before a build or submission
 
@@ -668,8 +676,10 @@ The primary evidence is `hy_world_image_to_world.json`. It binds the source and
 model revisions, selected immutable image, resolved packages/submodules and
 hashes for the panorama, WorldStereo/rendered videos, cameras, PLY/SPZ and
 Rerun report. The report is emitted only after the decoder, finite-camera and
-scene-asset validators succeed. A placeholder, echoed manifest, generic mesh,
-or multi-view reconstruction cannot satisfy this contract.
+scene-asset validators succeed. It additionally records the completed WorldNav
+reconstruct-pair handoff, so regular trajectories cannot stand in for a
+successful NavMesh branch. A placeholder, echoed manifest, generic mesh, or
+multi-view reconstruction cannot satisfy this contract.
 
 Generated assets can be handed to consumers that accept the declared camera,
 scene and Rerun artifact schemas, but the coordinate system remains upstream

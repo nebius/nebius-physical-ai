@@ -45,6 +45,7 @@ UNI3C_REF = "fca895f7fb454f4dfed43956cab09180d0946318"
 PYTORCH3D_REPOSITORY = "https://github.com/facebookresearch/pytorch3d.git"
 PYTORCH3D_REF = "88e182f989c80836f4bd744e0d9cb1852762ce01"
 FLASH_ATTN_VERSION = "2.8.3"
+RTREE_VERSION = "1.4.1"
 
 EVIDENCE_SCHEMA = "npa.workbench.byof.hy_world_image_to_world.v1"
 PRIMARY_CAPABILITY = "hy_world_2_image_conditioned_world_generation"
@@ -240,6 +241,34 @@ def _validate_camera_files(
     return records
 
 
+def _validate_worldnav_handoff(scene_dir: Path) -> dict[str, Any]:
+    """Require the upstream NavMesh handoff instead of inferring it from cameras."""
+
+    path = scene_dir / "navmesh" / "reconstruct_pairs.json"
+    try:
+        pairs = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HyWorldEvidenceError(
+            f"WorldNav reconstruct-pairs evidence is invalid: {path}: {exc}"
+        ) from exc
+    _require(
+        isinstance(pairs, list) and all(isinstance(pair, dict) for pair in pairs),
+        "WorldNav reconstruct-pairs evidence must be a list of objects",
+    )
+    for pair in pairs:
+        target = pair.get("target_pt")
+        _require(
+            isinstance(target, list)
+            and len(target) == 3
+            and all(
+                isinstance(value, (int, float)) and math.isfinite(value)
+                for value in target
+            ),
+            "WorldNav reconstruct pair lacks a finite 3D target point",
+        )
+    return {**_record(path, root=scene_dir), "reconstruct_pair_count": len(pairs)}
+
+
 def _model_provenance(metadata: Mapping[str, Any]) -> dict[str, Any]:
     expected = {
         "source_repository": SOURCE_REPOSITORY,
@@ -275,6 +304,7 @@ def _model_provenance(metadata: Mapping[str, Any]) -> dict[str, Any]:
             "flash_attn": {"package": "flash-attn", "version": FLASH_ATTN_VERSION},
             "gsplat_maskgaussian": {"source_ref": SOURCE_REF},
             "navmesh": {"source_ref": SOURCE_REF},
+            "rtree": {"package": "rtree", "version": RTREE_VERSION},
         },
     }
     for name, value in expected.items():
@@ -295,6 +325,7 @@ def _model_provenance(metadata: Mapping[str, Any]) -> dict[str, Any]:
         ("model_snapshot_revisions", "npa_model_snapshot_revisions.json"),
         ("runtime_contract", "npa_runtime_contract.json"),
         ("torch_cuda_probe", "npa_torch_cuda_probe.json"),
+        ("wan_offline_shards", "npa_wan_offline_shard_resolution.json"),
     ):
         record = metadata.get(name)
         _require(isinstance(record, Mapping), f"runtime metadata lacks {name}")
@@ -341,6 +372,7 @@ def build_evidence(
     )
     _required_one(worldstereo, "WorldStereo expansion video")
     cameras = _find_files(scene_dir, "render_results/**/camera.json")
+    worldnav = _validate_worldnav_handoff(scene_dir)
     splat = _required_one(_find_files(result_dir, "**/*.ply"), "trained 3DGS PLY")
     compressed = _required_one(
         _find_files(result_dir, "**/*.spz"), "compressed 3DGS SPZ"
@@ -378,6 +410,7 @@ def build_evidence(
         },
         "worldstereo_expansion_videos": generated_videos,
         "trajectory_cameras": _validate_camera_files(cameras, root=scene_dir),
+        "worldnav": worldnav,
         "scene_assets": {
             "ply": _record(splat, root=result_dir),
             "spz": _record(compressed, root=result_dir),

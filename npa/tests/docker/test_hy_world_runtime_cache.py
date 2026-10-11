@@ -27,6 +27,38 @@ def _bash(
     )
 
 
+def _fake_diffusers(root: Path) -> Path:
+    """Provide the sharded-resolver boundary without downloading a model."""
+
+    module = root / "diffusers" / "utils"
+    module.mkdir(parents=True)
+    (root / "diffusers" / "__init__.py").write_text("", encoding="utf-8")
+    (module / "__init__.py").write_text("", encoding="utf-8")
+    (module / "hub_utils.py").write_text(
+        """
+import json
+import os
+from pathlib import Path
+
+
+def _get_checkpoint_shard_files(snapshot, index, *, local_files_only, subfolder):
+    assert local_files_only is True
+    assert subfolder == \"transformer\"
+    index_path = Path(index)
+    payload = json.loads(index_path.read_text(encoding=\"utf-8\"))
+    paths = [index_path.parent / name for name in payload[\"weight_map\"].values()]
+    if os.environ.get(\"NPA_TEST_RETURN_BLOB_PATHS\") == \"1\":
+        paths = [path.resolve() for path in paths]
+    return (
+        [str(path) for path in paths],
+        {\"weight_map\": payload[\"weight_map\"]},
+    )
+""".lstrip(),
+        encoding="utf-8",
+    )
+    return root
+
+
 def test_default_runtime_root_is_frozen_before_hf_cache_isolated(
     tmp_path: Path,
 ) -> None:
@@ -203,6 +235,250 @@ def test_grounding_dino_snapshot_refuses_missing_processor_metadata(
     assert "pinned Hugging Face snapshot is missing config.json" in result.stderr
 
 
+def test_worldstereo_aliases_use_pinned_snapshots_and_reject_source_symlinks(
+    tmp_path: Path,
+) -> None:
+    """Model-ID aliases cannot redirect the offline loader outside WorldGen."""
+
+    worldgen = tmp_path / "worldgen"
+    receipt = tmp_path / "result.txt"
+    result = _bash(
+        "\n".join(
+            (
+                f"source {RUNTIME}",
+                'runtime_python() { printf "%s\\n" "$NPA_TEST_PYTHON"; }',
+                "configure_runtime_hf_cache",
+                'worldstereo="$(hub_cache_directory "$WORLD_STEREO_MODEL")/snapshots/$WORLD_STEREO_REF"',
+                'wan="$(hub_cache_directory "$WAN_I2V_MODEL")/snapshots/$WAN_I2V_REF"',
+                'mkdir -p "$worldstereo/worldstereo-memory-dmd" "$wan"',
+                'printf \'%s\\n\' \'{"base_model": "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers"}\' > "$worldstereo/worldstereo-memory-dmd/config.json"',
+                f"mkdir -p {worldgen}",
+                f"prepare_offline_worldstereo_aliases {worldgen}",
+                f'printf "%s\\n%s\\n" "$(readlink -f {worldgen}/hanshanxue/WorldStereo)" "$(readlink -f {worldgen}/Wan-AI/Wan2.1-I2V-14B-480P-Diffusers)" > {receipt}',
+            )
+        ),
+        environment={
+            "NPA_HY_WORLD_RUNTIME_CACHE": str(tmp_path / "runtime"),
+            "NPA_HY_WORLD_RUNTIME_LIBRARY": "1",
+            "NPA_TEST_PYTHON": sys.executable,
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    aliases = receipt.read_text(encoding="utf-8").splitlines()
+    assert aliases[0].endswith(
+        "models--hanshanxue--WorldStereo/snapshots/ac2ad97ecb043fe80c2f19cd1898006becb9d66e"
+    )
+    assert aliases[1].endswith(
+        "models--Wan-AI--Wan2.1-I2V-14B-480P-Diffusers/snapshots/b184e23a8a16b20f108f727c902e769e873ffc73"
+    )
+
+    escaped = tmp_path / "escaped"
+    escaped.mkdir()
+    (worldgen / "Wan-AI" / "Wan2.1-I2V-14B-480P-Diffusers").unlink()
+    (worldgen / "Wan-AI").rmdir()
+    (worldgen / "Wan-AI").symlink_to(escaped, target_is_directory=True)
+    collision = _bash(
+        "\n".join(
+            (
+                f"source {RUNTIME}",
+                'runtime_python() { printf "%s\\n" "$NPA_TEST_PYTHON"; }',
+                "configure_runtime_hf_cache",
+                f"prepare_offline_worldstereo_aliases {worldgen}",
+            )
+        ),
+        environment={
+            "NPA_HY_WORLD_RUNTIME_CACHE": str(tmp_path / "runtime"),
+            "NPA_HY_WORLD_RUNTIME_LIBRARY": "1",
+            "NPA_TEST_PYTHON": sys.executable,
+        },
+    )
+
+    assert collision.returncode != 0
+    assert "upstream model namespace is a symlink" in collision.stderr
+    assert not (escaped / "Wan2.1-I2V-14B-480P-Diffusers").exists()
+
+
+def test_wan_sharded_resolver_accepts_hub_blob_symlinks_but_not_escaped_paths(
+    tmp_path: Path,
+) -> None:
+    """The actual verifier accepts normal Hub blobs and refuses traversal."""
+
+    fake_modules = _fake_diffusers(tmp_path / "modules")
+    receipt = tmp_path / "wan-resolution.json"
+    result = _bash(
+        "\n".join(
+            (
+                f"source {RUNTIME}",
+                'runtime_python() { printf "%s\\n" "$NPA_TEST_PYTHON"; }',
+                "configure_runtime_hf_cache",
+                'cache="$(hub_cache_directory "$WAN_I2V_MODEL")"',
+                'snapshot="$cache/snapshots/$WAN_I2V_REF"',
+                'mkdir -p "$cache/blobs" "$snapshot/transformer"',
+                'printf \'%s\\n\' \'{"weight_map": {"transformer.weight": "model-00001-of-00001.safetensors"}}\' > "$cache/blobs/index"',
+                'printf weight > "$cache/blobs/shard"',
+                'ln -s ../../../blobs/index "$snapshot/transformer/model.safetensors.index.json"',
+                'ln -s ../../../blobs/shard "$snapshot/transformer/model-00001-of-00001.safetensors"',
+                'mkdir -p "$(source_tree)"',
+                "export HF_HUB_OFFLINE=1",
+                'verify_offline_wan_sharded_snapshot "$(source_tree)"',
+                f'cp "$(source_tree)/npa_wan_offline_shard_resolution.json" {receipt}',
+            )
+        ),
+        environment={
+            "NPA_HY_WORLD_RUNTIME_CACHE": str(tmp_path / "runtime"),
+            "NPA_HY_WORLD_RUNTIME_LIBRARY": "1",
+            "NPA_TEST_PYTHON": sys.executable,
+            "PYTHONPATH": str(fake_modules),
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(receipt.read_text(encoding="utf-8")) == {
+        "index_sha256": "1ec575028a26d148cef741008b1fb9d07ed3967fa34c6009dc9d1a29571cbace",
+        "repository": "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers",
+        "revision": "b184e23a8a16b20f108f727c902e769e873ffc73",
+        "schema": "npa.hy_world.wan_offline_shards.v1",
+        "shard_count": 1,
+        "weight_map_entries": 1,
+    }
+
+    direct_blob_receipt = tmp_path / "wan-resolution-direct-blobs.json"
+    direct_blob = _bash(
+        "\n".join(
+            (
+                f"source {RUNTIME}",
+                'runtime_python() { printf "%s\\n" "$NPA_TEST_PYTHON"; }',
+                "configure_runtime_hf_cache",
+                'mkdir -p "$(source_tree)"',
+                "export HF_HUB_OFFLINE=1 NPA_TEST_RETURN_BLOB_PATHS=1",
+                'verify_offline_wan_sharded_snapshot "$(source_tree)"',
+                f'cp "$(source_tree)/npa_wan_offline_shard_resolution.json" {direct_blob_receipt}',
+            )
+        ),
+        environment={
+            "NPA_HY_WORLD_RUNTIME_CACHE": str(tmp_path / "runtime"),
+            "NPA_HY_WORLD_RUNTIME_LIBRARY": "1",
+            "NPA_TEST_PYTHON": sys.executable,
+            "PYTHONPATH": str(fake_modules),
+        },
+    )
+
+    assert direct_blob.returncode == 0, direct_blob.stderr
+    assert (
+        json.loads(direct_blob_receipt.read_text(encoding="utf-8"))["shard_count"] == 1
+    )
+
+    outside = tmp_path / "outside.safetensors"
+    outside.write_bytes(b"outside")
+    external = _bash(
+        "\n".join(
+            (
+                f"source {RUNTIME}",
+                'runtime_python() { printf "%s\\n" "$NPA_TEST_PYTHON"; }',
+                "configure_runtime_hf_cache",
+                'cache="$(hub_cache_directory "$WAN_I2V_MODEL")"',
+                'snapshot="$cache/snapshots/$WAN_I2V_REF"',
+                'ln -sfn "$NPA_TEST_OUTSIDE" "$snapshot/transformer/model-00001-of-00001.safetensors"',
+                "export HF_HUB_OFFLINE=1",
+                'verify_offline_wan_sharded_snapshot "$(source_tree)"',
+            )
+        ),
+        environment={
+            "NPA_HY_WORLD_RUNTIME_CACHE": str(tmp_path / "runtime"),
+            "NPA_HY_WORLD_RUNTIME_LIBRARY": "1",
+            "NPA_TEST_OUTSIDE": str(outside),
+            "NPA_TEST_PYTHON": sys.executable,
+            "PYTHONPATH": str(fake_modules),
+        },
+    )
+
+    assert external.returncode != 0
+    assert "bytes escape the pinned repository cache" in external.stderr
+
+    escaped = _bash(
+        "\n".join(
+            (
+                f"source {RUNTIME}",
+                'runtime_python() { printf "%s\\n" "$NPA_TEST_PYTHON"; }',
+                "configure_runtime_hf_cache",
+                'cache="$(hub_cache_directory "$WAN_I2V_MODEL")"',
+                'snapshot="$cache/snapshots/$WAN_I2V_REF"',
+                'printf "%s\\n" \'{"weight_map": {"transformer.weight": "../escaped.safetensors"}}\' > "$cache/blobs/index"',
+                "export HF_HUB_OFFLINE=1",
+                'verify_offline_wan_sharded_snapshot "$(source_tree)"',
+            )
+        ),
+        environment={
+            "NPA_HY_WORLD_RUNTIME_CACHE": str(tmp_path / "runtime"),
+            "NPA_HY_WORLD_RUNTIME_LIBRARY": "1",
+            "NPA_TEST_PYTHON": sys.executable,
+            "PYTHONPATH": str(fake_modules),
+        },
+    )
+
+    assert escaped.returncode != 0
+    assert "traverses its snapshot" in escaped.stderr
+
+
+def test_worldnav_handoff_requires_a_real_reconstruct_pairs_file(
+    tmp_path: Path,
+) -> None:
+    """Regular cameras cannot substitute for WorldNav's explicit handoff."""
+
+    scene = tmp_path / "scene"
+    pairs = scene / "navmesh" / "reconstruct_pairs.json"
+    pairs.parent.mkdir(parents=True)
+    pairs.write_text('[{"target_pt": [1.0, 2.0, 3.0]}]', encoding="utf-8")
+    result = _bash(
+        "\n".join(
+            (
+                f"source {RUNTIME}",
+                'runtime_python() { printf "%s\\n" "$NPA_TEST_PYTHON"; }',
+                f"verify_worldnav_handoff {scene}",
+            )
+        ),
+        environment={
+            "NPA_HY_WORLD_RUNTIME_LIBRARY": "1",
+            "NPA_TEST_PYTHON": sys.executable,
+        },
+    )
+    assert result.returncode == 0, result.stderr
+
+    pairs.write_text("[]", encoding="utf-8")
+    no_target = _bash(
+        "\n".join(
+            (
+                f"source {RUNTIME}",
+                'runtime_python() { printf "%s\\n" "$NPA_TEST_PYTHON"; }',
+                f"verify_worldnav_handoff {scene}",
+            )
+        ),
+        environment={
+            "NPA_HY_WORLD_RUNTIME_LIBRARY": "1",
+            "NPA_TEST_PYTHON": sys.executable,
+        },
+    )
+    assert no_target.returncode == 0, no_target.stderr
+
+    pairs.unlink()
+    missing = _bash(
+        "\n".join(
+            (
+                f"source {RUNTIME}",
+                'runtime_python() { printf "%s\\n" "$NPA_TEST_PYTHON"; }',
+                f"verify_worldnav_handoff {scene}",
+            )
+        ),
+        environment={
+            "NPA_HY_WORLD_RUNTIME_LIBRARY": "1",
+            "NPA_TEST_PYTHON": sys.executable,
+        },
+    )
+    assert missing.returncode != 0
+    assert "WorldNav did not write" in missing.stderr
+
+
 def test_completed_cache_layout_is_checked_for_relocated_console_scripts(
     tmp_path: Path,
 ) -> None:
@@ -291,6 +567,7 @@ def test_runtime_contract_retains_the_exact_pytorch_wheel_index(tmp_path: Path) 
         (tree / "npa_runtime_contract.json").read_text(encoding="utf-8")
     )
     assert contract["pytorch_wheel_index"] == "https://download.pytorch.org/whl/cu128"
+    assert contract["rtree"] == "1.4.1"
     assert contract["vgg16_sha256"] == (
         "397923af8e79cdbb6a7127f12361acd7a2f83e06b05044ddf496e83de57a5bf0"
     )
@@ -427,6 +704,7 @@ def test_requirements_install_keeps_non_torch_requirements(tmp_path: Path) -> No
         "-r",
         str(tree / "npa_requirements_without_torch.txt"),
         "torchmetrics==1.9.0",
+        "rtree==1.4.1",
     ]
     assert copied_requirements.read_text(encoding="utf-8") == (
         "numpy==1.26.4\nscipy==1.14.1\nkept-package==3.0\n"

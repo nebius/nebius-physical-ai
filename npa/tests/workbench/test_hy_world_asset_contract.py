@@ -69,6 +69,7 @@ def _metadata() -> dict[str, object]:
             },
             "gsplat_maskgaussian": {"source_ref": contract.SOURCE_REF},
             "navmesh": {"source_ref": contract.SOURCE_REF},
+            "rtree": {"package": "rtree", "version": contract.RTREE_VERSION},
         },
         "container_image": "example.invalid/npa-hy-world@sha256:" + "0" * 64,
         "resolved_python_packages": {
@@ -104,6 +105,10 @@ def _metadata() -> dict[str, object]:
             "path": "npa_torch_cuda_probe.json",
             "sha256": "5" * 64,
         },
+        "wan_offline_shards": {
+            "path": "npa_wan_offline_shard_resolution.json",
+            "sha256": "a" * 64,
+        },
     }
 
 
@@ -126,6 +131,7 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
     (scene / "render_results/view0/traj0/camera.json").write_text(
         json.dumps({"c2w": [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]})
     )
+    _write(scene / "navmesh/reconstruct_pairs.json", b"[]\n")
     _write(
         result / "ply/point_cloud.ply",
         b"ply\nformat ascii 1.0\nelement vertex 1\nend_header\n" + b"0 " * 200,
@@ -179,6 +185,7 @@ def test_full_pipeline_evidence_requires_generated_assets(tmp_path: Path) -> Non
         contract.REPORT_CAPABILITY,
     ]
     assert evidence["trajectory_cameras"][0]["finite_matrix_count"] == 1
+    assert evidence["worldnav"]["reconstruct_pair_count"] == 0
     assert evidence["rendered_camera_dataset"]["decode"]["decoded_frames"] == 12
     assert "metric_or_calibrated_scene_scale" in evidence["not_claimed"]
 
@@ -187,6 +194,22 @@ def test_worldmirror_only_or_placeholder_output_does_not_pass(tmp_path: Path) ->
     scene, result, input_image = _fixture(tmp_path)
     (scene / "render_results/view0/traj0/worldstereo-memory-dmd_result.mp4").unlink()
     with pytest.raises(contract.HyWorldEvidenceError, match="WorldStereo"):
+        contract.build_evidence(
+            scene_dir=scene,
+            result_dir=result,
+            input_image=input_image,
+            runtime_metadata=_metadata(),
+            image_checker=_image,
+            video_checker=_video,
+        )
+
+
+def test_regular_trajectories_do_not_imply_worldnav_success(tmp_path: Path) -> None:
+    """A caught upstream NavMesh error must not pass as a navigation handoff."""
+
+    scene, result, input_image = _fixture(tmp_path)
+    (scene / "navmesh/reconstruct_pairs.json").unlink()
+    with pytest.raises(contract.HyWorldEvidenceError, match="WorldNav"):
         contract.build_evidence(
             scene_dir=scene,
             result_dir=result,
@@ -256,6 +279,48 @@ def test_runtime_provenance_requires_the_torch_cuda_probe(tmp_path: Path) -> Non
     metadata = _metadata()
     metadata.pop("torch_cuda_probe")
     with pytest.raises(contract.HyWorldEvidenceError, match="torch_cuda_probe"):
+        contract.build_evidence(
+            scene_dir=scene,
+            result_dir=result,
+            input_image=input_image,
+            runtime_metadata=metadata,
+            image_checker=_image,
+            video_checker=_video,
+        )
+
+
+def test_runtime_provenance_requires_offline_wan_shard_resolution(
+    tmp_path: Path,
+) -> None:
+    """The sharded Diffusers resolver remains bound to the immutable cache."""
+
+    scene, result, input_image = _fixture(tmp_path)
+    metadata = _metadata()
+    metadata.pop("wan_offline_shards")
+    with pytest.raises(contract.HyWorldEvidenceError, match="wan_offline_shards"):
+        contract.build_evidence(
+            scene_dir=scene,
+            result_dir=result,
+            input_image=input_image,
+            runtime_metadata=metadata,
+            image_checker=_image,
+            video_checker=_video,
+        )
+
+
+def test_runtime_provenance_requires_the_pinned_worldnav_spatial_index(
+    tmp_path: Path,
+) -> None:
+    """WorldNav evidence binds the rtree package that upstream actually imports."""
+
+    scene, result, input_image = _fixture(tmp_path)
+    metadata = _metadata()
+    dependencies = metadata["runtime_build_dependencies"]
+    assert isinstance(dependencies, dict)
+    dependencies.pop("rtree")
+    with pytest.raises(
+        contract.HyWorldEvidenceError, match="runtime_build_dependencies"
+    ):
         contract.build_evidence(
             scene_dir=scene,
             result_dir=result,
