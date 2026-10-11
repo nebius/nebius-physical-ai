@@ -109,6 +109,8 @@ USER ubuntu
 # license/notice files are kept alongside for attribution.
 RUN git clone --filter=blob:none "${COSMOS3_SOURCE_REPO}" "${COSMOS3_REPO}" \
     && git -C "${COSMOS3_REPO}" checkout --detach "${COSMOS3_REF}" \
+    && git -C "${COSMOS3_REPO}" rev-parse HEAD > "${COSMOS3_REPO}/.npa_source_revision" \
+    && test "$(cat "${COSMOS3_REPO}/.npa_source_revision")" = "${COSMOS3_REF}" \
     && mkdir -p /opt/cosmos3/licenses \
     && cp "${COSMOS3_REPO}/LICENSE" "${COSMOS3_REPO}/NOTICE" \
        "${COSMOS3_REPO}/ATTRIBUTIONS.md" /opt/cosmos3/licenses/ \

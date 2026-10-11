@@ -71,6 +71,11 @@ TOOL_REF_IMAGE_TOOL: dict[str, str | None] = {
     "workbench.cosmos3.policy_eval": "cosmos3",
     "workbench.cosmos3.policy_feedback": "cosmos3",
     "workbench.cosmos3.failure_candidates": "cosmos3",
+    "workbench.cosmos3.droid_fd_prepare": "cosmos3",
+    "workbench.cosmos3.droid_fd_predict": "cosmos3",
+    "workbench.cosmos3.droid_fd_controls": "cosmos3",
+    "workbench.cosmos3.droid_fd_evaluate": "cosmos3",
+    "workbench.cosmos3.droid_fd_visualize": "cosmos3",
     "workbench.cosmos3.generate_variants": "cosmos3",
     "workbench.cosmos3.prepare_video_input": "cosmos3",
     "workbench.cosmos3.checkpoint_eval": "cosmos3",
@@ -159,6 +164,16 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     # This entry explicitly disables the parent Cosmos3 hint: the public Nano
     # checkpoint is downloaded anonymously and this toolRef passes --no-guardrails.
     "workbench.cosmos3.text_to_image": (),
+    # The DROID derivative shards and its two card-pinned auxiliary payloads
+    # accept anonymous reads, but the upstream native prediction invocation
+    # also fetches its pinned Cosmos-Guardrail1 payload.  Forward an existing
+    # operator-scoped read token only to the two inference steps so that
+    # guardrails stay enabled and the request is not made anonymously.
+    "workbench.cosmos3.droid_fd_prepare": (),
+    "workbench.cosmos3.droid_fd_predict": ("HF_TOKEN",),
+    "workbench.cosmos3.droid_fd_controls": ("HF_TOKEN",),
+    "workbench.cosmos3.droid_fd_evaluate": (),
+    "workbench.cosmos3.droid_fd_visualize": (),
     "workbench.cosmos3.super_benchmark": (
         "HF_TOKEN",
         "AWS_ACCESS_KEY_ID",
