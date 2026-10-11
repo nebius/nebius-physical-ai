@@ -6702,6 +6702,36 @@ def test_exact_managed_job_lookup_preserves_absent_vs_unavailable(
     assert "provider unavailable" in unavailable.error
 
 
+@pytest.mark.parametrize(
+    ("stderr", "expected_outcome"),
+    [
+        ("", "absent"),
+        ("PermissionDenied: queue access denied\n", "unavailable"),
+    ],
+)
+def test_exact_managed_job_lookup_requires_noncontradictory_queue_diagnostics(
+    monkeypatch, tmp_path, stderr, expected_outcome
+) -> None:
+    """Only an empty queue without conflicting diagnostics proves absence."""
+
+    from npa.orchestration.skypilot.workflow import lookup_managed_job
+
+    sky_bin = _fake_sky(tmp_path)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout="[]\n", stderr=stderr
+        ),
+    )
+
+    evidence = lookup_managed_job("exact-run", sky_bin=sky_bin)
+
+    assert evidence.outcome == expected_outcome
+    if expected_outcome == "unavailable":
+        assert "malformed, ambiguous, or schema-invalid JSON" in evidence.error
+
+
 def test_exact_managed_job_lookup_accepts_real_0_12_2_empty_queue(
     monkeypatch, tmp_path
 ) -> None:

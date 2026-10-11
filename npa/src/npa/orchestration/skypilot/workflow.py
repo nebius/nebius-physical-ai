@@ -2946,7 +2946,7 @@ def lookup_managed_job(
         )
         return ManagedJobEvidence("unavailable", error=redact_text(detail))
     else:
-        parsed_jobs = queue_rows_from_output(result.stdout)
+        parsed_jobs = verified_structured_queue_rows(result)
         if parsed_jobs is None:
             return ManagedJobEvidence(
                 "unavailable",
