@@ -210,6 +210,8 @@ def test_isolated_creation_and_refresh_preserve_explicit_configuration(
 def test_new_profile_rejects_public_and_symlink_directories(fake_cli, tmp_path):
     public = tmp_path / "public"
     public.mkdir(mode=0o755)
+    # Preserve the public-directory rejection case under a private operator umask.
+    public.chmod(0o755)
     with pytest.raises(AuthenticationError, match="private directory"):
         nebius_login.create_human_profile("personal", public / "nebius.yaml")
     link = tmp_path / "linked"
