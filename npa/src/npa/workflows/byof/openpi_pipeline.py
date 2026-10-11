@@ -1549,7 +1549,12 @@ def _memory_stats(device: Any) -> dict[str, object]:
 
 
 def _publish_pi05_component(
-    args: argparse.Namespace, stage: int, name: str, evidence: str
+    args: argparse.Namespace,
+    stage: int,
+    name: str,
+    evidence: str,
+    *,
+    require_gpu: bool = True,
 ) -> None:
     root = str(getattr(args, "component_root_uri", "") or "")
     if not root:
@@ -1561,7 +1566,7 @@ def _publish_pi05_component(
         stage=stage,
         name=name,
         tier="WORKS",
-        require_gpu=True,
+        require_gpu=require_gpu,
         evidence=evidence,
         artifacts={"result": args.output_uri, "runtime_image": args.runtime_image},
     )
@@ -2331,6 +2336,7 @@ def _artifact_preflight(args: argparse.Namespace) -> int:
         4,
         "pi05_public_artifact_preflight",
         "Proved anonymous Polaris payload access and generation/checksum provenance.",
+        require_gpu=False,
     )
     print(json.dumps(result, sort_keys=True), flush=True)
     return 0

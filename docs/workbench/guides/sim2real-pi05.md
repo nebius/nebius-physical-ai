@@ -11,6 +11,10 @@ by the workflow manager. Publication checks both the OCI revision label and
 the baked adapter. OpenPI identifies `/opt/venv/bin/python` as its baked NPA
 interpreter through `NPA_BAKED_PYTHON`.
 
+The public artifact-access preflight runs on CPU and publishes source and image
+provenance without querying GPU devices. Training and checkpoint reload retain
+their required live GPU provenance.
+
 ## What the graph proves
 
 The workflow first runs a differential-IK Franka expert in Isaac physics. The

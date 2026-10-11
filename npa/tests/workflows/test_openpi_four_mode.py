@@ -28,6 +28,7 @@ from npa.workflows.byof import openpi_pipeline as pipeline
 from npa.workflows.byof import openpi_service as service
 from npa.workflows.byof import openpi_live
 from npa.workflows.byof import openpi_service_rbac as service_rbac
+from npa.workflows.sim2real import workflow_io
 
 ROOT = Path(__file__).resolve().parents[3]
 SPEC = ROOT / "workflows" / "testing" / "openpi-pi05-four-mode.yaml"
@@ -159,6 +160,21 @@ def test_public_artifact_preflight_requires_no_npa_consent_secret(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     output = tmp_path / "artifact-preflight.json"
+    uploads: dict[str, dict[str, object]] = {}
+
+    class LocalStorage:
+        def upload_file(self, local_file: str, uri: str) -> str:
+            uploads[uri] = json.loads(Path(local_file).read_text())
+            return uri
+
+    def unexpected_gpu_query(*_args, **_kwargs):
+        pytest.fail("public artifact preflight must publish without querying a GPU")
+
+    monkeypatch.setattr(workflow_io, "storage", lambda: LocalStorage())
+    monkeypatch.setattr(workflow_io.subprocess, "run", unexpected_gpu_query)
+    monkeypatch.setenv("NPA_IMAGE_SOURCE_SHA", "1" * 40)
+    monkeypatch.setenv("NPA_SIM2REAL_SOURCE_SHA", "1" * 40)
+    monkeypatch.setenv("NPA_TASK_IMAGE", DIGEST_IMAGE)
     monkeypatch.delenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", raising=False)
     monkeypatch.setattr(
         pipeline,
@@ -189,6 +205,8 @@ def test_public_artifact_preflight_requires_no_npa_consent_secret(
                 str(output),
                 "--runtime-image",
                 DIGEST_IMAGE,
+                "--component-root-uri",
+                "s3://example-bucket/preflight",
             ]
         )
         == 0
@@ -199,6 +217,38 @@ def test_public_artifact_preflight_requires_no_npa_consent_secret(
     assert result["required_runtime_payloads"]["tokenizer"]["size"] == 4_264_023
     assert result["credential_required"] is False
     assert result["npa_terms_attestation_required"] is False
+    record = uploads["s3://example-bucket/preflight/components/stage_04.json"]
+    assert record["tier"] == "WORKS"
+    assert record["artifacts"]["source_sha"] == "1" * 40
+    assert record["artifacts"]["image"] == DIGEST_IMAGE
+    assert "gpu_products" not in record["artifacts"]
+    history = (
+        "s3://example-bucket/preflight/components/history/stage_04/"
+        + record["content_sha256"]
+        + ".json"
+    )
+    assert uploads[history] == record
+
+
+@pytest.mark.parametrize("stage", [8, 9])
+def test_training_and_reload_component_publication_still_require_gpu_evidence(
+    monkeypatch: pytest.MonkeyPatch, stage: int
+) -> None:
+    monkeypatch.setenv("NPA_IMAGE_SOURCE_SHA", "1" * 40)
+    monkeypatch.setenv("NPA_SIM2REAL_SOURCE_SHA", "1" * 40)
+    monkeypatch.setenv("NPA_TASK_IMAGE", DIGEST_IMAGE)
+
+    def missing_gpu(*_args, **_kwargs):
+        return SimpleNamespace(stdout="")
+
+    monkeypatch.setattr(workflow_io.subprocess, "run", missing_gpu)
+    args = SimpleNamespace(
+        component_root_uri="s3://example-bucket/gpu-stage",
+        output_uri="s3://example-bucket/gpu-stage/result.json",
+        runtime_image=DIGEST_IMAGE,
+    )
+    with pytest.raises(RuntimeError, match="no nvidia-smi device evidence"):
+        pipeline._publish_pi05_component(args, stage, "gpu-stage", "measured")
 
 
 def test_artifact_preflight_rejects_unpinned_checkpoint(tmp_path: Path) -> None:
