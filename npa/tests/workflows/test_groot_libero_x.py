@@ -222,6 +222,30 @@ def _prepare(client: FakeS3, run_id: str = "groot-libero-x-fixture") -> dict[str
     )
 
 
+def _execute_baseline_policy(
+    client: FakeS3, *, phase: dict[str, str]
+) -> dict[str, Any]:
+    """Exercise the real S3 download boundary before model loading."""
+
+    return workflow._execute_policy(
+        client,
+        "s3://bucket/run/prepared/protocol.json",
+        "s3://bucket/run/rollouts/baseline/report.json",
+        "s3://bucket/run/rollouts/baseline/mp4",
+        "groot-libero-x-fixture",
+        policy_name="baseline",
+        model_repo=workflow.BASELINE_REPO,
+        model_revision=workflow.BASELINE_REVISION,
+        model_subdir="libero_10",
+        episodes_per_task=10,
+        n_envs=5,
+        max_episode_steps=720,
+        n_action_steps=8,
+        seed=20261002,
+        phase=phase,
+    )
+
+
 def _rollout(
     run_id: str,
     protocol: dict[str, Any],
@@ -280,6 +304,7 @@ def _native_worker_provenance() -> dict[str, Any]:
             "protocol_sha256": "a" * 64,
             "evaluation_tasks_sha256": "b" * 64,
             "dataset_object_inventory_sha256": "c" * 64,
+            "dataset_content_inventory_sha256": "d" * 64,
             "rollout_protocol": {"initial_state_protocol": "deterministic reset seeds"},
         },
         "policy_server": {
@@ -318,6 +343,77 @@ def test_prepare_requires_exact_60_training_tasks_and_disjoint_evaluation() -> N
 
     assert protocol["task_disjoint"] is True
     assert protocol["claims"]["labels"]["held_out"] is True
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "changed-bytes",
+        "missing-object",
+        "additional-object",
+    ),
+)
+def test_policy_refuses_downloaded_dataset_mutations_before_model_execution(
+    monkeypatch: pytest.MonkeyPatch, mutation: str
+) -> None:
+    """The actual download seam must bind every consumed byte before snapshots."""
+
+    client = FakeS3()
+    _prepare(client)
+    parquet_key = "run/evaluation-data/data/chunk-000/episode_000000.parquet"
+    if mutation == "changed-bytes":
+        original, content_type = client.objects[("bucket", parquet_key)]
+        client.objects[("bucket", parquet_key)] = (b"x" * len(original), content_type)
+    elif mutation == "missing-object":
+        del client.objects[("bucket", parquet_key)]
+    else:
+        client.seed("s3://bucket/run/evaluation-data/data/unexpected.bin", b"extra")
+
+    snapshots: list[tuple[Any, ...]] = []
+
+    def snapshot(*args: Any) -> tuple[Path, dict[str, Any]]:
+        snapshots.append(args)
+        pytest.fail("model snapshot must not execute before dataset content validation")
+
+    monkeypatch.setattr(workflow, "_snapshot_model", snapshot)
+    phase: dict[str, str] = {}
+    with pytest.raises(
+        workflow.GrootVisualizationError,
+        match="downloaded evaluation dataset content differs from prepared inventory",
+    ):
+        _execute_baseline_policy(client, phase=phase)
+
+    assert snapshots == []
+    assert phase == {"name": "validate_downloaded_evaluation_dataset"}
+
+
+def test_policy_accepts_exact_downloaded_dataset_before_model_execution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The unchanged FakeS3 download reaches model loading only after validation."""
+
+    client = FakeS3()
+    protocol = _prepare(client)
+    snapshots: list[tuple[Any, ...]] = []
+
+    def snapshot(*args: Any) -> tuple[Path, dict[str, Any]]:
+        snapshots.append(args)
+        raise RuntimeError("model snapshot reached after exact dataset validation")
+
+    monkeypatch.setattr(workflow, "_snapshot_model", snapshot)
+    phase: dict[str, str] = {}
+    with pytest.raises(RuntimeError, match="after exact dataset validation"):
+        _execute_baseline_policy(client, phase=phase)
+
+    assert snapshots == [
+        (workflow.BASELINE_REPO, workflow.BASELINE_REVISION, "libero_10")
+    ]
+    assert phase == {"name": "snapshot_model"}
+    assert protocol["dataset"]["materialized"]["content"]["sha256"] == (
+        workflow._json_hash(
+            {"objects": protocol["dataset"]["materialized"]["content"]["objects"]}
+        )
+    )
 
 
 def test_observed_paired_protocol_refuses_held_out_or_generalization_labels() -> None:
@@ -586,6 +682,8 @@ def test_native_rollout_uses_fixed_seeded_episode_waves(tmp_path: Path) -> None:
             {
                 "episode_lengths": [4] * kwargs["n_episodes"],
                 "episode_rewards": [1.0] * kwargs["n_episodes"],
+                "npa_environment_indices": list(range(kwargs["n_episodes"])),
+                "npa_completion_ordinals": [0] * kwargs["n_episodes"],
             },
         )
 
@@ -617,6 +715,129 @@ def test_native_rollout_uses_fixed_seeded_episode_waves(tmp_path: Path) -> None:
         range(37, 47)
     )
     assert all(episode["trajectory_ids"] == [7] for episode in result["episodes"])
+    assert all(episode["completion_ordinal"] == 0 for episode in result["episodes"])
+
+
+def test_native_completion_identity_overlay_joins_reversed_results_to_env_videos(
+    tmp_path: Path,
+) -> None:
+    """Execute the generated upstream hook, then join its completion identities."""
+
+    source = tmp_path / "Isaac-GR00T"
+    target = source / "gr00t/eval/rollout_policy.py"
+    target.parent.mkdir(parents=True)
+    target.write_text(
+        "from collections import defaultdict\n"
+        "from pathlib import Path\n\n"
+        "def create_eval_env(env_idx, wrapper_configs):\n"
+        "    return dict(\n"
+        f"        {workflow.NATIVE_VIDEO_LAYOUT_NEEDLE}\n"
+        "    )\n\n"
+        "def capture(completion_order):\n"
+        "    n_envs = 2\n"
+        "    current_successes = [False] * n_envs\n"
+        "    current_successes[1] = True\n"
+        "    episode_infos = defaultdict(list)\n"
+        "    episode_successes = []\n"
+        "    lengths = [101, 202]\n"
+        "    rewards = [1.25, 2.5]\n"
+        "    for env_idx in completion_order:\n"
+        "        if True:\n"
+        "            if True:\n"
+        "                if True:\n"
+        "                    episode_infos['episode_lengths'].append(lengths[env_idx])\n"
+        "                    episode_infos['episode_rewards'].append(rewards[env_idx])\n"
+        "                    episode_successes.append(current_successes[env_idx])\n"
+        "    return 'native-env', episode_successes, dict(episode_infos)\n"
+    )
+    workflow._overlay_native_video_layout(source)
+    workflow._overlay_native_completion_identity(source)
+
+    module_name = "npa_groot_libero_x_completion_hook_test"
+    spec = importlib.util.spec_from_file_location(module_name, target)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+        parsed = native._parse_rollout(module.capture([1, 0]))
+    finally:
+        sys.modules.pop(module_name, None)
+
+    wave_dir = tmp_path / "videos/wave-000"
+    for environment_index in range(2):
+        video = wave_dir / f"env-{environment_index:03d}/rollout.mp4"
+        video.parent.mkdir(parents=True)
+        video.write_bytes(f"env-{environment_index}".encode())
+    records = native._episode_video_records(
+        task_video_dir=tmp_path / "videos",
+        wave_dir=wave_dir,
+        task_id="observed-0",
+        trajectory_ids=[7],
+        initial_state_protocol="deterministic reset seeds",
+        reset_seeds=[41, 42],
+        outcomes=parsed["completed_episode_outcomes"],
+        wave_index=0,
+    )
+
+    assert [
+        outcome["environment_index"] for outcome in parsed["completed_episode_outcomes"]
+    ] == [1, 0]
+    assert [record["environment_index"] for record in records] == [0, 1]
+    assert [record["reset_seed"] for record in records] == [41, 42]
+    assert [record["success"] for record in records] == [False, True]
+    assert [record["episode_length"] for record in records] == [101, 202]
+    assert [record["episode_reward"] for record in records] == [1.25, 2.5]
+
+
+@pytest.mark.parametrize(
+    ("outcomes", "message"),
+    (
+        (
+            [
+                {"environment_index": 0, "completion_ordinal": 0},
+                {"environment_index": 0, "completion_ordinal": 0},
+            ],
+            "duplicate seeded environment outcomes",
+        ),
+        (
+            [{"environment_index": 0, "completion_ordinal": 0}],
+            "does not have one outcome per seeded environment",
+        ),
+        (
+            [
+                {"environment_index": 0, "completion_ordinal": 1},
+                {"environment_index": 1, "completion_ordinal": 0},
+            ],
+            "does not describe an initial seeded episode",
+        ),
+    ),
+)
+def test_episode_video_records_refuse_ambiguous_completion_identities(
+    tmp_path: Path, outcomes: list[dict[str, int]], message: str
+) -> None:
+    with pytest.raises(RuntimeError, match=message):
+        native._episode_video_records(
+            task_video_dir=tmp_path / "videos",
+            wave_dir=tmp_path / "videos/wave-000",
+            task_id="observed-0",
+            trajectory_ids=[7],
+            initial_state_protocol="deterministic reset seeds",
+            reset_seeds=[41, 42],
+            outcomes=outcomes,
+            wave_index=0,
+        )
+
+
+def test_native_rollout_refuses_missing_completion_identity_hook() -> None:
+    with pytest.raises(RuntimeError, match="lacks completion identities"):
+        native._parse_rollout(
+            (
+                "native-env",
+                [True],
+                {"episode_lengths": [1], "episode_rewards": [1.0]},
+            )
+        )
 
 
 def test_policy_server_device_evidence_uses_mocked_hardware_only_in_unit_test() -> None:
@@ -1006,6 +1227,9 @@ def test_runtime_readiness_failure_names_missing_documented_runtime(
                         workflow.NATIVE_VIDEO_LAYOUT_REPLACEMENT.encode()
                     ).hexdigest()
                 },
+                "npa_native_completion_identity": (
+                    workflow._native_completion_identity_overlay_record()
+                ),
             }
         )
     )
@@ -1149,7 +1373,15 @@ def test_materializer_installs_runtime_dependencies_before_publishing_runtime(
             target.write_text("def register_libero_envs():\n    pass\n")
             rollout = source / "gr00t/eval/rollout_policy.py"
             rollout.parent.mkdir(parents=True, exist_ok=True)
-            rollout.write_text(workflow.NATIVE_VIDEO_LAYOUT_NEEDLE)
+            rollout.write_text(
+                "\n".join(
+                    (
+                        workflow.NATIVE_VIDEO_LAYOUT_NEEDLE,
+                        workflow.NATIVE_COMPLETION_ORDINALS_NEEDLE,
+                        workflow.NATIVE_COMPLETION_APPEND_NEEDLE,
+                    )
+                )
+            )
         elif command[-2:] == [
             workflow.LIBERO_X_EVALUATOR_REPOSITORY,
             str(evaluator),
@@ -1229,6 +1461,7 @@ def test_materializer_installs_runtime_dependencies_before_publishing_runtime(
     assert runtime["provenance"]["libero_parquet_engine"] == expected_engine
     assert runtime["provenance"]["libero_torchcodec"] == expected_torchcodec
     assert runtime["provenance"]["npa_native_video_layout"]["version"] == "v1"
+    assert runtime["provenance"]["npa_native_completion_identity"]["version"] == "v1"
 
 
 def _native_runtime_cache_target(temporary_root: Path) -> Path:
@@ -1782,7 +2015,6 @@ def test_policy_stage_requires_native_results_and_uploads_actual_mp4s(
             },
         ),
     )
-    monkeypatch.setattr(workflow, "_download_prefix", lambda *_args: None)
     monkeypatch.setattr(
         workflow,
         "_materialize_native_runtime",
@@ -1959,7 +2191,6 @@ def test_policy_stage_persists_redacted_native_failure(
             {"repo": workflow.BASELINE_REPO, "revision": workflow.BASELINE_REVISION},
         ),
     )
-    monkeypatch.setattr(workflow, "_download_prefix", lambda *_args: None)
     monkeypatch.setattr(
         workflow,
         "_materialize_native_runtime",
