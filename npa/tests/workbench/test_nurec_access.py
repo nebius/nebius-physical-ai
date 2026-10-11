@@ -802,7 +802,7 @@ def test_staging_the_source_is_inert_for_an_image_that_already_bakes_npa() -> No
     assert "npa_baked_entry_available=0" in setup
     assert "from npa.cli.entry import main" in setup
     assert (
-        'if ! command -v npa >/dev/null 2>&1 '
+        "if ! command -v npa >/dev/null 2>&1 "
         '&& [ "$npa_baked_entry_available" != "1" ] && { ' in setup
     )
     # The baked-image path is tried before any S3 sync.
