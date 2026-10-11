@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 from dataclasses import dataclass, field
+from itertools import count
 from typing import Any, Callable
 
 from npa.orchestration.npa_workflow.artifacts import require_input_artifacts
@@ -12,6 +13,8 @@ from npa.orchestration.npa_workflow.catalog import (
     drop_empty_optional_flags,
 )
 from npa.orchestration.npa_workflow.decisions import (
+    DECISION_PROMOTE,
+    DECISION_LOOP_BACK,
     load_decision,
     normalize_decision,
     refresh_context_decision,
@@ -696,6 +699,25 @@ def _resolved_state_decision_uri(state: StateSpec, ctx: RunContext) -> str:
     )
 
 
+def _read_loop_decision(spec, state, ctx, reader, assumption):
+    until_only = state.loop.max is None and state.loop.until
+    if not ctx.last_decision or until_only:
+        writer = _sequence_decision_writer(spec, state)
+        _refresh_decision(ctx, state=writer, reader=reader, read_s3=writer is not None)
+    if until_only:
+        if ctx.last_decision not in {DECISION_PROMOTE, DECISION_LOOP_BACK}:
+            raise NpaWorkflowError("until-only loop requires a valid measured decision")
+        return
+    if not ctx.last_decision:
+        ctx.last_decision = assumption
+
+
+def _execution_iterations(state: StateSpec, config: dict[str, Any]):
+    if state.loop.max is None and state.loop.until:
+        return count(1)
+    return range(1, resolve_config_int(state.loop.max or 1, config) + 1)
+
+
 def _execute_state_machine(
     spec: NpaWorkflowSpec,
     state_name: str,
@@ -756,8 +778,7 @@ def _execute_state_machine(
 
     if state.sequence:
         if state.loop:
-            max_iter = resolve_config_int(state.loop.max or 1, ctx.config)
-            for iteration in range(1, max_iter + 1):
+            for iteration in _execution_iterations(state, ctx.config):
                 ctx.outer_iteration = iteration
                 ctx.loop_iterations[state.name] = iteration
                 ctx.last_decision = ""
@@ -778,16 +799,7 @@ def _execute_state_machine(
                         results_out=results,
                         depth=depth + 1,
                     )
-                if not ctx.last_decision:
-                    decision_writer = _sequence_decision_writer(spec, state)
-                    _refresh_decision(
-                        ctx,
-                        state=decision_writer,
-                        reader=decision_reader,
-                        read_s3=decision_writer is not None,
-                    )
-                if not ctx.last_decision:
-                    ctx.last_decision = assume_decision
+                _read_loop_decision(spec, state, ctx, decision_reader, assume_decision)
                 if state.loop.until and evaluate_predicate(
                     state.loop.until, ctx.as_predicate_context()
                 ):
