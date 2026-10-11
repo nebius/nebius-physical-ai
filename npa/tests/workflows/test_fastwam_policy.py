@@ -17,6 +17,8 @@ from types import ModuleType
 from pathlib import Path
 
 import pytest
+from packaging.requirements import Requirement
+from packaging.version import Version
 
 from npa.clients.storage import StorageError
 from npa.orchestration.npa_workflow import build_plan, load_spec
@@ -162,6 +164,25 @@ def test_fastwam_image_pins_the_stable_le_robot_release_and_feature_extra() -> N
     assert "7e241bd630a3719a56157a497ce5d08f244784f1" in notice
     assert fastwam.LEROBOT_VERSION == "0.6.1"
     assert fastwam.LEROBOT_RELEASE_COMMIT == "7e241bd630a3719a56157a497ce5d08f244784f1"
+
+
+def test_fastwam_npa_pyav_dependency_intersects_pinned_lerobot_evaluation_range() -> (
+    None
+):
+    """Keep the vendor interpreter's dependency-complete fallback solvable."""
+
+    pyproject = tomllib.loads((ROOT / "npa" / "pyproject.toml").read_text())
+    requirements = {
+        requirement.name: requirement
+        for dependency in pyproject["project"]["dependencies"]
+        if (requirement := Requirement(dependency)).name == "av"
+    }
+    npa_av = requirements["av"]
+    pinned_lerobot_evaluation_av = Requirement("av>=15.0.0,<16.0.0")
+
+    assert Version("15.1.0") in npa_av.specifier
+    assert Version("15.1.0") in pinned_lerobot_evaluation_av.specifier
+    assert Version("17.1.0") in npa_av.specifier
 
 
 def _npa_copy_destinations(dockerfile: str) -> dict[str, str]:
