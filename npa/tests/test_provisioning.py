@@ -348,7 +348,8 @@ def _retained_standard_recovery_evidence(
         / "failed-cluster"
     )
     recipe = backend / "k8s-training"
-    source = Path.cwd() / "deploy" / "cluster" / "vendor" / "nebius-solutions-library"
+    repository = _test_repository_root()
+    source = repository / "deploy" / "cluster" / "vendor" / "nebius-solutions-library"
     shutil.copytree(source / "k8s-training", recipe)
     shutil.copytree(source / "modules", backend / "modules")
     _materialize_standard_recipe(recipe, region=region)
@@ -388,7 +389,7 @@ def _retained_standard_recovery_evidence(
     )
     (recipe / ".terraform.lock.hcl").write_text("# retained lock\n", encoding="utf-8")
     (recipe / "README.md").write_text("retained standard recipe\n", encoding="utf-8")
-    selected_dir = terraform_dir or (Path.cwd() / "deploy" / "cluster").resolve()
+    selected_dir = terraform_dir or (repository / "deploy" / "cluster")
     evidence = tmp_path / "retained-events.json"
     service_dir = tmp_path / "service"
     service_dir.mkdir()
@@ -404,6 +405,15 @@ def _retained_standard_recovery_evidence(
     )
     evidence.chmod(0o600)
     return evidence
+
+
+def _test_repository_root() -> Path:
+    """Return the checked-out repository rather than the pytest invocation cwd."""
+
+    repository = Path(__file__).resolve().parents[2]
+    source = repository / "deploy" / "cluster" / "vendor" / "nebius-solutions-library"
+    assert source.is_dir(), f"missing checked-in recovery source: {source}"
+    return repository
 
 
 def _materialize_standard_recipe(recipe: Path, *, region: str) -> None:
