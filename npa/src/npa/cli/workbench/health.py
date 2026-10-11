@@ -641,6 +641,8 @@ def sim2real_command(
         raise typer.BadParameter(
             f"unknown check(s): {', '.join(unknown)}. Choices: {', '.join(ALL_CHECKS)}."
         )
+    if project.strip() and "s3" not in selected:
+        raise typer.BadParameter("--project requires --checks to include s3.")
 
     credentials = None
     project_storage_failure: CheckResult | None = None

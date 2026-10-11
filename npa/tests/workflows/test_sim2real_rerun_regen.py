@@ -115,10 +115,10 @@ def test_regen_sim2real_rrd_success(
 
     class FakeResult:
         output_rrd_path = str(local_dir / "reports" / "sim2real.rrd")
-        heldout_frame_count = 4
+        heldout_frame_count = 0
         rollout_count = 0
         frame_count = 0
-        heldout_env_count = 0
+        heldout_env_count = 3
         has_factual_observation_evidence = True
 
     monkeypatch.setattr(
@@ -129,7 +129,9 @@ def test_regen_sim2real_rrd_success(
     result = regen_sim2real_rrd(
         config_factory(), local_dir=local_dir, sync_inputs=False, upload=False
     )
-    assert result.heldout_frame_count == 4
+    assert result.heldout_frame_count == 0
+    assert result.heldout_env_count == 3
+    assert result.to_dict()["heldout_env_count"] == 3
     assert result.local_rrd_path.endswith("sim2real.rrd")
 
 
