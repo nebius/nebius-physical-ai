@@ -247,6 +247,27 @@ def test_gold_controller_states_share_exact_protocol_inputs() -> None:
     )
 
 
+@pytest.mark.parametrize("prefix", ["first", "nested/second"])
+def test_gold_controllers_read_the_declared_collection_object(prefix: str) -> None:
+    spec = merge_config_overrides(
+        load_spec(SPEC), {"bucket": "workflow-test", "prefix": prefix}
+    )
+    steps = {step.state: step for step in build_plan(spec, run_id="gold-object").steps}
+    collection = next(
+        artifact["uri"]
+        for artifact in steps["collect-expert"].outputs
+        if artifact["uri"].endswith("/gold/collection.json")
+    )
+    export_prefix = _value(steps["export-dataset"].argv, "--gold-uri")
+
+    assert collection == export_prefix + "collection.json"
+    for role in ("base", "adapted"):
+        assert (
+            _value(steps[f"evaluate-{role}-gold"].argv, "--gold-collection-uri")
+            == collection
+        )
+
+
 def test_default_split_seeds_match_collector_and_gold_validator() -> None:
     spec = load_spec(SPEC)
     plan = {step.state: step for step in build_plan(spec, run_id="split-seeds").steps}

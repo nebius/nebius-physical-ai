@@ -271,6 +271,8 @@ states:
     description: Run the real base weights receding-horizon on the untouched surface-placement gold split.
     needs: [start-base-service]
     toolRef: workbench.sim2real.pi05_base_gold
+    params:
+      gold_collection_uri: "{{config.collection_root_uri}}/gold/collection.json"
     resources: isaac
     outputs:
       - {uri: "{{config.base_gold_uri}}", schema: npa.sim2real.pi05.closed_loop_eval.v1}
@@ -324,6 +326,8 @@ states:
     description: Repeat the identical untouched gold task/scenarios/protocol with the selected checkpoint.
     needs: [start-adapted-service]
     toolRef: workbench.sim2real.pi05_adapted_gold
+    params:
+      gold_collection_uri: "{{config.collection_root_uri}}/gold/collection.json"
     resources: isaac
     outputs:
       - {uri: "{{config.adapted_gold_uri}}", schema: npa.sim2real.pi05.closed_loop_eval.v1}
