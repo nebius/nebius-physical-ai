@@ -7352,6 +7352,7 @@ def test_reconciliation_requires_noncontradictory_queue_diagnostics(
         assert evidence.state.value == ("found" if has_job else "absent")
         assert evidence.job_id == ("126" if has_job else "")
 
+
 @pytest.mark.parametrize("stderr", ["", "PermissionDenied: queue access denied\n"])
 def test_libero_launch_binding_requires_noncontradictory_queue_diagnostics(
     monkeypatch, stderr
@@ -7389,6 +7390,7 @@ def test_libero_launch_binding_requires_noncontradictory_queue_diagnostics(
         assert verified == "126"
         assert plausible == ()
         assert error == ""
+
 
 @pytest.mark.parametrize(
     ("stderr", "expected_outcome"),
