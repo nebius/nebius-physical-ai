@@ -24,6 +24,7 @@ from npa.workflows.byof.openpi_pipeline import (
     _redistribution_evidence,
     _write_json_uri,
 )
+from npa.workflows.byof.openpi_service_diagnostics import standalone_program
 
 MANAGED_BY = "npa-openpi-four-mode"
 SERVER_PORT = 8000
@@ -453,7 +454,10 @@ print("NPA_OPENPI_CLIENT_RESULT=" + encoded, flush=True)
 def _server_hardware_program() -> str:
     """Self-contained GPU proof for a server image that does not embed NPA."""
 
-    return r"""
+    return (
+        standalone_program()
+        + "\n"
+        + r"""
 import importlib.metadata
 import json
 import os
@@ -533,10 +537,11 @@ result = {
     "sm100_probe": sm100_probe,
 }
 encoded = json.dumps(result, sort_keys=True, separators=(",", ":"))
-with open("/tmp/npa-openpi-server-hardware.json", "w", encoding="utf-8") as stream:
+with diagnostic_path("npa-openpi-server-hardware.json").open("w", encoding="utf-8") as stream:
     stream.write(encoded)
 print("NPA_OPENPI_SERVER_HARDWARE=" + encoded, flush=True)
 """.strip()
+    )
 
 
 def _redirect_policy_cache_to_durable_storage(deployment: dict[str, Any]) -> None:
@@ -608,11 +613,15 @@ def _policy_server_shell(config_name: str, auth_secret: str) -> str:
         _server_hardware_program()
     )
     program = _pi05_noise_server_program() if auth_secret else _generic_server_program()
+    diagnostics_probe = "/opt/venv/bin/python -c " + shlex.quote(
+        standalone_program() + "\nprint(diagnostics_directory())"
+    )
     return (
         "set -euo pipefail; "
+        f"diagnostics_dir=$({diagnostics_probe}); "
         f"{hardware_probe}; "
         f"/opt/venv/bin/python -m http.server {SERVER_DIAGNOSTICS_PORT} "
-        "--bind 0.0.0.0 --directory /tmp >/tmp/npa-openpi-diagnostics.log 2>&1 & "
+        '--bind 0.0.0.0 --directory "$diagnostics_dir" >/dev/null 2>&1 & '
         "checkpoint_dir=$(/opt/venv/bin/python -c 'import os; "
         "from openpi.shared import download; "
         'print(download.maybe_download(os.environ["OPENPI_CHECKPOINT_URI"], token="anon"))\'); '

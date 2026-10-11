@@ -418,10 +418,10 @@ def test_camera_launcher_rejects_readonly_cache_as_portable_root(
 @pytest.mark.parametrize(
     "arguments",
     (
-        "--portable-root /tmp/npa-isaac-state/../../opt/isaac-cache",
-        "--portable-root /tmp/npa-isaac-state/kit --portable-root=/tmp/second",
-        "--portable-root=/tmp/npa-isaac-state/kit --portable-root /tmp/second",
-        "--portable-root /tmp/npa-isaac-state",
+        "--portable-root {state}/../../opt/isaac-cache",
+        "--portable-root {state}/kit --portable-root={second}",
+        "--portable-root={state}/kit --portable-root {second}",
+        "--portable-root {state}",
     ),
 )
 def test_kit_state_rejects_escape_duplicate_and_root_alias(
@@ -429,7 +429,7 @@ def test_kit_state_rejects_escape_duplicate_and_root_alias(
 ) -> None:
     state = tmp_path / "state"
     state.mkdir()
-    escaped = arguments.replace("/tmp/npa-isaac-state", str(state))
+    escaped = arguments.format(state=state, second=tmp_path / "second")
     monkeypatch.setenv("NPA_ISAAC_STATE_DIR", str(state))
     monkeypatch.setenv("NPA_ISAAC_KIT_ARGS", escaped)
     with pytest.raises(RuntimeError, match="portable-root|portable root"):

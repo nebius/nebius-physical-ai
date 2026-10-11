@@ -837,9 +837,7 @@ def _probe_public_gcs_payload(
         f"https://storage.googleapis.com/download/storage/v1/b/{quote(bucket, safe='')}/o/"
         f"{quote(name, safe='')}?alt=media&generation={quote(generation, safe='')}"
     )
-    request = urllib.request.Request(url, headers={"Range": "bytes=0-0"})
-    with urllib.request.urlopen(request) as response:  # noqa: S310 - pinned public GCS API
-        payload = response.read(2)
+    payload = _read_public_gcs_payload(url, 2, headers={"Range": "bytes=0-0"})
     if len(payload) != 1:
         raise OpenPIPipelineError("public checkpoint payload-byte probe was not exact")
     return {
@@ -853,6 +851,34 @@ def _probe_public_gcs_payload(
         "scope": "access_probe_not_full_payload_integrity_or_model_execution",
         "authentication": "anonymous",
     }
+
+
+def _read_public_gcs_payload(
+    url: str, maximum_bytes: int, *, headers: Mapping[str, str] | None = None
+) -> bytes:
+    """Read bounded anonymous bytes from the exact HTTPS GCS origin."""
+    import httpx
+
+    parsed = urlparse(url)
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != "storage.googleapis.com"
+        or parsed.port not in (None, 443)
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.fragment
+        or maximum_bytes < 1
+    ):
+        raise OpenPIPipelineError("public payload requires the exact HTTPS GCS origin")
+    payload = bytearray()
+    with httpx.Client(timeout=None, follow_redirects=False, trust_env=False) as client:
+        with client.stream("GET", url, headers=headers) as response:
+            response.raise_for_status()
+            for chunk in response.iter_bytes(chunk_size=min(maximum_bytes, 64 * 1024)):
+                payload.extend(chunk[: maximum_bytes - len(payload)])
+                if len(payload) == maximum_bytes:
+                    break
+    return bytes(payload)
 
 
 def _checkpoint_provenance(checkpoint_uri: str) -> dict[str, object]:
@@ -907,8 +933,7 @@ def _tokenizer_provenance() -> dict[str, object]:
         f"https://storage.googleapis.com/download/storage/v1/b/{bucket}/o/"
         f"{quote(name, safe='')}?alt=media&generation={REQUIRED_TOKENIZER_GENERATION}"
     )
-    with urllib.request.urlopen(url) as response:  # noqa: S310 - pinned public GCS
-        payload = response.read(REQUIRED_TOKENIZER_SIZE + 1)
+    payload = _read_public_gcs_payload(url, REQUIRED_TOKENIZER_SIZE + 1)
     md5 = base64.b64encode(
         hashlib.md5(payload, usedforsecurity=False).digest()  # noqa: S324
     ).decode("ascii")

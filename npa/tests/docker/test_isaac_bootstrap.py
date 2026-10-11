@@ -1078,7 +1078,8 @@ def _assert_startup_events(events, caller_enables_uploads, custom_kit_root):
     else:
         assert arguments[0] == "--portable-root"
         portable_root = Path(arguments[1])
-        assert portable_root == Path("/tmp/npa-isaac-state/kit")
+        assert portable_root.is_absolute()
+        assert portable_root.parts[-2:] == ("npa-isaac-state", "kit")
 
 
 @pytest.mark.parametrize("entrypoint", ["shim", "verify"])

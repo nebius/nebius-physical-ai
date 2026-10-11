@@ -133,20 +133,20 @@ def _assert_isaac_state_contract(pod_spec: dict) -> None:
     mounts = {item["name"]: item for item in container["volumeMounts"]}
     volumes = {item["name"]: item for item in pod_spec["volumes"]}
     env = {item["name"]: item.get("value") for item in container["env"]}
+    state_dir = Path(env["NPA_ISAAC_STATE_DIR"])
+    assert state_dir.is_absolute() and ".." not in state_dir.parts
     assert mounts["npa-isaac-runtime-cache"]["readOnly"] is True
     assert mounts["npa-isaac-job-state"] == {
         "name": "npa-isaac-job-state",
-        "mountPath": "/tmp/npa-isaac-state",
+        "mountPath": str(state_dir),
     }
     assert volumes["npa-isaac-job-state"] == {
         "name": "npa-isaac-job-state",
         "emptyDir": {},
     }
-    assert env["NPA_ISAAC_STATE_DIR"] == "/tmp/npa-isaac-state"
-    assert env["NPA_ISAAC_KIT_ARGS"] == "--portable-root /tmp/npa-isaac-state/kit"
+    assert env["NPA_ISAAC_KIT_ARGS"] == f"--portable-root {state_dir / 'kit'}"
     assert {name: env[name] for name in _ISAAC_STATE_ENV} == {
-        name: f"/tmp/npa-isaac-state/{suffix}"
-        for name, suffix in _ISAAC_STATE_ENV.items()
+        name: str(state_dir / suffix) for name, suffix in _ISAAC_STATE_ENV.items()
     }
 
 

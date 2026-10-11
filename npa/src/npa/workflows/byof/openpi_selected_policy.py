@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from npa.workflows.byof import openpi_pipeline as pipeline
+from npa.workflows.byof.openpi_service_diagnostics import diagnostic_path
 
 
 def _selected_lineage(root: Path) -> tuple[dict, dict, dict, int]:
@@ -89,7 +90,7 @@ def _verify_saved_normalization(step_dir: Path, data_config: Any) -> None:
 def _record_loaded_policy(
     root: Path, config: Any, dataset: dict, manifest: dict, step: int
 ) -> None:
-    path = Path("/tmp/npa-openpi-loaded-checkpoint.json")
+    path = diagnostic_path("npa-openpi-loaded-checkpoint.json")
     proof = json.loads(path.read_text())
     if proof["checkpoint_manifest_sha256"] != manifest["content_manifest_sha256"]:
         raise pipeline.OpenPIPipelineError("selected policy loaded-byte proof mismatch")

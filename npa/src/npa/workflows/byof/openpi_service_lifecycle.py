@@ -192,7 +192,12 @@ def _install_private_s3_secret(
 
 
 def _checkpoint_probe_program() -> str:
-    return """import hashlib,json,os,pathlib
+    from npa.workflows.byof.openpi_service_diagnostics import standalone_program
+
+    return (
+        standalone_program()
+        + "\n"
+        + """import hashlib,json,os,pathlib
 root=pathlib.Path(os.environ['NPA_RESOLVED_CHECKPOINT_DIR'])
 manifest_path=root/'manifest.json'
 manifest=json.loads(manifest_path.read_text()) if manifest_path.is_file() else None
@@ -208,8 +213,9 @@ if manifest is not None:
 result={'schema':'npa.workbench.openpi.loaded-checkpoint.v1','checkpoint_sha256':digest,
         'file_count':len(records),'total_size_bytes':sum(row['size'] for row in records),
         'checkpoint_manifest_sha256':manifest.get('content_manifest_sha256') if manifest else None}
-pathlib.Path('/tmp/npa-openpi-loaded-checkpoint.json').write_text(json.dumps(result,sort_keys=True))
+diagnostic_path('npa-openpi-loaded-checkpoint.json').write_text(json.dumps(result,sort_keys=True))
 """
+    )
 
 
 def _inject_checkpoint_probe(manifests: dict[str, dict[str, Any]]) -> None:

@@ -160,7 +160,7 @@ pydantic-core==2.33.2
 pyglet==2.1.16
 pygments==2.21.0
 # Fixes CVE-2026-102268; keep the public OSS runtime free of this token-forgery bug.
-pyjwt==2.14.0
+pyjwt==2.15.1
 pyopengl==3.1.10
 pyopengl-accelerate==3.1.10
 pyparsing==3.3.2

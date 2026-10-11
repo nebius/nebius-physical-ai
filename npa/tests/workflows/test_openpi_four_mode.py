@@ -4,7 +4,9 @@ import asyncio
 import base64
 import hashlib
 import json
+import runpy
 import sys
+import tempfile
 import types
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,6 +17,7 @@ except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility.
     import tomli as tomllib
 
 import numpy as np
+import httpx
 import pytest
 
 from npa.orchestration.npa_workflow import build_plan, load_spec
@@ -114,10 +117,10 @@ def _execute_noise_server(
     monkeypatch.setattr(
         sys, "argv", ["server", "--config=x", "--checkpoint=y", "--port=1"]
     )
-    namespace: dict = {}
-    exec(
-        compile(service._pi05_noise_server_program(), "noise-server", "exec"), namespace
-    )
+    with tempfile.TemporaryDirectory(prefix="npa-noise-server-") as directory:
+        program = Path(directory) / "noise-server.py"
+        program.write_text(service._pi05_noise_server_program(), encoding="utf-8")
+        namespace = runpy.run_path(str(program))
     return namespace, created
 
 
@@ -218,11 +221,12 @@ def test_public_probe_selects_generation_bound_model_weight_not_metadata(
 ) -> None:
     requested: list[object] = []
 
-    def _open(request):
-        requested.append(request)
-        return _RangeResponse()
+    def _read(url, maximum_bytes, *, headers=None):
+        requested.append(url)
+        assert maximum_bytes == 2 and headers == {"Range": "bytes=0-0"}
+        return b"x"
 
-    monkeypatch.setattr(pipeline.urllib.request, "urlopen", _open)
+    monkeypatch.setattr(pipeline, "_read_public_gcs_payload", _read)
     records = [
         {
             "name": "checkpoint/metadata.json",
@@ -243,7 +247,7 @@ def test_public_probe_selects_generation_bound_model_weight_not_metadata(
     assert (
         receipt["scope"] == "access_probe_not_full_payload_integrity_or_model_execution"
     )
-    assert "generation=2" in requested[0].full_url
+    assert "generation=2" in requested[0]
 
 
 def test_required_tokenizer_is_a_separate_generation_bound_full_payload(
@@ -261,11 +265,12 @@ def test_required_tokenizer_is_a_separate_generation_bound_full_payload(
         pipeline, "REQUIRED_TOKENIZER_SHA256", hashlib.sha256(payload).hexdigest()
     )
 
-    def _open(url):
+    def _read(url, maximum_bytes):
         requested.append(str(url))
-        return _PayloadResponse(payload)
+        assert maximum_bytes == len(payload) + 1
+        return payload
 
-    monkeypatch.setattr(pipeline.urllib.request, "urlopen", _open)
+    monkeypatch.setattr(pipeline, "_read_public_gcs_payload", _read)
     receipt = pipeline._tokenizer_provenance()
     assert receipt["size"] == len(payload)
     assert receipt["checkpoint_object_count_excludes_this_payload"] is True
@@ -280,6 +285,79 @@ def test_required_tokenizer_rejects_a_non_gcs_identity(
     monkeypatch.setattr(pipeline, "REQUIRED_TOKENIZER_URI", "https://example.invalid/x")
     with pytest.raises(pipeline.OpenPIPipelineError, match="exact gs:// object"):
         pipeline._tokenizer_provenance()
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "file:///checkpoint",
+        "http://storage.googleapis.com/object",
+        "https://example.invalid/object",
+        "https://user@storage.googleapis.com/object",
+        "https://storage.googleapis.com:80/object",
+    ],
+)
+def test_public_payload_rejects_other_origins_before_network(url):
+    with pytest.raises(pipeline.OpenPIPipelineError, match="HTTPS GCS origin"):
+        pipeline._read_public_gcs_payload(url, 2)
+
+
+def test_public_payload_reads_only_requested_bytes_and_closes(monkeypatch):
+    closed = []
+    requests = []
+
+    class Stream(httpx.SyncByteStream):
+        def __iter__(self):
+            yield b"x"
+            yield b"y"
+            raise AssertionError("read beyond the payload probe")
+
+        def close(self):
+            closed.append(True)
+
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(206, stream=Stream())
+
+    original_client = httpx.Client
+
+    def client(**kwargs):
+        assert kwargs["follow_redirects"] is False and kwargs["trust_env"] is False
+        return original_client(transport=httpx.MockTransport(respond), **kwargs)
+
+    monkeypatch.setattr(httpx, "Client", client)
+    assert (
+        pipeline._read_public_gcs_payload(
+            "https://storage.googleapis.com/object?generation=2",
+            2,
+            headers={"Range": "bytes=0-0"},
+        )
+        == b"xy"
+    )
+    assert len(requests) == 1 and requests[0].headers["Range"] == "bytes=0-0"
+    assert closed == [True]
+
+
+def test_public_payload_rejects_redirect_without_following(monkeypatch):
+    requests = []
+    original_client = httpx.Client
+
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(
+            302, headers={"Location": "https://example.invalid/weights"}
+        )
+
+    monkeypatch.setattr(
+        httpx,
+        "Client",
+        lambda **kwargs: original_client(
+            transport=httpx.MockTransport(respond), **kwargs
+        ),
+    )
+    with pytest.raises(httpx.HTTPStatusError):
+        pipeline._read_public_gcs_payload("https://storage.googleapis.com/object", 2)
+    assert len(requests) == 1
 
 
 def test_downloaded_public_checkpoint_must_match_generation_manifest(tmp_path) -> None:

@@ -107,6 +107,10 @@ label selector and verifies immutable ownership before acting. Client evidence
 comes from the Job termination message, and server hardware evidence comes
 from a private in-cluster diagnostic endpoint—not pod-log access.
 
+Hardware and loaded-checkpoint receipts use a service-owned directory with
+0700 permissions. The diagnostic HTTP endpoint serves that directory, and the
+selected policy records its loaded checkpoint through the same validated path.
+
 A robot consumer should execute about five position targets at 15 Hz, observe
 again, and re-query the policy.
 
