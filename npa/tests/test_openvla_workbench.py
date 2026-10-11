@@ -340,15 +340,15 @@ def test_workflow_resources_declare_the_skypilot_task_container() -> None:
         assert container["name"] == "ray-node", resource_name
         assert container["env"] == expected_storage_env, resource_name
         # The retained worker consumer proves that DAC_OVERRIDE permits the
-        # profile move and CHOWN is needed for SkyPilot's ~/.ssh ownership
-        # repair; no unrelated capability is restored.
+        # profile move, CHOWN repairs SkyPilot's ~/.ssh ownership, and FOWNER
+        # permits its subsequent sudo chmod; no unrelated capability returns.
         assert "allowPrivilegeEscalation" not in container["securityContext"]
         assert container["securityContext"] == {
             "runAsNonRoot": True,
             "privileged": False,
             "capabilities": {
                 "drop": ["ALL"],
-                "add": ["CHOWN", "DAC_OVERRIDE", "SETGID", "SETUID"],
+                "add": ["CHOWN", "DAC_OVERRIDE", "FOWNER", "SETGID", "SETUID"],
             },
         }, resource_name
 

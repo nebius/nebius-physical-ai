@@ -1,10 +1,10 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "d433b1a32d7c966ceb3e8c18341112443222b8f5714a37bbc04fcf3ec839f474",
+  "workflow_sha256": "6aa755bc7e4db1b259694b4d39f640c7af5c0eb9fd30bdd667b89ed476722115",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "The five-stage specification connects all handoff URIs and declares SkyPilot's named non-root ray-node task container. Its resources retain RuntimeDefault seccomp and privileged=false, drop all capabilities except CHOWN, DAC_OVERRIDE, SETGID, and SETUID for the platform's SSH and passwordless-sudo bootstrap, and preserve the configured RTX PRO train and rollout profiles. Schema validation, render planning, and capability-contract tests remain required for these exact workflow bytes.",
+      "reason": "The five-stage specification passed schema validation and production SkyPilot render planning with all handoff URIs connected. Every Kubernetes resource declares SkyPilot's named non-root ray-node task container, retains RuntimeDefault seccomp and privileged=false, drops all capabilities, and adds only CHOWN, DAC_OVERRIDE, FOWNER, SETGID, and SETUID for the evidenced non-root SkyPilot SSH bootstrap before payload execution. Its configured RTX PRO train and rollout profiles retain the same GPU product.",
       "evidence": [
         "npa workbench workflow validate-spec workflows/testing/openvla-oft-libero.yaml --json",
         "npa workbench workflow plan-spec workflows/testing/openvla-oft-libero.yaml --waves --check-render --json",
@@ -56,7 +56,7 @@
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "The controlled prepare failed before payload. Same-context diagnostics separated the passwordless-sudo bootstrap's DAC_OVERRIDE requirement from the SSH bootstrap's CHOWN requirement; the retained old image also lacked sshd and sshd_config. The workflow now keeps drop ALL with only CHOWN, DAC_OVERRIDE, SETGID, and SETUID, and the source recipe adds the SSH prerequisite. Current-image target bootstrap and the connected OFT workload still need actual verification before any simulator metric, benchmark, convergence, or physical-robot claim.",
+      "reason": "The controlled prepare was cancelled after its ray-node bootstrap failed before payload. A same-context diagnostic of the retained image proved passwordless sudo and the set-id operations work, while moving the user-owned bootstrap file from $HOME into /etc/profile.d fails without DAC_OVERRIDE; a later exact consumer reached the retained SkyPilot SSH ownership repair and then failed sudo chmod without FOWNER. The workflow therefore keeps drop ALL with only CHOWN, DAC_OVERRIDE, FOWNER, SETGID, and SETUID. A new image/consumer must still pass target bootstrap qualification before any OFT setup, simulator metric, benchmark, convergence, or physical-robot claim.",
       "evidence": [
         "docs/workbench/openvla-oft.md"
       ]

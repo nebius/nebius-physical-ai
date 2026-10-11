@@ -78,12 +78,13 @@ resources:
                 privileged: false
                 # SkyPilot's retained bootstrap moves its user-owned
                 # environment file into /etc/profile.d and then recursively
-                # fixes ~/.ssh ownership. DAC_OVERRIDE and CHOWN are the
-                # narrowly evidenced filesystem capabilities; SETGID/SETUID
-                # remain necessary for the non-root sudo bootstrap.
+                # fixes ~/.ssh ownership and then chmods those files through
+                # sudo. DAC_OVERRIDE, CHOWN, and FOWNER are the narrowly
+                # evidenced filesystem capabilities; SETGID/SETUID remain
+                # necessary for the non-root sudo bootstrap.
                 capabilities:
                   drop: [ALL]
-                  add: [CHOWN, DAC_OVERRIDE, SETGID, SETUID]
+                  add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
   train:
     cloud: kubernetes
     # The configured NPA route resolves this standard alias to its exact RTX PRO
@@ -125,12 +126,13 @@ resources:
                 privileged: false
                 # SkyPilot's retained bootstrap moves its user-owned
                 # environment file into /etc/profile.d and then recursively
-                # fixes ~/.ssh ownership. DAC_OVERRIDE and CHOWN are the
-                # narrowly evidenced filesystem capabilities; SETGID/SETUID
-                # remain necessary for the non-root sudo bootstrap.
+                # fixes ~/.ssh ownership and then chmods those files through
+                # sudo. DAC_OVERRIDE, CHOWN, and FOWNER are the narrowly
+                # evidenced filesystem capabilities; SETGID/SETUID remain
+                # necessary for the non-root sudo bootstrap.
                 capabilities:
                   drop: [ALL]
-                  add: [CHOWN, DAC_OVERRIDE, SETGID, SETUID]
+                  add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
   rollout:
     cloud: kubernetes
     accelerators: RTXPRO6000:1
@@ -169,12 +171,13 @@ resources:
                 privileged: false
                 # SkyPilot's retained bootstrap moves its user-owned
                 # environment file into /etc/profile.d and then recursively
-                # fixes ~/.ssh ownership. DAC_OVERRIDE and CHOWN are the
-                # narrowly evidenced filesystem capabilities; SETGID/SETUID
-                # remain necessary for the non-root sudo bootstrap.
+                # fixes ~/.ssh ownership and then chmods those files through
+                # sudo. DAC_OVERRIDE, CHOWN, and FOWNER are the narrowly
+                # evidenced filesystem capabilities; SETGID/SETUID remain
+                # necessary for the non-root sudo bootstrap.
                 capabilities:
                   drop: [ALL]
-                  add: [CHOWN, DAC_OVERRIDE, SETGID, SETUID]
+                  add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
   evidence:
     cloud: kubernetes
     cpus: 4
@@ -212,12 +215,13 @@ resources:
                 privileged: false
                 # SkyPilot's retained bootstrap moves its user-owned
                 # environment file into /etc/profile.d and then recursively
-                # fixes ~/.ssh ownership. DAC_OVERRIDE and CHOWN are the
-                # narrowly evidenced filesystem capabilities; SETGID/SETUID
-                # remain necessary for the non-root sudo bootstrap.
+                # fixes ~/.ssh ownership and then chmods those files through
+                # sudo. DAC_OVERRIDE, CHOWN, and FOWNER are the narrowly
+                # evidenced filesystem capabilities; SETGID/SETUID remain
+                # necessary for the non-root sudo bootstrap.
                 capabilities:
                   drop: [ALL]
-                  add: [CHOWN, DAC_OVERRIDE, SETGID, SETUID]
+                  add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
 
 initial: prepare
 
