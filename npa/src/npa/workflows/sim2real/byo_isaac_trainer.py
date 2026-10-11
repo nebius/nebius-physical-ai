@@ -561,6 +561,8 @@ def enumerate_periodic_checkpoints(
     return [
         {
             "training_iteration": iteration,
+            "checkpoint_completed_updates": iteration + 1,
+            "checkpoint_iteration_semantics": "last_completed_zero_based",
             "checkpoint_uri": f"s3://{parsed.netloc}/{discovered[iteration]}",
         }
         for iteration in sorted(set(selected))

@@ -80,7 +80,11 @@ Stage 7 downloads declared camera frames with sixteen concurrent transfers and
 rejects any failed transfer before writing a rollout manifest. Stage 14 also
 loads earlier outer-loop evidence documents so every completed PPO pass appears
 in the final loss curves, without mirroring historical camera trees.
-Resumed rollouts and PPO use the best validation candidate's exact checkpoint.
+After each full PPO pass, Stage 9 evaluates all saved 100-update checkpoints
+and the final checkpoint against the same validation split. It retains the
+strongest actor and records that checkpoint's actual completed updates separately
+from the full pass count. Resumed rollouts and PPO use its exact checkpoint.
+A retry verifies the complete committed candidate pool before adopting it.
 The next pass repeats exploration and the training-only goal curriculum until
 at least half of that candidate's validation episodes achieved both stable grasp
 and lift; later passes consolidate placement with low action noise. The decision

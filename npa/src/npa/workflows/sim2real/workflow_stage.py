@@ -556,6 +556,69 @@ def _run_eval(
     return report
 
 
+def _stage9_validation_candidates(args, work, update, training_embodiment):
+    from npa.workflows.sim2real.stage9_checkpoints import validation_checkpoints
+
+    checkpoints = validation_checkpoints(update, configured_updates=args.ppo_iterations)
+    return [
+        _stage9_validate_checkpoint(
+            args, work, checkpoint, training_embodiment, len(checkpoints)
+        )
+        for checkpoint in checkpoints
+    ]
+
+
+def _stage9_validate_checkpoint(args, work, checkpoint, training_embodiment, count):
+    root = _root(args)
+    index = checkpoint["training_iteration"]
+    directory = work / f"validation-checkpoint-{index:06d}"
+    directory.mkdir()
+    evidence = {
+        "schema": "npa.sim2real.inner_loop_evidence.v1",
+        "selected_checkpoint_uri": checkpoint["checkpoint_uri"],
+        "final_checkpoint_uri": checkpoint["checkpoint_uri"],
+    }
+    tag = f"validation-o{args.outer_iteration:02d}-i{args.inner_iteration:02d}"
+    if count > 1:
+        tag += f"-checkpoint-{index:06d}"
+    validation = _run_eval(
+        args,
+        split="validation",
+        envs_uri=f"{root}/envs/validation/envs.jsonl",
+        env_count=args.validation_count,
+        evidence=evidence,
+        output_path=directory / "report.json",
+        tag=tag,
+    )
+    if training_embodiment != _assert_embodiment_evidence(
+        root=root, payload=validation, stage="Stage 9 validation"
+    ):
+        raise RuntimeError("Stage 9 train/validation embodiment evidence differs")
+    prefix = f"{root}/eval/validation/outer-{args.outer_iteration:02d}/iter-{args.inner_iteration:02d}"
+    if count > 1:
+        prefix += f"/checkpoint-{index:06d}"
+    validation_uri = prefix + "/report.json"
+    write_json(validation_uri, validation, directory=directory / "published")
+    return _stage9_checkpoint_candidate(
+        args, checkpoint, validation, validation_uri, training_embodiment
+    )
+
+
+def _stage9_checkpoint_candidate(
+    args, checkpoint, validation, validation_uri, embodiment
+):
+    return {
+        **checkpoint,
+        "evaluation_split": "validation",
+        "outer_iteration": args.outer_iteration,
+        "inner_iteration": args.inner_iteration,
+        "checkpoint_sha256": validation.get("policy_checkpoint_sha256", ""),
+        "validation_report_uri": validation_uri,
+        "validation_report": validation,
+        "embodiment": embodiment,
+    }
+
+
 def _stage9(args: argparse.Namespace) -> None:
     from npa.workflows.sim2real import byo_isaac_trainer
     from npa.workflows.sim2real.checkpoint_selection import select_best_checkpoint
@@ -633,7 +696,7 @@ def _stage9(args: argparse.Namespace) -> None:
                 "evidence": evidence_uri,
                 "checkpoint": selection["checkpoint_uri"],
                 "checkpoint_sha256": selection.get("checkpoint_sha256", ""),
-                "validation_report": candidate["validation_report_uri"],
+                "validation_report": selection["validation_report_uri"],
                 "ppo_iterations": args.ppo_iterations,
                 "component_invocation": update.get("component_invocation"),
                 "idempotent_replay": True,
@@ -656,7 +719,7 @@ def _stage9(args: argparse.Namespace) -> None:
             "NPA_BYO_ISAAC_NUM_ENVS": args.ppo_num_envs,
             "NPA_BYO_ISAAC_ITERATIONS": args.ppo_iterations,
             "NPA_BYO_ISAAC_STEPS_PER_ENV": args.ppo_steps_per_env,
-            "NPA_BYO_ISAAC_VALIDATION_INTERVAL": args.ppo_iterations,
+            "NPA_BYO_ISAAC_VALIDATION_INTERVAL": min(100, args.ppo_iterations),
         }
     )
     _set_env(env)
@@ -674,44 +737,11 @@ def _stage9(args: argparse.Namespace) -> None:
     checkpoint_uri = str(update.get("checkpoint_path") or "")
     if not checkpoint_uri.startswith("s3://"):
         raise RuntimeError("Stage 9 PPO did not publish a checkpoint")
-    validation_path = work / "validation-report.json"
-    validation_evidence = {
-        "schema": "npa.sim2real.inner_loop_evidence.v1",
-        "selected_checkpoint_uri": checkpoint_uri,
-        "final_checkpoint_uri": checkpoint_uri,
-    }
-    validation = _run_eval(
-        args,
-        split="validation",
-        envs_uri=f"{root}/envs/validation/envs.jsonl",
-        env_count=args.validation_count,
-        evidence=validation_evidence,
-        output_path=validation_path,
-        tag=f"validation-o{args.outer_iteration:02d}-i{args.inner_iteration:02d}",
+    current_candidates = _stage9_validation_candidates(
+        args, work, update, training_embodiment
     )
-    validation_embodiment = _assert_embodiment_evidence(
-        root=root, payload=validation, stage="Stage 9 validation"
-    )
-    if training_embodiment != validation_embodiment:
-        raise RuntimeError("Stage 9 train/validation embodiment evidence differs")
-    validation_uri = (
-        f"{root}/eval/validation/outer-{args.outer_iteration:02d}/"
-        f"iter-{args.inner_iteration:02d}/report.json"
-    )
-    write_json(validation_uri, validation, directory=work / "validation-out")
-    candidate = {
-        "evaluation_split": "validation",
-        "outer_iteration": args.outer_iteration,
-        "inner_iteration": args.inner_iteration,
-        "training_iteration": args.ppo_iterations,
-        "checkpoint_uri": checkpoint_uri,
-        "checkpoint_sha256": validation.get("policy_checkpoint_sha256", ""),
-        "validation_report_uri": validation_uri,
-        "validation_report": validation,
-        "embodiment": training_embodiment,
-    }
     prior_iterations = list(prior.get("iterations") or [])
-    candidates = list(prior.get("checkpoint_candidates") or []) + [candidate]
+    candidates = list(prior.get("checkpoint_candidates") or []) + current_candidates
     selection = select_best_checkpoint(candidates)
     selected_validation = dict(selection.get("validation_report") or {})
     evidence = {
