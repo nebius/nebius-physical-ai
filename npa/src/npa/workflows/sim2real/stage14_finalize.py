@@ -755,6 +755,8 @@ def _assert_stage14_publication_preconditions(state: _Stage14State) -> None:
 def _validate_stage14_materialized_frames(state: _Stage14State) -> Path:
     """Revalidate downloaded frames against the sealed Stage 10 byte manifest."""
 
+    from npa.workflows.sim2real_viz import _heldout_renders_root
+
     lineage = state.gold.get("render_lineage")
     manifest = state.gold.get("render_manifest")
     if not isinstance(lineage, dict) or not isinstance(manifest, dict):
@@ -762,19 +764,22 @@ def _validate_stage14_materialized_frames(state: _Stage14State) -> Path:
     relative = lineage.get("local_relative_dir")
     if not isinstance(relative, str) or not relative:
         raise RuntimeError("Stage 14 gold report lacks a local render path")
-    render_dir = state.local / relative
+    render_dir = _heldout_renders_root(state.local, state.gold)
+    snapshot_root = state.local / ".verified-stage14-renders"
     _selection, candidate = _resolve_stage14_selection(
         state.evidence,
         state.root,
         state.args.run_id,
     )
-    return materialize_verified_render_snapshot(
+    snapshot_root.mkdir(mode=0o700)
+    materialize_verified_render_snapshot(
         render_dir,
-        state.local / ".verified-stage14-renders",
+        snapshot_root / render_dir.relative_to(state.local.resolve()),
         manifest,
         candidate,
         require_frame_identity=True,
     )
+    return snapshot_root
 
 
 def _stage14_report_payload(
@@ -924,10 +929,10 @@ def _emit_stage14_outputs(
     )
 
     localized_gold = json.loads(json.dumps(state.gold))
-    localized_gold["local_renders_dir"] = str(verified_renders)
     decision = report["outer_loop"]["decision"]
     rrd = emit_sim2real_rerun(
         local_dir=state.local,
+        heldout_local_dir=verified_renders,
         inner_evidence=state.evidence,
         heldout_report=localized_gold,
         stage_components=components,
@@ -943,6 +948,7 @@ def _emit_stage14_outputs(
     )
     mcap = emit_sim2real_mcap(
         local_dir=state.local,
+        heldout_local_dir=verified_renders,
         inner_evidence=state.evidence,
         heldout_report=localized_gold,
         output_mcap=reports / "sim2real.mcap",

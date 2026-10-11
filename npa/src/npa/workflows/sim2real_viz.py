@@ -186,8 +186,29 @@ def emit_sim2real_rerun(
     output_rrd: Path | None = None,
     write_mp4: bool = False,
     allow_progress_only: bool = False,
+    heldout_local_dir: Path | None = None,
 ) -> Sim2RealVizResult:
-    """Write ``reports/sim2real.rrd`` for a completed run's artifacts."""
+    """Write ``reports/sim2real.rrd`` for a completed run's artifacts.
+
+    Args:
+        local_dir: Materialized run inputs, including rollouts and synthetic data.
+        inner_evidence: Retained training and checkpoint-selection evidence.
+        heldout_report: Gold report with its original render path authority.
+        stage_components: Retained component records for the progress view.
+        outer_history: Retained outer-loop decisions.
+        run_metadata: Producer and run identity for the recording.
+        output_rrd: Destination, defaulting to the run's reports directory.
+        write_mp4: Also encode rollout video derivatives.
+        allow_progress_only: Permit a recording without camera content.
+        heldout_local_dir: Private, byte-validated snapshot root below local_dir,
+            retaining the report's canonical relative render layout. Only
+            held-out inputs use this root; provenance is not overridden.
+    Returns:
+        Recording path and counts of the emitted content.
+    Raises:
+        Sim2RealVizError: Inputs, path authority, or output content are invalid.
+        RerunUnavailableError: The native Rerun SDK is unavailable.
+    """
 
     rr, rrb = _import_rerun()
     local_dir = Path(local_dir)
@@ -200,8 +221,11 @@ def emit_sim2real_rerun(
         raise Sim2RealVizError(f"Rerun output path must end in .rrd, got: {output_rrd}")
     output_rrd.parent.mkdir(parents=True, exist_ok=True)
 
-    heldout_episodes = _heldout_render_episodes(local_dir, heldout_report)
-    heldout_pointclouds = _heldout_pointcloud_frames(local_dir, heldout_report)
+    heldout_root, heldout_report = _heldout_inputs(
+        local_dir, heldout_report, heldout_local_dir
+    )
+    heldout_episodes = _heldout_render_episodes(heldout_root, heldout_report)
+    heldout_pointclouds = _heldout_pointcloud_frames(heldout_root, heldout_report)
     has_heldout_cameras = bool(heldout_episodes)
     has_synthetic_data = _has_synthetic_visual_data(local_dir)
     blueprint = _build_blueprint(
@@ -2746,6 +2770,40 @@ def _heldout_renders_root(
     )
 
 
+def _heldout_inputs(
+    local_dir: Path,
+    report: dict[str, Any] | None,
+    snapshot_root: Path | None,
+) -> tuple[Path, dict[str, Any] | None]:
+    """Resolve an isolated snapshot without changing the report's path authority."""
+
+    if snapshot_root is None:
+        return local_dir, report
+    original = _heldout_renders_root(local_dir, report)
+    relative = original.relative_to(Path(local_dir).resolve())
+    root = _contained_render_path(
+        local_dir, str(snapshot_root), source="verified held-out root"
+    )
+    base = Path(local_dir).absolute()
+    current = Path(snapshot_root)
+    current = current.absolute() if current.is_absolute() else base / current
+    if not current.is_relative_to(base):
+        raise Sim2RealVizError("verified held-out root must be below local_dir")
+    while current != base:
+        if current.is_symlink():
+            raise Sim2RealVizError("verified held-out root traverses a symlink")
+        current = current.parent
+    snapshot_report = dict(report or {})
+    # Legacy absolute aliases are translated only after validating all original
+    # aliases and the sealed outer layout. The retained report stays untouched.
+    if Path(str(snapshot_report.get("local_renders_dir") or "")).is_absolute():
+        snapshot_report["local_renders_dir"] = relative.as_posix()
+    verified = _heldout_renders_root(root, snapshot_report)
+    if relative != verified.relative_to(root):
+        raise Sim2RealVizError("verified held-out layout disagrees with provenance")
+    return root, snapshot_report
+
+
 def _manifest_child_path(root: Path, value: object, *, source: str) -> Path:
     if not isinstance(value, str) or not value or value != value.strip():
         raise Sim2RealVizError(f"{source} must be a non-empty relative path")
@@ -3647,6 +3705,7 @@ def emit_sim2real_mcap(
     inner_evidence: dict[str, Any],
     heldout_report: dict[str, Any] | None,
     output_mcap: Path | None = None,
+    heldout_local_dir: Path | None = None,
 ) -> Sim2RealMcapResult:
     """Write ``reports/sim2real.mcap`` from the same inputs as the ``.rrd``.
 
@@ -3660,6 +3719,19 @@ def emit_sim2real_mcap(
     populated too (from the held-out episode when there is one, else mirrored from
     the first rollout), because the embedded viewer's default layout binds its
     Image panel to that one well-known topic.
+
+    Args:
+        local_dir: Materialized run inputs, including rollout data.
+        inner_evidence: Retained training and checkpoint-selection evidence.
+        heldout_report: Gold report with its original render path authority.
+        output_mcap: Destination, defaulting to the run's reports directory.
+        heldout_local_dir: Private, byte-validated snapshot root below local_dir,
+            retaining the report's canonical relative render layout.
+    Returns:
+        Recording path and counts of the emitted content.
+    Raises:
+        Sim2RealVizError: Inputs or path authority are invalid.
+        McapUnavailableError: The native MCAP library is unavailable.
     """
 
     writer_cls, compression_none = _import_mcap()
@@ -3681,7 +3753,10 @@ def emit_sim2real_mcap(
     )
     heldout_period_ns = int(HELDOUT_STEP_SECONDS * 1_000_000_000)
 
-    heldout_episodes = _heldout_render_episodes(local_dir, heldout_report)
+    heldout_root, heldout_report = _heldout_inputs(
+        local_dir, heldout_report, heldout_local_dir
+    )
+    heldout_episodes = _heldout_render_episodes(heldout_root, heldout_report)
     has_heldout_cameras = bool(heldout_episodes)
 
     from npa.workbench.lichtblick import encode_frame_to_compressed_bytes
@@ -3758,7 +3833,7 @@ def emit_sim2real_mcap(
         )
         _emit_mcap_pointclouds(
             emitter,
-            _heldout_pointcloud_frames(local_dir, heldout_report),
+            _heldout_pointcloud_frames(heldout_root, heldout_report),
             frame_period_ns=heldout_frame_period_ns,
         )
         _emit_mcap_heldout_scores(
@@ -3824,6 +3899,7 @@ def emit_sim2real_mcap_if_enabled(
     inner_evidence: dict[str, Any],
     heldout_report: dict[str, Any] | None,
     output_mcap: Path | None = None,
+    heldout_local_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Best-effort ``reports/sim2real.mcap`` emission for the finalize stage.
 
@@ -3831,6 +3907,17 @@ def emit_sim2real_mcap_if_enabled(
     gracefully (returns a ``skipped``/``disabled`` status dict, never raises) so a
     missing ``mcap`` writer or unreadable frame can never fail the finalize stage,
     mirroring the ``.rrd`` path. Shared by both loop engines.
+
+    Args:
+        local_dir: Materialized run inputs.
+        inner_evidence: Retained training and checkpoint-selection evidence.
+        heldout_report: Gold report with its original render path authority.
+        output_mcap: Destination, or the default reports path.
+        heldout_local_dir: Validated snapshot root as for emit_sim2real_mcap.
+    Returns:
+        Recording summary, or an explicit disabled/unavailable status.
+    Raises:
+        OSError: A filesystem operation fails.
     """
 
     import os
@@ -3844,6 +3931,7 @@ def emit_sim2real_mcap_if_enabled(
             inner_evidence=inner_evidence,
             heldout_report=heldout_report,
             output_mcap=output_mcap,
+            heldout_local_dir=heldout_local_dir,
         )
     except McapUnavailableError as exc:
         return {"status": "skipped", "reason": str(exc)}

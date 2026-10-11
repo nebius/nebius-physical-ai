@@ -414,7 +414,11 @@ def test_regen_also_refreshes_the_mcap(
 
     seen: dict[str, object] = {}
 
-    def fake_mcap(*, local_dir, inner_evidence, heldout_report, output_mcap):
+    def fake_mcap(
+        *, local_dir, inner_evidence, heldout_report, output_mcap, heldout_local_dir
+    ):
+        assert heldout_local_dir.is_relative_to(local_dir)
+        assert (heldout_local_dir / "eval/heldout/renders").is_dir()
         seen["output_mcap"] = output_mcap
         seen["reward_trend"] = inner_evidence.get("reward_trend")
         Path(output_mcap).parent.mkdir(parents=True, exist_ok=True)

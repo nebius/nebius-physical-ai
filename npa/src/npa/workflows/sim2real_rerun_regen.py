@@ -2646,16 +2646,20 @@ def _validate_regen_materialized_frames(
             inputs.heldout_report,
         )
         manifest = inputs.heldout_report.get("render_manifest") or {}
+        snapshot_dir.mkdir(mode=0o700)
+        destination = snapshot_dir / render_dir.relative_to(work_dir.resolve())
         if not modern and not manifest.get("episodes"):
-            return materialize_safe_render_snapshot(render_dir, snapshot_dir)
-        return materialize_verified_render_snapshot(
+            materialize_safe_render_snapshot(render_dir, destination)
+            return snapshot_dir
+        materialize_verified_render_snapshot(
             render_dir,
-            snapshot_dir,
+            destination,
             manifest,
             candidate,
             require_checkpoint_identity=modern,
             require_frame_identity=modern,
         )
+        return snapshot_dir
     except (RuntimeError, ValueError) as exc:
         raise Sim2RealRerunRegenError(
             f"canonical regeneration frame bytes are invalid: {exc}"
@@ -2811,10 +2815,9 @@ def _emit_regen_rrd(
 ) -> tuple[Sim2RealVizResult, float]:
     rerun_started = time.monotonic()
     heldout_report = json.loads(json.dumps(state.heldout_report))
-    if state.verified_renders_dir is not None:
-        heldout_report["local_renders_dir"] = str(state.verified_renders_dir)
     result = emit_sim2real_rerun(
         local_dir=work_dir,
+        heldout_local_dir=state.verified_renders_dir,
         inner_evidence=state.inner_evidence,
         heldout_report=heldout_report,
         stage_components=list(_stage_components(state.report)),
@@ -3044,10 +3047,9 @@ def _emit_regen_mcap(
     _assert_no_symlinked_ancestors(mcap_path, containment_root=work_dir)
     mcap_path.unlink(missing_ok=True)
     heldout_report = json.loads(json.dumps(state.heldout_report))
-    if state.verified_renders_dir is not None:
-        heldout_report["local_renders_dir"] = str(state.verified_renders_dir)
     return emit_sim2real_mcap_if_enabled(
         local_dir=work_dir,
+        heldout_local_dir=state.verified_renders_dir,
         inner_evidence=state.inner_evidence,
         heldout_report=heldout_report,
         output_mcap=mcap_path,
