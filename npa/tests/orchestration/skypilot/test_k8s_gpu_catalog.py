@@ -1451,6 +1451,53 @@ def test_stale_validation_recovery_refuses_unproven_api_ownership(message: str) 
     )
 
 
+def test_validation_environment_drops_an_inherited_submit_api_endpoint(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A validation API must not inherit the submit API's endpoint."""
+
+    from npa.orchestration.skypilot import cleanup, local_api
+
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+    inherited = tmp_path / "submit-config.yaml"
+    inherited.write_text(
+        yaml.safe_dump(
+            {
+                "api_server": {"endpoint": "http://submit-api.invalid"},
+                "kubernetes": {"allowed_contexts": ["unrelated"]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    isolated_root = tmp_path / "isolated"
+    monkeypatch.setenv("NPA_SKYPILOT_ISOLATED_CONFIG_DIR", str(isolated_root))
+    monkeypatch.setenv("SKYPILOT_GLOBAL_CONFIG", str(inherited))
+    captured: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        cleanup,
+        "sky_environment",
+        lambda _scope, *, environment: dict(environment),
+    )
+    monkeypatch.setattr(
+        local_api,
+        "ensure_isolated_api",
+        lambda **kwargs: captured.append(kwargs),
+    )
+
+    gpu_catalog.kubernetes_sky_environment(
+        context="exact-context",
+        kubeconfig=kubeconfig,
+        sky_executable="/opt/sky/bin/sky",
+    )
+
+    assert len(captured) == 1
+    config_path = Path(str(captured[0]["environment"]["SKYPILOT_GLOBAL_CONFIG"]))
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert "api_server" not in config
+    assert config["kubernetes"]["allowed_contexts"] == ["exact-context"]
+
+
 @pytest.mark.parametrize(
     "failure_message",
     [
