@@ -188,15 +188,28 @@ def _npa_groot_libero_x_register_envs():
         task_description = str(parsed.get("language") or "").strip()
         if not task_description:
             raise RuntimeError("LIBERO-X BDDL has no language instruction")
-        if native_env_name in gym.registry:
-            raise RuntimeError(f"LIBERO-X environment is already registered: {native_env_name}")
+        expected_entry_point = "gr00t.eval.sim.LIBERO.libero_env:LiberoEnv"
+        expected_kwargs = {
+            "task_bddl_file": str(bddl_path),
+            "task_description": task_description,
+        }
+        existing = gym.registry.get(native_env_name)
+        if existing is not None:
+            existing_kwargs = getattr(existing, "kwargs", None)
+            if (
+                getattr(existing, "entry_point", None) != expected_entry_point
+                or not isinstance(existing_kwargs, dict)
+                or existing_kwargs != expected_kwargs
+            ):
+                raise RuntimeError(
+                    "LIBERO-X environment registration conflicts with the "
+                    f"selected manifest: {native_env_name}"
+                )
+            continue
         register(
             id=native_env_name,
-            entry_point="gr00t.eval.sim.LIBERO.libero_env:LiberoEnv",
-            kwargs={
-                "task_bddl_file": str(bddl_path),
-                "task_description": task_description,
-            },
+            entry_point=expected_entry_point,
+            kwargs=expected_kwargs,
         )
 
 

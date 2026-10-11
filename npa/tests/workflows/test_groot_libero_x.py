@@ -9,6 +9,7 @@ import json
 import os
 import subprocess
 import sys
+import types
 from pathlib import Path
 from typing import Any
 
@@ -730,6 +731,88 @@ def test_runtime_overlay_and_git_fetch_contract_avoid_broad_lfs_smudging(
         == hashlib.sha256(workflow.LIBERO_X_RUNTIME_OVERLAY.encode()).hexdigest()
     )
     assert target.read_text().endswith(workflow.LIBERO_X_RUNTIME_OVERLAY + "\n")
+
+
+def test_runtime_overlay_registration_is_idempotent_only_for_matching_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "libero-x"
+    bddl = source / "libero/libero_x/bddl/LEVEL1/task.bddl"
+    bddl.parent.mkdir(parents=True)
+    bddl.write_text("(define (problem placeholder))\n")
+    native_env_name = "libero_sim/npa_groot_libero_x_0123456789abcdef0123456789abcdef"
+    manifest = tmp_path / "registration.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema": "npa.groot_libero_x.registration.v1",
+                "tasks": [
+                    {
+                        "native_env_name": native_env_name,
+                        "libero_x_bddl_path": "libero/libero_x/bddl/LEVEL1/task.bddl",
+                    }
+                ],
+            }
+        )
+    )
+    monkeypatch.setenv("NPA_GROOT_LIBERO_X_SOURCE", str(source))
+    monkeypatch.setenv("NPA_GROOT_LIBERO_X_REGISTRATION_MANIFEST", str(manifest))
+    parser_module = types.ModuleType("libero.libero.utils.parse_bddl")
+    parser_module.parse_bddl_file = lambda _path: {"language": "place the item"}
+    saved_modules = {
+        name: module
+        for name, module in sys.modules.items()
+        if name == "libero" or name.startswith("libero.")
+    }
+    for name in list(saved_modules):
+        del sys.modules[name]
+    package = types.ModuleType("libero")
+    package.__path__ = []  # type: ignore[attr-defined]
+    nested = types.ModuleType("libero.libero")
+    nested.__path__ = []  # type: ignore[attr-defined]
+    utils = types.ModuleType("libero.libero.utils")
+    utils.__path__ = []  # type: ignore[attr-defined]
+    sys.modules.update(
+        {
+            "libero": package,
+            "libero.libero": nested,
+            "libero.libero.utils": utils,
+            "libero.libero.utils.parse_bddl": parser_module,
+        }
+    )
+    overlay_module_path = tmp_path / "libero_env.py"
+    overlay_module_path.write_text(
+        "import os\n"
+        "from types import SimpleNamespace\n"
+        "gym = SimpleNamespace(registry={})\n"
+        "registrations = []\n"
+        "def register(*, id, entry_point, kwargs):\n"
+        "    registrations.append({'id': id, 'entry_point': entry_point, 'kwargs': kwargs})\n"
+        "    gym.registry[id] = SimpleNamespace(entry_point=entry_point, kwargs=kwargs)\n"
+        "def register_libero_envs():\n"
+        "    pass\n" + workflow.LIBERO_X_RUNTIME_OVERLAY
+    )
+    module_name = "npa_groot_libero_x_overlay_test"
+    spec = importlib.util.spec_from_file_location(module_name, overlay_module_path)
+    assert spec is not None and spec.loader is not None
+    overlay_module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = overlay_module
+    try:
+        spec.loader.exec_module(overlay_module)
+        overlay_module.register_libero_envs()
+        overlay_module.register_libero_envs()
+        assert len(overlay_module.registrations) == 1
+        overlay_module.gym.registry[native_env_name] = types.SimpleNamespace(
+            entry_point="unexpected:entry", kwargs={}
+        )
+        with pytest.raises(RuntimeError, match="conflicts with the selected manifest"):
+            overlay_module.register_libero_envs()
+    finally:
+        sys.modules.pop(module_name, None)
+        for name in list(sys.modules):
+            if name == "libero" or name.startswith("libero."):
+                del sys.modules[name]
+        sys.modules.update(saved_modules)
 
 
 def test_runtime_readiness_failure_names_missing_documented_runtime(
