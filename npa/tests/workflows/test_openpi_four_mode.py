@@ -3,11 +3,15 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import http.server
 import json
 import runpy
+import socket
 import sys
 import tempfile
+import threading
 import types
+import urllib.error
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -1392,6 +1396,122 @@ def test_service_server_wait_success() -> None:
         )
         is pod
     )
+
+
+class _HealthHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        self.server.health_requests.append(self.path)
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(self.server.health_response)
+
+    def log_message(self, _format: str, *_args: object) -> None:
+        pass
+
+
+@pytest.fixture
+def pending_health_endpoint(monkeypatch: pytest.MonkeyPatch):
+    with socket.socket() as reservation:
+        reservation.bind(("127.0.0.1", 0))
+        address = reservation.getsockname()
+    server = http.server.HTTPServer(address, _HealthHandler, bind_and_activate=False)
+    server.health_requests = []
+    server.health_response = b"OK"
+    monkeypatch.setattr(service, "SERVER_PORT", server.server_address[1])
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    try:
+        yield server, thread
+    finally:
+        if thread.is_alive():
+            server.shutdown()
+            thread.join()
+        server.server_close()
+
+
+def test_ready_pod_waits_for_real_service_connection(pending_health_endpoint) -> None:
+    server, thread = pending_health_endpoint
+    clock = _FakeClock()
+    pod = _pod(phase="Running", ready=True)
+
+    def activate_endpoint(seconds: float) -> None:
+        clock.sleep(seconds)
+        server.server_bind()
+        server.server_activate()
+        thread.start()
+
+    result = service._wait_server_ready(
+        _WaitCore([pod]),
+        _WaitApps(_deployment(available=1)),
+        "default",
+        "server",
+        timeout=2,
+        poll_interval=1,
+        health_check=lambda: service._service_endpoint_ready("127.0.0.1", 1),
+        clock=clock,
+        sleep=activate_endpoint,
+    )
+    assert result is pod
+    assert clock.value == 1
+    assert server.health_requests == ["/healthz"]
+
+
+def test_ready_pod_keeps_existing_deadline_when_service_refuses_connections(
+    pending_health_endpoint,
+) -> None:
+    clock = _FakeClock()
+    with pytest.raises(
+        service.OpenPIServiceError, match="service_endpoint_ready.*false"
+    ):
+        service._wait_server_ready(
+            _WaitCore([_pod(phase="Running", ready=True)]),
+            _WaitApps(_deployment(available=1)),
+            "default",
+            "server",
+            timeout=2,
+            poll_interval=1,
+            health_check=lambda: service._service_endpoint_ready("127.0.0.1", 1),
+            clock=clock,
+            sleep=clock.sleep,
+        )
+    assert clock.value == 2
+
+
+def test_service_endpoint_rejects_invalid_real_health_response(
+    pending_health_endpoint,
+) -> None:
+    server, thread = pending_health_endpoint
+    server.health_response = b"not-ready"
+    server.server_bind()
+    server.server_activate()
+    thread.start()
+    with pytest.raises(service.OpenPIServiceError, match="unexpected service health"):
+        service._service_endpoint_ready("127.0.0.1", 1)
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        urllib.error.HTTPError(
+            "http://localhost/healthz", 401, "Unauthorized", {}, None
+        ),
+        urllib.error.URLError(PermissionError("connection denied")),
+        urllib.error.URLError("unresolved host"),
+    ],
+)
+def test_service_endpoint_propagates_other_transport_errors(
+    monkeypatch: pytest.MonkeyPatch, failure: urllib.error.URLError
+) -> None:
+    def request(*_args: object, **_kwargs: object):
+        raise failure
+
+    monkeypatch.setattr(
+        service.urllib.request,
+        "build_opener",
+        lambda *_args: SimpleNamespace(open=request),
+    )
+    with pytest.raises(urllib.error.URLError) as caught:
+        service._service_endpoint_ready("localhost", 1)
+    assert caught.value is failure
 
 
 @pytest.mark.parametrize("reason", ["ImagePullBackOff", "ErrImagePull"])

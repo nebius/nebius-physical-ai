@@ -11,6 +11,7 @@ import shlex
 import textwrap
 import time
 from typing import Any, Callable, Mapping, Sequence
+import urllib.error
 import urllib.request
 
 from npa.workflows.byof.openpi_pipeline import (
@@ -1163,6 +1164,76 @@ def _deployment_state(deployment: Any, pods: Sequence[Any]) -> dict[str, object]
     }
 
 
+def _read_server_state(
+    api: Any, apps: Any, namespace: str, name: str, request_timeout: float
+) -> tuple[Any, Sequence[Any], dict[str, object]]:
+    deployment = _api_call(
+        apps.read_namespaced_deployment,
+        name,
+        namespace,
+        request_timeout=request_timeout,
+    )
+    pods = _api_call(
+        api.list_namespaced_pod,
+        namespace,
+        label_selector=f"npa.nebius.ai/cleanup-owner={name},app={name}",
+        request_timeout=request_timeout,
+    ).items
+    return deployment, pods, _deployment_state(deployment, pods)
+
+
+def _ready_server_pod(
+    deployment: Any, pods: Sequence[Any], state: Mapping[str, object]
+) -> Any | None:
+    if int(deployment.status.available_replicas or 0) < 1:
+        return None
+    ready = [
+        pod
+        for pod in pods
+        if pod.status.phase == "Running"
+        and any(
+            condition.type == "Ready" and condition.status == "True"
+            for condition in pod.status.conditions or []
+        )
+    ]
+    if len(ready) > 1:
+        raise OpenPIServiceError(f"server Deployment has multiple ready pods: {state}")
+    return ready[0] if ready else None
+
+
+def _validate_server_progress(state: Mapping[str, object], pods: Sequence[Any]) -> None:
+    for condition in state.get("conditions", []):
+        if (
+            condition.get("reason") == "ProgressDeadlineExceeded"
+            and condition.get("status") == "False"
+        ):
+            raise OpenPIServiceError(
+                "server Deployment exceeded its progress deadline: "
+                f"{json.dumps(state, sort_keys=True)}"
+            )
+    for pod in pods:
+        problem = _terminal_pod_problem(pod)
+        if problem:
+            raise OpenPIServiceError(f"server {problem}")
+
+
+def _service_endpoint_ready(service_dns: str, http_timeout: float) -> bool:
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(
+            f"http://{service_dns}:{SERVER_PORT}/healthz", timeout=http_timeout
+        ) as response:
+            health = response.read().decode("utf-8").strip()
+    except urllib.error.URLError as error:
+        # Pod readiness can precede the Service backend's routing update.
+        if isinstance(error.reason, ConnectionRefusedError):
+            return False
+        raise
+    if health != "OK":
+        raise OpenPIServiceError(f"unexpected service health response {health!r}")
+    return True
+
+
 def _wait_server_ready(
     api: Any,
     apps: Any,
@@ -1172,57 +1243,25 @@ def _wait_server_ready(
     timeout: float = DEFAULT_SERVER_READY_TIMEOUT_SECONDS,
     poll_interval: float = DEFAULT_POLL_INTERVAL_SECONDS,
     request_timeout: float = DEFAULT_API_TIMEOUT_SECONDS,
+    health_check: Callable[[], bool] | None = None,
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
 ) -> Any:
     timeout = _validated_positive_seconds(timeout, "server ready timeout")
     poll_interval = _validated_positive_seconds(poll_interval, "poll interval")
     deadline = clock() + timeout
-    selector = f"npa.nebius.ai/cleanup-owner={name},app={name}"
     last_state: dict[str, object] = {}
     while clock() < deadline:
-        deployment = _api_call(
-            apps.read_namespaced_deployment,
-            name,
-            namespace,
-            request_timeout=request_timeout,
+        deployment, pods, last_state = _read_server_state(
+            api, apps, namespace, name, request_timeout
         )
-        pods = _api_call(
-            api.list_namespaced_pod,
-            namespace,
-            label_selector=selector,
-            request_timeout=request_timeout,
-        ).items
-        last_state = _deployment_state(deployment, pods)
-        if int(deployment.status.available_replicas or 0) >= 1:
-            ready = [
-                pod
-                for pod in pods
-                if pod.status.phase == "Running"
-                and any(
-                    condition.type == "Ready" and condition.status == "True"
-                    for condition in pod.status.conditions or []
-                )
-            ]
-            if len(ready) == 1:
-                return ready[0]
-            if len(ready) > 1:
-                raise OpenPIServiceError(
-                    f"server Deployment has multiple ready pods: {last_state}"
-                )
-        for condition in last_state.get("conditions", []):
-            if (
-                condition.get("reason") == "ProgressDeadlineExceeded"
-                and condition.get("status") == "False"
-            ):
-                raise OpenPIServiceError(
-                    "server Deployment exceeded its progress deadline: "
-                    f"{json.dumps(last_state, sort_keys=True)}"
-                )
-        for pod in pods:
-            problem = _terminal_pod_problem(pod)
-            if problem:
-                raise OpenPIServiceError(f"server {problem}")
+        server = _ready_server_pod(deployment, pods, last_state)
+        if server is not None:
+            endpoint_ready = health_check is None or health_check()
+            if endpoint_ready:
+                return server
+            last_state["service_endpoint_ready"] = False
+        _validate_server_progress(last_state, pods)
         sleep(min(poll_interval, max(0.0, deadline - clock())))
     raise OpenPIServiceError(
         f"server readiness timed out after {timeout:g}s; last_state="
@@ -1770,6 +1809,7 @@ def _run_service_pods(
     _create_server_objects(
         api, apps, manifests, created=created, request_timeout=timeouts["api"]
     )
+    dns = f"{names['service']}.{args.namespace}.svc.cluster.local"
     server = _wait_server_ready(
         api,
         apps,
@@ -1778,8 +1818,8 @@ def _run_service_pods(
         timeout=timeouts["server"],
         poll_interval=timeouts["poll"],
         request_timeout=timeouts["api"],
+        health_check=lambda: _service_endpoint_ready(dns, timeouts["http"]),
     )
-    dns = f"{names['service']}.{args.namespace}.svc.cluster.local"
     health, hardware = _service_health(dns, timeouts["http"])
     _create_client_job(
         batch, manifests, created=created, request_timeout=timeouts["api"]

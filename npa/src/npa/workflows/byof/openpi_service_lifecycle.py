@@ -33,6 +33,7 @@ from npa.workflows.byof.openpi_service import (
     _delete_and_verify,
     _inject_public_checkpoint_binding,
     _pi05_noise_server_program,
+    _service_endpoint_ready,
     _validated_positive_seconds,
     _wait_server_ready,
     build_manifests,
@@ -359,6 +360,7 @@ def _launch_server(
     _create_server_objects(
         clients[0], clients[1], manifests, created=created, request_timeout=api_timeout
     )
+    host = f"{names['service']}.{args.namespace}.svc.cluster.local"
     pod = _wait_server_ready(
         clients[0],
         clients[1],
@@ -367,8 +369,8 @@ def _launch_server(
         timeout=ready,
         poll_interval=poll,
         request_timeout=api_timeout,
+        health_check=lambda: _service_endpoint_ready(host, http_timeout),
     )
-    host = f"{names['service']}.{args.namespace}.svc.cluster.local"
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     with opener.open(
         f"http://{host}:{SERVER_PORT}/healthz", timeout=http_timeout

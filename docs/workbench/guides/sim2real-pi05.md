@@ -15,6 +15,12 @@ The public artifact-access preflight runs on CPU and publishes source and image
 provenance without querying GPU devices. Training and checkpoint reload retain
 their required live GPU provenance.
 
+Policy-service startup waits for both Kubernetes pod readiness and a successful
+health check through the private Service address. If the pod becomes ready before
+Service routing has caught up, a refused connection remains in the existing
+startup polling loop. Invalid health responses and other transport errors still
+fail closed; checkpoint and hardware receipts are required before startup passes.
+
 ## What the graph proves
 
 The workflow first runs a differential-IK Franka expert in Isaac physics. The
