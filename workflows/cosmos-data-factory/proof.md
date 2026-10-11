@@ -31,6 +31,14 @@ the native labeling stages and review the actual edits/events before reporting
 task success. Keep source attribution, source-view limitations, sampled
 environment mismatches, failed attempts, and rejected samples visible.
 
+For IAA, prefer a full person view with the requested clothing visible. A cropped
+source can make the model invent a new pose or lower body to satisfy footwear
+instructions. Review person identity, pose, robot geometry, tool arrangement,
+and background separately from attribute verification; that verifier cannot
+establish scene preservation. For EVG, match the sampled environment to the
+source scene where possible and check the complete video for event occurrence,
+robot continuity, and changes at the outer borders.
+
 The fixed native sampler can be exercised reproducibly without adding another
 augmentation backend. For the first variant of one input, IAA seed `0` samples
 a red vest, blue jeans, and white sneakers; EVG seed `6` samples
