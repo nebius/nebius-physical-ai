@@ -21,7 +21,9 @@ existing torch attention implementation is used at the model's
 This is a compatibility remediation after the actual native baseline asserted
 that FlashAttention 2 was unavailable; it is not a performance-equivalence
 claim. The modified files and original licenses remain inspectable in the
-image.
+image. The modified configuration, model, and project-metadata files carry
+prominent NPA change notices. The delivered redistribution note is readable
+by the final non-root runtime user; the build checks that access.
 
 SwitchWorld code and the two adapter weights are not in this image. The
 workflow source-checks SwitchWorld at its pinned revision, fetches the selected
@@ -29,6 +31,9 @@ PencilHu adapter files with immutable revision/size/SHA-256 checks, and keeps
 both adapters, model checkpoints, CUDA Python packages, user media, native case
 tensors, credentials, runtime caches, and generated outputs outside image
 layers. Their upstream terms and the operator's authorization remain separate.
+The fetched SwitchWorld [NOTICE](https://github.com/yizhiqianbi/SwitchWorld/blob/44d21478f2c15dcccf6423983cb78beee695db1c/NOTICE)
+credits SwitchWorld contributors, Robbyant/LingBot-World, Matrix-Game, and
+Wan2.2; preserve those attributions with any applicable runtime distribution.
 
 The system package layer uses Debian's fixed `20261009T000000Z` snapshot so
 the scanner can bind parser-like literals to the independently audited package

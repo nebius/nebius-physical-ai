@@ -119,6 +119,8 @@ COPY --chmod=0755 docker/workbench/lingbot-world/switchworld_visualize_runtime.s
 COPY --chmod=0755 docker/workbench/common/model_source.sh /opt/npa/model_source.sh
 COPY --chmod=0755 docker/workbench/common/model_runtime.sh /usr/local/bin/model-runtime
 COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh /usr/local/bin/npa-job-entrypoint
+# Make the delivered notice traversable by the final non-root runtime user.
+RUN install -d -m 0755 /usr/share/doc/npa-switchworld-lingbot-private
 COPY --chmod=0444 docker/workbench/lingbot-world/SWITCHWORLD_PRIVATE_REDISTRIBUTION.md /usr/share/doc/npa-switchworld-lingbot-private/REDISTRIBUTION.md
 COPY src/npa/solutions/video_generation.py src/npa/solutions/lingbot_camera.py \
      src/npa/solutions/perception_video.py src/npa/solutions/native_image_smoke.py \
@@ -157,6 +159,23 @@ RUN /opt/npa/model_source.sh \
     && find /opt/wan-base -type d -name __pycache__ -prune -exec rm -rf {} + \
     && rm -rf /root/.cache /tmp/pip-*
 
+# Apache-2.0 requires prominent notices in each modified upstream file.
+RUN python3 - <<'NPA_MODIFIED_SOURCE_NOTICES'
+from pathlib import Path
+
+changes = {
+    "wan/configs/shared_config.py": "use the Wan EasyDict compatibility mapping.",
+    "wan/configs/wan_i2v_A14B.py": "use the Wan EasyDict compatibility mapping.",
+    "wan/modules/model.py": "use the existing Wan attention fallback.",
+    "pyproject.toml": "omit the FlashAttention package dependency.",
+}
+for relative_path, change in changes.items():
+    path = Path("/opt/byof") / relative_path
+    original = path.read_bytes()
+    notice = f"# Modified by Nebius Physical AI: {change}\n".encode()
+    path.write_bytes(notice + original)
+NPA_MODIFIED_SOURCE_NOTICES
+
 RUN install -d -m 0755 -o ubuntu -g ubuntu \
       /workspace /workspace/.cache/npa/wan2-2/runtime \
       /workspace/.cache/npa/switchworld/visualize-runtime \
@@ -168,7 +187,7 @@ RUN install -d -m 0755 -o ubuntu -g ubuntu \
     && test -x /usr/local/bin/switchworld-visualize-runtime \
     && test -r /etc/sudoers.d/npa-runtime \
     && grep -Fxq 'ubuntu ALL=(ALL) NOPASSWD:ALL' /etc/sudoers.d/npa-runtime \
-    && su ubuntu -s /bin/bash -c 'model-runtime health && test -w /workspace/.cache/npa/wan2-2/runtime && command -v rsync && test -x /usr/sbin/sshd'
+    && su ubuntu -s /bin/bash -c 'model-runtime health && test -w /workspace/.cache/npa/wan2-2/runtime && command -v rsync && test -x /usr/sbin/sshd && test -r /usr/share/doc/npa-switchworld-lingbot-private/REDISTRIBUTION.md'
 
 VOLUME ["/workspace/.cache/npa/wan2-2/runtime", "/workspace/.cache/npa/switchworld/visualize-runtime", "/workspace/model-cache/wan2.2"]
 USER ubuntu
