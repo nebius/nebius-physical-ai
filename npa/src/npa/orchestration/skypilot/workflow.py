@@ -2707,18 +2707,29 @@ def workflow_status(
             error=result.stderr.strip() or result.stdout.strip(),
         )
 
-    jobs = verified_structured_queue_rows(result)
-    if jobs is None:
+    rows = verified_structured_queue_rows(result)
+    if rows is None:
         return WorkflowResult(
             status="UNKNOWN",
             job_id=job_id,
             returncode=result.returncode,
             stdout=result.stdout,
             stderr=result.stderr,
-            error="SkyPilot queue returned malformed, ambiguous, or schema-invalid JSON",
+            error="managed-job queue response is malformed or has conflicting diagnostics",
         )
-    status = _status_from_queue_rows(jobs, job_id)
+    status = _status_from_queue_rows(rows, job_id)
     if not status:
+        if any(
+            str(row.get("job_id") or row.get("id") or "") == str(job_id) for row in rows
+        ):
+            return WorkflowResult(
+                status="UNKNOWN",
+                job_id=job_id,
+                returncode=result.returncode,
+                stdout=result.stdout,
+                stderr=result.stderr,
+                error="recorded managed job has no verifiable scheduler status",
+            )
         # A successful queue response is authoritative: if the recorded id is
         # absent, the managed-jobs controller has lost (or garbage-collected) its
         # execution record.  Treating this as UNKNOWN makes an unbounded runtime

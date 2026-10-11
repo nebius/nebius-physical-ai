@@ -4317,91 +4317,96 @@ def test_workflow_status_reads_json_queue(monkeypatch, tmp_path) -> None:
     assert result.job_id == "42"
 
 
-def test_workflow_status_accepts_exact_allowed_clouds_mismatch_diagnostic(
-    monkeypatch, tmp_path
+_ALLOWED_CLOUDS_NOTICE = (
+    'The following keys (["allowed_clouds"]) have different values in the client '
+    "SkyPilot config with the server and will be ignored. Remove these keys to "
+    "disable this warning. If you want to specify it, please modify it on server "
+    "side or contact your administrator."
+)
+
+
+@pytest.mark.parametrize("state", ["PENDING", "RUNNING", "SUCCEEDED"])
+def test_workflow_status_accepts_pinned_config_notice(
+    monkeypatch, tmp_path, state
 ) -> None:
-    """SkyPilot's known config warning is not a second queue payload."""
-
     sky_bin = _fake_sky(tmp_path)
-    warning = (
-        'The following keys (["allowed_clouds"]) have different values in the client '
-        "SkyPilot config with the server and will be ignored. Remove these keys to "
-        "disable this warning. If you want to specify it, please modify it on server side "
-        "or contact your administrator."
+    output = (
+        _ALLOWED_CLOUDS_NOTICE
+        + "\n"
+        + json.dumps([{"job_id": 42, "task_id": 0, "status": state}])
     )
-
     monkeypatch.setattr(
         subprocess,
         "run",
         lambda cmd, **kwargs: subprocess.CompletedProcess(
-            cmd,
-            0,
-            stdout=f'{warning}\n[{{"job_id": 42, "status": "RUNNING"}}]',
-            stderr="",
+            cmd, 0, stdout=output, stderr=""
         ),
     )
 
     result = workflow_status("42", sky_bin=sky_bin)
 
-    assert result.status == "RUNNING"
+    assert result.status == state
+    assert result.error == ""
 
 
-def test_workflow_status_rejects_unknown_diagnostic_queue_output(
-    monkeypatch, tmp_path
-) -> None:
-    """Only the exact SkyPilot config warning may precede queue JSON."""
-
-    sky_bin = _fake_sky(tmp_path)
-    monkeypatch.setattr(
-        subprocess,
-        "run",
-        lambda cmd, **kwargs: subprocess.CompletedProcess(
-            cmd,
-            0,
-            stdout='unexpected ["allowed_clouds"] diagnostic\n[{"job_id": 42, "status": "RUNNING"}]',
-            stderr="",
+@pytest.mark.parametrize(
+    ("stdout", "stderr"),
+    [
+        ("diagnostic only", ""),
+        ('[{"job_id": 42, "status": "SUCCEEDED"}]\n[]', ""),
+        (
+            _ALLOWED_CLOUDS_NOTICE + '\n[{"job_id": 42, "status": "SUCCEEDED"}]\n[]',
+            "",
         ),
-    )
-
-    result = workflow_status("42", sky_bin=sky_bin)
-
-    assert result.status == "UNKNOWN"
-    assert (
-        result.error
-        == "SkyPilot queue returned malformed, ambiguous, or schema-invalid JSON"
-    )
-
-
-def test_workflow_status_rejects_contradictory_queue_diagnostics(
-    monkeypatch, tmp_path
+        ('[{"job_id": 42, "status": "SUCCEEDED"}]', "Error: permission denied"),
+        ('[{"job_id": 42}]', ""),
+        (
+            _ALLOWED_CLOUDS_NOTICE.replace("allowed_clouds", "kubernetes")
+            + '\n[{"job_id": 42, "status": "RUNNING"}]',
+            "",
+        ),
+    ],
+)
+def test_workflow_status_does_not_infer_absence_from_unverified_queue(
+    monkeypatch, tmp_path, stdout, stderr
 ) -> None:
-    """A queue row is not authoritative when stderr reports an error."""
-
     sky_bin = _fake_sky(tmp_path)
     monkeypatch.setattr(
         subprocess,
         "run",
         lambda cmd, **kwargs: subprocess.CompletedProcess(
-            cmd,
-            0,
-            stdout='[{"job_id": 42, "status": "RUNNING"}]',
-            stderr="ERROR: queue backend returned stale data",
+            cmd, 0, stdout=stdout, stderr=stderr
         ),
     )
 
     result = workflow_status("42", sky_bin=sky_bin)
 
     assert result.status == "UNKNOWN"
-    assert (
-        result.error
-        == "SkyPilot queue returned malformed, ambiguous, or schema-invalid JSON"
-    )
+    assert result.error
 
 
-def test_workflow_status_requires_a_parseable_queue_before_controller_failure(
+def test_workflow_status_empty_queue_remains_verified_after_config_notice(
     monkeypatch, tmp_path
 ) -> None:
-    """A verified queue missing the recorded job remains a controller failure."""
+    sky_bin = _fake_sky(tmp_path)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=_ALLOWED_CLOUDS_NOTICE + "\n[]", stderr=""
+        ),
+    )
+
+    result = workflow_status("42", sky_bin=sky_bin)
+
+    assert result.status == "ABSENT"
+    assert result.error == ""
+
+
+def test_workflow_status_reports_controller_failure_for_verified_missing_job(
+    monkeypatch, tmp_path
+) -> None:
+    """A valid queue may authoritatively exclude the recorded managed job."""
 
     sky_bin = _fake_sky(tmp_path)
     monkeypatch.setattr(

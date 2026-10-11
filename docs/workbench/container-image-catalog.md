@@ -2,6 +2,14 @@
 
 [Workbench docs](README.md)
 
+The optional [team gateway](team-access.md) has a separate CPU service recipe
+at `npa/docker/team-server/Dockerfile`. It is built into an operator-controlled
+private registry and is outside the public image plan and release table below.
+Its Python and kubectl bases are digest-pinned. A private deployment does not
+establish a supported public release. Its isolated SkyPilot environment includes
+the AWS CLI for existing EKS cluster authentication; runtime AWS profiles stay
+in private configuration, and the execution policy remains Kubernetes-only.
+
 The **2026-10-10 UTC audit** of `main` at `e0819bd13` verified all **27 current
 release tags** against their recorded GHCR digests and all **three additional
 table aliases** anonymously. The GPU chart matches the publishing plan and
@@ -201,7 +209,8 @@ documented BF16 tolerance and five durable read-back objects per final target.
   [development build](https://github.com/nebius/nebius-physical-ai/actions/runs/36092335522)
   is bound to its GPU report, artifact manifest, provenance, SBOM, and recorded
   image inputs in the [development evidence manifest](validation/habitat-sim-development-image-manifest.json).
-  The current SDK package initializer differs from that producer. A rebuild
+  The current runtime lock, SDK package initializer and shared signed
+  source-descriptor parser differ from that producer. A rebuild
   from current source requires fresh image qualification; these retained
   results apply only to the recorded digest.
   This 19-step functional workload is not a long benchmark or policy-training
@@ -975,10 +984,36 @@ or newer. The published Genesis release tags above continue to identify their
 original immutable builds; GPU train/save/load/export and demo validation must
 complete before promoting a replacement release.
 
-MJLab's dedicated `npa-mjlab` recipe is excluded from the public table and the
-publication plan. A historical private CUDA 12.8 image completed native B200 and
-RTX PRO 6000 GPU qualification. The current CUDA 13.0 candidate replaces vulnerable
-Torch and setuptools pins and has separate [trained G1 rollout evidence](validation/mjlab-trained-g1-20260925.json)
-on RTX PRO 6000. Public promotion still requires the exact-image security,
-licensing and bootstrap gates. See [MJLab](mjlab.md) for the measured scope,
-operator builds and workflow overrides.
+## MJLab public development candidate
+
+MJLab has an anonymously pullable development image, built through the trusted
+publication workflow and qualified on one RTX PRO 6000. It remains excluded
+from the supported-release table and automatic public-release plan.
+
+The immutable `npa-mjlab:dev-d5cfdcc261d586c25caa877d332feab052369a1f`
+tag resolves to
+`sha256:ec8c099dc8ab34c8a390c6076d3cc3c07a88e27818d0eb0b6b6cf819663f242e`.
+Its measured RTX scope covers Cartpole, G1, Go1 and YAM native train/eval/ONNX;
+service resume/auth/scope/concurrency; fresh unmodified SkyPilot VM startup;
+and native NVIDIA G1 video at 1920 × 1080 and 50 fps.
+
+The [2026-10-10 native HD image and GPU record](validation/mjlab-native-hd-gpu-20261010.json)
+binds those results to the published digest and source commit. The four task
+cycles each trained for two updates and read back 49 artifacts in total; these
+are functional checks. Separately, the current image re-evaluated a verified
+3,000-update G1 checkpoint across 64 complete episodes, exported checked ONNX,
+and produced an unchanged 20-second native HD MP4. All 1,000 frames decoded;
+standalone HTML passed offline playback, seeking and mobile layout checks.
+The record preserves the original training image identity separately.
+The current digest has no B200 or multi-GPU qualification. Earlier CUDA 12.8 acceptance and the
+[2026-09-25 trained G1 rollout](validation/mjlab-trained-g1-20260925.json) apply
+only to their recorded image bytes.
+
+The trusted build passed vulnerability/license and all-severity secret gates,
+payload scans before and after publication, non-root SkyPilot bootstrap checks,
+and signed provenance/SPDX verification. The image delivers source for 239
+Debian components and 23 locked Python/native archives, retains required
+notices, and removes cuDNN SDK files before the dependency layer commits.
+The catalog audit verified all 27 accepted release digests anonymously on
+2026-10-10; this development candidate is separate from that release inventory.
+Use the explicit digest override in [MJLab](mjlab.md).

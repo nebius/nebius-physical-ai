@@ -4,15 +4,16 @@ PR #807 intentionally quarantined published images that violate the current
 image contract. PR #869 supplies repaired, digest-bound development defaults for
 the PAIDF actions. Historical release tags remain quarantined.
 
-This audit examines both planning dispositions in all 133 shipped declarative
+This audit examines both planning dispositions in all 147 shipped declarative
 workflows, using their real resource profiles and no image or registry overrides.
 It includes shell states whose resource profile selects a quarantined tool.
 It checks image selection; it does not claim GPU execution or acceptance of the
 blocked images. The guardrail compares the table below with actual default
 resolution, so a wildcard image override cannot conceal another regression.
 
-After PAIDF's repaired defaults, 33 workflows still fail default image planning:
-26 select the stale image families withdrawn by #807, and seven require images
+After PAIDF's repaired defaults and MJLab's qualified RTX pins, 30 workflows
+still fail default image planning: 26 select the stale image families withdrawn
+by #807, and four require images
 without an accepted public release. The audit checks every task, including
 unbuilt and validation candidates outside the stale-image inventory.
 
@@ -28,6 +29,16 @@ The scope remains explicit because image-byte safety and advertised runtime
 capability are separate claims. Qualifying Nano variant generation does not
 qualify checkpoint evaluation, policy training, or the separate Ray Serve image.
 An explicit operator image or registry still takes precedence.
+
+The MJLab evaluation, rendering and training/evaluation examples now pin the
+exact publicly pullable RTX development digest documented in the
+[native HD GPU record](mjlab-native-hd-gpu-20261010.json). Their default image
+selection and production rendering pass without an override. The image passed
+fresh SkyPilot VM startup and native GPU components; these complete Kubernetes
+workflow graphs were not submitted. Adjacent readiness records retain the
+operator storage, checkpoint and concrete placement prerequisites. MJLab's
+supported release remains quarantined, and current B200 and multi-GPU coverage
+remain unverified.
 
 The live normal PAIDF run also exposed stale adapter behavior in the accepted
 viewer image: its recording retained private S3 locations. The normal spec now
@@ -102,8 +113,8 @@ quarantine and full capability acceptance gates remain enforced.
 
 ## Other defaults without an accepted public release
 
-These seven workflows are additional qualification gaps, separate from the
-previously accepted images withdrawn by #807. Curobo, LIBERO, MJLab and NCore
+These four workflows are additional qualification gaps, separate from the
+previously accepted images withdrawn by #807. Curobo, LIBERO and NCore
 were already publication candidates before #807. That PR made the common
 publication quarantine apply to default consumption as well; NCore's explicit
 qualified-image requirement already existed. Open3D was registered later and
@@ -114,9 +125,6 @@ a development tag as evidence that its full workload is accepted.
 | --- | --- |
 | `workflows/testing/byof-libero.yaml` | `libero` |
 | `workflows/testing/curobo-benchmark.yaml` | `curobo` |
-| `workflows/testing/mjlab-eval.yaml` | `mjlab` |
-| `workflows/testing/mjlab-render.yaml` | `mjlab` |
-| `workflows/testing/mjlab-train-eval.yaml` | `mjlab` |
 | `workflows/testing/nurec-colmap-reconstruct.yaml` | `ncore` |
 | `workflows/testing/open3d-registration.yaml` | `open3d` |
 

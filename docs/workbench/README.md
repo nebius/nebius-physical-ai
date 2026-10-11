@@ -6,6 +6,22 @@ Use `npa workbench <tool> <command>` for a capability and
 `npa workbench workflow` for a pipeline. Tools exchange artifacts through S3;
 Python and HTTP access follow each tool's documented contract.
 
+[Workbench access](team-access.md) adds shared execution through the existing
+CLI, API, and SDK. Administrators create local users/groups and explicit personal
+GPU allocations and artifact storage; users use revocable personal key files and
+never receive scheduler or cluster credentials. The CPU gateway and private
+SkyPilot service still require live qualification. Start with the
+[setup and usage guide](shared-workbench-quickstart.md) for operator setup,
+both login paths, command meanings, and coding-agent access, then use
+[local users and personal access keys](team-identity.md) for identity details.
+External identities can be explicitly
+linked later without changing local ownership; there is no standalone portal or
+browser-login flow. The [offline team example](../demos/team-access.html)
+illustrates synthetic policy outcomes and recorded local checks, not a deployed
+service. Optional native Nebius human identity verification uses the same
+linked-local-account model and private token-file path; it does not make tenant
+access, cloud groups, or cloud roles into Workbench authorization.
+
 PAIDF workflows select repaired public Cosmos3, Evaluator, and Curator
 candidates by immutable digest while the historical releases remain
 quarantined. See the [PAIDF image-selection notes](guides/physical-ai-data-factory.md)
@@ -19,6 +35,7 @@ lists other affected images and shipped workflows, including the Sim2Real seams.
 | --- | --- |
 | Choose a workload | [Robot and workflow guides](guides/README.md) · [workflow catalog](../../workflows/README.md) |
 | Run or resume a workflow manually | [Manual workflow operations](guides/manual-workflow-operations.md) |
+| Run the 14-stage Sim2Real loop from a fresh terminal | [Manual Sim2Real runbook](guides/sim2real-workflow.md), including the qualified-image release gate |
 | Generate twelve PAIDF appearances from MP4 or real ALOHA data | [Manual twelve-profile recipe](guides/paidf-appearance-12.md) |
 | Submit episode batches and choose concurrency | [Dataset batches](guides/paidf-dataset-batches.md) · [capacity planning](guides/paidf-dataset-batches.md#concurrency-and-existing-capacity) |
 | Inspect supported quality reports | [Shared report inspection](insights-reports.md) |
