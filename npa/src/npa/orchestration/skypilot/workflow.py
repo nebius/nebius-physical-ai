@@ -882,7 +882,8 @@ def _ensure_isolated_api(**kwargs) -> ApiDaemonCwdProbe:
     try:
         return ApiDaemonCwdProbe(**ensure_isolated_api(**kwargs))
     except IsolatedApiError as exc:
-        raise SkyPilotSubmitError(str(exc)) from None
+        # API configuration validation precedes the workflow launch transaction.
+        raise SkyPilotSubmitError(str(exc), launch_attempted=False) from None
 
 
 def ensure_local_api_daemon_health(

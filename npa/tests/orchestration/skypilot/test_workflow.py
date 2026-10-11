@@ -10,6 +10,7 @@ import threading
 from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 import yaml
@@ -34,6 +35,55 @@ from npa.orchestration.skypilot.launch_transaction import (
 
 
 _REAL_RUN_LAUNCH_TRANSACTION = workflow_module.run_launch_transaction
+_REAL_ENSURE_ISOLATED_API = workflow_module._ensure_isolated_api
+
+
+def test_api_configuration_refusal_closes_only_unlaunched_transaction(monkeypatch):
+    from npa.cli.workbench.workflow import _record_workflow_submit_failure
+
+    def configuration_refusal(**kwargs):
+        raise local_api_module.IsolatedApiError("different verified configuration")
+
+    monkeypatch.setattr(local_api_module, "ensure_isolated_api", configuration_refusal)
+    operation = SimpleNamespace(record_rollback=Mock(), transition=Mock())
+    with pytest.raises(SkyPilotSubmitError) as caught:
+        _REAL_ENSURE_ISOLATED_API()
+
+    _record_workflow_submit_failure(operation, caught.value)
+
+    assert caught.value.launch_attempted is False
+    operation.record_rollback.assert_called_once_with(
+        attempted=False, completed=True, removed=[], preserved=[], outcomes=[]
+    )
+    operation.transition.assert_called_once_with(
+        "rolled-back",
+        error="different verified configuration",
+        details={"error_type": "SkyPilotSubmitError", "launch_attempted": False},
+    )
+
+
+@pytest.mark.parametrize(
+    "failure", ["unknown-launch", "started-transaction", "untyped"]
+)
+def test_api_failure_keeps_uncertain_launch_recovery_required(failure):
+    from npa.cli.workbench.workflow import _record_workflow_submit_failure
+
+    if failure == "unknown-launch":
+        error = SkyPilotSubmitError("unknown launch outcome")
+    elif failure == "started-transaction":
+        error = SkyPilotSubmitError(
+            "unknown launch outcome",
+            transaction=SimpleNamespace(launch_sequence=1),
+            launch_attempted=False,
+        )
+    else:
+        error = ValueError("different verified configuration")
+    operation = SimpleNamespace(record_rollback=Mock(), transition=Mock())
+
+    _record_workflow_submit_failure(operation, error)
+
+    operation.record_rollback.assert_not_called()
+    operation.transition.assert_called_once_with("recovery-required", error=str(error))
 
 
 @pytest.mark.parametrize("task_ids", ([0], [0, 0], [0, 1, 2], [False, 1]))
