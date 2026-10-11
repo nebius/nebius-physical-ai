@@ -193,25 +193,37 @@ DECLARATIVE_PIP_EXTRAS = frozenset({"viz"})
 #: look for. `lerobot policy_train` needs the latter: it materialises its dataset with
 #: `huggingface_hub`, and the interpreter running npa in a vendor image is not the vendor's own
 #: venv, so the library is not necessarily importable there (live job 244).
+FASTWAM_PYAV_REQUIREMENT = (
+    # LeRobot 0.6.1 FastWAM imports ``av.option.Option``. PyAV 17 still imports
+    # successfully, but removed that API, so an import-only probe silently leaves
+    # the vendor venv incompatible. Every FastWAM stage imports the policy path.
+    'python:av;assert(__import__("importlib.metadata").metadata.version("av").startswith("15."))',
+    "av>=15.0,<16.0",
+)
+
+
 TOOL_REF_PIP_REQUIREMENTS: dict[str, tuple[tuple[str, str], ...]] = {
     "workbench.lerobot.fastwam_prepare": (
         ("python:huggingface_hub", "huggingface_hub>=0.23,<1.0"),
         ("python:pyarrow", "pyarrow>=15,<22"),
+        FASTWAM_PYAV_REQUIREMENT,
     ),
     "workbench.lerobot.fastwam_train": (
         ("python:huggingface_hub", "huggingface_hub>=0.23,<1.0"),
         ("python:pyarrow", "pyarrow>=15,<22"),
+        FASTWAM_PYAV_REQUIREMENT,
     ),
     "workbench.lerobot.fastwam_rollout": (
         ("python:huggingface_hub", "huggingface_hub>=0.23,<1.0"),
-        ("python:av", "av>=12,<17"),
+        FASTWAM_PYAV_REQUIREMENT,
     ),
     "workbench.lerobot.fastwam_evaluate": (
         ("python:huggingface_hub", "huggingface_hub>=0.23,<1.0"),
         ("python:pyarrow", "pyarrow>=15,<22"),
+        FASTWAM_PYAV_REQUIREMENT,
     ),
     "workbench.lerobot.fastwam_report": (
-        ("python:av", "av>=12,<17"),
+        FASTWAM_PYAV_REQUIREMENT,
         ("python:rerun", "rerun-sdk==0.38.1"),
     ),
     "workbench.lerobot.transfer_prepare": (
