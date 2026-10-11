@@ -1654,6 +1654,17 @@ def test_policy_stage_requires_native_results_and_uploads_actual_mp4s(
     assert report["closed_loop"]["success_rate"] == 1.0
     video = report["closed_loop"]["tasks"][0]["videos"][0]
     assert video["bytes"] == len(b"actual-native-rollout")
+    media_prefix = workflow._read_s3_json(
+        client, "s3://bucket/run/rollouts/baseline/mp4"
+    )
+    assert media_prefix == {
+        "schema": workflow.ROLLOUT_MEDIA_PREFIX_SCHEMA,
+        "status": "completed",
+        "run_id": run_id,
+        "policy": "baseline",
+        "videos": [video],
+    }
+    assert report["rollout_media"]["uri"] == "s3://bucket/run/rollouts/baseline/mp4"
     assert client.head_object(
         Bucket="bucket", Key="run/rollouts/baseline/mp4/heldout-0/rollout.mp4"
     )
