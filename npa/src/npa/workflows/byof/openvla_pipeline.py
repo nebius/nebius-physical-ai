@@ -526,7 +526,10 @@ print(json.dumps({
         or not payload["observation_feature_keys"]
         or not isinstance(payload.get("action_shape"), list)
         or len(payload["action_shape"]) < 2
-        or any(not isinstance(value, int) or value <= 0 for value in payload["action_shape"])
+        or any(
+            not isinstance(value, int) or value <= 0
+            for value in payload["action_shape"]
+        )
     ):
         raise OpenVLAPipelineError("dlimp RLDS probe returned invalid data")
     return payload
