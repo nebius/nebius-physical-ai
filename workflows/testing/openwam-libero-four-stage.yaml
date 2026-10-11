@@ -59,6 +59,18 @@ resources:
     memory: 64Gi
     disk_size: "160"
     image: "{{config.runtime_image}}"
+    # The private OpenWAM image's Python 3.12 runtime contains the baked NPA
+    # source via an image-local .pth record. It intentionally has no generic
+    # `npa` console script, so declare the exact interpreter before setup
+    # evaluates the renderer's lightweight entrypoint guard.
+    kubernetes:
+      pod_config:
+        spec:
+          containers:
+            - name: ray-node
+              env:
+                - name: NPA_BAKED_PYTHON
+                  value: /opt/openwam-venv/bin/python
   openwam-gpu:
     cloud: kubernetes
     accelerators: "{{config.gpu_type}}:{{config.gpu_count}}"
@@ -66,12 +78,28 @@ resources:
     memory: 192Gi
     disk_size: "320"
     image: "{{config.runtime_image}}"
+    kubernetes:
+      pod_config:
+        spec:
+          containers:
+            - name: ray-node
+              env:
+                - name: NPA_BAKED_PYTHON
+                  value: /opt/openwam-venv/bin/python
   visualize-cpu:
     cloud: kubernetes
     cpus: 8
     memory: 32Gi
     disk_size: "32"
     image: "{{config.runtime_image}}"
+    kubernetes:
+      pod_config:
+        spec:
+          containers:
+            - name: ray-node
+              env:
+                - name: NPA_BAKED_PYTHON
+                  value: /opt/openwam-venv/bin/python
 
 initial: prepare-assets
 

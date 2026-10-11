@@ -2769,7 +2769,9 @@ def test_default_npa_setup_has_optin_source_overlay() -> None:
     # A thin image's incomplete source must not fail before the explicitly
     # selected complete source is downloaded.
     assert (
-        'if ! command -v npa >/dev/null 2>&1 && { [ "$NPA_SRC_OVERLAY" != "1" ] '
+        'if ! command -v npa >/dev/null 2>&1 '
+        '&& [ "$npa_baked_entry_available" != "1" ] && { '
+        '[ "$NPA_SRC_OVERLAY" != "1" ] '
         '|| [ -z "$NPA_SRC_S3_URI" ]; }; then' in setup
     )
 
