@@ -2898,7 +2898,7 @@ def workflow_task_statuses(
     )
     if raise_on_error:
         _verify_task_queue_result(result)
-    if result.returncode != 0:
+    if verified_structured_queue_rows(result) is None:
         return []
     return parse_task_statuses(result.stdout, job_id)
 

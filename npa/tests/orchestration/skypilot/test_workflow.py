@@ -7817,3 +7817,60 @@ def test_reconciliation_requires_noncontradictory_queue_streams(
     else:
         assert evidence.state is workflow_module.ReconciliationState.FOUND
         assert evidence.job_id == "126"
+
+
+@pytest.mark.parametrize("raise_on_error", [False, True])
+@pytest.mark.parametrize(
+    ("returncode", "stdout", "stderr", "has_rows", "ambiguous"),
+    [
+        (0, _QUEUE_JSON, "", True, False),
+        (0, _QUEUE_JSON, "Warning: optional metrics unavailable\n", True, False),
+        (0, _QUEUE_JSON, "PermissionDenied: queue access denied\n", False, True),
+        (0, "PermissionDenied: queue access denied\n" + _QUEUE_JSON, "", False, True),
+        (0, _QUEUE_JSON + "\nPermissionDenied: queue access denied", "", False, True),
+        (0, "[]", "", False, False),
+        (1, "", "No in-progress managed jobs.\n", False, False),
+        (0, "not-json", "", False, True),
+        (1, _QUEUE_JSON, "", False, True),
+        (0, _QUEUE_JSON + "\n[]", "", False, True),
+        (0, _QUEUE_JSON, "RUNNING job_id=999\n", False, True),
+        (0, "[]", "PermissionDenied: queue access denied\n", False, True),
+    ],
+)
+def test_task_statuses_verify_both_queue_streams(
+    monkeypatch,
+    tmp_path,
+    raise_on_error,
+    returncode,
+    stdout,
+    stderr,
+    has_rows,
+    ambiguous,
+) -> None:
+    """Optional diagnostics omit ambiguous rows; strict callers retain errors."""
+    from npa.orchestration.skypilot.workflow import workflow_task_statuses
+
+    sky_bin = _fake_sky(tmp_path)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, returncode, stdout=stdout, stderr=stderr
+        ),
+    )
+
+    if raise_on_error and ambiguous:
+        with pytest.raises(RuntimeError, match="SkyPilot task queue"):
+            workflow_task_statuses("75", sky_bin=sky_bin, raise_on_error=True)
+        return
+
+    rows = workflow_task_statuses("75", sky_bin=sky_bin, raise_on_error=raise_on_error)
+    if not has_rows:
+        assert rows == []
+        return
+    assert [row["task_id"] for row in rows] == [0, 1, 2]
+    assert {row["job_id"] for row in rows} == {"75"}
+    assert [row["status"] for row in rows] == ["SUCCEEDED", "RUNNING", "SUCCEEDED"]
+    assert rows[0]["submitted_at"] == 1785297417.2239287
+    assert rows[0]["end_at"] == 1785297483.0891774
+    assert rows[1]["end_at"] is None
