@@ -1818,6 +1818,7 @@ def _pull_probe_admission_status(
     if (
         not isinstance(observed, Mapping)
         or observed.get("serviceAccountName") != requested["serviceAccountName"]
+        or observed.get("automountServiceAccountToken") is not False
         or observed.get("imagePullSecrets", []) != pull_secrets
     ):
         return "authority_mismatch"
@@ -1926,6 +1927,7 @@ def verify_kubernetes_image_pull(
         {
             "restartPolicy": "Never",
             "serviceAccountName": service_account_name,
+            "automountServiceAccountToken": False,
             "terminationGracePeriodSeconds": 0,
             "containers": [
                 {

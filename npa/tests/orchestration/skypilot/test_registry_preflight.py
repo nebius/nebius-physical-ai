@@ -1628,6 +1628,7 @@ def _target_probe_runner(
                 {"name": "pull", "image": IMAGE, "imagePullPolicy": "Always"}
             ],
             "serviceAccountName": service_account_name,
+            "automountServiceAccountToken": False,
             "imagePullSecrets": [{"name": name} for name in secret_names],
             "nodeSelector": {"kubernetes.io/os": "linux"},
             "tolerations": [
@@ -1670,6 +1671,7 @@ def _target_probe_runner(
                 {"name": name} for name in secret_names
             ]
             assert manifest["spec"]["serviceAccountName"] == service_account_name
+            assert manifest["spec"]["automountServiceAccountToken"] is False
             expected_tolerations = [
                 {
                     "key": "nvidia.com/gpu",
@@ -1770,6 +1772,7 @@ def test_exact_target_pull_probe_reproduces_pod_placement() -> None:
     ("field", "changed_value", "expected_status"),
     [
         ("serviceAccountName", "different-account", "authority_mismatch"),
+        ("automountServiceAccountToken", True, "authority_mismatch"),
         ("imagePullSecrets", [{"name": "different-secret"}], "authority_mismatch"),
         ("nodeSelector", {"kubernetes.io/os": "other"}, "placement_mismatch"),
         ("tolerations", [], "placement_mismatch"),
