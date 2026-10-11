@@ -185,8 +185,8 @@ that an appearance variant is suitable for policy training.
 
 ## User: download and inspect the result
 
-Set `RUN_ID` to the ID returned by submission. After the run succeeds, list its
-outputs with your saved login:
+Set `RUN_ID` to the ID returned by submission. List its outputs with your saved
+login once the run becomes terminal:
 
 ```bash
 export RUN_ID
@@ -205,11 +205,12 @@ from npa.sdk.workbench.team import open_connection
 
 os.umask(0o077)
 run_id = os.environ["RUN_ID"]
+recording = "reports/sim2real.rrd"
 output = Path(f"{run_id}.rrd")
 client, _ = open_connection()
 try:
     with output.open("xb") as destination:
-        client.download(run_id, "reports/sim2real.rrd", destination)
+        client.download(run_id, recording, destination)
 finally:
     client.close()
 print(output.resolve())
@@ -220,6 +221,19 @@ with `rerun "$RUN_ID.rrd"` on your desktop; copy it there first if the VDI is
 headless. Scrub the source and generated video timelines and read the quality,
 caption, and curation panels. The recording embeds the videos, so this local
 inspection uses the downloaded file and your desktop viewer.
+
+If the run stopped with `quality rejected after bounded refinement`, change
+`recording` to `reports/quality-evidence.rrd`. That recording retains the source,
+generated videos, and rejected quality evidence before curation. Use the same
+personal download connection to read `grade/cosmos_evaluator.json` and
+`grade/quality_disposition.json`; check individual variants as well as the
+aggregate score. Verified timing can accompany a visual-quality rejection.
+Compare source and generated scenes at matching times, retain the failed run,
+and submit the affected episode again only after identifying a specific input,
+generation, or evaluator-service correction. Changing the workflow creates a
+new retry identity; repeating the original inputs recovers the rejected run.
+The [rejection runbook](../../workflows/guides/paidf-cosmos3.md#r6-diagnose-quality-rejection-and-prepare-the-next-run)
+explains the checks and evidence operators can use for diagnosis.
 
 ## Operator: audit the completed batch
 
