@@ -278,26 +278,87 @@ def _validate_bootstrap(env, runner, profile, training_split):
 
 
 def _bootstrap_round(env, actor, optimizer, *, index, replay=None):
-    batch, labels, successes, diagnostics = _training_round(
-        env, actor, learner_fraction=0.0 if index == 0 else 0.5
+    batch, labels, successes, diagnostics, recovery = _guarded_demonstrations(
+        env, actor, optimizer, index=index, replay=replay
     )
     count = int(successes.sum())
-    if count * 2 < len(successes):
-        raise RuntimeError(
-            "native training demonstrations did not establish stable placement: "
-            f"round {index}, {count}/{len(successes)} training scenarios"
-        )
     fit = _fit_actor(actor, batch, labels, optimizer, replay=replay)
     audit = {
         "round": index,
         "training_scenarios": len(successes),
         "teacher_stable_placements": count,
         "examples": len(labels),
+        "warmup_recovery": recovery,
         **diagnostics,
         **fit,
     }
     print("ROBOT_BOOTSTRAP_ROUND " + json.dumps(audit, sort_keys=True), flush=True)
     return audit
+
+
+def _require_successful_demonstrations(successes, *, index):
+    count = int(successes.sum())
+    if count * 2 < len(successes):
+        raise RuntimeError(
+            "native training demonstrations did not establish stable placement: "
+            f"round {index}, {count}/{len(successes)} training scenarios"
+        )
+
+
+def _guarded_demonstrations(env, actor, optimizer, *, index, replay):
+    recovery = []
+    fraction = 0.0 if index == 0 else 0.5
+    while True:
+        batch, labels, successes, diagnostics = _training_round(
+            env, actor, learner_fraction=fraction
+        )
+        if int(successes.sum()) * 2 >= len(successes):
+            return batch, labels, successes, diagnostics, recovery
+        if index == 0:
+            _require_successful_demonstrations(successes, index=index)
+        failed = _collection_evidence(successes, diagnostics, fraction=fraction)
+        del batch, labels
+        recovery.append(
+            _recover_mixed_demonstrations(env, actor, optimizer, replay, failed)
+        )
+        env.reset()
+        actor.reset()
+
+
+def _collection_evidence(successes, diagnostics, *, fraction):
+    return {
+        "scope": "sealed_training_only",
+        "training_scenarios": len(successes),
+        "strict_training_placements": int(successes.sum()),
+        "learner_fraction": fraction,
+        "inference_composition": "training_demonstration_mixture",
+        "gold_used": False,
+        "ppo_updates": 0,
+        **diagnostics,
+    }
+
+
+def _recover_mixed_demonstrations(env, actor, optimizer, replay, failed):
+    env.reset()
+    actor.reset()
+    batch, labels, successes, diagnostics = _training_round(
+        env, actor, learner_fraction=0.0
+    )
+    _require_successful_demonstrations(successes, index="teacher recovery")
+    fit = _fit_actor(actor, batch, labels, optimizer, replay=replay)
+    recovery = {
+        "failed_mixed_collection": failed,
+        "teacher_recovery_fit": {
+            **_collection_evidence(successes, diagnostics, fraction=0.0),
+            "examples": len(labels),
+            "fit": fit,
+        },
+    }
+    print(
+        "ROBOT_BOOTSTRAP_WARMUP_RECOVERY " + json.dumps(recovery, sort_keys=True),
+        flush=True,
+    )
+    return recovery
 
 
 def _publish_bootstrap_audit(task, runner, rounds, profile, output_dir, evidence):

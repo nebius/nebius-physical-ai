@@ -68,6 +68,9 @@ or spawn sibling Jobs.
   `franka-cartesian-gru-distillation-v2`, retains at least three 32-epoch demonstration
   fits, and repeats corrective fitting until a strict actor-only handoff across
   the complete training split passes before PPO. Archive every assessment.
+  A weak initial mixed collection triggers another guarded teacher-only fit and
+  a new mixed collection. Both accepted warmup rounds retain the half-split
+  placement guard; archive every failed collection and recovery fit.
   Expert phases only weight training loss. Every periodic and final checkpoint
   binds the policy semantics; all native inference paths reset
   recurrent state on actual `dones`. Keep the full PPO count and held-out gate.

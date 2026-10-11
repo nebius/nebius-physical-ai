@@ -460,6 +460,9 @@ the canonical 14-stage graph. Fresh stock-Franka training defaults
 Cartesian actions, normalized measured observations, and a recurrent actor
 shared by training and inference. At least three retained demonstration fits
 precede a strict actor-only placement check across the complete training split.
+If the initial mixed collection misses its placement guard, another guarded
+teacher-only collection refits the actor before retrying the mixture. The audit
+retains each failed collection and recovery fit; the placement threshold stays fixed.
 Corrective fitting repeats when that check fails, before the complete PPO pass
 begins. `none` disables the training bootstrap; an explicit profile rejects
 ineligible tasks and resumed checkpoints. Native checkpoint

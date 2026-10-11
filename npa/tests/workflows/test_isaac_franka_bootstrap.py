@@ -167,6 +167,53 @@ class TestNativeBootstrapCheckpoint:
         assert self.torch.equal(hidden[:, ~dones], before[:, ~dones])
         assert not hidden[:, dones].any()
 
+    def _weak_mixture_collector(self, observations, fractions):
+        def collect(*args, learner_fraction):
+            fractions.append(learner_fraction)
+            success = self.torch.ones(4, dtype=self.torch.bool)
+            if len(fractions) == 1:
+                success.zero_()
+            diagnostics = {"arm_label_mse": 0.01, "gripper_label_mse": 0.01}
+            labels = observations["policy"][:, :8] * 0.1
+            return observations, labels, success, diagnostics
+
+        return collect
+
+    def test_failed_mixture_recovers_from_guarded_native_teacher_data(
+        self, monkeypatch, tmp_path
+    ):
+        from npa.workflows.sim2real.isaac_recurrent_imitation import (
+            RecurrentDemonstrationReplay,
+        )
+
+        environment, runner = self._runner(tmp_path)
+        observations = self._training_observations(monkeypatch, environment, tmp_path)
+        actor = runner.alg.actor
+        optimizer = self.torch.optim.Adam(actor.parameters(), lr=0.0003)
+        replay = RecurrentDemonstrationReplay(environment.num_envs)
+        bootstrap._bootstrap_round(
+            environment, actor, optimizer, index=0, replay=replay
+        )
+        fractions = []
+
+        monkeypatch.setattr(
+            bootstrap,
+            "_training_round",
+            self._weak_mixture_collector(observations, fractions),
+        )
+        audit = bootstrap._bootstrap_round(
+            environment, actor, optimizer, index=1, replay=replay
+        )
+        assert fractions == [0.5, 0.0, 0.5]
+        recovery = audit["warmup_recovery"][0]
+        assert recovery["failed_mixed_collection"]["strict_training_placements"] == 0
+        assert recovery["teacher_recovery_fit"]["strict_training_placements"] == 4
+        assert recovery["teacher_recovery_fit"]["fit"]["replay_batches"] == 2
+        assert audit["teacher_stable_placements"] == 4
+        assert audit["replay_batches"] == 3
+        assert audit["normalization_sample_count"] == 384
+        assert runner.current_learning_iteration == 0
+
     def test_bootstrap_then_real_ppo_save_and_load(self, monkeypatch, tmp_path):
         from npa.workflows.sim2real import isaac_byo_robot_task
 
@@ -485,6 +532,65 @@ def test_bootstrap_audit_binds_exact_training_identity_and_zero_ppo_updates():
     assert _validate_audit(audit) == audit
 
 
+def _warmup_recovery_audit():
+    audit = _audit()
+    audit["rounds"][1]["warmup_recovery"] = [
+        {
+            "failed_mixed_collection": {
+                **_actor_collection(0.5),
+                "strict_training_placements": 31,
+            },
+            "teacher_recovery_fit": {
+                **_actor_collection(0.0),
+                "examples": 1024,
+                "fit": _recurrent_fit(2),
+            },
+        }
+    ]
+    audit["rounds"][1].update(_recurrent_fit(3))
+    audit["corrective_fit"]["fit"] = _recurrent_fit(4)
+    return audit
+
+
+def test_warmup_recovery_retains_failed_mixture_and_exact_native_fitting_history():
+    audit = _warmup_recovery_audit()
+    assert _validate_audit(audit) == audit
+    audit["rounds"][1]["warmup_recovery"] = []
+    with pytest.raises(RuntimeError, match="exact replay"):
+        _validate_audit(audit)
+
+
+@pytest.mark.parametrize(
+    "collection,field,value",
+    [
+        ("failed_mixed_collection", "gold_used", True),
+        ("failed_mixed_collection", "learner_fraction", 0.0),
+        ("failed_mixed_collection", "strict_training_placements", 32),
+        ("failed_mixed_collection", "training_scenarios", 64.0),
+        ("teacher_recovery_fit", "gold_used", True),
+        ("teacher_recovery_fit", "learner_fraction", 0.5),
+        ("teacher_recovery_fit", "strict_training_placements", 31),
+        ("teacher_recovery_fit", "examples", 1023),
+        ("teacher_recovery_fit", "examples", 1024.0),
+        ("teacher_recovery_fit", "fit", _recurrent_fit(1)),
+    ],
+)
+def test_warmup_recovery_rejects_unguarded_or_inconsistent_training_evidence(
+    collection, field, value
+):
+    audit = _warmup_recovery_audit()
+    audit["rounds"][1]["warmup_recovery"][0][collection][field] = value
+    with pytest.raises(RuntimeError):
+        _validate_audit(audit)
+
+
+def test_initial_teacher_failure_cannot_be_replaced_by_warmup_recovery():
+    audit = _warmup_recovery_audit()
+    audit["rounds"][0]["warmup_recovery"] = audit["rounds"][1]["warmup_recovery"]
+    with pytest.raises(RuntimeError, match="unsuccessful teacher evidence"):
+        _validate_audit(audit)
+
+
 def _adaptive_audit():
     audit = _audit()
     audit["additional_corrective_fits"] = [
@@ -684,7 +790,10 @@ def test_transport_targets_preserve_measured_cube_to_gripper_offset():
     assert torch.allclose(target[4], goals[4] + offsets[4])
 
 
-def test_failed_demonstrations_report_actual_coverage_before_actor_fitting(monkeypatch):
+@pytest.mark.parametrize("index,round_label", [(0, "0"), (1, "teacher recovery")])
+def test_failed_demonstrations_report_actual_coverage_before_actor_fitting(
+    monkeypatch, index, round_label
+):
     import numpy as np
 
     successes = np.array([True, False, True, False, False])
@@ -698,8 +807,11 @@ def test_failed_demonstrations_report_actual_coverage_before_actor_fitting(monke
         pytest.fail("failed demonstrations reached supervised actor fitting")
 
     monkeypatch.setattr(bootstrap, "_fit_actor", unexpected_fit)
-    with pytest.raises(RuntimeError, match="round 1, 2/5 training scenarios"):
-        bootstrap._bootstrap_round(None, None, None, index=1)
+    owner = SimpleNamespace(reset=lambda: None)
+    with pytest.raises(
+        RuntimeError, match=f"round {round_label}, 2/5 training scenarios"
+    ):
+        bootstrap._bootstrap_round(owner, owner, None, index=index)
 
 
 def _placement_teacher_fixture(torch):

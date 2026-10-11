@@ -710,7 +710,14 @@ limits each TCP correction to 10 cm, and uses the native Cartesian action
 scaling. Position actions use a 0.1 m scale, so an action-noise standard
 deviation of 0.05 corresponds to 5 mm. Collection prints measured
 phase counts and strict training-placement coverage after each episode cycle;
-failed coverage reports its actual count before supervised fitting starts.
+failed teacher-only coverage reports its actual count and stops before fitting.
+Both accepted warmup rounds must establish stable placement in at least half
+of the complete training split. If the first mixed collection falls below this
+guard, the actor receives another 32-epoch fit from a newly collected teacher-only
+round that passes the same guard, then retries the mixture. `warmup_recovery`
+retains every failed mixed collection and teacher recovery fit, including their
+native replay and normalization counts. Failed mixtures never stand in for a
+successful demonstration round or actor-only handoff.
 
 `NPA_BYO_ISAAC_BOOTSTRAP=auto` is the default for fresh stock-Franka PPO with a
 consumed training URI. `none` disables initialization; an explicit

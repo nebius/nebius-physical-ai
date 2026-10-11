@@ -1608,7 +1608,8 @@ def _validated_recurrent_training_audit(audit, scenario_count):
         )
     examples = audit["rounds"][0]["examples"]
     additional = _validated_handoff_assessments(audit, scenario_count)
-    fits = [*audit["rounds"], audit["corrective_fit"].get("fit")]
+    fits = _validated_warmup_fits(audit, scenario_count)
+    fits.append(audit["corrective_fit"].get("fit"))
     for correction in additional:
         _validated_actor_collection(
             correction,
@@ -1623,6 +1624,42 @@ def _validated_recurrent_training_audit(audit, scenario_count):
         _validated_recurrent_fit(
             fit, batches=batches, examples=examples * batches, samples=samples
         )
+
+
+def _validated_warmup_fits(audit, scenario_count):
+    rounds = audit["rounds"]
+    if rounds[0].get("warmup_recovery", []) != []:
+        raise RuntimeError(
+            "native bootstrap cannot replace unsuccessful teacher evidence"
+        )
+    recovery = rounds[1].get("warmup_recovery", [])
+    if not isinstance(recovery, list):
+        raise RuntimeError("native bootstrap has invalid warmup recovery history")
+    fits = [rounds[0]]
+    for row in recovery:
+        if not isinstance(row, dict):
+            raise RuntimeError("native bootstrap has invalid warmup recovery evidence")
+        failed = row.get("failed_mixed_collection")
+        teacher = row.get("teacher_recovery_fit")
+        _validated_actor_collection(
+            failed, fraction=0.5, scenario_count=scenario_count, require_success=False
+        )
+        if failed["strict_training_placements"] * 2 >= scenario_count:
+            raise RuntimeError(
+                "native bootstrap replaced successful mixed demonstrations"
+            )
+        _validated_actor_collection(
+            teacher, fraction=0.0, scenario_count=scenario_count, require_success=True
+        )
+        if (
+            type(teacher.get("examples")) is not int
+            or teacher["examples"] != rounds[0]["examples"]
+        ):
+            raise RuntimeError(
+                "native warmup recovery has inconsistent training examples"
+            )
+        fits.append(teacher.get("fit"))
+    return [*fits, rounds[1]]
 
 
 def _validated_handoff_assessments(audit, scenario_count):

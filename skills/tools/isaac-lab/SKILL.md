@@ -207,7 +207,10 @@ episode boundaries. `franka-cartesian-gru-distillation-v2` retains at least thre
 32-epoch demonstration fits and requires at least half the complete training
 split to achieve strict placement under the actor alone before PPO. Corrective
 fitting repeats when the complete actor-only check fails; retain its entire
-assessment and fitting history. Native checkpoints bind action/model semantics;
+assessment and fitting history. A weak mixed warmup collection requires another
+teacher-only round that passes the same half-split placement guard, followed by
+refitting and a fresh mixed collection. Preserve every failed mixture and teacher
+recovery fit in `warmup_recovery`. Native checkpoints bind action/model semantics;
 matching tensor dimensions alone are
 insufficient. This training handoff does not establish held-out acceptance.
 
