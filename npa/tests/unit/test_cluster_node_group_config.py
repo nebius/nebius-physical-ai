@@ -26,7 +26,50 @@ def test_resolve_preset_allows_override() -> None:
 
 
 def test_supported_gpu_types_are_v1_surface() -> None:
-    assert set(GPU_TYPE_DEFAULTS) == {"h100", "h200", "l40s", "rtx6000"}
+    assert set(GPU_TYPE_DEFAULTS) == {"b200", "h100", "h200", "l40s", "rtx6000"}
+
+
+def test_b200_defaults_to_reviewed_fabric_shape_and_storage() -> None:
+    config = NodeGroupConfig(
+        cluster_name="cluster-a",
+        gpu_type="b200",
+        gpu_cluster_id="computegpucluster-test",
+    )
+
+    assert config.platform == "gpu-b200-sxm"
+    assert config.node_preset == "8gpu-160vcpu-1792gb"
+    assert config.boot_disk_size_gib == 1280
+    assert config.gpu_cluster_id == "computegpucluster-test"
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"gpu_cluster_id": ""}, "--gpu-cluster-id"),
+        ({"node_count": 2}, "one fixed 8-GPU node"),
+        ({"node_preset": "1gpu-20vcpu-224gb"}, "reviewed gpu-b200-sxm"),
+        ({"boot_disk_size_gib": 128}, "at least 1280 GiB"),
+        ({"wait": False}, "requires --wait"),
+    ],
+)
+def test_b200_rejects_unverified_attachment_shapes(overrides, message: str) -> None:
+    options = {"gpu_cluster_id": "computegpucluster-test"}
+    options.update(overrides)
+    with pytest.raises(ClusterConfigError, match=message):
+        NodeGroupConfig(
+            cluster_name="cluster-a",
+            gpu_type="b200",
+            **options,
+        )
+
+
+def test_non_b200_rejects_gpu_cluster_attachment() -> None:
+    with pytest.raises(ClusterConfigError, match="only for b200"):
+        NodeGroupConfig(
+            cluster_name="cluster-a",
+            gpu_type="h100",
+            gpu_cluster_id="computegpucluster-test",
+        )
 
 
 def test_invalid_gpu_type_rejected() -> None:

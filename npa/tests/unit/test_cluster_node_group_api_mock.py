@@ -47,6 +47,18 @@ def _node_group(name: str = "cluster-a-h100-gpu", state: str = "RUNNING") -> dic
     }
 
 
+def _b200_node_group(state: str = "RUNNING") -> dict:
+    payload = _node_group(name="cluster-a-b200-gpu", state=state)
+    template = payload["spec"]["template"]
+    template["resources"] = {
+        "platform": "gpu-b200-sxm",
+        "preset": "8gpu-160vcpu-1792gb",
+    }
+    template["boot_disk"] = {"size_gibibytes": "1023", "type": "network_ssd"}
+    template["gpu_cluster"] = {"id": "computegpucluster-test"}
+    return payload
+
+
 def test_create_gpu_node_group_invokes_mk8s_create() -> None:
     calls: list[list[str]] = []
 
@@ -168,6 +180,41 @@ def test_create_gpu_node_group_uses_capacity_block_group() -> None:
     assert calls[0][policy_index] == "strict"
     ids_index = calls[0].index("--template-reservation-policy-reservation-ids") + 1
     assert calls[0][ids_index] == "capacityblockgroup-test"
+
+
+def test_create_b200_node_group_binds_fabric_and_reviewed_disk() -> None:
+    calls: list[list[str]] = []
+
+    def run(args, **kwargs):
+        calls.append(args)
+        return _result(_node_group())
+
+    client = MK8sClient(
+        nebius_bin="nebius", subprocess_runner=run, sleep=lambda _: None
+    )
+    config = NodeGroupConfig(
+        cluster_name="cluster-a",
+        gpu_type="b200",
+        gpu_cluster_id="computegpucluster-test",
+    )
+
+    client.create_gpu_node_group(config, "mk8scluster-a")
+
+    args = calls[0]
+    assert args[args.index("--template-resources-platform") + 1] == "gpu-b200-sxm"
+    assert args[args.index("--template-resources-preset") + 1] == "8gpu-160vcpu-1792gb"
+    assert args[args.index("--template-boot-disk-size-gibibytes") + 1] == "1280"
+    assert args[args.index("--template-gpu-cluster-id") + 1] == "computegpucluster-test"
+
+
+def test_parse_b200_node_group_preserves_attachment_and_disk() -> None:
+    client = MK8sClient(nebius_bin="nebius")
+
+    info = client._node_group_from_dict(_b200_node_group(), cluster_id="mk8scluster-a")
+
+    assert info.gpu_type == "b200"
+    assert info.gpu_cluster_id == "computegpucluster-test"
+    assert info.boot_disk_size_gib == 1023
 
 
 def test_get_node_group_uses_name_fallback_after_id_miss() -> None:

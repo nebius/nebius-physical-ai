@@ -48,6 +48,8 @@ class NodeGroupInfo:
     public_ip: bool = False
     autoscaling_min: int | None = None
     autoscaling_max: int | None = None
+    boot_disk_size_gib: int = 0
+    gpu_cluster_id: str = ""
     raw: dict[str, Any] | None = None
 
 
@@ -238,6 +240,7 @@ class MK8sClient:
             gpu_type=config.gpu_type,
             driver_preset=config.driver_preset,
             capacity_block_group=config.capacity_block_group,
+            gpu_cluster_id=config.gpu_cluster_id,
         )
 
     def create_node_group(
@@ -258,6 +261,7 @@ class MK8sClient:
         gpu_type: str = "",
         driver_preset: str = "",
         capacity_block_group: str = "",
+        gpu_cluster_id: str = "",
     ) -> NodeGroupInfo:
         network_interface: dict[str, Any] = {}
         if subnet_id:
@@ -302,6 +306,8 @@ class MK8sClient:
         )
         if driver_preset:
             args.extend(["--template-gpu-settings-drivers-preset", driver_preset])
+        if gpu_cluster_id:
+            args.extend(["--template-gpu-cluster-id", gpu_cluster_id])
         if capacity_block_group.strip():
             args.extend(
                 [
@@ -333,6 +339,7 @@ class MK8sClient:
                         public_ip=public_ip,
                         autoscaling_min=autoscaling_min,
                         autoscaling_max=autoscaling_max,
+                        boot_disk_size_gib=boot_disk_size_gib,
                     )
         return _enrich_node_group(
             node_group,
@@ -342,6 +349,7 @@ class MK8sClient:
             public_ip=public_ip,
             autoscaling_min=autoscaling_min,
             autoscaling_max=autoscaling_max,
+            boot_disk_size_gib=boot_disk_size_gib,
         )
 
     def list_clusters(self, project_id: str) -> list[ClusterInfo]:
@@ -759,6 +767,21 @@ class MK8sClient:
             )
         )
         public_ip = _has_public_ip(data)
+        boot_disk_size_gib = _int_value(
+            _deep_get(
+                data,
+                ("spec", "template", "boot_disk", "size_gibibytes"),
+                ("spec", "template", "bootDisk", "sizeGibibytes"),
+            )
+        )
+        gpu_cluster_id = str(
+            _deep_get(
+                data,
+                ("spec", "template", "gpu_cluster", "id"),
+                ("spec", "template", "gpuCluster", "id"),
+            )
+            or ""
+        )
         return NodeGroupInfo(
             id=str((metadata or {}).get("id") or data.get("id") or ""),
             name=str((metadata or {}).get("name") or data.get("name") or ""),
@@ -774,6 +797,8 @@ class MK8sClient:
             public_ip=public_ip,
             autoscaling_min=autoscaling_min,
             autoscaling_max=autoscaling_max,
+            boot_disk_size_gib=boot_disk_size_gib or 0,
+            gpu_cluster_id=gpu_cluster_id,
             raw=data,
         )
 
@@ -990,6 +1015,7 @@ def _enrich_node_group(
     public_ip: bool = False,
     autoscaling_min: int | None = None,
     autoscaling_max: int | None = None,
+    boot_disk_size_gib: int = 0,
 ) -> NodeGroupInfo:
     node_group.platform = node_group.platform or platform
     node_group.preset = node_group.preset or preset
@@ -1005,6 +1031,7 @@ def _enrich_node_group(
         if node_group.autoscaling_max is not None
         else autoscaling_max
     )
+    node_group.boot_disk_size_gib = node_group.boot_disk_size_gib or boot_disk_size_gib
     return node_group
 
 

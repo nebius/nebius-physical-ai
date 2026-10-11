@@ -17,11 +17,14 @@ candidate. Coordinates are the upstream scene frame and scale is uncalibrated.
 
 ## Status and exact identities
 
-No candidate image digest exists yet. The Dockerfile is a neutral CUDA bootstrap
-and the planned eight-B200 profile is a future qualification target, not a
-B200 compatibility statement. A governed build must use a full-40-character
-`dev-<sha>` tag, scan the exact image, and use its resulting immutable digest in
-the workflow; it must not be publicly pushed or promoted from this candidate.
+No public candidate image digest exists. A privately delivered neutral bootstrap
+has passed its governed private delivery scans and is retained only in restricted
+operator evidence; it remains quarantined and is not a public release. The
+eight-B200 profile still needs real GPU qualification, so neither the private
+bootstrap nor this guide is a B200 execution claim. Any future governed build
+uses a full-40-character `dev-<sha>` tag, scans the exact image, and uses its
+resulting immutable digest in the workflow; it must not be publicly pushed or
+promoted from this candidate.
 
 | Component | Exact identity | Delivery |
 | --- | --- | --- |
@@ -141,18 +144,129 @@ be borrowed as a cross-run service. For HY, the endpoint owner starts or reuses
 the private server below and records its own lifecycle/cleanup receipt.
 
 On that private serving workload, use the pinned model revision and the exact
-served identity below. This is an upstream vLLM command, not an NPA publication
-or a claim that NPA has provisioned the host. It requires an operator-owned CUDA
-environment with the upstream `vllm` CLI installed and Hugging Face access to
-the pinned Qwen model; those are the endpoint owner's normal model-serving
-prerequisites, separate from Tencent and Meta approval:
+served identity below. It needs Hugging Face access to the pinned Qwen model;
+that is an endpoint-owner prerequisite, separate from Tencent and Meta
+approval. The upstream command uses the released HY-World serving parameters:
 
 ```bash
 MODEL="Qwen/Qwen3-VL-8B-Instruct"
 REVISION="0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"
 vllm serve "$MODEL" --revision "$REVISION" \
   --served-model-name "$MODEL" --host 0.0.0.0 --port 8000 \
-  --trust-remote-code
+  --api-key EMPTY --max-model-len 32768 --gpu-memory-utilization 0.80
+```
+
+For a fresh endpoint, the verified portable route is an ordinary long-running
+NPA managed job submitted from a raw SkyPilot YAML. It is not SkyServe: the
+YAML has no `service:` section, replica policy, public port, or new controller.
+The selected Kubernetes context must be private and the job's Pod IP is used
+only inside that cluster. Use a distinct task-owned NPA/SkyPilot state directory
+for this job and preserve it for status, logs, cancellation, and cleanup.
+
+Save this file outside source control, after substituting only the selected
+private Kubernetes context through `--var`. `HF_TOKEN` travels through the
+standard secret channel; it is not in the YAML, image, or command history.
+
+```bash
+PROJECT="<configured-project-alias>"
+K8S_CONTEXT="<verified-private-kubernetes-context>"
+VLLM_RUN_ID="hy-world-qwen3-vl-$(date -u +%Y%m%dT%H%M%SZ)"
+umask 077
+SERVICE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/hy-world-qwen3-vl.XXXXXX")"
+chmod 700 "$SERVICE_DIR"
+SERVICE_SPEC="$SERVICE_DIR/service.yaml"
+
+cat >"$SERVICE_SPEC" <<'YAML'
+name: hy-world-qwen3-vl
+resources:
+  cloud: kubernetes
+  region: ${K8S_CONTEXT}
+  accelerators: H200:1
+  cpus: 8
+  memory: 64
+  image_id: vllm/vllm-openai@sha256:014a95f21c9edf6abe0aea6b07353f96baa4ec291c427bb1176dc7c93a85845c
+envs:
+  VLLM_API_KEY: EMPTY
+  VLLM_GPU_MEMORY_UTILIZATION: "0.80"
+  VLLM_MAX_MODEL_LEN: "32768"
+  VLLM_MODEL: Qwen/Qwen3-VL-8B-Instruct
+  VLLM_MODEL_REVISION: 0c351dd01ed87e9c1b53cbc748cba10e6187ff3b
+run: |
+  exec vllm serve "$VLLM_MODEL" --revision "$VLLM_MODEL_REVISION" \
+    --served-model-name "$VLLM_MODEL" --host 0.0.0.0 --port 8000 \
+    --api-key "$VLLM_API_KEY" --max-model-len "$VLLM_MAX_MODEL_LEN" \
+    --gpu-memory-utilization "$VLLM_GPU_MEMORY_UTILIZATION"
+YAML
+
+npa workbench health preflight --project "$PROJECT" --checks nebius,hf --json
+npa workbench workflow submit "$SERVICE_SPEC" --run-id "$VLLM_RUN_ID" \
+  --project "$PROJECT" --infra "k8s/$K8S_CONTEXT" \
+  --var "K8S_CONTEXT=$K8S_CONTEXT" --secret-env HF_TOKEN --output-format json
+npa workbench workflow status "$VLLM_RUN_ID" --project "$PROJECT" --json
+npa workbench workflow logs "$VLLM_RUN_ID" --project "$PROJECT" --follow
+```
+
+Wait for the managed-job logs to show the exact model revision loaded and the
+OpenAI server listening. Then use the exact task-owned Pod named by that job,
+not a label search or another workload's Pod. A transient local port-forward is
+private to the operator process and is useful for the required endpoint probes;
+it is not a public service exposure. In one terminal:
+
+```bash
+KUBECONFIG="<task-owned-kubeconfig>"
+POD_NAME="<exact-vllm-pod-from-managed-job-status>"
+kubectl --kubeconfig "$KUBECONFIG" --context "$K8S_CONTEXT" \
+  port-forward "pod/$POD_NAME" 8000:8000
+```
+
+In a second terminal, first verify the exact model identity, then make a small
+image-bearing request. The request exercises the same multimodal OpenAI shape
+that HY uses. The final HY workflow independently checks `/v1/models` from its
+own worker network before generation; a local port-forward is not a substitute
+for that runtime reachability check.
+
+```bash
+SMOKE_IMAGE="<small-private-png-path>"
+SERVICE_PROBE_JSON="$SERVICE_DIR/probe.json"
+
+curl --fail --silent --show-error \
+  --header 'Authorization: Bearer EMPTY' \
+  http://127.0.0.1:8000/v1/models
+
+npa/.venv/bin/python - "$SMOKE_IMAGE" >"$SERVICE_PROBE_JSON" <<'PY'
+import base64
+import json
+import sys
+
+encoded = base64.b64encode(open(sys.argv[1], "rb").read()).decode("ascii")
+payload = {
+    "model": "Qwen/Qwen3-VL-8B-Instruct",
+    "messages": [{"role": "user", "content": [
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64," + encoded}},
+        {"type": "text", "text": "Describe this image in one sentence."},
+    ]}],
+    "max_tokens": 32,
+}
+print(json.dumps(payload))
+PY
+
+curl --fail --silent --show-error \
+  --header 'Authorization: Bearer EMPTY' \
+  --header 'Content-Type: application/json' \
+  --data-binary "@$SERVICE_PROBE_JSON" \
+  http://127.0.0.1:8000/v1/chat/completions
+```
+
+Retain the NPA submission/status/log receipts and the redacted model/probe
+responses in private evidence. Keep the endpoint alive through the HY workflow,
+then cancel the exact managed job before deleting the local temporary files. Do
+not run `cluster down`, remove a shared node group, or stop another task's
+endpoint:
+
+```bash
+npa workbench workflow cancel "$VLLM_RUN_ID" --project "$PROJECT" --json
+rm -f "$SERVICE_SPEC" "$SERVICE_PROBE_JSON"
+rmdir "$SERVICE_DIR"
 ```
 
 The endpoint must be private and reachable from the HY worker. Its `/v1/models`
@@ -171,6 +285,75 @@ pinned capability and cannot be overridden by a workflow variable:
 ```bash
 export NPA_HY_WORLD_LLM_ADDR="<worker-reachable-vllm-host-or-address>"
 ```
+
+### Task-owned B200:8 worker group on a verified Kubernetes target
+
+The HY generation workflow needs the exact one-node `B200:8` envelope; an
+H200 used for the private Qwen endpoint is a separate dependency and must not
+be repurposed. Before creating capacity, select an already verified NPA
+Kubernetes target in the selected project, inspect the provider compatibility
+matrix for that target's Kubernetes version, and select its existing fabric
+GPU-cluster attachment. Quota or a running node is not evidence that an
+additional B200 group can be placed.
+
+The ordinary NPA node-group lifecycle creates a task-owned additive group. It
+does not create a cluster, modify the shared control plane, network, GPU
+cluster, or any existing node group. The supported B200 profile is one
+`gpu-b200-sxm` node with the `8gpu-160vcpu-1792gb` preset, managed `cuda13.0`
+drivers, the verified fabric attachment, and a 1280-GiB boot disk. A provider
+boot-disk size is not Kubernetes allocatable ephemeral storage. Before launch,
+the selected B200 node must report at least `1000000000000` allocatable and
+currently free ephemeral-storage bytes for the workflow's 1000G request; the
+normal Workbench capacity preflight re-reads that fit at submission time. This
+is not a claim that the model has already run.
+
+Run this through the same task-owned NPA configuration/context that owns the
+workflow. Do not use another image's controller, journal, kubeconfig, or
+cluster alias. The values below are placeholders, not infrastructure values to
+place in source control:
+
+```bash
+PROJECT_ID="<selected-project-id>"
+PROJECT="<configured-project-alias>"
+SPEC="workflows/testing/byof-hy-world.yaml"
+HY_CLUSTER_TARGET="<verified-npa-kubernetes-target>"
+GPU_CLUSTER_ID="<verified-project-gpu-cluster-id>"
+B200_NODE_GROUP="hy-world-b200-8"
+
+npa cluster node-group add \
+  --cluster-name "$HY_CLUSTER_TARGET" --name "$B200_NODE_GROUP" \
+  --project-id "$PROJECT_ID" --gpu-type b200 --node-count 1 \
+  --node-preset 8gpu-160vcpu-1792gb --boot-disk-size-gib 1280 \
+  --gpu-cluster-id "$GPU_CLUSTER_ID" \
+  --gpu-driver-mode managed-image --managed-driver-preset cuda13.0 --wait
+
+npa cluster node-group status --cluster-name "$HY_CLUSTER_TARGET" \
+  --name "$B200_NODE_GROUP" --project-id "$PROJECT_ID" --format json
+npa workbench workflow gpus --project "$PROJECT" --cluster "$HY_CLUSTER_TARGET" \
+  --spec "$SPEC" --json
+```
+
+The command refuses an unattached B200 group, another preset/count, a disk
+below 1280 GiB, `--no-wait`, and the unsafe operator-driver route. It also
+verifies that the provider reports the requested GPU-cluster attachment and
+disk before recording the group as ready. If either readiness or GPU discovery
+fails, retain the returned provider reason; do not change the cluster, network,
+or an unrelated node group to make the workflow fit.
+
+Cancel a run before removing only the group named above. This removes the
+task-owned node group and its matching local NPA state; it never removes the
+shared cluster, its control-plane network, the fabric GPU cluster, the H200
+endpoint, or another operator's groups:
+
+```bash
+npa workbench workflow cancel "<run-id>" --project "$PROJECT" --json
+npa cluster node-group remove --cluster-name "$HY_CLUSTER_TARGET" \
+  --name "$B200_NODE_GROUP" --project-id "$PROJECT_ID" --force
+```
+
+Keep the node group while a run, artifact collection, or factual output review
+is still active. Record the standard cancellation and removal receipts before
+declaring the task-owned B200 capacity cleaned up.
 
 ## Standard Workbench workflow
 

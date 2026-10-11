@@ -115,6 +115,25 @@ def test_missing_public_ip_preserves_false_default(tmp_path) -> None:
     )
 
 
+def test_node_group_state_preserves_b200_attachment_and_disk(tmp_path) -> None:
+    state = NodeGroupState(
+        cluster_name="cluster-a",
+        name="cluster-a-b200-gpu",
+        node_group_id="mk8snodegroup-b200",
+        gpu_type="b200",
+        platform="gpu-b200-sxm",
+        preset="8gpu-160vcpu-1792gb",
+        node_count=1,
+        created_at="2026-05-14T22:46:30Z",
+        boot_disk_size_gib=1280,
+        gpu_cluster_id="computegpucluster-test",
+    )
+
+    save_node_group_state(state, base_dir=tmp_path)
+
+    assert load_node_group_state("cluster-a", state.name, base_dir=tmp_path) == state
+
+
 def test_discovery_quarantines_each_bad_record_without_modifying_it(
     tmp_path, caplog
 ) -> None:
