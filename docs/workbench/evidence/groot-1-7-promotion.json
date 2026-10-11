@@ -1,0 +1,257 @@
+{
+  "schema": "npa.workflow_promotion_review.v1",
+  "workflow": "groot-1-7-finetune",
+  "review_date": "2026-10-08",
+  "workflow_sha256": "6ed25ff6935a99273e6a4be66665863f81bf7773b8d3884232d7eae4b8981461",
+  "submitted_source_sha": "58279f8074f1fefbca00ca97b7f38cb86c67bff8",
+  "image": "ghcr.io/nebius/nebius-physical-ai/npa-groot@sha256:04b3ea970002d40fb2afd54b17e0a4de2ef456a471c25b6f044d07d9a39e2f76",
+  "scope": "Four-update, two-GPU operational validation with offline held-out action prediction. No closed-loop or statistically meaningful learning claim.",
+  "execution": {
+    "driver_exit": 0,
+    "status": "succeeded",
+    "logical_stages_succeeded": 11,
+    "final_viewer_check_retried": true,
+    "runtime_ledger_sha256": "fc6889d719e8bdce341e529a971b4d679376c689e05e48d0c71f8dd2ff640c07"
+  },
+  "measurements": {
+    "workflow_status": "SUCCEEDED",
+    "learning_outcome": "not_improved",
+    "candidate_promoted": false,
+    "dataset": {
+      "embodiment": "so101_follower",
+      "camera_names": [
+        "front",
+        "wrist"
+      ],
+      "fps": 30.0,
+      "source_episodes": 5,
+      "train_episodes": 2,
+      "train_samples": 1038,
+      "heldout_episodes": 1,
+      "heldout_samples": 568,
+      "excluded_episodes": 2,
+      "action_dimensions": 6,
+      "split_hash": "7fcf9ffcae2f616f92c5d0cb5989cbeb3744611f3fa275c614e01c6e030037cd",
+      "leakage_free": true,
+      "statistics_source": "train split only"
+    },
+    "training": {
+      "accelerator": "NVIDIA B200",
+      "gpu_count": 2,
+      "distinct_gpu_count": 2,
+      "world_size": 2,
+      "observed_ranks": [
+        0,
+        1
+      ],
+      "training_observed_ranks": [
+        0,
+        1
+      ],
+      "all_ranks_trained": true,
+      "collective_ok": true,
+      "rank_zero_checkpoint_only": true,
+      "optimizer_steps": 4,
+      "global_batch_size": 2,
+      "initial_loss": 1.2188,
+      "final_loss": 1.8984,
+      "checkpoint_sha256": "671a15b628b679a2f49d6b770f69f5f3c7c79d9486c7165e31017b848c25c3ad",
+      "checkpoint_weights_sha256": "f9cfad4230f4f7a95b00e2a2ac61599b782083152b51f72753a74c2243772bc8",
+      "baseline_weights_sha256": "e42258d397ae0d90de9d632bae8a3ffd430871b5a12e636f2546c7edc040097d",
+      "weights_differ": true,
+      "resolved_checkpoint_step": 4,
+      "loss_history": [
+        {
+          "optimizer_step": 1,
+          "loss": 1.2188
+        },
+        {
+          "optimizer_step": 2,
+          "loss": 1.6484
+        },
+        {
+          "optimizer_step": 3,
+          "loss": 1.7266
+        },
+        {
+          "optimizer_step": 4,
+          "loss": 1.8984
+        }
+      ]
+    },
+    "evaluation": {
+      "baseline_value": 3079.199462890625,
+      "posttrain_value": 3083.4619140625,
+      "baseline_mae": 35.47294998168945,
+      "posttrain_mae": 35.5567626953125,
+      "relative_improvement": -0.0013842725108407193,
+      "gate_passed": false,
+      "gate_failures": [
+        "relative improvement -0.001384 is below 0.100000",
+        "absolute improvement -4.262451 does not exceed repeat-noise requirement 596.036865",
+        "candidate skill score -0.866210 is below 0.050000",
+        "per-dimension regression exceeds configured tolerance on dimensions 0,2,4,5",
+        "robust late-window training loss did not decrease"
+      ],
+      "samples": 568,
+      "episodes": 1,
+      "real_model_forward": true,
+      "baseline_forward_calls": 36,
+      "posttrain_forward_calls": 36,
+      "zero_predictor_mse": 3150.367908011982,
+      "train_mean_predictor_mse": 1652.2591262165618,
+      "baseline_skill_score": -0.8636298421647779,
+      "posttrain_skill_score": -0.8662095783159782,
+      "per_horizon_mse": {
+        "action_horizon": 16,
+        "baseline": [
+          3403.93798828125,
+          3026.9501953125,
+          3648.979736328125,
+          2312.794189453125,
+          3520.233154296875,
+          2677.11376953125,
+          2901.92041015625,
+          3105.8212890625,
+          3101.611083984375,
+          3490.80615234375,
+          2562.746337890625,
+          3356.342529296875,
+          3165.97021484375,
+          2836.50634765625,
+          2838.622314453125,
+          3317.858154296875
+        ],
+        "counts": [
+          36,
+          36,
+          36,
+          36,
+          36,
+          36,
+          36,
+          36,
+          35,
+          35,
+          35,
+          35,
+          35,
+          35,
+          35,
+          35
+        ],
+        "posttrain": [
+          3408.766845703125,
+          3034.054443359375,
+          3646.177001953125,
+          2309.785400390625,
+          3511.630126953125,
+          2672.403076171875,
+          2900.75048828125,
+          3108.3662109375,
+          3111.3291015625,
+          3500.126708984375,
+          2571.5947265625,
+          3377.156005859375,
+          3184.115966796875,
+          2839.36181640625,
+          2851.678466796875,
+          3310.257080078125
+        ]
+      }
+    },
+    "media": {
+      "decoded_video_frames": 568,
+      "preview_stride": 12,
+      "video_fps": 30.0,
+      "video_width": 1184,
+      "video_height": 608
+    },
+    "source_report_sha256": "7f273c77095deaf31b3f232ed049453088145ee6c68a22db94f016140f0bc306",
+    "comparison_video_sha256": "072dbc82757e912ac07ed0f42332a0eaac3f5a2bfc2a84e8453f1b4d67136db6",
+    "limitations": [
+      "This report is offline action-matching evidence, not a robot rollout.",
+      "The short optimizer smoke is an operational pipeline validation and does not establish statistical learning."
+    ],
+    "agent_viewer_verification": {
+      "status": "passed",
+      "health_ok": true,
+      "run_discovered": true,
+      "artifact_count": 152,
+      "required_artifacts": [
+        "mcap",
+        "report",
+        "rrd"
+      ],
+      "range_downloads": {
+        "mcap": true,
+        "rrd": true
+      },
+      "loads": {
+        "mcap": {
+          "viewer_ready": true,
+          "range_download_verified": true
+        },
+        "rrd": {
+          "viewer_ready": true,
+          "range_download_verified": true
+        }
+      },
+      "source_sha256": "02eba2b88149bf23ea3c3f2d486492ebc008b1c5678bda86e1c49d4893a60bf4"
+    }
+  },
+  "published_artifacts": {
+    "comparison_video": {
+      "bytes": 3363010,
+      "sha256": "072dbc82757e912ac07ed0f42332a0eaac3f5a2bfc2a84e8453f1b4d67136db6",
+      "content_type": "video/mp4"
+    },
+    "mcap": {
+      "bytes": 74489639,
+      "sha256": "5dd5f395fc89846e4770d610cd0d076847c2d23201cef5e3bac872fedcc7383d",
+      "content_type": "application/octet-stream"
+    },
+    "rrd": {
+      "bytes": 163443645,
+      "sha256": "69728d36a0a8183e70bfbb8420f7b6e25784909a706e779bfb954aa74c4ba1e6",
+      "content_type": "application/octet-stream"
+    }
+  },
+  "native_artifact_validation": {
+    "rrd": {
+      "parseable": true,
+      "entity_count": 13,
+      "timeline_count": 1
+    },
+    "mcap": {
+      "valid_magic": true,
+      "message_count": 2299,
+      "duration_s": 18.9,
+      "channels_monotonic": true,
+      "timestamps_in_int64_domain": true
+    }
+  },
+  "deployed_browser_review": {
+    "rrd": {
+      "status": "passed",
+      "substantive_canvas": true,
+      "native_paint_probe": true
+    },
+    "mcap": {
+      "status": "blocked",
+      "reason": "The deployed Content Security Policy rejects the Lichtblick frontend's JavaScript string evaluation. Artifact parsing, API readiness and authenticated byte-range checks passed; browser rendering did not."
+    }
+  },
+  "standalone_html_review": {
+    "offline": true,
+    "javascript_errors": 0,
+    "timeline_controls": "passed",
+    "mobile_layout": "passed",
+    "desktop_and_mobile_visual_review": "passed",
+    "sampled_comparison_frames": 48,
+    "measured_chart_images": 1,
+    "sha256": "8b0269698ff22cee815576d8160a79c41351666e9374efba980cd2a5ad034fe5",
+    "privacy_review": "Semantic HTML and evidence scanned; encoded images independently decoded and visually reviewed. Two resource-ID regex matches were confined to JPEG base64 bytes.",
+    "automatic_playback": "passed"
+  }
+}

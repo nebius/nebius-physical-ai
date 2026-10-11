@@ -1,0 +1,644 @@
+{
+  "arm_mean_scores": {
+    "baseline": 0.7222222222222222,
+    "physics": 0.7777777777777778,
+    "physics-negative": 0.7222222222222222
+  },
+  "assertion_counts": {
+    "baseline": {
+      "fail": 9,
+      "pass": 26,
+      "unknown": 1
+    },
+    "physics": {
+      "fail": 6,
+      "pass": 28,
+      "unknown": 2
+    },
+    "physics-negative": {
+      "fail": 4,
+      "pass": 26,
+      "unknown": 6
+    }
+  },
+  "cuda": "13.0",
+  "decoded_frames": 2916,
+  "evaluation": {
+    "assertions_per_video": 3,
+    "blinded_to_arm_and_expanded_prompt": true,
+    "frames_per_video": 16,
+    "unknown_is_unproven": true
+  },
+  "hardware": {
+    "container_restarts": 0,
+    "gpu_model": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+    "observed_image_digest_matches": true,
+    "worker_gpus": 2
+  },
+  "historical_source_sha256_by_role": {
+    "artifact_io": "0ca5db778179672fbc164ed398c3e88444410364ca45616ca3fb8933e07a38d4",
+    "evaluation": "2ee336aa57edd49f48eb3354bffc50dbbd718d8fff8dd6a1217cfe76fb829867",
+    "gpu_shard": "242bee053a24a0edfd345745ea257562e5e83f2e2f3a85fd3bd532bd033b1e86",
+    "native_video_generator": "1aace9eeac7625f843f7203bc9a9a59b8348083b0fda62b283015c9075073fbc",
+    "prompt_contract": "f5993337437a4c8fed222b6233123ccc35c32e5c5f6f6ce634a519dcccc7ddd5",
+    "stage_entrypoint": "0583d64c2cf92de227f299871a164d95161130c9c073e11de1dc02d1271eae7e",
+    "workflow_spec": "a12dbabc88cc0a432e32bcacca17cf0b0795a20dba0bbf05fc342110e69e08d2"
+  },
+  "image": "ghcr.io/nebius/nebius-physical-ai/npa-diffusers@sha256:6422a062a00c9816a945623b0c83a78977fa5d5cec1777a0e6d44d1d746fc42e",
+  "interpretation": "Exploratory sampled-frame VLM judgments; keep experimental. No benchmark-equivalent score, continuous-physics proof, training result, or robot-policy transfer claim.",
+  "judge_model": "MiniMaxAI/MiniMax-M3",
+  "matching_implementation_commit": "a364dea310ffb50bdecdac5c87f111f758ac8116",
+  "native_settings": {
+    "dtype": "bfloat16",
+    "fps": 16,
+    "frames": 81,
+    "guidance": 5.0,
+    "height": 720,
+    "model_id": "Wan-AI/Wan2.1-T2V-14B-Diffusers",
+    "pipeline": "WanPipeline",
+    "revision": "38ec498cb3208fb688890f8cc7e94ede2cbd7f68",
+    "steps": 50,
+    "width": 1280
+  },
+  "paired_scores": [
+    {
+      "case_id": "domino-contact",
+      "physics_negative_minus_baseline": 0.0,
+      "scores": {
+        "baseline": 0.6666666666666666,
+        "physics": 0.6666666666666666,
+        "physics-negative": 0.6666666666666666
+      },
+      "seed": 0
+    },
+    {
+      "case_id": "domino-contact",
+      "physics_negative_minus_baseline": 0.0,
+      "scores": {
+        "baseline": 0.6666666666666666,
+        "physics": 0.6666666666666666,
+        "physics-negative": 0.6666666666666666
+      },
+      "seed": 1
+    },
+    {
+      "case_id": "ramp-roll",
+      "physics_negative_minus_baseline": 0.0,
+      "scores": {
+        "baseline": 0.6666666666666666,
+        "physics": 0.6666666666666666,
+        "physics-negative": 0.6666666666666666
+      },
+      "seed": 0
+    },
+    {
+      "case_id": "ramp-roll",
+      "physics_negative_minus_baseline": -0.33333333333333337,
+      "scores": {
+        "baseline": 1.0,
+        "physics": 0.3333333333333333,
+        "physics-negative": 0.6666666666666666
+      },
+      "seed": 1
+    },
+    {
+      "case_id": "water-pour",
+      "physics_negative_minus_baseline": 0.0,
+      "scores": {
+        "baseline": 1.0,
+        "physics": 1.0,
+        "physics-negative": 1.0
+      },
+      "seed": 0
+    },
+    {
+      "case_id": "water-pour",
+      "physics_negative_minus_baseline": 0.0,
+      "scores": {
+        "baseline": 1.0,
+        "physics": 1.0,
+        "physics-negative": 1.0
+      },
+      "seed": 1
+    },
+    {
+      "case_id": "cloth-drape",
+      "physics_negative_minus_baseline": 0.3333333333333333,
+      "scores": {
+        "baseline": 0.0,
+        "physics": 1.0,
+        "physics-negative": 0.3333333333333333
+      },
+      "seed": 0
+    },
+    {
+      "case_id": "cloth-drape",
+      "physics_negative_minus_baseline": 0.33333333333333337,
+      "scores": {
+        "baseline": 0.6666666666666666,
+        "physics": 1.0,
+        "physics-negative": 1.0
+      },
+      "seed": 1
+    },
+    {
+      "case_id": "block-push",
+      "physics_negative_minus_baseline": 0.3333333333333333,
+      "scores": {
+        "baseline": 0.3333333333333333,
+        "physics": 0.3333333333333333,
+        "physics-negative": 0.6666666666666666
+      },
+      "seed": 0
+    },
+    {
+      "case_id": "block-push",
+      "physics_negative_minus_baseline": -0.6666666666666667,
+      "scores": {
+        "baseline": 1.0,
+        "physics": 1.0,
+        "physics-negative": 0.3333333333333333
+      },
+      "seed": 1
+    },
+    {
+      "case_id": "sponge-compression",
+      "physics_negative_minus_baseline": 0.0,
+      "scores": {
+        "baseline": 1.0,
+        "physics": 1.0,
+        "physics-negative": 1.0
+      },
+      "seed": 0
+    },
+    {
+      "case_id": "sponge-compression",
+      "physics_negative_minus_baseline": 0.0,
+      "scores": {
+        "baseline": 0.6666666666666666,
+        "physics": 0.6666666666666666,
+        "physics-negative": 0.6666666666666666
+      },
+      "seed": 1
+    }
+  ],
+  "prompt_model": "nvidia/Nemotron-3_5-Lightning",
+  "qualification_date": "2026-10-02",
+  "recipe_sha256": "5b06b25916e1371cd179fab527a9916d1419954fd1971dd83aa4329d7256072d",
+  "report_sha256": "952a54793cc339803a5e575d96437e24758bf78511e0c7e8b338620d7580cb41",
+  "runtime_versions": {
+    "diffusers": "0.38.0",
+    "huggingface-hub": "1.7.1",
+    "torch": "2.13.0",
+    "transformers": "5.5.0"
+  },
+  "schema": "npa.physical-prompt-comparison.qualification.v1",
+  "source_overlay_sha256": "cd65f9af138ea52718d91b620977904dfaf626f3e98dbf3477bce510b4b27181",
+  "source_staging": "Isolated working tree at the recorded revision. Historical source digests identify component roles before the descriptive namespace rename; they are not hashes of current renamed files.",
+  "stage_checksum_manifest_sha256": {
+    "prepared": "a40468724535c90aebdf0db84bb934b77d29f232302e123c54c0d481f2b3bbb4",
+    "report": "ba1646687cb29d019fbef7b6eeffc14d3bfc3be76212cb549687c0fffa564220",
+    "seed-a": "9d3a6b224b41ada9323b802fbf51655abed75055b4a8c04d88f6b404a044bc64",
+    "seed-b": "287f5dca226b93365b1a7158b83e5ef675475c8eb9121d782aa4e22f2d4fcc93"
+  },
+  "staged_checkout_base": "f4eb186ef0e91810b4b8447c7a89f60ad328654c",
+  "status": "verified",
+  "summed_video_elapsed_seconds": 76374.08704173303,
+  "video_count": 36,
+  "videos": [
+    {
+      "arm": "baseline",
+      "assertion_verdicts": [
+        "fail",
+        "pass",
+        "unknown"
+      ],
+      "case_id": "block-push",
+      "frames": 81,
+      "seed": 0,
+      "sha256": "d861bf66a41a1628e2be61a50afb7c3e7f52eab3c94c9ad0908cd2dbf81c810e"
+    },
+    {
+      "arm": "physics",
+      "assertion_verdicts": [
+        "unknown",
+        "pass",
+        "fail"
+      ],
+      "case_id": "block-push",
+      "frames": 81,
+      "seed": 0,
+      "sha256": "320704ab4a3ec476cb2942b41c655e6b37a5947bbc8af2a63b7c170a48fde731"
+    },
+    {
+      "arm": "physics-negative",
+      "assertion_verdicts": [
+        "pass",
+        "pass",
+        "unknown"
+      ],
+      "case_id": "block-push",
+      "frames": 81,
+      "seed": 0,
+      "sha256": "dd8111282fded8ae3c65baaf7d2f09794ad81cef8792d00058b0b5d750ff6d8b"
+    },
+    {
+      "arm": "baseline",
+      "assertion_verdicts": [
+        "pass",
+        "pass",
+        "pass"
+      ],
+      "case_id": "block-push",
+      "frames": 81,
+      "seed": 1,
+      "sha256": "5c5833c2a113191c0b6f62cf5019631fea39ce222310f5f1ca03aa02b4c58726"
+    },
+    {
+      "arm": "physics",
+      "assertion_verdicts": [
+        "pass",
+        "pass",
+        "pass"
+      ],
+      "case_id": "block-push",
+      "frames": 81,
+      "seed": 1,
+      "sha256": "fa71f75fe64ec6fb6aed7605e1e4e37e26f300324c84d687870092c728e4cd95"
+    },
+    {
+      "arm": "physics-negative",
+      "assertion_verdicts": [
+        "unknown",
+        "pass",
+        "fail"
+      ],
+      "case_id": "block-push",
+      "frames": 81,
+      "seed": 1,
+      "sha256": "6806f5a2a4366aa1aa1f177577cf57227e7a21095df506915698f5fa17b0be5a"
+    },
+    {
+      "arm": "baseline",
+      "assertion_verdicts": [
+        "fail",
+        "fail",
+        "fail"
+      ],
+      "case_id": "cloth-drape",
+      "frames": 81,
+      "seed": 0,
+      "sha256": "8eb07e031ea9f483d947c41d4ff16034691ce3f4b3f2e9621dccea7fa80dc11d"
+    },
+    {
+      "arm": "physics",
+      "assertion_verdicts": [
+        "pass",
+        "pass",
+        "pass"
+      ],
+      "case_id": "cloth-drape",
+      "frames": 81,
+      "seed": 0,
+      "sha256": "04b79074dcbcdfdda2d07385cabb2590444d9d7847ddbeb46ddde563c01d2d06"
+    },
+    {
+      "arm": "physics-negative",
+      "assertion_verdicts": [
+        "fail",
+        "unknown",
+        "pass"
+      ],
+      "case_id": "cloth-drape",
+      "frames": 81,
+      "seed": 0,
+      "sha256": "cfbbcb22764fc338ecb75a5aea92c49c86c7470acd6a5937b9d33867457e640c"
+    },
+    {
+      "arm": "baseline",
+      "assertion_verdicts": [
+        "fail",
+        "pass",
+        "pass"
+      ],
+      "case_id": "cloth-drape",
+      "frames": 81,
+      "seed": 1,
+      "sha256": "325fdfc9b90077afda3c301371722d2da757c90a80802f27a07da0e5c43c9e15"
+    },
+    {
+      "arm": "physics",
+      "assertion_verdicts": [
+        "pass",
+        "pass",
+        "pass"
+      ],
+      "case_id": "cloth-drape",
+      "frames": 81,
+      "seed": 1,
+      "sha256": "b7e5216231376b6f7e18b26cbbf3812c7b11f7edbbf905d8b980533dc1787d58"
+    },
+    {
+      "arm": "physics-negative",
+      "assertion_verdicts": [
+        "pass",
+        "pass",
+        "pass"
+      ],
+      "case_id": "cloth-drape",
+      "frames": 81,
+      "seed": 1,
+      "sha256": "b38a97618967a693d66e939f9c98575add657c65778f98a2ab94a3305b25deb7"
+    },
+    {
+      "arm": "baseline",
+      "assertion_verdicts": [
+        "fail",
+        "pass",
+        "pass"
+      ],
+      "case_id": "domino-contact",
+      "frames": 81,
+      "seed": 0,
+      "sha256": "3af30d0723b73edd864f311811ca07b5d56530a5aafd2b4cfadf8515a38af917"
+    },
+    {
+      "arm": "physics",
+      "assertion_verdicts": [
+        "fail",
+        "pass",
+        "pass"
+      ],
+      "case_id": "domino-contact",
+      "frames": 81,
+      "seed": 0,
+      "sha256": "4c2f8c9ce74d8189d9f96e911ccfb911e457b08a9926129c59614b7bf2e201e5"
+    },
+    {
+      "arm": "physics-negative",
+      "assertion_verdicts": [
+        "fail",
+        "pass",
+        "pass"
+      ],
+      "case_id": "domino-contact",
+      "frames": 81,
+      "seed": 0,
+      "sha256": "da8649625610d3203d56d6f7078b81b8b949babf9123eeb91a3d5fa2a9647648"
+    },
+    {
+      "arm": "baseline",
+      "assertion_verdicts": [
+        "fail",
+        "pass",
+        "pass"
+      ],
+      "case_id": "domino-contact",
+      "frames": 81,
+      "seed": 1,
+      "sha256": "fce8a67c8c2ec438bfefbf4e699a7beb6b8fae31b9d92fe062b2634025c1aaf0"
+    },
+    {
+      "arm": "physics",
+      "assertion_verdicts": [
+        "fail",
+        "pass",
+        "pass"
+      ],
+      "case_id": "domino-contact",
+      "frames": 81,
+      "seed": 1,
+      "sha256": "ff1da3bbe4e0a1d10ecbd6c03762cffc00de3525ced7593fea452715da0ab662"
+    },
+    {
+      "arm": "physics-negative",
+      "assertion_verdicts": [
+        "unknown",
+        "pass",
+        "pass"
+      ],
+      "case_id": "domino-contact",
+      "frames": 81,
+      "seed": 1,
+      "sha256": "1cc5015592713af8f706adc6e5fdc4682a4483a2072aa72c0e2ebcb9c5e65a44"
+    },
+    {
+      "arm": "baseline",
+      "assertion_verdicts": [
+        "pass",
+        "fail",
+        "pass"
+      ],
+      "case_id": "ramp-roll",
+      "frames": 81,
+      "seed": 0,
+      "sha256": "ee6fca013eca0b237e692937e16239f00c3a6fec52cddd208fc8e2217f39211e"
+    },
+    {
+      "arm": "physics",
+      "assertion_verdicts": [
+        "pass",
+        "unknown",
+        "pass"
+      ],
+      "case_id": "ramp-roll",
+      "frames": 81,
+      "seed": 0,
+      "sha256": "518e63322040080a5fe08a1b64aabf9ad6ebe8778cc0d69229ff834f1c5a434f"
+    },
+    {
+      "arm": "physics-negative",
+      "assertion_verdicts": [
+        "pass",
+        "unknown",
+        "pass"
+      ],
+      "case_id": "ramp-roll",
+      "frames": 81,
+      "seed": 0,
+      "sha256": "55d825788be7997e5bba5feedbda758b6c34ecb5ed75a7113a53d988c9bd89dd"
+    },
+    {
+      "arm": "baseline",
+      "assertion_verdicts": [
+        "pass",
+        "pass",
+        "pass"
+      ],
+      "case_id": "ramp-roll",
+      "frames": 81,
+      "seed": 1,
+      "sha256": "36dfc13351171cbf74e9142250cd73b328ef0d4339db47e97e43620bba8ef27c"
+    },
+    {
+      "arm": "physics",
+      "assertion_verdicts": [
+        "fail",
+        "fail",
+        "pass"
+      ],
+      "case_id": "ramp-roll",
+      "frames": 81,
+      "seed": 1,
+      "sha256": "bb97f86460d01adec26a5e7f580f9c531e59185717bc0cac04988272093ffab1"
+    },
+    {
+      "arm": "physics-negative",
+      "assertion_verdicts": [
+        "pass",
+        "fail",
+        "pass"
+      ],
+      "case_id": "ramp-roll",
+      "frames": 81,
+      "seed": 1,
+      "sha256": "3433c82e5dc244bfcbbdf9a7e350c7710a778e40e476f5aa1b560147a8a8c975"
+    },
+    {
+      "arm": "baseline",
+      "assertion_verdicts": [
+        "pass",
+        "pass",
+        "pass"
+      ],
+      "case_id": "sponge-compression",
+      "frames": 81,
+      "seed": 0,
+      "sha256": "2a875a6dba727998ffbc956b902e3728a6f19293323b557999ac627c979305f3"
+    },
+    {
+      "arm": "physics",
+      "assertion_verdicts": [
+        "pass",
+        "pass",
+        "pass"
+      ],
+      "case_id": "sponge-compression",
+      "frames": 81,
+      "seed": 0,
+      "sha256": "74308dd614cf4ff89e63e3c9f4362f4b61e5d4bba67f4987bfbba5b4d38f625f"
+    },
+    {
+      "arm": "physics-negative",
+      "assertion_verdicts": [
+        "pass",
+        "pass",
+        "pass"
+      ],
+      "case_id": "sponge-compression",
+      "frames": 81,
+      "seed": 0,
+      "sha256": "efafe8f17f2092f7fe1df462922197183f234010f16b6df852d41019e32dcacf"
+    },
+    {
+      "arm": "baseline",
+      "assertion_verdicts": [
+        "pass",
+        "fail",
+        "pass"
+      ],
+      "case_id": "sponge-compression",
+      "frames": 81,
+      "seed": 1,
+      "sha256": "7447687aa421a53ec34ce85231c87410bb2ce43e2d9484e64ab1957fde37600e"
+    },
+    {
+      "arm": "physics",
+      "assertion_verdicts": [
+        "pass",
+        "fail",
+        "pass"
+      ],
+      "case_id": "sponge-compression",
+      "frames": 81,
+      "seed": 1,
+      "sha256": "4e98d618419b155b3ba288c56df7cd863770f5e9379b683ad3e23ba32ea52d41"
+    },
+    {
+      "arm": "physics-negative",
+      "assertion_verdicts": [
+        "pass",
+        "unknown",
+        "pass"
+      ],
+      "case_id": "sponge-compression",
+      "frames": 81,
+      "seed": 1,
+      "sha256": "094f77e6e603394fa4233bcc08ef8ddcc44bfb4f773e7538dacb78d722e41c66"
+    },
+    {
+      "arm": "baseline",
+      "assertion_verdicts": [
+        "pass",
+        "pass",
+        "pass"
+      ],
+      "case_id": "water-pour",
+      "frames": 81,
+      "seed": 0,
+      "sha256": "723aba85174e08ac2573a350085f1545516ffa10901c04cdf08c606ae9012f75"
+    },
+    {
+      "arm": "physics",
+      "assertion_verdicts": [
+        "pass",
+        "pass",
+        "pass"
+      ],
+      "case_id": "water-pour",
+      "frames": 81,
+      "seed": 0,
+      "sha256": "7af720a631521297484443f676de119b9404317758e6221bacedcf35cc388579"
+    },
+    {
+      "arm": "physics-negative",
+      "assertion_verdicts": [
+        "pass",
+        "pass",
+        "pass"
+      ],
+      "case_id": "water-pour",
+      "frames": 81,
+      "seed": 0,
+      "sha256": "f11635fd9298d7688b0dccecb1544230bda4e6fcbc6f29a8bfa5e59d67c4b9dc"
+    },
+    {
+      "arm": "baseline",
+      "assertion_verdicts": [
+        "pass",
+        "pass",
+        "pass"
+      ],
+      "case_id": "water-pour",
+      "frames": 81,
+      "seed": 1,
+      "sha256": "cae9124fad8ea028ff268e93f14da81e4b878dd9000ecff653f1dd4669e4d1b1"
+    },
+    {
+      "arm": "physics",
+      "assertion_verdicts": [
+        "pass",
+        "pass",
+        "pass"
+      ],
+      "case_id": "water-pour",
+      "frames": 81,
+      "seed": 1,
+      "sha256": "2ac420f044f81afece128bb1a1a67f27e3332811ddf2593e5bcc2d757e7a941c"
+    },
+    {
+      "arm": "physics-negative",
+      "assertion_verdicts": [
+        "pass",
+        "pass",
+        "pass"
+      ],
+      "case_id": "water-pour",
+      "frames": 81,
+      "seed": 1,
+      "sha256": "280b981b25177348ce54a8ac475e04fe77e7dfc9aa50dfab8e2e2b9a3959eda3"
+    }
+  ],
+  "workflow_exit_code": 0,
+  "workflow_status": "SUCCEEDED"
+}

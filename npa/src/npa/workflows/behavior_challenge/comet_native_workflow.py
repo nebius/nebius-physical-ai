@@ -15,6 +15,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from npa.clients.storage import StorageClient
+from npa.exception_notes import add_exception_note
 from npa.workflows.behavior_challenge.native_training_checkpoint import (
     checkpoint_inventory,
     file_identity,
@@ -916,8 +917,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             try:
                 _publish_failure(StorageClient.from_environment(), args, error)
             except Exception as publication_error:  # noqa: BLE001
-                error.add_note(
-                    f"failure evidence publication also failed: {publication_error}"
+                add_exception_note(
+                    error,
+                    f"failure evidence publication also failed: {publication_error}",
                 )
         raise
 

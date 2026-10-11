@@ -1,0 +1,110 @@
+{
+  "boundary": "first production dispatch to final response persisted; validation excluded",
+  "comparison_basis": "nano_h200_p2_cell",
+  "concurrency": 1,
+  "derived": {
+    "attempts": 24,
+    "clip_video_seconds": 7.875,
+    "clips_per_node_hour": 461.1,
+    "max_client_wall_s": 62.539,
+    "median_client_wall_s": 61.811,
+    "p95_client_wall_s": 62.423,
+    "valid_attempts": 24,
+    "video_seconds_per_node_hour": 3631.4,
+    "window_seconds": 187.367
+  },
+  "dispatch_schedule": "synchronized_rounds",
+  "expected": {
+    "fps": 24.0,
+    "frames": 189,
+    "height": 480,
+    "max_seconds": 7.955,
+    "min_seconds": 7.795,
+    "width": 832
+  },
+  "expected_adopted_from_warmup": false,
+  "node_gpu_count": 8,
+  "prompt_hashes": {
+    "negative_prompt": "007a1bdfe1ec3edf3b9a71789ca1999a47ad565560f269a3d78bf9a8dfef9cfd",
+    "prompt": "61c9c4b46b6787d967cc509a2bf323766e70bf5ecf40e09a739362beac135677"
+  },
+  "protocol_version": "v1-p2-runlocal",
+  "replica_ports": [
+    8100,
+    8101,
+    8102,
+    8103,
+    8104,
+    8105,
+    8106,
+    8107
+  ],
+  "replicas": 8,
+  "rounds": [
+    {
+      "attempt_index_start": 0,
+      "attempt_index_stop": 1,
+      "finished_utc": "2026-10-05T22:15:56.466885Z",
+      "requests": 8,
+      "round": 0,
+      "started_utc": "2026-10-05T22:14:54.041612Z"
+    },
+    {
+      "attempt_index_start": 1,
+      "attempt_index_stop": 2,
+      "finished_utc": "2026-10-05T22:16:58.866871Z",
+      "requests": 8,
+      "round": 1,
+      "started_utc": "2026-10-05T22:15:56.466905Z"
+    },
+    {
+      "attempt_index_start": 2,
+      "attempt_index_stop": 3,
+      "finished_utc": "2026-10-05T22:18:01.408012Z",
+      "requests": 8,
+      "round": 2,
+      "started_utc": "2026-10-05T22:16:58.866892Z"
+    }
+  ],
+  "spec": {
+    "expected": {
+      "fps": 24.0,
+      "frames": 189,
+      "height": 480,
+      "max_seconds": 7.955,
+      "min_seconds": 7.795,
+      "width": 832
+    },
+    "extra_params": {
+      "guardrails": false,
+      "use_duration_template": false,
+      "use_resolution_template": false
+    },
+    "negative_file": "prompts/negative_prompt.json",
+    "note": "P1 controls at 832x480",
+    "prompt_file": "prompts/example_t2v_prompt.json",
+    "shape": {
+      "flow_shift": "10.0",
+      "fps": 24,
+      "guidance_scale": "6.0",
+      "max_sequence_length": "4096",
+      "num_frames": 189,
+      "num_inference_steps": 35,
+      "size": "832x480"
+    }
+  },
+  "validation_run_id": "validation-2026-10-05T22:18:01.408117Z",
+  "warmup_rounds": [
+    {
+      "attempt_index_start": 0,
+      "attempt_index_stop": 1,
+      "finished_utc": "2026-10-05T22:14:50.640527Z",
+      "requests": 8,
+      "round": 0,
+      "started_utc": "2026-10-05T22:13:47.895558Z"
+    }
+  ],
+  "window_end_utc": "2026-10-05T22:18:01.408110Z",
+  "window_seconds": 187.366506,
+  "window_start_utc": "2026-10-05T22:14:54.041599Z"
+}

@@ -20,17 +20,21 @@ profile; see the [resource preflight guide](../docs/workbench/npa-workflow-guide
 
 | Goal | Spec and runbook |
 | --- | --- |
+| Generate robot inspection datasets in five sites | [Marble Go1 presets](../docs/workbench/guides/marble-robot-presets.md) — warehouse, shipyard, home, factory and utility; one GPU per site, optional five-site fan-out; new presets await live validation |
 | Run a complete public sample with one command | [Four workflow demos](../docs/workbench/guides/public-workflow-demos.md) — automatic inputs, standard GPU execution, and offline HTML results |
 | Label videos in Encord and export an annotated MP4 | [Encord partner workflows](partners/encord/README.md) — real object tracks, exported-label verification, and media roundtrip |
 | Augment a video or LeRobot episode | [PAIDF + Cosmos 3](guides/paidf-cosmos3.md) — public starter, local MP4, and episode/camera inputs; [twelve variants with preserved padding](../docs/workbench/guides/paidf-appearance-12.md#apply-the-recipe) |
 | Generate an image or video | [Cosmos 3](../docs/workbench/cosmos3-generate.md) |
 | Compare Cosmos3-Super serving topologies | [Benchmark results and workflows](../benchmark/cosmos3-super/README.md) |
 | Improve a navigation policy from field failures | [Field failure workflow](testing/field-failure-policy-improvement.yaml) · [native and operator adapter runbook](../docs/workbench/cookbooks/field-failure-policy-improvement.md) — sealed data/runtime required; GPU acceptance pending |
+| Train navigation from a public RGB-D capture | [Scan-to-policy](main/rgbd-scan-to-policy-demo.yaml) · [runbook](../docs/workbench/guides/rgbd-scan-to-policy-demo.md) — automatic sample setup through held-out evaluation |
 | Reconstruct a captured scene | [NuRec](../docs/workbench/guides/neural-reconstruction.md) |
+| Render a digital-twin reference scene on CUDA | [Digital twin](../docs/workbench/guides/digital-twin.md) — dedicated GPU infrastructure, native Cycles, OpenUSD/glTF and offline HTML |
+| Inspect an industrial campus on RTX | [Campus rendering](../docs/workbench/guides/digital-twin.md#render-the-industrial-campus-on-rtx) — 18-hectare authored scene, native OptiX, four camera routes and 1440p output |
 | Prepare a reconstructed scene for Isaac navigation | [Scan-to-Isaac handoff](../docs/workbench/guides/scan-to-isaac-navigation.md) — supplied collision mesh, portable USDZ, and native PhysX probes |
 | Reconstruct metric RGB-D into a collision scene | [RGB-D scan to Isaac](../docs/workbench/guides/rgbd-scan-to-isaac.md) — measured TSDF surface, held-out depth qualification, colored USDZ, native PhysX; [explicit native-training handoff](../docs/workbench/guides/rgbd-scan-to-isaac.md#continue-into-native-navigation-training) requires the companion navigation implementation |
-| Compose the 14-stage robot loop | [Sim2Real](../docs/workbench/guides/sim2real-workflow.md) |
-| Train a GR00T policy | [GR00T N1.7](../docs/workbench/cookbooks/groot-1-7-training.md) |
+| Run the 14-stage robot loop manually | [Sim2Real from a fresh checkout](../docs/workbench/guides/sim2real-workflow.md), starting with the qualified-image release gate |
+| Fine-tune and inspect a GR00T policy | [GR00T N1.7](main/groot-1-7-finetune.yaml) · [runbook](../docs/workbench/cookbooks/groot-1-7-training.md) — distributed optimizer smoke, held-out action prediction, and synchronized diagnostics |
 | Evaluate a BEHAVIOR 2026 policy | [Start here](../docs/workbench/challenge-onboarding.md) · [Workflow](testing/behavior-challenge-eval.yaml) · [measured scope and limits](../docs/workbench/behavior-campaign.md#scope-and-validation-status) — operator runtime required |
 | Run a live π0.5 robot pickup in Antioch | [OpenPI live pickup](partners/antioch/openpi-live-pickup.md) — pretrained-policy inference, physical success checks, and native recording |
 | Collect Antioch trajectories and train ACT | [Antioch ACT workflow](partners/antioch/antioch-offline-policy-train.yaml) — completed dataset → LeRobot training; [runbook](partners/antioch/README.md#dataset-based-act-training) |
@@ -157,7 +161,19 @@ workflow YAMLs remain unchanged from `main`.
 
 ### Main workflows
 
-See the [main workflow and guide table](main/README.md) beside the three principal YAML specs.
+See the [main workflow and guide table](main/README.md) beside the principal YAML specs.
+
+The scan-to-policy and GR00T workflows connect real input preparation,
+learning, independent evaluation, and inspectable outputs. Scan-to-policy
+trains navigation in a measured scene; GR00T validates distributed fine-tuning,
+checkpoint identity, held-out action prediction, and artifact/viewer handoff.
+LeRobot transfer remains in testing.
+
+Catalog promotion does not establish physical-robot transfer. The recorded
+scan-to-policy qualification covers held-out goals in one reconstructed scene.
+GR00T's default four-step optimizer smoke establishes operational behavior;
+it does not establish statistically meaningful learning or closed-loop control.
+Their guides retain the qualification scope and current operator prerequisites.
 
 ### Partner workflows
 

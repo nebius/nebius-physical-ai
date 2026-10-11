@@ -8,6 +8,9 @@ making architecture, review, or domain judgments.
 
 ## Skill Index
 
+- `skills/tools/marble/SKILL.md`: hosted Marble acquisition, CUDA camera datasets
+  and spatial scans, and native workflows with factual interactive HTML reports.
+
 - `skills/index.yaml`: root manifest with name, when-to-use, path, and CI smoke
   expectations.
 - `skills/atomic/architecture/SKILL.md`: platform architecture and validation
