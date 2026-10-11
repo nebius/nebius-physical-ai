@@ -41,6 +41,7 @@ from npa.workflows.groot_visualization import (
     _list_objects,
     _put_bytes,
     _put_json,
+    _read_s3_bytes,
     _read_s3_json,
     _s3_client,
     _split_s3,
@@ -81,7 +82,7 @@ LIBERO_X_EVALUATOR_REPOSITORY = "https://github.com/meituan/LIBERO-X.git"
 LIBERO_X_EVALUATOR_REVISION = "f528726421c7211d8eb05fe48e9e5e2535ccc813"
 LIBERO_X_EVALUATOR_LICENSE = "MIT"
 LIBERO_X_EVALUATOR_SOURCE = "https://github.com/meituan/LIBERO-X"
-RUNTIME_READY_SCHEMA = "npa.groot_libero_x.runtime_ready.v6"
+RUNTIME_READY_SCHEMA = "npa.groot_libero_x.runtime_ready.v7"
 SHA256 = re.compile(r"^[a-f0-9]{64}$")
 TASK_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 LIBERO_X_BDDL_LEVELS = frozenset({"LEVEL1", "LEVEL2", "LEVEL3", "LEVEL4"})
@@ -227,6 +228,21 @@ NATIVE_VIDEO_LAYOUT_NEEDLE = "video_dir=Path(wrapper_configs.video.video_dir),"
 NATIVE_VIDEO_LAYOUT_REPLACEMENT = (
     'video_dir=Path(wrapper_configs.video.video_dir) / f"env-{env_idx:03d}", '
     f"# {NATIVE_VIDEO_LAYOUT_MARKER}"
+)
+NATIVE_COMPLETION_IDENTITY_MARKER = "NPA_GROOT_LIBERO_X_COMPLETION_IDENTITY_V1"
+NATIVE_COMPLETION_ORDINALS_NEEDLE = "current_successes = [False] * n_envs"
+NATIVE_COMPLETION_ORDINALS_REPLACEMENT = (
+    "current_successes = [False] * n_envs\n"
+    f"    completion_ordinals = [0] * n_envs  # {NATIVE_COMPLETION_IDENTITY_MARKER}"
+)
+NATIVE_COMPLETION_APPEND_NEEDLE = "episode_successes.append(current_successes[env_idx])"
+NATIVE_COMPLETION_APPEND_REPLACEMENT = (
+    "episode_successes.append(current_successes[env_idx])\n"
+    '                    episode_infos["npa_environment_indices"].append(env_idx)\n'
+    '                    episode_infos["npa_completion_ordinals"].append(\n'
+    "                        completion_ordinals[env_idx]\n"
+    "                    )\n"
+    "                    completion_ordinals[env_idx] += 1"
 )
 
 
@@ -506,6 +522,173 @@ def _object_inventory(client: Any, uri: str) -> dict[str, Any]:
     return {"uri": uri, "objects": rows, "sha256": _json_hash({"objects": rows})}
 
 
+def _dataset_relative_key(value: Any, *, field: str) -> str:
+    """Return one safe relative dataset object name without normalizing it."""
+
+    key = _require_string({field: value}, field)
+    path = PurePosixPath(key)
+    if (
+        path.is_absolute()
+        or key != path.as_posix()
+        or any(part in {"", ".", ".."} for part in path.parts)
+    ):
+        raise GrootVisualizationError(f"{field} is not a safe relative dataset path")
+    return key
+
+
+def _content_inventory_rows(objects: Any, *, field: str) -> list[dict[str, Any]]:
+    """Validate canonical per-object content facts before hashing them."""
+
+    if not isinstance(objects, list) or not objects:
+        raise GrootVisualizationError(f"{field} must contain dataset objects")
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in objects:
+        if not isinstance(item, Mapping):
+            raise GrootVisualizationError(f"{field} contains an invalid dataset object")
+        key = _dataset_relative_key(item.get("key"), field=f"{field} object key")
+        size = item.get("bytes")
+        if isinstance(size, bool) or not isinstance(size, int) or size <= 0:
+            raise GrootVisualizationError(f"{field} object has an invalid byte count")
+        sha256 = _require_sha256(item.get("sha256"), field=f"{field} object sha256")
+        if key in seen:
+            raise GrootVisualizationError(f"{field} contains duplicate dataset objects")
+        seen.add(key)
+        rows.append({"key": key, "bytes": size, "sha256": sha256})
+    return sorted(rows, key=lambda item: item["key"])
+
+
+def _dataset_content_inventory_from_s3(
+    client: Any, inventory: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Hash every selected dataset byte before it is bound into a protocol."""
+
+    uri = _require_string(inventory, "uri")
+    ref = _split_s3(uri, require_key=False)
+    prefix = ref.key.rstrip("/") + "/" if ref.key else ""
+    metadata_rows = inventory.get("objects")
+    if not isinstance(metadata_rows, list) or not metadata_rows:
+        raise GrootVisualizationError("evaluation dataset inventory has no objects")
+
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in metadata_rows:
+        if not isinstance(item, Mapping):
+            raise GrootVisualizationError(
+                "evaluation dataset inventory has an invalid object"
+            )
+        key = _dataset_relative_key(item.get("key"), field="dataset inventory key")
+        expected_size = item.get("bytes")
+        if (
+            isinstance(expected_size, bool)
+            or not isinstance(expected_size, int)
+            or expected_size <= 0
+        ):
+            raise GrootVisualizationError(
+                "evaluation dataset inventory has an invalid object byte count"
+            )
+        if key in seen:
+            raise GrootVisualizationError(
+                "evaluation dataset inventory has duplicate objects"
+            )
+        seen.add(key)
+        payload = _read_s3_bytes(client, f"s3://{ref.bucket}/{prefix}{key}")
+        if len(payload) != expected_size:
+            raise GrootVisualizationError(
+                "evaluation dataset object changed while preparation was reading it"
+            )
+        rows.append(
+            {
+                "key": key,
+                "bytes": len(payload),
+                "sha256": hashlib.sha256(payload).hexdigest(),
+            }
+        )
+    rows = sorted(rows, key=lambda item: item["key"])
+    return {"objects": rows, "sha256": _json_hash({"objects": rows})}
+
+
+def _prepared_dataset_content_inventory(protocol: Mapping[str, Any]) -> dict[str, Any]:
+    """Load the exact prepared byte inventory required before model loading."""
+
+    dataset = protocol.get("dataset")
+    if not isinstance(dataset, Mapping):
+        raise GrootVisualizationError("prepared protocol lacks dataset provenance")
+    materialized = dataset.get("materialized")
+    if not isinstance(materialized, Mapping):
+        raise GrootVisualizationError("prepared protocol lacks materialized dataset")
+    content = materialized.get("content")
+    if not isinstance(content, Mapping):
+        raise GrootVisualizationError(
+            "prepared protocol lacks a content-bound evaluation dataset inventory"
+        )
+    rows = _content_inventory_rows(
+        content.get("objects"), field="prepared dataset content inventory"
+    )
+    declared = _require_sha256(
+        content.get("sha256"), field="prepared dataset content inventory sha256"
+    )
+    actual = _json_hash({"objects": rows})
+    if actual != declared:
+        raise GrootVisualizationError(
+            "prepared dataset content inventory digest is inconsistent"
+        )
+    return {"objects": rows, "sha256": actual}
+
+
+def _downloaded_dataset_content_inventory(directory: Path) -> dict[str, Any]:
+    """Hash the local dataset tree that the native consumer will receive."""
+
+    if not directory.is_dir():
+        raise GrootVisualizationError(
+            "downloaded evaluation dataset directory is absent"
+        )
+    root = directory.resolve()
+    rows: list[dict[str, Any]] = []
+    for path in sorted(directory.rglob("*")):
+        if path.is_symlink():
+            raise GrootVisualizationError(
+                "downloaded evaluation dataset contains a non-regular file"
+            )
+        if path.is_dir():
+            continue
+        if not path.is_file():
+            raise GrootVisualizationError(
+                "downloaded evaluation dataset contains a non-regular file"
+            )
+        try:
+            key = path.resolve().relative_to(root).as_posix()
+        except ValueError as exc:
+            raise GrootVisualizationError(
+                "downloaded evaluation dataset escaped its destination"
+            ) from exc
+        rows.append(
+            {
+                "key": _dataset_relative_key(
+                    key, field="downloaded dataset object key"
+                ),
+                "bytes": path.stat().st_size,
+                "sha256": _file_sha256(path),
+            }
+        )
+    rows = _content_inventory_rows(rows, field="downloaded dataset content inventory")
+    return {"objects": rows, "sha256": _json_hash({"objects": rows})}
+
+
+def _validate_downloaded_dataset_content(
+    protocol: Mapping[str, Any], directory: Path
+) -> dict[str, Any]:
+    """Refuse changed, missing, or added bytes before any model is loaded."""
+
+    expected = _prepared_dataset_content_inventory(protocol)
+    actual = _downloaded_dataset_content_inventory(directory)
+    if actual != expected:
+        raise GrootVisualizationError(
+            "downloaded evaluation dataset content differs from prepared inventory"
+        )
+    return actual
+
+
 def _validate_dataset_manifest(
     client: Any, payload: Mapping[str, Any], *, evaluation_hash: str
 ) -> dict[str, Any]:
@@ -547,7 +730,13 @@ def _validate_dataset_manifest(
     )
     if inventory["sha256"] != declared:
         raise GrootVisualizationError("evaluation dataset S3 object inventory changed")
-    return {"source": dict(dataset), "materialized": inventory}
+    return {
+        "source": dict(dataset),
+        "materialized": {
+            **inventory,
+            "content": _dataset_content_inventory_from_s3(client, inventory),
+        },
+    }
 
 
 def _validate_materialized_trajectory_files(
@@ -811,6 +1000,9 @@ def _native_input_provenance(protocol: Mapping[str, Any]) -> dict[str, Any]:
             materialized.get("sha256"),
             field="materialized dataset object inventory sha256",
         ),
+        "dataset_content_inventory_sha256": _prepared_dataset_content_inventory(
+            protocol
+        )["sha256"],
         "rollout_protocol": _prepared_rollout_protocol(protocol),
     }
 
@@ -1275,6 +1467,54 @@ def _overlay_native_video_layout(source: Path) -> dict[str, str]:
     }
 
 
+def _overlay_native_completion_identity(source: Path) -> dict[str, str]:
+    """Capture completion identity without changing upstream rollout ordering."""
+
+    target = source / "gr00t/eval/rollout_policy.py"
+    try:
+        original = target.read_text()
+    except OSError as exc:
+        raise GrootVisualizationError(
+            "reviewed Isaac-GR00T checkout lacks its native rollout module"
+        ) from exc
+    if NATIVE_COMPLETION_IDENTITY_MARKER in original:
+        raise GrootVisualizationError(
+            "runtime source unexpectedly contains a completion-identity overlay"
+        )
+    if (
+        original.count(NATIVE_COMPLETION_ORDINALS_NEEDLE) != 1
+        or original.count(NATIVE_COMPLETION_APPEND_NEEDLE) != 1
+    ):
+        raise GrootVisualizationError(
+            "reviewed Isaac-GR00T completion boundary differs from the pinned contract"
+        )
+    target.write_text(
+        original.replace(
+            NATIVE_COMPLETION_ORDINALS_NEEDLE,
+            NATIVE_COMPLETION_ORDINALS_REPLACEMENT,
+        ).replace(
+            NATIVE_COMPLETION_APPEND_NEEDLE,
+            NATIVE_COMPLETION_APPEND_REPLACEMENT,
+        )
+    )
+    return _native_completion_identity_overlay_record()
+
+
+def _native_completion_identity_overlay_record() -> dict[str, str]:
+    """Describe the exact upstream completion-identity overlay bytes."""
+
+    return {
+        "target": "gr00t/eval/rollout_policy.py",
+        "sha256": hashlib.sha256(
+            (
+                NATIVE_COMPLETION_ORDINALS_REPLACEMENT
+                + NATIVE_COMPLETION_APPEND_REPLACEMENT
+            ).encode()
+        ).hexdigest(),
+        "version": "v1",
+    }
+
+
 def _verify_libero_parquet_engine(
     python: Path, *, cwd: Path, env: Mapping[str, str]
 ) -> dict[str, str]:
@@ -1414,6 +1654,7 @@ def _runtime_readiness_failure(target: Path) -> str | None:
     evaluator = payload.get("libero_x_evaluator")
     overlay = payload.get("npa_libero_x_overlay")
     video_layout = payload.get("npa_native_video_layout")
+    completion_identity = payload.get("npa_native_completion_identity")
     if (
         not isinstance(evaluator, dict)
         or evaluator.get("repository") != LIBERO_X_EVALUATOR_REPOSITORY
@@ -1425,6 +1666,7 @@ def _runtime_readiness_failure(target: Path) -> str | None:
         or not isinstance(video_layout, dict)
         or video_layout.get("sha256")
         != hashlib.sha256(NATIVE_VIDEO_LAYOUT_REPLACEMENT.encode()).hexdigest()
+        or completion_identity != _native_completion_identity_overlay_record()
     ):
         return "ready_marker_evaluator_or_overlay_mismatch"
     source_python = source / ".venv/bin/python"
@@ -1467,6 +1709,11 @@ def _runtime_readiness_failure(target: Path) -> str | None:
         return "native_video_layout_overlay_unreadable"
     if NATIVE_VIDEO_LAYOUT_REPLACEMENT not in rollout_text:
         return "native_video_layout_overlay_invalid"
+    if (
+        NATIVE_COMPLETION_ORDINALS_REPLACEMENT not in rollout_text
+        or NATIVE_COMPLETION_APPEND_REPLACEMENT not in rollout_text
+    ):
+        return "native_completion_identity_overlay_invalid"
     try:
         actual_parquet_engine = _verify_libero_parquet_engine(
             libero_python,
@@ -1655,6 +1902,7 @@ def _materialize_native_runtime(temporary_root: Path) -> dict[str, Any]:
             )
         overlay = _overlay_libero_env(source)
         video_layout = _overlay_native_video_layout(source)
+        completion_identity = _overlay_native_completion_identity(source)
         _run_runtime_command(
             [uv, "sync", "--python", "3.12"], cwd=source, env=environment
         )
@@ -1720,6 +1968,7 @@ def _materialize_native_runtime(temporary_root: Path) -> dict[str, Any]:
             },
             "npa_libero_x_overlay": overlay,
             "npa_native_video_layout": video_layout,
+            "npa_native_completion_identity": completion_identity,
             "libero_parquet_engine": parquet_engine,
             "libero_torchcodec": torchcodec,
             "python": "3.12",
@@ -1973,6 +2222,7 @@ def _require_native_worker_provenance(native: Mapping[str, Any]) -> dict[str, An
                 "protocol_sha256",
                 "evaluation_tasks_sha256",
                 "dataset_object_inventory_sha256",
+                "dataset_content_inventory_sha256",
             )
         )
     ):
@@ -2182,6 +2432,11 @@ def _execute_policy(
     bootstrap_ref = os.environ.get("GROOT_REPO_REF", "").strip()
     with tempfile.TemporaryDirectory(prefix="npa-groot-libero-x-") as temporary:
         root = Path(temporary)
+        dataset = root / "evaluation-dataset"
+        phase["name"] = "download_evaluation_dataset"
+        _download_prefix(client, protocol["dataset"]["materialized"]["uri"], dataset)
+        phase["name"] = "validate_downloaded_evaluation_dataset"
+        _validate_downloaded_dataset_content(protocol, dataset)
         phase["name"] = "snapshot_model"
         model, model_identity = _snapshot_model(
             model_repo, model_revision, model_subdir
@@ -2193,9 +2448,6 @@ def _execute_policy(
                 "attribution": "NVIDIA" if policy_name == "baseline" else "rohansiva",
             }
         )
-        dataset = root / "evaluation-dataset"
-        phase["name"] = "download_evaluation_dataset"
-        _download_prefix(client, protocol["dataset"]["materialized"]["uri"], dataset)
         phase["name"] = "materialize_native_runtime"
         runtime = _materialize_native_runtime(root)
         phase["name"] = "native_closed_loop_rollout"

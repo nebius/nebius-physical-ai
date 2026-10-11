@@ -216,14 +216,63 @@ def _parse_rollout(result: Any) -> dict[str, Any]:
         raise RuntimeError(
             "native rollout episode metrics do not align with completed episodes"
         )
+    completion_identities = _completion_identities(info_map, len(values))
+    outcomes = [
+        {
+            **identity,
+            "success": values[index],
+            "episode_length": lengths[index],
+            "episode_reward": rewards[index],
+        }
+        for index, identity in enumerate(completion_identities)
+    ]
     return {
         "native_env_name": str(env_name),
         "successes": values,
         "episode_lengths": lengths,
         "episode_rewards": rewards,
+        "completed_episode_outcomes": outcomes,
         "completed_episodes": len(values),
         "success_rate": sum(values) / len(values),
     }
+
+
+def _completion_identities(
+    info: Mapping[str, Any], completed_episodes: int
+) -> list[dict[str, int]]:
+    """Require upstream completion records for each emitted episode outcome."""
+
+    environment_indices = info.get("npa_environment_indices")
+    completion_ordinals = info.get("npa_completion_ordinals")
+    if (
+        not isinstance(environment_indices, list)
+        or not isinstance(completion_ordinals, list)
+        or len(environment_indices) != completed_episodes
+        or len(completion_ordinals) != completed_episodes
+    ):
+        raise RuntimeError(
+            "native rollout lacks completion identities for its episode outcomes"
+        )
+    identities: list[dict[str, int]] = []
+    for environment_index, completion_ordinal in zip(
+        environment_indices, completion_ordinals, strict=True
+    ):
+        if (
+            isinstance(environment_index, bool)
+            or not isinstance(environment_index, int)
+            or environment_index < 0
+            or isinstance(completion_ordinal, bool)
+            or not isinstance(completion_ordinal, int)
+            or completion_ordinal < 0
+        ):
+            raise RuntimeError("native rollout completion identity is invalid")
+        identities.append(
+            {
+                "environment_index": environment_index,
+                "completion_ordinal": completion_ordinal,
+            }
+        )
+    return identities
 
 
 def _episode_video_records(
@@ -234,15 +283,17 @@ def _episode_video_records(
     trajectory_ids: list[int],
     initial_state_protocol: str,
     reset_seeds: list[int],
-    successes: list[bool],
-    lengths: list[int],
-    rewards: list[float],
+    outcomes: list[dict[str, Any]],
     wave_index: int,
 ) -> list[dict[str, Any]]:
-    """Bind each completed seeded environment to exactly one local MP4 file."""
+    """Join upstream completion identities to one video and requested seed each."""
 
+    outcomes_by_environment = _seeded_outcomes_by_environment(outcomes, reset_seeds)
     records: list[dict[str, Any]] = []
     for environment_index, reset_seed in enumerate(reset_seeds):
+        outcome = outcomes_by_environment.get(environment_index)
+        if outcome is None:
+            raise RuntimeError("native rollout is missing a seeded environment outcome")
         videos = sorted((wave_dir / f"env-{environment_index:03d}").rglob("*.mp4"))
         if len(videos) != 1:
             raise RuntimeError(
@@ -261,15 +312,48 @@ def _episode_video_records(
                 "wave_index": wave_index,
                 "environment_index": environment_index,
                 "reset_seed": reset_seed,
+                "completion_ordinal": outcome["completion_ordinal"],
                 "initial_state": {"protocol": initial_state_protocol},
                 "trajectory_ids": trajectory_ids,
-                "success": successes[environment_index],
-                "episode_length": lengths[environment_index],
-                "episode_reward": rewards[environment_index],
+                "success": outcome["success"],
+                "episode_length": outcome["episode_length"],
+                "episode_reward": outcome["episode_reward"],
                 "video_relative_path": relative,
             }
         )
     return records
+
+
+def _seeded_outcomes_by_environment(
+    outcomes: list[dict[str, Any]], reset_seeds: list[int]
+) -> dict[int, dict[str, Any]]:
+    """Require one first-completion outcome for every requested environment."""
+
+    if len(outcomes) != len(reset_seeds):
+        raise RuntimeError(
+            "native rollout does not have one outcome per seeded environment"
+        )
+    outcomes_by_environment: dict[int, dict[str, Any]] = {}
+    for outcome in outcomes:
+        environment_index = outcome.get("environment_index")
+        completion_ordinal = outcome.get("completion_ordinal")
+        if (
+            isinstance(environment_index, bool)
+            or not isinstance(environment_index, int)
+            or environment_index not in range(len(reset_seeds))
+            or isinstance(completion_ordinal, bool)
+            or not isinstance(completion_ordinal, int)
+            or completion_ordinal != 0
+        ):
+            raise RuntimeError(
+                "native rollout completion does not describe an initial seeded episode"
+            )
+        if environment_index in outcomes_by_environment:
+            raise RuntimeError(
+                "native rollout has duplicate seeded environment outcomes"
+            )
+        outcomes_by_environment[environment_index] = outcome
+    return outcomes_by_environment
 
 
 def _run_seeded_episode_waves(
@@ -337,9 +421,7 @@ def _run_seeded_episode_waves(
                 trajectory_ids=trajectory_ids,
                 initial_state_protocol=initial_state_protocol,
                 reset_seeds=reset_seeds,
-                successes=parsed["successes"],
-                lengths=parsed["episode_lengths"],
-                rewards=parsed["episode_rewards"],
+                outcomes=parsed["completed_episode_outcomes"],
                 wave_index=wave_index,
             )
         )
