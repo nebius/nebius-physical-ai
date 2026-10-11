@@ -423,6 +423,7 @@ def test_fine_tune_invokes_the_selected_upstream_libero_entrypoint(
             "bash",
             "scripts/train.sh",
             "dataloader=libero",
+            f"dataloader.dataset_dir={workspace / 'repo' / 'assets' / 'benchmark_data' / 'libero'}",
             f"training.finetune_ckpt_path={workspace / 'repo' / 'assets' / 'openwam_ckpt' / 'openwam_alpha' / 'OpenWAM-Alpha-Pretrain-Foundation-Model'}",
             *mode_override,
             f"training.output_path={workspace / 'training-output'}",

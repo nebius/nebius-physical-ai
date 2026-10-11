@@ -344,7 +344,9 @@ def _command(
     subprocess.run(command, cwd=cwd, env=merged, check=True)
 
 
-def _training_command(foundation: Path, output: Path, training_mode: str) -> list[str]:
+def _training_command(
+    foundation: Path, dataset: Path, output: Path, training_mode: str
+) -> list[str]:
     """Build the pinned upstream trainer invocation for one supported mode."""
 
     try:
@@ -357,6 +359,7 @@ def _training_command(foundation: Path, output: Path, training_mode: str) -> lis
         "bash",
         "scripts/train.sh",
         "dataloader=libero",
+        f"dataloader.dataset_dir={dataset}",
         f"training.finetune_ckpt_path={foundation}",
         *mode_overrides,
         f"training.output_path={output}",
@@ -455,11 +458,12 @@ def fine_tune(args: argparse.Namespace) -> dict[str, Any]:
         / "openwam_alpha"
         / "OpenWAM-Alpha-Pretrain-Foundation-Model"
     )
+    dataset = repo / "assets" / "benchmark_data" / "libero"
     _checkpoint_record(foundation)
     output = workspace / "training-output"
     started = time.monotonic()
     _command(
-        _training_command(foundation, output, args.training_mode),
+        _training_command(foundation, dataset, output, args.training_mode),
         cwd=repo,
         env={"WANDB_MODE": "offline", "NPROC_PER_NODE": args.gpu_count},
     )
