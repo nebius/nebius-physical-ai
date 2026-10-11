@@ -7420,3 +7420,74 @@ def test_exact_managed_job_lookup_requires_noncontradictory_queue_diagnostics(
     assert evidence.outcome == expected_outcome
     if expected_outcome == "unavailable":
         assert "malformed, ambiguous, or schema-invalid JSON" in evidence.error
+
+
+@pytest.mark.parametrize(
+    ("returncode", "stdout", "stderr", "expected"),
+    [
+        (0, '[{"job_id": 42, "job_name": "exact-run"}]', "", ["42"]),
+        (
+            0,
+            '[{"job_id": 42, "job_name": "exact-run"}]',
+            "PermissionDenied: queue access denied\n",
+            [],
+        ),
+        (0, "[]", "", []),
+        (0, "not-json", "", []),
+        (1, '[{"job_id": 42, "job_name": "exact-run"}]', "", []),
+    ],
+)
+def test_named_job_ids_require_noncontradictory_queue_streams(
+    monkeypatch, tmp_path, returncode, stdout, stderr, expected
+) -> None:
+    """Contradictory diagnostics cannot supply a managed job's identity."""
+
+    from npa.orchestration.skypilot.workflow import find_job_ids_by_name
+
+    sky_bin = _fake_sky(tmp_path)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, returncode, stdout=stdout, stderr=stderr
+        ),
+    )
+
+    assert find_job_ids_by_name("exact-run", sky_bin=sky_bin) == expected
+
+
+@pytest.mark.parametrize(
+    ("returncode", "stdout", "stderr", "expected"),
+    [
+        (0, '[{"job_id": 42, "job_name": "exact-run"}]', "", "42"),
+        (
+            0,
+            '[{"job_id": 42, "job_name": "exact-run"}]',
+            "PermissionDenied: queue access denied\n",
+            "41",
+        ),
+        (0, "[]", "", "41"),
+        (0, "not-json", "", "41"),
+        (1, '[{"job_id": 42, "job_name": "exact-run"}]', "", "41"),
+    ],
+)
+def test_job_id_cross_check_preserves_fallback_on_contradictory_queue_streams(
+    monkeypatch, returncode, stdout, stderr, expected
+) -> None:
+    """A queue error cannot replace the launch ID with an unrelated queue ID."""
+
+    from npa.orchestration.skypilot.workflow import _verified_job_id
+
+    monkeypatch.delenv("NPA_SKYPILOT_VERIFY_JOB_ID", raising=False)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, returncode, stdout=stdout, stderr=stderr
+        ),
+    )
+
+    assert (
+        _verified_job_id("41", "exact-run", env={}, sky_executable="sky", cwd=None)
+        == expected
+    )
