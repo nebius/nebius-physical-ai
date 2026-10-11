@@ -419,12 +419,12 @@ _PPO_FIELDS = {
         "stable_placement_termination_rate"
     ),
     "Total timesteps": "total_timesteps",
+    "Total steps": "total_timesteps",
 }
 
 
-def parse_ppo_training_log(text: str) -> dict[str, Any]:
-    """Parse RSL-RL's iteration table into durable manipulation telemetry."""
-
+def _ppo_iteration_records(text: str) -> tuple[list[dict[str, Any]], int]:
+    """Read native update losses even before an episode return becomes available."""
     iterations: list[dict[str, Any]] = []
     current: dict[str, Any] | None = None
     configured_iterations = 0
@@ -447,26 +447,52 @@ def parse_ppo_training_log(text: str) -> dict[str, Any]:
         if not key:
             continue
         value = float(metric_match.group(2))
+        if not math.isfinite(value):
+            raise ValueError("RSL-RL PPO telemetry contains a nonfinite metric")
         current[key] = int(value) if key == "total_timesteps" else value
 
+    return iterations, configured_iterations
+
+
+def _complete_ppo_updates(iterations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Require unique consecutive updates with both measured optimizer losses."""
     if not iterations:
         raise ValueError("RSL-RL log contains no Learning iteration records")
-    # rsl-rl >= 5.0 no longer prints "Total timesteps" in the iteration table;
-    # treat it as optional evidence rather than a completeness requirement.
-    required = {"episode_return", "value_loss", "surrogate_loss"}
+    required = {"value_loss", "surrogate_loss"}
     complete = [item for item in iterations if required.issubset(item)]
     if not complete:
         raise ValueError("RSL-RL log contains no complete PPO telemetry iteration")
-    final = complete[-1]
+    indices = [item["iteration"] for item in complete]
+    if indices != list(range(indices[0], indices[-1] + 1)):
+        raise ValueError("RSL-RL PPO update records must be unique and consecutive")
+    return complete
+
+
+def parse_ppo_training_log(text: str) -> dict[str, Any]:
+    """Parse native PPO updates without inventing unfinished episode returns.
+
+    Args:
+        text: The untruncated native RSL-RL console log.
+    Returns:
+        Loss-bearing update records and separately counted observed episode returns.
+    Raises:
+        ValueError: No complete loss record exists, or updates repeat or have gaps.
+    """
+    iterations, configured_iterations = _ppo_iteration_records(text)
+    complete = _complete_ppo_updates(iterations)
+    returns = [item for item in complete if "episode_return" in item]
     return {
         "schema": "npa.sim2real.ppo_telemetry.v1",
         "backend": "isaac_rsl_rl_ppo",
         "configured_iterations": configured_iterations,
         "observed_iterations": len(complete),
+        "iterations_with_episode_return": len(returns),
         "first_iteration": complete[0],
-        "final_iteration": final,
+        "final_iteration": complete[-1],
         "best_episode_return": max(
-            complete, key=lambda item: (item["episode_return"], item["iteration"])
+            returns,
+            key=lambda item: (item["episode_return"], item["iteration"]),
+            default={},
         ),
         "minimum_object_position_error": min(
             (

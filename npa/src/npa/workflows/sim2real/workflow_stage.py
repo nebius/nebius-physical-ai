@@ -619,19 +619,12 @@ def _stage9_checkpoint_candidate(
     }
 
 
-def _stage9(args: argparse.Namespace) -> None:
-    from npa.workflows.sim2real import byo_isaac_trainer
-    from npa.workflows.sim2real.checkpoint_selection import select_best_checkpoint
-    from npa.workflows.sim2real.temporal_credit import convert_evaluation
-    from npa.workflows.sim2real.training_curriculum import resume_environment
-
-    root, work = _root(args), _work(9)
-    expected_model = args.reason_model
+def _stage9_evaluator(args, root, work):
     lane_base = (
         f"{root}/vlm_eval/train/outer-{args.outer_iteration:02d}/"
         f"iter-{args.inner_iteration:02d}/"
     )
-    cosmos3 = read_json(lane_base + "cosmos3.json", directory=work / "cosmos3")
+    evaluator = read_json(lane_base + "cosmos3.json", directory=work / "cosmos3")
     actions_uri = (
         f"{root}/actions/train/outer-{args.outer_iteration:02d}/"
         f"iter-{args.inner_iteration:02d}/"
@@ -642,71 +635,106 @@ def _stage9(args: argparse.Namespace) -> None:
     stage8_record = read_json(
         f"{root}/components/stage_08.json", directory=work / "stage8-record"
     )
-    right = validate_hosted_evaluator(
+    evaluations = validate_hosted_evaluator(
         stage7=stage7,
-        evaluator=cosmos3,
+        evaluator=evaluator,
         stage8_record=stage8_record,
-        expected_model=expected_model,
+        expected_model=args.reason_model,
         expected_source_sha=source_sha(),
         evaluator_uri=lane_base + "cosmos3.json",
         outer_iteration=args.outer_iteration,
         inner_iteration=args.inner_iteration,
     )
+    return lane_base, actions_uri, evaluator, evaluations
+
+
+def _stage9_temporal_signals(args, work, evaluations):
+    from npa.workflows.sim2real.temporal_credit import convert_evaluation
+
     evaluation_dir, signal_dir = work / "evaluations", work / "signals"
     evaluation_dir.mkdir()
     signal_dir.mkdir()
-    evaluations: list[dict[str, Any]] = []
-    signals: list[dict[str, Any]] = []
-    for rollout_id in sorted(right):
-        evaluation = dict(right[rollout_id])
+    evaluation_rows, signals = [], []
+    for rollout_id in sorted(evaluations):
+        evaluation = dict(evaluations[rollout_id])
         evaluation["threshold"] = args.threshold
         signal = convert_evaluation(evaluation)
         (evaluation_dir / f"{rollout_id}.json").write_text(
             json.dumps(evaluation, indent=2)
         )
         (signal_dir / f"{rollout_id}.json").write_text(json.dumps(signal, indent=2))
-        evaluations.append(evaluation)
+        evaluation_rows.append(evaluation)
         signals.append(signal)
-    evidence_uri = f"{root}/inner_loop/outer-{args.outer_iteration:02d}/evidence.json"
-    evaluation_uri = lane_base + "evaluations/"
-    signal_uri = lane_base + "signals/"
-    prior: dict[str, Any] = {}
-    if list_prefix(evidence_uri):
-        prior = read_json(evidence_uri, directory=work / "prior-evidence")
+    return {
+        "evaluation_dir": evaluation_dir,
+        "signal_dir": signal_dir,
+        "evaluations": evaluation_rows,
+        "signals": signals,
+    }
+
+
+def _stage9_inputs(args, root, work):
+    lane_base, actions_uri, evaluator, evaluations = _stage9_evaluator(args, root, work)
+    return {
+        **_stage9_temporal_signals(args, work, evaluations),
+        "lane_base": lane_base,
+        "actions_uri": actions_uri,
+        "evaluation_uri": lane_base + "evaluations/",
+        "signal_uri": lane_base + "signals/",
+        "evaluator_usage": evaluator.get("evaluator_usage"),
+    }
+
+
+def _stage9_publish_record(
+    args, root, evidence_uri, selection, update, embodiment=None
+):
+    artifacts = {
+        "evidence": evidence_uri,
+        "checkpoint": selection["checkpoint_uri"],
+        "checkpoint_sha256": selection.get("checkpoint_sha256", ""),
+        "validation_report": selection["validation_report_uri"],
+        "ppo_iterations": args.ppo_iterations,
+        "component_invocation": update.get("component_invocation"),
+    }
+    if embodiment is None:
+        artifacts["idempotent_replay"] = True
+        description = "Re-adopted exact durable same-iteration PPO and validation evidence after a standard-runtime Job retry."
+    else:
+        artifacts["embodiment"] = embodiment
+        description = "Genuine BYO Isaac RSL-RL PPO consumed bounded temporal Reason signals and published an exact checkpoint; validation alone selected it."
+    publish_component_record(
+        root_uri=root,
+        stage=9,
+        name="stage_09_training_signal",
+        tier="WORKS",
+        evidence=description,
+        artifacts=artifacts,
+        require_gpu=True,
+    )
+
+
+def _stage9_republish(args, root, work, inputs, prior, evidence_uri):
     replay = _stage9_existing_replay(
         prior=prior,
         outer_iteration=args.outer_iteration,
         inner_iteration=args.inner_iteration,
-        actions_uri=actions_uri,
-        evaluation_uri=evaluation_uri,
-        signal_uri=signal_uri,
-        sample_vlm_eval=evaluations[0],
-        sample_signal=signals[0],
+        actions_uri=inputs["actions_uri"],
+        evaluation_uri=inputs["evaluation_uri"],
+        signal_uri=inputs["signal_uri"],
+        sample_vlm_eval=inputs["evaluations"][0],
+        sample_signal=inputs["signals"][0],
     )
-    if replay is not None:
-        candidate, selection, update = replay
-        write_loop_output(evidence_uri, prior, work / "evidence", args.outer_iteration)
-        publish_component_record(
-            root_uri=root,
-            stage=9,
-            name="stage_09_training_signal",
-            tier="WORKS",
-            evidence="Re-adopted exact durable same-iteration PPO and validation evidence after a standard-runtime Job retry.",
-            artifacts={
-                "evidence": evidence_uri,
-                "checkpoint": selection["checkpoint_uri"],
-                "checkpoint_sha256": selection.get("checkpoint_sha256", ""),
-                "validation_report": selection["validation_report_uri"],
-                "ppo_iterations": args.ppo_iterations,
-                "component_invocation": update.get("component_invocation"),
-                "idempotent_replay": True,
-            },
-            require_gpu=True,
-        )
-        return
-    signal_batch = work / "signal-batch.json"
-    signal_batch.write_text(json.dumps({"signals": signals}, indent=2))
-    training_output = work / "training-update.json"
+    if replay is None:
+        return False
+    _candidate, selection, update = replay
+    write_loop_output(evidence_uri, prior, work / "evidence", args.outer_iteration)
+    _stage9_publish_record(args, root, evidence_uri, selection, update)
+    return True
+
+
+def _stage9_ppo_environment(args, root, work, signal_batch, training_output):
+    from npa.workflows.sim2real.training_curriculum import resume_environment
+
     env = _common_isaac_env(args, split_uri=f"{root}/envs/train/envs.jsonl")
     env.update(resume_environment(_prior_training_evidence(args, work)))
     env.update(
@@ -722,11 +750,20 @@ def _stage9(args: argparse.Namespace) -> None:
             "NPA_BYO_ISAAC_VALIDATION_INTERVAL": min(100, args.ppo_iterations),
         }
     )
-    _set_env(env)
+    return env
+
+
+def _stage9_train(args, root, work, signals):
+    from npa.workflows.sim2real import byo_isaac_trainer
+
+    signal_batch = work / "signal-batch.json"
+    signal_batch.write_text(json.dumps({"signals": signals}, indent=2))
+    training_output = work / "training-update.json"
+    _set_env(_stage9_ppo_environment(args, root, work, signal_batch, training_output))
     if byo_isaac_trainer.main() != 0:
         raise RuntimeError("Stage 9 genuine BYO Isaac PPO failed")
     update = json.loads(training_output.read_text())
-    training_embodiment = _assert_embodiment_evidence(
+    embodiment = _assert_embodiment_evidence(
         root=root, payload=update, stage="Stage 9 PPO"
     )
     if (
@@ -734,67 +771,82 @@ def _stage9(args: argparse.Namespace) -> None:
         != "npa_workflow_skypilot_task"
     ):
         raise RuntimeError("Stage 9 PPO escaped the workflow-owned task")
-    checkpoint_uri = str(update.get("checkpoint_path") or "")
-    if not checkpoint_uri.startswith("s3://"):
+    if not str(update.get("checkpoint_path") or "").startswith("s3://"):
         raise RuntimeError("Stage 9 PPO did not publish a checkpoint")
-    current_candidates = _stage9_validation_candidates(
-        args, work, update, training_embodiment
-    )
-    prior_iterations = list(prior.get("iterations") or [])
-    candidates = list(prior.get("checkpoint_candidates") or []) + current_candidates
-    selection = select_best_checkpoint(candidates)
-    selected_validation = dict(selection.get("validation_report") or {})
-    evidence = {
+    return update, embodiment
+
+
+def _stage9_iteration(args, inputs, update, embodiment):
+    return {
+        "iteration": args.inner_iteration,
+        "actions_uri": inputs["actions_uri"],
+        "vlm_eval_uri": inputs["evaluation_uri"],
+        "signal_uri": inputs["signal_uri"],
+        "trainer_component_invocation": update.get("component_invocation"),
+        "update": update,
+        "embodiment": embodiment,
+        "sample_vlm_eval": inputs["evaluations"][0],
+        "sample_signal": inputs["signals"][0],
+        "evaluator_usage": inputs["evaluator_usage"],
+    }
+
+
+def _stage9_loop_evidence(
+    args, inputs, prior, update, embodiment, candidates, selection
+):
+    validation = dict(selection.get("validation_report") or {})
+    return {
         "schema": "npa.sim2real.inner_loop_evidence.v1",
         "outer_iteration": args.outer_iteration,
-        "iterations": prior_iterations
-        + [
-            {
-                "iteration": args.inner_iteration,
-                "actions_uri": actions_uri,
-                "vlm_eval_uri": evaluation_uri,
-                "signal_uri": signal_uri,
-                "trainer_component_invocation": update.get("component_invocation"),
-                "update": update,
-                "embodiment": training_embodiment,
-                "sample_vlm_eval": evaluations[0],
-                "sample_signal": signals[0],
-                "evaluator_usage": cosmos3.get("evaluator_usage"),
-            }
-        ],
+        "iterations": list(prior.get("iterations") or [])
+        + [_stage9_iteration(args, inputs, update, embodiment)],
         "checkpoint_candidates": candidates,
         "selected_checkpoint_uri": selection["checkpoint_uri"],
         "final_checkpoint_uri": selection["checkpoint_uri"],
         "checkpoint_selection": selection,
-        "selected_validation_report": selected_validation,
+        "selected_validation_report": validation,
         "selected_validation_strict_success": float(
-            selected_validation.get("success_rate") or 0.0
+            validation.get("success_rate") or 0.0
         ),
     }
-    storage().upload_directory(str(evaluation_dir), evaluation_uri)
-    storage().upload_directory(str(signal_dir), signal_uri)
+
+
+def _stage9_commit(args, root, work, inputs, prior, update, embodiment, evidence_uri):
+    from npa.workflows.sim2real.checkpoint_selection import select_best_checkpoint
+
+    current = _stage9_validation_candidates(args, work, update, embodiment)
+    candidates = list(prior.get("checkpoint_candidates") or []) + current
+    selection = select_best_checkpoint(candidates)
+    evidence = _stage9_loop_evidence(
+        args, inputs, prior, update, embodiment, candidates, selection
+    )
+    storage().upload_directory(str(inputs["evaluation_dir"]), inputs["evaluation_uri"])
+    storage().upload_directory(str(inputs["signal_dir"]), inputs["signal_uri"])
     write_json(
-        lane_base + "signal-batch.json", {"signals": signals}, directory=work / "batch"
+        inputs["lane_base"] + "signal-batch.json",
+        {"signals": inputs["signals"]},
+        directory=work / "batch",
     )
-    write_json(lane_base + "training-update.json", update, directory=work / "training")
+    write_json(
+        inputs["lane_base"] + "training-update.json",
+        update,
+        directory=work / "training",
+    )
     write_loop_output(evidence_uri, evidence, work / "evidence", args.outer_iteration)
-    publish_component_record(
-        root_uri=root,
-        stage=9,
-        name="stage_09_training_signal",
-        tier="WORKS",
-        evidence="Genuine BYO Isaac RSL-RL PPO consumed bounded temporal Reason signals and published an exact checkpoint; validation alone selected it.",
-        artifacts={
-            "evidence": evidence_uri,
-            "checkpoint": selection["checkpoint_uri"],
-            "checkpoint_sha256": selection.get("checkpoint_sha256", ""),
-            "validation_report": selection["validation_report_uri"],
-            "ppo_iterations": args.ppo_iterations,
-            "component_invocation": update.get("component_invocation"),
-            "embodiment": training_embodiment,
-        },
-        require_gpu=True,
-    )
+    _stage9_publish_record(args, root, evidence_uri, selection, update, embodiment)
+
+
+def _stage9(args: argparse.Namespace) -> None:
+    root, work = _root(args), _work(9)
+    inputs = _stage9_inputs(args, root, work)
+    evidence_uri = f"{root}/inner_loop/outer-{args.outer_iteration:02d}/evidence.json"
+    prior = {}
+    if list_prefix(evidence_uri):
+        prior = read_json(evidence_uri, directory=work / "prior-evidence")
+    if _stage9_republish(args, root, work, inputs, prior, evidence_uri):
+        return
+    update, embodiment = _stage9_train(args, root, work, inputs["signals"])
+    _stage9_commit(args, root, work, inputs, prior, update, embodiment, evidence_uri)
 
 
 def _stage10(args: argparse.Namespace) -> None:

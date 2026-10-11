@@ -84,6 +84,10 @@ After each full PPO pass, Stage 9 evaluates all saved 100-update checkpoints
 and the final checkpoint against the same validation split. It retains the
 strongest actor and records that checkpoint's actual completed updates separately
 from the full pass count. Resumed rollouts and PPO use its exact checkpoint.
+PPO telemetry counts consecutive updates with measured value and surrogate losses.
+Episode return is recorded only after the native runner finishes an episode;
+`iterations_with_episode_return` records that separate count without inventing
+returns for the first updates.
 A retry verifies the complete committed candidate pool before adopting it.
 The next pass repeats exploration and the training-only goal curriculum until
 at least half of that candidate's validation episodes achieved both stable grasp
