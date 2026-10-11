@@ -9,12 +9,18 @@ import os
 from pathlib import Path
 from typing import Any
 
-_PROFILE = "franka-ik-distillation-v1"
+from npa.workflows.sim2real.isaac_franka_policy import (
+    BOOTSTRAP_PROFILE,
+    stock_franka_policy_contract,
+)
+from npa.workflows.sim2real.isaac_recurrent_imitation import (
+    RecurrentDemonstrationReplay,
+)
+
+_PROFILE = BOOTSTRAP_PROFILE
 _BOOTSTRAP_ROUNDS = 2
-_FITTING_EPOCHS = 8
-_MINIBATCH_SIZE = 4096
+_FITTING_EPOCHS = 32
 _TEACHER_TCP_STEP_M = 0.1
-_TEACHER_JOINT_STEP_RAD = 0.2
 
 
 def resolve_training_bootstrap(configured: str, *, eligible: bool) -> str:
@@ -93,20 +99,9 @@ class _FrankaTeacher:
 
     def __init__(self, task):
         import torch
-        from isaaclab.controllers import (
-            DifferentialIKController,
-            DifferentialIKControllerCfg,
-        )
 
         self.task = task
         self.robot, self.entity, self.arm, self.fingers = _native_joint_contract(task)
-        self.controller = DifferentialIKController(
-            DifferentialIKControllerCfg(
-                command_type="pose", use_relative_mode=False, ik_method="dls"
-            ),
-            num_envs=task.num_envs,
-            device=task.device,
-        )
         self.phase = torch.zeros(task.num_envs, dtype=torch.long, device=task.device)
         self.elapsed = torch.zeros(task.num_envs, device=task.device)
         self.stable_steps = torch.zeros_like(self.phase)
@@ -117,10 +112,6 @@ class _FrankaTeacher:
         self.lift_targets = torch.zeros_like(self.grasp_offsets)
         self.orientation = torch.tensor(
             [1.0, 0.0, 0.0, 0.0], device=task.device
-        ).repeat(task.num_envs, 1)
-        sensor = task.scene["ee_frame"]
-        self.offset = torch.tensor(
-            sensor.cfg.target_frames[0].offset.pos, device=task.device
         ).repeat(task.num_envs, 1)
 
     def _world_goals(self):
@@ -168,27 +159,17 @@ class _FrankaTeacher:
         self.phase = next_phase
         self.elapsed[advance] = 0
 
-    def _joint_labels(self, tcp_target):
+    def _cartesian_labels(self, tcp_target):
         import torch
-        from isaaclab.utils.math import quat_apply
+        from isaaclab.utils.math import subtract_frame_transforms
 
-        wrist_target = tcp_target - quat_apply(self.orientation, self.offset)
-        self.controller.set_command(torch.cat([wrist_target, self.orientation], dim=1))
-        pose = _tensor(self.robot.data.body_pose_w)[:, self.entity.body_ids[0]]
-        jacobian = _tensor(self.robot.data.body_link_jacobian_w)
-        jacobian = jacobian[:, self.entity.body_ids[0] - 1, :, self.entity.joint_ids]
-        joints = _tensor(self.robot.data.joint_pos)[:, self.entity.joint_ids]
-        desired = self.controller.compute(pose[:, :3], pose[:, 3:7], jacobian, joints)
-        desired = joints + (desired - joints).clamp(
-            -_TEACHER_JOINT_STEP_RAD, _TEACHER_JOINT_STEP_RAD
+        root = _tensor(self.robot.data.root_pose_w)
+        target, orientation = subtract_frame_transforms(
+            root[:, :3], root[:, 3:7], tcp_target, self.orientation
         )
-        limits = _tensor(self.robot.data.soft_joint_pos_limits)[
-            :, self.entity.joint_ids
-        ]
-        desired = torch.maximum(limits[..., 0], torch.minimum(limits[..., 1], desired))
-        arm_labels = (desired - _tensor(self.arm._offset)) / _tensor(self.arm._scale)
+        pose = torch.cat((target, orientation), dim=1) / _tensor(self.arm._scale)
         gripper = torch.where(self.phase >= 2, -1.0, 1.0).unsqueeze(1)
-        return torch.cat([arm_labels, gripper], dim=1)
+        return torch.cat((pose, gripper), dim=1)
 
     def actions(self):
         import torch
@@ -206,44 +187,44 @@ class _FrankaTeacher:
             torch.full_like(distance, 0.7),
             _TEACHER_TCP_STEP_M / distance.clamp_min(1e-8),
         )
-        return self._joint_labels(tcp + step)
+        return self._cartesian_labels(tcp + step)
 
     def reset(self, dones):
         self.phase[dones.bool()] = 0
         self.elapsed[dones.bool()] = 0
         self.stable_steps[dones.bool()] = 0
-        self.controller.reset(dones.nonzero(as_tuple=False).flatten())
 
 
 def _training_round(env, actor, *, learner_fraction):
-    """Collect supervised native actions over every consumed training scenario."""
+    """Collect native observations, separate fit annotations, and strict actor outcomes."""
     import torch
-    from tensordict import TensorDict
 
     task = env.unwrapped
     teacher = _FrankaTeacher(task)
-    row_count = len(task.npa_scenario_rows)
-    cycles = math.ceil(row_count / task.num_envs) + 1
+    cycles = math.ceil(len(task.npa_scenario_rows) / task.num_envs) + 1
     steps = cycles * int(task.max_episode_length)
-    observations = {name: [] for name in actor.obs_groups}
-    targets = []
+    collection = _DemonstrationCollection(actor)
+    actor.reset()
+    actor.eval()
     with torch.no_grad():
         for step in range(steps):
-            obs = env.get_observations()
+            observations = env.get_observations()
             labels = teacher.actions()
-            for name in observations:
-                observations[name].append(obs[name].clone())
-            targets.append(labels.clone())
-            actions = labels
-            if learner_fraction:
-                actions = labels.lerp(actor(obs), learner_fraction)
+            prediction = actor(observations)
+            if not torch.isfinite(prediction).all():
+                raise RuntimeError("native Franka actor produced nonfinite actions")
+            collection.record(observations, labels, prediction, teacher.phase)
+            actions = prediction
+            if learner_fraction != 1.0:
+                actions = labels.lerp(prediction, learner_fraction)
             if (step + 1) % int(task.max_episode_length) == 0:
                 _report_teacher_progress(teacher, step + 1, steps, learner_fraction)
             _, _, dones, _ = env.step(actions)
+            collection.resets.append(dones.bool().clone().unsqueeze(1))
             teacher.reset(dones)
-    combined = {name: torch.cat(rows) for name, rows in observations.items()}
-    batch = TensorDict(combined, batch_size=[steps * task.num_envs])
-    return batch, torch.cat(targets), teacher.successful_rows
+            actor.reset(dones)
+    actor.reset()
+    return collection.finish(steps, task.num_envs, teacher.successful_rows)
 
 
 def _report_teacher_progress(teacher, step, total_steps, learner_fraction):
@@ -264,31 +245,9 @@ def _report_teacher_progress(teacher, step, total_steps, learner_fraction):
     )
 
 
-def _fit_actor(actor, observations, labels, optimizer):
-    """Fit the actor mean while preserving the native inference and noise modules."""
-    import torch
-
-    actor.update_normalization(observations)
-    actor.train()
-    losses = []
-    for _ in range(_FITTING_EPOCHS):
-        order = torch.randperm(len(labels), device=labels.device)
-        for indices in order.split(_MINIBATCH_SIZE):
-            error = actor(observations[indices]) - labels[indices]
-            loss = error[:, :7].square().mean() + 2 * error[:, 7].square().mean()
-            if not torch.isfinite(loss):
-                raise RuntimeError("Franka bootstrap actor loss is nonfinite")
-            optimizer.zero_grad(set_to_none=True)
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(actor.parameters(), 1.0)
-            optimizer.step()
-            losses.append(float(loss.detach()))
-    actor.eval()
-    return {
-        "first_loss": losses[0],
-        "last_loss": losses[-1],
-        "optimizer_updates": len(losses),
-    }
+def _fit_actor(actor, observations, labels, optimizer, *, replay):
+    """Keep native GRU inference, noise, reset boundaries, and retained demonstrations."""
+    return replay.fit(actor, observations, labels, optimizer, epochs=_FITTING_EPOCHS)
 
 
 def _validate_bootstrap(env, runner, profile, training_split):
@@ -308,9 +267,9 @@ def _validate_bootstrap(env, runner, profile, training_split):
     if int(runner.current_learning_iteration) != 0:
         raise RuntimeError("Franka bootstrap cannot replace a resumed PPO checkpoint")
     actor = getattr(runner.alg, "actor", None)
-    if actor is None or actor.is_recurrent:
+    if actor is None or not actor.is_recurrent:
         raise RuntimeError(
-            "Franka bootstrap requires the native feed-forward RSL-RL actor"
+            "Franka bootstrap requires the native recurrent RSL-RL actor"
         )
     from npa.workflows.sim2real.isaac_franka_control import stock_franka_control_audit
 
@@ -318,8 +277,8 @@ def _validate_bootstrap(env, runner, profile, training_split):
     return task, actor
 
 
-def _bootstrap_round(env, actor, optimizer, *, index):
-    batch, labels, successes = _training_round(
+def _bootstrap_round(env, actor, optimizer, *, index, replay=None):
+    batch, labels, successes, diagnostics = _training_round(
         env, actor, learner_fraction=0.0 if index == 0 else 0.5
     )
     count = int(successes.sum())
@@ -328,19 +287,20 @@ def _bootstrap_round(env, actor, optimizer, *, index):
             "native training demonstrations did not establish stable placement: "
             f"round {index}, {count}/{len(successes)} training scenarios"
         )
-    fit = _fit_actor(actor, batch, labels, optimizer)
+    fit = _fit_actor(actor, batch, labels, optimizer, replay=replay)
     audit = {
         "round": index,
         "training_scenarios": len(successes),
         "teacher_stable_placements": count,
         "examples": len(labels),
+        **diagnostics,
         **fit,
     }
     print("ROBOT_BOOTSTRAP_ROUND " + json.dumps(audit, sort_keys=True), flush=True)
     return audit
 
 
-def _publish_bootstrap_audit(task, runner, rounds, profile, output_dir):
+def _publish_bootstrap_audit(task, runner, rounds, profile, output_dir, evidence):
     """Keep demonstration learning distinct from measured PPO updates."""
     import isaac_scenario_task
     from npa.workflows.sim2real.isaac_franka_control import stock_franka_control_audit
@@ -348,7 +308,7 @@ def _publish_bootstrap_audit(task, runner, rounds, profile, output_dir):
     if int(runner.current_learning_iteration) != 0:
         raise RuntimeError("training bootstrap changed the PPO update counter")
     audit = {
-        "schema": "npa.sim2real.franka_bootstrap.v1",
+        "schema": "npa.sim2real.franka_bootstrap.v2",
         "profile": profile,
         "scope": "sealed_training_only",
         "gold_used": False,
@@ -358,6 +318,8 @@ def _publish_bootstrap_audit(task, runner, rounds, profile, output_dir):
         "robot_control": stock_franka_control_audit(task.cfg),
         "training_scenarios": len(task.npa_scenario_rows),
         "rounds": rounds,
+        "policy_model": stock_franka_policy_contract(),
+        **evidence,
         "training_scenarios_sha256": hashlib.sha256(
             Path(os.environ[isaac_scenario_task.SCENARIO_ENV]).read_bytes()
         ).hexdigest(),
@@ -373,29 +335,131 @@ def _publish_bootstrap_audit(task, runner, rounds, profile, output_dir):
 def bootstrap_franka_actor(
     env: Any, runner: Any, *, profile: str, training_split: str, output_dir: str
 ) -> dict[str, Any]:
-    """Distill training-only native IK demonstrations before the full PPO pass.
+    """Establish an actor-only training handoff before the complete native PPO pass.
 
     Args:
-        env: Native RSL-RL wrapper consuming only the sealed training scenarios.
-        runner: Fresh RSL-RL runner whose learned actor receives supervised updates.
-        profile: Explicit ``franka-ik-distillation-v1`` training configuration.
+        env: Native vector wrapper consuming only the sealed training scenarios.
+        runner: Fresh RSL-RL runner whose GRU receives supervised updates.
+        profile: Explicit ``franka-cartesian-gru-distillation-v2`` configuration.
         training_split: The caller's verified sealed ``train`` split binding.
-        output_dir: Native training directory for the demonstration audit.
+        output_dir: Native output directory for the measured bootstrap audit.
     Returns:
-        Training-only demonstration, fit, and unchanged PPO-count audit.
+        Demonstration, corrective fitting, and strict actor-only handoff evidence.
     Raises:
-        ValueError: The profile is unsupported.
-        RuntimeError: The task, actor, demonstrations, or learning evidence is invalid.
+        ValueError: The profile or training split is unsupported.
+        RuntimeError: The native task, fitting, or actor-only handoff is invalid.
         OSError: Training evidence cannot be written.
     """
     import torch
 
     task, actor = _validate_bootstrap(env, runner, profile, training_split)
+    replay = RecurrentDemonstrationReplay(task.num_envs)
     optimizer = torch.optim.Adam(actor.parameters(), lr=0.0003)
     rounds = [
-        _bootstrap_round(env, actor, optimizer, index=index)
+        _bootstrap_round(env, actor, optimizer, index=index, replay=replay)
         for index in range(_BOOTSTRAP_ROUNDS)
     ]
-    audit = _publish_bootstrap_audit(task, runner, rounds, profile, output_dir)
+    evidence = _corrective_training_handoff(env, actor, replay)
+    audit = _publish_bootstrap_audit(
+        task, runner, rounds, profile, output_dir, evidence
+    )
     env.reset()
+    actor.reset()
     return audit
+
+
+class _DemonstrationCollection:
+    def __init__(self, actor):
+        self.observations = {name: [] for name in actor.obs_groups}
+        self.targets = []
+        self.resets = []
+        self.phases = []
+        self.arm_error = 0.0
+        self.gripper_error = 0.0
+
+    def record(self, observations, labels, prediction, phase):
+        for name, rows in self.observations.items():
+            rows.append(observations[name].clone())
+        self.targets.append(labels.clone())
+        self.phases.append(phase.clone().unsqueeze(1))
+        error = prediction - labels
+        self.arm_error += error[:, :-1].square().mean()
+        self.gripper_error += error[:, -1].square().mean()
+
+    def finish(self, steps, num_envs, successes):
+        import torch
+        from tensordict import TensorDict
+
+        combined = {name: torch.cat(rows) for name, rows in self.observations.items()}
+        combined["__done"] = torch.cat(self.resets)
+        combined["__phase"] = torch.cat(self.phases)
+        observations = TensorDict(combined, batch_size=[steps * num_envs])
+        diagnostics = {
+            "arm_label_mse": float(self.arm_error / steps),
+            "gripper_label_mse": float(self.gripper_error / steps),
+        }
+        return observations, torch.cat(self.targets), successes, diagnostics
+
+
+def _actor_collection_evidence(env, actor, *, learner_fraction):
+    env.reset()
+    actor.reset()
+    batch, labels, successes, diagnostics = _training_round(
+        env, actor, learner_fraction=learner_fraction
+    )
+    evidence = {
+        "scope": "sealed_training_only",
+        "training_scenarios": len(successes),
+        "strict_training_placements": int(successes.sum()),
+        "learner_fraction": learner_fraction,
+        "inference_composition": "learned_actor_only"
+        if learner_fraction == 1.0
+        else "training_demonstration_mixture",
+        "gold_used": False,
+        "ppo_updates": 0,
+        **diagnostics,
+    }
+    return batch, labels, evidence
+
+
+def _corrective_training_handoff(env, actor, replay):
+    import torch
+
+    batch, labels, baseline = _actor_collection_evidence(
+        env, actor, learner_fraction=1.0
+    )
+    del batch, labels
+    optimizer = torch.optim.Adam(actor.parameters(), lr=0.0003)
+    corrective = _fit_corrective_collection(env, actor, replay, optimizer)
+    additional = []
+    assessments = []
+    while True:
+        batch, labels, handoff = _actor_collection_evidence(
+            env, actor, learner_fraction=1.0
+        )
+        del batch, labels
+        assessments.append(handoff)
+        print(
+            "ROBOT_ACTOR_HANDOFF_ASSESSMENT " + json.dumps(handoff, sort_keys=True),
+            flush=True,
+        )
+        if handoff["strict_training_placements"] * 2 >= handoff["training_scenarios"]:
+            return {
+                "actor_baseline": baseline,
+                "corrective_fit": corrective,
+                "additional_corrective_fits": additional,
+                "actor_handoff_assessments": assessments,
+                "actor_handoff": handoff,
+            }
+        additional.append(_fit_corrective_collection(env, actor, replay, optimizer))
+
+
+def _fit_corrective_collection(env, actor, replay, optimizer):
+    batch, labels, evidence = _actor_collection_evidence(
+        env, actor, learner_fraction=0.75
+    )
+    evidence["fit"] = _fit_actor(actor, batch, labels, optimizer, replay=replay)
+    print(
+        "ROBOT_ACTOR_CORRECTIVE_FIT " + json.dumps(evidence, sort_keys=True), flush=True
+    )
+    return evidence

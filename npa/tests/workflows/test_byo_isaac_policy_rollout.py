@@ -215,7 +215,7 @@ def test_build_isaac_rollout_job_manifest_shape():
     assert "--portable-root /tmp/npa-isaac-kit" in pr.ISAAC_ROLLOUT_SCRIPT
     assert "kit_args=os.environ.get(" in pr.ISAAC_ROLLOUT_SCRIPT
     assert "device=SIM_DEVICE" in pr.ISAAC_ROLLOUT_SCRIPT
-    assert "OnPolicyRunner(env, acfg, log_dir=None, device=SIM_DEVICE)" in (
+    assert "OnPolicyRunner, env, acfg, task=TASK, log_dir=None, device=SIM_DEVICE" in (
         pr.ISAAC_ROLLOUT_SCRIPT
     )
     assert "get_inference_policy(device=SIM_DEVICE)" in pr.ISAAC_ROLLOUT_SCRIPT

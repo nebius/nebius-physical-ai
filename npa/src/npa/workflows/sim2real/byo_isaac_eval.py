@@ -583,6 +583,11 @@ try:
     from npa.workflows.sim2real.isaac_assets_compat import migrate_rsl_rl_agent_cfg
     agent_cfg = migrate_rsl_rl_agent_cfg(agent_cfg)
     acfg = agent_cfg.to_dict() if hasattr(agent_cfg, "to_dict") else dict(agent_cfg)
+    from npa.workflows.sim2real.isaac_franka_policy import (
+        configure_stock_franka_actor, create_stock_franka_runner,
+        validate_stock_franka_checkpoint,
+    )
+    stock_policy = configure_stock_franka_actor(acfg, task=TASK)
     print("AGENT_CFG_KEYS", sorted(acfg.keys()), flush=True)
     # The ACTUAL env count is the single source of truth for per-env sizing.
     realN = int(getattr(env.unwrapped, "num_envs", N) or N)
@@ -647,9 +652,12 @@ try:
         raise RuntimeError("evaluation action dimension disagrees with RobotSpec")
     if expected_observation_dim and actual_observation_dim != expected_observation_dim:
         raise RuntimeError("evaluation observation dimension disagrees with RobotSpec")
-    runner = OnPolicyRunner(env, acfg, log_dir=None, device="cuda:0")
+    runner = create_stock_franka_runner(
+        OnPolicyRunner, env, acfg, task=TASK, log_dir=None, device="cuda:0"
+    )
     try:
-        runner.load(CKPT)
+        checkpoint_info = runner.load(CKPT)
+        validate_stock_franka_checkpoint(checkpoint_info, task=TASK)
     except Exception as exc:
         raise RuntimeError(
             "checkpoint cannot load for RobotSpec embodiment "
@@ -657,6 +665,8 @@ try:
             f"{actual_observation_dim}/{actual_action_dim}: {exc}"
         ) from exc
     policy = runner.get_inference_policy(device="cuda:0")
+    if stock_policy:
+        runner.alg.actor.reset()
     _pb = int(_pt.shape[0]) if torch.is_tensor(_pt) and _pt.ndim >= 1 else realN
     # N stays the true env count; only WARN if the policy obs batch disagrees so a
     # genuine multi-env mismatch is visible in logs rather than silently collapsing.
@@ -834,6 +844,8 @@ try:
         if hasattr(actions, "ndim") and actions.ndim == 1:
             actions = actions.reshape(N, -1)
         obs, _, dones, extras = env.step(actions)
+        if stock_policy:
+            runner.alg.actor.reset(dones)
         simulation_clock.advance()
         try:
             done_np = dones.detach().cpu().numpy().astype(bool)
@@ -1366,7 +1378,7 @@ def run_isaac_eval_job(
         robot_spec_dict = {"robot_source": "stock_franka", "name": "franka"}
     from npa.workflows.sim2real.byo_isaac_trainer import embodiment_evidence
 
-    _EMBODIMENT_EVIDENCE = embodiment_evidence(robot_spec_dict)
+    _EMBODIMENT_EVIDENCE = embodiment_evidence(robot_spec_dict, stock_scenarios=True)
 
     manifest = build_isaac_eval_job_manifest(
         job_name=job_name,
@@ -1677,7 +1689,7 @@ def main() -> int:
     report["embodiment"] = dict(_EMBODIMENT_EVIDENCE) or {
         "embodiment_digest": "stock_franka",
         "expected_action_dim": 8,
-        "expected_observation_dim": 36,
+        "expected_observation_dim": 39,
         "runtime_dimension_validation": "passed",
     }
     report["policy_inference_provenance"] = policy_inference_provenance(

@@ -1614,6 +1614,11 @@ try:
     from npa.workflows.sim2real.isaac_assets_compat import migrate_rsl_rl_agent_cfg
     agent_cfg = migrate_rsl_rl_agent_cfg(agent_cfg)
     acfg = agent_cfg.to_dict() if hasattr(agent_cfg, "to_dict") else dict(agent_cfg)
+    from npa.workflows.sim2real.isaac_franka_policy import (
+        configure_stock_franka_actor, create_stock_franka_runner,
+        validate_stock_franka_checkpoint,
+    )
+    stock_policy = configure_stock_franka_actor(acfg, task=task)
     acfg["max_iterations"] = ITERS
     acfg["num_steps_per_env"] = STEPS_PER_ENV
     # Guarantee a checkpoint even for a tiny probe run.
@@ -1703,12 +1708,15 @@ try:
         raise RuntimeError("training action dimension disagrees with RobotSpec")
     if expected_observation_dim and actual_observation_dim != expected_observation_dim:
         raise RuntimeError("training observation dimension disagrees with RobotSpec")
-    runner = OnPolicyRunner(env, acfg, log_dir=OUT, device="cuda:0")
+    runner = create_stock_franka_runner(
+        OnPolicyRunner, env, acfg, task=task, log_dir=OUT, device="cuda:0"
+    )
     next_iteration = robotmod.next_ppo_iteration(runner, resumed=False)
     resume_ckpt = os.environ.get("ROBOT_RESUME_CKPT_LOCAL", "").strip()
     if resume_ckpt and os.path.isfile(resume_ckpt):
         try:
             resume_info = runner.load(resume_ckpt)
+            validate_stock_franka_checkpoint(resume_info, task=task)
             next_iteration = robotmod.next_ppo_iteration(
                 runner, resumed=True, checkpoint_info=resume_info,
             )
@@ -1735,7 +1743,7 @@ try:
             runner,
             start_iteration=next_iteration,
             num_learning_iterations=exploration_iterations,
-            init_at_random_ep_len=True,
+            init_at_random_ep_len=not stock_policy,
         )
         print("ROBOT_PPO_PHASE " + json.dumps(phase, sort_keys=True), flush=True)
         next_iteration = phase["completed_updates"]
@@ -1777,7 +1785,7 @@ try:
             runner,
             start_iteration=next_iteration,
             num_learning_iterations=ITERS,
-            init_at_random_ep_len=True,
+            init_at_random_ep_len=not stock_policy,
         )
     print("ROBOT_PPO_PHASE " + json.dumps(phase, sort_keys=True), flush=True)
     # Defensive explicit save (learn saves at save_interval; ensure one exists).

@@ -22,6 +22,8 @@ from npa.workflows.sim2real.isaac_franka_control import (
     stock_franka_control_audit,
 )
 
+from npa.workflows.sim2real.isaac_franka_policy import configure_stock_franka_policy
+
 SCENARIO_ENV = "NPA_SIM2REAL_SCENARIOS_JSONL"
 SCENARIO_TASK_ID = "NPA-Lift-Cube-Franka-Scenarios-v0"
 STOCK_TASK_ID = "Isaac-Lift-Cube-Franka-v0"
@@ -1388,6 +1390,7 @@ def register_stock() -> str | None:
         def __post_init__(self) -> None:
             super().__post_init__()
             configure_stock_franka_control(self)
+            configure_stock_franka_policy(self)
             if not install_env_cfg(self):
                 raise ScenarioContractError(
                     "scenario task registered without scenarios"

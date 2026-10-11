@@ -433,17 +433,28 @@ try:
     from npa.workflows.sim2real.isaac_assets_compat import migrate_rsl_rl_agent_cfg
     agent_cfg = migrate_rsl_rl_agent_cfg(agent_cfg)
     acfg = agent_cfg.to_dict() if hasattr(agent_cfg, "to_dict") else dict(agent_cfg)
-    runner = OnPolicyRunner(env, acfg, log_dir=None, device=SIM_DEVICE)
+    from npa.workflows.sim2real.isaac_franka_policy import (
+        configure_stock_franka_actor, create_stock_franka_runner,
+        validate_stock_franka_checkpoint,
+    )
+    stock_policy = configure_stock_franka_actor(acfg, task=TASK)
+    runner = create_stock_franka_runner(
+        OnPolicyRunner, env, acfg, task=TASK, log_dir=None, device=SIM_DEVICE
+    )
     trained = False
     if CKPT and os.path.isfile(CKPT):
         try:
-            runner.load(CKPT); trained = True
+            checkpoint_info = runner.load(CKPT)
+            validate_stock_franka_checkpoint(checkpoint_info, task=TASK)
+            trained = True
             print("ROLLOUT_CKPT_LOADED", CKPT, flush=True)
         except Exception as e:
             raise RuntimeError("trained checkpoint failed to load: %r" % (e,)) from e
     else:
         print("ROLLOUT_UNTRAINED_POLICY (no checkpoint yet)", flush=True)
     policy = runner.get_inference_policy(device=SIM_DEVICE)
+    if stock_policy:
+        runner.alg.actor.reset()
     realN = int(getattr(env.unwrapped, "num_envs", N) or N)
     try:
         reset_out = env.reset()
@@ -611,6 +622,8 @@ try:
             actions = actions.reshape(N, -1)
         a_np = actions.detach().cpu().numpy()
         obs, _, dones, extras = env.step(actions)
+        if stock_policy:
+            runner.alg.actor.reset(dones)
         simulation_clock.advance()
         done_np = dones.detach().cpu().numpy().astype(bool)
         episode_boundaries.advance(done_np.tolist(), _step)
@@ -1193,7 +1206,9 @@ def run_isaac_rollout_job(
         robot_spec_dict = {"robot_source": "stock_franka", "name": "franka"}
     from npa.workflows.sim2real.byo_isaac_trainer import embodiment_evidence
 
-    _LAST_EMBODIMENT_EVIDENCE = embodiment_evidence(robot_spec_dict)
+    _LAST_EMBODIMENT_EVIDENCE = embodiment_evidence(
+        robot_spec_dict, stock_scenarios=True
+    )
     task_config = None
     raw_task_config = _env("NPA_BYO_TASK_CONFIG_JSON")
     if raw_task_config:
@@ -1394,7 +1409,7 @@ def main() -> int:
     payload["embodiment"] = dict(_LAST_EMBODIMENT_EVIDENCE) or {
         "embodiment_digest": "stock_franka",
         "expected_action_dim": 8,
-        "expected_observation_dim": 36,
+        "expected_observation_dim": 39,
         "runtime_dimension_validation": "passed",
     }
     Path(output_json).parent.mkdir(parents=True, exist_ok=True)

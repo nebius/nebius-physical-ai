@@ -550,14 +550,26 @@ first, followed by stable grasp and lift achieved in the same episode. Extra
 lifts without stable grasp cannot displace a stronger paired-skill candidate.
 
 Fresh canonical stock-Franka training initializes the actor with
-`franka-ik-distillation-v1` before PPO. A native Isaac differential-IK teacher
-collects demonstrations across the consumed training scenarios; supervised
-updates fit the same eight-action RSL-RL actor that PPO and evaluation use. A
-second round mixes that actor's actions into collection to expose its own state
-errors. Both rounds must establish strict stable placement on at least half of
-their training scenarios. The initial actor uses small PPO action noise and
-exact goals, then receives all 2,000 configured PPO updates. Demonstration
-updates remain separate from PPO telemetry.
+`franka-cartesian-gru-distillation-v2` before PPO. The actor commands the native
+absolute TCP pose and binary gripper through Isaac Lab's differential-IK action
+term. Its GRU learns history from measured proprioception, object and goal state,
+TCP geometry, and the actual reset clock. The clock saturates at five seconds;
+changing that feature does not change the simulation clock or episode duration.
+Training, camera rollouts, validation, and Gold share this policy configuration
+and reset its recurrent state at every real episode boundary.
+
+Two demonstration rounds use pure teacher actions and then a 50% actor mixture.
+A third collection uses a 75% actor mixture and retains earlier demonstrations.
+Each fitting round performs 32 passes over real reset-bound sequences, with
+training-only expert phase labels balancing the loss. Those labels are separate
+from the actor's observations. Fitting initializes native observation
+normalization in training mode. Both initial rounds must establish strict
+placements on at least half their training scenarios. Before PPO starts, a
+separate actor-only rollout must also pass that threshold across the complete
+consumed training split. If it fails, another 75% actor collection and retained
+fit precede a fresh complete actor-only assessment. The audit preserves every
+assessment and corrective fit. The actor then receives all 2,000 configured PPO
+updates; supervised updates remain separate from PPO telemetry.
 
 The stock-Franka scenario task uses Isaac Lab's `FRANKA_PANDA_HIGH_PD_CFG`
 arm gains and robot gravity compensation. Physics runs at 200 Hz with four
@@ -569,19 +581,23 @@ and their `robot_control` audit records the actual gains and clock as
 `stock-franka-high-pd-200hz-v1`.
 
 The training teacher commands a downward XYZW `(1, 0, 0, 0)` hand orientation,
-limits each TCP correction to 10 cm and each joint correction to 0.2 rad, and
-uses the native joint limits and action scaling. Collection prints measured
+limits each TCP correction to 10 cm, and uses the native Cartesian action
+scaling. Position actions use a 0.1 m scale, so an action-noise standard
+deviation of 0.05 corresponds to 5 mm. Collection prints measured
 phase counts and strict training-placement coverage after each episode cycle;
 failed coverage reports its actual count before supervised fitting starts.
 
 `NPA_BYO_ISAAC_BOOTSTRAP=auto` is the default for fresh stock-Franka PPO with a
 consumed training URI. `none` disables initialization; an explicit
-`franka-ik-distillation-v1` rejects other tasks, custom robots, legacy physics,
-or resumed checkpoints. Existing entropy, learning-rate, and action-noise
+`franka-cartesian-gru-distillation-v2` rejects other tasks, custom robots, legacy
+physics, or resumed checkpoints. Existing entropy, learning-rate, and action-noise
 settings retain their operator overrides. The native job receives
 `ROBOT_BOOTSTRAP_PROFILE`, and its `bootstrap-audit.json` binds the profile,
-training-scenario SHA-256, demonstration successes, supervised fitting losses,
-and zero PPO updates at initialization. The adapter rejects missing or
+training-scenario SHA-256, demonstration successes, initialized normalization,
+recurrent sequences, supervised fitting losses, actor-only handoff, and zero
+PPO updates at initialization. Every native periodic and final checkpoint
+records the policy's action and model semantics; loading a stock checkpoint
+with missing or changed semantics fails. The adapter rejects missing or
 contradictory audit evidence. Validation and Gold execute the saved learned
 actor alone; they do not run the demonstration teacher or a post-actor
 controller. Training demonstration success does not establish held-out quality.

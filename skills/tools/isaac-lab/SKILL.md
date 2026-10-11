@@ -199,6 +199,18 @@ Keep the sealed object physics and strict 5 cm / 0.03 m/s / three-step
 placement predicate. Teacher demonstrations are training-only; evaluation
 executes the learned actor alone.
 
+The stock scenario actor uses `stock-franka-cartesian-gru-v2` with native
+absolute TCP-pose actions, normalized measured state and TCP geometry, a GRU,
+and the real reset clock bounded at five seconds. Training, held-out evaluation,
+and camera rollouts share that configuration and reset recurrent state on real
+episode boundaries. `franka-cartesian-gru-distillation-v2` retains at least three
+32-epoch demonstration fits and requires at least half the complete training
+split to achieve strict placement under the actor alone before PPO. Corrective
+fitting repeats when the complete actor-only check fails; retain its entire
+assessment and fitting history. Native checkpoints bind action/model semantics;
+matching tensor dimensions alone are
+insufficient. This training handoff does not establish held-out acceptance.
+
 Asset handling mirrors the Genesis no-fallback provenance discipline:
 
 - Stock: the built-in Isaac lift-cube manipuland, recorded as

@@ -59,6 +59,15 @@ or spawn sibling Jobs.
   actions. Training demonstrations initialize the actor; validation and Gold
   execute that learned actor alone. Physics refinement preserves episode duration
   and PPO update counts, with the strict placement predicate retained.
+- Stock scenario policies share `stock-franka-cartesian-gru-v2`: native absolute
+  TCP-pose actions, measured geometry, initialized observation normalization,
+  a GRU, and the real reset clock saturated at five seconds. Fresh training uses
+  `franka-cartesian-gru-distillation-v2`, retains at least three 32-epoch demonstration
+  fits, and repeats corrective fitting until a strict actor-only handoff across
+  the complete training split passes before PPO. Archive every assessment.
+  Expert phases only weight training loss. Every periodic and final checkpoint
+  binds the policy semantics; all native inference paths reset
+  recurrent state on actual `dones`. Keep the full PPO count and held-out gate.
 - Temporal rewards remain bounded and simulator-grounded. Strict success remains
   stable placement within 5 cm. Pipeline success and policy quality are distinct.
 - Native rollout actions preserve every reset between sparse samples using

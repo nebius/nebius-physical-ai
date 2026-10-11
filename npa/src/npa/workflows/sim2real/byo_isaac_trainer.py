@@ -150,14 +150,31 @@ def robot_asset_preflight_script(robot_spec: dict[str, Any]) -> str:
     return command
 
 
-def embodiment_evidence(robot_spec: dict[str, Any] | None) -> dict[str, Any]:
-    """Evidence attached only after the in-Isaac dimension checks pass."""
+def embodiment_evidence(
+    robot_spec: dict[str, Any] | None, *, stock_scenarios: bool = False
+) -> dict[str, Any]:
+    """Describe embodiment dimensions after the native runtime checks pass.
+
+    Args:
+        robot_spec: Resolved robot metadata, including explicit custom dimensions.
+        stock_scenarios: Whether stock Franka uses the curated Cartesian GRU task.
+    Returns:
+        Embodiment evidence with the task's default or explicit robot dimensions.
+    Raises:
+        ValueError: An explicit robot dimension cannot be converted to an integer.
+    """
 
     spec = dict(robot_spec or {})
+    stock_policy = (
+        stock_scenarios and spec.get("robot_source", "stock_franka") == "stock_franka"
+    )
+    observation_dim = 39 if stock_policy else 36
     return {
         "embodiment_digest": str(spec.get("embodiment_digest") or "stock_franka"),
         "expected_action_dim": int(spec.get("expected_action_dim") or 8),
-        "expected_observation_dim": int(spec.get("expected_observation_dim") or 36),
+        "expected_observation_dim": int(
+            spec.get("expected_observation_dim") or observation_dim
+        ),
         "resolved_usd_uri": str(spec.get("resolved_usd_uri") or ""),
         "resolved_manifest_uri": str(spec.get("resolved_manifest_uri") or ""),
         "runtime_dimension_validation": "passed",
@@ -1409,6 +1426,10 @@ def _validated_bootstrap_round(row, *, index, scenario_count):
         or row["optimizer_updates"] <= 0
     ):
         raise RuntimeError("native demonstration round is incomplete or unsuccessful")
+    _validated_fitting_losses(row)
+
+
+def _validated_fitting_losses(row):
     for name in ("first_loss", "last_loss"):
         loss = row.get(name)
         if type(loss) not in (float, int) or not math.isfinite(loss) or loss < 0:
@@ -1439,7 +1460,7 @@ def _validated_bootstrap_audit(audit, *, profile, checksum, scenario_count):
     from npa.workflows.sim2real.isaac_franka_control import franka_control_contract
 
     expected = {
-        "schema": "npa.sim2real.franka_bootstrap.v1",
+        "schema": "npa.sim2real.franka_bootstrap.v2",
         "profile": profile,
         "scope": "sealed_training_only",
         "gold_used": False,
@@ -1460,7 +1481,145 @@ def _validated_bootstrap_audit(audit, *, profile, checksum, scenario_count):
         raise RuntimeError("native demonstration audit lacks both supervised rounds")
     for index, row in enumerate(rounds):
         _validated_bootstrap_round(row, index=index, scenario_count=scenario_count)
+    _validated_recurrent_training_audit(audit, scenario_count)
     return audit
+
+
+def _validated_actor_collection(row, *, fraction, scenario_count, require_success):
+    expected = {
+        "scope": "sealed_training_only",
+        "training_scenarios": scenario_count,
+        "learner_fraction": fraction,
+        "inference_composition": "learned_actor_only"
+        if fraction == 1.0
+        else "training_demonstration_mixture",
+        "gold_used": False,
+        "ppo_updates": 0,
+    }
+    if not isinstance(row, dict) or any(
+        row.get(name) != value or type(row.get(name)) is not type(value)
+        for name, value in expected.items()
+    ):
+        raise RuntimeError(
+            "native actor collection lacks literal training-only evidence"
+        )
+    count = row.get("strict_training_placements")
+    if type(count) is not int or not 0 <= count <= scenario_count:
+        raise RuntimeError(
+            "native actor collection has invalid strict placement evidence"
+        )
+    if require_success and count * 2 < scenario_count:
+        raise RuntimeError(
+            "native learned actor did not establish the training handoff"
+        )
+    for name in ("arm_label_mse", "gripper_label_mse"):
+        value = row.get(name)
+        if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+            raise RuntimeError(
+                "native actor collection lacks finite prediction evidence"
+            )
+
+
+def _validated_recurrent_fit(fit, *, batches, examples, samples):
+    expected = {
+        "native_recurrent_model": "RNNModel-GRU",
+        "recurrent_hidden_dim": 128,
+        "real_reset_boundaries": True,
+        "expert_phase_is_observation": False,
+        "observation_normalization": True,
+        "normalization_mean_nonzero": True,
+        "fitting_epochs": 32,
+        "replay_batches": batches,
+        "replay_examples": examples,
+        "normalization_sample_count": samples,
+    }
+    if not isinstance(fit, dict) or any(
+        fit.get(name) != value or type(fit.get(name)) is not type(value)
+        for name, value in expected.items()
+    ):
+        raise RuntimeError(
+            "native recurrent fit lacks exact replay and normalization evidence"
+        )
+    if any(
+        type(fit.get(name)) is not int or fit[name] <= 0
+        for name in ("optimizer_updates", "replay_episodes")
+    ):
+        raise RuntimeError("native recurrent fit lacks measured sequence updates")
+    counts = fit.get("training_phase_example_counts")
+    if (
+        not isinstance(counts, list)
+        or len(counts) != 5
+        or any(type(count) is not int or count < 0 for count in counts)
+        or sum(counts) != examples
+    ):
+        raise RuntimeError(
+            "native recurrent fit has invalid training-only phase counts"
+        )
+    _validated_fitting_losses(fit)
+
+
+def _validated_recurrent_training_audit(audit, scenario_count):
+    from npa.workflows.sim2real.isaac_franka_policy import (
+        SCENARIO_TASK_ID,
+        validate_stock_franka_checkpoint,
+    )
+
+    validate_stock_franka_checkpoint(
+        {"npa_stock_franka_policy": audit.get("policy_model")}, task=SCENARIO_TASK_ID
+    )
+    for name, fraction, required in (
+        ("actor_baseline", 1.0, False),
+        ("corrective_fit", 0.75, False),
+        ("actor_handoff", 1.0, True),
+    ):
+        _validated_actor_collection(
+            audit.get(name),
+            fraction=fraction,
+            scenario_count=scenario_count,
+            require_success=required,
+        )
+    examples = audit["rounds"][0]["examples"]
+    additional = _validated_handoff_assessments(audit, scenario_count)
+    fits = [*audit["rounds"], audit["corrective_fit"].get("fit")]
+    for correction in additional:
+        _validated_actor_collection(
+            correction,
+            fraction=0.75,
+            scenario_count=scenario_count,
+            require_success=False,
+        )
+        fits.append(correction.get("fit"))
+    samples = 0
+    for batches, fit in enumerate(fits, start=1):
+        samples += examples * batches
+        _validated_recurrent_fit(
+            fit, batches=batches, examples=examples * batches, samples=samples
+        )
+
+
+def _validated_handoff_assessments(audit, scenario_count):
+    additional = audit.get("additional_corrective_fits")
+    assessments = audit.get("actor_handoff_assessments")
+    if not isinstance(additional, list) or not isinstance(assessments, list):
+        raise RuntimeError("native bootstrap lacks corrective fitting history")
+    if len(assessments) != len(additional) + 1:
+        raise RuntimeError("native bootstrap has incomplete actor assessment history")
+    for index, assessment in enumerate(assessments):
+        _validated_actor_collection(
+            assessment,
+            fraction=1.0,
+            scenario_count=scenario_count,
+            require_success=index == len(assessments) - 1,
+        )
+        if index < len(assessments) - 1 and (
+            assessment["strict_training_placements"] * 2 >= scenario_count
+        ):
+            raise RuntimeError(
+                "native corrective fitting replaced a successful handoff"
+            )
+    if assessments[-1] != audit["actor_handoff"]:
+        raise RuntimeError("native actor handoff differs from its final assessment")
+    return additional
 
 
 def _resume_curriculum_audit(
@@ -1966,7 +2125,9 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
     result["resume_checkpoint_uri"] = resume_uri if not physics else ""
     result["resume_checkpoint_sha256"] = resume_sha256 if not physics else ""
     result["resume_curriculum"] = resume_curriculum
-    result["embodiment"] = embodiment_evidence(robot_spec_dict)
+    result["embodiment"] = embodiment_evidence(
+        robot_spec_dict, stock_scenarios=bool(train_envs)
+    )
     result["training_bootstrap"] = {"profile": bootstrap_profile}
     if bootstrap_profile != "none":
         audit_uri = s3_output + "bootstrap-audit.json"
