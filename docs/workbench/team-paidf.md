@@ -183,6 +183,46 @@ produces augmented videos and reports for the selected camera. It does not
 rebuild a training-ready LeRobot dataset with action/state alignment or prove
 that an appearance variant is suitable for policy training.
 
+## User: download and inspect the result
+
+Set `RUN_ID` to the ID returned by submission. After the run succeeds, list its
+outputs with your saved login:
+
+```bash
+export RUN_ID
+npa workbench run "$RUN_ID" --action artifacts
+```
+
+The command returns an index. Download the recording through the same personal
+connection; the reference workflow publishes `reports/sim2real.rrd`. If your
+operator changed its output path, use the identifier from the index.
+
+```python
+import os
+from pathlib import Path
+
+from npa.sdk.workbench.team import open_connection
+
+os.umask(0o077)
+run_id = os.environ["RUN_ID"]
+output = Path(f"{run_id}.rrd")
+client, _ = open_connection()
+try:
+    with output.open("xb") as destination:
+        client.download(run_id, "reports/sim2real.rrd", destination)
+finally:
+    client.close()
+print(output.resolve())
+```
+
+The exclusive write preserves any earlier download. Open the resulting file
+with `rerun "$RUN_ID.rrd"` on your desktop; copy it there first if the VDI is
+headless. Scrub the source and generated video timelines and read the quality,
+caption, and curation panels. The recording embeds the videos, so this local
+inspection uses the downloaded file and your desktop viewer.
+
+## Operator: audit the completed batch
+
 Operators can audit a completed two-dataset, four-account batch with
 `npa/tests/e2e/test_team_paidf_live.py`. Set `NPA_INTEGRATION_E2E=1` and
 `NPA_TEAM_PAIDF_LIVE_CONFIG` to an absolute, mode-0600 JSON file containing
