@@ -25,6 +25,10 @@ def _metadata() -> dict[str, object]:
             "repository": contract.WORLD_STEREO_REPOSITORY,
             "ref": contract.WORLD_STEREO_REF,
         },
+        "wan_i2v_model": {
+            "repository": contract.WAN_I2V_REPOSITORY,
+            "ref": contract.WAN_I2V_REF,
+        },
         "qwen_image_model": {
             "repository": contract.QWEN_IMAGE_REPOSITORY,
             "ref": contract.QWEN_IMAGE_REF,
@@ -37,6 +41,10 @@ def _metadata() -> dict[str, object]:
         "grounding_dino_model": {
             "repository": contract.GROUNDING_DINO_REPOSITORY,
             "ref": contract.GROUNDING_DINO_REF,
+        },
+        "dinov2_model": {
+            "repository": contract.DINOV2_REPOSITORY,
+            "ref": contract.DINOV2_REF,
         },
         "sam3_model": {
             "repository": contract.SAM3_REPOSITORY,
@@ -66,6 +74,22 @@ def _metadata() -> dict[str, object]:
         "resolved_python_packages": {
             "path": "npa_resolved_inventory.txt",
             "sha256": "1" * 64,
+        },
+        "report_resolved_python_packages": {
+            "path": "npa_report_resolved_inventory.txt",
+            "sha256": "6" * 64,
+        },
+        "native_runtime_dependencies": {
+            "path": "npa_native_dependency_identity.json",
+            "sha256": "7" * 64,
+        },
+        "report_runtime_dependencies": {
+            "path": "npa_report_dependency_identity.json",
+            "sha256": "8" * 64,
+        },
+        "torch_auxiliary_assets": {
+            "path": "npa_torch_auxiliary_assets.json",
+            "sha256": "9" * 64,
         },
         "submodules": {"path": "npa_submodules.txt", "sha256": "2" * 64},
         "model_snapshot_revisions": {
@@ -205,6 +229,26 @@ def test_runtime_provenance_rejects_missing_gated_sam3_component(
         )
 
 
+@pytest.mark.parametrize("component", ("wan_i2v_model", "dinov2_model"))
+def test_runtime_provenance_requires_reachable_video_stage_models(
+    tmp_path: Path, component: str
+) -> None:
+    """WorldStereo and WorldMirror dependencies cannot be omitted from evidence."""
+
+    scene, result, input_image = _fixture(tmp_path)
+    metadata = _metadata()
+    metadata.pop(component)
+    with pytest.raises(contract.HyWorldEvidenceError, match=component):
+        contract.build_evidence(
+            scene_dir=scene,
+            result_dir=result,
+            input_image=input_image,
+            runtime_metadata=metadata,
+            image_checker=_image,
+            video_checker=_video,
+        )
+
+
 def test_runtime_provenance_requires_the_torch_cuda_probe(tmp_path: Path) -> None:
     """Generated-scene evidence must retain the B200 runtime compatibility proof."""
 
@@ -212,6 +256,25 @@ def test_runtime_provenance_requires_the_torch_cuda_probe(tmp_path: Path) -> Non
     metadata = _metadata()
     metadata.pop("torch_cuda_probe")
     with pytest.raises(contract.HyWorldEvidenceError, match="torch_cuda_probe"):
+        contract.build_evidence(
+            scene_dir=scene,
+            result_dir=result,
+            input_image=input_image,
+            runtime_metadata=metadata,
+            image_checker=_image,
+            video_checker=_video,
+        )
+
+
+def test_runtime_provenance_requires_torch_auxiliary_asset_inventory(
+    tmp_path: Path,
+) -> None:
+    """The trainer's separately fetched VGG backbone stays traceable."""
+
+    scene, result, input_image = _fixture(tmp_path)
+    metadata = _metadata()
+    metadata.pop("torch_auxiliary_assets")
+    with pytest.raises(contract.HyWorldEvidenceError, match="torch_auxiliary_assets"):
         contract.build_evidence(
             scene_dir=scene,
             result_dir=result,

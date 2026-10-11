@@ -516,12 +516,15 @@ the newer hosted-product branding or a reconstruction-only path equivalent to
 world generation. It pins the upstream source to
 `df9988efb87bfc0f4947eb3889411cf957478b06`, the HY-World model to
 `d78a16c91c7a56488894a1c8de4f5c7cc28aa8b0`, WorldStereo to
-`ac2ad97ecb043fe80c2f19cd1898006becb9d66e`, and Qwen Image Edit / Qwen3-VL to
-their runtime-only immutable references. The full trajectory closure also pins
-ZIM, Grounding DINO, MoGe, Uni3C, and Meta SAM 3. SAM 3 has a separate gated
-Meta/Hugging Face approval. The zero-payload bootstrap and its workflow are
-reviewable; runtime payload fetching and B200 scene qualification remain pending,
-and no accepted scene artifact or public image is claimed.
+`ac2ad97ecb043fe80c2f19cd1898006becb9d66e`, its declared Wan I2V base to
+`b184e23a8a16b20f108f727c902e769e873ffc73`, and Qwen Image Edit / Qwen3-VL to
+their runtime-only immutable references. The full trajectory and WorldMirror
+closure also pins ZIM, Grounding DINO, DINOv2, MoGe, Uni3C, and Meta SAM 3; its
+trainer records the full digest of the separately cached official LPIPS VGG
+backbone. SAM 3 has a separate gated Meta/Hugging Face approval. The zero-payload
+bootstrap and its workflow are reviewable; runtime payload fetching and B200
+scene qualification remain pending, and no accepted scene artifact or public
+image is claimed.
 
 | Capability | Status | Upstream basis |
 | --- | --- | --- |

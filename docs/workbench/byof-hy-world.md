@@ -31,15 +31,18 @@ promoted from this candidate.
 | HY-World source | `Tencent-Hunyuan/HY-World-2.0@df9988efb87bfc0f4947eb3889411cf957478b06` | operator runtime fetch |
 | HY-World weights | `tencent/HY-World-2.0@d78a16c91c7a56488894a1c8de4f5c7cc28aa8b0` | operator runtime fetch |
 | WorldStereo | `hanshanxue/WorldStereo@ac2ad97ecb043fe80c2f19cd1898006becb9d66e` | operator runtime fetch |
+| WorldStereo I2V base | `Wan-AI/Wan2.1-I2V-14B-480P-Diffusers@b184e23a8a16b20f108f727c902e769e873ffc73` | operator runtime fetch |
 | Image panorama | `Qwen/Qwen-Image-Edit-2509@d3968ef930e841f4c73640fb8afa3b306a78167e` | operator runtime fetch |
 | Trajectory VLM | `Qwen/Qwen3-VL-8B-Instruct@0c351dd01ed87e9c1b53cbc748cba10e6187ff3b` | operator-private vLLM, started with the exact recipe below |
-| Trajectory components | ZIM `667e2d7…`; Grounding DINO `a2bb814…`; SAM 3 `3c879f3…`; MoGe `cb0e8bb…`; Uni3C `fca895f…` | operator runtime fetch |
+| Trajectory and WorldMirror components | ZIM `667e2d7…`; Grounding DINO `a2bb814…`; DINOv2 `f9e44c8…`; SAM 3 `3c879f3…`; MoGe `cb0e8bb…`; Uni3C `fca895f…` | operator runtime fetch |
+| Trainer LPIPS VGG backbone | `https://download.pytorch.org/models/vgg16-397923af.pth` SHA-256 `397923af8e79cdbb6a7127f12361acd7a2f83e06b05044ddf496e83de57a5bf0` | isolated operator Torch Hub cache; official URL prefix and complete digest checked |
 | Native runtime dependencies | PyTorch3D `88e182f989c80836f4bd744e0d9cb1852762ce01`; `flash-attn==2.8.3` | compiled in operator cache |
 
 The image contains none of Tencent source, weights, runtime source tree,
 extension binary, input, cache, or generated output. A run records the selected
-image digest, source/component revisions, resolved package inventory, camera
-and generated-asset hashes in `hy_world_image_to_world.json`.
+image digest, source/component revisions, separate native/report Python
+inventories, cached LPIPS VGG digest, camera and generated-asset hashes in
+`hy_world_image_to_world.json`.
 
 ## Prerequisites before a build or submission
 

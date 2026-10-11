@@ -11,6 +11,8 @@ readonly HY_WORLD_MODEL="tencent/HY-World-2.0"
 readonly HY_WORLD_MODEL_REF="d78a16c91c7a56488894a1c8de4f5c7cc28aa8b0"
 readonly WORLD_STEREO_MODEL="hanshanxue/WorldStereo"
 readonly WORLD_STEREO_REF="ac2ad97ecb043fe80c2f19cd1898006becb9d66e"
+readonly WAN_I2V_MODEL="Wan-AI/Wan2.1-I2V-14B-480P-Diffusers"
+readonly WAN_I2V_REF="b184e23a8a16b20f108f727c902e769e873ffc73"
 readonly QWEN_IMAGE_MODEL="Qwen/Qwen-Image-Edit-2509"
 readonly QWEN_IMAGE_REF="d3968ef930e841f4c73640fb8afa3b306a78167e"
 readonly QWEN_VLM_MODEL="Qwen/Qwen3-VL-8B-Instruct"
@@ -19,6 +21,8 @@ readonly ZIM_MODEL="naver-iv/zim-anything-vitl"
 readonly ZIM_REF="667e2d7c233f6f1cacd12ccc64bdf6cc7b5aa16d"
 readonly GROUNDING_DINO_MODEL="IDEA-Research/grounding-dino-tiny"
 readonly GROUNDING_DINO_REF="a2bb814dd30d776dcf7e30523b00659f4f141c71"
+readonly DINOV2_MODEL="facebook/dinov2-base"
+readonly DINOV2_REF="f9e44c814b77203eaa57a6bdbbd535f21ede1415"
 readonly SAM3_MODEL="facebook/sam3"
 readonly SAM3_REF="3c879f39826c281e95690f02c7821c4de09afae7"
 readonly MOGE_MODEL="Ruicheng/moge-2-vitl-normal"
@@ -34,7 +38,15 @@ readonly FLASH_ATTN_VERSION="2.8.3"
 readonly PYTORCH_WHEEL_INDEX="https://download.pytorch.org/whl/cu128"
 readonly TORCH_VERSION="2.7.1+cu128"
 readonly TORCHVISION_VERSION="0.22.1+cu128"
-readonly RUNTIME_CONTRACT_REVISION="hy-world-cu128-spz-zstd-source-v1"
+readonly TORCHMETRICS_VERSION="1.9.0"
+readonly NATIVE_NUMPY_VERSION="1.26.4"
+readonly NATIVE_SCIPY_VERSION="1.14.1"
+readonly RERUN_SDK_VERSION="0.31.4"
+readonly VGG16_WEIGHTS_URL="https://download.pytorch.org/models/vgg16-397923af.pth"
+readonly VGG16_WEIGHTS_FILENAME="vgg16-397923af.pth"
+readonly VGG16_WEIGHTS_SHA256_PREFIX="397923af"
+readonly VGG16_WEIGHTS_SHA256="397923af8e79cdbb6a7127f12361acd7a2f83e06b05044ddf496e83de57a5bf0"
+readonly RUNTIME_CONTRACT_REVISION="hy-world-hub-ref-report-env-model-closure-v1"
 readonly RUNTIME_BOOTSTRAP_SHA256="$(sha256sum "${BASH_SOURCE[0]}" | awk '{print $1}')"
 
 # Resolve this once, before configure_runtime_hf_cache repoints HF_HOME at this
@@ -51,7 +63,7 @@ cache_root() {
 
 runtime_hf_home() {
   local closure
-  closure="${SOURCE_REF}:${HY_WORLD_MODEL_REF}:${WORLD_STEREO_REF}:${QWEN_IMAGE_REF}:${ZIM_REF}:${GROUNDING_DINO_REF}:${SAM3_REF}:${MOGE_REF}:${UNI3C_REF}"
+  closure="${SOURCE_REF}:${HY_WORLD_MODEL_REF}:${WORLD_STEREO_REF}:${WAN_I2V_REF}:${QWEN_IMAGE_REF}:${ZIM_REF}:${GROUNDING_DINO_REF}:${DINOV2_REF}:${SAM3_REF}:${MOGE_REF}:${UNI3C_REF}:${VGG16_WEIGHTS_SHA256}"
   printf '%s/hf-%s\n' "$(cache_root)" \
     "$(printf '%s' "$closure" | sha256sum | cut -c1-24)"
 }
@@ -65,12 +77,27 @@ configure_runtime_hf_cache() {
   export HUGGINGFACE_HUB_CACHE="$home/hub"
 }
 
+configure_runtime_torch_cache() {
+  local closure
+  closure="${TORCH_VERSION}:${TORCHVISION_VERSION}:${VGG16_WEIGHTS_SHA256}"
+  export TORCH_HOME="$(cache_root)/torch-$(printf '%s' "$closure" | sha256sum | cut -c1-24)"
+  mkdir -p "$TORCH_HOME"
+}
+
 source_tree() {
   printf '%s/source-%s\n' "$(cache_root)" "$SOURCE_REF"
 }
 
 runtime_python() {
   printf '%s/.venv/bin/python\n' "$(source_tree)"
+}
+
+report_python() {
+  printf '%s/.report-venv/bin/python\n' "$(source_tree)"
+}
+
+prefer_native_runtime_bin() {
+  export PATH="$(source_tree)/.venv/bin:$PATH"
 }
 
 torch_probe_path() {
@@ -178,12 +205,26 @@ verify_runtime_contract() {
   local tree="$1" contract
   contract="$tree/npa_runtime_contract.json"
   python3 - "$contract" "$RUNTIME_CONTRACT_REVISION" "$TORCH_VERSION" \
-    "$TORCHVISION_VERSION" "$PYTORCH_WHEEL_INDEX" "$RUNTIME_BOOTSTRAP_SHA256" <<'PY'
+    "$TORCHVISION_VERSION" "$PYTORCH_WHEEL_INDEX" "$NATIVE_NUMPY_VERSION" \
+    "$NATIVE_SCIPY_VERSION" "$TORCHMETRICS_VERSION" "$RERUN_SDK_VERSION" \
+    "$VGG16_WEIGHTS_SHA256" "$RUNTIME_BOOTSTRAP_SHA256" <<'PY'
 import json
 import sys
 from pathlib import Path
 
-path, revision, torch, torchvision, wheel_index, bootstrap_sha256 = sys.argv[1:]
+(
+    path,
+    revision,
+    torch,
+    torchvision,
+    wheel_index,
+    native_numpy,
+    native_scipy,
+    torchmetrics,
+    rerun_sdk,
+    vgg16_sha256,
+    bootstrap_sha256,
+) = sys.argv[1:]
 path = Path(path)
 try:
     observed = json.loads(path.read_text(encoding="utf-8"))
@@ -195,6 +236,11 @@ expected = {
     "torch": str(torch),
     "torchvision": str(torchvision),
     "pytorch_wheel_index": str(wheel_index),
+    "native_numpy": str(native_numpy),
+    "native_scipy": str(native_scipy),
+    "torchmetrics": str(torchmetrics),
+    "report_rerun_sdk": str(rerun_sdk),
+    "vgg16_sha256": str(vgg16_sha256),
     "bootstrap_sha256": str(bootstrap_sha256),
 }
 if observed != expected:
@@ -206,12 +252,26 @@ write_runtime_contract() {
   local tree="$1" contract
   contract="$tree/npa_runtime_contract.json"
   "$(runtime_python)" - "$contract" "$RUNTIME_CONTRACT_REVISION" "$TORCH_VERSION" \
-    "$TORCHVISION_VERSION" "$PYTORCH_WHEEL_INDEX" "$RUNTIME_BOOTSTRAP_SHA256" <<'PY'
+    "$TORCHVISION_VERSION" "$PYTORCH_WHEEL_INDEX" "$NATIVE_NUMPY_VERSION" \
+    "$NATIVE_SCIPY_VERSION" "$TORCHMETRICS_VERSION" "$RERUN_SDK_VERSION" \
+    "$VGG16_WEIGHTS_SHA256" "$RUNTIME_BOOTSTRAP_SHA256" <<'PY'
 import json
 import sys
 from pathlib import Path
 
-path, revision, torch, torchvision, wheel_index, bootstrap_sha256 = sys.argv[1:]
+(
+    path,
+    revision,
+    torch,
+    torchvision,
+    wheel_index,
+    native_numpy,
+    native_scipy,
+    torchmetrics,
+    rerun_sdk,
+    vgg16_sha256,
+    bootstrap_sha256,
+) = sys.argv[1:]
 path = Path(path)
 payload = {
     "schema": "npa.hy_world.runtime_contract.v1",
@@ -219,6 +279,11 @@ payload = {
     "torch": str(torch),
     "torchvision": str(torchvision),
     "pytorch_wheel_index": str(wheel_index),
+    "native_numpy": str(native_numpy),
+    "native_scipy": str(native_scipy),
+    "torchmetrics": str(torchmetrics),
+    "report_rerun_sdk": str(rerun_sdk),
+    "vgg16_sha256": str(vgg16_sha256),
     "bootstrap_sha256": str(bootstrap_sha256),
 }
 temporary = path.with_suffix(path.suffix + ".tmp")
@@ -236,13 +301,170 @@ install_blackwell_torch_wheels() {
 install_upstream_requirements() {
   local tree="$1" python="$2" requirements
   grep -qx 'torch==2.7.1' "$tree/requirements.txt" \
-    && grep -qx 'torchvision==0.22.1' "$tree/requirements.txt" || {
-      echo "npa-hy-world: upstream PyTorch requirements drifted from the reviewed cu128 selection" >&2
+    && grep -qx 'torchvision==0.22.1' "$tree/requirements.txt" \
+    && grep -qx "numpy==${NATIVE_NUMPY_VERSION}" "$tree/requirements.txt" \
+    && grep -qx "scipy==${NATIVE_SCIPY_VERSION}" "$tree/requirements.txt" \
+    && grep -qx "torchmetrics==${TORCHMETRICS_VERSION}" "$tree/requirements.txt" || {
+      echo "npa-hy-world: upstream native requirements drifted from the reviewed runtime closure" >&2
       exit "$EX_SOFTWARE"
     }
   requirements="$tree/npa_requirements_without_torch.txt"
   sed -E '/^(torch|torchvision)==/d' "$tree/requirements.txt" > "$requirements"
   uv pip install --python "$python" -r "$requirements"
+}
+
+install_report_runtime() {
+  local tree native report
+  tree="$1"
+  native="$2"
+  report="$(report_python)"
+  uv venv --python "$native" "$tree/.report-venv"
+  uv pip install --python "$report" "rerun-sdk==${RERUN_SDK_VERSION}"
+}
+
+record_native_dependency_identity() {
+  local tree python
+  tree="$1"
+  python="$tree/.venv/bin/python"
+  "$python" - "$tree/npa_native_dependency_identity.json" \
+    "$NATIVE_NUMPY_VERSION" "$NATIVE_SCIPY_VERSION" "$TORCHMETRICS_VERSION" <<'PY'
+import json
+import sys
+from importlib import metadata
+from pathlib import Path
+
+path = Path(sys.argv[1])
+expected_numpy, expected_scipy, expected_torchmetrics = sys.argv[2:]
+observed = {
+    "numpy": metadata.version("numpy"),
+    "scipy": metadata.version("scipy"),
+    "torchmetrics": metadata.version("torchmetrics"),
+}
+expected = {
+    "numpy": expected_numpy,
+    "scipy": expected_scipy,
+    "torchmetrics": expected_torchmetrics,
+}
+if observed != expected:
+    raise SystemExit(f"native dependency closure drifted: {observed}")
+try:
+    metadata.version("rerun-sdk")
+except metadata.PackageNotFoundError:
+    pass
+else:
+    raise SystemExit("rerun-sdk must remain isolated from the native runtime")
+payload = {"schema": "npa.hy_world.native_dependencies.v1", "python": sys.version.split()[0], **observed}
+temporary = path.with_suffix(path.suffix + ".tmp")
+temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+temporary.replace(path)
+PY
+}
+
+record_report_dependency_identity() {
+  local tree python
+  tree="$1"
+  python="$tree/.report-venv/bin/python"
+  "$python" - "$tree/npa_report_dependency_identity.json" "$RERUN_SDK_VERSION" <<'PY'
+import json
+import sys
+from importlib import metadata
+from pathlib import Path
+
+import rerun
+
+path, expected_rerun = Path(sys.argv[1]), sys.argv[2]
+observed = {"rerun_sdk": metadata.version("rerun-sdk"), "numpy": metadata.version("numpy")}
+if observed["rerun_sdk"] != expected_rerun or int(observed["numpy"].split(".", 1)[0]) < 2:
+    raise SystemExit(f"report dependency closure drifted: {observed}")
+payload = {
+    "schema": "npa.hy_world.report_dependencies.v1",
+    "python": sys.version.split()[0],
+    "rerun_module": str(rerun.__version__),
+    **observed,
+}
+temporary = path.with_suffix(path.suffix + ".tmp")
+temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+temporary.replace(path)
+PY
+}
+
+fetch_torch_auxiliary_asset() {
+  local tree asset
+  tree="$1"
+  configure_runtime_torch_cache
+  asset="$tree/npa_torch_auxiliary_assets.json"
+  "$(runtime_python)" - "$asset" "$TORCH_HOME" "$VGG16_WEIGHTS_URL" \
+    "$VGG16_WEIGHTS_FILENAME" "$VGG16_WEIGHTS_SHA256_PREFIX" \
+    "$VGG16_WEIGHTS_SHA256" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+import torch
+
+out, torch_home, url, filename, prefix, expected_digest = sys.argv[1:]
+if Path(torch_home) != Path(torch.hub.get_dir()).parent:
+    raise SystemExit("torch hub cache does not use the isolated TORCH_HOME")
+cache = Path(torch.hub.get_dir()) / "checkpoints"
+cache.mkdir(parents=True, exist_ok=True)
+path = cache / filename
+if not path.is_file():
+    torch.hub.download_url_to_file(url, str(path), hash_prefix=prefix, progress=False)
+with path.open("rb") as stream:
+    digest = hashlib.file_digest(stream, "sha256").hexdigest()
+if not digest.startswith(prefix) or digest != expected_digest:
+    raise SystemExit(f"torch auxiliary asset digest disagrees with the reviewed blob: {digest}")
+payload = {
+    "schema": "npa.hy_world.torch_auxiliary_assets.v1",
+    "assets": [{"url": url, "filename": filename, "sha256": digest}],
+}
+target = Path(out)
+temporary = target.with_suffix(target.suffix + ".tmp")
+temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+temporary.replace(target)
+PY
+}
+
+verify_torch_auxiliary_asset() {
+  local tree
+  tree="$1"
+  configure_runtime_torch_cache
+  "$(runtime_python)" - "$tree/npa_torch_auxiliary_assets.json" "$TORCH_HOME" \
+    "$VGG16_WEIGHTS_URL" "$VGG16_WEIGHTS_FILENAME" "$VGG16_WEIGHTS_SHA256_PREFIX" \
+    "$VGG16_WEIGHTS_SHA256" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+import torch
+
+manifest, torch_home, url, filename, prefix, expected_digest = sys.argv[1:]
+if Path(torch_home) != Path(torch.hub.get_dir()).parent:
+    raise SystemExit("torch hub cache does not use the isolated TORCH_HOME")
+path = Path(torch.hub.get_dir()) / "checkpoints" / filename
+try:
+    payload = json.loads(Path(manifest).read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError) as exc:
+    raise SystemExit(f"torch auxiliary manifest is unreadable: {exc}") from exc
+expected = {"url": url, "filename": filename}
+assets = payload.get("assets")
+if not isinstance(assets, list) or len(assets) != 1 or not isinstance(assets[0], dict):
+    raise SystemExit("torch auxiliary manifest has an invalid asset list")
+record = assets[0]
+digest = str(record.get("sha256") or "")
+if {key: record.get(key) for key in expected} != expected or len(digest) != 64:
+    raise SystemExit("torch auxiliary manifest disagrees with the reviewed asset")
+if not path.is_file():
+    raise SystemExit("torch auxiliary asset is absent or changed")
+with path.open("rb") as stream:
+    actual_digest = hashlib.file_digest(stream, "sha256").hexdigest()
+if actual_digest != digest or digest != expected_digest:
+    raise SystemExit("torch auxiliary asset is absent or changed")
+if not digest.startswith(prefix):
+    raise SystemExit("torch auxiliary asset no longer matches the official URL prefix")
+PY
 }
 
 verify_torch_blackwell_runtime() {
@@ -331,7 +553,6 @@ install_runtime() {
     uv pip install --python "$python" --no-build-isolation \
       "$tree/hyworld2/worldgen/third_party/navmesh"
   uv pip install --python "$python" --no-build-isolation "flash-attn==${FLASH_ATTN_VERSION}"
-  uv pip install --python "$python" "rerun-sdk==0.31.4"
   "$python" - <<'PY'
 import flash_attn
 import gsplat
@@ -340,13 +561,24 @@ import recast
 PY
   verify_torch_blackwell_runtime "$tree"
   uv pip freeze --python "$python" | LC_ALL=C sort > "$tree/npa_resolved_inventory.txt"
+  record_native_dependency_identity "$tree"
+  fetch_torch_auxiliary_asset "$tree"
+  install_report_runtime "$tree" "$python"
+  record_report_dependency_identity "$tree"
+  uv pip freeze --python "$(report_python)" | LC_ALL=C sort \
+    > "$tree/npa_report_resolved_inventory.txt"
 }
 
 verify_runtime_layout() {
-  local tree="$1" python stale
+  local tree="$1" python report stale
   python="$tree/.venv/bin/python"
+  report="$tree/.report-venv/bin/python"
   [[ -x "$python" ]] || {
     echo "npa-hy-world: runtime virtualenv is absent: $python" >&2
+    exit "$EX_SOFTWARE"
+  }
+  [[ -x "$report" ]] || {
+    echo "npa-hy-world: report virtualenv is absent: $report" >&2
     exit "$EX_SOFTWARE"
   }
   "$python" - "$tree" <<'PY'
@@ -360,12 +592,26 @@ if Path(sys.prefix).resolve() != expected:
         f"runtime virtualenv prefix {Path(sys.prefix).resolve()} does not match {expected}"
     )
 PY
-  stale="$(grep -RIl -- "$tree.incomplete" "$tree/.venv/bin" 2>/dev/null || true)"
+  "$report" - "$tree" <<'PY'
+from pathlib import Path
+import sys
+
+tree = Path(sys.argv[1]).resolve()
+expected = tree / ".report-venv"
+if Path(sys.prefix).resolve() != expected:
+    raise SystemExit(
+        f"report virtualenv prefix {Path(sys.prefix).resolve()} does not match {expected}"
+    )
+PY
+  stale="$(grep -RIl -- "$tree.incomplete" "$tree/.venv/bin" "$tree/.report-venv/bin" 2>/dev/null || true)"
   [[ -z "$stale" ]] || {
     echo "npa-hy-world: runtime entrypoint still references staging tree: $stale" >&2
     exit "$EX_SOFTWARE"
   }
   verify_runtime_contract "$tree"
+  record_native_dependency_identity "$tree"
+  record_report_dependency_identity "$tree"
+  verify_torch_auxiliary_asset "$tree"
 }
 
 ensure() {
@@ -419,7 +665,7 @@ hub_cache_directory() {
 }
 
 register_hub_main_ref() {
-  local model="$1" ref="$2" cache refs existing
+  local model="$1" ref="$2" cache refs
   cache="$(hub_cache_directory "$model")"
   [[ -d "$cache/snapshots/$ref" ]] || {
     echo "npa-hy-world: pinned Hugging Face snapshot is absent: $model@$ref" >&2
@@ -428,14 +674,28 @@ register_hub_main_ref() {
   refs="$cache/refs"
   mkdir -p "$refs"
   if [[ -f "$refs/main" ]]; then
-    existing="$(tr -d '\r\n' < "$refs/main")"
-    [[ "$existing" == "$ref" ]] || {
+    python3 - "$refs/main" "$ref" <<'PY' || {
+import os
+import sys
+from pathlib import Path
+
+path, ref = Path(sys.argv[1]), sys.argv[2]
+observed = path.read_bytes()
+expected = ref.encode("ascii")
+if observed == expected:
+    raise SystemExit(0)
+if observed != expected + b"\n":
+    raise SystemExit("isolated cache main ref disagrees")
+temporary = path.with_name(path.name + ".tmp")
+temporary.write_bytes(expected)
+os.replace(temporary, path)
+PY
       echo "npa-hy-world: isolated cache main ref disagrees for $model" >&2
       exit "$EX_SOFTWARE"
     }
     return
   fi
-  printf '%s\n' "$ref" > "$refs/main.tmp"
+  printf '%s' "$ref" > "$refs/main.tmp"
   mv "$refs/main.tmp" "$refs/main"
 }
 
@@ -465,10 +725,12 @@ fetch_models() {
   # downloads so upstream's model-id calls cannot silently resolve a later main.
   fetch_model_snapshot "$HY_WORLD_MODEL" "$HY_WORLD_MODEL_REF"
   fetch_model_snapshot "$WORLD_STEREO_MODEL" "$WORLD_STEREO_REF"
+  fetch_model_snapshot "$WAN_I2V_MODEL" "$WAN_I2V_REF"
   fetch_model_snapshot "$QWEN_IMAGE_MODEL" "$QWEN_IMAGE_REF"
   fetch_model_snapshot "$ZIM_MODEL" "$ZIM_REF" --include 'zim_vit_l_2092/*'
   fetch_model_snapshot "$GROUNDING_DINO_MODEL" "$GROUNDING_DINO_REF" \
     --include '*.json' --include '*.txt' --include 'model.safetensors'
+  fetch_model_snapshot "$DINOV2_MODEL" "$DINOV2_REF"
   fetch_model_snapshot "$SAM3_MODEL" "$SAM3_REF"
   fetch_model_snapshot "$MOGE_MODEL" "$MOGE_REF"
   fetch_model_snapshot "$UNI3C_MODEL" "$UNI3C_REF" --include 'controlnet.pth'
@@ -482,9 +744,11 @@ payload = {
     "models": [
         {"repository": "$HY_WORLD_MODEL", "revision": "$HY_WORLD_MODEL_REF"},
         {"repository": "$WORLD_STEREO_MODEL", "revision": "$WORLD_STEREO_REF"},
+        {"repository": "$WAN_I2V_MODEL", "revision": "$WAN_I2V_REF"},
         {"repository": "$QWEN_IMAGE_MODEL", "revision": "$QWEN_IMAGE_REF"},
         {"repository": "$ZIM_MODEL", "revision": "$ZIM_REF"},
         {"repository": "$GROUNDING_DINO_MODEL", "revision": "$GROUNDING_DINO_REF"},
+        {"repository": "$DINOV2_MODEL", "revision": "$DINOV2_REF"},
         {"repository": "$SAM3_MODEL", "revision": "$SAM3_REF"},
         {"repository": "$MOGE_MODEL", "revision": "$MOGE_REF"},
         {"repository": "$UNI3C_MODEL", "revision": "$UNI3C_REF"},
@@ -537,10 +801,23 @@ model_manifest = runtime_cache / "npa_model_snapshot_revisions.json"
 if not model_manifest.is_file():
     raise SystemExit("model snapshot revision manifest is absent")
 inventory = tree / "npa_resolved_inventory.txt"
+report_inventory = tree / "npa_report_resolved_inventory.txt"
+native_dependencies = tree / "npa_native_dependency_identity.json"
+report_dependencies = tree / "npa_report_dependency_identity.json"
+torch_auxiliary_assets = tree / "npa_torch_auxiliary_assets.json"
 submodules = tree / "npa_submodules.txt"
 runtime_contract = tree / "npa_runtime_contract.json"
 torch_probe = tree / "npa_torch_cuda_probe.json"
-for required in (inventory, submodules, runtime_contract, torch_probe):
+for required in (
+    inventory,
+    report_inventory,
+    native_dependencies,
+    report_dependencies,
+    torch_auxiliary_assets,
+    submodules,
+    runtime_contract,
+    torch_probe,
+):
     if not required.is_file():
         raise SystemExit(f"required runtime provenance is absent: {required}")
 payload = {
@@ -550,10 +827,12 @@ payload = {
     "source_ref": "df9988efb87bfc0f4947eb3889411cf957478b06",
     "hy_world_model": {"repository": "tencent/HY-World-2.0", "ref": "d78a16c91c7a56488894a1c8de4f5c7cc28aa8b0"},
     "worldstereo_model": {"repository": "hanshanxue/WorldStereo", "ref": "ac2ad97ecb043fe80c2f19cd1898006becb9d66e"},
+    "wan_i2v_model": {"repository": "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers", "ref": "b184e23a8a16b20f108f727c902e769e873ffc73"},
     "qwen_image_model": {"repository": "Qwen/Qwen-Image-Edit-2509", "ref": "d3968ef930e841f4c73640fb8afa3b306a78167e"},
     "qwen_vlm": {"repository": "Qwen/Qwen3-VL-8B-Instruct", "ref": "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"},
     "zim_model": {"repository": "naver-iv/zim-anything-vitl", "ref": "667e2d7c233f6f1cacd12ccc64bdf6cc7b5aa16d"},
     "grounding_dino_model": {"repository": "IDEA-Research/grounding-dino-tiny", "ref": "a2bb814dd30d776dcf7e30523b00659f4f141c71"},
+    "dinov2_model": {"repository": "facebook/dinov2-base", "ref": "f9e44c814b77203eaa57a6bdbbd535f21ede1415"},
     "sam3_model": {"repository": "facebook/sam3", "ref": "3c879f39826c281e95690f02c7821c4de09afae7"},
     "moge_model": {"repository": "Ruicheng/moge-2-vitl-normal", "ref": "cb0e8bbd6b1e243589717c78e750b1ba4c093acf"},
     "uni3c_model": {"repository": "ewrfcas/Uni3C", "ref": "fca895f7fb454f4dfed43956cab09180d0946318"},
@@ -565,6 +844,10 @@ payload = {
     },
     "container_image": str(image),
     "resolved_python_packages": {"path": "npa_resolved_inventory.txt", "sha256": sha256(inventory)},
+    "report_resolved_python_packages": {"path": "npa_report_resolved_inventory.txt", "sha256": sha256(report_inventory)},
+    "native_runtime_dependencies": {"path": "npa_native_dependency_identity.json", "sha256": sha256(native_dependencies)},
+    "report_runtime_dependencies": {"path": "npa_report_dependency_identity.json", "sha256": sha256(report_dependencies)},
+    "torch_auxiliary_assets": {"path": "npa_torch_auxiliary_assets.json", "sha256": sha256(torch_auxiliary_assets)},
     "submodules": {"path": "npa_submodules.txt", "sha256": sha256(submodules)},
     "model_snapshot_revisions": {"path": "npa_model_snapshot_revisions.json", "sha256": sha256(model_manifest)},
     "runtime_contract": {"path": "npa_runtime_contract.json", "sha256": sha256(runtime_contract)},
@@ -572,6 +855,10 @@ payload = {
 }
 out.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 Path(out.parent / "npa_resolved_inventory.txt").write_bytes(inventory.read_bytes())
+Path(out.parent / "npa_report_resolved_inventory.txt").write_bytes(report_inventory.read_bytes())
+Path(out.parent / "npa_native_dependency_identity.json").write_bytes(native_dependencies.read_bytes())
+Path(out.parent / "npa_report_dependency_identity.json").write_bytes(report_dependencies.read_bytes())
+Path(out.parent / "npa_torch_auxiliary_assets.json").write_bytes(torch_auxiliary_assets.read_bytes())
 Path(out.parent / "npa_submodules.txt").write_bytes(submodules.read_bytes())
 Path(out.parent / "npa_model_snapshot_revisions.json").write_bytes(model_manifest.read_bytes())
 Path(out.parent / "npa_runtime_contract.json").write_bytes(runtime_contract.read_bytes())
@@ -587,9 +874,12 @@ run_image_to_world() {
   require_value HY_WORLD_CONTAINER_IMAGE
   ensure
   fetch_models
-  local tree python worldgen scene result input out prompt
+  local tree python report worldgen scene result input out prompt
   tree="$(source_tree)"
   python="$(runtime_python)"
+  report="$(report_python)"
+  configure_runtime_torch_cache
+  prefer_native_runtime_bin
   worldgen="$tree/hyworld2/worldgen"
   scene="$HY_WORLD_SCENE_DIR"
   result="$HY_WORLD_RESULT_DIR"
@@ -637,7 +927,7 @@ run_image_to_world() {
   local render
   render="$(find "$result/videos" -type f -name '*.mp4' -print -quit)"
   [[ -n "$render" ]] || { echo "npa-hy-world: validator passed without a render" >&2; exit "$EX_SOFTWARE"; }
-  "$python" /opt/npa/hy-world/hy_world_report.py --evidence "$out/hy_world_image_to_world.json" \
+  "$report" /opt/npa/hy-world/hy_world_report.py --evidence "$out/hy_world_image_to_world.json" \
     --video "$render" --rrd "$out/reports/hy_world_scene.rrd" \
     --manifest "$out/reports/hy_world_scene_rrd_manifest.json" \
     --run-id "${NPA_BYOF_RUN_ID:?NPA_BYOF_RUN_ID is required for a run-scoped Rerun recording}"

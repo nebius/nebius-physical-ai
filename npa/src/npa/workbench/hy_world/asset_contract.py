@@ -24,6 +24,8 @@ HY_WORLD_MODEL_REPOSITORY = "tencent/HY-World-2.0"
 HY_WORLD_MODEL_REF = "d78a16c91c7a56488894a1c8de4f5c7cc28aa8b0"
 WORLD_STEREO_REPOSITORY = "hanshanxue/WorldStereo"
 WORLD_STEREO_REF = "ac2ad97ecb043fe80c2f19cd1898006becb9d66e"
+WAN_I2V_REPOSITORY = "Wan-AI/Wan2.1-I2V-14B-480P-Diffusers"
+WAN_I2V_REF = "b184e23a8a16b20f108f727c902e769e873ffc73"
 QWEN_IMAGE_REPOSITORY = "Qwen/Qwen-Image-Edit-2509"
 QWEN_IMAGE_REF = "d3968ef930e841f4c73640fb8afa3b306a78167e"
 QWEN_VLM_REPOSITORY = "Qwen/Qwen3-VL-8B-Instruct"
@@ -32,6 +34,8 @@ ZIM_REPOSITORY = "naver-iv/zim-anything-vitl"
 ZIM_REF = "667e2d7c233f6f1cacd12ccc64bdf6cc7b5aa16d"
 GROUNDING_DINO_REPOSITORY = "IDEA-Research/grounding-dino-tiny"
 GROUNDING_DINO_REF = "a2bb814dd30d776dcf7e30523b00659f4f141c71"
+DINOV2_REPOSITORY = "facebook/dinov2-base"
+DINOV2_REF = "f9e44c814b77203eaa57a6bdbbd535f21ede1415"
 SAM3_REPOSITORY = "facebook/sam3"
 SAM3_REF = "3c879f39826c281e95690f02c7821c4de09afae7"
 MOGE_REPOSITORY = "Ruicheng/moge-2-vitl-normal"
@@ -248,6 +252,7 @@ def _model_provenance(metadata: Mapping[str, Any]) -> dict[str, Any]:
             "repository": WORLD_STEREO_REPOSITORY,
             "ref": WORLD_STEREO_REF,
         },
+        "wan_i2v_model": {"repository": WAN_I2V_REPOSITORY, "ref": WAN_I2V_REF},
         "qwen_image_model": {
             "repository": QWEN_IMAGE_REPOSITORY,
             "ref": QWEN_IMAGE_REF,
@@ -258,6 +263,7 @@ def _model_provenance(metadata: Mapping[str, Any]) -> dict[str, Any]:
             "repository": GROUNDING_DINO_REPOSITORY,
             "ref": GROUNDING_DINO_REF,
         },
+        "dinov2_model": {"repository": DINOV2_REPOSITORY, "ref": DINOV2_REF},
         "sam3_model": {"repository": SAM3_REPOSITORY, "ref": SAM3_REF},
         "moge_model": {"repository": MOGE_REPOSITORY, "ref": MOGE_REF},
         "uni3c_model": {"repository": UNI3C_REPOSITORY, "ref": UNI3C_REF},
@@ -281,6 +287,10 @@ def _model_provenance(metadata: Mapping[str, Any]) -> dict[str, Any]:
     inventories: dict[str, dict[str, str]] = {}
     for name, filename in (
         ("resolved_python_packages", "npa_resolved_inventory.txt"),
+        ("report_resolved_python_packages", "npa_report_resolved_inventory.txt"),
+        ("native_runtime_dependencies", "npa_native_dependency_identity.json"),
+        ("report_runtime_dependencies", "npa_report_dependency_identity.json"),
+        ("torch_auxiliary_assets", "npa_torch_auxiliary_assets.json"),
         ("submodules", "npa_submodules.txt"),
         ("model_snapshot_revisions", "npa_model_snapshot_revisions.json"),
         ("runtime_contract", "npa_runtime_contract.json"),
