@@ -10925,7 +10925,10 @@ def _report_gpu_discovery(
                 f"    export NPA_WORKFLOW_GPU_ACCELERATOR={name}:{quantities[0]}"
             )
     for item in resolutions:
-        typer.echo(f"  {item['requested']} -> {item['resolved']}")
+        if item.get("error"):
+            typer.echo(f"  {item['requested']}: {item['error']}")
+        else:
+            typer.echo(f"  {item['requested']} -> {item['resolved']}")
     if spec_error:
         typer.echo(f"spec_error: {spec_error}")
 

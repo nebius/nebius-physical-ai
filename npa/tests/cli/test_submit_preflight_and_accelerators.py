@@ -989,6 +989,39 @@ def test_workflow_gpus_text_reports_missing_required_images_with_empty_catalog(
     )
 
 
+def test_workflow_gpus_text_reports_unsatisfied_accelerator(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    sky_bin: str,
+    owned_gpu_discovery,
+) -> None:
+    monkeypatch.setenv("NPA_SKYPILOT_BIN", sky_bin)
+    _stub_catalog(monkeypatch, CATALOG_OUTPUT)
+    spec = yaml.safe_load(yaml.safe_dump(SPEC))
+    spec["resources"]["gpu"]["accelerators"] = "H100:1"
+    path = tmp_path / "unavailable-accelerator.yaml"
+    path.write_text(yaml.safe_dump(spec, sort_keys=False), encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "gpus",
+            "--context",
+            "npa-cluster",
+            "--spec",
+            str(path),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert (
+        "H100:1: Accelerator 'H100' is not advertised by this cluster" in result.output
+    )
+    assert "Traceback" not in result.output
+
+
 def test_workflow_gpus_resolves_templated_accelerator_config(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sky_bin: str, owned_gpu_discovery
 ) -> None:
