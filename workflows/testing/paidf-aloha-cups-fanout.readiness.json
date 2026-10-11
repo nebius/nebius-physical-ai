@@ -1,0 +1,51 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "380dabb58e52bf4fab0d756b1719eb22b4b40d19a06a3c3cd9a2d6120851b729",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "CLI schema validation and production render checking succeeded for the complete seven-stage review. The staged LeRobot URI, output bucket and operator runtime must be supplied and verified before execution.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/paidf-aloha-cups-fanout.yaml --json: status valid",
+        "npa workbench workflow plan-spec workflows/testing/paidf-aloha-cups-fanout.yaml --run-id aloha-review-check --check-render --json: 7 stages",
+        "npa/tests/orchestration/npa_workflow/test_paidf_aloha_cups_fanout.py: 10 passed"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Resolved arguments select episode zero and cam_high, freshly prepare/caption the source, reproduce the twelve-profile order and historical native sampling controls, evaluate under unchanged strict thresholds, and retain quality disposition and terminal Rerun evidence without refinement or promotion. Planning does not establish generated appearance or task fidelity.",
+      "evidence": [
+        "npa/tests/orchestration/npa_workflow/test_paidf_aloha_cups_fanout.py: 10 passed",
+        "docs/workbench/examples/paidf-lerobot-realism-sources.json",
+        "docs/workbench/examples/paidf-cups-fanout-profiles.json"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "Select and verify the configured project endpoint, empty source-upload prefix and writable new run prefix. No storage calls were made while authoring.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "Download and hash-verify all four pinned ALOHA files, validate the episode/camera with the actual LeRobot reader, inspect source frames, then stage the fresh directory for the remote worker. No prior run source or generated media is an input.",
+      "evidence": []
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "Exact storage, available vision-model, Token Factory and gated Cosmos guardrail access remain operator checks. No credential or access probe was made while authoring.",
+      "evidence": []
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "Local rendering selects governed immutable public candidates and the Rerun release with submitted source_overlay. Anonymous registry-byte, bootstrap and actually running image identities require live preflight and audit.",
+      "evidence": []
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "The complete twelve-candidate review has not been submitted or audited from this recipe. Verify an RTX PRO 6000 node, full source/output timelines, native controls and guardrails, fresh seven-wave receipts, evaluator rejection/acceptance accounting and decoded Rerun media. Historical fanout output is comparative evidence only.",
+      "evidence": []
+    }
+  }
+}

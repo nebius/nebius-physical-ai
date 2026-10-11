@@ -7,6 +7,7 @@ report assembly against a fake storage client.
 
 from __future__ import annotations
 
+import base64
 import json
 import shutil
 import subprocess
@@ -15,9 +16,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import httpx
 import numpy as np
 import pytest
 
+from npa.clients.token_factory import TokenFactoryClient, resolve_config
 from npa.workbench.cosmos_evaluator import attribute_verification as av
 from npa.workbench.cosmos_evaluator import appearance_fidelity as appearance
 from npa.workbench.cosmos_evaluator import hallucination as hal
@@ -940,6 +943,66 @@ def test_answer_question_constrains_the_answer_to_the_offered_options() -> None:
         model="vlm",
     )
     assert answer == "UNKNOWN"
+
+
+def _qwen_answer_client(requests: list[dict[str, Any]]) -> TokenFactoryClient:
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "model": "Qwen/Qwen3.8-27B",
+                "choices": [{"message": {"content": "B"}, "finish_reason": "stop"}],
+            },
+            request=request,
+        )
+
+    config = resolve_config(api_key="test-key", environ={})
+    return TokenFactoryClient(
+        config,
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+
+def test_answer_question_uses_qwen_direct_output_profile_with_real_client(
+    tmp_path: Path,
+) -> None:
+    frame = tmp_path / "frame.png"
+    frame.write_bytes(
+        base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLx+QAAAABJRU5ErkJggg=="
+        )
+    )
+    requests: list[dict[str, Any]] = []
+    options = {"A": "red", "B": "blue"}
+    data_url = av._data_url(frame)
+
+    answer = av.answer_question(
+        client=_qwen_answer_client(requests),
+        question="What colour?",
+        options=options,
+        data_url=data_url,
+        model="Qwen/Qwen3.8-27B",
+        max_tokens=10,
+    )
+
+    assert answer == "B"
+    assert len(requests) == 1
+    request = requests[0]
+    assert request["model"] == "Qwen/Qwen3.8-27B"
+    assert request["temperature"] == 0.0
+    assert request["max_tokens"] == 10
+    assert request["chat_template_kwargs"] == {"enable_thinking": False}
+    assert request["messages"] == [
+        {"role": "system", "content": av.VERIFY_SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": av.format_question("What colour?", options)},
+                {"type": "image_url", "image_url": {"url": data_url}},
+            ],
+        },
+    ]
 
 
 def test_generate_question_uses_upstream_guided_json_schema() -> None:
