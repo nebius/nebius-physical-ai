@@ -39,7 +39,9 @@ def _coordinate_peer(rank, port, directory, fail_rank, listener):
 
     # Keep the real production rendezvous; transfer its already-bound socket.
     with patch.object(torch.distributed, "TCPStore", open_reserved_store):
-        store = coordinator._connect_store(leader=rank == 0, coordinator=True, port=port)
+        store = coordinator._connect_store(
+            leader=rank == 0, coordinator=True, port=port
+        )
     parent = coordinator._Coordinator(store, rank)
     parent.watch.thread.start()
     parent._execute = lambda command: _cpu_phase(
@@ -165,7 +167,13 @@ def _four_processes(target, tmp_path, failure):
             processes = [
                 context.Process(
                     target=target,
-                    args=(rank, port, str(tmp_path), failure, listener if rank == 0 else None),
+                    args=(
+                        rank,
+                        port,
+                        str(tmp_path),
+                        failure,
+                        listener if rank == 0 else None,
+                    ),
                 )
                 for rank in range(4)
             ]
