@@ -56,7 +56,9 @@ dependencies = [
     # Recursive legal byte scanning must inspect modern Debian data.tar.zst payloads.
     "zstandard>=0.19",
     # Wan MP4 verification must not depend on host ffmpeg/ffprobe packages.
-    "av==17.1.0",
+    # Keep the NPA requirement compatible with the pinned LeRobot 0.6.1
+    # evaluation extra, which owns the FastWAM image's PyAV 15.x line.
+    "av>=15.0,<18.0",
     "pydantic>=2.4.0",
     "tomli>=2.0.0; python_version < '3.11'",
     # Formerly the `data` extra: dataframe/plotting helpers used by curation,
