@@ -7526,3 +7526,103 @@ def test_native_cleanup_rechecks_actual_provider_incarnation(monkeypatch, tmp_pa
     )
     assert result.job_id == "42" and len(checks) == 2
     assert cleanup_check() == "c" * 64 and len(checks) == 3
+
+
+@pytest.mark.parametrize("has_job", [False, True])
+@pytest.mark.parametrize("stderr", ["", "PermissionDenied: queue access denied\n"])
+def test_reconciliation_requires_noncontradictory_queue_diagnostics(
+    monkeypatch, has_job, stderr
+) -> None:
+    rows = (
+        [{"job_id": 126, "job_name": "exact-run", "status": "RUNNING"}]
+        if has_job
+        else []
+    )
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps(rows), stderr=stderr
+        ),
+    )
+
+    evidence = workflow_module._reconcile_managed_job_env(
+        "exact-run", env={}, sky_executable="sky", cwd="/durable"
+    )
+
+    if stderr:
+        assert evidence.state is workflow_module.ReconciliationState.AMBIGUOUS
+        assert evidence.job_id == ""
+        assert not evidence.workload_observable
+    else:
+        assert evidence.state.value == ("found" if has_job else "absent")
+        assert evidence.job_id == ("126" if has_job else "")
+
+
+@pytest.mark.parametrize("stderr", ["", "PermissionDenied: queue access denied\n"])
+def test_libero_launch_binding_requires_noncontradictory_queue_diagnostics(
+    monkeypatch, stderr
+) -> None:
+    row = {
+        "job_id": 126,
+        "job_name": "exact-run",
+        "status": "RUNNING",
+        "submitted_at": 101.0,
+        "metadata": {"executable_profile_sha256": "a" * 64},
+    }
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps([row]), stderr=stderr
+        ),
+    )
+
+    verified, plausible, error = workflow_module._libero_launch_binding_candidates(
+        "126",
+        "exact-run",
+        env={},
+        sky_executable="sky",
+        cwd="/durable",
+        expected_profile_sha256="a" * 64,
+        launch_started_at=100.0,
+    )
+
+    if stderr:
+        assert verified == ""
+        assert plausible == ("126",)
+        assert "preserving indeterminate state and refusing retry" in error
+    else:
+        assert verified == "126"
+        assert plausible == ()
+        assert error == ""
+
+
+@pytest.mark.parametrize(
+    ("stderr", "expected_outcome"),
+    [
+        ("", "absent"),
+        ("PermissionDenied: queue access denied\n", "unavailable"),
+    ],
+)
+def test_exact_managed_job_lookup_requires_noncontradictory_queue_diagnostics(
+    monkeypatch, tmp_path, stderr, expected_outcome
+) -> None:
+    """Only an empty queue without conflicting diagnostics proves absence."""
+
+    from npa.orchestration.skypilot.workflow import lookup_managed_job
+
+    sky_bin = _fake_sky(tmp_path)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout="[]\n", stderr=stderr
+        ),
+    )
+
+    evidence = lookup_managed_job("exact-run", sky_bin=sky_bin)
+
+    assert evidence.outcome == expected_outcome
+    if expected_outcome == "unavailable":
+        assert "malformed, ambiguous, or schema-invalid JSON" in evidence.error

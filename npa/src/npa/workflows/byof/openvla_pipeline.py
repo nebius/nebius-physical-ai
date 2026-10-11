@@ -481,9 +481,24 @@ dataset = DLataset.from_rlds(
 sample = next(iter(dataset.take(1).as_numpy_iterator()))
 if not isinstance(sample, dict) or not sample:
     raise RuntimeError("dlimp did not decode a non-empty trajectory mapping")
+steps = sample.get("steps")
+if not isinstance(steps, dict) or not steps:
+    raise RuntimeError("dlimp trajectory has no non-empty steps mapping")
+observation = steps.get("observation")
+if not isinstance(observation, dict) or not observation:
+    raise RuntimeError("dlimp trajectory has no non-empty observation mapping")
+action = steps.get("action")
+if not hasattr(action, "shape") or not hasattr(action, "size") or action.size <= 0:
+    raise RuntimeError("dlimp trajectory has no non-empty action array")
+action_shape = [int(dimension) for dimension in action.shape]
+if len(action_shape) < 2 or any(dimension <= 0 for dimension in action_shape):
+    raise RuntimeError("dlimp trajectory action array has invalid shape")
 print(json.dumps({
     "trajectories_read": 1,
     "feature_keys": sorted(str(key) for key in sample),
+    "step_feature_keys": sorted(str(key) for key in steps),
+    "observation_feature_keys": sorted(str(key) for key in observation),
+    "action_shape": action_shape,
 }))
 """
     try:
@@ -506,6 +521,13 @@ print(json.dumps({
         payload.get("trajectories_read") != 1
         or not isinstance(payload.get("feature_keys"), list)
         or not payload["feature_keys"]
+        or not isinstance(payload.get("step_feature_keys"), list)
+        or not payload["step_feature_keys"]
+        or not isinstance(payload.get("observation_feature_keys"), list)
+        or not payload["observation_feature_keys"]
+        or not isinstance(payload.get("action_shape"), list)
+        or len(payload["action_shape"]) < 2
+        or any(not isinstance(value, int) or value <= 0 for value in payload["action_shape"])
     ):
         raise OpenVLAPipelineError("dlimp RLDS probe returned invalid data")
     return payload
