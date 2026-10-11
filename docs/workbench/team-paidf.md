@@ -168,6 +168,10 @@ Inspect a failed run's logs and artifacts before deciding on a new run. For
 `recovery_required`, retain the run ID and ask the operator to reconcile its
 existing scheduler state. The operator's `workflow batch` command follows a
 different submission path; it does not use a saved shared Workbench login.
+Status includes the latest recorded stage names and completed/recorded wave
+counts once the service has persisted runtime progress. These are observations,
+not a percentage estimate; refinement can add waves. They use private server
+records without a cloud lookup, and the run's lifecycle status stays authoritative.
 Fetching logs reports pending worker state for jobs that are still starting.
 It downloads available owned wave logs, which can take longer than an ordinary
 status request. Interrupting that read does not cancel the workflow.
