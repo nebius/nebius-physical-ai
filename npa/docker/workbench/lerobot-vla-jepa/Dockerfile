@@ -26,9 +26,9 @@ assert VLAJEPAConfig.__name__ == "VLAJEPAConfig"
 PY
 
 # The generic 0.6.0 service image carries only its service-side NPA subset.
-# Bake this candidate's reviewed workflow adapter into the same vendor venv so
-# the worker never depends on an ambient or mutable source overlay at GPU time.
-COPY --chown=ubuntu:ubuntu src/npa /opt/vla-jepa-npa/src/npa
+# Replace that subset at the canonical baked-source path used by the renderer,
+# so it cannot shadow this candidate's complete workflow adapter.
+COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 # The inherited service image previously retained this populated pip cache.
 # Delete it after the final install so runtime-only package payloads cannot be
 # mistaken for an intentionally baked model/data cache.
@@ -44,7 +44,7 @@ RUN /opt/lerobot/venv/bin/pip install --no-cache-dir "rerun-sdk==0.38.1" \
     && ! find /opt/lerobot/venv/lib/python3.12/site-packages/h5py/tests/data_files -type f -name '*.h5' -print -quit | grep -q . \
     && ! find /opt/lerobot/venv/lib/python3.12/site-packages/robosuite/models/assets/demonstrations -type f -name '*.hdf5' -print -quit | grep -q . \
     && ! find /opt/lerobot/venv/lib/python3.12/site-packages/botocore/data -type f -name 'examples-1.json' -print -quit | grep -q . \
-    && PYTHONPATH=/opt/vla-jepa-npa/src /opt/lerobot/venv/bin/python - <<'PY'
+    && PYTHONPATH=/opt/npa/src /opt/lerobot/venv/bin/python - <<'PY'
 import rerun
 from npa.workflows import lerobot_vla_jepa
 
@@ -103,9 +103,24 @@ ENV WANDB_MODE=disabled \
     HF_HUB_DISABLE_TELEMETRY=1 \
     NPA_LEROBOT_VERSION=0.6.1 \
     NPA_BAKED_PYTHON=/opt/lerobot/venv/bin/python \
-    PYTHONPATH=/opt/vla-jepa-npa/src \
+    NPA_IMAGE_SOURCE_SHA=${NPA_ADAPTER_REVISION} \
+    PYTHONPATH=/opt/npa/src \
     HOME=/home/ubuntu \
     PATH=/usr/bin:/opt/lerobot/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/sbin:/bin
+
+# Reject an unbound build before it can become an immutable candidate.
+RUN /opt/lerobot/venv/bin/python - <<'PY'
+import os
+import re
+from pathlib import Path
+
+from npa.workflows import lerobot_vla_jepa
+
+if re.fullmatch(r"[0-9a-f]{40}", os.environ["NPA_IMAGE_SOURCE_SHA"]) is None:
+    raise SystemExit("NPA_ADAPTER_REVISION must be the exact source commit")
+if not Path(lerobot_vla_jepa.__file__).resolve().is_relative_to("/opt/npa/src/npa"):
+    raise SystemExit("VLA-JEPA adapter must import from the canonical baked source")
+PY
 
 # The parent service entrypoint would start FastAPI rather than the workflow's
 # native CLI.  A job image leaves command selection to the NPA stage renderer.

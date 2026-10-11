@@ -4,6 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -180,8 +184,8 @@ def test_candidate_image_removes_the_inherited_pip_cache() -> None:
     final_copy = "COPY --from=vla_jepa_build / /"
     assert final_copy in dockerfile
     assert dockerfile.index(cleanup) < dockerfile.index(final_copy)
-    assert "PYTHONPATH=/opt/vla-jepa-npa/src:$PYTHONPATH" not in dockerfile
-    assert "PYTHONPATH=/opt/vla-jepa-npa/src" in dockerfile
+    assert "PYTHONPATH=/opt/npa/src:$PYTHONPATH" not in dockerfile
+    assert "PYTHONPATH=/opt/npa/src" in dockerfile
     assert "PATH=/opt/lerobot/venv/bin:$PATH" not in dockerfile
     assert "h5py/tests/data_files -type f -name '*.h5' -delete" in dockerfile
     assert "robosuite/models/assets/demonstrations -type f -name '*.hdf5'" in dockerfile
@@ -246,6 +250,7 @@ def test_candidate_baked_vendor_python_matches_prepare_render(
             "bucket": "unit-bucket",
             "prefix": "unit-prefix",
             "source_sha": "a" * 40,
+            "baked_npa_import": "npa.workflows.lerobot_vla_jepa",
         },
     )
     rendered = render_skypilot_yaml(
@@ -271,6 +276,132 @@ def test_candidate_baked_vendor_python_matches_prepare_render(
     )
     assert str(shim_python) in prepare["run"]
     assert "python3 -m npa.workflows.lerobot_vla_jepa prepare" in prepare["run"]
+
+
+def _candidate_baked_setup(monkeypatch: pytest.MonkeyPatch) -> str:
+    """Render the actual prepare setup without contacting a provider."""
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        SkypilotRenderOptions,
+        render_skypilot_yaml,
+    )
+    from npa.orchestration.npa_workflow.submit import merge_config_overrides
+
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example.invalid/npa-src")
+    spec = merge_config_overrides(
+        load_spec(WORKFLOW),
+        {
+            "vla_jepa_image": "registry.example.invalid/operator/vla@sha256:"
+            + "a" * 64,
+            "bucket": "unit-bucket",
+            "prefix": "unit-prefix",
+            "source_sha": "a" * 40,
+            "baked_npa_import": "npa.workflows.lerobot_vla_jepa",
+        },
+    )
+    rendered = render_skypilot_yaml(
+        spec,
+        build_plan(spec, run_id="vla-source-contract-test"),
+        run_id="vla-source-contract-test",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+    )
+    return next(
+        item["setup"]
+        for item in yaml.safe_load_all(rendered)
+        if item and item["name"].endswith("prepare")
+    )
+
+
+def _candidate_baked_layout(root: Path) -> tuple[Path, dict[str, str]]:
+    """Apply the recipe's source COPY over an inherited service-only package."""
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+    canonical = root / "opt/npa/src"
+    service = canonical / "npa"
+    service.mkdir(parents=True)
+    (service / "__init__.py").write_text("SERVICE_SUBSET = True\n")
+    target = re.search(r"^COPY --chown=ubuntu:ubuntu src/npa (\S+)$", dockerfile, re.M)
+    assert target is not None
+    destination = root / target.group(1).lstrip("/")
+    shutil.copytree(
+        ROOT / "npa/src/npa",
+        destination,
+        dirs_exist_ok=True,
+        ignore=shutil.ignore_patterns("__pycache__"),
+    )
+    pythonpath = re.search(r"^    PYTHONPATH=(\S+)", dockerfile, re.M)
+    assert pythonpath is not None
+    environment = {
+        "PYTHONPATH": str(root / pythonpath.group(1).lstrip("/")),
+        "NPA_BAKED_PYTHON": sys.executable,
+        "NPA_SIM2REAL_SOURCE_SHA": "a" * 40,
+    }
+    if "NPA_IMAGE_SOURCE_SHA=${NPA_ADAPTER_REVISION}" in dockerfile:
+        environment["NPA_IMAGE_SOURCE_SHA"] = "a" * 40
+    return canonical, environment
+
+
+@pytest.mark.parametrize("marker", ["matching", "missing", "different"])
+def test_candidate_real_import_and_source_attestation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, marker: str
+) -> None:
+    """Run real rendered setup against copied source, including stale service shadowing."""
+    canonical, image_environment = _candidate_baked_layout(tmp_path)
+    setup = _candidate_baked_setup(monkeypatch)
+    setup = setup.replace("/opt/npa/src", str(canonical))
+    setup = setup.replace("/tmp/npa-", str(tmp_path / "npa-"))
+    environment = dict(os.environ)
+    environment.pop("NPA_IMAGE_SOURCE_SHA", None)
+    environment.update(image_environment)
+    if marker == "missing":
+        environment.pop("NPA_IMAGE_SOURCE_SHA", None)
+    elif marker == "different":
+        environment["NPA_IMAGE_SOURCE_SHA"] = "b" * 40
+    setup += '\n"$npa_baked_python" -c "from npa.workflows import lerobot_vla_jepa; '
+    setup += 'print(lerobot_vla_jepa.__file__)"\n'
+    result = subprocess.run(
+        ["bash", "-c", setup],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if marker != "matching":
+        assert result.returncode != 0
+        assert "source attestation does not match" in result.stderr
+        return
+    assert result.returncode == 0, result.stderr
+    assert "immutable baked NPA runtime verified " + "a" * 40 in result.stdout
+    assert str(canonical / "npa/workflows/lerobot_vla_jepa.py") in result.stdout
+
+
+@pytest.mark.parametrize("revision", ["a" * 40, "local-uncommitted", "A" * 40])
+def test_candidate_build_requires_bound_source(tmp_path: Path, revision: str) -> None:
+    """Execute the Dockerfile's final import and revision check as written."""
+    canonical, image_environment = _candidate_baked_layout(tmp_path)
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+    probe = re.search(
+        r"^RUN /opt/lerobot/venv/bin/python - <<'PY'\n(.*?)\nPY$",
+        dockerfile,
+        re.M | re.S,
+    )
+    assert probe is not None
+    script = probe.group(1).replace("/opt/npa/src/npa", str(canonical / "npa"))
+    environment = dict(os.environ, **image_environment)
+    environment["NPA_IMAGE_SOURCE_SHA"] = revision
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if revision == "a" * 40:
+        assert result.returncode == 0, result.stderr
+    else:
+        assert result.returncode != 0
+        assert "NPA_ADAPTER_REVISION must be the exact source commit" in result.stderr
 
 
 def test_task_disjoint_split_and_numeric_training_statistics() -> None:
