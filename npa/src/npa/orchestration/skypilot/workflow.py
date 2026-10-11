@@ -2720,7 +2720,7 @@ def workflow_status(
             stderr=result.stderr,
             error="managed-job queue response is malformed or has conflicting diagnostics",
         )
-    status = _status_from_queue_payload(result.stdout, job_id)
+    status = _status_from_queue_rows(rows, job_id)
     if not status:
         if any(
             str(row.get("job_id") or row.get("id") or "") == str(job_id) for row in rows
@@ -5367,8 +5367,14 @@ def _status_from_queue_payload(output: str, job_id: str) -> str:
     jobs = queue_rows_from_output(output)
     if jobs is None:
         return ""
+    return _status_from_queue_rows(jobs, job_id)
+
+
+def _status_from_queue_rows(jobs: list[dict[str, Any]], job_id: str) -> str:
+    """Return the aggregate state for one job in verified SkyPilot queue rows."""
+
     statuses = []
-    for job in jobs or []:
+    for job in jobs:
         current_id = str(job.get("job_id") or job.get("id") or "")
         if current_id == str(job_id):
             status = str(job.get("status", "")).upper()

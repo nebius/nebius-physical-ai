@@ -66,7 +66,7 @@ when adapting it:
 
 | Task | Guide |
 | --- | --- |
-| Configure, preflight, submit, and recover | [Sim2Real operator runbook](sim2real-workflow.md); first confirm the declared data/robot contract, run-scoped S3 storage, a validated plan, image preflight, and the exact execution context |
+| Install, configure, submit, and recover without an agent | [Manual Sim2Real runbook](sim2real-workflow.md); establish the qualified five-image set before provisioning, then prepare access, RTX rendering, shared cache, seed data, and the exact execution context |
 | Prepare formats, schemas, and S3 layout | [Data contracts](sim2real-data-contracts.md) |
 | Supply customer data and robot assets | [Customer assets](sim2real-customer-assets.md) · [RobotSpec](sim2real-robot-spec.md) |
 | Understand stages, loops, and parallel execution | [Architecture](sim2real-architecture.md) |

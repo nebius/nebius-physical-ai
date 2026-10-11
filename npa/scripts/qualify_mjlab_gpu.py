@@ -151,9 +151,11 @@ def _evaluation(args, name, training, *, video=False, connection=None):
     )
     assert json.loads(paths["episodes.json"].read_text()) == report["episodes"]
     if video:
-        from npa.workbench.mjlab.worker import _verify_video
+        from npa.workbench.mjlab.worker import _inspect_video
 
-        assert _verify_video(paths["rollout.mp4"]) == report["video_frames"]
+        assert _inspect_video(paths["rollout.mp4"]) == report["video"]
+        assert report["video"]["frames"] == report["video_frames"]
+        assert (report["video"]["width"], report["video"]["height"]) == (1920, 1080)
     return report
 
 

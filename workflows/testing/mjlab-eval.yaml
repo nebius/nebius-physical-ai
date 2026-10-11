@@ -14,7 +14,8 @@ config:
 resources:
   gpu:
     cloud: kubernetes
-    accelerators: H100:1
+    accelerators: RTXPRO6000:1
+    image: ghcr.io/nebius/nebius-physical-ai/npa-mjlab@sha256:ec8c099dc8ab34c8a390c6076d3cc3c07a88e27818d0eb0b6b6cf819663f242e
     cpus: 8
     memory: 32Gi
 initial: mjlab-eval

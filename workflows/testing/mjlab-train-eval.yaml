@@ -2,8 +2,8 @@ apiVersion: npa.workflow/v0.0.1
 kind: Workflow
 metadata:
   name: mjlab-train-eval
-  description: Train a native MJLab policy, measure episodes, export ONNX, and repeat
-    evaluation with an independent seed.
+  description: Train a native MJLab policy, render its measured evaluation as native
+    1080p video and standalone HTML, export ONNX, and evaluate an independent seed.
 config:
   bucket: example-bucket
   prefix: runs/{{run.id}}/mjlab
@@ -19,7 +19,8 @@ config:
 resources:
   gpu:
     cloud: kubernetes
-    accelerators: H100:1
+    accelerators: RTXPRO6000:1
+    image: ghcr.io/nebius/nebius-physical-ai/npa-mjlab@sha256:ec8c099dc8ab34c8a390c6076d3cc3c07a88e27818d0eb0b6b6cf819663f242e
     cpus: 8
     memory: 32Gi
 initial: train
@@ -34,10 +35,13 @@ states:
   evaluate:
     needs:
     - train
-    toolRef: workbench.mjlab.eval
+    toolRef: workbench.mjlab.render
     resources: gpu
     outputs:
     - uri: '{{config.mjlab_uri}}mjlab_eval.json'
+    - uri: '{{config.mjlab_uri}}episodes.json'
+    - uri: '{{config.mjlab_uri}}rollout.mp4'
+    - uri: '{{config.mjlab_uri}}rollout.html'
     next: export
   export:
     needs:

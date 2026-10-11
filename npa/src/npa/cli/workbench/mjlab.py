@@ -103,6 +103,12 @@ def eval_cmd(
     seed: int = typer.Option(42, "--seed"),
     device: str = typer.Option("cuda:0", "--device"),
     video: bool = typer.Option(False, "--video"),
+    video_width: int = typer.Option(
+        1920, "--video-width", help="Native video width in pixels."
+    ),
+    video_height: int = typer.Option(
+        1080, "--video-height", help="Native video height in pixels."
+    ),
     endpoint: str = typer.Option("", "--endpoint"),
     token_env: str = typer.Option("MJLAB_TOKEN", "--token-env"),
     dry_run: bool = typer.Option(False, "--dry-run"),
@@ -127,6 +133,8 @@ def eval_cmd(
         seed=seed,
         device=device,
         video=video,
+        video_width=video_width,
+        video_height=video_height,
     )
     _call("eval", EvalRequest, values, endpoint, token_env, dry_run)
 
