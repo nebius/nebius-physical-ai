@@ -188,8 +188,14 @@ def _prepare(client: FakeS3, run_id: str = "groot-libero-x-fixture") -> dict[str
     }
     _put_json(client, training_uri, training)
     _put_json(client, evaluation_uri, evaluation)
+    _put_json(
+        client,
+        "s3://bucket/run/evaluation-data/meta/info.json",
+        {"chunks_size": 1_000},
+    )
     client.seed(
-        "s3://bucket/run/evaluation-data/meta/info.json", b"real-format-metadata"
+        "s3://bucket/run/evaluation-data/data/chunk-000/episode_000000.parquet",
+        b"real-format-parquet",
     )
     inventory = workflow._object_inventory(client, "s3://bucket/run/evaluation-data/")
     _put_json(
@@ -273,8 +279,14 @@ def test_observed_paired_protocol_refuses_held_out_or_generalization_labels() ->
     output_uri = "s3://bucket/run/prepared/observed-protocol.json"
     observed = {"schema": workflow.OBSERVED_TASKS_SCHEMA, "tasks": [_task("seen-0")]}
     _put_json(client, observed_uri, observed)
+    _put_json(
+        client,
+        "s3://bucket/run/evaluation-data/meta/info.json",
+        {"chunks_size": 1_000},
+    )
     client.seed(
-        "s3://bucket/run/evaluation-data/meta/info.json", b"real-format-metadata"
+        "s3://bucket/run/evaluation-data/data/chunk-000/episode_000000.parquet",
+        b"real-format-parquet",
     )
     inventory = workflow._object_inventory(client, "s3://bucket/run/evaluation-data/")
     _put_json(
@@ -307,6 +319,52 @@ def test_observed_paired_protocol_refuses_held_out_or_generalization_labels() ->
     assert protocol["rollout_protocol"]["initial_state_protocol"].startswith(
         "Isaac-GR00T reset seed batches"
     )
+
+
+def test_observed_paired_preparation_refuses_unmaterialized_trajectory() -> None:
+    client = FakeS3()
+    observed_uri = "s3://bucket/run/inputs/observed.json"
+    dataset_uri = "s3://bucket/run/inputs/dataset.json"
+    output_uri = "s3://bucket/run/prepared/observed-protocol.json"
+    observed = {"schema": workflow.OBSERVED_TASKS_SCHEMA, "tasks": [_task("seen-0")]}
+    _put_json(client, observed_uri, observed)
+    _put_json(
+        client,
+        "s3://bucket/run/evaluation-data/meta/info.json",
+        {"chunks_size": 1_000},
+    )
+    client.seed(
+        "s3://bucket/run/evaluation-data/data/chunk-000/episode_000024.parquet",
+        b"different-selected-episode",
+    )
+    inventory = workflow._object_inventory(client, "s3://bucket/run/evaluation-data/")
+    _put_json(
+        client,
+        dataset_uri,
+        {
+            "schema": workflow.DATASET_SCHEMA,
+            "source": {
+                "repo": workflow.LIBERO_X_REPO,
+                "revision": workflow.LIBERO_X_REVISION,
+                "license": "CC-BY-4.0",
+            },
+            "evaluation_task_manifest_sha256": workflow._json_hash(observed),
+            "materialized": {
+                "uri": "s3://bucket/run/evaluation-data/",
+                "object_inventory_sha256": inventory["sha256"],
+            },
+        },
+    )
+
+    with pytest.raises(
+        workflow.GrootVisualizationError,
+        match="omits required trajectory parquet files",
+    ):
+        workflow.prepare_observed_paired_evaluation(
+            observed_uri, dataset_uri, output_uri, "observed-run", s3_client=client
+        )
+
+    assert ("bucket", "run/prepared/observed-protocol.json") not in client.objects
 
 
 def test_observed_paired_tasks_require_direct_bddl_provenance() -> None:
@@ -632,6 +690,10 @@ def test_runtime_readiness_failure_names_missing_documented_runtime(
                     "package": workflow.LIBERO_PARQUET_ENGINE_PACKAGE,
                     "version": workflow.LIBERO_PARQUET_ENGINE_VERSION,
                 },
+                "libero_torchcodec": {
+                    "package": workflow.LIBERO_TORCHCODEC_PACKAGE,
+                    "version": workflow.LIBERO_TORCHCODEC_VERSION,
+                },
                 "libero_x_evaluator": {
                     "repository": workflow.LIBERO_X_EVALUATOR_REPOSITORY,
                     "revision": workflow.LIBERO_X_EVALUATOR_REVISION,
@@ -651,6 +713,41 @@ def test_runtime_readiness_failure_names_missing_documented_runtime(
         == "documented_python_runtime_missing"
     )
     assert workflow._runtime_ready(target) is None
+
+
+def test_runtime_readiness_refuses_cache_marker_without_torchcodec(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "runtime"
+    target.mkdir()
+    (target / "runtime-ready.json").write_text(
+        json.dumps(
+            {
+                "schema": workflow.RUNTIME_READY_SCHEMA,
+                "isaac_groot_revision": workflow.IMAGE_GROOT_REF,
+                "required_groot_lfs_objects": workflow._groot_lfs_provenance(),
+                "libero_parquet_engine": {
+                    "package": workflow.LIBERO_PARQUET_ENGINE_PACKAGE,
+                    "version": workflow.LIBERO_PARQUET_ENGINE_VERSION,
+                },
+                "libero_x_evaluator": {
+                    "repository": workflow.LIBERO_X_EVALUATOR_REPOSITORY,
+                    "revision": workflow.LIBERO_X_EVALUATOR_REVISION,
+                    "license": workflow.LIBERO_X_EVALUATOR_LICENSE,
+                },
+                "npa_libero_x_overlay": {
+                    "sha256": hashlib.sha256(
+                        workflow.LIBERO_X_RUNTIME_OVERLAY.encode()
+                    ).hexdigest()
+                },
+            }
+        )
+    )
+
+    assert (
+        workflow._runtime_readiness_failure(target)
+        == "ready_marker_torchcodec_mismatch"
+    )
 
 
 def test_runtime_post_publish_failure_is_actionable_and_path_free(
@@ -692,7 +789,29 @@ def test_libero_parquet_probe_reads_with_selected_interpreter(
     }
 
 
-def test_materializer_installs_parquet_engine_before_publishing_runtime(
+def test_libero_torchcodec_probe_rejects_unpinned_selected_interpreter(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def completed(*_args: Any, **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=json.dumps({"package": "torchcodec", "version": "0.0.0"}),
+            stderr="",
+        )
+
+    monkeypatch.setattr(workflow.subprocess, "run", completed)
+
+    with pytest.raises(
+        workflow.GrootVisualizationError,
+        match="TorchCodec differs from the pinned contract",
+    ):
+        workflow._verify_libero_torchcodec(
+            Path(sys.executable), cwd=tmp_path, env=os.environ
+        )
+
+
+def test_materializer_installs_runtime_dependencies_before_publishing_runtime(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.delenv("NPA_GROOT_LIBERO_X_RUNTIME_CACHE", raising=False)
@@ -700,7 +819,7 @@ def test_materializer_installs_parquet_engine_before_publishing_runtime(
     source = _native_runtime_cache_target(tmp_path) / "Isaac-GR00T"
     evaluator = _native_runtime_cache_target(tmp_path) / "LIBERO-X"
     commands: list[list[str]] = []
-    engine_calls: list[Path] = []
+    dependency_calls: list[tuple[str, Path]] = []
 
     def runtime_command(command: list[str], *, cwd: Path, env: dict[str, str]) -> None:
         commands.append(command)
@@ -740,9 +859,18 @@ def test_materializer_installs_parquet_engine_before_publishing_runtime(
         "version": workflow.LIBERO_PARQUET_ENGINE_VERSION,
     }
 
-    def verify(python: Path, **_kwargs: Any) -> dict[str, str]:
-        engine_calls.append(python)
+    def verify_parquet(python: Path, **_kwargs: Any) -> dict[str, str]:
+        dependency_calls.append(("parquet", python))
         return expected_engine
+
+    expected_torchcodec = {
+        "package": workflow.LIBERO_TORCHCODEC_PACKAGE,
+        "version": workflow.LIBERO_TORCHCODEC_VERSION,
+    }
+
+    def verify_torchcodec(python: Path, **_kwargs: Any) -> dict[str, str]:
+        dependency_calls.append(("torchcodec", python))
+        return expected_torchcodec
 
     monkeypatch.setattr(workflow.shutil, "which", lambda _name: "/tool")
     monkeypatch.setattr(workflow, "_run_runtime_command", runtime_command)
@@ -753,7 +881,8 @@ def test_materializer_installs_parquet_engine_before_publishing_runtime(
         workflow, "_required_groot_lfs_objects_verified", lambda _source: True
     )
     monkeypatch.setattr(workflow.subprocess, "run", revision)
-    monkeypatch.setattr(workflow, "_verify_libero_parquet_engine", verify)
+    monkeypatch.setattr(workflow, "_verify_libero_parquet_engine", verify_parquet)
+    monkeypatch.setattr(workflow, "_verify_libero_torchcodec", verify_torchcodec)
 
     runtime = workflow._materialize_native_runtime(tmp_path)
 
@@ -766,9 +895,16 @@ def test_materializer_installs_parquet_engine_before_publishing_runtime(
         "--python",
         str(libero_python),
         workflow.LIBERO_PARQUET_ENGINE_REQUIREMENT,
+        workflow.LIBERO_TORCHCODEC_REQUIREMENT,
     ] in commands
-    assert engine_calls == [libero_python, libero_python]
+    assert dependency_calls == [
+        ("parquet", libero_python),
+        ("torchcodec", libero_python),
+        ("parquet", libero_python),
+        ("torchcodec", libero_python),
+    ]
     assert runtime["provenance"]["libero_parquet_engine"] == expected_engine
+    assert runtime["provenance"]["libero_torchcodec"] == expected_torchcodec
 
 
 def _native_runtime_cache_target(temporary_root: Path) -> Path:

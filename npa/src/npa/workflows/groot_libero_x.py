@@ -80,7 +80,7 @@ LIBERO_X_EVALUATOR_REPOSITORY = "https://github.com/meituan/LIBERO-X.git"
 LIBERO_X_EVALUATOR_REVISION = "f528726421c7211d8eb05fe48e9e5e2535ccc813"
 LIBERO_X_EVALUATOR_LICENSE = "MIT"
 LIBERO_X_EVALUATOR_SOURCE = "https://github.com/meituan/LIBERO-X"
-RUNTIME_READY_SCHEMA = "npa.groot_libero_x.runtime_ready.v4"
+RUNTIME_READY_SCHEMA = "npa.groot_libero_x.runtime_ready.v5"
 SHA256 = re.compile(r"^[a-f0-9]{64}$")
 TASK_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 LIBERO_X_BDDL_LEVELS = frozenset({"LEVEL1", "LEVEL2", "LEVEL3", "LEVEL4"})
@@ -107,6 +107,16 @@ LIBERO_PARQUET_ENGINE_PACKAGE = "pyarrow"
 LIBERO_PARQUET_ENGINE_VERSION = "23.0.1"
 LIBERO_PARQUET_ENGINE_REQUIREMENT = (
     f"{LIBERO_PARQUET_ENGINE_PACKAGE}=={LIBERO_PARQUET_ENGINE_VERSION}"
+)
+# The separate LIBERO interpreter imports GR00T's LeRobot video decoder.  The
+# pinned upstream LIBERO setup creates that interpreter without TorchCodec,
+# while Isaac-GR00T's x86_64 lock resolves the exact public 0.8.0 wheel.  Keep
+# the runtime-fetch installation explicit and verify it before publishing the
+# cache-ready marker rather than allowing a policy rollout to discover it.
+LIBERO_TORCHCODEC_PACKAGE = "torchcodec"
+LIBERO_TORCHCODEC_VERSION = "0.8.0"
+LIBERO_TORCHCODEC_REQUIREMENT = (
+    f"{LIBERO_TORCHCODEC_PACKAGE}=={LIBERO_TORCHCODEC_VERSION}"
 )
 # Isaac-GR00T's lock resolves the aarch64 TorchCodec wheel while validating its
 # multi-platform environment, even on an x86_64 worker.  Fetch exactly that
@@ -519,6 +529,38 @@ def _validate_dataset_manifest(
     return {"source": dict(dataset), "materialized": inventory}
 
 
+def _validate_materialized_trajectory_files(
+    client: Any, dataset: Mapping[str, Any], tasks: Sequence[Mapping[str, Any]]
+) -> None:
+    """Require each native rollout trajectory parquet before GPU admission."""
+
+    materialized = dataset["materialized"]
+    dataset_uri = str(materialized["uri"])
+    ref = _split_s3(dataset_uri, require_key=False)
+    prefix = ref.key.rstrip("/")
+    object_prefix = f"{prefix}/" if prefix else ""
+    info = _read_s3_json(client, f"s3://{ref.bucket}/{object_prefix}meta/info.json")
+    chunk_size = info.get("chunks_size")
+    if (
+        isinstance(chunk_size, bool)
+        or not isinstance(chunk_size, int)
+        or chunk_size < 1
+    ):
+        raise GrootVisualizationError(
+            "materialized LeRobot dataset has an invalid chunks_size"
+        )
+    expected = {
+        f"data/chunk-{trajectory_id // chunk_size:03d}/episode_{trajectory_id:06d}.parquet"
+        for task in tasks
+        for trajectory_id in task["trajectory_ids"]
+    }
+    available = {str(item["key"]) for item in materialized["objects"]}
+    if not expected.issubset(available):
+        raise GrootVisualizationError(
+            "materialized dataset omits required trajectory parquet files"
+        )
+
+
 def prepare_evaluation(
     training_task_manifest_uri: str,
     evaluation_task_manifest_uri: str,
@@ -553,6 +595,7 @@ def prepare_evaluation(
         _read_s3_json(client, evaluation_dataset_manifest_uri),
         evaluation_hash=evaluation_hash,
     )
+    _validate_materialized_trajectory_files(client, dataset, eval_rows)
     protocol = {
         "schema": PROTOCOL_SCHEMA,
         "status": "prepared",
@@ -611,6 +654,7 @@ def prepare_observed_paired_evaluation(
         _read_s3_json(client, evaluation_dataset_manifest_uri),
         evaluation_hash=task_hash,
     )
+    _validate_materialized_trajectory_files(client, dataset, tasks)
     protocol = {
         "schema": PROTOCOL_SCHEMA,
         "status": "prepared",
@@ -1112,6 +1156,54 @@ print(json.dumps({"package": "pyarrow", "version": pyarrow.__version__}))
     return expected
 
 
+def _verify_libero_torchcodec(
+    python: Path, *, cwd: Path, env: Mapping[str, str]
+) -> dict[str, str]:
+    """Prove LIBERO's selected interpreter can import the rollout video decoder."""
+
+    probe = """
+import json
+import torchcodec
+
+print(json.dumps({"package": "torchcodec", "version": torchcodec.__version__}))
+"""
+    try:
+        completed = subprocess.run(
+            [str(python), "-c", probe],
+            cwd=cwd,
+            env=dict(env),
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except OSError as exc:
+        raise GrootVisualizationError(
+            "LIBERO Python runtime could not verify rollout video decoding support"
+        ) from exc
+    if completed.returncode:
+        detail, _ = _redact_failure_text(completed.stderr or "")
+        suffix = f": {detail}" if detail else ""
+        raise GrootVisualizationError(
+            f"LIBERO Python runtime cannot import TorchCodec{suffix}"
+        )
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise GrootVisualizationError(
+            "LIBERO Python runtime emitted invalid TorchCodec provenance"
+        ) from exc
+    expected = {
+        "package": LIBERO_TORCHCODEC_PACKAGE,
+        "version": LIBERO_TORCHCODEC_VERSION,
+    }
+    if payload != expected:
+        raise GrootVisualizationError(
+            "LIBERO Python runtime TorchCodec differs from the pinned contract"
+        )
+    return expected
+
+
 def _runtime_readiness_failure(target: Path) -> str | None:
     """Return a stable, non-sensitive reason when a cached runtime is unusable."""
 
@@ -1134,6 +1226,12 @@ def _runtime_readiness_failure(target: Path) -> str | None:
     }
     if payload.get("libero_parquet_engine") != expected_parquet_engine:
         return "ready_marker_parquet_engine_mismatch"
+    expected_torchcodec = {
+        "package": LIBERO_TORCHCODEC_PACKAGE,
+        "version": LIBERO_TORCHCODEC_VERSION,
+    }
+    if payload.get("libero_torchcodec") != expected_torchcodec:
+        return "ready_marker_torchcodec_mismatch"
     evaluator = payload.get("libero_x_evaluator")
     overlay = payload.get("npa_libero_x_overlay")
     if (
@@ -1190,6 +1288,16 @@ def _runtime_readiness_failure(target: Path) -> str | None:
         return "libero_parquet_engine_unavailable"
     if actual_parquet_engine != expected_parquet_engine:
         return "libero_parquet_engine_mismatch"
+    try:
+        actual_torchcodec = _verify_libero_torchcodec(
+            libero_python,
+            cwd=source,
+            env=os.environ,
+        )
+    except GrootVisualizationError:
+        return "libero_torchcodec_unavailable"
+    if actual_torchcodec != expected_torchcodec:
+        return "libero_torchcodec_mismatch"
     return None
 
 
@@ -1380,11 +1488,17 @@ def _materialize_native_runtime(temporary_root: Path) -> dict[str, Any]:
                 "--python",
                 str(libero_python),
                 LIBERO_PARQUET_ENGINE_REQUIREMENT,
+                LIBERO_TORCHCODEC_REQUIREMENT,
             ],
             cwd=source,
             env=environment,
         )
         parquet_engine = _verify_libero_parquet_engine(
+            libero_python,
+            cwd=source,
+            env=environment,
+        )
+        torchcodec = _verify_libero_torchcodec(
             libero_python,
             cwd=source,
             env=environment,
@@ -1416,6 +1530,7 @@ def _materialize_native_runtime(temporary_root: Path) -> dict[str, Any]:
             },
             "npa_libero_x_overlay": overlay,
             "libero_parquet_engine": parquet_engine,
+            "libero_torchcodec": torchcodec,
             "python": "3.12",
             "entrypoint": "gr00t.eval.rollout_policy.run_gr00t_sim_policy",
         }
