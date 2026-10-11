@@ -211,25 +211,37 @@ DECLARATIVE_PIP_EXTRAS = frozenset({"viz"})
 #: look for. `lerobot policy_train` needs the latter: it materialises its dataset with
 #: `huggingface_hub`, and the interpreter running npa in a vendor image is not the vendor's own
 #: venv, so the library is not necessarily importable there (live job 244).
+FASTWAM_PYAV_REQUIREMENT = (
+    # LeRobot 0.6.1 FastWAM imports ``av.option.Option``. PyAV 17 still imports
+    # successfully, but removed that API, so an import-only probe silently leaves
+    # the vendor venv incompatible. Every FastWAM stage imports the policy path.
+    'python:av;assert(__import__("importlib.metadata").metadata.version("av").startswith("15."))',
+    "av>=15.0,<16.0",
+)
+
+
 TOOL_REF_PIP_REQUIREMENTS: dict[str, tuple[tuple[str, str], ...]] = {
     "workbench.lerobot.fastwam_prepare": (
         ("python:huggingface_hub", "huggingface_hub>=0.23,<1.0"),
         ("python:pyarrow", "pyarrow>=15,<22"),
+        FASTWAM_PYAV_REQUIREMENT,
     ),
     "workbench.lerobot.fastwam_train": (
         ("python:huggingface_hub", "huggingface_hub>=0.23,<1.0"),
         ("python:pyarrow", "pyarrow>=15,<22"),
+        FASTWAM_PYAV_REQUIREMENT,
     ),
     "workbench.lerobot.fastwam_rollout": (
         ("python:huggingface_hub", "huggingface_hub>=0.23,<1.0"),
-        ("python:av", "av>=12,<17"),
+        FASTWAM_PYAV_REQUIREMENT,
     ),
     "workbench.lerobot.fastwam_evaluate": (
         ("python:huggingface_hub", "huggingface_hub>=0.23,<1.0"),
         ("python:pyarrow", "pyarrow>=15,<22"),
+        FASTWAM_PYAV_REQUIREMENT,
     ),
     "workbench.lerobot.fastwam_report": (
-        ("python:av", "av>=12,<17"),
+        FASTWAM_PYAV_REQUIREMENT,
         ("python:rerun", "rerun-sdk==0.38.1"),
     ),
     "workbench.marble.report": (("python:imageio_ffmpeg", "imageio-ffmpeg==0.6.0"),),
@@ -701,6 +713,40 @@ def render_pip_requirements_setup(requirements: Sequence[tuple[str, str]]) -> st
             "fi\n"
         )
     return "".join(lines)
+
+
+def render_fastwam_overlay_metadata_setup(tool_ref: str) -> str:
+    """Refresh staged FastWAM NPA metadata before its vendor dependency checks.
+
+    The source-first overlay intentionally avoids reinstalling NPA when its CLI
+    already imports.  That leaves a baked image's ``Requires-Dist`` metadata in
+    place, though: the FastWAM image previously recorded ``av==17.1.0`` while
+    the staged LeRobot 0.6.1 path correctly installs PyAV 15.x.  Refresh only
+    the editable distribution metadata without resolving dependencies; the
+    stage's declarative requirements below perform the one targeted PyAV change.
+    """
+
+    if not tool_ref.startswith("workbench.lerobot.fastwam"):
+        return ""
+    return (
+        'npa_fastwam_src=""\n'
+        "if [ -s /tmp/npa-src-root ]; then\n"
+        '  npa_fastwam_src="$(cat /tmp/npa-src-root)"\n'
+        "fi\n"
+        'if [ -z "$npa_fastwam_src" ] || [ ! -f "$npa_fastwam_src/pyproject.toml" ]; then\n'
+        "  echo 'FastWAM requires a staged NPA source root for dependency metadata' >&2\n"
+        "  exit 1\n"
+        "fi\n"
+        "npa_fastwam_python=python3\n"
+        "if [ -s /tmp/npa-python ]; then\n"
+        '  npa_fastwam_python="$(cat /tmp/npa-python)"\n'
+        "fi\n"
+        'echo "refreshing staged FastWAM NPA distribution metadata" >&2\n'
+        '"$npa_fastwam_python" -m pip install -q -e "$npa_fastwam_src" --no-deps \\\n'
+        '  || "$npa_fastwam_python" -m pip install -q -e "$npa_fastwam_src" --no-deps '
+        "--break-system-packages \\\n"
+        '  || "$npa_fastwam_python" -m pip install -q -e "$npa_fastwam_src" --no-deps --user\n'
+    )
 
 
 def render_pip_extra_setup(extra: str) -> str:
@@ -2116,6 +2162,7 @@ def render_setup_for_tool(
             "fi\n"
         )
     parts.append(render_vendor_interpreter_setup(tool_vendor_interpreters(tool_ref)))
+    parts.append(render_fastwam_overlay_metadata_setup(tool_ref))
     extra = tool_pip_extra(tool_ref)
     if extra:
         parts.append(render_pip_extra_setup(extra))

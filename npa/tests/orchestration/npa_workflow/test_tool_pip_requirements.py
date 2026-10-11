@@ -17,10 +17,12 @@ import yaml
 
 from npa.orchestration.npa_workflow.interpreter import build_plan
 from npa.orchestration.npa_workflow.skypilot_render import (
+    FASTWAM_PYAV_REQUIREMENT,
     TOOL_REF_PIP_REQUIREMENTS,
     SkypilotRenderOptions,
     assert_no_unresolved_placeholders,
     render_pip_requirements_setup,
+    render_setup_for_tool,
     render_skypilot_yaml,
     tool_pip_requirements,
 )
@@ -150,6 +152,42 @@ def test_groot_mcap_stage_installs_and_probes_native_writer_dependency() -> None
     assert "\"$npa_req_python\" -c 'import mcap'" in setup
     assert "-m pip install -q 'mcap>=1.3,<2'" in setup
     assert "uv pip install -q --python \"$npa_req_python\" 'mcap>=1.3,<2'" in setup
+
+
+def test_fastwam_stages_replace_an_importable_incompatible_pyav() -> None:
+    """LeRobot 0.6.1 requires PyAV's 15.x ``av.option`` API on every stage."""
+
+    fastwam_refs = (
+        "workbench.lerobot.fastwam_prepare",
+        "workbench.lerobot.fastwam_train",
+        "workbench.lerobot.fastwam_rollout",
+        "workbench.lerobot.fastwam_evaluate",
+        "workbench.lerobot.fastwam_report",
+    )
+    for tool_ref in fastwam_refs:
+        requirements = tool_pip_requirements(tool_ref)
+        assert FASTWAM_PYAV_REQUIREMENT in requirements
+        setup = render_pip_requirements_setup(requirements)
+        assert (
+            'import av;assert(__import__("importlib.metadata").metadata.version("av")'
+            '.startswith("15."))'
+        ) in setup
+        assert "-m pip install -q 'av>=15.0,<16.0'" in setup
+
+
+def test_fastwam_setup_refreshes_staged_metadata_before_pyav_install() -> None:
+    """Do not leave the baked NPA ``Requires-Dist`` pin ahead of the overlay."""
+
+    setup = render_setup_for_tool(
+        "workbench.lerobot.fastwam_report",
+        config={},
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+        command=("python3", "-m", "npa.workflows.fastwam_policy", "--help"),
+    )
+    metadata = '"$npa_fastwam_python" -m pip install -q -e "$npa_fastwam_src" --no-deps'
+    pyav = "-m pip install -q 'av>=15.0,<16.0'"
+    assert metadata in setup
+    assert setup.index(metadata) < setup.index(pyav)
 
 
 def test_executable_and_module_probes_can_coexist() -> None:
