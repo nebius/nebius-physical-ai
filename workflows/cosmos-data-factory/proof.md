@@ -112,7 +112,8 @@ receipts. The top-level fields are `built_at`, `evidence_scope`,
 `terminal_status`, and an `evidence` object. The evidence object contains
 `title`, `status_label`, `protocol_passed`, `media_ids`, `metrics` (each with
 `value` and `label`), `quality_verdict`, `variables_label`, `notes`, and `source`
-(`summary` and optional `url`). Keep predicted sampling labeled as planned
+(`summary`, optional `url`, and optional `media_ids` for prepared input images).
+Keep predicted sampling labeled as planned
 until the real configuration exists, and keep missing outputs pending rather
 than reusing unrelated successful metrics. Optional `preferred_seed` sets the
 selected workflow's command-form seed; without it the form uses `42`.

@@ -147,6 +147,7 @@ function renderSource(source) {
     link.href = source.url;
     details.append(link);
   }
+  (source.media_ids || []).forEach(id => details.append(assetFigure(id)));
   return details;
 }
 
