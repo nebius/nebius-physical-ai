@@ -314,7 +314,7 @@ def test_requirements_install_keeps_non_torch_requirements(tmp_path: Path) -> No
                 "torchvision==0.22.1",
                 "numpy==1.26.4",
                 "scipy==1.14.1",
-                "torchmetrics==1.9.0",
+                "torchmetrics",
                 "kept-package==3.0",
                 "",
             )
@@ -349,9 +349,10 @@ def test_requirements_install_keeps_non_torch_requirements(tmp_path: Path) -> No
         "/runtime/python",
         "-r",
         str(tree / "npa_requirements_without_torch.txt"),
+        "torchmetrics==1.9.0",
     ]
     assert copied_requirements.read_text(encoding="utf-8") == (
-        "numpy==1.26.4\nscipy==1.14.1\ntorchmetrics==1.9.0\nkept-package==3.0\n"
+        "numpy==1.26.4\nscipy==1.14.1\nkept-package==3.0\n"
     )
 
 
@@ -369,7 +370,7 @@ def test_requirements_native_dependency_drift_refuses_before_uv_install(
     requirements = {
         "numpy": "numpy==1.26.4",
         "scipy": "scipy==1.14.1",
-        "torchmetrics": "torchmetrics==1.9.0",
+        "torchmetrics": "torchmetrics",
     }
     requirements[drifted_requirement.partition("==")[0]] = drifted_requirement
     (tree / "requirements.txt").write_text(

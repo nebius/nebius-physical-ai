@@ -304,13 +304,14 @@ install_upstream_requirements() {
     && grep -qx 'torchvision==0.22.1' "$tree/requirements.txt" \
     && grep -qx "numpy==${NATIVE_NUMPY_VERSION}" "$tree/requirements.txt" \
     && grep -qx "scipy==${NATIVE_SCIPY_VERSION}" "$tree/requirements.txt" \
-    && grep -qx "torchmetrics==${TORCHMETRICS_VERSION}" "$tree/requirements.txt" || {
+    && grep -qx 'torchmetrics' "$tree/requirements.txt" || {
       echo "npa-hy-world: upstream native requirements drifted from the reviewed runtime closure" >&2
       exit "$EX_SOFTWARE"
     }
   requirements="$tree/npa_requirements_without_torch.txt"
-  sed -E '/^(torch|torchvision)==/d' "$tree/requirements.txt" > "$requirements"
-  uv pip install --python "$python" -r "$requirements"
+  sed -E '/^(torch|torchvision)==/d; /^torchmetrics$/d' "$tree/requirements.txt" > "$requirements"
+  uv pip install --python "$python" -r "$requirements" \
+    "torchmetrics==${TORCHMETRICS_VERSION}"
 }
 
 install_report_runtime() {
