@@ -32,10 +32,7 @@ def _without_allowed_clouds_warning(output: str) -> str:
     """Remove the exact leading allowed_clouds warning from CLI output."""
 
     lines = str(output or "").splitlines(keepends=True)
-    if (
-        lines
-        and lines[0].rstrip("\r\n") == _ALLOWED_CLOUDS_CONFIG_WARNING
-    ):
+    if lines and lines[0].rstrip("\r\n") == _ALLOWED_CLOUDS_CONFIG_WARNING:
         return "".join(lines[1:])
     return str(output or "")
 
