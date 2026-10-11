@@ -175,16 +175,21 @@ def test_genesis_workflow_runtime_upgrades_fixed_kernel_headers() -> None:
     assert 'linux_libc_dev_version="5.15.0-198.208"' in installer
     assert 'linux_libc_dev_version="6.8.0-139.139"' in installer
     assert '"linux-libc-dev=${linux_libc_dev_version}"' in installer
-    for relative in (
-        "sim2real-envgen/Dockerfile",
-        "sim2real-eval/Dockerfile",
+    for relative, snapshot in (
+        ("sim2real-envgen/Dockerfile", "20261009T000000Z"),
+        ("sim2real-eval/Dockerfile", "20260820T000000Z"),
     ):
         text = (WORKBENCH / relative).read_text(encoding="utf-8")
-        assert "ARG UBUNTU_SNAPSHOT=20261002T000000Z" in text, relative
-        assert 'install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" \\' in text, (
-            relative
-        )
+        assert f"ARG UBUNTU_SNAPSHOT={snapshot}" in text, relative
         assert "configure_ubuntu_snapshot.sh" in text, relative
+        if relative == "sim2real-envgen/Dockerfile":
+            assert "ARG ENVGEN_LINUX_LIBC_DEV_VERSION=5.15.0-198.208" in text
+            assert (
+                'install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" '
+                '"${ENVGEN_LINUX_LIBC_DEV_VERSION}" \\'
+            ) in text
+        else:
+            assert 'install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" \\' in text
 
 
 def test_genesis_workflow_images_replace_vulnerable_parent_gitpython() -> None:
@@ -222,9 +227,9 @@ def test_transfer_uses_the_hash_verified_pyjwt_signature_fix() -> None:
     overrides = (WORKBENCH / "cosmos2-transfer/security-overrides.txt").read_text()
     wheels = [line for line in overrides.splitlines() if "/pyjwt-" in line]
     assert len(wheels) == 1
-    assert "pyjwt-2.15.0-py3-none-any.whl" in wheels[0]
+    assert "pyjwt-2.15.1-py3-none-any.whl" in wheels[0]
     assert wheels[0].endswith(
-        "#sha256=7a3742debf6b879e912dbb9819ceec1594be812452b78c5f2e2dfc56564954f8"
+        "#sha256=42d59d631f7768a1028a64c7ff581a9bf7519804daf91fc5b6c56e30eec5e193"
     )
 
 

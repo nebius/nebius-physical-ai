@@ -205,6 +205,7 @@ ALL_GOLDEN_SPECS = sorted(
 
 DYNAMIC_SPECS = frozenset(
     {
+        "robot-policy-train-and-serve.yaml",
         "adversarial-scenario-hardening.yaml",
         "dataset-of-record-smoke.yaml",
         "dataset-ingest-curate.yaml",
@@ -1006,6 +1007,50 @@ def concurrency_overlaps(tasks: Iterable[dict[str, Any]]) -> list[tuple[str, str
             if earliest_end > latest_start:
                 overlaps.append((name_a, name_b))
     return overlaps
+
+
+def assert_parallel_run(waves, expected_parallel_tasks):
+    """Verify native parallel group size, concurrency and successive barriers.
+
+    Args: Completed runtime waves and the expected largest parallel group size.
+    Returns: None.
+    Raises: AssertionError when recorded execution lacks the required evidence.
+    """
+    parallel = [wave for wave in waves if wave["kind"] == "parallel"]
+    assert parallel, "no parallel waves recorded"
+    groups = {}
+    for wave in parallel:
+        group = wave["group"]
+        assert group, "parallel wave has no group identity"
+        groups.setdefault(group, set()).update(wave["states"])
+    assert max(len(states) for states in groups.values()) == expected_parallel_tasks
+    for group in groups:
+        members = [wave for wave in parallel if wave["group"] == group]
+        observed = max(wave.get("max_concurrent_observed", 0) for wave in members)
+        overlaps = any(
+            concurrency_overlaps(wave.get("tasks") or []) for wave in members
+        )
+        assert observed >= 2 or overlaps, (
+            f"parallel group {group} never ran concurrently"
+        )
+    for before, after in zip(waves, waves[1:]):
+        if before["kind"] == "parallel":
+            _assert_wave_barrier(before, after)
+
+
+def _assert_wave_barrier(before, after):
+    ends = [float(task.get("end_at") or 0) for task in before.get("tasks") or []]
+    starts = [
+        float(task.get("start_at") or task.get("submitted_at") or 0)
+        for task in after.get("tasks") or []
+    ]
+    assert ends and all(value > 0 for value in ends), "missing parallel end timings"
+    assert starts and all(value > 0 for value in starts), (
+        "missing barrier start timings"
+    )
+    assert min(starts) >= max(ends) - 1.0, (
+        f"barrier task started before preceding wave finished: ends={ends} starts={starts}"
+    )
 
 
 def write_runtime_evidence(name: str, payload: Any) -> Path:
