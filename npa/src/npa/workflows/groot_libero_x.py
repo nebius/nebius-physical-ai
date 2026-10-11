@@ -54,6 +54,7 @@ OBSERVED_TASKS_SCHEMA = "npa.groot_libero_x.observed_tasks.v1"
 DATASET_SCHEMA = "npa.groot_libero_x.evaluation_dataset.v1"
 PROTOCOL_SCHEMA = "npa.groot_libero_x.evaluation_protocol.v1"
 ROLLOUT_SCHEMA = "npa.groot_libero_x.closed_loop_rollout.v1"
+ROLLOUT_MEDIA_PREFIX_SCHEMA = "npa.groot_libero_x.rollout_media_prefix.v1"
 COMPARISON_SCHEMA = "npa.groot_libero_x.closed_loop_comparison.v1"
 EVIDENCE_SCHEMA = "npa.groot_libero_x.closed_loop_evidence.v1"
 POLICY_FAILURE_SCHEMA = "npa.groot_libero_x.closed_loop_failure.v1"
@@ -188,15 +189,28 @@ def _npa_groot_libero_x_register_envs():
         task_description = str(parsed.get("language") or "").strip()
         if not task_description:
             raise RuntimeError("LIBERO-X BDDL has no language instruction")
-        if native_env_name in gym.registry:
-            raise RuntimeError(f"LIBERO-X environment is already registered: {native_env_name}")
+        expected_entry_point = "gr00t.eval.sim.LIBERO.libero_env:LiberoEnv"
+        expected_kwargs = {
+            "task_bddl_file": str(bddl_path),
+            "task_description": task_description,
+        }
+        existing = gym.registry.get(native_env_name)
+        if existing is not None:
+            existing_kwargs = getattr(existing, "kwargs", None)
+            if (
+                getattr(existing, "entry_point", None) != expected_entry_point
+                or not isinstance(existing_kwargs, dict)
+                or existing_kwargs != expected_kwargs
+            ):
+                raise RuntimeError(
+                    "LIBERO-X environment registration conflicts with the "
+                    f"selected manifest: {native_env_name}"
+                )
+            continue
         register(
             id=native_env_name,
-            entry_point="gr00t.eval.sim.LIBERO.libero_env:LiberoEnv",
-            kwargs={
-                "task_bddl_file": str(bddl_path),
-                "task_description": task_description,
-            },
+            entry_point=expected_entry_point,
+            kwargs=expected_kwargs,
         )
 
 
@@ -765,6 +779,31 @@ def _upload_videos(
     if not artifacts:
         raise GrootVisualizationError("native LIBERO rollout produced no MP4 evidence")
     return artifacts
+
+
+def _publish_rollout_media_prefix(
+    client: Any,
+    output_uri: str,
+    *,
+    run_id: str,
+    policy_name: str,
+    videos: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Publish the durable marker for a non-empty native-rollout media prefix."""
+
+    if not videos:
+        raise GrootVisualizationError("native LIBERO rollout produced no MP4 evidence")
+    return _put_json(
+        client,
+        output_uri,
+        {
+            "schema": ROLLOUT_MEDIA_PREFIX_SCHEMA,
+            "status": "completed",
+            "run_id": run_id,
+            "policy": policy_name,
+            "videos": list(videos),
+        },
+    )
 
 
 def _numeric_metrics(metrics: Mapping[str, Any]) -> dict[str, Any]:
@@ -1874,6 +1913,15 @@ def _execute_policy(
                 {key: value for key, value in native_task.items() if key != "video_dir"}
                 | {"videos": artifacts}
             )
+    phase["name"] = "publish_rollout_media"
+    videos = [video for row in task_rows for video in row["videos"]]
+    media_prefix = _publish_rollout_media_prefix(
+        client,
+        rollout_media_uri,
+        run_id=run_id,
+        policy_name=policy_name,
+        videos=videos,
+    )
     phase["name"] = "publish_rollout_report"
     completed = sum(int(row["completed_episodes"]) for row in task_rows)
     successes = sum(sum(row["successes"]) for row in task_rows)
@@ -1901,6 +1949,7 @@ def _execute_policy(
             "native_entrypoint": "gr00t.eval.rollout_policy.run_gr00t_sim_policy",
         },
         "open_loop_action_error": action,
+        "rollout_media": media_prefix,
         "closed_loop": {
             "native_entrypoint": "gr00t.eval.rollout_policy.run_gr00t_sim_policy",
             "task_count": len(task_rows),

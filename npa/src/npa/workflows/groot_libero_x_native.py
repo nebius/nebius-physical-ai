@@ -227,6 +227,106 @@ def _run_seeded_episode_waves(
     }
 
 
+def _flatten_open_loop_observation(observation: dict[str, Any]) -> dict[str, Any]:
+    """Translate GR00T's nested open-loop observation to the sim-server protocol.
+
+    Args:
+        observation: Nested GR00T observation emitted by ``open_loop_eval``.
+
+    Returns:
+        Flat simulator observation accepted by ``Gr00tSimPolicyWrapper``.
+
+    Raises:
+        RuntimeError: If a required modality has an unsupported shape.
+    """
+    flattened: dict[str, Any] = {}
+    for modality in ("video", "state"):
+        values = observation.get(modality)
+        if not isinstance(values, dict) or not values:
+            raise RuntimeError(f"open-loop observation lacks {modality} values")
+        for key, value in values.items():
+            if not isinstance(key, str) or not key:
+                raise RuntimeError(
+                    f"open-loop observation has an invalid {modality} key"
+                )
+            flattened[f"{modality}.{key}"] = value
+    language = observation.get("language")
+    if not isinstance(language, dict) or not language:
+        raise RuntimeError("open-loop observation lacks language values")
+    for key, values in language.items():
+        if (
+            not isinstance(key, str)
+            or not key
+            or not isinstance(values, list)
+            or any(
+                not isinstance(item, list)
+                or len(item) != 1
+                or not isinstance(item[0], str)
+                for item in values
+            )
+        ):
+            raise RuntimeError(
+                "open-loop language observation has an unsupported shape"
+            )
+        flattened[key] = tuple(item[0] for item in values)
+    return flattened
+
+
+def _unprefix_sim_actions(actions: Any) -> dict[str, Any]:
+    """Translate simulator-wrapper action keys back to open-loop policy keys.
+
+    Args:
+        actions: Flat action mapping returned by the simulator-wrapper server.
+
+    Returns:
+        Action mapping expected by Isaac-GR00T's open-loop evaluator.
+
+    Raises:
+        RuntimeError: If the server action response is not a flat simulator action map.
+    """
+    if not isinstance(actions, dict) or not actions:
+        raise RuntimeError("simulator policy server returned no actions")
+    prefix = "action."
+    normalized: dict[str, Any] = {}
+    for key, value in actions.items():
+        if not isinstance(key, str) or not key.startswith(prefix) or key == prefix:
+            raise RuntimeError("simulator policy server returned an invalid action key")
+        normalized[key.removeprefix(prefix)] = value
+    return normalized
+
+
+class _OpenLoopSimServerPolicy:
+    """Adapt nested open-loop requests to the retained flat simulator server contract."""
+
+    def __init__(self, client: Any) -> None:
+        self._client = client
+
+    def get_action(
+        self, observation: dict[str, Any], options: dict[str, Any] | None = None
+    ) -> tuple[dict[str, Any], Any]:
+        """Request one action chunk through the simulator-wrapper policy server.
+
+        Args:
+            observation: Nested observation produced by the open-loop evaluator.
+            options: Optional inference options forwarded to the policy client.
+
+        Returns:
+            Open-loop action keys and upstream response metadata.
+
+        Raises:
+            RuntimeError: If the server response cannot satisfy the open-loop contract.
+        """
+        result = self._client.get_action(
+            _flatten_open_loop_observation(observation), options
+        )
+        if not isinstance(result, tuple) or len(result) != 2:
+            raise RuntimeError(
+                "simulator policy server returned an invalid action response"
+            )
+        actions, info = result
+        return _unprefix_sim_actions(actions), info
+
+
 def _run(config: dict[str, Any]) -> dict[str, Any]:
     libero_x_source = _configure_libero_x_source(config)
     # These imports must resolve from the checked-out Isaac-GR00T revision,
@@ -265,6 +365,7 @@ def _run(config: dict[str, Any]) -> dict[str, Any]:
             policy = PolicyClient(host=host, port=port)
             modality_config = policy.get_modality_config()
             loader = LeRobotEpisodeLoader(str(config["dataset_path"]), modality_config)
+            open_loop_policy = _OpenLoopSimServerPolicy(policy)
             action_rows: list[dict[str, Any]] = []
             action_mse_weighted = 0.0
             action_mae_weighted = 0.0
@@ -321,7 +422,7 @@ def _run(config: dict[str, Any]) -> dict[str, Any]:
                             f"trajectory {trajectory_id} for task {task_id} has no steps"
                         )
                     mse, mae = evaluate_single_trajectory(
-                        policy,
+                        open_loop_policy,
                         loader,
                         trajectory_id,
                         EmbodimentTag.LIBERO_PANDA,

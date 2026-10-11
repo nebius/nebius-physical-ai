@@ -9,6 +9,7 @@ import json
 import os
 import subprocess
 import sys
+import types
 from pathlib import Path
 from typing import Any
 
@@ -559,6 +560,63 @@ def test_native_rollout_uses_fixed_seeded_episode_waves(tmp_path: Path) -> None:
     assert result["completed_episodes"] == 10
 
 
+def test_open_loop_policy_adapts_nested_observation_for_sim_server() -> None:
+    class SimServerClient:
+        def __init__(self) -> None:
+            self.observation: dict[str, Any] | None = None
+            self.options: dict[str, Any] | None = None
+
+        def get_action(
+            self, observation: dict[str, Any], options: dict[str, Any] | None
+        ) -> tuple[dict[str, Any], dict[str, str]]:
+            self.observation = observation
+            self.options = options
+            return {"action.joints": np.array([[1.0]], dtype=np.float32)}, {
+                "server": "sim"
+            }
+
+    client = SimServerClient()
+    policy = native._OpenLoopSimServerPolicy(client)
+    image = np.zeros((1, 1, 2, 2, 3), dtype=np.uint8)
+    state = np.zeros((1, 1, 7), dtype=np.float32)
+
+    actions, info = policy.get_action(
+        {
+            "video": {"image": image},
+            "state": {"joints": state},
+            "language": {"task": [["place the bowl"]]},
+        },
+        {"temperature": 0.0},
+    )
+
+    assert client.observation is not None
+    assert client.observation["video.image"] is image
+    assert client.observation["state.joints"] is state
+    assert client.observation["task"] == ("place the bowl",)
+    assert client.options == {"temperature": 0.0}
+    assert set(actions) == {"joints"}
+    assert np.array_equal(actions["joints"], np.array([[1.0]], dtype=np.float32))
+    assert info == {"server": "sim"}
+
+
+def test_open_loop_policy_refuses_non_simulator_action_keys() -> None:
+    class InvalidServerClient:
+        def get_action(
+            self, _observation: dict[str, Any], _options: dict[str, Any] | None
+        ) -> tuple[dict[str, Any], dict[str, str]]:
+            return {"joints": np.array([[1.0]], dtype=np.float32)}, {}
+
+    policy = native._OpenLoopSimServerPolicy(InvalidServerClient())
+    with pytest.raises(RuntimeError, match="invalid action key"):
+        policy.get_action(
+            {
+                "video": {"image": np.zeros((1, 1, 2, 2, 3), dtype=np.uint8)},
+                "state": {"joints": np.zeros((1, 1, 7), dtype=np.float32)},
+                "language": {"task": [["place the bowl"]]},
+            }
+        )
+
+
 def test_native_evaluator_writes_worker_registration_manifest(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -673,6 +731,88 @@ def test_runtime_overlay_and_git_fetch_contract_avoid_broad_lfs_smudging(
         == hashlib.sha256(workflow.LIBERO_X_RUNTIME_OVERLAY.encode()).hexdigest()
     )
     assert target.read_text().endswith(workflow.LIBERO_X_RUNTIME_OVERLAY + "\n")
+
+
+def test_runtime_overlay_registration_is_idempotent_only_for_matching_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "libero-x"
+    bddl = source / "libero/libero_x/bddl/LEVEL1/task.bddl"
+    bddl.parent.mkdir(parents=True)
+    bddl.write_text("(define (problem placeholder))\n")
+    native_env_name = "libero_sim/npa_groot_libero_x_0123456789abcdef0123456789abcdef"
+    manifest = tmp_path / "registration.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema": "npa.groot_libero_x.registration.v1",
+                "tasks": [
+                    {
+                        "native_env_name": native_env_name,
+                        "libero_x_bddl_path": "libero/libero_x/bddl/LEVEL1/task.bddl",
+                    }
+                ],
+            }
+        )
+    )
+    monkeypatch.setenv("NPA_GROOT_LIBERO_X_SOURCE", str(source))
+    monkeypatch.setenv("NPA_GROOT_LIBERO_X_REGISTRATION_MANIFEST", str(manifest))
+    parser_module = types.ModuleType("libero.libero.utils.parse_bddl")
+    parser_module.parse_bddl_file = lambda _path: {"language": "place the item"}
+    saved_modules = {
+        name: module
+        for name, module in sys.modules.items()
+        if name == "libero" or name.startswith("libero.")
+    }
+    for name in list(saved_modules):
+        del sys.modules[name]
+    package = types.ModuleType("libero")
+    package.__path__ = []  # type: ignore[attr-defined]
+    nested = types.ModuleType("libero.libero")
+    nested.__path__ = []  # type: ignore[attr-defined]
+    utils = types.ModuleType("libero.libero.utils")
+    utils.__path__ = []  # type: ignore[attr-defined]
+    sys.modules.update(
+        {
+            "libero": package,
+            "libero.libero": nested,
+            "libero.libero.utils": utils,
+            "libero.libero.utils.parse_bddl": parser_module,
+        }
+    )
+    overlay_module_path = tmp_path / "libero_env.py"
+    overlay_module_path.write_text(
+        "import os\n"
+        "from types import SimpleNamespace\n"
+        "gym = SimpleNamespace(registry={})\n"
+        "registrations = []\n"
+        "def register(*, id, entry_point, kwargs):\n"
+        "    registrations.append({'id': id, 'entry_point': entry_point, 'kwargs': kwargs})\n"
+        "    gym.registry[id] = SimpleNamespace(entry_point=entry_point, kwargs=kwargs)\n"
+        "def register_libero_envs():\n"
+        "    pass\n" + workflow.LIBERO_X_RUNTIME_OVERLAY
+    )
+    module_name = "npa_groot_libero_x_overlay_test"
+    spec = importlib.util.spec_from_file_location(module_name, overlay_module_path)
+    assert spec is not None and spec.loader is not None
+    overlay_module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = overlay_module
+    try:
+        spec.loader.exec_module(overlay_module)
+        overlay_module.register_libero_envs()
+        overlay_module.register_libero_envs()
+        assert len(overlay_module.registrations) == 1
+        overlay_module.gym.registry[native_env_name] = types.SimpleNamespace(
+            entry_point="unexpected:entry", kwargs={}
+        )
+        with pytest.raises(RuntimeError, match="conflicts with the selected manifest"):
+            overlay_module.register_libero_envs()
+    finally:
+        sys.modules.pop(module_name, None)
+        for name in list(sys.modules):
+            if name == "libero" or name.startswith("libero."):
+                del sys.modules[name]
+        sys.modules.update(saved_modules)
 
 
 def test_runtime_readiness_failure_names_missing_documented_runtime(
@@ -1514,6 +1654,17 @@ def test_policy_stage_requires_native_results_and_uploads_actual_mp4s(
     assert report["closed_loop"]["success_rate"] == 1.0
     video = report["closed_loop"]["tasks"][0]["videos"][0]
     assert video["bytes"] == len(b"actual-native-rollout")
+    media_prefix = workflow._read_s3_json(
+        client, "s3://bucket/run/rollouts/baseline/mp4"
+    )
+    assert media_prefix == {
+        "schema": workflow.ROLLOUT_MEDIA_PREFIX_SCHEMA,
+        "status": "completed",
+        "run_id": run_id,
+        "policy": "baseline",
+        "videos": [video],
+    }
+    assert report["rollout_media"]["uri"] == "s3://bucket/run/rollouts/baseline/mp4"
     assert client.head_object(
         Bucket="bucket", Key="run/rollouts/baseline/mp4/heldout-0/rollout.mp4"
     )
