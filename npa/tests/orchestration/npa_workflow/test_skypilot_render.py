@@ -254,6 +254,50 @@ def test_robomimic_plan_uses_unbuilt_placeholder_and_stages_npa(
     assert "npa workbench byof run" in task["run"]
 
 
+@pytest.mark.parametrize(
+    ("source_uri", "expected_uri"),
+    [
+        (None, "s3://ambient-source/npa"),
+        ("s3://explicit-source/npa", "s3://explicit-source/npa"),
+        ("", None),
+    ],
+    ids=["discover", "override", "disable"],
+)
+def test_source_s3_uri_option_controls_source_discovery(
+    monkeypatch: pytest.MonkeyPatch, source_uri: str | None, expected_uri: str | None
+) -> None:
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://ambient-source/npa")
+    lookups = []
+
+    def discover_source() -> str:
+        lookups.append(True)
+        return os.environ["NPA_SRC_S3_URI"]
+
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.skypilot_render.resolve_src_s3_uri",
+        discover_source,
+    )
+    spec = load_spec(NPA_SPECS / "byof-robomimic.yaml")
+    rendered = render_skypilot_yaml(
+        spec,
+        build_plan(spec, run_id="source-uri-option"),
+        run_id="source-uri-option",
+        options=SkypilotRenderOptions(
+            image_overrides={
+                "workbench.byof.repo": "private.invalid/robomimic@sha256:" + "a" * 64
+            },
+            source_s3_uri=source_uri,
+            materialize_registry_secrets=False,
+        ),
+    )
+    task = [doc for doc in yaml.safe_load_all(rendered) if doc][-1]
+    if expected_uri is None:
+        assert "NPA_SRC_S3_URI" not in task["envs"]
+    else:
+        assert task["envs"]["NPA_SRC_S3_URI"] == expected_uri
+    assert lookups == ([True] if source_uri is None else [])
+
+
 def test_kubernetes_profile_disk_size_renders_as_ephemeral_storage() -> None:
     spec = load_spec(NPA_SPECS / "byof-wan2.2.yaml")
     plan = build_plan(spec, run_id="disk-contract")
