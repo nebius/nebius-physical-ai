@@ -231,6 +231,7 @@ SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
         "ncore",
         "robotwin",
         "libero",
+        "mjlab",
         "fiftyone",
         "groot",
         "habitat-sim",
@@ -519,7 +520,7 @@ SUPPORTED_TOOL_VERSIONS = {
     "curobo": "0.8.0-cuda13-blackwell-unbuilt",
     # CPU-only, so this image carries no CUDA tag family.
     "open3d": "0.20.0-cpu-20260918",
-    "mjlab": "dev-0202f396fb23f7d066fd452b469578e67151d382",
+    "mjlab": "dev-d5cfdcc261d586c25caa877d332feab052369a1f",
     "seedvr2": "0.1.0-cu130-unbuilt",
     "content-agents": "0.5.2-npa2",
     # Source packaging inventory only; no accepted public NCore release exists.
