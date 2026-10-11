@@ -19,17 +19,76 @@ import subprocess
 import sys
 import time
 from pathlib import Path, PurePosixPath
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 
 TASK_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 LIBERO_X_BDDL_LEVELS = frozenset({"LEVEL1", "LEVEL2", "LEVEL3", "LEVEL4"})
+NATIVE_WORKER_PROVENANCE_SCHEMA = "npa.groot_libero_x.native_worker_provenance.v1"
+POLICY_SERVER_EVIDENCE_SCHEMA = "npa.groot_libero_x.native_policy_server_evidence.v1"
 
 
 def _read_config(path: Path) -> dict[str, Any]:
     payload = json.loads(path.read_text())
     if not isinstance(payload, dict):
         raise ValueError("native evaluator config must be a JSON object")
+    return payload
+
+
+def _sha256_file(path: Path) -> str:
+    """Return the SHA-256 digest of one regular native source file."""
+
+    if not path.is_file():
+        raise RuntimeError("native provenance source is not a regular file")
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _module_record(module: Any) -> dict[str, str]:
+    """Return an actual imported module path and content digest."""
+
+    path = Path(str(getattr(module, "__file__", ""))).resolve()
+    return {
+        "module": str(module.__name__),
+        "path": str(path),
+        "sha256": _sha256_file(path),
+    }
+
+
+def _read_server_evidence(config: Mapping[str, Any]) -> dict[str, Any]:
+    """Require device and checkpoint evidence written after policy construction."""
+
+    path = Path(str(config.get("server_evidence_path") or ""))
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(
+            "native policy server did not publish readable evidence"
+        ) from exc
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema") != POLICY_SERVER_EVIDENCE_SCHEMA
+    ):
+        raise RuntimeError("native policy server evidence has an unknown schema")
+    model = payload.get("model")
+    device = payload.get("device")
+    imports = payload.get("imported_modules")
+    if (
+        payload.get("model_load_completed") is not True
+        or not isinstance(model, dict)
+        or not isinstance(model.get("checkpoint_files"), list)
+        or not model["checkpoint_files"]
+        or not isinstance(device, dict)
+        or device.get("cuda_available") is not True
+        or not str(device.get("selected_model_tensor_device") or "").startswith("cuda")
+        or int(device.get("device_count") or 0) < 1
+        or not isinstance(imports, list)
+        or not imports
+    ):
+        raise RuntimeError("native policy server evidence lacks model or CUDA proof")
     return payload
 
 
@@ -153,9 +212,9 @@ def _parse_rollout(result: Any) -> dict[str, Any]:
     info_map = dict(info or {})
     lengths = [int(value) for value in list(info_map.get("episode_lengths") or [])]
     rewards = [float(value) for value in list(info_map.get("episode_rewards") or [])]
-    if lengths and len(lengths) != len(values):
+    if len(lengths) != len(values) or len(rewards) != len(values):
         raise RuntimeError(
-            "native rollout lengths do not align with completed episodes"
+            "native rollout episode metrics do not align with completed episodes"
         )
     return {
         "native_env_name": str(env_name),
@@ -167,6 +226,52 @@ def _parse_rollout(result: Any) -> dict[str, Any]:
     }
 
 
+def _episode_video_records(
+    *,
+    task_video_dir: Path,
+    wave_dir: Path,
+    task_id: str,
+    trajectory_ids: list[int],
+    initial_state_protocol: str,
+    reset_seeds: list[int],
+    successes: list[bool],
+    lengths: list[int],
+    rewards: list[float],
+    wave_index: int,
+) -> list[dict[str, Any]]:
+    """Bind each completed seeded environment to exactly one local MP4 file."""
+
+    records: list[dict[str, Any]] = []
+    for environment_index, reset_seed in enumerate(reset_seeds):
+        videos = sorted((wave_dir / f"env-{environment_index:03d}").rglob("*.mp4"))
+        if len(videos) != 1:
+            raise RuntimeError(
+                "native rollout cannot bind one final MP4 to each seeded environment"
+            )
+        video = videos[0]
+        try:
+            relative = video.relative_to(task_video_dir).as_posix()
+        except ValueError as exc:
+            raise RuntimeError(
+                "native rollout video escapes its task workspace"
+            ) from exc
+        records.append(
+            {
+                "task_id": task_id,
+                "wave_index": wave_index,
+                "environment_index": environment_index,
+                "reset_seed": reset_seed,
+                "initial_state": {"protocol": initial_state_protocol},
+                "trajectory_ids": trajectory_ids,
+                "success": successes[environment_index],
+                "episode_length": lengths[environment_index],
+                "episode_reward": rewards[environment_index],
+                "video_relative_path": relative,
+            }
+        )
+    return records
+
+
 def _run_seeded_episode_waves(
     *,
     native_env_name: str,
@@ -174,6 +279,9 @@ def _run_seeded_episode_waves(
     policy_host: str,
     policy_port: int,
     video_dir: Path,
+    task_id: str,
+    trajectory_ids: list[int],
+    initial_state_protocol: str,
     task_index: int,
     episodes_per_task: int,
     n_envs: int,
@@ -189,8 +297,11 @@ def _run_seeded_episode_waves(
     lengths: list[int] = []
     rewards: list[float] = []
     reset_seed_batches: list[list[int]] = []
+    episodes: list[dict[str, Any]] = []
     for offset in range(0, episodes_per_task, n_envs):
         wave_seed = seed + task_index * episodes_per_task + offset
+        wave_index = offset // n_envs
+        wave_dir = video_dir / f"wave-{wave_index:03d}"
         parsed = _parse_rollout(
             rollout_runner(
                 env_name=native_env_name,
@@ -201,7 +312,7 @@ def _run_seeded_episode_waves(
                 policy_client_port=policy_port,
                 n_envs=n_envs,
                 n_action_steps=n_action_steps,
-                video_dir=str(video_dir / f"wave-{offset // n_envs:03d}"),
+                video_dir=str(wave_dir),
                 seed=wave_seed,
             )
         )
@@ -216,7 +327,22 @@ def _run_seeded_episode_waves(
         successes.extend(parsed["successes"])
         lengths.extend(parsed["episode_lengths"])
         rewards.extend(parsed["episode_rewards"])
-        reset_seed_batches.append(list(range(wave_seed, wave_seed + n_envs)))
+        reset_seeds = list(range(wave_seed, wave_seed + n_envs))
+        reset_seed_batches.append(reset_seeds)
+        episodes.extend(
+            _episode_video_records(
+                task_video_dir=video_dir,
+                wave_dir=wave_dir,
+                task_id=task_id,
+                trajectory_ids=trajectory_ids,
+                initial_state_protocol=initial_state_protocol,
+                reset_seeds=reset_seeds,
+                successes=parsed["successes"],
+                lengths=parsed["episode_lengths"],
+                rewards=parsed["episode_rewards"],
+                wave_index=wave_index,
+            )
+        )
     return {
         "successes": successes,
         "episode_lengths": lengths,
@@ -224,6 +350,7 @@ def _run_seeded_episode_waves(
         "completed_episodes": len(successes),
         "success_rate": sum(successes) / len(successes),
         "initial_reset_seed_batches": reset_seed_batches,
+        "episodes": episodes,
     }
 
 
@@ -327,14 +454,69 @@ class _OpenLoopSimServerPolicy:
         return _unprefix_sim_actions(actions), info
 
 
+def _worker_provenance(
+    *,
+    config: Mapping[str, Any],
+    server_evidence: Mapping[str, Any],
+    rollout_module: Any,
+    open_loop_module: Any,
+    server_client_module: Any,
+) -> dict[str, Any]:
+    """Bind the imported simulator consumer to its model and input evidence."""
+
+    input_provenance = config.get("input_provenance")
+    if not isinstance(input_provenance, Mapping):
+        raise RuntimeError("native evaluator lacks digest-bound input provenance")
+    evaluator_path = Path(__file__).resolve()
+    return {
+        "schema": NATIVE_WORKER_PROVENANCE_SCHEMA,
+        "worker_execution": {
+            "executable": sys.executable,
+            "python_version": sys.version,
+            "sanitized_server_argv": list(config.get("sanitized_server_argv") or []),
+        },
+        "executed_native_entrypoint": {
+            "module": "gr00t.eval.rollout_policy.run_gr00t_sim_policy",
+            "path": str(Path(rollout_module.__file__).resolve()),
+            "sha256": _sha256_file(Path(rollout_module.__file__).resolve()),
+        },
+        "native_evaluator": {
+            "path": str(evaluator_path),
+            "sha256": _sha256_file(evaluator_path),
+        },
+        "imported_modules": [
+            _module_record(rollout_module),
+            _module_record(open_loop_module),
+            _module_record(server_client_module),
+        ],
+        "input_provenance": dict(input_provenance),
+        "policy_server": dict(server_evidence),
+    }
+
+
 def _run(config: dict[str, Any]) -> dict[str, Any]:
     libero_x_source = _configure_libero_x_source(config)
+    input_provenance = config.get("input_provenance")
+    rollout_protocol = (
+        input_provenance.get("rollout_protocol")
+        if isinstance(input_provenance, Mapping)
+        else None
+    )
+    initial_state_protocol = (
+        str(rollout_protocol.get("initial_state_protocol") or "")
+        if isinstance(rollout_protocol, Mapping)
+        else ""
+    )
+    if not initial_state_protocol:
+        raise RuntimeError("native evaluator lacks the prepared initial-state protocol")
     # These imports must resolve from the checked-out Isaac-GR00T revision,
     # via the .pth that upstream setup_libero.sh writes into this interpreter.
     from gr00t.data.embodiment_tags import EmbodimentTag
     from gr00t.data.dataset.lerobot_episode_loader import LeRobotEpisodeLoader
+    from gr00t.eval import open_loop_eval, rollout_policy
     from gr00t.eval.open_loop_eval import evaluate_single_trajectory
     from gr00t.eval.rollout_policy import run_gr00t_sim_policy
+    from gr00t.policy import server_client
     from gr00t.policy.server_client import PolicyClient
 
     host = "127.0.0.1"
@@ -346,6 +528,12 @@ def _run(config: dict[str, Any]) -> dict[str, Any]:
     command = [
         server_python,
         server_script,
+        "--npa-evidence-input",
+        str(config["server_evidence_input"]),
+        "--npa-evidence-output",
+        str(config["server_evidence_path"]),
+        "--npa-upstream-server",
+        str(config["upstream_server_script"]),
         "--model-path",
         str(config["model_path"]),
         "--embodiment-tag",
@@ -362,6 +550,7 @@ def _run(config: dict[str, Any]) -> dict[str, Any]:
         )
         try:
             _wait_for_server(server, host, port)
+            server_evidence = _read_server_evidence(config)
             policy = PolicyClient(host=host, port=port)
             modality_config = policy.get_modality_config()
             loader = LeRobotEpisodeLoader(str(config["dataset_path"]), modality_config)
@@ -458,6 +647,9 @@ def _run(config: dict[str, Any]) -> dict[str, Any]:
                     policy_host=host,
                     policy_port=port,
                     video_dir=video_dir,
+                    task_id=task_id,
+                    trajectory_ids=trajectory_ids,
+                    initial_state_protocol=initial_state_protocol,
                     task_index=index,
                     episodes_per_task=int(config["episodes_per_task"]),
                     n_envs=int(config["n_envs"]),
@@ -471,6 +663,18 @@ def _run(config: dict[str, Any]) -> dict[str, Any]:
                         "env_name": env_name,
                         "native_env_name": native_env_name,
                         "trajectory_ids": trajectory_ids,
+                        "task_input": {
+                            "task_id": task_id,
+                            "env_name": env_name,
+                            "trajectory_ids": trajectory_ids,
+                            "libero_x_bddl_path": str(
+                                task.get("libero_x_bddl_path") or ""
+                            ),
+                            "libero_x_bddl_sha256": str(
+                                task.get("libero_x_bddl_sha256") or ""
+                            ),
+                            "language": str(task.get("language") or ""),
+                        },
                         **rollout,
                         "video_dir": str(video_dir),
                     }
@@ -481,6 +685,13 @@ def _run(config: dict[str, Any]) -> dict[str, Any]:
         raise RuntimeError("native GR00T evaluator produced no action-error samples")
     return {
         "native_entrypoint": "gr00t.eval.rollout_policy.run_gr00t_sim_policy",
+        "worker_provenance": _worker_provenance(
+            config=config,
+            server_evidence=server_evidence,
+            rollout_module=rollout_policy,
+            open_loop_module=open_loop_eval,
+            server_client_module=server_client,
+        ),
         "open_loop_action_error": {
             "mse": action_mse_weighted / action_samples,
             "mae": action_mae_weighted / action_samples,
