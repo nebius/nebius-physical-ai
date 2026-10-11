@@ -331,7 +331,7 @@ def test_live_matrix_does_not_require_an_optional_hub_token() -> None:
 
 def test_runtime_image_removes_nonruntime_payloads_in_their_creating_layers() -> None:
     dockerfile = DOCKERFILE.read_text(encoding="utf-8")
-    source_layer = dockerfile.split("# The two upstream dependency sets", maxsplit=1)[0]
+    source_layer = dockerfile.split("RUN cd /opt/molmoact2/experiments", maxsplit=1)[0]
 
     assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in dockerfile
     assert "rm -rf /opt/molmoact2/experiments/lerobot/tests" in source_layer
@@ -341,6 +341,21 @@ def test_runtime_image_removes_nonruntime_payloads_in_their_creating_layers() ->
     assert "torchmetrics/functional/image/lpips_models" in dockerfile
     assert "torchmetrics/functional/image/dists_models" in dockerfile
     assert "imageio_ffmpeg/binaries/*" in dockerfile
+
+
+def test_runtime_image_installs_only_libero_for_the_active_workflow() -> None:
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+    libero_install = 'pip install -e "./lerobot[libero]"'
+    protobuf_floor = 'pip install "protobuf>=6.33.5,<7"'
+    runtime_install = dockerfile.split("RUN cd /opt/molmoact2/experiments", maxsplit=1)[1]
+    runtime_install = runtime_install.split(
+        "COPY docker/workbench/molmoact2/THIRD_PARTY_NOTICES.md", maxsplit=1
+    )[0]
+
+    assert libero_install in runtime_install
+    assert 'pip install -e "./lerobot[async,libero]"' not in runtime_install
+    assert runtime_install.index(libero_install) < runtime_install.index(protobuf_floor)
+    assert runtime_install.index(protobuf_floor) < runtime_install.index("pip check")
 
 
 def test_runtime_image_declares_the_verified_skypilot_bootstrap_contract() -> None:

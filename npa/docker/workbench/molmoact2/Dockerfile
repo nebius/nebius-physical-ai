@@ -52,8 +52,11 @@ RUN git lfs install --skip-smudge \
     && rm -rf /opt/molmoact2/experiments/lerobot/tests \
     && rm -rf /opt/molmoact2/.git
 
-# The two upstream dependency sets both permit this current protobuf release;
-# installing it after LeRobot lets `pip check` verify the assembled runtime.
+# The active NPA workflow uses upstream LIBERO support, not LeRobot's optional
+# async service. That service pulls grpcio-dep, whose upstream protobuf cap is
+# incompatible with the security floor below. Install LIBERO alone until the
+# upstream async dependency graph supports that floor; `pip check` verifies the
+# assembled runtime.
 # The editable LeRobot source has already had its test fixtures removed in the
 # source layer. Remove non-runtime wheel payloads in this same install layer:
 # Torchmetrics bundles LPIPS and DISTS reference weights, and imageio-ffmpeg
@@ -61,7 +64,7 @@ RUN git lfs install --skip-smudge \
 # selected runtime.
 RUN cd /opt/molmoact2/experiments \
     && pip install -e ".[all]" \
-    && pip install -e "./lerobot[async,libero]" \
+    && pip install -e "./lerobot[libero]" \
     && pip install "protobuf>=6.33.5,<7" \
     && pip check \
     && rm -rf /opt/venv/lib/python3.12/site-packages/torchmetrics/functional/image/lpips_models \
