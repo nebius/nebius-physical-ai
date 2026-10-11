@@ -1,6 +1,7 @@
 """Exercise the real CPU rendezvous and node-local checkpoint join on four processes."""
 
 from datetime import timedelta
+import errno
 import hashlib
 import json
 import multiprocessing
@@ -8,6 +9,7 @@ import os
 from pathlib import Path
 import socket
 import sys
+from unittest.mock import patch
 
 import pytest
 
@@ -23,12 +25,21 @@ def _peer_environment(rank):
     )
 
 
-def _coordinate_peer(rank, port, directory, fail_rank):
+def _coordinate_peer(rank, port, directory, fail_rank, listener):
     from npa.workbench.flex_pi import training_multinode as coordinator
     from npa.workbench.flex_pi.runtime import FlexPiError
 
     _peer_environment(rank)
-    store = coordinator._connect_store(leader=rank == 0, coordinator=True, port=port)
+    native_tcp_store = torch.distributed.TCPStore
+
+    def open_reserved_store(*args, **kwargs):
+        if listener is not None:
+            kwargs["master_listen_fd"] = listener.detach()
+        return native_tcp_store(*args, **kwargs)
+
+    # Keep the real production rendezvous; transfer its already-bound socket.
+    with patch.object(torch.distributed, "TCPStore", open_reserved_store):
+        store = coordinator._connect_store(leader=rank == 0, coordinator=True, port=port)
     parent = coordinator._Coordinator(store, rank)
     parent.watch.thread.start()
     parent._execute = lambda command: _cpu_phase(
@@ -97,13 +108,22 @@ def _lead_cpu_phases(parent, directory):
     return result
 
 
-def _checkpoint_peer(rank, port, directory, missing_rank):
+def _checkpoint_peer(rank, port, directory, missing_rank, listener):
     from npa.workbench.flex_pi.training_checkpoint import collect_rank_checkpoint
 
     _peer_environment(rank)
+    store = torch.distributed.TCPStore(
+        "127.0.0.1",
+        port,
+        world_size=4,
+        is_master=rank == 0,
+        timeout=timedelta(seconds=30),
+        master_listen_fd=listener.detach() if listener is not None else None,
+        use_libuv=False,
+    )
     torch.distributed.init_process_group(
         "gloo",
-        init_method=f"tcp://127.0.0.1:{port}",
+        store=store,
         rank=rank,
         world_size=4,
         timeout=timedelta(seconds=30),
@@ -131,17 +151,26 @@ def _checkpoint_peer(rank, port, directory, missing_rank):
 
 
 def _four_processes(target, tmp_path, failure):
-    with socket.socket() as listener:
-        listener.bind(("127.0.0.1", 0))
-        port = listener.getsockname()[1]
     context = multiprocessing.get_context("spawn")
-    processes = [
-        context.Process(target=target, args=(rank, port, str(tmp_path), failure))
-        for rank in range(4)
-    ]
+    processes = []
     try:
-        for process in processes:
-            process.start()
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            port = listener.getsockname()[1]
+            # A concurrent worker must not claim the port before native adoption.
+            with socket.socket() as contender:
+                with pytest.raises(OSError) as refused:
+                    contender.bind(("127.0.0.1", port))
+                assert refused.value.errno == errno.EADDRINUSE
+            processes = [
+                context.Process(
+                    target=target,
+                    args=(rank, port, str(tmp_path), failure, listener if rank == 0 else None),
+                )
+                for rank in range(4)
+            ]
+            for process in processes:
+                process.start()
         for process in processes:
             process.join(timeout=45)
             assert process.exitcode == 0
