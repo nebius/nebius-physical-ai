@@ -9,9 +9,14 @@ from pathlib import Path
 import tarfile
 
 import pytest
+import yaml
 
 from npa.orchestration.npa_workflow import build_plan, load_spec, validate_spec
 from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+from npa.orchestration.npa_workflow.skypilot_render import (
+    SkypilotRenderOptions,
+    render_skypilot_yaml,
+)
 from npa.workflows import openwam_pipeline as pipeline
 
 
@@ -178,6 +183,33 @@ def test_workflow_has_five_connected_substantive_stages() -> None:
     assert (
         spec.states["emit-factual-rrd"].outputs[0].schema == "application/vnd.rerun.rrd"
     )
+
+
+def test_openwam_render_binds_the_baked_python_without_security_override() -> None:
+    spec = load_spec(SPEC)
+    plan = build_plan(spec, run_id="openwam-baked-python-contract")
+    rendered = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id="openwam-baked-python-contract",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+    )
+    tasks = [
+        document for document in yaml.safe_load_all(rendered) if document and "setup" in document
+    ]
+
+    assert len(tasks) == 5
+    for task in tasks:
+        containers = task["config"]["kubernetes"]["pod_config"]["spec"]["containers"]
+        worker = next(container for container in containers if container["name"] == "ray-node")
+        environment = {item["name"]: item["value"] for item in worker["env"]}
+
+        assert environment["NPA_BAKED_PYTHON"] == "/opt/openwam-venv/bin/python"
+        assert "securityContext" not in task["config"]["kubernetes"]["pod_config"]["spec"]
+        assert "securityContext" not in worker
+        assert "from npa.cli.entry import main" in task["setup"]
+        assert 'npa_baked_entry_available=0' in task["setup"]
+        assert '"$npa_baked_entry_available" != "1"' in task["setup"]
 
 
 def test_openwam_toolrefs_call_real_pipeline_stages() -> None:
