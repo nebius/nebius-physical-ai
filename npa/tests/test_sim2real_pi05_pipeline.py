@@ -26,6 +26,7 @@ from npa.workflows.byof.openpi_service import (
 from npa.workflows.sim2real import (
     pi05_closed_loop,
     pi05_closed_loop_entry,
+    pi05_collect_all,
     pi05_data,
     pi05_isaac,
     pi05_stage,
@@ -1075,9 +1076,7 @@ def test_collector_propagates_isaac_launcher_failure(monkeypatch) -> None:
         return Namespace(returncode=69, stderr="no ready Isaac cache", stdout="")
 
     monkeypatch.setattr(subprocess, "run", run)
-    with pytest.raises(
-        RuntimeError, match="train collector failed: no ready Isaac cache"
-    ):
+    with pytest.raises(RuntimeError, match="train collector failed with exit 69"):
         _run_collector(args, "train")
     assert len(commands) == 1
     assert commands[0][:3] == [
@@ -1085,6 +1084,135 @@ def test_collector_propagates_isaac_launcher_failure(monkeypatch) -> None:
         "-m",
         "npa.workflows.sim2real.pi05_isaac",
     ]
+
+
+def _collector_readback_fixture(tmp_path: Path) -> tuple[Namespace, dict]:
+    config = SPLITS["train"]
+    identity = config["object_identity"]
+    _write_episode(tmp_path, identity, "scene")
+    attempt = json.loads((tmp_path / "episode-000000/episode.json").read_text())
+    args = Namespace(
+        output_root_uri="s3://example/experts",
+        episodes_per_split=1,
+        seed=41,
+        object_usd="",
+    )
+    report = _collection_report(
+        [attempt], identity, "", config["object_scale"], config["scene_id"], {}, {}
+    )
+    return args, report
+
+
+def test_collector_reads_uploaded_report_when_kit_exits_before_print(
+    tmp_path, monkeypatch
+) -> None:
+    args, report = _collector_readback_fixture(tmp_path)
+    commands = []
+    downloads = []
+
+    def run(command, **kwargs):
+        commands.append((command, kwargs))
+        return Namespace(returncode=0, stdout="Kit shutdown; no JSON report")
+
+    def read(uri, *, directory):
+        assert directory.is_dir()
+        downloads.append(uri)
+        return report
+
+    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(pi05_collect_all, "read_json", read)
+    assert _run_collector(args, "train") is report
+    assert downloads == ["s3://example/experts/train/collection.json"]
+    assert commands == [(_collector_argv(args, "train"), {"check": False})]
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("schema", "npa.sim2real.pi05.collection_failure.v1"),
+        ("attempt_count", 2),
+        ("successful_episode_count", 0),
+        ("scene_id", "other-scene"),
+        ("attempts", []),
+        ("attempts", ["not-an-episode"]),
+    ],
+)
+def test_collector_rejects_invalid_durable_report(
+    tmp_path, monkeypatch, field, value
+) -> None:
+    args, report = _collector_readback_fixture(tmp_path)
+    report[field] = value
+    monkeypatch.setattr(
+        subprocess, "run", lambda *_args, **_kwargs: Namespace(returncode=0)
+    )
+    monkeypatch.setattr(pi05_collect_all, "read_json", lambda *_args, **_kwargs: report)
+    with pytest.raises(RuntimeError, match="train collection"):
+        _run_collector(args, "train")
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [("identity", "other-object"), ("usd", "other.usd"), ("scale", [1.2] * 3)],
+)
+def test_collector_rejects_durable_report_for_another_asset(
+    tmp_path, monkeypatch, field, value
+) -> None:
+    args, report = _collector_readback_fixture(tmp_path)
+    report["object_asset"][field] = value
+    monkeypatch.setattr(
+        subprocess, "run", lambda *_args, **_kwargs: Namespace(returncode=0)
+    )
+    monkeypatch.setattr(pi05_collect_all, "read_json", lambda *_args, **_kwargs: report)
+    with pytest.raises(RuntimeError, match="does not match its request"):
+        _run_collector(args, "train")
+
+
+@pytest.mark.parametrize(
+    "field,value", [("scene_seed", 42), ("object_identity", "other")]
+)
+def test_collector_rejects_success_from_another_request(
+    tmp_path, monkeypatch, field, value
+) -> None:
+    args, report = _collector_readback_fixture(tmp_path)
+    report["attempts"][0][field] = value
+    monkeypatch.setattr(
+        subprocess, "run", lambda *_args, **_kwargs: Namespace(returncode=0)
+    )
+    monkeypatch.setattr(pi05_collect_all, "read_json", lambda *_args, **_kwargs: report)
+    with pytest.raises(RuntimeError, match="successful episode does not match"):
+        _run_collector(args, "train")
+
+
+def test_collector_rejects_success_with_invalid_causal_camera_rows(
+    tmp_path, monkeypatch
+) -> None:
+    args, report = _collector_readback_fixture(tmp_path)
+    report["attempts"][0]["steps"][0]["wrist_timestamp_s"] = 1.0
+    monkeypatch.setattr(
+        subprocess, "run", lambda *_args, **_kwargs: Namespace(returncode=0)
+    )
+    monkeypatch.setattr(pi05_collect_all, "read_json", lambda *_args, **_kwargs: report)
+    with pytest.raises(Pi05ContractError):
+        _run_collector(args, "train")
+
+
+def test_collector_requires_durable_report_after_zero_child_exit(monkeypatch) -> None:
+    args = Namespace(
+        output_root_uri="s3://example/experts",
+        episodes_per_split=1,
+        seed=41,
+        object_usd="",
+    )
+    monkeypatch.setattr(
+        subprocess, "run", lambda *_args, **_kwargs: Namespace(returncode=0)
+    )
+
+    def missing(*_args, **_kwargs):
+        raise FileNotFoundError("declared collection report absent")
+
+    monkeypatch.setattr(pi05_collect_all, "read_json", missing)
+    with pytest.raises(FileNotFoundError, match="declared collection report absent"):
+        _run_collector(args, "train")
 
 
 def test_gold_evaluator_reuses_exact_custom_usd_and_scale() -> None:

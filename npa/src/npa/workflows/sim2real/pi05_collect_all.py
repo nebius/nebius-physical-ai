@@ -5,9 +5,12 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import tempfile
+from pathlib import Path
 from typing import Any
 
-from npa.workflows.sim2real.workflow_io import publish_component_record
+from npa.workflows.sim2real.pi05_contract import validate_dense_episode
+from npa.workflows.sim2real.workflow_io import publish_component_record, read_json
 
 
 SPLITS = {
@@ -43,12 +46,16 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _collector_argv(args: argparse.Namespace, split: str) -> list[str]:
+def _collector_identity(args: argparse.Namespace, split: str) -> str:
     config = SPLITS[split]
-    identity = str(config["object_identity"])
     if args.object_usd:
         percent = round(float(config["object_scale"][0]) * 100)
-        identity = f"operator-custom-usd-scale-{percent:03d}"
+        return f"operator-custom-usd-scale-{percent:03d}"
+    return str(config["object_identity"])
+
+
+def _collector_argv(args: argparse.Namespace, split: str) -> list[str]:
+    config = SPLITS[split]
     # The outer NPA interpreter excludes Isaac; the shim selects its verified cache.
     return [
         "/isaac-sim/python.sh",
@@ -61,7 +68,7 @@ def _collector_argv(args: argparse.Namespace, split: str) -> list[str]:
         "--seed",
         str(args.seed + int(config["seed_offset"])),
         "--object-identity",
-        identity,
+        _collector_identity(args, split),
         "--object-usd",
         args.object_usd,
         "--object-scale",
@@ -72,20 +79,62 @@ def _collector_argv(args: argparse.Namespace, split: str) -> list[str]:
 
 
 def _run_collector(args: argparse.Namespace, split: str) -> dict[str, Any]:
-    process = subprocess.run(
-        _collector_argv(args, split), check=False, capture_output=True, text=True
-    )
+    process = subprocess.run(_collector_argv(args, split), check=False)
     if process.returncode:
-        message = process.stderr.strip().splitlines()[-1:] or ["no stderr"]
-        raise RuntimeError(f"{split} collector failed: {message[0]}")
-    for line in reversed(process.stdout.splitlines()):
-        try:
-            result = json.loads(line)
-        except json.JSONDecodeError:
+        raise RuntimeError(f"{split} collector failed with exit {process.returncode}")
+    # Kit can exit during app.close(); the uploaded report precedes that boundary.
+    uri = f"{args.output_root_uri.rstrip('/')}/{split}/collection.json"
+    with tempfile.TemporaryDirectory(prefix="npa-pi05-collection-readback-") as path:
+        report = read_json(uri, directory=Path(path))
+    _validate_collection_report(report, args, split)
+    return report
+
+
+def _validate_collection_report(
+    report: dict[str, Any], args: argparse.Namespace, split: str
+) -> None:
+    config = SPLITS[split]
+    attempts = report.get("attempts")
+    asset = report.get("object_asset") or {}
+    if (
+        report.get("schema") != "npa.sim2real.pi05.expert_collection.v1"
+        or not isinstance(attempts, list)
+        or not isinstance(asset, dict)
+        or len(attempts) != args.episodes_per_split
+        or report.get("attempt_count") != len(attempts)
+        or report.get("scene_id") != config["scene_id"]
+        or asset.get("identity") != _collector_identity(args, split)
+        or asset.get("usd") != (args.object_usd or "task_default")
+        or asset.get("scale") != list(config["object_scale"])
+    ):
+        raise RuntimeError(f"{split} collection report does not match its request")
+    successes = _validate_collector_successes(attempts, args, split)
+    if successes < 1 or report.get("successful_episode_count") != successes:
+        raise RuntimeError(f"{split} collection success count is inconsistent")
+
+
+def _validate_collector_successes(
+    attempts: list[Any], args: argparse.Namespace, split: str
+) -> int:
+    config = SPLITS[split]
+    expected_identity = _collector_identity(args, split)
+    successes = 0
+    for index, attempt in enumerate(attempts):
+        if not isinstance(attempt, dict):
+            raise RuntimeError(f"{split} collection attempt is not an object")
+        if not attempt.get("success_evidence", {}).get(
+            "released_supported_surface_placement"
+        ):
             continue
-        if result.get("schema") == "npa.sim2real.pi05.expert_collection.v1":
-            return result
-    raise RuntimeError(f"{split} collector emitted no collection report")
+        validate_dense_episode(attempt)
+        expected_seed = args.seed + int(config["seed_offset"]) + index
+        if (
+            attempt.get("scene_seed") != expected_seed
+            or attempt.get("object_identity") != expected_identity
+        ):
+            raise RuntimeError(f"{split} successful episode does not match its request")
+        successes += 1
+    return successes
 
 
 def main(argv: list[str] | None = None) -> int:

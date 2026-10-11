@@ -224,6 +224,11 @@ selects the verified SDK cache interpreter and applies Kit privacy and writable
 state settings. Reusing the parent's `sys.executable` bypasses that handoff and
 cannot load Isaac Lab. A failed launcher stops the stage; the evaluator also
 requires a complete successful report read back by its outer process.
+The collector also reads each uploaded `collection.json` outside Kit rather
+than parsing child stdout: Kit shutdown can exit before the CLI prints its
+report. It checks the requested asset, scale, scene, episode count, and seeds,
+and validates the dense causal rows of every claimed success. A zero child exit
+without those durable report bytes cannot complete the collection stage.
 
 The reference held-out model evaluation uses batch size one. This deliberately
 covers every exported validation sample, including the observed 695-sample
