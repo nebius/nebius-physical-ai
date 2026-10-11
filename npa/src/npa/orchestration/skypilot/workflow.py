@@ -2888,7 +2888,7 @@ def find_job_ids_by_name(
         timeout=timeout,
         check=False,
     )
-    if result.returncode != 0:
+    if verified_structured_queue_rows(result) is None:
         return []
     return parse_job_ids_by_name(result.stdout, job_name)
 
@@ -5214,7 +5214,7 @@ def _verified_job_id(
             timeout=60,
             check=False,
         )
-        if result.returncode != 0:
+        if verified_structured_queue_rows(result) is None:
             return parsed
         ids = parse_job_ids_by_name(result.stdout, job_name)
     except Exception:  # noqa: BLE001 - never fail a successful submit over a lookup
