@@ -41,3 +41,14 @@ bytes rather than broadly excluding their paths. The image runs as `ubuntu`;
 passwordless sudo is solely the existing SkyPilot bootstrap prerequisite and
 does not start `sshd` by default. No EULA acceptance, credential, telemetry
 consent, or private infrastructure coordinate is baked.
+
+## Transformers test helper modification
+
+The private recipe replaces the bundled Transformers 5.5.0 test helper's
+hardcoded staging authentication token with an empty string. Production model
+loading is unchanged; bundled Hub authentication tests have no baked credential.
+The modified file retains its upstream license text and a prominent change
+notice. The recipe removes stale test-helper bytecode and updates the installed
+package RECORD before copying that environment into any final image layer.
+This recipe change does not qualify an earlier image or replace exact-image
+security and complete-byte validation.
