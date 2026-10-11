@@ -24,6 +24,7 @@ from urllib.parse import urlparse
 import yaml
 
 from npa.deploy.images import (
+    is_public_registry,
     libero_image_manifest,
     libero_publication_lineage_values,
     validate_libero_customer_runtime_authorization,
@@ -102,6 +103,7 @@ DEFAULT_YAML = (
 )
 DEFAULT_IMAGE_PULL_SECRETS = ("agent-sa",)
 LIBERO_SOLUTION_NAME = "libero"
+EMBODIEDGEN_SOLUTION_NAME = "embodiedgen"
 LIBERO_PAYLOAD_SERVICE_ACCOUNT = "npa-byof-libero-payload"
 LIBERO_PAYLOAD_ROLE = "npa-byof-libero-pod-reader"
 LIBERO_PAYLOAD_ROLE_BINDING = "npa-byof-libero-payload-pod-reader"
@@ -163,6 +165,9 @@ LIBERO_RUNTIME_MANIFEST = (
 #: one solution is forwarded into every other BYOF run whenever it happens to be
 #: set in the operator's shell. A solution that is not listed forwards none.
 OPERATOR_RUNTIME_ENVS_BY_SOLUTION: dict[str, tuple[str, ...]] = {
+    # EmbodiedGen's upstream URDF generator invokes the configured
+    # OpenAI-compatible Token Factory endpoint to estimate physical metadata.
+    "embodiedgen": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "openpi": ("NPA_OPENPI_ACCEPT_GEMMA_TERMS",),
     # Hash of the owner-only manager authorization record. The RoboTwin smoke
     # records it without exposing private cluster, reservation, or registry IDs.
@@ -2221,6 +2226,24 @@ def _materialize_task_kubernetes_config(document: dict[str, Any]) -> None:
     config["kubernetes"] = kubernetes
 
 
+def validate_embodiedgen_image_reference(image: str) -> str:
+    """Require the restricted EmbodiedGen runtime to use private immutable bytes."""
+
+    reference = image.strip().removeprefix("docker:")
+    if re.fullmatch(r"[^\s@]+/npa-embodiedgen@sha256:[0-9a-f]{64}", reference) is None:
+        raise ValueError(
+            "EmbodiedGen requires a private immutable "
+            "npa-embodiedgen@sha256:<64-hex> image"
+        )
+    registry = reference.split("@", 1)[0].rsplit("/", 1)[0]
+    host = registry.split("/", 1)[0]
+    if host != "localhost" and "." not in host and ":" not in host:
+        raise ValueError("EmbodiedGen requires a fully-qualified private registry host")
+    if is_public_registry(registry):
+        raise ValueError("EmbodiedGen cannot run from an anonymous/public registry")
+    return reference
+
+
 def render_workflow(
     yaml_path: Path,
     *,
@@ -2236,6 +2259,9 @@ def render_workflow(
 ) -> list[dict[str, Any]]:
     docs = _load_yaml_documents(yaml_path)
     robotwin = solution_name.strip().lower() == "robotwin"
+    embodiedgen = solution_name.strip().lower() == EMBODIEDGEN_SOLUTION_NAME
+    if embodiedgen:
+        image = validate_embodiedgen_image_reference(image)
     source = os.environ if runtime_env is None else runtime_env
     validate_gymnasium_task_configuration(docs, solution_name=solution_name)
     for doc in docs[1:]:
