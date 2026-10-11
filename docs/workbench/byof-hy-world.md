@@ -424,6 +424,8 @@ SPEC="workflows/testing/byof-hy-world.yaml"
 PROJECT="<configured-project-alias>"
 BUCKET="<private-bucket>"
 INPUT_IMAGE_URI="s3://${BUCKET}/inputs/scene.png"
+RUN_ID="hy-world-visual-$(date -u +%Y%m%dt%H%M%Sz)"
+PREFIX="operator-runs/hy-world/$RUN_ID"
 
 # CANDIDATE_IMAGE was read from the structured private-build receipt above.
 # This value is retained only in the SkyPilot secret channel.
@@ -434,7 +436,7 @@ Plan exactly the run configuration, without allocating infrastructure:
 
 ```bash
 npa workbench workflow validate-spec "$SPEC" --json
-npa workbench workflow plan-spec "$SPEC" --run-id hy-world-plan \
+npa workbench workflow plan-spec "$SPEC" --run-id "$RUN_ID" \
   --var bucket="$BUCKET" --var prefix="$PREFIX" \
   --var input_image_uri="$INPUT_IMAGE_URI" --var base_image="$CANDIDATE_IMAGE" \
   --json
@@ -558,17 +560,8 @@ npa workbench workflow preflight-images "$SPEC" --project "$PROJECT" \
   --json
 ```
 
-Prepare a durable run ID, then prove the selected immutable image is pullable
-with that project before submitting. Record the `run_id` returned by
-`prepare-run --json`; do not manufacture one by parsing human output.
-
-```bash
-npa workbench workflow prepare-run "$SPEC" --project "$PROJECT" --json
-npa workbench workflow preflight-images "$SPEC" --project "$PROJECT" \
-  --var bucket="$BUCKET" --var prefix="$PREFIX" \
-  --var input_image_uri="$INPUT_IMAGE_URI" --var base_image="$CANDIDATE_IMAGE" \
-  --json
-```
+The explicitly scoped image preflight above is the one preflight for this run;
+do not repeat it with a different context, pull-secret config, or prefix.
 
 Only after all legal/access/image gates pass, submit through the ordinary
 runtime. This neutral image intentionally contains no NPA CLI, so `--stage-src`
@@ -581,8 +574,6 @@ included only when the operator needs it for approved runtime component fetches;
 it is never written into the plan or image.
 
 ```bash
-RUN_ID="hy-world-visual-$(date -u +%Y%m%dt%H%M%Sz)"
-PREFIX="operator-runs/hy-world/$RUN_ID"
 RUN_SKY_STATE="$TASK_DIR/$RUN_ID"
 KUBECONFIG="$KUBECONFIG" \
 npa workbench workflow submit "$SPEC" --project "$PROJECT" --run-id "$RUN_ID" \

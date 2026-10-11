@@ -588,10 +588,12 @@ images:
       Candidate zero-payload runtime-fetch bootstrap. Tencent HY-WORLD 2.0's
       2026-04-15 Community License covers source and inference code as well as
       weights, so all Tencent bytes are operator runtime fetches at immutable
-      references. The image itself has no Tencent payload, but it remains
-      unbuilt and publication-quarantined until its complete component closure,
-      OCI layers/history/SBOM, secret scan, source/weight absence scan and a
-      real exact-digest GPU result are accepted. The runtime has no synthetic
+      references. The image itself has no Tencent payload. A prior
+      operator-private bootstrap completed built-byte validation, but the public
+      candidate remains unbuilt and publication-quarantined until a public
+      digest, complete component closure, OCI layers/history/SBOM, secret scan,
+      source/weight absence scan and a real exact-digest GPU result are accepted.
+      The runtime has no synthetic
       acceptance flag or local territory/MAU attestation: Tencent documents use
       as its mechanism, and the operator remains responsible for those external
       facts. HY-World output is never sent to a trainer because Section 5(b)
