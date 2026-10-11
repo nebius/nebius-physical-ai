@@ -4317,6 +4317,51 @@ def test_workflow_status_reads_json_queue(monkeypatch, tmp_path) -> None:
     assert result.job_id == "42"
 
 
+def test_workflow_status_rejects_conflicting_queue_diagnostics(
+    monkeypatch, tmp_path
+) -> None:
+    """A successful queue payload cannot override an error on stderr."""
+
+    sky_bin = _fake_sky(tmp_path)
+
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout='[{"job_id": 42, "name": "run", "status": "RUNNING"}]',
+            stderr="error: controller connection was refused\n",
+        ),
+    )
+
+    result = workflow_status("42", sky_bin=sky_bin)
+
+    assert result.status == "UNKNOWN"
+    assert result.error == "managed job queue response is malformed or has conflicting diagnostics"
+
+
+def test_workflow_status_allows_benign_queue_diagnostics(monkeypatch, tmp_path) -> None:
+    """Structured queue output retains the pinned benign-warning policy."""
+
+    sky_bin = _fake_sky(tmp_path)
+
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout='[{"job_id": 42, "name": "run", "status": "RUNNING"}]',
+            stderr="warning: refreshing managed jobs queue\n",
+        ),
+    )
+
+    result = workflow_status("42", sky_bin=sky_bin)
+
+    assert result.status == "RUNNING"
+
+
 def test_workflow_status_treats_successful_empty_queue_as_verified_absence(
     monkeypatch, tmp_path
 ) -> None:
