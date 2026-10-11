@@ -2037,7 +2037,13 @@ def sky_environment(
         env["SKYPILOT_USER_ID"] = f"npa-{state_digest}"
     env["PYTHONUNBUFFERED"] = "1"
     repo_src = Path(__file__).resolve().parents[3]
-    env["PYTHONPATH"] = str(repo_src) + os.pathsep + env.get("PYTHONPATH", "")
+    existing_pythonpath = env.get("PYTHONPATH", "").split(os.pathsep)
+    env["PYTHONPATH"] = os.pathsep.join(
+        [
+            str(repo_src),
+            *(item for item in existing_pythonpath if item != str(repo_src)),
+        ]
+    )
     from npa.clients.config import NPA_CONFIG_DIR
     from npa.orchestration.skypilot.local_api import isolated_api_environment
 

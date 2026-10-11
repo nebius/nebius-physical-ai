@@ -7374,3 +7374,25 @@ def test_native_cleanup_rechecks_actual_provider_incarnation(monkeypatch, tmp_pa
     )
     assert result.job_id == "42" and len(checks) == 2
     assert cleanup_check() == "c" * 64 and len(checks) == 3
+
+
+def test_sky_environment_is_idempotent_for_returned_environment(tmp_path) -> None:
+    from npa.orchestration.skypilot import cleanup
+
+    root = tmp_path / "isolated"
+    supplied = {
+        "HOME": str(tmp_path / "operator"),
+        "NPA_CONFIG_DIR": str(tmp_path / "config"),
+        "KUBECONFIG": str(tmp_path / "missing-kubeconfig"),
+        "PYTHONPATH": os.pathsep.join(["first-source", "", "last-source"]),
+    }
+    first = cleanup.sky_environment(root, environment=supplied)
+    second = cleanup.sky_environment(root, environment=first)
+    assert second == first
+    repo_src = str(Path(cleanup.__file__).resolve().parents[3])
+    assert second["PYTHONPATH"].split(os.pathsep) == [
+        repo_src,
+        "first-source",
+        "",
+        "last-source",
+    ]
