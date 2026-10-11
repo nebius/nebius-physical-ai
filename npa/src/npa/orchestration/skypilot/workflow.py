@@ -2720,8 +2720,7 @@ def workflow_status(
                 result, "malformed rows or conflicting diagnostics"
             ),
         )
-
-    status = _status_from_queue_payload(result.stdout, job_id)
+    status = _status_from_queue_rows(rows, job_id)
     if not status:
         # A verified queue response is authoritative: if the recorded id is
         # absent, the managed-jobs controller has lost (or garbage-collected) its
@@ -5413,8 +5412,14 @@ def _status_from_queue_payload(output: str, job_id: str) -> str:
     jobs = queue_rows_from_output(output)
     if jobs is None:
         return ""
+    return _status_from_queue_rows(jobs, job_id)
+
+
+def _status_from_queue_rows(jobs: list[dict[str, Any]], job_id: str) -> str:
+    """Return the aggregate state for one job in verified SkyPilot queue rows."""
+
     statuses = []
-    for job in jobs or []:
+    for job in jobs:
         current_id = _queue_row_job_id(job)
         if current_id == str(job_id):
             statuses.append(str(job.get("status") or "").upper())
