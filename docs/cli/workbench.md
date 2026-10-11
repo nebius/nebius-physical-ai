@@ -10,6 +10,10 @@ Physical AI workbench tools.
 Options
 --help  Show this message and exit.
 Commands
+whoami  Show verified identity and workspace access without a personal cloud account.
+submit  Start a workflow and return its run ID; unchanged retries reuse that run.
+runs  List the authenticated person's runs in one workspace.
+run  Show an existing run's status, or manage that run with --action.
 specialists  Self-hosted specialist agents and durable task monitoring.
 antioch  Run Antioch simulations and collect policy-compatible data.
 lerobot  LeRobot policy training, evaluation, serving, and inference.
@@ -52,6 +56,7 @@ dataset  Dataset-of-record: ingest, validate, curate, and query production senso
 insights  Insights: lineage graph + common metrics store over workflow-run artifacts.
 vlm-eval  VLM evaluation for sim-to-real pipeline gating.
 token-factory  Nebius Token Factory hosted inference (zero-GPU, OpenAI-compatible).
+access  Configure Workbench accounts, allocations, connections, and service access.
 byof  Onboard an OSS repo as a BYOF container (Tier 0 of the OSS ladder).
 workflow  Multi-stage training workflow orchestration.
 health  Preflight health checks for workbench workflows.
@@ -69,6 +74,10 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 
 | Command | Description |
 | --- | --- |
+| `whoami` | Show verified identity and workspace access without a personal cloud account. |
+| `submit` | Start a workflow and return its run ID; unchanged retries reuse that run. |
+| `runs` | List the authenticated person's runs in one workspace. |
+| `run` | Show an existing run's status, or manage that run with --action. |
 | `specialists` | Self-hosted specialist agents and durable task monitoring. |
 | `antioch` | Run Antioch simulations and collect policy-compatible data. |
 | `lerobot` | LeRobot policy training, evaluation, serving, and inference. |
@@ -109,6 +118,7 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 | `insights` | Insights: lineage graph + common metrics store over workflow-run artifacts. |
 | `vlm-eval` | VLM evaluation for sim-to-real pipeline gating. |
 | `token-factory` | Nebius Token Factory hosted inference (zero-GPU, OpenAI-compatible). |
+| `access` | Configure Workbench accounts, allocations, connections, and service access. |
 | `byof` | Onboard an OSS repo as a BYOF container (Tier 0 of the OSS ladder). |
 | `workflow` | Multi-stage training workflow orchestration. |
 | `health` | Preflight health checks for workbench workflows. |
@@ -119,7 +129,7 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 
 ```bash
 npa workbench --help
-npa workbench specialists --help
+npa workbench whoami --help
 ```
 
 Regenerate this page with `bash scripts/build_docs.sh` after changing `workbench`.
