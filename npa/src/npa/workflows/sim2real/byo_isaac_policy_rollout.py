@@ -435,7 +435,7 @@ try:
     acfg = agent_cfg.to_dict() if hasattr(agent_cfg, "to_dict") else dict(agent_cfg)
     from npa.workflows.sim2real.isaac_franka_policy import (
         configure_stock_franka_actor, create_stock_franka_runner,
-        validate_stock_franka_checkpoint,
+        validate_stock_franka_checkpoint, reset_stock_franka_actor,
     )
     stock_policy = configure_stock_franka_actor(acfg, task=TASK)
     runner = create_stock_franka_runner(
@@ -454,8 +454,7 @@ try:
         print("ROLLOUT_UNTRAINED_POLICY (no checkpoint yet)", flush=True)
     policy = runner.get_inference_policy(device=SIM_DEVICE)
     if stock_policy:
-        with torch.inference_mode():
-            runner.alg.actor.reset()
+        reset_stock_franka_actor(runner.alg.actor)
     realN = int(getattr(env.unwrapped, "num_envs", N) or N)
     try:
         reset_out = env.reset()
@@ -624,8 +623,7 @@ try:
         a_np = actions.detach().cpu().numpy()
         obs, _, dones, extras = env.step(actions)
         if stock_policy:
-            with torch.inference_mode():
-                runner.alg.actor.reset(dones)
+            reset_stock_franka_actor(runner.alg.actor, dones)
         simulation_clock.advance()
         done_np = dones.detach().cpu().numpy().astype(bool)
         episode_boundaries.advance(done_np.tolist(), _step)

@@ -585,7 +585,7 @@ try:
     acfg = agent_cfg.to_dict() if hasattr(agent_cfg, "to_dict") else dict(agent_cfg)
     from npa.workflows.sim2real.isaac_franka_policy import (
         configure_stock_franka_actor, create_stock_franka_runner,
-        validate_stock_franka_checkpoint,
+        validate_stock_franka_checkpoint, reset_stock_franka_actor,
     )
     stock_policy = configure_stock_franka_actor(acfg, task=TASK)
     print("AGENT_CFG_KEYS", sorted(acfg.keys()), flush=True)
@@ -666,8 +666,7 @@ try:
         ) from exc
     policy = runner.get_inference_policy(device="cuda:0")
     if stock_policy:
-        with torch.inference_mode():
-            runner.alg.actor.reset()
+        reset_stock_franka_actor(runner.alg.actor)
     _pb = int(_pt.shape[0]) if torch.is_tensor(_pt) and _pt.ndim >= 1 else realN
     # N stays the true env count; only WARN if the policy obs batch disagrees so a
     # genuine multi-env mismatch is visible in logs rather than silently collapsing.
@@ -846,8 +845,7 @@ try:
             actions = actions.reshape(N, -1)
         obs, _, dones, extras = env.step(actions)
         if stock_policy:
-            with torch.inference_mode():
-                runner.alg.actor.reset(dones)
+            reset_stock_franka_actor(runner.alg.actor, dones)
         simulation_clock.advance()
         try:
             done_np = dones.detach().cpu().numpy().astype(bool)

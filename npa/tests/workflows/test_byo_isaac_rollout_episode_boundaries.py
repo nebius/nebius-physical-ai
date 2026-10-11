@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 
 from npa.workflows.sim2real.byo_isaac_policy_rollout import ISAAC_ROLLOUT_SCRIPT
+from npa.workflows.sim2real.isaac_franka_policy import reset_stock_franka_actor
 
 
 HORIZON = 300
@@ -157,6 +158,7 @@ def _simulation_namespace(environment):
         "uenv": environment,
         "policy": environment.policy,
         "stock_policy": True,
+        "reset_stock_franka_actor": reset_stock_franka_actor,
         "runner": SimpleNamespace(
             alg=SimpleNamespace(actor=SimpleNamespace(reset=environment.reset_policy))
         ),

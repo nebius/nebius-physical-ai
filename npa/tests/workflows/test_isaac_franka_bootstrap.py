@@ -20,27 +20,21 @@ from npa.workflows.sim2real.byo_isaac_trainer import (
 from npa.workflows.sim2real.isaac_job_payload import decode_compressed_bash_args
 
 
-def _native_inference_reset_program(script):
-    resets = [
+def _native_inference_reset_handler(script):
+    from npa.workflows.sim2real.isaac_franka_policy import reset_stock_franka_actor
+
+    calls = [
         node
         for node in ast.walk(ast.parse(script))
-        if isinstance(node, ast.If)
-        and isinstance(node.test, ast.Name)
-        and node.test.id == "stock_policy"
-        and any(
-            isinstance(child, ast.Call)
-            and isinstance(child.func, ast.Attribute)
-            and child.func.attr == "reset"
-            and len(child.args) == 1
-            for child in ast.walk(node)
-        )
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "reset_stock_franka_actor"
+        and len(node.args) == 2
     ]
-    assert len(resets) == 1
-    return compile(
-        ast.fix_missing_locations(ast.Module(body=resets, type_ignores=[])),
-        "native-inference-reset",
-        "exec",
-    )
+    assert len(calls) == 1
+    assert ast.unparse(calls[0].args[0]) == "runner.alg.actor"
+    assert isinstance(calls[0].args[1], ast.Name) and calls[0].args[1].id == "dones"
+    return reset_stock_franka_actor
 
 
 class TestNativeBootstrapCheckpoint:
@@ -169,15 +163,7 @@ class TestNativeBootstrapCheckpoint:
         assert self.torch.is_inference(hidden)
         before = hidden.clone()
         dones = self.torch.tensor([False, True, False, True])
-        exec(
-            _native_inference_reset_program(script),
-            {
-                "torch": self.torch,
-                "runner": runner,
-                "stock_policy": True,
-                "dones": dones,
-            },
-        )
+        _native_inference_reset_handler(script)(runner.alg.actor, dones)
         assert self.torch.equal(hidden[:, ~dones], before[:, ~dones])
         assert not hidden[:, dones].any()
 

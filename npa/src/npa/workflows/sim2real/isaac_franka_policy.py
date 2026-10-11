@@ -38,6 +38,24 @@ def _tensor(value: Any) -> Any:
     return getattr(value, "torch", value)
 
 
+def reset_stock_franka_actor(actor: Any, dones: Any = None) -> None:
+    """Reset native recurrent state in the context that created inference tensors.
+
+    Args:
+        actor: The native recurrent actor used by stock-Franka inference.
+        dones: Completed-environment mask, or None to clear all hidden state.
+    Returns:
+        None; only the native actor's recurrent state is reset.
+    Raises:
+        RuntimeError: The native actor rejects its hidden state or reset mask.
+        AttributeError: The actor lacks the native reset API.
+    """
+    import torch
+
+    with torch.inference_mode():
+        actor.reset(dones)
+
+
 def _episode_clock(task: Any) -> Any:
     import torch
 
