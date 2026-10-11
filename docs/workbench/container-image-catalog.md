@@ -2,6 +2,14 @@
 
 [Workbench docs](README.md)
 
+The optional [team gateway](team-access.md) has a separate CPU service recipe
+at `npa/docker/team-server/Dockerfile`. It is built into an operator-controlled
+private registry and is outside the public image plan and release table below.
+Its Python and kubectl bases are digest-pinned. A private deployment does not
+establish a supported public release. Its isolated SkyPilot environment includes
+the AWS CLI for existing EKS cluster authentication; runtime AWS profiles stay
+in private configuration, and the execution policy remains Kubernetes-only.
+
 The **2026-10-10 UTC audit** of `main` at `e0819bd13` verified all **27 current
 release tags** against their recorded GHCR digests and all **three additional
 table aliases** anonymously. The GPU chart matches the publishing plan and
