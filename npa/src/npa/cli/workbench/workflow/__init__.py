@@ -10911,13 +10911,15 @@ def _report_gpu_discovery(inventory, catalog, sky_error, resolutions, json_outpu
         )
     if catalog.is_empty:
         typer.echo("accelerators: none advertised")
-        return
-    typer.echo(f"context: {catalog.context or 'all'}")
-    for name in sorted(catalog.quantities_by_accelerator, key=str.casefold):
-        quantities = sorted(catalog.quantities_by_accelerator[name])
-        offered = ", ".join(str(value) for value in quantities)
-        typer.echo(f"  {name}: requestable per node {offered}")
-        typer.echo(f"    export NPA_WORKFLOW_GPU_ACCELERATOR={name}:{quantities[0]}")
+    else:
+        typer.echo(f"context: {catalog.context or 'all'}")
+        for name in sorted(catalog.quantities_by_accelerator, key=str.casefold):
+            quantities = sorted(catalog.quantities_by_accelerator[name])
+            offered = ", ".join(str(value) for value in quantities)
+            typer.echo(f"  {name}: requestable per node {offered}")
+            typer.echo(
+                f"    export NPA_WORKFLOW_GPU_ACCELERATOR={name}:{quantities[0]}"
+            )
     for item in resolutions:
         if item.get("error"):
             typer.echo(f"  {item['requested']}: {item['error']}")

@@ -28,7 +28,10 @@ from npa.orchestration.skypilot.image_bootstrap_contract import (
     ImageContractEvidence,
     store_cached_evidence,
 )
-from npa.orchestration.skypilot.k8s_gpu_catalog import KubernetesGpuCatalog
+from npa.orchestration.skypilot.k8s_gpu_catalog import (
+    KubernetesGpuCatalog,
+    KubernetesGpuInventory,
+)
 from npa.orchestration.skypilot.registry_preflight import ImagePullCheck
 from npa.orchestration.skypilot.workflow import SkyPilotSubmitError
 from npa.provisioning_journal import OperationJournalError
@@ -965,6 +968,35 @@ def test_workflow_gpus_json_reports_missing_required_images_without_traceback(
             ),
         }
     ]
+
+
+def test_workflow_gpus_text_reports_missing_required_images_with_empty_catalog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inventory = KubernetesGpuInventory("npa-cluster", 0, 0, 0, 0, (), {})
+    catalog = KubernetesGpuCatalog({}, context="npa-cluster")
+    monkeypatch.setattr(
+        workflow_cli,
+        "_inspect_workflow_gpus",
+        lambda *_args: (inventory, catalog, ""),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "gpus",
+            "--spec",
+            str(REPO_ROOT / "workflows/testing/digital-twin-campus-render.yaml"),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "accelerators: none advertised" in result.output
+    assert "workflow plan: Each of config.runtime_image requires an explicit" in (
+        result.output
+    )
 
 
 def test_workflow_gpus_resolves_templated_accelerator_config(
