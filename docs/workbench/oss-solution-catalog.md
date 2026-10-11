@@ -38,7 +38,7 @@ tracks the GPU qualification; the workflow adds no new image or model admission.
 | AprilTag 3 | `AprilRobotics/apriltag` `94be7839…` (`v3.4.5`) | `apriltag_real_image_fiducial_detection` | labeled corner metrics + camera-consumer records + annotated PNGs + `apriltag_fiducial_evaluation.json` | `byof-apriltag.yaml` |
 | robomimic | `ARISE-Initiative/robomimic` `d309eae…` | `lift_ph_lowdim_checkpoint_reload_action` (deferred) | `robomimic-smoke.json` (not produced) | `byof-robomimic.yaml` |
 | Open Dreamer (world model, **2-GPU min**) | `next-state/open-dreamer` `2b10640` | `dreamer4_tokenizer_train_two_gpu` | `open_dreamer_world_model_2gpu.json` | `byof-open-dreamer.yaml` |
-| Tencent HY-World 2.0 (**runtime-fetch candidate; terms gate unresolved**) | `Tencent-Hunyuan/HY-World-2.0` `df9988ef…` | `hy_world_2_image_conditioned_world_generation` | `hy_world_image_to_world.json` + generated scene camera render + PLY/SPZ + verified RRD | [`byof-hy-world.yaml`](../../workflows/testing/byof-hy-world.yaml) · [guide](byof-hy-world.md) |
+| Tencent HY-World 2.0 (**runtime-fetch candidate; live qualification pending**) | `Tencent-Hunyuan/HY-World-2.0` `df9988ef…` | `hy_world_2_image_conditioned_world_generation` | `hy_world_image_to_world.json` + generated scene camera render + PLY/SPZ + verified RRD | [`byof-hy-world.yaml`](../../workflows/testing/byof-hy-world.yaml) · [guide](byof-hy-world.md) |
 | Alibaba Wan 2.2 TI2V-5B | `Wan-Video/Wan2.2` `42bf4cf…` | `wan2.2_ti2v_5b_text_to_video` | capability JSON + runtime inventory + MP4 | `byof-wan2.2.yaml` |
 | Lightricks LTX-2.5 (**accepted public image; entitled runtime fetch**) | `Lightricks/LTX-2` `fd4ded7f…` | `ltx2_5_text_to_video` | `ltx2_5_text_to_video.json` + provenance manifest + MP4 | `byof-ltx2.yaml` |
 | Alibaba Wan 2.2 TI2V-5B (**4-GPU distributed**) | same pinned source/checkpoint | `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | multi-GPU capability JSON + rank topology + runtime inventory + MP4 | `byof-wan2.2-multigpu.yaml` |
@@ -82,7 +82,7 @@ tracks the GPU qualification; the workflow adds no new image or model admission.
 | Open Dreamer | `dreamer4_dynamics_train_two_gpu` | **accepted** | Same run (`scripts/train_dynamics.py` exit 0, 15000 steps on the Minecraft latents) |
 | Open Dreamer | `dreamer4_action_conditioned_dream_rollout` | **accepted** | Same run (`sample_video` context→dream; dream maintains coherent Minecraft scenery across the 32-frame horizon; dream PSNR 17.3 dB) |
 | Open Dreamer | `world_model_rerun_visualization` | **accepted** | Same run (21 MB `.rrd` = 64 frames × observation/dream/gt_decoded + 10 reconstruction grids, `rerun-sdk==0.31.4`, loaded live into the agent Rerun viewer) |
-| Tencent HY-World 2.0 | `hy_world_2_image_conditioned_world_generation` / `hy_world_2_generated_scene_camera_render` / `hy_world_2_factual_scene_report` | **unvalidated runtime-fetch candidate** | Candidate code and neutral bootstrap only. Exact component access, a private image digest, a private Qwen3-VL endpoint, and real GPU evidence remain required; no accepted scene artifact is claimed. |
+| Tencent HY-World 2.0 | `hy_world_2_image_conditioned_world_generation` / `hy_world_2_generated_scene_camera_render` / `hy_world_2_factual_scene_report` | **unvalidated runtime-fetch candidate** | Candidate runtime-fetch workflow and neutral bootstrap only. Tencent and separate SAM 3 provider access remain runtime prerequisites; live GPU qualification and an accepted scene artifact are not claimed. |
 | Wan 2.2 TI2V-5B | `wan2.2_ti2v_5b_text_to_video` | **accepted** | exact zero-payload public-dev digest with Torch 2.13.0/CUDA 13.0: native TI2V-5B generation on RTX PRO 6000 Blackwell (`sm_120`) |
 | Wan 2.2 TI2V-5B | `wan2.2_decoded_mp4_validation` | **accepted** | same exact-digest run: 2,807,385-byte H.264 MP4, 1280x704, 17 frames at 24 fps; full decode and non-uniform-content gates passed |
 | Wan 2.2 TI2V-5B | `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | **accepted historical evidence** | prior Torch 2.7.1/CUDA 12.8/NCCL 2.27.7 runtime: one node, 4×B200 (`sm_100`), world size 4, T5/DiT FULL_SHARD FSDP, Ulysses size 4, and official `generate.py`; current NCCL 2.29.7 gate is not yet live-qualified |
@@ -509,7 +509,7 @@ run time. Actions parse to the real 27-binary / 121-categorical VPT layout that
 training budget (`OD_TOK_STEPS`/`OD_DYN_STEPS`; upstream trains ~200k). LPIPS is
 left off (no HF download); FVD/I3D scoring (`eval_fvd.py`) remains a follow-up.
 
-### Tencent HY-World 2.0 (terms-gated image-to-world candidate)
+### Tencent HY-World 2.0 (runtime-fetch image-to-world candidate; live qualification pending)
 
 The candidate selects the released image-conditioned route rather than calling
 the newer hosted-product branding or a reconstruction-only path equivalent to
@@ -519,9 +519,9 @@ world generation. It pins the upstream source to
 `ac2ad97ecb043fe80c2f19cd1898006becb9d66e`, and Qwen Image Edit / Qwen3-VL to
 their runtime-only immutable references. The full trajectory closure also pins
 ZIM, Grounding DINO, MoGe, Uni3C, and Meta SAM 3. SAM 3 has a separate gated
-Meta/Hugging Face approval; the zero-payload bootstrap and its workflow are
-reviewable, but no Tencent or SAM 3 bytes have been fetched and no B200 claim
-exists.
+Meta/Hugging Face approval. The zero-payload bootstrap and its workflow are
+reviewable; runtime payload fetching and B200 scene qualification remain pending,
+and no accepted scene artifact or public image is claimed.
 
 | Capability | Status | Upstream basis |
 | --- | --- | --- |

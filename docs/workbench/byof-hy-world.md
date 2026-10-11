@@ -1,6 +1,6 @@
 # HY-World 2.0 image-to-world candidate
 
-[Workflow](../../workflows/testing/byof-hy-world.yaml) · [solution catalog](oss-solution-catalog.md#tencent-hy-world-20-terms-gated-image-to-world-candidate) · [BYOF onboarding](../../skills/workflows/byof-onboard/SKILL.md) · [redistribution record](../../npa/docker/workbench/hy-world/REDISTRIBUTION.md)
+[Workflow](../../workflows/testing/byof-hy-world.yaml) · [solution catalog](oss-solution-catalog.md#tencent-hy-world-20-runtime-fetch-image-to-world-candidate-live-qualification-pending) · [BYOF onboarding](../../skills/workflows/byof-onboard/SKILL.md) · [redistribution record](../../npa/docker/workbench/hy-world/REDISTRIBUTION.md)
 
 This is a Tier-1 BYOF **candidate**, operated only through the normal
 `npa workbench workflow` / SkyPilot control plane. It adds no service, tool
@@ -199,6 +199,8 @@ run: |
 YAML
 
 npa workbench health preflight --project "$PROJECT" --checks nebius,hf --json
+# `--plan-only` renders an npa.workflow specification; it is not a raw-Sky-YAML
+# dry-run or a substitute for this managed-job submission.
 npa workbench workflow submit "$SERVICE_SPEC" --run-id "$VLLM_RUN_ID" \
   --project "$PROJECT" --infra "k8s/$K8S_CONTEXT" \
   --var "K8S_CONTEXT=$K8S_CONTEXT" --secret-env HF_TOKEN --output-format json
@@ -321,6 +323,8 @@ PROJECT_ID="<selected-project-id>"
 PROJECT="<configured-project-alias>"
 SPEC="workflows/testing/byof-hy-world.yaml"
 HY_CLUSTER_TARGET="<verified-npa-kubernetes-target>"
+K8S_CONTEXT="<verified-private-kubernetes-context>"
+KUBECONFIG="<task-owned-kubeconfig>"
 GPU_CLUSTER_ID="<verified-project-gpu-cluster-id>"
 B200_NODE_GROUP="hy-world-b200-8"
 
@@ -345,6 +349,53 @@ provider reports the requested GPU-cluster attachment, disk class, and size
 before recording the group as ready. If either readiness or GPU discovery fails,
 retain the returned provider reason; do not change the cluster, network, or an
 unrelated node group to make the workflow fit.
+
+Managed Kubernetes can expose `nebius.com/gpu-name=B200` before the NVIDIA
+product label that SkyPilot 0.12 recognizes arrives. If `workflow gpus` cannot
+resolve `B200:8`, use NPA's reviewed catalog helper **only after** identifying
+the one node owned by `$B200_NODE_GROUP`. It reads the whole context for an
+inventory but passes a one-node inventory to the mutating helper, so it cannot
+label another GPU node. It refuses an unexpected node, an unknown product, or
+an existing non-`b200` SkyPilot label.
+
+```bash
+B200_NODE="<exact-node-created-by-B200_NODE_GROUP>"
+npa/.venv/bin/python - "$K8S_CONTEXT" "$KUBECONFIG" "$B200_NODE" <<'PY'
+import json
+import sys
+from dataclasses import replace
+
+from npa.orchestration.skypilot.k8s_gpu_catalog import (
+    discover_kubernetes_gpu_inventory,
+    label_known_kubernetes_gpus_for_skypilot,
+)
+
+context, kubeconfig, node_name = sys.argv[1:]
+inventory = discover_kubernetes_gpu_inventory(context=context, kubeconfig=kubeconfig)
+if inventory.error or inventory.diagnostics:
+    raise SystemExit("GPU inventory is not authoritative; do not label a node")
+nodes = tuple(node for node in inventory.nodes if node.name == node_name)
+if len(nodes) != 1:
+    raise SystemExit("expected exactly one task-owned B200 node")
+labels = dict(inventory.node_labels.get(node_name) or {})
+if labels.get("skypilot.co/accelerator") not in {None, "b200"}:
+    raise SystemExit("refusing to change a non-B200 SkyPilot label")
+if labels.get("nebius.com/gpu-name") != "B200" or nodes[0].allocatable != 8:
+    raise SystemExit("node is not the declared allocatable B200:8 target")
+scoped = replace(inventory, nodes=nodes, node_labels={node_name: labels})
+changed = label_known_kubernetes_gpus_for_skypilot(
+    context=context, kubeconfig=kubeconfig, inventory=scoped
+)
+print(json.dumps({"task_owned_node": node_name, "labels_added": changed}))
+PY
+
+npa workbench workflow gpus --project "$PROJECT" --cluster "$HY_CLUSTER_TARGET" \
+  --spec "$SPEC" --json
+```
+
+The normal GPU discovery result must then offer `B200:8`; record the
+before/after node labels and the resolved request. Do not rerun this repair on
+an already-labelled node or use it to relabel shared H200/foreign B200 capacity.
 
 Cancel a run before removing only the group named above. This removes the
 task-owned node group and its matching local NPA state; it never removes the
@@ -372,7 +423,6 @@ control. This example uses placeholders deliberately:
 SPEC="workflows/testing/byof-hy-world.yaml"
 PROJECT="<configured-project-alias>"
 BUCKET="<private-bucket>"
-PREFIX=operator-runs/hy-world
 INPUT_IMAGE_URI="s3://${BUCKET}/inputs/scene.png"
 
 # CANDIDATE_IMAGE was read from the structured private-build receipt above.
@@ -395,10 +445,118 @@ Workbench submit surface selects the durable runtime even when an agent omits
 `--runtime`, and it rejects `--no-runtime`; the explicit `--runtime` below is
 only documentary redundancy, not a hidden required flag.
 
-The resolved `--output-root` is `s3://$BUCKET/$PREFIX`. The standard BYOF
-runner appends the run ID once, so the declared and uploaded artifacts are both
-under `s3://$BUCKET/$PREFIX/<run-id>/`. Overriding `prefix` therefore changes
-the real upload location and every output declaration together.
+The resolved `--output-root` is `s3://$BUCKET/$PREFIX`. `prefix` is also the
+durable runtime-ledger namespace, so every **fresh** run needs a unique prefix.
+The standard BYOF runner places its declared output artifacts beneath that
+namespace and the run ID. Reuse the exact prefix only when resuming that exact
+run; changing it for a fresh run keeps both the ledger and every declared
+artifact URI independent.
+
+### Private Kubernetes image authority
+
+`--registry-auth` is for VM SONIC image pulls. It does not attach credentials
+to a raw Kubernetes workload. For an operator-private image, create one
+task-owned `kubernetes.io/dockerconfigjson` Secret from the **exact registry
+host** that owns `CANDIDATE_IMAGE`, then bind it only in a new task-specific
+SkyPilot config. Do not modify a shared SkyPilot config, the default Service
+Account, or a pre-existing Secret. The following command reads only the exact
+host's Docker credential helper response (or exact `auths` entry), sends the
+generated Secret manifest directly to `kubectl`, and never writes credential
+material to a file or command argument.
+
+```bash
+K8S_CONTEXT="<verified-private-kubernetes-context>"
+KUBECONFIG="<task-owned-kubeconfig>"
+TASK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/hy-world-run.XXXXXX")"
+chmod 0700 "$TASK_DIR"
+PULL_SECRET="hy-world-private-image-pull"
+BASE_SKY_CONFIG="<task-owned-base-skypilot-config>"
+PULL_SKY_CONFIG="$TASK_DIR/skypilot-private-pull.yaml"
+REGISTRY_HOST="${CANDIDATE_IMAGE%%/*}"
+
+if kubectl --kubeconfig "$KUBECONFIG" --context "$K8S_CONTEXT" \
+  get secret "$PULL_SECRET" >/dev/null 2>&1; then
+  echo "refusing to adopt an existing pull Secret" >&2
+  exit 1
+fi
+
+npa/.venv/bin/python - "$REGISTRY_HOST" "$PULL_SECRET" <<'PY' \
+  | kubectl --kubeconfig "$KUBECONFIG" --context "$K8S_CONTEXT" create -f -
+import base64
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+host, name = sys.argv[1:]
+config_path = Path.home() / ".docker" / "config.json"
+config = json.loads(config_path.read_text(encoding="utf-8"))
+auths = config.get("auths") if isinstance(config.get("auths"), dict) else {}
+helpers = config.get("credHelpers") if isinstance(config.get("credHelpers"), dict) else {}
+helper = helpers.get(host) or config.get("credsStore")
+if helper:
+    reply = subprocess.check_output(
+        [f"docker-credential-{helper}", "get"], input=host, text=True
+    )
+    credential = json.loads(reply)
+    user, secret = credential.get("Username", ""), credential.get("Secret", "")
+else:
+    encoded = str((auths.get(host) or {}).get("auth") or "")
+    decoded = base64.b64decode(encoded).decode("utf-8") if encoded else ""
+    user, separator, secret = decoded.partition(":")
+    if not separator:
+        raise SystemExit("no exact Docker credential for the private registry host")
+if not user or not secret:
+    raise SystemExit("Docker credential helper returned an incomplete exact-host credential")
+dockerconfig = {"auths": {host: {"auth": base64.b64encode(f"{user}:{secret}".encode()).decode()}}}
+secret_data = base64.b64encode(json.dumps(dockerconfig, separators=(",", ":")).encode()).decode()
+print(json.dumps({
+    "apiVersion": "v1",
+    "kind": "Secret",
+    "metadata": {"name": name, "labels": {
+        "npa.nebius.com/owner": "hy-world",
+        "npa.nebius.com/purpose": "private-image-pull",
+    }},
+    "type": "kubernetes.io/dockerconfigjson",
+    "data": {".dockerconfigjson": secret_data},
+}))
+PY
+
+npa/.venv/bin/python - "$BASE_SKY_CONFIG" "$PULL_SKY_CONFIG" "$PULL_SECRET" <<'PY'
+import copy
+import sys
+from pathlib import Path
+import yaml
+
+base, output = map(Path, sys.argv[1:3])
+secret = sys.argv[3]
+config = yaml.safe_load(base.read_text(encoding="utf-8")) or {}
+if not isinstance(config, dict):
+    raise SystemExit("SkyPilot base config must be a mapping")
+derived = copy.deepcopy(config)
+kubernetes = derived.setdefault("kubernetes", {})
+pod_config = kubernetes.setdefault("pod_config", {})
+spec = pod_config.setdefault("spec", {})
+spec["imagePullSecrets"] = [{"name": secret}]
+Path(output).write_text(yaml.safe_dump(derived, sort_keys=False), encoding="utf-8")
+Path(output).chmod(0o600)
+PY
+```
+
+The generated config is an input to both the exact Kubernetes image preflight
+and the eventual submit; a verified pull probe is not proof that a later submit
+using a different config can pull the image. The normal preflight below is the
+only image authority check needed for that exact image/config/namespace:
+
+```bash
+KUBECONFIG="$KUBECONFIG" \
+npa workbench workflow preflight-images "$SPEC" --project "$PROJECT" \
+  --infra "k8s/$K8S_CONTEXT" --config-path "$PULL_SKY_CONFIG" \
+  --image-pull-secret "$PULL_SECRET" --image-bootstrap-timeout-seconds 0 \
+  --var bucket="$BUCKET" --var prefix="$PREFIX" \
+  --var input_image_uri="$INPUT_IMAGE_URI" --var base_image="$CANDIDATE_IMAGE" \
+  --json
+```
 
 Prepare a durable run ID, then prove the selected immutable image is pullable
 with that project before submitting. Record the `run_id` returned by
@@ -413,13 +571,25 @@ npa workbench workflow preflight-images "$SPEC" --project "$PROJECT" \
 ```
 
 Only after all legal/access/image gates pass, submit through the ordinary
-runtime. `HF_TOKEN` is included only when the operator needs it for approved
-runtime component fetches; it is never written into the plan or image.
+runtime. This neutral image intentionally contains no NPA CLI, so `--stage-src`
+is required: it content-addresses the checked-out NPA package into selected
+project storage and makes it available to the standard setup contract. Reuse
+the same explicit kubeconfig, task-derived pull config, and per-run isolated
+leaf for submit, status, logs, resume, and cancellation; ambient kubeconfig or
+a parent state directory may select a different controller. `HF_TOKEN` is
+included only when the operator needs it for approved runtime component fetches;
+it is never written into the plan or image.
 
 ```bash
-npa workbench workflow submit "$SPEC" --project "$PROJECT" --run-id "<run-id>" \
+RUN_ID="hy-world-visual-$(date -u +%Y%m%dt%H%M%Sz)"
+PREFIX="operator-runs/hy-world/$RUN_ID"
+RUN_SKY_STATE="$TASK_DIR/$RUN_ID"
+KUBECONFIG="$KUBECONFIG" \
+npa workbench workflow submit "$SPEC" --project "$PROJECT" --run-id "$RUN_ID" \
   --runtime --var bucket="$BUCKET" --var prefix="$PREFIX" \
   --var input_image_uri="$INPUT_IMAGE_URI" --var base_image="$CANDIDATE_IMAGE" \
+  --infra "k8s/$K8S_CONTEXT" --config-path "$PULL_SKY_CONFIG" \
+  --isolated-config-dir "$RUN_SKY_STATE" --stage-src --max-wait-seconds 0 \
   --secret-env NPA_HY_WORLD_LLM_ADDR --secret-env HF_TOKEN \
   --output-format json
 ```
@@ -436,9 +606,15 @@ closure gets a private, revision-keyed Hugging Face cache, avoiding shared
 All runtime control remains with the standard Workbench surface:
 
 ```bash
-npa workbench workflow status "<run-id>" --project "$PROJECT" --watch --json
-npa workbench workflow logs "<run-id>" --stage generate --project "$PROJECT" --follow
-npa workbench workflow artifacts "<run-id>" --project "$PROJECT" --json
+KUBECONFIG="$KUBECONFIG" \
+npa workbench workflow status "$RUN_ID" --project "$PROJECT" --watch --json \
+  --sky-bin "${NPA_SKYPILOT_BIN:?set the selected SkyPilot binary}" \
+  --isolated-config-dir "$RUN_SKY_STATE"
+KUBECONFIG="$KUBECONFIG" \
+npa workbench workflow logs "$RUN_ID" --stage generate --project "$PROJECT" --follow \
+  --sky-bin "${NPA_SKYPILOT_BIN:?set the selected SkyPilot binary}" \
+  --isolated-config-dir "$RUN_SKY_STATE"
+npa workbench workflow artifacts "$RUN_ID" --project "$PROJECT" --json
 ```
 
 If normal discovery cannot locate a run, use the exact durable workflow URI
@@ -453,9 +629,11 @@ project, config values, image digest, and secrets:
 
 ```bash
 npa workbench workflow submit "$SPEC" --project "$PROJECT" \
-  --resume-run "<run-id>" --runtime --resume \
+  --resume-run "$RUN_ID" --runtime --resume \
   --var bucket="$BUCKET" --var prefix="$PREFIX" \
   --var input_image_uri="$INPUT_IMAGE_URI" --var base_image="$CANDIDATE_IMAGE" \
+  --infra "k8s/$K8S_CONTEXT" --config-path "$PULL_SKY_CONFIG" \
+  --isolated-config-dir "$RUN_SKY_STATE" --stage-src --max-wait-seconds 0 \
   --secret-env NPA_HY_WORLD_LLM_ADDR --secret-env HF_TOKEN
 ```
 
@@ -464,7 +642,14 @@ previous managed job and every declared output are absent. To stop a live run,
 use the run-scoped, repeat-safe cancellation path:
 
 ```bash
-npa workbench workflow cancel "<run-id>" --project "$PROJECT" --json
+KUBECONFIG="$KUBECONFIG" \
+npa workbench workflow cancel "$RUN_ID" --project "$PROJECT" --json \
+  --sky-bin "${NPA_SKYPILOT_BIN:?set the selected SkyPilot binary}" \
+  --isolated-config-dir "$RUN_SKY_STATE"
+
+# Only after the HY run is terminal and evidence is in custody:
+kubectl --kubeconfig "$KUBECONFIG" --context "$K8S_CONTEXT" \
+  delete secret "$PULL_SECRET" --wait=true
 ```
 
 This terminal workflow creates no persistent service. Its owned durable outputs

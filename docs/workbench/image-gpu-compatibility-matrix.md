@@ -136,7 +136,7 @@ likewise predates its current coherent release.
 | `npa-sam2` | unverified | unverified | unverified | **verified** [native capability evidence](validation/studio-public-models-20260916.json) | unverified |
 | `npa-robomimic` (quarantined neutral candidate) | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; compatibility unknown; one-B200 hard gate deferred | unbuilt; not validated |
 | `npa-ltx2` | unverified runtime | unverified runtime | **verified** [accepted records](#accepted-release-evidence) | unverified runtime | unverified runtime |
-| `npa-hy-world` (quarantined zero-payload candidate) | unbuilt; no runtime/architecture evidence | unbuilt; no runtime/architecture evidence | unbuilt; no runtime/architecture evidence | unbuilt; planned 8-GPU target only, not validated | unbuilt; no runtime/architecture evidence |
+| `npa-hy-world` (quarantined zero-payload candidate) | private bootstrap only; HY runtime unqualified | private bootstrap only; HY runtime unqualified | private bootstrap only; HY runtime unqualified | private bootstrap only; B200 scene qualification pending | private bootstrap only; HY runtime unqualified |
 | `npa-openpi` | blocked (RTX-only runtime contract) | blocked (RTX-only runtime contract) | pending exact-digest full-DROID qualification | blocked (`sm_120`-only probe/runtime contract) | blocked (`sm_120`-only probe/runtime contract) |
 | `npa-lyra2` (`2.0-rtfetch2`) | unverified | unverified | **verified** [native reconstruction](validation/lyra2-rtx-20261009.json) | **historical evidence** [rtfetch1](validation/lyra2-b200-20261008.json); rtfetch2 unverified | unverified |
 | `npa-curobo` | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated |
@@ -216,13 +216,14 @@ and [container catalog](container-image-catalog.md). That evidence does not
 establish supported customer or agent worker acceptance. Rendering remains
 RTX-only and must not route to B200 or B300.
 
-`npa-hy-world` is likewise unbuilt and has no CUDA, PyTorch, renderer, image
-digest, or hardware evidence. Its 8×B200 workflow profile follows the released
-upstream multi-GPU sequence and is a future validation target, not a claim that
-the bootstrap or any model component can execute on B200. Tencent's use-based
-mechanism does not create a duplicate NPA territory/MAU form; exact component
-access, an immutable private digest, and a compatible B200 route are still
-required before source/model bytes are fetched or a live run begins.
+`npa-hy-world` has a privately validated, publication-quarantined neutral
+bootstrap, but no qualified HY runtime or generated scene result. Its 8×B200
+workflow profile follows the released upstream multi-GPU sequence and remains a
+live qualification target, not a claim that the bootstrap or any model component
+can execute the declared pipeline on B200. Tencent's use-based mechanism does
+not create a duplicate NPA territory/MAU form. Tencent runtime access and the
+separate SAM 3 provider approval remain operator prerequisites; no public image
+or accepted live scene is claimed.
 
 ### Rendering is not portable across these columns
 

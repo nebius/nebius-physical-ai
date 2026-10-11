@@ -1,8 +1,8 @@
 # HY-World 2.0 runtime-fetch redistribution record
 
 Review date: 2026-10-04. This is an engineering packaging record, not legal
-advice. The image is an **unbuilt, publication-quarantined candidate**. It has
-no OCI digest, payload scan, or GPU capability result yet.
+advice. The image is a **privately validated, publication-quarantined
+candidate**. It has no public OCI digest or accepted HY GPU capability result.
 
 ## Official identities and terms
 
@@ -32,7 +32,7 @@ their use under the Agreement.
 | Boundary | Delivery and decision |
 | --- | --- |
 | Tencent source | Not baked. `hy-world-runtime ensure` fetches the exact Git commit and recursive gitlinks into the operator cache after exact component-access checks. |
-| Baked runtime | Digest-pinned CUDA 12.8 development bootstrap, compiler toolchain, ffmpeg, git, uv, Hugging Face client, and NPA-owned validation/report scripts. It contains no Python environment, model, source tree, extension binary, cache, input, or output. The component closure has not yet received a built-byte review, so the candidate is `unvalidated`, not publicly redistributable. |
+| Baked runtime | Digest-pinned CUDA 12.8 development bootstrap, compiler toolchain, ffmpeg, git, uv, Hugging Face client, and NPA-owned validation/report scripts. It contains no Python environment, model, source tree, extension binary, cache, input, or output. Private built-byte validation does not make the candidate publicly redistributable or qualify the HY runtime pipeline. |
 | Weights | Tencent HY-World and WorldStereo, Qwen Image, ZIM, Grounding DINO, SAM 3, MoGe, and Uni3C are never baked. Runtime fetch pins exact Hub revisions and switches Hub access offline afterwards. |
 | Data/assets | No input, sample scene, panorama, mesh, or camera data is baked. The operator supplies one image through the declared private S3 input object. |
 | Caches | Source, virtualenv, checkpoint, and Hub blobs are operator-owned runtime bytes beneath the existing model-cache mount. They never enter OCI layers or output metadata. |
