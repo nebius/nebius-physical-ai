@@ -92,6 +92,7 @@ class _Environment:
         self.step_dt = 0.02
         self.step_calls = 0
         self.policy_calls = 0
+        self.policy_reset_masks = []
         self.scene = _scene(self.num_envs, torch)
         self.goal = torch.zeros(self.num_envs, 3)
         self.command_manager = SimpleNamespace(get_command=lambda _: self.goal)
@@ -131,13 +132,16 @@ class _Environment:
         self.policy_calls += 1
         return -self.torch.ones(self.num_envs, 8)
 
+    def reset_policy(self, dones):
+        self.policy_reset_masks.append(dones.tolist())
+
     def step(self, actions):
         assert actions.shape == (self.num_envs, 8)
         step = self.step_calls
         self.step_calls += 1
         self._update_state(step)
         done = self.torch.tensor([step in resets for resets in self.resets])
-        return self.torch.zeros(self.num_envs, 36), None, done, {}
+        return self.torch.zeros(self.num_envs, 39), None, done, {}
 
 
 def _simulation_namespace(environment):
@@ -152,8 +156,12 @@ def _simulation_namespace(environment):
         "env": environment,
         "uenv": environment,
         "policy": environment.policy,
+        "stock_policy": True,
+        "runner": SimpleNamespace(
+            alg=SimpleNamespace(actor=SimpleNamespace(reset=environment.reset_policy))
+        ),
         "_batched_obs": lambda value: value,
-        "obs": torch.zeros(count, 36),
+        "obs": torch.zeros(count, 39),
         "gripper_start": 7,
         "actions_log": {index: [] for index in range(count)},
     }
@@ -192,6 +200,9 @@ def _run_native(tmp_path, resets, *, stable=False):
     script.write_text(ast.unparse(_native_program()))
     result = runpy.run_path(str(script), init_globals=namespace)
     assert environment.step_calls == environment.policy_calls == HORIZON
+    assert environment.policy_reset_masks == [
+        [step in scheduled for scheduled in resets] for step in range(HORIZON)
+    ]
     assert result["simulation_clock"].completed_steps == HORIZON
     return result, encoded_pixels
 
