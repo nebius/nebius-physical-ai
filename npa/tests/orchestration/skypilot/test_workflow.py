@@ -4453,6 +4453,28 @@ def test_workflow_status_empty_queue_remains_verified_after_config_notice(
     assert result.error == ""
 
 
+def test_workflow_status_reports_controller_failure_for_verified_missing_job(
+    monkeypatch, tmp_path
+) -> None:
+    """A valid queue may authoritatively exclude the recorded managed job."""
+
+    sky_bin = _fake_sky(tmp_path)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout='[{"job_id": 43, "status": "RUNNING"}]',
+            stderr="",
+        ),
+    )
+
+    result = workflow_status("42", sky_bin=sky_bin)
+
+    assert result.status == "FAILED_CONTROLLER"
+
+
 def test_workflow_status_treats_successful_empty_queue_as_verified_absence(
     monkeypatch, tmp_path
 ) -> None:
