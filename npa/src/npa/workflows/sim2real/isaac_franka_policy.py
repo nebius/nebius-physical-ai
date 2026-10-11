@@ -140,6 +140,9 @@ def configure_stock_franka_actor(config: dict[str, Any], *, task: str) -> bool:
         }
     )
     actor["obs_normalization"] = contract["observation_normalization"]
+    algorithm = config.get("algorithm")
+    if isinstance(algorithm, dict):
+        algorithm["schedule"] = "fixed"
     return True
 
 
@@ -173,20 +176,50 @@ def create_stock_franka_runner(
 
 
 def _profiled_runner_type(runner_type: Any) -> Any:
+    from npa.workflows.sim2real.isaac_franka_normalization import (
+        restore_checkpoint_normalization,
+    )
+
     class ProfiledRunner(runner_type):
         def save(self, path, infos=None):
+            return super().save(
+                path, infos=_profiled_checkpoint_infos(self.alg.actor, infos)
+            )
+
+        def load(self, *args, **kwargs):
+            infos = super().load(*args, **kwargs)
+            validate_stock_franka_checkpoint(infos, task=SCENARIO_TASK_ID)
             _validate_actor_model(self.alg.actor)
-            metadata = dict(infos or {})
-            contract = stock_franka_policy_contract()
-            previous = metadata.get("npa_stock_franka_policy", contract)
-            if previous != contract:
-                raise RuntimeError(
-                    "checkpoint save contradicts the stock-Franka profile"
-                )
-            metadata["npa_stock_franka_policy"] = contract
-            return super().save(path, infos=metadata)
+            restore_checkpoint_normalization(self.alg.actor, infos)
+            return infos
 
     return ProfiledRunner
+
+
+def _profiled_checkpoint_infos(actor: Any, infos: Any) -> dict[str, Any]:
+    from npa.workflows.sim2real.isaac_franka_normalization import (
+        checkpoint_normalization_metadata,
+    )
+
+    _validate_actor_model(actor)
+    metadata = dict(infos or {})
+    contract = stock_franka_policy_contract()
+    previous = metadata.get("npa_stock_franka_policy", contract)
+    if previous != contract:
+        raise RuntimeError("checkpoint save contradicts the stock-Franka profile")
+    metadata["npa_stock_franka_policy"] = previous
+    validate_stock_franka_checkpoint(metadata, task=SCENARIO_TASK_ID)
+    normalization = checkpoint_normalization_metadata(actor)
+    previous_normalization = metadata.get(
+        "npa_stock_franka_normalization", normalization
+    )
+    if previous_normalization != normalization or any(
+        type(previous_normalization[key]) is not type(value)
+        for key, value in normalization.items()
+    ):
+        raise RuntimeError("checkpoint save contradicts its normalization state")
+    metadata["npa_stock_franka_normalization"] = normalization
+    return metadata
 
 
 def _validate_actor_model(actor: Any) -> None:

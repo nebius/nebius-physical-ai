@@ -71,6 +71,11 @@ or spawn sibling Jobs.
   A weak initial mixed collection triggers another guarded teacher-only fit and
   a new mixed collection. Both accepted warmup rounds retain the half-split
   placement guard; archive every failed collection and recovery fit.
+  Freeze trained observation statistics after the successful actor-only handoff.
+  Stock demonstration and resumed transport/convergence passes default to fixed
+  PPO updates at `0.00001`, zero entropy, and action noise `0.005`, while explicit
+  operator overrides remain effective. Every checkpoint binds the actual
+  normalization count and update bound; exact loads restore that bound.
   Expert phases only weight training loss. Every periodic and final checkpoint
   binds the policy semantics; all native inference paths reset
   recurrent state on actual `dones`. Keep the full PPO count and held-out gate.

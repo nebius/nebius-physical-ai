@@ -211,8 +211,13 @@ assessment and fitting history. A weak mixed warmup collection requires another
 teacher-only round that passes the same half-split placement guard, followed by
 refitting and a fresh mixed collection. Preserve every failed mixture and teacher
 recovery fit in `warmup_recovery`. Native checkpoints bind action/model semantics;
-matching tensor dimensions alone are
-insufficient. This training handoff does not establish held-out acceptance.
+freeze trained observation statistics after the successful actor-only handoff
+and preserve their literal count/update bound in every checkpoint and exact load.
+Stock demonstration and resumed transport/convergence passes default to a fixed
+PPO learning rate `0.00001`, zero entropy, and initial/convergence action noise
+`0.005`; preserve explicit operator overrides and custom task defaults.
+Matching tensor dimensions alone is insufficient. This training handoff does
+not establish held-out acceptance.
 
 Asset handling mirrors the Genesis no-fallback provenance discipline:
 

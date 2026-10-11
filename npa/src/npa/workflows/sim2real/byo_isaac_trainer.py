@@ -77,6 +77,9 @@ DEFAULT_RESUME_PPO_OPTIMIZER_LEARNING_RATE = "0.0001"
 # validation actually executes.  The baked Isaac wrapper applies and verifies
 # this value only after loading the exact resume checkpoint.
 DEFAULT_RESUME_CONVERGENCE_ACTION_NOISE_STD = "0.05"
+DEFAULT_BOOTSTRAP_ENTROPY_COEF = "0.0"
+DEFAULT_BOOTSTRAP_PPO_LEARNING_RATE = "0.00001"
+DEFAULT_BOOTSTRAP_ACTION_NOISE_STD = "0.005"
 _STOCK_ENTROPY_SENTINELS = frozenset({"stock", "default", "none", ""})
 _RESUME_PHASES = frozenset({"exploration", "transport", "convergence"})
 
@@ -1362,8 +1365,18 @@ def s3_object_sha256(uri: str, *, endpoint: str = "") -> str:
     return digest.hexdigest()
 
 
-def _resume_schedule_defaults(phase: str) -> dict[str, str]:
+def _resume_schedule_defaults(
+    phase: str, *, stock_policy: bool = False
+) -> dict[str, str]:
     """Retain trainable noise while learning transport toward the exact goal."""
+    if stock_policy:
+        return {
+            "entropy": DEFAULT_BOOTSTRAP_ENTROPY_COEF,
+            "final_entropy": DEFAULT_RESUME_ENTROPY_FINAL_COEF,
+            "fraction": DEFAULT_RESUME_ENTROPY_ANNEAL_FRACTION,
+            "learning_rate": DEFAULT_BOOTSTRAP_PPO_LEARNING_RATE,
+            "noise": DEFAULT_BOOTSTRAP_ACTION_NOISE_STD,
+        }
     if phase == "transport":
         return {
             "entropy": "0.006",
@@ -1384,25 +1397,31 @@ def _resume_schedule_defaults(phase: str) -> dict[str, str]:
 def _manifest_training_bootstrap(profile, task, spec, physics, resume_uri, scenarios):
     """Scope demonstrations to fresh curated stock-Franka training."""
     from npa.workflows.sim2real.isaac_franka_bootstrap import resolve_training_bootstrap
+
+    eligible = (
+        _stock_franka_scenarios(task, spec, scenarios, physics) and not resume_uri
+    )
+    return resolve_training_bootstrap(profile, eligible=bool(eligible))
+
+
+def _stock_franka_scenarios(task, spec, scenarios, physics):
     from npa.workflows.sim2real.isaac_scenario_task import (
         STOCK_TASK_ID,
         SCENARIO_TASK_ID,
     )
 
-    eligible = (
+    return bool(
         task in {STOCK_TASK_ID, SCENARIO_TASK_ID}
         and (spec or {}).get("robot_source") == "stock_franka"
         and not physics
-        and not resume_uri
         and scenarios
     )
-    return resolve_training_bootstrap(profile, eligible=bool(eligible))
 
 
 def _bootstrap_schedule() -> dict[str, str]:
     """Use small PPO exploration around the demonstration-trained actor mean."""
     schedule = {
-        "entropy": _env("NPA_BYO_ISAAC_ENTROPY_COEF", DEFAULT_RESUME_ENTROPY_COEF),
+        "entropy": _env("NPA_BYO_ISAAC_ENTROPY_COEF", DEFAULT_BOOTSTRAP_ENTROPY_COEF),
         "final_entropy": _env(
             "NPA_BYO_ISAAC_ENTROPY_FINAL_COEF", DEFAULT_RESUME_ENTROPY_FINAL_COEF
         ),
@@ -1412,14 +1431,14 @@ def _bootstrap_schedule() -> dict[str, str]:
         ),
         "learning_rate": _env(
             "NPA_BYO_ISAAC_PPO_LEARNING_RATE",
-            DEFAULT_RESUME_PPO_OPTIMIZER_LEARNING_RATE,
+            DEFAULT_BOOTSTRAP_PPO_LEARNING_RATE,
         ),
         "initial_noise": _env(
-            "NPA_BYO_ISAAC_INIT_NOISE_STD", DEFAULT_RESUME_CONVERGENCE_ACTION_NOISE_STD
+            "NPA_BYO_ISAAC_INIT_NOISE_STD", DEFAULT_BOOTSTRAP_ACTION_NOISE_STD
         ),
         "noise": _env(
             "NPA_BYO_ISAAC_RESUME_CONVERGENCE_ACTION_NOISE_STD",
-            DEFAULT_RESUME_CONVERGENCE_ACTION_NOISE_STD,
+            DEFAULT_BOOTSTRAP_ACTION_NOISE_STD,
         ),
     }
     for key in ("entropy", "initial_noise", "noise"):
@@ -1623,6 +1642,26 @@ def _validated_recurrent_training_audit(audit, scenario_count):
         samples += examples * batches
         _validated_recurrent_fit(
             fit, batches=batches, examples=examples * batches, samples=samples
+        )
+    _validated_normalization_freeze(audit.get("normalization_freeze"), samples)
+
+
+def _validated_normalization_freeze(freeze, samples):
+    expected = {
+        "schema": "npa.sim2real.franka_normalization.v1",
+        "scope": "sealed_training_only",
+        "gold_used": False,
+        "frozen": True,
+        "count": samples,
+        "until": samples,
+    }
+    if (
+        not isinstance(freeze, dict)
+        or freeze != expected
+        or any(type(freeze[key]) is not type(value) for key, value in expected.items())
+    ):
+        raise RuntimeError(
+            "native bootstrap lacks frozen training-only normalization statistics"
         )
 
 
@@ -1956,7 +1995,12 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
     if resume_uri and not physics:
         training_phase = f"resume_{resume_phase}"
     if resume_exact_goals:
-        schedule_defaults = _resume_schedule_defaults(resume_phase)
+        stock_policy = _stock_franka_scenarios(
+            task, robot_spec_dict, bool(train_envs_uri), physics
+        )
+        schedule_defaults = _resume_schedule_defaults(
+            resume_phase, stock_policy=stock_policy
+        )
         raw_ent = _env(
             "NPA_BYO_ISAAC_RESUME_ENTROPY_COEF",
             schedule_defaults["entropy"],
@@ -2150,7 +2194,13 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
     result["ppo_hyperparameters"] = {
         "signal_adapter_learning_rate": learning_rate,
         "ppo_optimizer_initial_learning_rate": float(ppo_optimizer_learning_rate),
-        "ppo_optimizer_schedule": "task_registry_adaptive_schedule",
+        "ppo_optimizer_schedule": (
+            "fixed_stock_franka"
+            if _stock_franka_scenarios(
+                task, robot_spec_dict, bool(train_envs_uri), physics
+            )
+            else "task_registry_adaptive_schedule"
+        ),
         "entropy_coef": float(entropy_coef) if entropy_coef else "task_default",
         "entropy_final_coef": (
             float(entropy_final_coef) if entropy_final_coef else "task_default"

@@ -245,6 +245,12 @@ class TestNativeBootstrapCheckpoint:
         self._assert_checkpoint_restores_actor(runner, observations, tmp_path)
 
     def _assert_checkpoint_restores_actor(self, runner, observations, tmp_path):
+        from npa.workflows.sim2real.isaac_franka_normalization import (
+            checkpoint_normalization_metadata,
+        )
+
+        normalization = checkpoint_normalization_metadata(runner.alg.actor)
+        assert normalization["frozen"] is True
         checkpoint = tmp_path / "model.pt"
         runner.save(str(checkpoint))
         runner.alg.actor.reset()
@@ -260,8 +266,10 @@ class TestNativeBootstrapCheckpoint:
         for path in periodic:
             payload = self.torch.load(path, map_location="cpu", weights_only=False)
             validate_stock_franka_checkpoint(payload["infos"], task=SCENARIO_TASK_ID)
+            assert payload["infos"]["npa_stock_franka_normalization"] == normalization
         information = restored.load(str(checkpoint))
         validate_stock_franka_checkpoint(information, task=SCENARIO_TASK_ID)
+        assert checkpoint_normalization_metadata(restored.alg.actor) == normalization
         restored.alg.actor.reset()
         self.torch.testing.assert_close(
             restored.get_inference_policy()(observations), expected
@@ -407,6 +415,53 @@ def test_stock_entropy_opt_out_disables_bootstrap_annealing_and_noise_freeze(
     )
 
 
+def test_pretrained_stock_policy_uses_small_fixed_updates_without_changing_custom_defaults():
+    from npa.workflows.sim2real.isaac_franka_policy import (
+        configure_stock_franka_actor,
+        SCENARIO_TASK_ID,
+    )
+    from npa.workflows.sim2real.byo_isaac_trainer import _resume_schedule_defaults
+
+    configuration = {"actor": {}, "algorithm": {"schedule": "adaptive"}}
+    assert configure_stock_franka_actor(configuration, task=SCENARIO_TASK_ID)
+    assert configuration["algorithm"]["schedule"] == "fixed"
+    custom = {"actor": {}, "algorithm": {"schedule": "adaptive"}}
+    assert not configure_stock_franka_actor(custom, task="customer-task")
+    assert custom == {"actor": {}, "algorithm": {"schedule": "adaptive"}}
+    bootstrap_schedule = _bootstrap_schedule()
+    assert bootstrap_schedule["learning_rate"] == "0.00001"
+    assert bootstrap_schedule["entropy"] == bootstrap_schedule["final_entropy"] == "0.0"
+    assert bootstrap_schedule["initial_noise"] == bootstrap_schedule["noise"] == "0.005"
+    for phase in ("transport", "convergence"):
+        schedule = _resume_schedule_defaults(phase, stock_policy=True)
+        assert schedule["learning_rate"] == "0.00001" and schedule["noise"] == "0.005"
+        assert schedule["entropy"] == schedule["final_entropy"] == "0.0"
+    assert _resume_schedule_defaults("transport")["learning_rate"] == "0.0003"
+    assert _resume_schedule_defaults("convergence")["learning_rate"] == "0.0001"
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("frozen", False),
+        ("frozen", 1),
+        ("count", 6144.0),
+        ("count", 6143),
+        ("until", None),
+        ("until", 6144.0),
+        ("scope", "validation"),
+        ("gold_used", 0),
+    ],
+)
+def test_bootstrap_rejects_missing_or_changed_training_normalization_freeze(
+    field, value
+):
+    audit = _audit()
+    audit["normalization_freeze"][field] = value
+    with pytest.raises(RuntimeError, match="frozen training-only normalization"):
+        _validate_audit(audit)
+
+
 def _native_runner_fixture():
     task = SimpleNamespace(
         spec=SimpleNamespace(id="NPA-Lift-Cube-Franka-Scenarios-v0"),
@@ -486,6 +541,17 @@ def _actor_collection(fraction):
     }
 
 
+def _frozen_normalization(samples):
+    return {
+        "schema": "npa.sim2real.franka_normalization.v1",
+        "scope": "sealed_training_only",
+        "gold_used": False,
+        "frozen": True,
+        "count": samples,
+        "until": samples,
+    }
+
+
 def _audit():
     row = {
         "training_scenarios": 64,
@@ -515,6 +581,7 @@ def _audit():
         "actor_handoff": _actor_collection(1.0),
         "additional_corrective_fits": [],
         "actor_handoff_assessments": [_actor_collection(1.0)],
+        "normalization_freeze": _frozen_normalization(6144),
     }
 
 
@@ -549,6 +616,7 @@ def _warmup_recovery_audit():
     ]
     audit["rounds"][1].update(_recurrent_fit(3))
     audit["corrective_fit"]["fit"] = _recurrent_fit(4)
+    audit["normalization_freeze"] = _frozen_normalization(10240)
     return audit
 
 
@@ -599,6 +667,7 @@ def _adaptive_audit():
     audit["actor_handoff_assessments"].insert(
         0, {**_actor_collection(1.0), "strict_training_placements": 31}
     )
+    audit["normalization_freeze"] = _frozen_normalization(10240)
     return audit
 
 

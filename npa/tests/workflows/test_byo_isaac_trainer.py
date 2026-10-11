@@ -1078,14 +1078,12 @@ def test_run_isaac_training_job_tags_s3_path_per_iteration(monkeypatch, resume_p
     convergence = resume_phase == "convergence"
     transport = resume_phase == "transport"
     assert captured["resume_phase"] == resume_phase
-    if transport:
-        expected = ("0.006", "0.001", "0.8", "0.0003")
-    elif convergence:
+    if transport or convergence:
         expected = (
-            byo.DEFAULT_RESUME_ENTROPY_COEF,
+            byo.DEFAULT_BOOTSTRAP_ENTROPY_COEF,
             byo.DEFAULT_RESUME_ENTROPY_FINAL_COEF,
             byo.DEFAULT_RESUME_ENTROPY_ANNEAL_FRACTION,
-            byo.DEFAULT_RESUME_PPO_OPTIMIZER_LEARNING_RATE,
+            byo.DEFAULT_BOOTSTRAP_PPO_LEARNING_RATE,
         )
     else:
         expected = (
@@ -1107,10 +1105,10 @@ def test_run_isaac_training_job_tags_s3_path_per_iteration(monkeypatch, resume_p
         == expected
     )
     assert captured["convergence_action_noise_std"] == (
-        byo.DEFAULT_RESUME_CONVERGENCE_ACTION_NOISE_STD if convergence else ""
+        byo.DEFAULT_BOOTSTRAP_ACTION_NOISE_STD if transport or convergence else ""
     )
-    assert (
-        result["ppo_hyperparameters"]["convergence_action_noise_frozen"] == convergence
+    assert result["ppo_hyperparameters"]["convergence_action_noise_frozen"] == (
+        transport or convergence
     )
     assert result["ppo_hyperparameters"]["training_phase"] == "resume_" + resume_phase
     assert captured["success_termination_enabled"] is False

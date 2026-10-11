@@ -707,8 +707,9 @@ and their `robot_control` audit records the actual gains and clock as
 
 The training teacher commands a downward XYZW `(1, 0, 0, 0)` hand orientation,
 limits each TCP correction to 10 cm, and uses the native Cartesian action
-scaling. Position actions use a 0.1 m scale, so an action-noise standard
-deviation of 0.05 corresponds to 5 mm. Collection prints measured
+scaling. Position actions use a 0.1 m scale, so the default initial action-noise
+standard deviation of 0.005 corresponds to 0.5 mm per translational coordinate.
+Collection prints measured
 phase counts and strict training-placement coverage after each episode cycle;
 failed teacher-only coverage reports its actual count and stops before fitting.
 Both accepted warmup rounds must establish stable placement in at least half
@@ -727,9 +728,19 @@ settings retain their operator overrides. The native job receives
 `ROBOT_BOOTSTRAP_PROFILE`, and its `bootstrap-audit.json` binds the profile,
 training-scenario SHA-256, demonstration successes, initialized normalization,
 recurrent sequences, supervised fitting losses, actor-only handoff, and zero
-PPO updates at initialization. Every native periodic and final checkpoint
+PPO updates at initialization. After the successful actor-only handoff, the
+native normalizer freezes its trained sample count so PPO cannot silently change
+the learned actor's input scale. The default demonstration and resumed stock
+transport/convergence passes use a fixed PPO learning rate of `0.00001`, zero
+entropy, and initial/convergence action-noise standard deviation `0.005`.
+Existing explicit entropy, learning-rate, and noise overrides still apply;
+custom robots and legacy tasks retain their task configuration. `none` disables
+both demonstration initialization and its automatic normalization freeze.
+Every native periodic and final checkpoint
 records the policy's action and model semantics; loading a stock checkpoint
-with missing or changed semantics fails. The adapter rejects missing or
+with missing or changed semantics fails. Checkpoints also bind the actual
+normalization count and update bound; loading restores the saved bound only
+after it agrees with the loaded statistic tensors. The adapter rejects missing or
 contradictory audit evidence. Validation and Gold execute the saved learned
 actor alone; they do not run the demonstration teacher or a post-actor
 controller. Training demonstration success does not establish held-out quality.
@@ -738,8 +749,9 @@ A checkpoint file alone does not prove that the actor learned to grasp. Until
 at least half of its validation episodes achieved both stable grasp and lift,
 resumed PPO retains the exploration schedule and repeats the training-only goal
 curriculum. Once validation proves that milestone, the next pass learns transport
-toward the exact goals while keeping action noise trainable. Low-noise placement
-consolidation begins only after at least half of validation episodes also bring
+toward the exact goals. The stock recurrent profile preserves its small fixed
+updates and trained normalization across transport and placement consolidation.
+The placement-consolidation milestone requires at least half of validation episodes to bring
 the grasped, lifted object within 8 cm of the goal. That 8 cm milestone selects a
 training phase; strict success still requires the unchanged 5 cm distance,
 0.03 m/s speed, and three consecutive stable steps. Missing distance evidence

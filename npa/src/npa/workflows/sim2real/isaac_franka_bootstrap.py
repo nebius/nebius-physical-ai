@@ -421,12 +421,26 @@ def bootstrap_franka_actor(
         for index in range(_BOOTSTRAP_ROUNDS)
     ]
     evidence = _corrective_training_handoff(env, actor, replay)
+    _freeze_training_handoff(actor, evidence)
     audit = _publish_bootstrap_audit(
         task, runner, rounds, profile, output_dir, evidence
     )
     env.reset()
     actor.reset()
     return audit
+
+
+def _freeze_training_handoff(actor, evidence):
+    from npa.workflows.sim2real.isaac_franka_normalization import (
+        freeze_training_normalization,
+    )
+
+    evidence["normalization_freeze"] = freeze_training_normalization(actor)
+    print(
+        "ROBOT_NORMALIZATION_FROZEN "
+        + json.dumps(evidence["normalization_freeze"], sort_keys=True),
+        flush=True,
+    )
 
 
 class _DemonstrationCollection:

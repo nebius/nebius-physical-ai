@@ -1655,6 +1655,7 @@ try:
     if init_noise:
         noise_cfg[noise_key] = float(init_noise)
     print("ROBOT_PPO_SETTINGS_APPLIED", json.dumps({
+        "schedule": algo.get("schedule"),
         "learning_rate": algo.get("learning_rate"),
         "entropy_coef": algo.get("entropy_coef"),
         "entropy_final_coef": float(ENT_FINAL) if ENT_FINAL else None,
@@ -1727,6 +1728,9 @@ try:
                 f"dimensions {actual_observation_dim}/{actual_action_dim}: {exc}"
             ) from exc
         print("ROBOT_RESUME_LOADED", resume_ckpt, flush=True)
+        if stock_policy:
+            from npa.workflows.sim2real.isaac_franka_normalization import checkpoint_normalization_metadata
+            print("ROBOT_NORMALIZATION_RESTORED", json.dumps(checkpoint_normalization_metadata(runner.alg.actor), sort_keys=True), flush=True)
     bootstrap_profile = os.environ.get("ROBOT_BOOTSTRAP_PROFILE", "none")
     if bootstrap_profile != "none":
         if resume_ckpt:

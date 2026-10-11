@@ -467,6 +467,11 @@ Corrective fitting repeats when that check fails, before the complete PPO pass
 begins. `none` disables the training bootstrap; an explicit profile rejects
 ineligible tasks and resumed checkpoints. Native checkpoint
 metadata binds the action scale, observations, model, and reset-clock contract.
+Successful demonstration training freezes its empirical observation statistics
+before PPO. Every checkpoint records that bound and restores it on resume.
+Stock demonstration and resumed transport/convergence passes default to fixed
+PPO updates at `0.00001`, zero entropy, and initial/convergence action noise
+`0.005`; existing learning-rate, entropy, and noise overrides still apply.
 Validation and Gold execute the learned actor alone.
 
 NPA pins its recording SDK and default hosted/share viewers to Rerun 0.38.1.
