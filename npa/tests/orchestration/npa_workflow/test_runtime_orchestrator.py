@@ -1260,6 +1260,22 @@ def test_image_identity_binds_digest_pins_to_reference_keys(change: str) -> None
     assert actual != expected
 
 
+def test_image_identity_ignores_a_noop_digest_pin() -> None:
+    reference = "cr.example/tool@sha256:" + "a" * 64
+    baseline = SkypilotRenderOptions(image_pull_secret_names=("operator-registry",))
+    no_op_pin = SkypilotRenderOptions(
+        image_digest_pins={reference: reference},
+        image_pull_secret_names=("operator-registry",),
+    )
+    changed_pin = SkypilotRenderOptions(
+        image_digest_pins={reference: "cr.example/tool@sha256:" + "b" * 64},
+        image_pull_secret_names=("operator-registry",),
+    )
+
+    assert _image_identity(no_op_pin) == _image_identity(baseline)
+    assert _image_identity(changed_pin) != _image_identity(baseline)
+
+
 @pytest.mark.parametrize("outputs_exist", [True, False])
 def test_completed_replay_rejects_swapped_image_pin_bindings(tmp_path, outputs_exist):
     bindings = _image_pin_bindings()
@@ -1284,6 +1300,28 @@ def test_completed_replay_accepts_reordered_image_pin_bindings(tmp_path):
     report, submitter = _resume_completed_case(
         spec, store, True, render_options=_image_pin_options(reordered)
     )
+    assert report.status == "succeeded"
+    assert report.waves[0]["replayed"] is True
+    assert submitter.calls == []
+
+
+def test_completed_replay_accepts_a_noop_digest_pin(tmp_path):
+    image = "cr.example/tool@sha256:" + "c" * 64
+    initial = SkypilotRenderOptions(
+        image_overrides={"*": image},
+        image_pull_secret_names=("operator-registry",),
+    )
+    resumed = SkypilotRenderOptions(
+        image_overrides={"*": image},
+        image_digest_pins={image: image},
+        image_pull_secret_names=("operator-registry",),
+    )
+    spec, store = _completed_replay_case(tmp_path, render_options=initial)
+
+    report, submitter = _resume_completed_case(
+        spec, store, True, render_options=resumed
+    )
+
     assert report.status == "succeeded"
     assert report.waves[0]["replayed"] is True
     assert submitter.calls == []
