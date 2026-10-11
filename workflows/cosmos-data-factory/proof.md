@@ -113,6 +113,9 @@ receipts. The top-level fields are `built_at`, `evidence_scope`,
 `title`, `status_label`, `protocol_passed`, `media_ids`, `metrics` (each with
 `value` and `label`), `quality_verdict`, `variables_label`, `notes`, and `source`
 (`summary`, optional `url`, and optional `media_ids` for prepared input images).
+Optional evidence `comparisons` retain additional runs with their own `title`,
+`verdict`, and `media_ids`; label failed preservation clearly even when native
+protocol checks pass.
 Keep predicted sampling labeled as planned
 until the real configuration exists, and keep missing outputs pending rather
 than reusing unrelated successful metrics. Optional `preferred_seed` sets the
@@ -121,6 +124,10 @@ Each asset needs `id`, `path`, `mime_type`, `sha256`, `alt`,
 and `caption`; paths are resolved relative to the evidence JSON. The template
 renders the exact `media_ids` supplied for each workflow. `robot_assets` lists
 optional source-reference asset IDs.
+Optional workflow `annotation_rows` display actual model answers in a collapsed
+table; each row has `scope`, native question ID in `label`, and `answer` with its
+original JSON value. Preserve empty strings and lists instead of silently
+turning them into missing responses.
 
 Use the packer from the repository root:
 
