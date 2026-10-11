@@ -582,6 +582,9 @@ Partial-launch reservations are reconciled before completion recovery;
 unconsumed or malformed reservation fields never authorize a generic retry.
 The native queue must explicitly agree on the exact job name; missing or
 conflicting names remain unverifiable, including during partial-launch recovery.
+Both queue output streams must be verified: success rows or an empty list paired
+with conflicting diagnostics remain unavailable. Malformed managed-job identities
+also block lookup; they cannot establish either completion or absence.
 
 A repaired driver can use the original content-addressed `NPA_SRC_S3_URI` with
 `--no-stage-src`. Completion recovery submits nothing: that URI reproduces the

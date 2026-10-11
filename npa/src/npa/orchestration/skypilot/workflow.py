@@ -2972,11 +2972,15 @@ def lookup_managed_job(
         )
         return ManagedJobEvidence("unavailable", error=redact_text(detail))
     else:
-        parsed_jobs = queue_rows_from_output(result.stdout)
-        if parsed_jobs is None:
+        parsed_jobs = verified_structured_queue_rows(result)
+        if parsed_jobs is None or any(
+            not _queue_row_job_id(row) for row in parsed_jobs
+        ):
             return ManagedJobEvidence(
                 "unavailable",
-                error="SkyPilot queue returned malformed, ambiguous, or schema-invalid JSON",
+                error=_queue_verification_error(
+                    result, "malformed rows or conflicting diagnostics"
+                ),
             )
         jobs = parsed_jobs
 

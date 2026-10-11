@@ -3,6 +3,7 @@
 import copy
 import hashlib
 import json
+import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -286,6 +287,57 @@ def test_unverified_controller_completion_never_retries(
     assert "controller completion blocked" in outcome.report.error
     assert outcome.submits == [] and outcome.cancels == []
     assert case.store.read_runtime_state().waves == before
+
+
+def _completed_queue_evidence(case, monkeypatch, tmp_path, stderr):
+    from npa.orchestration.skypilot import workflow as sky_workflow
+
+    sky_bin = tmp_path / "sky"
+    sky_bin.write_text("#!/bin/sh\nexit 0\n")
+    sky_bin.chmod(0o700)
+    row = {
+        "job_id": int(case.record["job_id"]),
+        "job_name": case.record["job_name"],
+        "task_name": case.record["job_name"],
+        "task_id": 0,
+        "status": "SUCCEEDED",
+        "start_at": 10.0,
+        "end_at": 11.0,
+    }
+    monkeypatch.setattr(sky_workflow, "ensure_skypilot_version", lambda *_: "sky")
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps([row]), stderr=stderr
+        ),
+    )
+    return sky_workflow.lookup_managed_job(
+        case.record["job_name"],
+        job_id=case.record["job_id"],
+        sky_bin=sky_bin,
+    )
+
+
+@pytest.mark.parametrize("stderr", ["", "Error: permission denied"])
+def test_controller_completion_requires_verified_queue_command(
+    failed_controller, monkeypatch, tmp_path, stderr
+):
+    case = failed_controller
+    before = copy.deepcopy(case.store.read_runtime_state().waves)
+    with monkeypatch.context() as queue_patch:
+        evidence = _completed_queue_evidence(case, queue_patch, tmp_path, stderr)
+    outcome = _resume(case, evidence=evidence, retries=3)
+
+    assert outcome.cancels == []
+    if stderr:
+        assert outcome.report.status == "failed"
+        assert outcome.submits == [] and outcome.reads == []
+        assert case.store.read_runtime_state().waves == before
+    else:
+        assert evidence.error == ""
+        assert outcome.report.status == "succeeded", (evidence, outcome.report.error)
+        assert [call["tasks"] for call in outcome.submits] == [["publish"]]
 
 
 @pytest.mark.parametrize(

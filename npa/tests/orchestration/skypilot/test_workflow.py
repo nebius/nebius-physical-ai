@@ -6942,6 +6942,81 @@ def test_exact_managed_job_lookup_accepts_real_0_12_2_empty_queue(
     assert evidence.outcome == "absent"
 
 
+@pytest.mark.parametrize("job_id", ["", "42"])
+@pytest.mark.parametrize("include_job", [False, True])
+@pytest.mark.parametrize(
+    "stderr", ["Error: permission denied", "Error: controller unavailable"]
+)
+def test_exact_lookup_refuses_success_rows_with_conflicting_diagnostics(
+    monkeypatch, tmp_path, job_id, include_job, stderr
+) -> None:
+    from npa.orchestration.skypilot.workflow import lookup_managed_job
+
+    sky_bin = _fake_sky(tmp_path)
+    payload = (
+        [{"job_id": 42, "job_name": "exact-run", "status": "SUCCEEDED"}]
+        if include_job
+        else []
+    )
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps(payload), stderr=stderr
+        ),
+    )
+
+    evidence = lookup_managed_job("exact-run", job_id=job_id, sky_bin=sky_bin)
+
+    assert evidence.outcome == "unavailable"
+    assert evidence.job_id == "" and evidence.status == ""
+    assert evidence.task_rows == ()
+    assert "conflicting diagnostics" in evidence.error
+
+
+@pytest.mark.parametrize("bad_id", [None, False, "01", 1.0])
+def test_exact_lookup_refuses_malformed_job_identity(monkeypatch, tmp_path, bad_id):
+    from npa.orchestration.skypilot.workflow import lookup_managed_job
+
+    sky_bin = _fake_sky(tmp_path)
+    payload = [{"job_id": bad_id, "job_name": "exact-run", "status": "SUCCEEDED"}]
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps(payload), stderr=""
+        ),
+    )
+
+    evidence = lookup_managed_job("exact-run", job_id="42", sky_bin=sky_bin)
+
+    assert evidence.outcome == "unavailable"
+    assert evidence.job_id == "" and evidence.task_rows == ()
+    assert "malformed rows" in evidence.error
+
+
+def test_exact_lookup_accepts_success_rows_after_pinned_notice(monkeypatch, tmp_path):
+    from npa.orchestration.skypilot.workflow import lookup_managed_job
+
+    sky_bin = _fake_sky(tmp_path)
+    payload = [{"job_id": 42, "job_name": "exact-run", "status": "SUCCEEDED"}]
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout=_ALLOWED_CLOUDS_NOTICE + "\n" + json.dumps(payload),
+            stderr="",
+        ),
+    )
+
+    evidence = lookup_managed_job("exact-run", job_id="42", sky_bin=sky_bin)
+
+    assert evidence.outcome == "found" and evidence.status == "SUCCEEDED"
+    assert evidence.job_id == "42" and evidence.job_name == "exact-run"
+
+
 def test_exact_managed_job_lookup_refuses_ambiguous_name_without_immutable_id(
     monkeypatch, tmp_path
 ) -> None:
