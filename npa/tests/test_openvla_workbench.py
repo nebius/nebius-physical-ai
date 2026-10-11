@@ -76,7 +76,7 @@ def test_prepare_reads_actual_rlds_file_and_publishes_normalization(
     monkeypatch.setattr(
         pipe,
         "_verify_dlimp_rlds_read",
-        lambda python, records: {
+        lambda python, data_root, dataset_name: {
             "trajectories_read": 1,
             "feature_keys": ["action", "observation"],
         },
@@ -114,18 +114,18 @@ def test_prepare_selects_only_declared_dataset_tfrecords(
     (sibling / "episode-000.tfrecord-00000-of-00001").write_bytes(b"sibling")
     output = tmp_path / "prepared"
     runtime = tmp_path / "runtime"
-    observed: list[Path] = []
+    observed: list[tuple[Path, str]] = []
     monkeypatch.setattr(pipe, "bootstrap_runtime", lambda root: runtime)
     monkeypatch.setattr(
         pipe,
         "_verify_dlimp_rlds_read",
-        lambda python, records: (
-            observed.extend(records)
+        lambda python, data_root, dataset_name: (
+            observed.append((data_root, dataset_name))
             or {"trajectories_read": 1, "feature_keys": ["action"]}
         ),
     )
 
-    pipe.prepare(
+    report = pipe.prepare(
         pipe.PrepareConfig(
             dataset_uri=str(dataset),
             output_uri=str(output),
@@ -135,10 +135,50 @@ def test_prepare_selects_only_declared_dataset_tfrecords(
         )
     )
 
-    assert [record.name for record in observed] == [
-        "episode-000.tfrecord-00000-of-00001"
+    assert observed[0][1] == "libero_spatial_no_noops"
+    assert report["rlds_file_count"] == 1
+    normalization = json.loads((output / "normalization.json").read_text())
+    assert [entry["path"] for entry in normalization["rlds_files"]] == [
+        "libero_spatial_no_noops/episode-000.tfrecord-00000-of-00001"
     ]
-    assert all("libero_spatial_no_noops" in record.parts for record in observed)
+
+
+def test_dlimp_rlds_probe_uses_declared_tfds_builder_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    data_root = tmp_path / "dataset"
+    builder_dir = data_root / "libero_spatial_no_noops" / "1.0.0"
+    builder_dir.mkdir(parents=True)
+    (builder_dir / "dataset_info.json").write_text("{}", encoding="utf-8")
+    observed: list[list[str]] = []
+
+    def read_one(command: list[str], *, text: bool) -> str:
+        observed.append(command)
+        assert text is True
+        return json.dumps(
+            {"trajectories_read": 1, "feature_keys": ["steps"]}
+        )
+
+    monkeypatch.setattr(pipe.subprocess, "check_output", read_one)
+
+    assert pipe._verify_dlimp_rlds_read(
+        tmp_path / "python", data_root, "libero_spatial_no_noops"
+    ) == {"trajectories_read": 1, "feature_keys": ["steps"]}
+    command = observed[0]
+    assert command[-1] == str(builder_dir)
+    assert "tfds.builder_from_directory" in command[2]
+    assert "DLataset.from_rlds" in command[2]
+    assert "DLataset.from_tfrecords" not in command[2]
+
+
+def test_dlimp_rlds_probe_requires_declared_tfds_builder_metadata(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(pipe.OpenVLAPipelineError, match="dataset_info.json"):
+        pipe._verify_dlimp_rlds_read(
+            tmp_path / "python", tmp_path / "dataset", "libero_spatial_no_noops"
+        )
 
 
 def test_prepare_rejects_tfrecords_outside_declared_dataset(tmp_path: Path) -> None:
