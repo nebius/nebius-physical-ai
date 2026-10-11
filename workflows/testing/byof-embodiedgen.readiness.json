@@ -14,28 +14,14 @@
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "Focused tests bind the private immutable-image requirement, literal URI transport through plan/render/BYOF bash, real upstream img3d-cli and EmbodiedGen converter calls, collision validation, PyBullet contact/settling, decoded view generation, and every declared generated asset/view artifact. A separate operator-private run completed that same workflow; its evidence remains outside the repository.",
+      "reason": "Focused tests bind the private immutable-image requirement, literal URI transport through plan/render/BYOF bash, real upstream img3d-cli and EmbodiedGen converter calls, collision validation, PyBullet contact/settling, decoded view generation, and every declared generated asset/view artifact. One operator-private immutable image built from source producer 896821301b53766cc137c0d3f72933764c6b2978 completed the same durable RTX PRO 6000 workflow: all six declared outputs and 59 artifacts were read back and hash-verified. Its historical source bridge covers image/runtime/workflow/profile inputs through 81baa4ead67f8d9bbc52548576a43a57b72035d9; later documentation and readiness handoff changes are reviewed separately. The digest, registry, project, and artifact locations remain private.",
       "evidence": [
         "npa/tests/docker/test_embodiedgen_runtime.py",
         "npa/tests/workflows/test_byof_solution_smokes.py",
-        "sha256:ad8c793f9308c046adc9887feb69f004504961c0465de6413479ba872c5c1fa1 workflows/testing/byof-embodiedgen.yaml"
+        "sha256:ad8c793f9308c046adc9887feb69f004504961c0465de6413479ba872c5c1fa1 workflows/testing/byof-embodiedgen.yaml",
+        "Operator-private exact-image qualification, target preflight, runtime receipt, durable success record, and artifact readback; identifiers retained outside repository.",
+        "docs/workbench/embodiedgen.md#qualification-status"
       ]
-    }
-  },
-  "live_qualification": {
-    "status": "verified",
-    "reason": "One operator-private immutable image built from source producer 896821301b53766cc137c0d3f72933764c6b2978 completed the standard durable RTX PRO 6000 workflow. All six declared outputs and 59 artifacts were read back and hash-verified. The historical producer-to-source bridge covers only the image/runtime/workflow/profile inputs; this later turnkey handoff deliberately revises documentation and readiness. The digest, registry, project, and artifact locations remain private.",
-    "evidence": [
-      "Operator-private exact-image qualification, target preflight, runtime receipt, durable success record, and artifact readback; identifiers retained outside repository.",
-      "docs/workbench/embodiedgen.md#qualification-status"
-    ],
-    "qualification_scope": {
-      "producer_source_head": "896821301b53766cc137c0d3f72933764c6b2978",
-      "historical_bridge_source_head": "81baa4ead67f8d9bbc52548576a43a57b72035d9",
-      "qualified_workflow_sha256": "ad8c793f9308c046adc9887feb69f004504961c0465de6413479ba872c5c1fa1",
-      "image_runtime_workflow_profile_inputs_unchanged_through_historical_bridge": true,
-      "guide_is_outside_the_historical_equivalence_claim": true,
-      "private_image_digest_retained_outside_repository": true
     }
   },
   "prerequisites": {

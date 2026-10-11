@@ -23,6 +23,7 @@ import numpy as np
 from PIL import Image
 
 from npa.orchestration.npa_workflow import build_plan
+from npa.orchestration.npa_workflow.readiness import load_readiness_record
 from npa.orchestration.npa_workflow.skypilot_render import (
     NpaWorkflowRenderError,
     SkypilotRenderOptions,
@@ -1396,6 +1397,13 @@ def test_readiness_record_binds_historical_qualification_and_consumer_prerequisi
     None
 ):
     readiness = json.loads(READINESS.read_text(encoding="utf-8"))
+    assert load_readiness_record(READINESS) == readiness
+    assert set(readiness) == {
+        "schema_version",
+        "workflow_sha256",
+        "planning",
+        "prerequisites",
+    }
     assert readiness["schema_version"] == "workflow-readiness/v1"
     assert (
         readiness["workflow_sha256"]
@@ -1407,14 +1415,12 @@ def test_readiness_record_binds_historical_qualification_and_consumer_prerequisi
     )
     assert readiness["planning"]["validation"]["status"] == "verified"
     assert readiness["planning"]["task_fidelity"]["status"] == "verified"
-    assert readiness["live_qualification"]["status"] == "verified"
-    assert "59 artifacts" in readiness["live_qualification"]["reason"]
-    scope = readiness["live_qualification"]["qualification_scope"]
-    assert scope["qualified_workflow_sha256"] == readiness["workflow_sha256"]
-    assert scope[
-        "image_runtime_workflow_profile_inputs_unchanged_through_historical_bridge"
-    ]
-    assert scope["guide_is_outside_the_historical_equivalence_claim"]
+    task_fidelity = readiness["planning"]["task_fidelity"]
+    assert "59 artifacts" in task_fidelity["reason"]
+    assert "historical source bridge" in task_fidelity["reason"]
+    assert any(
+        "durable success record" in evidence for evidence in task_fidelity["evidence"]
+    )
     assert all(
         prerequisite["status"] == "unverified"
         for prerequisite in readiness["prerequisites"].values()
