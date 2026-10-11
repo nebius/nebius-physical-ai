@@ -20,6 +20,7 @@ def _embedded_asset(asset, evidence_directory):
         raise ValueError(f"Unsupported embedded media: {mime}")
     return {
         "id": asset["id"],
+        "title": asset.get("title"),
         "alt": asset["alt"],
         "caption": asset["caption"],
         "mime_type": mime,

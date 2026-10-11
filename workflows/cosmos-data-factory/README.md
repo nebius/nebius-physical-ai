@@ -32,6 +32,10 @@ report takes source identity, sampled values, actual outputs, native acceptance,
 and visual verdicts from reviewed run evidence. Pending runs never inherit a
 historical fixture's successful metrics. Keep person-view limitations and
 source-to-sampled-environment mismatches explicit.
+For EVG, the proof template can show the photo-to-event-to-label transformation,
+pause the original clip at reviewed timestamps, and explain model labels in
+plain language. The [proof guide](proof.md#build-the-local-report) documents
+the optional explanation and EVG-first display fields.
 
 The implementations already existed in Workbench's testing catalog. These are
 their canonical locations; workflow names, run prefixes, model revisions, stage

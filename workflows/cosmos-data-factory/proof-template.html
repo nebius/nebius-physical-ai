@@ -16,8 +16,8 @@
 <main>
 <header class="hero">
   <div class="topline"><span class="brand">NEBIUS / PHYSICAL AI</span><span class="pill">NVIDIA Early Access · NPA + SkyPilot</span></div>
-  <h1>Human perception.<br>Robot-workcell safety.</h1>
-  <p class="lead">Review clothing variations around a collaborative robot and generated safety events in a real robot workcell. Two existing NVIDIA workflows, realistic inputs, and evidence you can inspect.</p>
+  <h1 id="proof-title">Human perception.<br>Robot-workcell safety.</h1>
+  <p id="proof-introduction" class="lead">Review clothing variations around a collaborative robot and generated safety events in a real robot workcell. Two existing NVIDIA workflows, realistic inputs, and evidence you can inspect.</p>
   <div class="hero-meta"><span class="pill good">2 CDF workflows</span><span class="pill">IAA · 9 states</span><span class="pill">EVG · 12 states</span><span class="pill">Single file · embedded media · offline</span></div>
   <nav aria-label="Report"><a href="#workflows">Workflows</a><a href="#evidence">Actual outputs</a><a href="#physical-ai">Robotics fit</a><a href="#run">Configure &amp; run</a><a href="#provenance">Evidence checks</a></nav>
   <div class="notice"><p id="proof-summary"></p></div>
@@ -30,8 +30,10 @@
     <button class="card workflow-card" id="tab-evg" role="tab" aria-controls="workflow-evg" aria-selected="false" data-workflow="evg"><span class="tag">02 / EVG</span><h3>Event Video Generation</h3><p>Test workcell safety perception with generated smoke/fire-event candidates seeded from a real UR5 robot scene.</p><code>workflows/cosmos-data-factory/paidf-event-video-generation.yaml</code></button>
   </div>
   <p class="mode-note muted">The announcement adds IAA and EVG to the broader PAIDF catalog. DIG and VDA are existing families. Main PAIDF stays at <code>workflows/main/paidf-cosmos3.yaml</code>.</p>
-  <div id="workflow-iaa" role="tabpanel" aria-labelledby="tab-iaa" class="workflow-panel surface card"></div>
-  <div id="workflow-evg" role="tabpanel" aria-labelledby="tab-evg" class="workflow-panel surface card" hidden></div>
+  <details id="workflow-details"><summary>Technical workflow states and GPU resources</summary>
+    <div id="workflow-iaa" role="tabpanel" aria-labelledby="tab-iaa" class="workflow-panel surface card"></div>
+    <div id="workflow-evg" role="tabpanel" aria-labelledby="tab-evg" class="workflow-panel surface card" hidden></div>
+  </details>
 </section>
 
 <section id="evidence" class="surface">
@@ -39,7 +41,7 @@
   <p id="evidence-scope"></p>
   <div id="evidence-iaa" class="workflow-evidence"></div>
   <div id="evidence-evg" class="workflow-evidence" hidden></div>
-  <p class="mode-note muted">Switch IAA / EVG above to inspect each application. Generated media, native protocol acceptance, annotation coverage, and task quality have separate verdicts.</p>
+  <p class="mode-note muted">Choose IAA / EVG in the Workflows section to inspect each application. Generated media, native protocol acceptance, annotation coverage, and task quality have separate verdicts.</p>
 </section>
 
 <section id="physical-ai" class="section-block">
@@ -97,7 +99,7 @@
 <script>
 // Present reviewed CDF evidence and prepare existing CLI commands without execution.
 const report = JSON.parse(document.getElementById('report-data').textContent);
-let selected = 'iaa';
+let selected = report.workflows.some(row => row.id === report.initial_workflow) ? report.initial_workflow : 'iaa';
 const imageSettings = {};
 const sharedImages = ['generation_image', 'attribute_search_image'];
 const extraImages = ['detection_image', 'captioning_image', 'visual_qa_image'];
@@ -113,6 +115,7 @@ function node(tag, text, className) {
 function assetFigure(id) {
   const asset = report.assets.find(row => row.id === id);
   const figure = node('figure');
+  if (asset.title) figure.append(node('h3', asset.title));
   const media = node(asset.mime_type.startsWith('video/') ? 'video' : 'img');
   media.src = asset.src;
   media.id = id;
@@ -170,18 +173,60 @@ function renderAnnotations(rows) {
   return details;
 }
 
-function renderEvidence(workflow) {
-  const panel = elements(`evidence-${workflow.id}`);
+function renderExplanation(explanation) {
+  const panel = node('div');
+  panel.append(node('p', explanation.summary, 'lead'));
+  const steps = node('div', undefined, 'grid three');
+  explanation.steps.forEach((step, index) => {
+    const card = node('article', undefined, 'card');
+    card.append(node('h3', `${index + 1}. ${step.title}`), node('p', step.description));
+    steps.append(card);
+  });
+  panel.append(steps);
+  return panel;
+}
+
+function renderWatchpoints(explanation, mediaIds) {
+  const controls = node('div', undefined, 'actions');
+  controls.style.margin = '18px 0';
+  const status = node('p', 'Play the full clip, or pause at a review point below.', 'mode-note');
+  status.setAttribute('aria-live', 'polite');
+  explanation.watchpoints.forEach(point => {
+    const button = node('button', `${point.seconds}s · ${point.label}`, 'button secondary');
+    button.type = 'button';
+    button.dataset.seconds = point.seconds;
+    button.addEventListener('click', () => {
+      const video = mediaIds.map(elements).find(media => media.tagName === 'VIDEO');
+      video.pause();
+      video.currentTime = point.seconds;
+      status.textContent = `Paused at ${point.seconds}s: ${point.description}`;
+    });
+    controls.append(button);
+  });
+  const panel = node('div', undefined, 'watchpoints');
+  panel.append(controls, status);
+  return panel;
+}
+
+function renderInterpretation(explanation) {
+  const panel = node('div');
+  panel.append(node('h3', 'What the automatic labels say'));
+  const labels = node('ul', undefined, 'bullets');
+  explanation.labels.forEach(label => labels.append(node('li', `${label.category}: ${label.answer}`)));
+  panel.append(labels, node('p', explanation.labels_note, 'mode-note'));
+  panel.append(node('h3', 'What this proof establishes'), node('p', explanation.conclusion));
+  panel.append(node('h3', 'Where this helps Physical AI'), node('p', explanation.application));
+  panel.append(node('h3', 'What still needs review'));
+  const limits = node('ul', undefined, 'bullets');
+  explanation.limitations.forEach(limit => limits.append(node('li', limit)));
+  panel.append(limits);
+  return panel;
+}
+
+function renderEvidenceDetails(workflow) {
+  const panel = node('div');
   const evidence = workflow.evidence;
-  const heading = node('div', undefined, 'heading');
-  heading.append(node('h3', evidence.title), node('span', evidence.status_label, 'pill ' + (evidence.protocol_passed ? 'good' : 'warning')));
-  const media = node('div', undefined, workflow.id === 'evg' && evidence.media_ids.length > 1 ? 'video-grid' : 'image-grid');
-  if (evidence.media_ids.length === 1) media.style.gridTemplateColumns = '1fr';
-  evidence.media_ids.forEach(id => media.append(assetFigure(id)));
-  panel.append(heading, media, renderMetrics(evidence.metrics));
-  const review = node('div', undefined, 'notice');
-  review.append(node('p', evidence.quality_verdict));
-  panel.append(review, node('h3', evidence.variables_label));
+  panel.append(node('h3', evidence.variables_label));
   panel.append(node('pre', JSON.stringify(workflow.sampled_variables, null, 2)));
   const notes = node('ul', undefined, 'bullets');
   evidence.notes.forEach(note => notes.append(node('li', note)));
@@ -200,9 +245,41 @@ function renderEvidence(workflow) {
   panel.append(queries);
   if (workflow.annotation_rows?.length) panel.append(renderAnnotations(workflow.annotation_rows));
   panel.append(renderSource(evidence.source));
+  return panel;
+}
+
+function renderEvidence(workflow) {
+  const panel = elements(`evidence-${workflow.id}`);
+  const evidence = workflow.evidence;
+  const heading = node('div', undefined, 'heading');
+  heading.append(node('h3', evidence.title), node('span', evidence.status_label, 'pill ' + (evidence.protocol_passed ? 'good' : 'warning')));
+  panel.append(heading);
+  if (evidence.explanation) panel.append(renderExplanation(evidence.explanation));
+  const media = node('div', undefined, workflow.id === 'evg' && evidence.media_ids.length > 1 ? 'video-grid' : 'image-grid');
+  media.style.marginTop = '20px';
+  if (evidence.media_ids.length === 1) media.style.gridTemplateColumns = '1fr';
+  evidence.media_ids.forEach(id => media.append(assetFigure(id)));
+  panel.append(media);
+  if (evidence.explanation) panel.append(renderWatchpoints(evidence.explanation, evidence.media_ids));
+  panel.append(renderMetrics(evidence.metrics));
+  const review = node('div', undefined, 'notice');
+  review.append(node('p', evidence.quality_verdict));
+  panel.append(review);
+  if (evidence.explanation) {
+    panel.append(renderInterpretation(evidence.explanation));
+    const details = node('details', undefined, 'run-evidence-details');
+    details.append(node('summary', 'Detailed run evidence: sampled values, all model answers and source identity'));
+    details.append(renderEvidenceDetails(workflow));
+    panel.append(details);
+    return;
+  }
+  panel.append(renderEvidenceDetails(workflow));
 }
 
 function renderMedia() {
+  if (report.title) elements('proof-title').textContent = report.title;
+  if (report.introduction) elements('proof-introduction').textContent = report.introduction;
+  if (report.initial_workflow === 'evg') elements('evidence').after(elements('workflows'));
   report.workflows.forEach(renderEvidence);
   report.robot_assets.forEach(id => elements('robot-seeds').append(assetFigure(id)));
   elements('proof-summary').textContent = report.claim_summary;

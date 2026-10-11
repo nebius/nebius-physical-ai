@@ -4,6 +4,15 @@ The standalone HTML should let a reviewer assess the task from actual inputs,
 generated media, and annotations. Scope it to the two workflows in this package.
 Keep an integration-completion verdict separate from the media-quality verdict.
 
+For EVG, lead with the transformation: one real scene photograph → a generated
+event clip → automatic model annotations and an assembled dataset. Distinguish
+the recorded source photo from the synthetic incident. Provide video seek
+controls so a reviewer can find the event, then explain its intended perception
+use and the remaining scene-quality limitations. Keep raw run details collapsed.
+For example, two positive and nineteen negative event answers describe different
+event categories; they are not a detector accuracy score. Person attributes
+describe a generated person and do not measure event-detection performance.
+
 ## Choose seeds for the task
 
 | Workflow | Upstream starting point | What representative review should establish |
@@ -116,13 +125,23 @@ receipts. The top-level fields are `built_at`, `evidence_scope`,
 Optional evidence `comparisons` retain additional runs with their own `title`,
 `verdict`, and `media_ids`; label failed preservation clearly even when native
 protocol checks pass.
+Optional evidence `explanation` provides `summary`, `steps` (`title`,
+`description`), `watchpoints` (`seconds`, `label`, `description`), `labels`
+(`category`, `answer`), `labels_note`, `conclusion`, `application`, and
+`limitations`. Tie these statements and timestamps to reviewed native media
+and actual model answers. Seek controls pause the original video; they do not
+edit or replace its bytes.
 Keep predicted sampling labeled as planned
 until the real configuration exists, and keep missing outputs pending rather
 than reusing unrelated successful metrics. Optional `preferred_seed` sets the
 selected workflow's command-form seed; without it the form uses `42`.
+Optional top-level `initial_workflow` selects `iaa` or `evg` when the page opens;
+`title` and `introduction` customize its opening explanation. Use these fields
+to produce an EVG-first standalone page from the same two-workflow evidence.
 Each asset needs `id`, `path`, `mime_type`, `sha256`, `alt`,
-and `caption`; paths are resolved relative to the evidence JSON. The template
-renders the exact `media_ids` supplied for each workflow. `robot_assets` lists
+and `caption`; paths are resolved relative to the evidence JSON. Optional asset
+`title` distinguishes source from generated output. The template renders the
+exact `media_ids` supplied for each workflow. `robot_assets` lists
 optional source-reference asset IDs.
 Optional workflow `annotation_rows` display actual model answers in a collapsed
 table; each row has `scope`, native question ID in `label`, and `answer` with its
