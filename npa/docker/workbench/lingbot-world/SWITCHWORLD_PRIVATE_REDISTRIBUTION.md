@@ -30,7 +30,7 @@ both adapters, model checkpoints, CUDA Python packages, user media, native case
 tensors, credentials, runtime caches, and generated outputs outside image
 layers. Their upstream terms and the operator's authorization remain separate.
 
-The system package layer uses Debian's fixed `20260906T183022Z` snapshot so
+The system package layer uses Debian's fixed `20261009T000000Z` snapshot so
 the scanner can bind parser-like literals to the independently audited package
 bytes rather than broadly excluding their paths. The image runs as `ubuntu`;
 passwordless sudo is solely the existing SkyPilot bootstrap prerequisite and
