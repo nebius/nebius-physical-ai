@@ -438,25 +438,43 @@ print(json.dumps({"deterministic": deterministic, "parallel_values": len(values)
     return payload
 
 
-def _verify_dlimp_rlds_read(python: Path, records: Sequence[Path]) -> dict[str, Any]:
-    """Read one staged trajectory through the installed OFT dlimp runtime.
+def _rlds_builder_directory(data_root: Path, dataset_name: str) -> Path:
+    """Return the one TFDS metadata directory for the declared RLDS dataset."""
+    candidates = sorted(
+        path.parent
+        for path in data_root.rglob("dataset_info.json")
+        if path.parent.parent.name == dataset_name
+    )
+    if len(candidates) != 1:
+        raise OpenVLAPipelineError(
+            "prepared RLDS data must contain exactly one TFDS dataset_info.json "
+            f"for declared dataset {dataset_name!r}"
+        )
+    return candidates[0]
 
-    The preparation stage is deliberately a data-processing stage, not a file
-    inventory. ``DLataset.from_tfrecords`` is the same dlimp reader used by the
-    upstream OFT data path, so this proves that the copied object-store records
-    can be decoded by the pinned deterministic dlimp revision before the
-    multi-GPU training stage starts.
+
+def _verify_dlimp_rlds_read(
+    python: Path, data_root: Path, dataset_name: str
+) -> dict[str, Any]:
+    """Read one staged trajectory through OFT's TFDS-backed dlimp reader.
+
+    The supplied LIBERO data is TFDS/RLDS, whereas ``from_tfrecords`` expects
+    dlimp's own tensor-encoded examples.  ``from_rlds`` is the reader the
+    pinned upstream OFT training path uses, and the local metadata directory
+    preserves the declared builder schema without registering a global TFDS
+    builder.
     """
-    if not records:
-        raise OpenVLAPipelineError("dlimp RLDS probe received no TFRecord files")
+    builder_dir = _rlds_builder_directory(data_root, dataset_name)
     script = """
 import json
 import sys
 from dlimp.dataset import DLataset
+import tensorflow_datasets as tfds
 
-records = json.loads(sys.argv[1])
-dataset = DLataset.from_tfrecords(
-    records,
+builder = tfds.builder_from_directory(sys.argv[1])
+dataset = DLataset.from_rlds(
+    builder,
+    split="train",
     shuffle=False,
     num_parallel_reads=4,
 )
@@ -475,7 +493,7 @@ print(json.dumps({
                     str(python),
                     "-c",
                     script,
-                    json.dumps([str(path) for path in records]),
+                    str(builder_dir),
                 ],
                 text=True,
             )
@@ -727,7 +745,8 @@ def prepare(cfg: PrepareConfig) -> dict[str, Any]:
         runtime = bootstrap_runtime(cfg.runtime_root)
         dlimp_rlds_probe = _verify_dlimp_rlds_read(
             runtime / "venv" / "bin" / "python",
-            [materialized / entry["path"] for entry in rlds_files],
+            materialized,
+            cfg.dataset_name,
         )
         normalization = {
             "schema": "npa.workbench.openvla-oft.normalization.v1",
