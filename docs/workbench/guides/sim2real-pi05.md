@@ -5,6 +5,12 @@ the compositional Sim2Real workflow. It does not change
 `workflows/main/sim2real.yaml`, replace its PPO policy, or compare its airborne
 goal task directly with released placement.
 
+The Isaac, OpenPI, and viewer images must bake the same NPA source commit used
+by the workflow manager. Publication checks both the OCI revision label and
+`NPA_IMAGE_SOURCE_SHA`; native stage setup verifies the latter before running
+the baked adapter. OpenPI identifies `/opt/venv/bin/python` as its baked NPA
+interpreter through `NPA_BAKED_PYTHON`.
+
 ## What the graph proves
 
 The workflow first runs a differential-IK Franka expert in Isaac physics. The

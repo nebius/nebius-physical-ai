@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import runpy
 import subprocess
 import sys
 from pathlib import Path
@@ -27,6 +28,87 @@ def steps():
 
 def named(name):
     return next(step for step in steps() if step.get("name") == name)
+
+
+def runtime_contract_code():
+    script = named(PRE)["run"]
+    return script.split("npa/.venv/bin/python - <<'PY'\n", 1)[1].split("\nPY", 1)[0]
+
+
+def run_runtime_contract(tmp_path):
+    script = tmp_path / "runtime-contract.py"
+    script.write_text(runtime_contract_code(), encoding="utf-8")
+    runpy.run_path(str(script))
+
+
+@pytest.mark.parametrize("tool", ["isaac-lab", "openpi", "rerun-viewer"])
+@pytest.mark.parametrize("runtime_sha", [None, "a" * 40, "duplicate"])
+def test_runtime_gate_rejects_unusable_baked_source_attestation(
+    tmp_path, monkeypatch, tool, runtime_sha
+):
+    from npa.orchestration.skypilot.image_bootstrap_contract import (
+        ATTESTATION_LABEL,
+        CONTRACT_VERSION,
+    )
+
+    sha = "e" * 40
+    environment = [] if runtime_sha is None else [f"NPA_IMAGE_SOURCE_SHA={runtime_sha}"]
+    if runtime_sha == "duplicate":
+        environment = [f"NPA_IMAGE_SOURCE_SHA={sha}"] * 2
+    config = {
+        "User": "ubuntu",
+        "Env": environment,
+        "Labels": {
+            "org.opencontainers.image.revision": sha,
+            ATTESTATION_LABEL: CONTRACT_VERSION,
+        },
+    }
+    monkeypatch.setenv("IMAGE", "fixture-image")
+    monkeypatch.setenv("TOOL", tool)
+    monkeypatch.setenv("DEVELOPMENT_SHA", sha)
+
+    def inspect(command, **kwargs):
+        assert command == ["docker", "inspect", "fixture-image"]
+        return json.dumps([{"Config": config}])
+
+    monkeypatch.setattr(subprocess, "check_output", inspect)
+    with pytest.raises(SystemExit, match="baked NPA source attestation"):
+        run_runtime_contract(tmp_path)
+
+
+@pytest.mark.parametrize("tool", ["isaac-lab", "openpi", "rerun-viewer", "curobo"])
+def test_runtime_gate_accepts_exact_baked_source_and_preserves_other_images(
+    tmp_path, monkeypatch, tool
+):
+    from npa.orchestration.skypilot.image_bootstrap_contract import (
+        ATTESTATION_LABEL,
+        CONTRACT_VERSION,
+    )
+
+    sha = "e" * 40
+    config = {
+        "User": "ubuntu",
+        "Env": [] if tool == "curobo" else [f"NPA_IMAGE_SOURCE_SHA={sha}"],
+        "Labels": {
+            "org.opencontainers.image.revision": sha,
+            ATTESTATION_LABEL: CONTRACT_VERSION,
+        },
+    }
+    monkeypatch.setenv("IMAGE", "fixture-image")
+    monkeypatch.setenv("TOOL", tool)
+    monkeypatch.setenv("DEVELOPMENT_SHA", sha)
+    calls = []
+
+    def inspect(command, **kwargs):
+        calls.append(command)
+        if command == ["docker", "inspect", "fixture-image"]:
+            return json.dumps([{"Config": config}])
+        assert command == ["docker", "history", "--no-trunc", "fixture-image"]
+        return ""
+
+    monkeypatch.setattr(subprocess, "check_output", inspect)
+    run_runtime_contract(tmp_path)
+    assert len(calls) == 2
 
 
 def curobo_block(name):

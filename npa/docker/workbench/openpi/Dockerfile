@@ -182,6 +182,9 @@ RUN install -d -m 0755 -o ubuntu -g ubuntu \
     && test -r /opt/byof/LICENSE \
     && test -r /usr/share/doc/npa-openpi/REDISTRIBUTION.md
 
+ENV NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
+    NPA_BAKED_PYTHON=/opt/venv/bin/python
+
 VOLUME ["/workspace/.cache/openpi"]
 WORKDIR /opt/byof
 USER ubuntu
