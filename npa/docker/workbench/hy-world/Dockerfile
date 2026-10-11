@@ -43,16 +43,19 @@ USER root
 # Worldgen builds CUDA extensions with nvcc but never invokes that profiler;
 # remove it (including its vulnerable EFA helper) without sacrificing the
 # compiler/toolchain required by gsplat, NavMesh, PyTorch3D and FlashAttention.
+# The pinned gsplat release references a vendored GLM path that is absent from
+# HY-World's source closure, so install the generic distribution headers.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
       build-essential ca-certificates cmake ffmpeg git libgl1 libglib2.0-0 \
-      linux-libc-dev ninja-build pkg-config python3-pip \
+      libglm-dev linux-libc-dev ninja-build pkg-config python3-pip \
       openssh-server procps rsync sudo util-linux zlib1g-dev \
     && NCOMPUTE_PKGS="$(dpkg-query -W -f='${binary:Package}\n' 'nsight-compute-*' 'cuda-nsight-compute-*' 2>/dev/null || true)" \
     && if [ -n "$NCOMPUTE_PKGS" ]; then apt-get purge -y $NCOMPUTE_PKGS; fi \
     && rm -rf /opt/nvidia/nsight-compute \
     && test ! -e /opt/nvidia/nsight-compute \
     && command -v nvcc >/dev/null \
+    && test -r /usr/include/glm/gtc/type_ptr.hpp \
     && rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
     && (id -u "${NPA_RUNTIME_USER}" >/dev/null 2>&1 \
