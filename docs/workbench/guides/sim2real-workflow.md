@@ -744,6 +744,11 @@ after it agrees with the loaded statistic tensors. The adapter rejects missing o
 contradictory audit evidence. Validation and Gold execute the saved learned
 actor alone; they do not run the demonstration teacher or a post-actor
 controller. Training demonstration success does not establish held-out quality.
+After the complete configured PPO pass, validation includes the first saved
+checkpoint as well as every configured periodic checkpoint and the final
+checkpoint. Native checkpoint index zero contains one completed PPO update;
+discarding it can lose the strongest learned warm start. The selected
+checkpoint's update count remains separate from the completed pass count.
 
 A checkpoint file alone does not prove that the actor learned to grasp. Until
 at least half of its validation episodes achieved both stable grasp and lift,

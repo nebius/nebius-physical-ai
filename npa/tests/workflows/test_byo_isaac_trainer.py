@@ -1131,7 +1131,7 @@ def test_run_isaac_training_job_tags_s3_path_per_iteration(monkeypatch, resume_p
     assert result["checkpoint_path"].endswith("/outer-02-iter-01/model_latest.pt")
 
 
-def test_enumerate_periodic_checkpoints_uses_interval_and_keeps_final(
+def test_enumerate_periodic_checkpoints_keeps_first_periodic_and_final(
     monkeypatch,
 ) -> None:
     import boto3
@@ -1159,4 +1159,8 @@ def test_enumerate_periodic_checkpoints_uses_interval_and_keeps_final(
         endpoint="https://storage.example",
         validation_interval=100,
     )
-    assert [item["training_iteration"] for item in checkpoints] == [100, 200, 250]
+    assert [item["training_iteration"] for item in checkpoints] == [0, 100, 200, 250]
+    assert checkpoints[0]["checkpoint_completed_updates"] == 1
+    assert (
+        checkpoints[0]["checkpoint_iteration_semantics"] == "last_completed_zero_based"
+    )

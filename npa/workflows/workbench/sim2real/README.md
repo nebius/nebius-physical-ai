@@ -80,8 +80,11 @@ Stage 7 downloads declared camera frames with sixteen concurrent transfers and
 rejects any failed transfer before writing a rollout manifest. Stage 14 also
 loads earlier outer-loop evidence documents so every completed PPO pass appears
 in the final loss curves, without mirroring historical camera trees.
-After each full PPO pass, Stage 9 evaluates all saved 100-update checkpoints
-and the final checkpoint against the same validation split. It retains the
+After each full PPO pass, Stage 9 evaluates the first saved checkpoint, all saved
+100-update checkpoints, and the final checkpoint against the same validation
+split. Native checkpoint zero contains one completed PPO update; retaining it
+protects the learned warm start when later PPO updates reduce strict success.
+Selection still requires the complete configured PPO pass. It retains the
 strongest actor and records that checkpoint's actual completed updates separately
 from the full pass count. Resumed rollouts and PPO use its exact checkpoint.
 Recurrent inference clears each environment's hidden state at its real reset

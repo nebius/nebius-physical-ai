@@ -557,10 +557,43 @@ def _load_s3_json(uri: str, *, endpoint: str) -> dict[str, Any]:
 def enumerate_periodic_checkpoints(
     *, s3_output: str, endpoint: str, validation_interval: int
 ) -> list[dict[str, Any]]:
-    """Enumerate durable RSL checkpoints selected for fixed-validation sweeps."""
+    """Retain the first periodic and final native checkpoints for validation.
+
+    Args:
+        s3_output: Durable trainer output prefix containing numbered checkpoints.
+        endpoint: Configured S3 endpoint, or an empty string for the SDK default.
+        validation_interval: Positive interval between periodic update indices.
+    Returns:
+        Ordered checkpoint identities with exact native completed-update counts.
+    Raises:
+        ValueError: The validation interval is not positive.
+        RuntimeError: The trainer published no numbered native checkpoints.
+    """
 
     if validation_interval <= 0:
         raise ValueError("validation checkpoint interval must be positive")
+    discovered = _published_native_checkpoints(s3_output, endpoint)
+    if not discovered:
+        raise RuntimeError("trainer published no numbered RSL checkpoints")
+    highest = max(discovered)
+    selected = [
+        iteration
+        for iteration in sorted(discovered)
+        if iteration % validation_interval == 0 or iteration == highest
+    ]
+    return [
+        {
+            "training_iteration": iteration,
+            "checkpoint_completed_updates": iteration + 1,
+            "checkpoint_iteration_semantics": "last_completed_zero_based",
+            "checkpoint_uri": discovered[iteration],
+        }
+        for iteration in sorted(set(selected))
+    ]
+
+
+def _published_native_checkpoints(s3_output: str, endpoint: str) -> dict[int, str]:
+    """Read numbered native checkpoint identities from the trainer's S3 prefix."""
     import boto3
     from urllib.parse import urlparse
 
@@ -569,33 +602,14 @@ def enumerate_periodic_checkpoints(
     paginator = boto3.client("s3", endpoint_url=endpoint or None).get_paginator(
         "list_objects_v2"
     )
-    discovered: dict[int, str] = {}
+    discovered = {}
     for page in paginator.paginate(Bucket=parsed.netloc, Prefix=prefix):
         for item in page.get("Contents", []) or []:
             key = str(item.get("Key") or "")
             match = re.search(r"/model_(\d+)\.pt$", f"/{key}")
             if match:
-                discovered[int(match.group(1))] = key
-    if not discovered:
-        raise RuntimeError("trainer published no numbered RSL checkpoints")
-    highest = max(discovered)
-    selected = [
-        iteration
-        for iteration in sorted(discovered)
-        if iteration > 0
-        and (iteration % validation_interval == 0 or iteration == highest)
-    ]
-    if highest not in selected:
-        selected.append(highest)
-    return [
-        {
-            "training_iteration": iteration,
-            "checkpoint_completed_updates": iteration + 1,
-            "checkpoint_iteration_semantics": "last_completed_zero_based",
-            "checkpoint_uri": f"s3://{parsed.netloc}/{discovered[iteration]}",
-        }
-        for iteration in sorted(set(selected))
-    ]
+                discovered[int(match.group(1))] = f"s3://{parsed.netloc}/{key}"
+    return discovered
 
 
 def read_generated_train_envs(

@@ -78,7 +78,9 @@ or spawn sibling Jobs.
   normalization count and update bound; exact loads restore that bound.
   Expert phases only weight training loss. Every periodic and final checkpoint
   binds the policy semantics; all native inference paths reset
-  recurrent state on actual `dones`. Keep the full PPO count and held-out gate.
+  recurrent state on actual `dones`. Validation retains the first native
+  checkpoint, including index zero with one completed update, as well as the
+  configured periodic and final checkpoints. Keep the full PPO count and held-out gate.
 - Temporal rewards remain bounded and simulator-grounded. Strict success remains
   stable placement within 5 cm. Pipeline success and policy quality are distinct.
 - Native rollout actions preserve every reset between sparse samples using
