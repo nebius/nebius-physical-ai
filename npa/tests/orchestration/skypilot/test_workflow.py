@@ -4317,6 +4317,92 @@ def test_workflow_status_reads_json_queue(monkeypatch, tmp_path) -> None:
     assert result.job_id == "42"
 
 
+_ALLOWED_CLOUDS_NOTICE = (
+    'The following keys (["allowed_clouds"]) have different values in the client '
+    "SkyPilot config with the server and will be ignored. Remove these keys to "
+    "disable this warning. If you want to specify it, please modify it on server "
+    "side or contact your administrator."
+)
+
+
+@pytest.mark.parametrize("state", ["PENDING", "RUNNING", "SUCCEEDED"])
+def test_workflow_status_accepts_pinned_config_notice(
+    monkeypatch, tmp_path, state
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    output = (
+        _ALLOWED_CLOUDS_NOTICE
+        + "\n"
+        + json.dumps([{"job_id": 42, "task_id": 0, "status": state}])
+    )
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=output, stderr=""
+        ),
+    )
+
+    result = workflow_status("42", sky_bin=sky_bin)
+
+    assert result.status == state
+    assert result.error == ""
+
+
+@pytest.mark.parametrize(
+    ("stdout", "stderr"),
+    [
+        ("diagnostic only", ""),
+        ('[{"job_id": 42, "status": "SUCCEEDED"}]\n[]', ""),
+        (
+            _ALLOWED_CLOUDS_NOTICE + '\n[{"job_id": 42, "status": "SUCCEEDED"}]\n[]',
+            "",
+        ),
+        ('[{"job_id": 42, "status": "SUCCEEDED"}]', "Error: permission denied"),
+        ('[{"job_id": 42}]', ""),
+        (
+            _ALLOWED_CLOUDS_NOTICE.replace("allowed_clouds", "kubernetes")
+            + '\n[{"job_id": 42, "status": "RUNNING"}]',
+            "",
+        ),
+    ],
+)
+def test_workflow_status_does_not_infer_absence_from_unverified_queue(
+    monkeypatch, tmp_path, stdout, stderr
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=stdout, stderr=stderr
+        ),
+    )
+
+    result = workflow_status("42", sky_bin=sky_bin)
+
+    assert result.status == "UNKNOWN"
+    assert result.error
+
+
+def test_workflow_status_empty_queue_remains_verified_after_config_notice(
+    monkeypatch, tmp_path
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=_ALLOWED_CLOUDS_NOTICE + "\n[]", stderr=""
+        ),
+    )
+
+    result = workflow_status("42", sky_bin=sky_bin)
+
+    assert result.status == "ABSENT"
+    assert result.error == ""
+
+
 def test_workflow_status_treats_successful_empty_queue_as_verified_absence(
     monkeypatch, tmp_path
 ) -> None:
