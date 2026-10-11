@@ -21,6 +21,7 @@ from npa.orchestration.npa_workflow.skypilot_render import (
     SkypilotRenderOptions,
     assert_no_unresolved_placeholders,
     render_pip_requirements_setup,
+    render_setup_for_tool,
     render_skypilot_yaml,
     tool_pip_requirements,
 )
@@ -174,6 +175,21 @@ def test_fastwam_stages_replace_an_importable_incompatible_pyav() -> None:
             '.startswith("15."))'
         ) in setup
         assert "-m pip install -q 'av>=15.0,<16.0'" in setup
+
+
+def test_fastwam_setup_refreshes_staged_metadata_before_pyav_install() -> None:
+    """Do not leave the baked NPA ``Requires-Dist`` pin ahead of the overlay."""
+
+    setup = render_setup_for_tool(
+        "workbench.lerobot.fastwam_report",
+        config={},
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+        command=("python3", "-m", "npa.workflows.fastwam_policy", "--help"),
+    )
+    metadata = '"$npa_fastwam_python" -m pip install -q -e "$npa_fastwam_src" --no-deps'
+    pyav = "-m pip install -q 'av>=15.0,<16.0'"
+    assert metadata in setup
+    assert setup.index(metadata) < setup.index(pyav)
 
 
 def test_executable_and_module_probes_can_coexist() -> None:
