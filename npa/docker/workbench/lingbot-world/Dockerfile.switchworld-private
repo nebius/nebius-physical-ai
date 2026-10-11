@@ -7,8 +7,8 @@
 # CPU-Python closure; none of its operating-system layers enter the final image.
 # The official Python 3.10 image and final runtime both use Debian Trixie, so
 # the copied CPython C extensions share their libc and libffi ABI. Copy the
-# CPython /usr/local tree and its CA bundle needed to contact the pinned Debian
-# snapshot; Python source-stage OS layers do not become image ancestors.
+# CPython /usr/local tree; Python source-stage OS layers do not become image
+# ancestors.
 ARG PYTHON_RUNTIME_SOURCE=python:3.10-slim-trixie@sha256:7b6bd969dda3ecfca0655524e338b57a8b8cd692a9362e3d55b5a3ef49b07256
 ARG DEBIAN_RUNTIME_BASE=debian:trixie-slim@sha256:918311b7b6c4c6f68b232ba516584925f6c78ad82b6fd534b98979df6438e483
 ARG WAN_SOURCE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@sha256:5780959ca6c6e7eb77ee7ea7d005fcf0f56db50783ce798dddee2809185eb837
@@ -23,10 +23,6 @@ ARG DEBIAN_SNAPSHOT=20261009T000000Z
 ARG NPA_SOURCE_SHA=unknown
 
 COPY --from=python-runtime /usr/local /usr/local
-# debian:trixie-slim intentionally omits CA roots. Bootstrap HTTPS snapshot
-# verification from the separately pinned Python source stage, then install
-# the final root's own ca-certificates package from that verified snapshot.
-COPY --from=python-runtime /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 
 LABEL npa.tool="lingbot-world-switchworld-private" \
       npa.version="a43bec7f8091c83e9b30b16b912f6fc906236fa6-switchworld-private" \
@@ -59,14 +55,35 @@ SHELL ["/bin/bash", "-lc"]
 USER root
 
 # The fixed snapshot supplies the exact libssh2 bytes independently audited in
-# ncore/native-bootstrap-lock.json. Install libffi8 before importing copied
-# CPython extensions; the slim base intentionally does not provide it. No
-# package acquisition occurs at pod time.
-RUN sed -ri \
-      -e "s|https?://deb.debian.org/debian-security|https://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}|g" \
-      -e "s|https?://deb.debian.org/debian|https://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}|g" \
-      /etc/apt/sources.list.d/debian.sources \
-    && printf 'Acquire::Check-Valid-Until "false";\n' >/etc/apt/apt.conf.d/99snapshot \
+# ncore/native-bootstrap-lock.json. The build route cannot validate the
+# snapshot's TLS chain, so the snapshot transport is HTTP while APT still
+# requires Debian-signed InRelease metadata and authenticated packages through
+# the base image's Debian archive keyring. Install libffi8 before importing
+# copied CPython extensions; the slim base intentionally does not provide it.
+# No package acquisition occurs at pod time.
+RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
+      /etc/apt/sources.list.d/*.sources \
+    && test -r /usr/share/keyrings/debian-archive-keyring.gpg \
+    && printf '%s\n' \
+      'Types: deb' \
+      "URIs: http://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}/" \
+      'Suites: trixie trixie-updates' \
+      'Components: main' \
+      'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg' \
+      > /etc/apt/sources.list.d/debian.sources \
+    && printf '%s\n' \
+      'Types: deb' \
+      "URIs: http://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}/" \
+      'Suites: trixie-security' \
+      'Components: main' \
+      'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg' \
+      > /etc/apt/sources.list.d/debian-security.sources \
+    && printf '%s\n' \
+      'Acquire::Check-Valid-Until "false";' \
+      'Acquire::AllowInsecureRepositories "false";' \
+      'Acquire::AllowDowngradeToInsecureRepositories "false";' \
+      'APT::Get::AllowUnauthenticated "false";' \
+      > /etc/apt/apt.conf.d/99snapshot \
     && apt-get update \
     && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
