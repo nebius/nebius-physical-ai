@@ -64,7 +64,8 @@ def test_no_loaded_module_points_at_the_real_npa_directory() -> None:
 
     The test compares against the account's actual `.npa` directory rather
     than all descendants of the account home, which can contain private test
-    homes. It does not use the redirected `HOME`. A constant left over from an earlier test's temporary home is a
+    homes. It does not use the redirected `HOME`. A constant left over from an
+    earlier test's temporary home is a
     separate and much smaller problem, and failing on it here would report a
     cross-test staleness bug as a credential leak.
 
@@ -72,7 +73,8 @@ def test_no_loaded_module_points_at_the_real_npa_directory() -> None:
         None.
     Raises:
         AssertionError: A loaded module exposes a path under the real
-            account `.npa` directory, so a unit test could read or write the operator's
+            account `.npa` directory, so a unit test could read or write the
+            operator's
             actual configuration and credentials.
     """
 
