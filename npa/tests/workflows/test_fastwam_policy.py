@@ -128,6 +128,8 @@ def test_workflow_has_five_connected_substantive_native_stages() -> None:
         spec.resources["gpu"]["accelerators"]
         == "{{config.gpu_type}}:{{config.gpu_count}}"
     )
+    assert spec.resources["gpu"]["cpus"] == 32
+    assert spec.resources["gpu"]["memory"] == "256Gi"
     train = next(step for step in plan.steps if step.state == "train")
     assert "--checkpoint-save-freq" in train.argv
     assert "20000" in train.argv
