@@ -65,3 +65,41 @@ Verify offline desktop and mobile layouts, decoded images, full video playback,
 embedded-asset hashes, and absence of script errors or external asset requests.
 Save the generated HTML outside Git with a terminal-friendly filename, retain
 its SHA256/verification receipt, and hand off its absolute path.
+
+## Build the local report
+
+The [template](proof-template.html) presents exactly IAA and EVG, their existing
+state graphs, embedded native media, robotics task fit, and an interactive Bash
+command preview. Its form requires an input prefix and non-placeholder private
+image digests before enabling copy. Live access and image preflights remain
+required; the form cannot establish their result. It makes no API calls or
+stores settings. Actual robot-source examples are labeled separately from CDF
+generation results.
+
+Prepare reviewed evidence JSON outside Git. Supply only sanitized display
+metadata, never credentials, concrete cloud identifiers, or raw operational
+receipts. The top-level fields are `built_at`, `evidence_scope`,
+`upstream_revision`, `current_source_revision`, `workflows`, `assets`, and
+`robot_assets`. Each workflow row needs `id` (`iaa` or `evg`), `title`,
+`spec_filename`, `input_guidance`, `resources`, `final_manifest`, `capabilities`,
+`queries`, `sampled_variables`, `producer_revisions`, `dataset_sha256`, and
+`terminal_status`. Each asset needs `id`, `path`, `mime_type`, `sha256`, `alt`,
+and `caption`; paths are resolved relative to the evidence JSON. The template
+uses asset IDs `iaa-source`, `iaa-generated`, `iaa-postprocessed`, `evg-source`,
+and `evg-video`. `robot_assets` lists optional source-reference asset IDs.
+
+Use the packer from the repository root:
+
+```bash
+npa/.venv/bin/python workflows/cosmos-data-factory/build-proof.py \
+  /absolute/private/evidence.json \
+  /absolute/private/cosmos-data-factory-turnkey.html
+```
+
+The packer verifies every original media hash, embeds JPEG/PNG/MP4 bytes, removes
+asset paths from the page, and derives stage/resource/model details and spec
+hashes from the two adjacent YAML files. It prints the delivered HTML's byte
+count and SHA256. Revalidate and visually inspect each generated report with
+networking disabled before handoff. The checked-in template includes retained
+fixture-specific quality disclosures; update those disclosures when replacing
+the evidence rather than presenting new results under historical claims.

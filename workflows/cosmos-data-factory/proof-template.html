@@ -1,0 +1,354 @@
+<!doctype html>
+<!-- Render the two existing CDF workflows and reviewed evidence without network assets. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Physical AI Data Factory · IAA &amp; EVG</title>
+<style>
+:root{color-scheme:dark;--bg:#0a1016;--surface:#111b24;--panel:#16222d;--line:#2a3b49;--text:#edf4f7;--muted:#adbdc9;--green:#b0ed76;--blue:#89c7ff;--amber:#ffd091}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.6 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{max-width:1220px;margin:auto;padding:32px 28px 60px}a{color:var(--blue)}button,input{font:inherit}button{cursor:pointer}button:focus-visible,a:focus-visible,input:focus-visible{outline:3px solid var(--blue);outline-offset:4px}button:disabled{cursor:default;opacity:.55}h1,h2,h3{line-height:1.15}h1{font-size:clamp(40px,6vw,70px);letter-spacing:-2.8px;margin:25px 0 18px}h2{font-size:30px;letter-spacing:-.6px;margin:10px 0 18px}h3{font-size:19px;margin:8px 0 14px}p{margin:10px 0 16px}code,pre{font:12px/1.7 ui-monospace,SFMono-Regular,Consolas,monospace}code{overflow-wrap:anywhere}pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;background:#091119;border:1px solid var(--line);border-radius:10px;padding:18px}.eyebrow{font-size:12px;font-weight:700;letter-spacing:2.1px;text-transform:uppercase;color:var(--green)}.muted,figcaption,.footer{color:var(--muted)}.lead{font-size:20px;max-width:850px}.topline,.heading,.actions{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap}.brand{font-size:13px;letter-spacing:.5px}.pill{display:inline-block;padding:5px 12px;border:1px solid var(--line);border-radius:30px;font-size:12px}.good{color:var(--green)}.warning{color:var(--amber)}nav{display:flex;flex-wrap:wrap;gap:22px;margin:28px 0 35px}nav a{text-decoration:none;font-size:14px}.hero{border-bottom:1px solid var(--line);padding-bottom:24px}.hero-meta{display:flex;gap:10px;flex-wrap:wrap;margin:23px 0}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.three{grid-template-columns:repeat(3,minmax(0,1fr))}.four{grid-template-columns:repeat(4,minmax(0,1fr))}.card,section.surface{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:23px}.card{min-width:0}.workflow-card{padding:24px;text-align:left;color:var(--text)}.workflow-card[aria-selected="true"]{border-color:var(--green);background:#17251f}.workflow-card .tag{color:var(--green);font-size:12px;letter-spacing:1px;font-weight:700}.workflow-card h3{font-size:25px;margin:12px 0}.workflow-card p{margin-bottom:14px}.workflow-card code{font-size:11px}.section-block,section.surface{margin-top:36px;scroll-margin-top:20px}.notice{border-left:3px solid var(--amber);background:#252116;color:#f4ddbd;border-radius:0 9px 9px 0;padding:15px 18px;margin:20px 0}.notice p{margin:4px 0}.stat{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}.stat strong{display:block;color:var(--green);font-size:28px;line-height:1.2}.stat span{font-size:12px;color:var(--muted)}.stats{margin:20px 0}.pipeline{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;padding:0;list-style:none}.pipeline button{height:100%;width:100%;border:1px solid var(--line);border-radius:8px;background:#0e1720;text-align:left;padding:12px;color:var(--text)}.pipeline button[aria-pressed="true"]{border-color:var(--blue);background:#182b3b}.pipeline .number{color:var(--blue);font-size:11px;display:block}.pipeline .name{font-size:13px;display:block;overflow-wrap:anywhere}.pipeline .resource{font-size:11px;color:var(--muted);display:block;margin-top:5px}.stage-detail{margin-top:14px;background:#0d1620;border:1px solid var(--line);border-radius:10px;padding:18px}.stage-detail pre{margin-top:12px}.stage-detail p{font-size:14px}.key-value{display:grid;grid-template-columns:130px minmax(0,1fr);gap:8px;font-size:13px}.key-value strong{color:var(--muted)}.image-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.video-grid{display:grid;grid-template-columns:1fr 2fr;gap:18px}figure{margin:0;min-width:0}figure img{display:block;width:100%;height:300px;object-fit:contain;background:#070c12;border:1px solid var(--line);border-radius:10px}figcaption{font-size:12px;line-height:1.5;margin-top:9px}video{display:block;width:100%;background:#05090d;border-radius:10px}.video-grid img{height:300px}.seed-grid img{height:230px}.seed-grid{margin-top:20px}.bullets{padding-left:20px}.bullets li{margin:7px 0}details{border-top:1px solid var(--line);padding-top:16px;margin-top:20px}summary{cursor:pointer;color:var(--blue);font-weight:600}details pre{margin-top:15px}.table-wrap{max-width:100%;overflow:auto}table{border-collapse:collapse;width:100%;font-size:13px;margin-top:14px}th,td{text-align:left;vertical-align:top;border-bottom:1px solid var(--line);padding:12px;overflow-wrap:anywhere}th{color:var(--muted)}label{display:block;color:var(--muted);font-size:12px;margin-bottom:5px}input{width:100%;min-width:0;border:1px solid var(--line);border-radius:7px;background:#0b131d;color:var(--text);padding:10px 12px;font-size:14px}.field{min-width:0}.fields{gap:15px;margin:20px 0}.button{display:inline-block;border:1px solid var(--green);background:var(--green);color:#122012;border-radius:8px;padding:10px 15px;font-size:13px;font-weight:700}.button.secondary{border-color:var(--line);color:var(--text);background:var(--panel)}.form-status{font-size:13px;color:var(--amber);margin:14px 0}.command-pane{margin-top:18px}.command-pane pre{max-height:540px;overflow:auto}.query-list{font-size:14px}.query-list li{margin:10px 0}.footer{font-size:12px;margin-top:28px}.proof-verdict{margin:18px 0}.hash{font-size:11px}.source-links{display:flex;gap:16px;flex-wrap:wrap;font-size:13px;margin-top:18px}.workflow-panel[hidden]{display:none}.selected-heading{align-items:flex-start}.wide{grid-column:1/-1}.reuse-card{border-top:3px solid var(--green)}.mode-note{font-size:13px}.coverage{margin:12px 0}#verify-result{font-size:13px;margin:12px 0;overflow-wrap:anywhere}
+@media(max-width:760px){main{padding:22px 16px 40px}h1{letter-spacing:-1.5px;font-size:43px}.lead{font-size:18px}.grid,.three,.video-grid,.image-grid{grid-template-columns:1fr}.four{grid-template-columns:repeat(2,minmax(0,1fr))}.card,section.surface{padding:18px}.pipeline{grid-template-columns:repeat(2,minmax(0,1fr))}.key-value{grid-template-columns:1fr}.key-value strong{margin-top:8px}.image-grid img{height:300px}.seed-grid img{height:240px}nav{gap:16px}.workflow-card h3{font-size:23px}h2{font-size:27px}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+<main>
+<header class="hero">
+  <div class="topline"><span class="brand">NEBIUS / PHYSICAL AI</span><span class="pill">NVIDIA Early Access · NPA + SkyPilot</span></div>
+  <h1>Two workflows.<br>One reviewable data factory.</h1>
+  <p class="lead">Turn person images into labeled appearance variants, or scene images into annotated event videos. Reuse NVIDIA's components and NPA's existing execution path.</p>
+  <div class="hero-meta"><span class="pill good">2 CDF workflows</span><span class="pill">IAA · 9 states</span><span class="pill">EVG · 12 states</span><span class="pill">Single file · embedded media · offline</span></div>
+  <nav aria-label="Report"><a href="#workflows">Workflows</a><a href="#evidence">Actual outputs</a><a href="#physical-ai">Robotics fit</a><a href="#run">Configure &amp; run</a><a href="#provenance">Evidence checks</a></nav>
+  <div class="notice"><p><strong>Implementation and quality are separate.</strong> The retained runs completed their native pipelines. Their silhouette and cameraman seeds are integration fixtures. Representative workcell results and downstream robotics performance remain to be demonstrated.</p></div>
+</header>
+
+<section id="workflows" class="section-block">
+  <div class="eyebrow">The scope of this package</div><h2>Choose the workflow for your task</h2>
+  <div class="grid" role="tablist" aria-label="CDF workflows">
+    <button class="card workflow-card" id="tab-iaa" role="tab" aria-controls="workflow-iaa" aria-selected="true" data-workflow="iaa"><span class="tag">01 / IAA</span><h3>Image Attribute Augmentation</h3><p>Create labeled clothing, color, and footwear variations of person images for person tracking and attribute search.</p><code>workflows/cosmos-data-factory/paidf-image-attribute-augmentation.yaml</code></button>
+    <button class="card workflow-card" id="tab-evg" role="tab" aria-controls="workflow-evg" aria-selected="false" data-workflow="evg"><span class="tag">02 / EVG</span><h3>Event Video Generation</h3><p>Generate event videos from scene images, then detect, track, caption, and label their event and person attributes.</p><code>workflows/cosmos-data-factory/paidf-event-video-generation.yaml</code></button>
+  </div>
+  <p class="mode-note muted">The announcement adds IAA and EVG to the broader PAIDF catalog. DIG and VDA are existing families. Main PAIDF stays at <code>workflows/main/paidf-cosmos3.yaml</code>.</p>
+  <div id="workflow-iaa" role="tabpanel" aria-labelledby="tab-iaa" class="workflow-panel surface card"></div>
+  <div id="workflow-evg" role="tabpanel" aria-labelledby="tab-evg" class="workflow-panel surface card" hidden></div>
+</section>
+
+<section id="evidence" class="surface">
+  <div class="eyebrow">Historical native execution / September 5, 2026 UTC</div><h2>Inspect the original outputs</h2>
+  <p>The images, original generated MP4, and annotation summaries below come from the retained native runs. The generated bytes are embedded without re-encoding. This page does not claim a new GPU run.</p>
+  <div id="evidence-iaa" class="workflow-evidence">
+    <div class="heading"><h3>IAA · silhouette → edit → searchable dataset</h3><span class="pill good">Terminal protocol validation passed</span></div>
+    <div id="iaa-images" class="image-grid"></div>
+    <div class="grid four stats"><div class="stat"><strong>9 / 9</strong><span>Logical states completed</span></div><div class="stat"><strong>1</strong><span>Final dataset entry</span></div><div class="stat"><strong>13</strong><span>Assembled files</span></div><div class="stat"><strong>4 / 6</strong><span>Sampled fields verified</span></div></div>
+    <div class="notice"><p><strong>Fixture result:</strong> a three-view illustration with black hoodie, black shorts, and brown boots. It does not demonstrate photographic person identity or original composition preservation. Footwear was excluded from the automated attribute verifier.</p></div>
+    <div class="grid"><div><h3>Requested attributes</h3><pre id="iaa-variables"></pre></div><div><h3>Actual attribute-search samples</h3><ul id="iaa-queries" class="query-list bullets"></ul><p class="muted mode-note">Three queries at each of easy, medium, and hard difficulty. Model-produced labels require task-specific review.</p></div></div>
+  </div>
+  <div id="evidence-evg" class="workflow-evidence" hidden>
+    <div class="heading"><h3>EVG · scene → video → annotated dataset</h3><span class="pill good">Terminal protocol validation passed</span></div>
+    <div id="evg-media" class="video-grid"></div>
+    <div class="grid four stats"><div class="stat"><strong>12 / 12</strong><span>Logical states completed</span></div><div class="stat"><strong>47</strong><span>Assembled scene files</span></div><div class="stat"><strong>21 / 21</strong><span>Anomaly answers: all No</span></div><div class="stat"><strong>29 / 33</strong><span>Person questions answered</span></div></div>
+    <div class="notice"><p><strong>The requested event is unverified.</strong> The run sampled <code>person_falling</code> in <code>warehouse</code> using the cameraman fixture. All 21 anomaly answers are negative. A completed pipeline is not evidence of a correctly generated warehouse falling event.</p></div>
+    <div class="grid"><div><h3>Annotation coverage and recovery</h3><p>Person QA returned 29 nonempty answers, two empty answers, and omitted two questions. The retained protocol accepted this partial coverage.</p><p class="muted mode-note">The first anomaly-QA attempt failed at the hosted VLM image limit. Durable resume reused generation and completed with the published ten-image controls. The failure is retained in private evidence.</p></div><div><h3>Actual attribute-search samples</h3><ul id="evg-queries" class="query-list bullets"></ul></div></div>
+  </div>
+  <p class="mode-note muted">Switch IAA / EVG above to review each workflow's complete evidence. Annotation coverage and event correctness are reported separately.</p>
+</section>
+
+<section id="physical-ai" class="section-block">
+  <div class="eyebrow">Robotics and Physical AI</div><h2>Reuse the pipeline that matches the consumer</h2>
+  <div class="grid three">
+    <article class="card reuse-card"><h3>People near robots</h3><span class="pill">IAA / person perception</span><p>Test robustness to human clothing and footwear around a workcell.</p><p class="muted mode-note">Use authorized real person images, such as an appropriate RSTPReid subset. Review identity and pose, then evaluate the intended tracker or attribute-search model.</p></article>
+    <article class="card reuse-card"><h3>Workcell safety</h3><span class="pill">EVG / event perception</span><p>Generate safety-event candidates in representative entrances, loading docks, and workcells.</p><p class="muted mode-note">Use actual scene images. Confirm the event occurs and labels match, then compare the safety detector on held-out real scenes.</p></article>
+    <article class="card reuse-card"><h3>Robot demonstrations</h3><span class="pill">Existing main PAIDF / VDA</span><p>Augment ALOHA and other robot videos through the existing input-derived structural controls and quality gate.</p><p class="muted mode-note">Reuse <code>workflows/main/paidf-cosmos3.yaml</code> and LeRobot / Sim2Real. IAA and EVG do not ingest robot actions or evaluate policies.</p></article>
+  </div>
+  <h3 style="margin-top:25px">Real robot seeds to ground the next evaluation</h3>
+  <p>These retained source frames demonstrate the available robot data. They are <strong>source references, not IAA or EVG outputs</strong>. An EVG run may consume one selected frame to test an event in that scene; motion-preserving demonstration augmentation belongs in the existing VDA workflow.</p>
+  <div id="robot-seeds" class="image-grid seed-grid"></div>
+  <div class="notice"><p><strong>Evidence required for a robotics claim:</strong> retain dataset, episode, camera, and frame identity; review geometry, contacts, timing, and outer padding; verify action/timestamp alignment. Compare original-only and augmented-data training on the same held-out task evaluation after the quality gate passes.</p></div>
+  <p class="mode-note muted">IAA and EVG do not include automatic edge detection or video-border masking. Keep those controls in the current VDA pipeline. Industrial inspection can reuse the existing DIG manual-ROI workflow; it is not a third addition to this package.</p>
+</section>
+
+<section id="run" class="surface">
+  <div class="eyebrow">Turnkey operating path / your authorized environment</div><h2>Configure, preflight, then submit</h2>
+  <p>This form prepares the existing NPA commands for the selected workflow. Run them in your configured checkout. The page makes no API calls and stores no settings.</p>
+  <div class="grid three">
+    <div class="card"><h3>1. Prepare the input</h3><p id="seed-guidance"></p><p class="muted mode-note">Stage the selected subset under a worker-readable S3 prefix. Both adapters decode images of at least 64 × 64 and record source/prepared hashes.</p></div>
+    <div class="card"><h3>2. Resolve dependencies</h3><p id="resource-guidance"></p><p class="muted mode-note">Use exact scanned operator-private image digests. Shipped example image references cannot run. Verify model access and hosted-model availability.</p></div>
+    <div class="card"><h3>3. Inspect the handoff</h3><p id="output-guidance"></p><p class="muted mode-note">Reopen labels and media. Keep rejected/skipped accounting and visual quality separate from terminal protocol success.</p></div>
+  </div>
+  <form id="configuration" autocomplete="off">
+    <div class="grid fields">
+      <div class="field"><label for="project">Configured NPA project</label><input id="project" placeholder="your-project" required></div>
+      <div class="field"><label for="context">Exact Kubernetes context</label><input id="context" placeholder="your-kubernetes-context" required></div>
+      <div class="field"><label for="bucket">Operator-owned output bucket</label><input id="bucket" placeholder="your-output-bucket" required></div>
+      <div class="field"><label for="input-uri">Authorized input prefix</label><input id="input-uri" placeholder="s3://your-input-bucket/selected-images/" required></div>
+      <div class="field"><label for="augmentations">Variants per prepared image</label><input id="augmentations" type="number" min="1" value="1" required></div>
+      <div class="field"><label for="seed">Sampling seed</label><input id="seed" type="number" step="1" value="42" required></div>
+    </div>
+    <div id="image-fields" class="grid fields"></div>
+  </form>
+  <p id="form-status" class="form-status" aria-live="polite"></p>
+  <div class="actions"><span class="mode-note muted">Bash · stop on failed preflight · secret names only</span><div><button id="copy-commands" class="button" type="button" disabled>Copy run commands</button> <button id="preview-commands" class="button secondary" type="button">Show template</button></div></div>
+  <div class="command-pane"><pre id="commands" tabindex="0" aria-label="Generated NPA commands"></pre></div>
+  <p class="mode-note muted">Complete <code>npa configure</code> and <code>npa skypilot bootstrap</code> first. Supply credentials through the private NPA credential store or environment. The commands stop on a failed check; a passing check authorizes only its validated dependency.</p>
+  <details><summary>Current adapter coverage and implementation gaps</summary><div class="table-wrap"><table><thead><tr><th>Workflow</th><th>Current controls</th><th>Review boundary</th></tr></thead><tbody><tr><td>IAA</td><td>Six sampled clothing / footwear fields; each input image is independent.</td><td>No grouped person-ID multi-view augmentation, accessory edit controls, or configurable weighted distributions. Automated verification excludes shoe color/type.</td></tr><tr><td>EVG</td><td>Uniform sampling of falling, climbing, running, smoking/vaping, and fire/smoke. Warehouse, retail, office, and education-facility environments.</td><td>Fighting/shoplifting and configurable weighted distributions are absent. Reused caption instructions remain warehouse-specific. Inspect the sampled config; arbitrary event overrides are unsupported.</td></tr></tbody></table></div></details>
+</section>
+
+<section id="provenance" class="surface">
+  <div class="eyebrow">Reviewable proof</div><h2>Verify the bytes and the claims</h2>
+  <div class="grid"><div><h3>What has been checked</h3><ul class="bullets"><li>Both existing native pipelines completed their terminal handoffs.</li><li>The retained IAA generated JPEG and original EVG MP4 match their recorded SHA256 hashes.</li><li>Current two-spec validation and render planning passed: nine IAA tasks and twelve EVG tasks.</li><li>Offline rendering, media decoding, playback, and form interactions are checked independently for the delivered HTML.</li></ul></div><div><h3>What remains before task deployment</h3><ul class="bullets"><li>Authorized representative input data and exact scanned private image digests.</li><li>Live credentials, model access, target capacity, and hosted-model availability.</li><li>Event/attribute quality and labels validated for the actual consumer.</li><li>Held-out perception or robot-policy evaluation before claiming an improvement.</li></ul></div></div>
+  <button id="verify" class="button secondary" type="button">Verify embedded media SHA256</button><p id="verify-result" aria-live="polite">Checks the embedded bytes locally; no network required.</p>
+  <details><summary>Spec, model, producer, and dataset provenance</summary><pre id="provenance-json"></pre></details>
+  <details><summary>Embedded media inventory</summary><div class="table-wrap"><table><thead><tr><th>Asset</th><th>Bytes</th><th>SHA256</th></tr></thead><tbody id="asset-inventory"></tbody></table></div></details>
+  <div class="source-links"><a href="https://github.com/NVIDIA/physical-ai-data-factory">NVIDIA workflow overview</a><a href="https://github.com/NVIDIA/paidf-orchestration/blob/f7ecd8c5d7aeec28b2d476b9e71b53a48ba8c0f9/docs/image-attribute-augmentation/getting-started.md">IAA input guide</a><a href="https://github.com/NVIDIA/paidf-orchestration/blob/f7ecd8c5d7aeec28b2d476b9e71b53a48ba8c0f9/docs/event-video-generation/getting-started.md">EVG input guide</a></div>
+  <p class="footer">NVIDIA reference orchestration: Apache-2.0 source; adapted upstream skills: CC-BY-4.0. Pinned reference: <code>f7ecd8c5d7aeec28b2d476b9e71b53a48ba8c0f9</code>. NPA reuses the native components with SkyPilot and durable S3 handoffs. Images, data, model access, and redistribution retain their separate terms.</p>
+</section>
+<p id="built-at" class="footer"></p>
+</main>
+<script id="report-data" type="application/json">__REPORT_DATA__</script>
+<script>
+// Present reviewed CDF evidence and prepare existing CLI commands without execution.
+const report = JSON.parse(document.getElementById('report-data').textContent);
+let selected = 'iaa';
+const imageSettings = {};
+const sharedImages = ['generation_image', 'attribute_search_image'];
+const extraImages = ['detection_image', 'captioning_image', 'visual_qa_image'];
+const elements = id => document.getElementById(id);
+
+function node(tag, text, className) {
+  const element = document.createElement(tag);
+  if (text !== undefined) element.textContent = text;
+  if (className) element.className = className;
+  return element;
+}
+
+function assetFigure(id) {
+  const asset = report.assets.find(row => row.id === id);
+  const figure = node('figure');
+  const media = node(asset.mime_type.startsWith('video/') ? 'video' : 'img');
+  media.src = asset.src;
+  media.id = id;
+  if (media.tagName === 'VIDEO') {
+    media.controls = true;
+    media.playsInline = true;
+    media.preload = 'metadata';
+    media.setAttribute('aria-label', asset.alt);
+  } else {
+    media.alt = asset.alt;
+  }
+  figure.append(media, node('figcaption', asset.caption));
+  return figure;
+}
+
+function renderMedia() {
+  ['iaa-source', 'iaa-generated', 'iaa-postprocessed'].forEach(id => elements('iaa-images').append(assetFigure(id)));
+  ['evg-source', 'evg-video'].forEach(id => elements('evg-media').append(assetFigure(id)));
+  report.robot_assets.forEach(id => elements('robot-seeds').append(assetFigure(id)));
+  report.workflows.forEach(workflow => {
+    workflow.queries.forEach(query => elements(`${workflow.id}-queries`).append(node('li', query)));
+  });
+  elements('iaa-variables').textContent = JSON.stringify(report.workflows[0].sampled_variables, null, 2);
+}
+
+function stageDetails(stage, panel) {
+  const detail = panel.querySelector('.stage-detail');
+  detail.replaceChildren(node('h3', stage.name));
+  const component = typeof stage.component === 'string' ? stage.component : JSON.stringify(stage.component);
+  detail.append(node('p', component, 'muted'));
+  if (stage.description) detail.append(node('p', stage.description));
+  detail.append(node('p', `Resource request: ${stage.accelerators}`));
+  detail.append(node('pre', JSON.stringify(stage.outputs, null, 2)));
+}
+
+function renderWorkflow(workflow) {
+  const panel = elements(`workflow-${workflow.id}`);
+  panel.style.marginTop = '18px';
+  panel.append(node('h3', workflow.title));
+  panel.append(node('p', workflow.input_guidance));
+  const metadata = node('div', undefined, 'key-value');
+  [ ['Generation model', workflow.model], ['GPU capacity', workflow.resources], ['Final manifest', workflow.final_manifest] ].forEach(([key, value]) => {
+    metadata.append(node('strong', key), node('code', value));
+  });
+  panel.append(metadata, node('p', 'Select a state to inspect its existing component, resources, and output contract.', 'muted mode-note'));
+  const pipeline = node('ol', undefined, 'pipeline');
+  workflow.stages.forEach((stage, index) => {
+    const item = node('li');
+    const button = node('button');
+    button.type = 'button';
+    button.setAttribute('aria-pressed', index === 0 ? 'true' : 'false');
+    button.append(node('span', String(index + 1).padStart(2, '0'), 'number'), node('span', stage.name, 'name'), node('span', stage.accelerators, 'resource'));
+    button.addEventListener('click', () => {
+      pipeline.querySelectorAll('button').forEach(row => row.setAttribute('aria-pressed', String(row === button)));
+      stageDetails(stage, panel);
+    });
+    item.append(button);
+    pipeline.append(item);
+  });
+  panel.append(pipeline, node('div', undefined, 'stage-detail'));
+  stageDetails(workflow.stages[0], panel);
+}
+
+function imageKeys() {
+  return selected === 'iaa' ? sharedImages : [...sharedImages, ...extraImages];
+}
+
+function renderImageFields() {
+  elements('image-fields').replaceChildren();
+  imageKeys().forEach(key => {
+    const field = node('div', undefined, 'field');
+    const label = node('label', key.replaceAll('_', ' ') + ' · exact private digest');
+    label.htmlFor = `image-${key}`;
+    const input = node('input');
+    input.id = label.htmlFor;
+    input.placeholder = 'your-registry/your-image@sha256:<64-hex-digest>';
+    input.required = true;
+    input.value = imageSettings[`${selected}:${key}`] || '';
+    input.addEventListener('input', () => {
+      imageSettings[`${selected}:${key}`] = input.value;
+      updateCommands();
+    });
+    field.append(label, input);
+    elements('image-fields').append(field);
+  });
+}
+
+function chooseWorkflow(id) {
+  selected = id;
+  report.workflows.forEach(workflow => {
+    const active = workflow.id === id;
+    elements(`tab-${workflow.id}`).setAttribute('aria-selected', String(active));
+    elements(`workflow-${workflow.id}`).hidden = !active;
+    elements(`evidence-${workflow.id}`).hidden = !active;
+  });
+  const workflow = report.workflows.find(row => row.id === id);
+  elements('seed-guidance').textContent = workflow.input_guidance;
+  elements('resource-guidance').textContent = workflow.resources;
+  elements('output-guidance').textContent = workflow.final_manifest;
+  renderImageFields();
+  updateCommands();
+}
+
+function shellQuote(value) {
+  return "'" + value.replaceAll("'", "'\"'\"'") + "'";
+}
+
+function configuration() {
+  const values = {};
+  ['project', 'context', 'bucket', 'input-uri', 'augmentations', 'seed'].forEach(id => values[id] = elements(id).value.trim());
+  imageKeys().forEach(key => values[key] = elements(`image-${key}`).value.trim());
+  return values;
+}
+
+function configurationIssue(values) {
+  if (Object.values(values).some(value => !value)) return 'Fill every field to prepare commands for your environment. The preview contains placeholders.';
+  if (!/^s3:\/\/[^/]+\/.+\/$/.test(values['input-uri'])) return 'Input must be an S3 directory prefix ending in /.';
+  if (!/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(values.bucket)) return 'Use a valid output bucket name.';
+  if (!/^\d+$/.test(values.augmentations) || Number(values.augmentations) < 1) return 'Variants must be a positive integer.';
+  if (!/^-?\d+$/.test(values.seed)) return 'Sampling seed must be an integer.';
+  const unresolved = imageKeys().some(key => !/^[^\s]+@sha256:[a-f0-9]{64}$/.test(values[key]) || /@sha256:0{64}$/.test(values[key]) || values[key].includes('example.invalid'));
+  if (unresolved) return 'Every image needs an exact non-placeholder sha256 digest. Preflight still must verify its access and acceptance.';
+  return '';
+}
+
+function commandAssignments(values, workflow) {
+  const defaults = {project:'YOUR_PROJECT', context:'YOUR_KUBE_CONTEXT', bucket:'YOUR_OUTPUT_BUCKET', 'input-uri':'s3://YOUR_INPUT_BUCKET/selected-images/', augmentations:'1', seed:'42'};
+  const variables = {project:'PROJECT', context:'KUBE_CONTEXT', bucket:'BUCKET', 'input-uri':'INPUT_URI', augmentations:'NUM_AUGMENTATIONS', seed:'SEED'};
+  const lines = ['#!/usr/bin/env bash', 'set -euo pipefail', '', `SPEC=${shellQuote(workflow.spec_path)}`];
+  Object.entries(variables).forEach(([key, variable]) => lines.push(`${variable}=${shellQuote(values[key] || defaults[key])}`));
+  imageKeys().forEach(key => lines.push(`${key.toUpperCase()}=${shellQuote(values[key] || 'YOUR_PRIVATE_IMAGE@sha256:REPLACE_WITH_EXACT_DIGEST')}`));
+  lines.push('', 'RUN_ID="$(npa workbench workflow prepare-run "$SPEC" --project "$PROJECT")"', 'OVERRIDES=(', '  --var "bucket=$BUCKET" --var "input_uri=$INPUT_URI"', '  --var "num_augmentations=$NUM_AUGMENTATIONS" --var "seed=$SEED"');
+  imageKeys().forEach(key => lines.push(`  --var "${key}=$${key.toUpperCase()}"`));
+  lines.push(')', '');
+  return lines;
+}
+
+function commandOperations(workflow) {
+  return [
+    'npa workbench workflow validate-spec "$SPEC" --json',
+    'npa workbench workflow plan-spec "$SPEC" "${OVERRIDES[@]}" --run-id "$RUN_ID" --check-render --json',
+    'npa workbench health preflight --project "$PROJECT" --checks s3,token_factory,hf,ngc,nebius',
+    `npa workbench health access --capability ${workflow.capabilities}`,
+    'npa workbench workflow preflight-images "$SPEC" "${OVERRIDES[@]}" --project "$PROJECT" --infra "k8s/$KUBE_CONTEXT"',
+    'npa workbench workflow submit "$SPEC" "${OVERRIDES[@]}" --project "$PROJECT" --infra "k8s/$KUBE_CONTEXT" --run-id "$RUN_ID" --runtime \\',
+    '  --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY \\',
+    '  --secret-env NEBIUS_TOKEN_FACTORY_KEY --secret-env HF_TOKEN --secret-env NGC_API_KEY',
+    '',
+    'npa workbench workflow status "$RUN_ID" --project "$PROJECT" --watch',
+    'npa workbench workflow logs "$RUN_ID" --project "$PROJECT" --stage validate-final-outputs',
+    'npa workbench workflow artifacts "$RUN_ID" --project "$PROJECT" --json'
+  ];
+}
+
+function updateCommands() {
+  const values = configuration();
+  const workflow = report.workflows.find(row => row.id === selected);
+  const issue = configurationIssue(values);
+  elements('form-status').textContent = issue || 'Commands prepared. Live dependency and image checks must pass before submission.';
+  elements('copy-commands').disabled = Boolean(issue);
+  elements('commands').textContent = [...commandAssignments(values, workflow), ...commandOperations(workflow)].join('\n');
+}
+
+async function copyCommands() {
+  try {
+    await navigator.clipboard.writeText(elements('commands').textContent);
+    elements('form-status').textContent = 'Commands copied. Run from your configured checkout after reviewing them.';
+  } catch {
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(elements('commands'));
+    selection.removeAllRanges();
+    selection.addRange(range);
+    elements('form-status').textContent = 'Commands selected. Use your browser’s Copy command to copy them.';
+  }
+}
+
+async function verifyAssets() {
+  elements('verify').disabled = true;
+  elements('verify-result').textContent = 'Checking original embedded bytes…';
+  try {
+    for (const asset of report.assets) {
+      const raw = atob(asset.src.split(',')[1]);
+      const bytes = Uint8Array.from(raw, letter => letter.charCodeAt(0));
+      const digest = await crypto.subtle.digest('SHA-256', bytes);
+      const hex = Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, '0')).join('');
+      if (hex !== asset.sha256 || bytes.length !== asset.bytes) throw new Error(`Hash mismatch: ${asset.id}`);
+    }
+    elements('verify-result').textContent = `PASS · ${report.assets.length} embedded assets match their recorded SHA256 hashes and byte counts.`;
+  } catch (error) {
+    elements('verify-result').textContent = `Verification failed: ${error.message}`;
+  } finally {
+    elements('verify').disabled = false;
+  }
+}
+
+function renderProvenance() {
+  const provenance = {
+    built_at: report.built_at,
+    evidence_scope: report.evidence_scope,
+    fresh_gpu_execution: false,
+    upstream_revision: report.upstream_revision,
+    current_source_revision: report.current_source_revision,
+    workflows: report.workflows.map(row => ({id:row.id, spec_path:row.spec_path, spec_sha256:row.spec_sha256, model:row.model, model_revision:row.model_revision, historical_producer_revisions:row.producer_revisions, historical_dataset_sha256:row.dataset_sha256, historical_terminal_status:row.terminal_status}))
+  };
+  elements('provenance-json').textContent = JSON.stringify(provenance, null, 2);
+  report.assets.forEach(asset => {
+    const row = node('tr');
+    row.append(node('td', asset.id), node('td', asset.bytes.toLocaleString()), node('td', asset.sha256, 'hash'));
+    elements('asset-inventory').append(row);
+  });
+  elements('built-at').textContent = `Built ${report.built_at}. Operator-private standalone report. Media, scripts, styling, graphs, and evidence work offline; source links are optional.`;
+}
+
+renderMedia();
+report.workflows.forEach(renderWorkflow);
+renderProvenance();
+chooseWorkflow(selected);
+document.querySelectorAll('[data-workflow]').forEach(button => button.addEventListener('click', () => chooseWorkflow(button.dataset.workflow)));
+elements('configuration').addEventListener('input', updateCommands);
+elements('configuration').addEventListener('submit', event => event.preventDefault());
+elements('copy-commands').addEventListener('click', copyCommands);
+elements('preview-commands').addEventListener('click', () => elements('commands').scrollIntoView());
+elements('verify').addEventListener('click', verifyAssets);
+</script>
+</body>
+</html>

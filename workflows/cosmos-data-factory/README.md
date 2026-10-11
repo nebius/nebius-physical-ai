@@ -16,7 +16,10 @@ conditioning are a separate integration. IAA and EVG do not add that graph or
 its edge-conditioning stages to their published task definitions.
 
 For the right seed data and a reviewable standalone HTML, use the
-[proof guide](proof.md). IAA needs person images; EVG needs scene images suitable
+[proof guide](proof.md). The local [HTML template](proof-template.html) and
+[evidence packer](build-proof.py) produce one offline report from reviewed
+operator-private media; they do not add another workflow or launch GPU jobs.
+IAA needs person images; EVG needs scene images suitable
 for the requested event. The workflow guides list the current adapter's sampling
 coverage and implementation gaps; the announcement's full configurable attribute
 and event vocabulary is not implemented. A robot-dataset frame can be evaluated
