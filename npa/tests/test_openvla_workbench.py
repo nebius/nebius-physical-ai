@@ -79,6 +79,9 @@ def test_prepare_reads_actual_rlds_file_and_publishes_normalization(
         lambda python, data_root, dataset_name: {
             "trajectories_read": 1,
             "feature_keys": ["action", "observation"],
+            "step_feature_keys": ["action", "observation"],
+            "observation_feature_keys": ["image", "proprio"],
+            "action_shape": [2, 7],
         },
     )
     report = pipe.prepare(
@@ -98,6 +101,9 @@ def test_prepare_reads_actual_rlds_file_and_publishes_normalization(
     assert normalization["dlimp_rlds_probe"] == {
         "trajectories_read": 1,
         "feature_keys": ["action", "observation"],
+        "step_feature_keys": ["action", "observation"],
+        "observation_feature_keys": ["image", "proprio"],
+        "action_shape": [2, 7],
     }
 
 
@@ -121,7 +127,13 @@ def test_prepare_selects_only_declared_dataset_tfrecords(
         "_verify_dlimp_rlds_read",
         lambda python, data_root, dataset_name: (
             observed.append((data_root, dataset_name))
-            or {"trajectories_read": 1, "feature_keys": ["action"]}
+            or {
+                "trajectories_read": 1,
+                "feature_keys": ["steps"],
+                "step_feature_keys": ["action", "observation"],
+                "observation_feature_keys": ["image"],
+                "action_shape": [1, 7],
+            }
         ),
     )
 
@@ -157,19 +169,34 @@ def test_dlimp_rlds_probe_uses_declared_tfds_builder_metadata(
         observed.append(command)
         assert text is True
         return json.dumps(
-            {"trajectories_read": 1, "feature_keys": ["steps"]}
+            {
+                "trajectories_read": 1,
+                "feature_keys": ["steps"],
+                "step_feature_keys": ["action", "observation"],
+                "observation_feature_keys": ["image"],
+                "action_shape": [1, 7],
+            }
         )
 
     monkeypatch.setattr(pipe.subprocess, "check_output", read_one)
 
     assert pipe._verify_dlimp_rlds_read(
         tmp_path / "python", data_root, "libero_spatial_no_noops"
-    ) == {"trajectories_read": 1, "feature_keys": ["steps"]}
+    ) == {
+        "trajectories_read": 1,
+        "feature_keys": ["steps"],
+        "step_feature_keys": ["action", "observation"],
+        "observation_feature_keys": ["image"],
+        "action_shape": [1, 7],
+    }
     command = observed[0]
     assert command[-1] == str(builder_dir)
     assert "tfds.builder_from_directory" in command[2]
     assert "DLataset.from_rlds" in command[2]
     assert "DLataset.from_tfrecords" not in command[2]
+    assert 'steps.get("observation")' in command[2]
+    assert 'steps.get("action")' in command[2]
+    assert '"action_shape"' in command[2]
 
 
 def test_dlimp_rlds_probe_requires_declared_tfds_builder_metadata(
@@ -178,6 +205,34 @@ def test_dlimp_rlds_probe_requires_declared_tfds_builder_metadata(
     with pytest.raises(pipe.OpenVLAPipelineError, match="dataset_info.json"):
         pipe._verify_dlimp_rlds_read(
             tmp_path / "python", tmp_path / "dataset", "libero_spatial_no_noops"
+        )
+
+
+def test_dlimp_rlds_probe_rejects_empty_trajectory_action_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    data_root = tmp_path / "dataset"
+    builder_dir = data_root / "libero_spatial_no_noops" / "1.0.0"
+    builder_dir.mkdir(parents=True)
+    (builder_dir / "dataset_info.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        pipe.subprocess,
+        "check_output",
+        lambda command, *, text: json.dumps(
+            {
+                "trajectories_read": 1,
+                "feature_keys": ["steps"],
+                "step_feature_keys": ["action", "observation"],
+                "observation_feature_keys": ["image"],
+                "action_shape": [0, 7],
+            }
+        ),
+    )
+
+    with pytest.raises(pipe.OpenVLAPipelineError, match="invalid data"):
+        pipe._verify_dlimp_rlds_read(
+            tmp_path / "python", data_root, "libero_spatial_no_noops"
         )
 
 
