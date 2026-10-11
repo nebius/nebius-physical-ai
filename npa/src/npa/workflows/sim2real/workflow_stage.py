@@ -23,6 +23,10 @@ from npa.workflows.sim2real.stage9_evaluator import (
 from npa.workflows.sim2real.stage9_replay import (
     existing_replay as _stage9_existing_replay,
 )
+from npa.workflows.sim2real.stage9_training_evidence import (
+    loop_evidence as _stage9_loop_evidence,
+    temporal_signals as _stage9_temporal_signals,
+)
 from npa.workflows.sim2real.workflow_io import (
     aggregate_parallel_provenance,
     list_prefix,
@@ -648,31 +652,6 @@ def _stage9_evaluator(args, root, work):
     return lane_base, actions_uri, evaluator, evaluations
 
 
-def _stage9_temporal_signals(args, work, evaluations):
-    from npa.workflows.sim2real.temporal_credit import convert_evaluation
-
-    evaluation_dir, signal_dir = work / "evaluations", work / "signals"
-    evaluation_dir.mkdir()
-    signal_dir.mkdir()
-    evaluation_rows, signals = [], []
-    for rollout_id in sorted(evaluations):
-        evaluation = dict(evaluations[rollout_id])
-        evaluation["threshold"] = args.threshold
-        signal = convert_evaluation(evaluation)
-        (evaluation_dir / f"{rollout_id}.json").write_text(
-            json.dumps(evaluation, indent=2)
-        )
-        (signal_dir / f"{rollout_id}.json").write_text(json.dumps(signal, indent=2))
-        evaluation_rows.append(evaluation)
-        signals.append(signal)
-    return {
-        "evaluation_dir": evaluation_dir,
-        "signal_dir": signal_dir,
-        "evaluations": evaluation_rows,
-        "signals": signals,
-    }
-
-
 def _stage9_inputs(args, root, work):
     lane_base, actions_uri, evaluator, evaluations = _stage9_evaluator(args, root, work)
     return {
@@ -774,41 +753,6 @@ def _stage9_train(args, root, work, signals):
     if not str(update.get("checkpoint_path") or "").startswith("s3://"):
         raise RuntimeError("Stage 9 PPO did not publish a checkpoint")
     return update, embodiment
-
-
-def _stage9_iteration(args, inputs, update, embodiment):
-    return {
-        "iteration": args.inner_iteration,
-        "actions_uri": inputs["actions_uri"],
-        "vlm_eval_uri": inputs["evaluation_uri"],
-        "signal_uri": inputs["signal_uri"],
-        "trainer_component_invocation": update.get("component_invocation"),
-        "update": update,
-        "embodiment": embodiment,
-        "sample_vlm_eval": inputs["evaluations"][0],
-        "sample_signal": inputs["signals"][0],
-        "evaluator_usage": inputs["evaluator_usage"],
-    }
-
-
-def _stage9_loop_evidence(
-    args, inputs, prior, update, embodiment, candidates, selection
-):
-    validation = dict(selection.get("validation_report") or {})
-    return {
-        "schema": "npa.sim2real.inner_loop_evidence.v1",
-        "outer_iteration": args.outer_iteration,
-        "iterations": list(prior.get("iterations") or [])
-        + [_stage9_iteration(args, inputs, update, embodiment)],
-        "checkpoint_candidates": candidates,
-        "selected_checkpoint_uri": selection["checkpoint_uri"],
-        "final_checkpoint_uri": selection["checkpoint_uri"],
-        "checkpoint_selection": selection,
-        "selected_validation_report": validation,
-        "selected_validation_strict_success": float(
-            validation.get("success_rate") or 0.0
-        ),
-    }
 
 
 def _stage9_commit(args, root, work, inputs, prior, update, embodiment, evidence_uri):
