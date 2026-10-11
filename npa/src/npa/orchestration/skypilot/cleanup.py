@@ -1971,8 +1971,8 @@ def _prepend_pythonpath_once(environment: dict[str, str], entry: str) -> None:
     """Keep the selected NPA source first without duplicating that entry."""
 
     entries = environment.get("PYTHONPATH", "").split(os.pathsep)
-    environment["PYTHONPATH"] = entry + os.pathsep + os.pathsep.join(
-        item for item in entries if item != entry
+    environment["PYTHONPATH"] = (
+        entry + os.pathsep + os.pathsep.join(item for item in entries if item != entry)
     )
 
 
