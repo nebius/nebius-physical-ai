@@ -1,10 +1,10 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "9395cd7fd7ac531e1a65398e90ce534237684c578fef099c9092b365dabd86a5",
+  "workflow_sha256": "52919bfc196aa16f0f072d121f6c63cf80626c5c4eeefdd8724d12101aeaee88",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "The separate 14-state npa.workflow validates, plans, and renders with explicit immutable-image and source placeholders; module argv, live-matrix, schema-chain, declared-output, independent training/service GPU-allocation checks, and distinct run-scoped base/adapted controller identities cover the new toolRefs. Preparation rejects accounts that do not match the existing exact-name RBAC helper for each suffixed service run.",
+      "reason": "The separate 14-state npa.workflow validates, plans, and renders with explicit immutable-image and source placeholders; module argv, live-matrix, schema-chain, declared-output, independent training/service GPU-allocation checks, and distinct run-scoped base/adapted controller identities cover the new toolRefs. Both closed-loop evaluators read the exact declared gold collection.json object while the exporter retains collection directory prefixes. Preparation rejects accounts that do not match the existing exact-name RBAC helper for each suffixed service run.",
       "evidence": [
         "npa workbench workflow validate-spec workflows/testing/sim2real-pi05.yaml",
         "npa workbench workflow plan-spec workflows/testing/sim2real-pi05.yaml --json --check-render",
