@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fnmatch
+import glob
 import json
 import logging
 import re
@@ -159,10 +160,11 @@ def _mount_sources(arguments: str, context: str) -> set[str]:
         if any(marker in mount for marker in ("'", '"', "\\", "$")):
             raise ValueError("Dynamic or quoted build mount")
         pairs = [part.split("=", 1) for part in mount.split(",") if "=" in part]
-        fields = dict(pairs)
+        fields = {key.lower(): value for key, value in pairs}
         if len(fields) != len(pairs):
             raise ValueError("Ambiguous build mount fields")
-        if fields.get("type", "bind") not in {
+        mount_type = fields.get("type", "bind").lower()
+        if mount_type not in {
             "bind",
             "cache",
             "tmpfs",
@@ -170,12 +172,14 @@ def _mount_sources(arguments: str, context: str) -> set[str]:
             "ssh",
         }:
             raise ValueError("Unsupported build mount type")
-        if fields.get("type", "bind") != "bind" or "from" in fields:
+        if mount_type != "bind" or "from" in fields:
             continue
         sources = [fields[key] for key in ("source", "src") if key in fields]
         if len(sources) > 1:
             raise ValueError("Ambiguous build-context mount")
-        paths.add(_context_path(sources[0] if sources else ".", context))
+        source = _context_path(sources[0] if sources else ".", context)
+        # Bind sources are literal paths; only COPY/ADD inputs use wildcards.
+        paths.add(glob.escape(source))
     return paths
 
 

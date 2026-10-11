@@ -594,6 +594,9 @@ changed recipe directories, individual packaging/catalog entries, and Dockerfile
 local `COPY`/`ADD` inputs and `RUN --mount=type=bind` sources. HTTP(S) `ADD`
 downloads are external inputs; changing their Dockerfile still rebuilds the
 owning image. Bind mounts without a source consume the whole build context.
+Bind-mount option names are case-insensitive; duplicate fields or source aliases
+restore the full build set. Bind sources match literal paths, including filenames
+with wildcard characters; local `COPY`/`ADD` inputs retain wildcard matching.
 The robomimic recipe uses its own directory as that context, matching the
 publisher. The selector considers the entire push diff, so shared NPA
 source and staged workflow changes in the same push rebuild their consumers.

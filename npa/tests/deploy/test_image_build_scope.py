@@ -294,20 +294,24 @@ def test_remote_add_keeps_local_inputs_and_recipe_changes_scoped(repository, sch
 
 
 @pytest.mark.parametrize(
-    "mount",
+    ("mount", "package_consumers"),
     [
-        "type=bind,source=src,target=/src,readonly",
-        "source=src,target=/src",
-        "src=src,target=/src",
-        "type=bind,target=/src",
+        ("type=bind,source=src,target=/src,readonly", ["lerobot"]),
+        ("source=src,target=/src", ["lerobot"]),
+        ("src=src,target=/src", ["lerobot"]),
+        ("TyPe=BIND,SoUrCe=src,target=/src", ["lerobot"]),
+        ("Src=src,target=/src", ["lerobot"]),
+        ("type=BIND,source=src,target=/src", ["lerobot"]),
+        ("type=bind,target=/src", ["lerobot", "sam3"]),
     ],
 )
-def test_bind_mounts_track_local_context_inputs(repository, mount):
+def test_bind_mounts_track_local_context_inputs(repository, mount, package_consumers):
     """Rebuild consumers of a static bind mount when its source changes.
 
     Args:
         repository: Committed image-input fixture.
         mount: Supported bind-mount syntax.
+        package_consumers: Images affected by an unrelated package input.
     Returns:
         None.
     Raises:
@@ -322,8 +326,83 @@ def test_bind_mounts_track_local_context_inputs(repository, mount):
     before = _commit(root)
     _write(root, "docs/guide.md", "Prose only\n")
     assert _selection((root, before)) == []
+    _write(root, "npa/pyproject.toml", "# Changed package metadata\n")
+    assert _selection((root, before)) == package_consumers
     _write(root, "npa/src/npa/workbench/runtime.py", "# Updated\n")
     assert _selection((root, before)) == ["lerobot", "sam3"]
+
+
+@pytest.mark.parametrize(
+    "mount",
+    [
+        "src=other,Source=src,target=/src",
+        "source=other,SOURCE=src,target=/src",
+        "type=cache,TYPE=bind,source=src,target=/src",
+    ],
+)
+def test_case_insensitive_mount_aliases_restore_full_rebuild(repository, mount):
+    """Keep ambiguous mount declarations from hiding changed consumers.
+
+    Args:
+        repository: Committed image-input fixture.
+        mount: Case-insensitive duplicate fields or source aliases.
+    Returns:
+        None.
+    Raises:
+        AssertionError: An ambiguous mount silently omits a consumer.
+    """
+    root, _ = repository
+    _write(
+        root,
+        "npa/docker/workbench/sam3/Dockerfile",
+        f"FROM ubuntu:22.04\nRUN --mount={mount} cat /src/npa/workbench/runtime.py\n",
+    )
+    _write(root, "npa/other/placeholder", "Unused\n")
+    before = _commit(root)
+    _write(root, "npa/src/npa/workbench/runtime.py", "# Changed consumed source\n")
+    _write(root, "npa/docker/workbench/sam2/runtime.py", "# Trigger publication\n")
+    assert _selection((root, before)) == _PUBLIC
+
+
+@pytest.mark.parametrize(
+    ("source", "lookalike"),
+    [
+        ("config[0].json", "config0.json"),
+        ("config?.json", "config1.json"),
+        ("config*.json", "config-extra.json"),
+        ("folder[0]/config.json", "folder0/config.json"),
+    ],
+)
+def test_bind_sources_match_literal_paths_without_selecting_lookalikes(
+    repository, source, lookalike
+):
+    """Track literal mount paths while excluding files that only match as globs.
+
+    Args:
+        repository: Committed image-input fixture.
+        source: Literal bind source beneath the shared directory.
+        lookalike: Unconsumed path that matches the source as a glob.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Selection misses a consumer or treats its source as a glob.
+    """
+    root, _ = repository
+    recipe = (
+        "FROM ubuntu:22.04\n"
+        f"RUN --mount=source=shared/{source},target=/config cat /config\n"
+    )
+    _write(root, "npa/docker/workbench/sam3/Dockerfile", recipe)
+    _write(root, f"npa/shared/{source}", "{}\n")
+    _write(root, f"npa/shared/{lookalike}", "{}\n")
+    before = _commit(root)
+    _write(root, f"npa/shared/{source}", '{"changed": true}\n')
+    _write(root, "npa/docker/workbench/sam2/runtime.py", "# Publish source change\n")
+    assert _selection((root, before)) == ["sam2", "sam3"]
+    before = _git(root, "rev-parse", "HEAD")
+    _write(root, f"npa/shared/{lookalike}", '{"unconsumed": true}\n')
+    _write(root, "npa/docker/workbench/sam2/runtime.py", "# Publish unrelated change\n")
+    assert _selection((root, before)) == ["sam2"]
 
 
 def test_non_context_mounts_do_not_hide_local_dependencies(repository):
