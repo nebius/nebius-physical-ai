@@ -6774,6 +6774,55 @@ def test_exact_managed_job_lookup_accepts_real_0_12_2_empty_queue(
     assert evidence.outcome == "absent"
 
 
+def test_exact_managed_job_lookup_requires_strict_structured_queue_evidence(
+    monkeypatch, tmp_path
+) -> None:
+    """Conflicting diagnostics cannot turn a structured empty queue into absence."""
+
+    from npa.orchestration.skypilot.workflow import lookup_managed_job
+
+    sky_bin = _fake_sky(tmp_path)
+    matching_row = {
+        "job_id": 43,
+        "job_name": "exact-run",
+        "task_id": 0,
+        "status": "RUNNING",
+    }
+    ambiguous_row = {
+        "job_id": 44,
+        "job_name": "exact-run",
+        "task_id": 0,
+        "status": "PENDING",
+    }
+    responses = iter(
+        [
+            subprocess.CompletedProcess(
+                [], 0, stdout="[]", stderr="PermissionDenied: queue read refused"
+            ),
+            subprocess.CompletedProcess([], 0, stdout="[]", stderr=""),
+            subprocess.CompletedProcess(
+                [], 0, stdout=json.dumps([matching_row]), stderr=""
+            ),
+            subprocess.CompletedProcess(
+                [], 0, stdout=json.dumps([matching_row, ambiguous_row]), stderr=""
+            ),
+        ]
+    )
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: next(responses))
+
+    denied_empty = lookup_managed_job("exact-run", sky_bin=sky_bin)
+    strict_empty = lookup_managed_job("exact-run", sky_bin=sky_bin)
+    found = lookup_managed_job("exact-run", sky_bin=sky_bin)
+    ambiguous = lookup_managed_job("exact-run", sky_bin=sky_bin)
+
+    assert denied_empty.outcome == "unavailable"
+    assert strict_empty.outcome == "absent"
+    assert found.outcome == "found"
+    assert found.job_id == "43"
+    assert ambiguous.outcome == "unavailable"
+    assert "ambiguous" in ambiguous.error
+
+
 def test_exact_managed_job_lookup_refuses_ambiguous_name_without_immutable_id(
     monkeypatch, tmp_path
 ) -> None:
