@@ -9,7 +9,6 @@
 # The student runs locally with no API key, no latency, no per-call cost.
 # New workflows are YAML files, not CLI subcommands.
 #
-# Run: npa workbench run npa/src/npa/workflows/byof/profiles/gemini-distill-rtxpro-gpu.yaml
 #   or: python -m npa.workflows.byof.gemini_robotics_distill --task "..." --output-dir ./out
 
 name: gemini-distill
@@ -27,7 +26,7 @@ stages:
   - name: plan
     uses: npa.workflows.byof.gemini_robotics_distill:plan_stage
     description: ER-2 embodied-reasoning plan via the live Gemini API.
-    # Runs anywhere; needs GOOGLE_API_KEY (env or ~/.npa/credentials.yaml).
+    # Runs anywhere; needs GOOGLE_API_KEY (env or <user-credentials-file>).
 
   - name: demos
     uses: npa.workflows.byof.gemini_robotics_distill:generate_demonstrations
