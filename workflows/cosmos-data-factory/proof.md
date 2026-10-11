@@ -22,6 +22,23 @@ protocol. They remain historical integration fixtures. In the retained EVG
 example, all 21 anomaly answers are negative; answer coverage alone does not
 verify the requested falling event. Preserve that result when showing the video.
 
+For a recognizable Physical AI demonstration, start IAA with a real person in
+a human–robot workcell, and EVG with a real workcell or loading-dock scene.
+Show the source next to the actual generated result. Name the consumer: clothing
+robustness for human perception, or event candidates for workcell safety
+perception. A realistic input is not evidence of successful generation. Complete
+the native labeling stages and review the actual edits/events before reporting
+task success. Keep source attribution, source-view limitations, sampled
+environment mismatches, failed attempts, and rejected samples visible.
+
+The fixed native sampler can be exercised reproducibly without adding another
+augmentation backend. For the first variant of one input, IAA seed `0` samples
+a red vest, blue jeans, and white sneakers; EVG seed `6` samples
+`fire_or_smoke` / `warehouse`. These are documented evaluation conditions,
+not configurable distributions or safety-equipment certification. Confirm the
+actual sampled values in `configs/manifest.json`, since adding inputs or variants
+advances the sampler. Photograph-derived results do not establish policy benefit.
+
 An ALOHA or other robot-dataset frame can supply an EVG scene. Record dataset,
 episode, camera, and frame identity, and assess the requested generated event.
 The IAA/EVG graphs do not consume robot actions or evaluate a policy; results
@@ -80,13 +97,21 @@ Prepare reviewed evidence JSON outside Git. Supply only sanitized display
 metadata, never credentials, concrete cloud identifiers, or raw operational
 receipts. The top-level fields are `built_at`, `evidence_scope`,
 `upstream_revision`, `current_source_revision`, `workflows`, `assets`, and
-`robot_assets`. Each workflow row needs `id` (`iaa` or `evg`), `title`,
+`robot_assets`, plus `claim_summary`, `recorded_checks`, and
+`fresh_gpu_execution`. Each workflow row needs `id` (`iaa` or `evg`), `title`,
 `spec_filename`, `input_guidance`, `resources`, `final_manifest`, `capabilities`,
 `queries`, `sampled_variables`, `producer_revisions`, `dataset_sha256`, and
-`terminal_status`. Each asset needs `id`, `path`, `mime_type`, `sha256`, `alt`,
+`terminal_status`, and an `evidence` object. The evidence object contains
+`title`, `status_label`, `protocol_passed`, `media_ids`, `metrics` (each with
+`value` and `label`), `quality_verdict`, `variables_label`, `notes`, and `source`
+(`summary` and optional `url`). Keep predicted sampling labeled as planned
+until the real configuration exists, and keep missing outputs pending rather
+than reusing unrelated successful metrics. Optional `preferred_seed` sets the
+selected workflow's command-form seed; without it the form uses `42`.
+Each asset needs `id`, `path`, `mime_type`, `sha256`, `alt`,
 and `caption`; paths are resolved relative to the evidence JSON. The template
-uses asset IDs `iaa-source`, `iaa-generated`, `iaa-postprocessed`, `evg-source`,
-and `evg-video`. `robot_assets` lists optional source-reference asset IDs.
+renders the exact `media_ids` supplied for each workflow. `robot_assets` lists
+optional source-reference asset IDs.
 
 Use the packer from the repository root:
 
@@ -100,6 +125,7 @@ The packer verifies every original media hash, embeds JPEG/PNG/MP4 bytes, remove
 asset paths from the page, and derives stage/resource/model details and spec
 hashes from the two adjacent YAML files. It prints the delivered HTML's byte
 count and SHA256. Revalidate and visually inspect each generated report with
-networking disabled before handoff. The checked-in template includes retained
-fixture-specific quality disclosures; update those disclosures when replacing
-the evidence rather than presenting new results under historical claims.
+networking disabled before handoff. The template takes execution metrics,
+annotation samples, quality verdicts, and source disclosures from the reviewed
+evidence. Update those fields from the real run when replacing media; do not
+carry successful fixture verdicts into a pending or failed representative run.

@@ -26,6 +26,13 @@ and event vocabulary is not implemented. A robot-dataset frame can be evaluated
 as an EVG seed, but that tests image-to-event-video synthesis. Robot-video augmentation,
 action preservation, and policy generalization require their own evidence.
 
+For recognizable Physical AI evaluation, the proof guide describes real
+human–robot photographs for IAA and robot-workcell scene seeds for EVG. The
+report takes source identity, sampled values, actual outputs, native acceptance,
+and visual verdicts from reviewed run evidence. Pending runs never inherit a
+historical fixture's successful metrics. Keep person-view limitations and
+source-to-sampled-environment mismatches explicit.
+
 The implementations already existed in Workbench's testing catalog. These are
 their canonical locations; workflow names, run prefixes, model revisions, stage
 graphs, and existing live-matrix registrations are retained. The generic catalog
