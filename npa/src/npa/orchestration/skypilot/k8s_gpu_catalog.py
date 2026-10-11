@@ -265,6 +265,11 @@ def kubernetes_sky_environment(
         config = yaml.safe_load(Path(inherited).read_text(encoding="utf-8")) or {}
         if not isinstance(config, dict):
             raise RuntimeError("SkyPilot configuration must be a mapping")
+    # Validation owns a distinct, check-only local API.  The submit API's
+    # endpoint would point this scope at a different daemon and make the
+    # validation daemon reject its own client configuration.  Its endpoint is
+    # supplied only after ``ensure_isolated_api`` establishes this scope.
+    config.pop("api_server", None)
     kubernetes = config.setdefault("kubernetes", {})
     if not isinstance(kubernetes, dict):
         raise RuntimeError("SkyPilot Kubernetes configuration must be a mapping")
