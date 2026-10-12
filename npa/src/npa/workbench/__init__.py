@@ -31,6 +31,7 @@ __all__ = [
     "retargeting",
     "robocasa",
     "scenario_gen",
+    "seedvr2",
     "sonic",
     "training_config",
     "trigger",

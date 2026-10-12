@@ -232,6 +232,28 @@ responses, unavailable providers, and federation mismatches are denied. The
 provider-verified `tenantUserAccountId` is the external subject and the fixed
 issuer is `https://api.nebius.cloud`.
 
+To obtain the subject for that link, use the same human CLI profile and
+configuration that completed browser sign-in. Set `NEBIUS_HUMAN_PROFILE` and
+`NEBIUS_HUMAN_CONFIG` to that profile name and configuration path, then request
+the current user's profile without exporting an IAM token:
+
+```bash
+umask 077
+install -d -m 700 "$HOME/.config/npa-private"
+nebius --config "$NEBIUS_HUMAN_CONFIG" --profile "$NEBIUS_HUMAN_PROFILE" \
+  --format json iam profile get > "$HOME/.config/npa-private/nebius-human-profile.json"
+```
+
+The CLI's JSON uses snake-case fields: require `user_profile.user_account_state`
+to be `ACTIVE`, then find exactly one entry in `user_profile.tenants` whose
+`tenant_id` matches the installation. Its `tenant_user_account_state` must also
+be `ACTIVE`; its `tenant_user_account_id` is the value for
+`NEBIUS_TENANT_USER_ACCOUNT_ID`. Check any configured federation restriction as
+well. If that tenant membership is missing or inactive, the tenant
+administrator must establish it before Workbench SSO can work. Keep this
+identity report private; the service independently verifies the provider on
+every bearer request.
+
 Link that exact provider-verified subject to the existing Workbench user. Do not
 substitute an email address, display name, project role, or cloud group:
 
