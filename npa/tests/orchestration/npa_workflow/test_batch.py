@@ -141,30 +141,24 @@ def update(delta):
         handle.seek(0)
         json.dump(state, handle)
         handle.truncate()
-
-def rendezvous_released(parties):
-    with path.open('r+') as handle:
-        fcntl.flock(handle, fcntl.LOCK_EX)
-        state = json.load(handle)
-        if state['active'] >= parties:
-            state['rendezvous_released'] = True
-            handle.seek(0)
-            json.dump(state, handle)
-            handle.truncate()
-        return state.get('rendezvous_released', False)
-
-update(1)
-try:
-    rendezvous_parties = int(os.getenv('BATCH_TEST_RENDEZVOUS_PARTIES', '0'))
-    if rendezvous_parties:
-        while True:
-            if rendezvous_released(rendezvous_parties):
-                break
-            time.sleep(0.01)
-    else:
-        time.sleep(0.3)
-finally:
-    update(-1)
+        return len(state['calls'])
+started = update(1)
+cohort_size = int(os.getenv('BATCH_TEST_START_COHORT', '0'))
+if cohort_size:
+    cohort_end = ((started - 1) // cohort_size + 1) * cohort_size
+    deadline = time.monotonic() + 30
+    while True:
+        with path.open() as handle:
+            fcntl.flock(handle, fcntl.LOCK_SH)
+            admitted = len(json.load(handle)['calls'])
+        if admitted >= cohort_end:
+            break
+        if time.monotonic() >= deadline:
+            raise RuntimeError('batch did not admit the complete child cohort')
+        time.sleep(0.01)
+else:
+    time.sleep(0.3)
+update(-1)
 if os.getenv('BATCH_TEST_FAILURE') == run_id and not resume:
     print('lost response')
     sys.exit(1)
@@ -218,7 +212,9 @@ def admission_observer(monkeypatch):
 def test_real_children_obey_limit_and_completed_resume_reverifies(
     manifest, children, tmp_path, monkeypatch, admission_observer
 ):
-    monkeypatch.setenv("BATCH_TEST_RENDEZVOUS_PARTIES", "3")
+    # A short sleep does not prove overlap when process startup is descheduled.
+    # Hold each three-child cohort until all three admissions are recorded.
+    monkeypatch.setenv("BATCH_TEST_START_COHORT", "3")
     admission_observer.arm(expected_admissions=3)
     result = batch.run_batch(
         manifest[0],

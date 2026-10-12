@@ -591,7 +591,14 @@ must still be checked: source availability is not proof of publication.
 
 Main-branch pushes touching `npa/docker/workbench/` select development builds by
 changed recipe directories, individual packaging/catalog entries, and Dockerfile
-`COPY`/`ADD` inputs. The selector considers the entire push diff, so shared NPA
+local `COPY`/`ADD` inputs and `RUN --mount=type=bind` sources. HTTP(S) `ADD`
+downloads are external inputs; changing their Dockerfile still rebuilds the
+owning image. Bind mounts without a source consume the whole build context.
+Bind-mount option names are case-insensitive; duplicate fields or source aliases
+restore the full build set. Bind sources match literal paths, including filenames
+with wildcard characters; local `COPY`/`ADD` inputs retain wildcard matching.
+The robomimic recipe uses its own directory as that context, matching the
+publisher. The selector considers the entire push diff, so shared NPA
 source and staged workflow changes in the same push rebuild their consumers.
 Unchanged images retain their previously validated versions; no new development
 tag is fabricated for them. The existing weekly refresh still builds every
