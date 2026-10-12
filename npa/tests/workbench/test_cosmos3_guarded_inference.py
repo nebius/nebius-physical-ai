@@ -261,6 +261,162 @@ def test_action_policy_server_is_allowlisted_for_fail_closed_guardrails() -> Non
     assert guarded.ACTION_POLICY_SERVER_MODULE in guarded.ALLOWED_INFERENCE_MODULES
 
 
+def _install_action_service_adapter(
+    monkeypatch, events: list[str], *, decode_video: bool = True
+):
+    """Install the adapter around a lightweight copy of the selected direct seam."""
+
+    class PolicyModel:
+        input_caption_key = "ai_caption"
+
+        def generate_samples_from_batch(self, data_batch, **_kwargs):
+            events.append("generate")
+            return {"action": "native-action"}
+
+    class PolicyPipe:
+        guardrails = object()
+
+        def _run_text_guardrail(self, _name, prompt):
+            events.append("prompt")
+            if prompt == "block-prompt":
+                raise ValueError("prompt blocked")
+
+        def _run_video_guardrail(self, _name, video):
+            events.append("media")
+            if video != "decoded-cthw":
+                raise ValueError("unexpected decoded video")
+            if events[-2] != "generate":
+                raise ValueError("media guard ran before native generation")
+            if self.block_media:
+                raise ValueError("media blocked")
+            return video
+
+        block_media = False
+
+    class RobolabPolicyService:
+        def __init__(self):
+            self.cfg = SimpleNamespace(decode_video=decode_video)
+            self.pipe = PolicyPipe()
+            self.model = PolicyModel()
+
+        def infer(self, obs):
+            data_batch = {"ai_caption": [obs["prompt"]]}
+            self.model.generate_samples_from_batch(data_batch)
+            outputs = {"action": "native-action"}
+            if self.cfg.decode_video:
+                outputs["video"] = "native-decoded-thwc"
+            return outputs
+
+    source = "selected direct service infer seam"
+    monkeypatch.setattr(guarded.inspect, "getsource", lambda _method: source)
+    monkeypatch.setattr(
+        guarded,
+        "ROBOLAB_POLICY_SERVICE_INFER_SHA256",
+        guarded._source_sha256(source),
+    )
+    module = SimpleNamespace(RobolabPolicyService=RobolabPolicyService)
+    monkeypatch.setattr(
+        guarded,
+        "_decoded_video_to_cthw",
+        lambda video: "decoded-cthw" if video == "native-decoded-thwc" else None,
+    )
+    monkeypatch.setattr(
+        guarded,
+        "_guardrail_video_to_thwc",
+        lambda video: "guarded-thwc" if video == "decoded-cthw" else None,
+    )
+    guarded._install_action_policy_service_guardrails(module)
+    return RobolabPolicyService
+
+
+def test_action_service_adapter_checks_native_prompt_then_decoded_media_and_publishes(
+    monkeypatch, tmp_path
+) -> None:
+    receipt = _reset(monkeypatch, tmp_path)
+    events: list[str] = []
+    service = _install_action_service_adapter(monkeypatch, events)()
+
+    response = service.infer({"prompt": "move the cube"})
+
+    assert events == ["prompt", "generate", "media"]
+    assert response["action"] == "native-action"
+    assert response["video"] == "guarded-thwc"
+    state = json.loads(receipt.read_text(encoding="utf-8"))
+    assert state["status"] == "passed"
+    assert state["effective"] is True
+    assert state["action_policy_requests"] == {
+        "started": 1,
+        "completed": 1,
+        "failed": 0,
+        "last": {
+            "id": 1,
+            "status": "passed",
+            "prompt_input": True,
+            "generated_media": True,
+        },
+    }
+
+
+def test_action_service_prompt_refusal_prevents_model_execution(
+    monkeypatch, tmp_path
+) -> None:
+    receipt = _reset(monkeypatch, tmp_path)
+    events: list[str] = []
+    service = _install_action_service_adapter(monkeypatch, events)()
+
+    with pytest.raises(ValueError, match="prompt blocked"):
+        service.infer({"prompt": "block-prompt"})
+
+    assert events == ["prompt"]
+    state = json.loads(receipt.read_text(encoding="utf-8"))
+    assert state["effective"] is False
+    assert state["action_policy_requests"]["completed"] == 0
+    assert state["action_policy_requests"]["failed"] == 1
+    assert state["action_policy_requests"]["last"]["status"] == "failed"
+
+
+def test_action_service_media_refusal_prevents_response_and_marks_request_failed(
+    monkeypatch, tmp_path
+) -> None:
+    receipt = _reset(monkeypatch, tmp_path)
+    events: list[str] = []
+    service = _install_action_service_adapter(monkeypatch, events)()
+    service.pipe.block_media = True
+
+    with pytest.raises(ValueError, match="media blocked"):
+        service.infer({"prompt": "move the cube"})
+
+    assert events == ["prompt", "generate", "media"]
+    state = json.loads(receipt.read_text(encoding="utf-8"))
+    assert state["effective"] is False
+    assert state["action_policy_requests"]["completed"] == 0
+    assert state["action_policy_requests"]["failed"] == 1
+    assert state["action_policy_requests"]["last"]["generated_media"] is False
+
+
+def test_action_service_adapter_refuses_a_changed_upstream_infer_seam(
+    monkeypatch,
+) -> None:
+    class ChangedService:
+        def infer(self, _obs):
+            return {"action": "different"}
+
+    with pytest.raises(RuntimeError, match="differs from the pinned source"):
+        guarded._install_action_policy_service_guardrails(
+            SimpleNamespace(RobolabPolicyService=ChangedService)
+        )
+
+
+def test_action_service_adapter_requires_actual_video_decode(monkeypatch) -> None:
+    events: list[str] = []
+    service_class = _install_action_service_adapter(
+        monkeypatch, events, decode_video=False
+    )
+
+    with pytest.raises(RuntimeError, match="require --decode-video True"):
+        service_class()
+
+
 def test_missing_token_refuses_before_upstream_import(monkeypatch, tmp_path) -> None:
     _reset(monkeypatch, tmp_path)
     monkeypatch.delenv("HF_TOKEN", raising=False)

@@ -171,6 +171,8 @@ def test_server_argv_preserves_guardrails_and_k2_vision_frames(tmp_path: Path) -
     assert "--no-guardrails" not in baseline
     assert "--drop-generated-vision" not in command
     assert "--drop-generated-vision" not in baseline
+    assert command[command.index("--decode-video") + 1] == "True"
+    assert baseline[baseline.index("--decode-video") + 1] == "True"
     assert "--keep-generated-vision-frames" not in baseline
 
 
@@ -207,10 +209,30 @@ def test_effective_guardrail_receipt_requires_prompt_and_media_evaluation(
                     "prompt_input": ["Blocklist", "Qwen3Guard"],
                     "generated_media": ["VideoContentSafetyFilter"],
                 },
+                "action_policy_requests": {
+                    "started": 2,
+                    "completed": 2,
+                    "failed": 0,
+                    "last": {
+                        "status": "passed",
+                        "prompt_input": True,
+                        "generated_media": True,
+                    },
+                },
             }
         )
     )
     assert _require_effective_guardrails(receipt)["effective"] is True
+
+    state = json.loads(receipt.read_text())
+    state.pop("action_policy_requests")
+    receipt.write_text(json.dumps(state))
+    try:
+        _require_effective_guardrails(receipt)
+    except FastWamK2Error as exc:
+        assert "not effective" in str(exc)
+    else:  # pragma: no cover - a non-request receipt must never be accepted
+        raise AssertionError("request-free guardrail receipt was accepted")
 
     receipt.write_text(
         json.dumps(
@@ -220,6 +242,16 @@ def test_effective_guardrail_receipt_requires_prompt_and_media_evaluation(
                 "effective": True,
                 "status": "passed",
                 "evaluated": {"prompt_input": ["Blocklist"], "generated_media": []},
+                "action_policy_requests": {
+                    "started": 1,
+                    "completed": 0,
+                    "failed": 0,
+                    "last": {
+                        "status": "pending",
+                        "prompt_input": True,
+                        "generated_media": False,
+                    },
+                },
             }
         )
     )

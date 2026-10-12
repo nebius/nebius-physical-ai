@@ -460,6 +460,8 @@ def server_argv(framework_python: Path, checkpoint: Path, variant: str) -> list[
         str(SERVER_PORT),
         "--format-prompt-as-json",
         "True",
+        "--decode-video",
+        "True",
     ]
     if variant == "fastwam-k2":
         argv.extend(
@@ -502,12 +504,28 @@ def _require_effective_guardrails(receipt: Path) -> dict[str, Any]:
             "policy server did not write a readable guardrail receipt"
         ) from exc
     required = ("prompt_input", "generated_media")
+    requests = state.get("action_policy_requests")
+    request_proof = (
+        isinstance(requests, dict)
+        and all(
+            isinstance(requests.get(field), int)
+            and not isinstance(requests.get(field), bool)
+            for field in ("started", "completed", "failed")
+        )
+        and requests["started"] > 0
+        and requests["completed"] == requests["started"]
+        and requests["failed"] == 0
+        and isinstance(requests.get("last"), dict)
+        and requests["last"].get("status") == "passed"
+        and all(requests["last"].get(role) is True for role in required)
+    )
     if (
         state.get("schema") != "npa.cosmos3.guardrail-state.v1"
         or state.get("requested") is not True
         or state.get("effective") is not True
         or state.get("status") != "passed"
         or any(not state.get("evaluated", {}).get(role) for role in required)
+        or not request_proof
     ):
         raise FastWamK2Error("policy server guardrails were not effective")
     return state

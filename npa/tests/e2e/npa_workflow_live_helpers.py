@@ -2074,6 +2074,16 @@ def assert_fastwam_k2_live_outputs(
             assert guardrails["status"] == "passed"
             assert guardrails["evaluated"]["prompt_input"]
             assert guardrails["evaluated"]["generated_media"]
+            requests = guardrails["action_policy_requests"]
+            assert requests["started"] > 0
+            assert requests["completed"] == requests["started"]
+            assert requests["failed"] == 0
+            assert requests["last"] == {
+                "id": requests["started"],
+                "status": "passed",
+                "prompt_input": True,
+                "generated_media": True,
+            }
             assert body["guardrails"] == {
                 "receipt": "guardrail-state.json",
                 "effective": True,
