@@ -74,6 +74,8 @@ PUBLIC_REUSABLE_TOOLREFS: dict[str, str] = {
     "workbench.openvla.eval": "public OpenVLA evaluation primitive (upstream argv planning; eval plan-only)",
     "workbench.newton.generate_demos": "public Newton physics simulation primitive (config validation; train/eval plan-only)",
     "workbench.newton.eval": "public Newton physics simulation primitive (config validation; train/eval plan-only)",
+    "workbench.gemini_robotics.plan": "public Gemini Robotics planning primitive (provisional adapter: API base URL and model id supplied explicitly; no live access validated)",
+    "workbench.gemini_robotics.eval": "public Gemini Robotics evaluation primitive (provisional adapter: API base URL and model id supplied explicitly; no live access validated)",
     "workbench.ros2.preflight": "public ROS 2 preflight primitive (checks Jazzy prerequisites; bridge/bag/fleet not implemented)",
 }
 
@@ -151,6 +153,11 @@ _OPENPI_FULL_DROID_PIPELINE = [
     "/opt/venv/bin/python",
     "-m",
     "npa.workflows.byof.openpi_full_droid",
+]
+_GEMINI_ROBOTICS_PIPELINE = [
+    "python3",
+    "-m",
+    "npa.workflows.byof.gemini_robotics_pipeline",
 ]
 _ROS2_PIPELINE = ["python3", "-m", "npa.workflows.byof.ros2_pipeline"]
 _MOLMOACT_PIPELINE = ["python3", "-m", "npa.workflows.byof.molmoact_pipeline"]
@@ -1838,10 +1845,15 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "colmap_dir": "sparse/0",
             "images_dir": "images",
             "masks_dir": "",
+            "colmap_source_sha256": "",
             "rig_mode": "derive",
             "reference_camera": "",
         },
-        omit_flags_when_empty=("--masks-dir", "--reference-camera"),
+        omit_flags_when_empty=(
+            "--masks-dir",
+            "--reference-camera",
+            "--expected-archive-sha256",
+        ),
         argv_template=[
             "npa",
             "workbench",
@@ -1851,6 +1863,58 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.colmap_input_uri}}",
             "--output-path",
             "{{config.ncore_sequence_uri}}",
+            "--expected-archive-sha256",
+            "{{config.colmap_source_sha256}}",
+            "--cache-dir",
+            "{{config.cache_dir}}",
+            "--scratch-dir",
+            "{{config.scratch_dir}}",
+            "--dataset-root",
+            "{{config.dataset_root}}",
+            "--colmap-dir",
+            "{{config.colmap_dir}}",
+            "--images-dir",
+            "{{config.images_dir}}",
+            "--masks-dir",
+            "{{config.masks_dir}}",
+            "--reference-camera",
+            "{{config.reference_camera}}",
+            "--rig-mode",
+            "{{config.rig_mode}}",
+            "--output-format",
+            "json",
+        ],
+    ),
+    "workbench.nurec.audit_colmap": ToolEntry(
+        name="workbench.nurec.audit_colmap",
+        description=(
+            "Independently enumerate, download, hash, and reopen every published "
+            "NCore V4 member against the original COLMAP source."
+        ),
+        config_defaults={
+            "cache_dir": str(DEFAULT_COLMAP_CACHE_DIR),
+            "scratch_dir": str(DEFAULT_COLMAP_SCRATCH_DIR),
+            "dataset_root": ".",
+            "colmap_dir": "sparse/0",
+            "images_dir": "images",
+            "masks_dir": "",
+            "rig_mode": "derive",
+            "reference_camera": "",
+        },
+        omit_flags_when_empty=("--masks-dir", "--reference-camera"),
+        argv_template=[
+            "npa",
+            "workbench",
+            "nurec",
+            "audit-colmap",
+            "--input-path",
+            "{{config.colmap_input_uri}}",
+            "--conversion-path",
+            "{{config.ncore_sequence_uri}}",
+            "--output-path",
+            "{{config.ncore_audit_uri}}",
+            "--expected-archive-sha256",
+            "{{config.colmap_source_sha256}}",
             "--cache-dir",
             "{{config.cache_dir}}",
             "--scratch-dir",
@@ -1950,6 +2014,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workbench.nurec.render": ToolEntry(
         name="workbench.nurec.render",
+        config_defaults={"nurec_image": ""},
+        omit_flags_when_empty=("--image",),
         access_capabilities=("nurec",),
         description=(
             "Render novel views from a trained reconstruction with `nre render` "
@@ -1970,6 +2036,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.render_image_scale}}",
             "--renderer",
             "{{config.renderer}}",
+            "--image",
+            "{{config.nurec_image}}",
             "--rig-translation-offset",
             "{{config.rig_translation_offset}}",
             "--rig-rotation-offset",
@@ -3079,6 +3147,46 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.gpu_count}}",
             "--expected-compute-capability",
             "{{config.expected_compute_capability}}",
+        ],
+    ),
+    "workbench.gemini_robotics.plan": ToolEntry(
+        name="workbench.gemini_robotics.plan",
+        description=(
+            "Run ER embodied-reasoning planning via the Gemini API "
+            "(provisional adapter: API base URL and model id must be supplied "
+            "explicitly; no live access has been validated)."
+        ),
+        argv_template=[
+            *_GEMINI_ROBOTICS_PIPELINE,
+            "--api-base-url",
+            "{{config.api_base_url}}",
+            "plan",
+            "--task",
+            "{{config.task}}",
+            "--model",
+            "{{config.model_id}}",
+            "--output-path",
+            "{{config.output_uri}}",
+        ],
+    ),
+    "workbench.gemini_robotics.eval": ToolEntry(
+        name="workbench.gemini_robotics.eval",
+        description=(
+            "Evaluate a plan against a rubric via the Gemini API "
+            "(provisional adapter: API base URL and model id must be supplied "
+            "explicitly; no live access has been validated)."
+        ),
+        argv_template=[
+            *_GEMINI_ROBOTICS_PIPELINE,
+            "--api-base-url",
+            "{{config.api_base_url}}",
+            "eval",
+            "--input-path",
+            "{{config.input_uri}}",
+            "--model",
+            "{{config.model_id}}",
+            "--output-path",
+            "{{config.output_uri}}",
         ],
     ),
     "workbench.ros2.preflight": ToolEntry(
