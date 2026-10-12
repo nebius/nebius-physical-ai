@@ -348,7 +348,11 @@ def test_candidate_real_import_and_source_attestation(
     canonical, image_environment = _candidate_baked_layout(tmp_path)
     setup = _candidate_baked_setup(monkeypatch)
     setup = setup.replace("/opt/npa/src", str(canonical))
-    setup = setup.replace("/tmp/npa-", str(tmp_path / "npa-"))
+    # Redirect the setup's actual output files into this test's owned sandbox.
+    outputs = re.findall(r"> (/\S+)", setup)
+    assert outputs
+    for output in outputs:
+        setup = setup.replace(output, str(tmp_path / Path(output).name))
     environment = dict(os.environ)
     environment.pop("NPA_IMAGE_SOURCE_SHA", None)
     environment.update(image_environment)
