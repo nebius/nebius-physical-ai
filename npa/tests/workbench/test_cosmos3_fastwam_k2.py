@@ -154,11 +154,13 @@ def test_framework_sync_uses_pinned_upstream_policy_server_contract(
     assert returned == framework / ".venv/bin/python"
 
 
-def test_server_argv_never_uses_k0_drop_generated_vision(tmp_path: Path) -> None:
+def test_server_argv_preserves_guardrails_and_k2_vision_frames(tmp_path: Path) -> None:
     command = server_argv(tmp_path / "python", tmp_path / "checkpoint", "fastwam-k2")
     baseline = server_argv(tmp_path / "python", tmp_path / "checkpoint", "full-wam")
 
     assert command[-2:] == ["--keep-generated-vision-frames", "2"]
+    assert "--no-guardrails" not in command
+    assert "--no-guardrails" not in baseline
     assert "--drop-generated-vision" not in command
     assert "--drop-generated-vision" not in baseline
     assert "--keep-generated-vision-frames" not in baseline

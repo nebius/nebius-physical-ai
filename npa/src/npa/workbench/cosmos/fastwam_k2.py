@@ -458,7 +458,6 @@ def server_argv(framework_python: Path, checkpoint: Path, variant: str) -> list[
         str(SERVER_PORT),
         "--format-prompt-as-json",
         "True",
-        "--no-guardrails",
     ]
     if variant == "fastwam-k2":
         argv.extend(
