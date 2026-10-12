@@ -92,6 +92,47 @@ def _read_server_evidence(config: Mapping[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def _source_episode_indices(
+    task: Mapping[str, Any], input_provenance: Mapping[str, Any]
+) -> list[int]:
+    """Resolve logical task trajectories to the source episodes the loader consumes."""
+
+    trajectories = task.get("trajectory_ids")
+    if (
+        not isinstance(trajectories, list)
+        or not trajectories
+        or any(
+            isinstance(value, bool) or not isinstance(value, int) or value < 0
+            for value in trajectories
+        )
+    ):
+        raise RuntimeError("native evaluator task has invalid trajectory identities")
+    mapping = input_provenance.get("episode_index_mapping")
+    if mapping is None:
+        return list(trajectories)
+    if not isinstance(mapping, Mapping):
+        raise RuntimeError("native evaluator has invalid episode identity mapping")
+    logical = mapping.get("workflow_trajectory_id")
+    source = mapping.get("source_episode_index")
+    if any(
+        isinstance(value, bool) or not isinstance(value, int) or value < 0
+        for value in (logical, source)
+    ):
+        raise RuntimeError("native evaluator has invalid episode identity mapping")
+    reference = task.get("reference_observation")
+    if logical in trajectories and (
+        not isinstance(reference, Mapping)
+        or reference.get("source_episode_index") != source
+    ):
+        raise RuntimeError(
+            "native evaluator episode identity mapping conflicts with task provenance"
+        )
+    return [
+        source if trajectory_id == logical else trajectory_id
+        for trajectory_id in trajectories
+    ]
+
+
 def _native_libero_x_env_name(task_id: str) -> str:
     digest = hashlib.sha256(task_id.encode()).hexdigest()[:32]
     return f"libero_sim/npa_groot_libero_x_{digest}"
@@ -675,27 +716,30 @@ def _run(config: dict[str, Any]) -> dict[str, Any]:
                     raise RuntimeError(
                         "native evaluator task is not a LIBERO or LIBERO-X environment"
                     )
-                for trajectory_id in trajectory_ids:
-                    if (
-                        not isinstance(trajectory_id, int)
-                        or trajectory_id < 0
-                        or trajectory_id >= len(loader)
-                    ):
+                source_episode_indices = _source_episode_indices(
+                    task, config["input_provenance"]
+                )
+                for trajectory_id, source_episode_index in zip(
+                    trajectory_ids, source_episode_indices, strict=True
+                ):
+                    if source_episode_index >= len(loader):
                         raise RuntimeError(
-                            f"trajectory {trajectory_id!r} is unavailable for task {task_id}"
+                            "mapped source episode "
+                            f"{source_episode_index!r} is unavailable for task {task_id}"
                         )
                     steps = min(
                         int(config["max_episode_steps"]),
-                        int(loader.get_episode_length(trajectory_id)),
+                        int(loader.get_episode_length(source_episode_index)),
                     )
                     if steps < 1:
                         raise RuntimeError(
-                            f"trajectory {trajectory_id} for task {task_id} has no steps"
+                            "mapped source episode "
+                            f"{source_episode_index} for task {task_id} has no steps"
                         )
                     mse, mae = evaluate_single_trajectory(
                         open_loop_policy,
                         loader,
-                        trajectory_id,
+                        source_episode_index,
                         EmbodimentTag.LIBERO_PANDA,
                         steps=steps,
                         execution_horizon=int(config["n_action_steps"]),
@@ -711,6 +755,7 @@ def _run(config: dict[str, Any]) -> dict[str, Any]:
                         {
                             "task_id": task_id,
                             "trajectory_id": trajectory_id,
+                            "source_episode_index": source_episode_index,
                             "mse": float(mse),
                             "mae": float(mae),
                             "steps": steps,

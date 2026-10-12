@@ -175,13 +175,13 @@ def _task(task_id: str) -> dict[str, Any]:
     }
 
 
-def _episode_parquet(episode_index: int) -> bytes:
+def _episode_parquet(episode_index: int, *, rows: int = 2) -> bytes:
     """Create a real v2-style parquet identity column for a production seam."""
 
     pa = pytest.importorskip("pyarrow")
     pq = pytest.importorskip("pyarrow.parquet")
     output = pa.BufferOutputStream()
-    pq.write_table(pa.table({"episode_index": [episode_index, episode_index]}), output)
+    pq.write_table(pa.table({"episode_index": [episode_index] * rows}), output)
     return output.getvalue().to_pybytes()
 
 
@@ -538,6 +538,9 @@ def test_observed_pair_binds_explicit_v2_source_episode_identity() -> None:
         "workflow_trajectory_id": 0,
         "source_episode_index": 24,
     }
+    assert native._source_episode_indices(
+        protocol["evaluation_tasks"][0], workflow._native_input_provenance(protocol)
+    ) == [24]
 
 
 def test_observed_pair_refuses_conflicting_mapped_parquet_identity() -> None:
@@ -548,6 +551,72 @@ def test_observed_pair_refuses_conflicting_mapped_parquet_identity() -> None:
         match="mapped materialized parquet episode identity conflicts",
     ):
         _prepare_mapped_observed_pair(FakeS3(), parquet_episode=23)
+
+
+def test_observed_pair_refuses_mapped_parquet_changed_between_inventory_and_identity_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The identity column must come from the exact bytes already inventory-bound."""
+
+    client = FakeS3()
+    original_read = workflow._read_s3_bytes
+    parquet_uri = (
+        "s3://bucket/run/evaluation-data/data/chunk-000/episode_000024.parquet"
+    )
+    reads = 0
+
+    def changed_second_read(s3_client: Any, uri: str) -> bytes:
+        nonlocal reads
+        if uri == parquet_uri:
+            reads += 1
+            if reads == 2:
+                return _episode_parquet(24, rows=3)
+        return original_read(s3_client, uri)
+
+    monkeypatch.setattr(workflow, "_read_s3_bytes", changed_second_read)
+    with pytest.raises(
+        workflow.GrootVisualizationError,
+        match="mapped materialized parquet differs from prepared content inventory",
+    ):
+        _prepare_mapped_observed_pair(client)
+
+    assert reads == 2
+
+
+def test_native_loader_uses_explicit_source_episode_for_mapped_logical_trajectory() -> (
+    None
+):
+    """The adapter passes source episode 24, not logical trajectory 0, to GR00T."""
+
+    task = _task("observed-0")
+    task["reference_observation"] = {"source_episode_index": 24}
+
+    assert native._source_episode_indices(
+        task,
+        {
+            "episode_index_mapping": {
+                "workflow_trajectory_id": 0,
+                "source_episode_index": 24,
+            }
+        },
+    ) == [24]
+
+
+def test_native_loader_refuses_mapped_logical_trajectory_without_source_provenance() -> (
+    None
+):
+    """A consumer mapping cannot substitute for a task's actual reference identity."""
+
+    with pytest.raises(RuntimeError, match="mapping conflicts with task provenance"):
+        native._source_episode_indices(
+            _task("observed-0"),
+            {
+                "episode_index_mapping": {
+                    "workflow_trajectory_id": 0,
+                    "source_episode_index": 24,
+                }
+            },
+        )
 
 
 def test_observed_pair_refuses_mapping_without_matching_task_provenance() -> None:

@@ -762,6 +762,34 @@ def _episode_index_mapping(materialized: Mapping[str, Any]) -> dict[int, int]:
     return {workflow_id: source_id}
 
 
+def _materialized_content_object(
+    materialized: Mapping[str, Any], key: str
+) -> dict[str, Any]:
+    """Return one content-inventory row after verifying the whole inventory."""
+
+    content = materialized.get("content")
+    if not isinstance(content, Mapping):
+        raise GrootVisualizationError(
+            "materialized dataset lacks a content-bound object inventory"
+        )
+    rows = _content_inventory_rows(
+        content.get("objects"), field="materialized dataset content inventory"
+    )
+    declared = _require_sha256(
+        content.get("sha256"), field="materialized dataset content inventory sha256"
+    )
+    if _json_hash({"objects": rows}) != declared:
+        raise GrootVisualizationError(
+            "materialized dataset content inventory digest is inconsistent"
+        )
+    for row in rows:
+        if row["key"] == key:
+            return row
+    raise GrootVisualizationError(
+        "materialized dataset content inventory omits a required trajectory parquet"
+    )
+
+
 def _source_episode_id(
     task: Mapping[str, Any], trajectory_id: int, mapping: Mapping[int, int]
 ) -> int:
@@ -781,7 +809,9 @@ def _source_episode_id(
     return source_id
 
 
-def _parquet_episode_index_values(client: Any, uri: str) -> set[int]:
+def _parquet_episode_index_values(
+    client: Any, uri: str, *, expected: Mapping[str, Any]
+) -> set[int]:
     """Read the v2 parquet identity column needed for an explicit mapping."""
 
     try:
@@ -791,10 +821,15 @@ def _parquet_episode_index_values(client: Any, uri: str) -> set[int]:
         raise GrootVisualizationError(
             "cannot verify mapped materialized parquet episode identity"
         ) from exc
-    try:
-        table = pq.read_table(
-            pa.BufferReader(_read_s3_bytes(client, uri)), columns=["episode_index"]
+    payload = _read_s3_bytes(client, uri)
+    if len(payload) != expected.get("bytes") or hashlib.sha256(
+        payload
+    ).hexdigest() != expected.get("sha256"):
+        raise GrootVisualizationError(
+            "mapped materialized parquet differs from prepared content inventory"
         )
+    try:
+        table = pq.read_table(pa.BufferReader(payload), columns=["episode_index"])
     except Exception as exc:  # parquet backend details vary by supported image
         raise GrootVisualizationError(
             "cannot read mapped materialized parquet episode identity"
@@ -848,7 +883,10 @@ def _validate_materialized_trajectory_files(
         if not mapped:
             continue
         parquet_uri = f"s3://{ref.bucket}/{object_prefix}{key}"
-        if _parquet_episode_index_values(client, parquet_uri) != {source_id}:
+        content = _materialized_content_object(materialized, key)
+        if _parquet_episode_index_values(client, parquet_uri, expected=content) != {
+            source_id
+        }:
             raise GrootVisualizationError(
                 "mapped materialized parquet episode identity conflicts with task provenance"
             )
@@ -1072,7 +1110,7 @@ def _native_input_provenance(protocol: Mapping[str, Any]) -> dict[str, Any]:
     materialized = dataset.get("materialized")
     if not isinstance(materialized, Mapping):
         raise GrootVisualizationError("prepared protocol lacks materialized dataset")
-    return {
+    provenance = {
         "protocol_sha256": _require_sha256(
             protocol.get("protocol_sha256"), field="prepared protocol sha256"
         ),
@@ -1088,6 +1126,13 @@ def _native_input_provenance(protocol: Mapping[str, Any]) -> dict[str, Any]:
         )["sha256"],
         "rollout_protocol": _prepared_rollout_protocol(protocol),
     }
+    mapping = materialized.get("episode_index_mapping")
+    if mapping is not None:
+        # Re-parse the exact manifest shape before passing it across the runtime
+        # boundary; the native evaluator must not infer source IDs from filenames.
+        _episode_index_mapping(materialized)
+        provenance["episode_index_mapping"] = dict(mapping)
+    return provenance
 
 
 def _upload_videos(
