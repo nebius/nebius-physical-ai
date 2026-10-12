@@ -347,7 +347,9 @@ def test_runtime_image_installs_only_libero_for_the_active_workflow() -> None:
     dockerfile = DOCKERFILE.read_text(encoding="utf-8")
     libero_install = 'pip install -e "./lerobot[libero]"'
     protobuf_floor = 'pip install "protobuf>=6.33.5,<7"'
-    runtime_install = dockerfile.split("RUN cd /opt/molmoact2/experiments", maxsplit=1)[1]
+    runtime_install = dockerfile.split("RUN cd /opt/molmoact2/experiments", maxsplit=1)[
+        1
+    ]
     runtime_install = runtime_install.split(
         "COPY docker/workbench/molmoact2/THIRD_PARTY_NOTICES.md", maxsplit=1
     )[0]
