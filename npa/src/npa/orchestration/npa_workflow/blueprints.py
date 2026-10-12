@@ -1,7 +1,8 @@
 """Locations of the supported ``npa.workflow`` blueprint catalog.
 
 The source catalog lives in repo-root ``workflows/main``, ``workflows/testing``,
-and ``workflows/partners/<partner>``. Wheels include the same directories so
+``workflows/cosmos-data-factory``, and ``workflows/partners/<partner>``.
+Wheels include the same directories so
 discovery and canonical workflow consumers also work without a source checkout.
 Guarded raw SkyPilot examples and resource profiles are separate from this catalog.
 """

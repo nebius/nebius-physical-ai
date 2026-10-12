@@ -10,7 +10,11 @@ from pathlib import Path
 from typing import Any
 
 from npa.workflows.sim2real.pi05_contract import validate_dense_episode
-from npa.workflows.sim2real.workflow_io import publish_component_record, read_json
+from npa.workflows.sim2real.workflow_io import (
+    PI05_COMPONENT_SCHEMA,
+    publish_component_record,
+    read_json,
+)
 
 
 SPLITS = {
@@ -145,6 +149,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--episodes-per-split must be positive")
     results = {split: _run_collector(args, split) for split in SPLITS}
     publish_component_record(
+        component_schema=PI05_COMPONENT_SCHEMA,
         root_uri=args.component_root_uri,
         stage=2,
         name="pi05_expert_collection",

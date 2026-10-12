@@ -11,9 +11,9 @@ It checks image selection; it does not claim GPU execution or acceptance of the
 blocked images. The guardrail compares the table below with actual default
 resolution, so a wildcard image override cannot conceal another regression.
 
-After PAIDF's repaired defaults and MJLab's qualified RTX pins, 30 workflows
+After PAIDF's repaired defaults and MJLab's qualified RTX pins, 31 workflows
 still fail default image planning: 26 select the stale image families withdrawn
-by #807, and four require images
+by #807, and five require images
 without an accepted public release. The audit checks every task, including
 unbuilt and validation candidates outside the stale-image inventory.
 
@@ -114,7 +114,7 @@ quarantine and full capability acceptance gates remain enforced.
 
 ## Other defaults without an accepted public release
 
-These four workflows are additional qualification gaps, separate from the
+These five workflows are additional qualification gaps, separate from the
 previously accepted images withdrawn by #807. Curobo, LIBERO and NCore
 were already publication candidates before #807. That PR made the common
 publication quarantine apply to default consumption as well; NCore's explicit
@@ -128,6 +128,7 @@ a development tag as evidence that its full workload is accepted.
 | `workflows/testing/curobo-benchmark.yaml` | `curobo` |
 | `workflows/testing/nurec-colmap-reconstruct.yaml` | `ncore` |
 | `workflows/testing/open3d-registration.yaml` | `open3d` |
+| `workflows/testing/seedvr2-video-restoration.yaml` | `seedvr2` |
 
 These paths need exact independently qualified operator images or a separately
 reviewed public default. Their existing license, customer authorization, model

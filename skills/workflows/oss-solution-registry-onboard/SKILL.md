@@ -335,6 +335,22 @@ Required smoke capabilities:
 - `mjx_cheetah_run_step`
 - `train_jax_ppo_cartpole_smoke` (live-accepted; brax PPO train API, jax&lt;0.8.1)
 
+### EmbodiedGen V2 (`byof-embodiedgen.yaml`)
+
+Pinned: `HorizonRobotics/EmbodiedGen` `f0124197888c2b733e4eaa65acd81ad9cfda3b79`;
+the upstream-supported TRELLIS gitlink
+`55a8e8164b195bbf927e0978f00e76c835e6011f`; and
+`microsoft/TRELLIS-image-large@25e0d31ffbebe4b5a97464dd851910efc3002d96`.
+
+The hard gate is `img3d-cli_trellis_image_to_urdf_pybullet`: the real upstream
+TRELLIS backend must produce a mesh and URDF, the exported collision meshes must
+decode and remain non-degenerate, and that exact URDF must load, contact a plane,
+settle under gravity, and produce a fully decoded PyBullet view MP4. The artifact
+is `embodiedgen_image_to_rigid_object.json`. It must name actual GPU facts and
+the source/model/image revisions and hashes. VLM-derived physical values are
+estimates, not calibrated ground truth. This operator-private CUDA candidate does
+not assert articulated generation or policy improvement.
+
 ### Gymnasium-Robotics (`byof-gymnasium-robotics.yaml`)
 
 Pinned: `Farama-Foundation/Gymnasium-Robotics`

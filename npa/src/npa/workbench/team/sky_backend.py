@@ -209,7 +209,24 @@ class SkyBackend:
         destination.mkdir(exist_ok=True, mode=0o700)
         chunks = []
         for wave in self.ledger.waves(self.run_id):
-            for job_id in json.loads(wave["job_ids"]):
+            identifiers = _stored_job_ids(wave["job_ids"])
+            if not identifiers:
+                chunks.append(
+                    f"{wave['name']}: scheduler acknowledgement pending; retain this run ID."
+                )
+                continue
+            rows = self.timeline(wave["id"])
+            for job_id in identifiers:
+                statuses = {
+                    str(row["status"]).upper()
+                    for row in rows
+                    if int(row["job_id"]) == job_id
+                }
+                if statuses <= {"PENDING", "STARTING", "RECOVERING"}:
+                    chunks.append(
+                        f"{wave['name']}: worker logs pending ({', '.join(sorted(statuses))})."
+                    )
+                    continue
                 response = self.call("logs", job_id=job_id, directory=str(destination))
                 chunks.extend(_read_log_paths(response["paths"], destination))
         text = "\n".join(chunks)

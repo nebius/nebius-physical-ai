@@ -23,7 +23,13 @@ def workload_secrets(allocation):
     path = allocation.workload_secrets_file
     if path is None:
         return {}
-    allowed = {"HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "NGC_API_KEY", "NVIDIA_API_KEY"}
+    allowed = {
+        "HF_TOKEN",
+        "HUGGING_FACE_HUB_TOKEN",
+        "NGC_API_KEY",
+        "NVIDIA_API_KEY",
+        "NEBIUS_TOKEN_FACTORY_KEY",
+    }
     try:
         if path.stat().st_mode & 0o077:
             raise ValueError("workload credential file is not private")

@@ -15,6 +15,7 @@ from npa.workflows.byof.openpi_service import (
 from npa.workflows.sim2real.pi05_contract import assert_contract, build_contract
 from npa.workflows.sim2real.pi05_closed_loop import validate_effectiveness_report
 from npa.workflows.sim2real.workflow_io import (
+    PI05_COMPONENT_SCHEMA,
     publish_component_record,
     read_json,
     storage,
@@ -46,6 +47,7 @@ def _prepare(args: argparse.Namespace) -> dict:
     with tempfile.TemporaryDirectory(prefix="npa-pi05-prepare-") as directory:
         write_json(args.output_uri, result, directory=Path(directory))
     publish_component_record(
+        component_schema=PI05_COMPONENT_SCHEMA,
         root_uri=args.component_root_uri,
         stage=1,
         name="pi05_prepare_contract",
@@ -93,6 +95,7 @@ def _external_seam(args: argparse.Namespace) -> dict:
     with tempfile.TemporaryDirectory(prefix="npa-pi05-external-") as directory:
         write_json(args.output_uri, result, directory=Path(directory))
     publish_component_record(
+        component_schema=PI05_COMPONENT_SCHEMA,
         root_uri=args.component_root_uri,
         stage=12,
         name="pi05_physical_robot_seam",
@@ -294,6 +297,7 @@ def _finalize_in_directory(args: argparse.Namespace, work: Path) -> dict:
     }
     write_json(args.output_uri, result, directory=work / "report")
     publish_component_record(
+        component_schema=PI05_COMPONENT_SCHEMA,
         root_uri=args.component_root_uri,
         stage=14,
         name="pi05_finalize",

@@ -391,9 +391,13 @@ def _publish_service_component(
     evidence: str,
     artifacts: dict[str, Any],
 ) -> None:
-    from npa.workflows.sim2real.workflow_io import publish_component_record
+    from npa.workflows.sim2real.workflow_io import (
+        PI05_COMPONENT_SCHEMA,
+        publish_component_record,
+    )
 
     publish_component_record(
+        component_schema=PI05_COMPONENT_SCHEMA,
         root_uri=args.component_root_uri,
         stage=stage,
         name=f"pi05_{args.checkpoint_role}_{suffix}",

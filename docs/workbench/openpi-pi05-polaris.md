@@ -131,10 +131,17 @@ reloaded. The full reloadable checkpoint is stored under the run's private S3
 prefix; weights never enter Git or the distributable image.
 
 Evaluation independently downloads and hashes that exact checkpoint, rejects
-any train/held-out ID overlap, runs upstream `compute_loss(train=False)`, and
+any train/held-out ID overlap, compiles upstream `compute_loss(train=False)`
+once with OpenPI's frozen-state `module_jit`, and
 reports held-out model loss plus trajectory MAE/MSE against the absolute
 targets. It also reloads the policy surface and requires a valid finite
 trajectory.
+
+Training and both held-out passes emit `npa.workbench.openpi.progress.v1`
+JSON records on stderr at the start, every 100 completed optimizer steps or
+held-out samples, and completion. Training also reports its first update and
+the current loss. The final stdout JSON result keeps its existing contract;
+progress logging does not reduce the evaluated sample count.
 
 ## Validate and run
 

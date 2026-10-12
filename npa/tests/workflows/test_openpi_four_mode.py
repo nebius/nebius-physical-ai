@@ -179,6 +179,7 @@ def test_public_artifact_preflight_requires_no_npa_consent_secret(
     monkeypatch.setenv("NPA_IMAGE_SOURCE_SHA", "1" * 40)
     monkeypatch.setenv("NPA_SIM2REAL_SOURCE_SHA", "1" * 40)
     monkeypatch.setenv("NPA_TASK_IMAGE", DIGEST_IMAGE)
+    monkeypatch.setenv("SKYPILOT_TASK_ID", "public-preflight-test-job")
     monkeypatch.delenv("NPA_OPENPI_ACCEPT_GEMMA_TERMS", raising=False)
     monkeypatch.setattr(
         pipeline,
@@ -222,6 +223,7 @@ def test_public_artifact_preflight_requires_no_npa_consent_secret(
     assert result["credential_required"] is False
     assert result["npa_terms_attestation_required"] is False
     record = uploads["s3://example-bucket/preflight/components/stage_04.json"]
+    assert record["schema"] == workflow_io.PI05_COMPONENT_SCHEMA
     assert record["tier"] == "WORKS"
     assert record["artifacts"]["source_sha"] == "1" * 40
     assert record["artifacts"]["image"] == DIGEST_IMAGE

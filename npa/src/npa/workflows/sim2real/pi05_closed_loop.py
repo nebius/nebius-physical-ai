@@ -1778,13 +1778,17 @@ def _persist_evaluation(
         json.dumps(result, indent=2, sort_keys=True) + "\n"
     )
     from npa.clients.storage import StorageClient
-    from npa.workflows.sim2real.workflow_io import publish_component_record
+    from npa.workflows.sim2real.workflow_io import (
+        PI05_COMPONENT_SCHEMA,
+        publish_component_record,
+    )
 
     StorageClient.from_environment().upload_directory(
         str(work), args.artifact_root_uri, require_empty=True
     )
     stage = 6 if args.checkpoint_role == "base" else 11
     publish_component_record(
+        component_schema=PI05_COMPONENT_SCHEMA,
         root_uri=args.component_root_uri,
         stage=stage,
         name=f"pi05_{args.checkpoint_role}_closed_loop_gold",

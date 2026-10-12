@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import time
 from typing import Any, Mapping, Sequence
 from urllib.parse import quote, urlencode, urlparse
@@ -1559,9 +1560,13 @@ def _publish_pi05_component(
     root = str(getattr(args, "component_root_uri", "") or "")
     if not root:
         return
-    from npa.workflows.sim2real.workflow_io import publish_component_record
+    from npa.workflows.sim2real.workflow_io import (
+        PI05_COMPONENT_SCHEMA,
+        publish_component_record,
+    )
 
     publish_component_record(
+        component_schema=PI05_COMPONENT_SCHEMA,
         root_uri=root,
         stage=stage,
         name=name,
@@ -1782,6 +1787,7 @@ def _run_training_steps(
     )
     iterator, state, metrics = iter(loader), initialized["state"], []
     batch, started = next(iterator), time.perf_counter()
+    _log_progress("training", 0, args.train_steps, started)
     with runtime["sharding"].set_mesh(mesh):
         for step in range(args.train_steps):
             rng = _optimizer_step_rng(jax.random, initialized["train_rng"], step)
@@ -1789,6 +1795,7 @@ def _run_training_steps(
             jax.block_until_ready(state)
             row = _finite_optimizer_metrics(jax, np, info, step)
             metrics.append({**row, "optimizer_step": float(step + 1)})
+            _log_progress("training", step + 1, args.train_steps, started, row["loss"])
             if step + 1 < args.train_steps:
                 batch = next(iterator)
     return {
@@ -2051,6 +2058,62 @@ def _train(args: argparse.Namespace) -> int:
     return _publish_training_result(args, _training_result(args, evidence))
 
 
+def _log_progress(
+    phase: str, completed: int, total: int, started: float, loss: float | None = None
+) -> None:
+    """Emit bounded progress on stderr while preserving the stdout JSON result."""
+    if completed not in (0, 1, total) and completed % 100:
+        return
+    progress = {
+        "schema": "npa.workbench.openpi.progress.v1",
+        "phase": phase,
+        "completed": completed,
+        "total": total,
+        "elapsed_seconds": round(time.perf_counter() - started, 3),
+    }
+    if loss is not None:
+        progress["loss"] = loss
+    print(json.dumps(progress, sort_keys=True), file=sys.stderr, flush=True)
+
+
+def _finite_heldout_losses(chunked: Any, batch_size: int) -> list[float]:
+    """Materialize every sample loss and reject non-finite model output."""
+    import jax
+    import numpy as np
+
+    values = np.asarray(jax.device_get(chunked)).reshape(batch_size, -1).mean(axis=1)
+    if not np.isfinite(values).all():
+        raise OpenPIPipelineError("held-out OpenPI model loss is non-finite")
+    return [float(value) for value in values]
+
+
+def _heldout_model_losses(
+    args: argparse.Namespace, model: Any, loader: Any, mesh: Any, sample_count: int
+) -> list[float]:
+    """Evaluate all held-out samples with one frozen-state compiled model call."""
+    import jax
+    from openpi.shared import nnx_utils
+    from openpi.training import sharding as openpi_sharding
+
+    loss_fn = nnx_utils.module_jit(model.compute_loss, static_argnames=("train",))
+    losses: list[float] = []
+    started = time.perf_counter()
+    _log_progress("heldout-model-loss", 0, sample_count, started)
+    with openpi_sharding.set_mesh(mesh):
+        for index, (observation, target_actions) in enumerate(loader):
+            chunked = loss_fn(
+                jax.random.fold_in(jax.random.key(args.seed), index),
+                observation,
+                target_actions,
+                train=False,
+            )
+            losses.extend(_finite_heldout_losses(chunked, args.batch_size))
+            _log_progress("heldout-model-loss", len(losses), sample_count, started)
+    if len(losses) != sample_count:
+        raise OpenPIPipelineError("held-out model loss sample count is incorrect")
+    return losses
+
+
 def _evaluate(args: argparse.Namespace) -> int:
     _validate_runtime_image(args.runtime_image)
     _set_runtime_cache(args.work_dir, "evaluate")
@@ -2143,25 +2206,7 @@ def _evaluate(args: argparse.Namespace) -> int:
     restored_params = openpi_model.restore_params(step_dir / "params")
     model = config.model.load(restored_params)
     model.eval()
-    losses: list[float] = []
-    with openpi_sharding.set_mesh(mesh):
-        for index, (observation, target_actions) in enumerate(heldout_loader):
-            chunked = model.compute_loss(
-                jax.random.fold_in(jax.random.key(args.seed), index),
-                observation,
-                target_actions,
-                train=False,
-            )
-            values = (
-                np.asarray(jax.device_get(chunked))
-                .reshape(args.batch_size, -1)
-                .mean(axis=1)
-            )
-            if not np.isfinite(values).all():
-                raise OpenPIPipelineError("held-out OpenPI model loss is non-finite")
-            losses.extend(float(value) for value in values)
-    if len(losses) != heldout_count:
-        raise OpenPIPipelineError("held-out model loss sample count is incorrect")
+    losses = _heldout_model_losses(args, model, heldout_loader, mesh, heldout_count)
     del model, restored_params
     policy = policy_config.create_trained_policy(config, step_dir)
     if heldout_count < 2:
@@ -2171,6 +2216,8 @@ def _evaluate(args: argparse.Namespace) -> int:
     predictions: list[np.ndarray] = []
     targets: list[np.ndarray] = []
     trajectory_evidence: dict[str, object] | None = None
+    inference_started = time.perf_counter()
+    _log_progress("heldout-actions", 0, heldout_count, inference_started)
     for index in range(heldout_count):
         raw = _ArrayDataset(arrays, "heldout")[index]
         observation = {
@@ -2191,6 +2238,7 @@ def _evaluate(args: argparse.Namespace) -> int:
             }
         predictions.append(prediction)
         targets.append(np.asarray(raw["actions"], dtype=np.float64))
+        _log_progress("heldout-actions", index + 1, heldout_count, inference_started)
     sensitivity_raw = _ArrayDataset(arrays, "heldout")[1]
     sensitivity_observation = {
         "observation/exterior_image_1_left": sensitivity_raw["observation"][

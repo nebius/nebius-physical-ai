@@ -74,6 +74,8 @@ PUBLIC_REUSABLE_TOOLREFS: dict[str, str] = {
     "workbench.openvla.eval": "public OpenVLA evaluation primitive (upstream argv planning; eval plan-only)",
     "workbench.newton.generate_demos": "public Newton physics simulation primitive (config validation; train/eval plan-only)",
     "workbench.newton.eval": "public Newton physics simulation primitive (config validation; train/eval plan-only)",
+    "workbench.gemini_robotics.plan": "public Gemini Robotics planning primitive (provisional adapter: API base URL and model id supplied explicitly; no live access validated)",
+    "workbench.gemini_robotics.eval": "public Gemini Robotics evaluation primitive (provisional adapter: API base URL and model id supplied explicitly; no live access validated)",
     "workbench.ros2.preflight": "public ROS 2 preflight primitive (checks Jazzy prerequisites; bridge/bag/fleet not implemented)",
 }
 
@@ -151,6 +153,11 @@ _OPENPI_FULL_DROID_PIPELINE = [
     "/opt/venv/bin/python",
     "-m",
     "npa.workflows.byof.openpi_full_droid",
+]
+_GEMINI_ROBOTICS_PIPELINE = [
+    "python3",
+    "-m",
+    "npa.workflows.byof.gemini_robotics_pipeline",
 ]
 _ROS2_PIPELINE = ["python3", "-m", "npa.workflows.byof.ros2_pipeline"]
 _OPENPI_SERVICE_LIFECYCLE = [
@@ -281,6 +288,12 @@ _CONTENT_AGENTS_PIPELINE = [
     "python3",
     "-m",
     "npa.workflows.content_agents",
+]
+_ROBOCASA_RUNTIME_IDENTITY_ARGV = [
+    "--expected-image-source-sha",
+    "{{config.robocasa_expected_image_source_sha}}",
+    "--expected-image-manifest-digest",
+    "{{config.robocasa_expected_image_manifest_digest}}",
 ]
 
 _PAIDF_NATIVE_PIPELINE = ["python3", "-m", "npa.workflows.paidf_native"]
@@ -1445,6 +1458,82 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{run.id}}",
         ],
     ),
+    "workbench.seedvr2.probe": ToolEntry(
+        name="workbench.seedvr2.probe",
+        description="Decode and hash the exact low-resolution input before GPU work.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "seedvr2",
+            "probe",
+            "--input-path",
+            "{{config.seedvr2_input_uri}}",
+            "--output-path",
+            "{{config.seedvr2_probe_uri}}",
+            "--run-id",
+            "{{run.id}}",
+        ],
+    ),
+    "workbench.seedvr2.restore": ToolEntry(
+        name="workbench.seedvr2.restore",
+        description="Run pinned SeedVR2-3B with explicit conditioning and assigned-GPU validation.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "seedvr2",
+            "restore",
+            "--input-path",
+            "{{config.seedvr2_input_uri}}",
+            "--probe-path",
+            "{{config.seedvr2_probe_uri}}",
+            "--output-path",
+            "{{config.seedvr2_output_uri}}",
+            "--run-id",
+            "{{run.id}}",
+            "--output-height",
+            "{{config.seedvr2_output_height}}",
+            "--output-width",
+            "{{config.seedvr2_output_width}}",
+            "--seed",
+            "{{config.seedvr2_seed}}",
+            "--conditioning-mode",
+            "{{config.seedvr2_conditioning_mode}}",
+            "--expected-gpu",
+            "{{config.seedvr2_gpu}}",
+        ],
+    ),
+    "workbench.seedvr2.verify": ToolEntry(
+        name="workbench.seedvr2.verify",
+        description="Read back and independently decode the delivered SeedVR2 result.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "seedvr2",
+            "verify",
+            "--input-path",
+            "{{config.seedvr2_result_uri}}",
+            "--output-path",
+            "{{config.seedvr2_verification_uri}}",
+            "--run-id",
+            "{{run.id}}",
+        ],
+    ),
+    "workbench.seedvr2.review": ToolEntry(
+        name="workbench.seedvr2.review",
+        description="Render a non-blended bicubic-baseline versus SeedVR2 proof pack.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "seedvr2",
+            "review",
+            "--input-path",
+            "{{config.seedvr2_result_uri}}",
+            "--output-path",
+            "{{config.seedvr2_review_uri}}",
+            "--run-id",
+            "{{run.id}}",
+        ],
+    ),
     "workbench.open3d.stage_demo": ToolEntry(
         name="workbench.open3d.stage_demo",
         description=(
@@ -1876,10 +1965,15 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "colmap_dir": "sparse/0",
             "images_dir": "images",
             "masks_dir": "",
+            "colmap_source_sha256": "",
             "rig_mode": "derive",
             "reference_camera": "",
         },
-        omit_flags_when_empty=("--masks-dir", "--reference-camera"),
+        omit_flags_when_empty=(
+            "--masks-dir",
+            "--reference-camera",
+            "--expected-archive-sha256",
+        ),
         argv_template=[
             "npa",
             "workbench",
@@ -1889,6 +1983,58 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.colmap_input_uri}}",
             "--output-path",
             "{{config.ncore_sequence_uri}}",
+            "--expected-archive-sha256",
+            "{{config.colmap_source_sha256}}",
+            "--cache-dir",
+            "{{config.cache_dir}}",
+            "--scratch-dir",
+            "{{config.scratch_dir}}",
+            "--dataset-root",
+            "{{config.dataset_root}}",
+            "--colmap-dir",
+            "{{config.colmap_dir}}",
+            "--images-dir",
+            "{{config.images_dir}}",
+            "--masks-dir",
+            "{{config.masks_dir}}",
+            "--reference-camera",
+            "{{config.reference_camera}}",
+            "--rig-mode",
+            "{{config.rig_mode}}",
+            "--output-format",
+            "json",
+        ],
+    ),
+    "workbench.nurec.audit_colmap": ToolEntry(
+        name="workbench.nurec.audit_colmap",
+        description=(
+            "Independently enumerate, download, hash, and reopen every published "
+            "NCore V4 member against the original COLMAP source."
+        ),
+        config_defaults={
+            "cache_dir": str(DEFAULT_COLMAP_CACHE_DIR),
+            "scratch_dir": str(DEFAULT_COLMAP_SCRATCH_DIR),
+            "dataset_root": ".",
+            "colmap_dir": "sparse/0",
+            "images_dir": "images",
+            "masks_dir": "",
+            "rig_mode": "derive",
+            "reference_camera": "",
+        },
+        omit_flags_when_empty=("--masks-dir", "--reference-camera"),
+        argv_template=[
+            "npa",
+            "workbench",
+            "nurec",
+            "audit-colmap",
+            "--input-path",
+            "{{config.colmap_input_uri}}",
+            "--conversion-path",
+            "{{config.ncore_sequence_uri}}",
+            "--output-path",
+            "{{config.ncore_audit_uri}}",
+            "--expected-archive-sha256",
+            "{{config.colmap_source_sha256}}",
             "--cache-dir",
             "{{config.cache_dir}}",
             "--scratch-dir",
@@ -1988,6 +2134,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workbench.nurec.render": ToolEntry(
         name="workbench.nurec.render",
+        config_defaults={"nurec_image": ""},
+        omit_flags_when_empty=("--image",),
         access_capabilities=("nurec",),
         description=(
             "Render novel views from a trained reconstruction with `nre render` "
@@ -2008,6 +2156,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.render_image_scale}}",
             "--renderer",
             "{{config.renderer}}",
+            "--image",
+            "{{config.nurec_image}}",
             "--rig-translation-offset",
             "{{config.rig_translation_offset}}",
             "--rig-rotation-offset",
@@ -3355,6 +3505,46 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         omit_flags_when_empty=("--component-root-uri",),
         config_defaults={"component_root_uri": ""},
     ),
+    "workbench.gemini_robotics.plan": ToolEntry(
+        name="workbench.gemini_robotics.plan",
+        description=(
+            "Run ER embodied-reasoning planning via the Gemini API "
+            "(provisional adapter: API base URL and model id must be supplied "
+            "explicitly; no live access has been validated)."
+        ),
+        argv_template=[
+            *_GEMINI_ROBOTICS_PIPELINE,
+            "--api-base-url",
+            "{{config.api_base_url}}",
+            "plan",
+            "--task",
+            "{{config.task}}",
+            "--model",
+            "{{config.model_id}}",
+            "--output-path",
+            "{{config.output_uri}}",
+        ],
+    ),
+    "workbench.gemini_robotics.eval": ToolEntry(
+        name="workbench.gemini_robotics.eval",
+        description=(
+            "Evaluate a plan against a rubric via the Gemini API "
+            "(provisional adapter: API base URL and model id must be supplied "
+            "explicitly; no live access has been validated)."
+        ),
+        argv_template=[
+            *_GEMINI_ROBOTICS_PIPELINE,
+            "--api-base-url",
+            "{{config.api_base_url}}",
+            "eval",
+            "--input-path",
+            "{{config.input_uri}}",
+            "--model",
+            "{{config.model_id}}",
+            "--output-path",
+            "{{config.output_uri}}",
+        ],
+    ),
     "workbench.ros2.preflight": ToolEntry(
         name="workbench.ros2.preflight",
         description=(
@@ -4485,6 +4675,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.train_batch_size}}",
             "--device",
             "{{config.policy_device}}",
+            "--training-env-ids",
+            "{{config.train_env_ids}}",
             # The checkpoint AND the run's textual artifacts (configs, logs, metrics) go to
             # the same prefix, so a downstream stage can read the run. The retired template
             # did the second half in a trailing inline-python block.
@@ -4493,6 +4685,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--artifacts-s3-uri",
             "{{config.artifacts_uri}}",
         ],
+        omit_flags_when_empty=("--training-env-ids",),
+        config_defaults={"train_env_ids": ""},
     ),
     "workbench.token_factory.triage": ToolEntry(
         name="workbench.token_factory.triage",
@@ -5445,6 +5639,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.env_id}}",
             "--output-path",
             "{{config.output_uri}}",
+            *_ROBOCASA_RUNTIME_IDENTITY_ARGV,
             "--service",
             "--endpoint",
             "{{config.robocasa_endpoint}}",
@@ -5471,6 +5666,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.env_id}}",
             "--output-path",
             "{{config.output_uri}}",
+            *_ROBOCASA_RUNTIME_IDENTITY_ARGV,
             "--service",
             "--endpoint",
             "{{config.robocasa_endpoint}}",
@@ -5497,6 +5693,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.env_id}}",
             "--output-path",
             "{{config.output_uri}}",
+            *_ROBOCASA_RUNTIME_IDENTITY_ARGV,
             "--service",
             "--endpoint",
             "{{config.robocasa_endpoint}}",
@@ -5527,6 +5724,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.iterations}}",
             "--num-envs",
             "{{config.num_envs}}",
+            *_ROBOCASA_RUNTIME_IDENTITY_ARGV,
             "--service",
             "--endpoint",
             "{{config.robocasa_endpoint}}",
@@ -5544,8 +5742,9 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         description=(
             "Run a batch of real RoboCasa kitchen rollouts across task/env "
             "configs and export per-episode trajectories (workspace/wrist "
-            "images, robot state, actions) plus metadata, metrics, and MP4 "
-            "video to S3 for LeRobotDataset materialization."
+            "images, explicit robot-state layout, actions) plus native outcome "
+            "metadata, metrics, and terminal-inclusive MP4 video to S3 for "
+            "LeRobotDataset materialization."
         ),
         argv_template=[
             "npa",
@@ -5562,6 +5761,9 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.iterations}}",
             "--num-envs",
             "{{config.num_envs}}",
+            "--seed",
+            "{{config.seed}}",
+            *_ROBOCASA_RUNTIME_IDENTITY_ARGV,
             "--service",
             "--endpoint",
             "{{config.robocasa_endpoint}}",
@@ -5578,7 +5780,9 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         name="workbench.robocasa.policy_eval",
         description=(
             "Load the exact produced ACT checkpoint and evaluate it on explicitly "
-            "disjoint held-out RoboCasa tasks and episodes with videos and hashes."
+            "disjoint held-out RoboCasa tasks against matched random-action "
+            "episodes, checking reset frame and robot state and retaining native "
+            "outcomes, videos, selected-checkpoint identity, and hashes."
         ),
         argv_template=[
             "npa",
@@ -5599,6 +5803,9 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.eval_iterations}}",
             "--num-envs",
             "{{config.rollout_episodes}}",
+            "--seed",
+            "{{config.seed}}",
+            *_ROBOCASA_RUNTIME_IDENTITY_ARGV,
             "--service",
             "--endpoint",
             "{{config.robocasa_endpoint}}",

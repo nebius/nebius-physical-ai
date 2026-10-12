@@ -15,6 +15,13 @@ The public artifact-access preflight runs on CPU and publishes source and image
 provenance without querying GPU devices. Training and checkpoint reload retain
 their required live GPU provenance.
 
+Component records use `npa.sim2real.pi05.component_record.v1`, with GPU device
+evidence required for collection, both gold evaluations, training, and checkpoint
+reload. The original Sim2Real graph retains its own schema and GPU stage map.
+Consumers must select the expected workflow schema explicitly; the default
+canonical reader rejects π0.5 records. Both schemas require immutable image,
+source, and workflow-job provenance for every executed stage.
+
 Policy-service startup waits for both Kubernetes pod readiness and a successful
 health check through the private Service address. If the pod becomes ready before
 Service routing has caught up, a refused connection remains in the existing
@@ -252,6 +259,12 @@ corpus, without dropping or padding a tail batch. An operator override may use a
 larger fixed batch only when it divides the held-out sample count and the
 allocated device count exactly; evaluation rejects any mismatch before fetching
 the trained checkpoint.
+
+Held-out model loss compiles the checkpoint's frozen model state once and
+evaluates every validation sample with the declared batch size and seed.
+Training, held-out loss, and held-out action prediction report completed counts
+as `npa.workbench.openpi.progress.v1` JSON records on stderr. Use the stage logs
+to follow these counts; the final stdout JSON remains the stage result.
 
 NPA adds no OpenPI/Gemma consent variable. Upstream terms remain the operator's
 responsibility through use. The Isaac expert can be qualified independently

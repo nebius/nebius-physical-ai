@@ -116,6 +116,17 @@ def test_spec_name_is_remapped_onto_the_advertised_product_string() -> None:
     assert "not advertised" in resolution.describe()
 
 
+def test_h100_name_is_remapped_to_the_standard_memory_qualified_name() -> None:
+    catalog = KubernetesGpuCatalog(
+        quantities_by_accelerator={"H100-80GB": frozenset({1})}
+    )
+
+    resolution = resolve_kubernetes_accelerator("H100:1", catalog=catalog)
+
+    assert resolution.resolved == "H100-80GB:1"
+    assert resolution.remapped is True
+
+
 def test_the_nebius_node_label_name_also_reaches_the_gfd_name() -> None:
     # `sky gpus list` reported RTX6000 while the GPU operator was still labelling.
     catalog = parse_kubernetes_gpu_catalog(LIVE_OUTPUT, context="npa-rtxpro-mk8s")
@@ -503,6 +514,46 @@ def test_inventory_prefers_gfd_product_over_same_node_provider_alias() -> None:
     assert inventory.to_dict()["accelerator_product"] == "NVIDIA-RTX-PRO-6000"
 
 
+def test_gfd_product_prevents_generic_provider_label_from_matching_nvl() -> None:
+    payload = {
+        "items": [
+            {
+                "metadata": {
+                    "name": "gpu-node",
+                    "labels": {
+                        "nvidia.com/gpu.product": "NVIDIA-H100-NVL",
+                        "nebius.com/gpu-name": "H100",
+                    },
+                },
+                "spec": {},
+                "status": {
+                    "conditions": [{"type": "Ready", "status": "True"}],
+                    "capacity": {"nvidia.com/gpu": "1"},
+                    "allocatable": {
+                        "nvidia.com/gpu": "1",
+                        "cpu": "8",
+                        "memory": "64Gi",
+                        "ephemeral-storage": "100Gi",
+                        "pods": "110",
+                    },
+                },
+            }
+        ]
+    }
+    inventory = discover_kubernetes_gpu_inventory(
+        context="ctx",
+        runner=lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            [], 0, stdout=json.dumps(payload), stderr=""
+        ),
+    )
+
+    assert set(inventory.nodes[0].products) == {"H100", "NVIDIA-H100-NVL"}
+    with pytest.raises(UnsatisfiableAcceleratorError):
+        preflight_kubernetes_gpu_gang(
+            inventory, accelerator="H100-80GB:1", node_count=1
+        )
+
+
 def _inventory_with_node_spec(spec: dict[str, object]) -> KubernetesGpuInventory:
     nodes = {
         "items": [
@@ -859,6 +910,129 @@ def test_gang_capacity_matches_nvidia_product_label_to_skypilot_name() -> None:
 
     assert evidence["compatible_free_nodes"] == 2
     assert evidence["selected_nodes"] == ["a", "b"]
+
+
+@pytest.mark.parametrize("accelerator", ["H100:1", "H100-80GB:1"])
+def test_gang_capacity_matches_standard_h100_gfd_label(accelerator: str) -> None:
+    product = "NVIDIA-H100-80GB-HBM3"
+    inventory = KubernetesGpuInventory(
+        context="exact-context",
+        ready_nodes=1,
+        eligible_gpu_nodes=1,
+        capacity=1,
+        allocatable=1,
+        products=(product,),
+        node_labels={},
+        nodes=(_node("h100", product=product),),
+    )
+
+    evidence = preflight_kubernetes_gpu_gang(
+        inventory, accelerator=accelerator, node_count=1
+    )
+
+    assert evidence["compatible_free_nodes"] == 1
+    assert evidence["selected_nodes"] == ["h100"]
+
+
+@pytest.mark.parametrize(
+    ("accelerator", "product"),
+    [("H100", "NVIDIA-H100-PCIe"), ("B200", "NVIDIA-HGX-B200")],
+)
+def test_unmapped_explicit_variant_reports_authoritative_product(accelerator, product):
+    node = KubernetesGpuNode(
+        **{
+            **_node("variant", product=product).to_dict(),
+            "products": (product, accelerator),
+            "labels": (
+                ("nvidia.com/gpu.product", product),
+                ("nebius.com/gpu-name", accelerator),
+            ),
+        }
+    )
+    inventory = KubernetesGpuInventory(
+        context="test-context",
+        ready_nodes=1,
+        eligible_gpu_nodes=1,
+        capacity=1,
+        allocatable=1,
+        products=(product,),
+        node_labels={},
+        nodes=(node,),
+    )
+    with pytest.raises(gpu_catalog.PermanentlyUnsatisfiableAcceleratorError) as error:
+        preflight_kubernetes_gpu_gang(
+            inventory, accelerator=f"{accelerator}:1", node_count=1
+        )
+    assert product in str(error.value)
+    assert "provider label is less specific" in str(error.value)
+    assert "workload hardware contract" in str(error.value)
+    assert "operator override does not qualify" in str(error.value)
+
+
+@pytest.mark.parametrize("cpu_request", [0, 1])
+def test_matching_product_capacity_failure_does_not_report_alias_mismatch(cpu_request):
+    product = "NVIDIA-H100-80GB-HBM3"
+    inventory = KubernetesGpuInventory(
+        context="test-context",
+        ready_nodes=1,
+        eligible_gpu_nodes=1,
+        capacity=1,
+        allocatable=1,
+        products=(product,),
+        node_labels={},
+        nodes=(_node("occupied", product=product, free=0),),
+    )
+    error_type = (
+        gpu_catalog.PermanentlyUnsatisfiableAcceleratorError
+        if cpu_request
+        else gpu_catalog.TemporarilyUnavailableAcceleratorError
+    )
+    with pytest.raises(error_type) as error:
+        preflight_kubernetes_gpu_gang(
+            inventory, accelerator="H100:1", node_count=1, cpus=cpu_request
+        )
+    assert "provider label is less specific" not in str(error.value)
+    assert "qualified alias" not in str(error.value)
+
+
+@pytest.mark.parametrize(
+    ("accelerator", "gfd_product"),
+    [
+        ("H200:1", "NVIDIA-H200"),
+        ("L40S:1", "NVIDIA-L40S"),
+        ("A100:1", "NVIDIA-A100-SXM4-80GB"),
+    ],
+)
+def test_non_alias_families_keep_exact_provider_name_compatibility(
+    accelerator: str, gfd_product: str
+) -> None:
+    provider_product = accelerator.split(":", 1)[0]
+    node = KubernetesGpuNode(
+        **{
+            **_node("gpu").to_dict(),
+            "products": (gfd_product, provider_product),
+            "labels": (
+                ("nvidia.com/gpu.product", gfd_product),
+                ("nebius.com/gpu-name", provider_product),
+            ),
+        }
+    )
+    inventory = KubernetesGpuInventory(
+        context="exact-context",
+        ready_nodes=1,
+        eligible_gpu_nodes=1,
+        capacity=1,
+        allocatable=1,
+        products=(gfd_product,),
+        node_labels={},
+        nodes=(node,),
+    )
+
+    evidence = preflight_kubernetes_gpu_gang(
+        inventory, accelerator=accelerator, node_count=1
+    )
+
+    assert evidence["selected_nodes"] == ["gpu"]
 
 
 @pytest.mark.parametrize(

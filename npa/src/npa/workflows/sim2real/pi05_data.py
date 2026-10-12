@@ -706,9 +706,13 @@ def _export_from_storage(args: Any, storage: Any, work: Path) -> dict[str, Any]:
         output=output,
     )
     storage.upload_directory(str(output), args.output_uri, require_empty=True)
-    from npa.workflows.sim2real.workflow_io import publish_component_record
+    from npa.workflows.sim2real.workflow_io import (
+        PI05_COMPONENT_SCHEMA,
+        publish_component_record,
+    )
 
     publish_component_record(
+        component_schema=PI05_COMPONENT_SCHEMA,
         root_uri=args.component_root_uri,
         stage=3,
         name="pi05_dense_dataset",

@@ -324,7 +324,7 @@ def test_component_records_and_eval_report_roots_are_stage_consistent() -> None:
         artifact.uri
         for state in spec.states.values()
         for artifact in state.outputs
-        if artifact.schema == "npa.sim2real.component_record.v1"
+        if artifact.schema == "npa.sim2real.pi05.component_record.v1"
     ]
     assert sorted(uri.rsplit("_", 1)[-1] for uri in components) == [
         f"{stage:02d}.json" for stage in range(1, 15)
