@@ -1,12 +1,13 @@
 """Reject evidence that misattributes a workflow or breaks the offline viewer."""
 
 import importlib.util
+import hashlib
 import json
 from pathlib import Path
 
 import pytest
 
-DIRECTORY = Path(__file__).resolve().parent
+DIRECTORY = Path(__file__).resolve().parents[3] / "workflows/cosmos-data-factory"
 MODULE_SPEC = importlib.util.spec_from_file_location(
     "cdf_proof", DIRECTORY / "build-proof.py"
 )
@@ -92,3 +93,39 @@ def test_reviewed_media_and_video_watchpoints_accepted(evidence):
     details["media_ids"].append("clip")
     details["explanation"] = {"watchpoints": [{"seconds": 0}]}
     PACKER._validate_media_references(evidence)
+
+
+@pytest.mark.parametrize("failure", ["hash", "mime", "traversal", "symlink"])
+def test_unqualified_media_rejected(tmp_path, failure):
+    evidence_directory = tmp_path / "evidence"
+    evidence_directory.mkdir()
+    media = evidence_directory / "seed.jpg"
+    media.write_bytes(b"fixture-media")
+    asset = {
+        "id": "seed",
+        "path": "seed.jpg",
+        "sha256": hashlib.sha256(media.read_bytes()).hexdigest(),
+        "mime_type": "image/jpeg",
+        "alt": "fixture",
+        "caption": "fixture",
+    }
+    messages = {
+        "hash": "Asset hash mismatch",
+        "mime": "Unsupported embedded media",
+        "traversal": "within the evidence directory",
+        "symlink": "within the evidence directory",
+    }
+    if failure == "hash":
+        media.write_bytes(b"modified-media")
+    elif failure == "mime":
+        asset["mime_type"] = "text/plain"
+    else:
+        outside = tmp_path / "outside.jpg"
+        outside.write_bytes(media.read_bytes())
+        if failure == "traversal":
+            asset["path"] = "../outside.jpg"
+        else:
+            media.unlink()
+            media.symlink_to(outside)
+    with pytest.raises(ValueError, match=messages[failure]):
+        PACKER._embedded_asset(asset, evidence_directory)

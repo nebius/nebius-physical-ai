@@ -146,6 +146,8 @@ optional source-reference asset IDs.
 Asset IDs must be unique and every media reference must resolve. Each workflow
 ID must match its spec filename. Source links must be absolute HTTP or HTTPS
 URLs, and video watchpoints require an embedded video in that workflow's media.
+Media paths must resolve within the evidence directory; external symlink targets
+and parent-directory traversal are rejected.
 Optional workflow `annotation_rows` display actual model answers in a collapsed
 table; each row has `scope`, native question ID in `label`, and `answer` with its
 original JSON value. Preserve empty strings and lists instead of silently
@@ -167,3 +169,10 @@ networking disabled before handoff. The template takes execution metrics,
 annotation samples, quality verdicts, and source disclosures from the reviewed
 evidence. Update those fields from the real run when replacing media; do not
 carry successful fixture verdicts into a pending or failed representative run.
+
+The standard test suite collects packer regressions from
+`npa/tests/workflows/test_cdf_proof.py`. Run them locally with:
+
+```bash
+npa/.venv/bin/python -m pytest npa/tests/workflows/test_cdf_proof.py -q
+```

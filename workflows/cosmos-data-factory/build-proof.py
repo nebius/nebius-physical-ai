@@ -17,6 +17,8 @@ WORKFLOW_SPECS = {
 
 def _embedded_asset(asset, evidence_directory):
     path = (evidence_directory / asset["path"]).resolve()
+    if not path.is_relative_to(evidence_directory.resolve()):
+        raise ValueError("Embedded media must stay within the evidence directory")
     body = path.read_bytes()
     digest = hashlib.sha256(body).hexdigest()
     if digest != asset["sha256"]:
