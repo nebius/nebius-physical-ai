@@ -342,3 +342,75 @@ def test_log_reader_keeps_paths_and_symlinks_inside_private_destination(tmp_path
     (job / "linked.log").symlink_to(outside / "secret.log")
     with pytest.raises(BackendError, match="symlink escaped"):
         _read_log_paths({"7": str(job)}, destination)
+
+
+@pytest.mark.parametrize("status", ["PENDING", "STARTING", "RECOVERING"])
+def test_logs_report_startup_without_waiting_for_worker_download(
+    config, actor, binding, workflow, status
+):
+    record, backend, scheduler = _backend(config, actor, binding, workflow)
+    wave = backend.ledger.begin_wave(record["id"], "starting-wave")
+    backend.ledger.record_wave(wave["id"], job_ids=(42,))
+    scheduler.queue_statuses = [status]
+
+    assert backend.logs() == f"starting-wave: worker logs pending ({status})."
+    assert [call["operation"] for call in scheduler.calls] == ["queue"]
+
+
+def test_logs_preserve_unacknowledged_submission_without_scheduler_calls(
+    config, actor, binding, workflow
+):
+    record, backend, scheduler = _backend(config, actor, binding, workflow)
+    backend.ledger.begin_wave(record["id"], "unacknowledged-wave")
+
+    assert "scheduler acknowledgement pending; retain this run ID" in backend.logs()
+    assert scheduler.calls == []
+
+
+@pytest.mark.parametrize("status", ["RUNNING", "SUCCEEDED"])
+def test_logs_download_available_worker_output_and_redact_credentials(
+    config, actor, binding, workflow, status
+):
+    record, backend, scheduler = _backend(config, actor, binding, workflow)
+    wave = backend.ledger.begin_wave(record["id"], "available-wave")
+    backend.ledger.record_wave(wave["id"], job_ids=(42,))
+    scheduler.queue_statuses = [status]
+    downloads = []
+
+    def transport(command, **kwargs):
+        request = json.loads(kwargs["input"])
+        if request["operation"] != "logs":
+            return scheduler(command, **kwargs)
+        downloads.append(request)
+        job = backend.root / "sky_logs" / "worker"
+        job.mkdir()
+        (job / "run.log").write_text("worker output test-alice secret-alice")
+        return SimpleNamespace(
+            returncode=0, stdout=json.dumps({"paths": {"42": str(job)}})
+        )
+
+    backend.runner = transport
+    assert backend.logs() == "worker output [redacted] [redacted]"
+    assert [request["job_id"] for request in downloads] == [42]
+
+
+def test_logs_refuse_mismatched_scheduler_identity_before_download(
+    config, actor, binding, workflow
+):
+    record, backend, _ = _backend(config, actor, binding, workflow)
+    wave = backend.ledger.begin_wave(record["id"], "owned-wave")
+    backend.ledger.record_wave(wave["id"], job_ids=(42,))
+    calls = []
+
+    def transport(command, **kwargs):
+        request = json.loads(kwargs["input"])
+        calls.append(request["operation"])
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps({"jobs": [{"job_id": 43, "status": "RUNNING"}]}),
+        )
+
+    backend.runner = transport
+    with pytest.raises(BackendError, match="exact recorded jobs"):
+        backend.logs()
+    assert calls == ["queue"]

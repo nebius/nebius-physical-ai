@@ -7,6 +7,29 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+### cuRobo image dependency closure
+
+- Lock the full system setuptools seed independently to the runtime's 84.0.0
+  wheel, preserving its Unicode-normalized manifest exclusions. Replace it in
+  the original apt layer, without changing the shared installer's limited donor
+  files or treating the source correction as rebuilt-image qualification.
+- A source-identified pip derivative repairs its separately vendored libraries;
+  an isolated builder and same-layer seed-wheel replacement retain real service
+  bootstrap without exporting the old installer bytes. Two hash-pinned OpenSSL
+  security binaries and their corresponding sources supplement the unchanged
+  distro snapshot. Rebuilt-image security and source-closure gates remain open
+  until verified against the actual artifact.
+- The image pins urllib3's streamed-response and HTTPS-proxy fixes and refreshes
+  the lock against current NPA dependencies. The final build checks dependency
+  compatibility after installing NPA; planner and numerical-library pins remain
+  unchanged. These source repairs do not qualify a rebuilt image for release.
+
+### cuRobo single-mode benchmark validation
+
+- The independent audit accepts complete kinematic-only or dynamics-only
+  benchmark populations. Requested modes are explicit, missing or extra cells
+  still fail, and all frozen per-mode acceptance thresholds remain unchanged.
+
 ### Distinct known-count frame sampling
 
 - Keep `sequence` as uniform full-span sampling and make `keyframes` allocate
@@ -17,6 +40,28 @@ a versioned heading when a release is cut.
   improved the declared labels, and one rationale hallucinated absent objects.
   This result remains a failed model-improvement gate, separately from the
   sampler's deterministic source/provenance contract.
+
+### Breaking: authoritative Kubernetes GPU product aliases
+
+- Existing-capacity preflight now treats `nvidia.com/gpu.product` as
+  authoritative for explicit accelerator aliases, including H100 and B200.
+  A conflicting provider nickname no longer admits an unqualified product.
+  H100 PCIe/NVL and HGX-B200 product spellings are not implicitly aliases;
+  previously schedulable submissions can now fail preflight. See the
+  [accepted spellings and qualification procedure](docs/orchestration/skypilot-setup.md#authoritative-gpu-product-aliases)
+  before migrating cluster labels or requesting an additional SKU.
+
+### SeedVR2 clean runtime and full bootstrap seed
+
+- Pin the full system setuptools seed to 84.0.0, separately from pip's limited
+  `pkg_resources` donor. Verify the wheel before replacing Ubuntu's seed in the
+  same image layer, and reject old or modified seed path files. This fixes the
+  seed's Unicode-normalization exclusion mismatch without changing the model
+  environment or treating historical images as repaired.
+- Export the repaired runtime producer into one clean-root layer and explicitly
+  retain its NVIDIA/NPA environment, non-root launch, cache volume and health
+  contract. Add source-bound clean-root qualification alongside the unchanged
+  complete-layer payload scan; source checks do not qualify new image bytes.
 
 ### VLM benchmarks distinguish outcome from agency
 

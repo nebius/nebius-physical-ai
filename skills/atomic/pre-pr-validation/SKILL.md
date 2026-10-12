@@ -6,7 +6,7 @@ description: Use before pushing an npa change to pick which gates apply and run 
 # Pre-PR Validation
 
 Every pull request has one automatic candidate workflow. PRs
-run the complete eight-shard Python 3.12 coverage suite, Cypress, focused
+run the complete six-shard Python 3.12 coverage suite, Cypress, focused
 Python 3.10/3.14 compatibility checks, lint, docs drift, guardrails, security
 regressions, secret scanning, and confidentiality scanning. Cross-subsystem
 coverage must pass before queue admission. Full shards include smoke tests;
@@ -177,7 +177,7 @@ sets a 180s timeout; CI runs with coverage and enforces `--cov-fail-under=60`.
 A local pass is a strong signal, not proof of the CI result.
 
 Run the equivalent coverage floor from the package directory. Merge-queue CI
-uses eight deterministic, duration-balanced shards; the daily three-interpreter
+uses six deterministic, duration-balanced shards; the daily three-interpreter
 audit retains four per interpreter. Both merge their coverage data:
 
 ```bash
