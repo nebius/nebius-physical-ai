@@ -311,6 +311,9 @@ def _append_episode_samples(
             {
                 "sample_id": sample_id,
                 "episode_id": str(metadata["episode_id"]),
+                "source_phase": str(
+                    metadata["steps"][index].get("phase", "unreported")
+                ),
                 "object_identity": str(metadata["object_identity"]),
                 "scene_configuration_digest": str(
                     metadata["scene_configuration_digest"]

@@ -46,6 +46,13 @@ resulting state. The exporter forms 15-step targets only within episode
 boundaries, computes normalization from the train split, and writes both the
 OpenPI dataset contract and native LeRobot v3 data.
 
+After the retreat waypoint, the expert records one additional 15-step horizon
+of real controls and new camera observations. This keeps the original release
+and retreat observations eligible as current model inputs, rather than losing
+them at the end of a demonstration. Targets are never padded or copied from a
+terminal frame. The capture receipt records the added steps, and exported
+sample lineage records each input's `source_phase` for coverage audits.
+
 Camera receipts preserve the SDK capture timestamp and the episode-local
 observation timestamp separately. Causal age is evaluated in the reproduced
 float32 sensor-clock domain; the raw float64/float32 representation delta is

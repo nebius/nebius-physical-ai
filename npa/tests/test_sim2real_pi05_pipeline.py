@@ -1766,6 +1766,52 @@ def test_dense_export_is_split_safe_and_openpi_readable(tmp_path, monkeypatch) -
     assert report["splits"]["gold"][0]["object_identity"] == "cube-gold"
 
 
+def _write_terminal_episode(root, identity, scene, phases) -> None:
+    _write_episode(root, identity, scene, len(phases))
+    episode = root / "episode-000000"
+    metadata = json.loads((episode / "episode.json").read_text())
+    actions = np.load(episode / "actions.npy")
+    actions[:, 0] += np.arange(len(phases), dtype=np.float32) * 0.001
+    for step, phase, action in zip(metadata["steps"], phases, actions, strict=True):
+        step.update(phase=phase, action=action.tolist())
+    _bind_frame_hashes(
+        metadata["steps"],
+        np.load(episode / "obs_workspace.npy"),
+        np.load(episode / "obs_wrist.npy"),
+    )
+    (episode / "episode.json").write_text(json.dumps(metadata))
+    np.save(episode / "actions.npy", actions)
+
+
+def test_terminal_rows_preserve_release_and_retreat_as_current_inputs(
+    tmp_path, monkeypatch
+) -> None:
+    roots = {name: tmp_path / name for name in ("train", "validation", "gold")}
+    phases = ["approach"] * 15 + ["release"] * 12 + ["retreat"] * 18
+    for index, (name, root) in enumerate(roots.items()):
+        _write_terminal_episode(root, f"cube-{name}", f"scene-{index}", phases)
+    monkeypatch.setitem(
+        sys.modules, "npa.adapter.sim_to_lerobot", _fake_lerobot_module()
+    )
+    output = tmp_path / "output"
+    export_local(
+        train_root=roots["train"],
+        validation_root=roots["validation"],
+        gold_root=roots["gold"],
+        output=output,
+    )
+    arrays, manifest = _load_dataset(
+        str(output / "openpi-dataset.npz"), str(output / "openpi-manifest.json")
+    )
+    lineage = manifest["splits"]["train"]["lineage"]
+    assert sum(row["source_phase"] == "release" for row in lineage) == 12
+    assert sum(row["source_phase"] == "retreat" for row in lineage) == 4
+    assert arrays["train_actions"].shape == (31, 15, 8)
+    actions = np.load(roots["train"] / "episode-000000" / "actions.npy")
+    for index, targets in enumerate(arrays["train_actions"]):
+        np.testing.assert_array_equal(targets, actions[index : index + 15])
+
+
 def test_exporter_rejects_invalid_canonical_report_before_publication(
     tmp_path, monkeypatch
 ) -> None:

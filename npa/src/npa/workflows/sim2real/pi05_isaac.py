@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from npa.workflows.sim2real.pi05_contract import (
+    ACTION_HORIZON,
     CONTROL_HZ,
     EPISODE_SCHEMA,
     GRIPPER_MEASUREMENT_TOLERANCE_M,
@@ -2425,6 +2426,7 @@ def _episode_evidence(
                 "timestamps",
             )
         },
+        "terminal_retreat_capture": context["terminal_retreat_capture"],
         **_controller_success_evidence(context),
     }
 
@@ -2635,12 +2637,37 @@ def _bind_surface_command(native: Any, target: Any) -> list[float]:
 
 def _run_expert_waypoints(context: dict[str, Any]) -> None:
     reference = context["finger_grasp_reference_geometry"]
-    for phase, goal, intent in _expert_waypoints(
+    waypoints = _expert_waypoints(
         context["initial_object_position"],
         context["target"],
         reference,
-    ):
+    )
+    for phase, goal, intent in waypoints:
         _run_phase(context, phase, goal, intent)
+    _capture_terminal_retreat(context, waypoints[-1][1])
+
+
+def _capture_terminal_retreat(context: dict[str, Any], goal: Any) -> None:
+    """Keep release and retreat inputs trainable without synthetic target padding."""
+    start = len(context["buffers"]["actions"])
+    for _ in range(ACTION_HORIZON):
+        command, _distance, _orientation_error = _expert_command(context, goal, 0.0)
+        observation = _causal_observation(
+            context["native"], context["joint_indices"], context["buffers"]
+        )
+        command_time, resulting_time = _step_command(context, command, "retreat")
+        _record_step(context, observation, 0.0, "retreat", command_time, resulting_time)
+    count = len(context["buffers"]["actions"]) - start
+    if count != ACTION_HORIZON:
+        raise RuntimeError("terminal retreat captures do not match actual commands")
+    context["terminal_retreat_capture"] = {
+        "action_horizon": ACTION_HORIZON,
+        "start_step": start,
+        "control_and_camera_steps": count,
+        "last_original_waypoint_step": start - 1,
+        "last_complete_target_input_step": start + count - ACTION_HORIZON,
+        "synthetic_target_padding": False,
+    }
 
 
 def _capture_attempt(
