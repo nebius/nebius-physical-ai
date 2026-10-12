@@ -106,7 +106,7 @@ YAML
   fi
 
   echo "--- [1/7] npa.workflow validate (all golden specs) ---"
-  for spec in "${NPA_SPECS}/main"/*.yaml "${NPA_SPECS}/testing"/*.yaml "${NPA_SPECS}/partners"/*/*.yaml; do
+  for spec in "${NPA_SPECS}/main"/*.yaml "${NPA_SPECS}/testing"/*.yaml "${NPA_SPECS}/cosmos-data-factory"/*.yaml "${NPA_SPECS}/partners"/*/*.yaml; do
     [[ -f "$spec" ]] || continue
     base=$(basename "$spec")
     echo "validate: ${base}"
@@ -117,7 +117,7 @@ YAML
 
   echo "--- [2/7] npa.workflow plan + scheduler (all golden specs) ---"
   RUN_ID="tmux-all-r${round}-$(date -u +%H%M%S)"
-  for spec in "${NPA_SPECS}/main"/*.yaml "${NPA_SPECS}/testing"/*.yaml "${NPA_SPECS}/partners"/*/*.yaml; do
+  for spec in "${NPA_SPECS}/main"/*.yaml "${NPA_SPECS}/testing"/*.yaml "${NPA_SPECS}/cosmos-data-factory"/*.yaml "${NPA_SPECS}/partners"/*/*.yaml; do
     [[ -f "$spec" ]] || continue
     base=$(basename "$spec")
     echo "plan: ${base}"

@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT / "npa/scripts"))
 
 from image_byte_scan import core as W  # noqa: E402
 from ncore_publication import artifact, cli, diagnostics, gates, process, registry  # noqa: E402
+from test_ncore_oci_publication import private as private  # noqa: E402
 
 
 # Deliberately synthetic hostile data, including forged diagnostic/workflow lines.
@@ -40,6 +41,7 @@ GATE_PHASES = (
     "bootstrap",
     "source-recheck",
 )
+POST_GATE_PHASES = ("evidence-manifest", "accepted-workload-binding")
 SUCCESS = (
     "NCore OCI operation passed; release acceptance and quarantine are unchanged\n"
 )
@@ -81,7 +83,10 @@ def _operation(name, calls, failure, result=None):
 
 
 def _gate_pipeline(monkeypatch, calls, failure):
-    graph = {"image_config_digest": "synthetic-config"}
+    graph = {
+        "image_manifest_digest": "synthetic-platform",
+        "image_config_digest": "synthetic-config",
+    }
     verification = {"archive_sha256": "synthetic-archive"}
     build = {
         "context_sha256": "synthetic-context",
@@ -117,13 +122,39 @@ def _gate_pipeline(monkeypatch, calls, failure):
         (gates.components, "verify", "components"),
         (gates.bootstrap, "verify", "bootstrap"),
         (artifact, "assert_unchanged", "source-recheck"),
-        (registry, "transfer", "registry-transfer"),
     ):
         monkeypatch.setattr(module, attribute, _operation(name, calls, failure))
+    evidence_operation = _operation("evidence-manifest", calls, failure)
+
+    def evidence(directory, *args):
+        evidence_operation(directory, *args)
+        path = directory / "evidence-manifest.json"
+        path.write_text("{}")
+        return path
+
+    monkeypatch.setattr(cli, "_gate_evidence_manifest", evidence)
+    monkeypatch.setattr(
+        cli,
+        "_require_accepted_publication",
+        _operation("accepted-workload-binding", calls, failure),
+    )
+    monkeypatch.setattr(
+        registry,
+        "transfer",
+        _operation("registry-transfer", calls, failure),
+    )
 
 
 @pytest.mark.parametrize(
-    "failure", [None, "inputs", "build-receipt", *GATE_PHASES, "registry-transfer"]
+    "failure",
+    [
+        None,
+        "inputs",
+        "build-receipt",
+        *GATE_PHASES,
+        *POST_GATE_PHASES,
+        "registry-transfer",
+    ],
 )
 def test_cli_gate_order_and_failure_stop(tmp_path, monkeypatch, capsys, failure):
     tmp_path.chmod(0o700)
@@ -141,7 +172,13 @@ def test_cli_gate_order_and_failure_stop(tmp_path, monkeypatch, capsys, failure)
         ]
     )
     output = capsys.readouterr()
-    ordered = ["inputs", "build-receipt", *GATE_PHASES, "registry-transfer"]
+    ordered = [
+        "inputs",
+        "build-receipt",
+        *GATE_PHASES,
+        *POST_GATE_PHASES,
+        "registry-transfer",
+    ]
     reached = ordered if failure is None else ordered[: ordered.index(failure) + 1]
     assert calls == reached
     assert result == (0 if failure is None else 1)
@@ -158,25 +195,34 @@ def test_cli_gate_order_and_failure_stop(tmp_path, monkeypatch, capsys, failure)
     expected += _markers("publish", "pass" if failure is None else "failure")
     assert output.err.splitlines() == expected
     receipt = tmp_path / "publication/prepublication.json"
-    assert receipt.exists() is (failure is None or failure == "registry-transfer")
+    assert receipt.exists() is (
+        failure is None or failure in {"accepted-workload-binding", "registry-transfer"}
+    )
 
 
 def _registry_pipeline(tmp_path, monkeypatch, calls, failure):
-    graph = {
-        "image_manifest_digest": "synthetic-platform",
-        "image_config_digest": "synthetic-config",
-        "receipt": {"blobs": []},
-    }
-    digest = "sha256:" + registry.W.sha(b"synthetic-index")
-    build = {"image": "synthetic-image", "image_digest": digest}
+    from test_ncore_oci_publication import _archive, _build_receipt, _fixture
+
+    archive, digest, _ = _archive(tmp_path)
+    graph, verification = artifact.inspect(archive, digest)
+    build = _build_receipt(tmp_path, digest)
+    build["archive_sha256"] = verification["archive_sha256"]
+    (tmp_path / "build/build.json").write_text(json.dumps(build))
+    archive.rename(tmp_path / "build/image.oci.tar")
+    acceptance = tmp_path / "acceptance.json"
+    process.write_json(acceptance, {"synthetic_accepted_workload": True})
+    process.write_json(tmp_path / "prepublication.json", {"status": "pass", **build})
+    directory = tmp_path / "transfer"
+    directory.mkdir(mode=0o700)
+    files, _, _ = _fixture()
+    index_bytes = files["blobs/sha256/" + digest[7:]]
+    observed = {"digest": None}
     monkeypatch.setattr(artifact, "assert_unchanged", lambda *_: None)
-    monkeypatch.setattr(registry, "_observed", lambda *_: None)
+    monkeypatch.setattr(registry, "_observed", lambda *_: observed["digest"])
     monkeypatch.setattr(
         artifact,
         "inspect",
-        _operation(
-            "anonymous-graph", calls, failure, (graph, {"archive_sha256": "synthetic"})
-        ),
+        _operation("anonymous-graph", calls, failure, (graph, verification)),
     )
     monkeypatch.setattr(gates, "byte_scan", _operation("byte-scan", calls, failure))
 
@@ -192,17 +238,25 @@ def _registry_pipeline(tmp_path, monkeypatch, calls, failure):
         _operation(name, calls, failure)()
         output.write_text(HOSTILE)
         if output.name in {"local-index.json", "anonymous-index.json"}:
-            output.write_bytes(b"synthetic-index")
+            output.write_bytes(index_bytes)
         elif output.name == "visibility.json":
             output.write_text('{"visibility":"public"}')
         elif "--digestfile" in argv:
             Path(argv[argv.index("--digestfile") + 1]).write_text(digest)
+        if output.name == "tag.log":
+            observed["digest"] = digest
 
     monkeypatch.setattr(registry, "run", run)
     return (
-        SimpleNamespace(analysis_root=tmp_path, authfile=tmp_path / "synthetic-auth"),
+        SimpleNamespace(
+            analysis_root=tmp_path,
+            authfile=tmp_path / "synthetic-auth",
+            acceptance=acceptance,
+            output_dir=directory,
+        ),
         build,
         graph,
+        verification,
     )
 
 
@@ -219,12 +273,20 @@ def _registry_pipeline(tmp_path, monkeypatch, calls, failure):
         "byte-scan",
     ],
 )
-def test_registry_phase_order_and_failure_stop(tmp_path, monkeypatch, capsys, failure):
+def test_registry_phase_order_and_failure_stop(private, monkeypatch, capsys, failure):
     calls = []
-    args, build, graph = _registry_pipeline(tmp_path, monkeypatch, calls, failure)
+    args, build, graph, verification = _registry_pipeline(
+        private, monkeypatch, calls, failure
+    )
     with nullcontext() if failure is None else pytest.raises(ValueError):
         diagnostics.run_phase(
-            "registry-transfer", registry.transfer, args, tmp_path, build, graph, {}
+            "registry-transfer",
+            registry.transfer,
+            args,
+            args.output_dir,
+            build,
+            graph,
+            verification,
         )
     output = capsys.readouterr()
     ordered = [
@@ -253,7 +315,10 @@ def test_registry_phase_order_and_failure_stop(tmp_path, monkeypatch, capsys, fa
     expected += _markers("registry-transfer", "pass" if failure is None else "failure")
     assert output.out == ""
     assert output.err.splitlines() == expected
-    assert (tmp_path / "published.json").exists() is (failure is None)
+    assert (args.output_dir / "published.json").exists() is (failure is None)
+    assert (args.output_dir / "completed-transfer.json").exists() is (
+        failure not in {"registry-transfer", "registry-copy"}
+    )
 
 
 class _UnprintableError(Exception):
