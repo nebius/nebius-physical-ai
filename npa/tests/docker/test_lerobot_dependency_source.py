@@ -66,7 +66,11 @@ def test_both_versions_correct_the_reviewed_source_in_the_original_install_layer
     text = DOCKERFILE.read_text()
     _installation(text)
     assert "NPA_LEROBOT_INTEGRATION_PROFILE" not in text
-    assert "/opt/lerobot/source-integration.json" in text
+    receipt_dir = "/usr/share/doc/npa-lerobot"
+    assert f"install -d -m 0755 -o root -g root {receipt_dir}" in text
+    assert f"{receipt_dir}/source-integration.json" in text
+    assert f"{receipt_dir}/dependency-source-correction.json" in text
+    assert "install -o root -g root -m 0644" in text
 
 
 def test_bootstrap_sshd_is_baked_before_apt_hardening_and_has_no_host_keys():

@@ -139,6 +139,24 @@ RUN python3.12 -m venv /opt/lerobot/venv \
     && test -z "$(find /opt/lerobot/venv -type f \
          -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)"
 
+USER root
+
+# These provenance receipts feed the version smoke and release audit. Keep the
+# runtime user from rewriting their source-integration or dependency claims.
+RUN install -d -m 0755 -o root -g root /usr/share/doc/npa-lerobot \
+    && if [ -f /opt/lerobot/source-integration.json ]; then \
+         install -o root -g root -m 0644 \
+           /opt/lerobot/source-integration.json \
+           /usr/share/doc/npa-lerobot/source-integration.json; \
+       fi \
+    && install -o root -g root -m 0644 \
+      /opt/lerobot/dependency-source-correction.json \
+      /usr/share/doc/npa-lerobot/dependency-source-correction.json \
+    && rm -f /opt/lerobot/source-integration.json \
+      /opt/lerobot/dependency-source-correction.json
+
+USER ubuntu
+
 ENV PATH=/opt/lerobot/venv/bin:$PATH \
     PYTHONPATH=/opt/npa/src \
     NPA_SKIP_EAGER_IMPORTS=1

@@ -698,6 +698,7 @@ def _private_callable_uses(path: Path) -> set[str]:
 
 
 _NON_LEROBOT_PRIVATE_CALLS = {
+    "npa/src/npa/workbench/robocasa/capabilities.py": {"_EndRecData"},
     "npa/src/npa/workflows/behavior_challenge/comet_training_data.py": {
         "_episode_starts",
         "_load_tables",

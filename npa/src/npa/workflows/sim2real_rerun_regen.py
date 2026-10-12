@@ -41,6 +41,7 @@ class RegenResult:
     heldout_frame_count: int
     rollout_count: int
     frame_count: int
+    heldout_env_count: int = 0
     local_mcap_path: str = ""
     mcap_upload_uri: str = ""
     mcap_status: str = ""
@@ -55,6 +56,7 @@ class RegenResult:
             "heldout_frame_count": self.heldout_frame_count,
             "rollout_count": self.rollout_count,
             "frame_count": self.frame_count,
+            "heldout_env_count": self.heldout_env_count,
             "local_mcap_path": self.local_mcap_path,
             "mcap_upload_uri": self.mcap_upload_uri,
             "mcap_status": self.mcap_status,
@@ -883,6 +885,7 @@ def _regen_result_from_viz(
         heldout_frame_count=result.heldout_frame_count,
         rollout_count=result.rollout_count,
         frame_count=result.frame_count,
+        heldout_env_count=result.heldout_env_count,
         local_mcap_path=str(mcap.get("output_mcap_path") or ""),
         mcap_upload_uri=mcap_upload_uri,
         mcap_status=str(mcap.get("status") or ""),

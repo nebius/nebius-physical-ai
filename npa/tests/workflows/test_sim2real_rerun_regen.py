@@ -178,7 +178,9 @@ def test_regen_accepts_ppm_rollouts_and_heldout_scores_without_camera_renders(
 
     assert result.rollout_count == 1
     assert result.frame_count == 2
+    assert result.heldout_env_count == 3
     assert result.heldout_frame_count == 0
+    assert result.to_dict()["heldout_env_count"] == 3
     assert Path(result.local_rrd_path).is_file()
     assert Path(result.local_rrd_path).stat().st_size > 0
 

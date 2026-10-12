@@ -76,7 +76,7 @@ def _package_versions(pyproject: Path) -> dict[str, str]:
 def _has_secure_lerobot_integration() -> bool:
     """Whether this image contains the receipt for the 0.5.1 integration."""
 
-    receipt_path = Path("/opt/lerobot/source-integration.json")
+    receipt_path = Path("/usr/share/doc/npa-lerobot/source-integration.json")
     try:
         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
