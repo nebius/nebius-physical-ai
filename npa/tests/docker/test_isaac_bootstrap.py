@@ -696,7 +696,7 @@ def test_isaac3_oss_closure_merges_the_workflow_runtime_security_pins() -> None:
     shared = (COMMON / "sim2real-control-requirements.txt").read_text(encoding="utf-8")
     for requirement in (
         "cryptography==50.0.0",
-        "oauthlib==3.3.1",
+        "oauthlib==4.0.0",
         "requests-oauthlib==2.0.0",
     ):
         assert requirement in lines
@@ -1094,7 +1094,7 @@ def test_base_installer_uses_immutable_system_and_bootstrap_inputs() -> None:
     assert "https://snapshot.ubuntu.com/ubuntu/${UBUNTU_SNAPSHOT}/" in text
     assert "add-apt-repository" not in text
     assert "sha256sum --check --strict" in text
-    assert text.count("3.11.15-1+jammy1") >= 9
+    assert text.count("3.11.17-1+jammy1") >= 9
     for requirement in (
         "pip==26.2.1",
         "setuptools==84.0.0",

@@ -10,6 +10,7 @@ Insights: lineage graph + common metrics store over workflow-run artifacts.
 Options
 --help  Show this message and exit.
 Commands
+report  Inspect a supported report without running inference or changing artifacts.
 record  Record metric emissions + lineage into the store.
 ingest-run  Non-invasively ingest a run prefix into the store.
 query  Query metric records by facet.
@@ -31,6 +32,7 @@ list  List service-tracked insights stores.
 
 | Command | Description |
 | --- | --- |
+| `report` | Inspect a supported report without running inference or changing artifacts. |
 | `record` | Record metric emissions + lineage into the store. |
 | `ingest-run` | Non-invasively ingest a run prefix into the store. |
 | `query` | Query metric records by facet. |
@@ -45,7 +47,7 @@ list  List service-tracked insights stores.
 
 ```bash
 npa workbench insights --help
-npa workbench insights record --help
+npa workbench insights report --help
 ```
 
 Regenerate this page with `bash scripts/build_docs.sh` after changing `insights`.

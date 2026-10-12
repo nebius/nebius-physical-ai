@@ -6,6 +6,9 @@ A workflow is a graph of tool calls, S3 artifacts, and transitions. NPA validate
 and plans the YAML, then uses SkyPilot to execute it. This page covers the command
 sequence and format; each workload guide supplies its inputs and resource needs.
 
+For an existing workflow, use the [manual run sequence](guides/manual-workflow-operations.md).
+For multiple episodes, use [dataset batches and capacity planning](guides/paidf-dataset-batches.md).
+
 ## Quick start
 
 From the clone root, inspect a generation workflow locally:
@@ -34,7 +37,13 @@ npa workbench workflow preflight-images "$workflow_spec" \
 ```
 
 Review the resolved GPU shape, image, and output prefix. Image preflight may
-create and delete a temporary probe pod.
+create and delete a temporary probe pod. In a fresh namespace it also creates
+SkyPilot's `skypilot-service-account` if that is the selected account and it is
+absent. The account remains for the subsequent SkyPilot launch, even if later
+readback or preflight fails or is interrupted; preflight does
+not grant RBAC permissions or change an existing account or its pull-secret
+defaults. Custom ServiceAccounts must already exist. An unavailable account
+read or unverifiable creation fails with `service_account_unverified`.
 
 Both `preflight-images` and `submit` accept
 `--image-pull-timeout-seconds` for each target pull and
@@ -87,6 +96,24 @@ Open the generated media and `generate.json`; a successful job alone does not
 prove output quality. Keep the run ID for [recovery](../run-lifecycle.md#restart-safety)
 and follow [teardown](../teardown.md) when finished with owned resources.
 
+## Schema and editor completion
+
+Print the authoritative JSON Schema bundled with the installed NPA package when
+configuring YAML editor completion or validation:
+
+```bash
+npa workbench workflow schema > npa.workflow.schema.json
+```
+
+`schema` is read-only and writes one JSON document to stdout; redirection keeps
+the output location and overwrite decision explicit. Associate the resulting
+file with `npa.workflow` YAML files in your editor. The command exports the
+same schema used by NPA, rather than a hand-maintained copy.
+
+The structural schema does not fully type arbitrary workflow `config` values,
+which depend on the selected tools and their inputs. Editor feedback therefore
+does not replace `validate-spec` and `plan-spec`; run both before submission.
+
 ### Source staging and run IDs
 
 `prepare-run` reserves a new identity. `submit` prints the resolved ID in text
@@ -127,9 +154,9 @@ opt-in environment contract.
 ### Choose another spec
 
 Browse the [workflow catalog](../../workflows/README.md). `workflows/main/`
-contains `sim2real.yaml`, `paidf-cosmos3.yaml`, and `nurec-reconstruct.yaml`;
-other catalog workflows live in `workflows/testing/`. A directory name does not
-establish a workflow's validation scope; read its guide.
+contains the promoted principal pipelines; general references live in
+`workflows/testing/` and partner integrations in `workflows/partners/<partner>/`.
+A directory name does not establish a workflow's validation scope; read its guide.
 
 Reference specs (all pytest-guarded):
 
@@ -543,6 +570,35 @@ exit nonzero, and `--cached` remains
 non-authoritative. Completion and declared artifact validation are separate
 requirements.
 
+If a driver recorded `FAILED_CONTROLLER` while the original managed job later
+finished successfully, an explicit resume can recover that same attempt. It
+requires the original project, workflow, staged source, image selection, launch identity,
+and output declarations, then verifies the exact provider job and every native
+task as `SUCCEEDED` before checking all declared outputs. Missing or conflicting
+evidence blocks recovery, including when payload retries were requested. Success
+retains the original failure evidence and advances without rerunning the completed
+wave. This intentionally tightens older retry behavior: SkyPilot can record
+`FAILED_CONTROLLER` even if its workload cleanup failed, so that status alone
+does not prove the original workload stopped. This includes a phantom queue record
+whose cancellation check returned `FAILED_CONTROLLER`: an earlier unobservable
+snapshot cannot rule out a launch racing with failed cleanup. Existing explicitly
+authorized or transport-verified absent relaunches retain their separate recovery
+path after a fresh exact lookup confirms the original job is still absent.
+Partial-launch reservations are reconciled before completion recovery;
+unconsumed or malformed reservation fields never authorize a generic retry.
+The native queue must explicitly agree on the exact job name; missing or
+conflicting names remain unverifiable, including during partial-launch recovery.
+Both queue output streams must be verified: success rows or an empty list paired
+with conflicting diagnostics remain unavailable. Malformed managed-job identities
+also block lookup; they cannot establish either completion or absence.
+
+A repaired driver can use the original content-addressed `NPA_SRC_S3_URI` with
+`--no-stage-src`. Completion recovery submits nothing: that URI reproduces the
+recorded source identity for comparison, without fetching or rehashing the archive.
+Confirm the original staged archive remains available and matches its recorded
+digest before later waves consume it. For an image-baked source run, retain its
+original image and source mode instead of introducing a staged archive.
+
 Job aggregates and task rows come from separate queue snapshots. A successful
 task row or durable stage record can therefore coexist with a recognized
 nonterminal job observation. Status retains the incomplete workflow lifecycle
@@ -693,5 +749,26 @@ dependencies separate, and retain the prepared NPA source path when calling NPA.
 If a stage explicitly starts a login shell, its profiles may change the inherited
 environment; verify the interpreter and source path inside that shell.
 
+For non-root images whose system Python has no pip, setup can use SkyPilot's
+uv installer. If that system environment is not writable, setup creates a fresh
+task-local control virtualenv instead of writing system packages. Vendor
+virtualenvs are not redirected by this fallback; an explicitly selected policy
+interpreter keeps its original dependency environment.
+
 Advanced scheduling stays in explicit fields (`parallel`, `maxConcurrency`,
 `params`, `trigger`), never Jinja. `gang` and `foreach` remain unimplemented.
+
+### Condition-only runtime loops
+
+A sequence with `loop: {until: promote_checkpoint}` and no `max` repeats until
+its final decision-writing child emits a valid measured decision. It requires
+`metadata.executionMode: runtime`; static submission is rejected. No iteration
+limit is inferred. A missing or invalid decision fails the run, even when planning
+used `--assume-decision promote_checkpoint`.
+
+`plan-spec` previews one iteration of each such loop; that preview is not a
+promise that the live run will finish after one iteration. Use iteration-specific
+output paths with `{{loop.<state-name>}}` to preserve evidence and prevent cached
+results from being reused across attempts. The
+[robot policy train-and-serve pipeline](cookbooks/robot-policy-train-and-serve.md) demonstrates two
+independent gates.

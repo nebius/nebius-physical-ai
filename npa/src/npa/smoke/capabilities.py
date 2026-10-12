@@ -9,6 +9,11 @@ from __future__ import annotations
 
 # Each value is an ordered list of concrete checks the golden eval runs.
 GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
+    "lyra2": [
+        "checksummed operator RGB capture and pinned Lyra checkpoint load",
+        "native CUDA reconstruction produces Gaussian geometry and camera poses",
+        "rendered MP4 fully decodes and an offline HTML viewer is produced",
+    ],
     "antioch": [
         "FastAPI service authentication boundary",
         "CPU-only system-info contract",
@@ -90,6 +95,13 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "real NVIDIA cuRobo V2 Franka pose optimization on CUDA",
         "finite interpolated joint trajectories and actual FK tool path",
         "factual RRD artifact passes decoder verification",
+    ],
+    "seedvr2": [
+        "pinned official SeedVR2-3B golden probe targets one B200; execution remains gated",
+        "four runtime-fetched public model payloads match fixed SHA-256 identities",
+        "pinned RoboPro robot-kitchen excerpt is restored from 320x240 to 640x480; "
+        "physical-capture provenance is unverified",
+        "decoded frame count, timing, dimensions, hashes, and provenance are retained",
     ],
     "openpi": [
         "pinned upstream full-DROID config remains batch 256 and 100,000 steps",

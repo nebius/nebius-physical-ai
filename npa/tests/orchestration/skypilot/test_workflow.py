@@ -4317,6 +4317,125 @@ def test_workflow_status_reads_json_queue(monkeypatch, tmp_path) -> None:
     assert result.job_id == "42"
 
 
+_ALLOWED_CLOUDS_NOTICE = (
+    'The following keys (["allowed_clouds"]) have different values in the client '
+    "SkyPilot config with the server and will be ignored. Remove these keys to "
+    "disable this warning. If you want to specify it, please modify it on server "
+    "side or contact your administrator."
+)
+
+
+@pytest.mark.parametrize("state", ["PENDING", "RUNNING", "SUCCEEDED"])
+def test_workflow_status_accepts_pinned_config_notice(
+    monkeypatch, tmp_path, state
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    output = (
+        _ALLOWED_CLOUDS_NOTICE
+        + "\n"
+        + json.dumps([{"job_id": 42, "task_id": 0, "status": state}])
+    )
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=output, stderr=""
+        ),
+    )
+
+    result = workflow_status("42", sky_bin=sky_bin)
+
+    assert result.status == state
+    assert result.error == ""
+
+
+@pytest.mark.parametrize(
+    ("stdout", "stderr"),
+    [
+        ("diagnostic only", ""),
+        ('[{"job_id": 42, "status": "SUCCEEDED"}]\n[]', ""),
+        (
+            _ALLOWED_CLOUDS_NOTICE + '\n[{"job_id": 42, "status": "SUCCEEDED"}]\n[]',
+            "",
+        ),
+        ('[{"job_id": 42, "status": "SUCCEEDED"}]', "Error: permission denied"),
+        ('[{"job_id": 42}]', ""),
+        (
+            _ALLOWED_CLOUDS_NOTICE.replace("allowed_clouds", "kubernetes")
+            + '\n[{"job_id": 42, "status": "RUNNING"}]',
+            "",
+        ),
+        (
+            '[{"job_id": 42, "status": "SUCCEEDED"}]',
+            _ALLOWED_CLOUDS_NOTICE,
+        ),
+        (_ALLOWED_CLOUDS_NOTICE + "\nNo in-progress managed jobs.", ""),
+        (
+            "Warning: optional display unavailable\n"
+            + _ALLOWED_CLOUDS_NOTICE
+            + '\n[{"job_id": 42, "status": "SUCCEEDED"}]',
+            "",
+        ),
+    ],
+)
+def test_workflow_status_does_not_infer_absence_from_unverified_queue(
+    monkeypatch, tmp_path, stdout, stderr
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=stdout, stderr=stderr
+        ),
+    )
+
+    result = workflow_status("42", sky_bin=sky_bin)
+
+    assert result.status == "UNKNOWN"
+    assert result.error
+
+
+def test_workflow_status_empty_queue_remains_verified_after_config_notice(
+    monkeypatch, tmp_path
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=_ALLOWED_CLOUDS_NOTICE + "\n[]", stderr=""
+        ),
+    )
+
+    result = workflow_status("42", sky_bin=sky_bin)
+
+    assert result.status == "ABSENT"
+    assert result.error == ""
+
+
+def test_workflow_status_reports_controller_failure_for_verified_missing_job(
+    monkeypatch, tmp_path
+) -> None:
+    """A valid queue may authoritatively exclude the recorded managed job."""
+
+    sky_bin = _fake_sky(tmp_path)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout='[{"job_id": 43, "status": "RUNNING"}]',
+            stderr="",
+        ),
+    )
+
+    result = workflow_status("42", sky_bin=sky_bin)
+
+    assert result.status == "FAILED_CONTROLLER"
+
+
 def test_workflow_status_treats_successful_empty_queue_as_verified_absence(
     monkeypatch, tmp_path
 ) -> None:
@@ -4334,6 +4453,138 @@ def test_workflow_status_treats_successful_empty_queue_as_verified_absence(
     assert result.status == "ABSENT"
     assert result.job_id == "42"
     assert result.error == ""
+
+
+@pytest.mark.parametrize(
+    ("stdout", "stderr"),
+    [
+        (
+            'The following keys (["allowed_clouds"]) are ignored.\n'
+            '[{"job_id": 42, "status": "RUNNING"}]',
+            "",
+        ),
+        ('[{"job_id": 42, "status": "RUNNING"}]\n[]', ""),
+        ("diagnostic only", ""),
+        ("", ""),
+        ('{"unexpected": []}', ""),
+        ('[{"job_id": 7, "status": "SUCCEEDED"}]', "Permission denied"),
+        ('[{"job_id": 42, "status": "SUCCEEDED"}]', "Traceback: query failed"),
+        ('[{"status": "RUNNING"}]', ""),
+        ('[{"job_id": true, "status": "RUNNING"}]', ""),
+        ('[{"job_id": 42.0, "status": "RUNNING"}]', ""),
+        ('[{"job_id": "042", "status": "RUNNING"}]', ""),
+        ('[{"job_id": 42}]', ""),
+        ('[{"job_id": 42, "status": "SUCCEEDED"}, {"job_id": 42}]', ""),
+    ],
+)
+def test_workflow_status_preserves_unverified_queue_as_unknown(
+    monkeypatch, tmp_path, stdout, stderr
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=stdout, stderr=stderr
+        ),
+    )
+
+    result = workflow_status("42", sky_bin=sky_bin)
+
+    assert result.status == "UNKNOWN"
+    assert result.job_id == "42"
+    assert result.stdout == stdout
+    assert result.stderr == stderr
+    assert result.error
+    assert not result.ok
+
+
+@pytest.mark.parametrize("status", [None, "", "UNRECOGNIZED"])
+def test_workflow_status_unknown_task_status_is_not_ok(
+    monkeypatch, tmp_path, status
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    stdout = json.dumps([{"job_id": 42, "status": status}])
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 0, stdout, ""),
+    )
+
+    result = workflow_status("42", sky_bin=sky_bin)
+
+    assert result.status == "UNKNOWN"
+    assert not result.ok
+    assert "missing or unrecognized status" in result.error
+
+
+def test_workflow_status_explains_ambiguous_config_warning_without_secrets(
+    monkeypatch, tmp_path
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    stdout = (
+        'The following keys (["allowed_clouds"]) are ignored.\n'
+        'token=synthetic-private-value\n[{"job_id": 42, "status": "RUNNING"}]'
+    )
+    stderr = "https://example.test/request?token=synthetic-url-secret " + "x" * 1000
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 0, stdout, stderr),
+    )
+
+    result = workflow_status("42", sky_bin=sky_bin)
+
+    assert result.status == "UNKNOWN"
+    assert "allowed_clouds" in result.error
+    assert "configuration" in result.error
+    assert "synthetic-private-value" not in result.error
+    assert "synthetic-url-secret" not in result.error
+    assert len(result.error) < 1000
+
+
+@pytest.mark.parametrize("job_id", [42, "42"])
+@pytest.mark.parametrize("group", [False, True])
+def test_workflow_status_accepts_verified_native_member_rows(
+    monkeypatch, tmp_path, job_id, group
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    rows = [
+        {"job_id": job_id, "task_id": index, "is_job_group": group, "status": status}
+        for index, status in enumerate(["SUCCEEDED", "PENDING"])
+    ]
+    stdout = "Warning: optional display unavailable\n" + json.dumps(rows)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 0, stdout, ""),
+    )
+
+    result = workflow_status("42", sky_bin=sky_bin)
+
+    assert result.status == "PENDING"
+    assert result.ok
+    assert result.error == ""
+
+
+@pytest.mark.parametrize("row", [{"job_id": 7}, {"job_id": "7"}, {"id": 7}])
+def test_workflow_status_detects_job_missing_from_verified_nonempty_queue(
+    monkeypatch, tmp_path, row
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    stdout = json.dumps([dict(row, status="RUNNING")])
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=stdout, stderr=""
+        ),
+    )
+
+    result = workflow_status("42", sky_bin=sky_bin)
+
+    assert result.status == "FAILED_CONTROLLER"
+    assert "absent from the successful queue response" in result.error
 
 
 @pytest.mark.parametrize(
@@ -6724,6 +6975,81 @@ def test_exact_managed_job_lookup_accepts_real_0_12_2_empty_queue(
     assert evidence.outcome == "absent"
 
 
+@pytest.mark.parametrize("job_id", ["", "42"])
+@pytest.mark.parametrize("include_job", [False, True])
+@pytest.mark.parametrize(
+    "stderr", ["Error: permission denied", "Error: controller unavailable"]
+)
+def test_exact_lookup_refuses_success_rows_with_conflicting_diagnostics(
+    monkeypatch, tmp_path, job_id, include_job, stderr
+) -> None:
+    from npa.orchestration.skypilot.workflow import lookup_managed_job
+
+    sky_bin = _fake_sky(tmp_path)
+    payload = (
+        [{"job_id": 42, "job_name": "exact-run", "status": "SUCCEEDED"}]
+        if include_job
+        else []
+    )
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps(payload), stderr=stderr
+        ),
+    )
+
+    evidence = lookup_managed_job("exact-run", job_id=job_id, sky_bin=sky_bin)
+
+    assert evidence.outcome == "unavailable"
+    assert evidence.job_id == "" and evidence.status == ""
+    assert evidence.task_rows == ()
+    assert "conflicting diagnostics" in evidence.error
+
+
+@pytest.mark.parametrize("bad_id", [None, False, "01", 1.0])
+def test_exact_lookup_refuses_malformed_job_identity(monkeypatch, tmp_path, bad_id):
+    from npa.orchestration.skypilot.workflow import lookup_managed_job
+
+    sky_bin = _fake_sky(tmp_path)
+    payload = [{"job_id": bad_id, "job_name": "exact-run", "status": "SUCCEEDED"}]
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps(payload), stderr=""
+        ),
+    )
+
+    evidence = lookup_managed_job("exact-run", job_id="42", sky_bin=sky_bin)
+
+    assert evidence.outcome == "unavailable"
+    assert evidence.job_id == "" and evidence.task_rows == ()
+    assert "malformed rows" in evidence.error
+
+
+def test_exact_lookup_accepts_success_rows_after_pinned_notice(monkeypatch, tmp_path):
+    from npa.orchestration.skypilot.workflow import lookup_managed_job
+
+    sky_bin = _fake_sky(tmp_path)
+    payload = [{"job_id": 42, "job_name": "exact-run", "status": "SUCCEEDED"}]
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout=_ALLOWED_CLOUDS_NOTICE + "\n" + json.dumps(payload),
+            stderr="",
+        ),
+    )
+
+    evidence = lookup_managed_job("exact-run", job_id="42", sky_bin=sky_bin)
+
+    assert evidence.outcome == "found" and evidence.status == "SUCCEEDED"
+    assert evidence.job_id == "42" and evidence.job_name == "exact-run"
+
+
 def test_exact_managed_job_lookup_refuses_ambiguous_name_without_immutable_id(
     monkeypatch, tmp_path
 ) -> None:
@@ -6768,6 +7094,49 @@ def test_exact_managed_job_lookup_refuses_ambiguous_name_without_immutable_id(
     assert exact.job_id == "43"
     assert exact.status == "RUNNING"
     assert exact.task_rows[0]["retry_count"] == 2
+
+
+@pytest.mark.parametrize(
+    "names,expected",
+    [
+        (["exact-run", "exact-run"], "exact-run"),
+        (["exact-run", "other-run"], ""),
+        (["exact-run", None], ""),
+        ([None, None], ""),
+    ],
+)
+def test_exact_lookup_retains_only_unanimous_native_job_name(
+    monkeypatch,
+    tmp_path,
+    names,
+    expected,
+) -> None:
+    from npa.orchestration.skypilot.workflow import lookup_managed_job
+
+    sky_bin = _fake_sky(tmp_path)
+    payload = [
+        {
+            "job_id": 42,
+            "job_name": name,
+            "task_id": index,
+            "task_name": f"task-{index}",
+            "status": "SUCCEEDED",
+        }
+        for index, name in enumerate(names)
+    ]
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout=json.dumps(payload),
+            stderr="",
+        ),
+    )
+    evidence = lookup_managed_job("exact-run", job_id="42", sky_bin=sky_bin)
+    assert evidence.outcome == "found"
+    assert evidence.job_name == expected
 
 
 def test_verified_job_id_prefers_the_name_lookup(mocker) -> None:

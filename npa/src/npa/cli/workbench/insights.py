@@ -11,6 +11,8 @@ import httpx
 import typer
 
 from npa.workbench.insights.schemas import DEFAULT_QUERY_LIMIT, DEFAULT_TOKEN_ENV
+from npa.lifecycle_intent import json_stdout_contract
+from npa.workbench.insights.reports import format_report
 
 app = typer.Typer(
     name="insights",
@@ -42,6 +44,76 @@ def emit(
             if text is not None
             else "\n".join(f"{key}: {value}" for key, value in payload.items())
         )
+
+
+@app.command("report")
+@json_stdout_contract
+def report_cmd(
+    input_path: str = typer.Option(
+        ...,
+        "--input-path",
+        help="Exact local or S3 report JSON; schema selects the reader.",
+    ),
+    service: bool = typer.Option(
+        False, "--service", help="Read through a deployed Insights service."
+    ),
+    endpoint: str = typer.Option("", "--endpoint", help="Insights service endpoint."),
+    token_env: str = typer.Option(
+        DEFAULT_TOKEN_ENV,
+        "--token-env",
+        help="Environment variable containing the bearer token.",
+    ),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.text,
+        "--output-format",
+        "--output",
+        help="Readable text or one JSON report projection.",
+    ),
+) -> None:
+    """Inspect a supported report without running inference or changing artifacts.
+
+    Args:
+        input_path: Exact report path or S3 object URI.
+        service: Call the deployed service instead of reading locally.
+        endpoint: Override the saved service endpoint.
+        token_env: Environment variable containing the service token.
+        output_format: Text by default, or one JSON document.
+    Returns:
+        None.
+    Raises:
+        typer.Exit: The read, schema validation or service request fails.
+    """
+    payload = _report_payload(input_path, service, endpoint, token_env)
+    emit(payload, output=output_format, text=format_report(payload))
+
+
+def _report_payload(
+    input_path: str, service: bool, endpoint: str, token_env: str
+) -> dict[str, Any]:
+    from npa.sdk.workbench.insights import (
+        InsightsServiceError,
+        InsightsValidationInputError,
+        report,
+    )
+    from npa.workbench.insights.reports import InsightsReportError
+    from npa.workbench.storage_scope import StorageAuthorizationError
+
+    try:
+        payload = report(
+            input_path=input_path,
+            service=service,
+            endpoint=endpoint,
+            token_env=token_env,
+        )
+    except (
+        InsightsReportError,
+        InsightsServiceError,
+        InsightsValidationInputError,
+        StorageAuthorizationError,
+    ) as exc:
+        fail(str(exc))
+        return
+    return payload
 
 
 @app.command("record")

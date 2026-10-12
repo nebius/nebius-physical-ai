@@ -76,8 +76,9 @@ class DeviceMemorySampler:
         if len(rows) != 1:
             raise NanoVideoError("VRAM measurement requires exactly one assigned GPU")
         name, used, total = (part.strip() for part in rows[0].split(","))
-        if "B200" not in name:
-            raise NanoVideoError("requested B200 device was not observed")
+        expected = os.environ.get("NPA_COSMOS3_NANO_VIDEO_EXPECTED_GPU", "B200")
+        if expected not in name:
+            raise NanoVideoError(f"requested {expected} device was not observed")
         sample = {
             "elapsed_seconds": time.monotonic() - self._started,
             "used_mib": float(used),
@@ -105,8 +106,9 @@ class DeviceMemorySampler:
         self._done.set()
         if self._thread:
             self._thread.join()
+        expected = os.environ.get("NPA_COSMOS3_NANO_VIDEO_EXPECTED_GPU", "B200")
         return {
-            "source": "nvidia-smi Ray-assigned B200 device memory.used",
+            "source": f"nvidia-smi Ray-assigned {expected} device memory.used",
             "sampling_interval_seconds": 0.5,
             "samples": self.samples,
             "peak_used_mib": max(

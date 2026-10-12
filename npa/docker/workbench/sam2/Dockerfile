@@ -1,5 +1,5 @@
 # Public source-only job runtime. CUDA and model weights are fetched at runtime.
-FROM ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@sha256:5780959ca6c6e7eb77ee7ea7d005fcf0f56db50783ce798dddee2809185eb837
+FROM ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@sha256:4e5fe7932f66fab3ff036090f66d4a9d915e9eb6fab3ee2e7633ca1c68363cf0
 
 ARG NPA_SOURCE_SHA
 LABEL npa.tool="sam2" \
@@ -24,7 +24,7 @@ RUN /opt/npa/model_source.sh \
       2b90b9f5ceec907a1c18123530e92e794ad901a4 \
       sam2 setup.py pyproject.toml MANIFEST.in LICENSE LICENSE_cctorch README.md \
     && /opt/wan-base/bin/python -m pip install --no-cache-dir --no-deps \
-      protobuf==6.33.6 hydra-core==1.3.2 omegaconf==2.3.0 antlr4-python3-runtime==4.9.3 iopath==0.1.10 portalocker==3.2.0 \
+      protobuf==6.33.6 hydra-core==1.3.7 omegaconf==2.3.0 antlr4-python3-runtime==4.9.3 iopath==0.1.10 portalocker==3.2.0 \
     && /opt/wan-base/bin/python -m pip freeze --all > /opt/byof/npa_baked_python_inventory.txt \
     && ! grep -Eiq '^(torch|torchvision|torchaudio|nvidia-)' /opt/byof/npa_baked_python_inventory.txt \
     && find /opt/wan-base -type d -name __pycache__ -prune -exec rm -rf {} + \

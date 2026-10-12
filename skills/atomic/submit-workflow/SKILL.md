@@ -30,8 +30,10 @@ SkyPilot submission behavior.
 - SDK: use shared workflow submission helpers rather than shelling out from
   application logic.
 - YAML: author shipped workflows as `npa.workflow/v0.0.1` specs under
-  `workflows/testing/`; `workflows/main/` is reserved for `sim2real.yaml` and
-  `paidf-cosmos3.yaml`. `npa workbench workflow submit`
+  `workflows/testing/`; promoted principal pipelines live in `workflows/main/`
+  and partner integrations in `workflows/partners/<partner>/`. See the
+  [catalog](../../../workflows/README.md) for their runbooks and validation scope.
+  `npa workbench workflow submit`
   accepts those specs (plans, renders, then launches SkyPilot) and still accepts
   raw SkyPilot YAML supplied by an operator or by guarded single-task example
   directories.

@@ -13,6 +13,110 @@ from npa.clients import config, credentials
 
 runner = CliRunner()
 
+
+@pytest.mark.parametrize(
+    "image",
+    [
+        "registry.example/graphics:operator",
+        "registry.example/graphics@sha256:" + "1" * 64,
+    ],
+)
+def test_provision_cli_preserves_explicit_graphics_image(monkeypatch, image):
+    from npa.cli.main import app
+
+    observed = []
+
+    def capture_provision(**kwargs):
+        observed.append(kwargs)
+        return SimpleNamespace(status="ready", to_dict=lambda: {"status": "ready"})
+
+    monkeypatch.setattr("npa.cli.provision.provision_if_absent", capture_provision)
+    result = runner.invoke(
+        app,
+        [
+            "provision-if-absent",
+            "--gpu-graphics-smoke-image",
+            image,
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert observed[0]["gpu_graphics_smoke_image"] == image
+
+
+def test_graphics_default_quarantine_precedes_storage_and_cluster_mutations(
+    tmp_path, monkeypatch
+):
+    _write_runtime(tmp_path, monkeypatch)
+    monkeypatch.chdir(tmp_path)
+
+    def unexpected_mutation(*_args, **_kwargs):
+        pytest.fail(
+            "quarantined graphics image must fail before storage or cluster mutation"
+        )
+
+    monkeypatch.setattr(
+        "npa.clients.storage_validation.probe_storage_write", unexpected_mutation
+    )
+    monkeypatch.setattr(
+        "npa.cli.cluster.terraform_lifecycle.up_cmd", unexpected_mutation
+    )
+    with pytest.raises(ValueError, match="quarantined public release"):
+        provisioning.provision_if_absent(
+            project="proj", gpu_workload_profile="rtx-rendering"
+        )
+
+
+def test_provision_cli_renders_graphics_quarantine_as_a_cli_error(
+    tmp_path, monkeypatch
+):
+    from npa.cli.main import app
+
+    _write_runtime(tmp_path, monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(
+        app,
+        [
+            "provision-if-absent",
+            "--project",
+            "proj",
+            "--gpu-workload-profile",
+            "rtx-rendering",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "quarantined public release" in result.output
+    assert "--gpu-graphics-smoke-image" in result.output
+    assert "Traceback" not in result.output
+
+
+@pytest.mark.parametrize("skip_k8s,dry_run", [(True, False), (False, True)])
+def test_graphics_default_not_resolved_when_no_health_work_runs(
+    tmp_path, monkeypatch, skip_k8s, dry_run
+):
+    _write_runtime(tmp_path, monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        provisioning,
+        "resolve_graphics_smoke_image",
+        lambda *_args: pytest.fail("unused image must not resolve"),
+    )
+    monkeypatch.setattr(provisioning, "_has_cached_kubeconfig", lambda *_args: False)
+
+    result = provisioning.provision_if_absent(
+        project="proj",
+        gpu_workload_profile="rtx-rendering",
+        skip_s3=True,
+        skip_k8s=skip_k8s,
+        dry_run=dry_run,
+    )
+
+    assert result.status == ("ok" if skip_k8s else "ready")
+
+
 # The external tools provisioning is allowed to resolve. Anything else reaching
 # _require_bin is a new dependency that should be noticed, not silently satisfied.
 PROVISIONING_BINARIES = frozenset({"terraform", "nebius", "kubectl"})

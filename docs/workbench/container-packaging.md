@@ -122,7 +122,7 @@ All first-class images live under `npa/docker/workbench/`:
 | `npa-groot` | `groot/Dockerfile` | job shell; `EXPOSE 8080` |
 | `npa-fiftyone` | `fiftyone/Dockerfile` | command-passthrough job entrypoint; `EXPOSE 5151` |
 | `npa-lancedb` | `lancedb/Dockerfile` | uvicorn `:8686`; non-root SkyPilot workflow host |
-| `npa-mjlab` (unpublished) | `mjlab/Dockerfile` | authenticated uvicorn `:8080`; native train/eval/export CLI |
+| `npa-mjlab` ([public development candidate](validation/mjlab-native-hd-gpu-20261010.json)) | `mjlab/Dockerfile` | authenticated uvicorn `:8080`; native train/eval/export CLI |
 | `npa-sonic` | `sonic/Dockerfile` | `/entrypoint.sh` modes |
 | `npa-detection-training` | `detection-training/Dockerfile` | uvicorn `:8790` |
 | `npa-antioch` | `antioch/Dockerfile` | CPU-only uvicorn `:8789`; proprietary CLI is verified runtime-fetch only |
@@ -591,7 +591,14 @@ must still be checked: source availability is not proof of publication.
 
 Main-branch pushes touching `npa/docker/workbench/` select development builds by
 changed recipe directories, individual packaging/catalog entries, and Dockerfile
-`COPY`/`ADD` inputs. The selector considers the entire push diff, so shared NPA
+local `COPY`/`ADD` inputs and `RUN --mount=type=bind` sources. HTTP(S) `ADD`
+downloads are external inputs; changing their Dockerfile still rebuilds the
+owning image. Bind mounts without a source consume the whole build context.
+Bind-mount option names are case-insensitive; duplicate fields or source aliases
+restore the full build set. Bind sources match literal paths, including filenames
+with wildcard characters; local `COPY`/`ADD` inputs retain wildcard matching.
+The robomimic recipe uses its own directory as that context, matching the
+publisher. The selector considers the entire push diff, so shared NPA
 source and staged workflow changes in the same push rebuild their consumers.
 Unchanged images retain their previously validated versions; no new development
 tag is fabricated for them. The existing weekly refresh still builds every

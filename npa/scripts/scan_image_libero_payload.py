@@ -37,7 +37,7 @@ BASE_PROVENANCE_SHA256 = (
 )
 BASE_SOURCE_REVISION = "688a0b86bb44289df16a363e9f41d90514c1a5f9"
 RUNTIME_MANIFEST_SHA256 = (
-    "d999dd97e8f9b324b68ec2a7f19b6360f5599868cd873cd752779106b8ea4f02"
+    "73cc3db0419d8431deab96461c33df4237074269a11956f367e272033356c6aa"
 )
 RUNTIME_MANIFEST = (
     Path(__file__).resolve().parents[1]
@@ -192,7 +192,7 @@ FORBIDDEN_PAYLOAD_CONTENT: tuple[re.Pattern[bytes], ...] = (
 )
 NEUTRAL_PAYLOAD_CONTENT_ALLOWLIST = {
     "opt/npa/libero/libero_smoke.py": (
-        "35aecce5323113281606c8841d79b8ddd8e54b13e9943b702e50e274a4c98dd6"
+        "77702cc6c56a7fc04bf219969041f9017688225bbb3e2cc52718b8cc59fc7e4c"
     )
 }
 NEVER_MATCH_ELF = re.compile(rb"(?!)")

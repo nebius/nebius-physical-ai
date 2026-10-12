@@ -1,0 +1,155 @@
+{
+  "schema": "npa.workflow_promotion_review.v1",
+  "workflow": "rgbd-scan-to-policy-demo",
+  "review_date": "2026-10-08",
+  "workflow_sha256": "182e87fef09fcdd7d081ba4b843d90c150a2ac9a8f74a62e3f05156b2c81d7c8",
+  "submitted_source_sha": "4661963d05915403db2af5bea577bee56ab5d1ad",
+  "original_workflow_sha256": "b3877e9f6b86fe24bbd0fcd1c3deb3384ee4987ee9e0af2627e1ac1f4a1bf2ed",
+  "images": {
+    "native_isaac": "ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:ef7f4234839852ed7b48ea4b88fd61f1c45a37ca00294c10a0a23fb335807ef4",
+    "cpu_geometry": "ghcr.io/nebius/nebius-physical-ai/npa-sonic@sha256:efcd93d00940b6ee718aeb5907e02dcc6a576b7d3f4151a6d40607d2c55545ca"
+  },
+  "scope": "Complete public TUM capture, native PhysX, 500-update range-based PPO and 4,000 held-out goals in the same reconstructed scene. No unseen-site or physical-robot transfer claim.",
+  "execution": {
+    "completed_logical_stages_across_original_and_recovery": 8,
+    "original_run_status": "failed",
+    "original_stages_succeeded_before_evaluation": 7,
+    "original_evaluation": "Incomplete before scoring: the compute-only target could not initialize Vulkan and the camera-evidence check rejected empty renderer output.",
+    "evaluation_recovery_status": "succeeded",
+    "evaluation_recovery_driver_exit": 0,
+    "recovery": "The unchanged evaluator reused the exact sealed checkpoint, recipe and source bundle on a graphics-qualified RTX target, publishing to a fresh prefix. Original failure evidence was preserved.",
+    "training_repeated": false,
+    "quality_gate_changed": false,
+    "catalog_fix": "GPU pods now select runtimeClassName nvidia and NVIDIA_DRIVER_CAPABILITIES all; the guide requires graphics readiness before execution."
+  },
+  "reconstruction": {
+    "integration_frames": 1984,
+    "validation_frames": 501,
+    "vertices": 513598,
+    "triangles": 921561,
+    "geometry_scope": "observed surfaces only; unseen space remains unknown"
+  },
+  "depth_validation": {
+    "schema": "npa.navigation.depth_validation.v1",
+    "observed_rays": 80703,
+    "surface_hits": 80625,
+    "inliers": 75956,
+    "coverage": 0.9990334931786923,
+    "inlier_fraction": 0.9411793861442573,
+    "mean_absolute_error_m": 0.041193160968703874,
+    "p95_absolute_error_m": 0.12246706023868215,
+    "thresholds": {
+      "distance_tolerance_m": 0.1,
+      "max_mean_error_m": 0.08,
+      "min_coverage": 0.85,
+      "min_inlier_fraction": 0.8,
+      "pixel_stride": 40
+    },
+    "physics_probe_selection": "one median-index depth inlier per held-out frame"
+  },
+  "physics": {
+    "validated": true,
+    "probe_count": 501,
+    "all_hits_in_measured_intervals": true
+  },
+  "training": {
+    "iterations": 500,
+    "environments": 4000,
+    "control_transitions": 16000000,
+    "learning_wall_seconds": 18561.020197733305,
+    "parameter_delta_l2": 6.710864067077637,
+    "heldout_used_for_training": false,
+    "native_controls_passed": true,
+    "checkpoint_sha256": "46011887374f8aa2b2a94bfd986edf909d3feb471f0848272e68274ed9251487",
+    "recipe_sha256": "5c060793f99998f85903ddb03122efc4497c21af269158ea42fdea41a0e789bb",
+    "source_bundle_sha256": "658024315893a1489a500e5a1dfa74b19e85ce884df99526c63007db1cd878c3",
+    "versions": {
+      "isaaclab": "3.0.0b2.post1",
+      "isaacsim": "6.0.1.0",
+      "rsl_rl": "5.0.1",
+      "torch": "2.11.0+cu128"
+    }
+  },
+  "evaluation": {
+    "complete": true,
+    "passed": true,
+    "policy_loaded": true,
+    "episodes": 4000,
+    "successes": 3386,
+    "success_rate": 0.8465,
+    "minimum_success_rate": 0.8,
+    "configured_maximum_steps": 300,
+    "maximum_observed_terminal_step": 20,
+    "native_controls_passed": true,
+    "checkpoint_recipe_and_source_match_training": true,
+    "heldout_inputs_sha256": "4f7d6773b4ee22885b868340fcd9e5d2a9630b8160b6921982f6823b83b780cd"
+  },
+  "graphics_preflight": {
+    "phase": "Succeeded",
+    "glx": "loaded",
+    "egl": "loaded",
+    "vulkan_instance": "created",
+    "vulkan_physical_devices": 1,
+    "nvidia_device": "enumerated",
+    "image": "ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:ef7f4234839852ed7b48ea4b88fd61f1c45a37ca00294c10a0a23fb335807ef4"
+  },
+  "native_gpu_observations": {
+    "training": {
+      "native_main_process_observations": 306,
+      "matching_cuda_process_observations": 306,
+      "single_pod_and_container_identity": true,
+      "observed_container_image_matches_pin": true,
+      "native_process_exit": 0,
+      "device": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+      "gpu_count": 1,
+      "observation_log_sha256": "faa792ffec2cafe1b57a63ac7548cfeda8859fe2fdc2d4a0c316032b5772bd83"
+    },
+    "evaluation": {
+      "native_main_process_observations": 5,
+      "matching_cuda_process_observations": 5,
+      "single_pod_and_container_identity": true,
+      "observed_container_image_matches_pin": true,
+      "native_process_exit": 0,
+      "device": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+      "gpu_count": 1,
+      "observation_log_sha256": "17fa77a81d4875452420177cb54181008dc9c950a2bad228abd8370a704f76a2"
+    }
+  },
+  "media": {
+    "renderer": "isaac-replicator-rgb",
+    "recorded_frames": 21,
+    "focal_scored_end_step": 7,
+    "preview_frames": 8,
+    "scope": "Scored focal episode only. Complete original recordings may also contain later observer motion.",
+    "native_media_and_metrics_preserved_in_refreshed_html": true
+  },
+  "standalone_html_review": {
+    "groups": 1,
+    "offline": true,
+    "javascript_errors": 0,
+    "timeline_controls": "passed",
+    "automatic_playback": "passed",
+    "mobile_layout": "passed",
+    "sha256": "7dcb0fa67281ffee36a7748b25197ff1fb18565b029fee092b154f63c581145f",
+    "desktop_and_mobile_visual_review": "passed",
+    "all_embedded_frames_visually_reviewed": true,
+    "confidentiality_scan": "passed"
+  },
+  "source_artifact_sha256": {
+    "physics/physics_validation.json": "fb93f64e4d372aea65dbc07dc1fc9d2c60eff82c78c5690dcc31295363935793",
+    "reconstructed/reconstruction.json": "efb2dd3ccb331999013573ed90f4e45a7a9ddf68c3da872167d896ad5f6354d5",
+    "training": "e880ac88df4b96c4647604a5cfba154b8f222cbd2307b538953675684a3188cc",
+    "learning_curves": "fa1f3c0d561ee59951dbd4d7ae35978f19312b58498ca4917dc1749124a17cf9",
+    "training_native_process": "baf979b33a50336526396c4752a2be11434d9f91bc7920aee2c81757fe8e6552",
+    "training_controls": "aeaa70f28af66ab58165bbe8f77cff4c59d08c52970579f0c300f6758fea8efe",
+    "evaluation": "248c15939726245b3f61d9c2229c1cc97fbd0ccc9ab9b41fe0c0806dcaf636c8",
+    "evaluation_native_process": "565af06c45151d6eebde2499f3e791247bd9ef8013ed35d7d152f889401ca141",
+    "evaluation_controls": "f949797fcd19bf06bd765160dca6b9e6dd8558a50813c2779030660f56636edb",
+    "rendered_frame_evidence": "b2b249cefcb016fa87db77f46bfd63a257287b841ef38cba2f57348e7b2c7c69",
+    "native_html": "c8af0594393dce6b33966d87a08118670a06e02577b663b7f34de5ad2d23ccec",
+    "summary": "eb03313e56d4bf3a67c4b029f09f3089a267401f271d7eeaa9db051c79477582",
+    "rollout_video": "03a4eea8cded2e67cc2b2066855ac08eb0d1342447efa9586fff19d5fc68e5c0",
+    "original_runtime_ledger": "bd53e0de66fa14766f153f28367b075a4f5b31c6552482755ac9f785f9d32115",
+    "evaluation_recovery_ledger": "ccdc706abf27c9ae8f2a4d3605be82d61de9df398ee6a9bbcc7442863f43d685"
+  }
+}

@@ -32,6 +32,7 @@ from npa.orchestration.skypilot.controller import (
 )
 from npa.orchestration.skypilot.json_output import (
     is_verified_empty_queue_result,
+    parse_cli_json_output,
     verified_structured_queue_rows,
 )
 from npa.orchestration.skypilot.workflow_state import redact_text
@@ -1366,7 +1367,7 @@ def _jobs_controller_clusters(
     if result.returncode != 0:
         return [], _format_command_error(cmd, result)
     try:
-        payload = json.loads(result.stdout or "[]")
+        payload = parse_cli_json_output(result.stdout)
     except json.JSONDecodeError:
         return [], f"{' '.join(cmd)} returned non-json output"
     clusters = payload if isinstance(payload, list) else payload.get("clusters", [])
@@ -1971,6 +1972,7 @@ def sky_environment(
     isolated_config_dir: Path | None = None,
     *,
     environment: Mapping[str, str] | None = None,
+    recover_isolated_api: bool = True,
 ) -> dict[str, str]:
     """Return an environment that keeps SkyPilot state inside a run directory."""
 
@@ -1987,7 +1989,11 @@ def sky_environment(
     if transaction is not None:
         from npa.orchestration.skypilot.local_api import isolated_api_environment
 
-        return isolated_api_environment(Path(isolated_config_dir), transaction)
+        return isolated_api_environment(
+            Path(isolated_config_dir),
+            transaction,
+            recover=recover_isolated_api,
+        )
     root = Path(isolated_config_dir)
     home = root / "home"
     runtime = root / "sky-runtime"
@@ -2043,7 +2049,7 @@ def sky_environment(
     # The isolated child's HOME must not move NPA credential/config resolution
     # away from the source already selected by this client process.
     env.setdefault("NPA_CONFIG_DIR", str(NPA_CONFIG_DIR))
-    return isolated_api_environment(root, env)
+    return isolated_api_environment(root, env, recover=recover_isolated_api)
 
 
 def _sanitize_name(value: str) -> str:

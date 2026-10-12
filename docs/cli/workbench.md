@@ -10,6 +10,10 @@ Physical AI workbench tools.
 Options
 --help  Show this message and exit.
 Commands
+whoami  Show verified identity and workspace access without a personal cloud account.
+submit  Start a workflow and return its run ID; unchanged retries reuse that run.
+runs  List the authenticated person's runs in one workspace.
+run  Show an existing run's status, or manage that run with --action.
 specialists  Self-hosted specialist agents and durable task monitoring.
 antioch  Run Antioch simulations and collect policy-compatible data.
 lerobot  LeRobot policy training, evaluation, serving, and inference.
@@ -30,6 +34,7 @@ nurec  NVIDIA Omniverse NuRec / Neural Reconstruction Engine: sensor recordings 
     Apache-2.0 NVIDIA NCore on CPU. Proprietary NRE reconstruction/rendering requires an RT-core GPU (L40S or RTX PRO 6000 Blackwell); never route the render path at H100/H200.
 sonic  NVIDIA GEAR-SONIC whole-body-control workbench.
 mjlab  MJLab GPU robot learning, evaluation and ONNX export.
+ros2  ROS 2 Jazzy prerequisite detection and deployment planning (bridge/bag-conversion/fleet execution not implemented).
 namespace  Create or select Kubernetes namespaces.
 molmoact  MolmoAct VLA: validate fine-tune/serve/eval configs (planning only; execution not implemented).
 openvla  OpenVLA: OFT fine-tuning, checkpoint serving, evaluation.
@@ -42,6 +47,8 @@ ltx2  LTX-2.5 licence surface: print the LTX-2.x Community License terms, the pi
     unlocks.
 alpamayo2-super  NVIDIA Alpamayo 2 Super trajectory-inference workbench.
 curobo  NVIDIA cuRobo V2 motion planning and complete benchmark evaluation.
+seedvr2  Restore low-resolution video with official ByteDance SeedVR2-3B.
+marble  World Labs Marble worlds, CUDA camera datasets, and spatial scans.
 lancedb  Deploy and query LanceDB vector-search workbenches.
 detection-training  Train Faster R-CNN detectors from LanceDB materialized views.
 encord  Register S3 media with Encord SaaS and materialize curated results.
@@ -50,6 +57,7 @@ dataset  Dataset-of-record: ingest, validate, curate, and query production senso
 insights  Insights: lineage graph + common metrics store over workflow-run artifacts.
 vlm-eval  VLM evaluation for sim-to-real pipeline gating.
 token-factory  Nebius Token Factory hosted inference (zero-GPU, OpenAI-compatible).
+access  Configure Workbench accounts, allocations, connections, and service access.
 byof  Onboard an OSS repo as a BYOF container (Tier 0 of the OSS ladder).
 workflow  Multi-stage training workflow orchestration.
 health  Preflight health checks for workbench workflows.
@@ -67,6 +75,10 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 
 | Command | Description |
 | --- | --- |
+| `whoami` | Show verified identity and workspace access without a personal cloud account. |
+| `submit` | Start a workflow and return its run ID; unchanged retries reuse that run. |
+| `runs` | List the authenticated person's runs in one workspace. |
+| `run` | Show an existing run's status, or manage that run with --action. |
 | `specialists` | Self-hosted specialist agents and durable task monitoring. |
 | `antioch` | Run Antioch simulations and collect policy-compatible data. |
 | `lerobot` | LeRobot policy training, evaluation, serving, and inference. |
@@ -86,6 +98,7 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 | `nurec` | NVIDIA Omniverse NuRec / Neural Reconstruction Engine: sensor recordings -> 3DGUT Gaussian reconstruction -> renderable USDZ -> novel-view renders. COLMAP ingestion uses Apache-2.0 NVIDIA NCore on CPU. Proprietary NRE reconstruction/rendering requires an RT-core GPU (L40S or RTX PRO 6000 Blackwell); never route the render path at H100/H200. |
 | `sonic` | NVIDIA GEAR-SONIC whole-body-control workbench. |
 | `mjlab` | MJLab GPU robot learning, evaluation and ONNX export. |
+| `ros2` | ROS 2 Jazzy prerequisite detection and deployment planning (bridge/bag-conversion/fleet execution not implemented). |
 | `namespace` | Create or select Kubernetes namespaces. |
 | `molmoact` | MolmoAct VLA: validate fine-tune/serve/eval configs (planning only; execution not implemented). |
 | `openvla` | OpenVLA: OFT fine-tuning, checkpoint serving, evaluation. |
@@ -97,6 +110,8 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 | `ltx2` | LTX-2.5 licence surface: print the LTX-2.x Community License terms, the pinned upstream source, and the gated weights repository the operator's own Hugging Face entitlement unlocks. |
 | `alpamayo2-super` | NVIDIA Alpamayo 2 Super trajectory-inference workbench. |
 | `curobo` | NVIDIA cuRobo V2 motion planning and complete benchmark evaluation. |
+| `seedvr2` | Restore low-resolution video with official ByteDance SeedVR2-3B. |
+| `marble` | World Labs Marble worlds, CUDA camera datasets, and spatial scans. |
 | `lancedb` | Deploy and query LanceDB vector-search workbenches. |
 | `detection-training` | Train Faster R-CNN detectors from LanceDB materialized views. |
 | `encord` | Register S3 media with Encord SaaS and materialize curated results. |
@@ -105,6 +120,7 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 | `insights` | Insights: lineage graph + common metrics store over workflow-run artifacts. |
 | `vlm-eval` | VLM evaluation for sim-to-real pipeline gating. |
 | `token-factory` | Nebius Token Factory hosted inference (zero-GPU, OpenAI-compatible). |
+| `access` | Configure Workbench accounts, allocations, connections, and service access. |
 | `byof` | Onboard an OSS repo as a BYOF container (Tier 0 of the OSS ladder). |
 | `workflow` | Multi-stage training workflow orchestration. |
 | `health` | Preflight health checks for workbench workflows. |
@@ -115,7 +131,7 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 
 ```bash
 npa workbench --help
-npa workbench specialists --help
+npa workbench whoami --help
 ```
 
 Regenerate this page with `bash scripts/build_docs.sh` after changing `workbench`.

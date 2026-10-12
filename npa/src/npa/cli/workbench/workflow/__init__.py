@@ -30,6 +30,8 @@ from npa.orchestration.skypilot.storage_context import call_with_workflow_storag
 from npa.cli.workbench.trigger import app as trigger_app
 from npa.cli._typer_defaults import resolve_typer_defaults
 from npa.cli.workbench.workflow.demo import app as demo_app
+from npa.cli.workbench.workflow.batch import app as batch_app
+from npa.cli.workbench.workflow.input_check import check_input_cmd
 from npa.cli.workbench.workflow.absence_recovery import register as register_absence
 from npa.cli.workbench.workflow.challenge import app as challenge_app
 from npa.cli.workbench.workflow.controller_recovery import (
@@ -67,6 +69,26 @@ MAX_LOG_OUTPUT_CHARS = 262_144
 _SUBMIT_PRIVATE_REDACTIONS: ContextVar[tuple[str, ...]] = ContextVar(
     "npa_submit_private_redactions", default=()
 )
+
+
+@app.command("schema")
+@resolve_typer_defaults
+def schema_cmd() -> None:
+    """Print the authoritative workflow JSON Schema as one JSON document.
+
+    Args:
+        None.
+
+    Returns:
+        None.
+
+    Raises:
+        FileNotFoundError: The bundled schema is unavailable from the installation.
+        ValueError: The bundled schema is not a JSON object.
+    """
+    from npa.orchestration.npa_workflow.schema_export import load_workflow_schema
+
+    typer.echo(json.dumps(load_workflow_schema(), indent=2, sort_keys=True))
 
 
 def _robotwin_render_process(
@@ -1046,8 +1068,8 @@ def submit_cmd(
         "",
         "--preset",
         help=(
-            "Explicit shipped workflow seed/config preset. Preset-owned dataset, "
-            "task, and trigger keys cannot be replaced with --var."
+            "Explicit shipped workflow seed/config preset. Preset-owned settings "
+            "cannot be replaced with --var."
         ),
     ),
     assume_decision: str = typer.Option(
@@ -1817,6 +1839,11 @@ def submit_cmd(
     try:
         required_secret_env = list(secret_env)
         if merged_npa_spec is not None and not plan_only:
+            from npa.orchestration.npa_workflow.marble_credentials import (
+                marble_secret_names,
+            )
+
+            required_secret_env.extend(marble_secret_names(merged_npa_spec))
             selected_access = _workflow_access_requirements(merged_npa_spec)
             if any(item.provider == "huggingface" for item in selected_access):
                 workflow_access_secret_names.add("HF_TOKEN")
@@ -2252,7 +2279,6 @@ def submit_cmd(
                 from npa.clients.token_factory import validate_model_access
                 from npa.clients.kube import run_kubectl
                 from npa.orchestration.npa_workflow.sim2real_preflight import (
-                    kubernetes_prerequisites,
                     static_prerequisites,
                 )
 
@@ -2303,14 +2329,12 @@ def submit_cmd(
                     )
                 else:
                     missing.extend(
-                        kubernetes_prerequisites(
+                        _sim2real_kubernetes_prerequisites_for_submit(
                             spec_config,
                             runner=_run_sim2real_kubectl,
+                            context=infra_context,
+                            kubeconfig=kubeconfig,
                             isaac_placements=isaac_placements,
-                            namespace=(
-                                os.environ.get("NPA_SIM2REAL_K8S_NAMESPACE", "").strip()
-                                or "default"
-                            ),
                         )
                     )
             if missing:
@@ -4458,6 +4482,54 @@ def _image_preflight_steps(
     )
 
 
+def _sim2real_cache_namespace(context, kubeconfig):
+    """Resolve the explicit legacy cache override or the selected context.
+
+    Args:
+        context: Selected Kubernetes context.
+        kubeconfig: Selected authenticated kubeconfig.
+    Returns:
+        Validated cache namespace.
+    Raises:
+        ValueError: The namespace or selected context cannot be verified.
+    """
+    from npa.clients.kubernetes_namespace import context_namespace, validate_namespace
+
+    namespace = os.environ.get("NPA_SIM2REAL_K8S_NAMESPACE", "").strip()
+    if namespace:
+        return validate_namespace(namespace)
+    return context_namespace(context=context, kubeconfig=kubeconfig)
+
+
+def _sim2real_kubernetes_prerequisites_for_submit(
+    config, *, runner, context, kubeconfig, isaac_placements
+):
+    """Check the Isaac cache in the namespace selected for this submission.
+
+    Args:
+        config: Resolved Sim2Real configuration.
+        runner: Exact-context Kubernetes reader.
+        context: Selected Kubernetes context.
+        kubeconfig: Selected authenticated kubeconfig.
+        isaac_placements: Effective Isaac render placement constraints.
+    Returns:
+        Missing prerequisites, including unreadable namespace evidence.
+    Raises:
+        None.
+    """
+    from npa.orchestration.npa_workflow.sim2real_preflight import (
+        kubernetes_prerequisites,
+    )
+
+    try:
+        namespace = _sim2real_cache_namespace(context, kubeconfig)
+    except ValueError:
+        namespace = None
+    return kubernetes_prerequisites(
+        config, runner=runner, namespace=namespace, isaac_placements=isaac_placements
+    )
+
+
 def _plan_preflight_image_requirements(
     spec: NpaWorkflowSpec,
     *,
@@ -4930,6 +5002,7 @@ def _preflight_image_bootstrap_contracts(
         try:
             reference = parse_image_reference(image)
             image_tool = tool_for_image_name(reference.repository.rsplit("/", 1)[-1])
+            pull_digest = str(getattr(check_by_image.get(image), "digest", "") or "")
             if image_tool and image_tool not in SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS:
                 # The packaging contract deliberately scopes this attestation to
                 # a subset of NPA images. Anonymous manifest pullability is the
@@ -4937,6 +5010,10 @@ def _preflight_image_bootstrap_contracts(
                 pull_digest = str(
                     getattr(check_by_image.get(image), "digest", "") or ""
                 ).lower()
+                if not pull_digest:
+                    raise ImageBootstrapContractError(
+                        "pullability preflight did not return an immutable digest"
+                    )
                 evidence = ImageContractEvidence(
                     image=immutable_image_reference(image, pull_digest),
                     digest=pull_digest,
@@ -4945,7 +5022,10 @@ def _preflight_image_bootstrap_contracts(
                     source="registry_pull_preflight",
                     checks=("immutable_registry_pull",),
                 )
-                results.append(evidence.to_dict())
+                result = evidence.to_dict()
+                if bind_requested_images:
+                    result["_requested_image"] = image
+                results.append(result)
                 continue
             host = reference.registry
             username, password = resolve_registry_credentials(
@@ -4954,7 +5034,6 @@ def _preflight_image_bootstrap_contracts(
             digest, labels = fetch_image_config_metadata(
                 image, username=username, password=password
             )
-            pull_digest = str(getattr(check_by_image.get(image), "digest", "") or "")
             if pull_digest and pull_digest != digest:
                 raise ImageBootstrapContractError(
                     "mutable tag resolved to a different digest between pull and contract checks"
@@ -6066,7 +6145,10 @@ def _raw_execution_preflight(
         controller_backend=controller_backend,
         infra=kwargs.get("infra", ""),
     )
-    env = sky_environment(runtime.isolated_config_dir)
+    env = sky_environment(
+        runtime.isolated_config_dir,
+        recover_isolated_api=False,
+    )
     env.update(kwargs.pop("extra_env", None) or {})
     return preflight_skypilot_submission(
         documents,
@@ -6683,7 +6765,18 @@ def _durable_workflow_status(
             for item in job_observations.values()
             if str(item.get("status") or "").strip()
         ]
-        if any(item.startswith("FAILED") for item in observed_states):
+        active_wave_status = str(
+            job_observations.get(resolution.job_id, {}).get("status") or ""
+        ).upper()
+        if runtime_waves and active_wave_status in {
+            "RUNNING",
+            "STARTING",
+            "PENDING",
+            "RECOVERING",
+        }:
+            # A resumed wave can run while other stages retain failed history.
+            live_status = active_wave_status
+        elif any(item.startswith("FAILED") for item in observed_states):
             live_status = "FAILED"
         elif any(item == "CANCELLED" for item in observed_states):
             live_status = "CANCELLED"
@@ -10164,6 +10257,18 @@ def preflight_images_cmd(
     spec = merge_config_overrides(
         _load_npa_workflow(yaml_path), _parse_submit_vars(var)
     )
+    if spec.name == "sim2real":
+        from npa.orchestration.npa_workflow.sim2real_preflight import (
+            image_prerequisites,
+        )
+
+        issues = image_prerequisites(spec.config)
+        if issues:
+            _fail(
+                "Sim2Real image preflight blocked: "
+                + "; ".join(f"{reason}; fix: {remedy}" for reason, remedy in issues)
+            )
+            return
     image_overrides: dict[str, str] = {}
     if image.strip():
         image_overrides["*"] = image.strip()
@@ -10568,6 +10673,8 @@ def _emit_gpu_discovery_json(inventory, catalog, sky_error, resolutions):
 
 
 app.add_typer(trigger_app, name="trigger")
+app.add_typer(batch_app, name="batch")
+app.command("check-input")(check_input_cmd)
 app.add_typer(demo_app, name="demo")
 app.add_typer(challenge_app, name="challenge")
 register_controller_recovery(app)

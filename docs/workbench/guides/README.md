@@ -7,6 +7,15 @@ artifacts. Complete the [quickstart](../../quickstart.md) and
 [GPU runtime setup](../getting-started.md) before a cloud run. A local preview
 checks the declaration; each guide states what its live validation actually proves.
 
+## Workflow operations
+
+| Task | Guide |
+| --- | --- |
+| Configure, submit, inspect or resume a workflow | [Manual workflow operations](manual-workflow-operations.md) |
+| Batch episodes and choose concurrency | [Dataset batches and capacity](paidf-dataset-batches.md) |
+| Inspect supported quality reports | [Shared report inspection](../insights-reports.md) |
+| Copy selected GCS/S3 objects | [Scoped storage transfers](scoped-storage-transfers.md) |
+
 ## Robot and reconstruction guides
 
 | Goal | Guide and required input | Compute and result scope |
@@ -57,7 +66,7 @@ when adapting it:
 
 | Task | Guide |
 | --- | --- |
-| Configure, preflight, submit, and recover | [Sim2Real operator runbook](sim2real-workflow.md) |
+| Install, configure, submit, and recover without an agent | [Manual Sim2Real runbook](sim2real-workflow.md); establish the qualified five-image set before provisioning, then prepare access, RTX rendering, shared cache, seed data, and the exact execution context |
 | Prepare formats, schemas, and S3 layout | [Data contracts](sim2real-data-contracts.md) |
 | Supply customer data and robot assets | [Customer assets](sim2real-customer-assets.md) · [RobotSpec](sim2real-robot-spec.md) |
 | Understand stages, loops, and parallel execution | [Architecture](sim2real-architecture.md) |

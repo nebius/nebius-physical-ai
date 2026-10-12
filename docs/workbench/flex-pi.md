@@ -234,7 +234,11 @@ These are single-observation compiled inference results, not paired speedup or
 fleet-scaling measurements. The historical results below remain bound to
 `0.1.0-cu128`, digest `sha256:88359258470d9622d9fb5274d8ad39627a57a5682cb8630c7ac85a3f303c7b91`;
 they do not qualify the replacement image. Neither release claims closed-loop
-RoboTwin task success. Other GPU classes remain unmeasured for r2.
+RoboTwin task success. On 2026-10-08 the r2 digest also passed one eager
+(uncompiled) four-step action-only inference on one H200 in a direct Docker
+smoke: finite 32×14 actions in 0.6106 s for a single call without warm-up, and
+25,293,465,088 bytes peak allocated GPU memory. The compiled workflow was not
+run on H200. Other GPU classes remain unmeasured for r2.
 
 ### Historical RTX PRO 6000 acceptance
 

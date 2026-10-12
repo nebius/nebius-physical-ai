@@ -49,6 +49,23 @@ def archive_bytes(members):
     return stream.getvalue()
 
 
+@pytest.mark.parametrize(
+    ("release", "supported"),
+    [
+        ("5.9", True),
+        ("5.9.0", True),
+        ("5.15.0-186-generic", True),
+        ("6.12.0+", True),
+        ("5.8.19", False),
+        ("4.19.0", False),
+        ("invalid", False),
+        ("5", False),
+    ],
+)
+def test_containment_probe_kernel_floor(release, supported):
+    assert B.supported_linux_kernel(release) is supported
+
+
 def prepare_archive(tmp_path, monkeypatch, members):
     raw = archive_bytes(members)
     monkeypatch.setattr(B, "GO_ARCHIVE_SHA256", B.digest(raw))
@@ -155,6 +172,20 @@ def test_read_detects_exact_path_replacement(tmp_path, monkeypatch):
         B.read_regular(target)
 
 
+def test_held_execution_inode_rejects_later_path_replacement(tmp_path):
+    target = tmp_path / "helper"
+    target.write_bytes(b"tested bytes")
+    held = B.open_held_regular(target)
+    try:
+        replacement = tmp_path / "replacement"
+        replacement.write_bytes(b"untested bytes")
+        replacement.replace(target)
+        with pytest.raises(B.BuildError, match="^input_(changed|replaced)$"):
+            B.read_held_regular(held)
+    finally:
+        B.close_held_regular(held)
+
+
 def test_exclusive_output_never_overwrites(tmp_path):
     target = tmp_path / "receipt"
     B.write_new(target, b"first")
@@ -207,6 +238,7 @@ def ready_raw(**overrides):
         "max_target_megabytes": 0,
         "ignore_inline_allow": True,
         "redact": 100,
+        "process_containment": "seccomp-process-group-v1",
         "policy_before_sha256": "b" * 64,
         "policy_after_sha256": "c" * 64,
     }
@@ -230,6 +262,7 @@ def test_ready_preserves_exact_first_line_bytes():
         {"max_target_megabytes": 1},
         {"ignore_inline_allow": False},
         {"redact": 0},
+        {"process_containment": "other"},
         {"rule_count": 0},
         {"policy_after_sha256": "invalid"},
     ],
@@ -242,6 +275,24 @@ def test_ready_rejects_changed_policy(overrides):
 def test_ready_rejects_missing_terminal_summary():
     with pytest.raises(B.BuildError, match="^helper_handshake_shape$"):
         B._ready(ready_raw().splitlines(keepends=True)[0], "a" * 64)
+
+
+def test_containment_probe_accepts_exact_output():
+    B.verify_containment_probe(b"seccomp-process-group-v1\n")
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"",
+        b"seccomp-process-group-v1",
+        b"seccomp-process-group-v1\nextra\n",
+        b"other\n",
+    ],
+)
+def test_containment_probe_rejects_nonexact_output(raw):
+    with pytest.raises(B.BuildError, match="^helper_containment_probe$"):
+        B.verify_containment_probe(raw)
 
 
 def test_module_notices_bind_exact_locked_payload(tmp_path):
@@ -314,11 +365,12 @@ def test_failed_subprocess_has_private_logs_fixed_boundary(tmp_path, monkeypatch
     def popen(*args, **kwargs):
         assert kwargs["start_new_session"] is True
         assert kwargs["stdin"] == subprocess.DEVNULL
+        assert kwargs["pass_fds"] == (37,)
         return Result()
 
     monkeypatch.setattr(B.subprocess, "Popen", popen)
     with pytest.raises(B.BuildError, match="^step_tests_failed$"):
-        B.run_step(["unused"], "tests", tmp_path, {}, tmp_path)
+        B.run_step(["unused"], "tests", tmp_path, {}, tmp_path, pass_fds=(37,))
     assert (tmp_path / "tests.stdout.log").read_bytes() == Result.stdout
     assert stat.S_IMODE((tmp_path / "tests.stdout.log").stat().st_mode) == 0o600
     assert json.loads((tmp_path / "tests.status.json").read_bytes()) == {

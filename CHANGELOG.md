@@ -18,6 +18,28 @@ a versioned heading when a release is cut.
   This result remains a failed model-improvement gate, separately from the
   sampler's deterministic source/provenance contract.
 
+### Breaking: authoritative Kubernetes GPU product aliases
+
+- Existing-capacity preflight now treats `nvidia.com/gpu.product` as
+  authoritative for explicit accelerator aliases, including H100 and B200.
+  A conflicting provider nickname no longer admits an unqualified product.
+  H100 PCIe/NVL and HGX-B200 product spellings are not implicitly aliases;
+  previously schedulable submissions can now fail preflight. See the
+  [accepted spellings and qualification procedure](docs/orchestration/skypilot-setup.md#authoritative-gpu-product-aliases)
+  before migrating cluster labels or requesting an additional SKU.
+
+### SeedVR2 clean runtime and full bootstrap seed
+
+- Pin the full system setuptools seed to 84.0.0, separately from pip's limited
+  `pkg_resources` donor. Verify the wheel before replacing Ubuntu's seed in the
+  same image layer, and reject old or modified seed path files. This fixes the
+  seed's Unicode-normalization exclusion mismatch without changing the model
+  environment or treating historical images as repaired.
+- Export the repaired runtime producer into one clean-root layer and explicitly
+  retain its NVIDIA/NPA environment, non-root launch, cache volume and health
+  contract. Add source-bound clean-root qualification alongside the unchanged
+  complete-layer payload scan; source checks do not qualify new image bytes.
+
 ### VLM benchmarks distinguish outcome from agency
 
 - A packaged `isaac-agency` calibration pairs one true elevated-object claim

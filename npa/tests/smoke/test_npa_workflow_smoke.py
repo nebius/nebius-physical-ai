@@ -20,6 +20,8 @@ def _spec(name: str) -> Path:
     "name",
     [
         "video-variant-sweep.yaml",
+        "marble-manufacturing-pallet-detection.yaml",
+        "marble-go1-inspection.yaml",
         "vlm-eval-single.yaml",
         "tokenfactory-rollout-judge.yaml",
         "sim2real.yaml",
@@ -33,6 +35,7 @@ def _spec(name: str) -> Path:
         "paidf-image-attribute-augmentation.yaml",
         "paidf-event-video-generation.yaml",
         "lerobot-transfer.yaml",
+        "rgbd-scan-to-policy-demo.yaml",
     ],
 )
 def test_cli_validate_spec(name: str) -> None:

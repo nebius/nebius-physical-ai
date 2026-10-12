@@ -72,6 +72,99 @@ class SubmitLiveCase:
 
 SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
+        "marble-go1-inspection.yaml",
+        "gpu",
+        secret_envs=("WLT_API_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        preset="warehouse",
+        notes="One selected situation: real hosted generation, one Go1 CUDA collector and continuous standalone HTML. All five preset commands have recorded GPU evidence.",
+    ),
+    SubmitLiveCase(
+        "marble-warehouse-quadruped.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        rotation_skip=True,
+        skip_reason="Requires an operator-owned generated Marble warehouse bundle.",
+        notes="Pretrained Go1 CPU control and articulated physics; gsplat/Warp CUDA sensors and Cycles CUDA robot rendering on one RTX PRO 6000.",
+    ),
+    SubmitLiveCase(
+        "marble-navigation-rl.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        rotation_skip=True,
+        skip_reason="Requires an operator-owned generated Marble world and a qualified immutable Isaac runtime image.",
+        notes="Actual collider preparation, native ANYmal GPU physics and PPO, and held-out checkpoint evaluation; acceptance is recorded separately.",
+    ),
+    SubmitLiveCase(
+        "marble-manufacturing-pallet-detection.yaml",
+        "gpu",
+        secret_envs=("WLT_API_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        rotation_skip=True,
+        skip_reason="Requires an operator-provided, group-disjoint real pallet dataset and training-only RGBA cutouts.",
+        notes="Real World API generation, gsplat CUDA rendering, and matched-budget Faster R-CNN real-test comparison. No sample-world override.",
+    ),
+    SubmitLiveCase(
+        "marble-warehouse-rover.yaml",
+        "gpu",
+        secret_envs=("WLT_API_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        notes=(
+            "Real World API warehouse generation, PyBullet wheel dynamics, "
+            "gsplat CUDA RGB and Warp CUDA depth, with a standalone HTML replay."
+        ),
+    ),
+    SubmitLiveCase(
+        "marble-world-capture.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        config_vars=(("world_source", "sample-hobbit"),),
+        notes="Real imported Marble example rendered by gsplat CUDA; generation mode separately requires WLT_API_KEY.",
+    ),
+    SubmitLiveCase(
+        "marble-spatial-scan.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        config_vars=(("world_source", "sample-hobbit"),),
+        notes="Real imported Marble collider raycast by NVIDIA Warp CUDA with depth and interactive HTML artifacts.",
+    ),
+    SubmitLiveCase(
+        "robot-policy-train-and-serve.yaml",
+        "multi",
+        runtime=True,
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        notes="Public SmolVLA/FiftyOne training, both measured retry gates, two GPU serving workers and standalone HTML proof.",
+    ),
+    SubmitLiveCase(
+        "physical-prompt-comparison.yaml",
+        "multi",
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "NEBIUS_TOKEN_FACTORY_KEY",
+        ),
+        runtime=True,
+        requires_token_factory=True,
+        expected_parallel_tasks=2,
+        notes="Full Wan 2.1 physical-prompt comparison: six scenarios, two seeds, three arms, blinded video judgment.",
+    ),
+    SubmitLiveCase(
+        "digital-twin-campus-render.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        notes="RTX OptiX campus rendering, native geometry counts, four camera routes and private offline HTML.",
+    ),
+    SubmitLiveCase(
+        "digital-twin-cuda-render.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        notes="Native Blender Cycles CUDA reference scene, OpenUSD/glTF export, and offline HTML with bound rendering evidence.",
+    ),
+    SubmitLiveCase(
         "video-variant-sweep.yaml",
         "multi",
         runtime=True,
@@ -202,6 +295,31 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Native eight-RTX-PRO-6000 XR1 fine-tuning; paired Antioch robot evaluation is a separate operator step.",
     ),
     SubmitLiveCase(
+        "lyra-reconstruction.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        rotation_skip=True,
+        skip_reason="Requires a checksummed captured-video bundle and operator-scoped internal Lyra R&D use.",
+        notes="Pinned upstream Lyra reconstruction, real Gaussian render and retained depth/camera predictions.",
+    ),
+    SubmitLiveCase(
+        "lyra-scene-actions.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        rotation_skip=True,
+        skip_reason="Requires matching Lyra reconstruction, metric geometry and an operator-calibrated robot mounting bundle.",
+        notes="Native RTX manipulation in the imported collision scene with a scene-matched offline HTML review.",
+    ),
+    SubmitLiveCase(
+        "physical-augmentation.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        notes="Native RTX Franka physical variants, regenerated IK actions, verified transitions, and LeRobot/Rerun demonstrations.",
+    ),
+    SubmitLiveCase(
         "franka-rl-transfer.yaml",
         "gpu",
         secret_envs=(
@@ -265,6 +383,27 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Uses a qualified public GHCR image; exact-digest GPU evidence is recorded in the OSS solution catalog.",
     ),
     SubmitLiveCase(
+        "byof-embodiedgen.yaml",
+        "gpu",
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "NEBIUS_TOKEN_FACTORY_KEY",
+        ),
+        requires_token_factory=True,
+        plan_only=True,
+        plan_only_justification=(
+            "The automated matrix intentionally does not replay the qualified private "
+            "GPU run; each operator submission requires its own private image, "
+            "credential, input/output, and fresh target preflight."
+        ),
+        notes=(
+            "One exact private image completed TRELLIS generation, EmbodiedGen "
+            "URDF/MJCF export, and PyBullet settling on RTX PRO 6000; no public "
+            "image or target-wide readiness is implied."
+        ),
+    ),
+    SubmitLiveCase(
         "cosmos3-policy-model-factory.yaml",
         "gpu",
         secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
@@ -318,6 +457,16 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         image_tool="curobo",
         notes="Complete MotionBenchMaker and MPiNets cases, kinematic and 3 kg dynamics modes, verified journal and RRD.",
+    ),
+    SubmitLiveCase(
+        "seedvr2-video-restoration.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        image_tool="seedvr2",
+        notes=(
+            "Pinned official SeedVR2-3B restoration on one H100, followed by "
+            "independent S3 readback verification and matched review media."
+        ),
     ),
     SubmitLiveCase(
         "open3d-registration.yaml",
@@ -1563,6 +1712,8 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "robocasa-data-policy.yaml",
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "ROBOCASA_TOKEN"),
+        plan_only=True,
+        plan_only_justification="the workflow requires a separately deployed RoboCasa service plus its accepted exact source SHA and manifest digest; the generic rotation cannot safely synthesize either identity",
         notes="Production PandaOmron RoboCasa data->policy pipeline: multi-task trajectory export, LeRobotDataset materialization, real ACT training, disjoint RoboCasa exact-checkpoint evaluation, insights lineage.",
     ),
     SubmitLiveCase(

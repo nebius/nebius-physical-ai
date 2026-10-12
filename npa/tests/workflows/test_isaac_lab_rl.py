@@ -65,10 +65,7 @@ def test_isaac_lab_single_job_yaml_uses_rt_core_gpu_and_rsl_rl_entrypoint() -> N
     assert task["resources"]["accelerators"] == "L40S:1"
     assert task["resources"]["cpus"] == 16
     assert task["resources"]["memory"] == 64
-    assert (
-        "npa-isaac-lab:3.0.0b2.post1-sim2real-coherent-20260904"
-        in task["resources"]["image_id"]
-    )
+    assert task["resources"]["image_id"] == "tool://isaac-lab"
     assert "scripts/reinforcement_learning/rsl_rl/train.py" in task["run"]
     assert "--num_envs" in task["run"]
     assert "--max_iterations" in task["run"]
@@ -266,6 +263,7 @@ def test_isaac_lab_runner_materializes_endpoint_from_env(monkeypatch, tmp_path) 
         task="Isaac-Cartpole-v0",
         iterations=1,
         output_root="s3://bucket/isaac-lab-rl",
+        image="registry.example/isaac-lab@sha256:" + "1" * 64,
     )
     envs = docs[1]["envs"]
     assert envs["AWS_ENDPOINT_URL"] == "https://storage.custom.example"
@@ -287,6 +285,8 @@ def test_isaac_lab_runner_render_only_keeps_rendered_yaml(capsys) -> None:
             "--iterations",
             "2",
             "--render-only",
+            "--image",
+            "registry.example/isaac-lab@sha256:" + "1" * 64,
         ]
     )
 
@@ -321,6 +321,8 @@ def test_isaac_lab_runner_requires_live_context_before_teardown(
             "missing-context",
             "--isolated-config-dir",
             str(tmp_path / "sky"),
+            "--image",
+            "registry.example/isaac-lab@sha256:" + "1" * 64,
         ]
     )
 
@@ -328,3 +330,105 @@ def test_isaac_lab_runner_requires_live_context_before_teardown(
         wrapper._submit_and_wait(args)
 
     assert not (tmp_path / "sky").exists()
+
+
+ISAAC_PROFILES = sorted(SINGLE_YAML.parent.glob("isaac-lab-rl-train*.yaml"))
+
+
+@pytest.mark.parametrize("profile", ISAAC_PROFILES, ids=lambda path: path.name)
+def test_isaac_profiles_reject_withdrawn_default_in_real_renderer(profile) -> None:
+    wrapper = _load_wrapper_module()
+    assert _docs(profile)[1]["resources"]["image_id"] == "tool://isaac-lab"
+
+    with pytest.raises(ValueError, match="has no consumable public release"):
+        wrapper.render_workflow(
+            profile, run_id="quarantined-image", task="Isaac-Cartpole-v0", iterations=1
+        )
+
+
+@pytest.mark.parametrize("profile", ISAAC_PROFILES, ids=lambda path: path.name)
+@pytest.mark.parametrize("docker_prefix", ["", "docker:"])
+def test_isaac_profiles_preserve_explicit_operator_image(
+    profile, docker_prefix
+) -> None:
+    wrapper = _load_wrapper_module()
+    image = "registry.example/isaac-lab@sha256:" + "1" * 64
+
+    docs = wrapper.render_workflow(
+        profile,
+        run_id="operator-image",
+        task="Isaac-Cartpole-v0",
+        iterations=1,
+        image=docker_prefix + image,
+    )
+
+    assert docs[1]["resources"]["image_id"] == "docker:" + image
+
+
+def test_isaac_renderer_preserves_operator_profile_image(tmp_path) -> None:
+    wrapper = _load_wrapper_module()
+    docs = _docs(SINGLE_YAML)
+    image = "docker:registry.example/isaac-lab@sha256:" + "2" * 64
+    docs[1]["resources"]["image_id"] = image
+    profile = tmp_path / "operator-profile.yaml"
+    profile.write_text(yaml.safe_dump_all(docs))
+
+    rendered = wrapper.render_workflow(
+        profile, run_id="operator-profile", task="Isaac-Cartpole-v0", iterations=1
+    )
+
+    assert rendered[1]["resources"]["image_id"] == image
+
+
+def test_isaac_renderer_consumes_the_governed_resolver_result(monkeypatch) -> None:
+    wrapper = _load_wrapper_module()
+    selected = "registry.example/isaac-lab@sha256:" + "3" * 64
+    seen = []
+
+    def resolve(tool):
+        seen.append(tool)
+        return selected
+
+    monkeypatch.setattr(wrapper, "container_image_for_tool", resolve)
+    docs = wrapper.render_workflow(
+        SINGLE_YAML, run_id="governed-image", task="Isaac-Cartpole-v0", iterations=1
+    )
+
+    assert seen == ["isaac-lab"]
+    assert docs[1]["resources"]["image_id"] == "docker:" + selected
+
+
+def test_byof_cookbook_requires_an_explicit_base_image() -> None:
+    cookbook = ROOT / "docs/workbench/cookbooks/byof-isaac-lab"
+    dockerfile = (cookbook / "Dockerfile.example").read_text()
+
+    assert "ARG NPA_ISAAC_LAB_BASE_IMAGE\n" in dockerfile
+    assert "FROM ${NPA_ISAAC_LAB_BASE_IMAGE}" in dockerfile
+    assert "NPA_ISAAC_LAB_BASE_IMAGE=" not in dockerfile
+    assert (
+        "NPA_ISAAC_LAB_BASE_IMAGE=$NPA_ISAAC_LAB_BASE_IMAGE"
+        in (cookbook / "README.md").read_text()
+    )
+
+
+@pytest.mark.parametrize("render_only", [False, True])
+def test_isaac_default_refusal_precedes_runtime_scope_and_submit(
+    monkeypatch, capsys, render_only
+) -> None:
+    wrapper = _load_wrapper_module()
+
+    def unexpected_runtime(*_args, **_kwargs):
+        pytest.fail("quarantined image must fail before runtime scope or submission")
+
+    for name in ("_execution_scope", "resolve_sky_bin", "submit_workflow"):
+        monkeypatch.setattr(wrapper, name, unexpected_runtime)
+    arguments = ["--yaml", str(SINGLE_YAML), "--run-id", "quarantine-boundary"]
+    if render_only:
+        arguments.append("--render-only")
+
+    assert wrapper.main(arguments) == 2
+    output = capsys.readouterr()
+    assert not output.out
+    assert "Error:" in output.err and "quarantined" in output.err
+    assert "Supply --image" in output.err
+    assert "Traceback" not in output.err

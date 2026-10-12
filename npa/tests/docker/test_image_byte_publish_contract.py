@@ -232,11 +232,20 @@ def test_required_policy_precedes_build_and_secret_environment_is_scoped():
     for step in all_steps:
         env = step.get("env", {})
         if "CUSTOMER_DENYLIST" in env or "INFRA_DENYLIST" in env:
-            assert step["name"] in {check, PRE, POST} | ncore_steps
+            assert (
+                step["name"]
+                in {
+                    check,
+                    "Validate required RoboCasa confidentiality policy before building",
+                    PRE,
+                    POST,
+                }
+                | ncore_steps
+            )
             assert {"CUSTOMER_DENYLIST", "INFRA_DENYLIST"} <= env.keys()
             if step["name"] in ncore_steps:
                 assert step["if"] == "matrix.tool == 'ncore'"
-            elif step["name"] != check:
+            elif step["name"] in {PRE, POST}:
                 assert all(
                     "matrix.tool == 'curobo'" in env[key]
                     for key in ("CUSTOMER_DENYLIST", "INFRA_DENYLIST")
@@ -255,9 +264,14 @@ def test_native_check_is_an_executed_gate_with_separate_private_dependencies():
         if isinstance(step.get("uses"), str)
         and re.fullmatch(r"actions/setup-python@[0-9a-f]{40}", step["uses"])
     )
-    assert (
-        setup["with"]["python-version"]
-        == "${{ (matrix.tool == 'curobo' || matrix.tool == 'ncore' || matrix.tool == 'robotwin' || matrix.tool == 'libero') && '3.12' || '3.11' }}"
+    expression = setup["with"]["python-version"]
+    roles = set(re.findall(r"matrix.tool == '([^']+)'", expression))
+    assert {"curobo", "ncore", "robotwin", "libero"} <= roles
+    assert roles <= {"curobo", "ncore", "robotwin", "libero", "robocasa"}
+    assert re.fullmatch(
+        r"\$\{\{ \(matrix.tool == '[a-z]+'(?: \|\| matrix.tool == '[a-z]+')*\)"
+        r" && '3.12' \|\| '3.11' \}\}",
+        expression,
     )
     for name, job in publish["jobs"].items():
         if name == "build-development":
