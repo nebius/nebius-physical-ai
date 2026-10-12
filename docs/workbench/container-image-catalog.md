@@ -115,9 +115,9 @@ complete SDXL generations. The opt-in FA4 inference profile improves selected
 attention calls; complete-model performance is effectively tied with FA2.
 These candidates do not change the accepted images listed below.
 
-The current source inventory has **62 packaging entries** (53 redistribution-eligible
-and nine restricted) and **53 mapped tools**: 27 public-release members, two
-restricted tools, and 24 quarantined tools. These counts come from
+The current source inventory has **63 packaging entries** (54 redistribution-eligible
+and nine restricted) and **54 mapped tools**: 27 public-release members, two
+restricted tools, and 25 quarantined tools. These counts come from
 `packaging-contract.yaml` and `npa.deploy.images`;
 the seven restricted PAIDF images have no mapped tool entry. These counts do not
 constitute acceptance of the quarantined images.
@@ -330,6 +330,25 @@ accepted public release row or verified anonymous pull claim for this image.
 Select development bytes only with an explicit immutable image digest.
 The existing NRE GPU consumer remains separately licensed. The new full
 COLMAP-to-reconstruction workflow is **not yet live validated**.
+
+## Pending SeedVR2 restoration image
+
+`npa-seedvr2` is a zero-weight, zero-input public-image candidate for official
+SeedVR2-3B video restoration. It bakes pinned Apache-2.0 source and a
+hash-locked CUDA/PyTorch inference closure; the public Apache-2.0 model
+payloads, sensor clips, outputs, credentials, and populated caches remain
+runtime-only. Repository packaging marks it redistribution-eligible but
+publication-quarantined until complete built-byte scans, anonymous digest
+verification, real H100 or B200 workflow execution, objective preservation metrics,
+calibrated VLM review, and independent review are accepted for the same commit
+and digest. There is no accepted public release row or verified anonymous pull
+claim for this image.
+
+The candidate recipe now exports its repaired runtime filesystem through a
+clean-root stage, separately pins the full setuptools bootstrap seed, and
+requires the measured NVIDIA/NPA runtime-config contract. This source change
+does not repair prior image digests or qualify a replacement image; complete
+byte, bootstrap, GPU and quality evidence remain separate gates.
 
 ## Pending Open3D registration image
 
@@ -921,13 +940,27 @@ historical evidence.
   only the SkyPilot worker bootstrap closure and must be built into the
   operator's own registry; it is deliberately excluded from the public catalog.
 - **`npa-robocasa`** is a validation candidate, not yet in the public publishing
-  plan. It is licence-eligible for public redistribution (Apache-2.0 RoboCasa and
-  robosuite), but its built-image payload scan and real GPU capability validation
-  have not yet been recorded, so it is quarantined from `publicly_publishable_tools()`
+  plan. It is licence-eligible for public redistribution (MIT RoboCasa, whose
+  license includes a separate Apache-2.0 notice for partial DeepMind MuJoCo, and
+  Apache-2.0 robosuite). Its resolved closure also includes LGPL-3.0
+  qpsolvers and GPL-2.0-or-later quadprog, whose exact source archives and
+  license texts must remain in every distributed image. Its built-image payload
+  scan and real GPU capability validation have not yet been recorded, so it is quarantined from `publicly_publishable_tools()`
   via `VALIDATION_CANDIDATE_TOOLS`. It will gain a public row only when its accepted
   digest and GPU evidence are recorded.
   It is a non-root service image with no passwordless-sudo grant; workflow
   toolRefs call the deployed service from the standard task image.
+  The candidate recipe upgrades inherited Ubuntu packages before dependency
+  installation, requires the fixed GnuPG/OpenSSL versions, and hash-locks pip.
+  Its scratch final stage copies the prepared filesystem while retaining exact
+  CUDA/service settings and notices, so superseded base-layer binaries are not
+  shipped merely because a later layer installed their replacements.
+  Those source controls do not qualify the older image bytes or establish that
+  the replacement image has no vulnerabilities; exact-image scans and runtime
+  validation remain required.
+  Its [candidate runtime boundary](../../npa/docker/workbench/robocasa/REDISTRIBUTION.md)
+  uses a minimal CUDA12.9 base and same-layer, exact-hash cuDNN runtime packaging;
+  older cuDNN development layers are not inherited or reclassified.
 
 The historical SONIC L40S and inherited MuJoCo variants remain restricted and
 quarantined in `sonic_image_manifest.json`. The old SONIC `0.1.2` alias was

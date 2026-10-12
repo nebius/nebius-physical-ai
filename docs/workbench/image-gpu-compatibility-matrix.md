@@ -54,11 +54,12 @@ status and evidence recorded in their own rows and catalog records.
 | Image | Tag measured | Torch / CUDA | Measured SASS set | Covers `sm_100`? |
 | --- | --- | --- | --- | --- |
 | `npa-base` | `cuda13-b300-sm80-sm90-sm100-sm103-sm120-20260803T032705Z` | 2.9.0+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` + `compute_120` PTX | yes |
+| `npa-seedvr2` | exact local candidate; publication quarantined | 2.13.0+cu130 | Torch: `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120`; FlashAttention and Apex: native `sm_90` only, no PTX | no; both source extensions require an `sm_100` rebuild |
 | `npa-lerobot` | default `…-0.5.1-…-20260803T034152Z`; optional `0.6.0-d6-extras-20260912` | 2.9.0+cu130 (default); 2.11.0+cu130 (0.6.0) | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` (`compute_120` PTX also measured for the default) | yes |
 | `npa-lerobot-policy` | `0.1.1` | 2.12.1+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` | yes |
 | `npa-lancedb` | `…-0.30.3-…-20260803T031514Z` | 2.12.1+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` | yes |
 | `npa-detection-training` | `bdd100k-golden-eval-smoke-20260614T210000Z` | 2.12.1+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` | yes |
-| `npa-robocasa` | `0.1.0` (validation candidate, not yet built) | CUDA 12.4 base (no torch baked) | `sm_80 sm_90` (cu124 wheels stop at sm_90) | no |
+| `npa-robocasa` | `0.1.1` (validation candidate, not yet built) | CUDA 12.9.1 base + PyTorch 2.13.0+cu129 | build-time architecture set pending exact-image measurement | pending |
 | `npa-openarm` | `2.2.0-isaac0.1.0-rtfetch` (`sha256:c30da0d55de0…`) | Isaac Sim 5.1.0.0 / Isaac Lab 2.3.2.post1 runtime fetch | runtime-fetched; `sm_120` observed | no |
 | `npa-cosmos3` | current `1.2.2-cu130-r7` (index `sha256:d8e1fe370f75…`) | 2.13.0+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` | yes |
 | `npa-cosmos3-ray-serve` | `dev-56d8c4f3f05db7aa3b03323441a3e0d7b97ac8da` (`linux/amd64` manifest `sha256:6e42f553a0d1…`); the published `ray1-cu130` tag resolves to that same digest | 2.10.0+cu130 | `sm_75 sm_80 sm_86 sm_90 sm_100 sm_120` + `compute_120` PTX | yes |
@@ -110,12 +111,13 @@ likewise predates its current coherent release.
 | --- | --- | --- | --- | --- | --- |
 | `npa-base` | supported | **verified** [22] | **verified** [23] | **verified** [20] | **verified** [21] |
 | `npa-workbench-cuda-base` | supported | supported | supported | supported | supported |
+| `npa-seedvr2` | blocked by `sm_90`-only extensions | H100 candidate built with native `sm_90`, real restoration pending; H200 is not accepted by the current H100-only runtime policy | blocked by `sm_90`-only extensions | blocked pending an `sm_100` extension rebuild and real restoration | blocked pending an `sm_100` extension rebuild and real restoration |
 | `npa-lerobot` | supported | **verified** [41] | **verified** [42] | **verified** [39], optional 0.6.0 [68] | **verified** [40] |
 | `npa-lerobot-vla-jepa` (private unbuilt candidate) | not built; not validated | not built; not validated | not built; required RTX PRO 6000 route is unvalidated | not built; no B200 claim | not built; no B300 claim |
 | `npa-lerobot-policy` | supported | supported | supported | supported | supported |
 | `npa-lancedb` | supported | **verified** [26] | **verified** [27] | **verified** [24] | **verified** [25] |
 | `npa-detection-training` | supported | **historical evidence** [29] | **verified** [current release evidence](#current-detection-runtime-evidence) | **historical evidence** [28] | **historical evidence** [31] |
-| `npa-robocasa` | supported (cu124) | supported (cu124) | blocked (needs cu130) | blocked (needs cu130) | blocked (needs cu130) |
+| `npa-robocasa` | supported (cu129; exact image pending) | supported (cu129; exact image pending) | unverified | unverified | unverified |
 | `npa-openarm` | supported (RT cores; unmeasured) | blocked (no RT cores) | **verified** [79] | blocked (no RT cores) | blocked (no RT cores) |
 | `npa-cosmos3` | supported | **verified** [90] (H200; r7, effective guardrails attested) | **verified** [accepted records](#accepted-release-evidence) (r7, effective guardrails attested) | supported | supported |
 | `npa-cosmos3-serving` (public zero-payload bootstrap) | blocked (8-GPU memory floor) | historical predecessor only; current digest unverified | unverified (8 GPUs) | **verified** [accepted records](#accepted-release-evidence) (8 GPUs) | unverified (8 GPUs) |

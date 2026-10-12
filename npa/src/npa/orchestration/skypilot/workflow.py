@@ -176,6 +176,7 @@ class ManagedJobEvidence:
     workload_observable: bool = True
     workload_evidence: str = ""
     error: str = ""
+    job_name: str = ""
 
 
 def _managed_job_workload_markers(row: Mapping[str, Any]) -> set[str]:
@@ -903,7 +904,10 @@ def ensure_local_api_daemon_health(
     # It only needs the exact configured executable to identify an already-live
     # daemon; an absent daemon is left for the regular pinned-version path.
     sky_executable = str(runtime_config.sky_bin)
-    env = sky_environment(runtime_config.isolated_config_dir)
+    env = sky_environment(
+        runtime_config.isolated_config_dir,
+        recover_isolated_api=False,
+    )
     if runtime_config.isolated_config_dir is not None:
         # Environment preparation validates any owned listener. Startup waits
         # until the exact workload/project configuration has passed preflight.
@@ -1086,7 +1090,7 @@ def _preflight_prepared_submission(
     )
 
     executable_profile_sha256 = libero_executable_profile_sha256(docs)
-    env = sky_environment(runtime.isolated_config_dir)
+    env = sky_environment(runtime.isolated_config_dir, recover_isolated_api=False)
     for key, value in (extra_env or {}).items():
         if value or key in {"NPA_S3_BUCKET", "NPA_S3_PREFIX"}:
             env[key] = value
@@ -2709,29 +2713,20 @@ def workflow_status(
         )
 
     rows = verified_structured_queue_rows(result)
-    if rows is None:
+    if rows is None or any(not _queue_row_job_id(row) for row in rows):
         return WorkflowResult(
             status="UNKNOWN",
             job_id=job_id,
             returncode=result.returncode,
             stdout=result.stdout,
             stderr=result.stderr,
-            error="managed-job queue response is malformed or has conflicting diagnostics",
+            error=_queue_verification_error(
+                result, "malformed rows or conflicting diagnostics"
+            ),
         )
     status = _status_from_queue_rows(rows, job_id)
     if not status:
-        if any(
-            str(row.get("job_id") or row.get("id") or "") == str(job_id) for row in rows
-        ):
-            return WorkflowResult(
-                status="UNKNOWN",
-                job_id=job_id,
-                returncode=result.returncode,
-                stdout=result.stdout,
-                stderr=result.stderr,
-                error="recorded managed job has no verifiable scheduler status",
-            )
-        # A successful queue response is authoritative: if the recorded id is
+        # A verified queue response is authoritative: if the recorded id is
         # absent, the managed-jobs controller has lost (or garbage-collected) its
         # execution record.  Treating this as UNKNOWN makes an unbounded runtime
         # poll forever and prevents the durable NPA ledger from resubmitting the
@@ -2750,6 +2745,13 @@ def workflow_status(
         returncode=result.returncode,
         stdout=result.stdout,
         stderr=result.stderr,
+        error=(
+            _queue_verification_error(
+                result, "a matching task has a missing or unrecognized status"
+            )
+            if status == "UNKNOWN"
+            else ""
+        ),
     )
 
 
@@ -2761,10 +2763,15 @@ def _verify_task_queue_result(result: subprocess.CompletedProcess[str]) -> None:
     detail = sanitize_reason(redact_text(_command_detail(result)))
     if result.returncode != 0:
         raise RuntimeError(f"SkyPilot task queue query failed: {detail}")
-    if verified_structured_queue_rows(result) is None:
+    rows = verified_structured_queue_rows(result)
+    if rows is None:
         raise RuntimeError(
             "SkyPilot task queue response is malformed or has conflicting diagnostics: "
             + detail
+        )
+    if any(not _queue_row_job_id(row) for row in rows):
+        raise RuntimeError(
+            "SkyPilot task queue contains malformed managed-job identities: " + detail
         )
 
 
@@ -2829,9 +2836,10 @@ def workflow_task_statuses(
     )
     if raise_on_error:
         _verify_task_queue_result(result)
-    if verified_structured_queue_rows(result) is None:
+    jobs = verified_structured_queue_rows(result)
+    if jobs is None:
         return []
-    return parse_task_statuses(result.stdout, job_id)
+    return _task_statuses_from_rows(jobs, job_id)
 
 
 def workflow_controller_logs(
@@ -2969,10 +2977,14 @@ def lookup_managed_job(
         return ManagedJobEvidence("unavailable", error=redact_text(detail))
     else:
         parsed_jobs = verified_structured_queue_rows(result)
-        if parsed_jobs is None:
+        if parsed_jobs is None or any(
+            not _queue_row_job_id(row) for row in parsed_jobs
+        ):
             return ManagedJobEvidence(
                 "unavailable",
-                error="SkyPilot queue returned malformed, ambiguous, or schema-invalid JSON",
+                error=_queue_verification_error(
+                    result, "malformed rows or conflicting diagnostics"
+                ),
             )
         jobs = parsed_jobs
 
@@ -3015,7 +3027,7 @@ def lookup_managed_job(
             ),
         )
     selected = str(max(matching_ids))
-    rows = tuple(parse_task_statuses(result.stdout, selected))
+    rows = tuple(_task_statuses_from_rows(jobs, selected))
     markers = sorted(
         {
             marker
@@ -3027,11 +3039,21 @@ def lookup_managed_job(
     return ManagedJobEvidence(
         "found",
         job_id=selected,
-        status=_status_from_queue_payload(result.stdout, selected) or "UNKNOWN",
+        status=_status_from_queue_rows(jobs, selected) or "UNKNOWN",
         task_rows=rows,
         workload_observable=bool(markers),
         workload_evidence=",".join(markers),
+        job_name=_exact_queue_job_name(jobs, selected),
     )
+
+
+def _exact_queue_job_name(rows: Sequence[Mapping[str, Any]], job_id: str) -> str:
+    """Keep native name evidence only when every exact job row agrees."""
+    selected = [row for row in rows if _queue_row_job_id(row) == job_id]
+    names = [row.get("job_name") for row in selected]
+    if not names or any(not isinstance(name, str) or not name for name in names):
+        return ""
+    return names[0] if len(set(names)) == 1 else ""
 
 
 def _libero_owner_binding_payload(
@@ -3859,49 +3881,60 @@ def parse_job_ids_by_name(output: str, job_name: str) -> list[str]:
     return [str(value) for value in sorted(ids, reverse=True)]
 
 
+def _task_status_row(job: dict[str, Any], current_id: str) -> dict[str, Any]:
+    """Normalize task timing and recovery fields without reparsing queue output."""
+
+    row = {
+        "job_id": current_id,
+        "task_id": job.get("task_id"),
+        "task_name": job.get("task_name") or job.get("job_name") or "",
+        "status": str(job.get("status") or "").upper(),
+        "submitted_at": job.get("submitted_at"),
+        "start_at": job.get("start_at"),
+        "end_at": job.get("end_at"),
+        "is_job_group": job.get("is_job_group"),
+        "execution": job.get("execution"),
+        "cluster_name": job.get("cluster_name_on_cloud")
+        or job.get("current_cluster_name")
+        or "",
+    }
+    # Preserve scheduler/recovery evidence without binding to one SkyPilot
+    # release's field spelling.  The actionable status projector consumes
+    # these normalized names and keeps the raw status separately.
+    for target, aliases in {
+        "retry_count": ("retry_count", "recovery_count", "num_restarts", "attempt"),
+        "last_progress_at": ("last_progress_at", "last_transition_at"),
+        "last_updated_at": ("last_updated_at", "updated_at"),
+        "failure_reason": ("failure_reason", "failure_message", "error"),
+    }.items():
+        for alias in aliases:
+            if job.get(alias) not in (None, ""):
+                row[target] = job[alias]
+                break
+    return row
+
+
+def _task_statuses_from_rows(
+    jobs: list[dict[str, Any]], job_id: str
+) -> list[dict[str, Any]]:
+    """Select task rows from the already parsed or verified queue evidence."""
+
+    rows: list[dict[str, Any]] = []
+    for job in jobs:
+        if not isinstance(job, dict):
+            continue
+        current_id = str(job.get("job_id") or job.get("id") or "")
+        if current_id == str(job_id):
+            rows.append(_task_status_row(job, current_id))
+    rows.sort(key=lambda row: (row.get("task_id") is None, row.get("task_id") or 0))
+    return rows
+
+
 def parse_task_statuses(output: str, job_id: str) -> list[dict[str, Any]]:
     """Extract per-task rows for ``job_id`` from ``sky jobs queue --output json``."""
 
     jobs = queue_rows_from_output(output)
-    if jobs is None:
-        return []
-    rows: list[dict[str, Any]] = []
-    for job in jobs or []:
-        if not isinstance(job, dict):
-            continue
-        current_id = str(job.get("job_id") or job.get("id") or "")
-        if current_id != str(job_id):
-            continue
-        row = {
-            "job_id": current_id,
-            "task_id": job.get("task_id"),
-            "task_name": job.get("task_name") or job.get("job_name") or "",
-            "status": str(job.get("status") or "").upper(),
-            "submitted_at": job.get("submitted_at"),
-            "start_at": job.get("start_at"),
-            "end_at": job.get("end_at"),
-            "is_job_group": job.get("is_job_group"),
-            "execution": job.get("execution"),
-            "cluster_name": job.get("cluster_name_on_cloud")
-            or job.get("current_cluster_name")
-            or "",
-        }
-        # Preserve scheduler/recovery evidence without binding to one SkyPilot
-        # release's field spelling.  The actionable status projector consumes
-        # these normalized names and keeps the raw status separately.
-        for target, aliases in {
-            "retry_count": ("retry_count", "recovery_count", "num_restarts", "attempt"),
-            "last_progress_at": ("last_progress_at", "last_transition_at"),
-            "last_updated_at": ("last_updated_at", "updated_at"),
-            "failure_reason": ("failure_reason", "failure_message", "error"),
-        }.items():
-            for alias in aliases:
-                if job.get(alias) not in (None, ""):
-                    row[target] = job[alias]
-                    break
-        rows.append(row)
-    rows.sort(key=lambda row: (row.get("task_id") is None, row.get("task_id") or 0))
-    return rows
+    return _task_statuses_from_rows(jobs, job_id) if jobs is not None else []
 
 
 class _LaunchStreamer:
@@ -5361,6 +5394,36 @@ def _looks_like_auth_error(detail: str) -> bool:
     )
 
 
+def _queue_row_job_id(row: Mapping[str, Any]) -> str:
+    """Read a positive managed-job identifier without coercing malformed values."""
+
+    value = row.get("job_id", row.get("id"))
+    if type(value) is int and value > 0:
+        return str(value)
+    if isinstance(value, str) and re.fullmatch(r"[1-9][0-9]*", value):
+        return value
+    return ""
+
+
+def _queue_verification_error(
+    result: subprocess.CompletedProcess[str], reason: str
+) -> str:
+    """Expose bounded, redacted diagnostics without treating them as job evidence."""
+
+    from npa.verification import sanitize_reason
+
+    diagnostics = []
+    for stream, output in (("stdout", result.stdout), ("stderr", result.stderr)):
+        if output.strip():
+            diagnostics.append(f"{stream}: {sanitize_reason(output, limit=300)}")
+    detail = "; ".join(diagnostics) or "no queue output"
+    return (
+        f"SkyPilot queue response does not verify managed-job state ({reason}). "
+        "Check SkyPilot client/controller configuration and restore queue access "
+        f"before resuming. {detail}"
+    )
+
+
 def _status_from_queue_payload(output: str, job_id: str) -> str:
     jobs = queue_rows_from_output(output)
     if jobs is None:
@@ -5373,11 +5436,9 @@ def _status_from_queue_rows(jobs: list[dict[str, Any]], job_id: str) -> str:
 
     statuses = []
     for job in jobs:
-        current_id = str(job.get("job_id") or job.get("id") or "")
+        current_id = _queue_row_job_id(job)
         if current_id == str(job_id):
-            status = str(job.get("status", "")).upper()
-            if status:
-                statuses.append(status)
+            statuses.append(str(job.get("status") or "").upper())
     if not statuses:
         return ""
     active_statuses = ("RUNNING", "RECOVERING", "STARTING", "PENDING", "CANCELLING")
