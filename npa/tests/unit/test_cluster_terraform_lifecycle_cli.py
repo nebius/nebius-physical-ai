@@ -3151,6 +3151,47 @@ region = "eu-north1"
     assert values["region"] == "eu-north1"
 
 
+def test_json_tfvars_select_gpu_topology_and_preserve_structured_values(tmp_path):
+    settings = {
+        "gpu_nodes_count": 4,
+        "gpu_nodes_platform": "gpu-h200-sxm",
+        "gpu_nodes_preset": "1gpu-16vcpu-200gb",
+        "gpu_disk_size": 512,
+        "enable_filestore": False,
+        "ssh_public_key": {"path": "~/.ssh/custom.pub"},
+    }
+    (tmp_path / "terraform.tfvars.json").write_text(json.dumps(settings))
+    assert tf_mod._read_tfvars(tmp_path) == settings
+
+
+def test_tfvars_load_order_matches_terraform_across_hcl_and_json(tmp_path):
+    (tmp_path / "terraform.tfvars").write_text('gpu_nodes_count = 1\nregion = "base"')
+    (tmp_path / "terraform.tfvars.json").write_text('{"gpu_nodes_count": 2}')
+    (tmp_path / "a.auto.tfvars.json").write_text('{"gpu_nodes_count": 3}')
+    (tmp_path / "b.auto.tfvars").write_text("gpu_nodes_count = 4")
+    values = tf_mod._read_tfvars(tmp_path)
+    assert values == {"gpu_nodes_count": 4, "region": "base"}
+
+
+@pytest.mark.parametrize("contents", ['{"iam_token": secret}', "[]", '"secret"'])
+def test_invalid_json_tfvars_fail_without_exposing_contents(tmp_path, contents):
+    (tmp_path / "terraform.tfvars.json").write_text(contents)
+    with pytest.raises(typer.BadParameter) as error:
+        tf_mod._read_tfvars(tmp_path)
+    assert "terraform.tfvars.json" in str(error.value)
+    assert "secret" not in str(error.value)
+
+
+@pytest.mark.parametrize("filename", ["terraform.tfvars.json", "z.auto.tfvars.json"])
+def test_json_tfvars_cannot_shadow_fresh_iam_token(tmp_path, filename):
+    (tmp_path / filename).write_text('{"iam_token": "private-credential"}')
+    values = tf_mod._read_tfvars(tmp_path)
+    with pytest.raises(typer.BadParameter) as error:
+        tf_mod._guard_tfvars_iam_token(tmp_path, values)
+    assert filename in str(error.value)
+    assert "private-credential" not in str(error.value)
+
+
 def test_up_explains_a_missing_ssh_public_key(monkeypatch, tmp_path: Path) -> None:
     tf_dir = tmp_path / "deploy" / "cluster"
     tf_dir.mkdir(parents=True)

@@ -24,14 +24,46 @@ LAYERS = {
     "application/vnd.oci.image.layer.v1.tar",
     "application/vnd.oci.image.layer.v1.tar+gzip",
 }
+DOCKER_MANIFEST = "application/vnd.docker.distribution.manifest.v2+json"
+DOCKER_CONFIG = "application/vnd.docker.container.image.v1+json"
+DOCKER_LAYERS = {
+    "application/vnd.docker.image.rootfs.diff.tar",
+    "application/vnd.docker.image.rootfs.diff.tar.gzip",
+}
 
 
-def inspect(fd, length, expected_id, *, platform, allow_docker_manifest=False):
-    """Return exact layer ranges and a hash-only receipt for every graph blob."""
+def inspect(
+    fd,
+    length,
+    expected_id,
+    *,
+    platform,
+    allow_docker_manifest=False,
+    direct_manifest=False,
+):
+    """Return layer ranges and hash receipts for one explicitly selected graph.
+
+    Args:
+        fd: Open archive descriptor.
+        length: Exact archive byte length.
+        expected_id: Index digest by default, manifest digest in direct mode.
+        platform: Required runtime platform and config identity.
+        allow_docker_manifest: Require and bind the Docker compatibility view.
+        direct_manifest: Explicitly admit one unattested Docker/OCI manifest.
+    Returns:
+        Ordered runtime layers, identities and every referenced graph blob.
+    Raises:
+        W.ScanError: The archive violates the selected closed-graph contract.
+    """
     W.require(
         isinstance(expected_id, str) and W.DIGEST.fullmatch(expected_id),
         "oci_expected_digest",
     )
+    W.require(type(direct_manifest) is bool, "oci_graph_mode")
+    W.require(not direct_manifest or allow_docker_manifest, "oci_direct_docker_view")
+    manifest_types = {MANIFEST, DOCKER_MANIFEST} if direct_manifest else {MANIFEST}
+    config_types = {CONFIG, DOCKER_CONFIG} if direct_manifest else {CONFIG}
+    layer_types = LAYERS | DOCKER_LAYERS if direct_manifest else LAYERS
     os.lseek(fd, 0, os.SEEK_SET)
     with (
         os.fdopen(os.dup(fd), "rb") as stream,
@@ -153,8 +185,14 @@ def inspect(fd, length, expected_id, *, platform, allow_docker_manifest=False):
 
         # A local OCI export may wrap the publication index in one or more
         # single-index descriptors. Never select one image out of a wider graph.
+        if direct_manifest:
+            index_schema(root)
+            W.require(len(root["manifests"]) == 1, "oci_direct_root_population")
+            desc = root["manifests"][0]
+            document(desc, manifest_types)
+            W.require(desc["digest"] == expected_id, "oci_direct_manifest_identity")
         selected, selected_digest = root, root_digest
-        while selected_digest != expected_id:
+        while not direct_manifest and selected_digest != expected_id:
             index_schema(selected)
             W.require(len(selected["manifests"]) == 1, "oci_publication_root_binding")
             desc = selected["manifests"][0]
@@ -167,7 +205,9 @@ def inspect(fd, length, expected_id, *, platform, allow_docker_manifest=False):
         def visit_index(value):
             index_schema(value)
             for desc in value["manifests"]:
-                manifest = document(desc, {INDEX, MANIFEST})
+                manifest = document(
+                    desc, manifest_types if direct_manifest else {INDEX, MANIFEST}
+                )
                 W.require(desc["digest"] not in visited, "oci_duplicate_graph_node")
                 visited.add(desc["digest"])
                 if desc["mediaType"] == INDEX:
@@ -176,7 +216,7 @@ def inspect(fd, length, expected_id, *, platform, allow_docker_manifest=False):
                 W.require(
                     type(manifest.get("schemaVersion")) is int
                     and manifest["schemaVersion"] == 2
-                    and manifest.get("mediaType") == MANIFEST
+                    and manifest.get("mediaType") == desc["mediaType"]
                     and isinstance(manifest.get("layers"), list),
                     "oci_manifest_schema",
                 )
@@ -187,6 +227,7 @@ def inspect(fd, length, expected_id, *, platform, allow_docker_manifest=False):
                     == "attestation-manifest"
                 )
                 if artifact or legacy:
+                    W.require(not direct_manifest, "oci_direct_attestation_forbidden")
                     W.require(
                         desc.get("platform")
                         == {"os": "unknown", "architecture": "unknown"},
@@ -235,8 +276,12 @@ def inspect(fd, length, expected_id, *, platform, allow_docker_manifest=False):
                         and "vnd.docker.reference.type" not in annotations,
                         "oci_runtime_manifest_schema",
                     )
-                    W.require(desc.get("platform") == platform, "oci_runtime_platform")
-                    config = document(manifest["config"], {CONFIG})
+                    W.require(
+                        desc.get("platform", platform if direct_manifest else None)
+                        == platform,
+                        "oci_runtime_platform",
+                    )
+                    config = document(manifest["config"], config_types)
                     W.require(
                         all(
                             config.get(key) == value for key, value in platform.items()
@@ -259,7 +304,7 @@ def inspect(fd, length, expected_id, *, platform, allow_docker_manifest=False):
                     for ordinal, (layer, diff_id) in enumerate(
                         zip(manifest["layers"], diff_ids, strict=True)
                     ):
-                        name, _ = bound(layer, LAYERS)
+                        name, _ = bound(layer, layer_types)
                         member = members[name]
                         layers.append(
                             {
@@ -278,10 +323,14 @@ def inspect(fd, length, expected_id, *, platform, allow_docker_manifest=False):
         visit_index(root)
         W.require(len(runtime) == 1, "oci_runtime_population")
         manifest_digest, config_digest, layers = runtime[0]
-        W.require(
-            attestations and all(target == manifest_digest for target in attestations),
-            "oci_attestation_target",
-        )
+        if direct_manifest:
+            W.require(not attestations, "oci_direct_attestation_forbidden")
+        else:
+            W.require(
+                attestations
+                and all(target == manifest_digest for target in attestations),
+                "oci_attestation_target",
+            )
         regular = {name for name, member in members.items() if member.isfile()}
         metadata = {"index.json", "oci-layout"}
         if allow_docker_manifest:
@@ -314,7 +363,9 @@ def inspect(fd, length, expected_id, *, platform, allow_docker_manifest=False):
             "image_config_digest": config_digest,
             "receipt": {
                 "archive_index_digest": root_digest,
-                "image_index_digest": expected_id,
+                (
+                    "image_manifest_digest" if direct_manifest else "image_index_digest"
+                ): expected_id,
                 "runtime_platform": platform,
                 "blob_count": len(stored),
                 "blob_bytes": sum(members[name].size for name in stored),

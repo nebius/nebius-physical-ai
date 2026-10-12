@@ -87,8 +87,8 @@ def test_logs_use_saved_isolated_connection(
     monkeypatch.setenv("SKYPILOT_API_SERVER_ENDPOINT", "http://127.0.0.1:1111")
     calls = []
 
-    def selected_connection(root, environment):
-        calls.append(root)
+    def selected_connection(root, environment, *, recover=True):
+        calls.append((root, recover))
         return {**environment, "SKYPILOT_API_SERVER_ENDPOINT": "http://127.0.0.1:2222"}
 
     monkeypatch.setattr(local_api, "isolated_api_environment", selected_connection)
@@ -97,7 +97,7 @@ def test_logs_use_saved_isolated_connection(
     )
     assert result.returncode == 0, result.stderr
     output = json.loads(result.stdout)
-    assert calls == [isolated]
+    assert calls == [(isolated, True)]
     assert output["endpoint"] == "http://127.0.0.1:2222"
     assert output["home"] == str(isolated / "home")
     assert Path(output["cwd"]).resolve() == isolated.resolve()
