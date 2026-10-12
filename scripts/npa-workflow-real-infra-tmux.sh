@@ -75,7 +75,7 @@ from npa_workflow_live_helpers import live_bucket
 print(live_bucket(None))
 PY
 )"
-  for spec in "${SPECS}/main"/*.yaml "${SPECS}/testing"/*.yaml "${SPECS}/partners"/*/*.yaml; do
+  for spec in "${SPECS}/main"/*.yaml "${SPECS}/testing"/*.yaml "${SPECS}/cosmos-data-factory"/*.yaml "${SPECS}/partners"/*/*.yaml; do
     [[ -f "$spec" ]] || continue
     base=$(basename "$spec")
     stem="${base%.yaml}"

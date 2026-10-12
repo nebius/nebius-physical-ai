@@ -185,6 +185,10 @@ Keep the returned run ID: you use it to inspect logs, find artifacts, and resume
 For video augmentation, the [PAIDF + Cosmos 3 runbook](workflows/guides/paidf-cosmos3.md)
 includes a public source-video example and full submission commands.
 
+For a shared installation, [team PAIDF](docs/workbench/team-paidf.md) covers
+new-user sign-in, local groups, scoped allocations, and 20 LeRobot episodes
+submitted through the shared CLI or SDK.
+
 <a id="pick-your-first-win"></a>
 
 ## Choose your first workload
@@ -235,6 +239,8 @@ See the [workflow catalog](workflows/README.md),
 [14-stage Sim2Real pipeline](docs/workbench/guides/sim2real-workflow.md) uses this
 same runtime at [`workflows/main/sim2real.yaml`](workflows/main/sim2real.yaml)
 and requires its own prepared images, task data, and resource profiles.
+Its manual runbook starts with a fresh CLI install and a qualified five-image
+release gate before provisioning; running it requires no agent deployment.
 Its [data contracts](docs/workbench/guides/sim2real-data-contracts.md) preserve
 simulator episode resets across sparse samples and exclude reset intervals from
 training credit. The older `sim2real/runbook.yaml` is a legacy path.

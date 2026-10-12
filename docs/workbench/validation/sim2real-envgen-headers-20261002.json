@@ -1,0 +1,20 @@
+{
+  "schema": "npa.sim2real.envgen-header-selection/v1",
+  "snapshot": "20261002T000000Z",
+  "suite": "jammy-updates",
+  "selected_version": "5.15.0-198.208",
+  "fixed_floor": "5.15.0-194.204",
+  "package": {
+    "Version": "5.15.0-198.208",
+    "Filename": "pool/main/l/linux/linux-libc-dev_5.15.0-198.208_amd64.deb",
+    "SHA256": "d7ba314f1e0e79745f104eaeeb662723fb72b1d4ab45c923d93db32867dd11e7",
+    "Size": 1390974
+  },
+  "authority": {
+    "packages_sha256": "98ccb2f8ad86c7edc8c93b4b83ea1dc57110fd8529709d0811b4dbf57d527ff4",
+    "inrelease_sha256": "765ccb6858cc1f3c1837ee5f84fc0bdcc137fdd3a1bb49271713c9d13c3f0374",
+    "keyring_sha256": "1a4dd63e5c76728960a2edddae22e2e0fc53df8e8b87806deb971030ac704eb0",
+    "retained_gpgv_exit": 0
+  },
+  "scope": "Retained signed frozen-index identity and actual failed-build selection; not a repaired image scan or functional acceptance. The original lower-floor downgrade failure is preserved."
+}

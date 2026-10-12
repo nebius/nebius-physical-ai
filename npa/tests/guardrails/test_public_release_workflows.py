@@ -358,16 +358,21 @@ def test_post_push_payload_scan_binds_remote_digest_to_local_full_tar() -> None:
     post_push = text[text.index("Verify pushed bytes") :]
 
     assert 'docker pull "$exact"' in post_push
-    # The remote config digest, pulled image, local image, and independent
-    # cuRobo archive verifier are each bound to the exact inspected image.
-    assert post_push.count("docker image inspect --format '{{.Id}}'") == 4
+    # Check each shared binding role, not an aggregate affected by new tools.
+    assert (
+        'config_digest="$(docker image inspect --format \'{{.Id}}\' "$exact")"'
+        in post_push
+    )
     assert (
         'test "$(docker image inspect --format \'{{.Id}}\' "$exact")" = \\\n'
         '                "$(docker image inspect --format \'{{.Id}}\' "$IMAGE")"'
     ) in post_push
+    curobo_verification = post_push.split(
+        "npa/docker/workbench/curobo/verify_image.py", 1
+    )[1].split("--json", 1)[0]
     assert (
         '--expected-image-id "$(docker image inspect --format \'{{.Id}}\' "$exact")"'
-        in post_push
+        in curobo_verification
     )
     assert (
         'docker save "${save_platform[@]}" --output "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact"'

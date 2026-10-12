@@ -123,6 +123,29 @@ def test_top_level_login_and_logout_help_are_discoverable():
     assert runner.invoke(app, ["logout", "--help"]).exit_code == 0
 
 
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "http://team.example.test",
+        "https://user:private-value@team.example.test",
+        "https://team.example.test?token=private-value",
+        "https://team.example.test#private-value",
+    ],
+)
+def test_invalid_endpoint_is_rejected_before_nebius_setup_or_login(
+    endpoint, native, connection, monkeypatch
+):
+    def metadata_forbidden(**options):
+        pytest.fail("invalid endpoint started Nebius profile discovery")
+
+    monkeypatch.setattr(nebius_login, "list_profiles", metadata_forbidden)
+    result = runner.invoke(app, ["login", "--endpoint", endpoint, "--nebius"])
+    assert result.exit_code != 0
+    assert not native.created and not native.calls and not connection.requests
+    assert "private-value" not in result.output
+    assert not SessionStore().exists("default")
+
+
 def test_local_key_login_verifies_before_saving_private_connection(
     connection, key_file
 ):

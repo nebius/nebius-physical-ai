@@ -13,10 +13,11 @@
   "current_source_reuse": {
     "status": "requires-requalification",
     "changed_inputs": [
+      "npa/docker/workbench/habitat-sim/bootstrap_sources.py",
       "npa/docker/workbench/habitat-sim/requirements-runtime.lock",
       "npa/src/npa/__init__.py"
     ],
-    "reason": "The runtime dependency lock and SDK export surface changed after the recorded producer. These historical image hashes and GPU results do not qualify a rebuild from current source."
+    "reason": "The signed source-descriptor parser, runtime dependency lock and SDK export surface changed after the recorded producer. These historical image hashes and GPU results do not qualify a rebuild from current source."
   },
   "source_inputs": [
     {

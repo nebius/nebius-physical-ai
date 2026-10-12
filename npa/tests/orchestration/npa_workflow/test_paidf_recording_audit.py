@@ -74,6 +74,77 @@ def video(tmp_path_factory):
     return path
 
 
+@pytest.mark.parametrize(
+    "publication", ["", "_native/" + "a" * 64 + "/" + "b" * 64 + "/"]
+)
+def test_transfer_audit_reads_manifest_publication_with_real_video(
+    live_audit, video, tmp_path, publication
+):
+    from npa.workflows.paidf_cosmos3_media import prepare_reference, verify_pair
+
+    base = "cosmos_augmented/candidate-a/" + publication
+    source = tmp_path / "source.mp4"
+    prepare_reference(video, source, 24)
+    alignment = verify_pair(source, source, 24)
+    control = b"native-edge-control-evidence"
+    reports = {
+        base + "metadata.json": {
+            "published_video_sha256": alignment["generated_sha256"]
+        },
+        base + "transfer.json": {
+            "source_frames": alignment["decoded_frames"],
+            "native_torch_compile": False,
+            "control_loader_verified": True,
+            "text_guardrail_passed": True,
+            "video_guardrail_passed": True,
+            "guardrail_postprocessing_applied": True,
+            "control_sha256": hashlib.sha256(control).hexdigest(),
+        },
+    }
+    media = {
+        PREFIX + base + "augmented_video.mp4": source.read_bytes(),
+        PREFIX + base + "source_edges.mkv": control,
+    }
+
+    def download_file(bucket, key, destination):
+        assert bucket == BUCKET
+        Path(destination).write_bytes(media[key])
+
+    variant = {
+        "clip": "candidate-a",
+        "augmented_video_uri": f"s3://{BUCKET}/{PREFIX}{base}augmented_video.mp4",
+        "temporal_alignment": alignment,
+    }
+    live_audit._assert_transfer_variant(
+        SimpleNamespace(download_file=download_file),
+        BUCKET,
+        PREFIX,
+        variant,
+        {"temporal_alignment": alignment},
+        source,
+        tmp_path,
+        reports.__getitem__,
+    )
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        f"s3://other-synthetic-bucket/{PREFIX}cosmos_augmented/candidate-a/augmented_video.mp4",
+        f"s3://{BUCKET}/other-run/cosmos_augmented/candidate-a/augmented_video.mp4",
+        f"s3://{BUCKET}/{PREFIX}cosmos_augmented/candidate-b/augmented_video.mp4",
+        f"s3://{BUCKET}/{PREFIX}cosmos_augmented/candidate-a/../augmented_video.mp4",
+        f"s3://{BUCKET}/{PREFIX}cosmos_augmented/candidate-a/%2e%2e/augmented_video.mp4",
+        f"s3://{BUCKET}/{PREFIX}cosmos_augmented/candidate-a/augmented_video.mp4?token=example",
+    ],
+)
+def test_transfer_audit_rejects_publication_outside_selected_boundary(live_audit, uri):
+    with pytest.raises(AssertionError):
+        live_audit._published_variant_base(
+            BUCKET, PREFIX, {"clip": "candidate-a", "augmented_video_uri": uri}
+        )
+
+
 def _source_reports():
     curator = {
         "schema": "npa.cosmos_curate.curation.v1",
@@ -124,7 +195,10 @@ def _source_reports():
 def _write_recording(path, video, selected, *, defect=""):
     import rerun as rr
 
-    rec = rr.RecordingStream("neural-reconstruction", recording_id="synthetic-run")
+    rec = rr.RecordingStream(
+        "other-application" if defect == "application" else "physical-ai-data-factory",
+        recording_id="other-run" if defect == "recording" else "synthetic-run",
+    )
     rec.save(str(path))
     for entity, key in (
         ("pipeline/4_cosmos_curator", CURATOR),
@@ -233,7 +307,7 @@ def test_live_audit_accepts_sanitized_recording_and_hashes_original_bytes(
 
 
 def _stage_producer_run(case):
-    run = case.folder / "producer-run"
+    run = case.folder / "synthetic-run"
     for relative, raw in case.bodies.items():
         path = run / relative
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -300,6 +374,30 @@ def test_live_audit_keeps_grounded_public_provenance_links(live_audit, recording
     _write_recording(case.path, case.video, case.selected)
 
     _audit(live_audit, case)
+
+
+@pytest.mark.parametrize(
+    "defect, message",
+    [("application", "Wrong PAIDF application"), ("recording", "different run")],
+)
+def test_live_audit_rejects_recording_from_another_run_or_application(
+    live_audit, recording_case, defect, message
+):
+    case = recording_case
+    _write_recording(case.path, case.video, case.selected, defect=defect)
+    with pytest.raises(AssertionError, match=message):
+        _audit(live_audit, case)
+
+
+def test_live_audit_rejects_incomplete_uploaded_recording(live_audit, recording_case):
+    case = recording_case
+    _write_recording(case.path, case.video, case.selected)
+    case.path.write_bytes(case.path.read_bytes()[:-1])
+    with (
+        pytest.warns(Warning, match="no footer"),
+        pytest.raises(RuntimeError, match="footer|manifest"),
+    ):
+        _audit(live_audit, case)
 
 
 @pytest.mark.parametrize(

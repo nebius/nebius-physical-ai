@@ -205,6 +205,7 @@ def test_cancellation_race_retains_actual_success(partial_runtime, valid):
         "unavailable",
         "wrong_id",
         "wrong_name",
+        "empty_name",
         "missing_name",
         "running",
         "unknown_terminal",
@@ -229,7 +230,13 @@ def test_uncertain_exact_identity_or_terminal_blocks(partial_runtime, outcome):
         return SimpleNamespace(
             outcome=outcome if outcome in {"absent", "unavailable"} else "found",
             job_id="99" if outcome == "wrong_id" else job_id,
-            job_name="different-name" if outcome == "wrong_name" else name,
+            job_name=(
+                "different-name"
+                if outcome == "wrong_name"
+                else ""
+                if outcome == "empty_name"
+                else name
+            ),
             status="RUNNING" if outcome == "running" else "UNKNOWN",
             workload_observable=True,
         )

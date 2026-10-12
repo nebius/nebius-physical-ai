@@ -378,7 +378,9 @@ def test_paidf_gpu_agnostic_video_clients_still_require_scheduled_cuvid(
     entry = next(item for item in entries if item["name"] == name)
     proof = manifest["validation_evidence"][name]
     workflow = yaml.safe_load(
-        (ROOT / "workflows/testing/paidf-event-video-generation.yaml").read_text()
+        (
+            ROOT / "workflows/cosmos-data-factory/paidf-event-video-generation.yaml"
+        ).read_text()
     )
 
     assert entry["verdict"] == "not-applicable"
@@ -503,6 +505,9 @@ def test_names_match_the_real_container_image_names(entries: list[dict]) -> None
         "npa-cosmos3-serving",
         "npa-content-agents",
         "npa-sim2real-control",
+        # Restricted workflow-only runtime; the EmbodiedGen renderer must use
+        # its explicit operator-private digest rather than a deploy default.
+        "npa-embodiedgen",
         # Restricted workflow-only compatibility runtime; selected explicitly
         # by the DIG resource profile, with no standalone deploy service.
         "npa-paidf-anomalygen-sky",

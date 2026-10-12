@@ -1,0 +1,97 @@
+{
+  "schema": "npa.embodiedgen.runtime-manifest.v1",
+  "solution": {
+    "name": "EmbodiedGen V2",
+    "source": "https://github.com/HorizonRobotics/EmbodiedGen.git",
+    "revision": "f0124197888c2b733e4eaa65acd81ad9cfda3b79",
+    "license": "Apache-2.0"
+  },
+  "backend": {
+    "name": "TRELLIS",
+    "source": "https://github.com/microsoft/TRELLIS.git",
+    "revision": "55a8e8164b195bbf927e0978f00e76c835e6011f",
+    "license": "MIT",
+    "model": "microsoft/TRELLIS-image-large",
+    "model_revision": "25e0d31ffbebe4b5a97464dd851910efc3002d96",
+    "model_license": "MIT"
+  },
+  "property_estimator": {
+    "provider": "openai-compatible",
+    "model": "openbmb/MiniCPM-V-4_5",
+    "license": "Apache-2.0",
+    "semantics": "VLM estimates only; not calibrated ground truth"
+  },
+  "runtime": {
+    "cache_env": "NPA_EMBODIEDGEN_RUNTIME_CACHE",
+    "input_uri_env": "NPA_EMBODIEDGEN_INPUT_URI",
+    "output_env": "NPA_SMOKE_OUTPUT_DIR",
+    "upstream_requirements": {
+      "path": "requirements.txt",
+      "sha256": "acd142fb1d6d87931a5b4c783110526acade67d641d01ab2660f1fece7af9157"
+    },
+    "upstream_install_basic": {
+      "path": "install/install_basic.sh",
+      "sha256": "2969700d580e8a0f18e377cddd3f3976317748c744ce0408ba6721d0a88f84d1"
+    },
+    "operator_runtime": {
+      "python": "3.12",
+      "pip": "pip==24.0",
+      "cuda_variant": "cu128",
+      "torch_index_url": "https://download.pytorch.org/whl/cu128",
+      "torch_cuda_arch_list": "12.0",
+      "tcnn_cuda_architectures": "120"
+    },
+    "validation_requirements": [
+      "numpy==1.26.4",
+      "scipy==1.14.1",
+      "Pillow==11.3.0",
+      "trimesh==4.11.1",
+      "plyfile==1.0.3",
+      "tifffile==2024.8.30",
+      "contourpy==1.3.0",
+      "imageio==2.37.4",
+      "imageio-ffmpeg==0.6.0",
+      "pybullet==3.2.7"
+    ],
+    "validation_system_packages": ["libxrender1"],
+    "trellis_attention_runtime": {
+      "xformers_version": "0.0.32.post2",
+      "fa3_enabled": false,
+      "dense_backend": "xformers",
+      "sparse_attention_backend": "xformers",
+      "expected_dispatch_prefix": "fa2F",
+      "cuda_capability": [12, 0]
+    },
+    "urdf_property_response": {
+      "reasoning_prefix": "one_completed_leading_think_block",
+      "completion_finish_reason": "stop",
+      "max_tokens": 2048,
+      "height_mass_ranges": "finite_positive_ordered",
+      "friction": {
+        "scalar": "finite_nonnegative",
+        "range": "finite_nonnegative_ordered_arithmetic_midpoint",
+        "provenance": "per_field_raw_and_normalized_sidecar"
+      },
+      "required_labels": [
+        "Category",
+        "Description",
+        "Pose",
+        "Height",
+        "Weight",
+        "Static friction coefficient",
+        "Dynamic friction coefficient"
+      ],
+      "query_or_parse_failure": "fail"
+    },
+    "credential_envs": ["NEBIUS_TOKEN_FACTORY_KEY", "NPA_TOKEN_FACTORY_API_KEY"],
+    "baked": {
+      "source": false,
+      "model": false,
+      "input": false,
+      "cache": false,
+      "output": false,
+      "credentials": false
+    }
+  },
+  "capability": "img3d-cli_trellis_image_to_urdf_pybullet"
+}

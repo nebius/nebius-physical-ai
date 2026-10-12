@@ -1,5 +1,6 @@
 """Verify the same authenticated ownership boundary across all run API operations."""
 
+import json
 import threading
 from types import SimpleNamespace
 
@@ -35,14 +36,14 @@ def application(config, tokens):
             worker.join()
 
 
-def _submit(application, tokens, workflow):
+def _submit(application, tokens, workflow, key="first"):
     response = application.client.post(
         "/v1/runs",
         headers={"Authorization": "Bearer " + tokens.sign()},
         json={
             "workspace": "robotics",
             "cluster": "east",
-            "idempotency_key": "first",
+            "idempotency_key": key,
             "workflow": workflow,
         },
     )
@@ -198,3 +199,150 @@ def test_downgraded_reader_can_read_owned_outputs_but_cannot_mutate(
             tokens.verifier.verify(headers["Authorization"]),
             application.service.ledger.get(run_id),
         )
+
+
+def _set_runtime_source(application, source):
+    config = application.policy[0]
+    values = config.model_dump()
+    values["workspaces"]["robotics"]["allocations"][0]["source_s3_uri"] = source
+    application.policy[0] = type(config).model_validate(values)
+
+
+@pytest.mark.parametrize(
+    "original,updated",
+    [
+        ("", "s3://team-test-alice/personal/source/new/npa"),
+        ("s3://team-test-alice/personal/source/old/npa", ""),
+        (
+            "s3://team-test-alice/personal/source/old/npa",
+            "s3://team-test-alice/personal/source/new/npa",
+        ),
+    ],
+)
+def test_source_updates_retain_owned_outputs_retries_and_run_versions(
+    application, tokens, workflow, original, updated
+):
+    _set_runtime_source(application, original)
+    run_id = _submit(application, tokens, workflow)
+    _set_runtime_source(application, updated)
+    application.service.backend_factory = lambda config, binding, *args: (
+        SimpleNamespace(logs=lambda: binding.allocation.source_s3_uri)
+    )
+    application.service.storage_factory = lambda grant: SimpleNamespace(
+        list=lambda prefix: [{"key": prefix + "/output.txt"}]
+    )
+    headers = {"Authorization": "Bearer " + tokens.sign()}
+    logs = application.client.get(f"/v1/runs/{run_id}/logs", headers=headers)
+    assert logs.status_code == 200 and logs.json() == {"logs": original}
+    artifacts = application.client.get(f"/v1/runs/{run_id}/artifacts", headers=headers)
+    assert artifacts.status_code == 200
+    assert artifacts.json()["artifacts"] == [
+        {"key": f"personal/runs/{run_id}/output.txt"}
+    ]
+    assert _submit(application, tokens, workflow) == run_id
+    actor = tokens.verifier.verify(headers["Authorization"])
+    application.service._check_running(actor, application.service.ledger.get(run_id))
+    new_id = _submit(application, tokens, workflow, key="new-version")
+    assert new_id != run_id
+    for selected, expected in [(run_id, original), (new_id, updated)]:
+        recorded = json.loads(application.service.ledger.get(selected)["binding"])
+        assert recorded.get("source_s3_uri", "") == expected
+
+
+def test_resuming_after_source_update_keeps_original_package(
+    application, tokens, workflow
+):
+    original = "s3://team-test-alice/personal/source/old/npa"
+    _set_runtime_source(application, original)
+
+    def interrupted(*args, **kwargs):
+        raise RuntimeError("simulated interrupted worker")
+
+    application.service.engine = interrupted
+    run_id = _submit(application, tokens, workflow)
+    for worker in list(application.service._workers.values()):
+        worker.join()
+    assert application.service.ledger.get(run_id)["status"] == "recovery_required"
+    _set_runtime_source(application, "s3://team-test-alice/personal/source/new/npa")
+    observed = []
+
+    def resumed(config, binding, record, backend, check, *, resume):
+        observed.append((binding.allocation.source_s3_uri, resume))
+        return SimpleNamespace(status="succeeded")
+
+    application.service.engine = resumed
+    response = application.client.post(
+        f"/v1/runs/{run_id}/resume",
+        headers={"Authorization": "Bearer " + tokens.sign()},
+    )
+    assert response.status_code == 202, response.text
+    for worker in list(application.service._workers.values()):
+        worker.join()
+    assert observed == [(original, True)]
+
+
+@pytest.mark.parametrize(
+    "boundary", ["bucket", "prefix", "principal", "inputs", "cluster"]
+)
+def test_source_rotation_still_rejects_changed_execution_boundaries(
+    application, tokens, workflow, boundary
+):
+    _set_runtime_source(application, "s3://team-test-alice/personal/source/old/npa")
+    run_id = _submit(application, tokens, workflow)
+    config = application.policy[0]
+    values = config.model_dump()
+    allocation = values["workspaces"]["robotics"]["allocations"][0]
+    if boundary == "inputs":
+        allocation["shared_inputs"] = ["s3://shared-test/reference/"]
+    elif boundary == "cluster":
+        values["clusters"]["east"]["context"] = "reallocated"
+    else:
+        allocation["storage"][boundary] = "reallocated"
+    storage = allocation["storage"]
+    allocation["source_s3_uri"] = (
+        f"s3://{storage['bucket']}/{storage['prefix']}/source/new/npa"
+    )
+    application.policy[0] = type(config).model_validate(values)
+    headers = {"Authorization": "Bearer " + tokens.sign()}
+    for suffix in ("/logs", "/artifacts"):
+        response = application.client.get(f"/v1/runs/{run_id}{suffix}", headers=headers)
+        assert response.status_code == 409, response.text
+
+
+def test_source_rotation_keeps_offboarding_and_foreign_owner_denial(
+    application, tokens, workflow
+):
+    run_id = _submit(application, tokens, workflow)
+    _set_runtime_source(application, "s3://team-test-alice/personal/source/new/npa")
+    config = application.policy[0]
+    application.policy[0] = config.model_copy(update={"disabled_subjects": ("alice",)})
+    for subject, expected in [("alice", 403), ("bob", 404)]:
+        for suffix in ("/logs", "/artifacts"):
+            response = application.client.get(
+                f"/v1/runs/{run_id}{suffix}",
+                headers={"Authorization": "Bearer " + tokens.sign(subject)},
+            )
+            assert response.status_code == expected
+
+
+def test_recorded_source_cannot_use_a_revoked_shared_input(
+    application, tokens, workflow
+):
+    config = application.policy[0]
+    values = config.model_dump()
+    allocation = values["workspaces"]["robotics"]["allocations"][0]
+    allocation["shared_inputs"] = ["s3://shared-test/source/"]
+    allocation["source_s3_uri"] = "s3://shared-test/source/old/npa"
+    application.policy[0] = type(config).model_validate(values)
+    run_id = _submit(application, tokens, workflow)
+    allocation["shared_inputs"] = []
+    allocation["source_s3_uri"] = "s3://team-test-alice/personal/source/new/npa"
+    application.policy[0] = type(config).model_validate(values)
+    response = application.client.get(
+        f"/v1/runs/{run_id}/artifacts",
+        headers={"Authorization": "Bearer " + tokens.sign()},
+    )
+    assert response.status_code == 409
+    assert response.json() == {
+        "error": "recorded runtime source no longer uses an allocated input scope"
+    }

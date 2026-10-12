@@ -457,6 +457,7 @@ def test_rebuilt_surfaces_including_detection_training_are_gpu_accepted() -> Non
     """
     assert RESTRICTED_PUBLICATION_TOOLS == frozenset(
         {
+            "embodiedgen",
             "cosmos3-nano-video",
             "cosmos3-super-benchmark",
             "paidf-anomalygen-sky",
@@ -474,7 +475,7 @@ def test_rebuilt_surfaces_including_detection_training_are_gpu_accepted() -> Non
     for tool in ("isaac-lab", "sonic", "groot", "cosmos3-serving", "sonic-mujoco"):
         assert is_publicly_redistributable(tool), tool
     assert UNVALIDATED_PUBLICATION_TOOLS == (
-        frozenset({"openpi", "curobo", "ncore", "libero", "sam3"})
+        frozenset({"seedvr2", "openpi", "curobo", "ncore", "libero", "sam3"})
         | ({"robotwin", "robomimic", "habitat-sim"} & CONTAINER_IMAGE_NAMES.keys())
     )
     assert NEUTRAL_UNBUILT_CANDIDATE_TOOLS == frozenset({"openvla-oft"})
@@ -778,6 +779,7 @@ def test_the_restriction_mechanism_still_exists() -> None:
     assert restricted_image_names() == [
         "cosmos3-nano-video",
         "cosmos3-super-benchmark",
+        "embodiedgen",
         "openvla-oft",
         "paidf-anomalygen-sky",
         "paidf-attribute-search-sky",

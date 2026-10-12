@@ -34,6 +34,7 @@ nurec  NVIDIA Omniverse NuRec / Neural Reconstruction Engine: sensor recordings 
     Apache-2.0 NVIDIA NCore on CPU. Proprietary NRE reconstruction/rendering requires an RT-core GPU (L40S or RTX PRO 6000 Blackwell); never route the render path at H100/H200.
 sonic  NVIDIA GEAR-SONIC whole-body-control workbench.
 mjlab  MJLab GPU robot learning, evaluation and ONNX export.
+gemini-robotics  Gemini Robotics hosted planning and evaluation (plan, eval). Bring your own GOOGLE_API_KEY; model and base URL default to the live-validated endpoint.
 ros2  ROS 2 Jazzy prerequisite detection and deployment planning (bridge/bag-conversion/fleet execution not implemented).
 namespace  Create or select Kubernetes namespaces.
 molmoact  MolmoAct VLA: validate fine-tune/serve/eval configs (planning only; execution not implemented).
@@ -47,6 +48,7 @@ ltx2  LTX-2.5 licence surface: print the LTX-2.x Community License terms, the pi
     unlocks.
 alpamayo2-super  NVIDIA Alpamayo 2 Super trajectory-inference workbench.
 curobo  NVIDIA cuRobo V2 motion planning and complete benchmark evaluation.
+seedvr2  Restore low-resolution video with official ByteDance SeedVR2-3B.
 marble  World Labs Marble worlds, CUDA camera datasets, and spatial scans.
 lancedb  Deploy and query LanceDB vector-search workbenches.
 detection-training  Train Faster R-CNN detectors from LanceDB materialized views.
@@ -97,6 +99,7 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 | `nurec` | NVIDIA Omniverse NuRec / Neural Reconstruction Engine: sensor recordings -> 3DGUT Gaussian reconstruction -> renderable USDZ -> novel-view renders. COLMAP ingestion uses Apache-2.0 NVIDIA NCore on CPU. Proprietary NRE reconstruction/rendering requires an RT-core GPU (L40S or RTX PRO 6000 Blackwell); never route the render path at H100/H200. |
 | `sonic` | NVIDIA GEAR-SONIC whole-body-control workbench. |
 | `mjlab` | MJLab GPU robot learning, evaluation and ONNX export. |
+| `gemini-robotics` | Gemini Robotics hosted planning and evaluation (plan, eval). Bring your own GOOGLE_API_KEY; model and base URL default to the live-validated endpoint. |
 | `ros2` | ROS 2 Jazzy prerequisite detection and deployment planning (bridge/bag-conversion/fleet execution not implemented). |
 | `namespace` | Create or select Kubernetes namespaces. |
 | `molmoact` | MolmoAct VLA: validate fine-tune/serve/eval configs (planning only; execution not implemented). |
@@ -109,6 +112,7 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 | `ltx2` | LTX-2.5 licence surface: print the LTX-2.x Community License terms, the pinned upstream source, and the gated weights repository the operator's own Hugging Face entitlement unlocks. |
 | `alpamayo2-super` | NVIDIA Alpamayo 2 Super trajectory-inference workbench. |
 | `curobo` | NVIDIA cuRobo V2 motion planning and complete benchmark evaluation. |
+| `seedvr2` | Restore low-resolution video with official ByteDance SeedVR2-3B. |
 | `marble` | World Labs Marble worlds, CUDA camera datasets, and spatial scans. |
 | `lancedb` | Deploy and query LanceDB vector-search workbenches. |
 | `detection-training` | Train Faster R-CNN detectors from LanceDB materialized views. |
