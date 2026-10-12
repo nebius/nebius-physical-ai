@@ -37,6 +37,16 @@ licenses:
     applies_to:
       - neural-reconstruction
 skills:
+  - name: embodiedgen
+    category: tools
+    when_to_use: "Run or review EmbodiedGen V2 image-to-rigid-object generation through the operator-private TRELLIS runtime, exported URDF/collision geometry, PyBullet validation, and factual view artifacts."
+    path: skills/tools/embodiedgen/SKILL.md
+    smoke:
+      - type: file_exists
+        path: docs/workbench/embodiedgen.md
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/testing/byof-embodiedgen.yaml
   - name: marble
     category: tools
     when_to_use: "Generate or import Marble worlds, collect CUDA sensor data, or prepare generated collision geometry for native navigation learning."
@@ -99,6 +109,17 @@ skills:
       - type: npa_workflow_yaml
         paths:
           - workflows/testing/curobo-benchmark.yaml
+  - name: seedvr2
+    category: tools
+    when_to_use: "Package, run, validate or review official SeedVR2-3B restoration of robot observation video, its S3 workflow, or objective and visual evidence."
+    path: skills/tools/seedvr2/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "seedvr2", "restore", "--help"]
+        contains: "input-path"
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/testing/seedvr2-video-restoration.yaml
   - name: open3d
     category: tools
     when_to_use: "Register overlapping point-cloud scans with real RANSAC/FPFH and ICP, optimize a multiway pose graph, reconstruct a Poisson surface, or review Open3D registration artifacts and their validators."

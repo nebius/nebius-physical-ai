@@ -383,6 +383,27 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Uses a qualified public GHCR image; exact-digest GPU evidence is recorded in the OSS solution catalog.",
     ),
     SubmitLiveCase(
+        "byof-embodiedgen.yaml",
+        "gpu",
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "NEBIUS_TOKEN_FACTORY_KEY",
+        ),
+        requires_token_factory=True,
+        plan_only=True,
+        plan_only_justification=(
+            "The automated matrix intentionally does not replay the qualified private "
+            "GPU run; each operator submission requires its own private image, "
+            "credential, input/output, and fresh target preflight."
+        ),
+        notes=(
+            "One exact private image completed TRELLIS generation, EmbodiedGen "
+            "URDF/MJCF export, and PyBullet settling on RTX PRO 6000; no public "
+            "image or target-wide readiness is implied."
+        ),
+    ),
+    SubmitLiveCase(
         "cosmos3-policy-model-factory.yaml",
         "gpu",
         secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
@@ -436,6 +457,16 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         image_tool="curobo",
         notes="Complete MotionBenchMaker and MPiNets cases, kinematic and 3 kg dynamics modes, verified journal and RRD.",
+    ),
+    SubmitLiveCase(
+        "seedvr2-video-restoration.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        image_tool="seedvr2",
+        notes=(
+            "Pinned official SeedVR2-3B restoration on one H100, followed by "
+            "independent S3 readback verification and matched review media."
+        ),
     ),
     SubmitLiveCase(
         "open3d-registration.yaml",
@@ -1681,6 +1712,8 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "robocasa-data-policy.yaml",
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "ROBOCASA_TOKEN"),
+        plan_only=True,
+        plan_only_justification="the workflow requires a separately deployed RoboCasa service plus its accepted exact source SHA and manifest digest; the generic rotation cannot safely synthesize either identity",
         notes="Production PandaOmron RoboCasa data->policy pipeline: multi-task trajectory export, LeRobotDataset materialization, real ACT training, disjoint RoboCasa exact-checkpoint evaluation, insights lineage.",
     ),
     SubmitLiveCase(

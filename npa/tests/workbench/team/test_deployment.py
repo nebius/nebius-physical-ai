@@ -85,6 +85,10 @@ def test_scheduler_cannot_grant_cluster_roles_or_impersonate_arbitrary_users(bin
     assert all(
         set(rule["verbs"]) <= {"get", "list", "watch"} for rule in discovery["rules"]
     )
+    assert any(
+        "pods" in rule["resources"] and "list" in rule["verbs"]
+        for rule in discovery["rules"]
+    ), "SkyPilot GPU availability must include pods outside the selected namespace"
     role = next(item for item in documents if item["kind"] == "Role")
     assert role["metadata"]["namespace"] == binding.namespace
     assert all(

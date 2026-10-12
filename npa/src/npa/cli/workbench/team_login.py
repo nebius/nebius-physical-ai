@@ -94,7 +94,7 @@ def login_cmd(
 def _login_options(
     endpoint, token_file, nebius, nebius_profile, nebius_config, profile, ca_file
 ):
-    from npa.workbench.team.sessions import SessionStore
+    from npa.workbench.team.sessions import SavedSession, SessionStore
 
     if token_file and (nebius or nebius_profile or nebius_config):
         raise TeamError("Choose either --token-file or --nebius.")
@@ -103,6 +103,13 @@ def _login_options(
     endpoint = endpoint or (saved.endpoint if saved else None)
     if not endpoint:
         endpoint = _ask("Workbench HTTPS endpoint", "--endpoint")
+    try:
+        endpoint = SavedSession(endpoint=endpoint).endpoint
+    except ValueError:
+        raise TeamError(
+            "Supply a Workbench HTTPS endpoint without embedded credentials, "
+            "a query, or a fragment."
+        ) from None
     nebius = nebius or bool(nebius_profile) or bool(nebius_config)
     if not token_file and not nebius and saved and endpoint == saved.endpoint:
         if saved.auth_mode == "nebius":
