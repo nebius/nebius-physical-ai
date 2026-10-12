@@ -8386,7 +8386,9 @@ def test_positive_queue_status_distinguishes_present_unverifiable_job(
     result = workflow_status("42", sky_bin=sky_bin)
     assert result.status == expected
     if status is None:
-        assert result.error == "recorded managed job has no verifiable scheduler status"
+        assert "a matching task has a missing or unrecognized status" in result.error
+        assert 'stdout: [{"job_id": 42}]' in result.error
+        assert "restore queue access before resuming" in result.error
     else:
         assert result.error == ""
 
