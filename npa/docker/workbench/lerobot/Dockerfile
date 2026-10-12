@@ -142,6 +142,7 @@ COPY --chown=ubuntu:ubuntu src/npa/deploy/terraform/.terraform.lock.npa.json /op
 COPY --chown=ubuntu:ubuntu src/npa/smoke/golden_evals.yaml /opt/npa/src/npa/smoke/golden_evals.yaml
 COPY --chown=ubuntu:ubuntu src/npa/cli/agent_ui.html /opt/npa/src/npa/cli/agent_ui.html
 COPY --chown=ubuntu:ubuntu src/npa/assets/paidf_starter_video.json /opt/npa/src/npa/assets/paidf_starter_video.json
+COPY --chown=ubuntu:ubuntu src/npa/workbench/robocasa/fixture-controls.json /opt/npa/src/npa/workbench/robocasa/fixture-controls.json
 
 RUN python -m npa.smoke.test_lerobot_env
 
