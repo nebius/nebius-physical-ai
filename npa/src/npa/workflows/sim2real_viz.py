@@ -597,6 +597,20 @@ def _validation_candidates(
         raise Sim2RealVizError("Validation outer iteration does not match its evidence")
     if _legacy_validation_population(payload):
         return _legacy_validation_candidates(payload, outer)
+    if any(
+        "periodic_checkpoints" in (item.get("update") or {})
+        for item in payload["iterations"]
+    ):
+        from npa.workflows.sim2real.validation_curves import (
+            native_pass_validation_candidates,
+        )
+
+        try:
+            return native_pass_validation_candidates(payload, outer)
+        except (KeyError, TypeError, RuntimeError) as exc:
+            raise Sim2RealVizError(
+                f"Validation checkpoint sweep is invalid: {exc}"
+            ) from exc
     candidates = {}
     for candidate in payload["checkpoint_candidates"]:
         iteration = _validation_iteration(candidate.get("inner_iteration"))
@@ -679,7 +693,8 @@ def _candidate_validation_report(
 ) -> dict[str, Any]:
     """Bind displayed validation facts to the checkpoint produced by this pass."""
 
-    checkpoint = (record.get("update") or {}).get("checkpoint_path")
+    update = record.get("update") or {}
+    checkpoint = update.get("final_checkpoint_uri", update.get("checkpoint_path"))
     digest = candidate.get("checkpoint_sha256")
     report = candidate.get("validation_report") or {}
     if (

@@ -403,6 +403,8 @@ def test_publish_eval_scenarios_is_content_addressed():
 
 def test_run_isaac_eval_job_uses_outer_iteration_artifact_tag(monkeypatch):
     captured: dict[str, str] = {}
+    # This contract exercises job tags; earlier evaluations may retain a camera root.
+    monkeypatch.setattr(ev, "_RENDERS_LOCAL_DIR", None)
 
     def fake_build(**kwargs):
         captured["job_name"] = kwargs["job_name"]

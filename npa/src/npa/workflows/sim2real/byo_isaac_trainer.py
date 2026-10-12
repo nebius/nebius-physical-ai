@@ -2248,6 +2248,17 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
         endpoint=endpoint,
         validation_interval=validation_interval,
     )
+    final_checkpoint = result["periodic_checkpoints"][-1]["checkpoint_uri"]
+    final_digest = s3_object_sha256(final_checkpoint, endpoint=endpoint)
+    alias_digest = s3_object_sha256(checkpoint_uri, endpoint=endpoint)
+    if final_digest != alias_digest:
+        raise RuntimeError("Final native checkpoint differs from its latest alias")
+    result.update(
+        checkpoint_sha256=alias_digest,
+        final_checkpoint_uri=final_checkpoint,
+        final_checkpoint_sha256=final_digest,
+        final_checkpoint_alias_verified=True,
+    )
     result["ppo_hyperparameters"]["validation_checkpoint_interval"] = (
         validation_interval
     )

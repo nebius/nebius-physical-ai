@@ -57,6 +57,46 @@ def _stage9_iteration(args, inputs, update, embodiment):
     }
 
 
+def component_record_kwargs(args, root, evidence_uri, selection, update, embodiment):
+    """Bind a completed native pass or its replay to the Stage 9 component record.
+
+    Args:
+        args: The configured full PPO pass.
+        root: Run-owned output root.
+        evidence_uri: Durable inner-loop evidence document.
+        selection: Exact validation-selected checkpoint and report.
+        update: Completed native trainer result.
+        embodiment: Verified training identity, or None for durable replay.
+    Returns:
+        Keyword arguments for the stage adapter's component publication.
+    Raises:
+        KeyError: Required selection evidence is absent.
+    """
+    artifacts = {
+        "evidence": evidence_uri,
+        "checkpoint": selection["checkpoint_uri"],
+        "checkpoint_sha256": selection.get("checkpoint_sha256", ""),
+        "validation_report": selection["validation_report_uri"],
+        "ppo_iterations": args.ppo_iterations,
+        "component_invocation": update.get("component_invocation"),
+    }
+    if embodiment is None:
+        artifacts["idempotent_replay"] = True
+        description = "Re-adopted exact durable same-iteration PPO and validation evidence after a standard-runtime Job retry."
+    else:
+        artifacts["embodiment"] = embodiment
+        description = "Genuine BYO Isaac RSL-RL PPO consumed bounded temporal Reason signals and published an exact checkpoint; validation alone selected it."
+    return {
+        "root_uri": root,
+        "stage": 9,
+        "name": "stage_09_training_signal",
+        "tier": "WORKS",
+        "evidence": description,
+        "artifacts": artifacts,
+        "require_gpu": True,
+    }
+
+
 def loop_evidence(args, inputs, prior, update, embodiment, candidates, selection):
     """Bind a complete PPO pass and validation-only selection into durable evidence.
 

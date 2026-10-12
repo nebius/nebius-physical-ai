@@ -1047,6 +1047,7 @@ def test_run_isaac_training_job_tags_s3_path_per_iteration(monkeypatch, resume_p
             }
         ],
     )
+    monkeypatch.setattr(byo, "s3_object_sha256", lambda *_a, **_k: "d" * 64)
     monkeypatch.setenv("NPA_SIM2REAL_ISAAC_IMAGE", "reg/npa-isaac-lab:2.3.2.post1")
     monkeypatch.setenv("NPA_SIM2REAL_BUCKET", "bkt")
     monkeypatch.setenv("NPA_SIM2REAL_TRAINER_TAG", "outer-02-iter-01")
@@ -1069,6 +1070,9 @@ def test_run_isaac_training_job_tags_s3_path_per_iteration(monkeypatch, resume_p
     monkeypatch.delenv("NPA_BYO_ISAAC_PHYSICS", raising=False)
 
     result = byo.run_isaac_training_job("myrun", signal_json="ignored")
+    assert result["final_checkpoint_uri"] == "s3://bkt/run/checkpoints/model_500.pt"
+    assert result["checkpoint_sha256"] == result["final_checkpoint_sha256"] == "d" * 64
+    assert result["final_checkpoint_alias_verified"] is True
     # distinct, tagged path
     assert captured["s3_output_uri"].endswith("/outer-02-iter-01/")
     assert "byo-trainer" in captured["s3_output_uri"]

@@ -32,7 +32,7 @@ def test_transfer_security_override_uses_the_verified_fixed_pyjwt_wheel():
 def test_isaac_oss_closure_does_not_retain_vulnerable_pyjwt():
     text = (WORKBENCH / "common/isaac3-oss-deps.txt").read_text()
     match = re.search(r"^pyjwt==(\S+)$", text, re.MULTILINE)
-    assert match and Version(match[1]) == Version("2.15.0")
+    assert match and Version(match[1]) == Version("2.15.1")
 
 
 def test_envgen_uses_explicit_fixed_headers_without_changing_other_callers():

@@ -35,6 +35,7 @@ from npa.workflows.sim2real.stage9_replay import (
     existing_replay as _stage9_existing_replay,
 )
 from npa.workflows.sim2real.stage9_training_evidence import (
+    component_record_kwargs as _stage9_record_kwargs,
     loop_evidence as _stage9_loop_evidence,
     temporal_signals as _stage9_temporal_signals,
 )
@@ -681,28 +682,8 @@ def _stage9_inputs(args, root, work):
 def _stage9_publish_record(
     args, root, evidence_uri, selection, update, embodiment=None
 ):
-    artifacts = {
-        "evidence": evidence_uri,
-        "checkpoint": selection["checkpoint_uri"],
-        "checkpoint_sha256": selection.get("checkpoint_sha256", ""),
-        "validation_report": selection["validation_report_uri"],
-        "ppo_iterations": args.ppo_iterations,
-        "component_invocation": update.get("component_invocation"),
-    }
-    if embodiment is None:
-        artifacts["idempotent_replay"] = True
-        description = "Re-adopted exact durable same-iteration PPO and validation evidence after a standard-runtime Job retry."
-    else:
-        artifacts["embodiment"] = embodiment
-        description = "Genuine BYO Isaac RSL-RL PPO consumed bounded temporal Reason signals and published an exact checkpoint; validation alone selected it."
     publish_component_record(
-        root_uri=root,
-        stage=9,
-        name="stage_09_training_signal",
-        tier="WORKS",
-        evidence=description,
-        artifacts=artifacts,
-        require_gpu=True,
+        **_stage9_record_kwargs(args, root, evidence_uri, selection, update, embodiment)
     )
 
 
