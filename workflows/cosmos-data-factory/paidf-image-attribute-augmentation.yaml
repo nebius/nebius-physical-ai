@@ -1,6 +1,7 @@
 apiVersion: npa.workflow/v0.0.1
 kind: Workflow
 
+# Early Access upstream; see the adjacent IAA guide and conversion decision.
 # Direct translation of NVIDIA/paidf-orchestration's
 # image_attribute_augmentation_dag at
 # f7ecd8c5d7aeec28b2d476b9e71b53a48ba8c0f9. Airflow validation/input

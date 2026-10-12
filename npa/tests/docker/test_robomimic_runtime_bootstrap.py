@@ -242,12 +242,18 @@ interpreter.write_text(
     '''#!/bin/sh
 if [ "${1:-}" = "-c" ]; then
     printf '%s' "$$" >"${NPA_TEST_IMPORT_PID}"
-    if [ -n "${NPA_TEST_IMPORT_STARTED:-}" ]; then
+    if [ -n "${NPA_TEST_IMPORT_STARTED:-}" ] && [ "${NPA_TEST_IMPORT_MODE:-success}" != block ]; then
         : >"${NPA_TEST_IMPORT_STARTED}"
     fi
     case "${NPA_TEST_IMPORT_MODE:-success}" in
         fail) exit 42 ;;
-        block) while :; do sleep 1; done ;;
+        block)
+            trap 'test -d "${NPA_ROBOMIMIC_ACTIVE_RUNTIME_ROOT}" || exit 90; printf HUP >"${NPA_TEST_IMPORT_SIGNAL}"; exit 129' HUP
+            trap 'test -d "${NPA_ROBOMIMIC_ACTIVE_RUNTIME_ROOT}" || exit 90; printf INT >"${NPA_TEST_IMPORT_SIGNAL}"; exit 130' INT
+            trap 'test -d "${NPA_ROBOMIMIC_ACTIVE_RUNTIME_ROOT}" || exit 90; printf TERM >"${NPA_TEST_IMPORT_SIGNAL}"; exit 143' TERM
+            : >"${NPA_TEST_IMPORT_STARTED}"
+            while :; do sleep 1; done
+            ;;
         remove) chmod 000 "$0"; exit 0 ;;
     esac
     exit 0
@@ -410,6 +416,18 @@ def _assert_process_group_gone(process_group: int) -> None:
         os.killpg(process_group, 0)
 
 
+def _assert_process_group_exited(process_group: int) -> None:
+    # The supervisor promises no executing descendants. An orphaned zombie can
+    # remain visible to killpg(0) until the host's init reaps it.
+    table = subprocess.check_output(["ps", "-eo", "pgid=,stat="], text=True)
+    members = [
+        status
+        for group, status in (line.split() for line in table.splitlines())
+        if int(group) == process_group
+    ]
+    assert all(status[0] in {"Z", "X"} for status in members), members
+
+
 def _remove_snapshot_parent(snapshot_root: Path) -> None:
     if not snapshot_root.parent.exists():
         return
@@ -440,6 +458,7 @@ def _exec_environment(
         "NPA_TEST_SNAPSHOT_MODE": snapshot_mode,
         "NPA_TEST_IMPORT_STARTED": str(tmp_path / "import-started"),
         "NPA_TEST_IMPORT_PID": str(tmp_path / "import-pid"),
+        "NPA_TEST_IMPORT_SIGNAL": str(tmp_path / "import-signal"),
         "NPA_TEST_IMPORT_MODE": import_mode,
         "NPA_TEST_EXEC_STARTED": str(tmp_path / "exec-started"),
         "NPA_TEST_EXEC_PID": str(tmp_path / "exec-pid"),
@@ -2438,12 +2457,13 @@ def test_bootstrap_cleans_snapshot_when_signalled_during_import(
         )
         import_pid = _recorded_pid(tmp_path / "import-pid")
         snapshot_root = Path((tmp_path / "snapshot-record").read_text(encoding="utf-8"))
-        signal_started = time.monotonic()
         os.kill(process.pid, signal_number)
         _communicate_or_kill(process, child_process_group=import_pid)
 
         assert process.returncode == expected_returncode
-        assert time.monotonic() - signal_started < 4
+        assert (
+            tmp_path / "import-signal"
+        ).read_text() == signal_number.name.removeprefix("SIG")
         _assert_process_gone(import_pid)
         assert not snapshot_root.parent.exists()
     finally:
@@ -2514,6 +2534,8 @@ def test_successful_leader_keeps_snapshot_until_descendant_exits(
         assert process.poll() is None
         os.killpg(payload_group, 0)
         assert snapshot_root.is_dir()
+        with pytest.raises(AssertionError):
+            _assert_process_group_exited(payload_group)
 
         (tmp_path / "descendant-release").touch()
         stdout, stderr = _communicate_or_kill(
@@ -2522,7 +2544,7 @@ def test_successful_leader_keeps_snapshot_until_descendant_exits(
 
         assert process.returncode == 0, (stdout, stderr)
         assert (tmp_path / "descendant-observed").is_file()
-        _assert_process_group_gone(payload_group)
+        _assert_process_group_exited(payload_group)
         assert not snapshot_root.parent.exists()
     finally:
         if process.poll() is None:

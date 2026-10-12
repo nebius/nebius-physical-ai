@@ -378,7 +378,7 @@ def test_candidate_real_import_and_source_attestation(
 @pytest.mark.parametrize("revision", ["a" * 40, "local-uncommitted", "A" * 40])
 def test_candidate_build_requires_bound_source(tmp_path: Path, revision: str) -> None:
     """Execute the Dockerfile's final import and revision check as written."""
-    canonical, image_environment = _candidate_baked_layout(tmp_path)
+    _canonical, image_environment = _candidate_baked_layout(tmp_path)
     dockerfile = DOCKERFILE.read_text(encoding="utf-8")
     probe = re.search(
         r"^RUN /opt/lerobot/venv/bin/python - <<'PY'\n(.*?)\nPY$",
@@ -386,7 +386,7 @@ def test_candidate_build_requires_bound_source(tmp_path: Path, revision: str) ->
         re.M | re.S,
     )
     assert probe is not None
-    script = probe.group(1).replace("/opt/npa/src/npa", str(canonical / "npa"))
+    script = probe.group(1)
     environment = dict(os.environ, **image_environment)
     environment["NPA_IMAGE_SOURCE_SHA"] = revision
     result = subprocess.run(
@@ -402,6 +402,42 @@ def test_candidate_build_requires_bound_source(tmp_path: Path, revision: str) ->
     else:
         assert result.returncode != 0
         assert "NPA_ADAPTER_REVISION must be the exact source commit" in result.stderr
+
+
+@pytest.mark.parametrize("shadowed", [False, True])
+def test_candidate_build_checks_configured_import_origin(
+    tmp_path: Path, shadowed: bool
+) -> None:
+    """Run the image's literal attestation against its configured source and a shadow."""
+    __canonical, image_environment = _candidate_baked_layout(tmp_path)
+    probe = re.search(
+        r"^RUN /opt/lerobot/venv/bin/python - <<'PY'\n(.*?)\nPY$",
+        DOCKERFILE.read_text(encoding="utf-8"),
+        re.M | re.S,
+    )
+    assert probe is not None
+    script = probe.group(1)
+    if shadowed:
+        shadow = tmp_path / "shadow"
+        module = shadow / "npa/workflows/lerobot_vla_jepa.py"
+        module.parent.mkdir(parents=True)
+        (shadow / "npa/__init__.py").write_text("")
+        (shadow / "npa/workflows/__init__.py").write_text("")
+        module.write_text("LEROBOT_VERSION = '0.6.1'\n")
+        script = f"import sys; sys.path.insert(0, {str(shadow)!r})\n" + script
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=tmp_path,
+        env=dict(os.environ, **image_environment),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if shadowed:
+        assert result.returncode != 0
+        assert "adapter must import from the canonical baked source" in result.stderr
+    else:
+        assert result.returncode == 0, result.stderr
 
 
 def test_task_disjoint_split_and_numeric_training_statistics() -> None:

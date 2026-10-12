@@ -27,6 +27,7 @@ def test_image_does_not_bake_application_distributions_or_whole_source_annex():
     assert "native-builder" not in dockerfile
     assert "base-source-lock.json" in dockerfile
     assert "--image-only" in dockerfile
+    assert "src/npa/workbench/nurec/source_control.py" in dockerfile
 
 
 def test_runtime_lock_is_exact_and_excludes_unrelated_npa_dependencies():
@@ -285,6 +286,48 @@ def test_adapter_reuses_public_callback_defaults_and_json(monkeypatch):
     assert requests[0].dataset_root == "."
     assert requests[0].rig_mode == "preserve"
     assert requests[0].include_downsampled_images is False
+
+
+def test_adapter_exposes_wrong_source_control(monkeypatch, tmp_path):
+    from typer.testing import CliRunner
+    from npa.workbench.nurec import source_control
+    from npa.workflows.ncore import application
+
+    receipt = tmp_path / "control.json"
+    observed = []
+
+    def control(request, *, expected_archive_sha256, receipt_path):
+        observed.append((request, expected_archive_sha256, receipt_path))
+        return {
+            "format": source_control.CONTROL_FORMAT,
+            "status": "pass",
+            "native_started": False,
+            "output_objects": 0,
+        }
+
+    monkeypatch.setattr(source_control, "run_wrong_source_control", control)
+    result = CliRunner().invoke(
+        application(),
+        [
+            "workbench",
+            "nurec",
+            "control-source",
+            "--input-path",
+            "s3://fixture/source.zip",
+            "--output-path",
+            "s3://fixture/control/",
+            "--expected-archive-sha256",
+            "a" * 64,
+            "--receipt-path",
+            str(receipt),
+            "--output-format",
+            "json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["status"] == "ok"
+    assert observed[0][0].input_path == "s3://fixture/source.zip"
+    assert observed[0][1:] == ("a" * 64, receipt)
 
 
 def test_adapter_keeps_public_path_failure_redaction():

@@ -118,7 +118,8 @@ from npa.workflows import lerobot_vla_jepa
 
 if re.fullmatch(r"[0-9a-f]{40}", os.environ["NPA_IMAGE_SOURCE_SHA"]) is None:
     raise SystemExit("NPA_ADAPTER_REVISION must be the exact source commit")
-if not Path(lerobot_vla_jepa.__file__).resolve().is_relative_to("/opt/npa/src/npa"):
+baked_package = Path(os.environ["PYTHONPATH"]) / "npa"
+if not Path(lerobot_vla_jepa.__file__).resolve().is_relative_to(baked_package):
     raise SystemExit("VLA-JEPA adapter must import from the canonical baked source")
 PY
 

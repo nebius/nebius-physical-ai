@@ -16,14 +16,14 @@
       "evidence": [
         "npa/tests/workflows/test_lerobot_vla_jepa.py",
         "sha256:5e725fc8ad33c658c51e556e45fc9b4c0a4a3a8f96c01d3f62fb89e851794046 workflows/testing/lerobot-vla-jepa.yaml",
-        "sha256:58555dda6bf65b6c22a7991dfafb47208cf4d9637f7e58cd508b5dae8244f690 npa/docker/workbench/lerobot-vla-jepa/Dockerfile",
+        "sha256:b75f101e67dc1ab6a6a26c24b1f5e0465ae0a153fe9aa408621f13b53e0b79ed npa/docker/workbench/lerobot-vla-jepa/Dockerfile",
         "sha256:6fb04352e5deba8ee9836f29e96dd0ae19ba5cb49d2c467c938b268904e0b447 npa/docker/workbench/lerobot-vla-jepa/entrypoint.sh",
         "sha256:4309a36139b9cdae62b09a836b39dc6add09b6288a8c0fc5167fa143dd099e25 npa/docker/workbench/blackwell-dc-images.json::npa-lerobot-vla-jepa-projection",
         "sha256:3931a5df6d5d9f853b715d31a724861c072c4227629bdf90665f2302d572fcfd npa/src/npa/deploy/images.py::lerobot-vla-jepa-neutral-candidate-projection",
         "sha256:3e477396dba062bff84bceab3b954d81cc32d13dc7f2c0006fc80fd1e3925894 npa/src/npa/smoke/golden_evals.yaml::lerobot-vla-jepa-projection",
         "sha256:c8ed8d140d524847071e8b1d88e8b3a74a8ccaf2342abcd6edd0925ebb7154d8 npa/src/npa/smoke/capabilities.py::lerobot-vla-jepa-projection",
         "sha256:b3c15412f0a41671ba344fa1231c9182ad100ad64457cb0609b936edff95c0f5 npa/src/npa/workflows/lerobot_vla_jepa.py",
-        "sha256:f22caeb37f539c507f981a24e8396786eefd9f79afefc5424525090e0cb61658 npa/tests/workflows/test_lerobot_vla_jepa.py"
+        "sha256:bf4d1ede8965dd3672d537d20715b503910bdaef524e1b84c356751b4cbfa1eb npa/tests/workflows/test_lerobot_vla_jepa.py"
       ]
     }
   },
