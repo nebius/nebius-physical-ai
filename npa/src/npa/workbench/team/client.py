@@ -117,7 +117,13 @@ class TeamClient:
         if action not in {"status", "cancel", "resume", "logs", "artifacts"}:
             raise TeamError("unsupported run operation")
         path = _run_path(run_id) + ("" if action == "status" else "/" + action)
-        return self._request("POST" if action in {"cancel", "resume"} else "GET", path)
+        options = {}
+        if action == "logs":
+            # Log downloads may cross many completed waves through the scheduler.
+            options["timeout"] = httpx.Timeout(5.0, read=None)
+        return self._request(
+            "POST" if action in {"cancel", "resume"} else "GET", path, **options
+        )
 
     def download(self, run_id: str, relative: str, destination):
         """Stream one owned artifact into a caller-selected binary output stream.

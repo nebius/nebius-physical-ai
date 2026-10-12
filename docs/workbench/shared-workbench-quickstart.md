@@ -135,6 +135,21 @@ Submit the workflow supplied by your administrator, or author an approved
 npa workbench submit --spec workflow.yaml
 ```
 
+Select inputs without editing the supplied YAML by repeating `--var KEY=VALUE`:
+
+```bash
+npa workbench submit --spec paidf-cosmos3.yaml \
+  --var input_kind=lerobot \
+  --var lerobot_dataset_uri="$DATASET_URI" \
+  --var input_camera=observation.images.top --var input_episode=19
+```
+
+Overrides are strings in the submitted workflow's `config`. The YAML stays
+unchanged. Different inputs have separate retry receipts; repeating the same
+inputs recovers the same run. The server still assigns output storage and
+placement from your allocation. See [team PAIDF](team-paidf.md) for the operator
+prerequisites, camera selection, and a recoverable 20-episode SDK example.
+
 Save the returned `id` as `RUN_ID`, then inspect that same execution:
 
 ```bash

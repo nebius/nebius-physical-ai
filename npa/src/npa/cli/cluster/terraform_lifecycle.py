@@ -2445,15 +2445,40 @@ def _preflight_provider_lock(terraform_dir: Path) -> str:
     return target_platform
 
 
+def _tfvars_paths(terraform_dir: Path) -> list[Path]:
+    """Select automatic variable files in Terraform's load order."""
+    return [
+        terraform_dir / "terraform.tfvars",
+        terraform_dir / "terraform.tfvars.json",
+        *sorted(
+            [
+                *terraform_dir.glob("*.auto.tfvars"),
+                *terraform_dir.glob("*.auto.tfvars.json"),
+            ]
+        ),
+    ]
+
+
 def _read_tfvars(terraform_dir: Path) -> dict[str, Any]:
     values: dict[str, Any] = {}
-    for path in [
-        terraform_dir / "terraform.tfvars",
-        *sorted(terraform_dir.glob("*.auto.tfvars")),
-    ]:
+    for path in _tfvars_paths(terraform_dir):
         if not path.exists():
             continue
-        for key, raw_value in _tfvar_assignments(path.read_text(encoding="utf-8")):
+        document = path.read_text(encoding="utf-8")
+        if path.suffix == ".json":
+            try:
+                variables = json.loads(document)
+            except ValueError:
+                raise typer.BadParameter(
+                    f"Invalid JSON variable file: {path.name}"
+                ) from None
+            if not isinstance(variables, dict):
+                raise typer.BadParameter(
+                    f"JSON variables must be an object: {path.name}"
+                )
+            values.update(variables)
+            continue
+        for key, raw_value in _tfvar_assignments(document):
             values[key] = _parse_tfvar_scalar(raw_value)
     return values
 
@@ -2697,12 +2722,7 @@ def _guard_tfvars_iam_token(terraform_dir: Path, tfvars: dict[str, Any]) -> None
     if "iam_token" not in tfvars:
         return
     files = ", ".join(
-        str(path.name)
-        for path in [
-            terraform_dir / "terraform.tfvars",
-            *sorted(terraform_dir.glob("*.auto.tfvars")),
-        ]
-        if path.exists()
+        str(path.name) for path in _tfvars_paths(terraform_dir) if path.exists()
     )
     raise typer.BadParameter(
         f"Remove the `iam_token` line from {files or 'terraform.tfvars'} in {terraform_dir}: "

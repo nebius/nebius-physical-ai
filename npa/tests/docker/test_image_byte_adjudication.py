@@ -403,7 +403,7 @@ def test_exact_authorization_is_required_before_reading_untrusted_manifest(tmp_p
         A.pinned_json(path, "0" * 64)
 
 
-def complete_case(tmp_path):
+def complete_case(tmp_path, verification_schema="npa.curobo.image-verification.v1"):
     """Generate real archive/ledger bindings with the existing protocol oracle."""
     # This is the existing hermetic framing detector, never a security claim.
     sys.path.insert(0, str(CHECKOUT / "npa/tests/docker"))
@@ -444,6 +444,7 @@ def complete_case(tmp_path):
     )
     verification = json.loads(Path(auth["verification_report"]["path"]).read_bytes())
     verification.update(
+        schema_version=verification_schema,
         expected_image_id=image_id,
         image_config_digest="sha256:" + sha(config_bytes),
         image_manifest_digest=image_id,
@@ -534,18 +535,37 @@ def complete_case(tmp_path):
     )
 
 
+@pytest.mark.parametrize(
+    "verification_schema",
+    [
+        "npa.curobo.image-verification.v1",
+        "npa.docker-save.image-verification.v1",
+    ],
+)
 def test_real_archive_binding_preserves_raw_failure_and_separates_source_revisions(
-    tmp_path, committed_source_oracle
+    tmp_path, committed_source_oracle, verification_schema
 ):
     tmp_path.chmod(0o700)
     with W.authorized_roots(tmp_path, CHECKOUT):
-        args, _auth, report = complete_case(tmp_path)
+        args, _auth, report = complete_case(
+            tmp_path, verification_schema=verification_schema
+        )
         result = A.verify(args)
         assert result["accepted"] is True and result["raw_scan_valid"] is False
         assert result["accepted_occurrences"] == report["findings"]
         assert json.loads(args.report.read_bytes()) == report
         assert result["context"]["image_source_sha"] == "a" * 40
         assert result["context"]["scanner_source_sha"] != "a" * 40
+
+
+def test_unknown_verification_schema_is_rejected():
+    with pytest.raises(W.ScanError, match="adjudication_verification_failed"):
+        A._verified_docker_save_report(
+            {
+                "valid": True,
+                "schema_version": "npa.unknown.image-verification.v1",
+            }
+        )
 
 
 @pytest.mark.parametrize(
