@@ -4005,3 +4005,69 @@ def test_sdk_rejects_invalid_output_before_capability_dispatch(
             output_path="file:///tmp/output",
         )
     assert called is False
+
+
+@pytest.mark.skipif(
+    sys.platform != "linux", reason="requires real procfs exit semantics"
+)
+@pytest.mark.parametrize("failure", ["exited", "permission", "malformed"])
+def test_supervisor_proc_read_exit_preserves_fail_closed_errors(failure):
+    """An actual process exit after stat open is absence, not failed cleanup."""
+    script = r"""
+import errno
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+from npa.workbench.robocasa import service
+
+failure = sys.argv[1]
+child = subprocess.Popen(
+    [sys.executable, "-c", "import sys; sys.stdin.buffer.read()"],
+    stdin=subprocess.PIPE,
+)
+stat_path = Path(f"/proc/{child.pid}/stat")
+original_read = Path.read_text
+observed = {}
+def read_after_exit(path, *args, **kwargs):
+    if path != stat_path:
+        return original_read(path, *args, **kwargs)
+    if failure == "permission":
+        raise PermissionError(errno.EACCES, "test-owned permission refusal")
+    if failure == "malformed":
+        return "invalid process identity"
+    with path.open(encoding="utf-8") as stream:
+        child.stdin.close()
+        child.wait()
+        try:
+            return stream.read()
+        except ProcessLookupError as error:
+            observed["kernel_errno"] = error.errno
+            raise
+Path.read_text = read_after_exit
+try:
+    stopped = service._stop_supervised_children()
+    observed.update(stopped=stopped, child_exited=child.poll() is not None)
+    os.kill(os.getppid(), 0)
+    observed["parent_alive"] = True
+    print(json.dumps(observed))
+finally:
+    Path.read_text = original_read
+    if child.poll() is None:
+        child.stdin.close()
+        child.wait()
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", script, failure], capture_output=True, text=True
+    )
+    assert completed.returncode == 0, completed.stderr
+    actual = json.loads(completed.stdout)
+    assert actual["parent_alive"] is True
+    if failure == "exited":
+        assert actual["kernel_errno"] == 3
+        assert actual["child_exited"] is True
+        assert actual["stopped"] is True
+    else:
+        assert actual["child_exited"] is False
+        assert actual["stopped"] is False
