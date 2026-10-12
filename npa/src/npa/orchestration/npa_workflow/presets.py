@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+from npa.orchestration.npa_workflow.marble_presets import MARBLE_GO1_PRESETS
 
 
 PUBLIC_FRANKA_LIFT = "public-franka-lift"
@@ -35,6 +36,13 @@ _PRESETS: dict[tuple[str, str], dict[str, str]] = {
     }
 }
 
+_PRESETS.update(
+    {
+        ("marble-go1-inspection", name): values
+        for name, values in MARBLE_GO1_PRESETS.items()
+    }
+)
+
 
 def available_presets(workflow_name: str = "") -> tuple[str, ...]:
     """Return stable public preset names, optionally scoped to one workflow."""
@@ -53,8 +61,8 @@ def preset_overrides(
 ) -> dict[str, str]:
     """Resolve a preset and merge non-conflicting explicit config overrides.
 
-    Preset-owned identity and trigger keys are intentionally immutable. Operators
-    can still tune every production/runtime knob and select ``bucket`` normally.
+    Preset-owned scenario, identity and trigger settings are immutable. Operators
+    can still select ``bucket`` and tune settings the preset does not own.
     """
 
     requested = str(preset or "").strip()
@@ -76,6 +84,6 @@ def preset_overrides(
     if conflicts:
         raise NpaWorkflowError(
             f"preset {requested!r} owns config keys {conflicts}; remove their "
-            "--var overrides or omit --preset to retain a custom/private dataset"
+            "--var overrides or omit --preset to use custom configuration"
         )
     return {**selected, **overrides}

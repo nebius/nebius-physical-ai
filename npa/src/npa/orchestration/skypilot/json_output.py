@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
-import json
 from typing import Any
 
 from npa.clients.json_output import parse_single_json_document
@@ -17,11 +17,36 @@ _EMPTY_QUEUE_MESSAGES = {
     "sky.exceptions.clusternotuperror: no in-progress managed jobs.",
 }
 
+# SkyPilot 0.12.2 emits this client/server notice before queue and status JSON.
+# Only this exact leading notice is admitted; other configuration differences
+# and ambiguous documents remain unverified.
+_ALLOWED_CLOUDS_CONFIG_WARNING = (
+    'The following keys (["allowed_clouds"]) have different values in the client '
+    "SkyPilot config with the server and will be ignored. Remove these keys to "
+    "disable this warning. If you want to specify it, please modify it on server side "
+    "or contact your administrator."
+)
+
+
+def _without_allowed_clouds_warning(output: str) -> str:
+    """Remove the exact leading allowed_clouds warning from CLI output."""
+
+    lines = str(output or "").splitlines(keepends=True)
+    if lines and lines[0].rstrip("\r\n") == _ALLOWED_CLOUDS_CONFIG_WARNING:
+        return "".join(lines[1:])
+    return str(output or "")
+
+
+def parse_cli_json_output(output: str) -> Any:
+    """Parse one CLI JSON document after the exact leading pinned notice."""
+
+    return json.loads(_without_allowed_clouds_warning(output))
+
 
 def queue_rows_from_output(output: str) -> list[dict[str, Any]] | None:
     """Parse a verified SkyPilot queue list from one unambiguous JSON payload."""
 
-    payload = parse_single_json_document(output)
+    payload = parse_single_json_document(_without_allowed_clouds_warning(output))
     if isinstance(payload, list):
         rows = payload
     elif isinstance(payload, dict) and isinstance(payload.get("jobs"), list):
@@ -62,10 +87,11 @@ def verified_structured_queue_rows(
 
     if result.returncode != 0:
         return None
-    rows = queue_rows_from_output(result.stdout)
+    normalized_stdout = _without_allowed_clouds_warning(result.stdout)
+    rows = queue_rows_from_output(normalized_stdout)
     if rows is None:
         return None
-    stdout_without_json = _without_single_json_document(result.stdout)
+    stdout_without_json = _without_single_json_document(normalized_stdout)
     if stdout_without_json is None:
         return None
     if _semantic_queue_lines(stdout_without_json, structured=True) is None:
@@ -128,7 +154,7 @@ def _semantic_queue_lines(value: str, *, structured: bool) -> list[str] | None:
 def _without_single_json_document(value: str) -> str | None:
     """Remove the one JSON document while retaining surrounding diagnostics."""
 
-    text = str(value or "")
+    text = _without_allowed_clouds_warning(value)
     decoder = json.JSONDecoder()
     matches: list[tuple[int, int]] = []
     for index, character in enumerate(text):

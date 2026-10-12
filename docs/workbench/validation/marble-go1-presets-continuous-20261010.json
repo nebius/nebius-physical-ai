@@ -1,0 +1,199 @@
+{
+  "schema_version": "npa.marble.preset-proof.v1",
+  "date": "2026-10-10",
+  "workflow": "workflows/testing/marble-go1-inspection.yaml",
+  "workflow_sha256": "6b27d08cdcf859baf7b45b8eb4c098a2b55211a4351ba71eb311dd278825428f",
+  "contract": "One selected preset, one hosted world generation, one RTX PRO 6000 collection, one continuous standalone report.",
+  "presets": [
+    {
+      "preset": "warehouse",
+      "argv_matches_original": true,
+      "resources_match_original": true,
+      "stages": 3,
+      "gpu_collectors": 1,
+      "waves": "sequential"
+    },
+    {
+      "preset": "shipyard",
+      "argv_matches_original": true,
+      "resources_match_original": true,
+      "stages": 3,
+      "gpu_collectors": 1,
+      "waves": "sequential"
+    },
+    {
+      "preset": "home",
+      "argv_matches_original": true,
+      "resources_match_original": true,
+      "stages": 3,
+      "gpu_collectors": 1,
+      "waves": "sequential"
+    },
+    {
+      "preset": "factory",
+      "argv_matches_original": true,
+      "resources_match_original": true,
+      "stages": 3,
+      "gpu_collectors": 1,
+      "waves": "sequential"
+    },
+    {
+      "preset": "utility",
+      "argv_matches_original": true,
+      "resources_match_original": true,
+      "stages": 3,
+      "gpu_collectors": 1,
+      "waves": "sequential"
+    }
+  ],
+  "command_equivalence_reference_commit": "e493654cb39db2c4a9387fbcc2b4ebc2a4d69c70",
+  "continuous_proof": {
+    "producer": "npa.workbench.marble.quadruped_report.write_quadruped_gallery",
+    "html_filename": "marble-go1-presets-continuous.html",
+    "html_sha256": "4d71e52d1a706339cdc1cc4c2aad84b8e52d8e8653d1b175d7b12dd7bc364a2f",
+    "bytes": 246455402,
+    "embedded_mp4s": 15,
+    "recorded_frames_per_view": 4250,
+    "capture_payloads_unchanged": true,
+    "original_live_evidence": "docs/workbench/validation/marble-go1-five-sites-20261010.json"
+  },
+  "offline_browser": {
+    "checks": [
+      {
+        "site": "warehouse",
+        "viewport": "desktop",
+        "single_report": false,
+        "duration_seconds": 20.0,
+        "fps": 25,
+        "presented_frames_in_2_2_seconds": 40,
+        "playback_advance_seconds": 2.401328,
+        "synchronized_seek": true,
+        "downloads": 2
+      },
+      {
+        "site": "shipyard",
+        "viewport": "desktop",
+        "single_report": false,
+        "duration_seconds": 30.0,
+        "fps": 25,
+        "presented_frames_in_2_2_seconds": 39,
+        "playback_advance_seconds": 2.607754,
+        "synchronized_seek": true,
+        "downloads": 2
+      },
+      {
+        "site": "home",
+        "viewport": "desktop",
+        "single_report": false,
+        "duration_seconds": 40.0,
+        "fps": 25,
+        "presented_frames_in_2_2_seconds": 39,
+        "playback_advance_seconds": 2.583541,
+        "synchronized_seek": true,
+        "downloads": 2
+      },
+      {
+        "site": "factory",
+        "viewport": "desktop",
+        "single_report": false,
+        "duration_seconds": 40.0,
+        "fps": 25,
+        "presented_frames_in_2_2_seconds": 41,
+        "playback_advance_seconds": 2.516843,
+        "synchronized_seek": true,
+        "downloads": 2
+      },
+      {
+        "site": "utility",
+        "viewport": "desktop",
+        "single_report": false,
+        "duration_seconds": 40.0,
+        "fps": 25,
+        "presented_frames_in_2_2_seconds": 41,
+        "playback_advance_seconds": 2.570106,
+        "synchronized_seek": true,
+        "downloads": 2
+      },
+      {
+        "site": "warehouse",
+        "viewport": "mobile",
+        "single_report": false,
+        "duration_seconds": 20.0,
+        "fps": 25,
+        "presented_frames_in_2_2_seconds": 41,
+        "playback_advance_seconds": 2.452157,
+        "synchronized_seek": true,
+        "downloads": 2
+      },
+      {
+        "site": "shipyard",
+        "viewport": "mobile",
+        "single_report": false,
+        "duration_seconds": 30.0,
+        "fps": 25,
+        "presented_frames_in_2_2_seconds": 41,
+        "playback_advance_seconds": 2.631029,
+        "synchronized_seek": true,
+        "downloads": 2
+      },
+      {
+        "site": "home",
+        "viewport": "mobile",
+        "single_report": false,
+        "duration_seconds": 40.0,
+        "fps": 25,
+        "presented_frames_in_2_2_seconds": 38,
+        "playback_advance_seconds": 2.599066,
+        "synchronized_seek": true,
+        "downloads": 2
+      },
+      {
+        "site": "factory",
+        "viewport": "mobile",
+        "single_report": false,
+        "duration_seconds": 40.0,
+        "fps": 25,
+        "presented_frames_in_2_2_seconds": 42,
+        "playback_advance_seconds": 2.690609,
+        "synchronized_seek": true,
+        "downloads": 2
+      },
+      {
+        "site": "utility",
+        "viewport": "mobile",
+        "single_report": false,
+        "duration_seconds": 40.0,
+        "fps": 25,
+        "presented_frames_in_2_2_seconds": 39,
+        "playback_advance_seconds": 2.479929,
+        "synchronized_seek": true,
+        "downloads": 2
+      },
+      {
+        "site": "warehouse",
+        "viewport": "desktop",
+        "single_report": true,
+        "duration_seconds": 20.0,
+        "fps": 25,
+        "presented_frames_in_2_2_seconds": 39,
+        "playback_advance_seconds": 2.408603,
+        "synchronized_seek": true,
+        "downloads": 2
+      }
+    ],
+    "offline": true,
+    "external_requests": 0,
+    "javascript_errors": 0
+  },
+  "scans": {
+    "built_in_infra_confidentiality": "passed",
+    "gitleaks": "passed",
+    "scope": "Full HTML text, with each embedded original MP4 replaced by its SHA-256 marker for scanning."
+  },
+  "live_scope": "Repackages existing real Nebius GPU outputs without resampling. All five native preset plans have identical stage argv and resources to their prior single-site configurations. No new live submission of the consolidated preset-selectable entrypoint was performed.",
+  "limitations": [
+    "Synthetic environments and pretrained-policy simulated collection; no new training or physical robot footage.",
+    "New generated geometry must independently pass route and motion acceptance.",
+    "Utility world retains visible reconstruction softness."
+  ]
+}

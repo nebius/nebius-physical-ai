@@ -6,6 +6,22 @@ Use `npa workbench <tool> <command>` for a capability and
 `npa workbench workflow` for a pipeline. Tools exchange artifacts through S3;
 Python and HTTP access follow each tool's documented contract.
 
+[Workbench access](team-access.md) adds shared execution through the existing
+CLI, API, and SDK. Administrators create local users/groups and explicit personal
+GPU allocations and artifact storage; users use revocable personal key files and
+never receive scheduler or cluster credentials. The CPU gateway and private
+SkyPilot service still require live qualification. Start with the
+[setup and usage guide](shared-workbench-quickstart.md) for operator setup,
+both login paths, command meanings, and coding-agent access, then use
+[local users and personal access keys](team-identity.md) for identity details.
+External identities can be explicitly
+linked later without changing local ownership; there is no standalone portal or
+browser-login flow. The [offline team example](../demos/team-access.html)
+illustrates synthetic policy outcomes and recorded local checks, not a deployed
+service. Optional native Nebius human identity verification uses the same
+linked-local-account model and private token-file path; it does not make tenant
+access, cloud groups, or cloud roles into Workbench authorization.
+
 PAIDF workflows select repaired public Cosmos3, Evaluator, and Curator
 candidates by immutable digest while the historical releases remain
 quarantined. See the [PAIDF image-selection notes](guides/physical-ai-data-factory.md)
@@ -19,6 +35,7 @@ lists other affected images and shipped workflows, including the Sim2Real seams.
 | --- | --- |
 | Choose a workload | [Robot and workflow guides](guides/README.md) · [workflow catalog](../../workflows/README.md) |
 | Run or resume a workflow manually | [Manual workflow operations](guides/manual-workflow-operations.md) |
+| Run the 14-stage Sim2Real loop from a fresh terminal | [Manual Sim2Real runbook](guides/sim2real-workflow.md), including the qualified-image release gate |
 | Generate twelve PAIDF appearances from MP4 or real ALOHA data | [Manual twelve-profile recipe](guides/paidf-appearance-12.md) |
 | Submit episode batches and choose concurrency | [Dataset batches](guides/paidf-dataset-batches.md) · [capacity planning](guides/paidf-dataset-batches.md#concurrency-and-existing-capacity) |
 | Inspect supported quality reports | [Shared report inspection](insights-reports.md) |
@@ -29,6 +46,7 @@ lists other affected images and shipped workflows, including the Sim2Real seams.
 | Use FA4 in your own RTX PRO 6000 container | [RTX PRO 6000 adoption guide: base → application → validation → deployment](guides/rtx6000-fa4.md) |
 | Compare FA2 and FA4 on RTX PRO 6000 | [Build and tuning guide](guides/fa2-fa4-comparison.md) · [Latest speeds, cold-start cost and actual renders](fa4-rtx-optimization.md) |
 | Author and submit | [Workflow guide](npa-workflow-guide.md) · [toolRef catalog](npa-workflow-tool-catalog.md) |
+| Train navigation from a Marble world | [Marble → native ANYmal PPO guide](guides/marble-navigation-rl.md): GPU physics and learning, with explicit runtime and validation requirements |
 | Integrate from Python or HTTP | [CLI / SDK walkthrough](cli-sdk-yaml-walkthrough.md) · [SDK errors](../sdk/errors.md) |
 | Diagnose or recover a run | [Run lifecycle](../run-lifecycle.md) · [controller recovery](controller-recovery.md) · [troubleshooting](troubleshooting/known-footguns.md) · [CLI errors](../cli-errors.md) |
 | Curate media with Encord | [S3 registration, pull, roundtrip verification, and a local MP4 demo](encord.md) |
@@ -49,6 +67,7 @@ a standalone HTML report.
 | Train and evaluate a Cosmos 3 robot policy | [Experimental native LIBERO model-factory workflow](cosmos3-policy-model-factory.md) |
 | Measure Cosmos 3 WAM training across B200 nodes | [Experimental Slurm recipe](cookbooks/cosmos3-wam-slurm.md) · [Measured 8/16-GPU results](evidence/cosmos3-wam-scaling/README.md) |
 | Scenes and digital twins | [NuRec reconstruction](guides/neural-reconstruction.md) · [RTX campus rendering and infrastructure](guides/digital-twin.md) · [living-lab fan-out](guides/living-lab-nurec-fanout.md) |
+| Image to rigid-object generation | [EmbodiedGen V2](embodiedgen.md) — qualified operator-private TRELLIS → generated URDF/collision bundle → PyBullet evidence; each selected target still needs its own preflight |
 | USD object preparation | [Content Agents](content-agents.md) |
 | Other video models | [Wan 2.2](wan2.2.md) · [LTX-2](ltx2.md) |
 
@@ -66,6 +85,11 @@ a standalone HTML report.
 | Motion planning | [cuRobo](curobo.md) |
 | BEHAVIOR 2026 household challenge | [Start here: one-file DEV setup](challenge-onboarding.md); [evaluation rules and runtime](behavior-challenge.md); [reusable campaigns and TRAIN recording](behavior-campaign.md); [CPU simulator source inspection](behavior-simulator-source-inspect.md); [matched π0.5 training results and limits](behavior-matched-results-2026-09-19.md); requires licensed runtime and fixed policy |
 | OpenArm simulation and RL | [OpenArm with MuJoCo and Isaac Lab](openarm.md) |
+| Generated worlds and GPU spatial datasets | [Marble to Nebius walkthrough](guides/marble-to-nebius.md) · [reference](marble.md) |
+| Wheel-driven warehouse collection with CUDA RGB and depth | [Marble inspection rover](guides/marble-warehouse-rover.md) |
+| Detailed walking quadruped with GPU materials and shadows | [Marble Go1 collection](guides/marble-warehouse-quadruped.md) |
+| Generate and collect in a new robot environment | [Five Go1 presets](guides/marble-robot-presets.md) · [Add a new world](guides/marble-robot-presets.md#add-a-new-world) · [Testing workflow table](../../workflows/testing/README.md#generation-and-reconstruction) |
+| Factory-background augmentation and real pallet detector evaluation | [Marble manufacturing experiment](marble-manufacturing.md) |
 | Isaac Lab versions | [Isaac Lab 3](isaac-lab-3.md) |
 | Policy evaluation in Isaac Lab | [Isaac Arena](isaac-arena.md) |
 

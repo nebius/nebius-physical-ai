@@ -37,6 +37,7 @@ The source of truth is `skills/index.yaml`. The tree is organized as:
 - `skills/tools/vlm-eval/SKILL.md`: score rollouts with a VLM and turn the score into a gate — `run` vs `loop`, rubric/threshold benchmark sweeps, backend selection, and judging against a plan an earlier stage wrote.
 - `skills/tools/golden-eval/SKILL.md`: prove a container image actually works — per-container hello-world manifest, dry-run/local/serverless tiers, batch runs, and the offline manifest validation that gates CI.
 - `skills/tools/alpamayo2-super/SKILL.md`: real Alpamayo 2 Super VLA inference, separate OpenMDW model and gated PhysicalAI-AV dataset terms, runtime-fetch packaging, and B200/RTX PRO 6000 validation.
+- `skills/tools/marble/SKILL.md`: hosted Marble world acquisition, gsplat/Warp CUDA consumers, native workflow composition, and factual interactive HTML reports.
 - `skills/tools/cosmos3-ray-serve/SKILL.md`: persistent Cosmos3-Nano serving through cosmos-framework's native Ray Serve batching path, authenticated readiness, S3 provenance, and independent B200/RTX PRO 6000 validation.
 - `skills/tools/ray-workbench/SKILL.md`: route Ray requests to the supported native Jobs/Core, Train V2, Cosmos3 native Serve, or fixed CPU KubeRay paths and state unsupported library boundaries.
 - `skills/tools/burst/SKILL.md`: one gang-scheduled multi-node GPU job with torchrun rendezvous, deliberately not a workflow surface.
@@ -45,6 +46,9 @@ The source of truth is `skills/index.yaml`. The tree is organized as:
   one frame with real RANSAC/FPFH + ICP, optimize the multiway pose graph,
   reconstruct a Poisson surface, and read the validators that reject a
   plausible-looking but non-rigid result. CPU-only by construction.
+- `skills/tools/embodiedgen/SKILL.md`: operator-private EmbodiedGen V2 TRELLIS
+  image-to-rigid-object generation, exported URDF/collision validation, and
+  factual PyBullet view evidence; VLM properties are estimates, not calibration.
 - `skills/tools/detection-training/SKILL.md`: Faster R-CNN detectors trained from LanceDB materialized views (BDD100K failure-mode slices).
 - `skills/tools/artifact-viz-share/SKILL.md`: sim demos → LeRobotDataset → `.rrd`/MP4, and time-boxed presigned Rerun share links.
 - `skills/workflows/emit-reviewable-rrd/SKILL.md`: derive factual Rerun recordings from actual workflow outputs, declare run-scoped `.rrd` artifacts, and validate their decoded timelines, entities, and provenance before handoff.
