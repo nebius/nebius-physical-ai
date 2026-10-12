@@ -1,0 +1,134 @@
+{
+  "schema_version": "npa.mjlab.public-development-image.v1",
+  "verified_date": "2026-10-10",
+  "image": {
+    "reference": "ghcr.io/nebius/nebius-physical-ai/npa-mjlab:dev-06764a544844f93324bdf75a378c1a7139802c9a",
+    "digest": "sha256:a3d70cf5147253431c349696eaaf0bf37fbc0bb325e0a25afb3962b57da6681f",
+    "source_sha": "06764a544844f93324bdf75a378c1a7139802c9a",
+    "config_digest": "sha256:1a7c1c5de43acab7a982a14b4c9706ee1d0a3de71a025be4623eceddbfd976cb",
+    "anonymous_pull_verified": true
+  },
+  "build": {
+    "run_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/38068786833",
+    "passed": true,
+    "pre_and_post_publication_payload": "clean",
+    "corresponding_source_verified_before_and_after_publication": true,
+    "critical_vulnerability_license_gate": "passed",
+    "all_severity_secret_gate": "passed",
+    "signed_provenance_verified": true,
+    "signed_spdx_sbom_verified": true,
+    "sbom_packages": 677,
+    "skypilot_bootstrap_contract": "skypilot-0.12.2-v1"
+  },
+  "source_delivery": {
+    "debian_components": 239,
+    "python_native_archives": 23,
+    "python_lock_sha256": "e076cf7e631a48be2b943cb50a828c054123aefee0469b9c30d317e16dd7eb00"
+  },
+  "qualification": {
+    "schema_version": "npa.mjlab.gpu-acceptance.v1",
+    "passed": true,
+    "cases": {
+      "cartpole": {
+        "task": "Mjlab-Cartpole-Balance",
+        "gpu_count": 1,
+        "checkpoint_sha256": "6f8d861d4ea55539fa320f34c584e44223ff777bc8ccb05fc8062db47d985838",
+        "iteration": 1,
+        "optimizer_step": 40.0,
+        "episodes_completed": 8,
+        "mean_return": 8.731246044184902,
+        "survival_fraction": 1.0,
+        "video_frames": null,
+        "onnx_sha256": "33d563174360bc80f2cd8f0ba3412b36f75a2b37b31c9388054dd566abe97925",
+        "artifact_hash_readbacks": 11
+      },
+      "g1": {
+        "task": "Mjlab-Velocity-Flat-Unitree-G1",
+        "gpu_count": 1,
+        "checkpoint_sha256": "92dc03a5fcb23a82fa278eccfab71c88c263141341cb198c920af38cdd88e426",
+        "iteration": 1,
+        "optimizer_step": 40.0,
+        "episodes_completed": 8,
+        "mean_return": 2.811892363381503,
+        "survival_fraction": 0.0,
+        "video_frames": 68,
+        "onnx_sha256": "7b9eeceaddffc9fb830e4b6d48aa4af2f8122288db0f5e67d52dba7b7f0dbff3",
+        "artifact_hash_readbacks": 14
+      },
+      "go1": {
+        "task": "Mjlab-Velocity-Flat-Unitree-Go1",
+        "gpu_count": 1,
+        "checkpoint_sha256": "e55143e67ca346ce2d6bba41f7d6dcb07d9e825b84d1113c29438b223b007e33",
+        "iteration": 1,
+        "optimizer_step": 40.0,
+        "episodes_completed": 8,
+        "mean_return": 77.14598124288023,
+        "survival_fraction": 1.0,
+        "video_frames": null,
+        "onnx_sha256": "53678612c692e590bbc320f6441ad1eddaac8ef21219e543d73aec9079299a92",
+        "artifact_hash_readbacks": 12
+      },
+      "yam": {
+        "task": "Mjlab-Lift-Cube-Yam",
+        "gpu_count": 1,
+        "checkpoint_sha256": "285e1f4748dd4f070da31259a8222aab8129f06bfff3d395e70494960764aaa2",
+        "iteration": 1,
+        "optimizer_step": 40.0,
+        "episodes_completed": 8,
+        "mean_return": 12.296474697155645,
+        "survival_fraction": 1.0,
+        "video_frames": null,
+        "onnx_sha256": "205eff8d6e1650174f23b047203e753db5640b2ec0cc6dbe100912651b75ec16",
+        "artifact_hash_readbacks": 12
+      }
+    },
+    "hardware": {
+      "devices": [
+        {
+          "name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+          "capability": [
+            12,
+            0
+          ]
+        }
+      ],
+      "torch": "2.13.0+cu130",
+      "torch_cuda": "13.0",
+      "torch_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120"
+      ],
+      "image_source_sha": "06764a544844f93324bdf75a378c1a7139802c9a",
+      "versions": {
+        "mjlab": "1.6.0",
+        "mujoco": "3.11.0",
+        "mujoco-warp": "3.11.0",
+        "warp-lang": "1.17.0",
+        "torch": "2.13.0+cu130",
+        "rsl-rl-lib": "5.4.2"
+      }
+    },
+    "service": {
+      "unauthenticated_status": 401,
+      "out_of_scope_status": 400,
+      "concurrent_status": 409,
+      "resumed_iteration": 2,
+      "resumed_optimizer_step": 80.0,
+      "episodes_completed": 8
+    }
+  },
+  "scope": {
+    "training_updates_per_task": 2,
+    "environments_per_training_task": 64,
+    "gpu_count": 1,
+    "rendered_g1_decoded_frames": 68,
+    "task_artifact_hash_readbacks": 49,
+    "quality_claim": "Functional capability checks; survival is a horizon metric, not task success.",
+    "supported_release_promoted": false,
+    "b200_and_multi_gpu_current_digest": "unverified"
+  }
+}

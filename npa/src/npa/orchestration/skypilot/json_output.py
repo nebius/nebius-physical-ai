@@ -17,19 +17,36 @@ _EMPTY_QUEUE_MESSAGES = {
     "sky.exceptions.clusternotuperror: no in-progress managed jobs.",
 }
 
-_ALLOWED_CLOUDS_CLIENT_SERVER_WARNING = (
+# SkyPilot 0.12.2 emits this client/server notice before queue and status JSON.
+# Only this exact leading notice is admitted; other configuration differences
+# and ambiguous documents remain unverified.
+_ALLOWED_CLOUDS_CONFIG_WARNING = (
     'The following keys (["allowed_clouds"]) have different values in the client '
     "SkyPilot config with the server and will be ignored. Remove these keys to "
-    "disable this warning. If you want to specify it, please modify it on server "
-    "side or contact your administrator."
+    "disable this warning. If you want to specify it, please modify it on server side "
+    "or contact your administrator."
 )
+
+
+def _without_allowed_clouds_warning(output: str) -> str:
+    """Remove the exact leading allowed_clouds warning from CLI output."""
+
+    lines = str(output or "").splitlines(keepends=True)
+    if lines and lines[0].rstrip("\r\n") == _ALLOWED_CLOUDS_CONFIG_WARNING:
+        return "".join(lines[1:])
+    return str(output or "")
+
+
+def parse_cli_json_output(output: str) -> Any:
+    """Parse one CLI JSON document after the exact leading pinned notice."""
+
+    return json.loads(_without_allowed_clouds_warning(output))
 
 
 def queue_rows_from_output(output: str) -> list[dict[str, Any]] | None:
     """Parse a verified SkyPilot queue list from one unambiguous JSON payload."""
 
-    normalized_output = _without_known_allowed_clouds_warning(output)
-    payload = parse_single_json_document(normalized_output)
+    payload = parse_single_json_document(_without_allowed_clouds_warning(output))
     if isinstance(payload, list):
         rows = payload
     elif isinstance(payload, dict) and isinstance(payload.get("jobs"), list):
@@ -51,12 +68,8 @@ def is_verified_empty_queue_result(
         return not rows
     if result.returncode not in {0, 1}:
         return False
-    stdout_lines = _semantic_queue_lines(
-        _without_known_allowed_clouds_warning(result.stdout), structured=False
-    )
-    stderr_lines = _semantic_queue_lines(
-        _without_known_allowed_clouds_warning(result.stderr), structured=False
-    )
+    stdout_lines = _semantic_queue_lines(result.stdout, structured=False)
+    stderr_lines = _semantic_queue_lines(result.stderr, structured=False)
     if stdout_lines is None or stderr_lines is None:
         return False
     # SkyPilot can echo the same benign marker on both streams. Evidence is the
@@ -74,32 +87,18 @@ def verified_structured_queue_rows(
 
     if result.returncode != 0:
         return None
-    stdout = _without_known_allowed_clouds_warning(result.stdout)
-    stderr = _without_known_allowed_clouds_warning(result.stderr)
-    rows = queue_rows_from_output(stdout)
+    normalized_stdout = _without_allowed_clouds_warning(result.stdout)
+    rows = queue_rows_from_output(normalized_stdout)
     if rows is None:
         return None
-    stdout_without_json = _without_single_json_document(stdout)
+    stdout_without_json = _without_single_json_document(normalized_stdout)
     if stdout_without_json is None:
         return None
     if _semantic_queue_lines(stdout_without_json, structured=True) is None:
         return None
-    if _semantic_queue_lines(stderr, structured=True) is None:
+    if _semantic_queue_lines(result.stderr, structured=True) is None:
         return None
     return rows
-
-
-def _without_known_allowed_clouds_warning(value: str) -> str:
-    """Remove only SkyPilot 0.12.2's exact allowed-clouds compatibility preamble."""
-
-    text = str(value or "")
-    prefix_length = len(text) - len(text.lstrip())
-    if not text[prefix_length:].startswith(_ALLOWED_CLOUDS_CLIENT_SERVER_WARNING):
-        return text
-    return (
-        text[:prefix_length]
-        + text[prefix_length + len(_ALLOWED_CLOUDS_CLIENT_SERVER_WARNING) :]
-    )
 
 
 def _semantic_queue_lines(value: str, *, structured: bool) -> list[str] | None:
@@ -155,7 +154,7 @@ def _semantic_queue_lines(value: str, *, structured: bool) -> list[str] | None:
 def _without_single_json_document(value: str) -> str | None:
     """Remove the one JSON document while retaining surrounding diagnostics."""
 
-    text = str(value or "")
+    text = _without_allowed_clouds_warning(value)
     decoder = json.JSONDecoder()
     matches: list[tuple[int, int]] = []
     for index, character in enumerate(text):

@@ -53,8 +53,8 @@ from .npa_workflow_live_helpers import (
     assert_lerobot_subtask_live_outputs,
     assert_no_credential_leakage,
     assert_nurec_colmap_live_outputs,
+    assert_parallel_run,
     assume_decision_for,
-    concurrency_overlaps,
     live_bucket,
     live_credential_markers,
     materialize_live_spec,
@@ -384,7 +384,6 @@ def test_npa_workflow_submit_live_reaches_terminal(
             and last_status not in TERMINAL_OK
             and not _is_terminal_fail(last_status)
         ):
-            # Best-effort cancel via sky jobs cancel through workflow helper.
             try:
                 from npa.orchestration.skypilot._bin import resolve_config
                 from npa.orchestration.skypilot.workflow_state import (
@@ -392,14 +391,27 @@ def test_npa_workflow_submit_live_reaches_terminal(
                 )
 
                 runtime = resolve_config()
-                cancel_workflow_job(
+                cancellation = cancel_workflow_job(
                     sky_bin=str(runtime.sky_bin),
                     job_id=str(job_id),
                     run_id=run_id,
                     cluster=run_id,
                 )
+                if (
+                    cancellation.get("cancel_returncode") != 0
+                    or cancellation.get("terminal_confirmed") is not True
+                    or cancellation.get("down_attempted") is not True
+                    or cancellation.get("down_returncode") != 0
+                ):
+                    pytest.fail(
+                        "timed-out workflow cancellation did not converge before "
+                        "cluster teardown; inspect private runtime evidence"
+                    )
             except Exception:
-                pass
+                pytest.fail(
+                    "timed-out workflow cancellation failed; retained job state "
+                    "must be inspected before deleting compute"
+                )
 
 
 # Provisioning failures that say "this cluster/image cannot host the task", as
@@ -576,45 +588,25 @@ def test_npa_workflow_runtime_live_reaches_terminal(
         )
 
     if case.expected_parallel_tasks > 1:
-        parallel_waves = [wave for wave in waves if wave["kind"] == "parallel"]
-        assert parallel_waves, (
-            f"{case.spec} declared a parallel group but ran none: {waves}"
-        )
-        launched = sum(len(wave["states"]) for wave in parallel_waves)
-        assert launched == case.expected_parallel_tasks
-        # Two independent concurrency signals: live RUNNING observations taken
-        # while polling, and overlapping submitted/end intervals afterwards.
-        observed = max(
-            wave.get("max_concurrent_observed", 0) for wave in parallel_waves
-        )
-        overlaps = concurrency_overlaps(parallel_waves[0].get("tasks") or [])
-        assert observed >= 2 or overlaps, (
-            "parallel wave never showed concurrent tasks: "
-            f"observed={observed} tasks={parallel_waves[0].get('tasks')}"
-        )
-        # Barrier: the waves *after* the group were submitted only once every
-        # member of the group had finished. Indexing off the group's position keeps
-        # this correct for specs that also have serial waves BEFORE the fan-out.
-        last_parallel_index = max(
-            index for index, wave in enumerate(waves) if wave["kind"] == "parallel"
-        )
-        group_end = max(
-            float(task.get("end_at") or 0.0)
-            for wave in waves[: last_parallel_index + 1]
-            if wave["kind"] == "parallel"
-            for task in wave.get("tasks") or []
-        )
-        downstream_starts = [
-            float(task.get("start_at") or task.get("submitted_at") or 0.0)
-            for wave in waves[last_parallel_index + 1 :]
-            for task in wave.get("tasks") or []
-            if float(task.get("start_at") or task.get("submitted_at") or 0.0) > 0
-        ]
-        assert downstream_starts, "no barrier task timings recorded"
-        assert min(downstream_starts) >= group_end - 1.0, (
-            f"barrier task started before the parallel group finished: "
-            f"group_end={group_end} starts={downstream_starts}"
-        )
+        assert_parallel_run(waves, case.expected_parallel_tasks)
+
+
+def _published_variant_base(bucket, prefix, variant):
+    """Follow the manifest's publication while retaining its run and clip boundary."""
+    from urllib.parse import unquote, urlsplit
+
+    clip = variant["clip"]
+    assert clip and clip not in {".", ".."} and "/" not in clip and "\\" not in clip
+    selected = urlsplit(variant["augmented_video_uri"])
+    assert selected.scheme == "s3" and selected.netloc == bucket
+    assert not selected.query and not selected.fragment
+    key = selected.path.lstrip("/")
+    assert key.startswith(prefix + f"cosmos_augmented/{clip}/"), (
+        "Published variant must remain in its selected run and clip"
+    )
+    assert key.endswith("/augmented_video.mp4")
+    assert all(part not in {"", ".", ".."} for part in unquote(key).split("/"))
+    return key[len(prefix) :].rsplit("/", 1)[0] + "/"
 
 
 def _assert_transfer_variant(
@@ -623,7 +615,7 @@ def _assert_transfer_variant(
     from npa.workflows.paidf_cosmos3_media import verify_pair, video_sha256
 
     clip = variant["clip"]
-    base = f"cosmos_augmented/{clip}/"
+    base = _published_variant_base(bucket, prefix, variant)
     generated = folder / f"{clip}.mp4"
     client.download_file(bucket, prefix + base + "augmented_video.mp4", str(generated))
     alignment = verify_pair(source, generated, variant["temporal_alignment"]["fps"])
@@ -828,12 +820,28 @@ def _assert_recorded_curation(text, raw, relative):
 
 
 def _assert_transfer_recording(client, bucket, prefix, folder, variants, read_json):
+    import subprocess
+    import sys
+
     from npa.viz.recordings import load_recording
+    from npa.workflows.data_factory_viz import APPLICATION_ID
 
     path = folder / "final.rrd"
     client.download_file(bucket, prefix + "reports/sim2real.rrd", str(path))
+    subprocess.run(
+        [sys.executable, "-m", "rerun", "rrd", "verify", str(path)],
+        check=True,
+        capture_output=True,
+    )
+    recording = load_recording(path)
+    # The CLI also accepts legacy streams; a fresh publication needs its footer.
+    recording.reader.store(store=recording.entry)
+    assert recording.application_id() == APPLICATION_ID, "Wrong PAIDF application"
+    assert recording.recording_id() == prefix.rstrip("/").rsplit("/", 1)[-1], (
+        "Recording belongs to a different run"
+    )
     entities = {}
-    for chunk in load_recording(path).chunks():
+    for chunk in recording.chunks():
         entities.setdefault(str(chunk.entity_path), []).append(chunk.to_record_batch())
 
     def document(entity):
@@ -987,16 +995,16 @@ def _assert_paidf_live_artifacts(
         assert augment.get("model")
         assert isinstance(augment.get("variants"), list)
         for variant in augment["variants"]:
-            relative = str(variant["clip"])
+            base = _published_variant_base(bucket, prefix, variant)
             for leaf in ("augmented_video.mp4", "metadata.json"):
                 head = client.head_object(
                     Bucket=bucket,
-                    Key=prefix + f"cosmos_augmented/{relative}/{leaf}",
+                    Key=prefix + base + leaf,
                 )
                 assert int(head.get("ContentLength") or 0) > 0
             frames = client.list_objects_v2(
                 Bucket=bucket,
-                Prefix=prefix + f"cosmos_augmented/{relative}/frame-",
+                Prefix=prefix + base + "frame-",
             ).get("Contents", [])
             assert any(int(item.get("Size") or 0) > 0 for item in frames)
     evaluator = read_json("grade/cosmos_evaluator.json")

@@ -29,6 +29,31 @@ layer, including files subsequently deleted, plus raw archive headers, logical
 names, optional gzip headers, and padding. It never extracts image members into
 the host filesystem. Unsupported layer encodings or ambiguous archives fail.
 
+The generic Docker-save path distinguishes graph-bound encoded layer blobs from
+logical file records. An encoded layer may exceed the 1 GiB complete-record cap:
+its exact graph-bound size and digest are checked, then every decoded file is
+scanned under the unchanged cap and decoded-layer accounting. Unknown outer
+files, misleading layer-like names, and oversized decoded files do not receive
+this exception. This does not change matching, findings, or acceptance policy.
+The restricted-payload scan of a cuRobo tarball is also bound to that graph
+verification. Run `verify_image.py` first and pass its successful report with
+`--verification-report`. Before it can emit a clean JSON report, the scanner
+rehashes the tarball and report and requires their config and complete ordered
+layer graph to agree. A containerd save cites its verified OCI manifest digest;
+a classic Docker save, which contains no registry manifest object, truthfully
+cites its verified image-config digest.
+
+For the post-push scan, also pass the exact digest-qualified image with
+`--registry-image` and the independently obtained digest with
+`--expected-manifest-digest`. The scanner fetches that exact manifest, verifies
+its raw digest, config and layer population against the saved archive, and
+requires Docker's pulled exact-digest image to expose the same config and rootfs
+diff-ID sequence. OCI saves additionally require exact layer descriptors.
+Classic saves bind registry descriptor order through Docker's successful
+exact-digest pull and the config's ordered diff IDs. Reports contain hashes and
+identity kinds, never registry credentials. A changed archive, report, config,
+layer graph, or registry manifest fails before payload classification.
+
 ## Policy and dependencies
 
 CI requires `CUSTOMER_DENYLIST` from the repository secret store;
@@ -55,6 +80,37 @@ detect changes to the authorized inputs; a later refusal alone cannot prevent
 changed executable bytes from running.
 
 ## Run and inspect
+
+### Original OCI archives
+
+The generic structural verifier accepts an original OCI archive with one Linux
+amd64 runtime and supported BuildKit attestations. It binds the independently
+obtained image index digest, archive hash, config, ordered layer digests and
+decoded ancestor-file population. It does not require conversion to a Docker
+save archive. Existing cuRobo, NCore, RoboTwin and Habitat verifier contracts are
+unchanged.
+
+```bash
+npa/.venv/bin/python npa/scripts/image_byte_scan/oci_verification.py \
+  --analysis-root "$SCAN_ROOT" --trusted-root "$PWD" \
+  --archive "$OCI_ARCHIVE" --expected-image-id "$EXPECTED_IMAGE_INDEX_DIGEST" \
+  --output-dir "$SCAN_ROOT/oci-verification"
+```
+
+Pass the resulting `verification.json` to `prepare.py authorize` together with
+the same archive and expected image identity. The report uses
+`npa.image.oci-verification.v1`. Normal dependency, confidentiality-policy,
+complete-byte and helper-completion checks still apply. A structural report's
+`valid` field does not mean the image passed those checks or product validation.
+Keep the original archive immutable; transformed archives need new verification
+and scans. Unsupported archive metadata remains a failure.
+
+This generic path does not enable finding adjudication: `adjudicate.py` retains
+its existing product and Docker-save requirements. Findings, missing policy and
+unfinished scans remain failures. GPU functionality, licensing, vulnerabilities,
+runtime provenance and publication authorization remain separate requirements.
+
+### Authorize and scan
 
 Use `prepare.py authorize --help` to prepare an authorization from the exact
 archive, successful cuRobo verifier report, expected image identity, and native
@@ -86,6 +142,39 @@ as stored. Encrypted content and unsupported semantic encodings remain limits of
 pattern detection. Whole-record regexes can also require substantial memory or
 CPU. An interrupted or exhausted scan is incomplete, with no truncation fallback.
 Functional GPU workloads and artifact inspection remain separate release gates.
+
+### SeedVR2 local direct-manifest archives
+
+The SeedVR2 local `--load --provenance=false` build has one Docker-schema-2 or
+OCI image manifest inside an OCI-layout Docker-save archive. It has no provenance
+attestation. Verify this distinct format with
+`npa/scripts/image_byte_scan/seedvr2_verification.py`, providing required
+`--analysis-root`, `--trusted-root`, `--archive`, `--expected-image-id` and a new
+`--output-dir`. The expected identity must be the independently inspected
+**manifest** digest, not a config or index digest. Its
+`npa.seedvr2.direct-manifest-verification.v1` receipt can then be supplied to
+`prepare.py authorize` using the existing policy and native-dependency options.
+
+This explicit mode binds the sole manifest, Linux/amd64 config, ordered layer
+descriptors and decoded diff IDs, Docker compatibility view, closed blob
+population and all ancestor regular-file counts. It rejects extra graph members,
+multiple image selections, unsupported media types and contradictory identities.
+It does not weaken the existing attested-index verifier or synthesize an
+attestation. Product payload scanning remains a separate SeedVR2 gate.
+
+As with the existing Docker-save contract, encoded layer transport is read and
+hash-bound in full; the native detector receives every complete decoded file,
+gzip/header metadata, names and padding. Native secret matching is **not** run
+against the compressed transport blob itself. Unknown blobs are rejected by graph
+closure, and incomplete, malformed or trailing gzip data fails. The schema, not
+the presence or absence of a report field, selects this behavior. This branch's
+existing native complete-record behavior is unchanged; the adapter adds no
+record-size, runtime or resource-admission policy.
+
+Keep the original image, build-source SHA and archive unchanged when updating
+only this external verifier. Record the separate verifier execution SHA. A
+structural receipt is not GPU capability, restored-video quality, complete-secret
+absence, OCI provenance or public-image release approval.
 
 RoboTwin adds a separate solution scanner,
 `npa/scripts/scan_image_robotwin_payload.py`. For the public-bootstrap design it
@@ -216,3 +305,9 @@ complete scans. It obtains no approval hash from an unreviewed file at runtime.
 A failed policy gate stops subsequent publication actions and retains failed
 inputs for private investigation. Confidentiality configuration remains required
 before building; exact public native content cannot authorize denied identifiers.
+
+Catalog remediation does not amend an existing image digest or make an old scan
+fresh. Preserve the original failed report and ledger unchanged. After an
+independent review confirms the exact source head and catalog bindings, rerun the
+complete-byte scanner on the same archive with a new authorization; only that
+fresh result may produce a policy-acceptance receipt.

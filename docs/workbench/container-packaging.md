@@ -31,6 +31,35 @@ node-local ephemeral storage, with durable reuse still unapproved.
 
 ## SkyPilot worker bootstrap contract
 
+The Sim2Real controller and Rerun viewer upgrade inherited Debian packages from
+the pinned `DEBIAN_SNAPSHOT=20261002T000000Z` closure. Their `MIN_*_VERSION`
+build arguments encode the observed fixed security floors: Perl for both roles,
+plus GLib and mbedcrypto for the viewer. An unreadable or below-floor installed
+version stops the build. The [package-index receipt](validation/sim2real-cpu-security-snapshot-20261002.json)
+binds the snapshot and exact package hashes; it is not replacement-image
+security, bootstrap or runtime acceptance. Do not lower these floors or
+substitute scanner exceptions for rebuilt, validated image bytes.
+
+The GPU-role security closure separately pins PyJWT 2.14.0 for Transfer and
+Isaac. EnvGen uses the October Ubuntu snapshot and the explicit
+`LINUX_LIBC_DEV_VERSION=5.15.0-198.208` argument to the existing installer;
+other installer callers retain their own release-specific defaults. The exact
+installed header version is checked before proceeding. The frozen APT transaction
+already selects that version, above the security floor `5.15.0-194.204`.
+The [signed-index binding](validation/sim2real-envgen-headers-20261002.json)
+preserves both identities; requesting the lower floor after that transaction
+caused a real downgrade refusal, not an access or transport failure. No downgrade
+override is used. These dependency pins
+do not qualify an image without its fresh complete artifact gates.
+
+EnvGen also removes one hash-bound, inert `grass()` sample-download example
+from inherited scikit-image source. The example contains a token-bearing URL
+flagged by the image scan; no assertion is made that it is a private credential.
+The sanitizer refuses changed source or package `RECORD`, preserves executable
+ASTs and primary API documentation, and updates the exact modified source hash
+in `RECORD`. It runs before filesystem flattening, not as a scanner suppression.
+Original failing image bytes and scan populations remain separate evidence.
+
 Every workflow image must satisfy version `skypilot-0.12.2-v1`: a usable
 effective user; root or verified passwordless sudo; `openssh-server`, `rsync`,
 and compatible service/init behavior; writable `/tmp` and home; and an
@@ -122,7 +151,7 @@ All first-class images live under `npa/docker/workbench/`:
 | `npa-groot` | `groot/Dockerfile` | job shell; `EXPOSE 8080` |
 | `npa-fiftyone` | `fiftyone/Dockerfile` | command-passthrough job entrypoint; `EXPOSE 5151` |
 | `npa-lancedb` | `lancedb/Dockerfile` | uvicorn `:8686`; non-root SkyPilot workflow host |
-| `npa-mjlab` (unpublished) | `mjlab/Dockerfile` | authenticated uvicorn `:8080`; native train/eval/export CLI |
+| `npa-mjlab` ([public development candidate](validation/mjlab-native-hd-gpu-20261010.json)) | `mjlab/Dockerfile` | authenticated uvicorn `:8080`; native train/eval/export CLI |
 | `npa-sonic` | `sonic/Dockerfile` | `/entrypoint.sh` modes |
 | `npa-detection-training` | `detection-training/Dockerfile` | uvicorn `:8790` |
 | `npa-antioch` | `antioch/Dockerfile` | CPU-only uvicorn `:8789`; proprietary CLI is verified runtime-fetch only |
@@ -591,7 +620,14 @@ must still be checked: source availability is not proof of publication.
 
 Main-branch pushes touching `npa/docker/workbench/` select development builds by
 changed recipe directories, individual packaging/catalog entries, and Dockerfile
-`COPY`/`ADD` inputs. The selector considers the entire push diff, so shared NPA
+local `COPY`/`ADD` inputs and `RUN --mount=type=bind` sources. HTTP(S) `ADD`
+downloads are external inputs; changing their Dockerfile still rebuilds the
+owning image. Bind mounts without a source consume the whole build context.
+Bind-mount option names are case-insensitive; duplicate fields or source aliases
+restore the full build set. Bind sources match literal paths, including filenames
+with wildcard characters; local `COPY`/`ADD` inputs retain wildcard matching.
+The robomimic recipe uses its own directory as that context, matching the
+publisher. The selector considers the entire push diff, so shared NPA
 source and staged workflow changes in the same push rebuild their consumers.
 Unchanged images retain their previously validated versions; no new development
 tag is fabricated for them. The existing weekly refresh still builds every

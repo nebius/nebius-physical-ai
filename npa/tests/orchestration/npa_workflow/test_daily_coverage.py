@@ -25,13 +25,15 @@ def test_required_images_are_covered_by_comprehensive_workflows() -> None:
     dc.assert_coverage()
 
 
-def test_api_only_preference_has_no_container_coverage_obligation() -> None:
+def test_api_only_tools_have_no_container_coverage_obligation() -> None:
     from npa.orchestration.npa_workflow.skypilot_render import (
         TOOL_REF_IMAGE_TOOL,
         tool_image_key,
     )
 
     assert tool_image_key("workbench.vlm_eval.compare_preference") is None
+    assert tool_image_key("workbench.gemini_robotics.plan") is None
+    assert tool_image_key("workbench.gemini_robotics.eval") is None
     assert None not in dc.WORKFLOW_IMAGE_TOOLS
     assert dc.WORKFLOW_IMAGE_TOOLS == {
         image for image in TOOL_REF_IMAGE_TOOL.values() if image is not None

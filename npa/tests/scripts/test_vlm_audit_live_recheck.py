@@ -336,7 +336,7 @@ def test_private_configuration_symlink_loops_fail_closed(
 def test_unrelated_resolve_runtime_error_is_not_swallowed(monkeypatch, tmp_path):
     runner = _runner()
 
-    def fail(_):
+    def fail(_, **kwargs):
         raise RuntimeError("unrelated runtime bug")
 
     monkeypatch.setattr(Path, "resolve", fail)

@@ -238,12 +238,251 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+func TestProcessContainmentReadinessIdentity(t *testing.T) {
+	if fixtureReady.ProcessContainment != processContainment {
+		t.Fatalf(
+			"ready containment %q, want %q",
+			fixtureReady.ProcessContainment,
+			processContainment,
+		)
+	}
+}
+
+func TestSeccompFilterCountRequiresOneNonnegativeValue(t *testing.T) {
+	for name, item := range map[string]struct {
+		status []byte
+		value  int
+		valid  bool
+	}{
+		"present":   {[]byte("Name:\thelper\nSeccomp_filters:\t2\n"), 2, true},
+		"zero":      {[]byte("Seccomp_filters:\t0\n"), 0, true},
+		"missing":   {[]byte("Seccomp:\t2\n"), 0, false},
+		"negative":  {[]byte("Seccomp_filters:\t-1\n"), 0, false},
+		"malformed": {[]byte("Seccomp_filters:\tunknown\n"), 0, false},
+		"duplicate": {[]byte("Seccomp_filters:\t1\nSeccomp_filters:\t2\n"), 0, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			actual := seccompFilterCountFromStatus(item.status)
+			if actual.value != item.value || actual.valid != item.valid {
+				t.Fatalf("got %+v, want value=%d valid=%v", actual, item.value, item.valid)
+			}
+		})
+	}
+}
+
+type seccompFilterInput struct {
+	syscall uint32
+	arch    uint32
+	arg0    uint32
+}
+
+const (
+	testBPFLoadWordAbsolute = 0x20
+	testBPFJumpEqual        = 0x15
+	testBPFJumpSet          = 0x45
+	testBPFReturn           = 0x06
+	testSeccompDataSyscall  = 0
+	testSeccompDataArch     = 4
+	testSeccompDataArg0     = 16
+	testAuditArchX8664      = 0xc000003e
+	testSeccompReturnKill   = 0x80000000
+	testSeccompReturnErrno  = 0x00050000
+	testSeccompReturnAllow  = 0x7fff0000
+	testErrnoNoSys          = 38
+	testX32SyscallBit       = 0x40000000
+	testSyscallClone        = 56
+	testSyscallSetpgid      = 109
+	testSyscallSetsid       = 112
+	testSyscallUnshare      = 272
+	testSyscallSetns        = 308
+	testSyscallClone3       = 435
+)
+
+func evaluateProcessContainmentFilter(
+	filter []sockFilter,
+	input seccompFilterInput,
+) (uint32, error) {
+	var accumulator uint32
+	for programCounter := 0; programCounter < len(filter); {
+		instruction := filter[programCounter]
+		switch instruction.Code {
+		case testBPFLoadWordAbsolute:
+			switch instruction.K {
+			case testSeccompDataSyscall:
+				accumulator = input.syscall
+			case testSeccompDataArch:
+				accumulator = input.arch
+			case testSeccompDataArg0:
+				accumulator = input.arg0
+			default:
+				return 0, fmt.Errorf("unsupported load offset %d", instruction.K)
+			}
+			programCounter++
+		case testBPFJumpEqual:
+			offset := instruction.Jf
+			if accumulator == instruction.K {
+				offset = instruction.Jt
+			}
+			programCounter += int(offset) + 1
+		case testBPFJumpSet:
+			offset := instruction.Jf
+			if accumulator&instruction.K != 0 {
+				offset = instruction.Jt
+			}
+			programCounter += int(offset) + 1
+		case testBPFReturn:
+			return instruction.K, nil
+		default:
+			return 0, fmt.Errorf("unsupported BPF instruction %#x", instruction.Code)
+		}
+	}
+	return 0, errors.New("filter terminated without a return")
+}
+
+func TestProcessContainmentFilterCoversEveryEscapeRoute(t *testing.T) {
+	filter := processContainmentFilter()
+	denied := uint32(testSeccompReturnErrno | 1)
+	for name, number := range map[string]uint32{
+		"setpgid": testSyscallSetpgid,
+		"setsid":  testSyscallSetsid,
+		"unshare": testSyscallUnshare,
+		"setns":   testSyscallSetns,
+		"x32":     testSyscallSetpgid | testX32SyscallBit,
+	} {
+		t.Run(name, func(t *testing.T) {
+			actual, err := evaluateProcessContainmentFilter(
+				filter,
+				seccompFilterInput{syscall: number, arch: testAuditArchX8664},
+			)
+			if err != nil || actual != denied {
+				t.Fatalf("result=%#x error=%v, want %#x", actual, err, denied)
+			}
+		})
+	}
+	clone3, err := evaluateProcessContainmentFilter(
+		filter,
+		seccompFilterInput{
+			syscall: testSyscallClone3,
+			arch:    testAuditArchX8664,
+		},
+	)
+	unsupported := uint32(testSeccompReturnErrno | testErrnoNoSys)
+	if err != nil || clone3 != unsupported {
+		t.Fatalf("clone3 result=%#x error=%v, want %#x", clone3, err, unsupported)
+	}
+	for name, flag := range map[string]uint32{
+		"time":    0x00000080,
+		"mount":   0x00020000,
+		"cgroup":  0x02000000,
+		"uts":     0x04000000,
+		"ipc":     0x08000000,
+		"user":    0x10000000,
+		"pid":     0x20000000,
+		"network": 0x40000000,
+	} {
+		t.Run("clone-"+name, func(t *testing.T) {
+			actual, err := evaluateProcessContainmentFilter(
+				filter,
+				seccompFilterInput{
+					syscall: testSyscallClone,
+					arch:    testAuditArchX8664,
+					arg0:    flag | 17,
+				},
+			)
+			if err != nil || actual != denied {
+				t.Fatalf("result=%#x error=%v, want %#x", actual, err, denied)
+			}
+		})
+	}
+	allowed, err := evaluateProcessContainmentFilter(
+		filter,
+		seccompFilterInput{
+			syscall: testSyscallClone,
+			arch:    testAuditArchX8664,
+			arg0:    17,
+		},
+	)
+	if err != nil || allowed != testSeccompReturnAllow {
+		t.Fatalf("ordinary clone result=%#x error=%v", allowed, err)
+	}
+	wrongArch, err := evaluateProcessContainmentFilter(
+		filter,
+		seccompFilterInput{syscall: 0, arch: 0},
+	)
+	if err != nil || wrongArch != testSeccompReturnKill {
+		t.Fatalf("wrong architecture result=%#x error=%v", wrongArch, err)
+	}
+}
+
 func scanner() *detect.Detector {
 	d := detect.NewDetector(fixtureConfig)
 	d.MaxTargetMegaBytes = 0
 	d.IgnoreGitleaksAllow = true
 	d.Redact = 100
 	return d
+}
+
+func TestBoundedAddressSpaceNeverRaisesInheritedLimit(t *testing.T) {
+	infinity := ^uint64(0)
+	cases := []struct {
+		name      string
+		inherited syscall.Rlimit
+		expected  uint64
+	}{
+		{"unlimited", syscall.Rlimit{Cur: infinity, Max: infinity}, maxMemoryBytes},
+		{"lower-soft", syscall.Rlimit{Cur: 4 << 30, Max: infinity}, 4 << 30},
+		{"lower-hard", syscall.Rlimit{Cur: 8 << 30, Max: 8 << 30}, 8 << 30},
+		{"higher-inherited", syscall.Rlimit{Cur: 16 << 30, Max: 20 << 30}, maxMemoryBytes},
+	}
+	for _, item := range cases {
+		t.Run(item.name, func(t *testing.T) {
+			actual := boundedAddressSpace(maxMemoryBytes, item.inherited)
+			if actual != item.expected {
+				t.Fatalf("got %d, want %d", actual, item.expected)
+			}
+		})
+	}
+}
+
+func TestApplyAddressSpaceLimitPreservesLowerInherited(t *testing.T) {
+	mode := os.Getenv("NPA_RLIMIT_CHILD_MODE")
+	if mode == "" {
+		for _, childMode := range []string{"soft", "hard"} {
+			command := exec.Command(
+				os.Args[0],
+				"-test.run=^TestApplyAddressSpaceLimitPreservesLowerInherited$",
+			)
+			command.Env = append(os.Environ(), "NPA_RLIMIT_CHILD_MODE="+childMode)
+			if output, err := command.CombinedOutput(); err != nil {
+				t.Fatalf("%s child failed: %v: %s", childMode, err, output)
+			}
+		}
+		return
+	}
+
+	var inherited syscall.Rlimit
+	if err := syscall.Getrlimit(syscall.RLIMIT_AS, &inherited); err != nil {
+		t.Fatal(err)
+	}
+	lower := uint64(4 << 30)
+	next := syscall.Rlimit{Cur: lower, Max: inherited.Max}
+	if mode == "hard" {
+		next.Max = lower
+	}
+	if err := syscall.Setrlimit(syscall.RLIMIT_AS, &next); err != nil {
+		t.Fatal(err)
+	}
+	effective, err := applyAddressSpaceLimit(maxMemoryBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var actual syscall.Rlimit
+	if err := syscall.Getrlimit(syscall.RLIMIT_AS, &actual); err != nil {
+		t.Fatal(err)
+	}
+	if effective != lower || actual.Cur != lower || actual.Max != lower {
+		t.Fatalf("effective=%d actual=%+v", effective, actual)
+	}
 }
 
 func framed(values ...[]byte) []byte {
@@ -269,6 +508,45 @@ func protocol(t *testing.T, payload []byte) (int, []map[string]any, string) {
 			break
 		} else if err != nil {
 			t.Fatal("invalid output JSON")
+		}
+		rows = append(rows, row)
+	}
+	return exit, rows, errors.String()
+}
+
+func privateMappedRecord(t *testing.T, payload []byte) int {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "record")
+	if err := os.WriteFile(path, payload, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0400); err != nil {
+		t.Fatal(err)
+	}
+	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		syscall.Close(fd)
+		t.Fatal(err)
+	}
+	return fd
+}
+
+func mappedProtocol(t *testing.T, payload []byte, ordinal uint64) (int, []map[string]any, string) {
+	t.Helper()
+	fd := privateMappedRecord(t, payload)
+	var output, errors bytes.Buffer
+	exit := processMapped(&output, &errors, scanner(), fixtureReady, fd, uint64(len(payload)), ordinal)
+	rows := make([]map[string]any, 0)
+	decoder := json.NewDecoder(&output)
+	for {
+		var row map[string]any
+		if err := decoder.Decode(&row); err == io.EOF {
+			break
+		} else if err != nil {
+			t.Fatal("invalid mapped output JSON")
 		}
 		rows = append(rows, row)
 	}
@@ -352,6 +630,175 @@ func TestEmptyAndMultipleRecords(t *testing.T) {
 	}
 }
 
+func TestMappedAndFramedWholeRecordProtocolsAreIdentical(t *testing.T) {
+	cases := [][]byte{
+		[]byte("ordinary \xff binary\nwith lines"),
+		[]byte(strings.Repeat("boundary-", 20000) + syntheticPAT()),
+		[]byte(syntheticJWT()),
+		[]byte(syntheticPrivateKey()),
+	}
+	for index, payload := range cases {
+		var output, errors bytes.Buffer
+		framedExit := processFrom(
+			bytes.NewReader(framed(payload)),
+			&output,
+			&errors,
+			scanner(),
+			fixtureReady,
+			6,
+		)
+		mappedExit, mappedRows, mappedErrors := mappedProtocol(t, payload, 7)
+		var framedRows []map[string]any
+		decoder := json.NewDecoder(&output)
+		for {
+			var row map[string]any
+			if err := decoder.Decode(&row); err == io.EOF {
+				break
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			framedRows = append(framedRows, row)
+		}
+		if framedExit != mappedExit || errors.String() != mappedErrors ||
+			!reflect.DeepEqual(framedRows, mappedRows) {
+			t.Fatalf("mapped protocol differs for case %d", index)
+		}
+	}
+}
+
+func TestMappedModeRejectsWritableOrLinkedDescriptor(t *testing.T) {
+	for _, linked := range []bool{false, true} {
+		path := filepath.Join(t.TempDir(), "record")
+		if err := os.WriteFile(path, []byte("record"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		flags := syscall.O_RDWR
+		if linked {
+			flags = syscall.O_RDONLY
+		}
+		fd, err := syscall.Open(path, flags|syscall.O_NOFOLLOW, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(path, 0400); err != nil {
+			t.Fatal(err)
+		}
+		if !linked {
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var output, diagnostic bytes.Buffer
+		exit := processMapped(&output, &diagnostic, scanner(), fixtureReady, fd, 6, 1)
+		if exit != 2 || !strings.Contains(diagnostic.String(), "record_descriptor_invalid") {
+			t.Fatal("unsafe mapped descriptor accepted")
+		}
+	}
+}
+
+func TestMappedCompleteRecordLimitBoundary(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sparse-record")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_EXCL, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(int64(completeRecordLimit)); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Chmod(0400); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	opened, payload, _, code := mapPrivateRecord(fd, completeRecordLimit)
+	if code != "" || uint64(len(payload)) != completeRecordLimit {
+		t.Fatalf("exact boundary rejected: %q", code)
+	}
+	if err := syscall.Munmap(payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := opened.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, code := mapPrivateRecord(-1, completeRecordLimit+1); code != "complete_record_limit" {
+		t.Fatalf("boundary+1 produced %q", code)
+	}
+}
+
+func TestMappedCleanupPreservesPrimaryFailurePrecedence(t *testing.T) {
+	originalDetect := mappedRecordDetect
+	originalStat := mappedRecordStat
+	originalUnmap := mappedRecordUnmap
+	originalClose := mappedRecordClose
+	defer func() {
+		mappedRecordDetect = originalDetect
+		mappedRecordStat = originalStat
+		mappedRecordUnmap = originalUnmap
+		mappedRecordClose = originalClose
+	}()
+	cases := []struct {
+		name, scanCode, expected string
+		mutation, unmap, close   bool
+	}{
+		{"scan", "synthetic_scan_failure", "synthetic_scan_failure", false, true, true},
+		{"mutation", "", "record_changed", true, true, true},
+		{"unmap", "", "record_unmap_failed", false, true, true},
+		{"close", "", "record_close_failed", false, false, true},
+	}
+	for _, item := range cases {
+		t.Run(item.name, func(t *testing.T) {
+			fd := privateMappedRecord(t, []byte("mapped cleanup fixture"))
+			unmapped, closed := false, false
+			mappedRecordDetect = func(payload []byte, detector *detect.Detector, ordinal uint64) ([]finding, string) {
+				if item.scanCode != "" {
+					return nil, item.scanCode
+				}
+				return detectMappedRecord(payload, detector, ordinal)
+			}
+			mappedRecordStat = func(file *os.File) (os.FileInfo, error) {
+				if item.mutation {
+					return nil, errors.New("synthetic mutation")
+				}
+				return file.Stat()
+			}
+			mappedRecordUnmap = func(payload []byte) error {
+				unmapped = true
+				if err := syscall.Munmap(payload); err != nil {
+					return err
+				}
+				if item.unmap {
+					return errors.New("synthetic unmap")
+				}
+				return nil
+			}
+			mappedRecordClose = func(file *os.File) error {
+				closed = true
+				if err := file.Close(); err != nil {
+					return err
+				}
+				if item.close {
+					return errors.New("synthetic close")
+				}
+				return nil
+			}
+			_, _, code := scanMappedRecord(
+				scanner(), fd, uint64(len("mapped cleanup fixture")), 1,
+			)
+			if code != item.expected || !unmapped || !closed {
+				t.Fatalf("code=%q unmap=%t close=%t", code, unmapped, closed)
+			}
+		})
+	}
+}
+
 func TestCleanEOFAndNoFindings(t *testing.T) {
 	for _, data := range [][]byte{nil, framed([]byte{0, 255, 128, 0}), framed(nil)} {
 		exit, rows, errors := protocol(t, data)
@@ -391,6 +838,60 @@ func TestOutputFailureIsBlocking(t *testing.T) {
 	var errors bytes.Buffer
 	if process(bytes.NewReader(nil), brokenWriter{}, &errors, scanner(), fixtureReady) != 2 || !strings.Contains(errors.String(), "output_error") {
 		t.Fatal("output failure ignored")
+	}
+}
+
+func TestRecordSizeLimitPrecedesPayloadAllocation(t *testing.T) {
+	var header [8]byte
+	binary.BigEndian.PutUint64(header[:], maxRecordBytes+1)
+	exit, _, errors := protocol(t, header[:])
+	if exit != 2 || !strings.Contains(errors, "record_size_limit") {
+		t.Fatal("record size limit did not precede payload allocation")
+	}
+}
+
+func TestRecordSizeLimitIsDerivedFromAddressSpaceBudget(t *testing.T) {
+	if maxRecordBytes*detectorPayloadExpansion+detectorMemoryHeadroom > maxMemoryBytes {
+		t.Fatal("record limit exceeds its address-space derivation")
+	}
+	if (maxRecordBytes+1)*detectorPayloadExpansion+detectorMemoryHeadroom <= maxMemoryBytes {
+		t.Fatal("record limit was not the largest value admitted by the derivation")
+	}
+	if uint64(inFlightByteBudget)*detectorPayloadExpansion+detectorMemoryHeadroom > maxMemoryBytes {
+		t.Fatal("concurrent payload budget exceeds the same address-space derivation")
+	}
+}
+
+func TestDetectionWorkerPopulationIsBounded(t *testing.T) {
+	previous := runtime.GOMAXPROCS(maxDetectionWorkers + 7)
+	defer runtime.GOMAXPROCS(previous)
+	if workers := detectionWorkers(); workers != maxDetectionWorkers {
+		t.Fatalf("worker population was not capped: %d", workers)
+	}
+	runtime.GOMAXPROCS(1)
+	if workers := detectionWorkers(); workers != 1 {
+		t.Fatalf("single-worker population changed: %d", workers)
+	}
+}
+
+func TestRecordFindingLimitPrecedesResponsePopulation(t *testing.T) {
+	cfg := config.Config{Rules: map[string]config.Rule{
+		"synthetic-many": {
+			RuleID: "synthetic-many",
+			Regex:  regexp.MustCompile("a"),
+		},
+	}}
+	detector := detect.NewDetector(cfg)
+	var output, errors bytes.Buffer
+	exit := process(
+		bytes.NewReader(framed([]byte(strings.Repeat("a", maxRecordFindings+1)))),
+		&output,
+		&errors,
+		detector,
+		fixtureReady,
+	)
+	if exit != 2 || !strings.Contains(errors.String(), "record_finding_limit") {
+		t.Fatal("record finding population was not bounded")
 	}
 }
 
@@ -884,7 +1385,6 @@ func TestDetectionReturnsItsReservation(t *testing.T) {
 		t.Fatal("the detected record's reservation was never returned")
 	}
 }
-
 func TestEmptyRecordFloodStaysBounded(t *testing.T) {
 	// Empty records consume no byte budget, so only the job bound stops an
 	// unbounded number of them from being admitted at once.
@@ -1023,6 +1523,11 @@ func TestDescriptorModeRejectsAmbiguousOrInvalidArguments(t *testing.T) {
 		{"--config-fd", "invalid"}, {"--config-fd", "18446744073709551616"},
 		{"--config", configFixturePath(), "--config-fd", "3"},
 		{"--config", "", "--config-fd", "3"}, {"--config-fd", "3", "extra"},
+		{"--config-fd", "3", "--record-fd", "4"},
+		{"--config-fd", "3", "--record-length", "4"},
+		{"--config-fd", "3", "--record-ordinal", "1"},
+		{"--config-fd", "3", "--record-fd", "3", "--record-length", "4", "--record-ordinal", "1"},
+		{"--config-fd", "3", "--record-fd", "4", "--record-length", "4", "--record-ordinal", "1", "--ordinal-base", "2"},
 	}
 	for _, args := range cases {
 		var out, diagnostic bytes.Buffer

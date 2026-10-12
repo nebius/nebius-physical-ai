@@ -445,6 +445,9 @@ def up_cmd(
     _preflight_provider_lock(tf_dir)
     tfvars = _read_tfvars(tf_dir)
     from npa.provisioning_preflight import current_resolved_plan
+    from npa.clients.nebius_auth import nebius_profile
+
+    profile = nebius_profile()
 
     inherited_plan = current_resolved_plan()
     if inherited_plan is not None:
@@ -690,6 +693,7 @@ def up_cmd(
             tenant_id=tenant_id_value,
             region=region_value,
             provider_env=env,
+            profile=profile,
             # Every fresh shared-backend apply uses the fleet capacity/quota
             # preflight, not only MIG targets. In particular, a non-MIG GPU
             # pool with a capacity block must prove the exact STRICT
@@ -742,6 +746,7 @@ def up_cmd(
                     project_id_value,
                     name_stem=context,
                     env=env,
+                    profile=profile,
                     network_state_path=(
                         backend_root / project_spec.key() / ".npa-fleet-network.json"
                     ),
@@ -776,6 +781,7 @@ def up_cmd(
                     recipe_root=recipe_dir.parent,
                     terraform_bin=terraform_bin,
                     nebius_bin=nebius_bin,
+                    profile=profile,
                     timeout_minutes=timeout,
                     on_status=lambda message: typer.echo(message, err=True),
                     standalone_context=context,
@@ -1031,7 +1037,9 @@ def up_cmd(
             operation.transition("state-durable")
 
         kubeconfig_path = kubeconfig or kubeconfig_file(context)
-        _write_kubeconfig(nebius_bin, cluster_id, kubeconfig_path, context)
+        _write_kubeconfig(
+            nebius_bin, cluster_id, kubeconfig_path, context, profile=profile
+        )
         _save_terraform_cluster_state(
             tfvars,
             cluster,
@@ -1259,6 +1267,21 @@ def down_cmd(
                 "nothing was deleted."
             )
         shared_metadata = candidate
+    if not metadata_present:
+        from npa.cluster_backends.standalone_recovery import partial_backend_metadata
+
+        try:
+            shared_metadata = partial_backend_metadata(
+                context=preview_context,
+                project_id=exact_project_id,
+                tenant_id=str(cleanup_identity.get("tenant_id") or ""),
+                region=str(cleanup_identity.get("region") or ""),
+                operation_id=operation_id,
+            )
+        except (OSError, ValueError, RuntimeError) as exc:
+            raise typer.BadParameter(
+                f"Partial standalone recovery failed: {exc}"
+            ) from exc
     if saved_cluster is not None and not metadata_present:
         raise typer.BadParameter(
             "Local cluster state exists without its ownership metadata; nothing was "
@@ -1357,6 +1380,11 @@ def down_cmd(
             raise RuntimeError(
                 "; ".join(str(item) for item in destroyed.get("errors") or [])
             )
+        recovery_id = str(shared_metadata.get("backend_recovery_operation_id") or "")
+        if recovery_id:
+            from npa.provisioning_journal import load_operation
+
+            load_operation(recovery_id).transition("destroyed")
         if not keep_local_state:
             delete_cluster_state(preview_context)
         response = {
@@ -2020,9 +2048,12 @@ def kubeconfig_cmd(
     `npa workbench workflow submit --infra k8s/<context>` read.
     """
     from npa.clients.config import resolve_environment
+    from npa.clients.nebius_auth import nebius_profile
 
     nebius_bin = _require_bin(os.environ.get("NPA_NEBIUS_BIN") or "nebius")
-    env = _terraform_env(nebius_bin)
+    profile = nebius_profile()
+    prefix = [nebius_bin, *(["--profile", profile] if profile else [])]
+    env = _terraform_env(nebius_bin, profile=profile)
     tfvars: dict[str, Any] = {}
     try:
         tfvars = _read_tfvars(_resolve_terraform_dir(terraform_dir))
@@ -2045,7 +2076,7 @@ def kubeconfig_cmd(
 
     result = _run_capture(
         [
-            nebius_bin,
+            *prefix,
             "mk8s",
             "cluster",
             "list",
@@ -2073,7 +2104,7 @@ def kubeconfig_cmd(
 
     context = context_name.strip() or name
     kubeconfig_path = kubeconfig or kubeconfig_file(context)
-    _write_kubeconfig(nebius_bin, cluster_id, kubeconfig_path, context)
+    _write_kubeconfig(nebius_bin, cluster_id, kubeconfig_path, context, profile=profile)
     _save_terraform_cluster_state(
         {**tfvars, "parent_id": resolved_project, "cluster_name": name},
         {"id": cluster_id, "name": name},
@@ -2226,9 +2257,12 @@ def _terraform_env(nebius_bin: str, *, profile: str = "") -> dict[str, str]:
     the machine's active profile.
     """
     from npa.cluster_backends.process import BackendCommandError, terraform_env
+    from npa.clients.nebius_auth import nebius_profile
 
     try:
-        return terraform_env(nebius_bin, profile=profile, capture_runner=_run_capture)
+        return terraform_env(
+            nebius_bin, profile=profile or nebius_profile(), capture_runner=_run_capture
+        )
     except BackendCommandError as exc:
         raise typer.BadParameter(str(exc)) from exc
 
@@ -2411,15 +2445,40 @@ def _preflight_provider_lock(terraform_dir: Path) -> str:
     return target_platform
 
 
+def _tfvars_paths(terraform_dir: Path) -> list[Path]:
+    """Select automatic variable files in Terraform's load order."""
+    return [
+        terraform_dir / "terraform.tfvars",
+        terraform_dir / "terraform.tfvars.json",
+        *sorted(
+            [
+                *terraform_dir.glob("*.auto.tfvars"),
+                *terraform_dir.glob("*.auto.tfvars.json"),
+            ]
+        ),
+    ]
+
+
 def _read_tfvars(terraform_dir: Path) -> dict[str, Any]:
     values: dict[str, Any] = {}
-    for path in [
-        terraform_dir / "terraform.tfvars",
-        *sorted(terraform_dir.glob("*.auto.tfvars")),
-    ]:
+    for path in _tfvars_paths(terraform_dir):
         if not path.exists():
             continue
-        for key, raw_value in _tfvar_assignments(path.read_text(encoding="utf-8")):
+        document = path.read_text(encoding="utf-8")
+        if path.suffix == ".json":
+            try:
+                variables = json.loads(document)
+            except ValueError:
+                raise typer.BadParameter(
+                    f"Invalid JSON variable file: {path.name}"
+                ) from None
+            if not isinstance(variables, dict):
+                raise typer.BadParameter(
+                    f"JSON variables must be an object: {path.name}"
+                )
+            values.update(variables)
+            continue
+        for key, raw_value in _tfvar_assignments(document):
             values[key] = _parse_tfvar_scalar(raw_value)
     return values
 
@@ -2663,12 +2722,7 @@ def _guard_tfvars_iam_token(terraform_dir: Path, tfvars: dict[str, Any]) -> None
     if "iam_token" not in tfvars:
         return
     files = ", ".join(
-        str(path.name)
-        for path in [
-            terraform_dir / "terraform.tfvars",
-            *sorted(terraform_dir.glob("*.auto.tfvars")),
-        ]
-        if path.exists()
+        str(path.name) for path in _tfvars_paths(terraform_dir) if path.exists()
     )
     raise typer.BadParameter(
         f"Remove the `iam_token` line from {files or 'terraform.tfvars'} in {terraform_dir}: "
@@ -3781,12 +3835,18 @@ def _cluster_output(outputs: dict[str, Any]) -> dict[str, Any]:
 
 
 def _write_kubeconfig(
-    nebius_bin: str, cluster_id: str, kubeconfig_path: Path, context: str
+    nebius_bin: str,
+    cluster_id: str,
+    kubeconfig_path: Path,
+    context: str,
+    *,
+    profile: str = "",
 ) -> None:
     kubeconfig_path.parent.mkdir(parents=True, exist_ok=True)
     _run_stream(
         [
             nebius_bin,
+            *(["--profile", profile] if profile else []),
             "mk8s",
             "cluster",
             "get-credentials",

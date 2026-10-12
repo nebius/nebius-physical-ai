@@ -12,6 +12,65 @@ and follow [installation](../docs/install.md) and
 The [command reference](../docs/cli/workbench.md) lists the installed tools;
 `npa workbench <tool> --help` exposes each tool's actual commands.
 
+Optional [Workbench access](../docs/workbench/team-access.md) adds CLI/API/SDK shared
+execution through `npa workbench submit`, `runs`, `run`, and `whoami`, and the
+existing `npa.sdk.workbench.team` SDK. Administrators use `npa workbench access`.
+The same commands serve individual and shared installations; `npa workbench team`
+remains a compatibility alias with the same saved accounts and run receipts.
+Use the [setup and usage guide](../docs/workbench/shared-workbench-quickstart.md)
+for the operator installation order, both login methods, coding-agent access,
+and existing clusters. `submit` starts an execution, `runs` lists executions,
+and `run RUN_ID` inspects or manages that one execution.
+Administrators create local users and groups, then assign explicit personal
+namespaces, GPU allocations, and scoped artifact storage. Users receive
+revocable personal key files for submit, status, logs, and artifacts; they do
+not receive scheduler or cluster credentials. Set `account_namespace` once to
+enable persistent local accounts through `npa workbench access account`.
+External JWT identities can be explicitly linked later without changing local
+ownership or allocations. Workbench access has no standalone portal or browser-login
+flow. `npa workbench whoami` and `TeamClient.whoami()` report the same
+personal permissions; see the [local account and key guide](../docs/workbench/team-identity.md).
+Sign in once with `npa login --endpoint <workbench-HTTPS-endpoint> --token-file <key-file>`
+or `npa login --endpoint <workbench-HTTPS-endpoint> --nebius`. The latter uses official
+Nebius browser sign-in and automatic CLI token refresh for a linked local
+account; no manual IAM-token files are needed. Both remember the connection and
+unambiguous workspace/cluster placement, so the next command can be
+`npa workbench submit --spec workflow.yaml`. Repeating it recovers the same
+run; add `--new-run` to deliberately repeat an acknowledged submission.
+`--profile` selects named connections, `--ca-file` trusts an administrator's
+private CA, and `npa logout` forgets the local connection. Private saved state
+uses `$NPA_CONFIG_DIR/team` or `~/.npa/team`. Agents can use the same saved login
+through `npa.sdk.workbench.team.connect()`. Native Nebius verification remains
+mutually exclusive with generic JWT identity mode and never imports cloud roles
+as Workbench grants.
+
+The server can stay on Nebius while workloads use other enrolled Kubernetes
+clusters. `npa workbench access export-connections --config <runtime-policy.yaml>
+--output-dir <new-private-directory>` prepares gateway and scheduler connections
+with server paths (default `/etc/npa-team`; override with `--server-directory`).
+`npa workbench access check-clusters --config <server-policy.yaml>` verifies access
+and allocation boundaries from the server environment. Both functions are also
+available in `npa.sdk.workbench.team`. The server includes the AWS CLI for EKS
+authentication; provider credentials are supplied privately at runtime. See the
+[external Kubernetes guide](../docs/workbench/external-kubernetes.md) for EKS,
+credential refresh and network requirements. Direct cloud VMs remain unsupported
+by this shared execution boundary.
+
+`npa workbench access setup --input-path <private-setup.yaml> --output-path
+<private-installation.json>` deploys the shared HTTPS gateway, creates its
+Nebius LoadBalancer, and retains the address. It uses operator cloud/Kubernetes
+credentials and existing server/TLS/state resources; no personal key or VDI
+client is required. See [shared server setup](../docs/workbench/team-access.md#deploy-and-qualify-the-service)
+for ownership checks, retries, and qualification.
+
+The [Marble quadruped workflow](../docs/workbench/guides/marble-warehouse-quadruped.md)
+reuses a generated warehouse and captures a simulated Go1 on one Nebius GPU.
+Its `motion_profile=turnaround` and `speed_mps=1.2` workflow defaults add fast
+aisle traversals and physical U-turns. Direct CLI/SDK callers retain
+`motion_profile=straight` and `speed_mps=0.35`; select `--motion-profile
+turnaround --speed-mps 1.2` to enable the patrol. The standalone HTML embeds
+the resulting videos and measured motion for offline playback.
+
 Sim2Real's `rerun regen` and `rerun serve --local-record` operate on existing
 artifacts without resolving execution image defaults. Regeneration therefore
 remains available after an old runtime is quarantined. Executing new workloads,
@@ -406,6 +465,16 @@ output or raise CLI exits and do not guarantee typed response objects.
 The [walkthrough](../docs/workbench/cli-sdk-yaml-walkthrough.md) explains these
 differences with a detection-training service example.
 
+For public-data GPU training and deployment, use the single
+[`robot-policy-train-and-serve.yaml`](../workflows/testing/robot-policy-train-and-serve.yaml).
+The [operator cookbook](../docs/workbench/cookbooks/robot-policy-train-and-serve.md)
+covers prerequisites and standard `npa workbench workflow` validation, submission,
+monitoring, resume and cancellation. Catalog stages run pinned public LeRobot data
+through FiftyOne curation, native SmolVLA continued training, both measured
+promotion gates, export, independent GPU HTTP serving and native simulation.
+The same run produces standalone HTML/MP4 proof. This qualified recipe uses
+managed Kubernetes plus torchrun and needs no private trainer scripts.
+
 For artifact conversion and sharing, see the
 [CLI / SDK walkthrough](../docs/workbench/cli-sdk-yaml-walkthrough.md),
 [Foxglove export](../docs/workbench/foxglove-export.md), and
@@ -613,7 +682,7 @@ gate; some optional checks also use Node, tmux, or Docker.
 
 Pull requests run the full Python 3.12 suite,
 dedicated Cypress job, focused Python 3.10/3.14 checks, and security gates.
-Five duration-balanced coverage shards run with xdist and cached constrained
+Six duration-balanced coverage shards run with xdist and cached constrained
 installs, then enforce the merged coverage floor. Full suites include smoke
 and CLI install checks without a duplicate subsystem job. The queue verifies
 this evidence against its combined latest-main candidate. Recognized prose-only
@@ -634,7 +703,17 @@ on all three supported versions. Every full Python 3.12 run publishes module
 timings, with merged profiles from successful runs for reviewed rebalancing.
 The focused compatibility check runs before CPU tensor dependencies are
 installed, so async cancellation and isolated SkyPilot fixture regressions
-surface before merge. Run it locally with:
+surface before merge. The existing browser compatibility job also checks
+portable checksums and exception notes, SQLite failure fixtures, and VLM path
+errors on Python 3.10 and 3.14. These focused regressions keep the full
+compatibility matrix in scheduled audits without adding queue shards.
+Run the stdlib compatibility guard locally with:
+
+```bash
+npa/.venv/bin/python -m pytest npa/tests/test_python_compatibility.py -q
+```
+
+Run the early compatibility checks locally with:
 
 ```bash
 npa/.venv/bin/python -m pytest \
@@ -867,8 +946,15 @@ uses existing storage credentials. See the [MJLab guide](../docs/workbench/mjlab
 for request schemas, deployment Secrets, environment variables, validation and
 image publication status.
 `eval --video` also publishes `rollout.mp4` and a self-contained `rollout.html`
-page alongside the measured evaluation manifest. The SDK and service expose the
-same behavior with `video=True`.
+page alongside the measured evaluation manifest, using native 1920 × 1080
+capture at the simulator step rate (50 fps for G1). `--video-width` and
+`--video-height` select other even dimensions; SDK/API fields are `video_width`
+and `video_height`. The page reports decoded video properties and the active
+OpenGL renderer, preserves aspect ratio and starts muted with controls.
+The SDK and service expose the same behavior with `video=True`.
+The supplied `mjlab-train-eval.yaml` and `mjlab-render.yaml` workflows select
+RTX PRO 6000 and pin the qualified public development image. Training produces
+the video and HTML before ONNX export and an independent-seed evaluation.
 
 ### Live MK8s attachment matching
 

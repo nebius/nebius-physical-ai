@@ -12,6 +12,7 @@ from typing import Optional
 import typer
 
 from npa.clients.config import ConfigError, list_projects, resolve_project_storage
+from npa.agent_backend.publication_reader import PublicationConflict
 from npa.clients.credentials import load_credentials
 from npa.clients.project_credential_store import ProjectCredentialStoreError
 from npa.clients.storage import StorageClient
@@ -960,7 +961,7 @@ def rerun_serve_command(
                     aws_secret_access_key=secret_key,
                 ),
             )
-        except Sim2RealRerunRegenError as exc:
+        except (Sim2RealRerunRegenError, PublicationConflict) as exc:
             typer.echo(f"Error: {exc}", err=True)
             raise typer.Exit(1) from exc
         payload["local_rrd_path"] = str(dest)
@@ -1032,6 +1033,11 @@ def rerun_regen_command(
             sync_inputs=not no_sync,
             client=storage.client,
         )
+    except PublicationConflict as exc:
+        typer.echo(
+            "Error: publication conflict; refresh publication state and retry", err=True
+        )
+        raise typer.Exit(1) from exc
     except Sim2RealRerunRegenError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
@@ -1076,13 +1082,16 @@ def rerun_heldout_only_command(
     no_publish: bool = typer.Option(
         False,
         "--no-publish",
-        help="Skip uploading held-out report/renders to the run prefix on S3.",
+        help="Keep the diagnostic result local instead of publishing immutable attempt evidence.",
     ),
     output: OutputFormat = typer.Option(
         OutputFormat.text, "--output", help="Output format."
     ),
 ) -> None:
-    """Re-run Isaac held-out eval (stage 10) on cluster for an existing run (~5–15 min)."""
+    """Run a diagnostic held-out eval without replacing canonical Stage 10 evidence.
+
+    Successful publication creates immutable attempt evidence only.
+    """
     try:
         storage = _resolve_rerun_storage(
             project=project,
@@ -1108,12 +1117,23 @@ def rerun_heldout_only_command(
             publish=not no_publish,
             client=storage.client,
         )
+    except PublicationConflict as exc:
+        typer.echo(
+            "Error: publication conflict; refresh publication state and retry", err=True
+        )
+        raise typer.Exit(1) from exc
     except Sim2RealRerunRegenError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from exc
 
     payload = {
         "run_id": run_id,
+        "publication_mode": "local_only" if no_publish else "immutable_attempt",
+        "local_report_path": report.get("report_uri") if no_publish else None,
+        "published_report_uri": None if no_publish else report.get("report_uri"),
+        "published_renders_uri": None
+        if no_publish
+        else (report.get("render_lineage") or {}).get("canonical_s3_uri"),
         "success_rate": report.get("success_rate"),
         "render_manifest_episodes": len(
             (report.get("render_manifest") or {}).get("episodes") or []
@@ -1125,5 +1145,12 @@ def rerun_heldout_only_command(
         typer.echo(json.dumps(payload, indent=2, sort_keys=True))
         return
     typer.echo(f"run_id: {run_id}")
+    typer.echo(f"publication_mode: {payload['publication_mode']}")
+    if payload["local_report_path"]:
+        typer.echo(f"local_report_path: {payload['local_report_path']}")
+    if payload["published_report_uri"]:
+        typer.echo(f"published_report_uri: {payload['published_report_uri']}")
+    if payload["published_renders_uri"]:
+        typer.echo(f"published_renders_uri: {payload['published_renders_uri']}")
     typer.echo(f"success_rate: {payload['success_rate']}")
     typer.echo(f"render_manifest_episodes: {payload['render_manifest_episodes']}")

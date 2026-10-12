@@ -654,6 +654,26 @@ def runtime_manifest_view(
     return replace(manifest, steps=steps)
 
 
+def _latest_stage_wave_attempts(
+    attempts: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Select the latest numbered invocation; keep uncertain ordering ambiguous."""
+    numbered: dict[int, str] = {}
+    for item in attempts:
+        key = str(item.get("wave_key") or "")
+        parts = key.split("|", 2)
+        if len(parts) != 3 or not parts[0].isdigit() or not all(parts[1:]):
+            return attempts
+        sequence = int(parts[0])
+        if sequence in numbered and numbered[sequence] != key:
+            return attempts
+        numbered[sequence] = key
+    if not numbered:
+        return attempts
+    latest = numbered[max(numbered)]
+    return [item for item in attempts if item.get("wave_key") == latest]
+
+
 def reconstruct_stage_job_attribution(
     manifest: RunManifest,
     *,
@@ -664,6 +684,8 @@ def reconstruct_stage_job_attribution(
     A root job ID is inherited only for the legacy single-managed-job contract
     (no runtime waves).  Conflicts and missing historical evidence remain
     explicit instead of broadcasting the latest discovered job across stages.
+    Repeated numbered waves select the latest invocation; retry counters are
+    scoped to that invocation and all earlier attempts remain in the history.
     """
 
     stages: dict[str, dict[str, Any]] = {}
@@ -761,15 +783,32 @@ def reconstruct_stage_job_attribution(
                 int(item.get("_order") or 0),
             )
         )
-        final = attempts[-1] if attempts else {}
+        current_attempts = _latest_stage_wave_attempts(attempts)
+        unresolved_wave_scopes = False
+        if all(item.get("provenance") == "runtime_wave" for item in attempts):
+            if current_attempts is attempts:
+                unresolved_wave_scopes = (
+                    len({item.get("wave_key") for item in attempts}) > 1
+                )
+            elif current_attempts:
+                latest_wave_key = current_attempts[0]["wave_key"]
+                previous = [
+                    item for item in attempts if item["wave_key"] != latest_wave_key
+                ]
+                unresolved_wave_scopes = any(
+                    item["state"] not in TERMINAL_STEP_STATES for item in previous
+                )
+                # Each numbered invocation owns its retry counter; keep history.
+                attempts = previous + current_attempts
+        final = current_attempts[-1] if current_attempts else {}
         final_attempt = int(final.get("attempt") or 0)
         final_ids = {
             str(item.get("job_id") or "")
-            for item in attempts
+            for item in current_attempts
             if int(item.get("attempt") or 0) == final_attempt
             and str(item.get("job_id") or "")
         }
-        ambiguous = len(final_ids) > 1
+        ambiguous = unresolved_wave_scopes or len(final_ids) > 1
         public_attempts = [
             {field: value for field, value in item.items() if field != "_order"}
             for item in attempts
@@ -1693,6 +1732,7 @@ def build_actionable_run_status(
             "state": state,
             "workflow_state": name,
             "managed_job_id": managed_job_id,
+            "job_name": str(attribution.get("job_name") or ""),
             "managed_job_attempts": list(attribution.get("attempts") or []),
             "active_attempt": attribution.get("active_attempt"),
             "job_attribution": attribution.get("attribution", "unknown"),

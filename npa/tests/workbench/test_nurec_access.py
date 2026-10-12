@@ -459,9 +459,22 @@ def test_sdk_module_exposes_every_cli_verb() -> None:
     )
     for verb in sorted(cli_verbs):
         wrapper = getattr(sdk, verb)
-        if verb == "convert_colmap":
-            # New capabilities use the shared workbench module directly; their
-            # behavior is covered by test_nurec_colmap_cli.test_sdk_calls_module_directly.
+        if verb in {
+            "acquire_source",
+            "audit_colmap",
+            "audit_qualification",
+            "bundle_runtime",
+            "cleanup_qualification",
+            "control_source",
+            "convert_colmap",
+            "observe_runtime",
+            "probe_storage",
+            "publish_evidence",
+            "readback_qualification",
+            "stage_source",
+        }:
+            # Evidence capabilities use shared workbench modules directly; their
+            # behavior is covered by focused CLI/SDK and receipt tests.
             assert callable(wrapper)
             assert not hasattr(wrapper, "__npa_cli_module__")
             continue
@@ -797,8 +810,11 @@ def test_explicit_source_overlay_precedes_baked_image_setup() -> None:
     )
 
     setup = default_npa_setup()
-    assert "if ! command -v npa >/dev/null 2>&1; then" in setup
-    assert setup.index("NPA_SRC_S3_URI") < setup.index("/opt/nebius-physical-ai/npa")
+    assert "if ! command -v npa >/dev/null 2>&1 && {" in setup
+    # The explicit-overlay guard skips a thin baked project when its complete
+    # selected source is available, then stages that source in the overlay path.
+    assert 'NPA_SRC_OVERLAY" != "1"' in setup
+    assert "/tmp/npa-src-overlay" in setup
 
     # And an unrelated tool's setup is unchanged by the NuRec additions.
     other = render_setup_for_tool(

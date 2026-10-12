@@ -204,9 +204,13 @@ def _render_overlay_setup(
         '  if [ "$NPA_SRC_OVERLAY" = "1" ] && [ -n "$NPA_SRC_S3_URI" ]; then\n'
         "    : # stage the explicitly selected source before any image-local install\n"
     )
-    return setup, setup.replace(branch, "", 1).replace(
-        f"  elif [ -f {partial}/pyproject.toml ]",
-        f"  if [ -f {partial}/pyproject.toml ]",
+    guarded_fallback = (
+        'if ! command -v npa >/dev/null 2>&1 && { '
+        '[ "$NPA_SRC_OVERLAY" != "1" ] || [ -z "$NPA_SRC_S3_URI" ]; }; then\n'
+    )
+    return setup, setup.replace(guarded_fallback, "if ! command -v npa >/dev/null 2>&1; then\n", 1).replace(
+        branch,
+        "",
         1,
     )
 

@@ -6,6 +6,7 @@ import signal
 import subprocess
 import time
 
+from npa.exception_notes import add_exception_note
 from npa.workflows.navigation.artifacts import file_sha256
 from npa.workflows.navigation.control_protocol import (
     ARMS,
@@ -93,8 +94,9 @@ def _retain_interruption(process, log, folder, arm, digest, started, interruptio
     try:
         _terminate_owned_process(process)
     except BaseException as cleanup_error:
-        interruption.add_note(
-            f"Owned native child cleanup failed: {type(cleanup_error).__name__}"
+        add_exception_note(
+            interruption,
+            f"Owned native child cleanup failed: {type(cleanup_error).__name__}",
         )
     try:
         log.flush()
@@ -102,8 +104,9 @@ def _retain_interruption(process, log, folder, arm, digest, started, interruptio
             process, folder, arm, digest, started, type(interruption).__name__
         )
     except BaseException as evidence_error:
-        interruption.add_note(
-            f"Native interruption receipt failed: {type(evidence_error).__name__}"
+        add_exception_note(
+            interruption,
+            f"Native interruption receipt failed: {type(evidence_error).__name__}",
         )
 
 
