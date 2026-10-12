@@ -56,6 +56,8 @@ CONDITIONING_LATENT_FRAMES = 1
 TOKENS_PER_VISION_LATENT_FRAME = 340
 SCREENING_TASKS = ("RubiksCubesInBinTask", "StackYellowOnRedTask")
 SERVER_PORT = 8000
+GUARDED_INFERENCE_MODULE = "npa.workbench.cosmos.guarded_inference"
+ACTION_POLICY_SERVER_MODULE = "cosmos_framework.scripts.action_policy_server_robolab"
 
 
 class FastWamK2Error(RuntimeError):
@@ -447,11 +449,11 @@ def _snapshot_checkpoint(
 
 
 def server_argv(framework_python: Path, checkpoint: Path, variant: str) -> list[str]:
-    """Return the exact server command for full WAM or the K=2 overlay path."""
+    """Run the action server through the fail-closed native guardrail wrapper."""
     argv = [
         str(framework_python),
         "-m",
-        "cosmos_framework.scripts.action_policy_server_robolab",
+        GUARDED_INFERENCE_MODULE,
         "--checkpoint-path",
         str(checkpoint),
         "--port",
@@ -466,6 +468,49 @@ def server_argv(framework_python: Path, checkpoint: Path, variant: str) -> list[
     elif variant != "full-wam":
         raise FastWamK2Error(f"unsupported policy variant: {variant}")
     return argv
+
+
+def _policy_server_env(
+    framework_env: dict[str, str],
+    framework: Path,
+    cuda_topology: dict[str, Any],
+    guardrail_receipt: Path,
+) -> dict[str, str]:
+    """Bind the framework venv to NPA's verified fail-closed guardrail entrypoint."""
+    npa_source_root = Path(__file__).resolve().parents[3]
+    guarded_entrypoint = npa_source_root / "npa/workbench/cosmos/guarded_inference.py"
+    if not guarded_entrypoint.is_file():
+        raise FastWamK2Error(
+            "the image does not contain the NPA fail-closed Cosmos guardrail entrypoint"
+        )
+    return dict(
+        framework_env,
+        CUDA_VISIBLE_DEVICES=cuda_topology["policy_server_cuda_visible_devices"],
+        PYTHONPATH=os.pathsep.join((str(framework), str(npa_source_root))),
+        NPA_COSMOS3_GUARDRAILS_REQUESTED="1",
+        NPA_COSMOS3_INFERENCE_MODULE=ACTION_POLICY_SERVER_MODULE,
+        NPA_COSMOS3_GUARDRAIL_RECEIPT=str(guardrail_receipt),
+    )
+
+
+def _require_effective_guardrails(receipt: Path) -> dict[str, Any]:
+    """Reject a completed policy run without an effective prompt and media receipt."""
+    try:
+        state = json.loads(receipt.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise FastWamK2Error(
+            "policy server did not write a readable guardrail receipt"
+        ) from exc
+    required = ("prompt_input", "generated_media")
+    if (
+        state.get("schema") != "npa.cosmos3.guardrail-state.v1"
+        or state.get("requested") is not True
+        or state.get("effective") is not True
+        or state.get("status") != "passed"
+        or any(not state.get("evaluated", {}).get(role) for role in required)
+    ):
+        raise FastWamK2Error("policy server guardrails were not effective")
+    return state
 
 
 def _wait_for_server(process: subprocess.Popen[bytes], log: Path) -> None:
@@ -687,13 +732,22 @@ def run_variant(
                 "checkpoint does not contain the expected immutable subdirectory"
             )
         command = server_argv(framework_python, checkpoint, variant)
+        guardrail_receipt = artifacts / "guardrail-state.json"
         write_local_json(
             artifacts / "serving-command.json",
-            {"argv": command, "variant": variant, "cuda_topology": cuda_topology},
+            {
+                "argv": command,
+                "variant": variant,
+                "cuda_topology": cuda_topology,
+                "guardrail_wrapper": {
+                    "module": GUARDED_INFERENCE_MODULE,
+                    "wrapped_module": ACTION_POLICY_SERVER_MODULE,
+                    "receipt": guardrail_receipt.name,
+                },
+            },
         )
-        server_env = dict(
-            framework_env,
-            CUDA_VISIBLE_DEVICES=cuda_topology["policy_server_cuda_visible_devices"],
+        server_env = _policy_server_env(
+            framework_env, framework, cuda_topology, guardrail_receipt
         )
         with (root / "policy-server.log").open("wb") as stream:
             process = subprocess.Popen(
@@ -718,9 +772,10 @@ def run_variant(
                     process.kill()
                     process.wait()
         rows = _episode_rows(output, request.tasks)
+        guardrails = _require_effective_guardrails(guardrail_receipt)
         _copy_run_artifacts(output, artifacts / "closed-loop")
         report = _variant_report(
-            variant, prepared, request, rows, overlay, cuda_topology
+            variant, prepared, request, rows, overlay, cuda_topology, guardrails
         )
         write_local_json(artifacts / "variant-result.json", report)
         for name in (
@@ -757,6 +812,7 @@ def _variant_report(
     rows: list[dict[str, Any]],
     overlay: dict[str, Any] | None,
     cuda_topology: dict[str, Any],
+    guardrails: dict[str, Any],
 ) -> dict[str, Any]:
     """Build the durable result report without presenting screening as a benchmark."""
     report = {
@@ -772,6 +828,12 @@ def _variant_report(
         "metrics": summarize_episode_metrics(rows, request.tasks),
         "model_lineage": _model_lineage(),
         "cuda_topology": cuda_topology,
+        "guardrails": {
+            "receipt": "guardrail-state.json",
+            "effective": bool(guardrails["effective"]),
+            "prompt_models": list(guardrails["evaluated"]["prompt_input"]),
+            "media_models": list(guardrails["evaluated"]["generated_media"]),
+        },
     }
     if overlay is not None:
         report["serving_contract"] = overlay

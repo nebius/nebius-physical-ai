@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from npa.workbench.cosmos.fastwam_k2 import (
@@ -18,6 +19,8 @@ from npa.workbench.cosmos.fastwam_k2 import (
     FastWamK2Error,
     _isaac_runtime_env,
     _prepared_payload,
+    _policy_server_env,
+    _require_effective_guardrails,
     _rrd_recording_id,
     _run_robolab,
     _select_cuda_topology,
@@ -159,11 +162,73 @@ def test_server_argv_preserves_guardrails_and_k2_vision_frames(tmp_path: Path) -
     baseline = server_argv(tmp_path / "python", tmp_path / "checkpoint", "full-wam")
 
     assert command[-2:] == ["--keep-generated-vision-frames", "2"]
+    assert command[:3] == [
+        str(tmp_path / "python"),
+        "-m",
+        "npa.workbench.cosmos.guarded_inference",
+    ]
     assert "--no-guardrails" not in command
     assert "--no-guardrails" not in baseline
     assert "--drop-generated-vision" not in command
     assert "--drop-generated-vision" not in baseline
     assert "--keep-generated-vision-frames" not in baseline
+
+
+def test_policy_server_environment_uses_the_fail_closed_wrapper(tmp_path: Path) -> None:
+    framework = tmp_path / "framework"
+    receipt = tmp_path / "artifacts" / "guardrail-state.json"
+    environment = _policy_server_env(
+        {"COSMOS_TRAINING": "1", "PYTHONPATH": str(framework)},
+        framework,
+        {"policy_server_cuda_visible_devices": "0"},
+        receipt,
+    )
+
+    assert environment["PYTHONPATH"].split(os.pathsep)[0] == str(framework)
+    assert environment["NPA_COSMOS3_GUARDRAILS_REQUESTED"] == "1"
+    assert environment["NPA_COSMOS3_INFERENCE_MODULE"] == (
+        "cosmos_framework.scripts.action_policy_server_robolab"
+    )
+    assert environment["NPA_COSMOS3_GUARDRAIL_RECEIPT"] == str(receipt)
+
+
+def test_effective_guardrail_receipt_requires_prompt_and_media_evaluation(
+    tmp_path: Path,
+) -> None:
+    receipt = tmp_path / "guardrail-state.json"
+    receipt.write_text(
+        json.dumps(
+            {
+                "schema": "npa.cosmos3.guardrail-state.v1",
+                "requested": True,
+                "effective": True,
+                "status": "passed",
+                "evaluated": {
+                    "prompt_input": ["Blocklist", "Qwen3Guard"],
+                    "generated_media": ["VideoContentSafetyFilter"],
+                },
+            }
+        )
+    )
+    assert _require_effective_guardrails(receipt)["effective"] is True
+
+    receipt.write_text(
+        json.dumps(
+            {
+                "schema": "npa.cosmos3.guardrail-state.v1",
+                "requested": True,
+                "effective": True,
+                "status": "passed",
+                "evaluated": {"prompt_input": ["Blocklist"], "generated_media": []},
+            }
+        )
+    )
+    try:
+        _require_effective_guardrails(receipt)
+    except FastWamK2Error as exc:
+        assert "not effective" in str(exc)
+    else:  # pragma: no cover - a media-free receipt must never be accepted
+        raise AssertionError("media-free guardrail receipt was accepted")
 
 
 def test_robolab_uses_only_the_shared_isaac_acceptance_surface() -> None:

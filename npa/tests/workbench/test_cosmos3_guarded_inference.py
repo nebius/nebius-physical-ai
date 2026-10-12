@@ -257,6 +257,10 @@ def test_guardrail_tokenizer_is_materialized_before_upstream_import(
     ]
 
 
+def test_action_policy_server_is_allowlisted_for_fail_closed_guardrails() -> None:
+    assert guarded.ACTION_POLICY_SERVER_MODULE in guarded.ALLOWED_INFERENCE_MODULES
+
+
 def test_missing_token_refuses_before_upstream_import(monkeypatch, tmp_path) -> None:
     _reset(monkeypatch, tmp_path)
     monkeypatch.delenv("HF_TOKEN", raising=False)

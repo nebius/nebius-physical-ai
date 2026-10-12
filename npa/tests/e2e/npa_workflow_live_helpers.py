@@ -2067,6 +2067,19 @@ def assert_fastwam_k2_live_outputs(
         assert visualization_body["prepared_sha256"] == full_body["prepared_sha256"]
         assert full["variant"] == full_body["variant"] == "full-wam"
         assert k2["variant"] == k2_body["variant"] == "fastwam-k2"
+        for body, files in ((full_body, full_files), (k2_body, k2_files)):
+            guardrails = json.loads(files["guardrail-state.json"].read_text())
+            assert guardrails["requested"] is True
+            assert guardrails["effective"] is True
+            assert guardrails["status"] == "passed"
+            assert guardrails["evaluated"]["prompt_input"]
+            assert guardrails["evaluated"]["generated_media"]
+            assert body["guardrails"] == {
+                "receipt": "guardrail-state.json",
+                "effective": True,
+                "prompt_models": guardrails["evaluated"]["prompt_input"],
+                "media_models": guardrails["evaluated"]["generated_media"],
+            }
         _assert_fastwam_k2_metrics(full_body)
         _assert_fastwam_k2_metrics(k2_body)
         contract = k2_body["serving_contract"]

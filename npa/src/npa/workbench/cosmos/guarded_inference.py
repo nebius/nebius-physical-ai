@@ -24,8 +24,13 @@ GUARDRAIL_RECEIPT_ENV = "NPA_COSMOS3_GUARDRAIL_RECEIPT"
 GUARDRAILS_REQUESTED_ENV = "NPA_COSMOS3_GUARDRAILS_REQUESTED"
 INFERENCE_MODULE_ENV = "NPA_COSMOS3_INFERENCE_MODULE"
 DEFAULT_INFERENCE_MODULE = "cosmos_framework.scripts.inference"
+ACTION_POLICY_SERVER_MODULE = "cosmos_framework.scripts.action_policy_server_robolab"
 ALLOWED_INFERENCE_MODULES = frozenset(
-    {DEFAULT_INFERENCE_MODULE, "npa.workbench.cosmos.structural_transfer_runner"}
+    {
+        DEFAULT_INFERENCE_MODULE,
+        ACTION_POLICY_SERVER_MODULE,
+        "npa.workbench.cosmos.structural_transfer_runner",
+    }
 )
 _ROLES = ("prompt_input", "generated_media")
 
