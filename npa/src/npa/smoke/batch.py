@@ -127,6 +127,7 @@ def run_container_eval(
     timeout: str = "40m",
     registry: str | None = None,
     tag: str | None = None,
+    expected_image_digest: str | None = None,
     on_state_change: Callable[[object], None] | None = None,
 ) -> ContainerRunResult:
     """Run one container's golden eval.
@@ -154,7 +155,10 @@ def run_container_eval(
         command=ge.command,
     )
 
-    if (registry or tag) and not serverless:
+    if (
+        any(value is not None for value in (registry, tag, expected_image_digest))
+        and not serverless
+    ):
         return ContainerRunResult(
             name=name,
             mode=mode,
@@ -166,7 +170,7 @@ def run_container_eval(
             detail={
                 "error": "CandidateOverrideRequiresServerless",
                 "message": (
-                    "registry/tag overrides require serverless execution; local and "
+                    "registry/tag/expected_image_digest overrides require serverless execution; local and "
                     "dry-run commands do not resolve candidate images"
                 ),
             },
@@ -197,6 +201,7 @@ def run_container_eval(
                 timeout=timeout,
                 registry=registry,
                 tag=tag,
+                expected_image_digest=expected_image_digest,
                 on_state_change=on_state_change,
             )
         except ServerlessClientError as exc:

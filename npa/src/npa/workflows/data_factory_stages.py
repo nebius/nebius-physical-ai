@@ -273,9 +273,7 @@ def prompt_from_combo(
     background = str(combo.get("background") or "").strip()
     color_grade = str(combo.get("color_grade") or "").strip()
     surface_finish = str(combo.get("surface_finish") or "").strip()
-    subject = (
-        scene or "Photorealistic input-conditioned physical robot manipulation scene"
-    )
+    subject = scene or "input-conditioned physical robot manipulation scene"
     if prompt_policy == SOURCE_FIDELITY_PROMPT_POLICY:
         return (
             f"Photorealistic video of {subject}. "
@@ -316,7 +314,7 @@ def prompt_from_combo(
             "reshape, or spatially move any foreground object."
         )
     return (
-        f"Photorealistic {subject}. "
+        f"Create an appearance variant of {subject} in the source video's visual style. "
         "Apply all four visible appearance requirements consistently in every frame: "
         f"lighting is {lighting or 'bright diffuse daylight'}; "
         f"the background behind the foreground subject is a {background or 'solid light-gray backdrop'}; "
@@ -324,7 +322,8 @@ def prompt_from_combo(
         f"the non-identity-bearing backdrop has a {surface_finish or 'matte low-gloss backdrop finish'}. "
         "Preserve the exact foreground objects, identities, geometry, camera, timing, and motion. "
         "Do not add, remove, recolor, or reshape foreground objects; change only lighting, "
-        "global color treatment, and the non-identity-bearing backdrop appearance."
+        "global color treatment, and the non-identity-bearing backdrop appearance. "
+        "Do not add light fixtures or other objects absent from the source."
     )
 
 

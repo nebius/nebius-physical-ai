@@ -287,6 +287,9 @@ def whoami_cmd(
 @json_stdout_contract
 def submit_cmd(
     spec: Path = typer.Option(..., "--spec"),
+    var: list[str] = typer.Option(
+        [], "--var", help="Repeatable workflow config override as KEY=VALUE."
+    ),
     workspace: str | None = typer.Option(None, "--workspace"),
     cluster: str | None = typer.Option(None, "--cluster"),
     idempotency_key: str | None = typer.Option(None, "--idempotency-key"),
@@ -310,6 +313,7 @@ def submit_cmd(
 
     Args:
         spec: Canonical workflow YAML.
+        var: Config values, such as an explicit LeRobot episode and camera.
         workspace, cluster: Requested enrolled placement.
         idempotency_key: Optional explicit retry identity; otherwise retained automatically.
         new_run: Start another run after acknowledging the previous submission.
@@ -323,6 +327,7 @@ def submit_cmd(
         TeamError, OSError: Validation, authorization, operation, or local I/O fails.
     """
     _json_only(output_format)
+    document = _submission_document(spec, var)
     client, session = _team_connection(
         endpoint, token_env, token_file, profile, ca_file
     )
@@ -332,7 +337,7 @@ def submit_cmd(
         result = submit_workflow(
             client,
             session,
-            yaml.safe_load(spec.read_text()),
+            document,
             workspace=workspace,
             cluster=cluster,
             idempotency_key=idempotency_key,
@@ -341,6 +346,22 @@ def submit_cmd(
         typer.echo(json.dumps(result))
     finally:
         client.close()
+
+
+def _submission_document(spec: Path, variables: list[str]) -> dict:
+    from .workflow import _parse_submit_vars
+
+    document = yaml.safe_load(spec.read_text())
+    if not isinstance(document, dict):
+        raise TeamError("workflow must be a mapping")
+    overrides = _parse_submit_vars(variables)
+    if not overrides:
+        return document
+    config = document.setdefault("config", {})
+    if not isinstance(config, dict):
+        raise TeamError("workflow config must be a mapping")
+    config.update(overrides)
+    return document
 
 
 @app.command("run")

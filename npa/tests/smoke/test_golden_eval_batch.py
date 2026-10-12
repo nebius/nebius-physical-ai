@@ -73,6 +73,7 @@ def test_needs_image_update_exclusions_can_only_shrink() -> None:
         "robocasa",
         "robotwin",
         "sam3",
+        "seedvr2",
         "sonic",
         "wan2-2",
     }

@@ -6,26 +6,32 @@ metadata:
   description: >
     RoboCasa native workbench smoke — verify Gymnasium task registration, kitchen
     asset availability, headless EGL environment reset, and a real random rollout
-    with a video artifact, all through the npa-robocasa service.
+    with a video artifact, all through CPU clients of the separately deployed
+    L40S npa-robocasa service.
 
 config:
   bucket: example-bucket
   prefix: "robocasa-smoke/{{run.id}}"
+  source_overlay: true
   env_id: "robocasa/PickPlaceCounterToCabinet"
-  robocasa_endpoint: http://npa-robocasa.workbench.svc.cluster.local:8791
+  robocasa_endpoint: http://npa-robocasa.default.svc.cluster.local:8791
   robocasa_token_env: ROBOCASA_TOKEN
+  # Quarantined service identity: override both with the exact deploy values.
+  # The all-zero placeholders are syntactically valid but cannot match a real image.
+  robocasa_expected_image_source_sha: "0000000000000000000000000000000000000000"
+  robocasa_expected_image_manifest_digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   iterations: "1"
   num_envs: "1"
   poll_seconds: "30"
   timeout_seconds: "3600"
-  output_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
+  # Each state owns an immutable child prefix below this run root.
+  output_uri: "s3://{{config.bucket}}/{{config.prefix}}"
 
 resources:
-  gpu:
+  service-client-cpu:
     cloud: kubernetes
-    accelerators: RTXPRO6000:1
-    cpus: 8
-    memory: 32Gi
+    cpus: 4
+    memory: 8Gi
 
 initial: task-registration
 
@@ -33,7 +39,9 @@ states:
   task-registration:
     description: Verify RoboCasa Gymnasium task registration.
     toolRef: workbench.robocasa.task_registration
-    resources: gpu
+    params:
+      output_uri: "{{config.output_uri}}/task-registration/"
+    resources: service-client-cpu
     outputs:
       - uri: "{{config.output_uri}}"
         schema: npa.robocasa.task_registration.v1
@@ -42,7 +50,9 @@ states:
   asset-availability:
     description: Verify RoboCasa kitchen asset availability.
     toolRef: workbench.robocasa.asset_availability
-    resources: gpu
+    params:
+      output_uri: "{{config.output_uri}}/asset-availability/"
+    resources: service-client-cpu
     needs: [task-registration]
     outputs:
       - uri: "{{config.output_uri}}"
@@ -52,7 +62,9 @@ states:
   egl-env-reset:
     description: Create and reset a headless EGL RoboCasa environment.
     toolRef: workbench.robocasa.egl_env_reset
-    resources: gpu
+    params:
+      output_uri: "{{config.output_uri}}/egl-env-reset/"
+    resources: service-client-cpu
     needs: [asset-availability]
     outputs:
       - uri: "{{config.output_uri}}"
@@ -62,7 +74,9 @@ states:
   random-rollout:
     description: Run a real RoboCasa random rollout with a video artifact.
     toolRef: workbench.robocasa.random_rollout
-    resources: gpu
+    params:
+      output_uri: "{{config.output_uri}}/random-rollout/"
+    resources: service-client-cpu
     needs: [egl-env-reset]
     outputs:
       - uri: "{{config.output_uri}}"
