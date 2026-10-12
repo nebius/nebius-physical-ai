@@ -7968,9 +7968,12 @@ def test_workflow_status_rejects_conflicting_queue_diagnostics(
     result = workflow_status("42", sky_bin=sky_bin)
 
     assert result.status == "UNKNOWN"
-    assert (
-        result.error
-        == "managed-job queue response is malformed or has conflicting diagnostics"
+    assert result.error == (
+        "SkyPilot queue response does not verify managed-job state "
+        "(malformed rows or conflicting diagnostics). Check SkyPilot "
+        "client/controller configuration and restore queue access before "
+        'resuming. stdout: [{"job_id": 42, "name": "run", "status": "RUNNING"}]; '
+        "stderr: error: controller connection was refused"
     )
 
 
@@ -7995,7 +7998,12 @@ def test_positive_queue_status_distinguishes_present_unverifiable_job(
     result = workflow_status("42", sky_bin=sky_bin)
     assert result.status == expected
     if status is None:
-        assert result.error == "recorded managed job has no verifiable scheduler status"
+        assert result.error == (
+            "SkyPilot queue response does not verify managed-job state "
+            "(a matching task has a missing or unrecognized status). Check "
+            "SkyPilot client/controller configuration and restore queue access "
+            'before resuming. stdout: [{"job_id": 42}]'
+        )
     else:
         assert result.error == ""
 
