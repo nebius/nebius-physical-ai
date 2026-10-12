@@ -185,6 +185,10 @@ Keep the returned run ID: you use it to inspect logs, find artifacts, and resume
 For video augmentation, the [PAIDF + Cosmos 3 runbook](workflows/guides/paidf-cosmos3.md)
 includes a public source-video example and full submission commands.
 
+For a shared installation, [team PAIDF](docs/workbench/team-paidf.md) covers
+new-user sign-in, local groups, scoped allocations, and 20 LeRobot episodes
+submitted through the shared CLI or SDK.
+
 <a id="pick-your-first-win"></a>
 
 ## Choose your first workload

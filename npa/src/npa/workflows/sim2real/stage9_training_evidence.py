@@ -76,6 +76,7 @@ def loop_evidence(args, inputs, prior, update, embodiment, candidates, selection
     validation = dict(selection.get("validation_report") or {})
     return {
         "schema": "npa.sim2real.inner_loop_evidence.v1",
+        "run_id": args.run_id,
         "outer_iteration": args.outer_iteration,
         "iterations": list(prior.get("iterations") or [])
         + [_stage9_iteration(args, inputs, update, embodiment)],

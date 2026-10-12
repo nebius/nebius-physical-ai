@@ -65,15 +65,17 @@ def appearance_prompt(profile: dict[str, str], subject: str) -> str:
         f"{key.replace('_', ' ')}: {profile[key]}" for key in APPEARANCE_FIELDS
     )
     return (
-        f"Photorealistic {subject}. Appearance requirements: {requirements}. "
+        f"Create an appearance variant of {subject} in the source video's visual style. "
+        f"Appearance requirements: {requirements}. "
         "Apply these consistently across the complete video and all generation windows. "
         "Change the appearance of existing surfaces only; retain their boundaries, "
         "positions, depth, occlusions and contact relationships. Preserve the exact "
         "foreground objects, robot parts, object counts, identity colors and markings. "
         "Preserve small task features, gripper openings, grasp points and insertion "
         "openings. Keep source camera motion, trajectories, timing and task outcome. "
-        "Keep realistic exposure, contact shadows and material response; no added "
-        "objects, scene replacement, geometry deformation, flicker or motion retiming."
+        "Keep exposure, contact shadows and material response consistent with the source "
+        "visual style; no added objects or light fixtures, scene replacement, geometry "
+        "deformation, flicker or motion retiming."
     )
 
 

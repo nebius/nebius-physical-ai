@@ -5028,6 +5028,7 @@ def _preflight_image_bootstrap_contracts(
         try:
             reference = parse_image_reference(image)
             image_tool = tool_for_image_name(reference.repository.rsplit("/", 1)[-1])
+            pull_digest = str(getattr(check_by_image.get(image), "digest", "") or "")
             if image_tool and image_tool not in SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS:
                 # The packaging contract deliberately scopes this attestation to
                 # a subset of NPA images. Anonymous manifest pullability is the
@@ -5035,6 +5036,10 @@ def _preflight_image_bootstrap_contracts(
                 pull_digest = str(
                     getattr(check_by_image.get(image), "digest", "") or ""
                 ).lower()
+                if not pull_digest:
+                    raise ImageBootstrapContractError(
+                        "pullability preflight did not return an immutable digest"
+                    )
                 evidence = ImageContractEvidence(
                     image=immutable_image_reference(image, pull_digest),
                     digest=pull_digest,
@@ -5043,7 +5048,10 @@ def _preflight_image_bootstrap_contracts(
                     source="registry_pull_preflight",
                     checks=("immutable_registry_pull",),
                 )
-                results.append(evidence.to_dict())
+                result = evidence.to_dict()
+                if bind_requested_images:
+                    result["_requested_image"] = image
+                results.append(result)
                 continue
             host = reference.registry
             username, password = resolve_registry_credentials(
@@ -5052,7 +5060,6 @@ def _preflight_image_bootstrap_contracts(
             digest, labels = fetch_image_config_metadata(
                 image, username=username, password=password
             )
-            pull_digest = str(getattr(check_by_image.get(image), "digest", "") or "")
             if pull_digest and pull_digest != digest:
                 raise ImageBootstrapContractError(
                     "mutable tag resolved to a different digest between pull and contract checks"
@@ -6164,7 +6171,10 @@ def _raw_execution_preflight(
         controller_backend=controller_backend,
         infra=kwargs.get("infra", ""),
     )
-    env = sky_environment(runtime.isolated_config_dir)
+    env = sky_environment(
+        runtime.isolated_config_dir,
+        recover_isolated_api=False,
+    )
     env.update(kwargs.pop("extra_env", None) or {})
     return preflight_skypilot_submission(
         documents,
@@ -9425,6 +9435,17 @@ def cancel_cmd(
                             "reported exact job/provider failures."
                         ),
                     }
+                    if getattr(cleanup, "outcome", "") == "controller_state_lost":
+                        result.update(
+                            outcome="controller_state_lost",
+                            controller_state_lost_job_ids=(
+                                cleanup.controller_state_lost_job_ids
+                            ),
+                            recovery=cleanup.recovery,
+                            owned_teardown_allowed=False,
+                            message="Controller state is lost; workload drain is unverified. "
+                            "Preserve recovery handles and follow the scoped recovery guidance.",
+                        )
     except (WorkflowStateError, OSError, RuntimeError, ValueError) as exc:
         result = {
             "run_id": resolved_run_id or str(run_id),
@@ -9466,7 +9487,19 @@ def cancel_cmd(
                 "kind": "managed_job_cancel" if result.get("cloud_calls") else "none",
                 "cancelled_job_ids": result.get("cancelled_job_ids", []),
             },
-            verification={"outcome": result.get("outcome", "")},
+            verification={
+                "outcome": result.get("outcome", ""),
+                **(
+                    {
+                        "controller_state_lost_job_ids": result[
+                            "controller_state_lost_job_ids"
+                        ],
+                        "recovery": result["recovery"],
+                    }
+                    if result.get("outcome") == "controller_state_lost"
+                    else {}
+                ),
+            },
             errors=[str(item) for item in result.get("errors", [])],
         )
     except (OSError, RuntimeError, ValueError) as exc:
@@ -9474,7 +9507,8 @@ def cancel_cmd(
             result.setdefault("errors", []).append(
                 f"durable teardown receipt could not be written: {exc}"
             )
-            result["outcome"] = "partial_cancellation"
+            if result.get("outcome") != "controller_state_lost":
+                result["outcome"] = "partial_cancellation"
         else:
             result.setdefault("diagnostics", []).append(
                 f"teardown receipt unavailable: {exc}"
@@ -9498,7 +9532,11 @@ def cancel_cmd(
             typer.echo(str(result["message"]))
         for error in result.get("errors", []):
             typer.echo(f"cleanup warning: {error}", err=True)
-    if result["outcome"] in {"verification_failed", "partial_cancellation"}:
+    if result["outcome"] in {
+        "verification_failed",
+        "partial_cancellation",
+        "controller_state_lost",
+    }:
         raise typer.Exit(code=2)
 
 

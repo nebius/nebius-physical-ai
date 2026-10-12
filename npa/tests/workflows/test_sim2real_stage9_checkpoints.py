@@ -55,6 +55,7 @@ def test_canonical_sweep_keeps_stronger_periodic_actor_after_full_pass(
 ):
     args = SimpleNamespace(
         root_uri="s3://unit/run",
+        run_id="run",
         ppo_iterations=2000,
         outer_iteration=1,
         inner_iteration=1,
