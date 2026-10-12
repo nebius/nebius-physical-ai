@@ -86,6 +86,10 @@ def test_bootstrap_sshd_is_baked_before_apt_hardening_and_has_no_host_keys():
 
     assert "openssh-server" in prereq
     assert "rm -f /etc/ssh/ssh_host_*" in prereq
+    assert (
+        "test -z \"$(find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*' "
+        '-print -quit)"'
+    ) in prereq
     assert prereq.index("openssh-server") < prereq.index("rm -f /etc/ssh/ssh_host_*")
     assert prereq_index < hardening_index
     assert "linux-libc-dev" in hardening

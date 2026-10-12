@@ -3429,6 +3429,36 @@ def test_submit_rejects_image_selector_before_mutations(
         boundary.assert_not_called()
 
 
+def test_dedicated_live_gate_refusal_precedes_immutable_image_validation(
+    mocker,
+) -> None:
+    """A live-only spec must return its owned refusal before generic input checks."""
+
+    validate = mocker.patch(
+        "npa.orchestration.npa_workflow.image_inputs.validate_immutable_image_inputs",
+        side_effect=AssertionError("immutable image validation must not run"),
+    )
+    mocker.patch(
+        "npa.cli.workbench.workflow._is_dedicated_live_gate_spec", return_value=True
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(HARDENING_SPEC),
+            "--run-id",
+            "dedicated-live-gate-ordering",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "executable only through its dedicated live gate" in result.output
+    validate.assert_not_called()
+
+
 def test_deploy_if_absent_quota_blocker_precedes_all_submit_mutation(
     monkeypatch: pytest.MonkeyPatch, mocker
 ) -> None:

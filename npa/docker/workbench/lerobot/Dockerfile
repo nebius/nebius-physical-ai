@@ -184,6 +184,7 @@ RUN apt-get update \
       sudo \
       netcat-openbsd \
     && rm -f /etc/ssh/ssh_host_* \
+    && test -z "$(find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*' -print -quit)" \
     && rm -rf /var/lib/apt/lists/* \
     && printf '%s ALL=(ALL) NOPASSWD:ALL\n' ubuntu \
          > /etc/sudoers.d/99-npa-runtime-user \

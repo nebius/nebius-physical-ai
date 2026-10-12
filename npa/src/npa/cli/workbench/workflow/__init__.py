@@ -1575,6 +1575,9 @@ def submit_cmd(
             merged_npa_spec = load_spec_for_submit(
                 yaml_path, config_overrides=substitutions
             )
+            if not plan_only and _is_dedicated_live_gate_spec(merged_npa_spec):
+                _refuse_dedicated_live_gate_execution(merged_npa_spec)
+                return
             validate_immutable_image_inputs(
                 _make_context(merged_npa_spec, run_id=run_id or "preflight").config
             )
@@ -1601,9 +1604,6 @@ def submit_cmd(
                 run_id=run_id or "preflight",
                 options=early_options,
             )
-            if not plan_only and _is_dedicated_live_gate_spec(merged_npa_spec):
-                _refuse_dedicated_live_gate_execution(merged_npa_spec)
-                return
         except Exception as exc:
             _fail(str(exc))
             return

@@ -143,6 +143,16 @@ The current readiness records require fresh workload qualification. The demo
 aliases accept the same repeated `--var key=value` inputs as standard workflow
 submission, and missing exact inputs fail before submission.
 
+### Immutable image-reference compatibility
+
+`required_immutable_images` now accepts only the canonical
+registry-qualified, lowercase `registry.example/repository@sha256:<64-hex>`
+form used for provenance and child-launch binding. It deliberately rejects
+tag-plus-digest references, unqualified `namespace/repository` references, and
+uppercase repository path components. Existing persisted workflow inputs using
+one of those legacy forms must be updated to the canonical form before replay
+or resume; archived evidence remains historical and is not rewritten.
+
 The optional LeRobot 0.6 training family is a separate version and dependency
 closure from the quarantined default 0.5 family. Fresh image-byte and real
 training qualification are required before selecting a new optional candidate;
