@@ -118,6 +118,22 @@ evidence for the observed tasks, but never a substitute for the strict workflow
 or a claim about unseen tasks. It adds no acceptance mechanism or new upstream
 terms.
 
+### Scope of explicit episode remapping
+
+The optional `episode_index_mapping` in the materialized dataset manifest
+currently holds one dataset-wide pair, `workflow_trajectory_id` and
+`source_episode_index`. It is not a list and is not keyed by task ID. Use this
+remapping for one selected observed task per prepared protocol. Assigning the
+same logical trajectory ID to different source episodes for multiple tasks in
+one protocol is unsupported; use separate task-specific materializations and
+prepared protocols for those remapped observations.
+
+Each remapped task's `reference_observation.source_episode_index` must agree
+with that single pair. Preparation rejects a disagreement with
+`materialized episode identity mapping conflicts with task provenance`; it
+does not infer another mapping or rewrite dataset episode IDs. Without an
+explicit remap, trajectory IDs retain their source episode identities.
+
 ## Readiness and acceptance
 
 Static workflow validation, planning, tool-argument coverage, native-handoff
