@@ -42,6 +42,7 @@ def _installation(text):
     default_branch = default_branch.split("else", 1)[0]
     assert optional_branch.count('"scikit-image==0.26.0"') == 1
     assert default_branch.count('"scikit-image==0.26.0"') == 1
+    assert '"wandb>=0.30.0"' in optional_branch
     assert "pip uninstall -y wandb" not in optional_branch
     assert "pip uninstall -y wandb" not in default_branch
     assert f"python {CORRECTION}" in optional_branch

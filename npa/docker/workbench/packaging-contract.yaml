@@ -424,7 +424,7 @@ images:
     dockerfile: lerobot/Dockerfile
     tier: service
     ports: [8080]
-    passwordless_root_exemption: "SkyPilot Kubernetes bootstrap only; non-root runtime user, no default sshd service, and no baked credentials."
+    passwordless_root_exemption: "SkyPilot Kubernetes bootstrap only; non-root runtime user, SSH server binaries present but unstarted by default, and no baked credentials."
     redistribution: public
     notes: >-
       The generic 0.5.1 path builds the explicitly versioned NPA integration

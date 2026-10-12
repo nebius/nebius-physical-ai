@@ -90,12 +90,13 @@ def _verify_wheel(content: bytes, source: dict[str, bytes]) -> dict[str, bytes]:
     }
     if not modules or any(source.get(name) != value for name, value in modules.items()):
         raise RuntimeError("wheel package differs from the pinned upstream commit")
-    if files[ORIGINAL_DIST_INFO + "licenses/LICENSE"] != source["LICENSE"]:
+    license_file = files.get(ORIGINAL_DIST_INFO + "licenses/LICENSE")
+    metadata = files.get(ORIGINAL_DIST_INFO + "METADATA")
+    if license_file is None or metadata is None:
+        raise RuntimeError("unreviewed upstream wheel layout")
+    if license_file != source["LICENSE"]:
         raise RuntimeError("upstream license differs between source and wheel")
-    if (
-        hashlib.sha256(files[ORIGINAL_DIST_INFO + "METADATA"]).hexdigest()
-        != METADATA_SHA256
-    ):
+    if hashlib.sha256(metadata).hexdigest() != METADATA_SHA256:
         raise RuntimeError("unreviewed upstream dependency metadata")
     return files
 

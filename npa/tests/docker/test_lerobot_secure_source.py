@@ -141,6 +141,29 @@ def test_unreviewed_logger_fails_before_output_creation(
     assert not (tmp_path / "candidate").exists()
 
 
+@pytest.mark.parametrize("member", ["licenses/LICENSE", "METADATA"])
+def test_missing_required_wheel_member_has_a_structured_failure(
+    integration, monkeypatch, tmp_path, member
+):
+    wheel, archive = _upstream(integration, monkeypatch)
+    rebuilt = io.BytesIO()
+    missing = integration.ORIGINAL_DIST_INFO + member
+    with (
+        zipfile.ZipFile(io.BytesIO(wheel)) as source,
+        zipfile.ZipFile(rebuilt, "w") as output,
+    ):
+        for entry in source.infolist():
+            if entry.filename != missing:
+                output.writestr(entry, source.read(entry.filename))
+    wheel = rebuilt.getvalue()
+    monkeypatch.setattr(integration, "WHEEL_SHA256", hashlib.sha256(wheel).hexdigest())
+
+    with pytest.raises(RuntimeError, match="unreviewed upstream wheel layout"):
+        integration._prepare(wheel, archive, tmp_path / "candidate")
+
+    assert not (tmp_path / "candidate").exists()
+
+
 @pytest.mark.parametrize("artifact", ["wheel", "archive"])
 def test_unreviewed_artifact_fails_before_output_creation(
     integration, monkeypatch, tmp_path, artifact

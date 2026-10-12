@@ -103,6 +103,7 @@ RUN python3.12 -m venv /opt/lerobot/venv \
            num2words \
            tensorboard \
            "uvicorn[standard]" \
+           "wandb>=0.30.0" \
          && /opt/lerobot/venv/bin/python /opt/lerobot/remove-scikit-image-recipe.py \
            --site-packages /opt/lerobot/venv/lib/python3.12/site-packages \
            --capability lerobot \
