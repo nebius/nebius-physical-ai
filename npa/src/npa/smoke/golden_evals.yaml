@@ -46,7 +46,7 @@ containers:
         runtime-fetched LingBot, Wan, adapter, and real-case payloads.
     safety:
       runs_as: ubuntu
-      base_image: python:3.10-slim-bookworm
+      base_image: debian:trixie-slim
       network: operator-authorized runtime fetch only
       external_fetch:
         - runtime-only CUDA/PyTorch closure, LingBot checkpoint, and canonical adapters

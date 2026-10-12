@@ -52,3 +52,12 @@ notice. The recipe removes stale test-helper bytecode and updates the installed
 package RECORD before copying that environment into any final image layer.
 This recipe change does not qualify an earlier image or replace exact-image
 security and complete-byte validation.
+
+## Build-stage cache boundary
+
+Publish only the final runtime target. Do not publish the
+`wan-python-sanitized` intermediate stage or export all intermediate layers
+with a registry cache using `mode=max`: that stage's initial copy precedes
+the test-helper sanitization. The final runtime copies only the sanitized
+environment. Its separate exact-byte security and payload qualification
+requirements remain unchanged.
