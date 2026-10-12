@@ -506,6 +506,9 @@ def test_names_match_the_real_container_image_names(entries: list[dict]) -> None
         # Operator-private job image selected only by the OpenWAM workflow;
         # it has no generic deployment or public-release resolver.
         "npa-openwam",
+        # Restricted workflow-only runtime; the EmbodiedGen renderer must use
+        # its explicit operator-private digest rather than a deploy default.
+        "npa-embodiedgen",
         # Restricted workflow-only compatibility runtime; selected explicitly
         # by the DIG resource profile, with no standalone deploy service.
         "npa-paidf-anomalygen-sky",

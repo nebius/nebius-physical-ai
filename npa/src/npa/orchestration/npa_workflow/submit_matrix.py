@@ -383,6 +383,27 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Uses a qualified public GHCR image; exact-digest GPU evidence is recorded in the OSS solution catalog.",
     ),
     SubmitLiveCase(
+        "byof-embodiedgen.yaml",
+        "gpu",
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "NEBIUS_TOKEN_FACTORY_KEY",
+        ),
+        requires_token_factory=True,
+        plan_only=True,
+        plan_only_justification=(
+            "The automated matrix intentionally does not replay the qualified private "
+            "GPU run; each operator submission requires its own private image, "
+            "credential, input/output, and fresh target preflight."
+        ),
+        notes=(
+            "One exact private image completed TRELLIS generation, EmbodiedGen "
+            "URDF/MJCF export, and PyBullet settling on RTX PRO 6000; no public "
+            "image or target-wide readiness is implied."
+        ),
+    ),
+    SubmitLiveCase(
         "cosmos3-policy-model-factory.yaml",
         "gpu",
         secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),

@@ -457,6 +457,7 @@ def test_rebuilt_surfaces_including_detection_training_are_gpu_accepted() -> Non
     """
     assert RESTRICTED_PUBLICATION_TOOLS == frozenset(
         {
+            "embodiedgen",
             "cosmos3-nano-video",
             "cosmos3-super-benchmark",
             "paidf-anomalygen-sky",
@@ -776,12 +777,19 @@ def test_the_restriction_mechanism_still_exists() -> None:
     """The general refusal API covers restricted and neutral-private entries."""
     assert hasattr(images, "OMNIVERSE_RESTRICTED_TOOLS")
     assert hasattr(images, "OMNIVERSE_RESTRICTED_DERIVED_IMAGES")
-    assert restricted_image_names() == sorted(
-        images.RESTRICTED_PUBLICATION_TOOLS
-        | images.RESTRICTED_DERIVED_IMAGES
-        | images.PENDING_REDISTRIBUTION_TOOLS
-        | images.NEUTRAL_UNBUILT_CANDIDATE_TOOLS
-    )
+    assert restricted_image_names() == [
+        "cosmos3-nano-video",
+        "cosmos3-super-benchmark",
+        "embodiedgen",
+        "openwam",
+        "paidf-anomalygen-sky",
+        "paidf-attribute-search-sky",
+        "paidf-captioning-sky",
+        "paidf-detection-sky",
+        "paidf-event-video-sky",
+        "paidf-image-edit-sky",
+        "paidf-visual-qa-sky",
+    ]
     assert "cosmos3-nano-video" not in publicly_publishable_tools()
     assert not is_publicly_redistributable("cosmos3-nano-video")
     assert not is_publicly_redistributable("paidf-anomalygen-sky")

@@ -227,9 +227,11 @@ SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
         "cosmos-curate",
         "cosmos-evaluator",
         "content-agents",
+        "embodiedgen",
         "ncore",
         "robotwin",
         "libero",
+        "mjlab",
         "fiftyone",
         "groot",
         "habitat-sim",
@@ -271,6 +273,7 @@ def requires_skypilot_bootstrap_runtime_probe(image: str) -> bool:
 # PAIDF AnomalyGen and Cosmos3-Super benchmark runtimes remain private.
 RESTRICTED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
     {
+        "embodiedgen",
         "cosmos3-nano-video",
         "cosmos3-super-benchmark",
         "paidf-detection-sky",
@@ -527,7 +530,7 @@ SUPPORTED_TOOL_VERSIONS = {
     "curobo": "0.8.0-cuda13-blackwell-unbuilt",
     # CPU-only, so this image carries no CUDA tag family.
     "open3d": "0.20.0-cpu-20260918",
-    "mjlab": "dev-0202f396fb23f7d066fd452b469578e67151d382",
+    "mjlab": "dev-d5cfdcc261d586c25caa877d332feab052369a1f",
     "content-agents": "0.5.2-npa2",
     # Source packaging inventory only; no accepted public NCore release exists.
     "ncore": "59c698d206da92b406a4f72619fce3b3a2c64bfd-unbuilt",
