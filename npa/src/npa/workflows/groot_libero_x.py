@@ -734,9 +734,79 @@ def _validate_dataset_manifest(
         "source": dict(dataset),
         "materialized": {
             **inventory,
+            "episode_index_mapping": materialized.get("episode_index_mapping"),
             "content": _dataset_content_inventory_from_s3(client, inventory),
         },
     }
+
+
+def _episode_index_mapping(materialized: Mapping[str, Any]) -> dict[int, int]:
+    """Read one explicit workflow-to-source episode identity mapping."""
+
+    value = materialized.get("episode_index_mapping")
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise GrootVisualizationError(
+            "materialized episode identity mapping is invalid"
+        )
+    workflow_id = value.get("workflow_trajectory_id")
+    source_id = value.get("source_episode_index")
+    if any(
+        isinstance(item, bool) or not isinstance(item, int) or item < 0
+        for item in (workflow_id, source_id)
+    ):
+        raise GrootVisualizationError(
+            "materialized episode identity mapping is invalid"
+        )
+    return {workflow_id: source_id}
+
+
+def _source_episode_id(
+    task: Mapping[str, Any], trajectory_id: int, mapping: Mapping[int, int]
+) -> int:
+    """Require an explicit task reference before using a mapped source episode."""
+
+    source_id = mapping.get(trajectory_id, trajectory_id)
+    if source_id == trajectory_id:
+        return source_id
+    reference = task.get("reference_observation")
+    if (
+        not isinstance(reference, Mapping)
+        or reference.get("source_episode_index") != source_id
+    ):
+        raise GrootVisualizationError(
+            "materialized episode identity mapping conflicts with task provenance"
+        )
+    return source_id
+
+
+def _parquet_episode_index_values(client: Any, uri: str) -> set[int]:
+    """Read the v2 parquet identity column needed for an explicit mapping."""
+
+    try:
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+    except ImportError as exc:
+        raise GrootVisualizationError(
+            "cannot verify mapped materialized parquet episode identity"
+        ) from exc
+    try:
+        table = pq.read_table(
+            pa.BufferReader(_read_s3_bytes(client, uri)), columns=["episode_index"]
+        )
+    except Exception as exc:  # parquet backend details vary by supported image
+        raise GrootVisualizationError(
+            "cannot read mapped materialized parquet episode identity"
+        ) from exc
+    values = set(table.column("episode_index").to_pylist())
+    if not values or any(
+        isinstance(value, bool) or not isinstance(value, int) for value in values
+    ):
+        raise GrootVisualizationError(
+            "mapped materialized parquet has invalid episode identity"
+        )
+    return values
 
 
 def _validate_materialized_trajectory_files(
@@ -759,16 +829,29 @@ def _validate_materialized_trajectory_files(
         raise GrootVisualizationError(
             "materialized LeRobot dataset has an invalid chunks_size"
         )
-    expected = {
-        f"data/chunk-{trajectory_id // chunk_size:03d}/episode_{trajectory_id:06d}.parquet"
-        for task in tasks
-        for trajectory_id in task["trajectory_ids"]
-    }
+    mapping = _episode_index_mapping(materialized)
+    expected: dict[str, tuple[int, bool]] = {}
+    for task in tasks:
+        for trajectory_id in task["trajectory_ids"]:
+            source_id = _source_episode_id(task, trajectory_id, mapping)
+            key = (
+                f"data/chunk-{source_id // chunk_size:03d}/"
+                f"episode_{source_id:06d}.parquet"
+            )
+            expected[key] = (source_id, trajectory_id in mapping)
     available = {str(item["key"]) for item in materialized["objects"]}
-    if not expected.issubset(available):
+    if not set(expected).issubset(available):
         raise GrootVisualizationError(
             "materialized dataset omits required trajectory parquet files"
         )
+    for key, (source_id, mapped) in expected.items():
+        if not mapped:
+            continue
+        parquet_uri = f"s3://{ref.bucket}/{object_prefix}{key}"
+        if _parquet_episode_index_values(client, parquet_uri) != {source_id}:
+            raise GrootVisualizationError(
+                "mapped materialized parquet episode identity conflicts with task provenance"
+            )
 
 
 def prepare_evaluation(

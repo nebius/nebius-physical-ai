@@ -175,6 +175,67 @@ def _task(task_id: str) -> dict[str, Any]:
     }
 
 
+def _episode_parquet(episode_index: int) -> bytes:
+    """Create a real v2-style parquet identity column for a production seam."""
+
+    pa = pytest.importorskip("pyarrow")
+    pq = pytest.importorskip("pyarrow.parquet")
+    output = pa.BufferOutputStream()
+    pq.write_table(pa.table({"episode_index": [episode_index, episode_index]}), output)
+    return output.getvalue().to_pybytes()
+
+
+def _prepare_mapped_observed_pair(
+    client: FakeS3,
+    *,
+    task_source_episode: int = 24,
+    parquet_episode: int = 24,
+) -> dict[str, Any]:
+    """Prepare a v2 observed pair with explicit workflow/source identities."""
+
+    observed_uri = "s3://bucket/run/inputs/observed.json"
+    dataset_uri = "s3://bucket/run/inputs/dataset.json"
+    output_uri = "s3://bucket/run/prepared/observed-protocol.json"
+    task = _task("observed-0")
+    task["reference_observation"] = {"source_episode_index": task_source_episode}
+    observed = {"schema": workflow.OBSERVED_TASKS_SCHEMA, "tasks": [task]}
+    _put_json(client, observed_uri, observed)
+    _put_json(
+        client,
+        "s3://bucket/run/evaluation-data/meta/info.json",
+        {"chunks_size": 1_000},
+    )
+    client.seed(
+        "s3://bucket/run/evaluation-data/data/chunk-000/episode_000024.parquet",
+        _episode_parquet(parquet_episode),
+    )
+    inventory = workflow._object_inventory(client, "s3://bucket/run/evaluation-data/")
+    _put_json(
+        client,
+        dataset_uri,
+        {
+            "schema": workflow.DATASET_SCHEMA,
+            "source": {
+                "repo": workflow.LIBERO_X_REPO,
+                "revision": workflow.LIBERO_X_REVISION,
+                "license": "CC-BY-4.0",
+            },
+            "evaluation_task_manifest_sha256": workflow._json_hash(observed),
+            "materialized": {
+                "uri": "s3://bucket/run/evaluation-data/",
+                "object_inventory_sha256": inventory["sha256"],
+                "episode_index_mapping": {
+                    "workflow_trajectory_id": 0,
+                    "source_episode_index": 24,
+                },
+            },
+        },
+    )
+    return workflow.prepare_observed_paired_evaluation(
+        observed_uri, dataset_uri, output_uri, "observed-run", s3_client=client
+    )
+
+
 def _prepare(client: FakeS3, run_id: str = "groot-libero-x-fixture") -> dict[str, Any]:
     training_uri = "s3://bucket/run/inputs/training.json"
     evaluation_uri = "s3://bucket/run/inputs/evaluation.json"
@@ -463,6 +524,40 @@ def test_observed_paired_protocol_refuses_held_out_or_generalization_labels() ->
     assert protocol["rollout_protocol"]["initial_state_protocol"].startswith(
         "Isaac-GR00T reset seed batches"
     )
+
+
+def test_observed_pair_binds_explicit_v2_source_episode_identity() -> None:
+    """A logical trajectory may use only its explicit source-episode mapping."""
+
+    client = FakeS3()
+
+    protocol = _prepare_mapped_observed_pair(client)
+
+    assert protocol["evaluation_tasks"][0]["trajectory_ids"] == [0]
+    assert protocol["dataset"]["materialized"]["episode_index_mapping"] == {
+        "workflow_trajectory_id": 0,
+        "source_episode_index": 24,
+    }
+
+
+def test_observed_pair_refuses_conflicting_mapped_parquet_identity() -> None:
+    """A filename cannot substitute for the actual v2 parquet episode value."""
+
+    with pytest.raises(
+        workflow.GrootVisualizationError,
+        match="mapped materialized parquet episode identity conflicts",
+    ):
+        _prepare_mapped_observed_pair(FakeS3(), parquet_episode=23)
+
+
+def test_observed_pair_refuses_mapping_without_matching_task_provenance() -> None:
+    """Dataset mappings cannot silently replace the task's stated source episode."""
+
+    with pytest.raises(
+        workflow.GrootVisualizationError,
+        match="materialized episode identity mapping conflicts with task provenance",
+    ):
+        _prepare_mapped_observed_pair(FakeS3(), task_source_episode=23)
 
 
 def test_observed_paired_preparation_refuses_unmaterialized_trajectory() -> None:
