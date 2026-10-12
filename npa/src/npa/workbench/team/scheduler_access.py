@@ -73,7 +73,8 @@ def _discovery_rules():
     return [
         {
             "apiGroups": [""],
-            "resources": ["nodes", "namespaces"],
+            # SkyPilot computes free GPU capacity from pods across all namespaces.
+            "resources": ["nodes", "namespaces", "pods"],
             "verbs": ["get", "list", "watch"],
         },
         {

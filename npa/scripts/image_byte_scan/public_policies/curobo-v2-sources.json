@@ -1569,6 +1569,615 @@
       "record_kind": "layer_regular_content",
       "record_sha256": "e743775cbd6ff9caf3d705479110c09a5e3423fea55ab4b156532e412bbffd63",
       "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_bytes": 1002902,
+        "artifact_sha256": "b8944756260c5ea6b7fac019745f931f905aa7a4df0763676b1b25c911b692e2",
+        "artifact_url": "https://snapshot.ubuntu.com/ubuntu/20260920T000000Z/pool/main/g/gnutls28/libgnutls30t64_3.8.3-1.1ubuntu3.6_amd64.deb",
+        "authenticated_indexes": [
+          {
+            "index_path": "main/binary-amd64/Packages.xz",
+            "index_sha256": "8ea244658162d7a46e9e0d95803a56f127f1d2912c033ce70c0c9610606d3cf2",
+            "inrelease_sha256": "aeaf85abd41363b42bf9951020685e0f28971d0626afd28f210919a2b8f89810",
+            "inrelease_url": "https://snapshot.ubuntu.com/ubuntu/20260920T000000Z/dists/noble-updates/InRelease"
+          },
+          {
+            "index_path": "main/binary-amd64/Packages.xz",
+            "index_sha256": "7068ebb5e7f7f862612a63d66e1178de0d136086ae02bc7fe95947ab09d8b6a1",
+            "inrelease_sha256": "603d902fbcedd1666b0897c005771162a7b36288a56aac6a5f557556d53d66de",
+            "inrelease_url": "https://snapshot.ubuntu.com/ubuntu/20260920T000000Z/dists/noble-security/InRelease"
+          }
+        ],
+        "kind": "signed-ubuntu-package-member",
+        "member": "usr/lib/x86_64-linux-gnu/libgnutls.so.30.37.1",
+        "member_bytes": 2065824,
+        "member_sha256": "ddbae2995750875c07bc218d12a062d73f8250678f54dedda7e9be5068781c98",
+        "package": "libgnutls30t64",
+        "version": "3.8.3-1.1ubuntu3.6"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "ddbae2995750875c07bc218d12a062d73f8250678f54dedda7e9be5068781c98",
+      "semantic_source": {
+        "authenticated_indexes": [
+          {
+            "index_path": "main/source/Sources.xz",
+            "index_sha256": "c876fec71ef809bc2de97df985eca3be12dce1a0699b3928d54a2d1a511bb2d2",
+            "inrelease_sha256": "aeaf85abd41363b42bf9951020685e0f28971d0626afd28f210919a2b8f89810",
+            "inrelease_url": "https://snapshot.ubuntu.com/ubuntu/20260920T000000Z/dists/noble-updates/InRelease"
+          },
+          {
+            "index_path": "main/source/Sources.xz",
+            "index_sha256": "ff1d73e6bea950e6f8294248f4fcbd4bca00db2a870a2a9c5403e4b111ff864e",
+            "inrelease_sha256": "603d902fbcedd1666b0897c005771162a7b36288a56aac6a5f557556d53d66de",
+            "inrelease_url": "https://snapshot.ubuntu.com/ubuntu/20260920T000000Z/dists/noble-security/InRelease"
+          }
+        ],
+        "constant_declarations": [
+          {
+            "binary_range": [
+              1640512,
+              1642187
+            ],
+            "declaration_sha256": "34651db37630d68ebd82c9842e6a984777e76f2a4a49fdfcb6550a8f1b9e974e",
+            "decoded_bytes": 1675,
+            "decoded_value_sha256": "f4b1de2f94f1df2d588ff6c18290e0f7f5091267b9ef0da8433c622bad3d127a",
+            "source_range": [
+              1317,
+              3167
+            ],
+            "storage": "static const",
+            "symbol": "rsa_2048_privkey"
+          },
+          {
+            "binary_range": [
+              1639296,
+              1640508
+            ],
+            "declaration_sha256": "a8b3c3b6f4c2c766695f0d99ae9f48a6697056652e098f6f05259ea2b012f7cb",
+            "decoded_bytes": 1212,
+            "decoded_value_sha256": "80ec06e06b06635bcad5c71b0e9e7a3516c02133c682a2369b09599addb8d7f3",
+            "source_range": [
+              4334,
+              5686
+            ],
+            "storage": "static const",
+            "symbol": "dsa_2048_privkey"
+          },
+          {
+            "binary_range": [
+              1638624,
+              1638851
+            ],
+            "declaration_sha256": "9eac8717372650f154f6b129d6c36f2d8972a3b5b54c3597b632222e317e319a",
+            "decoded_bytes": 227,
+            "decoded_value_sha256": "d653005e4d23cf91e3572fe8148ab6db2e474924d9711838521d3ba352b193f5",
+            "source_range": [
+              6034,
+              6333
+            ],
+            "storage": "static const",
+            "symbol": "ecdsa_secp256r1_privkey"
+          },
+          {
+            "binary_range": [
+              1639104,
+              1639294
+            ],
+            "declaration_sha256": "f649a1beabe68334345da2e5acde326ef35cc7b92d6fa85828355ef4b805c1bb",
+            "decoded_bytes": 190,
+            "decoded_value_sha256": "934b3e9bfd9936c5e30c7f0ed7d36a05e2044f755c0aa433e1d6bef6a68d1391",
+            "source_range": [
+              6756,
+              7013
+            ],
+            "storage": "static const",
+            "symbol": "ecdsa_secp192r1_privkey"
+          },
+          {
+            "binary_range": [
+              1638880,
+              1639082
+            ],
+            "declaration_sha256": "6ad255068648c50a1acfa2209eb731acad11550ec963d8aae914e83684a34d06",
+            "decoded_bytes": 202,
+            "decoded_value_sha256": "a0b9679665e29ac220dfb0b366317e1b9dd5fe31e9def8b2e511669a041389ae",
+            "source_range": [
+              7332,
+              7601
+            ],
+            "storage": "static const",
+            "symbol": "ecdsa_secp224r1_privkey"
+          },
+          {
+            "binary_range": [
+              1638336,
+              1638618
+            ],
+            "declaration_sha256": "dcf4ea9bf931abc765cd034b45c4bf39f4c3d1d798627f071040ab54525e8499",
+            "decoded_bytes": 282,
+            "decoded_value_sha256": "293216817f0d585f0b54f225582f59e7b2e2a795b5f8002e2d71c5e3d49ce9b0",
+            "source_range": [
+              7963,
+              8316
+            ],
+            "storage": "static const",
+            "symbol": "ecdsa_secp384r1_privkey"
+          },
+          {
+            "binary_range": [
+              1637952,
+              1638306
+            ],
+            "declaration_sha256": "b7fbd13f7a95098dcce18163c22d9c2482b9867d980b7bedf42826b7a2edba97",
+            "decoded_bytes": 354,
+            "decoded_value_sha256": "f8766749b0c6f9b5661364568226af0ba7ae8d87c0073df24e440de4417521cd",
+            "source_range": [
+              8843,
+              9272
+            ],
+            "storage": "static const",
+            "symbol": "ecdsa_secp521r1_privkey"
+          },
+          {
+            "binary_range": [
+              1637792,
+              1637944
+            ],
+            "declaration_sha256_hex_parts": [
+              "e0013064",
+              "bff8a6f0b35e2933de6b7bf46e56c6a325fc7fa9bed8da9455c012da"
+            ],
+            "decoded_bytes": 152,
+            "decoded_value_sha256": "b8369cc647a1e1e8f8e420b6b8580c36223f89b0f8e70281732d028aebf15fac",
+            "source_range": [
+              9934,
+              10144
+            ],
+            "storage": "static const",
+            "symbol": "gost01_privkey"
+          },
+          {
+            "binary_range": [
+              1637632,
+              1637788
+            ],
+            "declaration_sha256": "43b846c74b41ceba8b2e003407d744107266bc37d41863f84b1afba6c7cbf503",
+            "decoded_bytes": 156,
+            "decoded_value_sha256": "3de5d1d9ca9af8e24d29bab925c3d500c2cdd11a06c4a2c6a6b336e73bb3ad56",
+            "source_range": [
+              10174,
+              10392
+            ],
+            "storage": "static const",
+            "symbol": "gost12_256_privkey"
+          },
+          {
+            "binary_range": [
+              1637408,
+              1637609
+            ],
+            "declaration_sha256": "92a2c28662b04e1a47c39dc3274ba3c45831d471a36c0869832c28eb8e664a24",
+            "decoded_bytes": 201,
+            "decoded_value_sha256": "c72070fc1ffb2df729650b949157c85ec03d8ec9743ba7956c03e21d385bce4e",
+            "source_range": [
+              10422,
+              10690
+            ],
+            "storage": "static const",
+            "symbol": "gost12_512_privkey"
+          }
+        ],
+        "function_definitions": [
+          {
+            "bytes": 2024,
+            "name": "test_rsa_enc",
+            "sha256": "74bf72f586395d397ce42d9a3de819e882821b921dcb0f6b24fc2fc7ac77c3c0",
+            "source_range": [
+              10691,
+              12715
+            ]
+          },
+          {
+            "bytes": 4102,
+            "name": "test_sig",
+            "sha256": "8fe4585df8b7c46189282990253dbdf45765ceada6972fc1281ce4fb6eea9788",
+            "source_range": [
+              12717,
+              16819
+            ]
+          },
+          {
+            "bytes": 3039,
+            "name": "test_known_sig",
+            "sha256": "6d14b48b1933d0026f36c0057055f5d7c1bb4e65960bcad48275cbc30672491e",
+            "source_range": [
+              16821,
+              19860
+            ]
+          },
+          {
+            "bytes": 4564,
+            "name": "gnutls_pk_self_test",
+            "sha256": "160854c2c434372b3d848baeed18310131938cd880d6d93529ec380da5cfff1a",
+            "source_range": [
+              32658,
+              37222
+            ]
+          }
+        ],
+        "kind": "exact-applied-ubuntu-source-package",
+        "member": "gnutls-3.8.3/lib/crypto-selftests-pk.c",
+        "member_bytes": 37223,
+        "member_sha256": "0199a5b05732d825e235001455afa1d54178d8508da1fd2e0eb8a5ef271405b8",
+        "package": "gnutls28",
+        "patch_application": {
+          "applied_patch_count": 46,
+          "applied_patch_set_sha256": "b41990b33bad163322083fe9b40c55969959ceaab34a5973f56688b210b0515d",
+          "series_bytes": 1090,
+          "series_member": "debian/patches/series",
+          "series_sha256": "e54559d86987a35840990962201bc4714c9460920dd62f3bf8a526888f647a21"
+        },
+        "source_artifacts": [
+          {
+            "artifact_bytes": 3397,
+            "artifact_sha256": "34455be2f5fb343b5833ff40cc00623106326e6cc88aaf9862943f6b3aa5ab60",
+            "artifact_url": "https://snapshot.ubuntu.com/ubuntu/20260920T000000Z/pool/main/g/gnutls28/gnutls28_3.8.3-1.1ubuntu3.6.dsc",
+            "member": "gnutls28_3.8.3-1.1ubuntu3.6.dsc"
+          },
+          {
+            "artifact_bytes": 6463720,
+            "artifact_sha256": "f74fc5954b27d4ec6dfbb11dea987888b5b124289a3703afcada0ee520f4173e",
+            "artifact_url": "https://snapshot.ubuntu.com/ubuntu/20260920T000000Z/pool/main/g/gnutls28/gnutls28_3.8.3.orig.tar.xz",
+            "member": "gnutls28_3.8.3.orig.tar.xz"
+          },
+          {
+            "artifact_bytes": 124984,
+            "artifact_sha256": "b4cc6ebad4cb21ffe82d094f6d9c90de31e08a8b31ed36911a2adbe5aaa56d47",
+            "artifact_url": "https://snapshot.ubuntu.com/ubuntu/20260920T000000Z/pool/main/g/gnutls28/gnutls28_3.8.3-1.1ubuntu3.6.debian.tar.xz",
+            "member": "gnutls28_3.8.3-1.1ubuntu3.6.debian.tar.xz"
+          }
+        ],
+        "source_format": "3.0 (quilt)",
+        "version": "3.8.3-1.1ubuntu3.6"
+      }
+    },
+    {
+      "public_origin": {
+        "artifact_bytes": 200941980,
+        "artifact_sha256": "0a759da5dea5c0ea10fd307de75cdeb59e7ea4fcb8add0924859b944babf1112",
+        "artifact_url": "https://files.pythonhosted.org/packages/5f/67/cba3777620cdacb99102da4042883709c41c709f4b6323c10781a9c3aa34/nvidia_cusolver-12.0.4.66-py3-none-manylinux_2_27_x86_64.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "nvidia/cu13/lib/libcusolver.so.12",
+        "member_bytes": 141152872,
+        "member_sha256": "c571d524fc5571e6c8a5784d51f75fbe8cf17590463c397a06e48428cb926c48",
+        "package": "nvidia-cusolver",
+        "requirements_lock": {
+          "member": "npa/docker/workbench/curobo/requirements.lock",
+          "sha256": "0f957e5c15f125380116afb2e1e58a41defd7b2fcb37a11f3550e83eb5b84193"
+        },
+        "version": "12.0.4.66"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "c571d524fc5571e6c8a5784d51f75fbe8cf17590463c397a06e48428cb926c48",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_bytes": 145942937,
+        "artifact_sha256": "2b3c89c88d01ee0e477cb7f82ef60a11a4bcd57b6b87c33f789350b59759360b",
+        "artifact_url": "https://files.pythonhosted.org/packages/fa/18/623c77619c31d62efd55302939756966f3ecc8d724a14dab2b75f1508850/nvidia_cusparse-12.6.3.3-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "nvidia/cu13/lib/libcusparse.so.12",
+        "member_bytes": 162565256,
+        "member_sha256": "09339f848f60bb1111a61ee0fe91ed0c25132b7ff63298244d7ac14e61b58466",
+        "package": "nvidia-cusparse",
+        "requirements_lock": {
+          "member": "npa/docker/workbench/curobo/requirements.lock",
+          "sha256": "0f957e5c15f125380116afb2e1e58a41defd7b2fcb37a11f3550e83eb5b84193"
+        },
+        "version": "12.6.3.3"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "09339f848f60bb1111a61ee0fe91ed0c25132b7ff63298244d7ac14e61b58466",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_bytes": 526482318,
+        "artifact_sha256": "8db7338e6895c3d4bd89a02ff4209507d1f0cf2ffeb3b898538b5a07d1ea8c1e",
+        "artifact_url": "https://download.pytorch.org/whl/cu130/torch-2.13.0%2Bcu130-cp312-cp312-manylinux_2_28_x86_64.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "torch/testing/_internal/common_modules.py",
+        "member_bytes": 245899,
+        "member_sha256": "707a84f218ac88c75c7a82164cd74ec85684dace82e015d2dc49b4b356f3a54c",
+        "package": "torch",
+        "requirements_lock": {
+          "member": "npa/docker/workbench/curobo/requirements.lock",
+          "sha256": "0f957e5c15f125380116afb2e1e58a41defd7b2fcb37a11f3550e83eb5b84193"
+        },
+        "version": "2.13.0+cu130"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "707a84f218ac88c75c7a82164cd74ec85684dace82e015d2dc49b4b356f3a54c",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_bytes": 526482318,
+        "artifact_sha256": "8db7338e6895c3d4bd89a02ff4209507d1f0cf2ffeb3b898538b5a07d1ea8c1e",
+        "artifact_url": "https://download.pytorch.org/whl/cu130/torch-2.13.0%2Bcu130-cp312-cp312-manylinux_2_28_x86_64.whl",
+        "kind": "locked-public-wheel-member",
+        "member": "torch/fx/graph.py",
+        "member_bytes": 114691,
+        "member_sha256": "e12607320178caa224182665d31c28501194573ece6d104d2cd7ccdea6439dc7",
+        "package": "torch",
+        "requirements_lock": {
+          "member": "npa/docker/workbench/curobo/requirements.lock",
+          "sha256": "0f957e5c15f125380116afb2e1e58a41defd7b2fcb37a11f3550e83eb5b84193"
+        },
+        "version": "2.13.0+cu130"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "e12607320178caa224182665d31c28501194573ece6d104d2cd7ccdea6439dc7",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "kind": "public-git-source",
+        "member": "npa/src/npa/cli/cluster/terraform_lifecycle.py",
+        "member_bytes": 170430,
+        "member_sha256": "404ccd5811e79ed47c95dc7d5ab6f6d66c15cc2ee576a5150f224db28c07a01f",
+        "repository": "https://github.com/nebius/nebius-physical-ai",
+        "revision": "94afa2571ac921655a5ba32ce901fa65dee9cca8"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "404ccd5811e79ed47c95dc7d5ab6f6d66c15cc2ee576a5150f224db28c07a01f",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "compile_mode": "exec",
+        "compiler_executable_sha256": "a92f0f95e883390c7256b2e441484aac06b1002dbe1d924141a77c8d82f96223",
+        "header": {
+          "computed_source_hash_hex": "f9504fa6be06da83",
+          "header_sha256": "dc89ae8d4f3bcab20e46361624eac205cd4dd55f3375f1cd9e2dfb9d8010cdcf",
+          "invalidation_flags": 3,
+          "magic_hex": "cb0d0d0a",
+          "source_hash_hex": "f9504fa6be06da83",
+          "source_hash_matches_exact_source": true
+        },
+        "kind": "exact-checked-hash-bytecode",
+        "marshal": {
+          "bytes": 170450,
+          "canonical_structure_bytes": 288116,
+          "full_structure_sha256": "ca84211180ef1e091e83f2eda4fac8ec5a364467cf39b7385ab76c77f64f6e74",
+          "recursive_code_objects": 117,
+          "recursive_non_code_constants": 1595,
+          "roundtrip_equal": true,
+          "sha256": "e23f9a9011eb08600247dd9ab05464eaf5633dc33580296efedf384ca2e7bde9",
+          "version": 4
+        },
+        "optimization": 0,
+        "public_compiler_packages": [
+          {
+            "artifact_bytes": 838090,
+            "artifact_sha256": "b3bfbc02cc6767d02170781c9cb4c703ea18822b2703667473c3a402ff73088c",
+            "artifact_url": "https://snapshot.ubuntu.com/ubuntu/20260901T000000Z/pool/main/p/python3.12/libpython3.12-minimal_3.12.3-1ubuntu0.16_amd64.deb",
+            "members": [
+              {
+                "bytes": 7878,
+                "member": "usr/lib/python3.12/py_compile.py",
+                "sha256": "ba0e2ea55612c24ed88c075bdf37dba1527492bd848b1b7f068bbbb3371ac2d9"
+              }
+            ],
+            "package": "libpython3.12-minimal",
+            "version": "3.12.3-1ubuntu0.16"
+          },
+          {
+            "artifact_bytes": 2069898,
+            "artifact_sha256": "41081d5b192a03b48844eed1efd08bbf9c09cc33eb9863da6d7add9f5f3dd0c9",
+            "artifact_url": "https://snapshot.ubuntu.com/ubuntu/20260901T000000Z/pool/main/p/python3.12/libpython3.12-stdlib_3.12.3-1ubuntu0.16_amd64.deb",
+            "members": [],
+            "package": "libpython3.12-stdlib",
+            "version": "3.12.3-1ubuntu0.16"
+          },
+          {
+            "artifact_bytes": 650728,
+            "artifact_sha256": "0e8313f418201f1c0861ff7accbd30cefe459895feeffa5be27b18fc0417428e",
+            "artifact_url": "https://snapshot.ubuntu.com/ubuntu/20260901T000000Z/pool/main/p/python3.12/python3.12_3.12.3-1ubuntu0.16_amd64.deb",
+            "members": [],
+            "package": "python3.12",
+            "version": "3.12.3-1ubuntu0.16"
+          },
+          {
+            "artifact_bytes": 2334704,
+            "artifact_sha256": "3535ddab53a2f39f8cda32250bbf5bb066616f5902b642d15ef56047f83911d3",
+            "artifact_url": "https://snapshot.ubuntu.com/ubuntu/20260901T000000Z/pool/main/p/python3.12/python3.12-minimal_3.12.3-1ubuntu0.16_amd64.deb",
+            "members": [
+              {
+                "bytes": 8025024,
+                "member": "usr/bin/python3.12",
+                "sha256": "a92f0f95e883390c7256b2e441484aac06b1002dbe1d924141a77c8d82f96223"
+              }
+            ],
+            "package": "python3.12-minimal",
+            "version": "3.12.3-1ubuntu0.16"
+          }
+        ],
+        "public_compiler_signed_index": {
+          "index_path": "main/binary-amd64/Packages.xz",
+          "index_sha256": "3a78d8e3f8a004dd9b9a57a122d88527bbee7f0d9a34b30530d817c059b8a6e6",
+          "inrelease_sha256": "74ec0705b2d41f863e32b6e2f4d4efe6064842fc3bde08a78c2bc791b157c2a9",
+          "inrelease_url": "https://snapshot.ubuntu.com/ubuntu/20260901T000000Z/dists/noble-updates/InRelease"
+        },
+        "py_compile_sha256": "ba0e2ea55612c24ed88c075bdf37dba1527492bd848b1b7f068bbbb3371ac2d9",
+        "python_version": "3.12.3 (main, Jul 15 2026, 23:46:41) [GCC 13.3.0]",
+        "source": {
+          "kind": "public-git-source",
+          "member": "npa/src/npa/cli/cluster/terraform_lifecycle.py",
+          "member_bytes": 170430,
+          "member_sha256": "404ccd5811e79ed47c95dc7d5ab6f6d66c15cc2ee576a5150f224db28c07a01f",
+          "repository": "https://github.com/nebius/nebius-physical-ai",
+          "revision": "94afa2571ac921655a5ba32ce901fa65dee9cca8"
+        },
+        "source_bytes_sha256": "404ccd5811e79ed47c95dc7d5ab6f6d66c15cc2ee576a5150f224db28c07a01f",
+        "source_module": "/opt/npa-venv/lib/python3.12/site-packages/npa/cli/cluster/terraform_lifecycle.py",
+        "whole_file_reproduction": {
+          "compiled_bytes": 170466,
+          "compiled_sha256": "80d4c51e0d3ace8f28f108c7c7f9ac984e9a636da7833e3aa41cf0fa93bec8b1",
+          "observed_bytes": 170466,
+          "observed_sha256": "80d4c51e0d3ace8f28f108c7c7f9ac984e9a636da7833e3aa41cf0fa93bec8b1",
+          "whole_file_equal": true
+        }
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "80d4c51e0d3ace8f28f108c7c7f9ac984e9a636da7833e3aa41cf0fa93bec8b1",
+      "semantic_source": {}
+    },
+    {
+      "public_origin": {
+        "artifact_bytes": 1944134,
+        "artifact_sha256": "3d0955bc049bbcca0f4c3e78a3a8b994593d96db7d84f4320217224433844534",
+        "artifact_url": "https://snapshot.ubuntu.com/ubuntu/20260920T000000Z/pool/main/o/openssl/libssl3t64_3.0.13-0ubuntu3.15_amd64.deb",
+        "authenticated_indexes": [
+          {
+            "index_path": "main/binary-amd64/Packages.xz",
+            "index_sha256": "8ea244658162d7a46e9e0d95803a56f127f1d2912c033ce70c0c9610606d3cf2",
+            "inrelease_sha256": "aeaf85abd41363b42bf9951020685e0f28971d0626afd28f210919a2b8f89810",
+            "inrelease_url": "https://snapshot.ubuntu.com/ubuntu/20260920T000000Z/dists/noble-updates/InRelease"
+          },
+          {
+            "index_path": "main/binary-amd64/Packages.xz",
+            "index_sha256": "7068ebb5e7f7f862612a63d66e1178de0d136086ae02bc7fe95947ab09d8b6a1",
+            "inrelease_sha256": "603d902fbcedd1666b0897c005771162a7b36288a56aac6a5f557556d53d66de",
+            "inrelease_url": "https://snapshot.ubuntu.com/ubuntu/20260920T000000Z/dists/noble-security/InRelease"
+          }
+        ],
+        "kind": "signed-ubuntu-package-member",
+        "member": "usr/lib/x86_64-linux-gnu/libssl.so.3",
+        "member_bytes": 696512,
+        "member_sha256": "8e49cebd373d90b55f3626da71dd97fe8e95c68dc4c064d8962b27907690736e",
+        "package": "libssl3t64",
+        "version": "3.0.13-0ubuntu3.15"
+      },
+      "record_kind": "layer_regular_content",
+      "record_sha256": "8e49cebd373d90b55f3626da71dd97fe8e95c68dc4c064d8962b27907690736e",
+      "semantic_source": {
+        "debug_crc32_hex": "924a189d",
+        "debug_filename": {
+          "byte_range": [
+            694320,
+            694364
+          ],
+          "bytes": 44,
+          "sha256": "bb66bd1514c4f1e31f891b03af601145706052507c69939805cf357cf35ed51b"
+        },
+        "elf": {
+          "class": 64,
+          "endianness": "little",
+          "section_count": 29,
+          "section_header_entry_bytes": 64,
+          "section_header_offset": 694656
+        },
+        "kind": "exact-elf-section",
+        "member_sha256": "8e49cebd373d90b55f3626da71dd97fe8e95c68dc4c064d8962b27907690736e",
+        "native_capture": {
+          "byte_range": [
+            694320,
+            694358
+          ],
+          "bytes": 38,
+          "native_coordinate": {
+            "end_line": 4474,
+            "rule_id": "nebius-generic-id",
+            "start_line": 4474
+          },
+          "sha256": "03701a3dee9dff6308671ed67a3b90eefd69bc59bd2a50b53eb37a5b5a6d32c5"
+        },
+        "section": {
+          "bytes": 52,
+          "name": ".gnu_debuglink",
+          "offset": 694320,
+          "sha256": "c2f2191641771ca6d4077c896258dffda20a1e8584acb39e8717cd0c0509df85"
+        }
+      }
+    },
+    {
+      "public_origin": {
+        "architecture": "amd64",
+        "artifact_bytes": 142830,
+        "artifact_sha256": "0d4a0187bcdbbe3e6a10bfa574100087d12052d0d0ef28614fd6210021c587b2",
+        "artifact_url": "https://snapshot.ubuntu.com/ubuntu/20260920T000000Z/pool/main/k/krb5/libgssapi-krb5-2_1.20.1-6ubuntu2.10_amd64.deb",
+        "authenticated_indexes": [
+          {
+            "index_path": "main/binary-amd64/Packages.xz",
+            "index_sha256": "8ea244658162d7a46e9e0d95803a56f127f1d2912c033ce70c0c9610606d3cf2",
+            "inrelease_sha256": "aeaf85abd41363b42bf9951020685e0f28971d0626afd28f210919a2b8f89810",
+            "inrelease_url": "https://snapshot.ubuntu.com/ubuntu/20260920T000000Z/dists/noble-updates/InRelease"
+          }
+        ],
+        "control_member": {
+          "bytes": 75,
+          "member": "triggers",
+          "sha256": "0f1eda96d7595190cc2d40a06fafff8def651d19ceb635292ae6104de50de218"
+        },
+        "kind": "signed-ubuntu-dpkg-control-path",
+        "logical_path_derivation": {
+          "algorithm": "var/lib/dpkg/info/{binary-package}:{architecture}.{control-member-basename}",
+          "bytes": 49,
+          "sha256": "fb46c104e3ef44f1353c323c847b2ed7e224eb3d23b1e7df90ec0253f10f9270"
+        },
+        "package": "libgssapi-krb5-2",
+        "version": "1.20.1-6ubuntu2.10"
+      },
+      "record_kind": "logical_tar_path",
+      "record_sha256": "fb46c104e3ef44f1353c323c847b2ed7e224eb3d23b1e7df90ec0253f10f9270",
+      "semantic_source": {
+        "control_member": {
+          "bytes": 75,
+          "member": "triggers",
+          "sha256": "0f1eda96d7595190cc2d40a06fafff8def651d19ceb635292ae6104de50de218"
+        }
+      }
+    },
+    {
+      "public_origin": {
+        "architecture": "amd64",
+        "artifact_bytes": 9490,
+        "artifact_sha256": "0679f198b0128179e46cdf956fb2022c23c758664c00bc8efa0382d509683a8a",
+        "artifact_url": "https://snapshot.ubuntu.com/ubuntu/20260920T000000Z/pool/main/k/keyutils/libkeyutils1_1.6.3-3build1_amd64.deb",
+        "authenticated_indexes": [
+          {
+            "index_path": "main/binary-amd64/Packages.xz",
+            "index_sha256": "2a6a199e1031a5c279cb346646d594993f35b1c03dd4a82aaa0323980dd92451",
+            "inrelease_sha256": "cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0",
+            "inrelease_url": "https://snapshot.ubuntu.com/ubuntu/20260920T000000Z/dists/noble/InRelease"
+          }
+        ],
+        "control_member": {
+          "bytes": 75,
+          "member": "triggers",
+          "sha256": "0f1eda96d7595190cc2d40a06fafff8def651d19ceb635292ae6104de50de218"
+        },
+        "kind": "signed-ubuntu-dpkg-control-path",
+        "logical_path_derivation": {
+          "algorithm": "var/lib/dpkg/info/{binary-package}:{architecture}.{control-member-basename}",
+          "bytes": 45,
+          "sha256": "e03287709e8e16898a6834541beaf96414631cae385a54a63fcfb55826381725"
+        },
+        "package": "libkeyutils1",
+        "version": "1.6.3-3build1"
+      },
+      "record_kind": "logical_tar_path",
+      "record_sha256": "e03287709e8e16898a6834541beaf96414631cae385a54a63fcfb55826381725",
+      "semantic_source": {
+        "control_member": {
+          "bytes": 75,
+          "member": "triggers",
+          "sha256": "0f1eda96d7595190cc2d40a06fafff8def651d19ceb635292ae6104de50de218"
+        }
+      }
     }
   ],
   "schema_version": "npa.public-native-source-proofs.v1"

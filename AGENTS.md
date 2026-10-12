@@ -40,6 +40,7 @@ The source of truth is `skills/index.yaml`. The tree is organized as:
 - `skills/tools/marble/SKILL.md`: hosted Marble world acquisition, gsplat/Warp CUDA consumers, native workflow composition, and factual interactive HTML reports.
 - `skills/tools/cosmos3-ray-serve/SKILL.md`: persistent Cosmos3-Nano serving through cosmos-framework's native Ray Serve batching path, authenticated readiness, S3 provenance, and independent B200/RTX PRO 6000 validation.
 - `skills/tools/ray-workbench/SKILL.md`: route Ray requests to the supported native Jobs/Core, Train V2, Cosmos3 native Serve, or fixed CPU KubeRay paths and state unsupported library boundaries.
+- `skills/tools/seedvr2/SKILL.md`: package, run, validate, or review official SeedVR2-3B restoration of robot observation video, its S3 workflow, and objective/visual evidence without treating generated detail as sensor truth.
 - `skills/tools/burst/SKILL.md`: one gang-scheduled multi-node GPU job with torchrun rendezvous, deliberately not a workflow surface.
 - `skills/tools/gpu-cluster-provisioning/SKILL.md`: managed-image vs GPU-Operator driver strategy (operator mode is unsafe on NVSwitch), the post-apply health gates (fabric, CUDA vectorAdd, stability window), accelerator-name discovery, and triage for nodes whose GPUs do not work.
 - `skills/tools/open3d/SKILL.md`: register overlapping point-cloud scans into
