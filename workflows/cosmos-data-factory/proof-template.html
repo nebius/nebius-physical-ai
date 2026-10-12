@@ -145,7 +145,7 @@ function renderSource(source) {
   const details = node('details');
   details.append(node('summary', 'Source identity and attribution'));
   details.append(node('p', source.summary, 'mode-note'));
-  if (source.url) {
+  if (source.url && /^https?:\/\//i.test(source.url)) {
     const link = node('a', 'Original source and license');
     link.href = source.url;
     details.append(link);
@@ -187,6 +187,8 @@ function renderExplanation(explanation) {
 }
 
 function renderWatchpoints(explanation, mediaIds) {
+  const video = mediaIds.map(elements).find(media => media?.tagName === 'VIDEO');
+  if (!video || !explanation.watchpoints?.length) return node('div');
   const controls = node('div', undefined, 'actions');
   controls.style.margin = '18px 0';
   const status = node('p', 'Play the full clip, or pause at a review point below.', 'mode-note');
@@ -196,7 +198,6 @@ function renderWatchpoints(explanation, mediaIds) {
     button.type = 'button';
     button.dataset.seconds = point.seconds;
     button.addEventListener('click', () => {
-      const video = mediaIds.map(elements).find(media => media.tagName === 'VIDEO');
       video.pause();
       video.currentTime = point.seconds;
       status.textContent = `Paused at ${point.seconds}s: ${point.description}`;

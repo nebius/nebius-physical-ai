@@ -5,8 +5,14 @@ import base64
 import hashlib
 import json
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import yaml
+
+WORKFLOW_SPECS = {
+    "iaa": "paidf-image-attribute-augmentation.yaml",
+    "evg": "paidf-event-video-generation.yaml",
+}
 
 
 def _embedded_asset(asset, evidence_directory):
@@ -32,11 +38,8 @@ def _embedded_asset(asset, evidence_directory):
 
 def _workflow_details(workflow, directory):
     path = directory / workflow["spec_filename"]
-    if path.parent != directory or path.name not in {
-        "paidf-image-attribute-augmentation.yaml",
-        "paidf-event-video-generation.yaml",
-    }:
-        raise ValueError("Evidence must identify one of the two CDF specs")
+    if workflow["spec_filename"] != WORKFLOW_SPECS.get(workflow["id"]):
+        raise ValueError("Evidence workflow ID must match its CDF spec filename")
     spec = yaml.safe_load(path.read_text())
     workflow["spec_path"] = f"workflows/cosmos-data-factory/{path.name}"
     workflow["spec_sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
@@ -57,11 +60,51 @@ def _workflow_details(workflow, directory):
     return workflow
 
 
+def _media_references(workflow):
+    evidence = workflow["evidence"]
+    references = list(evidence["media_ids"])
+    references.extend(evidence["source"].get("media_ids", []))
+    for comparison in evidence.get("comparisons", []):
+        references.extend(comparison["media_ids"])
+    return references
+
+
+def _validate_source_url(source):
+    url = source.get("url")
+    if url:
+        parsed = urlsplit(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("Source links must use an absolute HTTP or HTTPS URL")
+
+
+def _validate_media_references(evidence):
+    assets = {asset["id"]: asset for asset in evidence["assets"]}
+    if len(assets) != len(evidence["assets"]):
+        raise ValueError("Embedded asset IDs must be unique")
+    references = list(evidence["robot_assets"])
+    for workflow in evidence["workflows"]:
+        references.extend(_media_references(workflow))
+        details = workflow["evidence"]
+        _validate_source_url(details["source"])
+        if details.get("explanation", {}).get("watchpoints"):
+            videos = [
+                assets[id]
+                for id in details["media_ids"]
+                if id in assets and assets[id]["mime_type"] == "video/mp4"
+            ]
+            if not videos:
+                raise ValueError("Video watchpoints require an embedded workflow video")
+    missing = set(references) - assets.keys()
+    if missing:
+        raise ValueError(f"Unknown embedded media IDs: {sorted(missing)}")
+
+
 def _report_data(evidence_path, directory):
     evidence = json.loads(evidence_path.read_text())
     workflows = evidence["workflows"]
     if {row["id"] for row in workflows} != {"iaa", "evg"} or len(workflows) != 2:
         raise ValueError("The proof must contain exactly IAA and EVG")
+    _validate_media_references(evidence)
     evidence["assets"] = [
         _embedded_asset(asset, evidence_path.parent) for asset in evidence["assets"]
     ]

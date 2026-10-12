@@ -143,6 +143,9 @@ and `caption`; paths are resolved relative to the evidence JSON. Optional asset
 `title` distinguishes source from generated output. The template renders the
 exact `media_ids` supplied for each workflow. `robot_assets` lists
 optional source-reference asset IDs.
+Asset IDs must be unique and every media reference must resolve. Each workflow
+ID must match its spec filename. Source links must be absolute HTTP or HTTPS
+URLs, and video watchpoints require an embedded video in that workflow's media.
 Optional workflow `annotation_rows` display actual model answers in a collapsed
 table; each row has `scope`, native question ID in `label`, and `answer` with its
 original JSON value. Preserve empty strings and lists instead of silently

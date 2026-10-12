@@ -1,6 +1,6 @@
 ---
 name: physical-ai-image-attribute-augmentation
-description: Author, run, or inspect the NPA Cosmos Data Factory IAA workflow for person-image clothing, color, footwear, and accessory augmentation with attribute verification and search labels.
+description: Author, run, or inspect the NPA Cosmos Data Factory IAA workflow for person-image clothing, color, and footwear augmentation with attribute verification and search labels.
 ---
 
 # Image Attribute Augmentation on NPA

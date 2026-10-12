@@ -1364,7 +1364,7 @@ skills:
         contains: "--infra"
   - name: physical-ai-image-attribute-augmentation
     category: workflows
-    when_to_use: "Author, run, or inspect person-image clothing, color, footwear, and accessory augmentation with verified labels on NPA."
+    when_to_use: "Author, run, or inspect person-image clothing, color, and footwear augmentation with attribute verification and search labels on NPA."
     path: skills/cosmos-data-factory/physical-ai-image-attribute-augmentation/SKILL.md
     smoke:
       - type: npa_workflow_yaml

@@ -184,9 +184,7 @@ verify terminal state before destroying owned infrastructure.
 
 The [existing native live evidence](../../docs/workbench/guides/physical-ai-data-factory.md#native-live-validation-evidence)
 describes accepted digests, representative results, and visual/QA limitations.
-It does not qualify a replacement image or a new dataset. Adjacent
-`*.readiness.json` records describe this checkout's local validation separately
-from deployment prerequisites; no new GPU execution is claimed by this relocation.
+It does not qualify a replacement image or a new dataset.
 
 ## Agent skills
 
