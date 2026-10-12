@@ -178,6 +178,38 @@ def test_image_independent_checks_do_not_construct_execution_images(
     )
 
 
+def test_text_health_discloses_when_image_policy_is_not_evaluated(
+    diagnostic_spies: SimpleNamespace, tmp_path: Path
+) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "health",
+            "sim2real",
+            "--checks",
+            "tokens",
+            "--s3-bucket",
+            "example-bucket",
+            "--s3-endpoint",
+            "https://s3.example.invalid",
+            "--k8s-context",
+            "diagnostic-context",
+            "--k8s-kubeconfig",
+            str(tmp_path / "kubeconfig.yaml"),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert (
+        "image_policy: not evaluated (no image-dependent checks selected)"
+        in result.output
+    )
+    diagnostic_spies.defaults.assert_not_called()
+    diagnostic_spies.execution.assert_not_called()
+    diagnostic_spies.image_inspector.assert_not_called()
+
+
 def test_tokens_and_s3_use_explicit_storage_without_image_resolution(
     diagnostic_spies: SimpleNamespace,
     monkeypatch: pytest.MonkeyPatch,

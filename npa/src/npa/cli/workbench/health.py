@@ -735,6 +735,10 @@ def sim2real_command(
             f"summary: {counts[PASS]} pass, {counts[WARN]} warn, "
             f"{counts[FAIL]} fail, {counts[SKIP]} skip"
         )
+        if not any(check in IMAGE_DEPENDENT_CHECKS for check in selected):
+            typer.echo(
+                "image_policy: not evaluated (no image-dependent checks selected)"
+            )
 
     if has_failure(results) and not warn_only:
         raise typer.Exit(code=1)

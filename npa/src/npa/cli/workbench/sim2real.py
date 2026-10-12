@@ -1036,6 +1036,7 @@ def rerun_regen_command(
         return
     typer.echo(f"local_rrd_path: {payload['local_rrd_path']}")
     typer.echo(f"heldout_frame_count: {payload['heldout_frame_count']}")
+    typer.echo(f"heldout_env_count: {payload['heldout_env_count']}")
     if payload.get("upload_uri"):
         typer.echo(f"upload_uri: {payload['upload_uri']}")
     if payload.get("local_mcap_path"):
