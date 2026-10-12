@@ -11,10 +11,10 @@ It checks image selection; it does not claim GPU execution or acceptance of the
 blocked images. The guardrail compares the table below with actual default
 resolution, so a wildcard image override cannot conceal another regression.
 
-After PAIDF's repaired defaults and MJLab's qualified RTX pins, 31 workflows
-still fail default image planning: 26 select the stale image families withdrawn
-by #807, and five require images
-without an accepted public release. The audit checks every task, including
+After PAIDF's repaired defaults, 32 workflows still fail default image planning:
+27 select the stale image families withdrawn by #807, and five require images
+without an accepted public release. This inventory includes MJLab's qualified
+RTX pins described below. The audit checks every task, including
 unbuilt and validation candidates outside the stale-image inventory.
 
 ## Repaired workflow defaults
