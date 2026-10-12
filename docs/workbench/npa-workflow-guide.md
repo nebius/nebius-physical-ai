@@ -37,7 +37,13 @@ npa workbench workflow preflight-images "$workflow_spec" \
 ```
 
 Review the resolved GPU shape, image, and output prefix. Image preflight may
-create and delete a temporary probe pod.
+create and delete a temporary probe pod. In a fresh namespace it also creates
+SkyPilot's `skypilot-service-account` if that is the selected account and it is
+absent. The account remains for the subsequent SkyPilot launch, even if later
+readback or preflight fails or is interrupted; preflight does
+not grant RBAC permissions or change an existing account or its pull-secret
+defaults. Custom ServiceAccounts must already exist. An unavailable account
+read or unverifiable creation fails with `service_account_unverified`.
 
 Both `preflight-images` and `submit` accept
 `--image-pull-timeout-seconds` for each target pull and
@@ -564,6 +570,35 @@ exit nonzero, and `--cached` remains
 non-authoritative. Completion and declared artifact validation are separate
 requirements.
 
+If a driver recorded `FAILED_CONTROLLER` while the original managed job later
+finished successfully, an explicit resume can recover that same attempt. It
+requires the original project, workflow, staged source, image selection, launch identity,
+and output declarations, then verifies the exact provider job and every native
+task as `SUCCEEDED` before checking all declared outputs. Missing or conflicting
+evidence blocks recovery, including when payload retries were requested. Success
+retains the original failure evidence and advances without rerunning the completed
+wave. This intentionally tightens older retry behavior: SkyPilot can record
+`FAILED_CONTROLLER` even if its workload cleanup failed, so that status alone
+does not prove the original workload stopped. This includes a phantom queue record
+whose cancellation check returned `FAILED_CONTROLLER`: an earlier unobservable
+snapshot cannot rule out a launch racing with failed cleanup. Existing explicitly
+authorized or transport-verified absent relaunches retain their separate recovery
+path after a fresh exact lookup confirms the original job is still absent.
+Partial-launch reservations are reconciled before completion recovery;
+unconsumed or malformed reservation fields never authorize a generic retry.
+The native queue must explicitly agree on the exact job name; missing or
+conflicting names remain unverifiable, including during partial-launch recovery.
+Both queue output streams must be verified: success rows or an empty list paired
+with conflicting diagnostics remain unavailable. Malformed managed-job identities
+also block lookup; they cannot establish either completion or absence.
+
+A repaired driver can use the original content-addressed `NPA_SRC_S3_URI` with
+`--no-stage-src`. Completion recovery submits nothing: that URI reproduces the
+recorded source identity for comparison, without fetching or rehashing the archive.
+Confirm the original staged archive remains available and matches its recorded
+digest before later waves consume it. For an image-baked source run, retain its
+original image and source mode instead of introducing a staged archive.
+
 Job aggregates and task rows come from separate queue snapshots. A successful
 task row or durable stage record can therefore coexist with a recognized
 nonterminal job observation. Status retains the incomplete workflow lifecycle
@@ -713,6 +748,12 @@ values with the current setup result. Keep the policy's pinned interpreter and
 dependencies separate, and retain the prepared NPA source path when calling NPA.
 If a stage explicitly starts a login shell, its profiles may change the inherited
 environment; verify the interpreter and source path inside that shell.
+
+For non-root images whose system Python has no pip, setup can use SkyPilot's
+uv installer. If that system environment is not writable, setup creates a fresh
+task-local control virtualenv instead of writing system packages. Vendor
+virtualenvs are not redirected by this fallback; an explicitly selected policy
+interpreter keeps its original dependency environment.
 
 Advanced scheduling stays in explicit fields (`parallel`, `maxConcurrency`,
 `params`, `trigger`), never Jinja. `gang` and `foreach` remain unimplemented.

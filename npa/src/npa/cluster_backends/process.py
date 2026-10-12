@@ -274,6 +274,7 @@ def run_stream(
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 start_new_session=True,
+                umask=0o077 if os.name == "posix" else -1,
             )
         except OSError as exc:
             raise BackendCommandError(
@@ -350,6 +351,7 @@ def run_stream(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             start_new_session=True,
+            umask=0o077 if os.name == "posix" else -1,
         )
     except OSError as exc:
         raise BackendCommandError(

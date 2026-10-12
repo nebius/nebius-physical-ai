@@ -109,7 +109,53 @@ def test_sdk_does_not_follow_token_redirects():
     assert len(seen) == 1
 
 
-def test_cli_and_sdk_share_the_submission_contract(tmp_path, workflow, monkeypatch):
+def test_logs_allow_scheduler_downloads_beyond_the_normal_read_timeout():
+    requests = []
+
+    def transport(request):
+        requests.append(request)
+        return httpx.Response(200, json={"logs": "owned worker output"})
+
+    client = TeamClient(
+        "https://team.example.test", "token", transport=httpx.MockTransport(transport)
+    )
+    try:
+        client.run("run-" + "1" * 32, "logs")
+        client.run("run-" + "1" * 32, "status")
+    finally:
+        client.close()
+    assert requests[0].extensions["timeout"] == {
+        "connect": 5.0,
+        "read": None,
+        "write": 5.0,
+        "pool": 5.0,
+    }
+    assert requests[1].extensions["timeout"]["read"] == 5.0
+
+
+@pytest.mark.parametrize(
+    "variables",
+    [
+        [],
+        [
+            "--var",
+            "input_kind=lerobot",
+            "--var",
+            "lerobot_dataset_uri=s3://team-test-alice/personal/dataset/",
+            "--var",
+            "input_episode=19",
+            "--var",
+            "input_camera=observation.images.front",
+        ],
+    ],
+)
+@pytest.mark.parametrize("omit_config", [False, True])
+def test_cli_and_sdk_share_the_submission_contract(
+    tmp_path, workflow, monkeypatch, variables, omit_config
+):
+    workflow = dict(workflow)
+    if omit_config:
+        workflow.pop("config", None)
     path = tmp_path / "workflow.yaml"
     path.write_text(yaml.safe_dump(workflow))
     token_file = tmp_path / "access-key"
@@ -145,12 +191,41 @@ def test_cli_and_sdk_share_the_submission_contract(tmp_path, workflow, monkeypat
             "https://team.example.test",
             "--token-file",
             str(token_file),
+            *variables,
         ],
     )
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout)["status"] == "accepted"
-    assert calls[0].workflow == workflow
+    expected = dict(workflow)
+    if variables:
+        expected["config"] = {
+            "input_kind": "lerobot",
+            "lerobot_dataset_uri": "s3://team-test-alice/personal/dataset/",
+            "input_episode": "19",
+            "input_camera": "observation.images.front",
+        }
+    assert calls[0].workflow == expected
+    assert yaml.safe_load(path.read_text()) == workflow
     assert "test-token" not in result.output
+
+
+@pytest.mark.parametrize("assignment", ["missing-separator", "=missing-key"])
+def test_invalid_config_assignment_fails_before_opening_connection(
+    tmp_path, workflow, monkeypatch, assignment
+):
+    path = tmp_path / "workflow.yaml"
+    path.write_text(yaml.safe_dump(workflow))
+
+    def connection_forbidden(*args):
+        pytest.fail("invalid config assignment contacted the service")
+
+    monkeypatch.setattr(cli, "_team_connection", connection_forbidden)
+    result = CliRunner().invoke(
+        workbench_app, ["submit", "--spec", str(path), "--var", assignment]
+    )
+    assert result.exit_code != 0
+    assert "KEY=VALUE" in result.output
+    assert yaml.safe_load(path.read_text()) == workflow
 
 
 def test_cli_whoami_uses_the_authenticated_client(tmp_path, monkeypatch):
