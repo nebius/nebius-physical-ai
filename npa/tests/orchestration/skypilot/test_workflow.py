@@ -7030,7 +7030,12 @@ def test_exact_managed_job_lookup_requires_noncontradictory_queue_diagnostics(
 
     assert evidence.outcome == expected_outcome
     if expected_outcome == "unavailable":
-        assert "malformed, ambiguous, or schema-invalid JSON" in evidence.error
+        assert evidence.error == (
+            "SkyPilot queue response does not verify managed-job state "
+            "(malformed rows or conflicting diagnostics). Check SkyPilot "
+            "client/controller configuration and restore queue access before "
+            "resuming. stdout: []; stderr: PermissionDenied: queue access denied"
+        )
 
 
 @pytest.mark.parametrize("has_job", [False, True])
