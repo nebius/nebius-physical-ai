@@ -150,6 +150,7 @@ def test_envgen_corrects_inert_dependency_recipe_before_flattening() -> None:
 
     text = (WORKBENCH / "sim2real-envgen/Dockerfile").read_text(encoding="utf-8")
     assert "COPY docker/workbench/curobo/remove_scikit_image_recipe.py" in text
+    assert text.count("&& python /usr/local/lib/npa/remove-scikit-image-recipe.py") == 1
     correction = text.index(
         "&& python /usr/local/lib/npa/remove-scikit-image-recipe.py"
     )
@@ -158,6 +159,7 @@ def test_envgen_corrects_inert_dependency_recipe_before_flattening() -> None:
     assert text.index("COPY --from=sanitized / /") > correction
     assert 'import sysconfig; print(sysconfig.get_path("purelib"))' in text
     assert "--capability envgen" in text
+    assert "--allow-corrected" in text
     assert "/usr/share/doc/npa-envgen/dependency-source-correction.json" in text
 
 
@@ -175,15 +177,13 @@ def test_genesis_workflow_runtime_upgrades_fixed_kernel_headers() -> None:
     assert 'linux_libc_dev_version="5.15.0-198.208"' in installer
     assert 'linux_libc_dev_version="6.8.0-139.139"' in installer
     assert '"linux-libc-dev=${linux_libc_dev_version}"' in installer
-    for relative in (
-        "sim2real-envgen/Dockerfile",
-        "sim2real-eval/Dockerfile",
+    for relative, snapshot in (
+        ("sim2real-envgen/Dockerfile", "20261009T000000Z"),
+        ("sim2real-eval/Dockerfile", "20261002T000000Z"),
     ):
         text = (WORKBENCH / relative).read_text(encoding="utf-8")
-        assert "ARG UBUNTU_SNAPSHOT=20261002T000000Z" in text, relative
-        assert 'install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" \\' in text, (
-            relative
-        )
+        assert f"ARG UBUNTU_SNAPSHOT={snapshot}" in text, relative
+        assert 'install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" \\' in text
         assert "configure_ubuntu_snapshot.sh" in text, relative
 
 
@@ -222,9 +222,9 @@ def test_transfer_uses_the_hash_verified_pyjwt_signature_fix() -> None:
     overrides = (WORKBENCH / "cosmos2-transfer/security-overrides.txt").read_text()
     wheels = [line for line in overrides.splitlines() if "/pyjwt-" in line]
     assert len(wheels) == 1
-    assert "pyjwt-2.15.0-py3-none-any.whl" in wheels[0]
+    assert "pyjwt-2.15.1-py3-none-any.whl" in wheels[0]
     assert wheels[0].endswith(
-        "#sha256=7a3742debf6b879e912dbb9819ceec1594be812452b78c5f2e2dfc56564954f8"
+        "#sha256=42d59d631f7768a1028a64c7ff581a9bf7519804daf91fc5b6c56e30eec5e193"
     )
 
 

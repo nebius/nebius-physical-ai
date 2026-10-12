@@ -17,7 +17,9 @@ from npa.cli.fiftyone import (
     DEFAULT_CPU_PRESET,
     FIFTYONE_HEALTH_RETRIES,
     FIFTYONE_HEALTH_BACKOFF_SEC,
+    FIFTYONE_GRAPHQL_CORE_REQUIREMENT,
     FIFTYONE_VERSION,
+    _build_install_command,
     _lerobot_importer_source,
     _run_fiftyone_command,
 )
@@ -44,6 +46,17 @@ runner = CliRunner()
 TERRAFORM_PLAN_FIXTURES = (
     Path(__file__).resolve().parents[1] / "fixtures" / "terraform_plans"
 )
+
+
+def test_vm_installer_requires_native_lerobot_temporal_support() -> None:
+    command = _build_install_command()
+
+    assert f'"fiftyone[multimodal]=={FIFTYONE_VERSION}"' in command
+    assert f'"{FIFTYONE_GRAPHQL_CORE_REQUIREMENT}"' in command
+    assert 'metadata.version("graphql-core")' in command
+    assert "from fiftyone import types" in command
+    assert 'hasattr(types, "LeRobotDataset")' in command
+    assert "import fiftyone" in command
 
 
 @pytest.fixture(autouse=True)

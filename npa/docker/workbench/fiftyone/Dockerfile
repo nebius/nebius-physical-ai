@@ -76,6 +76,7 @@ RUN apt-get update \
 RUN useradd -m -s /bin/bash -u 1000 ubuntu \
     && printf 'ubuntu ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/99-npa-runtime-user \
     && chmod 0440 /etc/sudoers.d/99-npa-runtime-user \
+    && install -d -m 0755 -o root -g root /usr/share/doc/npa-fiftyone \
     && install -d -m 0755 -o ubuntu -g ubuntu \
       /opt/fiftyone \
       /opt/fiftyone/db \
@@ -103,7 +104,7 @@ RUN python -m venv "${FIFTYONE_VENV}" \
     && python -m pip install --no-cache-dir --require-hashes --only-binary=:all: \
       -r /opt/npa-packaging-requirements.txt \
     && python -m pip install --no-cache-dir \
-      "fiftyone==${FIFTYONE_VERSION}" \
+      "fiftyone[multimodal]==${FIFTYONE_VERSION}" \
       "boto3==${BOTO3_VERSION}" \
       "datasets==${DATASETS_VERSION}" \
       "huggingface_hub==${HUGGINGFACE_HUB_VERSION}" \
@@ -112,9 +113,14 @@ RUN python -m venv "${FIFTYONE_VENV}" \
       "graphql-core==${GRAPHQL_CORE_VERSION}" \
       "paramiko==5.0.0" \
       "scikit-image==0.26.0" \
-    && python /opt/npa-remove-scikit-image-recipe.py \
+    && "${FIFTYONE_VENV}/bin/python" /opt/npa-remove-scikit-image-recipe.py \
       --site-packages "$(python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \
       --capability fiftyone \
+      > /tmp/npa-fiftyone-dependency-source-correction.json \
+    && sudo -n install -o root -g root -m 0644 \
+      /tmp/npa-fiftyone-dependency-source-correction.json \
+      /usr/share/doc/npa-fiftyone/dependency-source-correction.json \
+    && rm -f /tmp/npa-fiftyone-dependency-source-correction.json \
     && curl --fail --location --silent --show-error \
       -o /tmp/mongodb.tgz "https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu2204-${MONGODB_VERSION}.tgz" \
     && echo "${MONGODB_SHA256}  /tmp/mongodb.tgz" | sha256sum -c - \

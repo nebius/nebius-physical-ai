@@ -4,7 +4,7 @@ ARG BASE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-genesis@sha256:80cd1c4c7f7a
 FROM ${BASE_IMAGE} AS sanitized
 
 ARG NPA_SOURCE_SHA
-ARG UBUNTU_SNAPSHOT=20261002T000000Z
+ARG UBUNTU_SNAPSHOT=20261009T000000Z
 
 WORKDIR /opt/npa
 USER root
@@ -38,8 +38,9 @@ COPY --chmod=0644 docker/workbench/common/envgen_compat/tetgen.py \
 # * the AGPL tetgen Python wrapper (used only for optional tetrahedralization);
 # * optional W&B and Nsight Compute tooling, including separately compiled Go
 #   binaries that are not part of canonical environment generation.
-# * scikit-image's historical token-bearing recipe, removed by the exact-source
-#   correction already used by cuRobo without changing executable behavior.
+# * an inert historical token-bearing scikit-image recipe, removed by the
+#   exact-source correction already used by cuRobo while preserving executable
+#   behavior, the image loader, and its license.
 #
 # Retain MoviePy while replacing imageio-ffmpeg with its hash-pinned
 # pure-Python sdist. Remove the optional packages and their parent metadata
@@ -69,6 +70,7 @@ RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" \
     && python /usr/local/lib/npa/remove-scikit-image-recipe.py \
       --site-packages "$(python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \
       --capability envgen \
+      --allow-corrected \
       > /usr/share/doc/npa-envgen/dependency-source-correction.json \
     && find /opt/npa/venv -type f \
       -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \

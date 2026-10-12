@@ -32,11 +32,14 @@ def write_video_report(outputs, request, report, checkpoint_sha256) -> None:
         "video_sha256": hashlib.sha256(video).hexdigest(),
         "video_bytes": len(video),
         "video_frames": report["video_frames"],
+        "video": report["video"],
+        "rendering": report["rendering"],
         "episodes_completed": report["episodes_completed"],
         "mean_return": report["mean_return"],
         "mean_episode_length": report["mean_episode_length"],
         "survival_fraction": report["score"],
         "episodes": report["episodes"],
+        "runtime": report.get("runtime", {}),
     }
     encoded_video = base64.b64encode(video).decode("ascii")
     page = _page(request.task, encoded_video, provenance)
@@ -44,9 +47,25 @@ def write_video_report(outputs, request, report, checkpoint_sha256) -> None:
 
 
 def _page(task, encoded_video, provenance):
-    title = escape(task)
-    details = escape(json.dumps(provenance, indent=2, allow_nan=False))
-    return f"""<!doctype html>
+    video = provenance["video"]
+    return _PAGE.format(
+        title=escape(task),
+        encoded_video=encoded_video,
+        details=escape(json.dumps(provenance, indent=2, allow_nan=False)),
+        width=video["width"],
+        height=video["height"],
+        fps=video["fps"],
+        duration=video["duration_seconds"],
+        renderer=escape(provenance["rendering"]["renderer"]),
+        gpu=escape(
+            provenance["runtime"].get(
+                "gpu_name", provenance["runtime"].get("device", "")
+            )
+        ),
+    )
+
+
+_PAGE = """<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -58,7 +77,9 @@ def _page(task, encoded_video, provenance):
 <style>
 body {{ margin: 2rem auto; padding: 0 1rem; max-width: 70rem;
         font: 16px/1.5 system-ui, sans-serif; color: #e8edf5; background: #10151e; }}
-video {{ display: block; width: 100%; max-height: 75vh; background: #000; }}
+video {{ display: block; width: 100%; max-width: {width}px; max-height: 75vh;
+         height: auto; background: #000; border-radius: .5rem; }}
+.capture {{ padding: .75rem 1rem; background: #1a2230; border-radius: .5rem; }}
 pre {{ white-space: pre-wrap; overflow-wrap: anywhere; padding: 1rem;
        background: #1a2230; border-radius: .5rem; }}
 </style>
@@ -66,7 +87,10 @@ pre {{ white-space: pre-wrap; overflow-wrap: anywhere; padding: 1rem;
 <body>
 <h1>MJLab policy rollout</h1>
 <p>{title}</p>
-<video controls playsinline preload="metadata" aria-label="Rendered MJLab policy episode"
+<p class="capture"><strong>Native {width} × {height} · {fps:g} fps · {duration:g} seconds</strong><br>
+Simulation: {gpu}<br>Renderer: {renderer}</p>
+<video controls autoplay muted loop playsinline preload="auto" width="{width}" height="{height}"
+       aria-label="Rendered MJLab policy episode"
        src="data:video/mp4;base64,{encoded_video}"></video>
 <p>The video shows the first environment's first complete evaluation episode.
 The metrics below cover every measured episode. Survival means reaching the
