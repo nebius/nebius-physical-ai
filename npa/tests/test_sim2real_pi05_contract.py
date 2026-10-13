@@ -159,10 +159,13 @@ def test_absolute_bridge_and_physical_gripper_roundtrip() -> None:
     assert proof["thresholded_gripper_target"] == 1.0
     assert proof["expected_observed_gripper_width_m"] == 0.0
     assert width_to_droid_gripper(droid_gripper_to_width(0.25)) == pytest.approx(0.25)
+    assert width_to_droid_gripper(-0.01) == 1.0
     assert width_to_droid_gripper(0.080001) == 0.0
-    assert width_to_droid_gripper(0.085) == 0.0
+    assert width_to_droid_gripper(0.09) == 0.0
     with pytest.raises(Pi05ContractError, match="measurement tolerance"):
-        width_to_droid_gripper(0.085001)
+        width_to_droid_gripper(-0.010001)
+    with pytest.raises(Pi05ContractError, match="measurement tolerance"):
+        width_to_droid_gripper(0.090001)
     assert droid_gripper_to_width(0.0) == pytest.approx(0.08)
     assert droid_gripper_to_width(1.0) == pytest.approx(0.0)
 

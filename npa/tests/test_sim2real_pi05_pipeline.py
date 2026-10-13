@@ -318,6 +318,37 @@ def test_closed_loop_synchronizes_wrist_before_reading_rgb(monkeypatch) -> None:
     assert gripper.tolist() == [0.0]
 
 
+@pytest.mark.parametrize("width", [-0.0005, 0.0871])
+def test_physical_gripper_width_preserves_bounded_joint_overshoot(width: float) -> None:
+    robot = Namespace(
+        joint_names=[
+            *pi05_closed_loop.JOINT_NAMES,
+            "panda_finger_joint1",
+            "panda_finger_joint2",
+        ],
+        data=Namespace(joint_pos=_JointTensor([[0.0] * 7 + [width / 2] * 2])),
+    )
+    assert pi05_isaac._gripper_width(
+        Namespace(scene={"robot": robot})
+    ) == pytest.approx(width)
+
+
+@pytest.mark.parametrize("width", [-0.0101, 0.0901])
+def test_physical_gripper_width_rejects_implausible_joint_overshoot(
+    width: float,
+) -> None:
+    robot = Namespace(
+        joint_names=[
+            *pi05_closed_loop.JOINT_NAMES,
+            "panda_finger_joint1",
+            "panda_finger_joint2",
+        ],
+        data=Namespace(joint_pos=_JointTensor([[0.0] * 7 + [width / 2] * 2])),
+    )
+    with pytest.raises(RuntimeError, match="measured physical finger width"):
+        pi05_isaac._gripper_width(Namespace(scene={"robot": robot}))
+
+
 def test_closed_loop_wrist_ablation_is_deterministic() -> None:
     first = np.arange(224 * 224 * 3, dtype=np.uint8).reshape(224, 224, 3)
     second = np.flip(first, axis=0).copy()
@@ -610,6 +641,22 @@ def _comparison_episode(mode: str, seed: int, success: bool) -> dict:
         "camera_evidence": camera,
         "success": _success(trace),
     }
+
+
+def test_camera_evidence_accepts_declared_retreat_occlusion_only() -> None:
+    episode = _comparison_episode("frozen", 101, False)
+    visibility = episode["camera_evidence"]["phase_visibility"]
+    retreat = visibility.pop("release")
+    retreat.update(
+        destination_exterior_visible_samples=0,
+        occlusion_permitted=True,
+    )
+    visibility["retreat"] = retreat
+
+    pi05_closed_loop._validate_camera_evidence(episode)
+    retreat["occlusion_permitted"] = False
+    with pytest.raises(RuntimeError, match="destination marker"):
+        pi05_closed_loop._validate_camera_evidence(episode)
 
 
 def _comparison_geometry() -> dict:
@@ -2173,6 +2220,34 @@ def test_failed_camera_admission_retains_pixels_without_a_fictitious_query(
     assert len(artifacts) == 2
     assert np.array_equal(np.load(tmp_path / artifacts[1]["path"]), wrist[None])
     assert not any(key.startswith("_failed") for key in record)
+
+
+def test_destination_occlusion_is_allowed_only_during_retreat(monkeypatch) -> None:
+    phase = "approach"
+    monkeypatch.setattr(pi05_closed_loop, "_camera_pose_sample", lambda _native: {})
+    monkeypatch.setattr(pi05_closed_loop, "_destination_pixel_count", lambda *_args: 0)
+    monkeypatch.setattr(pi05_closed_loop, "_target_pixel_count", lambda *_args: 0)
+    monkeypatch.setattr(pi05_closed_loop, "_finger_in_frustum", lambda _native: True)
+    monkeypatch.setattr(
+        pi05_closed_loop,
+        "_finger_pixel_counts",
+        lambda *_args: {"left": 0, "right": 0},
+    )
+    monkeypatch.setattr(
+        pi05_closed_loop,
+        "_semantic_encoding_receipt",
+        lambda *_args: {"schema": "test"},
+    )
+    monkeypatch.setattr(pi05_closed_loop, "_policy_phase", lambda _record: phase)
+    record = {"physics_trace": [], "camera_trace": []}
+    receipts = {"exterior": {}, "wrist": {}}
+    with pytest.raises(RuntimeError, match="destination marker"):
+        pi05_closed_loop._record_query_camera(None, record, receipts, {})
+
+    phase = "retreat"
+    pi05_closed_loop._record_query_camera(None, record, receipts, {})
+    assert record["camera_trace"][0]["phase"] == "retreat"
+    assert record["camera_trace"][0]["exterior_destination_pixels"] == 0
 
 
 def test_admitted_camera_frames_match_completed_query_count(monkeypatch) -> None:

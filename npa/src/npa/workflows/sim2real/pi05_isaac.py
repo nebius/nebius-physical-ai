@@ -1372,8 +1372,14 @@ def _gripper_width(native: Any) -> float:
     ]
     q = _proxy_torch(robot.data.joint_pos)[0, indices].detach().cpu().numpy()
     width = float(np.sum(q))
-    if not 0.0 <= width <= MAX_GRIPPER_WIDTH_M + GRIPPER_MEASUREMENT_TOLERANCE_M:
+    if not (
+        -GRIPPER_MEASUREMENT_TOLERANCE_M
+        <= width
+        <= MAX_GRIPPER_WIDTH_M + GRIPPER_MEASUREMENT_TOLERANCE_M
+    ):
         raise RuntimeError(f"measured physical finger width is invalid: {width}")
+    # Preserve the raw finite physical measurement for physics evidence.  The
+    # model-facing conversion clamps only inside width_to_droid_gripper().
     return width
 
 

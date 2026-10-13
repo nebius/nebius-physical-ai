@@ -436,7 +436,8 @@ def _policy_phase(record: dict[str, Any]) -> str:
 def _record_query_camera(native: Any, record: dict, receipts: dict, wire: dict) -> None:
     camera = _camera_pose_sample(native)
     destination_pixels = _destination_pixel_count(native, "pi05_exterior")
-    if destination_pixels < 16:
+    phase = _policy_phase(record)
+    if destination_pixels < 16 and phase != "retreat":
         raise RuntimeError("cyan destination marker is not observable in exterior RGB")
     camera.update(
         {
@@ -449,7 +450,7 @@ def _record_query_camera(native: Any, record: dict, receipts: dict, wire: dict) 
                 name: _semantic_encoding_receipt(native, name)
                 for name in ("pi05_exterior", "pi05_wrist")
             },
-            "phase": _policy_phase(record),
+            "phase": phase,
         }
     )
     record["camera_trace"].append(
@@ -1573,7 +1574,9 @@ def _validate_camera_evidence(episode: dict[str, Any]) -> None:
             not isinstance(value, int) or not 0 <= value <= count for value in counters
         ):
             raise RuntimeError("camera phase visibility count is invalid")
-        if phase.get("destination_exterior_visible_samples") != count:
+        if phase.get("destination_exterior_visible_samples") != count and not phase.get(
+            "occlusion_permitted", False
+        ):
             raise RuntimeError("destination marker was absent at a policy query")
         samples += count
     if not visibility or samples != len(episode.get("queries") or []):
