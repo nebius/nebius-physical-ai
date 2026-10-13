@@ -339,7 +339,20 @@ def checkpoint_candidate_has_complete_identity(candidate: object) -> bool:
     if not isinstance(candidate, dict):
         return False
     try:
-        _assert_matching_identity(candidate, candidate)
+        for _label, field, aliases in _IDENTITY_FIELDS:
+            if field not in candidate:
+                return False
+            expected = _complete_identity_value(field, candidate[field])
+            for alias in aliases:
+                if (
+                    alias in candidate
+                    and _complete_identity_value(field, candidate[alias]) != expected
+                ):
+                    return False
+        if _identity_value(
+            "checkpoint_sha256", candidate["generator_policy_sha256"]
+        ) != _identity_value("checkpoint_sha256", candidate["checkpoint_sha256"]):
+            return False
     except (KeyError, TypeError, ValueError):
         return False
     return True

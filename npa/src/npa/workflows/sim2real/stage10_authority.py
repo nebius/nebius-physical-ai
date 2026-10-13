@@ -11,27 +11,43 @@ from npa.workflows.sim2real.checkpoint_selection import (
 )
 
 
-def _canonical_trainer_checkpoint_uri(
+def _canonical_trainer_checkpoint_uris(
     *,
     root: str,
     run_id: str,
     outer_iteration: int,
     candidate: dict[str, Any],
-) -> str:
+) -> tuple[str, str]:
+    """Return the only canonical latest and periodic trainer checkpoint URIs.
+
+    Stage 9 validates every retained native RSL checkpoint, not merely the
+    trainer's final ``model_latest.pt`` alias.  Stage 10 therefore may load a
+    validation-selected periodic checkpoint, but only when its object path is
+    the exact run/outer/inner/zero-based-iteration path written by the BYO
+    trainer.  This preserves validation-only selection while rejecting an
+    arbitrary object under the run prefix.
+    """
     candidate_outer = candidate.get("outer_iteration")
     candidate_inner = candidate.get("inner_iteration")
+    training_iteration = candidate.get("training_iteration")
     if (
         type(candidate_outer) is not int
         or candidate_outer != outer_iteration
         or type(candidate_inner) is not int
         or candidate_inner <= 0
+        or type(training_iteration) is not int
+        or training_iteration < 0
     ):
         raise RuntimeError(
-            "Stage 10 checkpoint lacks exact producer outer/inner iteration"
+            "Stage 10 checkpoint lacks exact producer outer/inner/training iteration"
         )
     job = k8s_job_name("s2r-byo-isaac-train", run_id)
     tag = artifact_tag(f"outer-{candidate_outer:02d}-iter-{candidate_inner:02d}")
-    return f"{root}/byo-trainer/{job}/{tag}/model_latest.pt"
+    prefix = f"{root}/byo-trainer/{job}/{tag}"
+    return (
+        f"{prefix}/model_latest.pt",
+        f"{prefix}/checkpoints/model_{training_iteration}.pt",
+    )
 
 
 def _resolve_stage10_checkpoint(
@@ -70,7 +86,7 @@ def _assert_modern_trainer_scope(
         raise RuntimeError("Stage 10 requires canonical Stage 9 inner-loop evidence")
     if evidence.get("run_id") != run_id:
         raise RuntimeError("Stage 10 evidence run_id disagrees with execution")
-    expected_uri = _canonical_trainer_checkpoint_uri(
+    latest_uri, periodic_uri = _canonical_trainer_checkpoint_uris(
         root=root,
         run_id=run_id,
         outer_iteration=args.outer_iteration,
@@ -79,7 +95,7 @@ def _assert_modern_trainer_scope(
     if (
         selection.get("outer_iteration") != candidate.get("outer_iteration")
         or selection.get("inner_iteration") != candidate.get("inner_iteration")
-        or selection["checkpoint_uri"] != expected_uri
+        or selection["checkpoint_uri"] not in {latest_uri, periodic_uri}
     ):
         raise RuntimeError(
             "Stage 10 checkpoint is not the exact canonical BYO trainer output"
