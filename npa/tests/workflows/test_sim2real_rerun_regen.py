@@ -126,8 +126,16 @@ def test_regen_sim2real_rrd_requires_factual_observation_evidence(
 
 
 @pytest.mark.parametrize("config_factory", [_config, _artifact_config])
+@pytest.mark.parametrize(
+    "expected_heldout_frame_count",
+    (4, 0),
+    ids=("heldout-cameras", "factual-score-only"),
+)
 def test_regen_sim2real_rrd_success(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, config_factory
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    config_factory,
+    expected_heldout_frame_count: int,
 ) -> None:
     local_dir = tmp_path / "run"
     (local_dir / "inner_loop/outer-01").mkdir(parents=True)
@@ -143,7 +151,7 @@ def test_regen_sim2real_rrd_success(
 
     class FakeResult:
         output_rrd_path = str(local_dir / "reports" / "sim2real.rrd")
-        heldout_frame_count = 4
+        heldout_frame_count = expected_heldout_frame_count
         rollout_count = 0
         frame_count = 0
         heldout_env_count = 0
@@ -157,7 +165,7 @@ def test_regen_sim2real_rrd_success(
     result = regen_sim2real_rrd(
         config_factory(), local_dir=local_dir, sync_inputs=False, upload=False
     )
-    assert result.heldout_frame_count == 4
+    assert result.heldout_frame_count == expected_heldout_frame_count
     assert result.local_rrd_path.endswith("sim2real.rrd")
 
 

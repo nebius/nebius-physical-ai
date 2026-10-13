@@ -893,13 +893,6 @@ def rerun_serve_command(
             rrd_s3_uri=rrd_uri,
             report_uri=report_uri,
         )
-        if local_record and not destroy:
-            artifact_config = Sim2RealArtifactConfig(
-                run_id=config.run_id,
-                s3_bucket=config.s3_bucket,
-                s3_prefix=config.s3_prefix,
-                s3_endpoint=config.s3_endpoint,
-            )
         if dry_run:
             manifest = build_rerun_serve_manifest(config)
             if output == OutputFormat.json:
@@ -940,6 +933,12 @@ def rerun_serve_command(
             err=True,
         )
     if local_record and not destroy:
+        artifact_config = Sim2RealArtifactConfig(
+            run_id=config.run_id,
+            s3_bucket=config.s3_bucket,
+            s3_prefix=config.s3_prefix,
+            s3_endpoint=config.s3_endpoint,
+        )
         dest = resolve_local_rrd_path(
             run_id,
             override=str(local_rrd_path) if local_rrd_path is not None else "",
