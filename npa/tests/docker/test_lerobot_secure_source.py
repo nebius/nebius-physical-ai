@@ -98,7 +98,8 @@ def test_versioned_integration_preserves_native_source_notices_and_record(
         receipt = json.loads(
             contents.read(integration.DIST_INFO + "npa-source-integration.json")
         )
-        assert receipt["upstream_commit"] == integration.UPSTREAM_COMMIT
+        assert receipt["declared_upstream_commit"] == integration.UPSTREAM_COMMIT
+        assert "upstream_commit" not in receipt
         assert receipt["upstream_source_distribution"] == "lerobot-0.5.1.tar.gz"
         assert receipt["native_model_source_unchanged"] is True
         assert receipt["package_source_unchanged"] is False
@@ -243,3 +244,12 @@ def test_source_archive_uses_the_immutable_pypi_distribution(integration):
     assert integration.ARCHIVE_URL.endswith("/lerobot-0.5.1.tar.gz")
     assert integration.SOURCE_ARCHIVE_ROOT == "lerobot-0.5.1"
     assert len(integration.ARCHIVE_SHA256) == 64
+
+
+def test_native_source_claim_is_derived_from_the_patch_paths(integration):
+    assert integration._native_model_source_unchanged(
+        {integration.LOGGER_PATH: {}}
+    )
+    assert not integration._native_model_source_unchanged(
+        {"lerobot/policies/act/modeling_act.py": {}}
+    )

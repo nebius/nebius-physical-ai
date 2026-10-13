@@ -151,6 +151,12 @@ def _logger_source(original: bytes) -> bytes:
     )
 
 
+def _native_model_source_unchanged(source_patches: dict[str, dict]) -> bool:
+    """Derive the policy-source claim from the exact patched paths."""
+
+    return not any(path.startswith("lerobot/policies/") for path in source_patches)
+
+
 def _integration(files: dict[str, bytes]) -> tuple[dict[str, bytes], dict]:
     result = {
         name.replace(ORIGINAL_DIST_INFO, DIST_INFO, 1): value
@@ -159,21 +165,24 @@ def _integration(files: dict[str, bytes]) -> tuple[dict[str, bytes], dict]:
     }
     result[DIST_INFO + "METADATA"] = _metadata(files[ORIGINAL_DIST_INFO + "METADATA"])
     result[LOGGER_PATH] = _logger_source(files[LOGGER_PATH])
+    source_patches = {
+        LOGGER_PATH: {
+            "original_sha256": LOGGER_SHA256,
+            "patched_sha256": hashlib.sha256(result[LOGGER_PATH]).hexdigest(),
+            "change": "added modification notice and replaced W&B Run.get_url() with supported Run.url property",
+        }
+    }
     receipt = {
         "integration_version": VERSION,
-        "upstream_commit": UPSTREAM_COMMIT,
+        "declared_upstream_commit": UPSTREAM_COMMIT,
         "upstream_source_distribution": "lerobot-0.5.1.tar.gz",
         "upstream_wheel_sha256": WHEEL_SHA256,
         "upstream_source_sha256": ARCHIVE_SHA256,
         "package_source_unchanged": False,
-        "native_model_source_unchanged": True,
-        "source_patches": {
-            LOGGER_PATH: {
-                "original_sha256": LOGGER_SHA256,
-                "patched_sha256": hashlib.sha256(result[LOGGER_PATH]).hexdigest(),
-                "change": "added modification notice and replaced W&B Run.get_url() with supported Run.url property",
-            }
-        },
+        "native_model_source_unchanged": _native_model_source_unchanged(
+            source_patches
+        ),
+        "source_patches": source_patches,
         "license_retained": "Apache-2.0",
         "dependency_changes": DEPENDENCIES,
         "capability_qualification": "pending native ACT, Diffusion, default decoder, server and offline logger gates",
