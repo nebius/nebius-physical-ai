@@ -179,9 +179,7 @@ def _integration(files: dict[str, bytes]) -> tuple[dict[str, bytes], dict]:
         "upstream_wheel_sha256": WHEEL_SHA256,
         "upstream_source_sha256": ARCHIVE_SHA256,
         "package_source_unchanged": False,
-        "native_model_source_unchanged": _native_model_source_unchanged(
-            source_patches
-        ),
+        "native_model_source_unchanged": _native_model_source_unchanged(source_patches),
         "source_patches": source_patches,
         "license_retained": "Apache-2.0",
         "dependency_changes": DEPENDENCIES,

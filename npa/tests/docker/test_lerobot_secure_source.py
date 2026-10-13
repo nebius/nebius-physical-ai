@@ -247,9 +247,7 @@ def test_source_archive_uses_the_immutable_pypi_distribution(integration):
 
 
 def test_native_source_claim_is_derived_from_the_patch_paths(integration):
-    assert integration._native_model_source_unchanged(
-        {integration.LOGGER_PATH: {}}
-    )
+    assert integration._native_model_source_unchanged({integration.LOGGER_PATH: {}})
     assert not integration._native_model_source_unchanged(
         {"lerobot/policies/act/modeling_act.py": {}}
     )
