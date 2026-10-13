@@ -3465,8 +3465,17 @@ def test_submit_rejects_image_selector_before_mutations(
     )
 
     assert result.exit_code == 1
-    assert message in result.output
-    for boundary in image_selector_boundaries:
+    dedicated_refusal = dedicated_live_gate and selector != "workbench.*"
+    if dedicated_refusal:
+        assert "_refuse_dedicated_live_gate_execution" in result.output
+    else:
+        assert message in result.output
+    dedicated_boundary, *other_boundaries = image_selector_boundaries
+    if dedicated_refusal:
+        dedicated_boundary.assert_called_once()
+    else:
+        dedicated_boundary.assert_not_called()
+    for boundary in other_boundaries:
         boundary.assert_not_called()
 
 
