@@ -66,7 +66,8 @@ def _selection_evaluation():
 
 def _selection_environment(monkeypatch):
     for key, value in {
-        "OPENPI_CHECKPOINT_URI": "s3://example/checkpoint",
+        "OPENPI_CHECKPOINT_URI": "/workspace/openpi-server-cache/adapted-checkpoint",
+        "NPA_OPENPI_CHECKPOINT_SOURCE_URI": "s3://example/checkpoint",
         "NPA_OPENPI_TRAINING_URI": "s3://example/training.json",
         "NPA_OPENPI_EVALUATION_URI": "s3://example/evaluation.json",
         "NPA_OPENPI_DATASET_URI": "s3://example/data.npz",

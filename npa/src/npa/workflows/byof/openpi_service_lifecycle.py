@@ -153,6 +153,9 @@ def _patch_private_s3_checkpoint(
     ]
     if len(checkpoint_env) != 1 or checkpoint_env[0].get("value") != checkpoint_uri:
         raise OpenPIServiceError("private checkpoint environment binding changed")
+    container["env"].append(
+        {"name": "NPA_OPENPI_CHECKPOINT_SOURCE_URI", "value": checkpoint_uri}
+    )
     checkpoint_env[0]["value"] = local
     download = "/opt/venv/bin/python -c " + shlex.quote(program) + "; "
     container["command"][2] = download + shell

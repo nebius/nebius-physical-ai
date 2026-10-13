@@ -73,6 +73,12 @@ def test_private_checkpoint_executes_valid_rendered_python(tmp_path, monkeypatch
     environment.update(
         {row["name"]: row["value"] for row in container["env"] if "value" in row}
     )
+    assert environment["OPENPI_CHECKPOINT_URI"] == (
+        "/workspace/openpi-server-cache/adapted-checkpoint"
+    )
+    assert environment["NPA_OPENPI_CHECKPOINT_SOURCE_URI"] == (
+        "s3://private/checkpoint"
+    )
     environment["PROBE_RECORD"] = str(record)
     result = subprocess.run(
         ["/bin/bash", "-c", shell], env=environment, text=True, capture_output=True

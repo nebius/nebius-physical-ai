@@ -17,7 +17,7 @@ def _selected_lineage(root: Path) -> tuple[dict, dict, dict, int]:
     manifest = json.loads((root / "manifest.json").read_text())
     lineage = evaluation["lineage"]
     checkpoint = training["checkpoint"]
-    expected_uri = os.environ["OPENPI_CHECKPOINT_URI"].rstrip("/")
+    expected_uri = os.environ["NPA_OPENPI_CHECKPOINT_SOURCE_URI"].rstrip("/")
     hashes = {
         manifest["content_manifest_sha256"],
         checkpoint["content_manifest_sha256"],
