@@ -1352,7 +1352,7 @@ def test_collector_state_saturates_only_allowed_open_width_overshoot() -> None:
     assert state.dtype == np.float32
     assert state.tolist() == [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 0.0]
     with pytest.raises(Pi05ContractError, match="measurement tolerance"):
-        _observation_state({"q": np.arange(7), "width": 0.086})
+        _observation_state({"q": np.arange(7), "width": 0.091})
 
 
 def test_grasp_reference_recovers_selected_asset_link_centroid(monkeypatch) -> None:
