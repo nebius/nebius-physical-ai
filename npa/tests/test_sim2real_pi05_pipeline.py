@@ -2080,6 +2080,9 @@ def test_service_manifest_adds_private_checkpoint_probe_without_client_job(
     monkeypatch,
 ) -> None:
     manifests = _private_checkpoint_manifests()
+    manifests["deployment"]["spec"]["template"]["spec"]["containers"][0]["env"] = [
+        {"name": "OPENPI_CHECKPOINT_URI", "value": "s3://private/checkpoint"}
+    ]
     monkeypatch.setenv("AWS_ENDPOINT_URL", "https://storage.invalid")
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "redacted")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "redacted")

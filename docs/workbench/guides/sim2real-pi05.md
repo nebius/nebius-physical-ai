@@ -163,7 +163,10 @@ and `--evaluation-uri`; the workflow supplies these artifacts automatically.
 The service verifies their checkpoint and dataset lineage, loads the selected
 `<step>/params` directory, and checks saved `<step>/assets/droid` normalization
 against the training data before starting. Its receipt records the loaded step,
-model variants and dataset digest. Cleanup needs no dataset or model imports.
+model variants and dataset digest. Private checkpoint staging updates the
+server's `OPENPI_CHECKPOINT_URI` environment binding to the downloaded directory.
+The launcher retains the shared quoted Python command, so shell parsing cannot
+strip quotes from an inserted local path. Cleanup needs no dataset or model imports.
 They are evaluated with the same gold object, scenario seeds, instruction,
 15 Hz absolute-joint controller, and eight-action receding-horizon prefix. A
 continuous policy gripper value is explicitly thresholded at `>0.5`, matching

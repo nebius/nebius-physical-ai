@@ -148,10 +148,14 @@ def _patch_private_s3_checkpoint(
     marker = "checkpoint_dir=$("
     if marker not in shell:
         raise OpenPIServiceError("unexpected OpenPI server command contract")
+    checkpoint_env = [
+        entry for entry in container["env"] if entry["name"] == "OPENPI_CHECKPOINT_URI"
+    ]
+    if len(checkpoint_env) != 1 or checkpoint_env[0].get("value") != checkpoint_uri:
+        raise OpenPIServiceError("private checkpoint environment binding changed")
+    checkpoint_env[0]["value"] = local
     download = "/opt/venv/bin/python -c " + shlex.quote(program) + "; "
-    container["command"][2] = download + shell.replace(
-        'os.environ["OPENPI_CHECKPOINT_URI"]', repr(local), 1
-    )
+    container["command"][2] = download + shell
 
 
 def _private_s3_credentials() -> dict[str, str]:
