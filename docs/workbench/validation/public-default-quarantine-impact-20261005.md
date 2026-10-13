@@ -138,7 +138,7 @@ access and workload acceptance requirements continue to apply.
 The preceding tables preserve the original dated resolver observation. That
 audit missed literal Isaac and SONIC digests, which bypassed tool-default
 quarantine. The follow-up removes those automatic selections. All 133 shipped
-specs now have **43 blocked defaults**: 33 workflows deny quarantined tool-image
+specs now have **41 blocked defaults**: 31 workflows deny quarantined tool-image
 selection, and ten deny missing exact operator image inputs before task
 expansion. These categories are audited independently: supplying exact operator
 inputs can reveal additional quarantined task-image defaults. This is planning
@@ -162,9 +162,6 @@ evidence only, not fresh image or GPU acceptance.
 | `workflows/testing/isaac-arena-evaluation-b200.yaml` | `isaac-arena` |
 | `workflows/testing/isaac-arena-evaluation-rtxpro.yaml` | `isaac-arena` |
 | `workflows/testing/isaac-franka-capture-reason.yaml` | `isaac-lab` |
-| `workflows/testing/mjlab-eval.yaml` | `mjlab` |
-| `workflows/testing/mjlab-render.yaml` | `mjlab` |
-| `workflows/testing/mjlab-train-eval.yaml` | `mjlab` |
 | `workflows/testing/multicamera-rgbd-capture.yaml` | `isaac-lab` |
 | `workflows/testing/nurec-colmap-reconstruct.yaml` | `ncore` |
 | `workflows/testing/open3d-registration.yaml` | `open3d` |
@@ -172,6 +169,7 @@ evidence only, not fresh image or GPU acceptance.
 | `workflows/testing/rl-policy-training-sim-success.yaml` | `isaac-lab` |
 | `workflows/testing/robocasa-data-policy.yaml` | `lerobot` |
 | `workflows/testing/shared-scene-navigation.yaml` | `isaac-lab` |
+| `workflows/testing/seedvr2-video-restoration.yaml` | `seedvr2` |
 | `workflows/testing/sonic-eval.yaml` | `sonic` |
 | `workflows/testing/sonic-export-eval.yaml` | `sonic` |
 | `workflows/testing/sonic-export.yaml` | `sonic` |
