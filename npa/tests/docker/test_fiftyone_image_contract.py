@@ -72,7 +72,17 @@ def test_fiftyone_retains_a_root_owned_dependency_correction_receipt() -> None:
     assert (
         "install -d -m 0755 -o root -g root /usr/share/doc/npa-fiftyone" in dockerfile
     )
-    assert "sudo -n install -o root -g root -m 0644" in dockerfile
+    assert "sudo -n install -o root -g root -m 0644" not in dockerfile
+    root_receipt_layer = (
+        "USER root\n\n"
+        "RUN install -o root -g root -m 0644 \\\n"
+        "      /opt/fiftyone/dependency-source-correction.json \\\n"
+        "      /usr/share/doc/npa-fiftyone/dependency-source-correction.json"
+    )
+    assert root_receipt_layer in dockerfile
+    assert (
+        "USER ubuntu\n\nRUN curl --fail --location --silent --show-error" in dockerfile
+    )
     assert receipt in dockerfile
     assert "dependency-source-correction" in validation
     assert "Correction receipt is mutable" in validation

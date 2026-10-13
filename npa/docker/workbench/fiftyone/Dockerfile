@@ -116,12 +116,18 @@ RUN python -m venv "${FIFTYONE_VENV}" \
     && "${FIFTYONE_VENV}/bin/python" /opt/npa-remove-scikit-image-recipe.py \
       --site-packages "$(python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \
       --capability fiftyone \
-      > /tmp/npa-fiftyone-dependency-source-correction.json \
-    && sudo -n install -o root -g root -m 0644 \
-      /tmp/npa-fiftyone-dependency-source-correction.json \
+      > /opt/fiftyone/dependency-source-correction.json
+
+USER root
+
+RUN install -o root -g root -m 0644 \
+      /opt/fiftyone/dependency-source-correction.json \
       /usr/share/doc/npa-fiftyone/dependency-source-correction.json \
-    && rm -f /tmp/npa-fiftyone-dependency-source-correction.json \
-    && curl --fail --location --silent --show-error \
+    && rm -f /opt/fiftyone/dependency-source-correction.json
+
+USER ubuntu
+
+RUN curl --fail --location --silent --show-error \
       -o /tmp/mongodb.tgz "https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu2204-${MONGODB_VERSION}.tgz" \
     && echo "${MONGODB_SHA256}  /tmp/mongodb.tgz" | sha256sum -c - \
     && tar xzf /tmp/mongodb.tgz -C /tmp \
