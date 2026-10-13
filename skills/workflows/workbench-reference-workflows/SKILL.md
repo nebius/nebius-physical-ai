@@ -112,6 +112,16 @@ to panoramic captures. Preserve an independently validated splatting baseline
 and require a matched quality comparison before claiming improvement. Panorama
 preparation supplies no metric calibration for the collision/action path.
 
+When formalizing a splatting baseline without a supplied implementation, use
+the [COLMAP → gsplat reference runbook](../../../docs/workbench/guides/gaussian-splatting-reference.md).
+It specifies manual upstream camera registration, image/camera export, pinned
+gsplat training and private recipe notes. Label it as an unqualified reference;
+do not claim it reproduces an operator's original pipeline or invent results.
+Use calibrated perspective input and retain actual registration and appearance
+evaluation evidence. The upstream appearance split may share images with pose
+estimation, and Lyra's native replay does not supply a matched held-out benchmark.
+Keep commands with private paths and exact capture/scene details outside Git.
+
 For a first BEHAVIOR DEV evaluation, use
 [the one-file onboarding guide](../../../docs/workbench/challenge-onboarding.md)
 and `npa workbench workflow challenge init`, `check`, and `prepare`.

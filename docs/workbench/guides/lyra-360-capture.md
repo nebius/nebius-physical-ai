@@ -78,7 +78,11 @@ processing resolution. That setting remains an unqualified experiment.
 
 Keep an independently validated photogrammetry/splatting pipeline as the
 comparison baseline. Its implementation must be supplied and validated before
-Workbench can reproduce it. Record these details privately when formalizing it:
+Workbench can reproduce it. The
+[COLMAP → gsplat reference runbook](gaussian-splatting-reference.md) provides
+an independently specified sequence, exact upstream training revision, image
+and camera handoffs, and a private recipe template. It is not a claim about
+the tools used in an unshared pipeline. Record these details privately:
 
 - Capture format, lens calibration, stitching/export settings and color handling.
 - Image ordering, selection, reprojection, resize dimensions and intrinsics.

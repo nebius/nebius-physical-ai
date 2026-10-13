@@ -1395,6 +1395,8 @@ skills:
         path: npa/src/npa/workflows/lyra_panorama_capture.py
       - type: file_exists
         path: docs/workbench/guides/lyra-360-capture.md
+      - type: file_exists
+        path: docs/workbench/guides/gaussian-splatting-reference.md
       - type: cli_help
         args: ["workbench", "workflow", "challenge", "prepare", "--help"]
         contains: "prescribed DEV cases"

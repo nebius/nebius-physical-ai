@@ -68,6 +68,7 @@ a standalone HTML report.
 | Measure Cosmos 3 WAM training across B200 nodes | [Experimental Slurm recipe](cookbooks/cosmos3-wam-slurm.md) · [Measured 8/16-GPU results](evidence/cosmos3-wam-scaling/README.md) |
 | Scenes and digital twins | [NuRec reconstruction](guides/neural-reconstruction.md) · [RTX campus rendering and infrastructure](guides/digital-twin.md) · [living-lab fan-out](guides/living-lab-nurec-fanout.md) |
 | Captured-video reconstruction | [Lyra 2](guides/lyra-physical-augmentation.md) · [360° capture preparation and quality comparison](guides/lyra-360-capture.md) |
+| Formalize a Gaussian splatting baseline | [COLMAP → gsplat reference runbook](guides/gaussian-splatting-reference.md); manually operated upstream tools, with capture/pose/training/review handoffs and private recipe notes |
 | Image to rigid-object generation | [EmbodiedGen V2](embodiedgen.md) — qualified operator-private TRELLIS → generated URDF/collision bundle → PyBullet evidence; each selected target still needs its own preflight |
 | USD object preparation | [Content Agents](content-agents.md) |
 | Video restoration and generation | [SeedVR2](seedvr2.md) · [Wan 2.2](wan2.2.md) · [LTX-2](ltx2.md) |
