@@ -2210,6 +2210,7 @@ def test_stage14_component_digest_is_refreshed_after_regen_mutation(
     class Result:
         output_rrd_path = str(output_rrd)
         heldout_frame_count = 4
+        heldout_env_count = 2
         rollout_count = 1
         frame_count = 4
 
@@ -2240,3 +2241,4 @@ def test_stage14_component_digest_is_refreshed_after_regen_mutation(
             ).encode()
         ).hexdigest()
     )
+    assert "2 held-out environment score(s)" in component["evidence"]

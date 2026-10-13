@@ -25,9 +25,12 @@ WHEEL_URL = (
 )
 WHEEL_SHA256 = "bbd11021023fde0947b6d1ff1c52fe91c86a28ab09a96359892f3ef7e8866862"
 ARCHIVE_URL = (
-    f"https://codeload.github.com/huggingface/lerobot/tar.gz/{UPSTREAM_COMMIT}"
+    "https://files.pythonhosted.org/packages/3b/46/"
+    "21c9531f77fc2c1a1fe3a4ea3e5b1633d9503738b85cc391f28ee4369f2a/"
+    "lerobot-0.5.1.tar.gz"
 )
-ARCHIVE_SHA256 = "fe0b3079a517f0c60bdf325afc7832d81ae384bd1d022f4e802e7da8f73606dd"
+ARCHIVE_SHA256 = "4a05a9d10f013bf8fc408c7bd9c32a261209250cb66987b796416911c96a6fd3"
+SOURCE_ARCHIVE_ROOT = "lerobot-0.5.1"
 METADATA_SHA256 = "88a5ac51b516cfdd66d12818b74325bb18f515679a522591faf205a1205275ed"
 DEPENDENCIES = {
     "torch<2.11.0,>=2.7": "torch<2.14.0,>=2.13.0",
@@ -64,15 +67,18 @@ def _download(url: str, expected_hash: str) -> bytes:
 
 def _source_files(archive: bytes) -> dict[str, bytes]:
     files = {}
+    source_prefix = f"{SOURCE_ARCHIVE_ROOT}/src/"
     with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as source:
         for member in source.getmembers():
-            if not member.isfile() or "/src/lerobot/" not in member.name:
+            if not member.isfile() or not member.name.startswith(source_prefix):
                 continue
-            path = member.name.split("/src/", 1)[1]
+            path = member.name.removeprefix(source_prefix)
+            if not path.startswith("lerobot/"):
+                continue
             if path in files:
                 raise RuntimeError("duplicate upstream source member")
             files[path] = source.extractfile(member).read()
-        license_member = source.getmember(f"lerobot-{UPSTREAM_COMMIT}/LICENSE")
+        license_member = source.getmember(f"{SOURCE_ARCHIVE_ROOT}/LICENSE")
         if not license_member.isfile():
             raise RuntimeError("upstream license is not a regular file")
         files["LICENSE"] = source.extractfile(license_member).read()
@@ -156,6 +162,7 @@ def _integration(files: dict[str, bytes]) -> tuple[dict[str, bytes], dict]:
     receipt = {
         "integration_version": VERSION,
         "upstream_commit": UPSTREAM_COMMIT,
+        "upstream_source_distribution": "lerobot-0.5.1.tar.gz",
         "upstream_wheel_sha256": WHEEL_SHA256,
         "upstream_source_sha256": ARCHIVE_SHA256,
         "package_source_unchanged": False,

@@ -113,7 +113,10 @@ def expected_lerobot_version(start_file: str) -> str:
         if override == "0.5.1" and _has_secure_lerobot_integration():
             return "0.5.1+npa.secure1"
         return override
-    return supported_tool_version("lerobot", start_file)
+    version = supported_tool_version("lerobot", start_file)
+    if version == "0.5.1" and _has_secure_lerobot_integration():
+        return "0.5.1+npa.secure1"
+    return version
 
 
 def train_env_eval_arg_for_version(version: str, value: int = 1_000_000) -> str:

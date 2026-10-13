@@ -166,6 +166,9 @@ def test_smoke_identifies_local_integration_without_changing_upstream_selection(
     assert resolve_lerobot_version(None) == "0.5.1"
     monkeypatch.setattr(_versions, "_has_secure_lerobot_integration", lambda: False)
     assert _versions.expected_lerobot_version(__file__) == "0.5.1"
+    monkeypatch.delenv("NPA_LEROBOT_VERSION")
+    monkeypatch.setattr(_versions, "_has_secure_lerobot_integration", lambda: True)
+    assert _versions.expected_lerobot_version(__file__) == "0.5.1+npa.secure1"
     monkeypatch.setenv("NPA_LEROBOT_VERSION", "0.6.0")
     assert _versions.expected_lerobot_version(__file__) == "0.6.0"
 

@@ -35,7 +35,7 @@ def _archive(module, model, logger):
             ("src/" + module.LOGGER_PATH, logger),
             ("LICENSE", b"Apache notice"),
         ):
-            item = tarfile.TarInfo(f"lerobot-{module.UPSTREAM_COMMIT}/{path}")
+            item = tarfile.TarInfo(f"{module.SOURCE_ARCHIVE_ROOT}/{path}")
             item.size = len(value)
             archive.addfile(item, io.BytesIO(value))
     return output.getvalue()
@@ -99,6 +99,7 @@ def test_versioned_integration_preserves_native_source_notices_and_record(
             contents.read(integration.DIST_INFO + "npa-source-integration.json")
         )
         assert receipt["upstream_commit"] == integration.UPSTREAM_COMMIT
+        assert receipt["upstream_source_distribution"] == "lerobot-0.5.1.tar.gz"
         assert receipt["native_model_source_unchanged"] is True
         assert receipt["package_source_unchanged"] is False
         assert list(receipt["source_patches"]) == [integration.LOGGER_PATH]
@@ -235,3 +236,10 @@ def test_download_uses_a_bounded_https_connection(integration, monkeypatch):
         "request": ("GET", "/lerobot.whl"),
         "closed": True,
     }
+
+
+def test_source_archive_uses_the_immutable_pypi_distribution(integration):
+    assert integration.ARCHIVE_URL.startswith("https://files.pythonhosted.org/")
+    assert integration.ARCHIVE_URL.endswith("/lerobot-0.5.1.tar.gz")
+    assert integration.SOURCE_ARCHIVE_ROOT == "lerobot-0.5.1"
+    assert len(integration.ARCHIVE_SHA256) == 64
