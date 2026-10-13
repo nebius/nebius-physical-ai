@@ -11,7 +11,6 @@ from npa.workflows.sim2real.models import Sim2RealLoopConfig
 from npa.workflows.sim2real.artifact_config import Sim2RealArtifactConfig
 from npa.workflows.sim2real.reporting import build_progress_metrics
 from npa.workflows.sim2real.utils import _artifact_root_uri
-from npa.workflows.sim2real_loop import generate_action_rollouts
 from npa.workflows.sim2real_rerun_regen import (
     Sim2RealRerunRegenError,
     _download_directory_fresh,

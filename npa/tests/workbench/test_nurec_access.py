@@ -8,6 +8,7 @@ real stage commands, the Rerun recording the agent displays).
 
 from __future__ import annotations
 
+import tempfile
 from pathlib import Path
 
 import typer
@@ -814,7 +815,7 @@ def test_explicit_source_overlay_precedes_baked_image_setup() -> None:
     # The explicit-overlay guard skips a thin baked project when its complete
     # selected source is available, then stages that source in the overlay path.
     assert 'NPA_SRC_OVERLAY" != "1"' in setup
-    assert "/tmp/npa-src-overlay" in setup
+    assert str(Path(tempfile.gettempdir()) / "npa-src-overlay") in setup
 
     # And an unrelated tool's setup is unchanged by the NuRec additions.
     other = render_setup_for_tool(

@@ -1072,10 +1072,9 @@ def sync_heldout_renders(
     try:
         canonical, sealed = _heldout_render_source(config, report)
     except Sim2RealRerunRegenError:
-        if (
-            report.get("evaluation_split") == "gold_heldout"
-            and _has_factual_heldout_scores(report)
-        ):
+        if report.get(
+            "evaluation_split"
+        ) == "gold_heldout" and _has_factual_heldout_scores(report):
             return False
         raise
     renders_dir = _renders_dir_for_report(config, local_dir, report)
