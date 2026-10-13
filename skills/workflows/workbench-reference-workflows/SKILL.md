@@ -98,6 +98,20 @@ do not transfer that claim to the repaired image. A reconstruction result does n
 separate `lyra-scene-actions.yaml` physics or wrist-camera path. Follow the
 [Lyra guide](../../../docs/workbench/guides/lyra-physical-augmentation.md).
 
+For stitched mono 2:1 panoramic video or JPG/PNG sequences, use
+`npa.workflows.lyra_panorama_capture` from the updated local checkout before
+submitting the unchanged reconstruction spec. Follow the
+[360° capture guide](../../../docs/workbench/guides/lyra-360-capture.md) for fixed
+perspective reprojection, output dimensions, source ordering and exact excerpts.
+Raw fisheye requires a calibrated stitched export; do not guess its lens model
+or treat a resized panorama as pinhole input. Keep each view direction in a
+separate sequence. Source filenames, paths and EXIF are omitted from the bundle,
+but pixels and reconstruction artifacts remain private. Synthetic CPU projection
+checks do not establish reduced haze or transfer the existing RTX qualification
+to panoramic captures. Preserve an independently validated splatting baseline
+and require a matched quality comparison before claiming improvement. Panorama
+preparation supplies no metric calibration for the collision/action path.
+
 For a first BEHAVIOR DEV evaluation, use
 [the one-file onboarding guide](../../../docs/workbench/challenge-onboarding.md)
 and `npa workbench workflow challenge init`, `check`, and `prepare`.

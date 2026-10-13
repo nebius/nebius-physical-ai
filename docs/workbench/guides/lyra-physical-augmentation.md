@@ -16,6 +16,12 @@ quality remain separate validation work.
 
 ## Prepare captured video
 
+For stitched 360° video or image sequences, first follow
+[panorama preparation and quality comparison](lyra-360-capture.md). It produces
+a fixed perspective input bundle at configurable dimensions; ordinary resizing
+does not correct spherical or fisheye distortion. Raw fisheye requires a
+calibrated export before using that path.
+
 The public `npa-lyra2:2.0-rtfetch2` image packages the CUDA compiler, Python and
 hash-locked NPA dependencies independently of Isaac Lab. The pinned Lyra/DA3
 source, inference dependencies and reconstruction checkpoint are fetched into
