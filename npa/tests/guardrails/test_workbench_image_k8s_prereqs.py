@@ -390,12 +390,20 @@ def test_derived_prereq_dockerfile_matches_the_shipped_one(tool: str) -> None:
         assert "OMNI_USER_DIR" in text and "OMNI_LOG_DIR" in text
 
 
-@pytest.mark.parametrize("tool", ("genesis", "sim2real-envgen", "sim2real-eval"))
-def test_genesis_workflow_images_pin_the_bootstrap_closure(tool: str) -> None:
+@pytest.mark.parametrize(
+    ("tool", "snapshot"),
+    (
+        ("genesis", "20261002T000000Z"),
+        ("sim2real-envgen", "20261009T000000Z"),
+        ("sim2real-eval", "20261002T000000Z"),
+    ),
+)
+def test_genesis_workflow_images_pin_the_bootstrap_closure(
+    tool: str, snapshot: str
+) -> None:
     """Genesis workflow images use the pinned non-root SkyPilot closure."""
 
     dockerfile = (DOCKER_ROOT / tool / "Dockerfile").read_text(encoding="utf-8")
-    snapshot = "20261009T000000Z" if tool == "sim2real-envgen" else "20261002T000000Z"
     assert f"ARG UBUNTU_SNAPSHOT={snapshot}" in dockerfile
     if tool == "sim2real-envgen":
         assert "ARG ENVGEN_LINUX_LIBC_DEV_VERSION=5.15.0-198.208" in dockerfile

@@ -184,6 +184,7 @@ def test_genesis_workflow_runtime_upgrades_fixed_kernel_headers() -> None:
         if relative == "sim2real-envgen/Dockerfile":
             assert "ARG ENVGEN_LINUX_LIBC_DEV_VERSION=5.15.0-198.208" in text
             assert '"${UBUNTU_SNAPSHOT}" "${ENVGEN_LINUX_LIBC_DEV_VERSION}"' in text
+        assert 'install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}"' in text, relative
         assert "configure_ubuntu_snapshot.sh" in text, relative
 
 
