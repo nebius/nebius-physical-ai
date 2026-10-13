@@ -616,6 +616,9 @@ def _invalidate_agent_artifact_discovery() -> None:
     clear_foxglove_inventory = globals().get("_clear_foxglove_exact_artifact_inventory")
     if callable(clear_foxglove_inventory):
         clear_foxglove_inventory()
+    clear_publication_cache = globals().get("_clear_verified_publication_cache")
+    if callable(clear_publication_cache):
+        clear_publication_cache()
 
 
 def _generic_exact_run_page(

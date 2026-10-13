@@ -62,6 +62,7 @@ TOOL_REF_IMAGE_TOOL: dict[str, str | None] = {
     "workflow.video_sweep.generate_cosmos3": "cosmos3",
     "workflow.habitat_sim.smoke": "habitat-sim",
     "workbench.nurec.convert_colmap": "ncore",
+    "workbench.nurec.audit_colmap": "ncore",
     # Visualization only needs the prebuilt pinned Rerun runtime, not NuRec.
     "workbench.nurec.visualize": "rerun-viewer",
     # Blinded preference is API-only, even under a global self-hosted backend.
@@ -69,6 +70,9 @@ TOOL_REF_IMAGE_TOOL: dict[str, str | None] = {
     # Paired judging is hosted API-only and must not inherit the self-hosted
     # VLM family's heavy Cosmos image.
     "workbench.vlm_eval.compare_judges": None,
+    # Gemini Robotics is a hosted API adapter.  It uses the default CPU image
+    # with staged source and must not inherit a model or accelerator image.
+    "workbench.gemini_robotics": None,
     "workbench.vlm_eval": "cosmos",
     "workbench.cosmos2": "cosmos2-transfer",
     # Generation runs in the Cosmos 3 framework image; the reason stage runs in the
@@ -140,6 +144,7 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
         "MLFLOW_TRACKING_URI",
         "MLFLOW_EXPERIMENT_ID",
     ),
+    "workbench.gemini_robotics": ("GOOGLE_API_KEY",),
     "workbench.encord": ("ENCORD_SSH_KEY_B64",),
     "workflow.paidf": (),
     "workflow.paidf.run_iaa_augmentation": ("HF_TOKEN", "NEBIUS_TOKEN_FACTORY_KEY"),
@@ -1931,6 +1936,8 @@ def default_npa_setup() -> str:
 #: not exist and silently fell back to this literal, so its "cannot drift" promise
 #: never actually engaged.)
 NUREC_RERUN_PIN = "rerun-sdk==0.38.1"
+# Receipt decoding uses this Python wrapper, not merely the ffmpeg executable.
+NUREC_FFMPEG_PIN = "imageio-ffmpeg==0.6.0"
 # Keep the independent NuRec consumer stable when it reads newly converted V4
 # sequences. This official Apache-2.0 wheel is fetched at runtime, not rebaked
 # into NVIDIA's proprietary NRE image.
@@ -2126,10 +2133,14 @@ def render_setup_for_tool(
         return SEEDVR2_IMMUTABLE_SETUP
     if tool_ref == HABITAT_SIM_TOOL_REF:
         return _habitat_sim_setup(config)
-    if tool_ref == "workbench.nurec.convert_colmap":
-        # Conversion uses the committed CPU image and its hash-locked runtime
-        # bootstrap. Do not run the NRE vendor-image dependency installer or overlay
-        # a floating PyPI nvidia-ncore onto the actual pinned source reader.
+    if tool_ref in {
+        "workbench.nurec.convert_colmap",
+        "workbench.nurec.audit_colmap",
+    }:
+        # Conversion and its independent read-back use the committed CPU image and
+        # its hash-locked runtime bootstrap. Do not run the NRE vendor-image
+        # dependency installer or overlay a floating PyPI nvidia-ncore onto the
+        # actual pinned source reader.
         return (
             "set -e\n"
             "export PATH=/opt/venv/bin:/opt/ncore/bin:$PATH\n"
@@ -2335,8 +2346,9 @@ def render_setup_for_tool(
             "    return 1\n"
             "  fi\n"
             "}\n"
-            f"npa_nurec_pip 'huggingface_hub>=0.30' '{NUREC_NCORE_PIN}' '{NUREC_RERUN_PIN}' 'pillow>=10.0'\n"
-            '"$npa_nurec_py" -c \'import ncore, rerun; print("nurec runtime deps ready")\'\n'
+            f"npa_nurec_pip 'huggingface_hub>=0.30' '{NUREC_NCORE_PIN}' '{NUREC_RERUN_PIN}' '{NUREC_FFMPEG_PIN}' 'pillow>=10.0'\n"
+            '"$npa_nurec_py" -c \'import ncore, rerun, imageio_ffmpeg; '
+            'imageio_ffmpeg.get_ffmpeg_exe(); print("nurec runtime deps ready")\'\n'
         )
     return "".join(parts)
 

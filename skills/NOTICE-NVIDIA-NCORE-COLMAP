@@ -23,6 +23,19 @@ Reference dataset attribution:
   Modification: the full struktur28 capture is converted to NCore V4 and receives
   an additional derived rig pose component for the existing NRE consumer.
 
+
+For COLMAP conversion, NPA preserves each frame's actual camera-to-world poses
+in `T_sensor_worlds`, including composition through downsampled camera parents.
+The derived `npa_rig` group uses explicitly virtual identity camera-to-rig
+calibrations and a merged world trajectory at disjoint virtual camera timestamps.
+The converter preserves 1 FPS photographic ordering, shares timestamps with
+downsampled aliases, and records original/new indices and image hashes. This
+makes the native rig-interpolating consumer use each camera's actual world pose;
+the earlier overlapping-timeline pose override was insufficient. These timestamps
+are not capture time or physical rig motion. Original
+poses, image bytes, calibration, masks and point records remain independently
+audited; malformed or contradictory pose contracts fail before reconstruction.
+
 Dataset bytes are fetched at runtime, never baked into the converter image.
 Retain this attribution, the immutable source revision, source hashes and a
 description of conversion/rig changes alongside derived runtime artifacts.

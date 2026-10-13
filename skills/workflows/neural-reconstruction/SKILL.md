@@ -107,7 +107,15 @@ Every stage is a real command; nothing here is a manifest stub.
 
 ```bash
 npa workbench nurec check       # NGC pullability + HF download rights + RT-core GPU
+npa workbench nurec probe-storage # S3 conditional write/read/list/delete preflight
+npa workbench nurec stage-source # conditional source staging + exact read-back
+npa workbench nurec control-source # pre-extraction wrong-hash / zero-output control
+npa workbench nurec observe-runtime # exact-job/stage-bound pod image/GPU observation
+npa workbench nurec bundle-runtime # bind reconstruct + render pod receipts
 npa workbench nurec convert-colmap # CPU: official Apache-2.0 COLMAP -> NCore V4
+npa workbench nurec audit-colmap # CPU: independent post-S3 object/V4 read-back
+npa workbench nurec audit-qualification # bind native receipts, media, USDZ, metrics, RRD
+npa workbench nurec cleanup-qualification # cancel, terminality, down, local/orphan audit
 npa workbench nurec fetch       # real NCore V4 shards + derived rig pose edge
 npa workbench nurec reconstruct # NRE 3DGUT training -> renderable USDZ + metrics
 npa workbench nurec render      # `nre render` novel views (rig offset, not training views)
@@ -126,6 +134,7 @@ npa workbench nurec status      # what a run prefix holds, stage by stage
 | SkyPilot workflow | `npa/src/npa/workbench/nurec/examples/nurec-reconstruct.yaml` |
 | Main declarative workflow | `workflows/main/nurec-reconstruct.yaml` |
 | COLMAP source workflow (not yet live validated) | `workflows/testing/nurec-colmap-reconstruct.yaml` |
+| Pre-publication downstream-only route | `workflows/testing/nurec-reconstruct-render.yaml` |
 | Rerun recording | `npa.workflows.data_factory_viz.build_run_rrd` |
 
 ## Input Data
@@ -150,7 +159,7 @@ metadata visibility, because a gated repo still answers 200 for
 ### COLMAP source ingestion (not yet live validated)
 
 Use `workflows/testing/nurec-colmap-reconstruct.yaml` for original COLMAP images,
-camera calibration/poses and sparse points. Its five states are conversion ->
+camera calibration/poses and sparse points. Its states are conversion -> audit ->
 existing NRE reconstruction -> render -> visualize -> finalize; the workflow
 owns the graph, with no separate Python orchestrator. The exact CLI/toolRef
 contract is documented in `docs/workbench/guides/nurec-colmap-reconstruct.md`.
@@ -169,8 +178,20 @@ contract is documented in `docs/workbench/guides/nurec-colmap-reconstruct.md`.
   `59c698d206da92b406a4f72619fce3b3a2c64bfd`, with its pinned MIT
   trueprice/pycolmap reader. Scope the immutable development image override to
   `workbench.nurec.convert_colmap`; no accepted/public availability is implied.
-- Preserve virtual per-camera **1 FPS** timestamps as photographic ordering,
-  not synchronized capture time. Sparse SfM points are not physical LiDAR.
+- Use the same immutable development image for both
+  `workbench.nurec.convert_colmap` and `workbench.nurec.audit_colmap`. The audit
+  re-lists the fresh prefix, downloads every object plus the original ZIP,
+  rejects changed or extra members, and independently reopens every V4 image,
+  calibration, pose and point before NRE starts.
+- For qualification before registry publication, run conversion locally by the
+  checked OCI archive's immutable loaded ID with `--pull=never`, then submit
+  `nurec-reconstruct-render.yaml`. Observe and bind the reconstruct and render
+  pod image IDs separately; a requested digest is never observed identity.
+- Preserve **1 FPS** ordering within each camera, assigning disjoint virtual
+  intervals to independent cameras and the same interval to their downsample
+  aliases. Bind original image hashes and frame indices to the new timestamps.
+  These are photographic indices, not synchronized capture time or a physical
+  rig trajectory. Sparse SfM points are not physical LiDAR.
   Record upstream's near-origin point filtering and any derived rig changes.
 - Reopen every image/calibration/pose/point, compare full source counts and
   finite geometry, and retain hashes, source notices and CC-BY-4.0 attribution
@@ -259,6 +280,20 @@ Some captures carry camera-to-world transforms only in the per-frame
 `T_sensor_worlds` generic-data field. NPA reads that representation when no
 dynamic camera pose edges exist; dynamic edges remain preferred.
 
+NPA's COLMAP conversion records each real frame world pose, including
+downsample-parent composition. Declared virtual-time-v2 conversions assign
+disjoint photographic intervals to independently moving cameras, then merge
+their original world poses into one exact-knot virtual rig with identity
+calibrations. Every global-shutter frame must match its unique rig knot. The
+native training consumer defaults to shared-rig interpolation even when the
+dataset stores per-camera frame poses; the old overlapping virtual-time-v1
+representation is therefore rejected, not accepted through a dataset flag.
+Original camera trajectories remain in the default group and are independently
+compared against every frame pose. Conflicting overrides, malformed frame data,
+missing or mismatched knots fail before reconstruction. This repair does not
+establish a successful NRE run; exact image, canonical conversion, effective
+native poses/rays and downstream RTX evidence remain required.
+
 `npa workbench nurec fetch` fixes this by default. For a single-camera capture
 the rig **is** the camera, so `rig -> world` is exactly that camera's pose
 trajectory. `ncore_rig.derive_rig_poses` writes one small extra component store
@@ -270,8 +305,9 @@ data is never modified:
   sequence's stores, and re-using `default` raises
   `Component instance default encountered multiple times`;
 - selecting a poses group **replaces** the pose set rather than merging, so the
-  derived component carries a complete copy of the original edges plus the rig
-  edge;
+  legacy derived component carries a complete copy of the original edges plus
+  the rig edge; declared COLMAP frame-pose conversion instead uses the virtual
+  calibration contract above;
 - the frame-pose fallback validates every camera frame before writing: timestamps
   must be strictly increasing and each `T_sensor_worlds` value must be a finite
   4×4 transform. Missing, malformed, duplicate, inconsistent, or non-finite data
@@ -339,6 +375,12 @@ the planned native arguments without writing initialization artifacts.
 Retain `initialization/ncore-sfm.json` with the source/conversion and PLY hashes,
 selected cameras, count, and recipe/image identity. Native `parsed.yaml` records
 effective configuration, while USDZ `data_info.json` is input sequence metadata.
+Retain `reconstruction/reconstruction.json` and
+`novel_views/nre-render.json`; they bind the exact input member inventory,
+requested digest-pinned NRE invocation, observed RT-core GPU, resolved recipe, metrics,
+USDZ and independently decoded render bytes.
+Acceptance also needs a separate control-plane image-ID attestation matching
+that digest; the requested image string is not an observation of runtime bytes.
 Available frames and exported ground truth do not establish split membership or
 actual sampled training frames. Require separate native split/sampler evidence
 before claiming that every source image participated in training. The COLMAP

@@ -672,9 +672,15 @@ images:
       Apache-2.0 cuRobo V2 source and robot assets, MIT/BSD pinned benchmark data,
       non-cuDNN CUDA 13 base with a hash-locked Python closure. The cuDNN wheel
       headers/static SDK files are excluded during the install RUN before its
-      layer commits; only runtime shared libraries and notices remain. No weights or populated
-      runtime cache. Publication quarantined pending exact-byte security/license
-      scans and independent real B200 and RTX PRO 6000 capability validation.
+      layer commits; only runtime shared libraries and notices remain. Pinocchio's
+      OpenMP boundary is supplied by exact Noble-snapshot libgomp1 bytes under
+      GPL-3.0-or-later WITH GCC-exception-3.1, with the matching notice, complete
+      license text, SONAME link and immutable gcc-14 corresponding-source
+      identities recorded in the baked redistribution record and runtime payload
+      contract. The build imports the real upstream benchmark and verifies both
+      pinned dataset populations. No weights or populated runtime cache.
+      Publication quarantined pending exact-byte security/license scans and
+      independent real B200 and RTX PRO 6000 capability validation.
   open3d:
     dockerfile: open3d/Dockerfile
     tier: job
@@ -990,7 +996,10 @@ images:
       CPU-only official NVIDIA NCore COLMAP converter and V4 reader at
       59c698d206da92b406a4f72619fce3b3a2c64bfd (Apache-2.0), with the MIT
       trueprice/pycolmap reader at fe7a7c45df803b6c391777e349f0d8d65d39d777
-      and NVIDIA's Python 3 patch. A narrow NPA adapter downloads the exact
+      and NVIDIA's Python 3 patch. Source-checked NPA converter patches retain
+      per-frame world poses for native NRE independent-camera pose overwrite,
+      with virtual static calibration rather than a claimed physical rig.
+      A narrow NPA adapter downloads the exact
       hash-locked converter/reader Python closure into an explicit writable
       runtime cache with locking and atomic ready state. No application wheels,
       Torch, CUDA, NRE, models, datasets or populated runtime caches are baked.
