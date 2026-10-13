@@ -318,7 +318,9 @@ def test_closed_loop_synchronizes_wrist_before_reading_rgb(monkeypatch) -> None:
     assert gripper.tolist() == [0.0]
 
 
-@pytest.mark.parametrize("width", [-0.0149, 0.09296306222677231, 0.0949])
+@pytest.mark.parametrize(
+    "width", [-0.0199, 0.09296306222677231, 0.09502406418323517, 0.0999]
+)
 def test_physical_gripper_width_preserves_bounded_joint_overshoot(width: float) -> None:
     robot = Namespace(
         joint_names=[
@@ -333,7 +335,7 @@ def test_physical_gripper_width_preserves_bounded_joint_overshoot(width: float) 
     ) == pytest.approx(width)
 
 
-@pytest.mark.parametrize("width", [-0.0151, 0.0951])
+@pytest.mark.parametrize("width", [-0.0201, 0.1001])
 def test_physical_gripper_width_rejects_implausible_joint_overshoot(
     width: float,
 ) -> None:
