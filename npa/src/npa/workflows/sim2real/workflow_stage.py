@@ -15,6 +15,9 @@ from urllib.parse import urlparse
 from npa.workflows.sim2real.component_authority import (
     validate_stage4_parallel_inputs,
 )
+from npa.workflows.sim2real.checkpoint_selection import (
+    stage9_checkpoint_candidate as _stage9_checkpoint_candidate,
+)
 from npa.workflows.sim2real.constants import DEFAULT_COSMOS3_MODEL
 from npa.workflows.sim2real.decision_authority import validate_stage11_decision
 from npa.workflows.sim2real.stage10_execution import (
@@ -619,35 +622,13 @@ def _stage9_validate_checkpoint(args, work, checkpoint, training_embodiment, cou
     validation_uri = prefix + "/report.json"
     write_json(validation_uri, validation, directory=directory / "published")
     return _stage9_checkpoint_candidate(
-        args, checkpoint, validation, validation_uri, training_embodiment
+        checkpoint,
+        validation,
+        validation_uri,
+        training_embodiment,
+        outer_iteration=args.outer_iteration,
+        inner_iteration=args.inner_iteration,
     )
-
-
-def _stage9_checkpoint_candidate(
-    args, checkpoint, validation, validation_uri, embodiment
-):
-    from npa.workflows.sim2real.checkpoint_selection import (
-        checkpoint_candidate_has_complete_identity,
-    )
-
-    provenance = validation.get("policy_inference_provenance")
-    if not isinstance(provenance, dict):
-        provenance = {}
-    candidate = {
-        **checkpoint,
-        "evaluation_split": "validation",
-        "outer_iteration": args.outer_iteration,
-        "inner_iteration": args.inner_iteration,
-        "checkpoint_sha256": validation.get("policy_checkpoint_sha256", ""),
-        "checkpoint_size_bytes": validation.get("policy_checkpoint_size_bytes", 0),
-        "generator_policy_sha256": provenance.get("generator_policy_sha256", ""),
-        "validation_report_uri": validation_uri,
-        "validation_report": validation,
-        "embodiment": embodiment,
-    }
-    if not checkpoint_candidate_has_complete_identity(candidate):
-        raise RuntimeError("Stage 9 validation checkpoint identity is incomplete")
-    return candidate
 
 
 def _stage9_evaluator(args, root, work):

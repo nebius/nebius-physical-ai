@@ -12,6 +12,7 @@ from npa.workflows.sim2real.checkpoint_selection import (
     checkpoint_candidate_has_complete_identity,
     resolve_selected_checkpoint,
     select_best_checkpoint,
+    stage9_checkpoint_candidate,
 )
 from npa.workflows.sim2real.stage9_checkpoints import (
     validate_replay_checkpoint_pool,
@@ -117,12 +118,13 @@ def test_stage9_candidate_rejects_incomplete_validation_identity() -> None:
         "policy_inference_provenance": {},
     }
     with pytest.raises(RuntimeError, match="identity is incomplete"):
-        workflow_stage._stage9_checkpoint_candidate(
-            args,
+        stage9_checkpoint_candidate(
             checkpoint,
             validation,
             "s3://sim2real-test/eval/validation/report.json",
             {"robot": "Franka"},
+            outer_iteration=args.outer_iteration,
+            inner_iteration=args.inner_iteration,
         )
 
 

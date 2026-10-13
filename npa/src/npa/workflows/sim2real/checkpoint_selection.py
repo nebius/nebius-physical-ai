@@ -42,6 +42,37 @@ _IDENTITY_FIELDS = (
 )
 
 
+def stage9_checkpoint_candidate(
+    checkpoint: dict[str, Any],
+    validation: dict[str, Any],
+    validation_uri: str,
+    embodiment: dict[str, Any],
+    *,
+    outer_iteration: int,
+    inner_iteration: int,
+) -> dict[str, Any]:
+    """Bind a validation result to the exact periodic trainer checkpoint."""
+
+    provenance = validation.get("policy_inference_provenance")
+    if not isinstance(provenance, dict):
+        provenance = {}
+    candidate = {
+        **checkpoint,
+        "evaluation_split": "validation",
+        "outer_iteration": outer_iteration,
+        "inner_iteration": inner_iteration,
+        "checkpoint_sha256": validation.get("policy_checkpoint_sha256", ""),
+        "checkpoint_size_bytes": validation.get("policy_checkpoint_size_bytes", 0),
+        "generator_policy_sha256": provenance.get("generator_policy_sha256", ""),
+        "validation_report_uri": validation_uri,
+        "validation_report": validation,
+        "embodiment": embodiment,
+    }
+    if not checkpoint_candidate_has_complete_identity(candidate):
+        raise RuntimeError("Stage 9 validation checkpoint identity is incomplete")
+    return candidate
+
+
 def _finite_metric(value: Any, *, field: str) -> float:
     """Coerce a metric value to a finite float or raise with the offending field.
 
