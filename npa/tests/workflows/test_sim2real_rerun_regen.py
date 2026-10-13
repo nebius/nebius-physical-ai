@@ -58,6 +58,8 @@ def _artifact_config(
         s3_prefix="sim2real-b",
         s3_endpoint="https://storage.example",
     )
+
+
 def _same_run_checkpoint_uri(filename: str) -> str:
     config = _config()
     return f"s3://{config.s3_bucket}/{config.s3_prefix}/{config.run_id}/{filename}"
@@ -127,8 +129,8 @@ def test_regen_sim2real_rrd_requires_factual_observation_evidence(
 
 @pytest.mark.parametrize("config_factory", [_config, _artifact_config])
 @pytest.mark.parametrize(
-    "expected_heldout_frame_count",
-    (4, 0),
+    ("expected_heldout_frame_count", "expected_heldout_env_count"),
+    ((4, 0), (0, 1)),
     ids=("heldout-cameras", "factual-score-only"),
 )
 def test_regen_sim2real_rrd_success(
@@ -136,6 +138,7 @@ def test_regen_sim2real_rrd_success(
     tmp_path: Path,
     config_factory,
     expected_heldout_frame_count: int,
+    expected_heldout_env_count: int,
 ) -> None:
     local_dir = tmp_path / "run"
     (local_dir / "inner_loop/outer-01").mkdir(parents=True)
@@ -154,7 +157,7 @@ def test_regen_sim2real_rrd_success(
         heldout_frame_count = expected_heldout_frame_count
         rollout_count = 0
         frame_count = 0
-        heldout_env_count = 0
+        heldout_env_count = expected_heldout_env_count
         has_factual_observation_evidence = True
 
     monkeypatch.setattr(
@@ -167,6 +170,37 @@ def test_regen_sim2real_rrd_success(
     )
     assert result.heldout_frame_count == expected_heldout_frame_count
     assert result.local_rrd_path.endswith("sim2real.rrd")
+
+
+def test_regen_sim2real_rrd_rejects_non_heldout_observation_evidence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    local_dir = tmp_path / "run"
+    (local_dir / "inner_loop/outer-01").mkdir(parents=True)
+    (local_dir / "eval/heldout").mkdir(parents=True)
+    (local_dir / "inner_loop/outer-01/evidence.json").write_text(
+        json.dumps({"outer_iteration": 1, "iterations": []}),
+        encoding="utf-8",
+    )
+    (local_dir / "eval/heldout/report.json").write_text(
+        json.dumps({"success_rate": 1.0}), encoding="utf-8"
+    )
+
+    class FakeResult:
+        output_rrd_path = str(local_dir / "reports" / "sim2real.rrd")
+        heldout_frame_count = 0
+        heldout_env_count = 0
+        rollout_count = 1
+        frame_count = 1
+        has_factual_observation_evidence = True
+
+    monkeypatch.setattr(
+        "npa.workflows.sim2real_rerun_regen.emit_sim2real_rerun",
+        lambda **_kwargs: FakeResult(),
+    )
+
+    with pytest.raises(Sim2RealRerunRegenError, match="no held-out cameras"):
+        regen_sim2real_rrd(_config(), local_dir=local_dir, sync_inputs=False)
 
 
 def test_gold_report_path_tracks_latest_completed_outer_iteration(

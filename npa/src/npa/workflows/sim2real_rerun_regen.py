@@ -3122,13 +3122,10 @@ def _emit_regen_mcap(
 
 
 def _assert_regen_heldout_frames(result: Sim2RealVizResult) -> None:
-    if (
-        result.heldout_frame_count <= 0
-        and not result.has_factual_observation_evidence
-    ):
+    if not (result.heldout_frame_count or result.heldout_env_count):
         raise Sim2RealRerunRegenError(
-            "regenerated .rrd has no factual rollout observations, held-out "
-            "cameras, or held-out scores"
+            "regenerated .rrd has no held-out cameras or held-out scores; "
+            "sync gold held-out renders or rerun held-out eval"
         )
 
 
