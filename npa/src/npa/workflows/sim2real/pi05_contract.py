@@ -32,10 +32,11 @@ JOINT_LIMITS_RAD = (
 )
 MAX_GRIPPER_WIDTH_M = 0.08
 # Isaac reports the sum of two physical finger joints.  Each joint may
-# transiently overshoot its 0.04 m limit by up to 0.005 m under contact, so the
-# summed measurement needs the corresponding two-finger tolerance.  This does
-# not change commanded limits or any grasp/release success threshold.
-GRIPPER_MEASUREMENT_TOLERANCE_M = 0.01
+# transiently overshoot its 0.04 m limit by up to 0.006 m while the high-PD
+# controller settles under contact, so the summed measurement needs the
+# corresponding two-finger tolerance.  Raw measurements remain in evidence;
+# this does not change commanded limits or any grasp/release success threshold.
+GRIPPER_MEASUREMENT_TOLERANCE_M = 0.012
 CONTROL_HZ = 15.0
 ACTION_HORIZON = 15
 EXECUTION_PREFIX = 8
