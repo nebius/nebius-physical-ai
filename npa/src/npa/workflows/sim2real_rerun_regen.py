@@ -1450,7 +1450,10 @@ def download_rrd_from_s3(
         config: Artifact coordinates and storage endpoint.
         dest_path: Local recording destination.
         client: Optional existing storage client.
-        rrd_uri: Exact viewer recording URI, or the standard run recording.
+        rrd_uri: Exact noncanonical viewer recording URI, or the standard run
+            recording. A noncanonical URI is operator-asserted and is not
+            publication-verified; the canonical URI always uses the committed
+            publication snapshot.
     Returns:
         The downloaded recording path.
     Raises:
@@ -1475,14 +1478,17 @@ def download_rrd_from_s3(
         absolute_dest,
         containment_root=containment_root,
     )
-    if rrd_uri:
+    selected_uri = rrd_uri.strip()
+    if selected_uri and selected_uri != canonical_uri:
         if not _download_if_exists(
             storage,
-            rrd_uri,
+            selected_uri,
             absolute_dest,
             containment_root=containment_root,
         ):
-            raise Sim2RealRerunRegenError(f"Rerun recording not found at {rrd_uri}")
+            raise Sim2RealRerunRegenError(
+                f"Rerun recording not found at {selected_uri}"
+            )
         return dest_path
     try:
         publication = resolve_committed_publication_snapshot(storage, canonical_uri)

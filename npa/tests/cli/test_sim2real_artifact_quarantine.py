@@ -22,7 +22,11 @@ from npa.workflows.sim2real.artifact_config import (
     build_artifact_config_from_env,
 )
 from npa.workflows.sim2real.config import artifact_uris, build_config_from_env
-from npa.workflows.sim2real_rerun_regen import RegenResult, download_rrd_from_s3
+from npa.workflows.sim2real_rerun_regen import (
+    RegenResult,
+    download_rrd_from_s3,
+    run_prefix_uri,
+)
 
 
 def _reject_execution_images(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -715,3 +719,37 @@ def test_recording_download_uses_exact_selected_uri(tmp_path: Path) -> None:
     )
     assert downloads == [selected]
     assert path.read_bytes() == b"existing-recording"
+
+
+def test_recording_download_treats_explicit_canonical_uri_as_verified(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config = Sim2RealArtifactConfig(run_id="archived-run", s3_bucket="example-bucket")
+    canonical_uri = f"{run_prefix_uri(config)}reports/sim2real.rrd"
+    immutable_uri = f"{canonical_uri}.immutable"
+    publication = SimpleNamespace(
+        resolve=lambda uri: immutable_uri if uri == canonical_uri else None
+    )
+    verified: list[tuple[object, ...]] = []
+    storage = object()
+
+    monkeypatch.setattr(
+        "npa.workflows.sim2real_rerun_regen.resolve_committed_publication_snapshot",
+        lambda client, uri: publication,
+    )
+    monkeypatch.setattr(
+        "npa.workflows.sim2real_rerun_regen._download_verified_rrd",
+        lambda *args: verified.append(args),
+    )
+
+    destination = tmp_path / "review.rrd"
+    assert (
+        download_rrd_from_s3(
+            config,
+            dest_path=destination,
+            rrd_uri=canonical_uri,
+            client=storage,
+        )
+        == destination
+    )
+    assert verified[0][0:4] == (storage, immutable_uri, publication, canonical_uri)

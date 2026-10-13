@@ -802,7 +802,11 @@ def rerun_serve_command(
     rrd_uri: str = typer.Option(
         "",
         "--rrd-uri",
-        help="Explicit s3:// URI for reports/sim2real.rrd; --local-record downloads it locally.",
+        help=(
+            "Explicit s3:// URI for reports/sim2real.rrd; --local-record downloads a "
+            "noncanonical URI as operator-asserted, while the canonical run URI is "
+            "publication-verified."
+        ),
     ),
     report_uri: str = typer.Option(
         "",
