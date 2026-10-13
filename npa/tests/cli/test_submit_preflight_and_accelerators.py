@@ -1725,6 +1725,53 @@ def test_registered_uncontracted_image_stops_after_pull_preflight(
     ]
 
 
+def test_registered_uncontracted_image_requires_pull_digest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    image = "ghcr.io/nebius/nebius-physical-ai/npa-retargeting:0.1.1"
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.fetch_image_config_metadata",
+        lambda *_args, **_kwargs: pytest.fail("must not fetch bootstrap metadata"),
+    )
+
+    with pytest.raises(Exception) as excinfo:
+        workflow_cli._preflight_image_bootstrap_contracts(
+            images=[image],
+            pull_checks=[ImagePullCheck(image=image, status="ok", http_status=200)],
+            context="exact-context",
+        )
+
+    assert excinfo.type.__name__ == "Exit"
+
+
+def test_submit_pins_registered_uncontracted_image_to_pull_digest(
+    monkeypatch: pytest.MonkeyPatch,
+    spec_path: Path,
+) -> None:
+    image = "ghcr.io/nebius/nebius-physical-ai/npa-retargeting:0.1.1"
+    digest = "sha256:" + "6" * 64
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
+        lambda images, **_kwargs: [
+            ImagePullCheck(image=item, status="ok", http_status=200, digest=digest)
+            for item in images
+        ],
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.fetch_image_config_metadata",
+        lambda *_args, **_kwargs: pytest.fail("must not fetch bootstrap metadata"),
+    )
+
+    pins = workflow_cli._preflight_submit_images(
+        spec_path,
+        options=SkypilotRenderOptions(image_overrides={"*": image}),
+        assume_decision="promote_checkpoint",
+        enabled=True,
+    )
+
+    assert pins == {image: image.rsplit(":", 1)[0] + "@" + digest}
+
+
 @pytest.mark.parametrize("source", ["oci_attestation", "ephemeral_capability_probe"])
 @pytest.mark.parametrize(
     "selected_image",

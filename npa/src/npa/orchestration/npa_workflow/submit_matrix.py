@@ -72,6 +72,65 @@ class SubmitLiveCase:
 
 SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
+        "marble-go1-inspection.yaml",
+        "gpu",
+        secret_envs=("WLT_API_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        preset="warehouse",
+        notes="One selected situation: real hosted generation, one Go1 CUDA collector and continuous standalone HTML. All five preset commands have recorded GPU evidence.",
+    ),
+    SubmitLiveCase(
+        "marble-warehouse-quadruped.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        rotation_skip=True,
+        skip_reason="Requires an operator-owned generated Marble warehouse bundle.",
+        notes="Pretrained Go1 CPU control and articulated physics; gsplat/Warp CUDA sensors and Cycles CUDA robot rendering on one RTX PRO 6000.",
+    ),
+    SubmitLiveCase(
+        "marble-navigation-rl.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        rotation_skip=True,
+        skip_reason="Requires an operator-owned generated Marble world and a qualified immutable Isaac runtime image.",
+        notes="Actual collider preparation, native ANYmal GPU physics and PPO, and held-out checkpoint evaluation; acceptance is recorded separately.",
+    ),
+    SubmitLiveCase(
+        "marble-manufacturing-pallet-detection.yaml",
+        "gpu",
+        secret_envs=("WLT_API_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        rotation_skip=True,
+        skip_reason="Requires an operator-provided, group-disjoint real pallet dataset and training-only RGBA cutouts.",
+        notes="Real World API generation, gsplat CUDA rendering, and matched-budget Faster R-CNN real-test comparison. No sample-world override.",
+    ),
+    SubmitLiveCase(
+        "marble-warehouse-rover.yaml",
+        "gpu",
+        secret_envs=("WLT_API_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        notes=(
+            "Real World API warehouse generation, PyBullet wheel dynamics, "
+            "gsplat CUDA RGB and Warp CUDA depth, with a standalone HTML replay."
+        ),
+    ),
+    SubmitLiveCase(
+        "marble-world-capture.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        config_vars=(("world_source", "sample-hobbit"),),
+        notes="Real imported Marble example rendered by gsplat CUDA; generation mode separately requires WLT_API_KEY.",
+    ),
+    SubmitLiveCase(
+        "marble-spatial-scan.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        config_vars=(("world_source", "sample-hobbit"),),
+        notes="Real imported Marble collider raycast by NVIDIA Warp CUDA with depth and interactive HTML artifacts.",
+    ),
+    SubmitLiveCase(
         "robot-policy-train-and-serve.yaml",
         "multi",
         runtime=True,
@@ -324,6 +383,27 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Uses a qualified public GHCR image; exact-digest GPU evidence is recorded in the OSS solution catalog.",
     ),
     SubmitLiveCase(
+        "byof-embodiedgen.yaml",
+        "gpu",
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "NEBIUS_TOKEN_FACTORY_KEY",
+        ),
+        requires_token_factory=True,
+        plan_only=True,
+        plan_only_justification=(
+            "The automated matrix intentionally does not replay the qualified private "
+            "GPU run; each operator submission requires its own private image, "
+            "credential, input/output, and fresh target preflight."
+        ),
+        notes=(
+            "One exact private image completed TRELLIS generation, EmbodiedGen "
+            "URDF/MJCF export, and PyBullet settling on RTX PRO 6000; no public "
+            "image or target-wide readiness is implied."
+        ),
+    ),
+    SubmitLiveCase(
         "cosmos3-policy-model-factory.yaml",
         "gpu",
         secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
@@ -377,6 +457,16 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         image_tool="curobo",
         notes="Complete MotionBenchMaker and MPiNets cases, kinematic and 3 kg dynamics modes, verified journal and RRD.",
+    ),
+    SubmitLiveCase(
+        "seedvr2-video-restoration.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        image_tool="seedvr2",
+        notes=(
+            "Pinned official SeedVR2-3B restoration on one H100, followed by "
+            "independent S3 readback verification and matched review media."
+        ),
     ),
     SubmitLiveCase(
         "open3d-registration.yaml",
@@ -1110,6 +1200,7 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "NGC_API_KEY"),
         image_overrides=(
             ("workbench.nurec.convert_colmap", "ncore"),
+            ("workbench.nurec.audit_colmap", "ncore"),
             ("workbench.nurec.visualize", "rerun-viewer"),
         ),
         notes=(
@@ -1118,6 +1209,23 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "existing separately licensed NRE full-default recipe on RTX PRO "
             "6000, render, Rerun and finalize stages. Select the development "
             "NCore digest with NPA_E2E_IMAGE_OVERRIDE_NCORE. Not yet live validated."
+        ),
+    ),
+    SubmitLiveCase(
+        "nurec-reconstruct-render.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "NGC_API_KEY"),
+        image_overrides=(("workbench.nurec.visualize", "rerun-viewer"),),
+        rotation_skip=True,
+        skip_reason=(
+            "Requires an independently audited NCore sequence from the separate "
+            "local immutable-image conversion before this downstream submit."
+        ),
+        notes=(
+            "Qualification downstream route: native NRE reconstruction and novel "
+            "views on RTX PRO 6000, followed by factual Rerun and finalize stages. "
+            "Uses the supplied audited ncore_sequence_uri; it does not pull or "
+            "execute the candidate NCore converter. No live acceptance implied."
         ),
     ),
     SubmitLiveCase(
@@ -1622,6 +1730,8 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "robocasa-data-policy.yaml",
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "ROBOCASA_TOKEN"),
+        plan_only=True,
+        plan_only_justification="the workflow requires a separately deployed RoboCasa service plus its accepted exact source SHA and manifest digest; the generic rotation cannot safely synthesize either identity",
         notes="Production PandaOmron RoboCasa data->policy pipeline: multi-task trajectory export, LeRobotDataset materialization, real ACT training, disjoint RoboCasa exact-checkpoint evaluation, insights lineage.",
     ),
     SubmitLiveCase(

@@ -18,6 +18,11 @@ that implementation. Keep simulator imports inside the isolated worker.
   `--video` publishes the first-episode MP4 and self-contained `rollout.html`
   with measured results and checkpoint/video hashes. `--device cpu` is supported
   for local evaluation.
+  Native video defaults to 1920 × 1080 at the simulator step rate, encoded as
+  H.264 CRF 18. `--video-width` / `--video-height` and the matching request fields
+  accept even dimensions. The runtime checks decoded dimensions, timing and
+  first-episode frame count; HTML reports the measured OpenGL renderer separately
+  from CUDA simulation. Validate NVIDIA OpenGL on the actual rendering GPU.
 - `export`: native ONNX export and checker validation, with task metadata.
 - `list`: query the installed upstream task registry; never hardcode fake suites.
 - `status`, `system-info`: dependency versions; absence is not availability.
@@ -48,23 +53,29 @@ fall back to unsafe pickle.
 ## Workflow and image routing
 
 - `workflows/testing/mjlab-eval.yaml`: existing native checkpoint → measured report.
-- `workflows/testing/mjlab-train-eval.yaml`: native train → eval → ONNX export →
-  independent-seed eval. All stages route to `npa-mjlab`, including repeated eval.
+- `workflows/testing/mjlab-train-eval.yaml`: native train → measured HD MP4/HTML →
+  ONNX export → independent-seed eval. All stages route to the pinned `npa-mjlab`.
 - `workflows/testing/mjlab-render.yaml`: trained checkpoint → measured evaluation,
   MP4 and HTML on RTX PRO 6000 through `workbench.mjlab.render` (`eval --video`).
 - `workbench.mjlab.train`, `.eval`, `.export` use real CLI flags and declared S3
-  outputs. H100 is the state-based workflow default; camera/video workloads need
-  a compatible rendering GPU/runtime.
+  outputs. All three supplied workflows select RTX PRO 6000 and the exact
+  qualified development digest, including the training workflow's video stage.
 - The dedicated Dockerfile has a hash-locked Linux Python 3.12 CUDA wheel closure.
   The current recipe uses Torch 2.13.0/CUDA 13.0 and setuptools >=83 to replace
   vulnerable dependency pins. Historical CUDA 12.8 evidence covers B200 and
   RTX PRO 6000, including eight-GPU training; do not transfer that evidence to
-  different image bytes. The current CUDA 13.0 candidate has a separate trained
+  different image bytes. The historical CUDA 13.0 candidate has a separate trained
   G1 RTX rollout record in `docs/workbench/validation/mjlab-trained-g1-20260925.json`.
   See the guide for exact artifacts and measured scope.
-  The image remains publication-quarantined.
-  Require an explicit operator-built image override until exact-image security,
-  license and bootstrap gates pass. Do not route to SONIC's image.
+  The current public development digest in `docs/workbench/validation/mjlab-native-hd-gpu-20261010.json`
+  passed trusted image gates, native Cartpole/G1/Go1/YAM cycles, service checks
+  and fresh unmodified SkyPilot VM startup on one RTX PRO 6000. It separately
+  re-evaluated the verified 3,000-update G1 checkpoint across 64 complete episodes,
+  rendered native NVIDIA 1080p/50 fps video and passed offline HTML playback,
+  seeking and mobile checks. Preserve the original training image identity.
+  Current B200/multi-GPU acceptance remains unverified; release promotion stays
+  quarantined. The examples already pin this qualified RTX digest. Do not route
+  to SONIC's image.
 - Keep orchestration in declarative workflow YAML, not a SONIC Python runner.
 
 ## Validation

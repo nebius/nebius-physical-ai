@@ -37,14 +37,19 @@ The source of truth is `skills/index.yaml`. The tree is organized as:
 - `skills/tools/vlm-eval/SKILL.md`: score rollouts with a VLM and turn the score into a gate — `run` vs `loop`, rubric/threshold benchmark sweeps, backend selection, and judging against a plan an earlier stage wrote.
 - `skills/tools/golden-eval/SKILL.md`: prove a container image actually works — per-container hello-world manifest, dry-run/local/serverless tiers, batch runs, and the offline manifest validation that gates CI.
 - `skills/tools/alpamayo2-super/SKILL.md`: real Alpamayo 2 Super VLA inference, separate OpenMDW model and gated PhysicalAI-AV dataset terms, runtime-fetch packaging, and B200/RTX PRO 6000 validation.
+- `skills/tools/marble/SKILL.md`: hosted Marble world acquisition, gsplat/Warp CUDA consumers, native workflow composition, and factual interactive HTML reports.
 - `skills/tools/cosmos3-ray-serve/SKILL.md`: persistent Cosmos3-Nano serving through cosmos-framework's native Ray Serve batching path, authenticated readiness, S3 provenance, and independent B200/RTX PRO 6000 validation.
 - `skills/tools/ray-workbench/SKILL.md`: route Ray requests to the supported native Jobs/Core, Train V2, Cosmos3 native Serve, or fixed CPU KubeRay paths and state unsupported library boundaries.
+- `skills/tools/seedvr2/SKILL.md`: package, run, validate, or review official SeedVR2-3B restoration of robot observation video, its S3 workflow, and objective/visual evidence without treating generated detail as sensor truth.
 - `skills/tools/burst/SKILL.md`: one gang-scheduled multi-node GPU job with torchrun rendezvous, deliberately not a workflow surface.
 - `skills/tools/gpu-cluster-provisioning/SKILL.md`: managed-image vs GPU-Operator driver strategy (operator mode is unsafe on NVSwitch), the post-apply health gates (fabric, CUDA vectorAdd, stability window), accelerator-name discovery, and triage for nodes whose GPUs do not work.
 - `skills/tools/open3d/SKILL.md`: register overlapping point-cloud scans into
   one frame with real RANSAC/FPFH + ICP, optimize the multiway pose graph,
   reconstruct a Poisson surface, and read the validators that reject a
   plausible-looking but non-rigid result. CPU-only by construction.
+- `skills/tools/embodiedgen/SKILL.md`: operator-private EmbodiedGen V2 TRELLIS
+  image-to-rigid-object generation, exported URDF/collision validation, and
+  factual PyBullet view evidence; VLM properties are estimates, not calibration.
 - `skills/tools/detection-training/SKILL.md`: Faster R-CNN detectors trained from LanceDB materialized views (BDD100K failure-mode slices).
 - `skills/tools/artifact-viz-share/SKILL.md`: sim demos → LeRobotDataset → `.rrd`/MP4, and time-boxed presigned Rerun share links.
 - `skills/workflows/emit-reviewable-rrd/SKILL.md`: derive factual Rerun recordings from actual workflow outputs, declare run-scoped `.rrd` artifacts, and validate their decoded timelines, entities, and provenance before handoff.
@@ -64,6 +69,7 @@ The source of truth is `skills/index.yaml`. The tree is organized as:
 - `skills/workflows/generate-npa-workflow/SKILL.md`: design new creative npa.workflow pipelines from the catalog (loops, gates, reference YAML).
 - `skills/workflows/diagram-to-npa-workflow/SKILL.md`: turn an architecture diagram + step write-up into a working npa.workflow/v0.0.1 YAML (boxes/arrows/diamonds/back-edges → states, loops, gates, catalog toolRefs); generalizes across sim2real, AV, RL, and Cosmos pipelines.
 - `skills/workflows/physical-ai-data-factory/SKILL.md`: author/run/view the native PAIDF VDA, DIG Day-1 manual-ROI, IAA, and EVG translations plus the NPA-specific Cosmos3 VDA alternative on Nebius + SkyPilot. The skill and `skills/NOTICE-NVIDIA-PAIDF` map each YAML to its exact upstream workflow; executable evaluator/curator boundaries are in `skills/NOTICE-NVIDIA-COSMOS-OSS`.
+- `skills/cosmos-data-factory/`: shared NPA setup and separate NVIDIA-adapted IAA/EVG skills; canonical specs and getting-started guides are in `workflows/cosmos-data-factory/`.
 - `skills/workflows/nvidia-osmo-to-npa-workflow/SKILL.md`: semantically translate a pinned NVIDIA OSMO workflow definition, or related authoritative Airflow DAG, into `npa.workflow/v0.0.1` while preserving real components, durable handoffs, failure semantics, evidence, licensing, and attribution without claiming control-plane equivalence.
 - `skills/workflows/neural-reconstruction/SKILL.md`: NuRec/NRE neural reconstruction on Nebius — NCore V4 capture (incl. deriving the `rig → world` pose edge NRE requires) → 3DGUT Gaussian training → renderable USDZ → rig-offset novel views → `reports/sim2real.rrd`. RT-core GPU only (L40S / RTX PRO 6000, never H100/H200).
 - `skills/workflows/content-agents/SKILL.md`: public zero-vendor-payload NVIDIA Content Agents packaging with runtime-fetched OVRTX and the RTX-only rigid-object USD workflow — real Material Agent, Physics Agent, OVRTX, and Validation Agent stages → self-contained USDZ plus a narrow Isaac Stage 2 adapter.

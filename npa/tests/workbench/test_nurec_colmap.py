@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from npa.workbench.nurec import colmap
+from npa.workbench.nurec import colmap, ncore_audit
 
 
 @pytest.mark.parametrize(
@@ -112,8 +112,14 @@ class Storage:
         base = f"s3://{Bucket}/"
         yield {
             "Contents": [
-                {"Key": uri[len(base) :]}
-                for uri in self.uploads
+                {
+                    "Key": uri[len(base) :],
+                    "Size": len(value),
+                    "ETag": '"'
+                    + hashlib.md5(value, usedforsecurity=False).hexdigest()
+                    + '"',
+                }
+                for uri, value in self.uploads.items()
                 if uri.startswith(base + Prefix)
             ]
         }
@@ -137,7 +143,10 @@ class Storage:
         shutil.copytree(self.source, destination, dirs_exist_ok=True)
 
     def download_file(self, uri, destination):
-        shutil.copyfile(self.source, destination)
+        if uri in self.uploads:
+            Path(destination).write_bytes(self.uploads[uri])
+        else:
+            shutil.copyfile(self.source, destination)
 
     def upload_file(self, source, uri):
         self.uploads[uri] = Path(source).read_bytes()
@@ -154,7 +163,16 @@ def fake_conversion(monkeypatch, tmp_path):
         colmap,
         "inspect_colmap_source",
         lambda *a, **kw: {
-            "counts": {"images": 2, "cameras": 1, "poses": 2, "points": 3}
+            "counts": {"images": 2, "cameras": 1, "poses": 2, "points": 3},
+            "cameras": {
+                "camera1": {
+                    "target": "world",
+                    "frames": [
+                        {"name": f"{index}.png", "encoded_sha256": "0" * 64}
+                        for index in range(2)
+                    ],
+                }
+            },
         },
     )
 
@@ -222,6 +240,169 @@ def test_exact_self_contained_publication(monkeypatch, tmp_path, as_zip):
     assert all(len(member["sha256"]) == 64 for member in report["members"])
     assert str(tmp_path) not in json.dumps(report)
     assert list(storage.uploads)[-1] == result["ncore_meta_uri"]
+
+
+def test_wrong_archive_hash_stops_before_extract_convert_or_upload(
+    monkeypatch, tmp_path
+):
+    storage, events = fake_conversion(monkeypatch, tmp_path)
+    archive = tmp_path / "dataset.zip"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        for file in storage.source.rglob("*"):
+            if file.is_file():
+                bundle.write(
+                    file, "scene/" + file.relative_to(storage.source).as_posix()
+                )
+    storage.source = archive
+    request = colmap.ColmapConversionRequest(
+        input_path="s3://test-bucket/input.zip",
+        output_path="s3://test-bucket/negative-control/",
+        expected_archive_sha256="0" * 64,
+        cache_dir=tmp_path / "cache",
+        scratch_dir=tmp_path / "scratch",
+        rig_mode="preserve",
+        include_downsampled_images=False,
+    )
+
+    with pytest.raises(colmap.NcoreConversionError, match="SHA-256 differs"):
+        colmap.convert_colmap(request, storage_client=storage)
+
+    assert events == []
+    assert storage.uploads == {}
+
+
+def _published_audit_fixture(monkeypatch, tmp_path):
+    storage, _ = fake_conversion(monkeypatch, tmp_path)
+    source_info = {
+        "counts": {"images": 2, "cameras": 1, "poses": 2, "points": 3},
+        "source_points": 3,
+        "origin_points_filtered": 0,
+        "cameras": {
+            "camera1": {
+                "frames": [
+                    {
+                        "name": "frame-0.jpg",
+                        "pose": [[1, 0, 0, 0]] * 4,
+                        "encoded_sha256": "a" * 64,
+                    },
+                    {
+                        "name": "frame-1.jpg",
+                        "pose": [[1, 0, 0, 0]] * 4,
+                        "encoded_sha256": "b" * 64,
+                    },
+                ],
+                "resolution": [8, 8],
+                "focal_length": [4.0, 4.0],
+                "principal_point": [4.0, 4.0],
+                "radial_coeffs": [0.0] * 6,
+                "tangential_coeffs": [0.0, 0.0],
+                "thin_prism_coeffs": [0.0] * 4,
+                "target": "world",
+            }
+        },
+    }
+    monkeypatch.setattr(colmap, "inspect_colmap_source", lambda *a, **kw: source_info)
+    monkeypatch.setattr(
+        ncore_audit, "inspect_colmap_source", lambda *a, **kw: source_info
+    )
+    archive = tmp_path / "audit-source.zip"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        for file in storage.source.rglob("*"):
+            if file.is_file():
+                bundle.write(
+                    file, "scene/" + file.relative_to(storage.source).as_posix()
+                )
+    storage.source = archive
+    archive_sha = hashlib.sha256(archive.read_bytes()).hexdigest()
+    request = colmap.ColmapConversionRequest(
+        input_path="s3://test-bucket/source.zip",
+        output_path="s3://test-bucket/exact",
+        cache_dir=tmp_path / "cache",
+        scratch_dir=tmp_path / "scratch",
+        rig_mode="preserve",
+        include_downsampled_images=False,
+    )
+    colmap.convert_colmap(request, storage_client=storage)
+    monkeypatch.setattr(
+        ncore_audit,
+        "validate_ncore_sequence",
+        lambda *a, **kw: source_info["counts"],
+    )
+    return storage, archive_sha
+
+
+def test_post_s3_audit_enumerates_and_reopens_exact_generation(monkeypatch, tmp_path):
+    storage, archive_sha = _published_audit_fixture(monkeypatch, tmp_path)
+    request = ncore_audit.ColmapAuditRequest(
+        input_path="s3://test-bucket/source.zip",
+        conversion_path="s3://test-bucket/exact/",
+        output_path="s3://test-bucket/evidence/audit.json",
+        expected_archive_sha256=archive_sha,
+        cache_dir=tmp_path / "audit-cache",
+        scratch_dir=tmp_path / "audit-scratch",
+        rig_mode="preserve",
+        include_downsampled_images=False,
+    )
+    result = ncore_audit.audit_colmap_conversion(request, storage_client=storage)
+    assert result["status"] == "ok"
+    assert result["source_counts"] == {
+        "images": 2,
+        "cameras": 1,
+        "poses": 2,
+        "points": 3,
+    }
+    raw = storage.uploads[request.output_path]
+    assert result["audit_sha256"] == hashlib.sha256(raw).hexdigest()
+    audit = json.loads(raw)
+    assert audit["conversion"]["all_members_reopened"] is True
+    assert audit["s3_readback"]["stable_listing"] is True
+    assert {item["path"] for item in audit["s3_readback"]["objects"]} == {
+        ".npa-colmap-claim.json",
+        "conversion.json",
+        "data.zarr.itar",
+        "sequence.json",
+    }
+
+
+def test_post_s3_audit_rejects_extra_or_tampered_generation(monkeypatch, tmp_path):
+    storage, archive_sha = _published_audit_fixture(monkeypatch, tmp_path)
+    storage.uploads["s3://test-bucket/exact/extra.bin"] = b"unreviewed"
+    with pytest.raises(ncore_audit.NcoreAuditError, match="audit failed"):
+        ncore_audit.audit_colmap_conversion(
+            ncore_audit.ColmapAuditRequest(
+                input_path="s3://test-bucket/source.zip",
+                conversion_path="s3://test-bucket/exact/",
+                output_path="s3://test-bucket/evidence/audit.json",
+                expected_archive_sha256=archive_sha,
+                cache_dir=tmp_path / "audit-cache",
+                scratch_dir=tmp_path / "audit-scratch",
+                rig_mode="preserve",
+                include_downsampled_images=False,
+            ),
+            storage_client=storage,
+        )
+    assert "s3://test-bucket/evidence/audit.json" not in storage.uploads
+
+
+def test_post_s3_audit_rejects_wrong_source_before_conversion_readback(
+    monkeypatch, tmp_path
+):
+    storage, _archive_sha = _published_audit_fixture(monkeypatch, tmp_path)
+    with pytest.raises(ncore_audit.NcoreAuditError, match="source archive"):
+        ncore_audit.audit_colmap_conversion(
+            ncore_audit.ColmapAuditRequest(
+                input_path="s3://test-bucket/source.zip",
+                conversion_path="s3://test-bucket/exact/",
+                output_path="s3://test-bucket/evidence/audit.json",
+                expected_archive_sha256="0" * 64,
+                cache_dir=tmp_path / "audit-cache",
+                scratch_dir=tmp_path / "audit-scratch",
+                rig_mode="preserve",
+                include_downsampled_images=False,
+            ),
+            storage_client=storage,
+        )
+    assert "s3://test-bucket/evidence/audit.json" not in storage.uploads
 
 
 def test_validation_failure_publishes_nothing(monkeypatch, tmp_path):
@@ -444,15 +625,33 @@ def ncore_fixture(tmp_path, *, corruption=""):
     for index in range(2):
         buffer = io.BytesIO()
         Image.new("RGB", (4, 3), (20, index * 100, 50)).save(buffer, format="PNG")
+        frame_poses = np.repeat(expected_poses[index][None], 2, axis=0)
+        if corruption == "frame_world_translation":
+            frame_poses[:, 0, 3] += 7
+        elif corruption == "frame_world_nan":
+            frame_poses[0, 0, 0] = np.nan
+        elif corruption == "frame_world_shape":
+            frame_poses = frame_poses[0]
+        elif corruption == "frame_world_integer":
+            frame_poses = frame_poses.astype(np.int64)
         camera.store_frame(
             image_binary_data=b"not an image"
             if corruption == "image" and index == 1
             else buffer.getvalue(),
             image_format="png",
             frame_timestamps_us=np.array([index * 1_000_000] * 2, dtype=np.uint64),
-            generic_data={"mask": np.zeros((6, 8), dtype=np.uint8)}
-            if corruption == "mask"
-            else {},
+            generic_data={
+                **(
+                    {"T_sensor_worlds": frame_poses}
+                    if corruption != "frame_world_missing"
+                    else {}
+                ),
+                **(
+                    {"mask": np.zeros((6, 8), dtype=np.uint8)}
+                    if corruption == "mask"
+                    else {}
+                ),
+            },
             generic_meta_data={},
         )
     schemas, attributes, rgb_hash = _point_rgb_fixture(corruption)
@@ -1018,6 +1217,11 @@ def _rewrite_derived_trajectory(meta, mutation):
         poses_writer.store_dynamic_pose(
             *edge, poses, timestamps, require_sequence_time_coverage=False
         )
+    for edge, transform in poses_reader.get_static_poses():
+        transform = np.array(transform)
+        if edge == ("camera1", "rig") and mutation == "original_edge":
+            transform[0, 3] += 7
+        poses_writer.store_static_pose(*edge, transform)
     paths = [
         path
         for path in reader.component_store_paths
@@ -1508,6 +1712,11 @@ def test_official_downsampling_preserves_each_camera_calibration(tmp_path, diffe
     meta = out / "capture/capture.json"
     assert colmap.validate_ncore_sequence(meta, source) == source["counts"]
     assert source["counts"] == {"cameras": 4, "images": 8, "poses": 8, "points": 2}
+    colmap._derive_in_place(meta, "")
+    assert (
+        colmap.validate_ncore_sequence(meta, source, rig_mode="derive")
+        == source["counts"]
+    )
     intrinsics = SequenceComponentGroupsReader([UPath(meta)]).open_component_readers(
         IntrinsicsComponent.Reader
     )["default"]
@@ -1821,3 +2030,219 @@ def test_empty_remote_prefix_never_returns_a_previous_cached_capture(tmp_path, c
     assert staged != cache
     assert find_ncore_json(staged) is None
     assert {path.name: path.read_bytes() for path in cache.iterdir()} == previous
+
+
+def test_derived_static_calibration_never_interpolates_uninitialized_time(
+    tmp_path, monkeypatch
+):
+    """A real SDK scalar-allocation poison reproduces the original NRE failure."""
+    import numpy as np
+
+    pytest.importorskip("ncore.data.v4")
+    from ncore.data.v4 import SequenceComponentGroupsReader, SequenceLoaderV4
+    from upath import UPath
+
+    meta, source = ncore_fixture(tmp_path)
+    colmap._derive_in_place(meta, "camera1")
+    reader = SequenceComponentGroupsReader([UPath(meta)])
+    loader = SequenceLoaderV4(
+        reader,
+        poses_component_group_name="npa_rig",
+        masks_component_group_name=None,
+        cuboids_component_group_name=None,
+    )
+    original_empty = np.empty
+
+    def poisoned(shape, dtype=float, **kwargs):
+        if shape == () and np.dtype(dtype) == np.dtype(np.uint64):
+            return np.asarray(4555682279880358000, dtype=np.uint64)
+        return original_empty(shape, dtype=dtype, **kwargs)
+
+    monkeypatch.setattr("ncore.impl.data.compat.np.empty", poisoned)
+    assert np.array_equal(loader.get_camera_sensor("camera1").T_sensor_rig, np.eye(4))
+    assert (
+        colmap.validate_ncore_sequence(meta, source, rig_mode="derive")
+        == source["counts"]
+    )
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        "dataset.frame_generic_data_pose_overwrite=false",
+        "+dataset.frame_generic_data_pose_overwrite=0",
+        "~dataset.frame_generic_data_pose_overwrite",
+        "~dataset.frame_generic_data_pose_overwrite=true",
+    ],
+)
+def test_independent_frame_pose_contract_rejects_disabled_native_override(
+    tmp_path, override
+):
+    from npa.workbench.nurec.ncore_frame_poses import plan_frame_poses
+    from npa.workbench.nurec.nurec import NurecConfig, NurecError
+
+    meta, _ = ncore_fixture(tmp_path)
+    colmap._derive_in_place(meta, "camera1")
+    with pytest.raises(NurecError, match="cannot be disabled"):
+        plan_frame_poses(NurecConfig(extra_overrides=(override,)), str(meta))
+
+
+def test_independent_frame_pose_contract_selects_native_path_without_budget_change(
+    tmp_path,
+):
+    from npa.workbench.nurec.ncore_frame_poses import plan_frame_poses
+    from npa.workbench.nurec.nurec import NurecConfig
+
+    meta, _ = ncore_fixture(tmp_path)
+    colmap._derive_in_place(meta, "camera1")
+    config = NurecConfig(max_epochs=0, world_size=1)
+    selected = plan_frame_poses(config, str(meta))
+    assert selected.max_epochs == 0 and selected.world_size == 1
+    assert selected.poses_component_group == "npa_rig"
+    assert "dataset.frame_generic_data_pose_overwrite=true" in selected.extra_overrides
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        "frame_world_missing",
+        "frame_world_shape",
+        "frame_world_nan",
+        "frame_world_integer",
+        "frame_world_translation",
+    ],
+)
+def test_derived_frame_world_poses_require_exact_original_geometry(
+    tmp_path, corruption
+):
+    meta, _ = ncore_fixture(tmp_path, corruption=corruption)
+    with pytest.raises(colmap.NcoreConversionError, match="rig derivation failed"):
+        colmap._derive_in_place(meta, "camera1")
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        "dataset.poses_component_group=default",
+        "+dataset.poses_component_group=other",
+        "~dataset.poses_component_group",
+        "~dataset.poses_component_group=npa_rig",
+    ],
+)
+def test_independent_frame_pose_contract_rejects_replaced_pose_group(
+    tmp_path, override
+):
+    from npa.workbench.nurec.ncore_frame_poses import plan_frame_poses
+    from npa.workbench.nurec.nurec import NurecConfig, NurecError
+
+    meta, _ = ncore_fixture(tmp_path)
+    colmap._derive_in_place(meta, "camera1")
+    with pytest.raises(NurecError, match="cannot be replaced"):
+        plan_frame_poses(NurecConfig(extra_overrides=(override,)), str(meta))
+
+
+@pytest.mark.parametrize("mode", ["unknown-mode", "independent-camera-world-v1"])
+def test_independent_frame_pose_contract_rejects_unknown_mode(tmp_path, mode):
+    from npa.workbench.nurec.ncore_frame_poses import plan_frame_poses
+    from npa.workbench.nurec.nurec import NurecConfig, NurecError
+
+    meta, _ = ncore_fixture(tmp_path)
+    colmap._derive_in_place(meta, "camera1")
+    sidecar_path = meta.parent / "npa-rig.json"
+    sidecar = json.loads(sidecar_path.read_text())
+    sidecar["frame_pose_mode"] = mode
+    sidecar_path.write_text(json.dumps(sidecar))
+    with pytest.raises(NurecError, match="unsupported or conflicting"):
+        plan_frame_poses(NurecConfig(), str(meta))
+
+
+def test_reference_extent_cannot_drop_camera_frames(tmp_path):
+    import numpy as np
+
+    pytest.importorskip("ncore.data.v4")
+    from ncore.data.v4 import SequenceComponentGroupsReader
+    from upath import UPath
+    from npa.workbench.nurec.ncore_frame_poses import _require_reference_coverage
+    from npa.workbench.nurec.nurec import NurecError
+
+    meta, _ = ncore_fixture(tmp_path)
+    reader = SequenceComponentGroupsReader([UPath(meta)])
+    with pytest.raises(NurecError, match="does not cover every camera frame"):
+        _require_reference_coverage(reader, np.array([0, 500_000], dtype=np.uint64))
+    _require_reference_coverage(reader, np.array([0, 1_000_000], dtype=np.uint64))
+
+
+@pytest.mark.parametrize("corruption", ["missing", "duplicate", "wrong_pose"])
+def test_virtual_rig_requires_each_original_frame_at_one_exact_knot(
+    tmp_path, corruption
+):
+    import numpy as np
+
+    pytest.importorskip("ncore.data.v4")
+    from ncore.data.v4 import PosesComponent, SequenceComponentGroupsReader
+    from upath import UPath
+    from npa.workbench.nurec.ncore_frame_poses import _require_rig_frame_knots
+    from npa.workbench.nurec.nurec import NurecError
+
+    meta, _ = ncore_fixture(tmp_path)
+    colmap._derive_in_place(meta, "camera1")
+    reader = SequenceComponentGroupsReader([UPath(meta)])
+    component = reader.open_component_readers(PosesComponent.Reader)["npa_rig"]
+    poses, times = dict(component.get_dynamic_poses())[("rig", "world")]
+    _require_rig_frame_knots(reader, poses, times)
+    poses, times = poses.copy(), times.copy()
+    if corruption == "missing":
+        times[1] += 1
+    elif corruption == "duplicate":
+        poses, times = np.concatenate([poses, poses[:1]]), np.r_[times, times[0]]
+    else:
+        poses[1, 0, 3] += 1
+    with pytest.raises(NurecError, match="exact time knot|original camera trajectory"):
+        _require_rig_frame_knots(reader, poses, times)
+
+
+def test_virtual_photographs_reject_nonzero_shutter_interval(tmp_path, monkeypatch):
+    import numpy as np
+    from types import SimpleNamespace
+
+    pytest.importorskip("ncore.data.v4")
+    from ncore.data.v4 import CameraSensorComponent, SequenceComponentGroupsReader
+    from upath import UPath
+    from npa.workbench.nurec.ncore_frame_poses import _require_rig_frame_knots
+    from npa.workbench.nurec.nurec import NurecError
+
+    meta, _ = ncore_fixture(tmp_path)
+    reader = SequenceComponentGroupsReader([UPath(meta)])
+    camera = reader.open_component_readers(CameraSensorComponent.Reader)["camera1"]
+    times = camera.frames_timestamps_us.copy()
+    times[0, 1] += 1
+    monkeypatch.setattr(
+        reader,
+        "open_component_readers",
+        lambda component: {"camera1": SimpleNamespace(frames_timestamps_us=times)},
+    )
+    with pytest.raises(NurecError, match="require global shutter"):
+        _require_rig_frame_knots(
+            reader, np.repeat(np.eye(4)[None], 2, axis=0), times[:, 1]
+        )
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        "dataset={frame_generic_data_pose_overwrite:false}",
+        "dataset={poses_component_group:default}",
+        "+dataset={frame_generic_data_pose_overwrite:false}",
+        "~dataset",
+    ],
+)
+def test_independent_frame_pose_contract_rejects_whole_dataset_replacement(
+    tmp_path, override
+):
+    from npa.workbench.nurec.ncore_frame_poses import plan_frame_poses
+    from npa.workbench.nurec.nurec import NurecConfig, NurecError
+
+    meta, _ = ncore_fixture(tmp_path)
+    colmap._derive_in_place(meta, "camera1")
+    with pytest.raises(NurecError, match="dataset cannot be replaced"):
+        plan_frame_poses(NurecConfig(extra_overrides=(override,)), str(meta))

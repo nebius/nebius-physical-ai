@@ -53,12 +53,23 @@ def run(
     checkpoint_uri: str = "",
     train_env_ids: str = "",
     heldout_env_ids: str = "",
+    expected_image_source_sha: str = "",
+    expected_image_manifest_digest: str = "",
 ) -> RoboCasaRunResponse:
     """Run a RoboCasa capability.
 
     ``output_uri`` remains as a compatibility alias for callers predating the
     canonical cross-tool ``output_path`` spelling.
     """
+    resolved_service = _resolve_mode(mode=mode, service=service)
+    if resolved_service and not expected_image_source_sha.strip():
+        raise RoboCasaValidationError(
+            "expected_image_source_sha is required in service mode"
+        )
+    if resolved_service and not expected_image_manifest_digest.strip():
+        raise RoboCasaValidationError(
+            "expected_image_manifest_digest is required in service mode"
+        )
     if output_path and output_uri and output_path != output_uri:
         raise RoboCasaValidationError(
             "output_path and compatibility output_uri must identify the same S3 path"
@@ -91,8 +102,10 @@ def run(
         checkpoint_uri=checkpoint_uri,
         train_env_ids=train_env_ids,
         heldout_env_ids=heldout_env_ids,
+        expected_image_source_sha=expected_image_source_sha,
+        expected_image_manifest_digest=expected_image_manifest_digest,
     )
-    if _resolve_mode(mode=mode, service=service):
+    if resolved_service:
         return RoboCasaRunResponse.model_validate(
             _request_json(
                 "POST",

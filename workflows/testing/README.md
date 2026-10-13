@@ -17,6 +17,10 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 
 | Workflow | Guide | Purpose |
 | --- | --- | --- |
+| [`marble-go1-inspection.yaml`](marble-go1-inspection.yaml) | [Choose one preset](../../docs/workbench/guides/marble-robot-presets.md#run-one-preset) · [Add a world](../../docs/workbench/guides/marble-robot-presets.md#add-a-new-world) | One selected situation: warehouse, shipyard, home, factory or utility → one Marble world → one RTX PRO 6000 Go1 collection → continuous standalone HTML |
+| [`marble-warehouse-rover.yaml`](marble-warehouse-rover.yaml) | [Rover collection guide](../../docs/workbench/guides/marble-warehouse-rover.md) | Generate a warehouse → wheel-driven rover dynamics → CUDA RGB/depth and standalone HTML |
+| [`marble-navigation-rl.yaml`](marble-navigation-rl.yaml) | [Guide](../../docs/workbench/guides/marble-navigation-rl.md) | Existing generated Marble collider → native ANYmal GPU physics/PPO → held-out checkpoint evaluation; qualified runtime required, GPU acceptance pending |
+| [`marble-warehouse-quadruped.yaml`](marble-warehouse-quadruped.yaml) | [Guide](../../docs/workbench/guides/marble-warehouse-quadruped.md) | Existing generated warehouse → pretrained Go1 walking → CUDA sensors and Cycles CUDA robot → standalone HTML |
 | [`physical-prompt-comparison.yaml`](physical-prompt-comparison.yaml) | [Guide](../../docs/workbench/physical-prompt-comparison.md) | Compare baseline prompts, physical descriptions, and negative guidance across six scenarios and two seeds, with full Wan 2.1 14B videos, blinded judgments, and standalone HTML. |
 | [`digital-twin-campus-render.yaml`](digital-twin-campus-render.yaml) | [Campus rendering guide](../../docs/workbench/guides/digital-twin.md#render-the-industrial-campus-on-rtx) | Authored industrial campus rendered with native RTX OptiX, recoverable immutable publication and offline HTML |
 | [`digital-twin-cuda-render.yaml`](digital-twin-cuda-render.yaml) | [CUDA rendering guide](../../docs/workbench/guides/digital-twin.md#render-the-authored-cuda-reference-scene) | Authored factory cell rendered with native Cycles CUDA, OpenUSD/glTF and offline HTML |
@@ -40,11 +44,11 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | [`nvidia-paidf-vda-cosmos-transfer25.yaml`](nvidia-paidf-vda-cosmos-transfer25.yaml) | [Deploy guide](../../docs/workbench/guides/physical-ai-data-factory-deploy.md) | Separately named NVIDIA-derived VDA semantic translation → pinned upstream contract → real Cosmos Transfer 2.5/Evaluator/Curator/FiftyOne → Rerun |
 | [`open3d-registration.yaml`](open3d-registration.yaml) | [Open3D CLI](../../docs/cli/open3d.md) | CPU point-cloud registration → optimized pose graph → Poisson surface → verified Rerun recording; public sample or supplied scans. |
 | [`paidf-defect-image-generation.yaml`](paidf-defect-image-generation.yaml) | [PAIDF deploy guide](../../docs/workbench/guides/physical-ai-data-factory-deploy.md) | Direct DIG Day-1 manual-ROI translation → runtime base-checkpoint setup → real AnomalyGen fine-tune → inference and native labels; B200; operator-authorized data/weights only |
-| [`paidf-event-video-generation.yaml`](paidf-event-video-generation.yaml) | [PAIDF deploy guide](../../docs/workbench/guides/physical-ai-data-factory-deploy.md) | Direct EVG DAG translation → Cosmos3 Super image2video → real detection/captioning/two Visual-QA passes/PAS → anomaly dataset |
-| [`paidf-image-attribute-augmentation.yaml`](paidf-image-attribute-augmentation.yaml) | [PAIDF deploy guide](../../docs/workbench/guides/physical-ai-data-factory-deploy.md) | Direct IAA DAG translation → Qwen Image Edit service → real paidf-augmentation verification → real Person Attribute Search → dataset |
+| [Cosmos Data Factory workflows](../cosmos-data-factory/README.md) | [IAA](../cosmos-data-factory/image-attribute-augmentation.md) · [EVG](../cosmos-data-factory/event-video-generation.md) | Separate person-attribute image editing and annotated event-video generation workflows |
 | [`physical-ai-data-factory.yaml`](physical-ai-data-factory.yaml) | [Deploy guide](../../docs/workbench/guides/physical-ai-data-factory-deploy.md) | Cosmos Transfer 2.5 PAIDF blueprint |
 | [`rgbd-scan-to-isaac.yaml`](rgbd-scan-to-isaac.yaml) | [Guide](../../docs/workbench/guides/rgbd-scan-to-isaac.md) | Metric RGB-D with poses → real Open3D TSDF and held-out depth gate → derived colored USDZ and exact triangle colliders → native Isaac PhysX; complete managed public capture qualified, with a verified navigation-input handoff |
 | [`scan-to-isaac-navigation.yaml`](scan-to-isaac-navigation.yaml) | [Guide](../../docs/workbench/guides/scan-to-isaac-navigation.md) | Existing NuRec visual scene + operator collision USD mesh and measured transforms → portable USDZ/provenance → actual Isaac PhysX ray probes; live qualification pending, no navigation-policy claim ([readiness](scan-to-isaac-navigation.readiness.json)) |
+| [`seedvr2-video-restoration.yaml`](seedvr2-video-restoration.yaml) | [SeedVR2 guide](../../docs/workbench/seedvr2.md) | Pinned SeedVR2-3B restoration with H100/sample defaults and explicit B200/posterior-mode controls → independent S3 readback verification → non-blended bicubic/candidate review package; image remains publication-quarantined pending live objective and VLM evidence. |
 | [`video-variant-sweep-cosmos3.yaml`](video-variant-sweep-cosmos3.yaml) | [Variant sweep guide](../guides/video-variant-sweep.md) | Explicit or Cartesian variants → parallel Cosmos3-Nano full-source edge transfer → paired review, lineage and accepted clips. |
 | [`video-variant-sweep.yaml`](video-variant-sweep.yaml) | [Variant sweep guide](../guides/video-variant-sweep.md) | Source captions and hints → parallel Cosmos Transfer 2.5 variants → paired review → Postgres/MLflow lineage and accepted clips. |
 
@@ -70,9 +74,12 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | [`lerobot-subtask-proof.yaml`](lerobot-subtask-proof.yaml) | [Guide](../../docs/workbench/guides/lerobot-subtask-labeling.md) | CPU post-review gate: complete LeRobot v3 `subtask_index` coverage → catalog resolution → row-level proof bound to the source Parquet digest |
 | [`lerobot-transfer.yaml`](lerobot-transfer.yaml) | [Runbook](../../docs/workbench/guides/lerobot-transfer.md) | Four-phase LeRobot demonstration experiment: paired ACT training → native PushT transfer stress tests → measured comparison and next-expert-demo queue. |
 | [`lyra-scene-actions.yaml`](lyra-scene-actions.yaml) | [Scene integration](../../docs/workbench/guides/lyra-physical-augmentation.md) | Execute physical variations in a calibrated Lyra collision scene and record workspace/wrist cameras. Prepared robot mounting and RTX required; imported-scene qualification remains separate. |
+| [`marble-world-capture.yaml`](marble-world-capture.yaml) | [Marble to Nebius guide](../../docs/workbench/guides/marble-to-nebius.md) | World API acquisition → gsplat CUDA camera dataset → verified HTML report; GPU consumer validated on the explicit sample |
+| [`marble-spatial-scan.yaml`](marble-spatial-scan.yaml) | [Marble to Nebius guide](../../docs/workbench/guides/marble-to-nebius.md) | World API acquisition → Warp CUDA depth and hit cloud → verified HTML report; GPU consumer validated on the explicit sample |
+| [`marble-manufacturing-pallet-detection.yaml`](marble-manufacturing-pallet-detection.yaml) | [Dataset and token setup](../../docs/workbench/marble-manufacturing.md) | API factory generation → GPU backgrounds → matched-update pallet detector comparison on real data; live benchmark pending |
 | [`mjlab-eval.yaml`](mjlab-eval.yaml) | [MJLab guide](../../docs/workbench/mjlab.md) | Measured native MJLab checkpoint evaluation |
-| [`mjlab-render.yaml`](mjlab-render.yaml) | [MJLab guide](../../docs/workbench/mjlab.md) | Trained MJLab checkpoint to measured evaluation, rendered MP4 and self-contained HTML on RTX PRO 6000 |
-| [`mjlab-train-eval.yaml`](mjlab-train-eval.yaml) | [MJLab guide](../../docs/workbench/mjlab.md) | Native MJLab training, measured evaluation, ONNX export and independent-seed evaluation |
+| [`mjlab-render.yaml`](mjlab-render.yaml) | [MJLab guide](../../docs/workbench/mjlab.md) | Trained MJLab checkpoint to measured native 1080p MP4 and standalone HTML on the pinned RTX PRO 6000 image |
+| [`mjlab-train-eval.yaml`](mjlab-train-eval.yaml) | [MJLab guide](../../docs/workbench/mjlab.md) | Native MJLab training, measured 1080p MP4/HTML, ONNX export and independent-seed evaluation on the pinned RTX image |
 | [`molmoact-finetune.yaml`](molmoact-finetune.yaml) | [MolmoAct CLI](../../docs/cli/molmoact.md) | **Stub stage:** fine-tuning toolRef and three-tier contract; not real training. |
 | [`multicamera-rgbd-capture.yaml`](multicamera-rgbd-capture.yaml) | [Guide](../../docs/workbench/multicamera-rgbd-capture.md) | Calibrated USD sensor rig → synchronized RGB/depth/poses and optional colored world points → decoded S3 validation; GPU acceptance pending |
 | [`multicamera-rgbd-warehouse.yaml`](multicamera-rgbd-warehouse.yaml) | [Guide](../../docs/workbench/multicamera-rgbd-capture.md) | Runtime-collect NVIDIA's full warehouse → four 1280×720 RGB-D streams at 265 poses → per-camera and fused world clouds with decoded S3 validation; complete native RTX qualification and artifact readback recorded for the public demo ([source-bound evidence](../../docs/workbench/evidence/public-demos/README.md)) |
@@ -84,8 +91,8 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | [`physical-augmentation.yaml`](physical-augmentation.yaml) | [One-command demo](../../docs/workbench/guides/physical-augmentation.md) | Fresh Franka actions across position, mass and friction changes → interactive HD replay, comparison film and accepted LeRobot/Rerun demonstrations. Requires RTX PRO 6000. |
 | [`retargeting.yaml`](retargeting.yaml) | [Retargeting CLI](../../docs/cli/retargeting.md) | Motion retargeting |
 | [`rl-policy-training-sim-success.yaml`](rl-policy-training-sim-success.yaml) | [Isaac Lab CLI](../../docs/cli/isaac-lab.md) | Isaac Lab RL train (partial) |
-| [`robocasa-data-policy.yaml`](robocasa-data-policy.yaml) | [RoboCasa CLI](../../docs/cli/robocasa.md) | Native multi-task PandaOmron trajectories → LeRobotDataset v3 → real ACT training → exact-checkpoint evaluation on disjoint RoboCasa tasks → insights |
-| [`robocasa-smoke.yaml`](robocasa-smoke.yaml) | [RoboCasa CLI](../../docs/cli/robocasa.md) | Native RoboCasa workbench: task registration, asset availability, headless EGL reset, and a real random rollout with video through the npa-robocasa service |
+| [`robocasa-data-policy.yaml`](robocasa-data-policy.yaml) | [RoboCasa CLI](../../docs/cli/robocasa.md) | CPU clients → L40S-hosted seeded random-action PandaOmron baselines with causally aligned trajectories → LeRobotDataset v3 → real ACT training on a separate L40S → matched-seed checkpoint/random evaluation on disjoint RoboCasa tasks → insights; no expert-demonstration or policy-improvement claim |
+| [`robocasa-smoke.yaml`](robocasa-smoke.yaml) | [RoboCasa CLI](../../docs/cli/robocasa.md) | CPU clients of an L40S-hosted RoboCasa service: task registration, asset availability, headless EGL reset, and a real random rollout with video |
 | [`robot-policy-train-and-serve.yaml`](robot-policy-train-and-serve.yaml) | [Guide](../../docs/workbench/cookbooks/robot-policy-train-and-serve.md) | One standard runtime: public LeRobot data → FiftyOne selection → grouped split → continued SmolVLA training and fine-tuning with two measured gates → portable export → independent GPU HTTP serving and native simulation → standalone HTML/MP4. |
 | [`shared-scene-navigation.yaml`](shared-scene-navigation.yaml) | [Contract and runbook](../../docs/workbench/guides/shared-scene-navigation.md) | Native Isaac public quadruped reference or BYOF navigation with shared-scene physics/perception probes, checkpoint resume and held-out evaluation. Public bundle builder supplies a cluttered warehouse; reconstructed scenes require measured resets. GPU acceptance unverified. |
 | [`sonic-eval.yaml`](sonic-eval.yaml) | [Evaluation runbook](../../docs/workbench/cookbooks/sonic-eval-runbook.md) | SONIC eval |
@@ -93,6 +100,19 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | [`sonic-export.yaml`](sonic-export.yaml) | [Evaluation runbook](../../docs/workbench/cookbooks/sonic-eval-runbook.md) | SONIC export |
 | [`sonic-locomotion-finetuning.yaml`](sonic-locomotion-finetuning.yaml) | [Fine-tuning guide](../../docs/workbench/cookbooks/sonic-locomotion-finetuning.md) | Retarget → train → export → native SONIC eval |
 | [`sonic-train.yaml`](sonic-train.yaml) | [Training runbook](../../docs/workbench/cookbooks/sonic-train-runbook.md) | SONIC train |
+
+The LeRobot policy-container training entrypoint chooses its evaluation-cadence
+flag from the installed package version. An explicit `NPA_LEROBOT_VERSION` must
+match that runtime; it cannot relabel an image. The pinned RoboCasa ACT derivative
+`0.6.1+npa2` additionally requires exact metadata, native parser and trainer source
+hashes, and rejects non-ACT policy overrides. This derivative accepts explicit
+ACT hyperparameters, not reward-model configuration, configuration/pretrained
+path indirection, or plugin discovery. Config-file-based resume is consequently
+not qualified on this derivative; ordinary `0.5.1`/`0.6.0` behavior is unchanged.
+This narrow runtime contract does not add a globally supported LeRobot release,
+change workflow image routing, or qualify an image for release. Use only an
+independently accepted immutable image; CPU training controls do not establish GPU
+rollout quality.
 
 ## Data, perception, and scenario analysis
 
@@ -119,6 +139,7 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | [`byof-cogvideox-2b.yaml`](byof-cogvideox-2b.yaml) | [Video/perception guide](../../docs/workbench/video-generation-byof.md) | Native B200 text-to-video with pinned runtime and runtime-fetched weights. |
 | [`byof-depth-anything-v2.yaml`](byof-depth-anything-v2.yaml) | [Video/perception guide](../../docs/workbench/video-generation-byof.md) | GPU relative-depth prediction on a hash-verified video → raw predictions and visualization; no ground-truth or robot-success claim. |
 | [`byof-droid-policy-learning.yaml`](byof-droid-policy-learning.yaml) | [BYOF CLI](../../docs/cli/byof.md) | OSS registry: DROID policy learning pinned image + RLDS config smoke |
+| [`byof-embodiedgen.yaml`](byof-embodiedgen.yaml) | [EmbodiedGen guide](../../docs/workbench/embodiedgen.md) | Qualified operator-private TRELLIS image-to-rigid-object generation → generated URDF/collision bundle, MJCF handoff bundle, and PyBullet view; each selected target still needs its own preflight. |
 | [`byof-evo.yaml`](byof-evo.yaml) | [BYOF CLI](../../docs/cli/byof.md) | Plan-only catalog definition; run pinned evo APE/RPE controls and matched KITTI plots through the direct BYOF runner |
 | [`byof-gymnasium-robotics.yaml`](byof-gymnasium-robotics.yaml) | [Qualification guide](../../docs/workbench/byof-gymnasium-robotics.md) | Neutral bootstrap development candidate with a nonresolving placeholder image; requires a reviewed build digest and runtime Shadow Hand cache. |
 | [`byof-libero.yaml`](byof-libero.yaml) | [Qualification guide](../../docs/workbench/byof-libero.md) | Quarantined managed qualification path; requires an explicitly qualified candidate and operator-authorized use. |
