@@ -353,7 +353,7 @@ def test_public_execution_defaults_remain_quarantined(
         build_config_from_env(run_id="execution-run")
 
 
-def test_serve_local_record_uses_resolved_viewer_storage(
+def test_serve_local_record_uses_explicit_viewer_storage(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _reject_execution_images(monkeypatch)
@@ -391,7 +391,7 @@ def test_serve_local_record_uses_resolved_viewer_storage(
     assert result.exit_code == 0, result.output
     assert downloads[0][0].s3_bucket == config.s3_bucket
     assert downloads[0][0].s3_endpoint == config.s3_endpoint
-    assert downloads[0][1]["rrd_uri"] == config.rrd_s3_uri
+    assert downloads[0][1]["rrd_uri"] == config.rrd_s3_uri_override
     assert downloads[0][1]["client"] is storage_client
     assert client_settings == [
         {
@@ -400,6 +400,43 @@ def test_serve_local_record_uses_resolved_viewer_storage(
             "aws_secret_access_key": "sk",
         }
     ]
+
+
+def test_serve_local_record_uses_verified_default_publication(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _reject_execution_images(monkeypatch)
+    config = RerunServeConfig(
+        run_id="archived-run",
+        s3_bucket="resolved-bucket",
+        s3_prefix="completed",
+        s3_endpoint="https://storage.example.invalid",
+    )
+    _mock_viewer_deploy(monkeypatch, config)
+    downloads: list[dict[str, object]] = []
+
+    def download(_coordinates: Sim2RealArtifactConfig, **kwargs: object) -> Path:
+        downloads.append(kwargs)
+        return tmp_path / "local.rrd"
+
+    monkeypatch.setattr("npa.cli.workbench.sim2real.download_rrd_from_s3", download)
+    monkeypatch.setattr(
+        "npa.cli.workbench.sim2real.StorageClient.from_environment",
+        lambda **_kwargs: object(),
+    )
+    result = _invoke_rerun(
+        "serve",
+        "--project",
+        "operator-project",
+        "--local-record",
+        "--local-rrd-path",
+        str(tmp_path / "local.rrd"),
+        "--output",
+        "json",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert downloads[0]["rrd_uri"] == ""
 
 
 def test_serve_local_record_ignores_unneeded_artifact_environment(

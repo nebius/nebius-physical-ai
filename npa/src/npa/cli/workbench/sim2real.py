@@ -947,7 +947,7 @@ def rerun_serve_command(
             download_rrd_from_s3(
                 artifact_config,
                 dest_path=dest,
-                rrd_uri=config.rrd_s3_uri,
+                rrd_uri=config.rrd_s3_uri_override.strip(),
                 client=StorageClient.from_environment(
                     endpoint_url=config.s3_endpoint,
                     aws_access_key_id=access_key,
