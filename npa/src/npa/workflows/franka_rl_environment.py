@@ -146,9 +146,11 @@ def configure_policy_interchange_cameras(config, robot_profile) -> None:
             )
         width, height = camera.image_size
         fx, fy, cx, cy = camera.intrinsics
-        if abs(fx - fy) > 1.0e-6 or abs(cx - (width - 1) / 2.0) > 1.0 or abs(
-            cy - (height - 1) / 2.0
-        ) > 1.0:
+        if (
+            abs(fx - fy) > 1.0e-6
+            or abs(cx - (width - 1) / 2.0) > 1.0
+            or abs(cy - (height - 1) / 2.0) > 1.0
+        ):
             raise ValueError(
                 "Isaac interchange currently requires square pixels and centered intrinsics"
             )
