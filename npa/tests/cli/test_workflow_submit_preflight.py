@@ -1464,7 +1464,7 @@ def test_sim2real_submit_rejects_oversized_sealed_split_before_images_or_launch(
             key: "ghcr.io/example/test@sha256:" + "a" * 64
             for key in (
                 "controller_image",
-                "transfer_image",
+                "cosmos3_image",
                 "envgen_image",
                 "isaac_image",
                 "viewer_image",
@@ -2104,7 +2104,7 @@ def test_config_pinned_resource_images_satisfy_the_npa_source_requirement() -> N
         name: digest_image
         for name in (
             "controller_image",
-            "transfer_image",
+            "cosmos3_image",
             "envgen_image",
             "isaac_image",
             "viewer_image",
@@ -2239,7 +2239,7 @@ def test_preflight_images_accepts_the_same_config_vars_as_submit(mocker) -> None
     args.extend(["--var", "source_sha=" + "a" * 40])
     for name in (
         "controller_image",
-        "transfer_image",
+        "cosmos3_image",
         "envgen_image",
         "isaac_image",
         "viewer_image",
@@ -2756,7 +2756,7 @@ def test_preflight_images_scopes_explicit_pull_secret_to_bootstrap(
     args.extend(["--var", "source_sha=" + "a" * 40])
     for name in (
         "controller_image",
-        "transfer_image",
+        "cosmos3_image",
         "envgen_image",
         "reason_image",
         "isaac_image",
@@ -2950,7 +2950,7 @@ def test_preflight_images_reports_valid_empty_plan(mocker) -> None:
 
 @pytest.mark.parametrize(
     "configured_roles",
-    [(), ("controller_image", "transfer_image", "envgen_image", "isaac_image")],
+    [(), ("controller_image", "cosmos3_image", "envgen_image", "isaac_image")],
 )
 def test_sim2real_image_preflight_rejects_incomplete_bundle_before_probes(
     mocker, configured_roles

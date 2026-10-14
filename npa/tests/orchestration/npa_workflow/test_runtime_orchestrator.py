@@ -2939,7 +2939,7 @@ def _canonical_sim2real_1x1():
             "validation_count": "3",
             "gold_count": "3",
             "controller_image": image,
-            "transfer_image": image,
+            "cosmos3_image": image,
             "envgen_image": image,
             "isaac_image": image,
             "viewer_image": image,
