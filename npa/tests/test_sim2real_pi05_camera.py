@@ -1351,9 +1351,7 @@ def test_collector_state_saturates_finite_open_width_measurement() -> None:
 
     assert state.dtype == np.float32
     assert state.tolist() == [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 0.0]
-    observed = _observation_state(
-        {"q": np.arange(7), "width": 0.12018878012895584}
-    )
+    observed = _observation_state({"q": np.arange(7), "width": 0.12018878012895584})
     assert observed.tolist() == state.tolist()
     with pytest.raises(Pi05ContractError, match="must be finite"):
         _observation_state({"q": np.arange(7), "width": float("nan")})
