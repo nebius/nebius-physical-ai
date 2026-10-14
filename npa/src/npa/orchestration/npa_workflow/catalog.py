@@ -248,6 +248,54 @@ def _pi05_service_timeout_argv() -> list[str]:
     ]
 
 
+def _smolvla_service_argv(command: str, role: str) -> list[str]:
+    prefix = "base" if role == "base" else "adapted"
+    return [
+        "python3",
+        "-m",
+        "npa.workflows.sim2real.smolvla_service_lifecycle",
+        command,
+        "--run-id",
+        "{{run.id}}",
+        "--checkpoint-role",
+        role,
+        "--checkpoint-uri",
+        f"{{{{config.{prefix}_checkpoint_uri}}}}",
+        "--bind-adapter-uri",
+        f"{{{{config.{prefix}_policy_adapter_uri}}}}",
+        "--runtime-image",
+        "{{config.runtime_image}}",
+        "--namespace",
+        "{{config.service_namespace}}",
+        "--service-account",
+        f"{{{{config.{prefix}_service_account}}}}",
+        "--auth-secret",
+        "{{config.service_auth_secret}}",
+        "--hf-token-secret",
+        "{{config.hf_token_secret}}",
+        "--gpu-count",
+        "{{config.service_gpu_count}}",
+        "--server-cpu",
+        "{{config.service_server_cpus}}",
+        "--server-memory",
+        "{{config.service_server_memory}}",
+        "--cache-size",
+        "{{config.service_cache_size}}",
+        "--gpu-node-selector-key",
+        "{{config.service_gpu_node_selector_key}}",
+        "--gpu-node-selector-value",
+        "{{config.service_gpu_node_selector_value}}",
+        "--hardware-topology",
+        "{{config.service_hardware_topology}}",
+        "--ready-timeout-seconds",
+        "{{config.service_server_ready_timeout_seconds}}",
+        "--output-uri",
+        f"{{{{config.{prefix}_service_{command}_uri}}}}",
+        "--component-root-uri",
+        "{{config.component_root_uri}}",
+    ]
+
+
 def _pi05_closed_loop_argv(role: str) -> list[str]:
     return [
         "/opt/npa/sim/venv/bin/python",
@@ -4743,6 +4791,40 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         ],
         omit_flags_when_empty=("--training-env-ids",),
         config_defaults={"train_env_ids": ""},
+    ),
+    "workbench.lerobot.smolvla_base_service_start": ToolEntry(
+        name="workbench.lerobot.smolvla_base_service_start",
+        description="Start an owned private typed SmolVLA base-checkpoint service.",
+        argv_template=_smolvla_service_argv("start", "base"),
+        omit_flags_when_empty=("--hf-token-secret",),
+        config_defaults={"hf_token_secret": ""},
+    ),
+    "workbench.lerobot.smolvla_base_service_cleanup": ToolEntry(
+        name="workbench.lerobot.smolvla_base_service_cleanup",
+        description="Clean only the exactly owned SmolVLA base service.",
+        argv_template=_smolvla_service_argv("cleanup", "base"),
+        omit_flags_when_empty=("--hf-token-secret",),
+        config_defaults={"hf_token_secret": ""},
+    ),
+    "workbench.lerobot.smolvla_adapted_service_start": ToolEntry(
+        name="workbench.lerobot.smolvla_adapted_service_start",
+        description="Start an owned private typed SmolVLA adapted-checkpoint service.",
+        argv_template=_smolvla_service_argv("start", "adapted"),
+        omit_flags_when_empty=("--bind-adapter-uri", "--hf-token-secret"),
+        config_defaults={
+            "adapted_policy_adapter_uri": "",
+            "hf_token_secret": "",
+        },
+    ),
+    "workbench.lerobot.smolvla_adapted_service_cleanup": ToolEntry(
+        name="workbench.lerobot.smolvla_adapted_service_cleanup",
+        description="Clean only the exactly owned SmolVLA adapted service.",
+        argv_template=_smolvla_service_argv("cleanup", "adapted"),
+        omit_flags_when_empty=("--bind-adapter-uri", "--hf-token-secret"),
+        config_defaults={
+            "adapted_policy_adapter_uri": "",
+            "hf_token_secret": "",
+        },
     ),
     "workbench.token_factory.triage": ToolEntry(
         name="workbench.token_factory.triage",
