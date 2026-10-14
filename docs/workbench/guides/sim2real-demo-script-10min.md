@@ -26,7 +26,7 @@ identifiers out of shared slides, screenshots, and exported reports.
 | Time | Show | Explain |
 | --- | --- | --- |
 | 0:00–1:00 | [14-stage graph](sim2real-architecture.md) and terminal runtime status | One standard workflow owns stages, parallel shards, iterations, and durable state |
-| 1:00–2:30 | Trigger manifest, task contract, Transfer manifest, curation and split manifests | Real seed data leads to simulated scenarios; train, validation, and gold remain disjoint |
+| 1:00–2:30 | Trigger manifest, task contract, Cosmos3 structural-transfer manifest, curation and split manifests | Real seed data leads to simulated scenarios; train, validation, and gold remain disjoint |
 | 2:30–4:00 | Actual primary/side/overhead rollout frames and action metadata | Rendered task visibility and exact action/frame/episode bindings establish usable evidence |
 | 4:00–5:30 | Hosted critique, training signal, measured PPO losses | Stage 8 records the actual model/provider; bounded grounded critique shapes real PPO |
 | 5:30–7:00 | Validation selection and gold report | Validation chooses the checkpoint; gold measures strict 5 cm stable placement |
