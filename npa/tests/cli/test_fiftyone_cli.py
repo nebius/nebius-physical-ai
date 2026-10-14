@@ -1379,7 +1379,7 @@ def test_fiftyone_deploy_accepts_gpu_flags_and_installs_app(
     install_cmd = ssh.run.call_args_list[1].args[0]
     assert "python3 -m venv /opt/fiftyone/venv" in install_cmd
     assert (
-        f'/opt/fiftyone/venv/bin/python -m pip install "fiftyone=={FIFTYONE_VERSION}"'
+        f'/opt/fiftyone/venv/bin/python -m pip install "fiftyone[multimodal]=={FIFTYONE_VERSION}"'
         in install_cmd
     )
     assert 'pyarrow "pillow>=12.3.0"' in install_cmd
