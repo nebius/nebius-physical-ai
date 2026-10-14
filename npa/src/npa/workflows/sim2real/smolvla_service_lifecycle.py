@@ -108,6 +108,8 @@ client.download_file({parsed.netloc!r},{parsed.path.lstrip('/')!r},str(target))
 def build_manifests(args: argparse.Namespace) -> dict[str, dict[str, Any]]:
     if not IMAGE_RE.fullmatch(args.runtime_image):
         raise SmolVLAServiceError("SmolVLA runtime image must be digest-pinned")
+    if not re.fullmatch(r"[0-9a-f]{40}", args.source_commit):
+        raise SmolVLAServiceError("baked source commit must be 40 lowercase hex")
     if not re.fullmatch(r"[a-z0-9](?:[-a-z0-9]*[a-z0-9])?", args.auth_secret):
         raise SmolVLAServiceError("auth secret must be a Kubernetes DNS label")
     names = resource_names(args.run_id, args.checkpoint_role)
@@ -428,6 +430,7 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
                 args.checkpoint_uri.encode()
             ).hexdigest(),
             "runtime_image": args.runtime_image,
+            "source_commit": args.source_commit,
             "service_host": host,
             "port": PORT,
             "public_ingress": False,
@@ -469,6 +472,7 @@ def build_parser() -> argparse.ArgumentParser:
         item.add_argument("--checkpoint-uri", required=True)
         item.add_argument("--bind-adapter-uri", default="")
         item.add_argument("--runtime-image", required=True)
+        item.add_argument("--source-commit", required=True)
         item.add_argument("--namespace", required=True)
         item.add_argument("--service-account", required=True)
         item.add_argument("--auth-secret", required=True)

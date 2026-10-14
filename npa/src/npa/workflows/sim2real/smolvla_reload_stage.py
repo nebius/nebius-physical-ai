@@ -84,11 +84,18 @@ def build_reload_receipt(
         "policy_identity": compatibility.get("policy_identity"),
         "robot_identity": compatibility.get("robot_identity"),
         "task_identity": compatibility.get("task_identity"),
-        "checkpoint_sha256": compatibility.get("checkpoint_sha256"),
-        "normalization_identity": compatibility.get("normalization_identity"),
     }
     actual = {key: manifest.get(key) for key in expected}
-    if actual != expected:
+    policy = preparation.get("policy") or {}
+    stable_match = bool(
+        actual == expected
+        and manifest.get("action") == policy.get("action")
+        and manifest.get("measured_state_names")
+        == policy.get("measured_state_names")
+        and [row.get("key") for row in manifest.get("cameras") or []]
+        == policy.get("camera_keys")
+    )
+    if not stable_match:
         raise SmolVLAReloadError(
             "loaded SmolVLA checkpoint differs from the prepared policy contract"
         )
@@ -107,6 +114,8 @@ def build_reload_receipt(
         "checkpoint_validation": runtime.validation.to_dict(),
         "interchange": {
             **actual,
+            "checkpoint_sha256": manifest["checkpoint_sha256"],
+            "normalization_identity": manifest["normalization_identity"],
             "manifest_sha256": _sha256(manifest_path),
             "normalization_files": manifest["normalization_files"],
             "action": manifest["action"],

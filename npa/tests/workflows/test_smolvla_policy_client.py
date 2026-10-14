@@ -118,3 +118,23 @@ def test_client_rejects_server_action_contract_change() -> None:
         )
         with pytest.raises(SmolVLAPolicyClientError, match="changed"):
             client.infer_typed(observation=observation, policy=policy)
+
+
+def test_client_verifies_native_episode_reset_receipt() -> None:
+    policy = SimpleNamespace(
+        identity="smolvla-ur10",
+        checkpoint_sha256="a" * 64,
+    )
+    payload = {
+        "status": "reset",
+        "policy_identity": policy.identity,
+        "checkpoint_sha256": policy.checkpoint_sha256,
+    }
+    with _server(payload) as server:
+        client = SmolVLAPolicyClient(
+            "127.0.0.1", server.server_port, auth_token="task-token"
+        )
+        receipt = client.reset(policy=policy)
+    assert receipt["status"] == "reset"
+    assert len(receipt["receipt_sha256"]) == 64
+    assert server.authorization == "Bearer task-token"  # type: ignore[attr-defined]

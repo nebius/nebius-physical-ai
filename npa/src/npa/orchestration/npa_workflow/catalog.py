@@ -265,6 +265,8 @@ def _smolvla_service_argv(command: str, role: str) -> list[str]:
         f"{{{{config.{prefix}_policy_adapter_uri}}}}",
         "--runtime-image",
         "{{config.runtime_image}}",
+        "--source-commit",
+        "{{config.source_sha}}",
         "--namespace",
         "{{config.service_namespace}}",
         "--service-account",
@@ -301,6 +303,42 @@ def _pi05_closed_loop_argv(role: str) -> list[str]:
         "/opt/npa/sim/venv/bin/python",
         "-m",
         "npa.workflows.sim2real.pi05_closed_loop_entry",
+        "--service-receipt-uri",
+        f"{{{{config.{role}_service_start_uri}}}}",
+        "--gold-collection-uri",
+        "{{config.gold_collection_uri}}",
+        "--output-uri",
+        f"{{{{config.{role}_gold_uri}}}}",
+        "--artifact-root-uri",
+        f"{{{{config.{role}_artifact_root_uri}}}}",
+        "--component-root-uri",
+        "{{config.component_root_uri}}",
+        "--checkpoint-role",
+        role,
+        "--split",
+        "gold",
+        "--episodes",
+        "{{config.gold_episodes}}",
+        "--decisions",
+        "{{config.eval_decisions}}",
+        "--seed",
+        "{{config.gold_seed}}",
+        "--wrist-ablation-modes",
+        "{{config.wrist_ablation_modes}}",
+        "--ablation-seed",
+        "{{config.wrist_ablation_seed}}",
+    ]
+
+
+def _smolvla_closed_loop_argv(role: str) -> list[str]:
+    return [
+        "/opt/npa/sim/venv/bin/python",
+        "-m",
+        "npa.workflows.sim2real.pi05_closed_loop_entry",
+        "--policy-backend",
+        "lerobot_smolvla",
+        "--preparation-uri",
+        "{{config.preparation_uri}}",
         "--service-receipt-uri",
         f"{{{{config.{role}_service_start_uri}}}}",
         "--gold-collection-uri",
@@ -3312,6 +3350,21 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         name="workbench.sim2real.pi05_adapted_gold",
         description="Evaluate selected adapted pi0.5 closed-loop on the identical untouched gold split.",
         argv_template=_pi05_closed_loop_argv("adapted"),
+    ),
+    "workbench.sim2real.smolvla_base_gold": ToolEntry(
+        name="workbench.sim2real.smolvla_base_gold",
+        description=(
+            "Evaluate native SmolVLA current-action control on the sealed "
+            "surface-placement gold cohort with matched wrist interventions."
+        ),
+        argv_template=_smolvla_closed_loop_argv("base"),
+    ),
+    "workbench.sim2real.smolvla_adapted_gold": ToolEntry(
+        name="workbench.sim2real.smolvla_adapted_gold",
+        description=(
+            "Evaluate the reloaded adapted SmolVLA on the identical sealed gold cohort."
+        ),
+        argv_template=_smolvla_closed_loop_argv("adapted"),
     ),
     "workbench.openpi.train": ToolEntry(
         name="workbench.openpi.train",

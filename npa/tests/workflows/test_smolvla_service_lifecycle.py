@@ -20,6 +20,7 @@ def _args(**updates):
         "checkpoint_uri": "hf://lerobot/smolvla_base@" + "a" * 40,
         "bind_adapter_uri": "s3://example/profile/base-adapter.json",
         "runtime_image": "registry.example.invalid/lerobot@sha256:" + "b" * 64,
+        "source_commit": "c" * 40,
         "namespace": "default",
         "service_account": "run-base-controller",
         "auth_secret": "run-policy-auth",

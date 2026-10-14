@@ -399,11 +399,16 @@ class LeRobotPolicyRuntime:
     def rollout(self, observations: list[dict[str, Any]]) -> list[list[float]]:
         if not observations:
             raise PolicyContainerError("rollout requires at least one observation")
+        self.reset()
+        return [self.infer(observation) for observation in observations]
+
+    def reset(self) -> None:
+        """Reset native policy and processor queues at a physical episode boundary."""
+
         for component in (self.policy, self.preprocessor, self.postprocessor):
             reset = getattr(component, "reset", None)
             if callable(reset):
                 reset()
-        return [self.infer(observation) for observation in observations]
 
     def infer_typed(self, observation: Any, policy_profile: Any) -> Any:
         """Consume and return the model-neutral typed policy interchange."""
@@ -1662,6 +1667,9 @@ def create_app() -> Any:
                 "normalization_identity": policy.manifest[
                     "normalization_identity"
                 ],
+                "measured_state_names": policy.manifest["measured_state_names"],
+                "cameras": policy.manifest["cameras"],
+                "action": policy.manifest["action"],
                 "manifest_sha256": _sha256_path(
                     policy.checkpoint_path / INTERCHANGE_MANIFEST_FILENAME
                 ),
@@ -1724,6 +1732,25 @@ def create_app() -> Any:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except (TypeError, ValueError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/reset")
+    async def reset(
+        authorization: str | None = Header(default=None),
+    ) -> dict[str, Any]:
+        """Reset native action queues before a sealed rollout episode."""
+
+        authorize(authorization)
+        if policy is None:
+            raise HTTPException(
+                status_code=503,
+                detail="NPA_POLICY_CHECKPOINT is required for reset",
+            )
+        policy.reset()
+        return {
+            "status": "reset",
+            "policy_identity": policy.manifest["policy_identity"],
+            "checkpoint_sha256": policy.manifest["checkpoint_sha256"],
+        }
 
     @app.post("/rollout")
     async def rollout(

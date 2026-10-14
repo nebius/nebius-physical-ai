@@ -37,12 +37,47 @@ class SmolVLAPolicyClient:
         if not host.strip() or not 0 < port < 65536 or timeout_s <= 0:
             raise SmolVLAPolicyClientError("invalid SmolVLA service endpoint")
         self._url = f"http://{host}:{port}/infer-typed"
+        self._reset_url = f"http://{host}:{port}/reset"
         self._token = token
         self._timeout_s = timeout_s
         self.metadata = {
             "backend": "lerobot_smolvla",
             "deterministic_noise_protocol": None,
             "repeated_paired_trials_required": True,
+        }
+
+    def reset(self, *, policy: Any) -> dict[str, Any]:
+        """Reset the native action queue and verify the loaded policy identity."""
+
+        request = urllib.request.Request(
+            self._reset_url,
+            data=b"{}",
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {self._token}",
+                "Content-Type": "application/json",
+            },
+        )
+        try:
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            with opener.open(request, timeout=self._timeout_s) as response:
+                body = response.read()
+            payload = json.loads(body)
+        except (OSError, urllib.error.HTTPError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise SmolVLAPolicyClientError(
+                f"SmolVLA reset request failed: {exc}"
+            ) from exc
+        if (
+            payload.get("status") != "reset"
+            or payload.get("policy_identity") != policy.identity
+            or payload.get("checkpoint_sha256") != policy.checkpoint_sha256
+        ):
+            raise SmolVLAPolicyClientError(
+                "SmolVLA reset receipt does not match the selected policy"
+            )
+        return {
+            **payload,
+            "receipt_sha256": hashlib.sha256(body).hexdigest(),
         }
 
     def infer_typed(self, *, observation: Any, policy: Any) -> tuple[Any, dict[str, Any]]:
@@ -87,11 +122,13 @@ class SmolVLAPolicyClient:
             raise SmolVLAPolicyClientError(
                 "SmolVLA response identities do not match the request/profile"
             )
+        latency_ms = round((time.perf_counter() - started) * 1000.0, 3)
         return output, {
             "backend": "lerobot_smolvla",
             "request_sha256": hashlib.sha256(body).hexdigest(),
             "response_sha256": hashlib.sha256(response_body).hexdigest(),
-            "latency_ms": round((time.perf_counter() - started) * 1000.0, 3),
+            "latency_ms": latency_ms,
+            "round_trip_ms": latency_ms,
             "deterministic_noise_coupled": False,
             "repeated_paired_trials_required": True,
             "camera_sha256": {

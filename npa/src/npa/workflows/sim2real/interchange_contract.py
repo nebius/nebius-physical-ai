@@ -370,6 +370,76 @@ class RobotSensorProfile:
         }
 
 
+def robot_sensor_profile_from_dict(value: Mapping[str, Any]) -> RobotSensorProfile:
+    """Rebuild a validated robot/sensor profile from durable preparation bytes."""
+
+    gripper = value.get("gripper")
+    cameras = value.get("cameras")
+    if not isinstance(gripper, Mapping) or not isinstance(cameras, list):
+        raise InterchangeContractError("robot preparation lacks gripper/camera data")
+    return RobotSensorProfile(
+        identity=str(value.get("identity") or ""),
+        bundle_sha256=str(value.get("bundle_sha256") or ""),
+        source_sha256=str(value.get("source_sha256") or ""),
+        fixed_base=bool(value.get("fixed_base", False)),
+        base_link=str(value.get("base_link") or ""),
+        ee_link=str(value.get("ee_link") or ""),
+        arm_joint_names=tuple(value.get("arm_joint_names") or ()),
+        measured_joint_names=tuple(value.get("measured_joint_names") or ()),
+        joint_limits_rad=tuple(
+            tuple(float(item) for item in row)
+            for row in value.get("joint_limits_rad") or ()
+        ),
+        home_positions_rad=tuple(value.get("home_positions_rad") or ()),
+        controller_representation=str(value.get("controller_representation") or ""),
+        gripper=GripperMapping(
+            joint_names=tuple(gripper.get("joint_names") or ()),
+            joint_units=tuple(gripper.get("joint_units") or ()),
+            finger_links=tuple(gripper.get("finger_links") or ()),
+            open_joint_positions=tuple(gripper.get("open_joint_positions") or ()),
+            closed_joint_positions=tuple(gripper.get("closed_joint_positions") or ()),
+            maximum_width_m=float(gripper.get("maximum_width_m", math.nan)),
+            model_semantics=str(gripper.get("model_semantics") or ""),
+            model_open=float(gripper.get("model_open", math.nan)),
+            model_closed=float(gripper.get("model_closed", math.nan)),
+        ),
+        cameras=tuple(
+            CameraView(
+                key=str(camera.get("key") or ""),
+                role=str(camera.get("role") or ""),
+                mount_link=str(camera.get("mount_link") or ""),
+                mount_from_camera=Transform(
+                    tuple(
+                        (camera.get("mount_from_camera") or {}).get(
+                            "translation_m"
+                        )
+                        or ()
+                    ),
+                    tuple(
+                        (camera.get("mount_from_camera") or {}).get(
+                            "quaternion_xyzw"
+                        )
+                        or ()
+                    ),
+                ),
+                intrinsics=tuple(camera.get("intrinsics_fx_fy_cx_cy") or ()),
+                image_size=tuple(camera.get("image_size_wh") or ()),
+                layout=str(camera.get("layout") or ""),
+                mask_key=str(camera.get("mask_key") or ""),
+                capture_timestamp_key=str(
+                    camera.get("capture_timestamp_key") or ""
+                ),
+                state_timestamp_key=str(camera.get("state_timestamp_key") or ""),
+                maximum_state_skew_s=float(
+                    camera.get("maximum_state_skew_s", math.nan)
+                ),
+            )
+            for camera in cameras
+            if isinstance(camera, Mapping)
+        ),
+    )
+
+
 def robot_sensor_profile_from_resolved(
     contract: Mapping[str, Any], *, sensor_config: Mapping[str, Any]
 ) -> RobotSensorProfile:
@@ -842,6 +912,61 @@ class PolicyProfile:
             raise InterchangeContractError("checkpoint identity must be SHA-256")
         _names(self.camera_keys, name="policy camera_keys")
         _names(self.measured_state_names, name="policy measured_state_names")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "backend": self.backend,
+            "identity": self.identity,
+            "checkpoint_sha256": self.checkpoint_sha256,
+            "robot_identity": self.robot_identity,
+            "task_identity": self.task_identity,
+            "camera_keys": list(self.camera_keys),
+            "measured_state_names": list(self.measured_state_names),
+            "action": self.action.to_dict(),
+            "capabilities": self.capabilities.to_dict(),
+            "normalization_identity": self.normalization_identity,
+        }
+
+
+def policy_profile_from_dict(value: Mapping[str, Any]) -> PolicyProfile:
+    """Rebuild a validated policy profile without backend-specific defaults."""
+
+    action = value.get("action")
+    capabilities = value.get("capabilities")
+    if not isinstance(action, Mapping) or not isinstance(capabilities, Mapping):
+        raise InterchangeContractError("policy preparation is incomplete")
+    return PolicyProfile(
+        backend=str(value.get("backend") or ""),
+        identity=str(value.get("identity") or ""),
+        checkpoint_sha256=str(value.get("checkpoint_sha256") or ""),
+        robot_identity=str(value.get("robot_identity") or ""),
+        task_identity=str(value.get("task_identity") or ""),
+        camera_keys=tuple(value.get("camera_keys") or ()),
+        measured_state_names=tuple(value.get("measured_state_names") or ()),
+        action=PolicyAction(
+            representation=str(action.get("representation") or ""),
+            names=tuple(action.get("names") or ()),
+            units=tuple(action.get("units") or ()),
+            frame=str(action.get("frame") or ""),
+            gripper_semantics=str(action.get("gripper_semantics") or ""),
+            horizon=int(action.get("horizon") or 0),
+            control_hz=float(action.get("control_hz") or 0.0),
+            execute_prefix=int(action.get("execute_prefix") or 0),
+        ),
+        capabilities=PolicyCapabilities(
+            inference=bool(capabilities.get("inference")),
+            native_training=bool(capabilities.get("native_training")),
+            checkpoint_reload=bool(capabilities.get("checkpoint_reload")),
+            model_loss=bool(capabilities.get("model_loss")),
+            action_metrics=bool(capabilities.get("action_metrics")),
+            deterministic_noise_coupling=bool(
+                capabilities.get("deterministic_noise_coupling")
+            ),
+            repeated_paired_trials=bool(capabilities.get("repeated_paired_trials")),
+            hardware_topologies=tuple(capabilities.get("hardware_topologies") or ()),
+        ),
+        normalization_identity=str(value.get("normalization_identity") or ""),
+    )
 
 
 @dataclass(frozen=True)

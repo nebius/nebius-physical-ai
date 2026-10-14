@@ -211,6 +211,26 @@ def test_checkpoint_features_must_match_camera_state_and_action_dimensions() -> 
         _validate_native_policy_features(policy, manifest)
 
 
+def test_native_runtime_reset_clears_policy_and_processor_queues() -> None:
+    from npa.workbench.lerobot.policy_container import LeRobotPolicyRuntime
+
+    calls: list[str] = []
+
+    class Component:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def reset(self) -> None:
+            calls.append(self.name)
+
+    runtime = object.__new__(LeRobotPolicyRuntime)
+    runtime.policy = Component("policy")
+    runtime.preprocessor = Component("preprocessor")
+    runtime.postprocessor = Component("postprocessor")
+    runtime.reset()
+    assert calls == ["policy", "preprocessor", "postprocessor"]
+
+
 def test_real_image_decode_and_stale_camera_rejection() -> None:
     pytest.importorskip("torch")
     manifest = _manifest("a" * 64)

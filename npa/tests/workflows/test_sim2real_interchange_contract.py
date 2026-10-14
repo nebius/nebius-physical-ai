@@ -23,9 +23,11 @@ from npa.workflows.sim2real.interchange_contract import (
     Transform,
     assert_policy_compatible,
     assert_surface_placement_compatible,
-    policy_output_from_wire,
-    rigid_object_profile_from_asset_manifest,
     policy_observation_from_wire,
+    policy_output_from_wire,
+    policy_profile_from_dict,
+    rigid_object_profile_from_asset_manifest,
+    robot_sensor_profile_from_dict,
     robot_sensor_profile_from_resolved,
     validate_observation,
 )
@@ -241,6 +243,13 @@ def test_normalized_open_gripper_endpoints_are_not_silently_reversed() -> None:
     assert gripper.model_to_joint_positions(0.0) == pytest.approx((0.8,))
     with pytest.raises(InterchangeContractError, match="open=1, closed=0"):
         replace(gripper, model_open=0.0, model_closed=1.0)
+
+
+def test_durable_robot_and_policy_profiles_round_trip_without_defaults() -> None:
+    robot = _robot(6)
+    policy = _policy(robot)
+    assert robot_sensor_profile_from_dict(robot.to_dict()) == robot
+    assert policy_profile_from_dict(policy.to_dict()) == policy
 
 
 def test_one_driver_parallel_jaw_gripper_is_supported() -> None:

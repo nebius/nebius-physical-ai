@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import hashlib
 import json
 import os
@@ -69,6 +70,12 @@ from npa.workflows.sim2real.pi05_isaac import (
     support_surface_contract,
 )
 from npa.workflows.sim2real.pi05_policy_client import Pi05PolicyClient
+from npa.workflows.sim2real.interchange_contract import (
+    policy_profile_from_dict,
+    robot_sensor_profile_from_dict,
+    validate_observation,
+)
+from npa.workflows.sim2real.smolvla_policy_client import SmolVLAPolicyClient
 
 
 PROMPT = (
@@ -541,6 +548,15 @@ def _query_policy(
 def _infer_query(context: dict, decision: int, observation: tuple, receipts: dict):
     exterior, wrist, joint, gripper = observation
     policy_wrist, intervention = _wrist_variant(context, wrist, decision)
+    if context.get("policy_backend") == "lerobot_smolvla":
+        return _infer_smolvla_query(
+            context,
+            decision,
+            exterior,
+            policy_wrist,
+            receipts,
+            intervention,
+        )
     sampling_noise, sampling_sequence = _decision_noise(context, decision)
     actions, inference = context["client"].infer(
         exterior=exterior,
@@ -553,6 +569,82 @@ def _infer_query(context: dict, decision: int, observation: tuple, receipts: dic
         sampling_noise=sampling_noise,
         sampling_sequence=sampling_sequence,
     )
+    inference["wrist_intervention"] = intervention
+    return actions, inference
+
+
+def _infer_smolvla_query(
+    context: dict[str, Any],
+    decision: int,
+    exterior: Any,
+    wrist: Any,
+    receipts: dict[str, Any],
+    intervention: dict[str, Any],
+) -> tuple[Any, dict[str, Any]]:
+    """Run the typed SmolVLA seam without inventing OpenPI sampler noise."""
+
+    import numpy as np
+
+    native = context["native"]
+    robot_profile = context["robot_profile"]
+    policy_profile = context["policy_profile"]
+    robot = native.scene["robot"]
+    names = list(robot.joint_names)
+    state = _proxy_torch(robot.data.joint_pos)[
+        0, [names.index(name) for name in robot_profile.measured_joint_names]
+    ].detach().cpu().numpy()
+    state_map = {
+        name: float(value)
+        for name, value in zip(
+            robot_profile.measured_joint_names, state, strict=True
+        )
+    }
+    frames_by_role = {"exterior": exterior, "wrist": wrist}
+    camera_payloads = {}
+    for camera in robot_profile.cameras:
+        frame = np.ascontiguousarray(frames_by_role[camera.role], dtype=np.uint8)
+        receipt = receipts[camera.role]
+        camera_payloads[camera.key] = {
+            "layout": camera.layout,
+            "image_size_wh": list(camera.image_size),
+            "mask": True,
+            "capture_timestamp_s": receipt["capture_time_s"],
+            "state_timestamp_s": receipt["observation_time_s"],
+            "rgb8": frame.tobytes(),
+            "image_sha256": hashlib.sha256(frame.tobytes()).hexdigest(),
+        }
+    observation = validate_observation(
+        robot=robot_profile,
+        policy=policy_profile,
+        camera_payloads=camera_payloads,
+        measured_state=state_map,
+        prompt=PROMPT,
+        input_identity=(
+            f"scene-{context['scenario_seed']}-decision-{decision}-"
+            f"{context['wrist_mode']}"
+        ),
+        task_identity=policy_profile.task_identity,
+    )
+    output, inference = context["client"].infer_typed(
+        observation=observation, policy=policy_profile
+    )
+    actions = np.asarray(output.action_chunk, dtype=np.float64)
+    inference["wire_input"] = {
+        "schema": "npa.sim2real.policy_observation_receipt.v1",
+        "input_identity": observation.input_identity,
+        "exterior_rgb_sha256": next(
+            view.rgb_sha256 for view in observation.views if view.role == "exterior"
+        ),
+        "wrist_rgb_sha256": next(
+            view.rgb_sha256 for view in observation.views if view.role == "wrist"
+        ),
+        "capture_age_s": next(
+            view.state_timestamp_s - view.capture_timestamp_s
+            for view in observation.views
+            if view.role == "wrist"
+        ),
+        "measured_state_names": list(observation.measured_state_names),
+    }
     inference["wrist_intervention"] = intervention
     return actions, inference
 
@@ -592,7 +684,10 @@ def _write_failed_camera_evidence(work: Path, episodes: list[dict]) -> list[dict
 
 def _execute_prefix(context: dict[str, Any], actions: Any, query: dict) -> bool:
     bridge = context["bridge"]
-    target, selection = _temporally_ensembled_target(context, actions, query)
+    if context.get("policy_backend") == "lerobot_smolvla":
+        target, selection = _current_action_target(actions, query)
+    else:
+        target, selection = _temporally_ensembled_target(context, actions, query)
     query["action_selection"] = selection
     for index, target in enumerate([target]):
         query["attempted_prefix"] = index + 1
@@ -626,6 +721,41 @@ def _execute_prefix(context: dict[str, Any], actions: Any, query: dict) -> bool:
         if proof["terminated"] or proof["truncated"]:
             return True
     return False
+
+
+def _current_action_target(
+    actions: Any, query: dict[str, Any]
+) -> tuple[Any, dict[str, Any]]:
+    """Apply the current native SmolVLA action; its queue lives in the runtime."""
+
+    import numpy as np
+
+    value = np.ascontiguousarray(actions, dtype=np.float64)
+    if value.shape != (1, 8) or not np.isfinite(value).all():
+        raise RuntimeError("SmolVLA must return one finite current 8D action")
+    target = value[0].copy()
+    return target, {
+        "schema": "npa.sim2real.current_native_action.v1",
+        "method": "native_policy_queue_current_action",
+        "fresh_observation_per_control": True,
+        "causality": "current_observation_and_native_policy_history",
+        "decision": int(query["decision"]),
+        "contributor_count": 1,
+        "contributors": [
+            {
+                "origin_decision": int(query["decision"]),
+                "action_index": 0,
+                "chunk_sha256": query["action_receipt"]["sha256"],
+            }
+        ],
+        "weight_per_contributor": 1.0,
+        "applied_action_sha256": hashlib.sha256(target.tobytes()).hexdigest(),
+        "applied_action_dtype": str(target.dtype),
+        "applied_action_shape": list(target.shape),
+        "applied_action": target.tolist(),
+        "applied_gripper_score": float(target[7]),
+        "applied_gripper_command": int(float(target[7]) > 0.5),
+    }
 
 
 def _temporally_ensembled_target(
@@ -747,9 +877,11 @@ def _finish_episode(record: dict[str, Any]) -> dict[str, Any]:
     times = [row["observation_time_s"] for row in record["queries"]]
     record["measured_requery_sim_seconds"] = [b - a for a, b in zip(times, times[1:])]
     record["receding_horizon"] = {
-        "model_horizon": ACTION_HORIZON,
+        "model_horizon": record.get("model_horizon", ACTION_HORIZON),
         "configured_execute_prefix": EXECUTION_PREFIX,
-        "action_selection": _action_selection_protocol(),
+        "action_selection": record.get(
+            "action_selection_protocol", _action_selection_protocol()
+        ),
     }
     return record
 
@@ -763,8 +895,13 @@ def _episode(
     wrist_mode: str,
     ablation_seed: int,
     object_width_m: float,
+    *,
+    robot_profile: Any = None,
+    policy_profile: Any = None,
 ) -> dict[str, Any]:
     native = env.unwrapped
+    if getattr(client, "metadata", {}).get("backend") == "lerobot_smolvla":
+        record["policy_reset"] = client.reset(policy=policy_profile)
     bridge = _joint_bridge(native)
     settle = _settle_policy_reset(env, bridge)
     record["hand_origin_control"] = _hand_origin_control_receipt(
@@ -784,6 +921,8 @@ def _episode(
         object_width_m,
         wrist_mode,
         ablation_seed,
+        robot_profile=robot_profile,
+        policy_profile=policy_profile,
     )
     record["wrist_ablation_mode"] = wrist_mode
     record["scenario_seed"] = int(scenario["scene_seed"])
@@ -805,9 +944,21 @@ def _episode_context(
     object_width_m: float,
     wrist_mode: str,
     ablation_seed: int,
+    *,
+    robot_profile: Any = None,
+    policy_profile: Any = None,
 ) -> dict[str, Any]:
     import numpy as np
 
+    backend = getattr(client, "metadata", {}).get("backend", "openpi_pi05")
+    if backend == "lerobot_smolvla":
+        record["model_horizon"] = policy_profile.action.horizon
+        record["action_selection_protocol"] = {
+            "schema": "npa.sim2real.current_native_action.v1",
+            "method": "native_policy_queue_current_action",
+            "fresh_observation_per_control": True,
+            "causality": "current_observation_and_native_policy_history",
+        }
     return {
         "env": env,
         "native": native,
@@ -821,6 +972,9 @@ def _episode_context(
         "ablation_seed": ablation_seed,
         "scenario_seed": int(scenario["scene_seed"]),
         "frozen_wrist": None,
+        "policy_backend": backend,
+        "robot_profile": robot_profile,
+        "policy_profile": policy_profile,
     }
 
 
@@ -1356,6 +1510,9 @@ def _evaluate(
     client: Pi05PolicyClient,
     args: argparse.Namespace,
     protocol: dict[str, Any],
+    *,
+    robot_profile: Any = None,
+    policy_profile: Any = None,
 ) -> list[dict[str, Any]]:
     episodes = []
     for mode in args.wrist_ablation_modes:
@@ -1372,6 +1529,14 @@ def _evaluate(
                     mode,
                     args.ablation_seed + index,
                     float(protocol["object_width_m"]),
+                    **(
+                        {
+                            "robot_profile": robot_profile,
+                            "policy_profile": policy_profile,
+                        }
+                        if robot_profile is not None or policy_profile is not None
+                        else {}
+                    ),
                 )
             except Exception as exc:
                 record.update(
@@ -1392,6 +1557,20 @@ def _evaluate(
 
 
 def _checkpoint_provenance(receipt: dict[str, Any]) -> dict[str, Any]:
+    if receipt.get("schema") == "npa.sim2real.smolvla_service_start.v1":
+        interchange = receipt.get("interchange") or {}
+        result = {
+            "source_commit": receipt.get("source_commit"),
+            "config_name": interchange.get("policy_identity"),
+            "checkpoint_role": receipt.get("checkpoint_role"),
+            "checkpoint_sha256": interchange.get("checkpoint_sha256"),
+            "checkpoint_manifest_sha256": interchange.get("manifest_sha256"),
+            "normalization_identity": interchange.get("normalization_identity"),
+            "image_digest": receipt.get("runtime_image"),
+        }
+        if any(not result.get(key) for key in result):
+            raise RuntimeError("SmolVLA service receipt lacks immutable provenance")
+        return result
     keys = (
         "source_commit",
         "config_name",
@@ -1417,9 +1596,31 @@ def _result(
 ) -> dict[str, Any]:
     passes = sum(_episode_passed(row) for row in episodes)
     grouped = _ablation_groups(episodes, args.wrist_ablation_modes)
-    noise_pairing = _sampler_noise_pairing(episodes, args.wrist_ablation_modes)
+    policy_backend = getattr(args, "policy_backend", "openpi_pi05")
+    if policy_backend == "lerobot_smolvla":
+        noise_pairing = {
+            "sampler_noise_identity_verified": False,
+            "sampler_noise_protocol": "unavailable_for_native_smolvla",
+            "paired_trial_protocol": "independently_seeded_repeated_matched_scenarios",
+            "paired_trial_seeds": sorted(
+                {int(row["scenario_seed"]) for row in episodes}
+            ),
+        }
+        qualification = "matched_repeated_trials_without_noise_coupling"
+        schema = "npa.sim2real.policy_interchange.closed_loop_eval.v1"
+        comparison = "same surface task and physical controller semantics only"
+    else:
+        noise_pairing = _sampler_noise_pairing(episodes, args.wrist_ablation_modes)
+        qualification = (
+            "matched_effectiveness_eligible"
+            if noise_pairing["sampler_noise_identity_verified"]
+            else "effectiveness_claim_rejected_without_sampler_noise_identity"
+        )
+        schema = "npa.sim2real.pi05.closed_loop_eval.v1"
+        comparison = "same pi0.5 surface task only"
     return {
-        "schema": "npa.sim2real.pi05.closed_loop_eval.v1",
+        "schema": schema,
+        "policy_backend": policy_backend,
         "checkpoint_role": args.checkpoint_role,
         "split": args.split,
         "checkpoint_provenance": _checkpoint_provenance(receipt),
@@ -1433,13 +1634,9 @@ def _result(
             "same_initial_object_poses": True,
             **noise_pairing,
             "per_mode": grouped,
-            "qualification": (
-                "matched_effectiveness_eligible"
-                if noise_pairing["sampler_noise_identity_verified"]
-                else "effectiveness_claim_rejected_without_sampler_noise_identity"
-            ),
+            "qualification": qualification,
         },
-        "task_comparison": "same pi0.5 surface task only",
+        "task_comparison": comparison,
         "physical_robot_deployment": False,
         "episodes": episodes,
         "review_artifacts": artifacts,
@@ -1949,6 +2146,7 @@ def _persist_evaluation(
     from npa.clients.storage import StorageClient
     from npa.workflows.sim2real.workflow_io import (
         PI05_COMPONENT_SCHEMA,
+        POLICY_INTERCHANGE_COMPONENT_SCHEMA,
         publish_component_record,
     )
 
@@ -1956,14 +2154,25 @@ def _persist_evaluation(
         str(work), args.artifact_root_uri, require_empty=True
     )
     stage = 6 if args.checkpoint_role == "base" else 11
+    interchange = getattr(args, "policy_backend", "openpi_pi05") == "lerobot_smolvla"
     publish_component_record(
-        component_schema=PI05_COMPONENT_SCHEMA,
+        component_schema=(
+            POLICY_INTERCHANGE_COMPONENT_SCHEMA if interchange else PI05_COMPONENT_SCHEMA
+        ),
         root_uri=args.component_root_uri,
         stage=stage,
-        name=f"pi05_{args.checkpoint_role}_closed_loop_gold",
+        name=(
+            f"smolvla_{args.checkpoint_role}_closed_loop_gold"
+            if interchange
+            else f"pi05_{args.checkpoint_role}_closed_loop_gold"
+        ),
         tier="WORKS",
         require_gpu=True,
-        evidence="Ran receding-horizon pi0.5 control and measured released-support physics.",
+        evidence=(
+            "Ran native SmolVLA current-action control and measured released-support physics."
+            if interchange
+            else "Ran receding-horizon pi0.5 control and measured released-support physics."
+        ),
         artifacts={
             "report": args.output_uri,
             "artifacts": args.artifact_root_uri,
@@ -2028,12 +2237,53 @@ def _run_from_receipt(
         or receipt.get("public_ingress") is not False
         or receipt.get("application_authentication") != "kubernetes_secret_bearer"
     ):
-        raise RuntimeError("OpenPI service receipt is not a ready private service")
-    client = Pi05PolicyClient(
-        str(receipt["service_host"]), int(receipt["service_port"])
-    )
+        raise RuntimeError("policy service receipt is not a ready private service")
+    robot_profile = policy_profile = None
+    if args.policy_backend == "lerobot_smolvla":
+        if not args.preparation_uri:
+            raise RuntimeError("SmolVLA evaluation requires --preparation-uri")
+        preparation = read_json(args.preparation_uri, directory=work / "preparation")
+        robot_profile = robot_sensor_profile_from_dict(preparation.get("robot") or {})
+        policy_profile = policy_profile_from_dict(preparation.get("policy") or {})
+        loaded = receipt.get("interchange") or {}
+        if (
+            policy_profile.backend != "lerobot_smolvla"
+            or loaded.get("policy_identity") != policy_profile.identity
+            or loaded.get("robot_identity") != robot_profile.identity
+            or loaded.get("task_identity") != policy_profile.task_identity
+            or loaded.get("action") != policy_profile.action.to_dict()
+            or loaded.get("measured_state_names")
+            != list(policy_profile.measured_state_names)
+            or [row.get("key") for row in loaded.get("cameras") or []]
+            != list(policy_profile.camera_keys)
+        ):
+            raise RuntimeError("SmolVLA service differs from prepared policy")
+        policy_profile = replace(
+            policy_profile,
+            checkpoint_sha256=str(loaded.get("checkpoint_sha256") or ""),
+            normalization_identity=str(
+                loaded.get("normalization_identity") or ""
+            ),
+        )
+        client = SmolVLAPolicyClient(
+            str(receipt["service_host"]), int(receipt["port"])
+        )
+    else:
+        client = Pi05PolicyClient(
+            str(receipt["service_host"]), int(receipt["service_port"])
+        )
     protocol = _load_gold_protocol(args, work)
-    return _run_evaluation(args, work, receipt, client, protocol, gym, parse_env_cfg)
+    return _run_evaluation(
+        args,
+        work,
+        receipt,
+        client,
+        protocol,
+        gym,
+        parse_env_cfg,
+        robot_profile=robot_profile,
+        policy_profile=policy_profile,
+    )
 
 
 def _run_evaluation(
@@ -2044,6 +2294,9 @@ def _run_evaluation(
     protocol: dict[str, Any],
     gym: Any,
     parse_env_cfg: Any,
+    *,
+    robot_profile: Any = None,
+    policy_profile: Any = None,
 ) -> dict[str, Any]:
     cfg = parse_env_cfg(POLICY_BASE_TASK_ID, device="cuda:0", num_envs=1)
     _configure_eval(cfg, args, protocol)
@@ -2055,7 +2308,14 @@ def _run_evaluation(
         _verify_scene_semantics(env.unwrapped)
         _validate_eval_geometry(env.unwrapped, protocol)
         _validate_eval_robot_plant(env.unwrapped, protocol)
-        episodes = _evaluate(env, client, args, protocol)
+        episodes = _evaluate(
+            env,
+            client,
+            args,
+            protocol,
+            robot_profile=robot_profile,
+            policy_profile=policy_profile,
+        )
         try:
             artifacts = _write_review_artifacts(work, episodes, args.checkpoint_role)
             result = _result(args, episodes, artifacts, protocol, receipt)
@@ -2072,6 +2332,12 @@ def build_parser() -> argparse.ArgumentParser:
     """Build the CLI. Args: None. Returns: Parser. Raises: None."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--service-receipt-uri", required=True)
+    parser.add_argument(
+        "--policy-backend",
+        choices=("openpi_pi05", "lerobot_smolvla"),
+        default="openpi_pi05",
+    )
+    parser.add_argument("--preparation-uri", default="")
     parser.add_argument("--gold-collection-uri", required=True)
     parser.add_argument("--output-uri", required=True)
     parser.add_argument("--artifact-root-uri", required=True)
@@ -2110,8 +2376,13 @@ def validate_success_report(report: dict[str, Any], args: argparse.Namespace) ->
     """Reject absent, failed, or incomplete post-Kit output."""
     expected = args.episodes * len(args.wrist_ablation_modes)
     artifacts = report.get("review_artifacts") or {}
+    expected_schema = (
+        "npa.sim2real.policy_interchange.closed_loop_eval.v1"
+        if getattr(args, "policy_backend", "openpi_pi05") == "lerobot_smolvla"
+        else "npa.sim2real.pi05.closed_loop_eval.v1"
+    )
     if (
-        report.get("schema") != "npa.sim2real.pi05.closed_loop_eval.v1"
+        report.get("schema") != expected_schema
         or report.get("checkpoint_role") != args.checkpoint_role
         or report.get("split") != args.split
         or report.get("episode_count") != expected

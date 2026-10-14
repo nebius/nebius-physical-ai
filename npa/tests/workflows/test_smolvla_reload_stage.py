@@ -56,7 +56,12 @@ def _preparation() -> dict:
             "task_identity": "surface-place-1",
             "checkpoint_sha256": "a" * 64,
             "normalization_identity": "b" * 64,
-        }
+        },
+        "policy": {
+            "action": {"names": ["j1", "gripper"]},
+            "measured_state_names": ["j1", "finger"],
+            "camera_keys": ["wrist"],
+        },
     }
 
 

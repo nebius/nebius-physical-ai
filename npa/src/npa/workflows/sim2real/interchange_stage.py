@@ -158,6 +158,7 @@ def build_preparation(profile_root: Path, *, run_id: str) -> dict[str, Any]:
         "run_id": run_id,
         "backend": backend.to_dict(),
         "robot": robot.to_dict(),
+        "policy": policy.to_dict(),
         "object": prop.to_dict(),
         "task": {
             "identity": task.identity,

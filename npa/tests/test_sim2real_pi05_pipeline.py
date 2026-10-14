@@ -850,6 +850,60 @@ def _effectiveness_report(role: str, successes: dict[str, set[int]]) -> dict:
     return pi05_closed_loop._result(args, episodes, artifacts, protocol, receipt)
 
 
+def test_smolvla_uses_current_native_action_without_fake_noise_pairing() -> None:
+    actions = np.arange(8, dtype=np.float64).reshape(1, 8)
+    action_receipt = pi05_closed_loop._action_receipt(actions)
+    target, selection = pi05_closed_loop._current_action_target(
+        actions, {"decision": 4, "action_receipt": action_receipt}
+    )
+    assert target.tolist() == list(range(8))
+    assert selection["method"] == "native_policy_queue_current_action"
+    assert selection["contributor_count"] == 1
+
+
+def test_smolvla_report_discloses_repeated_trials_not_noise_coupling() -> None:
+    modes = list(pi05_closed_loop.WRIST_ABLATION_MODES)
+    episodes = [
+        _comparison_episode(mode, seed, False)
+        for mode in modes
+        for seed in (20281007, 20281008)
+    ]
+    args = Namespace(
+        checkpoint_role="base",
+        split="gold",
+        wrist_ablation_modes=modes,
+        policy_backend="lerobot_smolvla",
+    )
+    receipt = {
+        "schema": "npa.sim2real.smolvla_service_start.v1",
+        "source_commit": "c" * 40,
+        "checkpoint_role": "base",
+        "runtime_image": "registry.example/smolvla@sha256:" + "d" * 64,
+        "interchange": {
+            "policy_identity": "smolvla-franka",
+            "checkpoint_sha256": "a" * 64,
+            "manifest_sha256": "b" * 64,
+            "normalization_identity": "e" * 64,
+        },
+    }
+    result = pi05_closed_loop._result(
+        args,
+        episodes,
+        {"mp4": {"bytes": 1}, "rrd": {"bytes": 1}},
+        _comparison_protocol(),
+        receipt,
+    )
+    assert result["schema"] == (
+        "npa.sim2real.policy_interchange.closed_loop_eval.v1"
+    )
+    ablation = result["wrist_ablation"]
+    assert ablation["sampler_noise_identity_verified"] is False
+    assert ablation["paired_trial_protocol"].startswith("independently_seeded")
+    assert ablation["qualification"] == (
+        "matched_repeated_trials_without_noise_coupling"
+    )
+
+
 def test_final_comparison_uses_validated_fresh_wrist_metric() -> None:
     baseline = _effectiveness_report("base", {"frozen": {20281007, 20281008}})
     adapted = _effectiveness_report("adapted", {"fresh": {20281007}})
