@@ -686,7 +686,7 @@ jobs:
           labels = config.get("Labels") or {}
           if labels.get("org.opencontainers.image.revision") != sha:
               raise SystemExit("OCI revision does not match the exact source commit")
-          if tool in {"isaac-lab", "openpi", "rerun-viewer"}:
+          if tool in {"isaac-lab", "lerobot", "openpi", "rerun-viewer"}:
               runtime_source = [
                   item.partition("=")[2]
                   for item in config.get("Env") or []

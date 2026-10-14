@@ -3,6 +3,7 @@
 FROM nvidia/cuda:12.4.1-devel-ubuntu22.04@sha256:da6791294b0b04d7e65d87b7451d6f2390b4d36225ab0701ee7dfec5769829f5
 
 ARG LEROBOT_VERSION=0.5.1
+ARG NPA_SOURCE_SHA=unknown
 
 LABEL npa.tool="lerobot" \
       npa.version="${LEROBOT_VERSION}"
@@ -18,6 +19,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NPA_JOB_STATUS_DIR=/opt/lerobot/job_status \
     NPA_LOG_DIR=/var/log/npa-lerobot \
     NPA_LEROBOT_VERSION=${LEROBOT_VERSION} \
+    NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
     IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -117,9 +119,8 @@ ENV PATH=/opt/lerobot/venv/bin:$PATH \
     NPA_SKIP_EAGER_IMPORTS=1
 
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
-COPY --chown=ubuntu:ubuntu src/npa/__init__.py /opt/npa/src/npa/__init__.py
-COPY --chown=ubuntu:ubuntu src/npa/server /opt/npa/src/npa/server
-COPY --chown=ubuntu:ubuntu src/npa/smoke /opt/npa/src/npa/smoke
+COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
+COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
 
 RUN python -m npa.smoke.test_lerobot_env
 

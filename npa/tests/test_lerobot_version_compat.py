@@ -109,6 +109,22 @@ def test_060_image_build_and_smoke_cover_real_diffusion_construction() -> None:
     assert "lerobot[training,evaluation,pusht,libero,diffusion,smolvla]" in cloud_init
 
 
+def test_lerobot_image_bakes_exact_npa_workflow_source() -> None:
+    root = Path(__file__).resolve().parents[2]
+    dockerfile = (root / "npa/docker/workbench/lerobot/Dockerfile").read_text(
+        encoding="utf-8"
+    )
+    publication = (root / ".github/workflows/publish-public-images.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "ARG NPA_SOURCE_SHA=unknown" in dockerfile
+    assert "NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA}" in dockerfile
+    assert "COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa" in dockerfile
+    assert "COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows" in dockerfile
+    assert '{"isaac-lab", "lerobot", "openpi", "rerun-viewer"}' in publication
+
+
 def test_unsupported_version_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("NPA_LEROBOT_VERSION", raising=False)
     with pytest.raises(LeRobotVersionError, match="Unsupported"):
