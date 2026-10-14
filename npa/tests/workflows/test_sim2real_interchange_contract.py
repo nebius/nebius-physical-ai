@@ -18,6 +18,7 @@ from npa.workflows.sim2real.interchange_contract import (
     SurfacePlacementTask,
     Transform,
     assert_policy_compatible,
+    rigid_object_profile_from_asset_manifest,
     robot_sensor_profile_from_resolved,
     validate_observation,
 )
@@ -62,6 +63,7 @@ def _robot(dof: int = 7) -> RobotSensorProfile:
         controller_representation="absolute_joint_position",
         gripper=GripperMapping(
             joint_names=fingers,
+            finger_links=("left_finger", "right_finger"),
             open_joint_positions=(0.03, 0.03),
             closed_joint_positions=(0.0, 0.0),
             maximum_width_m=0.06,
@@ -134,6 +136,7 @@ def test_profile_consumes_canonical_resolved_robot_without_franka_defaults() -> 
             "ee_link": "tool0",
             "arm_joint_names": ["a1", "a2", "a3", "a4", "a5", "a6"],
             "gripper_joint_names": ["finger_a", "finger_b"],
+            "finger_links": ["left_finger", "right_finger"],
             "home_qpos": [0.0] * 6 + [0.025, 0.025],
             "gripper_commands": {"open": 0.025, "close": 0.0},
             "source": {
@@ -168,6 +171,7 @@ def test_resolved_robot_requires_explicit_actual_joint_limits() -> None:
             "ee_link": "tool0",
             "arm_joint_names": ["a1"] * 6,
             "gripper_joint_names": ["finger_a", "finger_b"],
+            "finger_links": ["left_finger", "right_finger"],
             "home_qpos": [0.0] * 8,
             "gripper_commands": {"open": 0.025, "close": 0.0},
             "source": {
@@ -212,12 +216,27 @@ def test_gripper_width_mapping_uses_declared_non_franka_aperture() -> None:
         gripper.width_to_model(0.08)
 
 
+def test_one_driver_parallel_jaw_gripper_is_supported() -> None:
+    gripper = GripperMapping(
+        joint_names=("finger_driver",),
+        finger_links=("left_pad", "right_pad"),
+        open_joint_positions=(0.0,),
+        closed_joint_positions=(0.8,),
+        maximum_width_m=0.085,
+        model_semantics="normalized_open",
+        model_open=0.0,
+        model_closed=1.0,
+    )
+    assert gripper.model_to_joint_positions(1.0) == pytest.approx((0.8,))
+
+
 def test_unsupported_gripper_is_rejected_during_profile_construction() -> None:
-    with pytest.raises(InterchangeContractError, match="two-joint"):
+    with pytest.raises(InterchangeContractError, match="two physical"):
         GripperMapping(
-            joint_names=("single_finger",),
-            open_joint_positions=(0.02,),
-            closed_joint_positions=(0.0,),
+            joint_names=("finger_driver",),
+            finger_links=("finger_a", "finger_b", "finger_c"),
+            open_joint_positions=(0.0,),
+            closed_joint_positions=(0.8,),
             maximum_width_m=0.04,
             model_semantics="normalized_open",
             model_open=0.0,
@@ -275,6 +294,39 @@ def test_offset_non_cube_object_uses_declared_grasp_and_reference_frames() -> No
     frames = _task().teacher_frames(prop)
     assert frames["object_root_from_grasp"]["translation_m"] == [-0.01, 0.015, 0.04]
     assert frames["object_root_from_reference"]["translation_m"] == [0.02, 0.0, 0.03]
+
+
+def test_sealed_non_cube_asset_requires_explicit_offset_frames() -> None:
+    manifest = {
+        "schema": "npa.franka-rl.assets.v1",
+        "license": "Apache-2.0",
+        "units": "metres",
+        "files": {
+            "assets/spool.usda": DIGEST_A,
+            "assets/bottle.usda": DIGEST_B,
+        },
+    }
+    prop = rigid_object_profile_from_asset_manifest(
+        manifest,
+        target="bottle",
+        source_root_uri="s3://example/sealed",
+        world_from_root=Transform((0.5, 0.0, 0.038), (0.0, 0.0, 0.0, 1.0)),
+        root_from_reference=Transform((0.0, 0.0, -0.038), (0.0, 0.0, 0.0, 1.0)),
+        root_from_grasp=Transform((0.0, 0.0, 0.01), (0.0, 0.0, 0.0, 1.0)),
+        grasp_extents_m=(0.044, 0.044, 0.056),
+    )
+    assert prop.source_sha256 == DIGEST_B
+    assert prop.root_from_reference.translation_m == (0.0, 0.0, -0.038)
+    with pytest.raises(InterchangeContractError, match="not an exact sealed"):
+        rigid_object_profile_from_asset_manifest(
+            manifest,
+            target="cube",
+            source_root_uri="s3://example/sealed",
+            world_from_root=prop.world_from_root,
+            root_from_reference=prop.root_from_reference,
+            root_from_grasp=prop.root_from_grasp,
+            grasp_extents_m=prop.grasp_extents_m,
+        )
 
 
 @pytest.mark.parametrize("kind", ["articulated", "deformable"])

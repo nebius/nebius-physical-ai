@@ -157,6 +157,7 @@ class GripperMapping:
     """Measured parallel-jaw aperture and model-facing scalar semantics."""
 
     joint_names: tuple[str, ...]
+    finger_links: tuple[str, ...]
     open_joint_positions: tuple[float, ...]
     closed_joint_positions: tuple[float, ...]
     maximum_width_m: float
@@ -166,12 +167,14 @@ class GripperMapping:
 
     def __post_init__(self) -> None:
         joints = _names(self.joint_names, name="gripper joint_names")
-        if len(joints) != 2:
+        fingers = _names(self.finger_links, name="gripper finger_links")
+        if len(fingers) != 2:
             raise InterchangeContractError(
-                "surface placement currently supports an explicit two-joint "
-                "parallel-jaw gripper"
+                "surface placement currently supports exactly two physical "
+                "parallel-jaw fingers"
             )
         object.__setattr__(self, "joint_names", joints)
+        object.__setattr__(self, "finger_links", fingers)
         _finite(self.open_joint_positions, size=len(joints), name="gripper open")
         _finite(self.closed_joint_positions, size=len(joints), name="gripper closed")
         width = float(self.maximum_width_m)
@@ -209,6 +212,7 @@ class GripperMapping:
     def to_dict(self) -> dict[str, Any]:
         return {
             "joint_names": list(self.joint_names),
+            "finger_links": list(self.finger_links),
             "open_joint_positions": list(self.open_joint_positions),
             "closed_joint_positions": list(self.closed_joint_positions),
             "maximum_width_m": self.maximum_width_m,
@@ -329,6 +333,7 @@ def robot_sensor_profile_from_resolved(
         )
     arm_names = tuple(embodiment.get("arm_joint_names") or ())
     gripper_names = tuple(embodiment.get("gripper_joint_names") or ())
+    finger_links = tuple(embodiment.get("finger_links") or ())
     limits = sensor_config.get("joint_limits_rad")
     if not isinstance(limits, Sequence) or isinstance(limits, (str, bytes)):
         raise InterchangeContractError(
@@ -393,6 +398,7 @@ def robot_sensor_profile_from_resolved(
         ),  # type: ignore[arg-type]
         gripper=GripperMapping(
             joint_names=gripper_names,
+            finger_links=finger_links,
             open_joint_positions=tuple(open_positions),
             closed_joint_positions=tuple(closed_positions),
             maximum_width_m=float(gripper_config.get("maximum_width_m", math.nan)),
@@ -471,6 +477,65 @@ class RigidObjectProfile:
             "inertia_declared": self.inertia_declared,
             "material_declared": self.material_declared,
         }
+
+
+def rigid_object_profile_from_asset_manifest(
+    manifest: Mapping[str, Any],
+    *,
+    target: str,
+    source_root_uri: str,
+    world_from_root: Transform,
+    root_from_reference: Transform,
+    root_from_grasp: Transform,
+    grasp_extents_m: Sequence[float],
+    scale_xyz: Sequence[float] = (1.0, 1.0, 1.0),
+) -> RigidObjectProfile:
+    """Bind a sealed rigid USD asset to explicit task and grasp frames.
+
+    The reusable boundary consumes an existing asset manifest instead of
+    guessing geometry from a USD filename or visual bounds.  Frame transforms
+    remain task inputs because an asset's root need not be centered on either
+    its stable placement reference or a gripper-compatible grasp.
+    """
+
+    files = manifest.get("files")
+    if not isinstance(files, Mapping) or not files:
+        raise InterchangeContractError("object asset manifest lacks sealed files")
+    selected = f"assets/{target}.usda"
+    source_sha256 = str(files.get(selected) or "")
+    if len(source_sha256) != 64 or any(
+        char not in "0123456789abcdef" for char in source_sha256
+    ):
+        raise InterchangeContractError(
+            f"object target {target!r} is not an exact sealed USD asset"
+        )
+    if manifest.get("license") != "Apache-2.0":
+        raise InterchangeContractError(
+            "object asset manifest must declare its redistributable license"
+        )
+    units = str(manifest.get("units") or "").strip().lower()
+    if units not in {"metres", "meters"}:
+        raise InterchangeContractError("object asset units must be metres")
+    root = source_root_uri.rstrip("/")
+    if not root:
+        raise InterchangeContractError("object source root URI is required")
+    sealed = {str(key): str(value) for key, value in sorted(files.items())}
+    return RigidObjectProfile(
+        identity=f"{manifest.get('schema')}:{target}:{source_sha256}",
+        source_uri=f"{root}/{selected}",
+        source_sha256=source_sha256,
+        bundle_sha256=_sha({"files": sealed}),
+        kind="rigid",
+        units_m_per_unit=1.0,
+        scale_xyz=tuple(scale_xyz),  # type: ignore[arg-type]
+        world_from_root=world_from_root,
+        root_from_reference=root_from_reference,
+        root_from_grasp=root_from_grasp,
+        grasp_extents_m=tuple(grasp_extents_m),  # type: ignore[arg-type]
+        collision_declared=True,
+        inertia_declared=True,
+        material_declared=True,
+    )
 
 
 @dataclass(frozen=True)
