@@ -81,6 +81,7 @@ def _write_profile(root: Path, *, backend: str = "lerobot_smolvla") -> None:
         "task_identity": task_identity,
         "normalization_identity": DIGEST_B,
         "measured_state_names": arm + ["gripper"],
+        "measured_state_units": ["rad"] * 6 + ["normalized_closed"],
         "cameras": [{"key": "scene"}, {"key": "tool"}],
         "action": {
             "representation": "absolute_joint_position",

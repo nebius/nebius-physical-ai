@@ -126,6 +126,7 @@ def smolvla_policy_profile(
         task_identity=str(manifest.get("task_identity") or ""),
         camera_keys=tuple(str(row.get("key") or "") for row in cameras),
         measured_state_names=tuple(manifest.get("measured_state_names") or ()),
+        measured_state_units=tuple(manifest.get("measured_state_units") or ()),
         action=PolicyAction(
             representation=str(action.get("representation") or ""),
             names=tuple(action.get("names") or ()),
@@ -185,6 +186,7 @@ def openpi_pi05_policy_profile(
         task_identity=task.identity,
         camera_keys=tuple(camera.key for camera in robot.cameras),
         measured_state_names=robot.measured_state_names,
+        measured_state_units=robot.measured_state_units,
         action=PolicyAction(
             representation="absolute_joint_position",
             names=robot.action_names,

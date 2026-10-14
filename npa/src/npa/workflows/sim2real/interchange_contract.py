@@ -903,6 +903,7 @@ class PolicyProfile:
     task_identity: str
     camera_keys: tuple[str, ...]
     measured_state_names: tuple[str, ...]
+    measured_state_units: tuple[str, ...]
     action: PolicyAction
     capabilities: PolicyCapabilities
     normalization_identity: str
@@ -923,7 +924,13 @@ class PolicyProfile:
         if len(self.checkpoint_sha256) != 64:
             raise InterchangeContractError("checkpoint identity must be SHA-256")
         _names(self.camera_keys, name="policy camera_keys")
-        _names(self.measured_state_names, name="policy measured_state_names")
+        names = _names(self.measured_state_names, name="policy measured_state_names")
+        if len(self.measured_state_units) != len(names) or any(
+            not str(unit).strip() for unit in self.measured_state_units
+        ):
+            raise InterchangeContractError(
+                "one measured-state unit is required per policy input"
+            )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -934,6 +941,7 @@ class PolicyProfile:
             "task_identity": self.task_identity,
             "camera_keys": list(self.camera_keys),
             "measured_state_names": list(self.measured_state_names),
+            "measured_state_units": list(self.measured_state_units),
             "action": self.action.to_dict(),
             "capabilities": self.capabilities.to_dict(),
             "normalization_identity": self.normalization_identity,
@@ -955,6 +963,7 @@ def policy_profile_from_dict(value: Mapping[str, Any]) -> PolicyProfile:
         task_identity=str(value.get("task_identity") or ""),
         camera_keys=tuple(value.get("camera_keys") or ()),
         measured_state_names=tuple(value.get("measured_state_names") or ()),
+        measured_state_units=tuple(value.get("measured_state_units") or ()),
         action=PolicyAction(
             representation=str(action.get("representation") or ""),
             names=tuple(action.get("names") or ()),
@@ -1245,6 +1254,10 @@ def assert_policy_compatible(
     if policy.measured_state_names != robot.measured_state_names:
         raise InterchangeContractError(
             "policy measured state names/order do not match the embodiment"
+        )
+    if policy.measured_state_units != robot.measured_state_units:
+        raise InterchangeContractError(
+            "policy measured state units do not match the embodiment"
         )
     if policy.action.names != robot.action_names:
         raise InterchangeContractError(

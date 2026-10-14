@@ -140,6 +140,7 @@ def test_smolvla_manifest_preserves_six_dof_names_and_repeated_trials() -> None:
         "task_identity": _task().identity,
         "normalization_identity": DIGEST_B,
         "measured_state_names": list(robot.measured_state_names),
+        "measured_state_units": list(robot.measured_state_units),
         "cameras": [
             {"key": camera.key, "feature_key": f"observation.images.{camera.key}"}
             for camera in robot.cameras

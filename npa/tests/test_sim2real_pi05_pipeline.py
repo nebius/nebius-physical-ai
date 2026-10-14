@@ -1972,6 +1972,7 @@ def test_policy_adapter_must_match_real_lerobot_feature_dimensions(tmp_path) -> 
         "schema": "npa.sim2real.lerobot_policy_adapter.v1",
         "backend": "lerobot_smolvla",
         "measured_state_names": [f"state_{index}" for index in range(8)],
+        "measured_state_units": ["rad"] * 7 + ["normalized_closed"],
         "cameras": [
             {
                 "feature_key": f"observation.images.{name}",

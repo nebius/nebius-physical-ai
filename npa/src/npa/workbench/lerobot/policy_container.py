@@ -467,6 +467,7 @@ def _load_interchange_manifest(checkpoint: Path) -> dict[str, Any]:
     if any(not str(payload.get(key) or "").strip() for key in required_identities):
         raise PolicyContainerError("policy interchange identities must be non-empty")
     state_names = payload.get("measured_state_names")
+    state_units = payload.get("measured_state_units")
     cameras = payload.get("cameras")
     action = payload.get("action")
     if not isinstance(state_names, list) or not state_names:
@@ -475,6 +476,14 @@ def _load_interchange_manifest(checkpoint: Path) -> dict[str, Any]:
         not isinstance(name, str) or not name for name in state_names
     ):
         raise PolicyContainerError("measured_state_names must be unique strings")
+    if (
+        not isinstance(state_units, list)
+        or len(state_units) != len(state_names)
+        or any(not isinstance(unit, str) or not unit for unit in state_units)
+    ):
+        raise PolicyContainerError(
+            "one measured_state_units entry is required per state input"
+        )
     if not isinstance(cameras, list) or not cameras:
         raise PolicyContainerError("camera adapter declarations are required")
     camera_keys: set[str] = set()
@@ -547,6 +556,7 @@ def write_smolvla_interchange_manifest(
     task_identity: str,
     normalization_identity: str = "",
     measured_state_names: list[str],
+    measured_state_units: list[str],
     cameras: list[dict[str, Any]],
     action: dict[str, Any],
     state_feature_key: str = "observation.state",
@@ -574,6 +584,7 @@ def write_smolvla_interchange_manifest(
         "normalization_files": normalization_files,
         "checkpoint_sha256": _sha256_path(weight),
         "measured_state_names": measured_state_names,
+        "measured_state_units": measured_state_units,
         "state_feature_key": state_feature_key,
         "action_feature_key": action_feature_key,
         "cameras": cameras,
@@ -712,6 +723,7 @@ def prepare_smolvla_base_checkpoint(
         robot_identity=str(adapter.get("robot_identity") or ""),
         task_identity=str(adapter.get("task_identity") or ""),
         measured_state_names=list(adapter.get("measured_state_names") or ()),
+        measured_state_units=list(adapter.get("measured_state_units") or ()),
         cameras=list(adapter.get("cameras") or ()),
         action=dict(adapter.get("action") or {}),
         state_feature_key=str(adapter.get("state_feature_key") or "observation.state"),
@@ -875,9 +887,12 @@ def _smolvla_batch(
     if not prompt:
         raise PolicyContainerError("policy prompt must be non-empty")
     names = observation.get("measured_state_names")
+    units = observation.get("measured_state_units")
     values = observation.get("measured_state")
     if names != manifest["measured_state_names"] or not isinstance(values, list):
         raise PolicyContainerError("measured state names/order do not match checkpoint")
+    if units != manifest["measured_state_units"]:
+        raise PolicyContainerError("measured state units do not match checkpoint")
     if len(values) != len(names) or not all(
         isinstance(value, (int, float)) and math.isfinite(float(value))
         for value in values
@@ -2523,6 +2538,7 @@ def main(argv: list[str] | None = None) -> int:
                 task_identity=str(adapter.get("task_identity") or ""),
                 normalization_identity=str(adapter.get("normalization_identity") or ""),
                 measured_state_names=list(adapter.get("measured_state_names") or ()),
+                measured_state_units=list(adapter.get("measured_state_units") or ()),
                 cameras=list(adapter.get("cameras") or ()),
                 action=dict(adapter.get("action") or {}),
                 state_feature_key=str(
@@ -2621,6 +2637,7 @@ def main(argv: list[str] | None = None) -> int:
             task_identity=str(spec.get("task_identity") or ""),
             normalization_identity=str(spec.get("normalization_identity") or ""),
             measured_state_names=list(spec.get("measured_state_names") or ()),
+            measured_state_units=list(spec.get("measured_state_units") or ()),
             cameras=list(spec.get("cameras") or ()),
             action=dict(spec.get("action") or {}),
             state_feature_key=str(spec.get("state_feature_key") or "observation.state"),

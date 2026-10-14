@@ -235,6 +235,7 @@ def training_adapter(preparation: Mapping[str, Any]) -> dict[str, Any]:
         "task_identity": policy.get("task_identity"),
         "normalization_identity": "",
         "measured_state_names": policy.get("measured_state_names"),
+        "measured_state_units": policy.get("measured_state_units"),
         "state_feature_key": "observation.state",
         "action_feature_key": "action",
         "cameras": adapter_cameras,

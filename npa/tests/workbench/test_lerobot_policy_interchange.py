@@ -102,9 +102,9 @@ def _manifest(digest: str, normalization_identity: str = "c" * 64) -> dict:
             "j4",
             "j5",
             "j6",
-            "left_finger",
-            "right_finger",
+            "gripper",
         ],
+        "measured_state_units": ["rad"] * 6 + ["normalized_closed"],
         "state_feature_key": "observation.state",
         "action_feature_key": "action",
         "cameras": [
@@ -158,6 +158,7 @@ def _observation(manifest: dict) -> dict:
         "prompt": "place the object",
         "privileged_object_state": False,
         "measured_state_names": manifest["measured_state_names"],
+        "measured_state_units": manifest["measured_state_units"],
         "measured_state": [0.0] * len(manifest["measured_state_names"]),
         "views": [
             {
@@ -199,6 +200,7 @@ def test_writer_binds_complete_adapter_to_weight_bytes(tmp_path: Path) -> None:
         task_identity=manifest["task_identity"],
         normalization_identity=manifest["normalization_identity"],
         measured_state_names=manifest["measured_state_names"],
+        measured_state_units=manifest["measured_state_units"],
         cameras=manifest["cameras"],
         action=manifest["action"],
     )
@@ -219,6 +221,7 @@ def test_writer_derives_normalization_identity_from_native_processors(
         robot_identity=manifest["robot_identity"],
         task_identity=manifest["task_identity"],
         measured_state_names=manifest["measured_state_names"],
+        measured_state_units=manifest["measured_state_units"],
         cameras=manifest["cameras"],
         action=manifest["action"],
     )
@@ -241,7 +244,7 @@ def test_prepared_base_keeps_weights_and_binds_dataset_features(
         ACTION = "ACTION"
 
     features = {
-        "observation.state": SimpleNamespace(type=FeatureType.STATE, shape=(8,)),
+        "observation.state": SimpleNamespace(type=FeatureType.STATE, shape=(7,)),
         "observation.images.scene": SimpleNamespace(
             type=FeatureType.VISUAL, shape=(3, 224, 224)
         ),
@@ -355,7 +358,7 @@ def test_checkpoint_features_must_match_camera_state_and_action_dimensions() -> 
     policy = SimpleNamespace(
         config=SimpleNamespace(
             input_features={
-                "observation.state": feature((8,)),
+                "observation.state": feature((7,)),
                 "observation.images.scene": feature((3, 224, 224)),
                 "observation.images.tool": feature((3, 224, 224)),
             },
@@ -394,7 +397,7 @@ def test_real_image_decode_and_stale_camera_rejection() -> None:
     observation = _observation(manifest)
     batch = _smolvla_batch(observation, manifest, "cpu")
     assert tuple(batch["observation.images.scene"].shape) == (1, 3, 224, 224)
-    assert tuple(batch["observation.state"].shape) == (1, 8)
+    assert tuple(batch["observation.state"].shape) == (1, 7)
     assert batch["task"] == ["place the object"]
     observation["views"][1]["capture_timestamp_s"] = 1.0
     with pytest.raises(PolicyContainerError, match="stale"):

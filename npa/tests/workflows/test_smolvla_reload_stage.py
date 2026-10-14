@@ -33,6 +33,7 @@ def _runtime(tmp_path: Path, **manifest_updates):
         ],
         "action": {"names": ["j1", "gripper"]},
         "measured_state_names": ["j1", "finger"],
+        "measured_state_units": ["rad", "normalized_closed"],
         "cameras": [{"key": "wrist"}],
     }
     manifest.update(manifest_updates)
@@ -60,6 +61,7 @@ def _preparation() -> dict:
         "policy": {
             "action": {"names": ["j1", "gripper"]},
             "measured_state_names": ["j1", "finger"],
+            "measured_state_units": ["rad", "normalized_closed"],
             "camera_keys": ["wrist"],
         },
     }

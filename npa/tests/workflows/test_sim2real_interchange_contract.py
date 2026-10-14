@@ -108,6 +108,7 @@ def _policy(robot: RobotSensorProfile) -> PolicyProfile:
         task_identity=_task().identity,
         camera_keys=tuple(camera.key for camera in robot.cameras),
         measured_state_names=robot.measured_state_names,
+        measured_state_units=robot.measured_state_units,
         action=PolicyAction(
             representation="absolute_joint_position",
             names=robot.action_names,

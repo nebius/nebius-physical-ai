@@ -700,11 +700,15 @@ def install_policy_adapter(source: Path, dataset_root: Path) -> Path:
     ):
         raise Pi05ContractError("SmolVLA adapter lacks dataset feature bindings")
     state_names = adapter.get("measured_state_names")
+    state_units = adapter.get("measured_state_units")
     action_names = action.get("names")
     state_shape = (features.get("observation.state") or {}).get("shape")
     action_shape = (features.get("action") or {}).get("shape")
     if (
         not isinstance(state_names, list)
+        or not isinstance(state_units, list)
+        or len(state_units) != len(state_names)
+        or any(not isinstance(unit, str) or not unit for unit in state_units)
         or state_shape != [len(state_names)]
         or not isinstance(action_names, list)
         or action_shape != [len(action_names)]
