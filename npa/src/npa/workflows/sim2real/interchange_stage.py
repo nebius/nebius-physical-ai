@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import tempfile
@@ -100,6 +101,56 @@ def _task(value: Mapping[str, Any]) -> SurfacePlacementTask:
     )
 
 
+def _validated_robot_asset_binding(
+    robot_contract: Mapping[str, Any], robot: Any
+) -> dict[str, Any]:
+    """Retain the exact canonical RobotSpec and reject incomplete GPU inputs."""
+
+    robot_spec = robot_contract.get("robot_spec")
+    isaac_asset = robot_contract.get("isaac_asset")
+    if not isinstance(robot_spec, Mapping) or not isinstance(isaac_asset, Mapping):
+        raise InterchangeContractError(
+            "non-stock policy interchange requires the normalized RobotSpec and "
+            "resolved Isaac asset contract"
+        )
+    expected_names = [*robot.arm_joint_names, *robot.gripper.joint_names]
+    if list(robot_spec.get("joint_names") or ()) != expected_names:
+        raise InterchangeContractError(
+            "RobotSpec joint order differs from the policy robot profile"
+        )
+    for field in ("home_qpos", "kp", "kv", "force_lower", "force_upper"):
+        values = robot_spec.get(field)
+        if not isinstance(values, list) or len(values) != len(expected_names):
+            raise InterchangeContractError(
+                f"RobotSpec {field} must cover every ordered physical joint"
+            )
+        try:
+            numeric = [float(value) for value in values]
+        except (TypeError, ValueError) as exc:
+            raise InterchangeContractError(
+                f"RobotSpec {field} must contain numeric values"
+            ) from exc
+        if not all(math.isfinite(value) for value in numeric):
+            raise InterchangeContractError(
+                f"RobotSpec {field} must contain finite values"
+            )
+    if (
+        robot_spec.get("embodiment_digest") != robot.identity
+        or robot_spec.get("source_tree_sha256") != robot.bundle_sha256
+        or robot_spec.get("source_sha256") != robot.source_sha256
+        or isaac_asset.get("resolved_usd_uri") != robot_spec.get("resolved_usd_uri")
+        or not robot_spec.get("resolved_manifest_uri")
+    ):
+        raise InterchangeContractError(
+            "RobotSpec, sensor profile, and resolved Isaac asset identities disagree"
+        )
+    return {
+        "contract_digest": robot_contract.get("contract_digest"),
+        "robot_spec": dict(robot_spec),
+        "isaac_asset": dict(isaac_asset),
+    }
+
+
 def build_preparation(profile_root: Path, *, run_id: str) -> dict[str, Any]:
     """Validate a materialized sealed profile and return its launch authority."""
 
@@ -173,11 +224,13 @@ def build_preparation(profile_root: Path, *, run_id: str) -> dict[str, Any]:
             profile.get("cartesian_controller_qualified", False)
         ),
     )
+    robot_asset = _validated_robot_asset_binding(robot_contract, robot)
     return {
         "schema": PREPARATION_SCHEMA,
         "run_id": run_id,
         "backend": backend.to_dict(),
         "robot": robot.to_dict(),
+        "robot_asset": robot_asset,
         "policy": policy.to_dict(),
         "object": prop.to_dict(),
         "task": {

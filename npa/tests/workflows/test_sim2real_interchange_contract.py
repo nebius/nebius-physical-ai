@@ -289,6 +289,10 @@ def test_durable_object_and_task_profiles_round_trip_without_defaults() -> None:
         collision_declared=True,
         inertia_declared=True,
         material_declared=True,
+        mass_kg=0.12,
+        static_friction=0.8,
+        dynamic_friction=0.6,
+        restitution=0.05,
         grasp_axis="y",
     )
     task = _task()
@@ -444,6 +448,10 @@ def test_offset_non_cube_object_uses_declared_grasp_and_reference_frames() -> No
         collision_declared=True,
         inertia_declared=True,
         material_declared=True,
+        mass_kg=0.12,
+        static_friction=0.8,
+        dynamic_friction=0.6,
+        restitution=0.05,
     )
     frames = _task().teacher_frames(prop)
     assert frames["object_root_from_grasp"]["translation_m"] == [-0.01, 0.015, 0.04]
@@ -529,6 +537,10 @@ def test_object_grasp_width_must_fit_declared_gripper_aperture() -> None:
         collision_declared=True,
         inertia_declared=True,
         material_declared=True,
+        mass_kg=0.12,
+        static_friction=0.8,
+        dynamic_friction=0.6,
+        restitution=0.05,
         grasp_axis="y",
     )
     with pytest.raises(InterchangeContractError, match="gripper aperture"):
@@ -553,6 +565,10 @@ def test_non_rigid_object_kinds_are_explicitly_rejected(kind: str) -> None:
             collision_declared=True,
             inertia_declared=True,
             material_declared=True,
+            mass_kg=0.12,
+            static_friction=0.8,
+            dynamic_friction=0.6,
+            restitution=0.05,
         )
 
 

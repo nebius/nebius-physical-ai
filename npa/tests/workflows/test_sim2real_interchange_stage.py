@@ -69,6 +69,38 @@ def _write_profile(root: Path, *, backend: str = "lerobot_smolvla") -> None:
         "schema": "npa.sim2real.robot_contract.v1",
         "embodiment_digest": _digest(embodiment),
         "embodiment": embodiment,
+        "robot_spec": {
+            "schema": "npa.robot-spec/v0.0.1",
+            "name": "sealed_ur6",
+            "robot_source": "byo_urdf",
+            "base_link": "base_link",
+            "ee_link": "tool0",
+            "joint_names": arm + fingers,
+            "gripper_joint_names": fingers,
+            "finger_links": ["left_pad", "right_pad"],
+            "n_arm_joints": 6,
+            "n_gripper_joints": 2,
+            "home_qpos": [0.0] * 8,
+            "kp": [100.0] * 8,
+            "kv": [10.0] * 8,
+            "force_lower": [-100.0] * 8,
+            "force_upper": [100.0] * 8,
+            "source_sha256": DIGEST_A,
+            "source_tree_sha256": DIGEST_B,
+            "source_format": "urdf",
+            "source_relative_path": "robot.urdf",
+            "asset_root_uri": "s3://example/robot/source/",
+            "embodiment_digest": _digest(embodiment),
+            "expected_action_dim": 7,
+            "expected_observation_dim": None,
+            "resolved_usd_uri": "s3://example/robot/resolved/robot.usd",
+            "resolved_manifest_uri": "s3://example/robot/resolved/manifest.json",
+        },
+        "isaac_asset": {
+            "source_format": "urdf",
+            "resolved_usd_uri": "s3://example/robot/resolved/robot.usd",
+            "conversion": "isaaclab.sim.converters.UrdfConverter",
+        },
     }
     robot_contract["contract_digest"] = _digest(robot_contract)
     task_identity = "surface-placement-v1"
@@ -202,6 +234,14 @@ def test_preparation_binds_six_dof_non_franka_and_offset_spool(tmp_path: Path) -
     assert len(prepared["robot"]["arm_joint_names"]) == 6
     assert prepared["object"]["root_from_grasp"]["translation_m"] == [0.01, 0.0, 0.02]
     assert prepared["backend"]["name"] == "lerobot_smolvla"
+    assert prepared["robot_asset"]["robot_spec"]["joint_names"] == [
+        *[f"ur_axis_{index}" for index in range(1, 7)],
+        "left_driver",
+        "right_follower",
+    ]
+    assert prepared["robot_asset"]["isaac_asset"]["conversion"].endswith(
+        "UrdfConverter"
+    )
     assert prepared["capabilities"]["deterministic_noise_coupling"] is False
     assert prepared["capabilities"]["repeated_paired_trials"] is True
     adapter = training_adapter(prepared)
@@ -238,6 +278,23 @@ def test_preparation_rejects_reordered_policy_joints(tmp_path: Path) -> None:
     _reseal(root)
     with pytest.raises(InterchangeContractError, match="state names/order"):
         build_preparation(root, run_id="run-reordered")
+
+
+def test_preparation_rejects_incomplete_robot_actuator_arrays(tmp_path: Path) -> None:
+    root = _sealed(tmp_path)
+    contract = json.loads((root / "robot-contract.json").read_text())
+    contract["robot_spec"]["kp"] = contract["robot_spec"]["kp"][:-1]
+    contract["contract_digest"] = _digest(
+        {
+            key: value
+            for key, value in contract.items()
+            if key not in {"contract_digest", "content_addressed_uri"}
+        }
+    )
+    write_json(root / "robot-contract.json", contract)
+    _reseal(root)
+    with pytest.raises(InterchangeContractError, match="kp must cover every"):
+        build_preparation(root, run_id="run-incomplete-actuators")
 
 
 def test_artifact_preflight_requires_exact_huggingface_revision() -> None:

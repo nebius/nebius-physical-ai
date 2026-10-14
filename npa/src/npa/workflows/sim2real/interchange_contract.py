@@ -571,6 +571,10 @@ class RigidObjectProfile:
     collision_declared: bool
     inertia_declared: bool
     material_declared: bool
+    mass_kg: float
+    static_friction: float
+    dynamic_friction: float
+    restitution: float
     grasp_axis: Literal["x", "y", "z"] = "y"
 
     def __post_init__(self) -> None:
@@ -602,6 +606,16 @@ class RigidObjectProfile:
             raise InterchangeContractError(
                 "rigid props require explicit collision, inertia, and material data"
             )
+        if not math.isfinite(self.mass_kg) or self.mass_kg <= 0.0:
+            raise InterchangeContractError("object mass_kg must be positive")
+        if not (
+            math.isfinite(self.static_friction)
+            and math.isfinite(self.dynamic_friction)
+            and math.isfinite(self.restitution)
+            and 0.0 <= self.dynamic_friction <= self.static_friction
+            and 0.0 <= self.restitution <= 1.0
+        ):
+            raise InterchangeContractError("object material values are invalid")
         if self.grasp_axis not in GRASP_AXES:
             raise InterchangeContractError("object grasp_axis must be x, y, or z")
 
@@ -627,6 +641,10 @@ class RigidObjectProfile:
             "collision_declared": self.collision_declared,
             "inertia_declared": self.inertia_declared,
             "material_declared": self.material_declared,
+            "mass_kg": self.mass_kg,
+            "static_friction": self.static_friction,
+            "dynamic_friction": self.dynamic_friction,
+            "restitution": self.restitution,
             "grasp_axis": self.grasp_axis,
             "required_gripper_width_m": self.required_gripper_width_m,
         }
@@ -659,6 +677,10 @@ def rigid_object_profile_from_dict(value: Mapping[str, Any]) -> RigidObjectProfi
         collision_declared=bool(value.get("collision_declared", False)),
         inertia_declared=bool(value.get("inertia_declared", False)),
         material_declared=bool(value.get("material_declared", False)),
+        mass_kg=float(value.get("mass_kg", math.nan)),
+        static_friction=float(value.get("static_friction", math.nan)),
+        dynamic_friction=float(value.get("dynamic_friction", math.nan)),
+        restitution=float(value.get("restitution", math.nan)),
         grasp_axis=str(value.get("grasp_axis") or ""),  # type: ignore[arg-type]
     )
 
@@ -744,6 +766,10 @@ def rigid_object_profile_from_asset_manifest(
         collision_declared=True,
         inertia_declared=True,
         material_declared=True,
+        mass_kg=float(mass),
+        static_friction=float(material["static_friction"]),
+        dynamic_friction=float(material["dynamic_friction"]),
+        restitution=float(material["restitution"]),
         grasp_axis=grasp_axis,
     )
 

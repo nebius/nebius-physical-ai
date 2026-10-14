@@ -204,7 +204,14 @@ def _validate_spec(spec: dict) -> None:
         "resolved_usd_uri",
         "resolved_manifest_uri",
     )
-    missing = [name for name in required if not spec.get(name)]
+    missing = []
+    for name in required:
+        value = spec.get(name)
+        nullable = name == "expected_observation_dim"
+        if name not in spec or (value is None and not nullable):
+            missing.append(name)
+        elif isinstance(value, str) and not value:
+            missing.append(name)
     if missing:
         raise IsaacRobotAssetError(
             "resolved RobotSpec is missing immutable asset fields: "
@@ -308,7 +315,11 @@ def prepare_with_running_app() -> dict:
             "asset_files": asset_files,
             "asset_tree_sha256": asset_tree_sha256,
             "expected_action_dim": int(spec["expected_action_dim"]),
-            "expected_observation_dim": int(spec["expected_observation_dim"]),
+            "expected_observation_dim": (
+                int(spec["expected_observation_dim"])
+                if spec["expected_observation_dim"] is not None
+                else None
+            ),
             "converter": (
                 "isaaclab.sim.converters.UrdfConverter"
                 if spec["source_format"] == "urdf"

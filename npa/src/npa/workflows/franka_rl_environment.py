@@ -5,6 +5,114 @@ from __future__ import annotations
 from pathlib import Path
 
 
+def configure_policy_interchange_robot(
+    config, robot_profile, robot_spec: dict, robot_usd_path: Path
+) -> dict:
+    """Replace the template articulation with the exact resolved RobotSpec asset.
+
+    The Lift environment is only a scene/controller scaffold here.  Morphology,
+    home state, actuator gains, action order, gripper semantics, and link names
+    all come from the immutable RobotSpec used to produce ``robot_usd_path``.
+    """
+
+    from copy import deepcopy
+    import re
+
+    import isaaclab.sim as sim
+    from isaaclab.actuators import ImplicitActuatorCfg
+    from isaaclab.envs import mdp
+
+    names = list(robot_spec.get("joint_names") or ())
+    expected = [*robot_profile.arm_joint_names, *robot_profile.gripper.joint_names]
+    arrays = {
+        "home_qpos": robot_spec.get("home_qpos"),
+        "kp": robot_spec.get("kp"),
+        "kv": robot_spec.get("kv"),
+        "force_lower": robot_spec.get("force_lower"),
+        "force_upper": robot_spec.get("force_upper"),
+    }
+    if names != expected or any(
+        not isinstance(values, list) or len(values) != len(names)
+        for values in arrays.values()
+    ):
+        raise ValueError(
+            "resolved RobotSpec joint order or actuator arrays differ from the policy profile"
+        )
+    if (
+        robot_spec.get("base_link") != robot_profile.base_link
+        or robot_spec.get("ee_link") != robot_profile.ee_link
+        or list(robot_spec.get("finger_links") or ())
+        != list(robot_profile.gripper.finger_links)
+    ):
+        raise ValueError("resolved RobotSpec links differ from the policy profile")
+    if not robot_usd_path.is_file():
+        raise ValueError("resolved RobotSpec USD is missing")
+
+    old_spawn = config.scene.robot.spawn
+    spawn = sim.UsdFileCfg(usd_path=str(robot_usd_path))
+    for attribute in ("articulation_props", "rigid_props", "activate_contact_sensors"):
+        if hasattr(old_spawn, attribute) and hasattr(spawn, attribute):
+            setattr(spawn, attribute, deepcopy(getattr(old_spawn, attribute)))
+    config.scene.robot.spawn = spawn
+    config.scene.robot.init_state.joint_pos = dict(
+        zip(names, arrays["home_qpos"], strict=True)
+    )
+    config.scene.robot.actuators = {}
+    for index, name in enumerate(names):
+        effort = max(
+            abs(float(arrays["force_lower"][index])),
+            abs(float(arrays["force_upper"][index])),
+        )
+        config.scene.robot.actuators[f"robot_spec_joint_{index:02d}"] = (
+            ImplicitActuatorCfg(
+                joint_names_expr=["^" + re.escape(name) + "$"],
+                stiffness=float(arrays["kp"][index]),
+                damping=float(arrays["kv"][index]),
+                effort_limit=effort,
+                effort_limit_sim=effort,
+            )
+        )
+    config.actions.arm_action = mdp.JointPositionActionCfg(
+        asset_name="robot",
+        joint_names=list(robot_profile.arm_joint_names),
+        preserve_order=True,
+        scale=1.0,
+        use_default_offset=False,
+    )
+    config.actions.gripper_action = mdp.BinaryJointPositionActionCfg(
+        asset_name="robot",
+        joint_names=list(robot_profile.gripper.joint_names),
+        open_command_expr=dict(
+            zip(
+                robot_profile.gripper.joint_names,
+                robot_profile.gripper.open_joint_positions,
+                strict=True,
+            )
+        ),
+        close_command_expr=dict(
+            zip(
+                robot_profile.gripper.joint_names,
+                robot_profile.gripper.closed_joint_positions,
+                strict=True,
+            )
+        ),
+    )
+    config.commands.object_pose.body_name = robot_profile.ee_link
+    config.scene.ee_frame.prim_path = "{ENV_REGEX_NS}/Robot/" + robot_profile.base_link
+    target = config.scene.ee_frame.target_frames[0]
+    target.prim_path = "{ENV_REGEX_NS}/Robot/" + robot_profile.ee_link
+    target.offset.pos = (0.0, 0.0, 0.0)
+    return {
+        "joint_names": names,
+        "home_qpos": list(arrays["home_qpos"]),
+        "kp": list(arrays["kp"]),
+        "kv": list(arrays["kv"]),
+        "force_lower": list(arrays["force_lower"]),
+        "force_upper": list(arrays["force_upper"]),
+        "usd_path": str(robot_usd_path),
+    }
+
+
 def environment_config(
     recipe: dict,
     *,
@@ -178,10 +286,13 @@ def configure_policy_interchange_cameras(config, robot_profile) -> None:
 
 
 def configure_policy_interchange_surface_task(
-    config, robot_profile, object_profile, task
+    config, robot_profile, object_profile, task, *, object_usd_path: Path
 ) -> None:
     """Bind a non-Franka Isaac lift template to the released-surface protocol."""
 
+    from copy import deepcopy
+
+    import isaaclab.sim as sim
     from isaaclab.sensors import ContactSensorCfg
     from npa.workflows.sim2real.pi05_isaac import (
         configure_destination_marker,
@@ -192,6 +303,20 @@ def configure_policy_interchange_surface_task(
     configure_support_surface(config)
     configure_surface_goal(config, task.target_world_xyz_m)
     configure_destination_marker(config, task.target_world_xyz_m)
+    if not object_usd_path.is_file():
+        raise ValueError("sealed rigid-object USD is missing")
+    old_spawn = config.scene.object.spawn
+    config.scene.object.spawn = sim.UsdFileCfg(
+        usd_path=str(object_usd_path),
+        scale=tuple(object_profile.scale_xyz),
+        rigid_props=deepcopy(old_spawn.rigid_props),
+        mass_props=sim.MassPropertiesCfg(mass=object_profile.mass_kg),
+        physics_material=sim.RigidBodyMaterialCfg(
+            static_friction=object_profile.static_friction,
+            dynamic_friction=object_profile.dynamic_friction,
+            restitution=object_profile.restitution,
+        ),
+    )
     config.scene.object.init_state.pos = tuple(
         object_profile.world_from_root.translation_m
     )

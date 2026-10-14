@@ -11,6 +11,7 @@ import tempfile
 
 from npa.workflows.lerobot_transfer_data import materialize, publish, write_json
 from npa.workflows.sim2real.workflow_io import read_json
+from npa.workflows.sim2real import isaac_robot_asset
 
 
 SCHEMA = "npa.sim2real.policy_interchange.non_franka_execution.v1"
@@ -26,6 +27,18 @@ def run(args: argparse.Namespace) -> dict:
         service_path = work / "service.json"
         write_json(preparation_path, preparation)
         write_json(service_path, service)
+        asset = preparation.get("robot_asset")
+        spec = asset.get("robot_spec") if isinstance(asset, dict) else None
+        if not isinstance(spec, dict):
+            raise RuntimeError("preparation lacks the exact resolved RobotSpec")
+        robot_work = work / "robot-asset"
+        os.environ["NPA_BYO_ROBOT_SPEC_JSON"] = json.dumps(
+            spec, sort_keys=True, separators=(",", ":")
+        )
+        os.environ["NPA_ROBOT_WORK_DIR"] = str(robot_work)
+        robot_manifest = isaac_robot_asset.fetch()
+        robot_manifest_path = robot_work / "resolved" / "manifest.json"
+        robot_usd_path = robot_work / "resolved" / "robot.usd"
         output = work / "output"
         log = work / "isaac-runtime.log"
         child = [
@@ -38,6 +51,10 @@ def run(args: argparse.Namespace) -> dict:
             str(preparation_path),
             "--service-receipt-path",
             str(service_path),
+            "--robot-usd-path",
+            str(robot_usd_path),
+            "--robot-asset-manifest-path",
+            str(robot_manifest_path),
             "--output-path",
             str(output),
             "--decisions",
@@ -69,6 +86,10 @@ def run(args: argparse.Namespace) -> dict:
             or len(report.get("camera_hashes") or []) != args.decisions
         ):
             raise RuntimeError("native non-Franka execution report is incomplete")
+        if report.get("robot_asset", {}).get("usd_sha256") != robot_manifest.get(
+            "usd_sha256"
+        ):
+            raise RuntimeError("native execution did not consume the fetched robot USD")
         (output / "isaac-runtime.log").write_bytes(log.read_bytes())
         publish(output, args.output_uri)
         return report

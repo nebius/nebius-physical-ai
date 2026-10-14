@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import time
 from typing import Any
+from urllib.parse import urlparse
 
 from npa.workflows.lerobot_transfer_data import write_json
 from npa.workflows.sim2real.interchange_contract import (
@@ -43,6 +44,28 @@ def _load(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"{path.name} must contain one JSON object")
     return value
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _local_object_asset(root: Path, prop: Any) -> Path:
+    """Resolve one exact sealed object byte stream without trusting its filename."""
+
+    name = Path(urlparse(prop.source_uri).path).name
+    candidates = [path for path in root.rglob(name) if path.is_file()]
+    matches = [path for path in candidates if _sha256(path) == prop.source_sha256]
+    if len(matches) != 1:
+        raise RuntimeError(
+            "prepared simulation must contain exactly one object asset matching "
+            "the sealed source URI and SHA-256"
+        )
+    return matches[0]
 
 
 def _camera_frame(native: Any, key: str, profile: Any) -> tuple[Any, float]:
@@ -223,9 +246,9 @@ def _update_events(context: dict[str, Any], sample: dict[str, Any], step: int) -
 def run(args: argparse.Namespace) -> dict[str, Any]:
     import gymnasium as gym
 
-    from npa.workflows.franka_rl_embodiments import embodiment_evidence
     from npa.workflows.franka_rl_environment import (
         configure_policy_interchange_cameras,
+        configure_policy_interchange_robot,
         configure_policy_interchange_surface_task,
         environment_config,
     )
@@ -234,7 +257,18 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     preparation = _load(args.preparation_path)
     receipt = _load(args.service_receipt_path)
     recipe = _load(args.input_path / "recipe.json")
+    robot_manifest = _load(args.robot_asset_manifest_path)
+    robot_asset = preparation.get("robot_asset") or {}
+    robot_spec = robot_asset.get("robot_spec")
+    if not isinstance(robot_spec, dict):
+        raise RuntimeError("preparation lacks normalized RobotSpec bytes")
     robot = robot_sensor_profile_from_dict(preparation.get("robot") or {})
+    if (
+        robot_manifest.get("embodiment_digest") != robot.identity
+        or robot_manifest.get("source_tree_sha256") != robot.bundle_sha256
+        or robot_manifest.get("usd_sha256") != _sha256(args.robot_usd_path)
+    ):
+        raise RuntimeError("fetched robot asset manifest does not bind this profile")
     prop = rigid_object_profile_from_dict(preparation.get("object") or {})
     task = surface_placement_task_from_dict(preparation.get("task") or {})
     policy = policy_profile_from_dict(preparation.get("policy") or {})
@@ -261,7 +295,13 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     )
     config.scene.num_envs = 1
     config.seed = args.seed
-    configure_policy_interchange_surface_task(config, robot, prop, task)
+    robot_configuration = configure_policy_interchange_robot(
+        config, robot, robot_spec, args.robot_usd_path
+    )
+    object_usd_path = _local_object_asset(args.input_path, prop)
+    configure_policy_interchange_surface_task(
+        config, robot, prop, task, object_usd_path=object_usd_path
+    )
     configure_policy_interchange_cameras(config, robot)
     env = gym.make(recipe["task"], cfg=config)
     try:
@@ -274,7 +314,20 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             layout=layout,
             profile=robot,
         )
-        embodiment = embodiment_evidence(env, recipe)
+        embodiment = {
+            "schema": "npa.sim2real.exact_robot_asset_binding.v1",
+            "robot_identity": robot.identity,
+            "source_sha256": robot.source_sha256,
+            "source_tree_sha256": robot.bundle_sha256,
+            "usd_sha256": robot_manifest["usd_sha256"],
+            "usd_size_bytes": robot_manifest["usd_size_bytes"],
+            "asset_tree_sha256": robot_manifest["asset_tree_sha256"],
+            "converter": robot_manifest["converter"],
+            "configuration": robot_configuration,
+            "live_joint_names": list(native.scene["robot"].joint_names),
+            "live_body_names": list(native.scene["robot"].body_names),
+            "exact_resolved_usd_consumed": True,
+        }
         client = SmolVLAPolicyClient(
             str(receipt["service_host"]), int(receipt.get("port", 8080))
         )
@@ -322,6 +375,17 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             },
             "robot_binding": binding,
             "embodiment": embodiment,
+            "robot_asset": robot_manifest,
+            "object_asset": {
+                "identity": prop.identity,
+                "source_sha256": prop.source_sha256,
+                "bundle_sha256": prop.bundle_sha256,
+                "mass_kg": prop.mass_kg,
+                "static_friction": prop.static_friction,
+                "dynamic_friction": prop.dynamic_friction,
+                "restitution": prop.restitution,
+                "exact_local_bytes_consumed": True,
+            },
             "robot_identity": robot.identity,
             "object_identity": prop.identity,
             "task_identity": task.identity,
@@ -354,6 +418,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--input-path", type=Path, required=True)
     parser.add_argument("--preparation-path", type=Path, required=True)
     parser.add_argument("--service-receipt-path", type=Path, required=True)
+    parser.add_argument("--robot-usd-path", type=Path, required=True)
+    parser.add_argument("--robot-asset-manifest-path", type=Path, required=True)
     parser.add_argument("--output-path", type=Path, required=True)
     parser.add_argument("--decisions", type=int, required=True)
     parser.add_argument("--seed", type=int, required=True)
