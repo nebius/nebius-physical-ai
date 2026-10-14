@@ -124,6 +124,57 @@ def _camera_config(config) -> None:
     )
 
 
+def configure_policy_interchange_cameras(config, robot_profile) -> None:
+    """Install calibrated world-pose cameras from a sealed robot profile.
+
+    Both sensors use world-rooted camera prims. The native policy execution
+    stage republishes the wrist sensor pose from its declared live mount link
+    before every capture, avoiding a stale USD child transform on moving
+    articulations.
+    """
+
+    import re
+
+    import isaaclab.sim as sim
+    from isaaclab.sensors import TiledCameraCfg
+
+    config.scene.num_envs = 1
+    for camera in robot_profile.cameras:
+        if re.fullmatch(r"[a-z][a-z0-9_]*", camera.key) is None:
+            raise ValueError(
+                "policy camera keys must be lowercase identifiers for Isaac routing"
+            )
+        width, height = camera.image_size
+        fx, fy, cx, cy = camera.intrinsics
+        if abs(fx - fy) > 1.0e-6 or abs(cx - (width - 1) / 2.0) > 1.0 or abs(
+            cy - (height - 1) / 2.0
+        ) > 1.0:
+            raise ValueError(
+                "Isaac interchange currently requires square pixels and centered intrinsics"
+            )
+        aperture = 20.955
+        focal_length = fx * aperture / width
+        sensor = TiledCameraCfg(
+            prim_path=f"{{ENV_REGEX_NS}}/NpaPolicyCamera_{camera.key}",
+            offset=TiledCameraCfg.OffsetCfg(
+                pos=tuple(camera.mount_from_camera.translation_m),
+                rot=tuple(camera.mount_from_camera.quaternion_xyzw),
+                convention="ros",
+            ),
+            data_types=["rgb"],
+            width=width,
+            height=height,
+            update_period=0.0,
+            update_latest_camera_pose=True,
+            spawn=sim.PinholeCameraCfg(
+                focal_length=focal_length,
+                horizontal_aperture=aperture,
+                clipping_range=(0.03, 10.0),
+            ),
+        )
+        setattr(config.scene, f"npa_policy_camera_{camera.key}", sensor)
+
+
 def build_runner(env, recipe: dict, output=None):
     """Construct native RSL-RL PPO with the task's version-migrated configuration.
 
