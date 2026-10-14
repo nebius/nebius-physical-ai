@@ -250,6 +250,9 @@ def _pi05_service_timeout_argv() -> list[str]:
 
 def _smolvla_service_argv(command: str, role: str) -> list[str]:
     prefix = "base" if role == "base" else "adapted"
+    checkpoint_key = (
+        "base_service_checkpoint_uri" if role == "base" else "adapted_checkpoint_uri"
+    )
     return [
         "python3",
         "-m",
@@ -260,7 +263,7 @@ def _smolvla_service_argv(command: str, role: str) -> list[str]:
         "--checkpoint-role",
         role,
         "--checkpoint-uri",
-        f"{{{{config.{prefix}_checkpoint_uri}}}}",
+        f"{{{{config.{checkpoint_key}}}}}",
         "--bind-adapter-uri",
         f"{{{{config.{prefix}_policy_adapter_uri}}}}",
         "--runtime-image",
@@ -3174,12 +3177,12 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "processor payload before service or training GPU work."
         ),
         argv_template=[
-            "/opt/lerobot/venv/bin/python",
+            "python3",
             "-m",
             "npa.workflows.sim2real.interchange_stage",
             "artifact-preflight",
             "--checkpoint-uri",
-            "{{config.base_source_checkpoint_uri}}",
+            "{{config.base_checkpoint_uri}}",
             "--dataset-uri",
             "{{config.lerobot_uri}}",
             "--dataset-repo-id",
@@ -4973,7 +4976,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--training-env-ids",
             "{{config.train_env_ids}}",
             "--pretrained-policy-source",
-            "{{config.training_base_checkpoint_uri}}",
+            "{{config.base_checkpoint_uri}}",
             "--interchange-adapter-relative-path",
             "{{config.policy_adapter_relative_path}}",
             "--artifacts-s3-uri",

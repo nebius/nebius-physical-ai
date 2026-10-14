@@ -63,6 +63,18 @@ def test_native_train_reload_and_service_share_exact_checkpoint_lineage() -> Non
     )
 
 
+def test_base_service_uses_zero_update_dataset_bound_checkpoint() -> None:
+    spec = load_spec(SPEC)
+    steps = {step.state: step for step in build_plan(spec, run_id="base-bind").steps}
+    artifact = steps["artifact-preflight"].argv
+    service = steps["start-base-service"].argv
+    prepared = _value(artifact, "--prepared-checkpoint-uri")
+    assert _value(artifact, "--checkpoint-uri") == spec.config["base_checkpoint_uri"]
+    assert prepared == spec.config["prepared_base_checkpoint_uri"]
+    assert _value(service, "--checkpoint-uri") == prepared
+    assert "--bind-adapter-uri" not in service
+
+
 def test_gold_arms_share_physics_protocol_but_not_fake_noise_contract() -> None:
     steps = {
         step.state: step
