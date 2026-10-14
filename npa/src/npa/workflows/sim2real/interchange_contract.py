@@ -1139,11 +1139,13 @@ def assert_policy_compatible(
         "task_identity": task.identity,
         "policy_identity": policy.identity,
         "backend": policy.backend,
+        "checkpoint_sha256": policy.checkpoint_sha256,
         "arm_dof": len(robot.arm_joint_names),
         "ee_link": robot.ee_link,
         "camera_keys": list(robot_cameras),
         "action": policy.action.to_dict(),
         "normalization_identity": policy.normalization_identity,
+        "capabilities": policy.capabilities.to_dict(),
     }
     return {**receipt, "compatibility_sha256": _sha(receipt)}
 

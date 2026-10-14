@@ -60,6 +60,7 @@ PARSER_FACTORIES = {
     "npa.workflows.sim2real.pi05_stage": "build_parser",
     "npa.workflows.sim2real.interchange_stage": "build_parser",
     "npa.workflows.sim2real.smolvla_service_lifecycle": "build_parser",
+    "npa.workflows.sim2real.smolvla_reload_stage": "build_parser",
     "npa.workflows.byof.ros2_pipeline": "build_parser",
     "npa.workflows.content_agents": "build_parser",
     "npa.workflows.paidf_native": "build_parser",

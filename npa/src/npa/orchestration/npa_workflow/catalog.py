@@ -4792,6 +4792,28 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         omit_flags_when_empty=("--training-env-ids",),
         config_defaults={"train_env_ids": ""},
     ),
+    "workbench.lerobot.smolvla_interchange_reload": ToolEntry(
+        name="workbench.lerobot.smolvla_interchange_reload",
+        description=(
+            "Reload exact native SmolVLA weights and checkpoint-local processors, "
+            "then bind the live objects to the prepared robot/task contract."
+        ),
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workflows.sim2real.smolvla_reload_stage",
+            "--checkpoint-uri",
+            "{{config.adapted_checkpoint_uri}}",
+            "--preparation-uri",
+            "{{config.preparation_uri}}",
+            "--hardware-topology",
+            "{{config.service_hardware_topology}}",
+            "--output-uri",
+            "{{config.reload_uri}}",
+            "--component-root-uri",
+            "{{config.component_root_uri}}",
+        ],
+    ),
     "workbench.lerobot.smolvla_base_service_start": ToolEntry(
         name="workbench.lerobot.smolvla_base_service_start",
         description="Start an owned private typed SmolVLA base-checkpoint service.",
