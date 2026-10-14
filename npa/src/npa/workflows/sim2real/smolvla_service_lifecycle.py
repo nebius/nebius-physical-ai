@@ -326,7 +326,9 @@ def _create(
     created.add("service")
 
 
-def _ready(api: Any, apps: Any, manifests: dict[str, dict[str, Any]], timeout: float) -> str:
+def _ready(
+    api: Any, apps: Any, manifests: dict[str, dict[str, Any]], timeout: float
+) -> tuple[str, dict[str, Any]]:
     namespace = manifests["deployment"]["metadata"]["namespace"]
     name = manifests["deployment"]["metadata"]["name"]
     deadline = time.monotonic() + timeout
@@ -342,8 +344,8 @@ def _ready(api: Any, apps: Any, manifests: dict[str, dict[str, Any]], timeout: f
                     payload = json.loads(response.read())
                 if payload.get("status") == "ok" and isinstance(
                     payload.get("checkpoint"), dict
-                ):
-                    return host
+                ) and isinstance(payload.get("interchange"), dict):
+                    return host, payload
             except (OSError, urllib.error.URLError, json.JSONDecodeError):
                 pass
         time.sleep(5)
@@ -414,7 +416,7 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
         created: set[str] = set()
         try:
             _create(api, apps, manifests, created=created)
-            host = _ready(api, apps, manifests, args.ready_timeout_seconds)
+            host, health = _ready(api, apps, manifests, args.ready_timeout_seconds)
         except Exception:
             _cleanup(api, apps, manifests, created=created)
             raise
@@ -428,6 +430,10 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
             "runtime_image": args.runtime_image,
             "service_host": host,
             "port": PORT,
+            "public_ingress": False,
+            "application_authentication": "kubernetes_secret_bearer",
+            "checkpoint": health["checkpoint"],
+            "interchange": health["interchange"],
             "status": "ready",
         }
         stage = 5 if args.checkpoint_role == "base" else 10

@@ -321,6 +321,42 @@ def test_interchange_cli_requires_explicit_checkpoint_inputs_and_outputs() -> No
     )
 
 
+def test_health_exposes_loaded_interchange_identities_and_byte_hash(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    fastapi_testclient = pytest.importorskip("fastapi.testclient")
+    checkpoint = tmp_path / "checkpoint"
+    checkpoint.mkdir()
+    manifest_path = checkpoint / INTERCHANGE_MANIFEST_FILENAME
+    manifest_path.write_text('{"sealed":true}\n', encoding="utf-8")
+    manifest = _manifest("a" * 64, "b" * 64)
+    runtime = SimpleNamespace(
+        checkpoint_path=checkpoint,
+        manifest=manifest,
+        validation=SimpleNamespace(to_dict=lambda: {"status": "loadable"}),
+    )
+    monkeypatch.setenv("NPA_POLICY_CHECKPOINT", str(checkpoint))
+    import npa.workbench.lerobot.policy_container as policy_container
+
+    monkeypatch.setattr(policy_container, "LeRobotPolicyRuntime", lambda _: runtime)
+    monkeypatch.setattr(
+        policy_container,
+        "assert_lerobot_importable",
+        lambda: SimpleNamespace(to_dict=lambda: {"status": "ok"}),
+    )
+    response = fastapi_testclient.TestClient(policy_container.create_app()).get(
+        "/health"
+    )
+    assert response.status_code == 200
+    interchange = response.json()["interchange"]
+    assert interchange["robot_identity"] == "six-axis-arm"
+    assert interchange["checkpoint_sha256"] == "a" * 64
+    assert interchange["normalization_identity"] == "b" * 64
+    assert interchange["manifest_sha256"] == hashlib.sha256(
+        manifest_path.read_bytes()
+    ).hexdigest()
+
+
 def test_interchange_training_forbids_early_checkpoint_only_upload() -> None:
     with pytest.raises(PolicyContainerError, match="checkpoint-only upload"):
         main(

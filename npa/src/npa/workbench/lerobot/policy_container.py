@@ -1652,6 +1652,20 @@ def create_app() -> Any:
         payload: dict[str, Any] = {"status": "ok", "lerobot": import_result}
         if policy is not None:
             payload["checkpoint"] = policy.validation.to_dict()
+            payload["interchange"] = {
+                "schema": policy.manifest["schema"],
+                "backend": policy.manifest["backend"],
+                "policy_identity": policy.manifest["policy_identity"],
+                "robot_identity": policy.manifest["robot_identity"],
+                "task_identity": policy.manifest["task_identity"],
+                "checkpoint_sha256": policy.manifest["checkpoint_sha256"],
+                "normalization_identity": policy.manifest[
+                    "normalization_identity"
+                ],
+                "manifest_sha256": _sha256_path(
+                    policy.checkpoint_path / INTERCHANGE_MANIFEST_FILENAME
+                ),
+            }
         else:
             payload["checkpoint"] = "not configured"
         return payload

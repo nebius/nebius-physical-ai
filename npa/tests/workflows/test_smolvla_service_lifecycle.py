@@ -6,6 +6,7 @@ import pytest
 
 from npa.workflows.sim2real.smolvla_service_lifecycle import (
     SmolVLAServiceError,
+    _run,
     build_manifests,
     resource_names,
 )
@@ -107,3 +108,34 @@ def test_resource_names_are_deterministic_and_role_separated() -> None:
     adapted = resource_names("Run/With Unsafe Chars", "adapted")
     assert base["deployment"] != adapted["deployment"]
     assert len(base["deployment"]) <= 63
+
+
+def test_start_receipt_binds_loaded_checkpoint_and_private_auth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _credentials(monkeypatch)
+    import npa.workflows.sim2real.smolvla_service_lifecycle as lifecycle
+
+    monkeypatch.setattr(lifecycle, "_clients", lambda: (object(), object()))
+    monkeypatch.setattr(lifecycle, "_assert_absent", lambda *_: None)
+    monkeypatch.setattr(
+        lifecycle, "_create", lambda *_args, created: created.update({"secret"})
+    )
+    health = {
+        "checkpoint": {"status": "loadable", "tensor_count": 123},
+        "interchange": {
+            "checkpoint_sha256": "c" * 64,
+            "normalization_identity": "d" * 64,
+            "manifest_sha256": "e" * 64,
+        },
+    }
+    monkeypatch.setattr(lifecycle, "_ready", lambda *_: ("private.svc", health))
+    monkeypatch.setattr(lifecycle, "write_json", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        lifecycle, "publish_component_record", lambda *_args, **_kwargs: None
+    )
+    receipt = _run(_args())
+    assert receipt["public_ingress"] is False
+    assert receipt["application_authentication"] == "kubernetes_secret_bearer"
+    assert receipt["checkpoint"]["tensor_count"] == 123
+    assert receipt["interchange"]["manifest_sha256"] == "e" * 64
