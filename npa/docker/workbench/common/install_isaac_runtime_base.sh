@@ -100,10 +100,11 @@ if [ -n "$LINUX_LIBC_DEV_VERSION" ]; then
 elif [ "$UBUNTU_SUITE" = jammy ]; then
   system_packages+=(linux-libc-dev=5.15.0-186.196)
 elif [ "$UBUNTU_SUITE" = noble ]; then
-  # Fixed for CVE-2026-53215 in the repository's immutable Noble snapshot.
+  # Fixed for the current linux-libc-dev critical CVE set in the repository's
+  # immutable Noble snapshot.
   # Keep the exact build here so a future base/snapshot change cannot silently
   # reintroduce the vulnerable userspace headers.
-  system_packages+=(linux-libc-dev=6.8.0-138.138)
+  system_packages+=(linux-libc-dev=6.8.0-147.147)
 else
   system_packages+=(linux-libc-dev)
 fi
