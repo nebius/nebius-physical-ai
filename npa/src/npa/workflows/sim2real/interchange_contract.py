@@ -632,6 +632,37 @@ class RigidObjectProfile:
         }
 
 
+def rigid_object_profile_from_dict(value: Mapping[str, Any]) -> RigidObjectProfile:
+    """Rebuild a validated rigid-object profile from durable preparation bytes."""
+
+    def transform(name: str) -> Transform:
+        raw = value.get(name)
+        if not isinstance(raw, Mapping):
+            raise InterchangeContractError(f"object preparation lacks {name}")
+        return Transform(
+            tuple(raw.get("translation_m") or ()),  # type: ignore[arg-type]
+            tuple(raw.get("quaternion_xyzw") or ()),  # type: ignore[arg-type]
+        )
+
+    return RigidObjectProfile(
+        identity=str(value.get("identity") or ""),
+        source_uri=str(value.get("source_uri") or ""),
+        source_sha256=str(value.get("source_sha256") or ""),
+        bundle_sha256=str(value.get("bundle_sha256") or ""),
+        kind=str(value.get("kind") or ""),
+        units_m_per_unit=float(value.get("units_m_per_unit", math.nan)),
+        scale_xyz=tuple(value.get("scale_xyz") or ()),  # type: ignore[arg-type]
+        world_from_root=transform("world_from_root"),
+        root_from_reference=transform("root_from_reference"),
+        root_from_grasp=transform("root_from_grasp"),
+        grasp_extents_m=tuple(value.get("grasp_extents_m") or ()),  # type: ignore[arg-type]
+        collision_declared=bool(value.get("collision_declared", False)),
+        inertia_declared=bool(value.get("inertia_declared", False)),
+        material_declared=bool(value.get("material_declared", False)),
+        grasp_axis=str(value.get("grasp_axis") or ""),  # type: ignore[arg-type]
+    )
+
+
 def rigid_object_profile_from_asset_manifest(
     manifest: Mapping[str, Any],
     *,
@@ -775,6 +806,19 @@ class SurfacePlacementTask:
             "retreat_distance_m": self.retreat_distance_m,
             "success_events": list(self.success_events),
         }
+
+
+def surface_placement_task_from_dict(value: Mapping[str, Any]) -> SurfacePlacementTask:
+    """Rebuild the immutable success protocol from a preparation receipt."""
+
+    return SurfacePlacementTask(
+        identity=str(value.get("identity") or ""),
+        target_world_xyz_m=tuple(value.get("target_world_xyz_m") or ()),  # type: ignore[arg-type]
+        approach_clearance_m=float(value.get("approach_clearance_m", math.nan)),
+        lift_delta_m=float(value.get("lift_delta_m", math.nan)),
+        retreat_distance_m=float(value.get("retreat_distance_m", math.nan)),
+        success_events=tuple(value.get("success_events") or ()),
+    )
 
 
 def assert_surface_placement_compatible(

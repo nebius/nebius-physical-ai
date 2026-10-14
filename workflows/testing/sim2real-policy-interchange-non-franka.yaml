@@ -1,0 +1,125 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: sim2real-policy-interchange-non-franka
+  description: >
+    Bounded native acceptance for one already prepared non-Franka fixed-base
+    parallel-jaw robot, a non-cube rigid prop, and an exact native SmolVLA
+    checkpoint. It records execution validity separately from released-surface
+    task success and does not claim zero-shot support for untested combinations.
+
+config:
+  bucket: example-bucket
+  prefix: "sim2real-policy-interchange-non-franka/{{run.id}}"
+  root_uri: "s3://{{config.bucket}}/{{config.prefix}}"
+  component_root_uri: "{{config.root_uri}}"
+  source_sha: ""
+  cpu_image: ""
+  isaac_image: ""
+  runtime_image: ""
+  isaac_cache_pvc: ""
+  preparation_uri: "s3://example-bucket/private-profiles/ur10e-spool-smolvla/preparation.json"
+  non_franka_prepared_robot_uri: "s3://example-bucket/private-profiles/ur10e-spool-smolvla/prepared-isaac/"
+  adapted_checkpoint_uri: "s3://example-bucket/private-checkpoints/smolvla-ur10e-spool/"
+  adapted_policy_adapter_uri: ""
+  hf_token_secret: ""
+  service_namespace: default
+  service_auth_secret: replace-with-run-scoped-policy-auth-secret
+  adapted_service_account: replace-with-run-scoped-adapted-controller
+  service_gpu_node_selector_key: nebius.com/gpu-name
+  service_gpu_node_selector_value: B200
+  service_gpu_count: "1"
+  service_hardware_topology: single-b200
+  service_server_cpus: "16"
+  service_server_memory: 96Gi
+  service_cache_size: 40Gi
+  service_server_ready_timeout_seconds: "1200"
+  non_franka_decisions: "192"
+  non_franka_seed: "20301014"
+  adapted_service_start_uri: "{{config.root_uri}}/service/start.json"
+  adapted_service_cleanup_uri: "{{config.root_uri}}/service/cleanup.json"
+  non_franka_execution_uri: "{{config.root_uri}}/execution/"
+
+resources:
+  adapted-service-control:
+    cloud: kubernetes
+    cpus: "2"
+    memory: 8Gi
+    disk_size: "20"
+    image: "{{config.cpu_image}}"
+    kubernetes:
+      pod_config:
+        spec:
+          serviceAccountName: "{{config.adapted_service_account}}"
+  isaac:
+    cloud: kubernetes
+    accelerators: "RTXPRO6000:1"
+    cpus: "16"
+    memory: 128Gi
+    disk_size: "100"
+    image: "{{config.isaac_image}}"
+    kubernetes:
+      provision_timeout: 2400
+      pod_config:
+        spec:
+          runtimeClassName: nvidia
+          containers:
+            - name: ray-node
+              env:
+                - {name: NPA_ISAAC_CACHE_DIR, value: /opt/isaac-cache}
+                - {name: NPA_ISAAC_CACHE_READONLY, value: "1"}
+                - {name: NPA_ISAAC_BOOTSTRAP_OFFLINE, value: "1"}
+                - {name: NPA_BAKED_PYTHON, value: /opt/npa/sim/venv/bin/python}
+                - {name: NPA_ISAAC_STATE_DIR, value: /tmp/npa-isaac-state}
+                - {name: NPA_ISAAC_KIT_ARGS, value: "--portable-root /tmp/npa-isaac-state/kit"}
+                - {name: OMNI_USER_DIR, value: /tmp/npa-isaac-state/omni-user}
+                - {name: OMNI_LOG_DIR, value: /tmp/npa-isaac-state/logs}
+                - {name: XDG_RUNTIME_DIR, value: /tmp/npa-isaac-state/xdg-runtime}
+                - {name: XDG_CACHE_HOME, value: /tmp/npa-isaac-state/xdg-cache}
+                - {name: XDG_CONFIG_HOME, value: /tmp/npa-isaac-state/xdg-config}
+                - {name: XDG_DATA_HOME, value: /tmp/npa-isaac-state/xdg-data}
+                - name: NPA_POLICY_AUTH_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: "{{config.service_auth_secret}}"
+                      key: auth_token
+              volumeMounts:
+                - {name: npa-isaac-runtime-cache, mountPath: /opt/isaac-cache, readOnly: true}
+                - {name: npa-isaac-job-state, mountPath: /tmp/npa-isaac-state}
+          volumes:
+            - name: npa-isaac-runtime-cache
+              persistentVolumeClaim: {claimName: "{{config.isaac_cache_pvc}}", readOnly: true}
+            - name: npa-isaac-job-state
+              emptyDir: {}
+
+initial: start-adapted-service
+
+states:
+  start-adapted-service:
+    description: Start one owned private native SmolVLA service from the exact prepared checkpoint.
+    toolRef: workbench.lerobot.smolvla_adapted_service_start
+    resources: adapted-service-control
+    outputs:
+      - {uri: "{{config.adapted_service_start_uri}}", schema: npa.sim2real.smolvla_service_start.v1}
+      - {uri: "{{config.component_root_uri}}/components/stage_10.json", schema: npa.sim2real.policy_interchange.component_record.v1}
+    next: execute-non-franka
+
+  execute-non-franka:
+    description: Apply real native policy actions to the sealed six-axis robot with causal exterior and moving-wrist RTX observations.
+    needs: [start-adapted-service]
+    toolRef: workbench.sim2real.policy_interchange_non_franka_execute
+    resources: isaac
+    outputs:
+      - {uri: "{{config.non_franka_execution_uri}}report.json", schema: npa.sim2real.policy_interchange.non_franka_execution.v1}
+    next: cleanup-adapted-service
+
+  cleanup-adapted-service:
+    description: Delete only the exact owned policy service after the native trial.
+    needs: [execute-non-franka]
+    toolRef: workbench.lerobot.smolvla_adapted_service_cleanup
+    resources: adapted-service-control
+    outputs:
+      - {uri: "{{config.adapted_service_cleanup_uri}}", schema: npa.sim2real.smolvla_service_cleanup.v1}
+      - {uri: "{{config.component_root_uri}}/components/stage_13.json", schema: npa.sim2real.policy_interchange.component_record.v1}
+    terminal: true

@@ -27,8 +27,10 @@ from npa.workflows.sim2real.interchange_contract import (
     policy_output_from_wire,
     policy_profile_from_dict,
     rigid_object_profile_from_asset_manifest,
+    rigid_object_profile_from_dict,
     robot_sensor_profile_from_dict,
     robot_sensor_profile_from_resolved,
+    surface_placement_task_from_dict,
     validate_observation,
 )
 
@@ -269,6 +271,30 @@ def test_durable_robot_and_policy_profiles_round_trip_without_defaults() -> None
     policy = _policy(robot)
     assert robot_sensor_profile_from_dict(robot.to_dict()) == robot
     assert policy_profile_from_dict(policy.to_dict()) == policy
+
+
+def test_durable_object_and_task_profiles_round_trip_without_defaults() -> None:
+    prop = RigidObjectProfile(
+        identity="offset-spool",
+        source_uri="s3://example/assets/spool.usda",
+        source_sha256=DIGEST_A,
+        bundle_sha256=DIGEST_B,
+        kind="rigid",
+        units_m_per_unit=1.0,
+        scale_xyz=(1.0, 1.0, 1.0),
+        world_from_root=Transform((0.4, 0.0, 0.04), (0.0, 0.0, 0.0, 1.0)),
+        root_from_reference=Transform((0.0, 0.0, -0.02), (0.0, 0.0, 0.0, 1.0)),
+        root_from_grasp=Transform((0.01, 0.0, 0.02), (0.0, 0.0, 0.0, 1.0)),
+        grasp_extents_m=(0.06, 0.05, 0.08),
+        collision_declared=True,
+        inertia_declared=True,
+        material_declared=True,
+        grasp_axis="y",
+    )
+    task = _task()
+    task_payload = {"identity": task.identity, **task.teacher_frames(prop)}
+    assert rigid_object_profile_from_dict(prop.to_dict()) == prop
+    assert surface_placement_task_from_dict(task_payload) == task
 
 
 def test_one_driver_parallel_jaw_gripper_is_supported() -> None:

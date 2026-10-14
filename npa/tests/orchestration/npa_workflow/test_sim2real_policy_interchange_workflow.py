@@ -8,6 +8,7 @@ from npa.orchestration.npa_workflow.spec import load_spec
 
 ROOT = Path(__file__).resolve().parents[4]
 SPEC = ROOT / "workflows/testing/sim2real-policy-interchange-smolvla.yaml"
+NON_FRANKA_SPEC = ROOT / "workflows/testing/sim2real-policy-interchange-non-franka.yaml"
 STATES = [
     "prepare-contract",
     "collect-expert",
@@ -117,3 +118,37 @@ def test_reference_labels_its_bounded_franka_cube_scope() -> None:
     assert "does not claim" in description
     assert "franka" in collect
     assert "cube" in collect
+
+
+def test_isaac_client_mounts_the_smolvla_auth_variable() -> None:
+    spec = load_spec(SPEC)
+    env = spec.resources["isaac"]["kubernetes"]["pod_config"]["spec"]["containers"][0][
+        "env"
+    ]
+    names = [item["name"] for item in env]
+    assert "NPA_POLICY_AUTH_TOKEN" in names
+    assert "NPA_OPENPI_SERVICE_AUTH_TOKEN" not in names
+
+
+def test_non_franka_acceptance_uses_standard_runtime_and_real_native_seams() -> None:
+    spec = load_spec(NON_FRANKA_SPEC)
+    plan = build_plan(spec, run_id="ur10e-spool-smolvla")
+    assert [step.state for step in plan.steps] == [
+        "start-adapted-service",
+        "execute-non-franka",
+        "cleanup-adapted-service",
+    ]
+    execute = plan.steps[1]
+    assert spec.states["execute-non-franka"].tool_ref == (
+        "workbench.sim2real.policy_interchange_non_franka_execute"
+    )
+    assert execute.argv[:3] == [
+        "/opt/npa/sim/venv/bin/python",
+        "-m",
+        "npa.workflows.sim2real.interchange_isaac_entry",
+    ]
+    assert _value(execute.argv, "--preparation-uri") == spec.config["preparation_uri"]
+    assert _value(execute.argv, "--service-receipt-uri").endswith("/service/start.json")
+    description = str(spec.metadata["description"]).lower()
+    assert "execution validity separately" in description
+    assert "does not claim" in description

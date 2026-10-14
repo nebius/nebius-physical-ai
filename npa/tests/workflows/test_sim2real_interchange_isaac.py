@@ -17,6 +17,7 @@ from npa.workflows.sim2real.interchange_isaac import (
     camera_world_pose,
     render_absolute_joint_action,
 )
+from npa.workflows.sim2real.interchange_isaac_runtime import _update_events
 
 
 def _profile(dof: int = 6) -> RobotSensorProfile:
@@ -159,3 +160,46 @@ def test_declared_wrist_mount_composes_with_different_ee_pose() -> None:
     )
     assert pose.translation_m == pytest.approx((1.0, 2.1, 3.0))
     assert pose.quaternion_xyzw == pytest.approx((0.0, 0.0, half, half))
+
+
+def test_surface_success_requires_ordered_physics_and_three_stable_steps() -> None:
+    context = {
+        "ordered_event_steps": {},
+        "required_events": (
+            "contact",
+            "grasp",
+            "lift",
+            "transport",
+            "release",
+            "support_contact",
+            "stable",
+        ),
+        "retreat_distance_m": 0.1,
+        "stable_steps": 0,
+    }
+    sample = {
+        "bilateral_finger_contact": True,
+        "gripper_closed": True,
+        "lifted": True,
+        "target_xy_distance_m": 0.04,
+        "hand_object_distance_m": 0.02,
+        "object_support_force_n": 0.0,
+        "object_speed_m_s": 0.01,
+    }
+    _update_events(context, sample, 4)
+    assert list(context["ordered_event_steps"]) == [
+        "contact",
+        "grasp",
+        "lift",
+        "transport",
+    ]
+    sample.update(
+        bilateral_finger_contact=False,
+        gripper_closed=False,
+        hand_object_distance_m=0.11,
+        object_support_force_n=1.0,
+    )
+    for step in range(5, 9):
+        _update_events(context, sample, step)
+    assert list(context["ordered_event_steps"]) == list(context["required_events"])
+    assert context["ordered_event_steps"]["stable"] == 8

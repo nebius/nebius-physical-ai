@@ -400,3 +400,55 @@ task success.
 Physical robot deployment remains an explicit operator seam. DROID-shaped
 Franka observations are useful for integration, but neither simulation success
 nor Polaris loading establishes safe zero-shot transfer to an unqualified robot.
+
+## Policy and embodiment interchange
+
+The 14-stage collect → export → baseline → native adaptation → exact reload →
+same-task gold → cleanup → factual proof structure is a useful reusable design.
+The original pi0.5 implementation is not itself embodiment-neutral: Panda joint
+names, two physical finger joints, DROID aliases and padding, a calibrated Panda
+hand camera, and OpenPI's JAX/LoRA/noise protocol remain in its adapter.
+
+The interchange boundary keeps those details out of the shared contract:
+
+- the robot profile binds an immutable canonical robot bundle, ordered physical
+  arm and gripper joints, limits, home pose, base/end-effector/finger links,
+  controller representation, semantic gripper scalar, and calibrated cameras;
+- the rigid-object profile binds exact licensed USD bytes, units, collision,
+  inertia, material, root/reference/grasp transforms and grasp extents; and
+- the policy profile binds timestamped camera roles, ordered measured state and
+  units, exact action representation/names/units/frame, gripper semantics,
+  horizon, cadence, normalization, checkpoint, and backend capabilities.
+
+`sim2real-policy-interchange-smolvla.yaml` is the model-neutral 14-stage
+reference. It uses real LeRobotDataset materialization and native SmolVLA
+training, processor-bound reload and typed serving. OpenPI/DROID translation,
+padding, MessagePack/WebSocket and explicit sampler-noise coupling remain only
+inside the pi0.5 adapter. SmolVLA instead declares its native action queue and
+requires independently seeded repeated paired task trials.
+
+`sim2real-policy-interchange-non-franka.yaml` is a smaller acceptance graph for
+an already prepared second robot/object profile. Its Isaac bridge derives the
+action dimension from the live action manager, rejects reordered or missing
+joints and links, maps the declared semantic gripper value to physical driver
+joints, republishes the moving wrist camera from its calibrated end-effector
+mount before every capture, and records actual controller targets and causal
+timestamps. The unchanged event order is contact → grasp → lift → transport →
+release → support contact → stable placement. A complete action trace proves
+execution validity; only all ordered measured events prove task success.
+
+Current support matrix:
+
+| Combination | Source contract | Native execution | Task success | Claim |
+| --- | --- | --- | --- | --- |
+| Franka + cube-size family + pi0.5 | qualified | completed | adapted fresh 1/8; baseline provenance invalid | exercised only; no valid improvement or wrist-benefit comparison |
+| Franka + cube-size family + SmolVLA | implemented | pending exact-image/native run | unmeasured | unsupported pending qualification |
+| UR10e/Robotiq + spool + SmolVLA | implemented six-axis/tool/calibration bridge | pending exact-image/native run | unmeasured | unsupported pending qualification |
+| Historical UR10e/Robotiq + spool + PPO | exercised on native Isaac | 0/1024 lifts | failed | diagnostic only; privileged PPO state is not a VLA input |
+| Articulated/deformable props, mobile bases, non-parallel-jaw grippers, Cartesian policies without qualified IK | rejected or unimplemented | not run | unmeasured | unsupported |
+
+Cube sizes are one shape family, not object-category generalization. Simulation
+does not qualify physical-robot deployment, and model-specific imitation losses
+must not be used to rank different policy backends. Update this table only from
+immutable source/image/robot/object/dataset/checkpoint/seed evidence and retain
+failed combinations rather than converting unavailable metrics to zero.

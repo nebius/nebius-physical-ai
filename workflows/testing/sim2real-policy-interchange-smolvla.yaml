@@ -159,7 +159,7 @@ resources:
                 - {name: XDG_CACHE_HOME, value: /tmp/npa-isaac-state/xdg-cache}
                 - {name: XDG_CONFIG_HOME, value: /tmp/npa-isaac-state/xdg-config}
                 - {name: XDG_DATA_HOME, value: /tmp/npa-isaac-state/xdg-data}
-                - name: NPA_OPENPI_SERVICE_AUTH_TOKEN
+                - name: NPA_POLICY_AUTH_TOKEN
                   valueFrom:
                     secretKeyRef:
                       name: "{{config.service_auth_secret}}"

@@ -3113,6 +3113,31 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         ],
         omit_flags_when_empty=("--object-usd",),
     ),
+    "workbench.sim2real.policy_interchange_non_franka_execute": ToolEntry(
+        name="workbench.sim2real.policy_interchange_non_franka_execute",
+        description=(
+            "Run a sealed non-Franka articulation, calibrated moving wrist camera, "
+            "rigid prop, and native typed SmolVLA service under the unchanged "
+            "released-surface physics event contract."
+        ),
+        argv_template=[
+            "/opt/npa/sim/venv/bin/python",
+            "-m",
+            "npa.workflows.sim2real.interchange_isaac_entry",
+            "--prepared-robot-uri",
+            "{{config.non_franka_prepared_robot_uri}}",
+            "--preparation-uri",
+            "{{config.preparation_uri}}",
+            "--service-receipt-uri",
+            "{{config.adapted_service_start_uri}}",
+            "--output-uri",
+            "{{config.non_franka_execution_uri}}",
+            "--decisions",
+            "{{config.non_franka_decisions}}",
+            "--seed",
+            "{{config.non_franka_seed}}",
+        ],
+    ),
     "workbench.sim2real.policy_interchange_prepare": ToolEntry(
         name="workbench.sim2real.policy_interchange_prepare",
         description=(

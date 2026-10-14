@@ -177,6 +177,60 @@ def configure_policy_interchange_cameras(config, robot_profile) -> None:
         setattr(config.scene, f"npa_policy_camera_{camera.key}", sensor)
 
 
+def configure_policy_interchange_surface_task(
+    config, robot_profile, object_profile, task
+) -> None:
+    """Bind a non-Franka Isaac lift template to the released-surface protocol."""
+
+    from isaaclab.sensors import ContactSensorCfg
+    from npa.workflows.sim2real.pi05_isaac import (
+        configure_destination_marker,
+        configure_support_surface,
+        configure_surface_goal,
+    )
+
+    configure_support_surface(config)
+    configure_surface_goal(config, task.target_world_xyz_m)
+    configure_destination_marker(config, task.target_world_xyz_m)
+    config.scene.object.init_state.pos = tuple(
+        object_profile.world_from_root.translation_m
+    )
+    config.scene.object.init_state.rot = tuple(
+        object_profile.world_from_root.quaternion_xyzw
+    )
+    reset = getattr(config.events, "reset_object_position", None)
+    params = getattr(reset, "params", None)
+    if not isinstance(params, dict) or "pose_range" not in params:
+        raise ValueError("Isaac task lacks an explicit object reset pose range")
+    params["pose_range"] = {
+        "x": (0.0, 0.0),
+        "y": (0.0, 0.0),
+        "z": (0.0, 0.0),
+        "roll": (0.0, 0.0),
+        "pitch": (0.0, 0.0),
+        "yaw": (0.0, 0.0),
+    }
+    config.scene.robot.spawn.activate_contact_sensors = True
+    config.scene.object.spawn.activate_contact_sensors = True
+    config.scene.table.spawn.activate_contact_sensors = True
+    left, right = robot_profile.gripper.finger_links
+    config.scene.npa_left_object_contact = ContactSensorCfg(
+        prim_path=f"{{ENV_REGEX_NS}}/Robot/{left}",
+        filter_prim_paths_expr=["{ENV_REGEX_NS}/Object"],
+        history_length=3,
+    )
+    config.scene.npa_right_object_contact = ContactSensorCfg(
+        prim_path=f"{{ENV_REGEX_NS}}/Robot/{right}",
+        filter_prim_paths_expr=["{ENV_REGEX_NS}/Object"],
+        history_length=3,
+    )
+    config.scene.npa_object_support_contact = ContactSensorCfg(
+        prim_path="{ENV_REGEX_NS}/Object",
+        filter_prim_paths_expr=["{ENV_REGEX_NS}/Table"],
+        history_length=3,
+    )
+
+
 def build_runner(env, recipe: dict, output=None):
     """Construct native RSL-RL PPO with the task's version-migrated configuration.
 
