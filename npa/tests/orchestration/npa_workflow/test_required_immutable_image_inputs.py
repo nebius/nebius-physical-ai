@@ -28,8 +28,13 @@ EXACT_INPUT_SPECS = (
     "rgbd-scan-to-isaac.yaml",
     "scan-to-isaac-navigation.yaml",
 )
+DIGITAL_TWIN_OPERATOR_IMAGE_SPECS = (
+    "digital-twin-campus-render.yaml",
+    "digital-twin-cuda-render.yaml",
+)
 OPERATOR_IMAGE_SPECS = (
     *EXACT_INPUT_SPECS,
+    *DIGITAL_TWIN_OPERATOR_IMAGE_SPECS,
     "lyra-scene-actions.yaml",
     "physical-augmentation.yaml",
 )
@@ -217,6 +222,7 @@ def test_shipped_exact_image_consumers_require_operator_input_before_planning(na
 def _supplied_spec(name):
     spec = load_spec(_shipped_workflow_path(name))
     images = {
+        "runtime_image": ISAAC,
         "isaac_image": ISAAC,
         "navigation_image": ISAAC,
         "assembly_image": CPU,
@@ -225,6 +231,27 @@ def _supplied_spec(name):
     return merge_config_overrides(
         spec, {key: images[key] for key in spec.config["required_immutable_images"]}
     )
+
+
+@pytest.mark.parametrize(
+    "name",
+    ("digital-twin-campus-render.yaml", "digital-twin-cuda-render.yaml"),
+)
+def test_digital_twin_renderers_require_operator_runtime_without_repinning(name):
+    path = _shipped_workflow_path(name)
+    document = yaml.safe_load(path.read_text())
+
+    assert document["config"]["required_immutable_images"] == ["runtime_image"]
+    assert document["config"]["runtime_image"] == ""
+    assert document["resources"]["renderer"]["image"] == "{{config.runtime_image}}"
+    assert document["states"]["render"]["run"]["argv"][:3] == [
+        "/opt/npa/venv/bin/python",
+        "-m",
+        "npa.workflows.digital_twin_render",
+    ]
+
+    with pytest.raises(NpaWorkflowError, match="requires an explicit.*--var"):
+        interpreter.build_plan(load_spec(path), run_id="missing-compatible-runtime")
 
 
 @pytest.mark.parametrize(

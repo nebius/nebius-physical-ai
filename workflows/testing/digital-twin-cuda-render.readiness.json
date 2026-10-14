@@ -1,64 +1,46 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "abb3addbaa8eccd3caf96385a14392a305bce55785afe6e2ee31dfbf5abc4181",
+  "workflow_sha256": "e4d128a414c8737a0282c9acb62f53d3354ae7653ddcea3ae654b02ed2d64abf",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "Schema validation and planning passed; the resolved stage invokes the native CUDA-only renderer and publishes scene, media evidence, and HTML.",
+      "reason": "Schema validation and local production-renderer planning passed with a syntactically valid operator-supplied immutable image; neither check pulls or qualifies that image.",
       "evidence": [
         "npa workbench workflow validate-spec workflows/testing/digital-twin-cuda-render.yaml --json",
-        "npa workbench workflow plan-spec workflows/testing/digital-twin-cuda-render.yaml --run-id digital-twin-reference --json"
+        "npa workbench workflow plan-spec workflows/testing/digital-twin-cuda-render.yaml --run-id digital-twin-reference --check-render --var runtime_image=registry.example.invalid/npa-runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --json"
       ]
     },
     "task_fidelity": {
-      "status": "verified",
-      "reason": "Schema validation and planning passed; the resolved stage invokes the native CUDA-only renderer and publishes scene, media evidence, and HTML.",
-      "evidence": [
-        "npa workbench workflow validate-spec workflows/testing/digital-twin-cuda-render.yaml --json",
-        "npa workbench workflow plan-spec workflows/testing/digital-twin-cuda-render.yaml --run-id digital-twin-reference --json"
-      ]
+      "status": "unverified",
+      "reason": "The workflow now requires an operator-supplied immutable runtime image. Its source-overlay, renderer, inputs, and outputs require fresh workload qualification together.",
+      "evidence": []
     }
   },
   "prerequisites": {
     "output_storage": {
-      "status": "verified",
-      "reason": "Immutable publication, checksum verification and independent object-storage readback completed for the real rendered bundle.",
-      "evidence": [
-        "docs/workbench/guides/digital-twin.md#verified-b200-execution",
-        "npa/tests/e2e/test_digital_twin_render_live.py"
-      ]
+      "status": "unverified",
+      "reason": "No current run with the operator-supplied runtime image has completed immutable publication or independent object-storage readback.",
+      "evidence": []
     },
     "worker_input": {
-      "status": "verified",
-      "reason": "The source overlay and authored scene executed on the worker; the live acceptance check binds the recorded scene script to the checkout SHA-256.",
-      "evidence": [
-        "docs/workbench/guides/digital-twin.md#verified-b200-execution",
-        "npa/tests/e2e/test_digital_twin_render_live.py"
-      ]
+      "status": "unverified",
+      "reason": "No current worker run has executed the source overlay and authored scene with the operator-supplied runtime image.",
+      "evidence": []
     },
     "credentials": {
-      "status": "verified",
-      "reason": "Project-scoped cloud and storage preflight succeeded; worker publication and independent authenticated readback completed. Exact credentials and receipts remain private.",
-      "evidence": [
-        "docs/workbench/guides/digital-twin.md#verified-b200-execution",
-        "npa/tests/e2e/test_digital_twin_render_live.py"
-      ]
+      "status": "unverified",
+      "reason": "Current project, storage, image-pull, and worker credentials require a fresh preflight for the selected operator runtime image.",
+      "evidence": []
     },
     "source_image": {
-      "status": "verified",
-      "reason": "The pinned source image passed image and bootstrap preflight and ran the CUDA renderer; the official Blender runtime archive passed its pinned SHA-256 check.",
-      "evidence": [
-        "docs/workbench/guides/digital-twin.md#verified-b200-execution",
-        "npa/tests/e2e/test_digital_twin_render_live.py"
-      ]
+      "status": "unverified",
+      "reason": "The workflow intentionally has no default runtime image. A compatible immutable NPA image must be supplied by the operator and independently qualified.",
+      "evidence": []
     },
     "target_runtime": {
-      "status": "verified",
-      "reason": "The workflow succeeded on one NVIDIA B200 with native Blender 4.5.3 Cycles CUDA and CPU render devices disabled. Live artifact checks and offline browser playback passed. RTX/NuRec qualification is separate.",
-      "evidence": [
-        "docs/workbench/guides/digital-twin.md#verified-b200-execution",
-        "npa/tests/e2e/test_digital_twin_render_live.py"
-      ]
+      "status": "unverified",
+      "reason": "The selected operator runtime image requires fresh native Cycles CUDA workload qualification on the target before this claim can be verified.",
+      "evidence": []
     }
   }
 }
