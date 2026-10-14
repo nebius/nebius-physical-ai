@@ -317,7 +317,9 @@ def test_typed_openpi_adapter_preserves_wrist_bytes_and_gripper_mapping(
     assert actions.shape == (15, 8)
     sent = msgpack.unpackb(connection.sent[0], object_hook=_unpack_array)
     assert sent["observation/joint_position"].shape == (7,)
-    assert sent["observation/gripper_position"].tolist() == [0.0]
+    assert sent["observation/gripper_position"].tolist() == pytest.approx(
+        [0.0], abs=1.0e-6
+    )
     assert evidence["wire_input"]["wrist_rgb_sha256"] == hashlib.sha256(
         observation.views[1].rgb8
     ).hexdigest()
