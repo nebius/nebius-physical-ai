@@ -328,7 +328,9 @@ def test_closed_loop_synchronizes_wrist_before_reading_rgb(monkeypatch) -> None:
         0.12018878012895584,
     ],
 )
-def test_physical_gripper_width_preserves_finite_joint_measurement(width: float) -> None:
+def test_physical_gripper_width_preserves_finite_joint_measurement(
+    width: float,
+) -> None:
     robot = Namespace(
         joint_names=[
             *pi05_closed_loop.JOINT_NAMES,
