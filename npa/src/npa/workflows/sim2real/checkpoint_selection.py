@@ -349,10 +349,8 @@ def _assert_matching_identity(
     selection_iteration = selection.get("training_iteration")
     candidate_iteration = candidate.get("training_iteration")
     if (
-        type(selection_iteration) is not int
-        or selection_iteration <= 0
-        or type(candidate_iteration) is not int
-        or candidate_iteration <= 0
+        not _has_valid_training_iteration(selection)
+        or not _has_valid_training_iteration(candidate)
         or selection_iteration != candidate_iteration
     ):
         raise ValueError(
@@ -362,6 +360,22 @@ def _assert_matching_identity(
         "checkpoint_sha256", selection["generator_policy_sha256"]
     ) != _identity_value("checkpoint_sha256", selection["checkpoint_sha256"]):
         raise ValueError("selected checkpoint generator digest disagrees with bytes")
+
+
+def _has_valid_training_iteration(record: dict[str, Any]) -> bool:
+    """Return whether one record declares a valid trainer iteration."""
+
+    iteration = record.get("training_iteration")
+    if type(iteration) is not int or iteration < 0:
+        return False
+    if iteration > 0:
+        return True
+    completed_updates = record.get("checkpoint_completed_updates")
+    return (
+        type(completed_updates) is int
+        and completed_updates == 1
+        and record.get("checkpoint_iteration_semantics") == "last_completed_zero_based"
+    )
 
 
 def checkpoint_candidate_has_complete_identity(candidate: object) -> bool:

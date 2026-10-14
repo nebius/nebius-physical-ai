@@ -139,6 +139,51 @@ def test_checkpoint_identity_accepts_a_zero_based_initial_checkpoint() -> None:
         "checkpoint_iteration_semantics": "last_completed_zero_based",
     }
     assert checkpoint_candidate_has_complete_identity(candidate)
+    evidence = {
+        "selected_checkpoint_uri": candidate["checkpoint_uri"],
+        "final_checkpoint_uri": candidate["checkpoint_uri"],
+        "checkpoint_selection": candidate,
+        "checkpoint_candidates": [copy.deepcopy(candidate)],
+    }
+    selection, resolved_candidate = resolve_selected_checkpoint(evidence)
+    assert (
+        selection["training_iteration"] == resolved_candidate["training_iteration"] == 0
+    )
+
+
+@pytest.mark.parametrize(
+    ("record_name", "field", "value"),
+    [
+        ("checkpoint_selection", "checkpoint_completed_updates", 2),
+        ("checkpoint_candidates", "checkpoint_completed_updates", True),
+        ("checkpoint_selection", "checkpoint_iteration_semantics", "completed_updates"),
+        ("checkpoint_candidates", "checkpoint_iteration_semantics", None),
+    ],
+)
+def test_checkpoint_identity_rejects_unproven_zero_based_checkpoint(
+    record_name, field, value
+) -> None:
+    candidate = {
+        "checkpoint_uri": "s3://sim2real-test/checkpoints/model_000000.pt",
+        "checkpoint_sha256": "a" * 64,
+        "checkpoint_size_bytes": 1,
+        "generator_policy_sha256": "a" * 64,
+        "training_iteration": 0,
+        "checkpoint_completed_updates": 1,
+        "checkpoint_iteration_semantics": "last_completed_zero_based",
+    }
+    evidence = {
+        "selected_checkpoint_uri": candidate["checkpoint_uri"],
+        "final_checkpoint_uri": candidate["checkpoint_uri"],
+        "checkpoint_selection": candidate,
+        "checkpoint_candidates": [copy.deepcopy(candidate)],
+    }
+    record = evidence[record_name]
+    if record_name == "checkpoint_candidates":
+        record = record[0]
+    record[field] = value
+    with pytest.raises(ValueError, match="training_iteration sources disagree"):
+        resolve_selected_checkpoint(evidence)
 
 
 @pytest.mark.parametrize(
