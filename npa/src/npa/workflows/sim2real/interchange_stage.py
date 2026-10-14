@@ -16,8 +16,9 @@ import tempfile
 from pathlib import Path
 from typing import Any, Mapping
 
-from npa.workflows.lerobot_transfer_data import materialize, tree_hashes
 from npa.workbench.lerobot.policy_container import prepare_smolvla_base_checkpoint
+from npa.workflows.lerobot_dataset import materialize_lerobot_dataset
+from npa.workflows.lerobot_transfer_data import materialize, tree_hashes
 from npa.workflows.sim2real.interchange_backends import (
     backend_contract,
     openpi_pi05_policy_profile,
@@ -344,7 +345,11 @@ def _artifact_preflight(args: argparse.Namespace) -> dict[str, Any]:
             for path in sorted(base.rglob("*"))
             if path.is_file() and ".cache" not in path.parts
         ]
-        dataset = materialize(args.dataset_uri, work / "dataset")
+        dataset = materialize_lerobot_dataset(
+            args.dataset_uri,
+            work / "dataset",
+            repo_id=args.dataset_repo_id,
+        )
         adapter = read_json(args.adapter_uri, directory=work / "adapter")
         prepared = work / "prepared"
         prepared_receipt = prepare_smolvla_base_checkpoint(
