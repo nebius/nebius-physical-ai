@@ -10,6 +10,7 @@ aliases and transports belong in adapters, not in this contract.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import base64
 import hashlib
 import json
 import math
@@ -157,6 +158,7 @@ class GripperMapping:
     """Measured parallel-jaw aperture and model-facing scalar semantics."""
 
     joint_names: tuple[str, ...]
+    joint_units: tuple[str, ...]
     finger_links: tuple[str, ...]
     open_joint_positions: tuple[float, ...]
     closed_joint_positions: tuple[float, ...]
@@ -175,6 +177,12 @@ class GripperMapping:
             )
         object.__setattr__(self, "joint_names", joints)
         object.__setattr__(self, "finger_links", fingers)
+        if len(self.joint_units) != len(joints) or any(
+            not str(unit).strip() for unit in self.joint_units
+        ):
+            raise InterchangeContractError(
+                "one physical unit is required per gripper joint"
+            )
         _finite(self.open_joint_positions, size=len(joints), name="gripper open")
         _finite(self.closed_joint_positions, size=len(joints), name="gripper closed")
         width = float(self.maximum_width_m)
@@ -209,9 +217,40 @@ class GripperMapping:
             )
         )
 
+    def joint_positions_to_width(self, values: Sequence[float]) -> float:
+        """Recover physical aperture from all declared coupled joint positions."""
+
+        positions = _finite(
+            values, size=len(self.joint_names), name="measured gripper positions"
+        )
+        ratios: list[float] = []
+        for value, opened, closed in zip(
+            positions,
+            self.open_joint_positions,
+            self.closed_joint_positions,
+            strict=True,
+        ):
+            span = opened - closed
+            if abs(span) < 1.0e-12:
+                raise InterchangeContractError(
+                    "gripper joint endpoints do not define an aperture mapping"
+                )
+            ratios.append((value - closed) / span)
+        if max(ratios) - min(ratios) > 1.0e-4:
+            raise InterchangeContractError(
+                "measured gripper joints disagree with the declared coupling"
+            )
+        ratio = sum(ratios) / len(ratios)
+        if not -1.0e-4 <= ratio <= 1.0001:
+            raise InterchangeContractError(
+                "measured gripper positions are outside declared endpoints"
+            )
+        return min(max(ratio, 0.0), 1.0) * self.maximum_width_m
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "joint_names": list(self.joint_names),
+            "joint_units": list(self.joint_units),
             "finger_links": list(self.finger_links),
             "open_joint_positions": list(self.open_joint_positions),
             "closed_joint_positions": list(self.closed_joint_positions),
@@ -398,6 +437,7 @@ def robot_sensor_profile_from_resolved(
         ),  # type: ignore[arg-type]
         gripper=GripperMapping(
             joint_names=gripper_names,
+            joint_units=tuple(gripper_config.get("joint_units") or ()),
             finger_links=finger_links,
             open_joint_positions=tuple(open_positions),
             closed_joint_positions=tuple(closed_positions),
@@ -707,6 +747,111 @@ class PolicyProfile:
         _names(self.measured_state_names, name="policy measured_state_names")
 
 
+@dataclass(frozen=True)
+class TimestampedCameraObservation:
+    """One exact RGB observation bound to calibration and robot state time."""
+
+    key: str
+    role: Literal["exterior", "wrist"]
+    calibration_sha256: str
+    image_size: tuple[int, int]
+    layout: Literal["HWC", "CHW"]
+    mask: bool
+    capture_timestamp_s: float
+    state_timestamp_s: float
+    rgb8: bytes
+    rgb_sha256: str
+
+    def __post_init__(self) -> None:
+        if not self.key.strip() or self.role not in CAMERA_ROLES:
+            raise InterchangeContractError("camera observation key/role is invalid")
+        if len(self.calibration_sha256) != 64:
+            raise InterchangeContractError("camera calibration identity is invalid")
+        width, height = self.image_size
+        if width <= 0 or height <= 0 or self.layout not in IMAGE_LAYOUTS:
+            raise InterchangeContractError("camera observation geometry is invalid")
+        if not self.mask:
+            raise InterchangeContractError("camera observation is masked unavailable")
+        if not isinstance(self.rgb8, bytes) or len(self.rgb8) != width * height * 3:
+            raise InterchangeContractError(
+                "camera RGB bytes do not match declared image dimensions"
+            )
+        actual = hashlib.sha256(self.rgb8).hexdigest()
+        if self.rgb_sha256 != actual:
+            raise InterchangeContractError("camera RGB hash does not match bytes")
+
+    def to_wire_dict(self) -> dict[str, Any]:
+        return {
+            "key": self.key,
+            "role": self.role,
+            "calibration_sha256": self.calibration_sha256,
+            "image_size_wh": list(self.image_size),
+            "layout": self.layout,
+            "mask": self.mask,
+            "capture_timestamp_s": self.capture_timestamp_s,
+            "state_timestamp_s": self.state_timestamp_s,
+            "image_rgb8_base64": base64.b64encode(self.rgb8).decode("ascii"),
+            "image_sha256": self.rgb_sha256,
+        }
+
+
+@dataclass(frozen=True)
+class PolicyObservation:
+    """Model-neutral observation; object truth is intentionally absent."""
+
+    input_identity: str
+    robot_identity: str
+    task_identity: str
+    policy_identity: str
+    prompt: str
+    views: tuple[TimestampedCameraObservation, ...]
+    measured_state_names: tuple[str, ...]
+    measured_state_units: tuple[str, ...]
+    measured_state: tuple[float, ...]
+
+    def __post_init__(self) -> None:
+        if any(
+            not value.strip()
+            for value in (
+                self.input_identity,
+                self.robot_identity,
+                self.task_identity,
+                self.policy_identity,
+                self.prompt,
+            )
+        ):
+            raise InterchangeContractError(
+                "observation identities and prompt must be non-empty"
+            )
+        names = _names(self.measured_state_names, name="measured state names")
+        if len(self.measured_state_units) != len(names) or any(
+            not str(unit).strip() for unit in self.measured_state_units
+        ):
+            raise InterchangeContractError(
+                "one measured-state unit is required per named value"
+            )
+        _finite(self.measured_state, size=len(names), name="measured state")
+        if not self.views:
+            raise InterchangeContractError("at least one camera view is required")
+        if len({view.key for view in self.views}) != len(self.views):
+            raise InterchangeContractError("camera observation keys must be unique")
+
+    def to_wire_dict(self) -> dict[str, Any]:
+        return {
+            "schema": "npa.sim2real.policy_observation.v1",
+            "input_identity": self.input_identity,
+            "robot_identity": self.robot_identity,
+            "task_identity": self.task_identity,
+            "policy_identity": self.policy_identity,
+            "prompt": self.prompt,
+            "views": [view.to_wire_dict() for view in self.views],
+            "measured_state_names": list(self.measured_state_names),
+            "measured_state_units": list(self.measured_state_units),
+            "measured_state": list(self.measured_state),
+            "privileged_object_state": False,
+        }
+
+
 def assert_policy_compatible(
     robot: RobotSensorProfile,
     task: SurfacePlacementTask,
@@ -776,7 +921,7 @@ def validate_observation(
     prompt: str,
     input_identity: str,
     task_identity: str,
-) -> dict[str, Any]:
+) -> PolicyObservation:
     """Validate one causal model observation without privileged object state."""
 
     if not prompt.strip() or not input_identity.strip():
@@ -798,7 +943,7 @@ def validate_observation(
         size=len(policy.measured_state_names),
         name="measured state",
     )
-    views: list[dict[str, Any]] = []
+    views: list[TimestampedCameraObservation] = []
     by_key = {camera.key: camera for camera in robot.cameras}
     for key in policy.camera_keys:
         payload = camera_payloads[key]
@@ -814,26 +959,33 @@ def validate_observation(
             state_s=float(payload.get("state_timestamp_s", math.nan)),
         )
         image_sha256 = str(payload.get("image_sha256") or "")
-        if len(image_sha256) != 64:
-            raise InterchangeContractError(f"camera {key!r} image hash is invalid")
+        rgb8 = payload.get("rgb8")
+        if not isinstance(rgb8, bytes):
+            raise InterchangeContractError(f"camera {key!r} RGB bytes are required")
+        calibration_sha256 = _sha(camera.to_dict())
         views.append(
-            {
-                "key": key,
-                "role": camera.role,
-                "image_sha256": image_sha256,
-                "capture_timestamp_s": payload["capture_timestamp_s"],
-                "state_timestamp_s": payload["state_timestamp_s"],
-            }
+            TimestampedCameraObservation(
+                key=key,
+                role=camera.role,
+                calibration_sha256=calibration_sha256,
+                image_size=camera.image_size,
+                layout=camera.layout,
+                mask=True,
+                capture_timestamp_s=float(payload["capture_timestamp_s"]),
+                state_timestamp_s=float(payload["state_timestamp_s"]),
+                rgb8=rgb8,
+                rgb_sha256=image_sha256,
+            )
         )
-    return {
-        "schema": SCHEMA,
-        "input_identity": input_identity,
-        "robot_identity": robot.identity,
-        "task_identity": task_identity,
-        "policy_identity": policy.identity,
-        "prompt": prompt,
-        "views": views,
-        "measured_state_names": list(policy.measured_state_names),
-        "measured_state": list(state_values),
-        "privileged_object_state": False,
-    }
+    state_units = ("rad",) * len(robot.arm_joint_names) + robot.gripper.joint_units
+    return PolicyObservation(
+        input_identity=input_identity,
+        robot_identity=robot.identity,
+        task_identity=task_identity,
+        policy_identity=policy.identity,
+        prompt=prompt,
+        views=tuple(views),
+        measured_state_names=policy.measured_state_names,
+        measured_state_units=state_units,
+        measured_state=state_values,
+    )

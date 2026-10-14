@@ -6,6 +6,11 @@ import pytest
 import sys
 import types
 
+from npa.workflows.sim2real.interchange_contract import (
+    GripperMapping,
+    PolicyObservation,
+    TimestampedCameraObservation,
+)
 from npa.workflows.sim2real.pi05_policy_client import (
     Pi05PolicyClient,
     Pi05PolicyClientError,
@@ -222,3 +227,97 @@ def test_client_rejects_stale_or_hash_mismatched_wrist(
             capture_age_s=capture_age_s,
             source_wrist_sha256=source_hash,
         )
+
+
+def _typed_observation(*, arm_dof: int) -> tuple[PolicyObservation, object, object]:
+    arm = tuple(f"joint_{index}" for index in range(arm_dof))
+    fingers = ("finger_left", "finger_right")
+    rgb = bytes(224 * 224 * 3)
+    digest = hashlib.sha256(rgb).hexdigest()
+    views = tuple(
+        TimestampedCameraObservation(
+            key=role,
+            role=role,
+            calibration_sha256="c" * 64,
+            image_size=(224, 224),
+            layout="HWC",
+            mask=True,
+            capture_timestamp_s=1.0,
+            state_timestamp_s=1.0,
+            rgb8=rgb,
+            rgb_sha256=digest,
+        )
+        for role in ("exterior", "wrist")
+    )
+    identity = f"arm-{arm_dof}"
+    policy_identity = f"pi05-{arm_dof}"
+    observation = PolicyObservation(
+        input_identity="input-1",
+        robot_identity=identity,
+        task_identity="surface-v1",
+        policy_identity=policy_identity,
+        prompt="place the object",
+        views=views,
+        measured_state_names=arm + fingers,
+        measured_state_units=("rad",) * arm_dof + ("m", "m"),
+        measured_state=(0.0,) * arm_dof + (0.04, 0.04),
+    )
+    robot = types.SimpleNamespace(
+        identity=identity,
+        arm_joint_names=arm,
+        measured_joint_names=arm + fingers,
+        gripper=GripperMapping(
+            joint_names=fingers,
+            joint_units=("m", "m"),
+            finger_links=("left_pad", "right_pad"),
+            open_joint_positions=(0.04, 0.04),
+            closed_joint_positions=(0.0, 0.0),
+            maximum_width_m=0.08,
+            model_semantics="normalized_open",
+            model_open=0.0,
+            model_closed=1.0,
+        ),
+    )
+    policy = types.SimpleNamespace(
+        backend="openpi_pi05",
+        identity=policy_identity,
+        task_identity="surface-v1",
+    )
+    return observation, robot, policy
+
+
+def test_typed_openpi_adapter_rejects_six_dof_without_padding(monkeypatch) -> None:
+    msgpack = _fake_msgpack()
+    monkeypatch.setitem(sys.modules, "msgpack", msgpack)
+    connection = _Connection(msgpack)
+    monkeypatch.setattr(
+        "websockets.sync.client.connect", lambda *args, **kwargs: connection
+    )
+    client = Pi05PolicyClient("private-service", auth_token="test-only-token")
+    observation, robot, policy = _typed_observation(arm_dof=6)
+    with pytest.raises(Pi05PolicyClientError, match="seven arm joints"):
+        client.infer_typed(observation=observation, robot=robot, policy=policy)
+    assert connection.sent == []
+
+
+def test_typed_openpi_adapter_preserves_wrist_bytes_and_gripper_mapping(
+    monkeypatch,
+) -> None:
+    msgpack = _fake_msgpack()
+    monkeypatch.setitem(sys.modules, "msgpack", msgpack)
+    connection = _Connection(msgpack)
+    monkeypatch.setattr(
+        "websockets.sync.client.connect", lambda *args, **kwargs: connection
+    )
+    client = Pi05PolicyClient("private-service", auth_token="test-only-token")
+    observation, robot, policy = _typed_observation(arm_dof=7)
+    actions, evidence = client.infer_typed(
+        observation=observation, robot=robot, policy=policy
+    )
+    assert actions.shape == (15, 8)
+    sent = msgpack.unpackb(connection.sent[0], object_hook=_unpack_array)
+    assert sent["observation/joint_position"].shape == (7,)
+    assert sent["observation/gripper_position"].tolist() == [0.0]
+    assert evidence["wire_input"]["wrist_rgb_sha256"] == hashlib.sha256(
+        observation.views[1].rgb8
+    ).hexdigest()

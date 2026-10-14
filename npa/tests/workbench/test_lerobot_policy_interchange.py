@@ -179,6 +179,22 @@ def test_real_image_decode_and_stale_camera_rejection() -> None:
         _smolvla_batch(observation, manifest, "cpu")
 
 
+def test_typed_raw_rgb_wire_is_consumed_and_hash_bound() -> None:
+    pytest.importorskip("torch")
+    manifest = _manifest("a" * 64)
+    observation = _observation(manifest)
+    rgb8 = bytes([23]) * (224 * 224 * 3)
+    for view in observation["views"]:
+        view.pop("image_base64")
+        view["image_rgb8_base64"] = base64.b64encode(rgb8).decode("ascii")
+        view["image_sha256"] = hashlib.sha256(rgb8).hexdigest()
+    batch = _smolvla_batch(observation, manifest, "cpu")
+    assert tuple(batch["observation.images.tool"].shape) == (3, 224, 224)
+    observation["views"][1]["image_sha256"] = "0" * 64
+    with pytest.raises(PolicyContainerError, match="hash"):
+        _smolvla_batch(observation, manifest, "cpu")
+
+
 def test_six_axis_manifest_cannot_accept_reordered_or_padded_state() -> None:
     pytest.importorskip("torch")
     manifest = _manifest("a" * 64)

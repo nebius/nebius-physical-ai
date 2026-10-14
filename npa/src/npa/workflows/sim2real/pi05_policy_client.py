@@ -104,6 +104,78 @@ class Pi05PolicyClient:
             observation.update(sampling["payload"])
         return self._send_inference(observation, wrist_sha256, capture_age_s, sampling)
 
+    def infer_typed(
+        self,
+        *,
+        observation: Any,
+        robot: Any,
+        policy: Any,
+        sampling_noise: Any | None = None,
+        sampling_sequence: str = "",
+    ) -> tuple[Any, dict[str, Any]]:
+        """Translate the neutral contract to pinned DROID/OpenPI wire aliases.
+
+        This adapter is deliberately exact: pi0.5 is qualified only for the
+        seven-axis Franka action/state shape and never pads a different arm.
+        """
+
+        import numpy as np
+
+        if policy.backend != "openpi_pi05":
+            raise Pi05PolicyClientError("typed OpenPI adapter requires openpi_pi05")
+        if (
+            observation.policy_identity != policy.identity
+            or observation.robot_identity != robot.identity
+            or observation.task_identity != policy.task_identity
+        ):
+            raise Pi05PolicyClientError(
+                "typed observation identities do not match OpenPI profile"
+            )
+        if len(robot.arm_joint_names) != 7:
+            raise Pi05PolicyClientError(
+                "pi0.5 DROID checkpoint requires exactly seven arm joints; padding is forbidden"
+            )
+        if tuple(observation.measured_state_names) != tuple(robot.measured_joint_names):
+            raise Pi05PolicyClientError(
+                "typed measured state names/order do not match the robot"
+            )
+        views = {view.role: view for view in observation.views}
+        if set(views) != {"exterior", "wrist"}:
+            raise Pi05PolicyClientError(
+                "pi0.5 requires exactly one exterior and one wrist view"
+            )
+        if any(view.layout != "HWC" or view.image_size != (224, 224) for view in views.values()):
+            raise Pi05PolicyClientError(
+                "pi0.5 requires calibrated 224x224 HWC RGB views"
+            )
+        exterior = np.frombuffer(views["exterior"].rgb8, dtype=np.uint8).reshape(
+            224, 224, 3
+        )
+        wrist = np.frombuffer(views["wrist"].rgb8, dtype=np.uint8).reshape(
+            224, 224, 3
+        )
+        state = np.asarray(observation.measured_state, dtype=np.float32)
+        arm = state[:7]
+        try:
+            width = robot.gripper.joint_positions_to_width(state[7:])
+        except Exception as exc:
+            raise Pi05PolicyClientError(str(exc)) from exc
+        from npa.workflows.sim2real.pi05_contract import width_to_droid_gripper
+
+        gripper = np.asarray([width_to_droid_gripper(width)], dtype=np.float32)
+        wrist_age = views["wrist"].state_timestamp_s - views["wrist"].capture_timestamp_s
+        return self.infer(
+            exterior=exterior,
+            wrist=wrist,
+            joint_position=arm,
+            gripper_position=gripper,
+            prompt=observation.prompt,
+            capture_age_s=wrist_age,
+            source_wrist_sha256=views["wrist"].rgb_sha256,
+            sampling_noise=sampling_noise,
+            sampling_sequence=sampling_sequence,
+        )
+
     def _send_inference(
         self,
         observation: dict[str, Any],

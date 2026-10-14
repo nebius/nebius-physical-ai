@@ -615,10 +615,21 @@ def _decode_camera(camera: dict[str, Any], declaration: dict[str, Any]) -> Any:
     try:
         import numpy as np
         import torch
-        from PIL import Image
 
-        raw = base64.b64decode(str(camera.get("image_base64") or ""), validate=True)
-        image = np.asarray(Image.open(io.BytesIO(raw)).convert("RGB")).copy()
+        raw_rgb = camera.get("image_rgb8_base64")
+        if raw_rgb:
+            raw = base64.b64decode(str(raw_rgb), validate=True)
+            width, height = declaration["image_size_wh"]
+            if len(raw) != width * height * 3:
+                raise ValueError("raw RGB byte length does not match calibration")
+            image = np.frombuffer(raw, dtype=np.uint8).reshape(height, width, 3).copy()
+        else:
+            from PIL import Image
+
+            raw = base64.b64decode(
+                str(camera.get("image_base64") or ""), validate=True
+            )
+            image = np.asarray(Image.open(io.BytesIO(raw)).convert("RGB")).copy()
     except Exception as exc:
         raise PolicyContainerError(f"invalid encoded camera image: {exc}") from exc
     width, height = declaration["image_size_wh"]
@@ -626,6 +637,9 @@ def _decode_camera(camera: dict[str, Any], declaration: dict[str, Any]) -> Any:
         raise PolicyContainerError(
             "camera bytes do not match declared image dimensions"
         )
+    expected_hash = str(camera.get("image_sha256") or "")
+    if expected_hash and hashlib.sha256(image.tobytes()).hexdigest() != expected_hash:
+        raise PolicyContainerError("camera RGB hash does not match decoded bytes")
     tensor = torch.from_numpy(image).float() / 255.0
     # LeRobot processor inputs are CHW tensors. ``layout`` describes the
     # external bytes and is checked above; decoding a PNG yields HWC in both

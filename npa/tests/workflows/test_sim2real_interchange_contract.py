@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import hashlib
 
 import pytest
 
@@ -12,10 +13,12 @@ from npa.workflows.sim2real.interchange_contract import (
     InterchangeContractError,
     PolicyAction,
     PolicyCapabilities,
+    PolicyObservation,
     PolicyProfile,
     RigidObjectProfile,
     RobotSensorProfile,
     SurfacePlacementTask,
+    TimestampedCameraObservation,
     Transform,
     assert_policy_compatible,
     rigid_object_profile_from_asset_manifest,
@@ -63,6 +66,7 @@ def _robot(dof: int = 7) -> RobotSensorProfile:
         controller_representation="absolute_joint_position",
         gripper=GripperMapping(
             joint_names=fingers,
+            joint_units=("m", "m"),
             finger_links=("left_finger", "right_finger"),
             open_joint_positions=(0.03, 0.03),
             closed_joint_positions=(0.0, 0.0),
@@ -150,6 +154,7 @@ def test_profile_consumes_canonical_resolved_robot_without_franka_defaults() -> 
         "controller_representation": "absolute_joint_position",
         "joint_limits_rad": [[-2.0, 2.0]] * 6,
         "gripper": {
+            "joint_units": ["m", "m"],
             "maximum_width_m": 0.05,
             "model_semantics": "normalized_open",
             "model_open": 0.0,
@@ -219,6 +224,7 @@ def test_gripper_width_mapping_uses_declared_non_franka_aperture() -> None:
 def test_one_driver_parallel_jaw_gripper_is_supported() -> None:
     gripper = GripperMapping(
         joint_names=("finger_driver",),
+        joint_units=("rad",),
         finger_links=("left_pad", "right_pad"),
         open_joint_positions=(0.0,),
         closed_joint_positions=(0.8,),
@@ -234,6 +240,7 @@ def test_unsupported_gripper_is_rejected_during_profile_construction() -> None:
     with pytest.raises(InterchangeContractError, match="two physical"):
         GripperMapping(
             joint_names=("finger_driver",),
+            joint_units=("rad",),
             finger_links=("finger_a", "finger_b", "finger_c"),
             open_joint_positions=(0.0,),
             closed_joint_positions=(0.8,),
@@ -257,7 +264,8 @@ def test_camera_mount_calibration_and_staleness_are_enforced() -> None:
             "mask": True,
             "capture_timestamp_s": 1.0,
             "state_timestamp_s": 1.0,
-            "image_sha256": DIGEST_A,
+            "rgb8": bytes(224 * 224 * 3),
+            "image_sha256": hashlib.sha256(bytes(224 * 224 * 3)).hexdigest(),
         }
         for key in policy.camera_keys
     }
@@ -272,6 +280,46 @@ def test_camera_mount_calibration_and_staleness_are_enforced() -> None:
             input_identity=DIGEST_B,
             task_identity=_task().identity,
         )
+
+
+def test_validated_observation_is_typed_and_binds_exact_camera_bytes() -> None:
+    robot = _robot(6)
+    policy = _policy(robot)
+    rgb8 = bytes([17]) * (224 * 224 * 3)
+    payloads = {
+        key: {
+            "layout": "HWC",
+            "image_size_wh": [224, 224],
+            "mask": True,
+            "capture_timestamp_s": 2.0,
+            "state_timestamp_s": 2.0,
+            "rgb8": rgb8,
+            "image_sha256": hashlib.sha256(rgb8).hexdigest(),
+        }
+        for key in policy.camera_keys
+    }
+    observation = validate_observation(
+        robot=robot,
+        policy=policy,
+        camera_payloads=payloads,
+        measured_state={name: 0.0 for name in policy.measured_state_names},
+        prompt="place the object",
+        input_identity=DIGEST_B,
+        task_identity=_task().identity,
+    )
+    assert isinstance(observation, PolicyObservation)
+    assert all(isinstance(view, TimestampedCameraObservation) for view in observation.views)
+    wire = observation.to_wire_dict()
+    assert wire["privileged_object_state"] is False
+    assert wire["views"][1]["role"] == "wrist"
+    assert wire["views"][1]["image_sha256"] == hashlib.sha256(rgb8).hexdigest()
+
+
+def test_gripper_inverse_rejects_inconsistent_coupled_joint_measurements() -> None:
+    gripper = _robot(6).gripper
+    assert gripper.joint_positions_to_width((0.03, 0.03)) == pytest.approx(0.06)
+    with pytest.raises(InterchangeContractError, match="disagree"):
+        gripper.joint_positions_to_width((0.03, 0.0))
 
 
 def test_offset_non_cube_object_uses_declared_grasp_and_reference_frames() -> None:
