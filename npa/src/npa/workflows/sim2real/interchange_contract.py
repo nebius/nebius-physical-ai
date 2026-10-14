@@ -917,6 +917,58 @@ class PolicyObservation:
         }
 
 
+def policy_observation_from_wire(payload: Mapping[str, Any]) -> PolicyObservation:
+    """Decode the exact public wire schema into the typed observation contract."""
+
+    if payload.get("schema") != "npa.sim2real.policy_observation.v1":
+        raise InterchangeContractError("unsupported policy observation schema")
+    privileged = payload.get("privileged_object_state")
+    if privileged is not None and privileged is not False:
+        raise InterchangeContractError("privileged object state is forbidden")
+    raw_views = payload.get("views")
+    if not isinstance(raw_views, Sequence) or isinstance(raw_views, (str, bytes)):
+        raise InterchangeContractError("camera views must be an ordered list")
+    views: list[TimestampedCameraObservation] = []
+    for raw in raw_views:
+        if not isinstance(raw, Mapping):
+            raise InterchangeContractError("camera view must be an object")
+        capture = float(raw.get("capture_timestamp_s", math.nan))
+        state = float(raw.get("state_timestamp_s", math.nan))
+        if not math.isfinite(capture) or not math.isfinite(state) or capture > state:
+            raise InterchangeContractError("camera timestamps are invalid")
+        try:
+            rgb8 = base64.b64decode(
+                str(raw.get("image_rgb8_base64") or ""), validate=True
+            )
+        except ValueError as exc:
+            raise InterchangeContractError("camera RGB payload is not base64") from exc
+        views.append(
+            TimestampedCameraObservation(
+                key=str(raw.get("key") or ""),
+                role=str(raw.get("role") or ""),  # type: ignore[arg-type]
+                calibration_sha256=str(raw.get("calibration_sha256") or ""),
+                image_size=tuple(raw.get("image_size_wh") or ()),  # type: ignore[arg-type]
+                layout=str(raw.get("layout") or ""),  # type: ignore[arg-type]
+                mask=raw.get("mask") is True,
+                capture_timestamp_s=capture,
+                state_timestamp_s=state,
+                rgb8=rgb8,
+                rgb_sha256=str(raw.get("image_sha256") or ""),
+            )
+        )
+    return PolicyObservation(
+        input_identity=str(payload.get("input_identity") or ""),
+        robot_identity=str(payload.get("robot_identity") or ""),
+        task_identity=str(payload.get("task_identity") or ""),
+        policy_identity=str(payload.get("policy_identity") or ""),
+        prompt=str(payload.get("prompt") or ""),
+        views=tuple(views),
+        measured_state_names=tuple(payload.get("measured_state_names") or ()),
+        measured_state_units=tuple(payload.get("measured_state_units") or ()),
+        measured_state=tuple(payload.get("measured_state") or ()),
+    )
+
+
 @dataclass(frozen=True)
 class PolicyOutput:
     """Finite action chunk with the complete declared controller semantics."""

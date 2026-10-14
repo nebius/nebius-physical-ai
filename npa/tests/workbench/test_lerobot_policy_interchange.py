@@ -18,6 +18,7 @@ from npa.workbench.lerobot.policy_container import (
     _smolvla_batch,
     _validate_native_policy_features,
     write_smolvla_interchange_manifest,
+    build_parser,
 )
 
 
@@ -212,6 +213,15 @@ def test_six_axis_manifest_cannot_accept_reordered_or_padded_state() -> None:
         _smolvla_batch(observation, manifest, "cpu")
 
 
+def test_smolvla_rejects_structured_privileged_object_state() -> None:
+    pytest.importorskip("torch")
+    manifest = _manifest("a" * 64)
+    observation = _observation(manifest)
+    observation["privileged_object_state"] = {"object_xyz": [0.0, 0.0, 0.0]}
+    with pytest.raises(PolicyContainerError, match="privileged"):
+        _smolvla_batch(observation, manifest, "cpu")
+
+
 def test_cartesian_manifest_requires_qualified_controller(tmp_path: Path) -> None:
     checkpoint, digest = _checkpoint(tmp_path)
     payload = _manifest(digest)
@@ -219,3 +229,31 @@ def test_cartesian_manifest_requires_qualified_controller(tmp_path: Path) -> Non
     _write_manifest(checkpoint, payload)
     with pytest.raises(PolicyContainerError, match="IK/controller"):
         _load_interchange_manifest(checkpoint)
+
+
+def test_interchange_cli_requires_explicit_checkpoint_inputs_and_outputs() -> None:
+    parser = build_parser()
+    bound = parser.parse_args(
+        [
+            "bind-interchange",
+            "--checkpoint-path",
+            "/tmp/checkpoint",
+            "--adapter-spec",
+            "/tmp/adapter.json",
+            "--output-json",
+            "/tmp/bound.json",
+        ]
+    )
+    assert bound.command == "bind-interchange"
+    inferred = parser.parse_args(
+        [
+            "infer-interchange",
+            "--checkpoint-path",
+            "/tmp/checkpoint",
+            "--observation-json",
+            "/tmp/observation.json",
+            "--output-json",
+            "/tmp/output.json",
+        ]
+    )
+    assert inferred.command == "infer-interchange"

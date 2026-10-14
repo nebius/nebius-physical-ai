@@ -682,7 +682,8 @@ def _smolvla_batch(
     for key in ("policy_identity", "robot_identity", "task_identity"):
         if observation.get(key) != manifest.get(key):
             raise PolicyContainerError(f"observation {key} does not match checkpoint")
-    if observation.get("privileged_object_state") not in {None, False}:
+    privileged = observation.get("privileged_object_state")
+    if privileged is not None and privileged is not False:
         raise PolicyContainerError("privileged object state is forbidden")
     prompt = str(observation.get("prompt") or "").strip()
     if not prompt:
@@ -2050,6 +2051,23 @@ def build_parser() -> argparse.ArgumentParser:
         "validate-checkpoint", help="Assert a checkpoint has loadable weights."
     )
     validate_cmd.add_argument("--checkpoint-path", type=Path, required=True)
+    bind_cmd = subparsers.add_parser(
+        "bind-interchange",
+        help="Bind a trained SmolVLA checkpoint to an explicit robot/task adapter.",
+    )
+    bind_cmd.add_argument("--checkpoint-path", type=Path, required=True)
+    bind_cmd.add_argument("--adapter-spec", type=Path, required=True)
+    bind_cmd.add_argument("--output-json", type=Path, required=True)
+    infer_cmd = subparsers.add_parser(
+        "infer-interchange",
+        help="Run one real checkpoint-loaded typed SmolVLA inference.",
+    )
+    infer_cmd.add_argument("--checkpoint-path", type=Path, required=True)
+    infer_cmd.add_argument("--observation-json", type=Path, required=True)
+    infer_cmd.add_argument("--output-json", type=Path, required=True)
+    infer_cmd.add_argument(
+        "--hardware-topology", default="single-gpu", help="Measured runtime topology."
+    )
     feedback_cmd = subparsers.add_parser(
         "feedback-step", help="Run one feedback trainer-hook step."
     )
@@ -2164,6 +2182,62 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "validate-checkpoint":
         validation_result = validate_lerobot_checkpoint(args.checkpoint_path)
         print(json.dumps(validation_result.to_dict(), indent=2, sort_keys=True))
+        return 0
+    if args.command == "bind-interchange":
+        spec = json.loads(args.adapter_spec.read_text(encoding="utf-8"))
+        path = write_smolvla_interchange_manifest(
+            args.checkpoint_path,
+            policy_identity=str(spec.get("policy_identity") or ""),
+            robot_identity=str(spec.get("robot_identity") or ""),
+            task_identity=str(spec.get("task_identity") or ""),
+            normalization_identity=str(spec.get("normalization_identity") or ""),
+            measured_state_names=list(spec.get("measured_state_names") or ()),
+            cameras=list(spec.get("cameras") or ()),
+            action=dict(spec.get("action") or {}),
+            state_feature_key=str(
+                spec.get("state_feature_key") or "observation.state"
+            ),
+            action_feature_key=str(spec.get("action_feature_key") or "action"),
+            cartesian_controller_qualified=bool(
+                spec.get("cartesian_controller_qualified", False)
+            ),
+        )
+        result = {
+            "status": "bound",
+            "manifest": json.loads(path.read_text(encoding="utf-8")),
+        }
+        args.output_json.parent.mkdir(parents=True, exist_ok=True)
+        args.output_json.write_text(
+            json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 0
+    if args.command == "infer-interchange":
+        from types import SimpleNamespace
+
+        from npa.workflows.sim2real.interchange_backends import (
+            smolvla_policy_profile,
+        )
+        from npa.workflows.sim2real.interchange_contract import (
+            policy_observation_from_wire,
+        )
+
+        runtime = LeRobotPolicyRuntime(args.checkpoint_path)
+        observation = policy_observation_from_wire(
+            json.loads(args.observation_json.read_text(encoding="utf-8"))
+        )
+        profile = smolvla_policy_profile(
+            runtime.manifest,
+            robot=SimpleNamespace(identity=observation.robot_identity),
+            task=SimpleNamespace(identity=observation.task_identity),
+            hardware_topologies=(args.hardware_topology,),
+        )
+        output = runtime.infer_typed(observation, profile).to_dict()
+        args.output_json.parent.mkdir(parents=True, exist_ok=True)
+        args.output_json.write_text(
+            json.dumps(output, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        print(json.dumps(output, indent=2, sort_keys=True))
         return 0
     if args.command == "feedback-step":
         payload = json.loads(args.feedback_json.read_text(encoding="utf-8"))

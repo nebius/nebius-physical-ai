@@ -24,6 +24,7 @@ from npa.workflows.sim2real.interchange_contract import (
     assert_policy_compatible,
     assert_surface_placement_compatible,
     rigid_object_profile_from_asset_manifest,
+    policy_observation_from_wire,
     robot_sensor_profile_from_resolved,
     validate_observation,
 )
@@ -315,6 +316,11 @@ def test_validated_observation_is_typed_and_binds_exact_camera_bytes() -> None:
     assert wire["privileged_object_state"] is False
     assert wire["views"][1]["role"] == "wrist"
     assert wire["views"][1]["image_sha256"] == hashlib.sha256(rgb8).hexdigest()
+    decoded = policy_observation_from_wire(wire)
+    assert decoded == observation
+    wire["privileged_object_state"] = {"object_xyz": [0.0, 0.0, 0.0]}
+    with pytest.raises(InterchangeContractError, match="privileged"):
+        policy_observation_from_wire(wire)
 
 
 def test_gripper_inverse_rejects_inconsistent_coupled_joint_measurements() -> None:
