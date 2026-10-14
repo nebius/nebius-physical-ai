@@ -50,6 +50,7 @@ def test_native_train_reload_and_service_share_exact_checkpoint_lineage() -> Non
     reload = steps["reload-validation"].argv
     adapted = steps["start-adapted-service"].argv
     selected = _value(train, "--selected-checkpoint-s3-uri")
+    assert _value(train, "--policy-type") == "smolvla"
     assert (
         _value(train, "--pretrained-policy-source")
         == spec.config["base_checkpoint_uri"]

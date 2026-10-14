@@ -2176,7 +2176,7 @@ def build_parser() -> argparse.ArgumentParser:
     train_cmd.add_argument(
         "--pretrained-policy-cache-dir",
         type=Path,
-        default=Path("/tmp/npa-lerobot-pretrained"),
+        default=Path.home() / ".cache" / "npa" / "lerobot-pretrained",
     )
     train_cmd.add_argument(
         "--interchange-adapter-relative-path",

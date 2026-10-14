@@ -9,6 +9,7 @@ import json
 import os
 import re
 import shlex
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -449,7 +450,8 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
             "status": "absent",
         }
         stage = 7 if args.checkpoint_role == "base" else 13
-    write_json(args.output_uri, result, directory=Path("/tmp/npa-smolvla-lifecycle"))
+    with tempfile.TemporaryDirectory(prefix="npa-smolvla-lifecycle-") as directory:
+        write_json(args.output_uri, result, directory=Path(directory))
     publish_component_record(
         component_schema=POLICY_INTERCHANGE_COMPONENT_SCHEMA,
         root_uri=args.component_root_uri,

@@ -334,29 +334,36 @@ def test_cartesian_manifest_requires_qualified_controller(tmp_path: Path) -> Non
         _load_interchange_manifest(checkpoint)
 
 
-def test_interchange_cli_requires_explicit_checkpoint_inputs_and_outputs() -> None:
+def test_interchange_cli_requires_explicit_checkpoint_inputs_and_outputs(
+    tmp_path: Path,
+) -> None:
     parser = build_parser()
+    checkpoint = tmp_path / "checkpoint"
+    adapter = tmp_path / "adapter.json"
+    bound_output = tmp_path / "bound.json"
     bound = parser.parse_args(
         [
             "bind-interchange",
             "--checkpoint-path",
-            "/tmp/checkpoint",
+            str(checkpoint),
             "--adapter-spec",
-            "/tmp/adapter.json",
+            str(adapter),
             "--output-json",
-            "/tmp/bound.json",
+            str(bound_output),
         ]
     )
     assert bound.command == "bind-interchange"
+    observation = tmp_path / "observation.json"
+    inference_output = tmp_path / "output.json"
     inferred = parser.parse_args(
         [
             "infer-interchange",
             "--checkpoint-path",
-            "/tmp/checkpoint",
+            str(checkpoint),
             "--observation-json",
-            "/tmp/observation.json",
+            str(observation),
             "--output-json",
-            "/tmp/output.json",
+            str(inference_output),
         ]
     )
     assert inferred.command == "infer-interchange"
@@ -366,7 +373,7 @@ def test_interchange_cli_requires_explicit_checkpoint_inputs_and_outputs() -> No
             "--dataset-repo-id",
             "operator/surface-placement",
             "--output-dir",
-            "/tmp/output",
+            str(tmp_path / "training"),
             "--steps",
             "100",
             "--interchange-adapter-relative-path",
@@ -413,7 +420,9 @@ def test_health_exposes_loaded_interchange_identities_and_byte_hash(
     )
 
 
-def test_interchange_training_forbids_early_checkpoint_only_upload() -> None:
+def test_interchange_training_forbids_early_checkpoint_only_upload(
+    tmp_path: Path,
+) -> None:
     with pytest.raises(PolicyContainerError, match="checkpoint-only upload"):
         main(
             [
@@ -421,7 +430,7 @@ def test_interchange_training_forbids_early_checkpoint_only_upload() -> None:
                 "--dataset-repo-id",
                 "operator/surface-placement",
                 "--output-dir",
-                "/tmp/output",
+                str(tmp_path / "output"),
                 "--steps",
                 "100",
                 "--interchange-adapter-relative-path",
