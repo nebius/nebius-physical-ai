@@ -777,6 +777,20 @@ class PolicyCapabilities:
                 "qualified hardware topology must be explicit"
             )
 
+    def to_dict(self) -> dict[str, Any]:
+        """Return explicit support rather than fabricating unavailable metrics."""
+
+        return {
+            "inference": self.inference,
+            "native_training": self.native_training,
+            "checkpoint_reload": self.checkpoint_reload,
+            "model_loss": self.model_loss,
+            "action_metrics": self.action_metrics,
+            "deterministic_noise_coupling": self.deterministic_noise_coupling,
+            "repeated_paired_trials": self.repeated_paired_trials,
+            "hardware_topologies": list(self.hardware_topologies),
+        }
+
 
 @dataclass(frozen=True)
 class PolicyProfile:

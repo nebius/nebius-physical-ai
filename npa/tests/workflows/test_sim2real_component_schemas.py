@@ -104,6 +104,24 @@ def test_pi05_reader_cannot_admit_a_canonical_record():
         )
 
 
+@pytest.mark.parametrize("stage", [1, 3, 4, 5, 7, 10, 13, 14])
+def test_policy_interchange_cpu_stages_have_distinct_schema(stage):
+    schema = workflow_io.POLICY_INTERCHANGE_COMPONENT_SCHEMA
+    record = _record(stage, schema)
+    _validate(record, schema)
+    assert record["schema"] == schema
+    with pytest.raises(ValueError, match="ComponentRecord is invalid"):
+        _validate(record, workflow_io.PI05_COMPONENT_SCHEMA)
+
+
+@pytest.mark.parametrize("stage", [2, 6, 8, 9, 11])
+def test_policy_interchange_gpu_stages_require_device_evidence(stage):
+    schema = workflow_io.POLICY_INTERCHANGE_COMPONENT_SCHEMA
+    with pytest.raises(ValueError, match="execution provenance is invalid"):
+        _record(stage, schema)
+    _validate(_record(stage, schema, gpu=True), schema)
+
+
 @pytest.mark.parametrize("schema", ["", "npa.sim2real.unknown.v1"])
 def test_unknown_schema_cannot_select_cpu_execution_requirements(schema):
     with pytest.raises(ValueError, match="Unknown ComponentRecord workflow schema"):

@@ -2999,6 +2999,27 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.adapted_service_account}}",
         ],
     ),
+    "workbench.sim2real.policy_interchange_prepare": ToolEntry(
+        name="workbench.sim2real.policy_interchange_prepare",
+        description=(
+            "Validate one sealed robot, camera, rigid-object, task, and native "
+            "policy profile before any GPU stage."
+        ),
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workflows.sim2real.interchange_stage",
+            "prepare",
+            "--run-id",
+            "{{run.id}}",
+            "--profile-uri",
+            "{{config.profile_uri}}",
+            "--output-uri",
+            "{{config.preparation_uri}}",
+            "--component-root-uri",
+            "{{config.component_root_uri}}",
+        ],
+    ),
     "workbench.sim2real.pi05_external_seam": ToolEntry(
         name="workbench.sim2real.pi05_external_seam",
         description="Record the honest operator-owned physical robot validation seam.",

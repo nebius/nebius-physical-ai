@@ -21,9 +21,13 @@ from npa.workflows.sim2real.publication import (
 
 CANONICAL_COMPONENT_SCHEMA = "npa.sim2real.component_record.v1"
 PI05_COMPONENT_SCHEMA = "npa.sim2real.pi05.component_record.v1"
+POLICY_INTERCHANGE_COMPONENT_SCHEMA = (
+    "npa.sim2real.policy_interchange.component_record.v1"
+)
 _COMPONENT_GPU_STAGES = {
     CANONICAL_COMPONENT_SCHEMA: frozenset({3, 4, 7, 9, 10}),
     PI05_COMPONENT_SCHEMA: frozenset({2, 6, 8, 9, 11}),
+    POLICY_INTERCHANGE_COMPONENT_SCHEMA: frozenset({2, 6, 8, 9, 11}),
 }
 
 
