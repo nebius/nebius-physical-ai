@@ -135,7 +135,7 @@ class Pi05PolicyClient:
             raise Pi05PolicyClientError(
                 "pi0.5 DROID checkpoint requires exactly seven arm joints; padding is forbidden"
             )
-        if tuple(observation.measured_state_names) != tuple(robot.measured_joint_names):
+        if tuple(observation.measured_state_names) != tuple(robot.measured_state_names):
             raise Pi05PolicyClientError(
                 "typed measured state names/order do not match the robot"
             )
@@ -157,13 +157,7 @@ class Pi05PolicyClient:
         wrist = np.frombuffer(views["wrist"].rgb8, dtype=np.uint8).reshape(224, 224, 3)
         state = np.asarray(observation.measured_state, dtype=np.float32)
         arm = state[:7]
-        try:
-            width = robot.gripper.joint_positions_to_width(state[7:])
-        except Exception as exc:
-            raise Pi05PolicyClientError(str(exc)) from exc
-        from npa.workflows.sim2real.pi05_contract import width_to_droid_gripper
-
-        gripper = np.asarray([width_to_droid_gripper(width)], dtype=np.float32)
+        gripper = np.asarray([state[7]], dtype=np.float32)
         wrist_age = (
             views["wrist"].state_timestamp_s - views["wrist"].capture_timestamp_s
         )

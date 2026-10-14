@@ -590,17 +590,27 @@ def _infer_smolvla_query(
     policy_profile = context["policy_profile"]
     robot = native.scene["robot"]
     names = list(robot.joint_names)
-    state = (
+    arm_state = (
         _proxy_torch(robot.data.joint_pos)[
-            0, [names.index(name) for name in robot_profile.measured_joint_names]
+            0, [names.index(name) for name in robot_profile.arm_joint_names]
         ]
         .detach()
         .cpu()
         .numpy()
     )
+    gripper_positions = (
+        _proxy_torch(robot.data.joint_pos)[
+            0, [names.index(name) for name in robot_profile.gripper.joint_names]
+        ]
+        .detach()
+        .cpu()
+        .numpy()
+    )
+    width = robot_profile.gripper.joint_positions_to_width(gripper_positions)
+    state = np.r_[arm_state, robot_profile.gripper.width_to_model(width)]
     state_map = {
         name: float(value)
-        for name, value in zip(robot_profile.measured_joint_names, state, strict=True)
+        for name, value in zip(robot_profile.measured_state_names, state, strict=True)
     }
     frames_by_role = {"exterior": exterior, "wrist": wrist}
     camera_payloads = {}

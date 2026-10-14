@@ -34,7 +34,8 @@ def _robot(dof: int) -> RobotSensorProfile:
         base_link="base",
         ee_link="tool0" if dof == 6 else "hand",
         arm_joint_names=arm,
-        measured_joint_names=arm + fingers,
+        measured_state_names=arm + ("gripper",),
+        measured_state_units=("rad",) * len(arm) + ("normalized_closed",),
         joint_limits_rad=tuple((-2.0, 2.0) for _ in arm),
         home_positions_rad=tuple(0.0 for _ in arm),
         controller_representation="absolute_joint_position",
@@ -138,7 +139,7 @@ def test_smolvla_manifest_preserves_six_dof_names_and_repeated_trials() -> None:
         "robot_identity": robot.identity,
         "task_identity": _task().identity,
         "normalization_identity": DIGEST_B,
-        "measured_state_names": list(robot.measured_joint_names),
+        "measured_state_names": list(robot.measured_state_names),
         "cameras": [
             {"key": camera.key, "feature_key": f"observation.images.{camera.key}"}
             for camera in robot.cameras
@@ -161,6 +162,6 @@ def test_smolvla_manifest_preserves_six_dof_names_and_repeated_trials() -> None:
         hardware_topologies=("single-gpu",),
     )
     assert len(profile.action.names) == 7
-    assert profile.measured_state_names == robot.measured_joint_names
+    assert profile.measured_state_names == robot.measured_state_names
     assert profile.capabilities.deterministic_noise_coupling is False
     assert profile.capabilities.repeated_paired_trials is True

@@ -80,7 +80,7 @@ def _write_profile(root: Path, *, backend: str = "lerobot_smolvla") -> None:
         "robot_identity": robot_contract["embodiment_digest"],
         "task_identity": task_identity,
         "normalization_identity": DIGEST_B,
-        "measured_state_names": arm + fingers,
+        "measured_state_names": arm + ["gripper"],
         "cameras": [{"key": "scene"}, {"key": "tool"}],
         "action": {
             "representation": "absolute_joint_position",
@@ -105,6 +105,10 @@ def _write_profile(root: Path, *, backend: str = "lerobot_smolvla") -> None:
             "fixed_base": True,
             "controller_representation": "absolute_joint_position",
             "joint_limits_rad": [[-3.14, 3.14]] * 6,
+            "measured_state": {
+                "names": arm + ["gripper"],
+                "units": ["rad"] * 6 + ["normalized_closed"],
+            },
             "gripper": {
                 "joint_units": ["rad", "rad"],
                 "open_joint_positions": [0.03, 0.03],

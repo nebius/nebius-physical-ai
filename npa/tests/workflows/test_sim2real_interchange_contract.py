@@ -66,7 +66,8 @@ def _robot(dof: int = 7) -> RobotSensorProfile:
         base_link="base",
         ee_link="tool0" if dof == 6 else "hand",
         arm_joint_names=arm,
-        measured_joint_names=arm + fingers,
+        measured_state_names=arm + ("gripper",),
+        measured_state_units=("rad",) * len(arm) + ("normalized_closed",),
         joint_limits_rad=tuple((-2.0, 2.0) for _ in arm),
         home_positions_rad=tuple(0.0 for _ in arm),
         controller_representation="absolute_joint_position",
@@ -106,7 +107,7 @@ def _policy(robot: RobotSensorProfile) -> PolicyProfile:
         robot_identity=robot.identity,
         task_identity=_task().identity,
         camera_keys=tuple(camera.key for camera in robot.cameras),
-        measured_state_names=robot.measured_joint_names,
+        measured_state_names=robot.measured_state_names,
         action=PolicyAction(
             representation="absolute_joint_position",
             names=robot.action_names,
@@ -159,6 +160,10 @@ def test_profile_consumes_canonical_resolved_robot_without_franka_defaults() -> 
         "fixed_base": True,
         "controller_representation": "absolute_joint_position",
         "joint_limits_rad": [[-2.0, 2.0]] * 6,
+        "measured_state": {
+            "names": ["a1", "a2", "a3", "a4", "a5", "a6", "gripper"],
+            "units": ["rad"] * 6 + ["normalized_closed"],
+        },
         "gripper": {
             "joint_units": ["m", "m"],
             "maximum_width_m": 0.05,
@@ -172,6 +177,19 @@ def test_profile_consumes_canonical_resolved_robot_without_franka_defaults() -> 
     assert profile.arm_joint_names == ("a1", "a2", "a3", "a4", "a5", "a6")
     assert profile.ee_link == "tool0"
     assert profile.gripper.maximum_width_m == 0.05
+    assert profile.measured_state_names[-1] == "gripper"
+    assert profile.measured_state_units[-1] == "normalized_closed"
+
+
+def test_policy_state_keeps_physical_fingers_out_of_model_dimensions() -> None:
+    robot = _robot(7)
+    assert robot.gripper.joint_names == (
+        "left_finger_joint",
+        "right_finger_joint",
+    )
+    assert robot.measured_state_names == (*robot.arm_joint_names, "gripper")
+    assert len(robot.measured_state_names) == 8
+    assert len(robot.arm_joint_names + robot.gripper.joint_names) == 9
 
 
 def test_resolved_robot_requires_explicit_actual_joint_limits() -> None:

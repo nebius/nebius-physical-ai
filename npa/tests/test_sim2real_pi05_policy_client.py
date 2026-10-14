@@ -258,14 +258,14 @@ def _typed_observation(*, arm_dof: int) -> tuple[PolicyObservation, object, obje
         policy_identity=policy_identity,
         prompt="place the object",
         views=views,
-        measured_state_names=arm + fingers,
-        measured_state_units=("rad",) * arm_dof + ("m", "m"),
-        measured_state=(0.0,) * arm_dof + (0.04, 0.04),
+        measured_state_names=arm + ("gripper",),
+        measured_state_units=("rad",) * arm_dof + ("normalized_closed",),
+        measured_state=(0.0,) * arm_dof + (0.0,),
     )
     robot = types.SimpleNamespace(
         identity=identity,
         arm_joint_names=arm,
-        measured_joint_names=arm + fingers,
+        measured_state_names=arm + ("gripper",),
         gripper=GripperMapping(
             joint_names=fingers,
             joint_units=("m", "m"),

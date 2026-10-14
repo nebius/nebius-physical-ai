@@ -290,7 +290,8 @@ class RobotSensorProfile:
     base_link: str
     ee_link: str
     arm_joint_names: tuple[str, ...]
-    measured_joint_names: tuple[str, ...]
+    measured_state_names: tuple[str, ...]
+    measured_state_units: tuple[str, ...]
     joint_limits_rad: tuple[tuple[float, float], ...]
     home_positions_rad: tuple[float, ...]
     controller_representation: Literal[
@@ -317,11 +318,17 @@ class RobotSensorProfile:
                     "robot source digests must be lowercase SHA-256"
                 )
         arm = _names(self.arm_joint_names, name="arm_joint_names")
-        measured = _names(self.measured_joint_names, name="measured_joint_names")
-        expected = arm + self.gripper.joint_names
-        if measured != expected:
+        measured = _names(self.measured_state_names, name="measured_state_names")
+        if measured[: len(arm)] != arm or len(measured) != len(arm) + 1:
             raise InterchangeContractError(
-                "measured_joint_names must equal ordered arm then gripper joints"
+                "measured_state_names must equal the ordered arm joints followed "
+                "by one semantic gripper value"
+            )
+        expected_units = ("rad",) * len(arm) + (self.gripper.model_semantics,)
+        if self.measured_state_units != expected_units:
+            raise InterchangeContractError(
+                "measured_state_units must declare radians for ordered arm joints "
+                "and the gripper model semantics for the final value"
             )
         if len(self.joint_limits_rad) != len(arm):
             raise InterchangeContractError(
@@ -361,7 +368,8 @@ class RobotSensorProfile:
             "base_link": self.base_link,
             "ee_link": self.ee_link,
             "arm_joint_names": list(self.arm_joint_names),
-            "measured_joint_names": list(self.measured_joint_names),
+            "measured_state_names": list(self.measured_state_names),
+            "measured_state_units": list(self.measured_state_units),
             "joint_limits_rad": [list(limit) for limit in self.joint_limits_rad],
             "home_positions_rad": list(self.home_positions_rad),
             "controller_representation": self.controller_representation,
@@ -385,7 +393,10 @@ def robot_sensor_profile_from_dict(value: Mapping[str, Any]) -> RobotSensorProfi
         base_link=str(value.get("base_link") or ""),
         ee_link=str(value.get("ee_link") or ""),
         arm_joint_names=tuple(value.get("arm_joint_names") or ()),
-        measured_joint_names=tuple(value.get("measured_joint_names") or ()),
+        measured_state_names=tuple(
+            value.get("measured_state_names") or value.get("measured_joint_names") or ()
+        ),
+        measured_state_units=tuple(value.get("measured_state_units") or ()),
         joint_limits_rad=tuple(
             tuple(float(item) for item in row)
             for row in value.get("joint_limits_rad") or ()
@@ -466,6 +477,13 @@ def robot_sensor_profile_from_resolved(
     gripper_config = sensor_config.get("gripper")
     if not isinstance(gripper_config, Mapping):
         raise InterchangeContractError("explicit gripper width mapping is required")
+    measured_state = sensor_config.get("measured_state")
+    if not isinstance(measured_state, Mapping):
+        raise InterchangeContractError(
+            "explicit measured_state names and units are required"
+        )
+    measured_state_names = tuple(measured_state.get("names") or ())
+    measured_state_units = tuple(measured_state.get("units") or ())
     cameras_config = sensor_config.get("cameras")
     if not isinstance(cameras_config, Sequence) or isinstance(
         cameras_config, (str, bytes)
@@ -512,7 +530,8 @@ def robot_sensor_profile_from_resolved(
         base_link=str(embodiment.get("base_link") or ""),
         ee_link=str(embodiment.get("ee_link") or ""),
         arm_joint_names=arm_names,
-        measured_joint_names=arm_names + gripper_names,
+        measured_state_names=measured_state_names,
+        measured_state_units=measured_state_units,
         joint_limits_rad=limit_values,
         home_positions_rad=home,
         controller_representation=str(
@@ -1223,7 +1242,7 @@ def assert_policy_compatible(
         raise InterchangeContractError(
             "policy camera keys/order do not match calibrated views"
         )
-    if policy.measured_state_names != robot.measured_joint_names:
+    if policy.measured_state_names != robot.measured_state_names:
         raise InterchangeContractError(
             "policy measured state names/order do not match the embodiment"
         )
@@ -1332,7 +1351,6 @@ def validate_observation(
                 rgb_sha256=image_sha256,
             )
         )
-    state_units = ("rad",) * len(robot.arm_joint_names) + robot.gripper.joint_units
     return PolicyObservation(
         input_identity=input_identity,
         robot_identity=robot.identity,
@@ -1341,6 +1359,6 @@ def validate_observation(
         prompt=prompt,
         views=tuple(views),
         measured_state_names=policy.measured_state_names,
-        measured_state_units=state_units,
+        measured_state_units=robot.measured_state_units,
         measured_state=state_values,
     )
