@@ -38,6 +38,14 @@ def _checkpoint(tmp_path: Path) -> tuple[Path, str]:
     (checkpoint / "policy_postprocessor.json").write_text(
         '{"unnormalize":{"mean":[0.1],"std":[0.2]}}\n', encoding="utf-8"
     )
+    (
+        checkpoint
+        / "policy_preprocessor_step_5_normalizer_processor.safetensors"
+    ).write_bytes(b"native-normalizer-state")
+    (
+        checkpoint
+        / "policy_postprocessor_step_0_unnormalizer_processor.safetensors"
+    ).write_bytes(b"native-unnormalizer-state")
     digest = hashlib.sha256(weights.read_bytes()).hexdigest()
     return checkpoint, digest
 

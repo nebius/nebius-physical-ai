@@ -55,7 +55,9 @@ INTERCHANGE_MANIFEST_FILENAME = "npa_policy_interchange.json"
 INTERCHANGE_MANIFEST_SCHEMA = "npa.sim2real.lerobot_policy_adapter.v1"
 INTERCHANGE_PROCESSOR_FILES = (
     "policy_preprocessor.json",
+    "policy_preprocessor_step_5_normalizer_processor.safetensors",
     "policy_postprocessor.json",
+    "policy_postprocessor_step_0_unnormalizer_processor.safetensors",
 )
 TRAINING_DATASET_PROVENANCE_FILENAME = "training_dataset_provenance.json"
 # This is the pinned RoboCasa ACT closure, not a generally supported release.
