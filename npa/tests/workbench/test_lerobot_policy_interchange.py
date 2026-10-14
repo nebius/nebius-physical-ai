@@ -15,6 +15,7 @@ from npa.workbench.lerobot.policy_container import (
     INTERCHANGE_MANIFEST_FILENAME,
     PolicyContainerError,
     _load_interchange_manifest,
+    _processor_identity,
     _smolvla_batch,
     _validate_native_policy_features,
     write_smolvla_interchange_manifest,
@@ -27,18 +28,24 @@ def _checkpoint(tmp_path: Path) -> tuple[Path, str]:
     checkpoint.mkdir()
     weights = checkpoint / "pytorch_model.bin"
     weights.write_bytes(b"real-checkpoint-binding-fixture")
+    (checkpoint / "policy_preprocessor.json").write_text(
+        '{"normalize":{"mean":[0.1],"std":[0.2]}}\n', encoding="utf-8"
+    )
+    (checkpoint / "policy_postprocessor.json").write_text(
+        '{"unnormalize":{"mean":[0.1],"std":[0.2]}}\n', encoding="utf-8"
+    )
     digest = hashlib.sha256(weights.read_bytes()).hexdigest()
     return checkpoint, digest
 
 
-def _manifest(digest: str) -> dict:
+def _manifest(digest: str, normalization_identity: str = "c" * 64) -> dict:
     return {
         "schema": "npa.sim2real.lerobot_policy_adapter.v1",
         "backend": "lerobot_smolvla",
         "policy_identity": "smolvla-six-axis",
         "robot_identity": "six-axis-arm",
         "task_identity": "released-surface-v1",
-        "normalization_identity": "c" * 64,
+        "normalization_identity": normalization_identity,
         "checkpoint_sha256": digest,
         "measured_state_names": [
             "j1",
@@ -122,7 +129,9 @@ def test_manifest_is_cryptographically_bound_to_real_weight_file(
     tmp_path: Path,
 ) -> None:
     checkpoint, digest = _checkpoint(tmp_path)
-    payload = _manifest(digest)
+    normalization, files = _processor_identity(checkpoint)
+    payload = _manifest(digest, normalization)
+    payload["normalization_files"] = files
     _write_manifest(checkpoint, payload)
     assert _load_interchange_manifest(checkpoint)["checkpoint_sha256"] == digest
     payload["checkpoint_sha256"] = "0" * 64
@@ -133,7 +142,8 @@ def test_manifest_is_cryptographically_bound_to_real_weight_file(
 
 def test_writer_binds_complete_adapter_to_weight_bytes(tmp_path: Path) -> None:
     checkpoint, digest = _checkpoint(tmp_path)
-    manifest = _manifest(digest)
+    normalization, _ = _processor_identity(checkpoint)
+    manifest = _manifest(digest, normalization)
     path = write_smolvla_interchange_manifest(
         checkpoint,
         policy_identity=manifest["policy_identity"],
@@ -146,7 +156,21 @@ def test_writer_binds_complete_adapter_to_weight_bytes(tmp_path: Path) -> None:
     )
     payload = json.loads(path.read_text())
     assert payload["checkpoint_sha256"] == digest
+    assert payload["normalization_identity"] == normalization
     assert payload["action"]["names"][-1] == "gripper"
+
+
+def test_manifest_rejects_changed_normalization_processor(tmp_path: Path) -> None:
+    checkpoint, digest = _checkpoint(tmp_path)
+    normalization, files = _processor_identity(checkpoint)
+    payload = _manifest(digest, normalization)
+    payload["normalization_files"] = files
+    _write_manifest(checkpoint, payload)
+    (checkpoint / "policy_preprocessor.json").write_text(
+        '{"normalize":{"mean":[9.9],"std":[0.2]}}\n', encoding="utf-8"
+    )
+    with pytest.raises(PolicyContainerError, match="normalization"):
+        _load_interchange_manifest(checkpoint)
 
 
 def test_checkpoint_features_must_match_camera_state_and_action_dimensions() -> None:
@@ -224,7 +248,9 @@ def test_smolvla_rejects_structured_privileged_object_state() -> None:
 
 def test_cartesian_manifest_requires_qualified_controller(tmp_path: Path) -> None:
     checkpoint, digest = _checkpoint(tmp_path)
-    payload = _manifest(digest)
+    normalization, files = _processor_identity(checkpoint)
+    payload = _manifest(digest, normalization)
+    payload["normalization_files"] = files
     payload["action"]["representation"] = "ee_pose"
     _write_manifest(checkpoint, payload)
     with pytest.raises(PolicyContainerError, match="IK/controller"):

@@ -52,6 +52,10 @@ DEFAULT_EVAL_TIMEOUT_SECONDS = 7200
 REAL_WEIGHT_FILENAMES = ("model.safetensors", "pytorch_model.bin")
 INTERCHANGE_MANIFEST_FILENAME = "npa_policy_interchange.json"
 INTERCHANGE_MANIFEST_SCHEMA = "npa.sim2real.lerobot_policy_adapter.v1"
+INTERCHANGE_PROCESSOR_FILES = (
+    "policy_preprocessor.json",
+    "policy_postprocessor.json",
+)
 TRAINING_DATASET_PROVENANCE_FILENAME = "training_dataset_provenance.json"
 # This is the pinned RoboCasa ACT closure, not a generally supported release.
 _ROBOCASA_ACT_TRAINING_VERSION = "0.6.1+npa2"
@@ -517,6 +521,13 @@ def _load_interchange_manifest(checkpoint: Path) -> dict[str, Any]:
     expected = str(payload.get("checkpoint_sha256") or "")
     if len(expected) != 64 or _sha256_path(weight_path) != expected:
         raise PolicyContainerError("policy manifest is not bound to checkpoint weights")
+    normalization_identity, normalization_files = _processor_identity(checkpoint)
+    if payload.get("normalization_identity") != normalization_identity:
+        raise PolicyContainerError(
+            "policy manifest is not bound to checkpoint normalization processors"
+        )
+    if payload.get("normalization_files") != normalization_files:
+        raise PolicyContainerError("policy normalization file manifest is stale")
     return payload
 
 
@@ -540,6 +551,11 @@ def write_smolvla_interchange_manifest(
     weight = _find_weight_file(target)
     if weight is None:
         raise PolicyContainerError("cannot bind interchange manifest without weights")
+    actual_normalization, normalization_files = _processor_identity(target)
+    if normalization_identity != actual_normalization:
+        raise PolicyContainerError(
+            "declared normalization identity differs from checkpoint processors"
+        )
     payload = {
         "schema": INTERCHANGE_MANIFEST_SCHEMA,
         "backend": "lerobot_smolvla",
@@ -547,6 +563,7 @@ def write_smolvla_interchange_manifest(
         "robot_identity": robot_identity,
         "task_identity": task_identity,
         "normalization_identity": normalization_identity,
+        "normalization_files": normalization_files,
         "checkpoint_sha256": _sha256_path(weight),
         "measured_state_names": measured_state_names,
         "state_feature_key": state_feature_key,
@@ -561,6 +578,23 @@ def write_smolvla_interchange_manifest(
     )
     _load_interchange_manifest(target)
     return path
+
+
+def _processor_identity(checkpoint: Path) -> tuple[str, list[dict[str, Any]]]:
+    """Hash the exact serialized native normalization processor pipelines."""
+
+    records: list[dict[str, Any]] = []
+    for name in INTERCHANGE_PROCESSOR_FILES:
+        path = checkpoint / name
+        if not path.is_file():
+            raise PolicyContainerError(
+                f"checkpoint is missing required normalization processor {name}"
+            )
+        records.append(
+            {"path": name, "bytes": path.stat().st_size, "sha256": _sha256_path(path)}
+        )
+    encoded = json.dumps(records, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest(), records
 
 
 def _sha256_path(path: Path) -> str:
