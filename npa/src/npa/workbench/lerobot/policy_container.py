@@ -605,6 +605,152 @@ def _processor_identity(checkpoint: Path) -> tuple[str, list[dict[str, Any]]]:
     return hashlib.sha256(encoded).hexdigest(), records
 
 
+def _native_smolvla_preparation_api() -> tuple[Any, ...]:
+    """Load the exact native LeRobot objects used by base preparation."""
+
+    try:
+        from lerobot.configs import FeatureType
+        from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
+        from lerobot.policies.factory import make_pre_post_processors
+        from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
+        from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
+        from lerobot.utils.constants import (
+            POLICY_POSTPROCESSOR_DEFAULT_NAME,
+            POLICY_PREPROCESSOR_DEFAULT_NAME,
+        )
+        from lerobot.utils.feature_utils import dataset_to_policy_features
+    except Exception as exc:
+        raise PolicyContainerError(
+            f"native LeRobot SmolVLA preparation is unavailable: {exc}"
+        ) from exc
+    return (
+        FeatureType,
+        LeRobotDatasetMetadata,
+        make_pre_post_processors,
+        SmolVLAConfig,
+        SmolVLAPolicy,
+        POLICY_POSTPROCESSOR_DEFAULT_NAME,
+        POLICY_PREPROCESSOR_DEFAULT_NAME,
+        dataset_to_policy_features,
+    )
+
+
+def prepare_smolvla_base_checkpoint(
+    base_checkpoint: Path,
+    *,
+    dataset_root: Path,
+    dataset_repo_id: str,
+    adapter: Mapping[str, Any],
+    output_dir: Path,
+) -> dict[str, Any]:
+    """Bind untouched SmolVLA weights to one dataset/controller contract.
+
+    LeRobot's public base checkpoint declares the state, camera, and action
+    features of its source robot. Loading those bytes directly for a different
+    embodiment is invalid even though SmolVLA's internal projections have fixed
+    padded dimensions. This native preparation follows LeRobot's training
+    factory boundary: derive feature declarations and normalization processors
+    from the training-only dataset, retain the exact base weight file bytes, and
+    prove that the resulting checkpoint loads with the declared policy adapter.
+    """
+
+    source_weight = _find_weight_file(base_checkpoint)
+    if source_weight is None:
+        raise PolicyContainerError("SmolVLA base checkpoint has no native weights")
+    if output_dir.exists():
+        raise PolicyContainerError("prepared base checkpoint output already exists")
+    if not dataset_repo_id.strip() or not dataset_root.is_dir():
+        raise PolicyContainerError("prepared base requires a local LeRobot dataset")
+    (
+        FeatureType,
+        LeRobotDatasetMetadata,
+        make_pre_post_processors,
+        SmolVLAConfig,
+        SmolVLAPolicy,
+        POLICY_POSTPROCESSOR_DEFAULT_NAME,
+        POLICY_PREPROCESSOR_DEFAULT_NAME,
+        dataset_to_policy_features,
+    ) = _native_smolvla_preparation_api()
+
+    metadata = LeRobotDatasetMetadata(repo_id=dataset_repo_id, root=dataset_root)
+    features = dataset_to_policy_features(metadata.features)
+    inputs = {
+        key: value
+        for key, value in features.items()
+        if value.type is not FeatureType.ACTION
+    }
+    outputs = {
+        key: value
+        for key, value in features.items()
+        if value.type is FeatureType.ACTION
+    }
+    expected_action_key = str(adapter.get("action_feature_key") or "action")
+    if not inputs or set(outputs) != {expected_action_key}:
+        raise PolicyContainerError(
+            "dataset policy features lack one declared action output"
+        )
+
+    shutil.copytree(base_checkpoint, output_dir)
+    config = SmolVLAConfig.from_pretrained(str(base_checkpoint))
+    config.input_features = inputs
+    config.output_features = outputs
+    config.pretrained_path = None
+    config.device = "cpu"
+    config.save_pretrained(output_dir)
+    preprocessor, postprocessor = make_pre_post_processors(
+        policy_cfg=config, dataset_stats=metadata.stats
+    )
+    preprocessor.save_pretrained(
+        output_dir, config_filename=f"{POLICY_PREPROCESSOR_DEFAULT_NAME}.json"
+    )
+    postprocessor.save_pretrained(
+        output_dir, config_filename=f"{POLICY_POSTPROCESSOR_DEFAULT_NAME}.json"
+    )
+    manifest_path = write_smolvla_interchange_manifest(
+        output_dir,
+        policy_identity=str(adapter.get("policy_identity") or ""),
+        robot_identity=str(adapter.get("robot_identity") or ""),
+        task_identity=str(adapter.get("task_identity") or ""),
+        measured_state_names=list(adapter.get("measured_state_names") or ()),
+        cameras=list(adapter.get("cameras") or ()),
+        action=dict(adapter.get("action") or {}),
+        state_feature_key=str(adapter.get("state_feature_key") or "observation.state"),
+        action_feature_key=str(adapter.get("action_feature_key") or "action"),
+        cartesian_controller_qualified=bool(
+            adapter.get("cartesian_controller_qualified", False)
+        ),
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    prepared_weight = _find_weight_file(output_dir)
+    source_weight_sha256 = _sha256_path(source_weight)
+    if prepared_weight is None or _sha256_path(prepared_weight) != source_weight_sha256:
+        raise PolicyContainerError(
+            "prepared base changed the exact native weight bytes"
+        )
+    try:
+        policy = SmolVLAPolicy.from_pretrained(str(output_dir)).to("cpu").eval()
+        _validate_native_policy_features(policy, manifest)
+    except PolicyContainerError:
+        raise
+    except Exception as exc:
+        raise PolicyContainerError(
+            f"prepared native SmolVLA base failed exact reload: {exc}"
+        ) from exc
+    return {
+        "schema": "npa.sim2real.smolvla_prepared_base.v1",
+        "dataset_repo_id": dataset_repo_id,
+        "source_weight_sha256": source_weight_sha256,
+        "prepared_weight_sha256": _sha256_path(prepared_weight),
+        "weight_update_l2": 0.0,
+        "normalization_identity": manifest["normalization_identity"],
+        "normalization_files": manifest["normalization_files"],
+        "measured_state_names": manifest["measured_state_names"],
+        "camera_feature_keys": [row["feature_key"] for row in manifest["cameras"]],
+        "action": manifest["action"],
+        "native_reload_passed": True,
+    }
+
+
 def _sha256_path(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:

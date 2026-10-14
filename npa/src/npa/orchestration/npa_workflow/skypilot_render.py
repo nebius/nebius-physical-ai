@@ -355,6 +355,7 @@ TOOL_REF_VENDOR_INTERPRETERS: dict[str, tuple[str, ...]] = {
     "workbench.groot.baseline_eval": ("/opt/groot/Isaac-GR00T/.venv/bin/python",),
     "workbench.groot.posttrain_eval": ("/opt/groot/Isaac-GR00T/.venv/bin/python",),
     "workbench.lerobot": ("/opt/lerobot/venv/bin/python",),
+    "workbench.sim2real.smolvla_artifact_preflight": ("/opt/lerobot/venv/bin/python",),
     # Isaac Lab's simulator packages live in the Omniverse kit environment, not in the image's
     # system python. Live job 267 installed npa into /usr/bin/python3 and the stage died with
     # `isaaclab is required in the Isaac Lab image: No module named 'isaaclab'`. python.sh is

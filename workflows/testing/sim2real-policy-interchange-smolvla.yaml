@@ -24,7 +24,10 @@ config:
   isaac_image: ""
   runtime_image: "registry.example.invalid/lerobot@sha256:0000000000000000000000000000000000000000000000000000000000000000"
   isaac_cache_pvc: ""
-  base_checkpoint_uri: "hf://lerobot/smolvla_base@5e8d12a6e2975b0e5e5fce7c8caf47c371d257b6"
+  base_source_checkpoint_uri: "hf://lerobot/smolvla_base@5e8d12a6e2975b0e5e5fce7c8caf47c371d257b6"
+  training_base_checkpoint_uri: "{{config.base_source_checkpoint_uri}}"
+  prepared_base_checkpoint_uri: "{{config.root_uri}}/stage_04_artifact/prepared-base/"
+  base_checkpoint_uri: "{{config.prepared_base_checkpoint_uri}}"
   hf_token_secret: ""
 
   training_gpu_type: B200
@@ -79,8 +82,9 @@ config:
   gold_collection_uri: "{{config.collection_root_uri}}/gold/"
   dataset_root_uri: "{{config.root_uri}}/stage_03_dataset/"
   lerobot_uri: "{{config.dataset_root_uri}}lerobot-v3/"
+  dataset_policy_adapter_uri: "{{config.lerobot_uri}}meta/npa_policy_adapter.json"
   artifact_preflight_uri: "{{config.root_uri}}/stage_04_artifact/preflight.json"
-  base_policy_adapter_uri: "{{config.policy_adapter_uri}}"
+  base_policy_adapter_uri: ""
   adapted_policy_adapter_uri: ""
 
   base_service_start_uri: "{{config.root_uri}}/stage_05_base_service/start.json"

@@ -8,11 +8,13 @@ import io
 import json
 import sys
 import types
+from enum import Enum
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+import npa.workbench.lerobot.policy_container as policy_container
 from npa.workbench.lerobot.policy_container import (
     INTERCHANGE_MANIFEST_FILENAME,
     PolicyContainerError,
@@ -23,6 +25,7 @@ from npa.workbench.lerobot.policy_container import (
     _validate_native_policy_features,
     build_parser,
     main,
+    prepare_smolvla_base_checkpoint,
     write_smolvla_interchange_manifest,
 )
 
@@ -39,12 +42,10 @@ def _checkpoint(tmp_path: Path) -> tuple[Path, str]:
         '{"unnormalize":{"mean":[0.1],"std":[0.2]}}\n', encoding="utf-8"
     )
     (
-        checkpoint
-        / "policy_preprocessor_step_5_normalizer_processor.safetensors"
+        checkpoint / "policy_preprocessor_step_5_normalizer_processor.safetensors"
     ).write_bytes(b"native-normalizer-state")
     (
-        checkpoint
-        / "policy_postprocessor_step_0_unnormalizer_processor.safetensors"
+        checkpoint / "policy_postprocessor_step_0_unnormalizer_processor.safetensors"
     ).write_bytes(b"native-unnormalizer-state")
     digest = hashlib.sha256(weights.read_bytes()).hexdigest()
     return checkpoint, digest
@@ -223,6 +224,116 @@ def test_writer_derives_normalization_identity_from_native_processors(
     )
     payload = json.loads(path.read_text())
     assert payload["normalization_identity"] == _processor_identity(checkpoint)[0]
+
+
+def test_prepared_base_keeps_weights_and_binds_dataset_features(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base, digest = _checkpoint(tmp_path)
+    dataset = tmp_path / "dataset"
+    dataset.mkdir()
+    output = tmp_path / "prepared"
+    manifest = _manifest(digest)
+
+    class FeatureType(Enum):
+        STATE = "STATE"
+        VISUAL = "VISUAL"
+        ACTION = "ACTION"
+
+    features = {
+        "observation.state": SimpleNamespace(type=FeatureType.STATE, shape=(8,)),
+        "observation.images.scene": SimpleNamespace(
+            type=FeatureType.VISUAL, shape=(3, 224, 224)
+        ),
+        "observation.images.tool": SimpleNamespace(
+            type=FeatureType.VISUAL, shape=(3, 224, 224)
+        ),
+        "action": SimpleNamespace(type=FeatureType.ACTION, shape=(7,)),
+    }
+
+    class Metadata:
+        def __init__(self, *, repo_id: str, root: Path) -> None:
+            assert repo_id == "npa/six-axis-placement"
+            assert root == dataset
+            self.features = features
+            self.stats = {"training_split_only": True}
+
+    class Config:
+        input_features = {}
+        output_features = {}
+        pretrained_path = "public-base"
+        device = "cuda"
+        saved_pretrained_path = "unset"
+        saved_device = "unset"
+
+        @classmethod
+        def from_pretrained(cls, path: str) -> Config:
+            assert Path(path) == base
+            return cls()
+
+        def save_pretrained(self, path: Path) -> None:
+            (path / "config.json").write_text("{}\n", encoding="utf-8")
+            Config.input_features = self.input_features
+            Config.output_features = self.output_features
+            Config.saved_pretrained_path = self.pretrained_path
+            Config.saved_device = self.device
+
+    class Processor:
+        def __init__(self, prefix: str) -> None:
+            self.prefix = prefix
+
+        def save_pretrained(self, path: Path, *, config_filename: str) -> None:
+            (path / config_filename).write_text("{}\n", encoding="utf-8")
+            state = (
+                "policy_preprocessor_step_5_normalizer_processor.safetensors"
+                if self.prefix == "pre"
+                else "policy_postprocessor_step_0_unnormalizer_processor.safetensors"
+            )
+            (path / state).write_bytes(f"{self.prefix}-training-stats".encode())
+
+    class Policy:
+        config = Config
+
+        @classmethod
+        def from_pretrained(cls, path: str) -> Policy:
+            assert Path(path) == output
+            return cls()
+
+        def to(self, device: str) -> Policy:
+            assert device == "cpu"
+            return self
+
+        def eval(self) -> Policy:
+            return self
+
+    def api() -> tuple:
+        return (
+            FeatureType,
+            Metadata,
+            lambda **kwargs: (Processor("pre"), Processor("post")),
+            Config,
+            Policy,
+            "policy_postprocessor",
+            "policy_preprocessor",
+            lambda value: value,
+        )
+
+    monkeypatch.setattr(policy_container, "_native_smolvla_preparation_api", api)
+    receipt = prepare_smolvla_base_checkpoint(
+        base,
+        dataset_root=dataset,
+        dataset_repo_id="npa/six-axis-placement",
+        adapter=manifest,
+        output_dir=output,
+    )
+    assert receipt["native_reload_passed"] is True
+    assert receipt["weight_update_l2"] == 0.0
+    assert receipt["source_weight_sha256"] == digest
+    assert (output / "pytorch_model.bin").read_bytes() == (
+        base / "pytorch_model.bin"
+    ).read_bytes()
+    assert Config.saved_pretrained_path is None
+    assert Config.saved_device == "cpu"
 
 
 def test_manifest_rejects_changed_normalization_processor(tmp_path: Path) -> None:

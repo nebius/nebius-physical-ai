@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from npa.workflows.lerobot_transfer_data import materialize, tree_hashes
+from npa.workbench.lerobot.policy_container import prepare_smolvla_base_checkpoint
 from npa.workflows.sim2real.interchange_backends import (
     backend_contract,
     openpi_pi05_policy_profile,
@@ -309,7 +310,7 @@ def _artifact_preflight(args: argparse.Namespace) -> dict[str, Any]:
             "base SmolVLA checkpoint must be hf://repo@40-hex-revision"
         )
     try:
-        from huggingface_hub import hf_hub_download
+        from huggingface_hub import snapshot_download
     except ImportError as exc:
         raise InterchangeContractError("huggingface_hub is required") from exc
     required = (
@@ -320,35 +321,65 @@ def _artifact_preflight(args: argparse.Namespace) -> dict[str, Any]:
         "policy_preprocessor_step_5_normalizer_processor.safetensors",
         "policy_postprocessor_step_0_unnormalizer_processor.safetensors",
     )
-    files = []
-    for name in required:
-        path = Path(
-            hf_hub_download(
-                repo_id=match.group("repo"),
-                revision=match.group("revision"),
-                filename=name,
-                token=os.environ.get("HF_TOKEN") or None,
-            )
+    with tempfile.TemporaryDirectory(prefix="npa-smolvla-preflight-") as directory:
+        work = Path(directory)
+        base = work / "base"
+        snapshot_download(
+            repo_id=match.group("repo"),
+            revision=match.group("revision"),
+            token=os.environ.get("HF_TOKEN") or None,
+            local_dir=base,
         )
-        files.append(
+        missing = [name for name in required if not (base / name).is_file()]
+        if missing:
+            raise InterchangeContractError(
+                "exact SmolVLA snapshot lacks required files: " + ", ".join(missing)
+            )
+        files = [
             {
-                "path": name,
+                "path": path.relative_to(base).as_posix(),
                 "bytes": path.stat().st_size,
                 "sha256": _sha256_path(path),
             }
+            for path in sorted(base.rglob("*"))
+            if path.is_file() and ".cache" not in path.parts
+        ]
+        dataset = materialize(args.dataset_uri, work / "dataset")
+        adapter = read_json(args.adapter_uri, directory=work / "adapter")
+        prepared = work / "prepared"
+        prepared_receipt = prepare_smolvla_base_checkpoint(
+            base,
+            dataset_root=dataset,
+            dataset_repo_id=args.dataset_repo_id,
+            adapter=adapter,
+            output_dir=prepared,
         )
-    result = {
-        "schema": "npa.sim2real.smolvla_artifact_preflight.v1",
-        "checkpoint_uri": args.checkpoint_uri,
-        "repository": match.group("repo"),
-        "revision": match.group("revision"),
-        "anonymous_access": not bool(os.environ.get("HF_TOKEN")),
-        "files": files,
-        "complete_required_bytes_verified": True,
-        "license": "Apache-2.0",
-    }
-    with tempfile.TemporaryDirectory(prefix="npa-smolvla-preflight-") as directory:
-        write_json(args.output_uri, result, directory=Path(directory))
+        (prepared / "prepared-base-receipt.json").write_text(
+            json.dumps(prepared_receipt, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        (prepared / "checksums.json").write_text(
+            json.dumps(tree_hashes(prepared), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        storage().upload_directory(
+            str(prepared), args.prepared_checkpoint_uri, require_empty=True
+        )
+        materialize(args.prepared_checkpoint_uri, work / "prepared-readback")
+        result = {
+            "schema": "npa.sim2real.smolvla_artifact_preflight.v1",
+            "checkpoint_uri": args.checkpoint_uri,
+            "repository": match.group("repo"),
+            "revision": match.group("revision"),
+            "anonymous_access": not bool(os.environ.get("HF_TOKEN")),
+            "files": files,
+            "complete_snapshot_bytes_verified": True,
+            "complete_required_bytes_verified": True,
+            "license": "Apache-2.0",
+            "prepared_checkpoint_uri": args.prepared_checkpoint_uri,
+            "prepared_base": prepared_receipt,
+        }
+        write_json(args.output_uri, result, directory=work / "result")
     publish_component_record(
         component_schema=POLICY_INTERCHANGE_COMPONENT_SCHEMA,
         root_uri=args.component_root_uri,
@@ -356,7 +387,11 @@ def _artifact_preflight(args: argparse.Namespace) -> dict[str, Any]:
         name="smolvla_exact_artifact_preflight",
         tier="WORKS",
         evidence="Downloaded and hashed exact-revision base weights and processors.",
-        artifacts={"preflight": args.output_uri, "revision": result["revision"]},
+        artifacts={
+            "preflight": args.output_uri,
+            "revision": result["revision"],
+            "prepared_checkpoint": args.prepared_checkpoint_uri,
+        },
     )
     return result
 
@@ -492,6 +527,10 @@ def build_parser() -> argparse.ArgumentParser:
     external.add_argument("--component-root-uri", required=True)
     artifact = commands.add_parser("artifact-preflight")
     artifact.add_argument("--checkpoint-uri", required=True)
+    artifact.add_argument("--dataset-uri", required=True)
+    artifact.add_argument("--dataset-repo-id", required=True)
+    artifact.add_argument("--adapter-uri", required=True)
+    artifact.add_argument("--prepared-checkpoint-uri", required=True)
     artifact.add_argument("--output-uri", required=True)
     artifact.add_argument("--component-root-uri", required=True)
     final = commands.add_parser("finalize")
