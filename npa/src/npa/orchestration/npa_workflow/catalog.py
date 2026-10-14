@@ -4709,6 +4709,41 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         omit_flags_when_empty=("--training-env-ids",),
         config_defaults={"train_env_ids": ""},
     ),
+    "workbench.lerobot.smolvla_interchange_train": ToolEntry(
+        name="workbench.lerobot.smolvla_interchange_train",
+        description=(
+            "Fine-tune pinned SmolVLA and bind its real weights plus native "
+            "processor normalization to an explicit robot/task adapter before upload."
+        ),
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workbench.lerobot.policy_container",
+            "train",
+            "--dataset-repo-id",
+            "{{config.lerobot_dataset}}",
+            "--output-dir",
+            "{{config.lerobot_output_dir}}",
+            "--steps",
+            "{{config.train_steps}}",
+            "--policy-type",
+            "smolvla",
+            "--batch-size",
+            "{{config.train_batch_size}}",
+            "--device",
+            "{{config.policy_device}}",
+            "--training-env-ids",
+            "{{config.train_env_ids}}",
+            "--override",
+            "policy.pretrained_path={{config.base_policy}}",
+            "--interchange-adapter-relative-path",
+            "{{config.policy_adapter_relative_path}}",
+            "--artifacts-s3-uri",
+            "{{config.artifacts_uri}}",
+        ],
+        omit_flags_when_empty=("--training-env-ids",),
+        config_defaults={"train_env_ids": ""},
+    ),
     "workbench.token_factory.triage": ToolEntry(
         name="workbench.token_factory.triage",
         description=(

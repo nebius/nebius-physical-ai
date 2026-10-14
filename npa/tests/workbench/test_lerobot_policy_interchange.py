@@ -18,8 +18,9 @@ from npa.workbench.lerobot.policy_container import (
     _processor_identity,
     _smolvla_batch,
     _validate_native_policy_features,
-    write_smolvla_interchange_manifest,
     build_parser,
+    main,
+    write_smolvla_interchange_manifest,
 )
 
 
@@ -160,6 +161,24 @@ def test_writer_binds_complete_adapter_to_weight_bytes(tmp_path: Path) -> None:
     assert payload["action"]["names"][-1] == "gripper"
 
 
+def test_writer_derives_normalization_identity_from_native_processors(
+    tmp_path: Path,
+) -> None:
+    checkpoint, digest = _checkpoint(tmp_path)
+    manifest = _manifest(digest)
+    path = write_smolvla_interchange_manifest(
+        checkpoint,
+        policy_identity=manifest["policy_identity"],
+        robot_identity=manifest["robot_identity"],
+        task_identity=manifest["task_identity"],
+        measured_state_names=manifest["measured_state_names"],
+        cameras=manifest["cameras"],
+        action=manifest["action"],
+    )
+    payload = json.loads(path.read_text())
+    assert payload["normalization_identity"] == _processor_identity(checkpoint)[0]
+
+
 def test_manifest_rejects_changed_normalization_processor(tmp_path: Path) -> None:
     checkpoint, digest = _checkpoint(tmp_path)
     normalization, files = _processor_identity(checkpoint)
@@ -283,3 +302,39 @@ def test_interchange_cli_requires_explicit_checkpoint_inputs_and_outputs() -> No
         ]
     )
     assert inferred.command == "infer-interchange"
+    trained = parser.parse_args(
+        [
+            "train",
+            "--dataset-repo-id",
+            "operator/surface-placement",
+            "--output-dir",
+            "/tmp/output",
+            "--steps",
+            "100",
+            "--interchange-adapter-relative-path",
+            "meta/npa_policy_adapter.json",
+        ]
+    )
+    assert (
+        trained.interchange_adapter_relative_path
+        == "meta/npa_policy_adapter.json"
+    )
+
+
+def test_interchange_training_forbids_early_checkpoint_only_upload() -> None:
+    with pytest.raises(PolicyContainerError, match="checkpoint-only upload"):
+        main(
+            [
+                "train",
+                "--dataset-repo-id",
+                "operator/surface-placement",
+                "--output-dir",
+                "/tmp/output",
+                "--steps",
+                "100",
+                "--interchange-adapter-relative-path",
+                "meta/npa_policy_adapter.json",
+                "--checkpoint-s3-uri",
+                "s3://example/checkpoint/",
+            ]
+        )

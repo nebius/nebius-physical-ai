@@ -537,7 +537,7 @@ def write_smolvla_interchange_manifest(
     policy_identity: str,
     robot_identity: str,
     task_identity: str,
-    normalization_identity: str,
+    normalization_identity: str = "",
     measured_state_names: list[str],
     cameras: list[dict[str, Any]],
     action: dict[str, Any],
@@ -552,7 +552,7 @@ def write_smolvla_interchange_manifest(
     if weight is None:
         raise PolicyContainerError("cannot bind interchange manifest without weights")
     actual_normalization, normalization_files = _processor_identity(target)
-    if normalization_identity != actual_normalization:
+    if normalization_identity and normalization_identity != actual_normalization:
         raise PolicyContainerError(
             "declared normalization identity differs from checkpoint processors"
         )
@@ -562,7 +562,7 @@ def write_smolvla_interchange_manifest(
         "policy_identity": policy_identity,
         "robot_identity": robot_identity,
         "task_identity": task_identity,
-        "normalization_identity": normalization_identity,
+        "normalization_identity": actual_normalization,
         "normalization_files": normalization_files,
         "checkpoint_sha256": _sha256_path(weight),
         "measured_state_names": measured_state_names,
@@ -2054,6 +2054,14 @@ def build_parser() -> argparse.ArgumentParser:
     # RUN (configs, logs, metrics) needs the whole output tree, which the retired
     # tokenfactory-train-triage template uploaded with a trailing inline-python block.
     train_cmd.add_argument("--artifacts-s3-uri", default="")
+    train_cmd.add_argument(
+        "--interchange-adapter-relative-path",
+        default="",
+        help=(
+            "Optional dataset-relative JSON adapter spec. When set, training binds "
+            "the real checkpoint weights and serialized processors before upload."
+        ),
+    )
     train_cmd.add_argument("--checkpoint-s3-endpoint-url", default="")
     train_cmd.add_argument("--checkpoint-s3-access-key-id", default="")
     train_cmd.add_argument("--checkpoint-s3-secret-access-key", default="")
@@ -2135,6 +2143,14 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
     if args.command == "train":
+        if (
+            args.interchange_adapter_relative_path.strip()
+            and args.checkpoint_s3_uri.strip()
+        ):
+            raise PolicyContainerError(
+                "interchange training uploads the complete bound artifact tree; "
+                "checkpoint-only upload is forbidden"
+            )
         try:
             training_config = build_training_config(
                 data_path=args.data_path,
@@ -2189,6 +2205,55 @@ def main(argv: list[str] | None = None) -> int:
             **training_provenance,
             "artifact_path": str(provenance_path),
         }
+        relative_adapter = args.interchange_adapter_relative_path.strip()
+        if relative_adapter:
+            relative = Path(relative_adapter)
+            if relative.is_absolute() or ".." in relative.parts:
+                raise PolicyContainerError(
+                    "interchange adapter spec must be a safe dataset-relative path"
+                )
+            adapter_path = (dataset_path / relative).resolve()
+            try:
+                adapter_path.relative_to(dataset_path.resolve())
+            except ValueError as exc:
+                raise PolicyContainerError(
+                    "interchange adapter spec escapes the materialized dataset"
+                ) from exc
+            try:
+                adapter = json.loads(adapter_path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise PolicyContainerError(
+                    f"invalid interchange adapter spec: {exc}"
+                ) from exc
+            if not isinstance(adapter, dict):
+                raise PolicyContainerError("interchange adapter spec must be an object")
+            manifest_path = write_smolvla_interchange_manifest(
+                Path(train_result.checkpoint_path),
+                policy_identity=str(adapter.get("policy_identity") or ""),
+                robot_identity=str(adapter.get("robot_identity") or ""),
+                task_identity=str(adapter.get("task_identity") or ""),
+                normalization_identity=str(
+                    adapter.get("normalization_identity") or ""
+                ),
+                measured_state_names=list(
+                    adapter.get("measured_state_names") or ()
+                ),
+                cameras=list(adapter.get("cameras") or ()),
+                action=dict(adapter.get("action") or {}),
+                state_feature_key=str(
+                    adapter.get("state_feature_key") or "observation.state"
+                ),
+                action_feature_key=str(
+                    adapter.get("action_feature_key") or "action"
+                ),
+                cartesian_controller_qualified=bool(
+                    adapter.get("cartesian_controller_qualified", False)
+                ),
+            )
+            payload["policy_interchange_manifest"] = {
+                "artifact_path": str(manifest_path),
+                "manifest": json.loads(manifest_path.read_text(encoding="utf-8")),
+            }
         if args.artifacts_s3_uri.strip():
             payload["artifacts_uri"] = upload_run_artifacts(
                 train_result.output_dir, args.artifacts_s3_uri
