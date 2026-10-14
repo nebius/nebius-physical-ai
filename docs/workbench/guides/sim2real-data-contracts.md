@@ -87,9 +87,9 @@ Every JSON artifact should include a top-level `"schema"` string. Constants live
 | `npa.sim2real.stock_robot_spec.v1` | (embedded in consumed robot) | 2 | Stock-only wrapper |
 | `npa.sim2real.scene_spec.v1` | envgen / BYO input | 2–6 | Scene composition for envgen |
 | `npa.sim2real.robot_spec.v1` | BYO `ROBOT_SPEC_URI` | 2 | Articulated robot definition |
-| Cosmos transfer manifest | `augment/manifest.json` | 3 | From `cosmos_split`; includes `augmented_frames_uri` |
-| `npa.sim2real.augmented_frame.v1` | `augment/frames/frame-*.json` | 3 | Per-frame augment record |
-| `npa.sim2real.augmented_frames.v1` | `augment/frames/index.json` | 3 | Frame index |
+| `npa.cosmos3.structural-transfer.v1` | `augment/manifest.json` | 3 | Complete primary-camera source sequence, edge control, guarded Cosmos3-Nano video2video result, decoded-frame coverage, and downstream-consumer lineage |
+| `npa.sim2real.cosmos3_stage_result.v1` | `augment/cosmos3-transfer-result.json` | 3 | Stage-completion receipt binding the run ID to the canonical structural-transfer manifest |
+| `npa.sim2real.augmented_frames.v1` | `augment/frames/index.json` | 3 | Ordered references to every decoded generated PNG frame handed to EnvGen |
 | `npa.sim2real.raw_env.v1` | `envs/raw/*.jsonl` (sharded) | 4 | One record per synthetic env |
 | `npa.sim2real.raw_env_shard_summary.v1` | shard summary JSON | 4 | Envgen shard metadata |
 | `npa.sim2real.env_manifest.v1` | `envs/raw|train|heldout/manifest.json` | 4–6 | Env lists for split dirs |

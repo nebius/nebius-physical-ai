@@ -52,7 +52,7 @@ npa workbench workflow submit "$SPEC" --runtime \
   --var robot_spec_uri="$ROBOT_SPEC_URI" \
   --var bucket="$NPA_BUCKET" \
   --var controller_image="$CONTROLLER_IMAGE" \
-  --var transfer_image="$TRANSFER_IMAGE" \
+  --var cosmos3_image="$COSMOS3_IMAGE" \
   --var envgen_image="$ENVGEN_IMAGE" \
   --var isaac_image="$ISAAC_IMAGE" \
   --var viewer_image="$VIEWER_IMAGE" \
