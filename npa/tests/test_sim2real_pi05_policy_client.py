@@ -282,6 +282,16 @@ def _typed_observation(*, arm_dof: int) -> tuple[PolicyObservation, object, obje
         backend="openpi_pi05",
         identity=policy_identity,
         task_identity="surface-v1",
+        checkpoint_sha256="d" * 64,
+        action=types.SimpleNamespace(
+            names=arm + ("gripper",),
+            execute_prefix=1,
+            horizon=15,
+            to_dict=lambda: {
+                "representation": "absolute_joint_position",
+                "names": list(arm + ("gripper",)),
+            },
+        ),
     )
     return observation, robot, policy
 
@@ -311,10 +321,12 @@ def test_typed_openpi_adapter_preserves_wrist_bytes_and_gripper_mapping(
     )
     client = Pi05PolicyClient("private-service", auth_token="test-only-token")
     observation, robot, policy = _typed_observation(arm_dof=7)
-    actions, evidence = client.infer_typed(
+    output, evidence = client.infer_typed(
         observation=observation, robot=robot, policy=policy
     )
-    assert actions.shape == (15, 8)
+    assert len(output.action_chunk) == 15
+    assert len(output.action_chunk[0]) == 8
+    assert output.checkpoint_sha256 == "d" * 64
     sent = msgpack.unpackb(connection.sent[0], object_hook=_unpack_array)
     assert sent["observation/joint_position"].shape == (7,)
     assert sent["observation/gripper_position"].tolist() == pytest.approx(

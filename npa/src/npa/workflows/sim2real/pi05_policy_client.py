@@ -164,7 +164,7 @@ class Pi05PolicyClient:
 
         gripper = np.asarray([width_to_droid_gripper(width)], dtype=np.float32)
         wrist_age = views["wrist"].state_timestamp_s - views["wrist"].capture_timestamp_s
-        return self.infer(
+        actions, evidence = self.infer(
             exterior=exterior,
             wrist=wrist,
             joint_position=arm,
@@ -175,6 +175,17 @@ class Pi05PolicyClient:
             sampling_noise=sampling_noise,
             sampling_sequence=sampling_sequence,
         )
+        from npa.workflows.sim2real.interchange_contract import PolicyOutput
+
+        output = PolicyOutput(
+            observation_input_identity=observation.input_identity,
+            policy_identity=policy.identity,
+            checkpoint_sha256=policy.checkpoint_sha256,
+            action=policy.action,
+            action_chunk=tuple(tuple(float(value) for value in row) for row in actions),
+            generated_timestamp_s=time.time(),
+        )
+        return output, evidence
 
     def _send_inference(
         self,

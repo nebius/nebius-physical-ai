@@ -14,6 +14,7 @@ from npa.workflows.sim2real.interchange_contract import (
     PolicyAction,
     PolicyCapabilities,
     PolicyObservation,
+    PolicyOutput,
     PolicyProfile,
     RigidObjectProfile,
     RobotSensorProfile,
@@ -320,6 +321,29 @@ def test_gripper_inverse_rejects_inconsistent_coupled_joint_measurements() -> No
     assert gripper.joint_positions_to_width((0.03, 0.03)) == pytest.approx(0.06)
     with pytest.raises(InterchangeContractError, match="disagree"):
         gripper.joint_positions_to_width((0.03, 0.0))
+
+
+def test_policy_output_binds_action_semantics_and_finite_chunk() -> None:
+    policy = _policy(_robot(6))
+    output = PolicyOutput(
+        observation_input_identity="input-1",
+        policy_identity=policy.identity,
+        checkpoint_sha256=policy.checkpoint_sha256,
+        action=policy.action,
+        action_chunk=((0.0,) * len(policy.action.names),),
+        generated_timestamp_s=3.0,
+    )
+    assert output.to_dict()["action"]["horizon"] == 50
+    assert output.to_dict()["action_chunk"][0][-1] == 0.0
+    with pytest.raises(InterchangeContractError, match="finite"):
+        PolicyOutput(
+            observation_input_identity="input-1",
+            policy_identity=policy.identity,
+            checkpoint_sha256=policy.checkpoint_sha256,
+            action=policy.action,
+            action_chunk=((float("nan"),) * len(policy.action.names),),
+            generated_timestamp_s=3.0,
+        )
 
 
 def test_offset_non_cube_object_uses_declared_grasp_and_reference_frames() -> None:

@@ -852,6 +852,52 @@ class PolicyObservation:
         }
 
 
+@dataclass(frozen=True)
+class PolicyOutput:
+    """Finite action chunk with the complete declared controller semantics."""
+
+    observation_input_identity: str
+    policy_identity: str
+    checkpoint_sha256: str
+    action: PolicyAction
+    action_chunk: tuple[tuple[float, ...], ...]
+    generated_timestamp_s: float
+
+    def __post_init__(self) -> None:
+        if not self.observation_input_identity.strip() or not self.policy_identity.strip():
+            raise InterchangeContractError(
+                "policy output observation and policy identities are required"
+            )
+        if len(self.checkpoint_sha256) != 64:
+            raise InterchangeContractError(
+                "policy output checkpoint identity must be SHA-256"
+            )
+        rows = tuple(
+            _finite(row, size=len(self.action.names), name="policy action row")
+            for row in self.action_chunk
+        )
+        if not self.action.execute_prefix <= len(rows) <= self.action.horizon:
+            raise InterchangeContractError(
+                "policy output rows must cover execute_prefix without exceeding horizon"
+            )
+        if not math.isfinite(self.generated_timestamp_s):
+            raise InterchangeContractError(
+                "policy output generation timestamp must be finite"
+            )
+        object.__setattr__(self, "action_chunk", rows)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema": "npa.sim2real.policy_output.v1",
+            "observation_input_identity": self.observation_input_identity,
+            "policy_identity": self.policy_identity,
+            "checkpoint_sha256": self.checkpoint_sha256,
+            "action": self.action.to_dict(),
+            "action_chunk": [list(row) for row in self.action_chunk],
+            "generated_timestamp_s": self.generated_timestamp_s,
+        }
+
+
 def assert_policy_compatible(
     robot: RobotSensorProfile,
     task: SurfacePlacementTask,

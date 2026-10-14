@@ -401,6 +401,29 @@ class LeRobotPolicyRuntime:
                 reset()
         return [self.infer(observation) for observation in observations]
 
+    def infer_typed(self, observation: Any, policy_profile: Any) -> Any:
+        """Consume and return the model-neutral typed policy interchange."""
+
+        from npa.workflows.sim2real.interchange_contract import PolicyOutput
+
+        if (
+            policy_profile.backend != "lerobot_smolvla"
+            or policy_profile.identity != self.manifest["policy_identity"]
+            or policy_profile.checkpoint_sha256 != self.manifest["checkpoint_sha256"]
+        ):
+            raise PolicyContainerError(
+                "typed SmolVLA profile does not match loaded checkpoint"
+            )
+        values = self.infer(observation.to_wire_dict())
+        return PolicyOutput(
+            observation_input_identity=observation.input_identity,
+            policy_identity=policy_profile.identity,
+            checkpoint_sha256=policy_profile.checkpoint_sha256,
+            action=policy_profile.action,
+            action_chunk=(tuple(values),),
+            generated_timestamp_s=time.time(),
+        )
+
 
 def _load_interchange_manifest(checkpoint: Path) -> dict[str, Any]:
     path = checkpoint / INTERCHANGE_MANIFEST_FILENAME
