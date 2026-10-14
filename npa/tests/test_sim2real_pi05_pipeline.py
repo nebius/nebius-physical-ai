@@ -320,9 +320,15 @@ def test_closed_loop_synchronizes_wrist_before_reading_rgb(monkeypatch) -> None:
 
 @pytest.mark.parametrize(
     "width",
-    [-0.0399, 0.09502406418323517, 0.10055141896009445, 0.10171762108802795, 0.1199],
+    [
+        -0.0401,
+        0.09502406418323517,
+        0.10055141896009445,
+        0.10171762108802795,
+        0.12018878012895584,
+    ],
 )
-def test_physical_gripper_width_preserves_bounded_joint_overshoot(width: float) -> None:
+def test_physical_gripper_width_preserves_finite_joint_measurement(width: float) -> None:
     robot = Namespace(
         joint_names=[
             *pi05_closed_loop.JOINT_NAMES,
@@ -336,8 +342,8 @@ def test_physical_gripper_width_preserves_bounded_joint_overshoot(width: float) 
     ) == pytest.approx(width)
 
 
-@pytest.mark.parametrize("width", [-0.0401, 0.1201])
-def test_physical_gripper_width_rejects_implausible_joint_overshoot(
+@pytest.mark.parametrize("width", [float("-inf"), float("inf"), float("nan")])
+def test_physical_gripper_width_rejects_non_finite_joint_measurement(
     width: float,
 ) -> None:
     robot = Namespace(

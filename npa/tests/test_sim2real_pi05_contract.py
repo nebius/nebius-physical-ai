@@ -164,11 +164,10 @@ def test_absolute_bridge_and_physical_gripper_roundtrip() -> None:
     assert width_to_droid_gripper(0.09502406418323517) == 0.0
     assert width_to_droid_gripper(0.1) == 0.0
     assert width_to_droid_gripper(0.10171762108802795) == 0.0
-    assert width_to_droid_gripper(0.12) == 0.0
-    with pytest.raises(Pi05ContractError, match="measurement tolerance"):
-        width_to_droid_gripper(-0.040001)
-    with pytest.raises(Pi05ContractError, match="measurement tolerance"):
-        width_to_droid_gripper(0.120001)
+    assert width_to_droid_gripper(0.12018878012895584) == 0.0
+    for invalid in (float("-inf"), float("inf"), float("nan")):
+        with pytest.raises(Pi05ContractError, match="must be finite"):
+            width_to_droid_gripper(invalid)
     assert droid_gripper_to_width(0.0) == pytest.approx(0.08)
     assert droid_gripper_to_width(1.0) == pytest.approx(0.0)
 

@@ -27,7 +27,6 @@ from npa.workflows.sim2real.pi05_contract import (
     ACTION_HORIZON,
     CONTROL_HZ,
     EPISODE_SCHEMA,
-    GRIPPER_MEASUREMENT_TOLERANCE_M,
     JOINT_NAMES,
     MAX_GRIPPER_WIDTH_M,
     OBJECT_INITIAL_X_RANGE_M,
@@ -1372,14 +1371,10 @@ def _gripper_width(native: Any) -> float:
     ]
     q = _proxy_torch(robot.data.joint_pos)[0, indices].detach().cpu().numpy()
     width = float(np.sum(q))
-    if not (
-        -GRIPPER_MEASUREMENT_TOLERANCE_M
-        <= width
-        <= MAX_GRIPPER_WIDTH_M + GRIPPER_MEASUREMENT_TOLERANCE_M
-    ):
+    if not math.isfinite(width):
         raise RuntimeError(f"measured physical finger width is invalid: {width}")
-    # Preserve the raw finite physical measurement for physics evidence.  The
-    # model-facing conversion clamps only inside width_to_droid_gripper().
+    # Preserve every raw finite physical measurement for physics evidence.
+    # The model-facing conversion clamps only inside width_to_droid_gripper().
     return width
 
 

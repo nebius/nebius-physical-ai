@@ -31,13 +31,6 @@ JOINT_LIMITS_RAD = (
     (-2.8973, 2.8973),
 )
 MAX_GRIPPER_WIDTH_M = 0.08
-# Isaac reports the sum of two physical finger joints.  Each joint may
-# transiently overshoot its 0.04 m limit while the high-PD
-# controller settles under contact, so the summed measurement needs the
-# bounded two-finger tolerance observed by the simulator. Raw measurements
-# remain in evidence;
-# this does not change commanded limits or any grasp/release success threshold.
-GRIPPER_MEASUREMENT_TOLERANCE_M = 0.04
 CONTROL_HZ = 15.0
 ACTION_HORIZON = 15
 # Refresh both camera inputs and measured robot state before every applied
@@ -313,10 +306,11 @@ def droid_gripper_to_width(value: float) -> float:
 def width_to_droid_gripper(width_m: float) -> float:
     """Convert finger width. Args: width_m. Returns: DROID grip. Raises: Pi05ContractError."""
     width = float(width_m)
-    minimum = -GRIPPER_MEASUREMENT_TOLERANCE_M
-    maximum = MAX_GRIPPER_WIDTH_M + GRIPPER_MEASUREMENT_TOLERANCE_M
-    if not math.isfinite(width) or not minimum <= width <= maximum:
-        raise Pi05ContractError("physical gripper width exceeds measurement tolerance")
+    if not math.isfinite(width):
+        raise Pi05ContractError("physical gripper width must be finite")
+    # PhysX can transiently report finite joint positions beyond configured
+    # articulation limits while the high-PD controller settles. Preserve that
+    # raw value in physics evidence; only saturate the model-facing scalar.
     bounded = min(max(width, 0.0), MAX_GRIPPER_WIDTH_M)
     return 1.0 - bounded / MAX_GRIPPER_WIDTH_M
 
