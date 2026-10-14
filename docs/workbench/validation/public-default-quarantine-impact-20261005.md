@@ -189,6 +189,8 @@ still required for the operator-selected bytes.
 
 | Workflow | Required config keys |
 | --- | --- |
+| `workflows/testing/digital-twin-campus-render.yaml` | `runtime_image` |
+| `workflows/testing/digital-twin-cuda-render.yaml` | `runtime_image` |
 | `workflows/testing/field-failure-reference-demo.yaml` | `navigation_image, reconstruction_image` |
 | `workflows/testing/lyra-scene-actions.yaml` | `isaac_image` |
 | `workflows/testing/multicamera-rgbd-warehouse.yaml` | `isaac_image` |
