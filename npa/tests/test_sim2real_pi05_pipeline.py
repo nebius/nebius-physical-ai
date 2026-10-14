@@ -421,6 +421,8 @@ def test_policy_query_receipt_survives_controller_failure(monkeypatch) -> None:
     assert query["attempted_prefix"] == 1
     assert query["executed_prefix"] == 0
     assert query["controller_proofs"] == []
+    assert query["action_selection"]["contributor_count"] == 1
+    assert query["action_selection"]["contributors"][0]["action_index"] == 0
     assert record["physics_trace"] == []
     assert (
         query["execution_error"] == "RuntimeError: controller rejected <redacted-uri>"
@@ -461,6 +463,56 @@ def test_policy_query_records_applied_target_with_failed_physics_observation(
     assert proof["physics_observation_status"] == "failed"
     assert proof["physics_observation_error"] == "RuntimeError: observer failed"
     assert record["physics_trace"] == []
+
+
+def test_temporal_action_ensemble_aligns_only_causal_chunk_targets() -> None:
+    context: dict = {}
+    selections = []
+    for decision in range(3):
+        actions = np.zeros((15, 8), dtype=np.float64)
+        actions[:, :7] = np.arange(15, dtype=np.float64)[:, None] + decision * 10.0
+        if decision == 0:
+            actions[2, 7] = 1.0
+        elif decision == 1:
+            actions[1, 7] = 1.0
+        else:
+            actions[0, 7] = 1.0
+        query = {
+            "decision": decision,
+            "action_receipt": pi05_closed_loop._action_receipt(actions),
+        }
+        target, receipt = pi05_closed_loop._temporally_ensembled_target(
+            context, actions, query
+        )
+        selections.append((target, receipt))
+
+    target, receipt = selections[-1]
+    assert np.allclose(target[:7], [11.0] * 7)
+    assert target[7] == 1.0
+    assert receipt["applied_gripper_command"] == 1
+    assert receipt["contributor_count"] == 3
+    assert [row["origin_decision"] for row in receipt["contributors"]] == [0, 1, 2]
+    assert [row["action_index"] for row in receipt["contributors"]] == [2, 1, 0]
+    assert receipt["weight_per_contributor"] == 1.0 / 3.0
+    assert receipt["fresh_observation_per_control"] is True
+
+
+def test_temporal_action_ensemble_lineage_rejects_tampering() -> None:
+    queries = []
+    context: dict = {}
+    for decision in range(3):
+        actions = np.full((15, 8), decision, dtype=np.float64)
+        action_receipt = pi05_closed_loop._action_receipt(actions)
+        query = {"decision": decision, "action_receipt": action_receipt}
+        _target, selection = pi05_closed_loop._temporally_ensembled_target(
+            context, actions, query
+        )
+        queries.append({**query, "action_selection": selection})
+    episode = {"queries": queries}
+    pi05_closed_loop._validate_action_selection_history(episode)
+    queries[-1]["action_selection"]["contributors"][0]["action_index"] = 0
+    with pytest.raises(RuntimeError, match="ensemble lineage"):
+        pi05_closed_loop._validate_action_selection_history(episode)
 
 
 def _paired_noise_episode(mode: str, identity: str | None) -> dict:
@@ -596,8 +648,41 @@ def _comparison_query(mode: str, seed: int, decision: int) -> dict:
         "attempted_prefix": pi05_closed_loop.EXECUTION_PREFIX,
         "executed_prefix": pi05_closed_loop.EXECUTION_PREFIX,
         "controller_proofs": _comparison_proofs(decision),
-        "action_receipt": {"sha256": "a" * 64, "shape": [15, 8]},
+        "action_receipt": _comparison_action_receipt(),
+        "action_selection": _comparison_action_selection(decision),
         "inference": _comparison_inference(mode, seed, decision, source, policy),
+    }
+
+
+def _comparison_action_receipt() -> dict:
+    return pi05_closed_loop._action_receipt(np.zeros((15, 8), dtype=np.float64))
+
+
+def _comparison_action_selection(decision: int) -> dict:
+    chunk_sha256 = _comparison_action_receipt()["sha256"]
+    origins = range(max(0, decision - 14), decision + 1)
+    contributors = [
+        {
+            "origin_decision": origin,
+            "action_index": decision - origin,
+            "chunk_sha256": chunk_sha256,
+        }
+        for origin in origins
+    ]
+    return {
+        **pi05_closed_loop._action_selection_protocol(),
+        "decision": decision,
+        "contributor_count": len(contributors),
+        "contributors": contributors,
+        "weight_per_contributor": 1.0 / len(contributors),
+        "applied_action_sha256": hashlib.sha256(
+            np.zeros(8, dtype=np.float64).tobytes()
+        ).hexdigest(),
+        "applied_action_dtype": "float64",
+        "applied_action_shape": [8],
+        "applied_action": [0.0] * 8,
+        "applied_gripper_score": 0.0,
+        "applied_gripper_command": 0,
     }
 
 
@@ -695,6 +780,7 @@ def _comparison_protocol() -> dict:
         "robot_plant": _robot_plant(),
         "control_hz": 15,
         "execution_prefix": pi05_closed_loop.EXECUTION_PREFIX,
+        "action_selection": pi05_closed_loop._action_selection_protocol(),
         "scenarios": _comparison_scenarios(),
     }
     pi05_closed_loop._bind_protocol_hashes(protocol)

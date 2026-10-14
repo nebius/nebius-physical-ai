@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from npa.workflows.sim2real.pi05_contract import (
+    ACTION_HORIZON,
     CONTROL_HZ,
     EXECUTION_PREFIX,
     JOINT_NAMES,
@@ -103,6 +104,7 @@ EFFECTIVENESS_PROTOCOL_FIELDS = {
     "robot_plant",
     "control_hz",
     "execution_prefix",
+    "action_selection",
     "scenarios",
 }
 MANIPULATION_EVENT_ORDER = (
@@ -114,6 +116,16 @@ MANIPULATION_EVENT_ORDER = (
     "support_contact",
     "stable",
 )
+
+
+def _action_selection_protocol() -> dict[str, Any]:
+    return {
+        "schema": "npa.sim2real.pi05.temporal_action_ensemble.v1",
+        "method": "uniform_mean",
+        "model_horizon": ACTION_HORIZON,
+        "fresh_observation_per_control": True,
+        "causality": "current_and_past_predictions_only",
+    }
 
 
 def _vector(value: Any, size: int, label: str) -> list[float]:
@@ -580,7 +592,9 @@ def _write_failed_camera_evidence(work: Path, episodes: list[dict]) -> list[dict
 
 def _execute_prefix(context: dict[str, Any], actions: Any, query: dict) -> bool:
     bridge = context["bridge"]
-    for index, target in enumerate(actions[:EXECUTION_PREFIX]):
+    target, selection = _temporally_ensembled_target(context, actions, query)
+    query["action_selection"] = selection
+    for index, target in enumerate([target]):
         query["attempted_prefix"] = index + 1
         proof = _apply_target(
             context["env"],
@@ -614,6 +628,63 @@ def _execute_prefix(context: dict[str, Any], actions: Any, query: dict) -> bool:
     return False
 
 
+def _temporally_ensembled_target(
+    context: dict[str, Any], actions: Any, query: dict[str, Any]
+) -> tuple[Any, dict[str, Any]]:
+    """Select one causal target from overlapping fresh-observation chunks."""
+
+    import numpy as np
+
+    decision = int(query["decision"])
+    value = np.ascontiguousarray(actions)
+    if value.shape != (ACTION_HORIZON, 8) or not np.isfinite(value).all():
+        raise RuntimeError("policy action chunk is not finite 15x8 data")
+    history = context.setdefault("action_chunks", [])
+    history.append(
+        {
+            "origin_decision": decision,
+            "actions": value.copy(),
+            "chunk_sha256": query["action_receipt"]["sha256"],
+        }
+    )
+    history[:] = [
+        row
+        for row in history
+        if 0 <= decision - int(row["origin_decision"]) < ACTION_HORIZON
+    ]
+    contributors, candidates = [], []
+    for row in history:
+        offset = decision - int(row["origin_decision"])
+        candidate = row["actions"][offset]
+        candidates.append(candidate)
+        contributors.append(
+            {
+                "origin_decision": int(row["origin_decision"]),
+                "action_index": offset,
+                "chunk_sha256": row["chunk_sha256"],
+            }
+        )
+    if not candidates or contributors[-1]["action_index"] != 0:
+        raise RuntimeError("temporal action ensemble lacks the current prediction")
+    target = np.ascontiguousarray(np.mean(np.stack(candidates), axis=0))
+    if target.shape != (8,) or not np.isfinite(target).all():
+        raise RuntimeError("temporal action ensemble produced an invalid target")
+    receipt = {
+        **_action_selection_protocol(),
+        "decision": decision,
+        "contributor_count": len(contributors),
+        "contributors": contributors,
+        "weight_per_contributor": 1.0 / len(contributors),
+        "applied_action_sha256": hashlib.sha256(target.tobytes()).hexdigest(),
+        "applied_action_dtype": str(target.dtype),
+        "applied_action_shape": list(target.shape),
+        "applied_action": target.tolist(),
+        "applied_gripper_score": float(target[7]),
+        "applied_gripper_command": int(float(target[7]) > 0.5),
+    }
+    return target, receipt
+
+
 def _action_receipt(actions: Any) -> dict[str, Any]:
     import numpy as np
 
@@ -623,6 +694,7 @@ def _action_receipt(actions: Any) -> dict[str, Any]:
         "sha256": hashlib.sha256(value.tobytes()).hexdigest(),
         "shape": list(value.shape),
         "dtype": str(value.dtype),
+        "actions": value.tolist(),
         "gripper_scores": scores,
         "thresholded_gripper_commands": [int(score > 0.5) for score in scores],
     }
@@ -671,8 +743,9 @@ def _finish_episode(record: dict[str, Any]) -> dict[str, Any]:
     times = [row["observation_time_s"] for row in record["queries"]]
     record["measured_requery_sim_seconds"] = [b - a for a, b in zip(times, times[1:])]
     record["receding_horizon"] = {
-        "model_horizon": 15,
+        "model_horizon": ACTION_HORIZON,
         "configured_execute_prefix": EXECUTION_PREFIX,
+        "action_selection": _action_selection_protocol(),
     }
     return record
 
@@ -1096,6 +1169,7 @@ def _load_gold_protocol(args: argparse.Namespace, work: Path) -> dict[str, Any]:
         "robot_plant": robot_plant,
         "control_hz": CONTROL_HZ,
         "execution_prefix": EXECUTION_PREFIX,
+        "action_selection": _action_selection_protocol(),
         "scenarios": scenarios,
     }
     if not protocol["object_identity"] or not protocol["scene_id"]:
@@ -1529,6 +1603,7 @@ def _validate_query_numeric_receipts(
     shape = inference.get("sampler_noise_shape")
     age = wire.get("capture_age_s")
     action = query.get("action_receipt") or {}
+    selection = query.get("action_selection") or {}
     horizon = inference.get("shape")
     if (
         shape != PI05_SAMPLER_NOISE_SHAPE
@@ -1539,12 +1614,97 @@ def _validate_query_numeric_receipts(
         or inference.get("finite") is not True
         or not isinstance(horizon, list)
         or len(horizon) != 2
-        or horizon[0] < 15
+        or horizon[0] < ACTION_HORIZON
         or horizon[1] != 8
         or action.get("shape") != horizon
-        or not _valid_receipt_hash(action.get("sha256"))
+        or not _valid_action_chunk_receipt(action)
+        or not _valid_action_selection_receipt(selection, query.get("decision"))
     ):
         raise RuntimeError("policy query numeric receipt is invalid")
+
+
+def _valid_action_chunk_receipt(receipt: dict[str, Any]) -> bool:
+    import numpy as np
+
+    try:
+        actions = np.asarray(receipt.get("actions"), dtype=np.float64)
+    except (TypeError, ValueError):
+        return False
+    value = np.ascontiguousarray(actions)
+    return bool(
+        receipt.get("shape") == [ACTION_HORIZON, 8]
+        and receipt.get("dtype") == "float64"
+        and value.shape == (ACTION_HORIZON, 8)
+        and np.isfinite(value).all()
+        and receipt.get("sha256") == hashlib.sha256(value.tobytes()).hexdigest()
+        and receipt.get("gripper_scores") == value[:, 7].tolist()
+        and receipt.get("thresholded_gripper_commands")
+        == [int(score > 0.5) for score in value[:, 7]]
+    )
+
+
+def _valid_action_selection_receipt(selection: dict, decision: Any) -> bool:
+    import numpy as np
+
+    try:
+        applied = np.asarray(selection.get("applied_action"), dtype=np.float64)
+    except (TypeError, ValueError):
+        return False
+    digest = hashlib.sha256(np.ascontiguousarray(applied).tobytes()).hexdigest()
+    score = selection.get("applied_gripper_score")
+    return bool(
+        selection.get("schema") == _action_selection_protocol()["schema"]
+        and selection.get("method") == "uniform_mean"
+        and selection.get("model_horizon") == ACTION_HORIZON
+        and selection.get("fresh_observation_per_control") is True
+        and selection.get("causality") == "current_and_past_predictions_only"
+        and selection.get("decision") == decision
+        and selection.get("applied_action_shape") == [8]
+        and selection.get("applied_action_dtype") == "float64"
+        and applied.shape == (8,)
+        and np.isfinite(applied).all()
+        and selection.get("applied_action_sha256") == digest
+        and isinstance(score, (int, float))
+        and float(score) == float(applied[7])
+        and selection.get("applied_gripper_command") == int(float(score) > 0.5)
+    )
+
+
+def _validate_action_selection_history(episode: dict[str, Any]) -> None:
+    import numpy as np
+
+    queries = episode.get("queries") or []
+    receipts = {
+        int(query["decision"]): query.get("action_receipt") or {} for query in queries
+    }
+    for query in queries:
+        decision = int(query["decision"])
+        selection = query.get("action_selection") or {}
+        contributors = selection.get("contributors") or []
+        origins = list(range(max(0, decision - ACTION_HORIZON + 1), decision + 1))
+        if (
+            selection.get("contributor_count") != len(origins)
+            or len(contributors) != len(origins)
+            or selection.get("weight_per_contributor") != 1.0 / len(origins)
+        ):
+            raise RuntimeError("temporal action ensemble count is invalid")
+        for contributor, origin in zip(contributors, origins):
+            if (
+                contributor.get("origin_decision") != origin
+                or contributor.get("action_index") != decision - origin
+                or contributor.get("chunk_sha256")
+                != receipts.get(origin, {}).get("sha256")
+                or not _valid_receipt_hash(contributor.get("chunk_sha256"))
+            ):
+                raise RuntimeError("temporal action ensemble lineage is invalid")
+        candidates = [
+            np.asarray(receipts[origin]["actions"], dtype=np.float64)[decision - origin]
+            for origin in origins
+        ]
+        expected = np.ascontiguousarray(np.mean(np.stack(candidates), axis=0))
+        applied = np.asarray(selection["applied_action"], dtype=np.float64)
+        if not np.array_equal(applied, expected):
+            raise RuntimeError("temporal action ensemble value is invalid")
 
 
 def _validate_camera_evidence(episode: dict[str, Any]) -> None:
@@ -1610,6 +1770,7 @@ def _validate_effectiveness_cohort(episodes: list[dict[str, Any]]) -> None:
         _validate_camera_evidence(episode)
         for query in episode.get("queries") or []:
             _validate_query_lineage(episode, query)
+        _validate_action_selection_history(episode)
         _physics_rows(episode)
 
 
@@ -1714,6 +1875,7 @@ def _validate_protocol_contents(protocol: dict[str, Any]) -> None:
         or not protocol.get("scene_id")
         or not isinstance(protocol.get("decisions"), int)
         or protocol["decisions"] < 1
+        or protocol.get("action_selection") != _action_selection_protocol()
     ):
         raise RuntimeError("closed-loop task protocol is incomplete")
     _validate_object_source(protocol.get("object_usd"))
