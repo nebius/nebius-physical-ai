@@ -19,6 +19,7 @@ from npa.workflows.sim2real.robot_contract import (
     materialize_robot_contract,
     _mesh_dependencies,
     stock_robot_contract,
+    validate_robot_source_bundle,
 )
 from npa.workflows.sim2real import (
     isaac_robot_asset,
@@ -155,6 +156,33 @@ def test_stage2_materializes_content_addressed_urdf_contract(tmp_path: Path) -> 
     assert contract["content_addressed_uri"] in storage.uploads
     parsed = urlparse(contract["content_addressed_uri"])
     assert contract["contract_digest"] in parsed.path
+
+
+def test_task_neutral_source_boundary_accepts_one_driver_two_finger_bundle(
+    tmp_path: Path,
+) -> None:
+    bundle = tmp_path / "bundle"
+    (bundle / "meshes").mkdir(parents=True)
+    source = bundle / "robot.urdf"
+    source.write_text(URDF, encoding="utf-8")
+    (bundle / "meshes" / "arm.stl").write_bytes(b"solid arm\n")
+    document = _doc(
+        joint_names=["joint1", "joint2", "joint3", "left_joint"],
+        gripper_joint_names=["left_joint"],
+        n_gripper_joints=1,
+        kp=[100, 100, 100, 20],
+        kv=[10, 10, 10, 2],
+        force_lower=[-10, -10, -10, -2],
+        force_upper=[10, 10, 10, 2],
+        home_qpos=[0, -0.5, 0.5, 0.0],
+    )
+    spec = robot_assets.parse_robot_spec(document)
+    evidence = validate_robot_source_bundle(
+        spec=spec, bundle_root=bundle, source_path=source
+    )
+    assert evidence["urdf_dependencies"] == ["meshes/arm.stl"]
+    assert evidence["urdf"]["controlled_joint_count"] == 4
+    assert len(evidence["source_files"]) == 2
 
 
 def test_committed_panda_example_is_a_complete_parseable_robot_spec() -> None:

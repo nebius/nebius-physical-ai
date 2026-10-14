@@ -223,6 +223,55 @@ def _validate_urdf_structure(
     }
 
 
+def validate_robot_source_bundle(
+    *,
+    spec: robot_assets.RobotSpec,
+    bundle_root: Path,
+    source_path: Path,
+) -> dict[str, Any]:
+    """Validate one complete articulated source bundle independent of task type.
+
+    Task adapters share this byte/provenance boundary, then apply their own
+    explicit morphology and controller compatibility rules.  It deliberately
+    does not declare lift or VLA compatibility.
+    """
+
+    try:
+        relative = source_path.resolve().relative_to(bundle_root.resolve())
+    except ValueError as exc:
+        raise RobotContractError(
+            "RobotSpec.robot_uri resolved outside RobotSpec.asset_root_uri"
+        ) from exc
+    if not source_path.is_file() or source_path.stat().st_size == 0:
+        raise RobotContractError(
+            f"RobotSpec.robot_uri did not resolve to a non-empty file: {spec.robot_uri!r}"
+        )
+    dependencies: list[str] = []
+    urdf: dict[str, Any] = {}
+    if spec.robot_source == robot_assets.ROBOT_SOURCE_BYO_URDF:
+        dependencies = _mesh_dependencies(source_path, bundle_root)
+        urdf = _validate_urdf_structure(source_path, spec)
+    elif spec.robot_source != robot_assets.ROBOT_SOURCE_BYO_USD:
+        raise RobotContractError(
+            "Isaac robot materialization supports byo_urdf and byo_usd sources; "
+            f"got {spec.robot_source!r}"
+        )
+    source_tree_sha256, files = _tree_digest(bundle_root)
+    return {
+        "source_relative_path": relative.as_posix(),
+        "source_sha256": _file_digest(source_path),
+        "source_tree_sha256": source_tree_sha256,
+        "source_format": (
+            "urdf"
+            if spec.robot_source == robot_assets.ROBOT_SOURCE_BYO_URDF
+            else "usd"
+        ),
+        "source_files": files,
+        "urdf_dependencies": dependencies,
+        "urdf": urdf,
+    }
+
+
 def _task_config(doc: dict[str, Any], spec: robot_assets.RobotSpec) -> dict[str, Any]:
     supplied = doc.get("task") or doc.get("task_config") or {}
     if supplied and not isinstance(supplied, dict):
@@ -353,30 +402,12 @@ def materialize_robot_contract(
                 f"RobotSpec.robot_uri is inaccessible: {spec.robot_uri!r}: {exc}"
             ) from exc
         source_relative = source_path.relative_to(bundle).as_posix()
-    try:
-        source_path.resolve().relative_to(bundle.resolve())
-    except ValueError as exc:
-        raise RobotContractError(
-            "RobotSpec.robot_uri resolved outside RobotSpec.asset_root_uri"
-        ) from exc
-    if not source_path.is_file() or source_path.stat().st_size == 0:
-        raise RobotContractError(
-            f"RobotSpec.robot_uri did not resolve to a non-empty file: {spec.robot_uri!r}"
-        )
-
-    dependencies: list[str] = []
-    urdf: dict[str, Any] = {}
-    if spec.robot_source == robot_assets.ROBOT_SOURCE_BYO_URDF:
-        dependencies = _mesh_dependencies(source_path, bundle)
-        urdf = _validate_urdf_structure(source_path, spec)
-    elif spec.robot_source != robot_assets.ROBOT_SOURCE_BYO_USD:
-        raise RobotContractError(
-            f"Isaac canonical workflow supports byo_urdf and byo_usd robot sources; "
-            f"got {spec.robot_source!r}"
-        )
-
-    source_tree_sha256, files = _tree_digest(bundle)
-    source_sha256 = _file_digest(source_path)
+    source = validate_robot_source_bundle(
+        spec=spec, bundle_root=bundle, source_path=source_path
+    )
+    source_tree_sha256 = source["source_tree_sha256"]
+    source_sha256 = source["source_sha256"]
+    source_relative = source["source_relative_path"]
     source_root_uri = (
         f"{root_uri.rstrip('/')}/stage_02_assets/robot/by-sha256/"
         f"{source_tree_sha256}/source/"
@@ -393,9 +424,9 @@ def materialize_robot_contract(
             "source_sha256": source_sha256,
             "source_tree_sha256": source_tree_sha256,
             "source_relative_path": source_relative,
-            "source_format": "urdf" if spec.robot_source == "byo_urdf" else "usd",
-            "source_files": files,
-            "urdf_dependencies": dependencies,
+            "source_format": source["source_format"],
+            "source_files": source["source_files"],
+            "urdf_dependencies": source["urdf_dependencies"],
         }
     )
     task_config = _task_config(doc, spec)
@@ -442,7 +473,7 @@ def materialize_robot_contract(
             "license": dict(doc.get("license") or {}),
             "provenance": dict(doc.get("provenance") or {}),
         },
-        "urdf": urdf,
+        "urdf": source["urdf"],
     }
     embodiment_digest = _canonical_digest(embodiment)
     normalized_spec.update(
