@@ -49,7 +49,10 @@ config:
   object_usd: ""
   gold_episodes: "8"
   gold_seed: "20281007"
-  eval_decisions: "24"
+  # Consume a fresh observation for every applied control target. Preserve the
+  # previous 24 * 8 = 192-control episode horizon without open-loop execution
+  # between moving wrist-camera frames.
+  eval_decisions: "192"
   wrist_ablation_modes: fresh,frozen,pixel_channel_shuffle
   wrist_ablation_seed: "20271008"
   train_steps: "1000"

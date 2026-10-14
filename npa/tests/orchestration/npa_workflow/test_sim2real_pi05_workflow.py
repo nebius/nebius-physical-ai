@@ -245,6 +245,7 @@ def test_gold_controller_states_share_exact_protocol_inputs() -> None:
     assert _value(base, "--wrist-ablation-modes") == (
         "fresh,frozen,pixel_channel_shuffle"
     )
+    assert _value(base, "--decisions") == "192"
 
 
 @pytest.mark.parametrize("prefix", ["first", "nested/second"])

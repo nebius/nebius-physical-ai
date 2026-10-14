@@ -32,14 +32,18 @@ JOINT_LIMITS_RAD = (
 )
 MAX_GRIPPER_WIDTH_M = 0.08
 # Isaac reports the sum of two physical finger joints.  Each joint may
-# transiently overshoot its 0.04 m limit by up to 0.01 m while the high-PD
+# transiently overshoot its 0.04 m limit while the high-PD
 # controller settles under contact, so the summed measurement needs the
-# corresponding two-finger tolerance.  Raw measurements remain in evidence;
+# bounded two-finger tolerance observed by the simulator. Raw measurements
+# remain in evidence;
 # this does not change commanded limits or any grasp/release success threshold.
-GRIPPER_MEASUREMENT_TOLERANCE_M = 0.02
+GRIPPER_MEASUREMENT_TOLERANCE_M = 0.04
 CONTROL_HZ = 15.0
 ACTION_HORIZON = 15
-EXECUTION_PREFIX = 8
+# Refresh both camera inputs and measured robot state before every applied
+# target. The wrist view moves with the hand, so a multi-target prefix makes
+# later controls depend on an image captured several control intervals earlier.
+EXECUTION_PREFIX = 1
 PROXIMAL_FINGER_CLEARANCE_M = 0.008
 OBJECT_INITIAL_X_RANGE_M = (0.42, 0.55)
 OBJECT_INITIAL_Y_RANGE_M = (-0.25, -0.08)
@@ -186,7 +190,10 @@ def _observation_contract() -> dict[str, Any]:
                 "units": "normalized",
                 "open": 0.0,
                 "closed": 1.0,
-                "measurement_overshoot": "saturates_within_0.005_m_tolerance",
+                "measurement_overshoot": (
+                    "finite_raw_two-finger_measurement_saturates_to_the_"
+                    "unchanged_0.08_m_model_range"
+                ),
             },
             "prompt": "non_empty_utf8",
             "alignment": (

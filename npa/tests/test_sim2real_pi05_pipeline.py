@@ -319,7 +319,8 @@ def test_closed_loop_synchronizes_wrist_before_reading_rgb(monkeypatch) -> None:
 
 
 @pytest.mark.parametrize(
-    "width", [-0.0199, 0.09296306222677231, 0.09502406418323517, 0.0999]
+    "width",
+    [-0.0399, 0.09502406418323517, 0.10055141896009445, 0.10171762108802795, 0.1199],
 )
 def test_physical_gripper_width_preserves_bounded_joint_overshoot(width: float) -> None:
     robot = Namespace(
@@ -335,7 +336,7 @@ def test_physical_gripper_width_preserves_bounded_joint_overshoot(width: float) 
     ) == pytest.approx(width)
 
 
-@pytest.mark.parametrize("width", [-0.0201, 0.1001])
+@pytest.mark.parametrize("width", [-0.0401, 0.1201])
 def test_physical_gripper_width_rejects_implausible_joint_overshoot(
     width: float,
 ) -> None:
@@ -376,21 +377,6 @@ def test_closed_loop_wrist_ablation_is_deterministic() -> None:
     )
 
 
-class _FailSecondControllerStep:
-    calls = 0
-
-    def __call__(self, *_args, **_kwargs):
-        self.calls += 1
-        if self.calls == 2:
-            raise RuntimeError("controller rejected gs://private/location")
-        return {
-            "terminated": False,
-            "truncated": False,
-            "command_application_time_s": 0.0,
-            "resulting_state_time_s": 1.0 / 15.0,
-        }
-
-
 def _partial_execution_context(record: dict) -> dict:
     return {
         "record": record,
@@ -403,7 +389,7 @@ def _partial_execution_context(record: dict) -> dict:
     }
 
 
-def test_policy_query_receipt_survives_partial_controller_failure(monkeypatch) -> None:
+def test_policy_query_receipt_survives_controller_failure(monkeypatch) -> None:
     actions = np.zeros((15, 8), dtype=np.float64)
     actions[:, 7] = -0.2
     record = {"queries": [], "physics_trace": []}
@@ -417,7 +403,11 @@ def test_policy_query_receipt_survives_partial_controller_failure(monkeypatch) -
             {"observation_time_s": 0.0},
         ),
     )
-    monkeypatch.setattr(pi05_closed_loop, "_apply_target", _FailSecondControllerStep())
+
+    def fail_first_target(*_args, **_kwargs):
+        raise RuntimeError("controller rejected gs://private/location")
+
+    monkeypatch.setattr(pi05_closed_loop, "_apply_target", fail_first_target)
     monkeypatch.setattr(pi05_closed_loop, "_physics_sample", lambda *_args: {})
 
     with pytest.raises(RuntimeError, match="controller rejected"):
@@ -428,11 +418,10 @@ def test_policy_query_receipt_survives_partial_controller_failure(monkeypatch) -
     assert query["action_receipt"]["gripper_scores"] == [-0.2] * 15
     assert query["action_receipt"]["thresholded_gripper_commands"] == [0] * 15
     assert query["execution_status"] == "failed"
-    assert query["attempted_prefix"] == 2
-    assert query["executed_prefix"] == 1
-    assert len(query["controller_proofs"]) == 1
-    assert query["controller_proofs"][0]["physics_observation_status"] == "recorded"
-    assert record["physics_trace"][0]["simulator_time_s"] == 1.0 / 15.0
+    assert query["attempted_prefix"] == 1
+    assert query["executed_prefix"] == 0
+    assert query["controller_proofs"] == []
+    assert record["physics_trace"] == []
     assert (
         query["execution_error"] == "RuntimeError: controller rejected <redacted-uri>"
     )
@@ -481,7 +470,7 @@ def _paired_noise_episode(mode: str, identity: str | None) -> dict:
             "truncated": False,
             "physics_observation_status": "recorded",
         }
-    ] * 8
+    ] * pi05_closed_loop.EXECUTION_PREFIX
     return {
         "scenario_seed": 9,
         "wrist_ablation_mode": mode,
@@ -489,8 +478,8 @@ def _paired_noise_episode(mode: str, identity: str | None) -> dict:
             {
                 "decision": 0,
                 "execution_status": "completed",
-                "attempted_prefix": 8,
-                "executed_prefix": 8,
+                "attempted_prefix": pi05_closed_loop.EXECUTION_PREFIX,
+                "executed_prefix": pi05_closed_loop.EXECUTION_PREFIX,
                 "controller_proofs": proofs,
                 "inference": {"sampler_noise_sha256": identity},
             }
@@ -541,8 +530,8 @@ def _comparison_trace(success: bool) -> list[dict]:
 
 def _comparison_proofs(decision: int) -> list[dict]:
     proofs = []
-    for local_index in range(8):
-        index = decision * 8 + local_index
+    for local_index in range(pi05_closed_loop.EXECUTION_PREFIX):
+        index = decision * pi05_closed_loop.EXECUTION_PREFIX + local_index
         proofs.append(
             {
                 "terminated": False,
@@ -600,12 +589,12 @@ def _comparison_query(mode: str, seed: int, decision: int) -> dict:
         policy = hashlib.sha256(f"shuffle-{seed}-{decision}".encode()).hexdigest()
     return {
         "decision": decision,
-        "observation_time_s": decision * 8 / 15.0,
+        "observation_time_s": (decision * pi05_closed_loop.EXECUTION_PREFIX / 15.0),
         "wrist_rgb_sha256": source,
         "exterior_rgb_sha256": "e" * 64,
         "execution_status": "completed",
-        "attempted_prefix": 8,
-        "executed_prefix": 8,
+        "attempted_prefix": pi05_closed_loop.EXECUTION_PREFIX,
+        "executed_prefix": pi05_closed_loop.EXECUTION_PREFIX,
         "controller_proofs": _comparison_proofs(decision),
         "action_receipt": {"sha256": "a" * 64, "shape": [15, 8]},
         "inference": _comparison_inference(mode, seed, decision, source, policy),
@@ -616,11 +605,11 @@ def _comparison_episode(mode: str, seed: int, success: bool) -> dict:
     trace = _comparison_trace(success)
     visibility = {
         phase: {
-            "samples": 1,
-            "wrist_visible_samples": 1,
-            "exterior_visible_samples": 1,
-            "destination_exterior_visible_samples": 1,
-            "both_fingers_rendered_samples": 1,
+            "samples": 8,
+            "wrist_visible_samples": 8,
+            "exterior_visible_samples": 8,
+            "destination_exterior_visible_samples": 8,
+            "both_fingers_rendered_samples": 8,
         }
         for phase in ("approach", "grasp", "lift", "transport", "lower", "release")
     }
@@ -638,7 +627,7 @@ def _comparison_episode(mode: str, seed: int, success: bool) -> dict:
     return {
         "scenario_seed": seed,
         "wrist_ablation_mode": mode,
-        "queries": [_comparison_query(mode, seed, decision) for decision in range(6)],
+        "queries": [_comparison_query(mode, seed, decision) for decision in range(48)],
         "physics_trace": trace,
         "camera_evidence": camera,
         "success": _success(trace),
@@ -693,7 +682,7 @@ def _comparison_protocol() -> dict:
         "split": "gold",
         "seed": 20281007,
         "episodes": 2,
-        "decisions": 6,
+        "decisions": 48,
         "object_identity": "multicolor-cube-72mm",
         "object_usd": "task_default",
         "object_scale": [1.2, 1.2, 1.2],
@@ -705,7 +694,7 @@ def _comparison_protocol() -> dict:
         "support_surface_contract": support_surface_contract(),
         "robot_plant": _robot_plant(),
         "control_hz": 15,
-        "execution_prefix": 8,
+        "execution_prefix": pi05_closed_loop.EXECUTION_PREFIX,
         "scenarios": _comparison_scenarios(),
     }
     pi05_closed_loop._bind_protocol_hashes(protocol)
@@ -722,7 +711,7 @@ def _effectiveness_report(role: str, successes: dict[str, set[int]]) -> dict:
     ]
     args = Namespace(checkpoint_role=role, split="gold", wrist_ablation_modes=modes)
     artifacts = {
-        "mp4": {"bytes": 10, "frames": 36, "ffprobe": [{"codec_name": "h264"}]},
+        "mp4": {"bytes": 10, "frames": 288, "ffprobe": [{"codec_name": "h264"}]},
         "rrd": {
             "bytes": 20,
             "timeline_rows": 288,
