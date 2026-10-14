@@ -342,8 +342,18 @@ def materialize_robot_contract(
     root_uri: str,
     work_dir: Path,
     client: Any,
+    task_contract: str = "canonical_lift",
 ) -> dict[str, Any]:
-    """Fetch, validate, normalize, and publish one content-addressed RobotSpec."""
+    """Fetch, validate, normalize, and publish one content-addressed RobotSpec.
+
+    ``canonical_lift`` preserves the established Isaac Lift compatibility gate.
+    ``surface_placement_asset_only`` shares only immutable source and morphology
+    materialization; its controller, cameras, gripper aperture, task geometry,
+    and policy mapping must pass the policy-interchange preparation gate later.
+    """
+
+    if task_contract not in {"canonical_lift", "surface_placement_asset_only"}:
+        raise RobotContractError(f"unsupported task contract {task_contract!r}")
 
     if not robot_spec_uri.startswith("s3://"):
         raise RobotContractError(
@@ -378,11 +388,13 @@ def materialize_robot_contract(
             "a non-empty robot_spec_uri must describe an explicit articulated BYO "
             "robot; omit robot_spec_uri to use the byte-for-byte stock Franka path"
         )
-    if spec.n_gripper_joints != 2 or len(spec.finger_links) != 2:
+    supported_driver_counts = (
+        {2} if task_contract == "canonical_lift" else {1, 2}
+    )
+    if spec.n_gripper_joints not in supported_driver_counts or len(spec.finger_links) != 2:
         raise RobotContractError(
-            "unsupported gripper contract: canonical Isaac Lift currently requires "
-            "a two-joint, two-finger parallel-jaw gripper with explicit ordered "
-            "gripper_joint_names and finger_links"
+            "unsupported gripper contract: the selected task requires a supported "
+            "parallel-jaw driver count and exactly two physical finger_links"
         )
 
     bundle = work_dir / "source"
@@ -429,15 +441,38 @@ def materialize_robot_contract(
             "urdf_dependencies": source["urdf_dependencies"],
         }
     )
-    task_config = _task_config(doc, spec)
-    compatibility = isaac_byo_robot_task.task_robot_compatibility(
-        {**normalized_spec, "usd_path": immutable_source_uri},
-        task_kind=str(task_config["skill"]),
-    )
-    if not compatibility.get("task_robot_compatible"):
-        raise RobotContractError(str(compatibility.get("reason") or compatibility))
+    if task_contract == "canonical_lift":
+        task_config = _task_config(doc, spec)
+        compatibility = isaac_byo_robot_task.task_robot_compatibility(
+            {**normalized_spec, "usd_path": immutable_source_uri},
+            task_kind=str(task_config["skill"]),
+        )
+        if not compatibility.get("task_robot_compatible"):
+            raise RobotContractError(
+                str(compatibility.get("reason") or compatibility)
+            )
+    else:
+        task_config = {
+            "skill": "surface_placement",
+            "compatibility_scope": "asset_materialization_only",
+        }
+        compatibility = {
+            "task_robot_compatible": False,
+            "asset_materialized": True,
+            "scope": "asset_materialization_only",
+            "requires": [
+                "explicit joint limits and controller representation",
+                "parallel-jaw aperture mapping",
+                "calibrated exterior and wrist cameras",
+                "surface-placement geometry and policy compatibility",
+            ],
+        }
     expected_action_dim = spec.n_arm_joints + (1 if spec.has_gripper else 0)
-    expected_observation_dim = 2 * spec.dof_count + 10 + expected_action_dim
+    expected_observation_dim = (
+        2 * spec.dof_count + 10 + expected_action_dim
+        if task_contract == "canonical_lift"
+        else None
+    )
     embodiment = {
         "name": spec.name,
         "robot_source": spec.robot_source,
@@ -461,7 +496,11 @@ def materialize_robot_contract(
             "dof": spec.dof_count,
             "action": expected_action_dim,
             "observation": expected_observation_dim,
-            "observation_formula": "2*dof+object_pose7+goal3+last_action",
+            "observation_formula": (
+                "2*dof+object_pose7+goal3+last_action"
+                if task_contract == "canonical_lift"
+                else "typed calibrated cameras plus ordered measured state; no privileged object state"
+            ),
         },
         "task_config": task_config,
         "compatibility": compatibility,
@@ -520,6 +559,7 @@ def materialize_robot_contract(
             "robot_spec_uri": robot_spec_uri,
             "robot_uri": spec.robot_uri,
             "asset_root_uri": asset_root_uri,
+            "task_contract": task_contract,
         },
     }
     contract["contract_digest"] = _canonical_digest(contract)

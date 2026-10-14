@@ -134,6 +134,16 @@ def _materialize(tmp_path: Path, storage: FakeStorage) -> dict:
     )
 
 
+def _materialize_surface(tmp_path: Path, storage: FakeStorage) -> dict:
+    return materialize_robot_contract(
+        robot_spec_uri="s3://inputs/spec.json",
+        root_uri="s3://private-run/root",
+        work_dir=tmp_path,
+        client=storage,
+        task_contract="surface_placement_asset_only",
+    )
+
+
 def test_stage2_materializes_content_addressed_urdf_contract(tmp_path: Path) -> None:
     storage = FakeStorage(_doc())
     contract = _materialize(tmp_path, storage)
@@ -183,6 +193,51 @@ def test_task_neutral_source_boundary_accepts_one_driver_two_finger_bundle(
     assert evidence["urdf_dependencies"] == ["meshes/arm.stl"]
     assert evidence["urdf"]["controlled_joint_count"] == 4
     assert len(evidence["source_files"]) == 2
+
+
+def test_surface_materializer_accepts_one_driver_without_claiming_task_compatibility(
+    tmp_path: Path,
+) -> None:
+    document = _doc(
+        joint_names=["joint1", "joint2", "joint3", "left_joint"],
+        gripper_joint_names=["left_joint"],
+        n_gripper_joints=1,
+        kp=[100, 100, 100, 20],
+        kv=[10, 10, 10, 2],
+        force_lower=[-10, -10, -10, -2],
+        force_upper=[10, 10, 10, 2],
+        home_qpos=[0, -0.5, 0.5, 0.0],
+    )
+    contract = _materialize_surface(tmp_path, FakeStorage(document))
+    assert assert_robot_contract(contract) == contract["embodiment_digest"]
+    assert contract["embodiment"]["gripper_joint_names"] == ["left_joint"]
+    assert contract["embodiment"]["compatibility"] == {
+        "task_robot_compatible": False,
+        "asset_materialized": True,
+        "scope": "asset_materialization_only",
+        "requires": [
+            "explicit joint limits and controller representation",
+            "parallel-jaw aperture mapping",
+            "calibrated exterior and wrist cameras",
+            "surface-placement geometry and policy compatibility",
+        ],
+    }
+    assert contract["robot_spec"]["expected_observation_dim"] is None
+
+
+def test_canonical_lift_still_rejects_one_driver_gripper(tmp_path: Path) -> None:
+    document = _doc(
+        joint_names=["joint1", "joint2", "joint3", "left_joint"],
+        gripper_joint_names=["left_joint"],
+        n_gripper_joints=1,
+        kp=[100, 100, 100, 20],
+        kv=[10, 10, 10, 2],
+        force_lower=[-10, -10, -10, -2],
+        force_upper=[10, 10, 10, 2],
+        home_qpos=[0, -0.5, 0.5, 0.0],
+    )
+    with pytest.raises(RobotContractError, match="gripper contract"):
+        _materialize(tmp_path, FakeStorage(document))
 
 
 def test_committed_panda_example_is_a_complete_parseable_robot_spec() -> None:
