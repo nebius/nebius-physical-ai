@@ -20,6 +20,7 @@ from npa.workflows.sim2real.decision_authority import gold_report_sha256
 from npa.workflows.sim2real.models import Sim2RealLoopConfig
 import npa.workflows.sim2real.stage14_finalize as stage14
 import npa.workflows.sim2real_rerun_regen as regen
+from npa.workflows.sim2real_viz import Sim2RealVizResult
 
 pytestmark = pytest.mark.usefixtures("operator_sim2real_image_defaults")
 
@@ -617,7 +618,8 @@ def test_disabled_mcap_does_not_upload_stale_bytes(
         "publish_regen_outputs",
         lambda *_a, **_k: f"{ROOT}/reports/sim2real.rrd",
     )
-    result = SimpleNamespace(
+    result = Sim2RealVizResult(
+        status="written",
         heldout_frame_count=1,
         output_rrd_path=str(rrd),
         rollout_count=0,
