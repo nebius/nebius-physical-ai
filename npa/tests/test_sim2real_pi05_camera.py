@@ -1346,13 +1346,17 @@ def test_contact_convergence_requires_measured_proximal_clearance() -> None:
     assert _phase_converged("transport", 0.0, 0.0, -0.02)
 
 
-def test_collector_state_saturates_only_allowed_open_width_overshoot() -> None:
+def test_collector_state_saturates_finite_open_width_measurement() -> None:
     state = _observation_state({"q": np.arange(7), "width": 0.085})
 
     assert state.dtype == np.float32
     assert state.tolist() == [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 0.0]
-    with pytest.raises(Pi05ContractError, match="measurement tolerance"):
-        _observation_state({"q": np.arange(7), "width": 0.121})
+    observed = _observation_state(
+        {"q": np.arange(7), "width": 0.12018878012895584}
+    )
+    assert observed.tolist() == state.tolist()
+    with pytest.raises(Pi05ContractError, match="must be finite"):
+        _observation_state({"q": np.arange(7), "width": float("nan")})
 
 
 def test_grasp_reference_recovers_selected_asset_link_centroid(monkeypatch) -> None:
