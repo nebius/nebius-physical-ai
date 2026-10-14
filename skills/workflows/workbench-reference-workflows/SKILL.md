@@ -122,6 +122,14 @@ evaluation evidence. The upstream appearance split may share images with pose
 estimation, and Lyra's native replay does not supply a matched held-out benchmark.
 Keep commands with private paths and exact capture/scene details outside Git.
 
+`workflows/testing/gaussian-splatting-reference.yaml` encodes that reference as
+native COLMAP and gsplat states with private S3 handoffs. Its runtime image is
+an explicit placeholder; retain its readiness record and require a compatible
+operator digest before execution. The shareable
+`docs/demos/lyra-splatting-overview.html` contains a synthetic projection preview
+and exact downloadable YAML for both this reference and the existing Lyra path.
+It is a workflow explainer, not a report of real capture reconstruction quality.
+
 For a first BEHAVIOR DEV evaluation, use
 [the one-file onboarding guide](../../../docs/workbench/challenge-onboarding.md)
 and `npa workbench workflow challenge init`, `check`, and `prepare`.

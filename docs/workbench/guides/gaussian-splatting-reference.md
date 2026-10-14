@@ -169,6 +169,42 @@ inspection, but does not automatically reproduce gsplat's held-out evaluation.
 A strict paired benchmark requires additional pose alignment, split handling
 and rendering work; do not report its absence as a quality result.
 
+## Workflow YAML and standalone overview
+
+The [reference workflow YAML](../../../workflows/testing/gaussian-splatting-reference.yaml)
+encodes the real COLMAP and gsplat commands as two states joined through private
+S3 storage. Its default image is an explicit placeholder, and execution is not
+qualified. Supply an immutable compatible operator image before submission.
+The image must provide Bash, GNU coreutils, Git, tar, AWS CLI v2, COLMAP,
+a clean pinned gsplat checkout at `/opt/gsplat`, and a compatible CUDA Python
+environment at `/opt/splat-venv/bin/python` with gsplat 1.5.3 and all example
+dependencies. It also needs the SkyPilot startup tools used by Workbench.
+The workflow does not build that environment or install vendor payloads.
+
+Stage calibrated perspective images under `images/` in a private input S3
+prefix. Supply exported `fx,fy,cx,cy` through `intrinsics`; keep all URI overrides
+as prefixes ending in `/`. Registration rejects zero or multiple connected
+components, rather than selecting a component silently. Review registration
+and coverage before accepting the resulting training run. The native training
+archive contains private PLY exports, checkpoints, rendered views and metrics.
+
+```bash
+npa workbench workflow submit workflows/testing/gaussian-splatting-reference.yaml \
+  --project "$NPA_PROJECT" --infra "k8s/$NPA_CLUSTER" --runtime \
+  --run-id "$NPA_RUN_ID" --var "bucket=$NPA_S3_BUCKET" \
+  --var "training_image=$NPA_SPLAT_IMAGE" \
+  --var "input_uri=$NPA_SPLAT_INPUT_URI" \
+  --var "intrinsics=$NPA_SPLAT_INTRINSICS" \
+  --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
+```
+
+Read the adjacent [readiness record](../../../workflows/testing/gaussian-splatting-reference.readiness.json)
+before executing. The [standalone HTML overview](../../demos/lyra-splatting-overview.html)
+uses an interactive synthetic grid and embeds downloadable YAML for this
+reference and the existing Lyra workflow. It contains no capture results or
+private infrastructure configuration. Lyra's YAML begins after local panorama
+preparation and private bundle upload.
+
 ## Record the recipe privately
 
 Copy this lab-notes template into private run evidence. It documents the run;

@@ -1397,6 +1397,11 @@ skills:
         path: docs/workbench/guides/lyra-360-capture.md
       - type: file_exists
         path: docs/workbench/guides/gaussian-splatting-reference.md
+      - type: file_exists
+        path: docs/demos/lyra-splatting-overview.html
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/testing/gaussian-splatting-reference.yaml
       - type: cli_help
         args: ["workbench", "workflow", "challenge", "prepare", "--help"]
         contains: "prescribed DEV cases"
