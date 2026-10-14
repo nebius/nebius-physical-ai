@@ -201,9 +201,7 @@ def test_preparation_binds_six_dof_non_franka_and_offset_spool(tmp_path: Path) -
     assert prepared["capabilities"]["repeated_paired_trials"] is True
     adapter = training_adapter(prepared)
     assert adapter["normalization_identity"] == ""
-    assert adapter["measured_state_names"] == prepared["policy"][
-        "measured_state_names"
-    ]
+    assert adapter["measured_state_names"] == prepared["policy"]["measured_state_names"]
     assert [camera["feature_key"] for camera in adapter["cameras"]] == [
         "observation.images.workspace",
         "observation.images.wrist",
@@ -212,9 +210,7 @@ def test_preparation_binds_six_dof_non_franka_and_offset_spool(tmp_path: Path) -
 
 def test_preparation_rejects_six_dof_openpi_padding(tmp_path: Path) -> None:
     with pytest.raises(InterchangeContractError, match="seven arm joints"):
-        build_preparation(
-            _sealed(tmp_path, backend="openpi_pi05"), run_id="run-openpi"
-        )
+        build_preparation(_sealed(tmp_path, backend="openpi_pi05"), run_id="run-openpi")
 
 
 def test_preparation_rejects_object_wider_than_gripper(tmp_path: Path) -> None:

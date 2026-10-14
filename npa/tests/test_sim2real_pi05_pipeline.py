@@ -897,9 +897,7 @@ def test_smolvla_report_discloses_repeated_trials_not_noise_coupling() -> None:
         _comparison_protocol(),
         receipt,
     )
-    assert result["schema"] == (
-        "npa.sim2real.policy_interchange.closed_loop_eval.v1"
-    )
+    assert result["schema"] == ("npa.sim2real.policy_interchange.closed_loop_eval.v1")
     ablation = result["wrist_ablation"]
     assert ablation["sampler_noise_identity_verified"] is False
     assert ablation["paired_trial_protocol"].startswith("independently_seeded")

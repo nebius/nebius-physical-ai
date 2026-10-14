@@ -50,9 +50,10 @@ def test_native_train_reload_and_service_share_exact_checkpoint_lineage() -> Non
     reload = steps["reload-validation"].argv
     adapted = steps["start-adapted-service"].argv
     selected = _value(train, "--selected-checkpoint-s3-uri")
-    assert _value(train, "--pretrained-policy-source") == spec.config[
-        "base_checkpoint_uri"
-    ]
+    assert (
+        _value(train, "--pretrained-policy-source")
+        == spec.config["base_checkpoint_uri"]
+    )
     assert _value(train, "--selected-checkpoint-s3-uri") == selected
     assert _value(reload, "--checkpoint-uri") == selected
     assert _value(adapted, "--checkpoint-uri") == selected
@@ -88,8 +89,7 @@ def test_every_stage_declares_explicit_interchange_component_record() -> None:
         artifact.uri
         for state in spec.states.values()
         for artifact in state.outputs
-        if artifact.schema
-        == "npa.sim2real.policy_interchange.component_record.v1"
+        if artifact.schema == "npa.sim2real.policy_interchange.component_record.v1"
     ]
     assert sorted(uri.rsplit("_", 1)[-1] for uri in components) == [
         f"{stage:02d}.json" for stage in range(1, 15)

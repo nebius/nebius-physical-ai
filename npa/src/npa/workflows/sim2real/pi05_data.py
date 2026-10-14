@@ -681,7 +681,9 @@ def install_policy_adapter(source: Path, dataset_root: Path) -> Path:
             (dataset_root / "meta" / "info.json").read_text(encoding="utf-8")
         )
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise Pi05ContractError(f"invalid SmolVLA adapter/dataset metadata: {exc}") from exc
+        raise Pi05ContractError(
+            f"invalid SmolVLA adapter/dataset metadata: {exc}"
+        ) from exc
     if (
         not isinstance(adapter, dict)
         or adapter.get("schema") != "npa.sim2real.lerobot_policy_adapter.v1"
@@ -770,9 +772,7 @@ def _export_from_storage(args: Any, storage: Any, work: Path) -> dict[str, Any]:
         adapter_path = work / "policy-adapter.json"
         storage.download_file(adapter_uri, str(adapter_path))
         install_policy_adapter(adapter_path, output / "lerobot-v3")
-        report["lerobot"]["policy_adapter"] = (
-            "meta/npa_policy_adapter.json"
-        )
+        report["lerobot"]["policy_adapter"] = "meta/npa_policy_adapter.json"
         (output / "dataset-report.json").write_text(
             json.dumps(report, indent=2, sort_keys=True) + "\n"
         )
@@ -783,9 +783,7 @@ def _export_from_storage(args: Any, storage: Any, work: Path) -> dict[str, Any]:
         publish_component_record,
     )
 
-    component_schema = str(
-        getattr(args, "component_schema", PI05_COMPONENT_SCHEMA)
-    )
+    component_schema = str(getattr(args, "component_schema", PI05_COMPONENT_SCHEMA))
     if component_schema not in {
         PI05_COMPONENT_SCHEMA,
         POLICY_INTERCHANGE_COMPONENT_SCHEMA,

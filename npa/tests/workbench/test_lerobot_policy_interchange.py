@@ -65,9 +65,7 @@ def test_exact_revision_policy_source_is_forwarded_to_huggingface(
         {
             "repo_id": "lerobot/smolvla_base",
             "revision": revision,
-            "local_dir": tmp_path
-            / "cache"
-            / f"lerobot__smolvla_base--{revision}",
+            "local_dir": tmp_path / "cache" / f"lerobot__smolvla_base--{revision}",
         }
     ]
 
@@ -76,9 +74,7 @@ def test_malformed_huggingface_revision_is_rejected_before_download(
     tmp_path: Path,
 ) -> None:
     with pytest.raises(PolicyContainerError, match="40 lowercase hex"):
-        _materialize_policy_source(
-            "hf://lerobot/smolvla_base@main", tmp_path / "cache"
-        )
+        _materialize_policy_source("hf://lerobot/smolvla_base@main", tmp_path / "cache")
 
 
 def _manifest(digest: str, normalization_identity: str = "c" * 64) -> dict:
@@ -377,10 +373,7 @@ def test_interchange_cli_requires_explicit_checkpoint_inputs_and_outputs() -> No
             "meta/npa_policy_adapter.json",
         ]
     )
-    assert (
-        trained.interchange_adapter_relative_path
-        == "meta/npa_policy_adapter.json"
-    )
+    assert trained.interchange_adapter_relative_path == "meta/npa_policy_adapter.json"
 
 
 def test_health_exposes_loaded_interchange_identities_and_byte_hash(
@@ -414,9 +407,10 @@ def test_health_exposes_loaded_interchange_identities_and_byte_hash(
     assert interchange["robot_identity"] == "six-axis-arm"
     assert interchange["checkpoint_sha256"] == "a" * 64
     assert interchange["normalization_identity"] == "b" * 64
-    assert interchange["manifest_sha256"] == hashlib.sha256(
-        manifest_path.read_bytes()
-    ).hexdigest()
+    assert (
+        interchange["manifest_sha256"]
+        == hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    )
 
 
 def test_interchange_training_forbids_early_checkpoint_only_upload() -> None:

@@ -689,9 +689,7 @@ def _decode_camera(camera: dict[str, Any], declaration: dict[str, Any]) -> Any:
         else:
             from PIL import Image
 
-            raw = base64.b64decode(
-                str(camera.get("image_base64") or ""), validate=True
-            )
+            raw = base64.b64decode(str(camera.get("image_base64") or ""), validate=True)
             image = np.asarray(Image.open(io.BytesIO(raw)).convert("RGB")).copy()
     except Exception as exc:
         raise PolicyContainerError(f"invalid encoded camera image: {exc}") from exc
@@ -1665,9 +1663,7 @@ def create_app() -> Any:
                 "robot_identity": policy.manifest["robot_identity"],
                 "task_identity": policy.manifest["task_identity"],
                 "checkpoint_sha256": policy.manifest["checkpoint_sha256"],
-                "normalization_identity": policy.manifest[
-                    "normalization_identity"
-                ],
+                "normalization_identity": policy.manifest["normalization_identity"],
                 "measured_state_names": policy.manifest["measured_state_names"],
                 "cameras": policy.manifest["cameras"],
                 "action": policy.manifest["action"],
@@ -2082,7 +2078,8 @@ def _materialize_policy_source(raw: str, cache: Path) -> Path:
         snapshot_download(
             repo_id=repo_id,
             revision=revision,
-            local_dir=cache / (repo_id.replace("/", "__") + (f"--{revision}" if revision else "")),
+            local_dir=cache
+            / (repo_id.replace("/", "__") + (f"--{revision}" if revision else "")),
         )
     )
     print(f"NPA_LEROBOT_POLICY_READY {target}", flush=True)
@@ -2374,20 +2371,14 @@ def main(argv: list[str] | None = None) -> int:
                 policy_identity=str(adapter.get("policy_identity") or ""),
                 robot_identity=str(adapter.get("robot_identity") or ""),
                 task_identity=str(adapter.get("task_identity") or ""),
-                normalization_identity=str(
-                    adapter.get("normalization_identity") or ""
-                ),
-                measured_state_names=list(
-                    adapter.get("measured_state_names") or ()
-                ),
+                normalization_identity=str(adapter.get("normalization_identity") or ""),
+                measured_state_names=list(adapter.get("measured_state_names") or ()),
                 cameras=list(adapter.get("cameras") or ()),
                 action=dict(adapter.get("action") or {}),
                 state_feature_key=str(
                     adapter.get("state_feature_key") or "observation.state"
                 ),
-                action_feature_key=str(
-                    adapter.get("action_feature_key") or "action"
-                ),
+                action_feature_key=str(adapter.get("action_feature_key") or "action"),
                 cartesian_controller_qualified=bool(
                     adapter.get("cartesian_controller_qualified", False)
                 ),
@@ -2482,9 +2473,7 @@ def main(argv: list[str] | None = None) -> int:
             measured_state_names=list(spec.get("measured_state_names") or ()),
             cameras=list(spec.get("cameras") or ()),
             action=dict(spec.get("action") or {}),
-            state_feature_key=str(
-                spec.get("state_feature_key") or "observation.state"
-            ),
+            state_feature_key=str(spec.get("state_feature_key") or "observation.state"),
             action_feature_key=str(spec.get("action_feature_key") or "action"),
             cartesian_controller_qualified=bool(
                 spec.get("cartesian_controller_qualified", False)

@@ -51,9 +51,7 @@ _PROFILE_FILES = {
     "task.json",
     "policy-adapter.json",
 }
-_HF_SOURCE_RE = re.compile(
-    r"^hf://(?P<repo>[^@\s]+)@(?P<revision>[0-9a-f]{40})$"
-)
+_HF_SOURCE_RE = re.compile(r"^hf://(?P<repo>[^@\s]+)@(?P<revision>[0-9a-f]{40})$")
 
 
 def _sha256_path(path: Path) -> str:
@@ -68,7 +66,9 @@ def _object(path: Path) -> dict[str, Any]:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise InterchangeContractError(f"invalid profile JSON {path.name}: {exc}") from exc
+        raise InterchangeContractError(
+            f"invalid profile JSON {path.name}: {exc}"
+        ) from exc
     if not isinstance(value, dict):
         raise InterchangeContractError(f"profile file {path.name} must be an object")
     return value
@@ -104,7 +104,9 @@ def build_preparation(profile_root: Path, *, run_id: str) -> dict[str, Any]:
     checksums = _object(profile_root / "checksums.json")
     if not checksums or checksums != tree_hashes(profile_root):
         raise InterchangeContractError("interchange profile checksum mismatch")
-    missing = sorted(name for name in _PROFILE_FILES if not (profile_root / name).is_file())
+    missing = sorted(
+        name for name in _PROFILE_FILES if not (profile_root / name).is_file()
+    )
     if missing:
         raise InterchangeContractError(
             "sealed interchange profile is incomplete: " + ", ".join(missing)
@@ -394,7 +396,9 @@ def _finalize(args: argparse.Namespace) -> dict[str, Any]:
         external = read_json(args.external_seam_uri, directory=work / "external")
         expected = "npa.sim2real.policy_interchange.closed_loop_eval.v1"
         if baseline.get("schema") != expected or adapted.get("schema") != expected:
-            raise InterchangeContractError("closed-loop interchange reports are invalid")
+            raise InterchangeContractError(
+                "closed-loop interchange reports are invalid"
+            )
         before = baseline.get("checkpoint_provenance") or {}
         after = adapted.get("checkpoint_provenance") or {}
         same_protocol = bool(
