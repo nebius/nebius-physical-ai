@@ -6,6 +6,8 @@ import base64
 import hashlib
 import io
 import json
+import sys
+import types
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,6 +17,7 @@ from npa.workbench.lerobot.policy_container import (
     INTERCHANGE_MANIFEST_FILENAME,
     PolicyContainerError,
     _load_interchange_manifest,
+    _materialize_policy_source,
     _processor_identity,
     _smolvla_batch,
     _validate_native_policy_features,
@@ -37,6 +40,45 @@ def _checkpoint(tmp_path: Path) -> tuple[Path, str]:
     )
     digest = hashlib.sha256(weights.read_bytes()).hexdigest()
     return checkpoint, digest
+
+
+def test_exact_revision_policy_source_is_forwarded_to_huggingface(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = []
+    module = types.ModuleType("huggingface_hub")
+
+    def snapshot_download(**kwargs):
+        calls.append(kwargs)
+        target = Path(kwargs["local_dir"])
+        target.mkdir(parents=True)
+        return str(target)
+
+    module.snapshot_download = snapshot_download
+    monkeypatch.setitem(sys.modules, "huggingface_hub", module)
+    revision = "a" * 40
+    result = _materialize_policy_source(
+        f"hf://lerobot/smolvla_base@{revision}", tmp_path / "cache"
+    )
+    assert result.is_dir()
+    assert calls == [
+        {
+            "repo_id": "lerobot/smolvla_base",
+            "revision": revision,
+            "local_dir": tmp_path
+            / "cache"
+            / f"lerobot__smolvla_base--{revision}",
+        }
+    ]
+
+
+def test_malformed_huggingface_revision_is_rejected_before_download(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(PolicyContainerError, match="40 lowercase hex"):
+        _materialize_policy_source(
+            "hf://lerobot/smolvla_base@main", tmp_path / "cache"
+        )
 
 
 def _manifest(digest: str, normalization_identity: str = "c" * 64) -> dict:

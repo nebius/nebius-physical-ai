@@ -11,6 +11,7 @@ import importlib.metadata
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -2036,12 +2037,19 @@ def _materialize_eval_checkpoint(args: argparse.Namespace) -> Path:
     local path is used as-is; anything else is fetched first.
     """
 
-    given = Path(args.checkpoint_path)
+    return _materialize_policy_source(
+        str(args.checkpoint_path), Path(args.checkpoint_cache_dir)
+    )
+
+
+def _materialize_policy_source(raw: str, cache: Path) -> Path:
+    """Resolve local, private S3, or exact-revision Hugging Face policy bytes."""
+
+    given = Path(raw)
     if given.exists():
         return given
 
-    raw = str(args.checkpoint_path).strip()
-    cache = Path(args.checkpoint_cache_dir)
+    raw = raw.strip()
     cache.mkdir(parents=True, exist_ok=True)
     if raw.startswith("s3://"):
         from npa.clients.storage import StorageClient
@@ -2052,6 +2060,13 @@ def _materialize_eval_checkpoint(args: argparse.Namespace) -> Path:
         return target
 
     repo_id = raw[len("hf://") :] if raw.startswith("hf://") else raw
+    revision = None
+    if "@" in repo_id:
+        repo_id, revision = repo_id.rsplit("@", 1)
+        if not re.fullmatch(r"[0-9a-f]{40}", revision):
+            raise PolicyContainerError(
+                "Hugging Face policy revision must be exactly 40 lowercase hex"
+            )
     if "/" not in repo_id:
         raise PolicyContainerError(
             f"--checkpoint-path {raw!r} is neither a local path, an s3:// prefix, nor a "
@@ -2064,7 +2079,11 @@ def _materialize_eval_checkpoint(args: argparse.Namespace) -> Path:
             f"huggingface_hub is required to fetch the policy {repo_id!r}"
         ) from exc
     target = Path(
-        snapshot_download(repo_id=repo_id, local_dir=cache / repo_id.replace("/", "__"))
+        snapshot_download(
+            repo_id=repo_id,
+            revision=revision,
+            local_dir=cache / (repo_id.replace("/", "__") + (f"--{revision}" if revision else "")),
+        )
     )
     print(f"NPA_LEROBOT_POLICY_READY {target}", flush=True)
     return target
@@ -2146,6 +2165,22 @@ def build_parser() -> argparse.ArgumentParser:
     # RUN (configs, logs, metrics) needs the whole output tree, which the retired
     # tokenfactory-train-triage template uploaded with a trailing inline-python block.
     train_cmd.add_argument("--artifacts-s3-uri", default="")
+    train_cmd.add_argument(
+        "--selected-checkpoint-s3-uri",
+        default="",
+        help=(
+            "Optional canonical destination for the fully bound selected checkpoint. "
+            "Requires interchange binding and whole-run artifact publication."
+        ),
+    )
+    train_cmd.add_argument("--result-uri", default="")
+    train_cmd.add_argument("--component-root-uri", default="")
+    train_cmd.add_argument("--pretrained-policy-source", default="")
+    train_cmd.add_argument(
+        "--pretrained-policy-cache-dir",
+        type=Path,
+        default=Path("/tmp/npa-lerobot-pretrained"),
+    )
     train_cmd.add_argument(
         "--interchange-adapter-relative-path",
         default="",
@@ -2243,6 +2278,19 @@ def main(argv: list[str] | None = None) -> int:
                 "interchange training uploads the complete bound artifact tree; "
                 "checkpoint-only upload is forbidden"
             )
+        pretrained_source = args.pretrained_policy_source.strip()
+        if pretrained_source:
+            if any(
+                value.split("=", 1)[0] == "policy.pretrained_path"
+                for value in args.override
+            ):
+                raise PolicyContainerError(
+                    "choose --pretrained-policy-source or a pretrained_path override"
+                )
+            local_pretrained = _materialize_policy_source(
+                pretrained_source, args.pretrained_policy_cache_dir
+            )
+            args.override.append(f"policy.pretrained_path={local_pretrained}")
         try:
             training_config = build_training_config(
                 data_path=args.data_path,
@@ -2299,6 +2347,8 @@ def main(argv: list[str] | None = None) -> int:
         }
         relative_adapter = args.interchange_adapter_relative_path.strip()
         if relative_adapter:
+            payload["schema"] = "npa.workbench.lerobot.training-result.v1"
+            payload["policy_backend"] = "lerobot_smolvla"
             relative = Path(relative_adapter)
             if relative.is_absolute() or ".." in relative.parts:
                 raise PolicyContainerError(
@@ -2346,9 +2396,56 @@ def main(argv: list[str] | None = None) -> int:
                 "artifact_path": str(manifest_path),
                 "manifest": json.loads(manifest_path.read_text(encoding="utf-8")),
             }
+        selected_uri = args.selected_checkpoint_s3_uri.strip()
+        if selected_uri:
+            if not relative_adapter or not args.artifacts_s3_uri.strip():
+                raise PolicyContainerError(
+                    "selected interchange checkpoint publication requires adapter "
+                    "binding and whole-run artifact publication"
+                )
+            from npa.clients.storage import StorageClient
+
+            payload["selected_checkpoint_uri"] = (
+                StorageClient.from_environment().upload_directory(
+                    str(train_result.checkpoint_path), selected_uri, require_empty=True
+                )
+            )
         if args.artifacts_s3_uri.strip():
             payload["artifacts_uri"] = upload_run_artifacts(
                 train_result.output_dir, args.artifacts_s3_uri
+            )
+        if args.result_uri.strip():
+            from npa.workflows.sim2real.workflow_io import write_json
+
+            write_json(
+                args.result_uri,
+                payload,
+                directory=Path(train_result.output_dir).parent / "npa-result",
+            )
+        if args.component_root_uri.strip():
+            if not args.result_uri.strip() or not selected_uri:
+                raise PolicyContainerError(
+                    "interchange ComponentRecord requires result and selected checkpoint URIs"
+                )
+            from npa.workflows.sim2real.workflow_io import (
+                POLICY_INTERCHANGE_COMPONENT_SCHEMA,
+                publish_component_record,
+            )
+
+            publish_component_record(
+                component_schema=POLICY_INTERCHANGE_COMPONENT_SCHEMA,
+                root_uri=args.component_root_uri,
+                stage=8,
+                name="smolvla_native_training",
+                tier="WORKS",
+                require_gpu=True,
+                evidence=(
+                    "Ran native SmolVLA fine-tuning and published a weight/processor-bound checkpoint."
+                ),
+                artifacts={
+                    "training": args.result_uri,
+                    "checkpoint": selected_uri,
+                },
             )
         print(json.dumps(payload, indent=2, sort_keys=True))
         return 0

@@ -672,6 +672,54 @@ def export_local(
     return report
 
 
+def install_policy_adapter(source: Path, dataset_root: Path) -> Path:
+    """Validate a SmolVLA adapter against actual LeRobot feature dimensions."""
+
+    try:
+        adapter = json.loads(source.read_text(encoding="utf-8"))
+        info = json.loads(
+            (dataset_root / "meta" / "info.json").read_text(encoding="utf-8")
+        )
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise Pi05ContractError(f"invalid SmolVLA adapter/dataset metadata: {exc}") from exc
+    if (
+        not isinstance(adapter, dict)
+        or adapter.get("schema") != "npa.sim2real.lerobot_policy_adapter.v1"
+        or adapter.get("backend") != "lerobot_smolvla"
+    ):
+        raise Pi05ContractError("exported SmolVLA adapter is invalid")
+    features = info.get("features") if isinstance(info, dict) else None
+    action = adapter.get("action")
+    cameras = adapter.get("cameras")
+    if (
+        not isinstance(features, dict)
+        or not isinstance(action, dict)
+        or not isinstance(cameras, list)
+    ):
+        raise Pi05ContractError("SmolVLA adapter lacks dataset feature bindings")
+    state_names = adapter.get("measured_state_names")
+    action_names = action.get("names")
+    state_shape = (features.get("observation.state") or {}).get("shape")
+    action_shape = (features.get("action") or {}).get("shape")
+    if (
+        not isinstance(state_names, list)
+        or state_shape != [len(state_names)]
+        or not isinstance(action_names, list)
+        or action_shape != [len(action_names)]
+    ):
+        raise Pi05ContractError("SmolVLA adapter state/action dimensions differ")
+    for camera in cameras:
+        if not isinstance(camera, dict):
+            raise Pi05ContractError("SmolVLA camera adapter must be an object")
+        feature = features.get(str(camera.get("feature_key") or "")) or {}
+        width, height = camera.get("image_size_wh") or (None, None)
+        if feature.get("shape") != [height, width, 3]:
+            raise Pi05ContractError("SmolVLA camera adapter differs from dataset")
+    target = dataset_root / "meta" / "npa_policy_adapter.json"
+    shutil.copy2(source, target)
+    return target
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the CLI. Args: None. Returns: Parser. Raises: None."""
     parser = argparse.ArgumentParser()
@@ -679,6 +727,15 @@ def build_parser() -> argparse.ArgumentParser:
         parser.add_argument(f"--{split}-uri", required=True)
     parser.add_argument("--output-uri", required=True)
     parser.add_argument("--component-root-uri", required=True)
+    parser.add_argument("--policy-adapter-uri", default="")
+    parser.add_argument(
+        "--component-schema",
+        choices=(
+            "npa.sim2real.pi05.component_record.v1",
+            "npa.sim2real.policy_interchange.component_record.v1",
+        ),
+        default="npa.sim2real.pi05.component_record.v1",
+    )
     return parser
 
 
@@ -708,17 +765,42 @@ def _export_from_storage(args: Any, storage: Any, work: Path) -> dict[str, Any]:
         gold_root=roots["gold"],
         output=output,
     )
+    adapter_uri = str(getattr(args, "policy_adapter_uri", "") or "").strip()
+    if adapter_uri:
+        adapter_path = work / "policy-adapter.json"
+        storage.download_file(adapter_uri, str(adapter_path))
+        install_policy_adapter(adapter_path, output / "lerobot-v3")
+        report["lerobot"]["policy_adapter"] = (
+            "meta/npa_policy_adapter.json"
+        )
+        (output / "dataset-report.json").write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n"
+        )
     storage.upload_directory(str(output), args.output_uri, require_empty=True)
     from npa.workflows.sim2real.workflow_io import (
         PI05_COMPONENT_SCHEMA,
+        POLICY_INTERCHANGE_COMPONENT_SCHEMA,
         publish_component_record,
     )
 
+    component_schema = str(
+        getattr(args, "component_schema", PI05_COMPONENT_SCHEMA)
+    )
+    if component_schema not in {
+        PI05_COMPONENT_SCHEMA,
+        POLICY_INTERCHANGE_COMPONENT_SCHEMA,
+    }:
+        raise Pi05ContractError("unsupported dataset ComponentRecord schema")
+
     publish_component_record(
-        component_schema=PI05_COMPONENT_SCHEMA,
+        component_schema=component_schema,
         root_uri=args.component_root_uri,
         stage=3,
-        name="pi05_dense_dataset",
+        name=(
+            "policy_interchange_franka_lerobot_dataset"
+            if component_schema == POLICY_INTERCHANGE_COMPONENT_SCHEMA
+            else "pi05_dense_dataset"
+        ),
         tier="WORKS",
         evidence="Exported split-safe dense OpenPI and native LeRobot data.",
         artifacts={

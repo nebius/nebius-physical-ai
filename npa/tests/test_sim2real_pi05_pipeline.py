@@ -53,7 +53,11 @@ from npa.workflows.sim2real.pi05_collect_all import (
     _collector_argv,
     _run_collector,
 )
-from npa.workflows.sim2real.pi05_data import OPENPI_SCHEMA, export_local
+from npa.workflows.sim2real.pi05_data import (
+    OPENPI_SCHEMA,
+    export_local,
+    install_policy_adapter,
+)
 from npa.workflows.sim2real.pi05_isaac import (
     _collection_report,
     _new_attempt_buffers,
@@ -1952,6 +1956,42 @@ def _fake_lerobot_module() -> types.ModuleType:
 
     module.convert = convert
     return module
+
+
+def test_policy_adapter_must_match_real_lerobot_feature_dimensions(tmp_path) -> None:
+    root = tmp_path / "lerobot-v3"
+    (root / "meta").mkdir(parents=True)
+    info = {
+        "features": {
+            "observation.state": {"shape": [8]},
+            "action": {"shape": [8]},
+            "observation.images.workspace": {"shape": [224, 224, 3]},
+            "observation.images.wrist": {"shape": [224, 224, 3]},
+        }
+    }
+    (root / "meta" / "info.json").write_text(json.dumps(info))
+    adapter = {
+        "schema": "npa.sim2real.lerobot_policy_adapter.v1",
+        "backend": "lerobot_smolvla",
+        "measured_state_names": [f"state_{index}" for index in range(8)],
+        "cameras": [
+            {
+                "feature_key": f"observation.images.{name}",
+                "image_size_wh": [224, 224],
+            }
+            for name in ("workspace", "wrist")
+        ],
+        "action": {"names": [f"action_{index}" for index in range(8)]},
+    }
+    source = tmp_path / "adapter.json"
+    source.write_text(json.dumps(adapter))
+    target = install_policy_adapter(source, root)
+    assert target == root / "meta" / "npa_policy_adapter.json"
+
+    adapter["action"]["names"].pop()
+    source.write_text(json.dumps(adapter))
+    with pytest.raises(Pi05ContractError, match="state/action dimensions"):
+        install_policy_adapter(source, root)
 
 
 def test_dense_export_is_split_safe_and_openpi_readable(tmp_path, monkeypatch) -> None:

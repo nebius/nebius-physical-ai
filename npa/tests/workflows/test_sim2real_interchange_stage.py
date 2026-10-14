@@ -13,7 +13,11 @@ from npa.workflows.lerobot_transfer_data import (
     write_json,
 )
 from npa.workflows.sim2real.interchange_contract import InterchangeContractError
-from npa.workflows.sim2real.interchange_stage import build_preparation
+from npa.workflows.sim2real.interchange_stage import (
+    _artifact_preflight,
+    build_preparation,
+    training_adapter,
+)
 
 
 DIGEST_A = "a" * 64
@@ -195,6 +199,15 @@ def test_preparation_binds_six_dof_non_franka_and_offset_spool(tmp_path: Path) -
     assert prepared["backend"]["name"] == "lerobot_smolvla"
     assert prepared["capabilities"]["deterministic_noise_coupling"] is False
     assert prepared["capabilities"]["repeated_paired_trials"] is True
+    adapter = training_adapter(prepared)
+    assert adapter["normalization_identity"] == ""
+    assert adapter["measured_state_names"] == prepared["policy"][
+        "measured_state_names"
+    ]
+    assert [camera["feature_key"] for camera in adapter["cameras"]] == [
+        "observation.images.workspace",
+        "observation.images.wrist",
+    ]
 
 
 def test_preparation_rejects_six_dof_openpi_padding(tmp_path: Path) -> None:
@@ -224,3 +237,16 @@ def test_preparation_rejects_reordered_policy_joints(tmp_path: Path) -> None:
     _reseal(root)
     with pytest.raises(InterchangeContractError, match="state names/order"):
         build_preparation(root, run_id="run-reordered")
+
+
+def test_artifact_preflight_requires_exact_huggingface_revision() -> None:
+    from argparse import Namespace
+
+    with pytest.raises(InterchangeContractError, match="40-hex"):
+        _artifact_preflight(
+            Namespace(
+                checkpoint_uri="hf://lerobot/smolvla_base@main",
+                output_uri="unused",
+                component_root_uri="unused",
+            )
+        )

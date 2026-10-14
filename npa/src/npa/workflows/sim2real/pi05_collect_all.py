@@ -12,6 +12,7 @@ from typing import Any
 from npa.workflows.sim2real.pi05_contract import validate_dense_episode
 from npa.workflows.sim2real.workflow_io import (
     PI05_COMPONENT_SCHEMA,
+    POLICY_INTERCHANGE_COMPONENT_SCHEMA,
     publish_component_record,
     read_json,
 )
@@ -47,6 +48,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, required=True)
     parser.add_argument("--object-usd", default="")
     parser.add_argument("--component-root-uri", required=True)
+    parser.add_argument(
+        "--component-schema",
+        choices=(PI05_COMPONENT_SCHEMA, POLICY_INTERCHANGE_COMPONENT_SCHEMA),
+        default=PI05_COMPONENT_SCHEMA,
+    )
     return parser
 
 
@@ -149,10 +155,14 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--episodes-per-split must be positive")
     results = {split: _run_collector(args, split) for split in SPLITS}
     publish_component_record(
-        component_schema=PI05_COMPONENT_SCHEMA,
+        component_schema=args.component_schema,
         root_uri=args.component_root_uri,
         stage=2,
-        name="pi05_expert_collection",
+        name=(
+            "policy_interchange_franka_expert_collection"
+            if args.component_schema == POLICY_INTERCHANGE_COMPONENT_SCHEMA
+            else "pi05_expert_collection"
+        ),
         tier="WORKS",
         require_gpu=True,
         evidence="Collected physics-only released placements with dense exterior and moving-wrist observations.",
