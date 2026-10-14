@@ -3005,7 +3005,7 @@ def test_canonical_resume_replays_single_stage8_then_restarts_at_stage9() -> Non
         trigger_waiter=_trigger_ready,
     )
     assert first_report.status == "failed"
-    assert first_submitter.calls[-2]["tasks"] == ["stage-08-cosmos3"]
+    assert first_submitter.calls[-2]["tasks"] == ["stage-08-token-factory"]
     assert first_submitter.calls[-1]["tasks"] == ["stage-09-ppo"]
 
     options = RuntimeOptions(
@@ -3040,7 +3040,9 @@ def test_canonical_resume_replays_single_stage8_then_restarts_at_stage9() -> Non
         ["stage-13-retrigger"],
         ["stage-14-visualize"],
     ]
-    stage8 = next(wave for wave in report.waves if "stage-08-cosmos3" in wave["states"])
+    stage8 = next(
+        wave for wave in report.waves if "stage-08-token-factory" in wave["states"]
+    )
     assert stage8["replayed"] is True
 
 

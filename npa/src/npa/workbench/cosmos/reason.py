@@ -61,14 +61,17 @@ def cosmos_reason_family(model_id: str) -> str:
 
 
 def hosted_rollout_model_family(model_id: str) -> str:
-    """Identify supported hosted evaluators without attributing them to Cosmos."""
+    """Identify the current supported hosted evaluator without Cosmos relabeling."""
 
     model = str(model_id or "").strip()
     if model == "MiniMaxAI/MiniMax-M3":
         return "minimax_m3"
-    if model == DEFAULT_COSMOS3_MODEL:
-        return "cosmos3"
-    raise CosmosReasonError(f"unsupported hosted rollout evaluator: {model}")
+    raise CosmosReasonError(
+        "unsupported hosted rollout evaluator: "
+        f"{model}. Current public Token Factory evaluation uses MiniMaxAI/MiniMax-M3; "
+        "a dedicated/self-hosted Cosmos3 Reasoner needs separate discovered access "
+        "and evaluator-contract validation"
+    )
 
 
 def default_reason_cache_dir(model_id: str) -> str:
@@ -379,8 +382,9 @@ def run_cosmos_reason_vlm(
     family = cosmos_reason_family(resolved_model)
     if family == "cosmos3":
         raise CosmosReasonError(
-            "Cosmos3-Super-Reasoner is hosted by Token Factory; use the "
-            "token_factory Stage 8 backend instead of the self-hosted loader"
+            "Cosmos3 Reasoner is not an implied Token Factory fallback; use a "
+            "dedicated/self-hosted backend only after access and evaluator-contract "
+            "validation"
         )
     try:
         import torch
@@ -643,6 +647,7 @@ def run_token_factory_rollout_vlm(
             ],
             "request": {
                 "request_id": str(response.get("id") or "") or None,
+                "endpoint_url": active.config.base_url,
                 "input_tokens": int(raw_usage.get("prompt_tokens") or 0),
                 "output_tokens": int(raw_usage.get("completion_tokens") or 0),
                 "total_tokens": int(raw_usage.get("total_tokens") or 0),

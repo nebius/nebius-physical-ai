@@ -161,7 +161,7 @@ def test_stage_01_inferred_when_later_stage_present(
 ) -> None:
     client = _fake_s3(
         {
-            "sim2real-b/run-1/augment/cosmos2-transfer-result.json",
+            "sim2real-b/run-1/augment/cosmos3-transfer-result.json",
         }
     )
     monkeypatch.setattr(
@@ -180,7 +180,7 @@ def test_stage_01_inferred_when_later_stage_present(
     assert stages["stage_01_trigger"]["source"] == "inferred_from_later_stage"
 
 
-def test_stage_03_pending_without_cosmos2_transfer_result(
+def test_stage_03_pending_without_cosmos3_transfer_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = _fake_s3(

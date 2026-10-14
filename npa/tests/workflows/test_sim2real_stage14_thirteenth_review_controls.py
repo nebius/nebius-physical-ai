@@ -373,7 +373,7 @@ def test_fresh_stage9_evidence_carries_run_identity(
         workflow_stage,
         "read_json",
         lambda uri, **_kwargs: (
-            {"evaluator_usage": {}} if uri.endswith("cosmos3.json") else {}
+            {"evaluator_usage": {}} if uri.endswith("token-factory.json") else {}
         ),
     )
     monkeypatch.setattr(
@@ -410,6 +410,7 @@ def test_fresh_stage9_evidence_carries_run_identity(
             root_uri=ROOT,
             run_id=RUN_ID,
             reason_model="reasoner",
+            token_factory_base_url="https://api.tokenfactory.nebius.com/v1/",
             outer_iteration=1,
             inner_iteration=1,
             threshold=0.5,

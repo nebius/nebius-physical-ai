@@ -18,7 +18,7 @@ from npa.workflows.sim2real.component_authority import (
 from npa.workflows.sim2real.checkpoint_selection import (
     stage9_checkpoint_candidate as _stage9_checkpoint_candidate,
 )
-from npa.workflows.sim2real.constants import DEFAULT_COSMOS3_MODEL
+from npa.workflows.sim2real.constants import DEFAULT_TOKEN_FACTORY_MODEL
 from npa.workflows.sim2real.decision_authority import validate_stage11_decision
 from npa.workflows.sim2real.stage10_execution import (
     Stage10Operations,
@@ -32,7 +32,7 @@ from npa.workflows.sim2real.stage14_finalize import (
 )
 from npa.workflows.sim2real.stage9_evaluator import (
     validate_hosted_evaluator,
-    validate_stage7_cosmos3_coverage as _validate_stage7_cosmos3_coverage,  # noqa: F401 - compatibility import
+    validate_stage7_hosted_evaluation_coverage as _validate_stage7_hosted_evaluation_coverage,  # noqa: F401
 )
 from npa.workflows.sim2real.stage9_replay import (
     existing_replay as _stage9_existing_replay,
@@ -198,34 +198,23 @@ def _stage2(args: argparse.Namespace) -> None:
 
 
 def _stage3(args: argparse.Namespace) -> None:
-    from npa.workflows.sim2real.workflow_transfer import (
-        run_cosmos2_transfer_component_from_s3,
+    from npa.workflows.sim2real.cosmos3_augment import (
+        run_cosmos3_structural_augmentation,
     )
 
     root = _root(args)
-    _set_env(
-        {
-            "NPA_SIM2REAL_REQUIRE_REAL_COMPONENTS": "1",
-            "NPA_SIM2REAL_AUGMENT_MODE": "real",
-        }
-    )
-    result_uri = f"{root}/augment/cosmos2-transfer-result.json"
-    frames_uri = f"{root}/augment/frames/"
-    result = run_cosmos2_transfer_component_from_s3(
-        input_uri=args.trigger_uri,
-        output_uri=result_uri,
-        augmented_frames_uri=frames_uri,
-        assets_uri=args.assets_uri,
-        scene_spec_uri=args.scene_spec_uri,
-        image=os.environ["NPA_TASK_IMAGE"],
-        run_id=args.run_id,
+    result = run_cosmos3_structural_augmentation(
+        input_uri=args.trigger_uri, root_uri=root, run_id=args.run_id
     )
     manifest = dict(result.get("manifest") or {})
-    if manifest.get("mode") != "cosmos_transfer2.5_gpu" or not manifest.get(
-        "input_conditioned"
+    coverage = dict(manifest.get("full_source_coverage") or {})
+    if (
+        manifest.get("mode") != "cosmos3_nano_video2video_edge_gpu"
+        or manifest.get("input_conditioned") is not True
+        or coverage.get("complete") is not True
     ):
         raise RuntimeError(
-            "Stage 3 did not produce real input-conditioned Cosmos Transfer output"
+            "Stage 3 did not produce real guarded full-source Cosmos3-Nano transfer"
         )
     frames = manifest.get("frames")
     if (
@@ -239,12 +228,15 @@ def _stage3(args: argparse.Namespace) -> None:
         stage=3,
         name="stage_03_augment",
         tier="WORKS",
-        evidence="Real Cosmos Transfer 2.5 generated task-conditioned augmentation on the workflow GPU.",
+        evidence="Real guarded Cosmos3-Nano edge-controlled video2video generated a full-source task-conditioned augmentation on the workflow GPU.",
         artifacts={
             "manifest": f"{root}/augment/manifest.json",
-            "result": result_uri,
-            "frames": frames_uri,
+            "result": result["result_uri"],
+            "frames": result["frames_uri"],
             "frame_count": int(manifest.get("frame_count") or 0),
+            "source_frame_count": coverage.get("selected_source_frames"),
+            "temporal_alignment": manifest.get("temporal_alignment"),
+            "downstream_consumers": manifest.get("downstream_consumers"),
         },
         require_gpu=True,
     )
@@ -636,7 +628,9 @@ def _stage9_evaluator(args, root, work):
         f"{root}/vlm_eval/train/outer-{args.outer_iteration:02d}/"
         f"iter-{args.inner_iteration:02d}/"
     )
-    evaluator = read_json(lane_base + "cosmos3.json", directory=work / "cosmos3")
+    evaluator = read_json(
+        lane_base + "token-factory.json", directory=work / "token-factory"
+    )
     actions_uri = (
         f"{root}/actions/train/outer-{args.outer_iteration:02d}/"
         f"iter-{args.inner_iteration:02d}/"
@@ -652,8 +646,9 @@ def _stage9_evaluator(args, root, work):
         evaluator=evaluator,
         stage8_record=stage8_record,
         expected_model=args.reason_model,
+        expected_token_factory_endpoint=args.token_factory_base_url,
         expected_source_sha=source_sha(),
-        evaluator_uri=lane_base + "cosmos3.json",
+        evaluator_uri=lane_base + "token-factory.json",
         outer_iteration=args.outer_iteration,
         inner_iteration=args.inner_iteration,
     )
@@ -1013,7 +1008,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--inner-iteration", type=int, default=1)
     parser.add_argument("--rollout-count", type=int, default=1)
     parser.add_argument("--steps-per-rollout", type=int, default=32)
-    parser.add_argument("--reason-model", default=DEFAULT_COSMOS3_MODEL)
+    parser.add_argument("--reason-model", default=DEFAULT_TOKEN_FACTORY_MODEL)
+    parser.add_argument("--token-factory-base-url", default="")
     parser.add_argument("--evaluation-concurrency", type=int, default=8)
     parser.add_argument("--evaluation-max-frames", type=int, default=0)
     parser.add_argument("--threshold", type=float, default=0.5)

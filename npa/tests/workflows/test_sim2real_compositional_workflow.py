@@ -34,13 +34,20 @@ from npa.workflows.sim2real.workflow_stage import (
     _stage8,
     _stage9,
     _stage9_existing_replay,
-    _validate_stage7_cosmos3_coverage,
+    _validate_stage7_hosted_evaluation_coverage,
     build_parser,
 )
 
 
 ROOT = Path(__file__).resolve().parents[3]
 SPEC = ROOT / "workflows" / "main" / "sim2real.yaml"
+_TOKEN_FACTORY_ENDPOINT = "https://api.tokenfactory.nebius.com/v1/"
+
+
+@pytest.fixture(autouse=True)
+def _token_factory_secret_binding(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Supply the secret binding expected by isolated Stage 8 unit paths."""
+    monkeypatch.setenv("NEBIUS_TOKEN_FACTORY_KEY", "unit-test-key")
 
 
 def test_canonical_is_one_standard_compositional_workflow() -> None:
@@ -81,12 +88,12 @@ def test_canonical_is_one_standard_compositional_workflow() -> None:
     ][0]["resources"]
     assert viewer["requests"]["ephemeral-storage"] == "24Gi"
     assert viewer["limits"]["ephemeral-storage"] == "48Gi"
-    cosmos3 = payload["states"]["stage-08-cosmos3"]
-    assert cosmos3["resources"] == "stage8-cpu"
+    token_factory = payload["states"]["stage-08-token-factory"]
+    assert token_factory["resources"] == "stage8-cpu"
     assert "accelerators" not in payload["resources"]["stage8-cpu"]
-    assert payload["config"]["cosmos3_model"] == "MiniMaxAI/MiniMax-M3"
-    assert "--reason-lane" not in cosmos3["run"]["argv"]
-    assert "--reason-backend" not in cosmos3["run"]["argv"]
+    assert payload["config"]["token_factory_model"] == "MiniMaxAI/MiniMax-M3"
+    assert "--reason-lane" not in token_factory["run"]["argv"]
+    assert "--reason-backend" not in token_factory["run"]["argv"]
     assert int(payload["config"]["ppo_iterations"]) == DEFAULT_PPO_ITERATIONS
     assert DEFAULT_PPO_ITERATIONS >= 2_000
     stage14_argv = payload["states"]["stage-14-visualize"]["run"]["argv"]
@@ -110,12 +117,9 @@ def test_retired_monolithic_toolrefs_are_not_catalog_surfaces() -> None:
 
 @pytest.mark.parametrize(
     ("model", "family"),
-    [
-        ("nvidia/Cosmos3-Super-Reasoner", "cosmos3"),
-        ("MiniMaxAI/MiniMax-M3", "minimax_m3"),
-    ],
+    [("MiniMaxAI/MiniMax-M3", "minimax_m3")],
 )
-def test_stage8_scores_every_rollout_once_with_hosted_cosmos3(
+def test_stage8_scores_every_rollout_once_with_hosted_token_factory(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, model: str, family: str
 ) -> None:
     from npa.workbench.cosmos import reason
@@ -201,6 +205,7 @@ def test_stage8_scores_every_rollout_once_with_hosted_cosmos3(
             outer_iteration=1,
             inner_iteration=1,
             reason_model=model,
+            token_factory_base_url=_TOKEN_FACTORY_ENDPOINT,
             threshold=0.5,
             evaluation_concurrency=1,
             evaluation_max_frames=0,
@@ -209,7 +214,8 @@ def test_stage8_scores_every_rollout_once_with_hosted_cosmos3(
 
     assert calls == ["rollout-0000", "rollout-0001"]
     payload = writes[0][1]
-    assert payload["schema"] == "npa.sim2real.cosmos3_evaluator.v1"
+    assert payload["schema"] == "npa.sim2real.token_factory_evaluator.v1"
+    assert payload["evaluator"] == "token_factory_rollout"
     assert payload["source_rollout_ids"] == calls
     assert payload["model"] == model
     assert payload["reason_family"] == family
@@ -245,7 +251,7 @@ def test_reduced_plan_preserves_all_real_solution_boundaries() -> None:
         "stage-05-split",
         "stage-06-tokens",
         "stage-07-rollouts",
-        "stage-08-cosmos3",
+        "stage-08-token-factory",
         "stage-09-ppo",
         "stage-10-gold",
         "stage-11-decision",
@@ -298,13 +304,13 @@ def test_stage9_rejects_inexact_single_evaluator_coverage(
         "schema": "npa.sim2real.policy_rollouts.v1",
         "rollout_dirs": [f"/tmp/actions/{item}" for item in stage7_ids],
     }
-    cosmos3 = {
+    evaluator = {
         "source_rollout_ids": source_ids,
         "evaluations": [{"rollout_id": item} for item in evaluation_ids],
     }
 
     with pytest.raises(RuntimeError, match="exactly cover Stage 7"):
-        _validate_stage7_cosmos3_coverage(stage7, cosmos3)
+        _validate_stage7_hosted_evaluation_coverage(stage7, evaluator)
 
 
 def test_stage_adapters_do_not_submit_hidden_kubernetes_jobs() -> None:
@@ -393,8 +399,8 @@ def test_loop_outputs_preserve_canonical_lineage_and_runtime_checkpoint(
             1,
         ),
         (
-            "stage-08-cosmos3",
-            "s3://unit/run/vlm_eval/train/outer-01/iter-01/cosmos3.json",
+            "stage-08-token-factory",
+            "s3://unit/run/vlm_eval/train/outer-01/iter-01/token-factory.json",
             1,
             1,
         ),
@@ -569,11 +575,12 @@ def _stage9_replay_fixture() -> tuple[dict, dict, dict, dict]:
         "rollout_id": "rollout-1",
         "score": 0.8,
         "threshold": 0.5,
-        "model": "nvidia/Cosmos3-Super-Reasoner",
+        "model": "MiniMaxAI/MiniMax-M3",
         "provider": "nebius",
         "backend": "token_factory",
         "request": {
             "request_id": "request-1",
+            "endpoint_url": _TOKEN_FACTORY_ENDPOINT,
             "input_tokens": 10,
             "output_tokens": 5,
             "total_tokens": 15,
@@ -677,10 +684,7 @@ def test_stage9_conflicting_same_iteration_replay_fails_closed() -> None:
 
 @pytest.mark.parametrize(
     ("model", "family"),
-    [
-        ("nvidia/Cosmos3-Super-Reasoner", "cosmos3"),
-        ("MiniMaxAI/MiniMax-M3", "minimax_m3"),
-    ],
+    [("MiniMaxAI/MiniMax-M3", "minimax_m3")],
 )
 @pytest.mark.parametrize(
     "corruption",
@@ -767,24 +771,26 @@ def test_stage9_retry_republishes_exact_evidence_without_training(
             "name": "stage_08_vlm_eval_train",
             "artifacts": {
                 **provenance,
-                "result": lane_base + "cosmos3.json",
+                "result": lane_base + "token-factory.json",
                 "model": model,
                 "reason_family": family,
                 "provider": "nebius",
                 "backend": "token_factory",
+                "token_factory_endpoint": _TOKEN_FACTORY_ENDPOINT,
                 "evaluator_usage": _aggregate_usage([sample_eval], model=model),
                 "rollout_count": 1,
                 "outer_iteration": 1,
                 "inner_iteration": 1,
             },
         },
-        lane_base + "cosmos3.json": {
-            "schema": "npa.sim2real.cosmos3_evaluator.v1",
-            "evaluator": "cosmos3",
+        lane_base + "token-factory.json": {
+            "schema": "npa.sim2real.token_factory_evaluator.v1",
+            "evaluator": "token_factory_rollout",
             "model": model,
             "reason_family": family,
             "provider": "nebius",
             "backend": "token_factory",
+            "token_factory_endpoint": _TOKEN_FACTORY_ENDPOINT,
             "provenance": provenance,
             "evaluator_usage": _aggregate_usage([sample_eval], model=model),
             "source_rollout_ids": ["rollout-1"],
@@ -825,13 +831,9 @@ def test_stage9_retry_republishes_exact_evidence_without_training(
         lambda **kwargs: records.append(kwargs),
     )
 
-    envelope = lanes[lane_base + "cosmos3.json"]
+    envelope = lanes[lane_base + "token-factory.json"]
     record = lanes[f"{root}/components/stage_08.json"]["artifacts"]
-    wrong_model = (
-        "MiniMaxAI/MiniMax-M3"
-        if family == "cosmos3"
-        else "nvidia/Cosmos3-Super-Reasoner"
-    )
+    wrong_model = "unsupported/model"
     if corruption == "envelope_model":
         envelope["model"] = wrong_model
     elif corruption == "envelope_family":
@@ -929,7 +931,14 @@ def test_stage9_retry_republishes_exact_evidence_without_training(
         threshold=0.5,
         ppo_iterations=2,
         reason_model=wrong_model if corruption == "configured_model" else model,
+        token_factory_base_url=_TOKEN_FACTORY_ENDPOINT,
     )
+    if corruption == "configured_model":
+        with pytest.raises(RuntimeError, match="unsupported hosted rollout evaluator"):
+            _stage9(args)
+        assert not writes
+        assert not records
+        return
     if corruption not in {None, "priced_usage"}:
         unchanged = json.dumps(lanes, sort_keys=True)
         with pytest.raises(RuntimeError, match="Stage 8") as failure:
@@ -1897,13 +1906,11 @@ def test_baked_raw_module_setup_probes_the_executed_module() -> None:
     assert "baked Sim2Real evaluator verified" in setup
 
 
-@pytest.mark.parametrize(
-    "model", ["MiniMaxAI/MiniMax-M3", "nvidia/Cosmos3-Super-Reasoner"]
-)
+@pytest.mark.parametrize("model", ["MiniMaxAI/MiniMax-M3"])
 def test_baked_sim2real_setup_keeps_the_selected_evaluator(model):
     setup = render_setup_for_tool(
         "",
-        config={"require_baked_npa": "1", "cosmos3_model": model},
+        config={"require_baked_npa": "1", "token_factory_model": model},
         options=SkypilotRenderOptions(),
         command=["python3", "-m", "npa.workflows.sim2real.workflow_stage"],
     )
@@ -1919,7 +1926,7 @@ def test_compute_capacity_preserves_isaac_rendering(accelerator: str) -> None:
         source_sha="a" * 40,
         outer_iterations="1",
         inner_iterations="1",
-        transfer_accelerator=accelerator,
+        cosmos3_accelerator=accelerator,
         envgen_accelerator=accelerator,
     )
     spec.config.update(
@@ -1927,7 +1934,7 @@ def test_compute_capacity_preserves_isaac_rendering(accelerator: str) -> None:
             key: image
             for key in (
                 "controller_image",
-                "transfer_image",
+                "cosmos3_image",
                 "envgen_image",
                 "isaac_image",
                 "viewer_image",
@@ -1959,7 +1966,7 @@ def test_exact_source_and_per_state_immutable_images_reach_rendered_tasks() -> N
             "outer_iterations": "1",
             "inner_iterations": "1",
             "controller_image": image,
-            "transfer_image": image,
+            "cosmos3_image": image,
             "envgen_image": image,
             "isaac_image": image,
             "viewer_image": image,
@@ -2018,11 +2025,11 @@ def test_exact_source_and_per_state_immutable_images_reach_rendered_tasks() -> N
         )
         assert "priorityClassName" not in pod_config["spec"]
 
-    transfer_pod = spec.resources["transfer-gpu"]["kubernetes"]["pod_config"]["spec"]
-    transfer_env = {
-        item["name"]: item["value"] for item in transfer_pod["containers"][0]["env"]
+    cosmos3_pod = spec.resources["cosmos3-gpu"]["kubernetes"]["pod_config"]["spec"]
+    cosmos3_env = {
+        item["name"]: item["value"] for item in cosmos3_pod["containers"][0]["env"]
     }
-    assert transfer_env == {
+    assert cosmos3_env == {
         "UV_CACHE_DIR": "/tmp/npa-skypilot-uv-cache",
         "XDG_CACHE_HOME": "/tmp/npa-skypilot-xdg-cache",
     }
@@ -2036,7 +2043,7 @@ def test_exact_source_and_per_state_immutable_images_reach_rendered_tasks() -> N
         rendered_transfer_tasks[0]["config"]["kubernetes"]["pod_config"]["spec"][
             "containers"
         ][0]["env"]
-        == transfer_pod["containers"][0]["env"]
+        == cosmos3_pod["containers"][0]["env"]
     )
 
     isaac_pod = spec.resources["isaac-gpu"]["kubernetes"]["pod_config"]["spec"]
@@ -2064,17 +2071,19 @@ def test_canonical_isaac_eula_acceptance_is_operator_supplied_and_fail_closed() 
 
 def test_sim2real_hosted_defaults_and_stage9_model_contract_agree():
     from npa.clients.token_factory import DEFAULT_REASONER_MODEL
-    from npa.workflows.sim2real.constants import DEFAULT_COSMOS3_MODEL
+    from npa.workflows.sim2real.constants import DEFAULT_TOKEN_FACTORY_MODEL
 
     payload = yaml.safe_load(SPEC.read_text())
     assert (
-        DEFAULT_COSMOS3_MODEL
+        DEFAULT_TOKEN_FACTORY_MODEL
         == DEFAULT_REASONER_MODEL
-        == payload["config"]["cosmos3_model"]
+        == payload["config"]["token_factory_model"]
     )
-    for stage in ("stage-08-cosmos3", "stage-09-ppo"):
+    for stage in ("stage-08-token-factory", "stage-09-ppo"):
         argv = payload["states"][stage]["run"]["argv"]
-        assert argv[argv.index("--reason-model") + 1] == "{{config.cosmos3_model}}"
+        assert (
+            argv[argv.index("--reason-model") + 1] == "{{config.token_factory_model}}"
+        )
 
 
 def _no_reset_boundary():
@@ -2157,6 +2166,7 @@ def _evaluate_saved(paths, store, **settings):
         source_sha="a" * 40,
         concurrency=2,
         max_frames=settings.get("max_frames", 0),
+        token_factory_base_url=_TOKEN_FACTORY_ENDPOINT,
     )
 
 
@@ -2213,21 +2223,22 @@ def test_hosted_evaluation_identity_binds_actual_inputs(monkeypatch, tmp_path, c
 
     path = _hosted_inputs(tmp_path, count=1)[0]
     request = _rollout_input(path, "MiniMaxAI/MiniMax-M3", 0.5, 0)
-    original = _input_identity(request, "a" * 40)
+    endpoint = _TOKEN_FACTORY_ENDPOINT
+    original = _input_identity(request, "a" * 40, endpoint)
     source = "a" * 40
     if changed == "frame":
         (path.parent / "camera-000.png").write_bytes(b"different-frame")
     elif changed == "actions":
         request["actions"][0]["action"] = [1.0]
     elif changed == "model":
-        request["model_id"] = "nvidia/Cosmos3-Super-Reasoner"
+        request["model_id"] = "unsupported/model"
     elif changed == "threshold":
         request["threshold"] = 0.75
     elif changed == "source":
         source = "b" * 40
     else:
-        monkeypatch.setenv("NEBIUS_TOKEN_FACTORY_BASE_URL", "https://example.com/v1")
-    assert _input_identity(request, source) != original
+        endpoint = "https://example.com/v1/"
+    assert _input_identity(request, source, endpoint) != original
 
 
 def test_hosted_evaluation_rejects_corrupt_receipts(monkeypatch, tmp_path):

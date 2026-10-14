@@ -73,7 +73,7 @@ promote the quarantined release defaults.
 | Setting | Image and required capability |
 | --- | --- |
 | `CONTROLLER_IMAGE` | `npa-sim2real-control`, including current hosted Stage 8/9 support |
-| `TRANSFER_IMAGE` | `npa-cosmos2-transfer`, with real Transfer inference |
+| `COSMOS3_IMAGE` | `npa-cosmos3`, with real guarded Cosmos3-Nano edge-controlled `video2video` transfer |
 | `ENVGEN_IMAGE` | `npa-envgen`, with real scenario generation |
 | `ISAAC_IMAGE` | `npa-isaac-lab`, with rollout, PPO, held-out evaluation, and RTX rendering |
 | `VIEWER_IMAGE` | `npa-rerun-viewer`, with RRD and MCAP finalization |
@@ -100,7 +100,7 @@ into pods, or patch archived artifacts to make an old set pass.
 ```bash
 SOURCE_SHA='<common-full-40-hex-source-sha>'
 CONTROLLER_IMAGE='<qualified-controller-repository>@sha256:<64-hex-digest>'
-TRANSFER_IMAGE='<qualified-transfer-repository>@sha256:<64-hex-digest>'
+COSMOS3_IMAGE='<qualified-cosmos3-repository>@sha256:<64-hex-digest>'
 ENVGEN_IMAGE='<qualified-envgen-repository>@sha256:<64-hex-digest>'
 ISAAC_IMAGE='<qualified-isaac-repository>@sha256:<64-hex-digest>'
 VIEWER_IMAGE='<qualified-viewer-repository>@sha256:<64-hex-digest>'
@@ -124,12 +124,17 @@ and the terms applicable to your hosted use. NPA does not distribute or cache
 these weights. The [August 2026 notice](https://docs.tokenfactory.nebius.com/august-2026-deprecation-notice)
 announced removal of the former public Cosmos3 model on August 31.
 
-The `cosmos3_model` config key, lane name, artifact filename, and schema remain
-for compatibility. Results record the actual model and `reason_family`; MiniMax
-results are not attributed to NVIDIA Cosmos. An explicit Cosmos3 model remains
-usable with an authorized endpoint serving it. Start a new run when changing
-models or upgrading this evaluator contract; Stage 9 verifies model identity,
-family, request accounting, and exact Stage 7 rollout coverage before PPO.
+The canonical `token_factory_model` config key records the actual hosted model;
+its fresh Stage 8 state and envelope are respectively
+`stage-08-token-factory` and `token-factory.json`
+(`npa.sim2real.token_factory_evaluator.v1`). MiniMax results are not attributed
+to NVIDIA Cosmos. Historical `cosmos3_*` names in already-published schemas or
+outcomes are not reinterpreted or rewritten. A dedicated or self-hosted Cosmos3
+Reasoner is a separate optional backend: it is not enabled by a Token Factory
+model rename and requires real access plus a validated evaluation contract.
+Start a new run when changing models or upgrading this evaluator contract;
+Stage 9 verifies model identity, family, endpoint, request accounting, and
+exact Stage 7 rollout coverage before PPO.
 The hosted endpoint must support the ordered JSON Schema response contract:
 each generated event has a fixed action index and recorded camera reference,
 including explicit neutral values for unsampled actions. Validate this with
@@ -174,30 +179,29 @@ private process environment, never in workflow YAML or shell history.
 | Credential name | Purpose |
 | --- | --- |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | Seed reads, checkpoints, reports, and durable run state |
-| `HF_TOKEN` | Gated Transfer checkpoint access |
+| `HF_TOKEN` | Exact Cosmos3-Nano and Guardrail runtime-access preflight |
 | `NEBIUS_TOKEN_FACTORY_KEY` | Hosted Stage 8 evaluation; an IAM token cannot replace it |
 
-Review and obtain access to all three gated Transfer dependencies under your
-Hugging Face account:
+Before a GPU submission, validate the exact Stage 3 runtime payloads with the
+same `HF_TOKEN` that the job will receive:
 
-- [Cosmos Transfer 2.5](https://huggingface.co/nvidia/Cosmos-Transfer2.5-2B), for inference weights.
-- [Cosmos Predict 2.5](https://huggingface.co/nvidia/Cosmos-Predict2.5-2B), for the pinned tokenizer.
-- [Cosmos Guardrail](https://huggingface.co/nvidia/Cosmos-Guardrail1), for runtime safety weights.
+- [Cosmos3-Nano](https://huggingface.co/nvidia/Cosmos3-Nano), for the structural `video2video` weights.
+- [Cosmos Guardrail](https://huggingface.co/nvidia/Cosmos-Guardrail1), for runtime safety checks.
 
-Your read token must cover all three repositories. The access command probes
-their pinned payloads; accepting Transfer alone leaves Stage 3 unusable.
-`401` means invalid authentication; `403` means missing approval or token scope.
-See [Hugging Face setup](../huggingface-token.md). `NGC_API_KEY` is not a runtime
-prerequisite when all five images already exist; separate builds may need it.
+The preflight probes pinned payloads for both; it does not accept a legacy
+Transfer2.5/Predict2.5 approval as a substitute. `401` means invalid
+authentication; `403` means missing approval or token scope. See [Hugging Face
+setup](../huggingface-token.md). `NGC_API_KEY` is not a runtime prerequisite
+when all five images already exist; separate builds may need it.
 
 Stage 8 needs image input and strict ordered JSON Schema output. This checkout
 uses hosted MiniMax-M3; review its [model license](https://huggingface.co/MiniMaxAI/MiniMax-M3/blob/main/LICENSE)
-and hosted-service terms. The `cosmos3_model` setting and artifact names remain
-for compatibility; results record the actual model and family. Do not select a
-text-only model. For an authorized Cosmos 3 endpoint, select the exact supported
-model ID and propagate `NEBIUS_TOKEN_FACTORY_BASE_URL` as a secret name so local
-checks and remote evaluation use that same endpoint. Start a new run when
-changing evaluator contracts.
+and hosted-service terms. `token_factory_model` records the actual model and
+results record its family and exact endpoint. Do not select a text-only model.
+For a custom endpoint, set the credential-free `token_factory_base_url` and
+validate its model discovery and inference contract before submit; a Cosmos3
+Reasoner needs a separately supported backend and is not claimed here. Start a
+new run when changing evaluator contracts.
 
 Review the [Omniverse terms](https://docs.omniverse.nvidia.com/usd/latest/common/NVIDIA_Omniverse_License_Agreement.html),
 [Isaac additional licenses](https://docs.isaacsim.omniverse.nvidia.com/latest/common/licenses.html),
@@ -502,13 +506,13 @@ CONFIG_ARGS=(
   --var bucket="$NPA_BUCKET"
   --var source_sha="$SOURCE_SHA"
   --var controller_image="$CONTROLLER_IMAGE"
-  --var transfer_image="$TRANSFER_IMAGE"
+  --var cosmos3_image="$COSMOS3_IMAGE"
   --var envgen_image="$ENVGEN_IMAGE"
   --var isaac_image="$ISAAC_IMAGE"
   --var viewer_image="$VIEWER_IMAGE"
   --var isaac_cache_pvc=npa-isaac-cache
   --var gpu_concurrency="$NPA_GPU_CONCURRENCY"
-  --var cosmos3_model=MiniMaxAI/MiniMax-M3
+  --var token_factory_model=MiniMaxAI/MiniMax-M3
 )
 WORKFLOW_ARGS=(--preset public-franka-lift "${CONFIG_ARGS[@]}")
 TARGET_ARGS=(--project "$NPA_PROJECT" --infra "k8s/$NPA_CLUSTER")
@@ -581,7 +585,7 @@ private store or the process environment.
   declare -p NPA_CONFIG_DIR NPA_PROJECT NPA_CLUSTER NPA_BUCKET \
     NPA_NAMESPACE NPA_CLIENT_DIR KUBECONFIG SKYPILOT_GLOBAL_CONFIG \
     NPA_SKYPILOT_ISOLATED_CONFIG_DIR NPA_SKYPILOT_BIN \
-    SPEC RUN_ID SOURCE_SHA CONTROLLER_IMAGE TRANSFER_IMAGE ENVGEN_IMAGE \
+    SPEC RUN_ID SOURCE_SHA CONTROLLER_IMAGE COSMOS3_IMAGE ENVGEN_IMAGE \
     ISAAC_IMAGE VIEWER_IMAGE NPA_GPU_CONCURRENCY \
     CONFIG_ARGS WORKFLOW_ARGS TARGET_ARGS SECRET_ARGS \
     > "$NPA_CONFIG_DIR/$RUN_ID-settings.sh"

@@ -24,6 +24,7 @@ from npa.workbench.cosmos.reason import (
     apply_cosmos_reason_kubernetes_env,
     cosmos_reason_k8s_shell_preamble,
     cosmos_reason_runtime_env,
+    hosted_rollout_model_family,
     default_reason_cache_dir,
     cosmos_reason_family,
     merge_reason_evaluations,
@@ -169,6 +170,11 @@ def test_model_family_distinguishes_real_cosmos3_edge_from_reason2() -> None:
     assert cosmos_reason_family("nvidia/Cosmos-Reason2-2B") == "reason2"
 
 
+def test_hosted_rollout_rejects_a_retired_cosmos3_serverless_alias() -> None:
+    with pytest.raises(CosmosReasonError, match="MiniMaxAI/MiniMax-M3"):
+        hosted_rollout_model_family("nvidia/Cosmos3-Super-Reasoner")
+
+
 def test_hosted_frame_selection_is_bounded_and_rollout_wide() -> None:
     frames = [Path(f"camera-{index:03d}.png") for index in range(32)]
     selected = select_hosted_event_frames(frames)
@@ -180,7 +186,7 @@ def test_hosted_frame_selection_is_bounded_and_rollout_wide() -> None:
 
 @pytest.mark.parametrize(
     ("model", "family"),
-    [(DEFAULT_COSMOS3_MODEL, "cosmos3"), ("MiniMaxAI/MiniMax-M3", "minimax_m3")],
+    [("MiniMaxAI/MiniMax-M3", "minimax_m3")],
 )
 def test_token_factory_rollout_evaluator_returns_event_local_contract(
     tmp_path, model, family
@@ -192,6 +198,7 @@ def test_token_factory_rollout_evaluator_returns_event_local_contract(
         frames.append(frame)
 
     class Client:
+        config = SimpleNamespace(base_url="https://token-factory.example/v1/")
         last_request_metrics = {"latency_seconds": 1.25, "retries": 1}
 
         def chat_completion(self, **kwargs):
@@ -283,6 +290,7 @@ def test_token_factory_rollout_evaluator_returns_event_local_contract(
     assert result["component_source"] == "token_factory_rollout_vlm"
     assert result["request"] == {
         "request_id": "request-public-1",
+        "endpoint_url": "https://token-factory.example/v1/",
         "input_tokens": 100,
         "output_tokens": 50,
         "total_tokens": 150,
@@ -987,10 +995,10 @@ def test_complete_hosted_output_retains_original_score_and_ground_truth():
     )
 
 
-@pytest.mark.parametrize("model", [DEFAULT_COSMOS3_MODEL, "MiniMaxAI/MiniMax-M3"])
 def test_hosted_prompt_and_strict_output_cover_actions_beyond_legacy_preview(
-    tmp_path, model
+    tmp_path,
 ):
+    model = "MiniMaxAI/MiniMax-M3"
     frame = tmp_path / "frame.png"
     frame.write_bytes(b"synthetic-frame")
     actions = [
@@ -1004,6 +1012,8 @@ def test_hosted_prompt_and_strict_output_cover_actions_beyond_legacy_preview(
     ]
 
     class Client:
+        config = SimpleNamespace(base_url="https://token-factory.example/v1/")
+
         def chat_completion(self, **kwargs):
             prompt = kwargs["messages"][0]["content"][0]["text"]
             lines = prompt.splitlines()

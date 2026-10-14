@@ -987,8 +987,9 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         requires_token_factory=True,
         image_tool="isaac-lab",
         notes=(
-            "Isaac Lab renders Franka frames on a GPU, then a hosted Cosmos3 reasoner plans "
-            "from them on CPU. Needs no seeded input: the first stage produces the second's."
+            "Isaac Lab renders Franka frames on a GPU, then hosted MiniMax-M3 through "
+            "Token Factory plans from them on CPU. Needs no seeded input: the first stage "
+            "produces the second's."
         ),
     ),
     SubmitLiveCase(

@@ -8,10 +8,11 @@ import hashlib
 import json
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from botocore.exceptions import ClientError
 
-from npa.clients.token_factory import resolve_config
+from npa.clients.token_factory import TokenFactoryClient, resolve_config
 from npa.workbench.cosmos import reason
 from npa.workbench.cosmos.visual_grounding import validate_stored_visual_grounding
 
@@ -42,12 +43,29 @@ def _rollout_input(path: Path, model: str, threshold: float, max_frames: int) ->
     }
 
 
-def _input_identity(request: dict, source_sha: str) -> dict:
+def validate_token_factory_endpoint(base_url: str) -> str:
+    """Resolve a credential-free HTTPS endpoint for hosted evaluation."""
+
+    endpoint = resolve_config(base_url=base_url, require_api_key=False).base_url
+    parsed = urlparse(endpoint)
+    if (
+        parsed.scheme != "https"
+        or not parsed.netloc
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("token_factory_base_url must be a credential-free HTTPS URL")
+    return endpoint
+
+
+def _input_identity(request: dict, source_sha: str, endpoint: str) -> dict:
     frames = request["image_paths"]
     return {
         "schema": "npa.sim2real.hosted_evaluation_receipt.v1",
         "source_sha": source_sha,
-        "endpoint_sha256": _digest(resolve_config(require_api_key=False).base_url),
+        "endpoint_sha256": _digest(endpoint),
         "request": copy.deepcopy(
             {key: value for key, value in request.items() if key != "image_paths"}
         ),
@@ -94,13 +112,15 @@ def _evaluate_one(
     request = _rollout_input(
         path, settings["model"], settings["threshold"], settings["max_frames"]
     )
-    identity = _input_identity(request, settings["source_sha"])
+    endpoint = settings["token_factory_base_url"]
+    identity = _input_identity(request, settings["source_sha"], endpoint)
     receipt_path = path.parent / "hosted-evaluation-receipt.json"
     uri = f"{prefix}/receipts/{_digest(identity)}.json"
     cached = _cached_result(store, uri, receipt_path, identity)
     if cached is not None:
         return cached, True
-    result = reason.run_token_factory_rollout_vlm(**request)
+    client = TokenFactoryClient(resolve_config(base_url=endpoint))
+    result = reason.run_token_factory_rollout_vlm(**request, client=client)
     receipt = {
         "identity": identity,
         "evaluation": result,
@@ -148,6 +168,7 @@ def evaluate_rollouts(
     source_sha: str,
     concurrency: int,
     max_frames: int,
+    token_factory_base_url: str = "",
 ) -> tuple[list[dict], int]:
     """Score rollouts in deterministic order and reuse exact durable evaluations.
 
@@ -160,6 +181,7 @@ def evaluate_rollouts(
         source_sha: Source attested by the executing image.
         concurrency: Positive number of simultaneous inference requests.
         max_frames: Frame sample size; zero sends all declared primary frames.
+        token_factory_base_url: Explicit public endpoint used by every request.
     Returns:
         Evaluations in input order and the number reused from verified receipts.
     Raises:
@@ -173,6 +195,9 @@ def evaluate_rollouts(
         "threshold": threshold,
         "source_sha": source_sha,
         "max_frames": max_frames,
+        "token_factory_base_url": validate_token_factory_endpoint(
+            token_factory_base_url
+        ),
     }
     completed = _evaluate_all(paths, store, prefix, settings, concurrency)
     return [result for result, _ in completed], sum(reused for _, reused in completed)

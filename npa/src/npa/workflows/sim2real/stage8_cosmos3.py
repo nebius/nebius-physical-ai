@@ -1,8 +1,14 @@
-"""Hosted rollout evaluation; Cosmos3 artifact names remain compatible."""
+"""Hosted Token Factory rollout evaluation.
+
+The module path is retained for import compatibility with earlier, immutable
+run sources.  New canonical artifacts deliberately identify the actual hosted
+MiniMax/Token Factory execution rather than Cosmos3.
+"""
 
 from __future__ import annotations
 
 import argparse
+import os
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -17,6 +23,9 @@ from npa.workflows.sim2real.workflow_io import (
 
 def _aggregate_usage(results: list[dict[str, Any]], *, model: str) -> dict[str, Any]:
     requests = [dict(item.get("request") or {}) for item in results]
+    endpoints = {str(item.get("endpoint_url") or "") for item in requests}
+    if len(endpoints) != 1 or not next(iter(endpoints), ""):
+        raise RuntimeError("Stage 8 requests did not bind one Token Factory endpoint")
     priced = bool(requests) and all(
         item.get("cost_usd") is not None for item in requests
     )
@@ -24,6 +33,7 @@ def _aggregate_usage(results: list[dict[str, Any]], *, model: str) -> dict[str, 
         "provider": "nebius",
         "backend": "token_factory",
         "model": model,
+        "endpoint_url": next(iter(endpoints)),
         "request_count": len(requests),
         "input_tokens": sum(int(item.get("input_tokens") or 0) for item in requests),
         "output_tokens": sum(int(item.get("output_tokens") or 0) for item in requests),
@@ -51,7 +61,7 @@ def _publish(args: argparse.Namespace, payload: dict[str, Any], work: Path) -> N
     root = str(args.root_uri).rstrip("/")
     output_uri = (
         f"{root}/vlm_eval/train/outer-{args.outer_iteration:02d}/"
-        f"iter-{args.inner_iteration:02d}/cosmos3.json"
+        f"iter-{args.inner_iteration:02d}/token-factory.json"
     )
     write_loop_output(
         output_uri, payload, work / "out", args.outer_iteration, args.inner_iteration
@@ -68,6 +78,7 @@ def _publish(args: argparse.Namespace, payload: dict[str, Any], work: Path) -> N
             "reason_family": payload["reason_family"],
             "provider": "nebius",
             "backend": "token_factory",
+            "token_factory_endpoint": payload["token_factory_endpoint"],
             "evaluator_usage": payload["evaluator_usage"],
             "rollout_count": len(payload["evaluations"]),
             "outer_iteration": args.outer_iteration,
@@ -83,12 +94,13 @@ def _result_payload(args, results, reused, provenance) -> dict[str, Any]:
     from npa.workbench.cosmos.reason import hosted_rollout_model_family
 
     return {
-        "schema": "npa.sim2real.cosmos3_evaluator.v1",
-        "evaluator": "cosmos3",
+        "schema": "npa.sim2real.token_factory_evaluator.v1",
+        "evaluator": "token_factory_rollout",
         "model": args.reason_model,
         "reason_family": hosted_rollout_model_family(args.reason_model),
         "provider": "nebius",
         "backend": "token_factory",
+        "token_factory_endpoint": args.token_factory_base_url,
         "evaluations": results,
         "source_rollout_ids": [str(item["rollout_id"]) for item in results],
         "evaluator_usage": _aggregate_usage(results, model=args.reason_model),
@@ -114,10 +126,21 @@ def run(args: argparse.Namespace) -> None:
         ValueError: Invalid evaluation settings or duplicate rollout identities.
     """
     from npa.workbench.cosmos.reason import hosted_rollout_model_family
-    from npa.workflows.sim2real.hosted_evaluation import evaluate_rollouts
+    from npa.workflows.sim2real.hosted_evaluation import (
+        evaluate_rollouts,
+        validate_token_factory_endpoint,
+    )
 
     root = str(args.root_uri).rstrip("/")
     hosted_rollout_model_family(args.reason_model)
+    args.token_factory_base_url = validate_token_factory_endpoint(
+        args.token_factory_base_url
+    )
+    if not os.environ.get("NEBIUS_TOKEN_FACTORY_KEY", "").strip():
+        raise RuntimeError(
+            "Stage 8 requires the NEBIUS_TOKEN_FACTORY_KEY secret binding for its "
+            "configured Token Factory endpoint"
+        )
     work = Path(tempfile.mkdtemp(prefix="npa-s2r-stage-08-"))
     iteration = f"outer-{args.outer_iteration:02d}/iter-{args.inner_iteration:02d}"
     actions = work / "actions"
@@ -136,6 +159,7 @@ def run(args: argparse.Namespace) -> None:
         source_sha=provenance["source_sha"],
         concurrency=args.evaluation_concurrency,
         max_frames=args.evaluation_max_frames,
+        token_factory_base_url=args.token_factory_base_url,
     )
     payload = _result_payload(args, results, reused, provenance)
     _publish(args, payload, work)

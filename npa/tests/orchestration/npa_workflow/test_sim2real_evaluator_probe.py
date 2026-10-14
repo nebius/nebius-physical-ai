@@ -10,20 +10,29 @@ from npa.orchestration.npa_workflow.sim2real_evaluator_probe import (
 )
 
 
-def _run_probe(model, *, preparation=""):
-    script = preparation + "\nactual = 'a' * 40\n" + render_evaluator_probe(model)
+def _run_probe(
+    model, *, endpoint="https://api.tokenfactory.nebius.com/v1/", preparation=""
+):
+    script = (
+        preparation + "\nactual = 'a' * 40\n" + render_evaluator_probe(model, endpoint)
+    )
     return subprocess.run(
         [sys.executable, "-c", script], capture_output=True, text=True
     )
 
 
-@pytest.mark.parametrize(
-    "model", ["MiniMaxAI/MiniMax-M3", "nvidia/Cosmos3-Super-Reasoner"]
-)
-def test_current_baked_evaluator_accepts_explicit_model(model):
+def test_current_baked_evaluator_accepts_minimax_m3():
+    model = "MiniMaxAI/MiniMax-M3"
     result = _run_probe(model)
     assert result.returncode == 0, result.stderr
     assert f"baked Sim2Real evaluator verified {model}" in result.stdout
+
+
+def test_probe_preserves_an_explicit_custom_endpoint():
+    endpoint = "https://dedicated.example/v1/"
+    result = _run_probe("MiniMaxAI/MiniMax-M3", endpoint=endpoint)
+    assert result.returncode == 0, result.stderr
+    assert endpoint in result.stdout
 
 
 def test_old_image_fails_before_a_hosted_request():
