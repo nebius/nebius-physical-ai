@@ -185,9 +185,9 @@ def openpi_pi05_policy_profile(
         action=PolicyAction(
             representation="absolute_joint_position",
             names=robot.action_names,
-            units=("rad",) * 7 + ("normalized_open",),
+            units=("rad",) * 7 + ("normalized_closed",),
             frame="joint",
-            gripper_semantics="normalized_open",
+            gripper_semantics="normalized_closed",
             horizon=15,
             control_hz=15.0,
             execute_prefix=1,

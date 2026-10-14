@@ -18,9 +18,9 @@ from npa.workflows.sim2real.smolvla_policy_client import (
 ACTION = PolicyAction(
     representation="absolute_joint_position",
     names=("j1", "j2", "j3", "j4", "j5", "j6", "gripper"),
-    units=("rad", "rad", "rad", "rad", "rad", "rad", "normalized_open"),
+    units=("rad", "rad", "rad", "rad", "rad", "rad", "normalized_closed"),
     frame="joint",
-    gripper_semantics="normalized_open",
+    gripper_semantics="normalized_closed",
     horizon=50,
     control_hz=15.0,
     execute_prefix=1,

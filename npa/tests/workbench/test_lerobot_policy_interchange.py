@@ -79,8 +79,8 @@ def _manifest(digest: str, normalization_identity: str = "c" * 64) -> dict:
         "action": {
             "representation": "absolute_joint_position",
             "names": ["j1", "j2", "j3", "j4", "j5", "j6", "gripper"],
-            "units": ["rad", "rad", "rad", "rad", "rad", "rad", "normalized_open"],
-            "gripper_semantics": "normalized_open",
+            "units": ["rad", "rad", "rad", "rad", "rad", "rad", "normalized_closed"],
+            "gripper_semantics": "normalized_closed",
             "horizon": 50,
             "control_hz": 15.0,
             "execute_prefix": 1,

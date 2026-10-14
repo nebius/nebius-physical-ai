@@ -75,7 +75,7 @@ def _robot(dof: int = 7) -> RobotSensorProfile:
             open_joint_positions=(0.03, 0.03),
             closed_joint_positions=(0.0, 0.0),
             maximum_width_m=0.06,
-            model_semantics="normalized_open",
+            model_semantics="normalized_closed",
             model_open=0.0,
             model_closed=1.0,
         ),
@@ -108,9 +108,9 @@ def _policy(robot: RobotSensorProfile) -> PolicyProfile:
         action=PolicyAction(
             representation="absolute_joint_position",
             names=robot.action_names,
-            units=("rad",) * len(robot.arm_joint_names) + ("normalized_open",),
+            units=("rad",) * len(robot.arm_joint_names) + ("normalized_closed",),
             frame="joint",
-            gripper_semantics="normalized_open",
+            gripper_semantics="normalized_closed",
             horizon=50,
             control_hz=15.0,
             execute_prefix=1,
@@ -160,7 +160,7 @@ def test_profile_consumes_canonical_resolved_robot_without_franka_defaults() -> 
         "gripper": {
             "joint_units": ["m", "m"],
             "maximum_width_m": 0.05,
-            "model_semantics": "normalized_open",
+            "model_semantics": "normalized_closed",
             "model_open": 0.0,
             "model_closed": 1.0,
         },
@@ -216,13 +216,31 @@ def test_reordered_joint_names_fail_before_controller_use() -> None:
         assert_policy_compatible(robot, _task(), reordered)
 
 
-def test_gripper_width_mapping_uses_declared_non_franka_aperture() -> None:
+def test_normalized_closed_gripper_mapping_uses_declared_non_franka_aperture() -> None:
     gripper = _robot(6).gripper
     assert gripper.width_to_model(0.06) == pytest.approx(0.0)
     assert gripper.width_to_model(0.0) == pytest.approx(1.0)
     assert gripper.model_to_joint_positions(0.0) == pytest.approx((0.03, 0.03))
     with pytest.raises(InterchangeContractError, match="out of range"):
         gripper.width_to_model(0.08)
+
+
+def test_normalized_open_gripper_endpoints_are_not_silently_reversed() -> None:
+    gripper = GripperMapping(
+        joint_names=("finger_driver",),
+        joint_units=("rad",),
+        finger_links=("left_pad", "right_pad"),
+        open_joint_positions=(0.0,),
+        closed_joint_positions=(0.8,),
+        maximum_width_m=0.085,
+        model_semantics="normalized_open",
+        model_open=1.0,
+        model_closed=0.0,
+    )
+    assert gripper.width_to_model(0.085) == pytest.approx(1.0)
+    assert gripper.model_to_joint_positions(0.0) == pytest.approx((0.8,))
+    with pytest.raises(InterchangeContractError, match="open=1, closed=0"):
+        replace(gripper, model_open=0.0, model_closed=1.0)
 
 
 def test_one_driver_parallel_jaw_gripper_is_supported() -> None:
@@ -233,7 +251,7 @@ def test_one_driver_parallel_jaw_gripper_is_supported() -> None:
         open_joint_positions=(0.0,),
         closed_joint_positions=(0.8,),
         maximum_width_m=0.085,
-        model_semantics="normalized_open",
+        model_semantics="normalized_closed",
         model_open=0.0,
         model_closed=1.0,
     )
@@ -249,7 +267,7 @@ def test_unsupported_gripper_is_rejected_during_profile_construction() -> None:
             open_joint_positions=(0.0,),
             closed_joint_positions=(0.8,),
             maximum_width_m=0.04,
-            model_semantics="normalized_open",
+            model_semantics="normalized_closed",
             model_open=0.0,
             model_closed=1.0,
         )
@@ -487,7 +505,7 @@ def test_action_units_horizon_and_cartesian_controller_fail_closed() -> None:
     policy = _policy(robot)
     wrong_units = replace(
         policy,
-        action=replace(policy.action, units=("degree",) * 6 + ("normalized_open",)),
+        action=replace(policy.action, units=("degree",) * 6 + ("normalized_closed",)),
     )
     with pytest.raises(InterchangeContractError, match="units"):
         assert_policy_compatible(robot, _task(), wrong_units)

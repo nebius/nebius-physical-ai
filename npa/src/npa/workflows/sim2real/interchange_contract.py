@@ -23,7 +23,9 @@ IMAGE_LAYOUTS = frozenset({"HWC", "CHW"})
 ACTION_REPRESENTATIONS = frozenset(
     {"absolute_joint_position", "delta_joint_position", "ee_pose"}
 )
-GRIPPER_SEMANTICS = frozenset({"width_m", "normalized_open", "binary_open"})
+GRIPPER_SEMANTICS = frozenset(
+    {"width_m", "normalized_open", "normalized_closed", "binary_open"}
+)
 RIGID_OBJECT_KINDS = frozenset({"rigid"})
 GRASP_AXES = frozenset({"x", "y", "z"})
 
@@ -164,7 +166,9 @@ class GripperMapping:
     open_joint_positions: tuple[float, ...]
     closed_joint_positions: tuple[float, ...]
     maximum_width_m: float
-    model_semantics: Literal["width_m", "normalized_open", "binary_open"]
+    model_semantics: Literal[
+        "width_m", "normalized_open", "normalized_closed", "binary_open"
+    ]
     model_open: float
     model_closed: float
 
@@ -195,6 +199,20 @@ class GripperMapping:
             raise InterchangeContractError("model gripper endpoints must be finite")
         if self.model_open == self.model_closed:
             raise InterchangeContractError("model gripper endpoints must differ")
+        expected_endpoints = {
+            "normalized_open": (1.0, 0.0),
+            "normalized_closed": (0.0, 1.0),
+            "binary_open": (1.0, 0.0),
+        }
+        expected = expected_endpoints.get(self.model_semantics)
+        if expected is not None and (
+            abs(self.model_open - expected[0]) > 1.0e-9
+            or abs(self.model_closed - expected[1]) > 1.0e-9
+        ):
+            raise InterchangeContractError(
+                f"{self.model_semantics} gripper endpoints must be open={expected[0]:g}, "
+                f"closed={expected[1]:g}"
+            )
 
     def width_to_model(self, width_m: float) -> float:
         width = float(width_m)
