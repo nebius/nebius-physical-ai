@@ -25,6 +25,7 @@ ACTION_REPRESENTATIONS = frozenset(
 )
 GRIPPER_SEMANTICS = frozenset({"width_m", "normalized_open", "binary_open"})
 RIGID_OBJECT_KINDS = frozenset({"rigid"})
+GRASP_AXES = frozenset({"x", "y", "z"})
 
 
 class InterchangeContractError(ValueError):
@@ -469,6 +470,7 @@ class RigidObjectProfile:
     collision_declared: bool
     inertia_declared: bool
     material_declared: bool
+    grasp_axis: Literal["x", "y", "z"] = "y"
 
     def __post_init__(self) -> None:
         if self.kind not in RIGID_OBJECT_KINDS:
@@ -499,6 +501,14 @@ class RigidObjectProfile:
             raise InterchangeContractError(
                 "rigid props require explicit collision, inertia, and material data"
             )
+        if self.grasp_axis not in GRASP_AXES:
+            raise InterchangeContractError("object grasp_axis must be x, y, or z")
+
+    @property
+    def required_gripper_width_m(self) -> float:
+        """Return the declared object extent along the closing-axis normal."""
+
+        return self.grasp_extents_m[("x", "y", "z").index(self.grasp_axis)]
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -516,6 +526,8 @@ class RigidObjectProfile:
             "collision_declared": self.collision_declared,
             "inertia_declared": self.inertia_declared,
             "material_declared": self.material_declared,
+            "grasp_axis": self.grasp_axis,
+            "required_gripper_width_m": self.required_gripper_width_m,
         }
 
 
@@ -528,6 +540,7 @@ def rigid_object_profile_from_asset_manifest(
     root_from_reference: Transform,
     root_from_grasp: Transform,
     grasp_extents_m: Sequence[float],
+    grasp_axis: Literal["x", "y", "z"] = "y",
     scale_xyz: Sequence[float] = (1.0, 1.0, 1.0),
 ) -> RigidObjectProfile:
     """Bind a sealed rigid USD asset to explicit task and grasp frames.
@@ -556,6 +569,31 @@ def rigid_object_profile_from_asset_manifest(
     units = str(manifest.get("units") or "").strip().lower()
     if units not in {"metres", "meters"}:
         raise InterchangeContractError("object asset units must be metres")
+    physics = manifest.get("physics")
+    if not isinstance(physics, Mapping):
+        raise InterchangeContractError(
+            "object asset manifest requires explicit physics metadata"
+        )
+    if physics.get("collision") != "declared":
+        raise InterchangeContractError("object collision metadata is not declared")
+    mass = physics.get("mass_kg")
+    if not isinstance(mass, (int, float)) or not math.isfinite(mass) or mass <= 0:
+        raise InterchangeContractError("object inertial mass metadata is invalid")
+    material = physics.get("material")
+    if not isinstance(material, Mapping):
+        raise InterchangeContractError("object physics material metadata is required")
+    for key in ("static_friction", "dynamic_friction", "restitution"):
+        value = material.get(key)
+        if not isinstance(value, (int, float)) or not math.isfinite(value):
+            raise InterchangeContractError(
+                f"object physics material {key} must be finite"
+            )
+    if not (
+        0 <= float(material["dynamic_friction"])
+        <= float(material["static_friction"])
+        and 0 <= float(material["restitution"]) <= 1
+    ):
+        raise InterchangeContractError("object physics material values are invalid")
     root = source_root_uri.rstrip("/")
     if not root:
         raise InterchangeContractError("object source root URI is required")
@@ -575,6 +613,7 @@ def rigid_object_profile_from_asset_manifest(
         collision_declared=True,
         inertia_declared=True,
         material_declared=True,
+        grasp_axis=grasp_axis,
     )
 
 
@@ -636,6 +675,32 @@ class SurfacePlacementTask:
             "retreat_distance_m": self.retreat_distance_m,
             "success_events": list(self.success_events),
         }
+
+
+def assert_surface_placement_compatible(
+    robot: RobotSensorProfile,
+    prop: RigidObjectProfile,
+    task: SurfacePlacementTask,
+) -> dict[str, Any]:
+    """Reject geometry the declared parallel jaws cannot grasp before launch."""
+
+    required = prop.required_gripper_width_m
+    available = robot.gripper.maximum_width_m
+    if required > available + 1.0e-9:
+        raise InterchangeContractError(
+            "object grasp width exceeds the declared gripper aperture"
+        )
+    receipt = {
+        "schema": "npa.sim2real.surface_placement_compatibility.v1",
+        "robot_identity": robot.identity,
+        "object_identity": prop.identity,
+        "task_identity": task.identity,
+        "grasp_axis": prop.grasp_axis,
+        "required_gripper_width_m": required,
+        "available_gripper_width_m": available,
+        "teacher_frames": task.teacher_frames(prop),
+    }
+    return {**receipt, "compatibility_sha256": _sha(receipt)}
 
 
 @dataclass(frozen=True)

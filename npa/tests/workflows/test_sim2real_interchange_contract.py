@@ -22,6 +22,7 @@ from npa.workflows.sim2real.interchange_contract import (
     TimestampedCameraObservation,
     Transform,
     assert_policy_compatible,
+    assert_surface_placement_compatible,
     rigid_object_profile_from_asset_manifest,
     robot_sensor_profile_from_resolved,
     validate_observation,
@@ -373,6 +374,15 @@ def test_sealed_non_cube_asset_requires_explicit_offset_frames() -> None:
         "schema": "npa.franka-rl.assets.v1",
         "license": "Apache-2.0",
         "units": "metres",
+        "physics": {
+            "collision": "declared",
+            "mass_kg": 0.08,
+            "material": {
+                "static_friction": 0.8,
+                "dynamic_friction": 0.6,
+                "restitution": 0.0,
+            },
+        },
         "files": {
             "assets/spool.usda": DIGEST_A,
             "assets/bottle.usda": DIGEST_B,
@@ -389,6 +399,8 @@ def test_sealed_non_cube_asset_requires_explicit_offset_frames() -> None:
     )
     assert prop.source_sha256 == DIGEST_B
     assert prop.root_from_reference.translation_m == (0.0, 0.0, -0.038)
+    compatibility = assert_surface_placement_compatible(_robot(6), prop, _task())
+    assert compatibility["required_gripper_width_m"] == 0.044
     with pytest.raises(InterchangeContractError, match="not an exact sealed"):
         rigid_object_profile_from_asset_manifest(
             manifest,
@@ -399,6 +411,47 @@ def test_sealed_non_cube_asset_requires_explicit_offset_frames() -> None:
             root_from_grasp=prop.root_from_grasp,
             grasp_extents_m=prop.grasp_extents_m,
         )
+
+
+def test_asset_manifest_cannot_fabricate_missing_physics_metadata() -> None:
+    manifest = {
+        "schema": "npa.franka-rl.assets.v1",
+        "license": "Apache-2.0",
+        "units": "metres",
+        "files": {"assets/spool.usda": DIGEST_A},
+    }
+    with pytest.raises(InterchangeContractError, match="physics metadata"):
+        rigid_object_profile_from_asset_manifest(
+            manifest,
+            target="spool",
+            source_root_uri="s3://example/sealed",
+            world_from_root=Transform((0.5, 0.0, 0.026), (0.0, 0.0, 0.0, 1.0)),
+            root_from_reference=Transform((0.0, 0.0, -0.026), (0.0, 0.0, 0.0, 1.0)),
+            root_from_grasp=Transform((0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)),
+            grasp_extents_m=(0.054, 0.054, 0.052),
+        )
+
+
+def test_object_grasp_width_must_fit_declared_gripper_aperture() -> None:
+    prop = RigidObjectProfile(
+        identity="wide-spool",
+        source_uri="s3://example/spool.usda",
+        source_sha256=DIGEST_A,
+        bundle_sha256=DIGEST_B,
+        kind="rigid",
+        units_m_per_unit=1.0,
+        scale_xyz=(1.0, 1.0, 1.0),
+        world_from_root=Transform((0.5, 0.0, 0.026), (0.0, 0.0, 0.0, 1.0)),
+        root_from_reference=Transform((0.0, 0.0, -0.026), (0.0, 0.0, 0.0, 1.0)),
+        root_from_grasp=Transform((0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)),
+        grasp_extents_m=(0.054, 0.09, 0.052),
+        collision_declared=True,
+        inertia_declared=True,
+        material_declared=True,
+        grasp_axis="y",
+    )
+    with pytest.raises(InterchangeContractError, match="gripper aperture"):
+        assert_surface_placement_compatible(_robot(6), prop, _task())
 
 
 @pytest.mark.parametrize("kind", ["articulated", "deformable"])
