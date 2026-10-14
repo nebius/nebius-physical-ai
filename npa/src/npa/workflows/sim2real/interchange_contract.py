@@ -1029,6 +1029,47 @@ class PolicyOutput:
         }
 
 
+def policy_output_from_wire(
+    payload: Mapping[str, Any], *, expected_action: PolicyAction
+) -> PolicyOutput:
+    """Decode a policy response without accepting changed controller semantics."""
+
+    if payload.get("schema") != "npa.sim2real.policy_output.v1":
+        raise InterchangeContractError("unsupported policy output schema")
+    raw_action = payload.get("action")
+    if not isinstance(raw_action, Mapping):
+        raise InterchangeContractError("policy output action contract is required")
+    action = PolicyAction(
+        representation=str(raw_action.get("representation") or ""),  # type: ignore[arg-type]
+        names=tuple(raw_action.get("names") or ()),
+        units=tuple(raw_action.get("units") or ()),
+        frame=str(raw_action.get("frame") or ""),
+        gripper_semantics=str(raw_action.get("gripper_semantics") or ""),  # type: ignore[arg-type]
+        horizon=int(raw_action.get("horizon") or 0),
+        control_hz=float(raw_action.get("control_hz") or 0.0),
+        execute_prefix=int(raw_action.get("execute_prefix") or 0),
+    )
+    if action != expected_action:
+        raise InterchangeContractError(
+            "policy response changed the declared action/controller contract"
+        )
+    raw_chunk = payload.get("action_chunk")
+    if not isinstance(raw_chunk, Sequence) or isinstance(raw_chunk, (str, bytes)):
+        raise InterchangeContractError("policy output action_chunk must be a list")
+    return PolicyOutput(
+        observation_input_identity=str(
+            payload.get("observation_input_identity") or ""
+        ),
+        policy_identity=str(payload.get("policy_identity") or ""),
+        checkpoint_sha256=str(payload.get("checkpoint_sha256") or ""),
+        action=action,
+        action_chunk=tuple(tuple(row) for row in raw_chunk),
+        generated_timestamp_s=float(
+            payload.get("generated_timestamp_s", math.nan)
+        ),
+    )
+
+
 def assert_policy_compatible(
     robot: RobotSensorProfile,
     task: SurfacePlacementTask,

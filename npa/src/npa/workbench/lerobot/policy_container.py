@@ -1629,7 +1629,7 @@ def create_app() -> Any:
     """Create the FastAPI app used inside the policy container."""
 
     try:
-        from fastapi import FastAPI, HTTPException
+        from fastapi import FastAPI, Header, HTTPException
     except ImportError as exc:
         raise PolicyContainerError(
             "fastapi is required to serve the policy container"
@@ -1640,6 +1640,11 @@ def create_app() -> Any:
     checkpoint = os.environ.get("NPA_POLICY_CHECKPOINT", "")
     if checkpoint:
         policy = LeRobotPolicyRuntime(checkpoint)
+
+    def authorize(authorization: str | None) -> None:
+        token = os.environ.get("NPA_POLICY_AUTH_TOKEN", "").strip()
+        if token and authorization != f"Bearer {token}":
+            raise HTTPException(status_code=401, detail="invalid bearer token")
 
     @app.get("/health")
     async def health() -> dict[str, Any]:
@@ -1652,7 +1657,10 @@ def create_app() -> Any:
         return payload
 
     @app.post("/infer")
-    async def infer(payload: dict[str, Any]) -> dict[str, Any]:
+    async def infer(
+        payload: dict[str, Any], authorization: str | None = Header(default=None)
+    ) -> dict[str, Any]:
+        authorize(authorization)
         if policy is None:
             raise HTTPException(
                 status_code=503,
@@ -1666,8 +1674,48 @@ def create_app() -> Any:
         except PolicyContainerError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    @app.post("/infer-typed")
+    async def infer_typed(
+        payload: dict[str, Any], authorization: str | None = Header(default=None)
+    ) -> dict[str, Any]:
+        """Validate the neutral wire contract and run the real native policy."""
+
+        authorize(authorization)
+        if policy is None:
+            raise HTTPException(
+                status_code=503,
+                detail="NPA_POLICY_CHECKPOINT is required for inference",
+            )
+        try:
+            from types import SimpleNamespace
+
+            from npa.workflows.sim2real.interchange_backends import (
+                smolvla_policy_profile,
+            )
+            from npa.workflows.sim2real.interchange_contract import (
+                policy_observation_from_wire,
+            )
+
+            observation = policy_observation_from_wire(payload)
+            profile = smolvla_policy_profile(
+                policy.manifest,
+                robot=SimpleNamespace(identity=observation.robot_identity),
+                task=SimpleNamespace(identity=observation.task_identity),
+                hardware_topologies=(
+                    os.environ.get("NPA_POLICY_HARDWARE_TOPOLOGY", "single-gpu"),
+                ),
+            )
+            return policy.infer_typed(observation, profile).to_dict()
+        except PolicyContainerError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     @app.post("/rollout")
-    async def rollout(payload: dict[str, Any]) -> dict[str, Any]:
+    async def rollout(
+        payload: dict[str, Any], authorization: str | None = Header(default=None)
+    ) -> dict[str, Any]:
+        authorize(authorization)
         if policy is None:
             raise HTTPException(
                 status_code=503, detail="NPA_POLICY_CHECKPOINT is required for rollout"
@@ -1684,7 +1732,10 @@ def create_app() -> Any:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.post("/feedback/train-step")
-    async def feedback_train_step(payload: dict[str, Any]) -> dict[str, Any]:
+    async def feedback_train_step(
+        payload: dict[str, Any], authorization: str | None = Header(default=None)
+    ) -> dict[str, Any]:
+        authorize(authorization)
         is_signal = bool(payload.get("signals")) or str(
             payload.get("schema", "")
         ).startswith("npa.sim2real.rl_signal.")

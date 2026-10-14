@@ -23,6 +23,7 @@ from npa.workflows.sim2real.interchange_contract import (
     Transform,
     assert_policy_compatible,
     assert_surface_placement_compatible,
+    policy_output_from_wire,
     rigid_object_profile_from_asset_manifest,
     policy_observation_from_wire,
     robot_sensor_profile_from_resolved,
@@ -499,3 +500,20 @@ def test_action_units_horizon_and_cartesian_controller_fail_closed() -> None:
     )
     with pytest.raises(InterchangeContractError, match="IK/controller"):
         assert_policy_compatible(cartesian_robot, _task(), cartesian)
+
+
+def test_policy_output_wire_cannot_change_action_semantics() -> None:
+    action = _policy(_robot(6)).action
+    output = PolicyOutput(
+        observation_input_identity="observation-1",
+        policy_identity="policy-1",
+        checkpoint_sha256=DIGEST_A,
+        action=action,
+        action_chunk=(tuple(0.0 for _ in action.names),),
+        generated_timestamp_s=2.0,
+    )
+    payload = output.to_dict()
+    assert policy_output_from_wire(payload, expected_action=action) == output
+    payload["action"]["units"][0] = "degree"
+    with pytest.raises(InterchangeContractError, match="changed"):
+        policy_output_from_wire(payload, expected_action=action)
