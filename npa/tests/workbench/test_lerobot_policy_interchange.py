@@ -274,8 +274,9 @@ def test_real_image_decode_and_stale_camera_rejection() -> None:
     manifest = _manifest("a" * 64)
     observation = _observation(manifest)
     batch = _smolvla_batch(observation, manifest, "cpu")
-    assert tuple(batch["observation.images.scene"].shape) == (3, 224, 224)
-    assert tuple(batch["observation.state"].shape) == (8,)
+    assert tuple(batch["observation.images.scene"].shape) == (1, 3, 224, 224)
+    assert tuple(batch["observation.state"].shape) == (1, 8)
+    assert batch["task"] == ["place the object"]
     observation["views"][1]["capture_timestamp_s"] = 1.0
     with pytest.raises(PolicyContainerError, match="stale"):
         _smolvla_batch(observation, manifest, "cpu")
@@ -291,7 +292,7 @@ def test_typed_raw_rgb_wire_is_consumed_and_hash_bound() -> None:
         view["image_rgb8_base64"] = base64.b64encode(rgb8).decode("ascii")
         view["image_sha256"] = hashlib.sha256(rgb8).hexdigest()
     batch = _smolvla_batch(observation, manifest, "cpu")
-    assert tuple(batch["observation.images.tool"].shape) == (3, 224, 224)
+    assert tuple(batch["observation.images.tool"].shape) == (1, 3, 224, 224)
     observation["views"][1]["image_sha256"] = "0" * 64
     with pytest.raises(PolicyContainerError, match="hash"):
         _smolvla_batch(observation, manifest, "cpu")

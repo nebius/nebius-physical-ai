@@ -747,8 +747,8 @@ def _smolvla_batch(
     batch: dict[str, Any] = {
         str(manifest.get("state_feature_key") or "observation.state"): torch.tensor(
             values, dtype=torch.float32, device=device
-        ),
-        "task": prompt,
+        ).unsqueeze(0),
+        "task": [prompt],
     }
     for declaration in manifest["cameras"]:
         view = by_key[declaration["key"]]
@@ -765,7 +765,9 @@ def _smolvla_batch(
             or state - capture > declaration["maximum_state_skew_s"] + 1.0e-9
         ):
             raise PolicyContainerError("camera observation is future-dated or stale")
-        batch[declaration["feature_key"]] = _decode_camera(view, declaration).to(device)
+        batch[declaration["feature_key"]] = (
+            _decode_camera(view, declaration).unsqueeze(0).to(device)
+        )
     return batch
 
 
