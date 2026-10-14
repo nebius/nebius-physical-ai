@@ -497,6 +497,31 @@ def test_temporal_action_ensemble_aligns_only_causal_chunk_targets() -> None:
     assert receipt["fresh_observation_per_control"] is True
 
 
+def test_temporal_action_ensemble_resets_history_at_episode_boundary() -> None:
+    context: dict = {}
+    first = np.zeros((15, 8), dtype=np.float64)
+    second = np.ones((15, 8), dtype=np.float64)
+    for actions in (first, second):
+        query = {
+            "decision": 0,
+            "action_receipt": pi05_closed_loop._action_receipt(actions),
+        }
+        target, receipt = pi05_closed_loop._temporally_ensembled_target(
+            context, actions, query
+        )
+
+    assert np.array_equal(target, second[0])
+    assert receipt["contributor_count"] == 1
+    assert receipt["contributors"] == [
+        {
+            "origin_decision": 0,
+            "action_index": 0,
+            "chunk_sha256": query["action_receipt"]["sha256"],
+        }
+    ]
+    assert len(context["action_chunks"]) == 1
+
+
 def test_temporal_action_ensemble_lineage_rejects_tampering() -> None:
     queries = []
     context: dict = {}

@@ -640,6 +640,10 @@ def _temporally_ensembled_target(
     if value.shape != (ACTION_HORIZON, 8) or not np.isfinite(value).all():
         raise RuntimeError("policy action chunk is not finite 15x8 data")
     history = context.setdefault("action_chunks", [])
+    if decision == 0:
+        history.clear()
+    elif not history or int(history[-1]["origin_decision"]) != decision - 1:
+        raise RuntimeError("temporal action ensemble history is not episode-contiguous")
     history.append(
         {
             "origin_decision": decision,
