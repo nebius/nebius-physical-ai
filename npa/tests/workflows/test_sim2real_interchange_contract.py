@@ -339,7 +339,9 @@ def test_validated_observation_is_typed_and_binds_exact_camera_bytes() -> None:
         task_identity=_task().identity,
     )
     assert isinstance(observation, PolicyObservation)
-    assert all(isinstance(view, TimestampedCameraObservation) for view in observation.views)
+    assert all(
+        isinstance(view, TimestampedCameraObservation) for view in observation.views
+    )
     wire = observation.to_wire_dict()
     assert wire["privileged_object_state"] is False
     assert wire["views"][1]["role"] == "wrist"

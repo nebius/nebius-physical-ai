@@ -75,9 +75,10 @@ def test_adapted_private_checkpoint_uses_ephemeral_owned_secret(
             bind_adapter_uri="",
         )
     )
-    assert manifests["secret"]["metadata"]["labels"][
-        "npa.nebius.ai/checkpoint-role"
-    ] == "adapted"
+    assert (
+        manifests["secret"]["metadata"]["labels"]["npa.nebius.ai/checkpoint-role"]
+        == "adapted"
+    )
     shell = manifests["deployment"]["spec"]["template"]["spec"]["containers"][0][
         "command"
     ][2]

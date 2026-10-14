@@ -70,7 +70,7 @@ def _download_program(checkpoint_uri: str) -> str:
         if not parsed.netloc or not parsed.path.strip("/"):
             raise SmolVLAServiceError("private checkpoint S3 prefix is invalid")
         return f"""import boto3,pathlib,os
-bucket={parsed.netloc!r}; prefix={parsed.path.lstrip('/')!r}.rstrip('/')+'/'
+bucket={parsed.netloc!r}; prefix={parsed.path.lstrip("/")!r}.rstrip('/')+'/'
 root=pathlib.Path({target!r}); root.mkdir(parents=True,exist_ok=False)
 client=boto3.client('s3',endpoint_url=os.environ['AWS_ENDPOINT_URL'])
 items=[item for page in client.get_paginator('list_objects_v2').paginate(Bucket=bucket,Prefix=prefix) for item in page.get('Contents',[])]
@@ -88,7 +88,7 @@ for item in items:
         )
     return f"""import os
 from huggingface_hub import snapshot_download
-snapshot_download(repo_id={match.group('repo')!r},revision={match.group('revision')!r},local_dir={target!r},token=os.environ.get('HF_TOKEN') or None)
+snapshot_download(repo_id={match.group("repo")!r},revision={match.group("revision")!r},local_dir={target!r},token=os.environ.get('HF_TOKEN') or None)
 """
 
 
@@ -101,7 +101,7 @@ def _adapter_download_program(adapter_uri: str) -> str:
     return f"""import boto3,os,pathlib
 target=pathlib.Path('/workspace/adapter.json')
 client=boto3.client('s3',endpoint_url=os.environ['AWS_ENDPOINT_URL'])
-client.download_file({parsed.netloc!r},{parsed.path.lstrip('/')!r},str(target))
+client.download_file({parsed.netloc!r},{parsed.path.lstrip("/")!r},str(target))
 """
 
 
@@ -227,9 +227,7 @@ def build_manifests(args: argparse.Namespace) -> dict[str, dict[str, Any]]:
                 },
             }
         ],
-        "volumes": [
-            {"name": "policy", "emptyDir": {"sizeLimit": args.cache_size}}
-        ],
+        "volumes": [{"name": "policy", "emptyDir": {"sizeLimit": args.cache_size}}],
     }
     if args.gpu_node_selector_key:
         pod_spec["nodeSelector"] = {
@@ -322,9 +320,7 @@ def _create(
         namespace, manifests["deployment"], _request_timeout=30
     )
     created.add("deployment")
-    api.create_namespaced_service(
-        namespace, manifests["service"], _request_timeout=30
-    )
+    api.create_namespaced_service(namespace, manifests["service"], _request_timeout=30)
     created.add("service")
 
 
@@ -342,11 +338,15 @@ def _ready(
             host = f"{name}.{namespace}.svc"
             opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
             try:
-                with opener.open(f"http://{host}:{PORT}/health", timeout=10) as response:
+                with opener.open(
+                    f"http://{host}:{PORT}/health", timeout=10
+                ) as response:
                     payload = json.loads(response.read())
-                if payload.get("status") == "ok" and isinstance(
-                    payload.get("checkpoint"), dict
-                ) and isinstance(payload.get("interchange"), dict):
+                if (
+                    payload.get("status") == "ok"
+                    and isinstance(payload.get("checkpoint"), dict)
+                    and isinstance(payload.get("interchange"), dict)
+                ):
                     return host, payload
             except (OSError, urllib.error.URLError, json.JSONDecodeError):
                 pass
@@ -468,7 +468,9 @@ def build_parser() -> argparse.ArgumentParser:
     for command in ("start", "cleanup"):
         item = commands.add_parser(command)
         item.add_argument("--run-id", required=True)
-        item.add_argument("--checkpoint-role", choices=("base", "adapted"), required=True)
+        item.add_argument(
+            "--checkpoint-role", choices=("base", "adapted"), required=True
+        )
         item.add_argument("--checkpoint-uri", required=True)
         item.add_argument("--bind-adapter-uri", default="")
         item.add_argument("--runtime-image", required=True)

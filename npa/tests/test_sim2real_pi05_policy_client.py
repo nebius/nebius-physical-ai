@@ -273,7 +273,7 @@ def _typed_observation(*, arm_dof: int) -> tuple[PolicyObservation, object, obje
             open_joint_positions=(0.04, 0.04),
             closed_joint_positions=(0.0, 0.0),
             maximum_width_m=0.08,
-            model_semantics="normalized_open",
+            model_semantics="normalized_closed",
             model_open=0.0,
             model_closed=1.0,
         ),
@@ -332,6 +332,7 @@ def test_typed_openpi_adapter_preserves_wrist_bytes_and_gripper_mapping(
     assert sent["observation/gripper_position"].tolist() == pytest.approx(
         [0.0], abs=1.0e-6
     )
-    assert evidence["wire_input"]["wrist_rgb_sha256"] == hashlib.sha256(
-        observation.views[1].rgb8
-    ).hexdigest()
+    assert (
+        evidence["wire_input"]["wrist_rgb_sha256"]
+        == hashlib.sha256(observation.views[1].rgb8).hexdigest()
+    )

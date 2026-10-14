@@ -262,9 +262,7 @@ def validate_robot_source_bundle(
         "source_sha256": _file_digest(source_path),
         "source_tree_sha256": source_tree_sha256,
         "source_format": (
-            "urdf"
-            if spec.robot_source == robot_assets.ROBOT_SOURCE_BYO_URDF
-            else "usd"
+            "urdf" if spec.robot_source == robot_assets.ROBOT_SOURCE_BYO_URDF else "usd"
         ),
         "source_files": files,
         "urdf_dependencies": dependencies,
@@ -388,10 +386,11 @@ def materialize_robot_contract(
             "a non-empty robot_spec_uri must describe an explicit articulated BYO "
             "robot; omit robot_spec_uri to use the byte-for-byte stock Franka path"
         )
-    supported_driver_counts = (
-        {2} if task_contract == "canonical_lift" else {1, 2}
-    )
-    if spec.n_gripper_joints not in supported_driver_counts or len(spec.finger_links) != 2:
+    supported_driver_counts = {2} if task_contract == "canonical_lift" else {1, 2}
+    if (
+        spec.n_gripper_joints not in supported_driver_counts
+        or len(spec.finger_links) != 2
+    ):
         raise RobotContractError(
             "unsupported gripper contract: the selected task requires a supported "
             "parallel-jaw driver count and exactly two physical finger_links"
@@ -448,9 +447,7 @@ def materialize_robot_contract(
             task_kind=str(task_config["skill"]),
         )
         if not compatibility.get("task_robot_compatible"):
-            raise RobotContractError(
-                str(compatibility.get("reason") or compatibility)
-            )
+            raise RobotContractError(str(compatibility.get("reason") or compatibility))
     else:
         task_config = {
             "skill": "surface_placement",

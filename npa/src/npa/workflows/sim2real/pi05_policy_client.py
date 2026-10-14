@@ -144,16 +144,17 @@ class Pi05PolicyClient:
             raise Pi05PolicyClientError(
                 "pi0.5 requires exactly one exterior and one wrist view"
             )
-        if any(view.layout != "HWC" or view.image_size != (224, 224) for view in views.values()):
+        if any(
+            view.layout != "HWC" or view.image_size != (224, 224)
+            for view in views.values()
+        ):
             raise Pi05PolicyClientError(
                 "pi0.5 requires calibrated 224x224 HWC RGB views"
             )
         exterior = np.frombuffer(views["exterior"].rgb8, dtype=np.uint8).reshape(
             224, 224, 3
         )
-        wrist = np.frombuffer(views["wrist"].rgb8, dtype=np.uint8).reshape(
-            224, 224, 3
-        )
+        wrist = np.frombuffer(views["wrist"].rgb8, dtype=np.uint8).reshape(224, 224, 3)
         state = np.asarray(observation.measured_state, dtype=np.float32)
         arm = state[:7]
         try:
@@ -163,7 +164,9 @@ class Pi05PolicyClient:
         from npa.workflows.sim2real.pi05_contract import width_to_droid_gripper
 
         gripper = np.asarray([width_to_droid_gripper(width)], dtype=np.float32)
-        wrist_age = views["wrist"].state_timestamp_s - views["wrist"].capture_timestamp_s
+        wrist_age = (
+            views["wrist"].state_timestamp_s - views["wrist"].capture_timestamp_s
+        )
         actions, evidence = self.infer(
             exterior=exterior,
             wrist=wrist,

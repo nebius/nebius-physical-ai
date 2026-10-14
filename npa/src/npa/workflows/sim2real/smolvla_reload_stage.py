@@ -90,8 +90,7 @@ def build_reload_receipt(
     stable_match = bool(
         actual == expected
         and manifest.get("action") == policy.get("action")
-        and manifest.get("measured_state_names")
-        == policy.get("measured_state_names")
+        and manifest.get("measured_state_names") == policy.get("measured_state_names")
         and [row.get("key") for row in manifest.get("cameras") or []]
         == policy.get("camera_keys")
     )
@@ -130,9 +129,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="npa-smolvla-reload-") as directory:
         root = Path(directory)
         preparation = read_json(args.preparation_uri, directory=root / "preparation")
-        checkpoint = materialize_checkpoint(
-            args.checkpoint_uri, root / "checkpoint"
-        )
+        checkpoint = materialize_checkpoint(args.checkpoint_uri, root / "checkpoint")
         runtime = LeRobotPolicyRuntime(checkpoint)
         result = build_reload_receipt(
             runtime=runtime,

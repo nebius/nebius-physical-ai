@@ -63,7 +63,12 @@ class SmolVLAPolicyClient:
             with opener.open(request, timeout=self._timeout_s) as response:
                 body = response.read()
             payload = json.loads(body)
-        except (OSError, urllib.error.HTTPError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        except (
+            OSError,
+            urllib.error.HTTPError,
+            UnicodeDecodeError,
+            json.JSONDecodeError,
+        ) as exc:
             raise SmolVLAPolicyClientError(
                 f"SmolVLA reset request failed: {exc}"
             ) from exc
@@ -80,7 +85,9 @@ class SmolVLAPolicyClient:
             "receipt_sha256": hashlib.sha256(body).hexdigest(),
         }
 
-    def infer_typed(self, *, observation: Any, policy: Any) -> tuple[Any, dict[str, Any]]:
+    def infer_typed(
+        self, *, observation: Any, policy: Any
+    ) -> tuple[Any, dict[str, Any]]:
         if policy.backend != "lerobot_smolvla":
             raise SmolVLAPolicyClientError(
                 "typed SmolVLA client requires lerobot_smolvla"
@@ -110,7 +117,11 @@ class SmolVLAPolicyClient:
         try:
             payload = json.loads(response_body)
             output = policy_output_from_wire(payload, expected_action=policy.action)
-        except (UnicodeDecodeError, json.JSONDecodeError, InterchangeContractError) as exc:
+        except (
+            UnicodeDecodeError,
+            json.JSONDecodeError,
+            InterchangeContractError,
+        ) as exc:
             raise SmolVLAPolicyClientError(
                 f"SmolVLA typed response is invalid: {exc}"
             ) from exc
@@ -131,7 +142,5 @@ class SmolVLAPolicyClient:
             "round_trip_ms": latency_ms,
             "deterministic_noise_coupled": False,
             "repeated_paired_trials_required": True,
-            "camera_sha256": {
-                view.key: view.rgb_sha256 for view in observation.views
-            },
+            "camera_sha256": {view.key: view.rgb_sha256 for view in observation.views},
         }

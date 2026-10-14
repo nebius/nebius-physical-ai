@@ -148,7 +148,10 @@ def smolvla_policy_profile(
         ),
         normalization_identity=str(manifest.get("normalization_identity") or ""),
     )
-    if profile.robot_identity != robot.identity or profile.task_identity != task.identity:
+    if (
+        profile.robot_identity != robot.identity
+        or profile.task_identity != task.identity
+    ):
         raise InterchangeContractError(
             "SmolVLA manifest robot/task binding does not match the run"
         )

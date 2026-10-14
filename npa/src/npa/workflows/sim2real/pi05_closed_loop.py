@@ -590,14 +590,17 @@ def _infer_smolvla_query(
     policy_profile = context["policy_profile"]
     robot = native.scene["robot"]
     names = list(robot.joint_names)
-    state = _proxy_torch(robot.data.joint_pos)[
-        0, [names.index(name) for name in robot_profile.measured_joint_names]
-    ].detach().cpu().numpy()
+    state = (
+        _proxy_torch(robot.data.joint_pos)[
+            0, [names.index(name) for name in robot_profile.measured_joint_names]
+        ]
+        .detach()
+        .cpu()
+        .numpy()
+    )
     state_map = {
         name: float(value)
-        for name, value in zip(
-            robot_profile.measured_joint_names, state, strict=True
-        )
+        for name, value in zip(robot_profile.measured_joint_names, state, strict=True)
     }
     frames_by_role = {"exterior": exterior, "wrist": wrist}
     camera_payloads = {}
@@ -2157,7 +2160,9 @@ def _persist_evaluation(
     interchange = getattr(args, "policy_backend", "openpi_pi05") == "lerobot_smolvla"
     publish_component_record(
         component_schema=(
-            POLICY_INTERCHANGE_COMPONENT_SCHEMA if interchange else PI05_COMPONENT_SCHEMA
+            POLICY_INTERCHANGE_COMPONENT_SCHEMA
+            if interchange
+            else PI05_COMPONENT_SCHEMA
         ),
         root_uri=args.component_root_uri,
         stage=stage,
@@ -2261,13 +2266,9 @@ def _run_from_receipt(
         policy_profile = replace(
             policy_profile,
             checkpoint_sha256=str(loaded.get("checkpoint_sha256") or ""),
-            normalization_identity=str(
-                loaded.get("normalization_identity") or ""
-            ),
+            normalization_identity=str(loaded.get("normalization_identity") or ""),
         )
-        client = SmolVLAPolicyClient(
-            str(receipt["service_host"]), int(receipt["port"])
-        )
+        client = SmolVLAPolicyClient(str(receipt["service_host"]), int(receipt["port"]))
     else:
         client = Pi05PolicyClient(
             str(receipt["service_host"]), int(receipt["service_port"])

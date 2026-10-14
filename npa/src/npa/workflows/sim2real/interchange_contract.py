@@ -410,15 +410,11 @@ def robot_sensor_profile_from_dict(value: Mapping[str, Any]) -> RobotSensorProfi
                 mount_link=str(camera.get("mount_link") or ""),
                 mount_from_camera=Transform(
                     tuple(
-                        (camera.get("mount_from_camera") or {}).get(
-                            "translation_m"
-                        )
+                        (camera.get("mount_from_camera") or {}).get("translation_m")
                         or ()
                     ),
                     tuple(
-                        (camera.get("mount_from_camera") or {}).get(
-                            "quaternion_xyzw"
-                        )
+                        (camera.get("mount_from_camera") or {}).get("quaternion_xyzw")
                         or ()
                     ),
                 ),
@@ -426,9 +422,7 @@ def robot_sensor_profile_from_dict(value: Mapping[str, Any]) -> RobotSensorProfi
                 image_size=tuple(camera.get("image_size_wh") or ()),
                 layout=str(camera.get("layout") or ""),
                 mask_key=str(camera.get("mask_key") or ""),
-                capture_timestamp_key=str(
-                    camera.get("capture_timestamp_key") or ""
-                ),
+                capture_timestamp_key=str(camera.get("capture_timestamp_key") or ""),
                 state_timestamp_key=str(camera.get("state_timestamp_key") or ""),
                 maximum_state_skew_s=float(
                     camera.get("maximum_state_skew_s", math.nan)
@@ -677,8 +671,7 @@ def rigid_object_profile_from_asset_manifest(
                 f"object physics material {key} must be finite"
             )
     if not (
-        0 <= float(material["dynamic_friction"])
-        <= float(material["static_friction"])
+        0 <= float(material["dynamic_friction"]) <= float(material["static_friction"])
         and 0 <= float(material["restitution"]) <= 1
     ):
         raise InterchangeContractError("object physics material values are invalid")
@@ -1138,7 +1131,10 @@ class PolicyOutput:
     generated_timestamp_s: float
 
     def __post_init__(self) -> None:
-        if not self.observation_input_identity.strip() or not self.policy_identity.strip():
+        if (
+            not self.observation_input_identity.strip()
+            or not self.policy_identity.strip()
+        ):
             raise InterchangeContractError(
                 "policy output observation and policy identities are required"
             )
@@ -1200,16 +1196,12 @@ def policy_output_from_wire(
     if not isinstance(raw_chunk, Sequence) or isinstance(raw_chunk, (str, bytes)):
         raise InterchangeContractError("policy output action_chunk must be a list")
     return PolicyOutput(
-        observation_input_identity=str(
-            payload.get("observation_input_identity") or ""
-        ),
+        observation_input_identity=str(payload.get("observation_input_identity") or ""),
         policy_identity=str(payload.get("policy_identity") or ""),
         checkpoint_sha256=str(payload.get("checkpoint_sha256") or ""),
         action=action,
         action_chunk=tuple(tuple(row) for row in raw_chunk),
-        generated_timestamp_s=float(
-            payload.get("generated_timestamp_s", math.nan)
-        ),
+        generated_timestamp_s=float(payload.get("generated_timestamp_s", math.nan)),
     )
 
 

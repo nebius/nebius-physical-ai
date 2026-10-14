@@ -54,9 +54,7 @@ def _robot(dof: int) -> RobotSensorProfile:
                 key="scene",
                 role="exterior",
                 mount_link="world",
-                mount_from_camera=Transform(
-                    (1.0, 0.0, 1.0), (0.0, 0.0, 0.0, 1.0)
-                ),
+                mount_from_camera=Transform((1.0, 0.0, 1.0), (0.0, 0.0, 0.0, 1.0)),
                 intrinsics=(192.0, 192.0, 111.5, 111.5),
                 image_size=(224, 224),
                 layout="HWC",
@@ -69,9 +67,7 @@ def _robot(dof: int) -> RobotSensorProfile:
                 key="tool",
                 role="wrist",
                 mount_link="tool0" if dof == 6 else "hand",
-                mount_from_camera=Transform(
-                    (0.1, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)
-                ),
+                mount_from_camera=Transform((0.1, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)),
                 intrinsics=(192.0, 192.0, 111.5, 111.5),
                 image_size=(224, 224),
                 layout="HWC",
