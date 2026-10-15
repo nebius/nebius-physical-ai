@@ -13,6 +13,11 @@ from npa.workflows.lerobot_transfer_data import (
     write_json,
 )
 from npa.workflows.sim2real.interchange_contract import InterchangeContractError
+from npa.workflows.sim2real import interchange_object_asset
+from npa.workflows.sim2real.interchange_object_asset import (
+    assert_collection_object_binding,
+    materialize_prepared_object,
+)
 from npa.workflows.sim2real.interchange_stage import (
     _artifact_preflight,
     build_preparation,
@@ -308,3 +313,74 @@ def test_artifact_preflight_requires_exact_huggingface_revision() -> None:
                 component_root_uri="unused",
             )
         )
+
+
+def _prepared_object(source_sha256: str) -> dict:
+    return {
+        "object": {
+            "identity": "sealed-cube",
+            "source_uri": "s3://private-run/assets/cube.usda",
+            "source_sha256": source_sha256,
+            "bundle_sha256": DIGEST_B,
+            "kind": "rigid",
+            "units_m_per_unit": 1.0,
+            "scale_xyz": [1.2, 1.2, 1.2],
+            "world_from_root": {
+                "translation_m": [0.4, 0.0, 0.04],
+                "quaternion_xyzw": [0.0, 0.0, 0.0, 1.0],
+            },
+            "root_from_reference": {
+                "translation_m": [0.0, 0.0, -0.03],
+                "quaternion_xyzw": [0.0, 0.0, 0.0, 1.0],
+            },
+            "root_from_grasp": {
+                "translation_m": [0.0, 0.0, 0.0],
+                "quaternion_xyzw": [0.0, 0.0, 0.0, 1.0],
+            },
+            "grasp_extents_m": [0.072, 0.072, 0.072],
+            "collision_declared": True,
+            "inertia_declared": True,
+            "material_declared": True,
+            "mass_kg": 0.12,
+            "static_friction": 0.8,
+            "dynamic_friction": 0.6,
+            "restitution": 0.05,
+            "grasp_axis": "y",
+        }
+    }
+
+
+def test_prepared_object_bytes_and_collection_binding_are_exact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = b'#usda 1.0\ndef Xform "Cube" {}\n'
+    digest = hashlib.sha256(payload).hexdigest()
+
+    class Storage:
+        def download_file(self, uri: str, destination: str) -> None:
+            assert uri == "s3://private-run/assets/cube.usda"
+            Path(destination).write_bytes(payload)
+
+    monkeypatch.setattr(interchange_object_asset, "storage", lambda: Storage())
+    materialized = materialize_prepared_object(
+        _prepared_object(digest), tmp_path / "asset"
+    )
+    receipt = materialized.receipt()
+    assert materialized.local_path.read_bytes() == payload
+    assert_collection_object_binding(receipt, materialized.profile)
+
+    changed = {**receipt, "source_sha256": DIGEST_A}
+    with pytest.raises(InterchangeContractError, match="differs from prepared"):
+        assert_collection_object_binding(changed, materialized.profile)
+
+
+def test_prepared_object_rejects_downloaded_byte_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Storage:
+        def download_file(self, _uri: str, destination: str) -> None:
+            Path(destination).write_bytes(b"wrong")
+
+    monkeypatch.setattr(interchange_object_asset, "storage", lambda: Storage())
+    with pytest.raises(InterchangeContractError, match="downloaded object bytes"):
+        materialize_prepared_object(_prepared_object(DIGEST_A), tmp_path / "asset")

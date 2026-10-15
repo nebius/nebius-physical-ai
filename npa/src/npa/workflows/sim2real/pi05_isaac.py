@@ -3009,8 +3009,10 @@ def _collection_report(
     geometry: Mapping[str, Any],
     robot_plant: Mapping[str, Any],
     graphics_preflight: Mapping[str, Any] | None = None,
+    object_source: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     scenarios = _successful_scenarios(attempts)
+    source = dict(object_source or {})
     return {
         "schema": "npa.sim2real.pi05.expert_collection.v1",
         "task_contract": build_contract(),
@@ -3022,9 +3024,10 @@ def _collection_report(
         "object_asset": {
             "family": "isaac-multicolor-cube",
             "identity": identity,
-            "usd": object_usd or "task_default",
+            "usd": source.get("source_uri") or object_usd or "task_default",
             "scale": list(scale),
             "geometry": dict(geometry),
+            **source,
         },
         "scene_id": scene_id,
         "scene_layout_holdout": False,
@@ -3094,6 +3097,7 @@ def collect(
     object_usd: str,
     object_scale: tuple[float, float, float],
     scene_id: str,
+    object_source: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Collect physics attempts. Args: collection settings. Returns: Report. Raises: RuntimeError."""
 
@@ -3112,6 +3116,7 @@ def collect(
                 "object_usd": object_usd,
                 "scale": object_scale,
                 "scene_id": scene_id,
+                "object_source": dict(object_source or {}),
             },
         )
 
@@ -3134,6 +3139,7 @@ def _collect_in_directory(
             scale=tuple(settings["scale"]),
             scene_id=str(settings["scene_id"]),
             graphics=graphics,
+            object_source=dict(settings["object_source"]),
         )
     except Exception as error:
         app = app or getattr(error, "runtime_app", None)
@@ -3183,6 +3189,7 @@ def _run_collection(
     scale: tuple[float, float, float],
     scene_id: str,
     graphics: Mapping[str, Any],
+    object_source: Mapping[str, str],
 ) -> dict[str, Any]:
     geometry = _object_asset_geometry(env.unwrapped, scale)
     robot_plant = _robot_plant_receipt(env.unwrapped)
@@ -3198,6 +3205,7 @@ def _run_collection(
         geometry,
         robot_plant,
         graphics,
+        object_source,
     )
     (work / "collection.json").write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n"
@@ -3219,6 +3227,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seed", type=int, required=True)
     parser.add_argument("--object-identity", required=True)
     parser.add_argument("--object-usd", default="")
+    parser.add_argument("--object-profile-identity", default="")
+    parser.add_argument("--object-source-uri", default="")
+    parser.add_argument("--object-source-sha256", default="")
+    parser.add_argument("--object-bundle-sha256", default="")
     parser.add_argument("--object-scale", default="1,1,1")
     parser.add_argument("--scene-id", required=True)
     args = parser.parse_args(argv)
@@ -3230,6 +3242,20 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(f"--object-scale must be three comma-separated numbers: {exc}")
     if len(scale) != 3 or any(value <= 0 for value in scale):
         parser.error("--object-scale must contain three positive values")
+    source_values = {
+        "profile_identity": args.object_profile_identity,
+        "source_uri": args.object_source_uri,
+        "source_sha256": args.object_source_sha256,
+        "bundle_sha256": args.object_bundle_sha256,
+    }
+    if any(source_values.values()) and not all(source_values.values()):
+        parser.error("prepared object source fields must be supplied together")
+    if source_values["source_uri"] and not args.object_usd:
+        parser.error("prepared object source requires a local --object-usd")
+    if source_values["source_sha256"]:
+        actual = hashlib.sha256(Path(args.object_usd).read_bytes()).hexdigest()
+        if actual != source_values["source_sha256"]:
+            parser.error("local object bytes differ from --object-source-sha256")
     try:
         report = collect(
             output_uri=args.output_uri,
@@ -3239,6 +3265,7 @@ def main(argv: list[str] | None = None) -> int:
             object_usd=args.object_usd,
             object_scale=scale,
             scene_id=args.scene_id,
+            object_source=source_values if source_values["source_uri"] else None,
         )
     except Exception as error:
         phase = getattr(error, "phase", "collection_runtime")

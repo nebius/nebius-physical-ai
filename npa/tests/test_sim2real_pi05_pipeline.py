@@ -1275,6 +1275,33 @@ def test_each_split_collector_runs_in_a_fresh_isaac_process() -> None:
     )
 
 
+def test_interchange_collector_passes_verified_object_identity_to_isaac() -> None:
+    args = Namespace(
+        output_root_uri="s3://example/experts",
+        episodes_per_split=3,
+        seed=41,
+        object_usd="",
+        preparation_uri="s3://example/preparation.json",
+    )
+    receipt = {
+        "profile_identity": "offset-spool-v1",
+        "source_uri": "s3://example/assets/offset-spool.usda",
+        "source_sha256": "a" * 64,
+        "bundle_sha256": "b" * 64,
+    }
+    prepared = Namespace(
+        local_path=Path("/task-owned/offset-spool.usda"),
+        receipt=lambda: receipt,
+    )
+
+    argv = _collector_argv(args, "gold", prepared)
+
+    assert argv[argv.index("--object-usd") + 1] == str(prepared.local_path)
+    for key, value in receipt.items():
+        flag = f"--object-{key.replace('_', '-')}"
+        assert argv[argv.index(flag) + 1] == value
+
+
 def test_collector_propagates_isaac_launcher_failure(monkeypatch) -> None:
     args = Namespace(
         output_root_uri="s3://example/experts",
@@ -1441,6 +1468,21 @@ def test_gold_evaluator_reuses_exact_custom_usd_and_scale() -> None:
     assert spawn.usd_path == "/runtime/operator-object.usd"
     assert spawn.scale == (0.8, 0.9, 1.1)
     assert spawn.semantic_tags == [("class", "pi05_target_object")]
+
+
+def test_gold_evaluator_prefers_verified_runtime_materialization() -> None:
+    spawn = Namespace(usd_path="stock.usd", scale=(1.0, 1.0, 1.0))
+    cfg = Namespace(scene=Namespace(object=Namespace(spawn=spawn)))
+    protocol = {
+        "object_usd": "s3://private-run/assets/cube.usda",
+        "_runtime_object_usd": "/tmp/task-owned/object.usda",
+        "object_scale": [1.2, 1.2, 1.2],
+    }
+
+    _configure_eval_object(cfg, protocol)
+
+    assert spawn.usd_path == "/tmp/task-owned/object.usda"
+    assert spawn.scale == (1.2, 1.2, 1.2)
 
 
 def test_gold_evaluator_remeasures_custom_geometry(monkeypatch) -> None:

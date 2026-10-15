@@ -75,6 +75,10 @@ from npa.workflows.sim2real.interchange_contract import (
     robot_sensor_profile_from_dict,
     validate_observation,
 )
+from npa.workflows.sim2real.interchange_object_asset import (
+    assert_collection_object_binding,
+    materialize_prepared_object,
+)
 from npa.workflows.sim2real.smolvla_policy_client import SmolVLAPolicyClient
 
 
@@ -1309,7 +1313,11 @@ def _sha(payload: Any) -> str:
     ).hexdigest()
 
 
-def _load_gold_protocol(args: argparse.Namespace, work: Path) -> dict[str, Any]:
+def _load_gold_protocol(
+    args: argparse.Namespace,
+    work: Path,
+    preparation: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     from npa.workflows.sim2real.workflow_io import read_json
 
     collection = read_json(args.gold_collection_uri, directory=work)
@@ -1347,13 +1355,18 @@ def _load_gold_protocol(args: argparse.Namespace, work: Path) -> dict[str, Any]:
         raise RuntimeError("gold collection lacks object or scene identity")
     _validate_object_source(protocol["object_usd"])
     _bind_protocol_hashes(protocol)
+    if preparation is not None:
+        prepared = materialize_prepared_object(preparation, work / "runtime-object")
+        assert_collection_object_binding(asset, prepared.profile)
+        _validate_prepared_object_geometry(protocol, prepared.profile)
+        protocol["_runtime_object_usd"] = str(prepared.local_path)
     return protocol
 
 
 def _protocol_object_fields(
     asset: dict[str, Any], geometry: dict[str, Any], scale: list[float]
 ) -> dict[str, Any]:
-    return {
+    result = {
         "object_identity": asset.get("identity"),
         "object_usd": asset.get("usd"),
         "object_scale": scale,
@@ -1361,6 +1374,28 @@ def _protocol_object_fields(
         "object_height_m": _measured_dimension(geometry, "support_height_m", 0.25),
         "object_geometry": _validated_geometry_receipt(geometry, scale),
     }
+    if asset.get("profile_identity"):
+        result.update(
+            {
+                "object_profile_identity": asset.get("profile_identity"),
+                "object_source_sha256": asset.get("source_sha256"),
+                "object_bundle_sha256": asset.get("bundle_sha256"),
+            }
+        )
+    return result
+
+
+def _validate_prepared_object_geometry(protocol: dict[str, Any], profile: Any) -> None:
+    """Require prepared gold-scale geometry to match the composed gold asset."""
+
+    expected_scale = [float(value) for value in profile.scale_xyz]
+    if expected_scale != protocol["object_scale"]:
+        raise RuntimeError("prepared object scale differs from the gold protocol")
+    axis = ("x", "y", "z").index(profile.grasp_axis)
+    if abs(profile.grasp_extents_m[axis] - protocol["object_width_m"]) > 1.0e-6:
+        raise RuntimeError("prepared object grasp extent differs from gold geometry")
+    if abs(profile.grasp_extents_m[2] - protocol["object_height_m"]) > 1.0e-6:
+        raise RuntimeError("prepared object height differs from gold geometry")
 
 
 def _validate_object_source(value: Any) -> None:
@@ -1474,8 +1509,9 @@ def _configure_eval(
 
 
 def _configure_eval_object(cfg: Any, protocol: dict[str, Any]) -> None:
-    if protocol["object_usd"] != "task_default":
-        cfg.scene.object.spawn.usd_path = protocol["object_usd"]
+    runtime_source = protocol.get("_runtime_object_usd") or protocol["object_usd"]
+    if runtime_source != "task_default":
+        cfg.scene.object.spawn.usd_path = runtime_source
     cfg.scene.object.spawn.scale = tuple(protocol["object_scale"])
     cfg.scene.object.spawn.semantic_tags = [("class", "pi05_target_object")]
 
@@ -1631,13 +1667,16 @@ def _result(
         )
         schema = "npa.sim2real.pi05.closed_loop_eval.v1"
         comparison = "same pi0.5 surface task only"
+    public_protocol = {
+        key: value for key, value in protocol.items() if not key.startswith("_")
+    }
     return {
         "schema": schema,
         "policy_backend": policy_backend,
         "checkpoint_role": args.checkpoint_role,
         "split": args.split,
         "checkpoint_provenance": _checkpoint_provenance(receipt),
-        "protocol": protocol,
+        "protocol": public_protocol,
         "episode_count": len(episodes),
         "released_surface_placements": passes,
         "success_rate": passes / len(episodes),
@@ -2253,7 +2292,7 @@ def _run_from_receipt(
         or receipt.get("application_authentication") != "kubernetes_secret_bearer"
     ):
         raise RuntimeError("policy service receipt is not a ready private service")
-    robot_profile = policy_profile = None
+    robot_profile = policy_profile = preparation = None
     if args.policy_backend == "lerobot_smolvla":
         if not args.preparation_uri:
             raise RuntimeError("SmolVLA evaluation requires --preparation-uri")
@@ -2283,7 +2322,7 @@ def _run_from_receipt(
         client = Pi05PolicyClient(
             str(receipt["service_host"]), int(receipt["service_port"])
         )
-    protocol = _load_gold_protocol(args, work)
+    protocol = _load_gold_protocol(args, work, preparation)
     return _run_evaluation(
         args,
         work,
