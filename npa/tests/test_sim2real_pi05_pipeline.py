@@ -1475,13 +1475,13 @@ def test_gold_evaluator_prefers_verified_runtime_materialization() -> None:
     cfg = Namespace(scene=Namespace(object=Namespace(spawn=spawn)))
     protocol = {
         "object_usd": "s3://private-run/assets/cube.usda",
-        "_runtime_object_usd": "/tmp/task-owned/object.usda",
+        "_runtime_object_usd": "/workspace/task-owned/object.usda",
         "object_scale": [1.2, 1.2, 1.2],
     }
 
     _configure_eval_object(cfg, protocol)
 
-    assert spawn.usd_path == "/tmp/task-owned/object.usda"
+    assert spawn.usd_path == "/workspace/task-owned/object.usda"
     assert spawn.scale == (1.2, 1.2, 1.2)
 
 
