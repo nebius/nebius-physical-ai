@@ -11,7 +11,9 @@ from npa.workflows.sim2real.interchange_contract import (
     CameraView,
     GripperMapping,
     InterchangeContractError,
+    RigidObjectProfile,
     RobotSensorProfile,
+    SurfacePlacementTask,
     Transform,
 )
 from npa.workflows.sim2real.interchange_isaac import (
@@ -19,12 +21,15 @@ from npa.workflows.sim2real.interchange_isaac import (
     assert_live_robot_matches_profile,
     camera_world_pose,
     render_absolute_joint_action,
+    surface_teacher_waypoints,
 )
 from npa.workflows.sim2real.interchange_isaac_runtime import (
+    _axis_angle_error,
     _update_events,
     _visual_evidence_decisions,
     _write_png_rgb8,
 )
+from npa.workflows.franka_rl_environment import policy_interchange_timing
 
 
 def _profile(dof: int = 6) -> RobotSensorProfile:
@@ -167,6 +172,116 @@ def test_declared_wrist_mount_composes_with_different_ee_pose() -> None:
     )
     assert pose.translation_m == pytest.approx((1.0, 2.1, 3.0))
     assert pose.quaternion_xyzw == pytest.approx((0.0, 0.0, half, half))
+
+
+def test_teacher_uses_offset_object_reference_and_grasp_frames() -> None:
+    prop = RigidObjectProfile(
+        identity="offset-spool",
+        source_uri="s3://example/assets/spool.usda",
+        source_sha256="a" * 64,
+        bundle_sha256="b" * 64,
+        kind="rigid",
+        units_m_per_unit=1.0,
+        scale_xyz=(1.0, 1.0, 1.0),
+        world_from_root=Transform((0.48, -0.14, 0.0), (0.0, 0.0, 0.0, 1.0)),
+        root_from_reference=Transform((0.012, -0.006, 0.0), (0.0, 0.0, 0.0, 1.0)),
+        root_from_grasp=Transform((0.012, -0.006, 0.026), (0.0, 0.0, 0.0, 1.0)),
+        grasp_extents_m=(0.054, 0.054, 0.052),
+        collision_declared=True,
+        inertia_declared=True,
+        material_declared=True,
+        mass_kg=0.12,
+        static_friction=0.8,
+        dynamic_friction=0.6,
+        restitution=0.05,
+        grasp_axis="y",
+    )
+    task = SurfacePlacementTask(
+        identity="surface-placement-v1",
+        target_world_xyz_m=(0.55, 0.15, 0.0),
+        approach_clearance_m=0.08,
+        lift_delta_m=0.08,
+        retreat_distance_m=0.1,
+    )
+
+    waypoints = surface_teacher_waypoints(prop, task)
+
+    assert [item.phase for item in waypoints] == [
+        "approach",
+        "contact",
+        "grasp",
+        "lift",
+        "transport",
+        "lower",
+        "release",
+        "retreat",
+    ]
+    assert waypoints[1].world_from_ee.translation_m == pytest.approx(
+        (0.492, -0.146, 0.026)
+    )
+    # The destination root compensates for the non-centered reference; the
+    # grasp/reference relative offset leaves the tool 26 mm above the target.
+    assert waypoints[5].world_from_ee.translation_m == pytest.approx(
+        (0.55, 0.15, 0.026)
+    )
+    assert waypoints[-1].world_from_ee.translation_m == pytest.approx(
+        (0.55, 0.15, 0.126)
+    )
+    assert waypoints[2].gripper_closed is True
+    assert waypoints[6].gripper_closed is False
+
+
+def test_teacher_orientation_error_is_sign_invariant() -> None:
+    assert _axis_angle_error(
+        (0.0, 0.0, 0.0, 1.0), (0.0, 0.0, 0.0, -1.0)
+    ) == pytest.approx((0.0, 0.0, 0.0))
+    assert _axis_angle_error(
+        (0.0, 0.0, 0.0, 1.0), (1.0, 0.0, 0.0, 0.0)
+    ) == pytest.approx((math.pi, 0.0, 0.0))
+
+
+@pytest.mark.parametrize(
+    ("semantics", "model_open", "model_closed", "open_value", "closed_value"),
+    [
+        ("normalized_open", 1.0, 0.0, 0.9, 0.1),
+        ("normalized_closed", 0.0, 1.0, 0.1, 0.9),
+        ("binary_open", 1.0, 0.0, 1.0, 0.0),
+        ("width_m", 0.085, 0.0, 0.08, 0.005),
+    ],
+)
+def test_gripper_closed_classification_uses_declared_endpoints(
+    semantics: str,
+    model_open: float,
+    model_closed: float,
+    open_value: float,
+    closed_value: float,
+) -> None:
+    mapping = GripperMapping(
+        joint_names=("finger_joint",),
+        joint_units=("rad",),
+        finger_links=("left_finger", "right_finger"),
+        open_joint_positions=(0.0,),
+        closed_joint_positions=(0.8,),
+        maximum_width_m=0.085,
+        model_semantics=semantics,
+        model_open=model_open,
+        model_closed=model_closed,
+    )
+
+    assert mapping.model_value_is_closed(open_value) is False
+    assert mapping.model_value_is_closed(closed_value) is True
+
+
+def test_policy_interchange_cadence_is_explicit_and_exact() -> None:
+    assert policy_interchange_timing(control_hz=15.0) == {
+        "simulation_hz": 60.0,
+        "simulation_dt_s": 1.0 / 60.0,
+        "control_hz": 15.0,
+        "decimation": 4,
+        "episode_length_s": 240.0,
+    }
+    with pytest.raises(ValueError, match="must divide"):
+        policy_interchange_timing(control_hz=14.0)
 
 
 def test_surface_success_requires_ordered_physics_and_three_stable_steps() -> None:

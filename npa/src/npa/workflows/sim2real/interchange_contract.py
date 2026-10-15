@@ -236,6 +236,15 @@ class GripperMapping:
             )
         )
 
+    def model_value_is_closed(self, value: float) -> bool:
+        """Classify aperture state without assuming either scalar direction."""
+
+        scalar = float(value)
+        low, high = sorted((self.model_open, self.model_closed))
+        if not math.isfinite(scalar) or not low <= scalar <= high:
+            raise InterchangeContractError("model gripper state is out of range")
+        return abs(scalar - self.model_closed) < abs(scalar - self.model_open)
+
     def joint_positions_to_width(self, values: Sequence[float]) -> float:
         """Recover physical aperture from all declared coupled joint positions."""
 

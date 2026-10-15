@@ -3118,9 +3118,9 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     "workbench.sim2real.policy_interchange_non_franka_execute": ToolEntry(
         name="workbench.sim2real.policy_interchange_non_franka_execute",
         description=(
-            "Run a sealed non-Franka articulation, calibrated moving wrist camera, "
-            "rigid prop, and native typed SmolVLA service under the unchanged "
-            "released-surface physics event contract."
+            "Run a geometry-aware native teacher and typed SmolVLA service on a "
+            "sealed non-Franka articulation, calibrated moving wrist camera, and "
+            "rigid prop under the unchanged released-surface event contract."
         ),
         argv_template=[
             "/opt/npa/sim/venv/bin/python",

@@ -29,6 +29,7 @@ from npa.workflows.sim2real.interchange_isaac import (
     assert_live_robot_matches_profile,
     live_camera_world_pose,
     measured_policy_state,
+    surface_teacher_waypoints,
 )
 from npa.workflows.sim2real.smolvla_policy_client import SmolVLAPolicyClient
 
@@ -101,17 +102,19 @@ def _camera_frame(native: Any, key: str, profile: Any) -> tuple[Any, float]:
 
 def _observation(
     native: Any, robot: Any, policy: Any, decision: int
-) -> tuple[Any, dict, dict[str, tuple[bytes, int, int, str]]]:
+) -> tuple[Any, dict, dict[str, tuple[bytes, int, int, str]], dict[str, Any]]:
     state = measured_policy_state(native, robot)
     state_time = _sim_time(native)
     cameras: dict[str, Any] = {}
     hashes: dict[str, str] = {}
     frames: dict[str, tuple[bytes, int, int, str]] = {}
+    capture_timestamps: dict[str, float] = {}
     for camera in robot.cameras:
         frame, capture_time = _camera_frame(native, camera.key, robot)
         payload = frame.tobytes()
         digest = hashlib.sha256(payload).hexdigest()
         hashes[camera.key] = digest
+        capture_timestamps[camera.key] = capture_time
         frames[camera.key] = (
             payload,
             camera.image_size[0],
@@ -123,7 +126,7 @@ def _observation(
             "image_size_wh": list(camera.image_size),
             "mask": True,
             "capture_timestamp_s": capture_time,
-            "state_timestamp_s": max(state_time, capture_time),
+            "state_timestamp_s": state_time,
             "rgb8": payload,
             "image_sha256": digest,
         }
@@ -136,7 +139,16 @@ def _observation(
         input_identity=f"non-franka-surface-decision-{decision}",
         task_identity=policy.task_identity,
     )
-    return observation, hashes, frames
+    return (
+        observation,
+        hashes,
+        frames,
+        {
+            "decision": decision,
+            "state_timestamp_s": state_time,
+            "capture_timestamps_s": capture_timestamps,
+        },
+    )
 
 
 def _png_chunk(kind: bytes, payload: bytes) -> bytes:
@@ -220,10 +232,7 @@ def _sample(native: Any, robot: Any, prop: Any, task: Any, initial_z: float) -> 
         velocity = velocity.torch
     speed = float(torch.linalg.vector_norm(velocity[0]).detach().cpu())
     state = measured_policy_state(native, robot)
-    closed = (
-        state[robot.measured_state_names[-1]]
-        > (robot.gripper.model_open + robot.gripper.model_closed) / 2.0
-    )
+    closed = robot.gripper.model_value_is_closed(state[robot.measured_state_names[-1]])
     left = _force(native, "npa_left_object_contact")
     right = _force(native, "npa_right_object_contact")
     support = _force(native, "npa_object_support_contact")
@@ -297,20 +306,304 @@ def _update_events(context: dict[str, Any], sample: dict[str, Any], step: int) -
         events["stable"] = step
 
 
+def _native_tensor(value: Any) -> Any:
+    if hasattr(value, "torch"):
+        return value.torch
+    return value
+
+
+def _teacher_layout(native: Any, robot: Any) -> dict[str, Any]:
+    """Bind the native differential-IK action to the sealed morphology."""
+
+    names = list(native.action_manager.active_terms)
+    dimensions = [int(value) for value in native.action_manager.action_term_dim]
+    if names.count("arm_action") != 1 or names.count("gripper_action") != 1:
+        raise RuntimeError("teacher requires one named arm and gripper action")
+    arm_index = names.index("arm_action")
+    gripper_index = names.index("gripper_action")
+    if dimensions[arm_index] != 6 or dimensions[gripper_index] != 1:
+        raise RuntimeError("teacher requires six-axis relative IK plus gripper")
+    arm = native.action_manager.get_term("arm_action")
+    gripper = native.action_manager.get_term("gripper_action")
+    arm_names = tuple(
+        getattr(getattr(arm, "IO_descriptor", None), "joint_names", ())
+        or getattr(arm, "_joint_names", ())
+    )
+    gripper_names = tuple(
+        getattr(getattr(gripper, "IO_descriptor", None), "joint_names", ())
+        or getattr(gripper, "_joint_names", ())
+    )
+    if arm_names != robot.arm_joint_names:
+        raise RuntimeError("teacher IK joint order differs from the sealed robot")
+    if gripper_names != robot.gripper.joint_names:
+        raise RuntimeError("teacher gripper order differs from the sealed robot")
+    if str(arm.cfg.body_name) != robot.ee_link:
+        raise RuntimeError("teacher IK end-effector differs from the sealed robot")
+    scale = _native_tensor(getattr(arm, "_scale", None))
+    if scale is None or not hasattr(scale, "detach"):
+        raise RuntimeError("teacher IK action does not expose its native scale")
+    values = scale[0].detach().cpu().numpy().astype(float)
+    if values.shape != (6,) or not all(
+        math.isfinite(item) and item > 0 for item in values
+    ):
+        raise RuntimeError("teacher IK native scale is invalid")
+    return {
+        "total_dimension": sum(dimensions),
+        "arm_start": sum(dimensions[:arm_index]),
+        "gripper_start": sum(dimensions[:gripper_index]),
+        "scale": values,
+        "arm_joint_names": list(robot.arm_joint_names),
+        "gripper_joint_names": list(robot.gripper.joint_names),
+        "ee_link": robot.ee_link,
+    }
+
+
+def _axis_angle_error(current: Any, target: tuple[float, ...]) -> Any:
+    import numpy as np
+
+    current = np.asarray(current, dtype=float)
+    target_array = np.asarray(target, dtype=float)
+    inverse = np.asarray([-current[0], -current[1], -current[2], current[3]])
+    x1, y1, z1, w1 = target_array
+    x2, y2, z2, w2 = inverse
+    relative = np.asarray(
+        [
+            w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+            w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
+            w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
+            w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
+        ]
+    )
+    if relative[3] < 0.0:
+        relative *= -1.0
+    vector_norm = float(np.linalg.norm(relative[:3]))
+    if vector_norm < 1.0e-12:
+        return np.zeros(3, dtype=float)
+    angle = 2.0 * math.atan2(vector_norm, max(0.0, float(relative[3])))
+    return relative[:3] * (angle / vector_norm)
+
+
+def _teacher_command(
+    native: Any, layout: dict[str, Any], waypoint: Any
+) -> tuple[Any, float, float]:
+    import numpy as np
+    import torch
+
+    frame = native.scene["ee_frame"].data
+    position = _native_tensor(frame.target_pos_w)[0, 0, :3].detach().cpu().numpy()
+    quaternion = _native_tensor(frame.target_quat_w)[0, 0, :4].detach().cpu().numpy()
+    target = waypoint.world_from_ee
+    translation = np.asarray(target.translation_m, dtype=float) - position
+    rotation = _axis_angle_error(quaternion, target.quaternion_xyzw)
+    processed = np.r_[
+        np.clip(translation, -0.07, 0.07),
+        np.clip(rotation, -0.25, 0.25),
+    ]
+    raw = np.clip(processed / layout["scale"], -1.0, 1.0)
+    command = torch.zeros(
+        (1, layout["total_dimension"]), dtype=torch.float32, device=native.device
+    )
+    start = layout["arm_start"]
+    command[0, start : start + 6] = torch.as_tensor(raw, device=native.device)
+    command[0, layout["gripper_start"]] = -1.0 if waypoint.gripper_closed else 1.0
+    return command, float(np.linalg.norm(translation)), float(np.linalg.norm(rotation))
+
+
+def _teacher_camera_capture(
+    native: Any, robot: Any
+) -> tuple[dict[str, str], dict[str, tuple[bytes, int, int, str]], dict[str, float]]:
+    hashes: dict[str, str] = {}
+    frames: dict[str, tuple[bytes, int, int, str]] = {}
+    timestamps: dict[str, float] = {}
+    for camera in robot.cameras:
+        frame, capture_time = _camera_frame(native, camera.key, robot)
+        payload = frame.tobytes()
+        hashes[camera.key] = hashlib.sha256(payload).hexdigest()
+        timestamps[camera.key] = capture_time
+        frames[camera.key] = (
+            payload,
+            camera.image_size[0],
+            camera.image_size[1],
+            camera.role,
+        )
+    return hashes, frames, timestamps
+
+
+def _run_teacher(
+    *,
+    gym: Any,
+    args: argparse.Namespace,
+    robot: Any,
+    robot_spec: dict[str, Any],
+    prop: Any,
+    task: Any,
+    object_usd_path: Path,
+    control_hz: float,
+) -> dict[str, Any]:
+    """Execute one geometry-aware native teacher before policy evaluation."""
+
+    from npa.workflows.franka_rl_environment import (
+        POLICY_INTERCHANGE_SCAFFOLD_TASK,
+        configure_policy_interchange_cameras,
+        configure_policy_interchange_robot,
+        configure_policy_interchange_surface_task,
+        policy_interchange_environment_config,
+        policy_interchange_timing,
+    )
+
+    timing = policy_interchange_timing(control_hz=control_hz)
+    config = policy_interchange_environment_config(
+        seed=args.seed, control_hz=control_hz
+    )
+    configuration = configure_policy_interchange_robot(
+        config,
+        robot,
+        robot_spec,
+        args.robot_usd_path,
+        controller_representation="relative_ee_pose",
+    )
+    configure_policy_interchange_surface_task(
+        config, robot, prop, task, object_usd_path=object_usd_path
+    )
+    configure_policy_interchange_cameras(config, robot)
+    env = gym.make(POLICY_INTERCHANGE_SCAFFOLD_TASK, cfg=config)
+    try:
+        env.reset(seed=args.seed)
+        native = env.unwrapped
+        layout = _teacher_layout(native, robot)
+        initial_z = _reference_position(native, prop)[2]
+        context = {
+            "ordered_event_steps": {},
+            "required_events": task.success_events,
+            "retreat_distance_m": task.retreat_distance_m,
+            "stable_steps": 0,
+        }
+        controls: list[dict[str, Any]] = []
+        physics: list[dict[str, Any]] = []
+        camera_hashes: list[dict[str, str]] = []
+        camera_clocks: list[dict[str, Any]] = []
+        visual_evidence: list[dict[str, Any]] = []
+        global_step = 0
+        for waypoint in surface_teacher_waypoints(prop, task):
+            consecutive = 0
+            for phase_step in range(90):
+                hashes, frames, capture_timestamps = _teacher_camera_capture(
+                    native, robot
+                )
+                if phase_step == 0:
+                    for key, (payload, width, height, role) in frames.items():
+                        relative = (
+                            Path("visuals") / f"teacher-{waypoint.phase}-{role}.png"
+                        )
+                        visual_evidence.append(
+                            {
+                                "step": global_step,
+                                "phase": waypoint.phase,
+                                "camera_key": key,
+                                "camera_role": role,
+                                **_write_png_rgb8(
+                                    args.output_path / relative,
+                                    payload,
+                                    width,
+                                    height,
+                                ),
+                                "path": relative.as_posix(),
+                            }
+                        )
+                command, position_error, orientation_error = _teacher_command(
+                    native, layout, waypoint
+                )
+                before = _sim_time(native)
+                if any(
+                    value > before + 1.0e-9 for value in capture_timestamps.values()
+                ):
+                    raise RuntimeError("teacher camera capture followed its control")
+                _, _, terminated, truncated, _ = env.step(command)
+                after = _sim_time(native)
+                if bool(terminated[0]) or bool(truncated[0]):
+                    raise RuntimeError(f"native teacher reset during {waypoint.phase}")
+                sample = _sample(native, robot, prop, task, initial_z)
+                _update_events(context, sample, global_step)
+                controls.append(
+                    {
+                        "step": global_step,
+                        "phase": waypoint.phase,
+                        "command_application_time_s": before,
+                        "resulting_state_time_s": after,
+                        "native_action": command[0].detach().cpu().tolist(),
+                        "position_error_m": position_error,
+                        "orientation_error_rad": orientation_error,
+                        "gripper_closed": waypoint.gripper_closed,
+                    }
+                )
+                physics.append(sample)
+                camera_hashes.append(hashes)
+                camera_clocks.append(
+                    {
+                        "step": global_step,
+                        "capture_timestamps_s": capture_timestamps,
+                        "command_application_time_s": before,
+                        "resulting_state_time_s": after,
+                    }
+                )
+                global_step += 1
+                converged = position_error < 0.012 and orientation_error < 0.08
+                consecutive = consecutive + 1 if converged else 0
+                hold = 12 if waypoint.phase in {"grasp", "release"} else 3
+                if waypoint.phase == "retreat" and context["stable_steps"] >= 3:
+                    break
+                if consecutive >= hold:
+                    break
+            else:
+                raise RuntimeError(
+                    f"geometry-aware teacher failed to reach {waypoint.phase}"
+                )
+        return {
+            "schema": "npa.sim2real.policy_interchange.native_teacher.v1",
+            "execution_valid": bool(controls),
+            "task_success": tuple(context["ordered_event_steps"])
+            == task.success_events,
+            "ordered_event_steps": context["ordered_event_steps"],
+            "native_scaffold_task": POLICY_INTERCHANGE_SCAFFOLD_TASK,
+            "timing": timing,
+            "controller": configuration,
+            "layout": {
+                key: value.tolist() if hasattr(value, "tolist") else value
+                for key, value in layout.items()
+            },
+            "waypoints": [
+                {
+                    "phase": item.phase,
+                    "world_from_ee": item.world_from_ee.to_dict(),
+                    "gripper_closed": item.gripper_closed,
+                }
+                for item in surface_teacher_waypoints(prop, task)
+            ],
+            "controls": controls,
+            "physics": physics,
+            "camera_hashes": camera_hashes,
+            "camera_clocks": camera_clocks,
+            "visual_evidence": visual_evidence,
+            "privileged_object_state_policy_input": False,
+        }
+    finally:
+        env.close()
+
+
 def run(args: argparse.Namespace) -> dict[str, Any]:
     import gymnasium as gym
 
     from npa.workflows.franka_rl_environment import (
+        POLICY_INTERCHANGE_SCAFFOLD_TASK,
         configure_policy_interchange_cameras,
         configure_policy_interchange_robot,
         configure_policy_interchange_surface_task,
-        environment_config,
+        policy_interchange_environment_config,
     )
     from npa.workflows.sim2real.interchange_contract import assert_policy_compatible
 
     preparation = _load(args.preparation_path)
     receipt = _load(args.service_receipt_path)
-    recipe = _load(args.input_path / "recipe.json")
     robot_manifest = _load(args.robot_asset_manifest_path)
     robot_asset = preparation.get("robot_asset") or {}
     robot_spec = robot_asset.get("robot_spec")
@@ -341,23 +634,29 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         normalization_identity=str(loaded.get("normalization_identity") or ""),
     )
     assert_policy_compatible(robot, task, policy)
-    config = environment_config(
-        recipe,
-        training=False,
-        capture=False,
-        asset_root=args.input_path,
+    object_usd_path = _local_object_asset(args.input_path, prop)
+    args.output_path.mkdir(parents=True, exist_ok=False)
+    teacher = _run_teacher(
+        gym=gym,
+        args=args,
+        robot=robot,
+        robot_spec=robot_spec,
+        prop=prop,
+        task=task,
+        object_usd_path=object_usd_path,
+        control_hz=policy.action.control_hz,
     )
-    config.scene.num_envs = 1
-    config.seed = args.seed
+    config = policy_interchange_environment_config(
+        seed=args.seed, control_hz=policy.action.control_hz
+    )
     robot_configuration = configure_policy_interchange_robot(
         config, robot, robot_spec, args.robot_usd_path
     )
-    object_usd_path = _local_object_asset(args.input_path, prop)
     configure_policy_interchange_surface_task(
         config, robot, prop, task, object_usd_path=object_usd_path
     )
     configure_policy_interchange_cameras(config, robot)
-    env = gym.make(recipe["task"], cfg=config)
+    env = gym.make(POLICY_INTERCHANGE_SCAFFOLD_TASK, cfg=config)
     try:
         env.reset(seed=args.seed)
         native = env.unwrapped
@@ -393,12 +692,19 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "retreat_distance_m": task.retreat_distance_m,
             "stable_steps": 0,
         }
-        args.output_path.mkdir(parents=True, exist_ok=False)
-        controls, physics, inference, camera_hashes = [], [], [], []
+        controls, physics, inference, camera_hashes, observation_clocks = (
+            [],
+            [],
+            [],
+            [],
+            [],
+        )
         visual_evidence: list[dict[str, Any]] = []
         evidence_decisions = _visual_evidence_decisions(args.decisions)
         for decision in range(args.decisions):
-            observation, hashes, frames = _observation(native, robot, policy, decision)
+            observation, hashes, frames, observation_clock = _observation(
+                native, robot, policy, decision
+            )
             if decision in evidence_decisions:
                 for key, (payload, width, height, role) in frames.items():
                     relative = Path("visuals") / f"decision-{decision:06d}-{role}.png"
@@ -423,12 +729,15 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             control = apply_absolute_joint_target(
                 env, output.action_chunk[0], profile=robot
             )
+            if control["terminated"] or control["truncated"]:
+                raise RuntimeError("native policy environment reset during evaluation")
             sample = _sample(native, robot, prop, task, initial_z)
             _update_events(context, sample, decision)
             controls.append(control)
             physics.append(sample)
             inference.append(inference_receipt)
             camera_hashes.append(hashes)
+            observation_clocks.append(observation_clock)
         success = tuple(context["ordered_event_steps"]) == task.success_events
         report = {
             "schema": "npa.sim2real.policy_interchange.non_franka_execution.v1",
@@ -460,16 +769,20 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "robot_identity": robot.identity,
             "object_identity": prop.identity,
             "task_identity": task.identity,
+            "native_scaffold_task": POLICY_INTERCHANGE_SCAFFOLD_TASK,
+            "timing": teacher["timing"],
             "policy_identity": policy.identity,
             "checkpoint_sha256": policy.checkpoint_sha256,
             "normalization_identity": policy.normalization_identity,
             "service_reset": reset,
+            "teacher": teacher,
             "seed": args.seed,
             "decisions": args.decisions,
             "controls": controls,
             "physics": physics,
             "inference": inference,
             "camera_hashes": camera_hashes,
+            "observation_clocks": observation_clocks,
             "visual_evidence": visual_evidence,
             "visual_evidence_decisions": sorted(evidence_decisions),
             "all_camera_decisions_hashed": len(camera_hashes) == args.decisions,

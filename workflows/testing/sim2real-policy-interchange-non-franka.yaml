@@ -106,7 +106,7 @@ states:
     next: execute-non-franka
 
   execute-non-franka:
-    description: Apply real native policy actions to the sealed six-axis robot with causal exterior and moving-wrist RTX observations.
+    description: Execute the geometry-aware native teacher, then apply real native policy actions to the sealed six-axis robot with causal exterior and moving-wrist RTX observations.
     needs: [start-adapted-service]
     toolRef: workbench.sim2real.policy_interchange_non_franka_execute
     resources: isaac

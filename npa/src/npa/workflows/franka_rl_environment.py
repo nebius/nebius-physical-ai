@@ -2,11 +2,74 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 
+POLICY_INTERCHANGE_SCAFFOLD_TASK = "Isaac-Lift-Cube-Franka-IK-Rel-v0"
+POLICY_INTERCHANGE_SIMULATION_HZ = 60.0
+
+
+def policy_interchange_timing(*, control_hz: float) -> dict[str, float | int]:
+    """Resolve an exact controller cadence against the owned physics rate."""
+
+    frequency = float(control_hz)
+    ratio = POLICY_INTERCHANGE_SIMULATION_HZ / frequency
+    decimation = round(ratio)
+    if (
+        not math.isfinite(frequency)
+        or frequency <= 0.0
+        or decimation <= 0
+        or abs(ratio - decimation) > 1.0e-9
+    ):
+        raise ValueError(
+            "policy control_hz must divide the 60 Hz interchange physics rate exactly"
+        )
+    return {
+        "simulation_hz": POLICY_INTERCHANGE_SIMULATION_HZ,
+        "simulation_dt_s": 1.0 / POLICY_INTERCHANGE_SIMULATION_HZ,
+        "control_hz": frequency,
+        "decimation": decimation,
+        "episode_length_s": 240.0,
+    }
+
+
+def policy_interchange_environment_config(*, seed: int, control_hz: float):
+    """Load only the native scene/IK scaffold used by typed interchange.
+
+    The caller must replace the scaffold robot, home state, actuators, action
+    mapping, support surface, rigid object, goal, reset, and cameras before the
+    environment is created. This avoids importing Franka reach, controller, or
+    task settings through an unrelated training recipe.
+    """
+
+    import isaaclab_tasks  # noqa: F401
+    from isaaclab_tasks.utils import load_cfg_from_registry
+    from npa.workflows.sim2real.isaac_assets_compat import remap_moved_franka_usd
+
+    config = load_cfg_from_registry(
+        POLICY_INTERCHANGE_SCAFFOLD_TASK, "env_cfg_entry_point"
+    )
+    remap_moved_franka_usd(config)
+    timing = policy_interchange_timing(control_hz=control_hz)
+    config.scene.num_envs = 1
+    config.seed = seed
+    config.sim.device = "cuda:0"
+    config.sim.dt = timing["simulation_dt_s"]
+    config.decimation = timing["decimation"]
+    config.episode_length_s = timing["episode_length_s"]
+    config.commands.object_pose.resampling_time_range = (1.0e9, 1.0e9)
+    config.observations.policy.enable_corruption = False
+    return config
+
+
 def configure_policy_interchange_robot(
-    config, robot_profile, robot_spec: dict, robot_usd_path: Path
+    config,
+    robot_profile,
+    robot_spec: dict,
+    robot_usd_path: Path,
+    *,
+    controller_representation: str = "absolute_joint_position",
 ) -> dict:
     """Replace the template articulation with the exact resolved RobotSpec asset.
 
@@ -54,6 +117,8 @@ def configure_policy_interchange_robot(
         if hasattr(old_spawn, attribute) and hasattr(spawn, attribute):
             setattr(spawn, attribute, deepcopy(getattr(old_spawn, attribute)))
     config.scene.robot.spawn = spawn
+    config.scene.robot.init_state.pos = (0.0, 0.0, 0.0)
+    config.scene.robot.init_state.rot = (0.0, 0.0, 0.0, 1.0)
     config.scene.robot.init_state.joint_pos = dict(
         zip(names, arrays["home_qpos"], strict=True)
     )
@@ -72,13 +137,33 @@ def configure_policy_interchange_robot(
                 effort_limit_sim=effort,
             )
         )
-    config.actions.arm_action = mdp.JointPositionActionCfg(
-        asset_name="robot",
-        joint_names=list(robot_profile.arm_joint_names),
-        preserve_order=True,
-        scale=1.0,
-        use_default_offset=False,
-    )
+    if controller_representation == "absolute_joint_position":
+        config.actions.arm_action = mdp.JointPositionActionCfg(
+            asset_name="robot",
+            joint_names=list(robot_profile.arm_joint_names),
+            preserve_order=True,
+            scale=1.0,
+            use_default_offset=False,
+        )
+    elif controller_representation == "relative_ee_pose":
+        action = config.actions.arm_action
+        if (
+            not hasattr(action, "body_name")
+            or not hasattr(action, "body_offset")
+            or not hasattr(action, "joint_names")
+        ):
+            raise ValueError(
+                "geometry-aware teacher requires the native relative differential-IK "
+                "action scaffold"
+            )
+        action.joint_names = list(robot_profile.arm_joint_names)
+        action.body_name = robot_profile.ee_link
+        action.body_offset.pos = (0.0, 0.0, 0.0)
+        action.body_offset.rot = (0.0, 0.0, 0.0, 1.0)
+    else:
+        raise ValueError(
+            f"unsupported policy-interchange controller {controller_representation!r}"
+        )
     config.actions.gripper_action = mdp.BinaryJointPositionActionCfg(
         asset_name="robot",
         joint_names=list(robot_profile.gripper.joint_names),
@@ -102,6 +187,7 @@ def configure_policy_interchange_robot(
     target = config.scene.ee_frame.target_frames[0]
     target.prim_path = "{ENV_REGEX_NS}/Robot/" + robot_profile.ee_link
     target.offset.pos = (0.0, 0.0, 0.0)
+    target.offset.rot = (0.0, 0.0, 0.0, 1.0)
     return {
         "joint_names": names,
         "home_qpos": list(arrays["home_qpos"]),
@@ -110,6 +196,7 @@ def configure_policy_interchange_robot(
         "force_lower": list(arrays["force_lower"]),
         "force_upper": list(arrays["force_upper"]),
         "usd_path": str(robot_usd_path),
+        "controller_representation": controller_representation,
     }
 
 

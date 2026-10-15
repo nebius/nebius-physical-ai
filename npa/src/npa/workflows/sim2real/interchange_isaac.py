@@ -16,7 +16,9 @@ from typing import Any, Sequence
 
 from npa.workflows.sim2real.interchange_contract import (
     InterchangeContractError,
+    RigidObjectProfile,
     RobotSensorProfile,
+    SurfacePlacementTask,
     Transform,
 )
 
@@ -67,6 +69,76 @@ class IsaacActionLayout:
             raise InterchangeContractError(
                 "Isaac action term offsets overlap or escape"
             )
+
+
+@dataclass(frozen=True)
+class TeacherWaypoint:
+    """One geometry-derived Cartesian target for native teacher execution."""
+
+    phase: str
+    world_from_ee: Transform
+    gripper_closed: bool
+
+
+def surface_teacher_waypoints(
+    prop: RigidObjectProfile, task: SurfacePlacementTask
+) -> tuple[TeacherWaypoint, ...]:
+    """Derive a released-surface plan from declared object frames.
+
+    The object root is allowed to be offset from both the stable reference and
+    the gripper-compatible grasp frame. The target names the desired reference
+    point, so the destination root is solved explicitly instead of assuming a
+    centered cube or guessing from rendered bounds.
+    """
+
+    grasp = compose_transform(prop.world_from_root, prop.root_from_grasp)
+    reference = compose_transform(prop.world_from_root, prop.root_from_reference)
+    destination_reference = Transform(
+        task.target_world_xyz_m, reference.quaternion_xyzw
+    )
+    destination_root = compose_transform(
+        destination_reference, inverse_transform(prop.root_from_reference)
+    )
+    destination_grasp = compose_transform(destination_root, prop.root_from_grasp)
+
+    def raised(value: Transform, amount: float) -> Transform:
+        x, y, z = value.translation_m
+        return Transform((x, y, z + amount), value.quaternion_xyzw)
+
+    lifted = max(task.approach_clearance_m, task.lift_delta_m)
+    return (
+        TeacherWaypoint("approach", raised(grasp, task.approach_clearance_m), False),
+        TeacherWaypoint("contact", grasp, False),
+        TeacherWaypoint("grasp", grasp, True),
+        TeacherWaypoint("lift", raised(grasp, lifted), True),
+        TeacherWaypoint("transport", raised(destination_grasp, lifted), True),
+        TeacherWaypoint("lower", destination_grasp, True),
+        TeacherWaypoint("release", destination_grasp, False),
+        TeacherWaypoint(
+            "retreat", raised(destination_grasp, task.retreat_distance_m), False
+        ),
+    )
+
+
+def compose_transform(left: Transform, right: Transform) -> Transform:
+    """Compose two validated XYZW rigid transforms."""
+
+    rotated = _rotate_xyzw(left.quaternion_xyzw, right.translation_m)
+    return Transform(
+        tuple(left.translation_m[index] + rotated[index] for index in range(3)),
+        _multiply_xyzw(left.quaternion_xyzw, right.quaternion_xyzw),
+    )
+
+
+def inverse_transform(value: Transform) -> Transform:
+    """Invert one validated XYZW rigid transform."""
+
+    x, y, z, w = value.quaternion_xyzw
+    inverse_rotation = (-x, -y, -z, w)
+    rotated = _rotate_xyzw(
+        inverse_rotation, tuple(-item for item in value.translation_m)
+    )
+    return Transform(rotated, inverse_rotation)
 
 
 def action_layout_from_live_isaac(

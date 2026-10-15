@@ -87,6 +87,7 @@ def run(args: argparse.Namespace) -> dict:
                 f"native non-Franka policy trial failed with {result.returncode}\n{excerpt}"
             )
         report = json.loads((output / "report.json").read_text(encoding="utf-8"))
+        teacher = report.get("teacher") or {}
         if (
             report.get("schema") != SCHEMA
             or report.get("execution_valid") is not True
@@ -95,9 +96,43 @@ def run(args: argparse.Namespace) -> dict:
             or len(report.get("camera_hashes") or []) != args.decisions
             or report.get("all_camera_decisions_hashed") is not True
             or not report.get("visual_evidence")
+            or teacher.get("schema")
+            != "npa.sim2real.policy_interchange.native_teacher.v1"
+            or teacher.get("execution_valid") is not True
+            or not teacher.get("controls")
+            or not teacher.get("visual_evidence")
+            or len(teacher.get("camera_hashes") or ())
+            != len(teacher.get("controls") or ())
+            or len(teacher.get("camera_clocks") or ())
+            != len(teacher.get("controls") or ())
+            or len(report.get("observation_clocks") or ()) != args.decisions
         ):
             raise RuntimeError("native non-Franka execution report is incomplete")
-        for visual in report["visual_evidence"]:
+        for clock in teacher["camera_clocks"]:
+            if any(
+                float(value) > float(clock["command_application_time_s"]) + 1.0e-9
+                for value in clock["capture_timestamps_s"].values()
+            ):
+                raise RuntimeError("native teacher camera/control clock is noncausal")
+        for clock, control in zip(
+            report["observation_clocks"], report["controls"], strict=True
+        ):
+            state_time = float(clock["state_timestamp_s"])
+            command_time = float(control["command_application_time_s"])
+            if (
+                any(
+                    float(value) > state_time + 1.0e-9
+                    for value in clock["capture_timestamps_s"].values()
+                )
+                or state_time > command_time + 1.0e-9
+                or control.get("terminated") is not False
+                or control.get("truncated") is not False
+            ):
+                raise RuntimeError("native policy camera/control clock is noncausal")
+        for visual in [
+            *teacher["visual_evidence"],
+            *report["visual_evidence"],
+        ]:
             path = output / str(visual.get("path") or "")
             if (
                 not path.is_file()
