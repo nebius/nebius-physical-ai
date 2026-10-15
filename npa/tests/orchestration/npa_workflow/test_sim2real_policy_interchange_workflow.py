@@ -138,6 +138,7 @@ def test_isaac_client_mounts_the_smolvla_auth_variable() -> None:
 
 def test_isaac_default_leaves_standard_runtime_controller_headroom() -> None:
     spec = load_spec(SPEC)
+    spec.config["source_sha"] = "0123456789abcdef0123456789abcdef01234567"
     rendered = render_skypilot_yaml(
         spec,
         build_plan(spec, run_id="controller-headroom"),
