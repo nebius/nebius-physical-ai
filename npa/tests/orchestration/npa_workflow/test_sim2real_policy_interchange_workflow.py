@@ -148,11 +148,13 @@ def test_runtime_fetch_isaac_stages_use_the_cache_bound_interpreter() -> None:
         ),
     ):
         spec = load_spec(path)
-        steps = {step.state: step for step in build_plan(spec, run_id="isaac-shim").steps}
+        steps = {
+            step.state: step for step in build_plan(spec, run_id="isaac-shim").steps
+        }
         assert all(steps[state].argv[0] == "/isaac-sim/python.sh" for state in states)
-        env = spec.resources["isaac"]["kubernetes"]["pod_config"]["spec"][
-            "containers"
-        ][0]["env"]
+        env = spec.resources["isaac"]["kubernetes"]["pod_config"]["spec"]["containers"][
+            0
+        ]["env"]
         by_name = {item["name"]: item["value"] for item in env if "value" in item}
         assert by_name["NPA_BAKED_PYTHON"] == "/isaac-sim/python.sh"
 
