@@ -112,9 +112,7 @@ def build_manifests(args: argparse.Namespace) -> dict[str, dict[str, Any]]:
         raise SmolVLAServiceError("baked source commit must be 40 lowercase hex")
     if not re.fullmatch(r"[a-z0-9](?:[-a-z0-9]*[a-z0-9])?", args.auth_secret):
         raise SmolVLAServiceError("auth secret must be a Kubernetes DNS label")
-    if not re.fullmatch(
-        r"[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?", args.policy_cache_pvc
-    ):
+    if not re.fullmatch(r"[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?", args.policy_cache_pvc):
         raise SmolVLAServiceError(
             "policy cache PVC must be an explicit Kubernetes DNS subdomain"
         )
