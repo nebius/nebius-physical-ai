@@ -1647,9 +1647,7 @@ def test_nested_validation_verifies_then_drops_parent_api_identity(
     def verify_parent(
         root: Path, environment: dict[str, str], *, recover: bool = True
     ) -> dict[str, str]:
-        verified.append(
-            (root, environment["SKYPILOT_API_SERVER_ENDPOINT"], recover)
-        )
+        verified.append((root, environment["SKYPILOT_API_SERVER_ENDPOINT"], recover))
         return dict(environment)
 
     def child_environment(
