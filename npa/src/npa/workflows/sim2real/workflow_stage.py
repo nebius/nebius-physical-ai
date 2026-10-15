@@ -739,10 +739,19 @@ def _stage9_train(args, root, work, signals):
 
 
 def _stage9_commit(args, root, work, inputs, prior, update, embodiment, evidence_uri):
-    from npa.workflows.sim2real.checkpoint_selection import select_best_checkpoint
+    from npa.workflows.sim2real.checkpoint_selection import (
+        require_complete_checkpoint_candidate_pool,
+        select_best_checkpoint,
+    )
 
     current = _stage9_validation_candidates(args, work, update, embodiment)
     candidates = list(prior.get("checkpoint_candidates") or []) + current
+    try:
+        require_complete_checkpoint_candidate_pool(candidates)
+    except ValueError as exc:
+        raise RuntimeError(
+            "Stage 9 refuses to select a checkpoint without complete byte identity"
+        ) from exc
     selection = select_best_checkpoint(candidates)
     evidence = _stage9_loop_evidence(
         args, inputs, prior, update, embodiment, candidates, selection

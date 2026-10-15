@@ -10,6 +10,7 @@ import pytest
 from npa.workflows.sim2real import workflow_stage
 from npa.workflows.sim2real.checkpoint_selection import (
     checkpoint_candidate_has_complete_identity,
+    require_complete_checkpoint_candidate_pool,
     resolve_selected_checkpoint,
     select_best_checkpoint,
     stage9_checkpoint_candidate,
@@ -128,6 +129,19 @@ def test_stage9_candidate_rejects_incomplete_validation_identity() -> None:
         )
 
 
+def test_checkpoint_candidate_pool_rejects_incomplete_byte_identity() -> None:
+    candidate = {
+        "checkpoint_uri": "s3://sim2real-test/checkpoints/model_000001.pt",
+        "checkpoint_sha256": "a" * 64,
+        "generator_policy_sha256": "a" * 64,
+        "checkpoint_size_bytes": 1,
+    }
+    del candidate["checkpoint_size_bytes"]
+
+    with pytest.raises(ValueError, match="lacks complete checkpoint byte identity"):
+        require_complete_checkpoint_candidate_pool([candidate])
+
+
 def test_checkpoint_identity_accepts_a_zero_based_initial_checkpoint() -> None:
     candidate = {
         "checkpoint_uri": "s3://sim2real-test/checkpoints/model_000000.pt",
@@ -228,6 +242,8 @@ def _committed_replay():
             "outer_iteration": 1,
             "inner_iteration": 1,
             "checkpoint_sha256": str(index + 1) * 64,
+            "checkpoint_size_bytes": 100 + index + 1,
+            "generator_policy_sha256": str(index + 1) * 64,
             "validation_report_uri": f"s3://unit/validation/{index}.json",
             "validation_report": evaluator(None),
         }
@@ -271,6 +287,23 @@ def test_same_iteration_retry_adopts_earlier_checkpoint_and_full_ppo_evidence():
     assert update["ppo_telemetry"]["observed_iterations"] == 2000
     prior["checkpoint_candidates"].pop()
     with pytest.raises(RuntimeError, match="partial or inconsistent"):
+        existing_replay(
+            prior=prior,
+            outer_iteration=1,
+            inner_iteration=1,
+            actions_uri=inputs["actions_uri"],
+            evaluation_uri=inputs["vlm_eval_uri"],
+            signal_uri=inputs["signal_uri"],
+            sample_vlm_eval=inputs["sample_vlm_eval"],
+            sample_signal=inputs["sample_signal"],
+        )
+
+
+def test_same_iteration_retry_rejects_incomplete_checkpoint_identity():
+    prior, inputs = _committed_replay()
+    del prior["checkpoint_candidates"][0]["checkpoint_size_bytes"]
+
+    with pytest.raises(RuntimeError, match="lacks complete byte identity"):
         existing_replay(
             prior=prior,
             outer_iteration=1,

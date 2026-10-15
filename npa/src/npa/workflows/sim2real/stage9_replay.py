@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from npa.workflows.sim2real.checkpoint_selection import select_best_checkpoint
+from npa.workflows.sim2real.checkpoint_selection import (
+    require_complete_checkpoint_candidate_pool,
+    select_best_checkpoint,
+)
 from npa.workflows.sim2real.stage9_checkpoints import validate_replay_checkpoint_pool
 
 
@@ -110,13 +113,20 @@ def _select_replay_checkpoint(prior, iteration, candidates):
     if any(row.get("evaluation_split") != "validation" for row in candidates):
         raise RuntimeError("Stage 9 replay checkpoint lineage is inconsistent")
     validate_replay_checkpoint_pool(update, candidates)
+    all_candidates = list(prior.get("checkpoint_candidates") or [])
+    try:
+        require_complete_checkpoint_candidate_pool(all_candidates)
+    except ValueError as exc:
+        raise RuntimeError(
+            "Stage 9 replay checkpoint lineage lacks complete byte identity"
+        ) from exc
     current_selection = select_best_checkpoint(candidates)
     candidate = next(
         row
         for row in candidates
         if row["checkpoint_uri"] == current_selection["checkpoint_uri"]
     )
-    selection = select_best_checkpoint(list(prior.get("checkpoint_candidates") or []))
+    selection = select_best_checkpoint(all_candidates)
     if (
         prior.get("selected_checkpoint_uri") != selection["checkpoint_uri"]
         or prior.get("final_checkpoint_uri") != selection["checkpoint_uri"]

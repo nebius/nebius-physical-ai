@@ -567,6 +567,8 @@ def _stage9_replay_fixture() -> tuple[dict, dict, dict, dict]:
         "training_iteration": 2,
         "checkpoint_uri": "s3://unit/run/checkpoint.pt",
         "checkpoint_sha256": "a" * 64,
+        "checkpoint_size_bytes": 128,
+        "generator_policy_sha256": "a" * 64,
         "validation_report_uri": "s3://unit/run/validation.json",
         "validation_report": validation,
     }

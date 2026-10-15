@@ -403,6 +403,28 @@ def checkpoint_candidate_has_complete_identity(candidate: object) -> bool:
     return True
 
 
+def require_complete_checkpoint_candidate_pool(
+    candidates: list[dict[str, Any]],
+) -> None:
+    """Reject a validation pool containing an incomplete checkpoint identity.
+
+    Args:
+        candidates: Validation candidates considered for checkpoint selection.
+    Returns:
+        None.
+    Raises:
+        ValueError: If any candidate lacks a complete, internally consistent
+            checkpoint byte identity.
+    """
+
+    for index, candidate in enumerate(candidates):
+        if not checkpoint_candidate_has_complete_identity(candidate):
+            raise ValueError(
+                "checkpoint selection candidate "
+                f"at index {index} lacks complete checkpoint byte identity"
+            )
+
+
 def _identity_value(field: str, value: Any) -> Any:
     if "sha256" in field and isinstance(value, str):
         return value.lower()
