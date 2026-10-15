@@ -221,6 +221,19 @@ def _inject_public_checkpoint_binding(
     manifests: dict[str, dict[str, Any]], provenance: Mapping[str, object]
 ) -> None:
     container = manifests["deployment"]["spec"]["template"]["spec"]["containers"][0]
+    manifest_sha256 = provenance.get("sha256")
+    if not isinstance(manifest_sha256, str) or not re.fullmatch(
+        r"[0-9a-f]{64}", manifest_sha256
+    ):
+        raise OpenPIServiceError(
+            "public checkpoint provenance lacks a generation-manifest digest"
+        )
+    container["env"].append(
+        {
+            "name": "NPA_OPENPI_PUBLIC_CHECKPOINT_MANIFEST_SHA256",
+            "value": manifest_sha256,
+        }
+    )
     shell = container["command"][2]
     marker = "exec /opt/venv/bin/python -c "
     if marker not in shell:

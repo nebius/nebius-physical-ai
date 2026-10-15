@@ -209,6 +209,7 @@ def _checkpoint_probe_program() -> str:
 root=pathlib.Path(os.environ['NPA_RESOLVED_CHECKPOINT_DIR'])
 manifest_path=root/'manifest.json'
 manifest=json.loads(manifest_path.read_text()) if manifest_path.is_file() else None
+public_manifest_sha256=os.environ.get('NPA_OPENPI_PUBLIC_CHECKPOINT_MANIFEST_SHA256')
 records=[]
 for path in sorted(item for item in root.rglob('*') if item.is_file() and item != manifest_path):
     records.append({'path':path.relative_to(root).as_posix(),'size':path.stat().st_size,
@@ -220,7 +221,9 @@ if manifest is not None:
     assert manifest.get('content_manifest_sha256') == digest, 'adapted checkpoint digest mismatch'
 result={'schema':'npa.workbench.openpi.loaded-checkpoint.v1','checkpoint_sha256':digest,
         'file_count':len(records),'total_size_bytes':sum(row['size'] for row in records),
-        'checkpoint_manifest_sha256':manifest.get('content_manifest_sha256') if manifest else None}
+        'checkpoint_manifest_sha256':manifest.get('content_manifest_sha256') if manifest else public_manifest_sha256,
+        'checkpoint_manifest_scheme':'content_manifest_sha256' if manifest else (
+            'gcs_object_generation_manifest_sha256' if public_manifest_sha256 else None)}
 diagnostic_path('npa-openpi-loaded-checkpoint.json').write_text(json.dumps(result,sort_keys=True))
 """
     )
