@@ -958,10 +958,7 @@ def test_s3_object_sha256_streams_exact_checkpoint_bytes(monkeypatch) -> None:
         "sha256": expected,
         "size_bytes": len(b"exact-checkpoint"),
     }
-    assert (
-        byo.s3_object_sha256("s3://bucket/run/model.pt")
-        == expected
-    )
+    assert byo.s3_object_sha256("s3://bucket/run/model.pt") == expected
 
 
 @pytest.mark.parametrize("resume_phase", ["convergence", "exploration", "transport"])
@@ -1085,7 +1082,9 @@ def test_run_isaac_training_job_tags_s3_path_per_iteration(monkeypatch, resume_p
     result = byo.run_isaac_training_job("myrun", signal_json="ignored")
     assert result["final_checkpoint_uri"] == "s3://bkt/run/checkpoints/model_500.pt"
     assert result["checkpoint_sha256"] == result["final_checkpoint_sha256"] == "d" * 64
-    assert result["checkpoint_size_bytes"] == result["final_checkpoint_size_bytes"] == 123
+    assert (
+        result["checkpoint_size_bytes"] == result["final_checkpoint_size_bytes"] == 123
+    )
     assert result["final_checkpoint_alias_verified"] is True
     # distinct, tagged path
     assert captured["s3_output_uri"].endswith("/outer-02-iter-01/")

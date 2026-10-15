@@ -76,9 +76,9 @@ def stage9_checkpoint_candidate(
     if not checkpoint_candidate_has_complete_identity(candidate):
         raise RuntimeError("Stage 9 validation checkpoint identity is incomplete")
     for _label, field, _aliases in _IDENTITY_FIELDS:
-        if _complete_identity_value(field, checkpoint[field]) != _complete_identity_value(
-            field, candidate[field]
-        ):
+        if _complete_identity_value(
+            field, checkpoint[field]
+        ) != _complete_identity_value(field, candidate[field]):
             raise RuntimeError(
                 "Stage 9 validation did not load the trainer-published checkpoint bytes"
             )

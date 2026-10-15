@@ -132,7 +132,9 @@ def test_stage9_candidate_rejects_incomplete_validation_identity() -> None:
         )
 
 
-def test_stage9_candidate_rejects_validation_bytes_other_than_native_candidate() -> None:
+def test_stage9_candidate_rejects_validation_bytes_other_than_native_candidate() -> (
+    None
+):
     checkpoint = {
         "checkpoint_uri": "s3://sim2real-test/checkpoints/model_000001.pt",
         "training_iteration": 1,
