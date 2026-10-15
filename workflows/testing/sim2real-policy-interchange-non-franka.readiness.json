@@ -1,0 +1,58 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "fcc2164d4ee6fec6bc8fce3b15cb50c99c1d7769269e50b929a18e5911afe176",
+  "planning": {
+    "validation": {
+      "status": "unverified",
+      "reason": "The 14-state standard npa.workflow validates and 484 focused Linux tests bind its real module argv, catalog toolRefs, ComponentRecords, six-axis joint ordering, calibrated cameras, offset-origin rigid object frames, native SmolVLA reload, and identical base/adapted execution protocol. Exact-image plan rendering remains pending until the successor's immutable DEV images pass publication qualification; the checked-in quarantined placeholder intentionally fails closed.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/sim2real-policy-interchange-non-franka.yaml",
+        "npa/tests/orchestration/npa_workflow/test_sim2real_policy_interchange_workflow.py",
+        "npa/tests/workflows/test_sim2real_interchange_stage.py",
+        "npa/tests/workflows/test_sim2real_interchange_isaac.py"
+      ]
+    },
+    "task_fidelity": {
+      "status": "unverified",
+      "reason": "Source tests exercise real dynamic observation/action arrays and reject incompatible morphology, grippers, stale cameras, reordered joints, mismatched action spaces, and unbound reloads before launch. Native UR10e/Robotiq conversion, geometry-aware spool collection, SmolVLA fine-tuning/reload, and applied closed-loop actions have not yet completed, so no non-Franka task-success or generalization claim is made.",
+      "evidence": [
+        "npa/tests/workflows/test_sim2real_interchange_contract.py",
+        "npa/tests/workflows/test_sim2real_interchange_stage.py",
+        "npa/tests/workflows/test_sim2real_interchange_isaac.py"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "The eventual owned execution must bind a fresh private output prefix; no live storage identifiers are committed.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "The selected robot bundle, complete URDF dependency tree, converted USD, offset-origin rigid spool bundle, sealed cohorts, and pinned SmolVLA payload require exact-byte native qualification.",
+      "evidence": [
+        "workflows/testing/sim2real-policy-interchange-non-franka.yaml"
+      ]
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "Execution uses the operator's own scoped credentials and model access. No token, acceptance flag, or credential is baked into source or images.",
+      "evidence": []
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "The successor source has not yet produced independently qualified exact-source Isaac, LeRobot, and CPU DEV images. Earlier image qualifications do not qualify these bytes.",
+      "evidence": [
+        "workflows/testing/sim2real-policy-interchange-non-franka.yaml"
+      ]
+    },
+    "target_runtime": {
+      "status": "blocked",
+      "reason": "Native execution is deliberately blocked on exact-source image publication, anonymous byte/provenance/SBOM verification, exact robot and object conversion receipts, and private rendered-plan preflight. Physical-robot deployment remains an explicit SEAM.",
+      "evidence": [
+        "workflows/testing/sim2real-policy-interchange-non-franka.yaml"
+      ]
+    }
+  }
+}
