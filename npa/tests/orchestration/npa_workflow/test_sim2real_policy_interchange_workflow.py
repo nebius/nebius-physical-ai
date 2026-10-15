@@ -133,7 +133,7 @@ def test_isaac_client_mounts_the_smolvla_auth_variable() -> None:
 def test_isaac_default_leaves_standard_runtime_controller_headroom() -> None:
     spec = load_spec(SPEC)
     assert spec.config["isaac_cpus"] == "12"
-    assert spec.resources["isaac"].cpus == "12"
+    assert spec.resources["isaac"]["cpus"] == "12"
 
 
 def test_non_franka_acceptance_uses_standard_runtime_and_real_native_seams() -> None:
