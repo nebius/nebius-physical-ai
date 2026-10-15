@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
+import struct
+import zlib
 
 import pytest
 
@@ -17,7 +20,11 @@ from npa.workflows.sim2real.interchange_isaac import (
     camera_world_pose,
     render_absolute_joint_action,
 )
-from npa.workflows.sim2real.interchange_isaac_runtime import _update_events
+from npa.workflows.sim2real.interchange_isaac_runtime import (
+    _update_events,
+    _visual_evidence_decisions,
+    _write_png_rgb8,
+)
 
 
 def _profile(dof: int = 6) -> RobotSensorProfile:
@@ -203,3 +210,16 @@ def test_surface_success_requires_ordered_physics_and_three_stable_steps() -> No
         _update_events(context, sample, step)
     assert list(context["ordered_event_steps"]) == list(context["required_events"])
     assert context["ordered_event_steps"]["stable"] == 8
+
+
+def test_native_visual_evidence_preserves_exact_rgb_bytes(tmp_path: Path) -> None:
+    raw = bytes((255, 0, 0, 0, 255, 0))
+    path = tmp_path / "frame.png"
+    receipt = _write_png_rgb8(path, raw, 2, 1)
+    encoded = path.read_bytes()
+    assert encoded.startswith(b"\x89PNG\r\n\x1a\n")
+    length = struct.unpack(">I", encoded[33:37])[0]
+    assert encoded[37:41] == b"IDAT"
+    assert zlib.decompress(encoded[41 : 41 + length]) == b"\x00" + raw
+    assert receipt["raw_rgb_sha256"] and receipt["bytes"] == len(encoded)
+    assert _visual_evidence_decisions(192) == {0, 96, 191}

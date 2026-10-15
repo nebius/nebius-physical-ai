@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -15,6 +16,14 @@ from npa.workflows.sim2real import isaac_robot_asset
 
 
 SCHEMA = "npa.sim2real.policy_interchange.non_franka_execution.v1"
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def run(args: argparse.Namespace) -> dict:
@@ -84,8 +93,18 @@ def run(args: argparse.Namespace) -> dict:
             or report.get("decisions") != args.decisions
             or len(report.get("controls") or []) != args.decisions
             or len(report.get("camera_hashes") or []) != args.decisions
+            or report.get("all_camera_decisions_hashed") is not True
+            or not report.get("visual_evidence")
         ):
             raise RuntimeError("native non-Franka execution report is incomplete")
+        for visual in report["visual_evidence"]:
+            path = output / str(visual.get("path") or "")
+            if (
+                not path.is_file()
+                or path.stat().st_size != visual.get("bytes")
+                or _sha256(path) != visual.get("sha256")
+            ):
+                raise RuntimeError("native non-Franka visual evidence is incomplete")
         if report.get("robot_asset", {}).get("usd_sha256") != robot_manifest.get(
             "usd_sha256"
         ):

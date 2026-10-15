@@ -9,9 +9,11 @@ import json
 import math
 import os
 from pathlib import Path
+import struct
 import time
 from typing import Any
 from urllib.parse import urlparse
+import zlib
 
 from npa.workflows.lerobot_transfer_data import write_json
 from npa.workflows.sim2real.interchange_contract import (
@@ -99,16 +101,23 @@ def _camera_frame(native: Any, key: str, profile: Any) -> tuple[Any, float]:
 
 def _observation(
     native: Any, robot: Any, policy: Any, decision: int
-) -> tuple[Any, dict]:
+) -> tuple[Any, dict, dict[str, tuple[bytes, int, int, str]]]:
     state = measured_policy_state(native, robot)
     state_time = _sim_time(native)
     cameras: dict[str, Any] = {}
     hashes: dict[str, str] = {}
+    frames: dict[str, tuple[bytes, int, int, str]] = {}
     for camera in robot.cameras:
         frame, capture_time = _camera_frame(native, camera.key, robot)
         payload = frame.tobytes()
         digest = hashlib.sha256(payload).hexdigest()
         hashes[camera.key] = digest
+        frames[camera.key] = (
+            payload,
+            camera.image_size[0],
+            camera.image_size[1],
+            camera.role,
+        )
         cameras[camera.key] = {
             "layout": camera.layout,
             "image_size_wh": list(camera.image_size),
@@ -127,7 +136,50 @@ def _observation(
         input_identity=f"non-franka-surface-decision-{decision}",
         task_identity=policy.task_identity,
     )
-    return observation, hashes
+    return observation, hashes, frames
+
+
+def _png_chunk(kind: bytes, payload: bytes) -> bytes:
+    return (
+        struct.pack(">I", len(payload))
+        + kind
+        + payload
+        + struct.pack(">I", zlib.crc32(kind + payload) & 0xFFFFFFFF)
+    )
+
+
+def _write_png_rgb8(path: Path, payload: bytes, width: int, height: int) -> dict:
+    """Write exact HWC RGB8 bytes as PNG without a runtime imaging dependency."""
+
+    if width < 1 or height < 1 or len(payload) != width * height * 3:
+        raise RuntimeError("native visual evidence has invalid RGB dimensions")
+    stride = width * 3
+    rows = b"".join(
+        b"\x00" + payload[offset : offset + stride]
+        for offset in range(0, len(payload), stride)
+    )
+    encoded = (
+        b"\x89PNG\r\n\x1a\n"
+        + _png_chunk("IHDR".encode(), struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        + _png_chunk("IDAT".encode(), zlib.compress(rows, level=6))
+        + _png_chunk("IEND".encode(), b"")
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(encoded)
+    return {
+        "path": path.as_posix(),
+        "bytes": len(encoded),
+        "sha256": hashlib.sha256(encoded).hexdigest(),
+        "raw_rgb_sha256": hashlib.sha256(payload).hexdigest(),
+        "width": width,
+        "height": height,
+    }
+
+
+def _visual_evidence_decisions(decisions: int) -> frozenset[int]:
+    if decisions < 1:
+        raise ValueError("decisions must be positive")
+    return frozenset((0, decisions // 2, decisions - 1))
 
 
 def _force(native: Any, name: str) -> float:
@@ -339,9 +391,26 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "retreat_distance_m": task.retreat_distance_m,
             "stable_steps": 0,
         }
+        args.output_path.mkdir(parents=True, exist_ok=False)
         controls, physics, inference, camera_hashes = [], [], [], []
+        visual_evidence: list[dict[str, Any]] = []
+        evidence_decisions = _visual_evidence_decisions(args.decisions)
         for decision in range(args.decisions):
-            observation, hashes = _observation(native, robot, policy, decision)
+            observation, hashes, frames = _observation(native, robot, policy, decision)
+            if decision in evidence_decisions:
+                for key, (payload, width, height, role) in frames.items():
+                    relative = Path("visuals") / f"decision-{decision:06d}-{role}.png"
+                    visual_evidence.append(
+                        {
+                            "decision": decision,
+                            "camera_key": key,
+                            "camera_role": role,
+                            **_write_png_rgb8(
+                                args.output_path / relative, payload, width, height
+                            ),
+                            "path": relative.as_posix(),
+                        }
+                    )
             output, inference_receipt = client.infer_typed(
                 observation=observation, policy=policy
             )
@@ -399,10 +468,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "physics": physics,
             "inference": inference,
             "camera_hashes": camera_hashes,
+            "visual_evidence": visual_evidence,
+            "visual_evidence_decisions": sorted(evidence_decisions),
+            "all_camera_decisions_hashed": len(camera_hashes) == args.decisions,
             "privileged_object_state_policy_input": False,
             "physical_robot_tested": False,
         }
-        args.output_path.mkdir(parents=True, exist_ok=False)
         write_json(args.output_path / "report.json", report)
         return report
     finally:
