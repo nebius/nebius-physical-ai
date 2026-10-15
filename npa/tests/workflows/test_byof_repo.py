@@ -3227,10 +3227,6 @@ def test_dockerfile_writes_metadata_without_python_dependency() -> None:
     assert "NPA_SKYPILOT_BOOTSTRAP_APT_BYPASSED" in text
     assert "--kill-after=5s" in text
     assert "ssh-keygen -A" in text
-    assert (
-        "ln -sf /usr/local/sbin/npa-skypilot-bootstrap-guard "
-        "/usr/local/bin/ssh-keygen"
-    ) in text
     assert "rm -f /etc/ssh/ssh_host_*" in text
     assert "ENV HOME=/home/ubuntu" in text
     assert 'exec \\"$@\\"' in text

@@ -2043,7 +2043,6 @@ def _dockerfile_text() -> str:
         "chmod 0755 /usr/local/sbin/npa-skypilot-bootstrap-guard\n"
         "ln -sf npa-skypilot-bootstrap-guard /usr/local/sbin/apt-get\n"
         "ln -sf /usr/local/sbin/npa-skypilot-bootstrap-guard /usr/local/bin/timeout\n"
-        "ln -sf /usr/local/sbin/npa-skypilot-bootstrap-guard /usr/local/bin/ssh-keygen\n"
         "NPA_SKYPILOT_GUARD_INSTALL\n"
         "RUN /usr/local/sbin/npa-skypilot-bootstrap-guard verify\n"
         "RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu\n"
