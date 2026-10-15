@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import yaml
+
 from npa.orchestration.npa_workflow.interpreter import build_plan
+from npa.orchestration.npa_workflow.skypilot_render import (
+    SkypilotRenderOptions,
+    render_skypilot_yaml,
+)
 from npa.orchestration.npa_workflow.spec import load_spec
 
 
@@ -132,8 +138,20 @@ def test_isaac_client_mounts_the_smolvla_auth_variable() -> None:
 
 def test_isaac_default_leaves_standard_runtime_controller_headroom() -> None:
     spec = load_spec(SPEC)
+    rendered = render_skypilot_yaml(
+        spec,
+        build_plan(spec, run_id="controller-headroom"),
+        run_id="controller-headroom",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+    )
+    tasks = [
+        doc for doc in yaml.safe_load_all(rendered) if doc and doc.get("resources")
+    ]
+    isaac_tasks = [task for task in tasks if task["name"] == "collect-expert"]
+
     assert spec.config["isaac_cpus"] == "12"
-    assert spec.resources["isaac"]["cpus"] == "12"
+    assert len(isaac_tasks) == 1
+    assert isaac_tasks[0]["resources"]["cpus"] == "12"
 
 
 def test_non_franka_acceptance_uses_standard_runtime_and_real_native_seams() -> None:
