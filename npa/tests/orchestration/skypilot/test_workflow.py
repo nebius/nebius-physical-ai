@@ -2543,13 +2543,19 @@ def test_submit_workflow_keeps_preflight_storage_credentials_out_of_task_yaml(
     def fake_preflight(documents, **_kwargs):
         for document in documents:
             document.setdefault("envs", {}).update(private_values)
-        return SimpleNamespace(project="selected-project"), {"checks": {}}, private_values
+        return (
+            SimpleNamespace(project="selected-project"),
+            {"checks": {}},
+            private_values,
+        )
 
     def fake_run(cmd, **kwargs):
         if _is_status_cmd(cmd):
             return _healthy_status(cmd)
         calls.append(cmd)
-        return subprocess.CompletedProcess(cmd, 0, stdout="Job submitted, ID: 10\n", stderr="")
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout="Job submitted, ID: 10\n", stderr=""
+        )
 
     monkeypatch.setattr(workflow_module, "_execution_preflight", fake_preflight)
     monkeypatch.setattr(subprocess, "run", fake_run)
