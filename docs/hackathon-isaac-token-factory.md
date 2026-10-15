@@ -1,28 +1,29 @@
-# Hackathon Guide — Isaac Lab Franka + Token Factory (sim visuals → serverless reasoner)
+# Hackathon Guide — Isaac Lab Franka + Token Factory (sim visuals → MiniMax-M3)
 
 [Docs](README.md)
 
-> Historical Cosmos3 recipe: its public hosted model was retired under the
+> This guide uses the current hosted vision/reasoning default,
+> `MiniMaxAI/MiniMax-M3`, through `https://api.tokenfactory.nebius.com/v1/`.
+> The public `nvidia/Cosmos3-Super-Reasoner` route was retired under the
 > [August 2026 notice](https://docs.tokenfactory.nebius.com/august-2026-deprecation-notice).
-> Use the current [Token Factory guide](workbench/token-factory.md) and
-> [migration verification](workbench/token-factory-deprecation-verification.md)
-> for current defaults. Explicit legacy model IDs require a serving endpoint;
-> this page does not establish their current availability.
+> A dedicated or self-hosted Cosmos3 Reasoner is a separate backend: do not
+> substitute its name for a MiniMax request. Confirm the selected model with
+> `npa workbench token-factory models`; availability is key-scoped.
 
 This guide shows **one complete pipeline** that pairs an **existing workbench tool**
 (Isaac Lab on Nebius GPU) with **Nebius Token Factory** (zero-GPU hosted inference).
 You simulate a **Franka arm** in Isaac Lab, capture RGB frames from the rollout,
-then call **`nvidia/Cosmos3-Super-Reasoner`** to describe the scene and produce a
+then call **`MiniMaxAI/MiniMax-M3`** to describe the scene and produce a
 manipulation plan.
 
 | Piece | What it does | GPU? |
 |-------|----------------|------|
 | **Isaac Lab** (`Isaac-Lift-Cube-Franka-v0`) | Headless Franka lift-cube sim; writes PNG frames | Yes (L40S / RTX Pro) |
-| **Token Factory** (`token-factory reason`) | Reads frames (local or S3); returns scene + plan JSON | No (hosted API) |
+| **Token Factory** (`token-factory reason`, MiniMax-M3) | Reads frames (local or S3); returns scene + plan JSON | No (hosted API) |
 
 Prerequisites for the **serverless** stage match
 [hackathon-cosmos3-reasoner.md](hackathon-cosmos3-reasoner.md) (Token Factory key,
-`npa configure`, `verify`). The **sim** stage additionally needs Nebius Kubernetes
+`npa configure`, `verify`, and key-scoped `models`). The **sim** stage additionally needs Nebius Kubernetes
 + the `npa-isaac-lab` image (RT-core GPU).
 
 ---
@@ -98,7 +99,7 @@ result = reason_scene(
     input_path="docs/assets/hackathon/isaac-franka-lift-cube",
     output_path="/tmp/out",
     task="Describe the Franka scene and give a lift plan.",
-    model="nvidia/Cosmos3-Super-Reasoner",
+    model="MiniMaxAI/MiniMax-M3",
     max_images=8,
     max_tokens=1024,
 )
@@ -119,7 +120,7 @@ npa workbench token-factory reason \
   --input-path ./docs/assets/hackathon/isaac-franka-lift-cube \
   --output-path ./out \
   --task "These frames are from Isaac Lab Franka lift-cube. What is happening and what should the robot do next?" \
-  --model nvidia/Cosmos3-Super-Reasoner \
+  --model MiniMaxAI/MiniMax-M3 \
   --max-images 8 \
   --max-tokens 1024 \
   --output json
@@ -193,14 +194,14 @@ environment origin.
 | `CUDA GPU is required` on capture | Run capture on L40S / RTX Pro; Isaac Lab needs RT cores |
 | `No frames captured` | Confirm `Isaac-Lift-Cube-Franka-v0` and `enable_cameras`; check Isaac image version |
 | `NEBIUS_TOKEN_FACTORY_KEY is not set` | `export NEBIUS_TOKEN_FACTORY_KEY`, then `npa configure --no-interactive --save-env-credentials` |
-| Reasoner returns empty `analysis` | Increase `--max-tokens`; confirm Cosmos3 model in `npa workbench token-factory models` |
+| Reasoner returns empty `analysis` | Increase `--max-tokens`; confirm `MiniMaxAI/MiniMax-M3` is present in `npa workbench token-factory models` |
 | SkyPilot stage 1 can't find NPA repo | Set `NPA_REPO_ROOT=/opt/nebius-physical-ai` or bake repo into image |
 
 ---
 
 ## Related docs
 
-- [hackathon-cosmos3-reasoner.md](hackathon-cosmos3-reasoner.md) — Token Factory only (no sim)
+- [hackathon-cosmos3-reasoner.md](hackathon-cosmos3-reasoner.md) — Token Factory vision reasoning (no sim)
 - [Compose cloud and Token Factory workloads](workbench/composing-cloud-and-token-factory.md).
 - [Combine LeRobot and Token Factory](workbench/cookbooks/tokenfactory-compute-combos.md).
 - Isaac Lab tool skill: `skills/tools/isaac-lab/SKILL.md`
