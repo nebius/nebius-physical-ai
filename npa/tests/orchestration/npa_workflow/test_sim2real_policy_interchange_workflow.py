@@ -158,7 +158,7 @@ def test_isaac_default_leaves_standard_runtime_controller_headroom() -> None:
 
     assert spec.config["isaac_cpus"] == "12"
     assert len(isaac_tasks) == 1
-    assert isaac_tasks[0]["resources"]["cpus"] == "12"
+    assert isaac_tasks[0]["resources"]["cpus"] == "12+"
 
 
 def test_non_franka_acceptance_uses_standard_runtime_and_real_native_seams() -> None:
