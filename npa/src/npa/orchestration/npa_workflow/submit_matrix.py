@@ -1651,6 +1651,38 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "sim2real-policy-interchange-smolvla.yaml",
+        "multi",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HF_TOKEN"),
+        plan_only=True,
+        plan_only_justification=(
+            "Execution requires qualified immutable LeRobot and Isaac images, an "
+            "exact operator-authorized SmolVLA revision, scoped service RBAC, and "
+            "pre-provisioned durable policy and Isaac cache PVCs."
+        ),
+        runtime=True,
+        notes=(
+            "Model-neutral Franka surface-placement graph with native SmolVLA "
+            "training, exact reload, private serving, matched gold trials, and cleanup."
+        ),
+    ),
+    SubmitLiveCase(
+        "sim2real-policy-interchange-non-franka.yaml",
+        "multi",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        plan_only=True,
+        plan_only_justification=(
+            "Execution requires an operator-prepared immutable non-Franka robot/object "
+            "bundle, task-compatible native checkpoint, qualified runtime images, scoped "
+            "service RBAC, and pre-provisioned durable policy and Isaac cache PVCs."
+        ),
+        runtime=True,
+        notes=(
+            "Bounded six-axis non-Franka, non-cube rigid-object native SmolVLA "
+            "execution acceptance; execution validity remains separate from task success."
+        ),
+    ),
+    SubmitLiveCase(
         "byof.yaml",
         "multi",
         plan_only=True,

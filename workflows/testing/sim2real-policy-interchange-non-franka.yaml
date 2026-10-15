@@ -19,6 +19,7 @@ config:
   isaac_image: ""
   runtime_image: ""
   isaac_cache_pvc: ""
+  policy_cache_pvc: ""
   preparation_uri: "s3://example-bucket/private-profiles/ur10e-spool-smolvla/preparation.json"
   non_franka_prepared_robot_uri: "s3://example-bucket/private-profiles/ur10e-spool-smolvla/prepared-isaac/"
   adapted_checkpoint_uri: "s3://example-bucket/private-checkpoints/smolvla-ur10e-spool/"
@@ -33,7 +34,6 @@ config:
   service_hardware_topology: single-b200
   service_server_cpus: "16"
   service_server_memory: 96Gi
-  service_cache_size: 40Gi
   service_server_ready_timeout_seconds: "1200"
   non_franka_decisions: "192"
   non_franka_seed: "20301014"

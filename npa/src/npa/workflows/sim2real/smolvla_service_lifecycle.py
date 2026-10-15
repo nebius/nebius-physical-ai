@@ -62,8 +62,7 @@ def _labels(run_id: str, role: str, deployment: str) -> dict[str, str]:
     }
 
 
-def _download_program(checkpoint_uri: str) -> str:
-    target = "/workspace/policy"
+def _download_program(checkpoint_uri: str, target: str) -> str:
     if checkpoint_uri.startswith("s3://"):
         from urllib.parse import urlparse
 
@@ -93,14 +92,14 @@ snapshot_download(repo_id={match.group("repo")!r},revision={match.group("revisio
 """
 
 
-def _adapter_download_program(adapter_uri: str) -> str:
+def _adapter_download_program(adapter_uri: str, target: str) -> str:
     from urllib.parse import urlparse
 
     parsed = urlparse(adapter_uri)
     if parsed.scheme != "s3" or not parsed.netloc or not parsed.path.strip("/"):
         raise SmolVLAServiceError("adapter URI must name one s3:// object")
     return f"""import boto3,os,pathlib
-target=pathlib.Path('/workspace/adapter.json')
+target=pathlib.Path({target!r})
 client=boto3.client('s3',endpoint_url=os.environ['AWS_ENDPOINT_URL'])
 client.download_file({parsed.netloc!r},{parsed.path.lstrip("/")!r},str(target))
 """
@@ -113,29 +112,54 @@ def build_manifests(args: argparse.Namespace) -> dict[str, dict[str, Any]]:
         raise SmolVLAServiceError("baked source commit must be 40 lowercase hex")
     if not re.fullmatch(r"[a-z0-9](?:[-a-z0-9]*[a-z0-9])?", args.auth_secret):
         raise SmolVLAServiceError("auth secret must be a Kubernetes DNS label")
+    if not re.fullmatch(
+        r"[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?", args.policy_cache_pvc
+    ):
+        raise SmolVLAServiceError(
+            "policy cache PVC must be an explicit Kubernetes DNS subdomain"
+        )
     names = resource_names(args.run_id, args.checkpoint_role)
     labels = _labels(args.run_id, args.checkpoint_role, names["deployment"])
     selector = {"app": names["deployment"]}
     python = "/opt/lerobot/venv/bin/python"
+    policy_root = f"/workspace/{names['deployment']}"
+    policy_path = f"{policy_root}/policy"
+    adapter_path = f"{policy_root}/adapter.json"
+    checkpoint_identity = hashlib.sha256(args.checkpoint_uri.encode()).hexdigest()
+    checkpoint_marker = f"{policy_root}/checkpoint-{checkpoint_identity}.complete"
     shell = (
         "set -euo pipefail; "
+        + "mkdir -p "
+        + shlex.quote(policy_root)
+        + "; if test -f "
+        + shlex.quote(checkpoint_marker)
+        + "; then test -d "
+        + shlex.quote(policy_path)
+        + "; else test ! -e "
+        + shlex.quote(policy_path)
+        + "; "
         + python
         + " -c "
-        + shlex.quote(_download_program(args.checkpoint_uri))
-        + "; "
+        + shlex.quote(_download_program(args.checkpoint_uri, policy_path))
+        + "; touch "
+        + shlex.quote(checkpoint_marker)
+        + "; fi; "
         + (
             python
             + " -c "
-            + shlex.quote(_adapter_download_program(args.bind_adapter_uri))
+            + shlex.quote(
+                _adapter_download_program(args.bind_adapter_uri, adapter_path)
+            )
             + "; "
             + python
             + " -m npa.workbench.lerobot.policy_container bind-interchange "
-            + "--checkpoint-path /workspace/policy --adapter-spec /workspace/adapter.json "
-            + "--output-json /workspace/base-binding.json; "
+            + f"--checkpoint-path {shlex.quote(policy_path)} "
+            + f"--adapter-spec {shlex.quote(adapter_path)} "
+            + f"--output-json {shlex.quote(policy_root + '/base-binding.json')}; "
             if args.bind_adapter_uri
             else ""
         )
-        + "export NPA_POLICY_CHECKPOINT=/workspace/policy; "
+        + f"export NPA_POLICY_CHECKPOINT={shlex.quote(policy_path)}; "
         + "exec "
         + python
         + " -m npa.workbench.lerobot.policy_container serve --host 0.0.0.0 --port 8080"
@@ -228,7 +252,12 @@ def build_manifests(args: argparse.Namespace) -> dict[str, dict[str, Any]]:
                 },
             }
         ],
-        "volumes": [{"name": "policy", "emptyDir": {"sizeLimit": args.cache_size}}],
+        "volumes": [
+            {
+                "name": "policy",
+                "persistentVolumeClaim": {"claimName": args.policy_cache_pvc},
+            }
+        ],
     }
     if args.gpu_node_selector_key:
         pod_spec["nodeSelector"] = {
@@ -432,6 +461,9 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
             ).hexdigest(),
             "runtime_image": args.runtime_image,
             "source_commit": args.source_commit,
+            "policy_cache_pvc_sha256": hashlib.sha256(
+                args.policy_cache_pvc.encode()
+            ).hexdigest(),
             "service_host": host,
             "port": PORT,
             "public_ingress": False,
@@ -484,7 +516,7 @@ def build_parser() -> argparse.ArgumentParser:
         item.add_argument("--gpu-count", type=int, default=1)
         item.add_argument("--server-cpu", default="8")
         item.add_argument("--server-memory", default="64Gi")
-        item.add_argument("--cache-size", default="40Gi")
+        item.add_argument("--policy-cache-pvc", required=True)
         item.add_argument("--gpu-node-selector-key", default="")
         item.add_argument("--gpu-node-selector-value", default="")
         item.add_argument("--hardware-topology", default="single-gpu")

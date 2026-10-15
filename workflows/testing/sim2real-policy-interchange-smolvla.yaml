@@ -24,6 +24,7 @@ config:
   isaac_image: ""
   runtime_image: "registry.example.invalid/lerobot@sha256:0000000000000000000000000000000000000000000000000000000000000000"
   isaac_cache_pvc: ""
+  policy_cache_pvc: ""
   base_checkpoint_uri: "hf://lerobot/smolvla_base@5e8d12a6e2975b0e5e5fce7c8caf47c371d257b6"
   prepared_base_checkpoint_uri: "{{config.root_uri}}/stage_04_artifact/prepared-base/"
   base_service_checkpoint_uri: "{{config.prepared_base_checkpoint_uri}}"
@@ -70,7 +71,6 @@ config:
   service_hardware_topology: single-b200
   service_server_cpus: "16"
   service_server_memory: 96Gi
-  service_cache_size: 40Gi
   service_server_ready_timeout_seconds: "1200"
 
   preparation_uri: "{{config.root_uri}}/stage_01_prepare/preparation.json"

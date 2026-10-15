@@ -28,7 +28,7 @@ def _args(**updates):
         "gpu_count": 1,
         "server_cpu": "8",
         "server_memory": "64Gi",
-        "cache_size": "40Gi",
+        "policy_cache_pvc": "run-policy-cache",
         "gpu_node_selector_key": "nebius.com/gpu-name",
         "gpu_node_selector_value": "RTXPRO6000",
         "hardware_topology": "single-rtxpro6000",
@@ -56,12 +56,19 @@ def test_base_service_is_digest_pinned_private_and_binds_exact_revision(
     shell = container["command"][2]
     assert container["image"].endswith("b" * 64)
     assert "snapshot_download" in shell and "a" * 40 in shell
+    assert ".complete" in shell and "if test -f" in shell
     assert "bind-interchange" in shell
     assert deployment["metadata"]["labels"]["app.kubernetes.io/part-of"] == (
         "sim2real-policy-interchange"
     )
     assert manifests["service"]["spec"]["type"] == "ClusterIP"
     assert container["env"][1]["valueFrom"]["secretKeyRef"]["key"] == "auth_token"
+    volume = deployment["spec"]["template"]["spec"]["volumes"][0]
+    assert volume == {
+        "name": "policy",
+        "persistentVolumeClaim": {"claimName": "run-policy-cache"},
+    }
+    assert "emptyDir" not in volume
 
 
 def test_adapted_private_checkpoint_uses_ephemeral_owned_secret(
@@ -103,6 +110,8 @@ def test_service_rejects_mutable_image_and_unpinned_hf_revision(
         build_manifests(_args(runtime_image="registry.example.invalid/lerobot:latest"))
     with pytest.raises(SmolVLAServiceError, match="40-hex"):
         build_manifests(_args(checkpoint_uri="hf://lerobot/smolvla_base@main"))
+    with pytest.raises(SmolVLAServiceError, match="policy cache PVC"):
+        build_manifests(_args(policy_cache_pvc=""))
 
 
 def test_resource_names_are_deterministic_and_role_separated() -> None:
@@ -141,3 +150,4 @@ def test_start_receipt_binds_loaded_checkpoint_and_private_auth(
     assert receipt["application_authentication"] == "kubernetes_secret_bearer"
     assert receipt["checkpoint"]["tensor_count"] == 123
     assert receipt["interchange"]["manifest_sha256"] == "e" * 64
+    assert receipt["policy_cache_pvc_sha256"]
