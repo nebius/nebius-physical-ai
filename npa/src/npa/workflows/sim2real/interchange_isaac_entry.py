@@ -12,6 +12,10 @@ import tempfile
 
 from npa.workflows.lerobot_transfer_data import materialize, publish, write_json
 from npa.workflows.sim2real.workflow_io import read_json
+from npa.workflows.sim2real.workflow_io import (
+    POLICY_INTERCHANGE_COMPONENT_SCHEMA,
+    publish_component_record,
+)
 from npa.workflows.sim2real import isaac_robot_asset
 
 
@@ -146,7 +150,19 @@ def run(args: argparse.Namespace) -> dict:
             raise RuntimeError("native execution did not consume the fetched robot USD")
         (output / "isaac-runtime.log").write_bytes(log.read_bytes())
         publish(output, args.output_uri)
-        return report
+    publish_component_record(
+        component_schema=POLICY_INTERCHANGE_COMPONENT_SCHEMA,
+        root_uri=args.component_root_uri,
+        stage=args.component_stage,
+        name=f"policy_interchange_non_franka_{args.policy_role}_execution",
+        tier="WORKS",
+        evidence=(
+            "Executed the geometry-aware native teacher and applied real typed "
+            f"{args.policy_role} policy actions to the sealed non-Franka task."
+        ),
+        artifacts={"execution": args.output_uri},
+    )
+    return report
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -155,6 +171,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--preparation-uri", required=True)
     parser.add_argument("--service-receipt-uri", required=True)
     parser.add_argument("--output-uri", required=True)
+    parser.add_argument("--component-root-uri", required=True)
+    parser.add_argument("--component-stage", type=int, choices=(6, 11), required=True)
+    parser.add_argument("--policy-role", choices=("base", "adapted"), required=True)
     parser.add_argument("--decisions", type=int, required=True)
     parser.add_argument("--seed", type=int, required=True)
     return parser

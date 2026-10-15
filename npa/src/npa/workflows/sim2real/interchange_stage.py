@@ -652,6 +652,95 @@ def _finalize(args: argparse.Namespace) -> dict[str, Any]:
     return result
 
 
+def _non_franka_finalize(args: argparse.Namespace) -> dict[str, Any]:
+    """Bind native non-Franka base/adapted execution without overclaiming success."""
+
+    with tempfile.TemporaryDirectory(prefix="npa-non-franka-finalize-") as directory:
+        work = Path(directory)
+        baseline = read_json(args.baseline_uri, directory=work / "baseline")
+        adapted = read_json(args.adapted_uri, directory=work / "adapted")
+        training = read_json(args.training_uri, directory=work / "training")
+        reload = read_json(args.reload_uri, directory=work / "reload")
+        external = read_json(args.external_seam_uri, directory=work / "external")
+        expected = "npa.sim2real.policy_interchange.non_franka_execution.v1"
+        if baseline.get("schema") != expected or adapted.get("schema") != expected:
+            raise InterchangeContractError("non-Franka execution reports are invalid")
+        same_protocol = all(
+            baseline.get(name) == adapted.get(name)
+            for name in (
+                "robot_identity",
+                "object_identity",
+                "task_identity",
+                "seed",
+                "decisions",
+                "success_contract",
+            )
+        )
+        before = baseline.get("service_provenance") or {}
+        after = adapted.get("service_provenance") or {}
+        if (
+            not same_protocol
+            or before.get("source_commit") != after.get("source_commit")
+            or before.get("image_digest") != after.get("image_digest")
+        ):
+            raise InterchangeContractError(
+                "non-Franka base and adapted trials must share one sealed protocol/runtime"
+            )
+        if before.get("checkpoint_sha256") == after.get("checkpoint_sha256"):
+            raise InterchangeContractError("adapted checkpoint is not distinct")
+        if (
+            reload.get("schema") != "npa.sim2real.smolvla_reload_validation.v1"
+            or reload.get("status") != "native_checkpoint_reloaded"
+            or (reload.get("interchange") or {}).get("checkpoint_sha256")
+            != after.get("checkpoint_sha256")
+            or training.get("selected_checkpoint_uri") != args.checkpoint_uri
+        ):
+            raise InterchangeContractError(
+                "training, native reload and adapted non-Franka service differ"
+            )
+        result = {
+            "schema": "npa.sim2real.policy_interchange.non_franka_final_report.v1",
+            "run_id": args.run_id,
+            "backend": "lerobot_smolvla",
+            "robot_identity": baseline["robot_identity"],
+            "object_identity": baseline["object_identity"],
+            "task_identity": baseline["task_identity"],
+            "comparison_protocol_identical": True,
+            "baseline_execution_valid": baseline.get("execution_valid") is True,
+            "adapted_execution_valid": adapted.get("execution_valid") is True,
+            "baseline_task_success": baseline.get("task_success") is True,
+            "adapted_task_success": adapted.get("task_success") is True,
+            "improvement_claimed": False,
+            "reason_improvement_withheld": "one paired trial is execution qualification, not a powered task comparison",
+            "cross_model_loss_ranking": False,
+            "checkpoint": {
+                "selected_uri": args.checkpoint_uri,
+                "sha256": after.get("checkpoint_sha256"),
+                "native_reload_verified": True,
+            },
+            "visual_evidence": adapted.get("visual_evidence") or [],
+            "teacher_visual_evidence": (adapted.get("teacher") or {}).get(
+                "visual_evidence"
+            )
+            or [],
+            "physical_robot": external,
+        }
+        write_json(args.output_uri, result, directory=work / "output")
+    publish_component_record(
+        component_schema=POLICY_INTERCHANGE_COMPONENT_SCHEMA,
+        root_uri=args.component_root_uri,
+        stage=14,
+        name="policy_interchange_non_franka_finalize",
+        tier="WORKS",
+        evidence=(
+            "Bound identical-protocol native non-Franka executions and exact reload "
+            "without converting one trial into an improvement claim."
+        ),
+        artifacts={"report": args.output_uri},
+    )
+    return result
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -690,6 +779,19 @@ def build_parser() -> argparse.ArgumentParser:
         "component-root-uri",
     ):
         final.add_argument(f"--{name}", required=True)
+    non_franka_final = commands.add_parser("non-franka-finalize")
+    non_franka_final.add_argument("--run-id", required=True)
+    for name in (
+        "baseline-uri",
+        "adapted-uri",
+        "training-uri",
+        "reload-uri",
+        "checkpoint-uri",
+        "external-seam-uri",
+        "output-uri",
+        "component-root-uri",
+    ):
+        non_franka_final.add_argument(f"--{name}", required=True)
     return parser
 
 
@@ -700,6 +802,7 @@ def main(argv: list[str] | None = None) -> int:
         "external-seam": _external_seam,
         "artifact-preflight": _artifact_preflight,
         "finalize": _finalize,
+        "non-franka-finalize": _non_franka_finalize,
     }[args.command](args)
     print(json.dumps(result, sort_keys=True), flush=True)
     return 0

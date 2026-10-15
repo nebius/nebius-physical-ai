@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from npa.workflows.sim2real import interchange_stage
 from npa.workflows.lerobot_transfer_data import (
     materialize,
     publish,
@@ -20,6 +21,7 @@ from npa.workflows.sim2real.interchange_object_asset import (
 )
 from npa.workflows.sim2real.interchange_stage import (
     _artifact_preflight,
+    _non_franka_finalize,
     assert_execution_profile,
     build_preparation,
     training_adapter,
@@ -440,3 +442,121 @@ def test_franka_execution_profile_accepts_exact_robot_and_cameras() -> None:
     }
 
     assert_execution_profile(preparation, "pi05_franka_surface_v1")
+
+
+def test_non_franka_finalize_binds_protocol_reload_and_withholds_improvement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from argparse import Namespace
+
+    checkpoint_uri = "s3://private-run/checkpoints/step-10000"
+    protocol = {
+        "schema": "npa.sim2real.policy_interchange.non_franka_execution.v1",
+        "robot_identity": DIGEST_A,
+        "object_identity": DIGEST_B,
+        "task_identity": "surface-placement-v1",
+        "seed": 17,
+        "decisions": [{"step": 0, "action": [0.0] * 7}],
+        "success_contract": [
+            "contact",
+            "grasp",
+            "lift",
+            "transport",
+            "release",
+            "support_contact",
+            "stable",
+        ],
+        "execution_valid": True,
+        "task_success": False,
+    }
+    baseline = {
+        **protocol,
+        "service_provenance": {
+            "source_commit": "c" * 40,
+            "image_digest": f"sha256:{DIGEST_A}",
+            "checkpoint_sha256": DIGEST_A,
+        },
+    }
+    adapted = {
+        **protocol,
+        "task_success": True,
+        "service_provenance": {
+            "source_commit": "c" * 40,
+            "image_digest": f"sha256:{DIGEST_A}",
+            "checkpoint_sha256": DIGEST_B,
+        },
+        "visual_evidence": ["s3://private-run/evidence/adapted.mp4"],
+        "teacher": {"visual_evidence": ["s3://private-run/evidence/teacher.mp4"]},
+    }
+    payloads = {
+        "baseline": baseline,
+        "adapted": adapted,
+        "training": {"selected_checkpoint_uri": checkpoint_uri},
+        "reload": {
+            "schema": "npa.sim2real.smolvla_reload_validation.v1",
+            "status": "native_checkpoint_reloaded",
+            "interchange": {"checkpoint_sha256": DIGEST_B},
+        },
+        "external": {"status": "SEAM", "executed": False},
+    }
+    written: dict = {}
+    component: dict = {}
+    monkeypatch.setattr(
+        interchange_stage,
+        "read_json",
+        lambda uri, *, directory: payloads[uri],
+    )
+    monkeypatch.setattr(
+        interchange_stage,
+        "write_json",
+        lambda uri, value, *, directory: written.update(value),
+    )
+    monkeypatch.setattr(
+        interchange_stage,
+        "publish_component_record",
+        lambda **kwargs: component.update(kwargs),
+    )
+
+    result = _non_franka_finalize(
+        Namespace(
+            run_id="run-non-franka",
+            baseline_uri="baseline",
+            adapted_uri="adapted",
+            training_uri="training",
+            reload_uri="reload",
+            checkpoint_uri=checkpoint_uri,
+            external_seam_uri="external",
+            output_uri=str(tmp_path / "report.json"),
+            component_root_uri="s3://private-run/components",
+        )
+    )
+
+    assert result == written
+    assert result["baseline_task_success"] is False
+    assert result["adapted_task_success"] is True
+    assert result["improvement_claimed"] is False
+    assert result["checkpoint"]["sha256"] == DIGEST_B
+    assert component["stage"] == 14
+    assert component["name"] == "policy_interchange_non_franka_finalize"
+
+    payloads["adapted"] = {
+        **adapted,
+        "service_provenance": {
+            **adapted["service_provenance"],
+            "source_commit": "d" * 40,
+        },
+    }
+    with pytest.raises(InterchangeContractError, match="sealed protocol/runtime"):
+        _non_franka_finalize(
+            Namespace(
+                run_id="run-non-franka",
+                baseline_uri="baseline",
+                adapted_uri="adapted",
+                training_uri="training",
+                reload_uri="reload",
+                checkpoint_uri=checkpoint_uri,
+                external_seam_uri="external",
+                output_uri=str(tmp_path / "report.json"),
+                component_root_uri="s3://private-run/components",
+            )
+        )

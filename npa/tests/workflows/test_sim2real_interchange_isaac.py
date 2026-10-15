@@ -5,6 +5,7 @@ from pathlib import Path
 import struct
 import zlib
 
+import numpy as np
 import pytest
 
 from npa.workflows.sim2real.interchange_contract import (
@@ -27,8 +28,10 @@ from npa.workflows.sim2real.interchange_isaac_runtime import (
     _axis_angle_error,
     _update_events,
     _visual_evidence_decisions,
+    _write_teacher_episode,
     _write_png_rgb8,
 )
+from npa.workflows.sim2real.interchange_teacher_runtime import _scenario_offset
 from npa.workflows.franka_rl_environment import policy_interchange_timing
 
 
@@ -229,6 +232,101 @@ def test_teacher_uses_offset_object_reference_and_grasp_frames() -> None:
     )
     assert waypoints[2].gripper_closed is True
     assert waypoints[6].gripper_closed is False
+
+
+def test_successful_teacher_episode_preserves_dynamic_six_axis_policy_state(
+    tmp_path: Path,
+) -> None:
+    robot = _profile(6)
+    prop = RigidObjectProfile(
+        identity="offset-spool",
+        source_uri="s3://example/assets/spool.usda",
+        source_sha256="a" * 64,
+        bundle_sha256="b" * 64,
+        kind="rigid",
+        units_m_per_unit=1.0,
+        scale_xyz=(1.0, 1.0, 1.0),
+        world_from_root=Transform((0.48, -0.14, 0.0), (0.0, 0.0, 0.0, 1.0)),
+        root_from_reference=Transform((0.012, -0.006, 0.0), (0.0, 0.0, 0.0, 1.0)),
+        root_from_grasp=Transform((0.012, -0.006, 0.026), (0.0, 0.0, 0.0, 1.0)),
+        grasp_extents_m=(0.054, 0.054, 0.052),
+        collision_declared=True,
+        inertia_declared=True,
+        material_declared=True,
+        mass_kg=0.12,
+        static_friction=0.8,
+        dynamic_friction=0.6,
+        restitution=0.05,
+        grasp_axis="y",
+    )
+    task = SurfacePlacementTask(
+        identity="surface-placement-v1",
+        target_world_xyz_m=(0.55, 0.15, 0.0),
+        approach_clearance_m=0.08,
+        lift_delta_m=0.08,
+        retreat_distance_m=0.1,
+    )
+    pixels = np.arange(12, dtype=np.uint8).reshape(2, 2, 3).tobytes()
+    frames = [
+        {
+            "scene": (pixels, 2, 2, "exterior"),
+            "tool": (pixels[::-1], 2, 2, "wrist"),
+        }
+        for _ in range(2)
+    ]
+    states = [[0.0] * 7, [0.1] * 7]
+    actions = [[0.1] * 7, [0.2] * 7]
+    teacher = {
+        "task_success": True,
+        "ordered_event_steps": {
+            name: index for index, name in enumerate(task.success_events)
+        },
+    }
+
+    metadata = _write_teacher_episode(
+        directory=tmp_path / "episode_0000",
+        robot=robot,
+        task=task,
+        prop=prop,
+        states=states,
+        actions=actions,
+        camera_frames=frames,
+        timestamps=[0.0, 1.0 / 15.0],
+        teacher=teacher,
+    )
+
+    episode = tmp_path / "episode_0000"
+    assert np.load(episode / "state.npy").shape == (2, 7)
+    assert np.load(episode / "actions.npy").shape == (2, 7)
+    assert np.load(episode / "obs_workspace.npy").shape == (2, 2, 2, 3)
+    assert np.load(episode / "obs_wrist.npy").shape == (2, 2, 2, 3)
+    assert metadata["action_names"] == [*robot.arm_joint_names, "gripper"]
+    assert metadata["privileged_object_state_policy_input"] is False
+
+
+def test_teacher_scenario_layouts_are_deterministic_and_split_disjoint() -> None:
+    train = [_scenario_offset("train", index) for index in range(32)]
+    validation = [_scenario_offset("validation", index) for index in range(32)]
+    gold = [_scenario_offset("gold", index) for index in range(32)]
+    assert train == [_scenario_offset("train", index) for index in range(32)]
+    assert max(value[0] for value in train) < min(value[0] for value in validation)
+    assert max(value[0] for value in validation) < min(value[0] for value in gold)
+    assert len({*train, *validation, *gold}) == 96
+
+
+def test_failed_teacher_episode_cannot_enter_training(tmp_path: Path) -> None:
+    with pytest.raises(RuntimeError, match="only successful"):
+        _write_teacher_episode(
+            directory=tmp_path / "episode_0000",
+            robot=_profile(6),
+            task=type("Task", (), {"identity": "task"})(),
+            prop=type("Prop", (), {"identity": "prop"})(),
+            states=[],
+            actions=[],
+            camera_frames=[],
+            timestamps=[],
+            teacher={"task_success": False},
+        )
 
 
 def test_teacher_orientation_error_is_sign_invariant() -> None:

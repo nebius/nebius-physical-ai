@@ -429,6 +429,82 @@ def _teacher_camera_capture(
     return hashes, frames, timestamps
 
 
+def _write_teacher_episode(
+    *,
+    directory: Path,
+    robot: Any,
+    task: Any,
+    prop: Any,
+    states: list[list[float]],
+    actions: list[list[float]],
+    camera_frames: list[dict[str, tuple[bytes, int, int, str]]],
+    timestamps: list[float],
+    teacher: dict[str, Any],
+) -> dict[str, Any]:
+    """Materialize one native teacher rollout in the generic adapter layout."""
+
+    import numpy as np
+
+    if not teacher.get("task_success"):
+        raise RuntimeError("only successful native teacher episodes may enter training")
+    count = len(states)
+    if not count or not (
+        len(actions) == len(camera_frames) == len(timestamps) == count
+    ):
+        raise RuntimeError("teacher dataset streams have inconsistent lengths")
+    expected_dimension = len(robot.measured_state_names)
+    if any(len(row) != expected_dimension for row in [*states, *actions]):
+        raise RuntimeError("teacher state/action width differs from the sealed robot")
+    by_role: dict[str, list[Any]] = {"exterior": [], "wrist": []}
+    for frame_set in camera_frames:
+        roles: dict[str, Any] = {}
+        for payload, width, height, role in frame_set.values():
+            if role in roles:
+                raise RuntimeError(f"teacher episode has multiple {role!r} cameras")
+            pixels = np.frombuffer(payload, dtype=np.uint8).reshape(height, width, 3)
+            roles[role] = pixels.copy()
+        if set(roles) != set(by_role):
+            raise RuntimeError(
+                "teacher episode requires one exterior and one wrist view"
+            )
+        for role, pixels in roles.items():
+            by_role[role].append(pixels)
+    directory.mkdir(parents=True, exist_ok=True)
+    outputs = (
+        "obs_workspace.npy",
+        "obs_wrist.npy",
+        "state.npy",
+        "actions.npy",
+        "timestamps.npy",
+        "metadata.json",
+    )
+    if any((directory / name).exists() for name in outputs):
+        raise RuntimeError("teacher episode output already exists")
+    np.save(directory / "obs_workspace.npy", np.stack(by_role["exterior"]))
+    np.save(directory / "obs_wrist.npy", np.stack(by_role["wrist"]))
+    np.save(directory / "state.npy", np.asarray(states, dtype=np.float32))
+    np.save(directory / "actions.npy", np.asarray(actions, dtype=np.float32))
+    np.save(directory / "timestamps.npy", np.asarray(timestamps, dtype=np.float64))
+    metadata = {
+        "schema": "npa.sim2real.policy_interchange.teacher_episode.v1",
+        "robot_identity": robot.identity,
+        "object_identity": prop.identity,
+        "task_identity": task.identity,
+        "task": PROMPT,
+        "frames": count,
+        "observation_state_names": list(robot.measured_state_names),
+        "observation_state_units": list(robot.measured_state_units),
+        "action_representation": "absolute_joint_position",
+        "action_names": list(robot.measured_state_names),
+        "action_units": list(robot.measured_state_units),
+        "gripper_semantics": robot.gripper.model_semantics,
+        "privileged_object_state_policy_input": False,
+        "ordered_event_steps": teacher["ordered_event_steps"],
+    }
+    write_json(directory / "metadata.json", metadata)
+    return metadata
+
+
 def _run_teacher(
     *,
     gym: Any,
@@ -439,6 +515,7 @@ def _run_teacher(
     task: Any,
     object_usd_path: Path,
     control_hz: float,
+    episode_directory: Path | None = None,
 ) -> dict[str, Any]:
     """Execute one geometry-aware native teacher before policy evaluation."""
 
@@ -482,6 +559,10 @@ def _run_teacher(
         physics: list[dict[str, Any]] = []
         camera_hashes: list[dict[str, str]] = []
         camera_clocks: list[dict[str, Any]] = []
+        dataset_states: list[list[float]] = []
+        dataset_actions: list[list[float]] = []
+        dataset_frames: list[dict[str, tuple[bytes, int, int, str]]] = []
+        dataset_timestamps: list[float] = []
         visual_evidence: list[dict[str, Any]] = []
         global_step = 0
         for waypoint in surface_teacher_waypoints(prop, task):
@@ -490,6 +571,7 @@ def _run_teacher(
                 hashes, frames, capture_timestamps = _teacher_camera_capture(
                     native, robot
                 )
+                measured_before = measured_policy_state(native, robot)
                 if phase_step == 0:
                     for key, (payload, width, height, role) in frames.items():
                         relative = (
@@ -523,6 +605,7 @@ def _run_teacher(
                 if bool(terminated[0]) or bool(truncated[0]):
                     raise RuntimeError(f"native teacher reset during {waypoint.phase}")
                 sample = _sample(native, robot, prop, task, initial_z)
+                measured_after = measured_policy_state(native, robot)
                 _update_events(context, sample, global_step)
                 controls.append(
                     {
@@ -546,6 +629,14 @@ def _run_teacher(
                         "resulting_state_time_s": after,
                     }
                 )
+                dataset_states.append(
+                    [measured_before[name] for name in robot.measured_state_names]
+                )
+                dataset_actions.append(
+                    [measured_after[name] for name in robot.measured_state_names]
+                )
+                dataset_frames.append(frames)
+                dataset_timestamps.append(before)
                 global_step += 1
                 converged = position_error < 0.012 and orientation_error < 0.08
                 consecutive = consecutive + 1 if converged else 0
@@ -558,7 +649,7 @@ def _run_teacher(
                 raise RuntimeError(
                     f"geometry-aware teacher failed to reach {waypoint.phase}"
                 )
-        return {
+        result = {
             "schema": "npa.sim2real.policy_interchange.native_teacher.v1",
             "execution_valid": bool(controls),
             "task_success": tuple(context["ordered_event_steps"])
@@ -586,6 +677,19 @@ def _run_teacher(
             "visual_evidence": visual_evidence,
             "privileged_object_state_policy_input": False,
         }
+        if episode_directory is not None:
+            result["dataset_episode"] = _write_teacher_episode(
+                directory=episode_directory,
+                robot=robot,
+                task=task,
+                prop=prop,
+                states=dataset_states,
+                actions=dataset_actions,
+                camera_frames=dataset_frames,
+                timestamps=dataset_timestamps,
+                teacher=result,
+            )
+        return result
     finally:
         env.close()
 
@@ -774,6 +878,15 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "policy_identity": policy.identity,
             "checkpoint_sha256": policy.checkpoint_sha256,
             "normalization_identity": policy.normalization_identity,
+            "service_provenance": {
+                "source_commit": receipt.get("source_commit"),
+                "runtime_image": receipt.get("runtime_image"),
+                "image_digest": str(receipt.get("runtime_image") or "").rsplit(
+                    "@sha256:", 1
+                )[-1],
+                "checkpoint_sha256": loaded.get("checkpoint_sha256"),
+                "checkpoint_manifest_sha256": loaded.get("manifest_sha256"),
+            },
             "service_reset": reset,
             "teacher": teacher,
             "seed": args.seed,

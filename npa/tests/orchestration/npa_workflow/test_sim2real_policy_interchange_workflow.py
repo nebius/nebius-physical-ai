@@ -134,21 +134,62 @@ def test_non_franka_acceptance_uses_standard_runtime_and_real_native_seams() -> 
     spec = load_spec(NON_FRANKA_SPEC)
     plan = build_plan(spec, run_id="ur10e-spool-smolvla")
     assert [step.state for step in plan.steps] == [
+        "prepare-contract",
+        "collect-expert",
+        "export-dataset",
+        "artifact-preflight",
+        "start-base-service",
+        "evaluate-base",
+        "cleanup-base-service",
+        "train-native",
+        "reload-validation",
         "start-adapted-service",
-        "execute-non-franka",
+        "evaluate-adapted",
+        "physical-robot-seam",
         "cleanup-adapted-service",
+        "finalize",
     ]
-    execute = plan.steps[1]
-    assert spec.states["execute-non-franka"].tool_ref == (
+    steps = {step.state: step for step in plan.steps}
+    collect = steps["collect-expert"]
+    export = steps["export-dataset"]
+    execute = steps["evaluate-adapted"]
+    assert spec.states["evaluate-adapted"].tool_ref == (
         "workbench.sim2real.policy_interchange_non_franka_execute"
     )
+    assert collect.argv[:3] == [
+        "/opt/npa/sim/venv/bin/python",
+        "-m",
+        "npa.workflows.sim2real.interchange_teacher_collect",
+    ]
+    assert _value(collect.argv, "--train-episodes") == "32"
+    assert export.argv[:3] == [
+        "python3",
+        "-m",
+        "npa.workflows.sim2real.interchange_teacher_export",
+    ]
     assert execute.argv[:3] == [
         "/opt/npa/sim/venv/bin/python",
         "-m",
         "npa.workflows.sim2real.interchange_isaac_entry",
     ]
-    assert _value(execute.argv, "--preparation-uri") == spec.config["preparation_uri"]
-    assert _value(execute.argv, "--service-receipt-uri").endswith("/service/start.json")
+    assert _value(execute.argv, "--preparation-uri").endswith(
+        "/stage_01_prepare/preparation.json"
+    )
+    assert _value(execute.argv, "--service-receipt-uri").endswith(
+        "/stage_10_adapted_service/start.json"
+    )
+    base = steps["evaluate-base"]
+    assert _value(base.argv, "--seed") == _value(execute.argv, "--seed")
+    assert _value(base.argv, "--decisions") == _value(execute.argv, "--decisions")
+    components = [
+        artifact.uri
+        for state in spec.states.values()
+        for artifact in state.outputs
+        if artifact.schema == "npa.sim2real.policy_interchange.component_record.v1"
+    ]
+    assert sorted(uri.rsplit("_", 1)[-1] for uri in components) == [
+        f"{stage:02d}.json" for stage in range(1, 15)
+    ]
     description = str(spec.metadata["description"]).lower()
-    assert "execution validity separately" in description
-    assert "does not claim" in description
+    assert "execution validity separate" in description
+    assert "statistical improvement" in description
