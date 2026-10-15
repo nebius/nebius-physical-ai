@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -33,6 +34,10 @@ from npa.workflows.sim2real.interchange_isaac_runtime import (
     _write_png_rgb8,
 )
 from npa.workflows.sim2real.interchange_teacher_runtime import _scenario_offset
+from npa.workflows.sim2real.interchange_teacher_export import (
+    EPISODE_FILES,
+    _validated_episodes,
+)
 from npa.workflows.franka_rl_environment import policy_interchange_timing
 
 
@@ -331,6 +336,76 @@ def test_failed_teacher_episode_cannot_enter_training(tmp_path: Path) -> None:
             timestamps=[],
             teacher={"task_success": False},
         )
+
+
+def test_teacher_export_requires_the_complete_native_trace(tmp_path: Path) -> None:
+    robot = _profile(6)
+    task = type(
+        "Task",
+        (),
+        {
+            "identity": "task",
+            "success_events": ("contact", "stable"),
+        },
+    )()
+    prop = type("Prop", (), {"identity": "prop"})()
+    frame = bytes(range(12))
+    frames = [
+        {
+            "scene": (frame, 2, 2, "exterior"),
+            "tool": (frame[::-1], 2, 2, "wrist"),
+        }
+    ]
+    episode = tmp_path / "splits" / "train" / "episode_0000"
+    _write_teacher_episode(
+        directory=episode,
+        robot=robot,
+        task=task,
+        prop=prop,
+        states=[[0.0] * 7],
+        actions=[[0.1] * 7],
+        camera_frames=frames,
+        timestamps=[0.0],
+        teacher={
+            "schema": "npa.sim2real.policy_interchange.native_teacher.v1",
+            "task_success": True,
+            "ordered_event_steps": {"contact": 0, "stable": 1},
+            "controls": [{"step": 0}],
+            "camera_hashes": [{"scene": "a", "tool": "b"}],
+            "camera_clocks": [
+                {
+                    "capture_timestamps_s": {"scene": 0.0, "tool": 0.0},
+                    "camera_world_poses": {
+                        "scene": {"translation_m": [0.0, 0.0, 0.0]},
+                        "tool": {"translation_m": [0.0, 0.0, 0.0]},
+                    },
+                    "command_application_time_s": 0.0,
+                }
+            ],
+        },
+    )
+    artifacts = {
+        name: hashlib.sha256((episode / name).read_bytes()).hexdigest()
+        for name in EPISODE_FILES
+    }
+    report = {
+        "schema": "npa.sim2real.policy_interchange.teacher_collection.v1",
+        "status": "passed",
+        "all_teacher_episodes_successful": True,
+        "counts": {"train": 1, "validation": 0, "gold": 0},
+        "episodes": [
+            {
+                "split": "train",
+                "episode_index": 0,
+                "task_success": True,
+                "artifacts": artifacts,
+            }
+        ],
+    }
+    assert _validated_episodes(tmp_path, report)["train"] == [episode]
+    (episode / "native_teacher.json").unlink()
+    with pytest.raises(RuntimeError, match="teacher episode bytes differ"):
+        _validated_episodes(tmp_path, report)
 
 
 def test_teacher_orientation_error_is_sign_invariant() -> None:
