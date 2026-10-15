@@ -160,7 +160,9 @@ def _write_png_rgb8(path: Path, payload: bytes, width: int, height: int) -> dict
     )
     encoded = (
         b"\x89PNG\r\n\x1a\n"
-        + _png_chunk("IHDR".encode(), struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        + _png_chunk(
+            "IHDR".encode(), struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+        )
         + _png_chunk("IDAT".encode(), zlib.compress(rows, level=6))
         + _png_chunk("IEND".encode(), b"")
     )
