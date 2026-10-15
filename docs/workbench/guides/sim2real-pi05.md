@@ -427,15 +427,20 @@ padding, MessagePack/WebSocket and explicit sampler-noise coupling remain only
 inside the pi0.5 adapter. SmolVLA instead declares its native action queue and
 requires independently seeded repeated paired task trials.
 
-`sim2real-policy-interchange-non-franka.yaml` is a smaller acceptance graph for
-an already prepared second robot/object profile. Its Isaac bridge derives the
-action dimension from the live action manager, rejects reordered or missing
-joints and links, maps the declared semantic gripper value to physical driver
-joints, republishes the moving wrist camera from its calibrated end-effector
-mount before every capture, and records actual controller targets and causal
-timestamps. The unchanged event order is contact → grasp → lift → transport →
-release → support contact → stable placement. A complete action trace proves
-execution validity; only all ordered measured events prove task success.
+`sim2real-policy-interchange-non-franka.yaml` is the second complete 14-stage
+acceptance graph. It collects successful geometry-aware teacher episodes for
+all three splits, converts only the training split to LeRobotDataset, runs base
+and adapted policies against the same sealed physical protocol, performs native
+SmolVLA training and processor-bound reload, and retains cleanup and factual
+finalization as explicit stages. Its Isaac bridge derives the action dimension
+from the declared robot profile, rejects reordered or missing joints and links,
+maps the declared semantic gripper value to physical driver joints, republishes
+the moving wrist camera from its calibrated end-effector mount before every
+capture, and records actual controller targets and causal timestamps. The
+unchanged event order is contact → grasp → lift → transport → release → support
+contact → stable placement. A complete action trace proves execution validity;
+only all ordered measured events prove task success. One paired execution is
+not treated as a statistically powered improvement comparison.
 
 Current support matrix:
 
