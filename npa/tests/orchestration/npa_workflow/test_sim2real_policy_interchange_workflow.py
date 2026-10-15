@@ -136,6 +136,27 @@ def test_isaac_client_mounts_the_smolvla_auth_variable() -> None:
     assert "NPA_OPENPI_SERVICE_AUTH_TOKEN" not in names
 
 
+def test_runtime_fetch_isaac_stages_use_the_cache_bound_interpreter() -> None:
+    for path, states in (
+        (
+            SPEC,
+            ("collect-expert", "evaluate-base-gold", "evaluate-adapted-gold"),
+        ),
+        (
+            NON_FRANKA_SPEC,
+            ("collect-expert", "evaluate-base", "evaluate-adapted"),
+        ),
+    ):
+        spec = load_spec(path)
+        steps = {step.state: step for step in build_plan(spec, run_id="isaac-shim").steps}
+        assert all(steps[state].argv[0] == "/isaac-sim/python.sh" for state in states)
+        env = spec.resources["isaac"]["kubernetes"]["pod_config"]["spec"][
+            "containers"
+        ][0]["env"]
+        by_name = {item["name"]: item["value"] for item in env if "value" in item}
+        assert by_name["NPA_BAKED_PYTHON"] == "/isaac-sim/python.sh"
+
+
 def test_isaac_default_leaves_standard_runtime_controller_headroom() -> None:
     spec = load_spec(SPEC)
     spec.config["source_sha"] = "0123456789abcdef0123456789abcdef01234567"
@@ -188,7 +209,7 @@ def test_non_franka_acceptance_uses_standard_runtime_and_real_native_seams() -> 
         "workbench.sim2real.policy_interchange_non_franka_execute"
     )
     assert collect.argv[:3] == [
-        "/opt/npa/sim/venv/bin/python",
+        "/isaac-sim/python.sh",
         "-m",
         "npa.workflows.sim2real.interchange_teacher_collect",
     ]
@@ -199,7 +220,7 @@ def test_non_franka_acceptance_uses_standard_runtime_and_real_native_seams() -> 
         "npa.workflows.sim2real.interchange_teacher_export",
     ]
     assert execute.argv[:3] == [
-        "/opt/npa/sim/venv/bin/python",
+        "/isaac-sim/python.sh",
         "-m",
         "npa.workflows.sim2real.interchange_isaac_entry",
     ]

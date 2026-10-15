@@ -80,6 +80,12 @@ PUBLIC_REUSABLE_TOOLREFS: dict[str, str] = {
 }
 
 
+# The public Isaac image intentionally keeps Isaac Sim/Lab out of its layers.
+# This shim binds the operator-owned, integrity-pinned runtime cache before it
+# invokes Python.  The baked controller venv alone cannot import ``isaaclab``.
+_ISAAC_RUNTIME_PYTHON = "/isaac-sim/python.sh"
+
+
 _BYOF_REPO_ARGV = [
     "npa",
     "workbench",
@@ -303,7 +309,7 @@ def _smolvla_service_argv(command: str, role: str) -> list[str]:
 
 def _pi05_closed_loop_argv(role: str) -> list[str]:
     return [
-        "/opt/npa/sim/venv/bin/python",
+        _ISAAC_RUNTIME_PYTHON,
         "-m",
         "npa.workflows.sim2real.pi05_closed_loop_entry",
         "--service-receipt-uri",
@@ -335,7 +341,7 @@ def _pi05_closed_loop_argv(role: str) -> list[str]:
 
 def _smolvla_closed_loop_argv(role: str) -> list[str]:
     return [
-        "/opt/npa/sim/venv/bin/python",
+        _ISAAC_RUNTIME_PYTHON,
         "-m",
         "npa.workflows.sim2real.pi05_closed_loop_entry",
         "--policy-backend",
@@ -3050,7 +3056,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "disjoint object morphologies and scene configurations."
         ),
         argv_template=[
-            "/opt/npa/sim/venv/bin/python",
+            _ISAAC_RUNTIME_PYTHON,
             "-m",
             "npa.workflows.sim2real.pi05_collect_all",
             "--output-root-uri",
@@ -3095,7 +3101,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "publishing the model-neutral ComponentRecord schema."
         ),
         argv_template=[
-            "/opt/npa/sim/venv/bin/python",
+            _ISAAC_RUNTIME_PYTHON,
             "-m",
             "npa.workflows.sim2real.pi05_collect_all",
             "--output-root-uri",
@@ -3123,7 +3129,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "rigid prop under the unchanged released-surface event contract."
         ),
         argv_template=[
-            "/opt/npa/sim/venv/bin/python",
+            _ISAAC_RUNTIME_PYTHON,
             "-m",
             "npa.workflows.sim2real.interchange_isaac_entry",
             "--prepared-robot-uri",
@@ -3153,7 +3159,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "policy on the sealed non-Franka task."
         ),
         argv_template=[
-            "/opt/npa/sim/venv/bin/python",
+            _ISAAC_RUNTIME_PYTHON,
             "-m",
             "npa.workflows.sim2real.interchange_isaac_entry",
             "--prepared-robot-uri",
@@ -3183,7 +3189,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "non-Franka articulation and offset-origin rigid prop."
         ),
         argv_template=[
-            "/opt/npa/sim/venv/bin/python",
+            _ISAAC_RUNTIME_PYTHON,
             "-m",
             "npa.workflows.sim2real.interchange_teacher_collect",
             "--prepared-robot-uri",

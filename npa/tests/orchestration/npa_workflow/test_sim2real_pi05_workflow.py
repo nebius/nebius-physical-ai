@@ -108,6 +108,9 @@ def test_only_isaac_tasks_use_the_configured_graphics_runtime_class() -> None:
         "evaluate-adapted-gold",
     }
     for state in isaac_states:
+        assert next(step for step in plan.steps if step.state == state).argv[0] == (
+            "/isaac-sim/python.sh"
+        )
         pod_spec = tasks[state]["resources"]["kubernetes"]["pod_config"]["spec"]
         _assert_isaac_state_contract(pod_spec)
 
@@ -133,6 +136,7 @@ def _assert_isaac_state_contract(pod_spec: dict) -> None:
     mounts = {item["name"]: item for item in container["volumeMounts"]}
     volumes = {item["name"]: item for item in pod_spec["volumes"]}
     env = {item["name"]: item.get("value") for item in container["env"]}
+    assert env["NPA_BAKED_PYTHON"] == "/isaac-sim/python.sh"
     state_dir = Path(env["NPA_ISAAC_STATE_DIR"])
     assert state_dir.is_absolute() and ".." not in state_dir.parts
     assert mounts["npa-isaac-runtime-cache"]["readOnly"] is True

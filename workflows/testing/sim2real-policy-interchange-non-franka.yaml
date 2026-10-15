@@ -142,7 +142,7 @@ resources:
                 - {name: NPA_ISAAC_CACHE_DIR, value: /opt/isaac-cache}
                 - {name: NPA_ISAAC_CACHE_READONLY, value: "1"}
                 - {name: NPA_ISAAC_BOOTSTRAP_OFFLINE, value: "1"}
-                - {name: NPA_BAKED_PYTHON, value: /opt/npa/sim/venv/bin/python}
+                - {name: NPA_BAKED_PYTHON, value: /isaac-sim/python.sh}
                 - {name: NPA_ISAAC_STATE_DIR, value: /tmp/npa-isaac-state}
                 - {name: NPA_ISAAC_KIT_ARGS, value: "--portable-root /tmp/npa-isaac-state/kit"}
                 - {name: OMNI_USER_DIR, value: /tmp/npa-isaac-state/omni-user}
