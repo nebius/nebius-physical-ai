@@ -254,6 +254,23 @@ def kubernetes_sky_environment(
     from npa.orchestration.skypilot.local_api import ensure_isolated_api
     import yaml
 
+    # Submission readiness runs a short-lived validation API below the durable
+    # workflow API's isolated root.  Authenticate an inherited parent endpoint
+    # against that parent before removing its process-scoped identity from the
+    # child environment.  Passing the verified parent endpoint into
+    # ``sky_environment(scope, ...)`` would correctly be rejected as an attempt
+    # to bind one endpoint to two independently owned state directories.
+    if session is not None and isolated_root is not None:
+        parent = Path(isolated_root).expanduser().resolve()
+        if session.scope.resolve() != parent:
+            local_api.isolated_api_environment(parent, env, recover=False)
+            for name in (
+                "SKYPILOT_API_SERVER_ENDPOINT",
+                "NPA_OWNED_SKYPILOT_API_ID",
+                "NPA_SKYPILOT_ISOLATED_API_DIR",
+            ):
+                env.pop(name, None)
+
     validation_user_id = str(env.get("SKYPILOT_USER_ID") or "").strip()
     if not validation_user_id:
         validation_user_id = (

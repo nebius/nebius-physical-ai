@@ -1625,6 +1625,63 @@ def test_stale_validation_recovery_refuses_unproven_api_ownership(message: str) 
     )
 
 
+def test_nested_validation_verifies_then_drops_parent_api_identity(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A child discovery API must not inherit its verified parent's endpoint."""
+
+    from npa.orchestration.skypilot import cleanup, local_api
+    from npa.orchestration.skypilot.cluster_validation import (
+        cluster_validation_session,
+    )
+
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+    parent = tmp_path / "workflow-state"
+    monkeypatch.setenv("NPA_SKYPILOT_ISOLATED_CONFIG_DIR", str(parent))
+    monkeypatch.setenv("SKYPILOT_API_SERVER_ENDPOINT", "http://127.0.0.1:46321")
+    monkeypatch.setenv("NPA_OWNED_SKYPILOT_API_ID", "parent-marker")
+    verified: list[tuple[Path, str, bool]] = []
+    children: list[dict[str, str]] = []
+
+    def verify_parent(
+        root: Path, environment: dict[str, str], *, recover: bool = True
+    ) -> dict[str, str]:
+        verified.append(
+            (root, environment["SKYPILOT_API_SERVER_ENDPOINT"], recover)
+        )
+        return dict(environment)
+
+    def child_environment(
+        _scope: Path, *, environment: dict[str, str]
+    ) -> dict[str, str]:
+        children.append(dict(environment))
+        return {
+            **environment,
+            "SKYPILOT_API_SERVER_ENDPOINT": "http://127.0.0.1:46322",
+        }
+
+    monkeypatch.setattr(local_api, "isolated_api_environment", verify_parent)
+    monkeypatch.setattr(cleanup, "sky_environment", child_environment)
+    monkeypatch.setattr(local_api, "ensure_isolated_api", lambda **_kwargs: None)
+
+    with cluster_validation_session(
+        kubeconfig, "exact-context", isolated_config_dir=parent
+    ):
+        result = gpu_catalog.kubernetes_sky_environment(
+            context="exact-context",
+            kubeconfig=kubeconfig,
+            sky_executable="/opt/sky/bin/sky",
+        )
+
+    assert verified == [(parent.resolve(), "http://127.0.0.1:46321", False)]
+    assert len(children) == 1
+    assert "SKYPILOT_API_SERVER_ENDPOINT" not in children[0]
+    assert "NPA_OWNED_SKYPILOT_API_ID" not in children[0]
+    assert "NPA_SKYPILOT_ISOLATED_API_DIR" not in children[0]
+    assert result["SKYPILOT_API_SERVER_ENDPOINT"] == "http://127.0.0.1:46322"
+
+
 @pytest.mark.parametrize(
     "failure_message",
     [
