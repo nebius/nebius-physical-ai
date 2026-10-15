@@ -142,7 +142,10 @@ def test_isaac_default_leaves_standard_runtime_controller_headroom() -> None:
         spec,
         build_plan(spec, run_id="controller-headroom"),
         run_id="controller-headroom",
-        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+        options=SkypilotRenderOptions(
+            image_overrides={"*": "registry.example.invalid/npa:dev-source-sha"},
+            materialize_registry_secrets=False,
+        ),
     )
     tasks = [
         doc for doc in yaml.safe_load_all(rendered) if doc and doc.get("resources")
