@@ -168,6 +168,11 @@ quality of a particular real wrist reconstruction.
 
 ## Standalone Lyra HTML
 
+For a concrete completed result, use the
+[validated reference review](lyra-validated-example.md). It revalidates retained
+native media, measures RGB replay fidelity and packages the real result with
+workflow downloads in one offline file.
+
 Reconstruction can be reviewed independently of the collision and Isaac action
 workflow. Its completed output bundle includes `index.html`, a single offline
 file. To regenerate the viewer from a downloaded bundle:

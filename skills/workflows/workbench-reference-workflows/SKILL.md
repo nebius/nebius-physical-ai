@@ -130,6 +130,16 @@ operator digest before execution. The shareable
 and exact downloadable YAML for both this reference and the existing Lyra path.
 It is a workflow explainer, not a report of real capture reconstruction quality.
 
+When a user needs a real validated example, start from the
+[native Lyra reference review](../../../docs/workbench/guides/lyra-validated-example.md),
+not the synthetic workflow explainer. `npa.workflows.lyra_validated_example`
+requires the retained HTML's qualified digest, native identities and embedded
+video hashes; it fully decodes paired media and measures RGB replay PSNR before
+packaging real playback, depth samples, evidence and workflow YAML. Keep the
+generated file private under the recorded internal R&D scope. This revalidates
+retained perspective artifacts; it does not qualify panorama input or claim a
+new GPU run, held-out quality or haze improvement.
+
 For a first BEHAVIOR DEV evaluation, use
 [the one-file onboarding guide](../../../docs/workbench/challenge-onboarding.md)
 and `npa workbench workflow challenge init`, `check`, and `prepare`.
