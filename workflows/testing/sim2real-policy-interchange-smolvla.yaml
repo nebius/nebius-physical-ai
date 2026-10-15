@@ -39,7 +39,9 @@ config:
   gpu_disk_size: "100"
   isaac_gpu_type: RTXPRO6000
   isaac_runtime_class: nvidia
-  isaac_cpus: "16"
+  # Leave headroom for the standard-runtime controller and node services on
+  # 24-vCPU single-GPU workers. Operators can raise this on larger workers.
+  isaac_cpus: "12"
   isaac_memory: 128Gi
   isaac_disk_size: "100"
   cpu_cpus: "8"
