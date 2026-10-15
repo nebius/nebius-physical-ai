@@ -143,7 +143,10 @@ def test_isaac_default_leaves_standard_runtime_controller_headroom() -> None:
         build_plan(spec, run_id="controller-headroom"),
         run_id="controller-headroom",
         options=SkypilotRenderOptions(
-            image_overrides={"*": "registry.example.invalid/npa:dev-source-sha"},
+            image_overrides={
+                "*": "registry.example.invalid/npa@sha256:"
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+            },
             materialize_registry_secrets=False,
         ),
     )
