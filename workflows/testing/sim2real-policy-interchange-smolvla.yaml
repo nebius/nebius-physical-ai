@@ -20,6 +20,7 @@ config:
   baked_npa_import: npa.workflows.sim2real.interchange_stage
 
   profile_uri: "s3://example-bucket/private-profiles/franka-cube-smolvla/"
+  execution_profile: pi05_franka_surface_v1
   cpu_image: ""
   isaac_image: ""
   runtime_image: "registry.example.invalid/lerobot@sha256:0000000000000000000000000000000000000000000000000000000000000000"

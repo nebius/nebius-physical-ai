@@ -20,6 +20,7 @@ from npa.workflows.sim2real.interchange_object_asset import (
 )
 from npa.workflows.sim2real.interchange_stage import (
     _artifact_preflight,
+    assert_execution_profile,
     build_preparation,
     training_adapter,
 )
@@ -384,3 +385,58 @@ def test_prepared_object_rejects_downloaded_byte_mismatch(
     monkeypatch.setattr(interchange_object_asset, "storage", lambda: Storage())
     with pytest.raises(InterchangeContractError, match="downloaded object bytes"):
         materialize_prepared_object(_prepared_object(DIGEST_A), tmp_path / "asset")
+
+
+def test_franka_execution_profile_rejects_six_axis_robot_before_gpu() -> None:
+    preparation = {
+        "robot": {
+            "base_link": "base_link",
+            "ee_link": "tool0",
+            "arm_joint_names": [f"ur_axis_{index}" for index in range(1, 7)],
+            "measured_state_names": [
+                *[f"ur_axis_{index}" for index in range(1, 7)],
+                "gripper",
+            ],
+            "controller_representation": "absolute_joint_position",
+            "gripper": {
+                "joint_names": ["left_driver", "right_follower"],
+                "finger_links": ["left_pad", "right_pad"],
+                "maximum_width_m": 0.085,
+            },
+            "cameras": [
+                {"role": "exterior", "mount_link": "world"},
+                {"role": "wrist", "mount_link": "tool0"},
+            ],
+        },
+        "policy": {"backend": "lerobot_smolvla"},
+    }
+
+    with pytest.raises(
+        InterchangeContractError, match="incompatible before GPU submission"
+    ):
+        assert_execution_profile(preparation, "pi05_franka_surface_v1")
+
+
+def test_franka_execution_profile_accepts_exact_robot_and_cameras() -> None:
+    arm = [f"panda_joint{index}" for index in range(1, 8)]
+    preparation = {
+        "robot": {
+            "base_link": "panda_link0",
+            "ee_link": "panda_hand",
+            "arm_joint_names": arm,
+            "measured_state_names": [*arm, "gripper"],
+            "controller_representation": "absolute_joint_position",
+            "gripper": {
+                "joint_names": ["panda_finger_joint1", "panda_finger_joint2"],
+                "finger_links": ["panda_leftfinger", "panda_rightfinger"],
+                "maximum_width_m": 0.08,
+            },
+            "cameras": [
+                {"role": "exterior", "mount_link": "world"},
+                {"role": "wrist", "mount_link": "panda_hand"},
+            ],
+        },
+        "policy": {"backend": "lerobot_smolvla"},
+    }
+
+    assert_execution_profile(preparation, "pi05_franka_surface_v1")

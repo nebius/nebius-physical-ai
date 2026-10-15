@@ -245,6 +245,84 @@ def build_preparation(profile_root: Path, *, run_id: str) -> dict[str, Any]:
     }
 
 
+def assert_execution_profile(
+    preparation: Mapping[str, Any], execution_profile: str
+) -> None:
+    """Reject a sealed profile that cannot run through the selected stage adapter.
+
+    Args:
+        preparation: Fully validated model-neutral preparation receipt.
+        execution_profile: Concrete simulator/controller adapter selected by a graph.
+
+    Returns:
+        None.
+
+    Raises:
+        InterchangeContractError: The concrete adapter and profile are incompatible.
+    """
+
+    if not execution_profile:
+        return
+    if execution_profile != "pi05_franka_surface_v1":
+        raise InterchangeContractError(
+            f"unsupported execution profile {execution_profile!r}"
+        )
+    robot = preparation.get("robot")
+    policy = preparation.get("policy")
+    if not isinstance(robot, Mapping) or not isinstance(policy, Mapping):
+        raise InterchangeContractError("preparation lacks robot/policy profiles")
+    expected_arm = [f"panda_joint{index}" for index in range(1, 8)]
+    expected_gripper = ["panda_finger_joint1", "panda_finger_joint2"]
+    expected_state = [*expected_arm, "gripper"]
+    cameras = robot.get("cameras")
+    by_role = {
+        str(camera.get("role") or ""): camera
+        for camera in cameras or ()
+        if isinstance(camera, Mapping)
+    }
+    checks = {
+        "backend": policy.get("backend") == "lerobot_smolvla",
+        "base_link": robot.get("base_link") == "panda_link0",
+        "ee_link": robot.get("ee_link") == "panda_hand",
+        "arm_joint_names": robot.get("arm_joint_names") == expected_arm,
+        "gripper_joint_names": (
+            (robot.get("gripper") or {}).get("joint_names") == expected_gripper
+            if isinstance(robot.get("gripper"), Mapping)
+            else False
+        ),
+        "finger_links": (
+            (robot.get("gripper") or {}).get("finger_links")
+            == ["panda_leftfinger", "panda_rightfinger"]
+            if isinstance(robot.get("gripper"), Mapping)
+            else False
+        ),
+        "maximum_width_m": (
+            abs(float((robot.get("gripper") or {}).get("maximum_width_m", -1.0)) - 0.08)
+            <= 1.0e-9
+            if isinstance(robot.get("gripper"), Mapping)
+            else False
+        ),
+        "measured_state_names": robot.get("measured_state_names") == expected_state,
+        "controller_representation": (
+            robot.get("controller_representation") == "absolute_joint_position"
+        ),
+        "exterior_camera": (
+            isinstance(by_role.get("exterior"), Mapping)
+            and by_role["exterior"].get("mount_link") == "world"
+        ),
+        "wrist_camera": (
+            isinstance(by_role.get("wrist"), Mapping)
+            and by_role["wrist"].get("mount_link") == "panda_hand"
+        ),
+    }
+    failed = sorted(name for name, passed in checks.items() if not passed)
+    if failed:
+        raise InterchangeContractError(
+            "pi05 Franka execution profile is incompatible before GPU submission: "
+            + ", ".join(failed)
+        )
+
+
 def training_adapter(preparation: Mapping[str, Any]) -> dict[str, Any]:
     """Project a validated preparation into a native LeRobot adapter spec.
 
@@ -301,6 +379,9 @@ def _prepare(args: argparse.Namespace) -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="npa-sim2real-interchange-") as directory:
         root = materialize(args.profile_uri, Path(directory) / "profile")
         result = build_preparation(root, run_id=args.run_id)
+        assert_execution_profile(result, args.execution_profile)
+        if args.execution_profile:
+            result["execution_profile"] = args.execution_profile
         write_json(args.output_uri, result, directory=Path(directory) / "output")
         if args.adapter_output_uri:
             write_json(
@@ -580,6 +661,7 @@ def build_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--output-uri", required=True)
     prepare.add_argument("--component-root-uri", required=True)
     prepare.add_argument("--adapter-output-uri", default="")
+    prepare.add_argument("--execution-profile", default="")
     external = commands.add_parser("external-seam")
     external.add_argument("--run-id", required=True)
     external.add_argument("--output-uri", required=True)

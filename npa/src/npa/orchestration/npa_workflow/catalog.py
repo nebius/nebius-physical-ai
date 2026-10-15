@@ -3161,9 +3161,11 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.component_root_uri}}",
             "--adapter-output-uri",
             "{{config.policy_adapter_uri}}",
+            "--execution-profile",
+            "{{config.execution_profile}}",
         ],
-        omit_flags_when_empty=("--adapter-output-uri",),
-        config_defaults={"policy_adapter_uri": ""},
+        omit_flags_when_empty=("--adapter-output-uri", "--execution-profile"),
+        config_defaults={"policy_adapter_uri": "", "execution_profile": ""},
     ),
     "workbench.sim2real.pi05_external_seam": ToolEntry(
         name="workbench.sim2real.pi05_external_seam",
