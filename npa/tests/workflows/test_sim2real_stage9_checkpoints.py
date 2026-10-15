@@ -142,6 +142,32 @@ def test_checkpoint_candidate_pool_rejects_incomplete_byte_identity() -> None:
         require_complete_checkpoint_candidate_pool([candidate])
 
 
+def test_stage9_commit_rejects_incomplete_retained_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    incomplete = {
+        "checkpoint_uri": "s3://sim2real-test/checkpoints/model_000001.pt",
+        "checkpoint_sha256": "a" * 64,
+        "generator_policy_sha256": "a" * 64,
+    }
+    monkeypatch.setattr(
+        workflow_stage, "_stage9_validation_candidates", lambda *_args: []
+    )
+
+    with pytest.raises(RuntimeError, match="without complete byte identity"):
+        workflow_stage._stage9_commit(
+            SimpleNamespace(),
+            "s3://sim2real-test/run",
+            tmp_path,
+            {},
+            {"checkpoint_candidates": [incomplete]},
+            {},
+            {},
+            "s3://sim2real-test/run/evidence.json",
+        )
+
+
 def test_checkpoint_identity_accepts_a_zero_based_initial_checkpoint() -> None:
     candidate = {
         "checkpoint_uri": "s3://sim2real-test/checkpoints/model_000000.pt",
