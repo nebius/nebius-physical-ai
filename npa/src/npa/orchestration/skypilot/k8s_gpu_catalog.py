@@ -271,6 +271,7 @@ def kubernetes_sky_environment(
             "SKYPILOT_API_SERVER_ENDPOINT",
             "NPA_OWNED_SKYPILOT_API_ID",
             "NPA_SKYPILOT_ISOLATED_API_DIR",
+            "SKYPILOT_SERVER_PLUGINS_CONFIG",
         ):
             env.pop(name, None)
 

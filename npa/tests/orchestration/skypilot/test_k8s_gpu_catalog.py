@@ -1641,6 +1641,10 @@ def test_nested_validation_verifies_then_drops_parent_api_identity(
     monkeypatch.setenv("NPA_SKYPILOT_ISOLATED_CONFIG_DIR", str(parent))
     monkeypatch.setenv("SKYPILOT_API_SERVER_ENDPOINT", "http://127.0.0.1:46321")
     monkeypatch.setenv("NPA_OWNED_SKYPILOT_API_ID", "parent-marker")
+    monkeypatch.setenv(
+        "SKYPILOT_SERVER_PLUGINS_CONFIG",
+        str(parent / "local-api" / "server-plugins.yaml"),
+    )
     verified: list[tuple[Path, str, bool]] = []
     children: list[dict[str, str]] = []
 
@@ -1677,6 +1681,7 @@ def test_nested_validation_verifies_then_drops_parent_api_identity(
     assert "SKYPILOT_API_SERVER_ENDPOINT" not in children[0]
     assert "NPA_OWNED_SKYPILOT_API_ID" not in children[0]
     assert "NPA_SKYPILOT_ISOLATED_API_DIR" not in children[0]
+    assert "SKYPILOT_SERVER_PLUGINS_CONFIG" not in children[0]
     assert result["SKYPILOT_API_SERVER_ENDPOINT"] == "http://127.0.0.1:46322"
 
 
