@@ -540,7 +540,10 @@ for exact reuse after a shell restart.
 The opt-in preset fetches the anonymous public [Franka lift dataset](https://huggingface.co/datasets/huyyyyan/pi05-Isaac-sim_Franka_lift_cube)
 at revision `42c181e40a43afb1702c29d6f24d5de25219aff8`. Upstream metadata
 declares Apache-2.0; staging checks access, revision, and license before fetching.
-It uploads real Parquet actions, both MP4s, decoded frames, and hashed manifests.
+It uploads real Parquet actions, both MP4s, every decoded primary-camera frame in
+source order (never a representative subset), and hashed manifests. The canonical
+Cosmos3 Stage 3 adapter rejects a sequence with fewer than six frames or incomplete
+frame-index provenance before GPU inference begins.
 
 ```bash
 npa/.venv/bin/npa workbench workflow trigger stage-preset \
