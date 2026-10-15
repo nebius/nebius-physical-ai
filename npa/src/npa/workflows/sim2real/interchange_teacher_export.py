@@ -29,7 +29,9 @@ EPISODE_FILES = (
     "actions.npy",
     "timestamps.npy",
     "metadata.json",
+    "native_teacher.json",
 )
+DATASET_FILES = EPISODE_FILES[:5]
 
 
 def _sha256(path: Path) -> str:
@@ -89,7 +91,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         for index, source in enumerate(splits["train"]):
             destination = lerobot_input / f"episode_{index:06d}"
             destination.mkdir(parents=True)
-            for name in EPISODE_FILES[:-1]:
+            for name in DATASET_FILES:
                 shutil.copy2(source / name, destination / name)
         output = work / "output"
         dataset = convert(

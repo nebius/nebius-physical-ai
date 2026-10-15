@@ -98,6 +98,7 @@ def _episode_artifacts(directory: Path) -> dict[str, str]:
         "actions.npy",
         "timestamps.npy",
         "metadata.json",
+        "native_teacher.json",
     )
     return {name: _sha256(directory / name) for name in names}
 

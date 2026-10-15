@@ -71,7 +71,7 @@ def _local_object_asset(root: Path, prop: Any) -> Path:
     return matches[0]
 
 
-def _camera_frame(native: Any, key: str, profile: Any) -> tuple[Any, float]:
+def _camera_frame(native: Any, key: str, profile: Any) -> tuple[Any, float, dict]:
     import numpy as np
     import torch
 
@@ -97,7 +97,7 @@ def _camera_frame(native: Any, key: str, profile: Any) -> tuple[Any, float]:
         raise RuntimeError(f"camera {key!r} returned invalid RGB bytes")
     if int(np.ptp(frame.astype(np.int16))) < 8:
         raise RuntimeError(f"camera {key!r} returned a blank frame")
-    return frame, _sim_time(native)
+    return frame, _sim_time(native), pose.to_dict()
 
 
 def _observation(
@@ -109,12 +109,14 @@ def _observation(
     hashes: dict[str, str] = {}
     frames: dict[str, tuple[bytes, int, int, str]] = {}
     capture_timestamps: dict[str, float] = {}
+    camera_world_poses: dict[str, dict] = {}
     for camera in robot.cameras:
-        frame, capture_time = _camera_frame(native, camera.key, robot)
+        frame, capture_time, world_pose = _camera_frame(native, camera.key, robot)
         payload = frame.tobytes()
         digest = hashlib.sha256(payload).hexdigest()
         hashes[camera.key] = digest
         capture_timestamps[camera.key] = capture_time
+        camera_world_poses[camera.key] = world_pose
         frames[camera.key] = (
             payload,
             camera.image_size[0],
@@ -147,6 +149,7 @@ def _observation(
             "decision": decision,
             "state_timestamp_s": state_time,
             "capture_timestamps_s": capture_timestamps,
+            "camera_world_poses": camera_world_poses,
         },
     )
 
@@ -411,22 +414,29 @@ def _teacher_command(
 
 def _teacher_camera_capture(
     native: Any, robot: Any
-) -> tuple[dict[str, str], dict[str, tuple[bytes, int, int, str]], dict[str, float]]:
+) -> tuple[
+    dict[str, str],
+    dict[str, tuple[bytes, int, int, str]],
+    dict[str, float],
+    dict[str, dict],
+]:
     hashes: dict[str, str] = {}
     frames: dict[str, tuple[bytes, int, int, str]] = {}
     timestamps: dict[str, float] = {}
+    poses: dict[str, dict] = {}
     for camera in robot.cameras:
-        frame, capture_time = _camera_frame(native, camera.key, robot)
+        frame, capture_time, world_pose = _camera_frame(native, camera.key, robot)
         payload = frame.tobytes()
         hashes[camera.key] = hashlib.sha256(payload).hexdigest()
         timestamps[camera.key] = capture_time
+        poses[camera.key] = world_pose
         frames[camera.key] = (
             payload,
             camera.image_size[0],
             camera.image_size[1],
             camera.role,
         )
-    return hashes, frames, timestamps
+    return hashes, frames, timestamps, poses
 
 
 def _write_teacher_episode(
@@ -477,6 +487,7 @@ def _write_teacher_episode(
         "actions.npy",
         "timestamps.npy",
         "metadata.json",
+        "native_teacher.json",
     )
     if any((directory / name).exists() for name in outputs):
         raise RuntimeError("teacher episode output already exists")
@@ -502,6 +513,7 @@ def _write_teacher_episode(
         "ordered_event_steps": teacher["ordered_event_steps"],
     }
     write_json(directory / "metadata.json", metadata)
+    write_json(directory / "native_teacher.json", teacher)
     return metadata
 
 
@@ -568,8 +580,8 @@ def _run_teacher(
         for waypoint in surface_teacher_waypoints(prop, task):
             consecutive = 0
             for phase_step in range(90):
-                hashes, frames, capture_timestamps = _teacher_camera_capture(
-                    native, robot
+                hashes, frames, capture_timestamps, camera_world_poses = (
+                    _teacher_camera_capture(native, robot)
                 )
                 measured_before = measured_policy_state(native, robot)
                 if phase_step == 0:
@@ -625,6 +637,7 @@ def _run_teacher(
                     {
                         "step": global_step,
                         "capture_timestamps_s": capture_timestamps,
+                        "camera_world_poses": camera_world_poses,
                         "command_application_time_s": before,
                         "resulting_state_time_s": after,
                     }

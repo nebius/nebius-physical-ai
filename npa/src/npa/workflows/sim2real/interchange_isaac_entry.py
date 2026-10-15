@@ -113,6 +113,11 @@ def run(args: argparse.Namespace) -> dict:
         ):
             raise RuntimeError("native non-Franka execution report is incomplete")
         for clock in teacher["camera_clocks"]:
+            poses = clock.get("camera_world_poses")
+            if not isinstance(poses, dict) or set(poses) != set(
+                clock["capture_timestamps_s"]
+            ):
+                raise RuntimeError("native teacher camera poses are incomplete")
             if any(
                 float(value) > float(clock["command_application_time_s"]) + 1.0e-9
                 for value in clock["capture_timestamps_s"].values()
@@ -123,8 +128,11 @@ def run(args: argparse.Namespace) -> dict:
         ):
             state_time = float(clock["state_timestamp_s"])
             command_time = float(control["command_application_time_s"])
+            poses = clock.get("camera_world_poses")
             if (
-                any(
+                not isinstance(poses, dict)
+                or set(poses) != set(clock["capture_timestamps_s"])
+                or any(
                     float(value) > state_time + 1.0e-9
                     for value in clock["capture_timestamps_s"].values()
                 )

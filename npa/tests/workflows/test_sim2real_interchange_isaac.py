@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 from pathlib import Path
 import struct
@@ -300,6 +301,9 @@ def test_successful_teacher_episode_preserves_dynamic_six_axis_policy_state(
     assert np.load(episode / "actions.npy").shape == (2, 7)
     assert np.load(episode / "obs_workspace.npy").shape == (2, 2, 2, 3)
     assert np.load(episode / "obs_wrist.npy").shape == (2, 2, 2, 3)
+    persisted_teacher = json.loads((episode / "native_teacher.json").read_text())
+    assert persisted_teacher["task_success"] is True
+    assert persisted_teacher["ordered_event_steps"] == teacher["ordered_event_steps"]
     assert metadata["action_names"] == [*robot.arm_joint_names, "gripper"]
     assert metadata["privileged_object_state_policy_input"] is False
 
