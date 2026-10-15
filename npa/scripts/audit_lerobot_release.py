@@ -98,6 +98,7 @@ IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
         (
             "npa/src/npa/workflows/policy_training/turnkey_holdout.py",
             "npa/src/npa/workflows/policy_training/turnkey_server.py",
+            "npa/src/npa/workbench/lerobot/policy_container.py",
         ),
     ),
     (
@@ -106,12 +107,16 @@ IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
         (
             "npa/src/npa/workflows/policy_training/turnkey_holdout.py",
             "npa/src/npa/workflows/policy_training/turnkey_server.py",
+            "npa/src/npa/workbench/lerobot/policy_container.py",
         ),
     ),
     (
         "lerobot.datasets.dataset_metadata",
         "LeRobotDatasetMetadata",
-        ("npa/src/npa/workflows/policy_training/turnkey_holdout.py",),
+        (
+            "npa/src/npa/workflows/policy_training/turnkey_holdout.py",
+            "npa/src/npa/workbench/lerobot/policy_container.py",
+        ),
     ),
     (
         "lerobot.datasets.factory",
