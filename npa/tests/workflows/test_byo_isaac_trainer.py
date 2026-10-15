@@ -953,9 +953,14 @@ def test_s3_object_sha256_streams_exact_checkpoint_bytes(monkeypatch) -> None:
     import boto3
 
     monkeypatch.setattr(boto3, "client", lambda *a, **k: S3())
+    expected = hashlib.sha256(b"exact-checkpoint").hexdigest()
+    assert byo.s3_object_identity("s3://bucket/run/model.pt") == {
+        "sha256": expected,
+        "size_bytes": len(b"exact-checkpoint"),
+    }
     assert (
         byo.s3_object_sha256("s3://bucket/run/model.pt")
-        == hashlib.sha256(b"exact-checkpoint").hexdigest()
+        == expected
     )
 
 
@@ -1044,10 +1049,18 @@ def test_run_isaac_training_job_tags_s3_path_per_iteration(monkeypatch, resume_p
             {
                 "training_iteration": 500,
                 "checkpoint_uri": "s3://bkt/run/checkpoints/model_500.pt",
+                "checkpoint_sha256": "d" * 64,
+                "checkpoint_size_bytes": 123,
+                "generator_policy_sha256": "d" * 64,
             }
         ],
     )
     monkeypatch.setattr(byo, "s3_object_sha256", lambda *_a, **_k: "d" * 64)
+    monkeypatch.setattr(
+        byo,
+        "s3_object_identity",
+        lambda *_a, **_k: {"sha256": "d" * 64, "size_bytes": 123},
+    )
     monkeypatch.setenv("NPA_SIM2REAL_ISAAC_IMAGE", "reg/npa-isaac-lab:2.3.2.post1")
     monkeypatch.setenv("NPA_SIM2REAL_BUCKET", "bkt")
     monkeypatch.setenv("NPA_SIM2REAL_TRAINER_TAG", "outer-02-iter-01")
@@ -1072,6 +1085,7 @@ def test_run_isaac_training_job_tags_s3_path_per_iteration(monkeypatch, resume_p
     result = byo.run_isaac_training_job("myrun", signal_json="ignored")
     assert result["final_checkpoint_uri"] == "s3://bkt/run/checkpoints/model_500.pt"
     assert result["checkpoint_sha256"] == result["final_checkpoint_sha256"] == "d" * 64
+    assert result["checkpoint_size_bytes"] == result["final_checkpoint_size_bytes"] == 123
     assert result["final_checkpoint_alias_verified"] is True
     # distinct, tagged path
     assert captured["s3_output_uri"].endswith("/outer-02-iter-01/")
@@ -1157,6 +1171,21 @@ def test_enumerate_periodic_checkpoints_keeps_first_periodic_and_final(
             assert name == "list_objects_v2"
             return Paginator()
 
+        def get_object(self, *, Bucket, Key):
+            assert Bucket == "bucket"
+            return {"Body": Body(f"native-{Key}".encode("utf-8"))}
+
+    class Body:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def read(self, _size):
+            payload, self.payload = self.payload, b""
+            return payload
+
+        def close(self):
+            return None
+
     monkeypatch.setattr(boto3, "client", lambda *args, **kwargs: Client())
     checkpoints = byo.enumerate_periodic_checkpoints(
         s3_output="s3://bucket/run/",
@@ -1168,3 +1197,10 @@ def test_enumerate_periodic_checkpoints_keeps_first_periodic_and_final(
     assert (
         checkpoints[0]["checkpoint_iteration_semantics"] == "last_completed_zero_based"
     )
+    for checkpoint in checkpoints:
+        payload = f"native-run/checkpoints/model_{checkpoint['training_iteration']}.pt".encode(
+            "utf-8"
+        )
+        assert checkpoint["checkpoint_sha256"] == hashlib.sha256(payload).hexdigest()
+        assert checkpoint["checkpoint_size_bytes"] == len(payload)
+        assert checkpoint["generator_policy_sha256"] == checkpoint["checkpoint_sha256"]

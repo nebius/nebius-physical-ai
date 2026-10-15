@@ -53,6 +53,11 @@ def stage9_checkpoint_candidate(
 ) -> dict[str, Any]:
     """Bind a validation result to the exact periodic trainer checkpoint."""
 
+    # A validation report must corroborate the bytes that the native trainer
+    # actually published. Replacing missing producer metadata with a later
+    # evaluator field allowed an incomplete trainer result to reach Gold.
+    if not checkpoint_candidate_has_complete_identity(checkpoint):
+        raise RuntimeError("Stage 9 trainer checkpoint identity is incomplete")
     provenance = validation.get("policy_inference_provenance")
     if not isinstance(provenance, dict):
         provenance = {}
@@ -70,6 +75,13 @@ def stage9_checkpoint_candidate(
     }
     if not checkpoint_candidate_has_complete_identity(candidate):
         raise RuntimeError("Stage 9 validation checkpoint identity is incomplete")
+    for _label, field, _aliases in _IDENTITY_FIELDS:
+        if _complete_identity_value(field, checkpoint[field]) != _complete_identity_value(
+            field, candidate[field]
+        ):
+            raise RuntimeError(
+                "Stage 9 validation did not load the trainer-published checkpoint bytes"
+            )
     return candidate
 
 

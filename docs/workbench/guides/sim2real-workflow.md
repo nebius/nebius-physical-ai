@@ -672,9 +672,11 @@ checkpoint's score does not replace earlier candidate measurements.
 
 The production training default is 2,000 PPO updates per inner pass. After the
 complete pass, validation ranks every saved 100-update checkpoint and the final
-checkpoint using the same sealed split. Each candidate records
-its native zero-based index and completed updates separately from the full
-pass count. A stronger earlier actor may win; selection never reads Gold. Subsequent train rollouts
+checkpoint using the same sealed split. The trainer reads each candidate object
+to record its actual SHA-256 and byte size, which validation must corroborate
+before ranking. Each candidate records its native zero-based index and completed
+updates separately from the full pass count. A stronger earlier actor may win;
+selection never reads Gold. Subsequent train rollouts
 and PPO resume the best candidate's exact checkpoint, which can differ from the
 newest training checkpoint; a three-pass loop performs 6,000 new updates while
 retaining stronger validation candidates. Strict success and placement rank

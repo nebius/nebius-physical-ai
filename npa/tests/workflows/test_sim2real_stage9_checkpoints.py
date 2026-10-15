@@ -33,8 +33,11 @@ def _update():
                 "checkpoint_completed_updates": index + 1,
                 "checkpoint_iteration_semantics": "last_completed_zero_based",
                 "checkpoint_uri": f"s3://unit/train/checkpoints/model_{index}.pt",
+                "checkpoint_sha256": str(position + 1) * 64,
+                "checkpoint_size_bytes": 101 + position,
+                "generator_policy_sha256": str(position + 1) * 64,
             }
-            for index in (100, 1999)
+            for position, index in enumerate((100, 1999))
         ],
     }
 
@@ -126,6 +129,30 @@ def test_stage9_candidate_rejects_incomplete_validation_identity() -> None:
             {"robot": "Franka"},
             outer_iteration=args.outer_iteration,
             inner_iteration=args.inner_iteration,
+        )
+
+
+def test_stage9_candidate_rejects_validation_bytes_other_than_native_candidate() -> None:
+    checkpoint = {
+        "checkpoint_uri": "s3://sim2real-test/checkpoints/model_000001.pt",
+        "training_iteration": 1,
+        "checkpoint_sha256": "a" * 64,
+        "checkpoint_size_bytes": 123,
+        "generator_policy_sha256": "a" * 64,
+    }
+    validation = {
+        "policy_checkpoint_sha256": "b" * 64,
+        "policy_checkpoint_size_bytes": 123,
+        "policy_inference_provenance": {"generator_policy_sha256": "b" * 64},
+    }
+    with pytest.raises(RuntimeError, match="did not load the trainer-published"):
+        stage9_checkpoint_candidate(
+            checkpoint,
+            validation,
+            "s3://sim2real-test/eval/validation/report.json",
+            {"robot": "Franka"},
+            outer_iteration=1,
+            inner_iteration=1,
         )
 
 

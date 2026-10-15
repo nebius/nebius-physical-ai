@@ -581,15 +581,24 @@ def enumerate_periodic_checkpoints(
         for iteration in sorted(discovered)
         if iteration % validation_interval == 0 or iteration == highest
     ]
-    return [
-        {
-            "training_iteration": iteration,
-            "checkpoint_completed_updates": iteration + 1,
-            "checkpoint_iteration_semantics": "last_completed_zero_based",
-            "checkpoint_uri": discovered[iteration],
-        }
-        for iteration in sorted(set(selected))
-    ]
+    checkpoints = []
+    for iteration in sorted(set(selected)):
+        checkpoint_uri = discovered[iteration]
+        identity = s3_object_identity(checkpoint_uri, endpoint=endpoint)
+        checkpoints.append(
+            {
+                "training_iteration": iteration,
+                "checkpoint_completed_updates": iteration + 1,
+                "checkpoint_iteration_semantics": "last_completed_zero_based",
+                "checkpoint_uri": checkpoint_uri,
+                # This is measured from the native model object, rather than
+                # inferred from an S3 list response or a later evaluator.
+                "checkpoint_sha256": identity["sha256"],
+                "checkpoint_size_bytes": identity["size_bytes"],
+                "generator_policy_sha256": identity["sha256"],
+            }
+        )
+    return checkpoints
 
 
 def _published_native_checkpoints(s3_output: str, endpoint: str) -> dict[int, str]:
@@ -1353,8 +1362,14 @@ def latest_byo_checkpoint_uri(
         return ""
 
 
-def s3_object_sha256(uri: str, *, endpoint: str = "") -> str:
-    """Hash one S3 object so a discovered resume is verified again in the GPU Pod."""
+def s3_object_identity(uri: str, *, endpoint: str = "") -> dict[str, int | str]:
+    """Measure the exact SHA-256 and byte count of one checkpoint object.
+
+    A listed S3 key is not a checkpoint identity. The native trainer records
+    this measurement for each validation candidate, so the validator and Gold
+    evaluator can bind themselves to the same bytes without inventing a size
+    from metadata or a later report.
+    """
 
     normalized = str(uri or "").strip()
     if not normalized.startswith("s3://"):
@@ -1367,16 +1382,32 @@ def s3_object_sha256(uri: str, *, endpoint: str = "") -> str:
         raise ValueError("checkpoint URI must include a bucket and object key")
     import boto3
 
-    body = boto3.client("s3", endpoint_url=endpoint or None).get_object(
+    response = boto3.client("s3", endpoint_url=endpoint or None).get_object(
         Bucket=bucket, Key=key
-    )["Body"]
+    )
+    body = response["Body"]
     digest = hashlib.sha256()
+    size_bytes = 0
     try:
         while chunk := body.read(1024 * 1024):
             digest.update(chunk)
+            size_bytes += len(chunk)
     finally:
         body.close()
-    return digest.hexdigest()
+    if size_bytes <= 0:
+        raise RuntimeError("checkpoint object is empty")
+    declared_size = response.get("ContentLength")
+    if declared_size is not None and (
+        type(declared_size) is not int or declared_size != size_bytes
+    ):
+        raise RuntimeError("checkpoint object byte count disagrees with S3 response")
+    return {"sha256": digest.hexdigest(), "size_bytes": size_bytes}
+
+
+def s3_object_sha256(uri: str, *, endpoint: str = "") -> str:
+    """Hash one S3 object so a discovered resume is verified again in the GPU Pod."""
+
+    return str(s3_object_identity(uri, endpoint=endpoint)["sha256"])
 
 
 def _resume_schedule_defaults(
@@ -2248,15 +2279,21 @@ def run_isaac_training_job(run_id: str, *, signal_json: str) -> dict[str, Any]:
         endpoint=endpoint,
         validation_interval=validation_interval,
     )
-    final_checkpoint = result["periodic_checkpoints"][-1]["checkpoint_uri"]
-    final_digest = s3_object_sha256(final_checkpoint, endpoint=endpoint)
-    alias_digest = s3_object_sha256(checkpoint_uri, endpoint=endpoint)
-    if final_digest != alias_digest:
+    final_checkpoint_record = result["periodic_checkpoints"][-1]
+    final_checkpoint = final_checkpoint_record["checkpoint_uri"]
+    final_identity = {
+        "sha256": final_checkpoint_record["checkpoint_sha256"],
+        "size_bytes": final_checkpoint_record["checkpoint_size_bytes"],
+    }
+    alias_identity = s3_object_identity(checkpoint_uri, endpoint=endpoint)
+    if final_identity != alias_identity:
         raise RuntimeError("Final native checkpoint differs from its latest alias")
     result.update(
-        checkpoint_sha256=alias_digest,
+        checkpoint_sha256=alias_identity["sha256"],
+        checkpoint_size_bytes=alias_identity["size_bytes"],
         final_checkpoint_uri=final_checkpoint,
-        final_checkpoint_sha256=final_digest,
+        final_checkpoint_sha256=final_identity["sha256"],
+        final_checkpoint_size_bytes=final_identity["size_bytes"],
         final_checkpoint_alias_verified=True,
     )
     result["ppo_hyperparameters"]["validation_checkpoint_interval"] = (
