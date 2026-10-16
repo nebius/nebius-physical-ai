@@ -2138,10 +2138,14 @@ def render_setup_for_tool(
             from npa.orchestration.npa_workflow.sim2real_evaluator_probe import (
                 render_evaluator_probe,
             )
-            from npa.workflows.sim2real.constants import DEFAULT_COSMOS3_MODEL
+            from npa.clients.token_factory import DEFAULT_BASE_URL
+            from npa.workflows.sim2real.constants import DEFAULT_TOKEN_FACTORY_MODEL
 
             evaluator_probe = render_evaluator_probe(
-                str(config.get("cosmos3_model") or DEFAULT_COSMOS3_MODEL).strip()
+                str(
+                    config.get("token_factory_model") or DEFAULT_TOKEN_FACTORY_MODEL
+                ).strip(),
+                str(config.get("token_factory_base_url") or DEFAULT_BASE_URL).strip(),
             )
         return (
             "set -e\n"

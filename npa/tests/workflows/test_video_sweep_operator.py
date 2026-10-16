@@ -27,6 +27,7 @@ def configuration(tmp_path):
 def test_initialization_is_private_and_never_overwrites(configuration):
     path, config = configuration
     assert path.stat().st_mode & 0o777 == 0o600
+    assert config["reasoner_model"] == "MiniMaxAI/MiniMax-M3"
     assert operator._load(path) == config
     with pytest.raises(FileExistsError):
         operator._initialize(path)

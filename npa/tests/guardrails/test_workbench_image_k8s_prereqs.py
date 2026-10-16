@@ -400,7 +400,11 @@ def test_genesis_derived_workflow_images_pin_the_bootstrap_closure(tool: str) ->
         assert "ARG ENVGEN_LINUX_LIBC_DEV_VERSION=5.15.0-198.208" in dockerfile
         assert '"${UBUNTU_SNAPSHOT}" "${ENVGEN_LINUX_LIBC_DEV_VERSION}"' in dockerfile
     assert "install_workflow_runtime_prereqs.sh" in dockerfile
-    assert 'install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}"' in dockerfile
+    invocation = 'install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}"'
+    if tool == "sim2real-envgen":
+        assert "ARG ENVGEN_LINUX_LIBC_DEV_VERSION=5.15.0-198.208" in dockerfile
+        invocation += ' "${ENVGEN_LINUX_LIBC_DEV_VERSION}"'
+    assert invocation in dockerfile
 
     installer = (
         DOCKER_ROOT / "common" / "install_workflow_runtime_prereqs.sh"
@@ -410,6 +414,7 @@ def test_genesis_derived_workflow_images_pin_the_bootstrap_closure(tool: str) ->
     ).read_text(encoding="utf-8")
     assert "configure-ubuntu-snapshot" in installer
     assert "snapshot.ubuntu.com/ubuntu/${snapshot}" in snapshot_config
+    assert 'Acquire::Retries "5";' in snapshot_config
     assert "ubuntu:22.04" in snapshot_config
     assert "ubuntu:24.04" in snapshot_config
     assert "ubuntu:22.04" in installer

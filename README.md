@@ -245,6 +245,16 @@ Its [data contracts](docs/workbench/guides/sim2real-data-contracts.md) preserve
 simulator episode resets across sparse samples and exclude reset intervals from
 training credit. The older `sim2real/runbook.yaml` is a legacy path.
 
+Fresh stock-Franka training uses `NPA_BYO_ISAAC_BOOTSTRAP=auto` to initialize its
+learned actor from native Isaac demonstrations on the sealed training split,
+then runs the full PPO pass. Resumed checkpoints and custom robots retain their
+existing training path. Set `NPA_BYO_ISAAC_BOOTSTRAP=none` to disable the warm
+start, or use `franka-ik-distillation-v1` to require its supported task boundary.
+See the [training and evaluation contract](docs/workbench/guides/sim2real-workflow.md).
+The canonical stock-Franka scenario task uses upstream task-space arm drives
+with robot gravity compensation and 200 Hz physics. Its policy still acts at
+50 Hz. Training and held-out artifacts attest this same control profile.
+
 <a id="whats-in-the-box"></a>
 
 ## Find a tool or integration

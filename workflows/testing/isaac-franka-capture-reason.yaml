@@ -3,8 +3,9 @@ kind: Workflow
 
 # npa.workflow twin of skypilot/isaac-franka-capture-reason.yaml.
 #
-# A headless Isaac Lab Franka rollout renders RGB frames on a GPU, then a hosted Cosmos3 reasoner
-# reads those frames on CPU and writes a manipulation plan. Sim pixels in, plan out; the GPU is
+# A headless Isaac Lab Franka rollout renders RGB frames on a GPU, then hosted
+# MiniMax-M3 through Token Factory reads those frames on CPU and writes a
+# manipulation plan. Sim pixels in, plan out; the GPU is
 # held only for the render.
 #
 # The template could not run without a repo checkout inside the pod:
@@ -24,8 +25,8 @@ kind: Workflow
 metadata:
   name: isaac-franka-capture-reason
   description: >
-    Headless Isaac Lab Franka rollout renders RGB frames on a GPU, then a hosted Cosmos3
-    reasoner turns them into a step-by-step manipulation plan.
+    Headless Isaac Lab Franka rollout renders RGB frames on a GPU, then hosted
+    MiniMax-M3 through Token Factory turns them into a step-by-step manipulation plan.
 
 config:
   bucket: example-bucket
@@ -71,7 +72,7 @@ states:
     next: reason
 
   reason:
-    description: Hosted Cosmos3 reasoner plans from the rendered frames.
+    description: Hosted MiniMax-M3 through Token Factory plans from the rendered frames.
     needs: [capture]
     toolRef: workbench.token_factory.reason
     resources: cpu

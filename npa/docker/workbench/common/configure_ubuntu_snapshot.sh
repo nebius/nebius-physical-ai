@@ -32,3 +32,8 @@ printf '%s\n' \
   'Components: main restricted universe multiverse' \
   'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
   > /etc/apt/sources.list.d/ubuntu.sources
+
+# A transient snapshot-service 5xx must not cause a build to substitute a
+# moving mirror. Retry only the exact pinned object acquisition; APT still
+# fails closed if that immutable snapshot remains unavailable.
+printf '%s\n' 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/99npa-snapshot-retries

@@ -119,7 +119,7 @@ def _authority_uris(
         },
         3: {
             "manifest": f"{root}/augment/manifest.json",
-            "result": f"{root}/augment/cosmos2-transfer-result.json",
+            "result": f"{root}/augment/cosmos3-transfer-result.json",
             "frames": f"{root}/augment/frames/",
         },
         4: {"raw_envs": f"{root}/envs/raw/"},
@@ -131,7 +131,7 @@ def _authority_uris(
         },
         6: {"tokens": f"{root}/tokens/manifest.json"},
         7: {"prefix": (f"{root}/actions/train/outer-{outer:02d}/iter-{inner:02d}/")},
-        8: {"result": lane + "cosmos3.json"},
+        8: {"result": lane + "token-factory.json"},
         9: {
             "evidence": f"{root}/inner_loop/outer-{outer:02d}/evidence.json",
             "checkpoint": selection["checkpoint_uri"],

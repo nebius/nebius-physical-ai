@@ -514,6 +514,10 @@ def download_plan(
             "Stage 14 evidence outer iteration disagrees with the requested path"
         )
     entries = _base_download_entries(root, outer)
+    # Complete PPO curves need prior evidence, without historical camera trees.
+    for prior_outer in range(1, outer_iteration):
+        relative = f"inner_loop/outer-{prior_outer:02d}/evidence.json"
+        entries.append((f"{root}/{relative}", relative, False))
     entries += _iteration_download_entries(
         root, outer_iteration, evidence.get("iterations")
     )

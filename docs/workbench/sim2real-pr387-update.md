@@ -2,6 +2,12 @@
 
 [Workbench docs](README.md)
 
+This page records PR #387's earlier reduced-scope review and reused workload
+evidence. For current canonical runtime instructions, use the
+[Sim2Real operator guide](guides/sim2real-workflow.md). The 0/64 result below
+belongs to that earlier 200-update proof and does not measure the current
+production training configuration.
+
 The rebased PR retains the Sim2Real submit check that rejects rollout,
 validation, or gold requests exceeding their deterministic sealed splits before
 GPU work. Focused regression tests cover all three consumers and the supported

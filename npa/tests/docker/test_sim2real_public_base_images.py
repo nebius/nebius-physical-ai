@@ -145,6 +145,15 @@ def test_envgen_removes_optional_forbidden_and_vulnerable_parent_tools() -> None
     assert "raise RuntimeError(" in compat
 
 
+def test_envgen_corrects_inherited_recipe_before_flattening() -> None:
+    text = (WORKBENCH / "sim2real-envgen/Dockerfile").read_text()
+    assert "COPY docker/workbench/curobo/remove_scikit_image_recipe.py" in text
+    correction = text.index("python /usr/local/lib/npa/remove-scikit-image-recipe.py")
+    assert "--site-packages /opt/npa/venv/lib/python3.11/site-packages" in text
+    assert correction < text.index("python -m pip check")
+    assert correction < text.index("FROM scratch AS runtime")
+
+
 def test_genesis_workflow_runtime_upgrades_fixed_kernel_headers() -> None:
     installer = (WORKBENCH / "common/install_workflow_runtime_prereqs.sh").read_text(
         encoding="utf-8"
@@ -169,6 +178,27 @@ def test_genesis_workflow_runtime_upgrades_fixed_kernel_headers() -> None:
             assert "ARG ENVGEN_LINUX_LIBC_DEV_VERSION=5.15.0-198.208" in text
             assert '"${UBUNTU_SNAPSHOT}" "${ENVGEN_LINUX_LIBC_DEV_VERSION}"' in text
         assert "configure_ubuntu_snapshot.sh" in text, relative
+
+
+def test_canonical_sim2real_images_exclude_fixed_critical_dependencies():
+    envgen = (WORKBENCH / "sim2real-envgen/Dockerfile").read_text()
+    pin = re.search(
+        r"^ARG ENVGEN_LINUX_LIBC_DEV_VERSION=(5\.15\.0-\d+\.\d+)$",
+        envgen,
+        re.MULTILINE,
+    )
+    assert pin
+    header_components = tuple(int(part) for part in re.split(r"[.-]", pin.group(1)))
+    assert header_components >= (5, 15, 0, 198, 208)
+    assert '"${UBUNTU_SNAPSHOT}" "${ENVGEN_LINUX_LIBC_DEV_VERSION}"' in envgen
+    isaac = (WORKBENCH / "common/isaac3-oss-deps.txt").read_text()
+    pin = re.search(r"^pyjwt==(\S+)$", isaac, re.MULTILINE)
+    assert pin and Version(pin.group(1)) >= Version("2.15.1")
+    transfer = (WORKBENCH / "cosmos2-transfer/security-overrides.txt").read_text()
+    pin = re.search(r"/pyjwt-(\S+)-py3-none-any.whl#sha256=[a-f0-9]{64}", transfer)
+    assert pin and Version(pin.group(1)) >= Version("2.15.1")
+    dockerfile = (WORKBENCH / "cosmos2-transfer/Dockerfile").read_text()
+    assert 'm.version("PyJWT") == "2.15.1"' in dockerfile
 
 
 def test_genesis_workflow_images_replace_vulnerable_parent_gitpython() -> None:

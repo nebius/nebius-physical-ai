@@ -16,8 +16,8 @@ config:
   workers: 2
   accelerators: B200:1
   worker: 0
-  # Explicit selection: no silent replacement when a hosted model is absent.
-  reasoner_model: nvidia/Cosmos3-Super-Reasoner
+  # Current hosted evaluator; Cosmos3-Nano remains the separate generator.
+  reasoner_model: MiniMaxAI/MiniMax-M3
   merge_model: nvidia/Nemotron-3_5-Lightning
   samples: 8
   threshold: 0.8

@@ -1764,6 +1764,57 @@ def test_validation_environment_migrates_changed_config_only_after_safe_recovery
     ] == ["kubernetes"]
 
 
+def test_validation_environment_drops_parent_api_endpoint(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A scope-owned validation API cannot inherit its parent's endpoint."""
+
+    kubeconfig = tmp_path / "kubeconfig"
+    kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
+    parent_config = tmp_path / "controller-config.yaml"
+    parent_config.write_text(
+        yaml.safe_dump(
+            {
+                "allowed_clouds": ["kubernetes", "nebius"],
+                "api_server": {"endpoint": "http://127.0.0.1:36471"},
+                "kubernetes": {"allowed_contexts": ["parent-context"]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    isolated_root = tmp_path / "isolated"
+    monkeypatch.setenv("NPA_SKYPILOT_ISOLATED_CONFIG_DIR", str(isolated_root))
+    monkeypatch.setenv("SKYPILOT_GLOBAL_CONFIG", str(parent_config))
+
+    from npa.orchestration.skypilot import cleanup, local_api
+
+    client_configs: list[dict] = []
+
+    def fake_sky_environment(
+        _scope: Path, *, environment: dict[str, str]
+    ) -> dict[str, str]:
+        client_configs.append(
+            yaml.safe_load(
+                Path(environment["SKYPILOT_GLOBAL_CONFIG"]).read_text(encoding="utf-8")
+            )
+        )
+        return dict(environment)
+
+    monkeypatch.setattr(cleanup, "sky_environment", fake_sky_environment)
+    monkeypatch.setattr(local_api, "ensure_isolated_api", lambda **_kwargs: None)
+
+    gpu_catalog.kubernetes_sky_environment(
+        context="exact-context",
+        kubeconfig=kubeconfig,
+        sky_executable="/opt/sky/bin/sky",
+    )
+
+    assert len(client_configs) == 1
+    assert "api_server" not in client_configs[0]
+    assert client_configs[0]["allowed_clouds"] == ["kubernetes"]
+    assert client_configs[0]["kubernetes"]["allowed_contexts"] == ["exact-context"]
+
+
 def test_readiness_retries_quarantined_snapshot_before_healthy_inventory(monkeypatch):
     invalid = _inventory_with_node_spec({"unschedulable": "false"})
     healthy = KubernetesGpuInventory("ctx", 1, 1, 8, 8, ("NVIDIA-B200",), {})

@@ -1,17 +1,16 @@
-# Pre-populate the Isaac runtime cache once, so workload pods reuse a verified tree.
+# Pre-populate the pinned Isaac runtime cache before submitting workload pods.
 #
 # WHY YOU WANT THIS
-#   The Isaac workbench images ship no NVIDIA Isaac bytes; Isaac Sim and Isaac Lab are
-#   downloaded on first run (see npa/docker/workbench/common/isaac_bootstrap.sh).
-#   Cold setup includes the image pull, hash-pinned wheel installation, source checkout,
-#   and tree verification. Its duration depends on network and filesystem performance;
-#   installation can be quiet while pip writes many files to the shared volume.
+#   The Isaac workbench images ship no NVIDIA Isaac bytes; the pinned Isaac Sim and
+#   Isaac Lab closure is downloaded on first run. Its size and install time depend on
+#   the selected version, network, and filesystem. Older 111-second / 10-GiB estimates
+#   do not describe the current Isaac Sim 6 runtime; measure the selected closure.
 #
-#   With a per-pod emptyDir every pod repeats that installation. Warming a SHARED volume
-#   once lets subsequent pods use the verified tree. It also lets you run workloads with
-#   NPA_ISAAC_CACHE_READONLY=1, so the runtime user never needs write access to the cache
-#   at all - the bootstrap downloads and executes code, so shrinking its write surface in
-#   steady state is worth doing.
+#   Warm a shared volume once so every node can reuse the verified, atomically published
+#   tree. NPA_ISAAC_CACHE_READONLY=1 keeps ordinary workload pods from modifying it.
+#   The warm job disables pip bytecode compilation: precompiling the SDK's many Python
+#   modules adds avoidable metadata writes on shared filesystems. Python can execute
+#   the source modules from a read-only cache without writing bytecode there.
 #
 # EULA POLICY
 #   NPA defaults acceptance on for non-interactive Isaac workflows. The image never
@@ -37,13 +36,14 @@
 #      PersistentVolumeClaim below creates.
 #   b) Per-node emptyDir: no PVC to manage, but one download per pod. Only sensible for a
 #      single-pod smoke; GPU nodes have ~890 GiB of ephemeral storage, so it fits, but you
-#      repeat the download and installation every time.
+#      repeat the complete SDK download and installation every time.
 #
 # SIZING
-#   The current Isaac Sim 6 / Isaac Lab 3 tree occupies about 18 GiB. Check free space on
-#   the backing filesystem before warming: the PVC request does not prove that shared
-#   filesystem capacity is available. A version bump builds alongside existing trees;
-#   preserve those trees and arrange sufficient capacity before starting another warm.
+#   Measure the selected installed tree and reserve space for two complete versions
+#   plus download/install headroom. The current Isaac Sim 6 closure occupies about 18 GiB;
+#   the 64-GiB PVC below allows a new version beside the existing immutable tree.
+#   Check backing-filesystem free space before warming: the PVC request alone does not
+#   establish available space. A per-pod cache needs matching ephemeral-storage capacity.
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -54,7 +54,7 @@ spec:
   storageClassName: csi-mounted-fs-path-sc
   resources:
     requests:
-      storage: 40Gi
+      storage: 64Gi
 ---
 apiVersion: batch/v1
 kind: Job
@@ -84,8 +84,8 @@ spec:
           # The job's only legitimate writes are into the mounted cache volume, so the
           # root filesystem is immutable and /tmp is a separate scratch volume (pip needs
           # a writable TMPDIR). Flagged by Trivy KSV-0014 on the first draft of this file
-          # — worth honouring rather than ignoring, because this job downloads and unpacks
-          # third-party code and should not be able to modify the image root.
+          # — this job downloads and unpacks third-party code and should not be able to
+          # modify the image root.
           securityContext:
             readOnlyRootFilesystem: true
             allowPrivilegeEscalation: false
@@ -111,6 +111,9 @@ spec:
               value: "YES"
             - name: NPA_ISAAC_CACHE_DIR
               value: /opt/isaac-cache
+            # Avoid precompiling the SDK into thousands of shared-filesystem writes.
+            - name: PIP_COMPILE
+              value: "0"
             # Point this at an internal mirror if egress to pypi.nvidia.com is restricted;
             # the wheels are sha256-pinned, so a mirror is verifiable.
             # - name: NPA_ISAAC_INDEX_URL
@@ -134,7 +137,7 @@ spec:
           persistentVolumeClaim:
             claimName: npa-isaac-cache
         # Writable scratch, because the root filesystem is read-only. pip unpacks wheels
-        # here, so size it for the largest one (isaacsim-extscache-kit is ~3 GB) plus room.
+        # here, so size it for the selected wheel closure and installation headroom.
         - name: tmp
           emptyDir:
             sizeLimit: 12Gi
@@ -142,4 +145,4 @@ spec:
         # cache plus headroom, or the pod is evicted part-way through the bootstrap.
         # - name: isaac-cache
         #   emptyDir:
-        #     sizeLimit: 40Gi
+        #     sizeLimit: 64Gi

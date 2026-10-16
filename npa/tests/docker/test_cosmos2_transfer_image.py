@@ -20,6 +20,9 @@ ROOT = Path(__file__).resolve().parents[3]
 IMAGE_DIR = ROOT / "npa" / "docker" / "workbench" / "cosmos2-transfer"
 DOCKERFILE = IMAGE_DIR / "Dockerfile"
 SOURCE_SHA = "67d56b7d550a3911024a32dc23ae0bae5258e633"
+SOURCE_ARCHIVE_SHA256 = (
+    "978bfb03a49213669551701659641ae7b8414649480eb45c4c9c1f8d5e5a92a8"
+)
 SAM2_SOURCE_SHA = "2b90b9f5ceec907a1c18123530e92e794ad901a4"
 BUILD_BASE_SHA = (
     "sha256:3986465b3dd3b4d602c07061f2cff417e0bfb24810129408d4eb12e111015a6c"
@@ -37,6 +40,24 @@ def _dockerfile() -> str:
 def test_source_base_uv_and_python_are_immutable() -> None:
     text = _dockerfile()
     assert f"COSMOS_TRANSFER_REVISION={SOURCE_SHA}" in text
+    assert f"COSMOS_TRANSFER_ARCHIVE_SHA256={SOURCE_ARCHIVE_SHA256}" in text
+    assert (
+        "https://codeload.github.com/nvidia-cosmos/cosmos-transfer2.5/tar.gz/"
+        "${COSMOS_TRANSFER_REVISION}"
+    ) in text
+    assert (
+        'echo "${COSMOS_TRANSFER_ARCHIVE_SHA256}  ${archive}" | '
+        "sha256sum --check --status"
+    ) in text
+    assert 'tar -xzf "${archive}" --strip-components=1' in text
+    assert (
+        "git remote add origin https://github.com/nvidia-cosmos/cosmos-transfer2.5.git"
+        not in text
+    )
+    assert (
+        'org.nebius.npa.cosmos_transfer_archive_sha256="${COSMOS_TRANSFER_ARCHIVE_SHA256}"'
+        in text
+    )
     assert f"SAM2_REVISION={SAM2_SOURCE_SHA}" in text
     assert f"cudnn-devel-ubuntu24.04@{BUILD_BASE_SHA}" in text
     assert f"cudnn-runtime-ubuntu24.04@{RUNTIME_BASE_SHA}" in text
@@ -64,7 +85,9 @@ def test_source_base_uv_and_python_are_immutable() -> None:
 
 def test_lfs_media_models_and_build_credentials_are_excluded() -> None:
     text = _dockerfile()
-    assert text.count("GIT_LFS_SKIP_SMUDGE=1") >= 3
+    # The Transfer tree now comes from an integrity-checked public archive; SAM2
+    # remains a separate Git fetch and must keep its LFS-smudge protections.
+    assert text.count("GIT_LFS_SKIP_SMUDGE=1") >= 2
     assert "filter.lfs.smudge=" in text
     assert "rm -rf .git assets" in text
     assert "matplotlib/mpl-data/sample_data" in text

@@ -698,6 +698,62 @@ def test_stage10_rejects_nontrainer_checkpoint_under_run_root() -> None:
         )
 
 
+def test_stage10_accepts_validation_selected_periodic_native_checkpoint() -> None:
+    checkpoint = f"{ROOT}/byo-trainer/{TRAIN_JOB}/{TRAIN_TAG}/checkpoints/model_700.pt"
+    evidence = _evidence(checkpoint)
+    for record in [
+        evidence["checkpoint_selection"],
+        evidence["checkpoint_candidates"][0],
+    ]:
+        record["training_iteration"] = 700
+        record["checkpoint_completed_updates"] = 701
+        record["checkpoint_iteration_semantics"] = "last_completed_zero_based"
+    assert (
+        stage10_authority.validate_stage10_input_scope(
+            Namespace(run_id=RUN_ID, outer_iteration=1),
+            root=ROOT,
+            evidence=evidence,
+        )
+        == RUN_ID
+    )
+
+
+def test_stage10_accepts_zero_based_first_periodic_checkpoint() -> None:
+    checkpoint = f"{ROOT}/byo-trainer/{TRAIN_JOB}/{TRAIN_TAG}/checkpoints/model_0.pt"
+    evidence = _evidence(checkpoint)
+    for record in [
+        evidence["checkpoint_selection"],
+        evidence["checkpoint_candidates"][0],
+    ]:
+        record["training_iteration"] = 0
+        record["checkpoint_completed_updates"] = 1
+        record["checkpoint_iteration_semantics"] = "last_completed_zero_based"
+    assert (
+        stage10_authority.validate_stage10_input_scope(
+            Namespace(run_id=RUN_ID, outer_iteration=1),
+            root=ROOT,
+            evidence=evidence,
+        )
+        == RUN_ID
+    )
+
+
+def test_stage10_rejects_periodic_checkpoint_with_wrong_iteration() -> None:
+    checkpoint = f"{ROOT}/byo-trainer/{TRAIN_JOB}/{TRAIN_TAG}/checkpoints/model_700.pt"
+    evidence = _evidence(checkpoint)
+    for record in [
+        evidence["checkpoint_selection"],
+        evidence["checkpoint_candidates"][0],
+    ]:
+        record["training_iteration"] = 701
+    with pytest.raises(RuntimeError, match="exact canonical BYO trainer output"):
+        stage10_authority.validate_stage10_input_scope(
+            Namespace(run_id=RUN_ID, outer_iteration=1),
+            root=ROOT,
+            evidence=evidence,
+        )
+
+
 def _run_stage10_with_frames(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

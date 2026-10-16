@@ -92,7 +92,7 @@ def test_canonical_sim2real_workflow_requires_operator_pinned_images() -> None:
     config = runbook["config"]
     image_inputs = (
         "controller_image",
-        "transfer_image",
+        "cosmos3_image",
         "envgen_image",
         "isaac_image",
         "viewer_image",

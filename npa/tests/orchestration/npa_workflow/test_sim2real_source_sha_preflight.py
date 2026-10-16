@@ -13,12 +13,12 @@ def _config(**overrides):
     digest = f"registry.example/registry/image@sha256:{'a' * 64}"
     config = {
         "controller_image": digest,
-        "transfer_image": digest,
+        "cosmos3_image": digest,
         "envgen_image": digest,
         "isaac_image": digest,
         "viewer_image": digest,
         "isaac_cache_pvc": "npa-isaac-cache",
-        "cosmos3_model": "MiniMaxAI/MiniMax-M3",
+        "token_factory_model": "MiniMaxAI/MiniMax-M3",
         "env_count": "640",
         "train_fraction": "0.8",
         "rollout_count": "64",
@@ -44,7 +44,7 @@ def _run_preflight(config):
         requested_secret_envs=_valid_secret_envs(),
         secret_values={"HF_TOKEN": "redacted", "NEBIUS_TOKEN_FACTORY_KEY": "redacted"},
         hf_validator=lambda _token, repo: SimpleNamespace(ok=True, repo=repo),
-        token_factory_validator=lambda _key, model: SimpleNamespace(
+        token_factory_validator=lambda _key, model, **_kwargs: SimpleNamespace(
             ok=True, model=model
         ),
     )

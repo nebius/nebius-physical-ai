@@ -1191,6 +1191,59 @@ Metrics/object_pose/position_error: 0.3215
     assert "total_timesteps" not in telemetry["final_iteration"]
 
 
+def test_ppo_updates_before_first_finished_episode_remain_observed() -> None:
+    log = """
+Learning iteration 0/3
+Total steps: 24576
+Mean value loss: 0.0223
+Mean surrogate loss: 0.2169
+Learning iteration 1/3
+Total steps: 49152
+Mean value loss: 0.0006
+Mean surrogate loss: 0.0154
+Learning iteration 2/3
+Total steps: 73728
+Mean value loss: 11.0701
+Mean surrogate loss: -0.0038
+Mean reward: 63.89
+"""
+    telemetry = parse_ppo_training_log(log)
+    assert telemetry["observed_iterations"] == 3
+    assert telemetry["iterations_with_episode_return"] == 1
+    assert telemetry["first_iteration"]["iteration"] == 0
+    assert telemetry["first_iteration"]["total_timesteps"] == 24576
+    assert "episode_return" not in telemetry["first_iteration"]
+    assert telemetry["best_episode_return"]["iteration"] == 2
+
+
+@pytest.mark.parametrize("indices", [(0, 0), (0, 2), (1, 0)])
+def test_ppo_accounting_rejects_repeated_missing_or_reordered_updates(indices) -> None:
+    log = "\n".join(
+        f"Learning iteration {index}/3\nMean value loss: 0.1\n"
+        "Mean surrogate loss: -0.01\nMean reward: 1.0"
+        for index in indices
+    )
+    with pytest.raises(ValueError, match="unique and consecutive"):
+        parse_ppo_training_log(log)
+
+
+def test_ppo_accounting_does_not_fabricate_returns_for_short_training() -> None:
+    telemetry = parse_ppo_training_log(
+        "Learning iteration 0/1\nMean value loss: 0.1\nMean surrogate loss: -0.01"
+    )
+    assert telemetry["observed_iterations"] == 1
+    assert telemetry["iterations_with_episode_return"] == 0
+    assert telemetry["best_episode_return"] == {}
+    assert "episode_return" not in telemetry["curves"][0]
+
+
+def test_ppo_accounting_rejects_overflowing_optimizer_loss() -> None:
+    with pytest.raises(ValueError, match="nonfinite metric"):
+        parse_ppo_training_log(
+            "Learning iteration 0/1\nMean value loss: 1e999\nMean surrogate loss: -0.01"
+        )
+
+
 def _no_reset_boundary():
     return {
         "schema": "npa.sim2real.episode_boundary.v1",

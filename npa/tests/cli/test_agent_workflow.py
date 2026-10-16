@@ -120,20 +120,28 @@ def test_generate_sim2real_loop_gate_yaml_validates() -> None:
 
 
 @pytest.mark.parametrize(
-    ("yaml_text", "state"),
+    ("yaml_text", "state", "schema"),
     [
-        (generate_sim2real_loop_gate_yaml(), "augment"),
-        (generate_vlm_rl_loop_yaml(), "stage-03-transfer"),
-        (generate_token_factory_gate_yaml(), "augment-scene"),
-        (generate_data_factory_yaml(), "augment"),
+        (generate_sim2real_loop_gate_yaml(), "augment", "npa.cosmos2.transfer.v1"),
+        (
+            generate_vlm_rl_loop_yaml(),
+            "stage-03-transfer",
+            "npa.cosmos3.structural-transfer.v1",
+        ),
+        (
+            generate_token_factory_gate_yaml(),
+            "augment-scene",
+            "npa.cosmos2.transfer.v1",
+        ),
+        (generate_data_factory_yaml(), "augment", "npa.cosmos2.transfer.v1"),
     ],
 )
 def test_generated_cosmos_transfer_outputs_use_canonical_manifest_schema(
-    yaml_text: str, state: str
+    yaml_text: str, state: str, schema: str
 ) -> None:
     spec = yaml.safe_load(yaml_text)
 
-    assert spec["states"][state]["outputs"][0]["schema"] == ("npa.cosmos2.transfer.v1")
+    assert spec["states"][state]["outputs"][0]["schema"] == schema
 
 
 @pytest.mark.parametrize(
@@ -441,7 +449,7 @@ def test_sim2real_staged_chat_parameters_validate_and_plan() -> None:
     assert spec["config"]["threshold"] == "0.82"
     assert spec["config"]["task_id"] == "Isaac-Lift-Cube-Franka-v0"
     assert len(spec["states"]) == 24
-    assert "stage-08-cosmos3" in spec["states"]
+    assert "stage-08-token-factory" in spec["states"]
     assert "stage-08-wave" not in spec["states"]
     assert "stage-08-reason2" not in spec["states"]
     assert "run-sim2real" not in spec["states"]
@@ -1363,7 +1371,16 @@ def test_vlm_rl_draft_keeps_canonical_resource_profiles_without_live_infra() -> 
     # chat does not rewrite its named lane profiles into the retired single
     # generic `gpu` resource. Runtime backend selection is carried separately.
     assert "gpu" not in spec["resources"]
-    assert spec["resources"]["transfer-gpu"]["accelerators"] == "RTXPRO6000:1"
+    assert spec["config"]["cosmos3_accelerator"] == "RTXPRO6000:1"
+    assert spec["config"]["envgen_accelerator"] == "RTXPRO6000:1"
+    assert (
+        spec["resources"]["cosmos3-gpu"]["accelerators"]
+        == "{{config.cosmos3_accelerator}}"
+    )
+    assert (
+        spec["resources"]["envgen-gpu"]["accelerators"]
+        == "{{config.envgen_accelerator}}"
+    )
     assert spec["resources"]["isaac-gpu"]["accelerators"] == "RTXPRO6000:1"
 
 

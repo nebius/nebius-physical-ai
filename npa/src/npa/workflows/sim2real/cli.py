@@ -413,7 +413,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     component_cosmos = subparsers.add_parser(
         "component-cosmos2-transfer",
-        help="Run Cosmos Transfer 2.5 augment in a sibling GPU job.",
+        help="Legacy-only Cosmos Transfer 2.5 sibling-job adapter; canonical workflows use Stage 3 Cosmos3-Nano.",
     )
     component_cosmos.add_argument("--input-uri", required=True)
     component_cosmos.add_argument("--output-uri", required=True)

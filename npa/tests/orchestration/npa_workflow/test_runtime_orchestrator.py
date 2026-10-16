@@ -2934,12 +2934,16 @@ def _canonical_sim2real_1x1():
             "outer_iterations": "1",
             "inner_iterations": "1",
             "env_count": "12",
+            # Keep these logical resume tests independent of the production
+            # capacity default: the eight deterministic shards form one fake
+            # wave here, while production derives its bound from live capacity.
+            "gpu_concurrency": "8",
             "rollout_count": "1",
             "ppo_iterations": "2",
             "validation_count": "3",
             "gold_count": "3",
             "controller_image": image,
-            "transfer_image": image,
+            "cosmos3_image": image,
             "envgen_image": image,
             "isaac_image": image,
             "viewer_image": image,
@@ -3005,7 +3009,7 @@ def test_canonical_resume_replays_single_stage8_then_restarts_at_stage9() -> Non
         trigger_waiter=_trigger_ready,
     )
     assert first_report.status == "failed"
-    assert first_submitter.calls[-2]["tasks"] == ["stage-08-cosmos3"]
+    assert first_submitter.calls[-2]["tasks"] == ["stage-08-token-factory"]
     assert first_submitter.calls[-1]["tasks"] == ["stage-09-ppo"]
 
     options = RuntimeOptions(
@@ -3040,7 +3044,9 @@ def test_canonical_resume_replays_single_stage8_then_restarts_at_stage9() -> Non
         ["stage-13-retrigger"],
         ["stage-14-visualize"],
     ]
-    stage8 = next(wave for wave in report.waves if "stage-08-cosmos3" in wave["states"])
+    stage8 = next(
+        wave for wave in report.waves if "stage-08-token-factory" in wave["states"]
+    )
     assert stage8["replayed"] is True
 
 

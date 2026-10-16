@@ -269,11 +269,13 @@ and paired visual review; `merge_model` selects prompt enhancement. The current
 reasoning client uses Token Factory and requires exact available model IDs. A
 Cosmos3 generation result does not prove Cosmos3 reasoning.
 
-The reference reasoner is `nvidia/Cosmos3-Super-Reasoner`, which was unavailable
-to the account used for the earlier live tests. Those tests explicitly selected
-`MiniMaxAI/MiniMax-M3`. The reference merge model is
-`nvidia/Nemotron-3_5-Lightning`. There is no silent substitution. Cluster-backed
-Cosmos3 reasoning remains a separate integration requirement.
+The current hosted reference reasoner is `MiniMaxAI/MiniMax-M3`; it must appear
+in the key-scoped model inventory before a run. Earlier live tests that could
+not use the retired public `nvidia/Cosmos3-Super-Reasoner` route explicitly
+selected the same MiniMax model. The reference merge model is
+`nvidia/Nemotron-3_5-Lightning`. There is no silent substitution. A
+cluster-backed Cosmos3 Reasoner remains a separate integration requirement and
+must not be represented as a MiniMax request.
 
 Source frames and hints are sent to the explicitly selected hosted service.
 Use only inputs approved for that service. Public demonstrations must use
