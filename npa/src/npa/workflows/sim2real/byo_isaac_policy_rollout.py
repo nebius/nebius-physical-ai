@@ -286,7 +286,7 @@ def upload_and_exit(rollouts, note, applied=None):
     # rollouts: list of {rollout_id, frames:[names], actions:[{step,action}]}
     checkpoint = checkpoint_provenance()
     meta = {"rollouts": rollouts, "note": note, "policy_trained": bool(trained),
-            "actor_initialization": actor_initialization,
+            "actor_initialization": globals().get("actor_initialization"),
             "applied_scenarios": applied or {},
             "policy_checkpoint": checkpoint,
             "camera_metadata": CAMERA_VIEWS,

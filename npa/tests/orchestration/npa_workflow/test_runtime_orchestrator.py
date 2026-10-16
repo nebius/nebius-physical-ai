@@ -2934,6 +2934,10 @@ def _canonical_sim2real_1x1():
             "outer_iterations": "1",
             "inner_iterations": "1",
             "env_count": "12",
+            # Keep these logical resume tests independent of the production
+            # capacity default: the eight deterministic shards form one fake
+            # wave here, while production derives its bound from live capacity.
+            "gpu_concurrency": "8",
             "rollout_count": "1",
             "ppo_iterations": "2",
             "validation_count": "3",
