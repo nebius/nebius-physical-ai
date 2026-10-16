@@ -35,6 +35,7 @@ lists other affected images and shipped workflows, including the Sim2Real seams.
 | --- | --- |
 | Choose a workload | [Robot and workflow guides](guides/README.md) · [workflow catalog](../../workflows/README.md) |
 | Run or resume a workflow manually | [Manual workflow operations](guides/manual-workflow-operations.md) |
+| Run the 14-stage Sim2Real loop from a fresh terminal | [Manual Sim2Real runbook](guides/sim2real-workflow.md), including the qualified-image release gate |
 | Generate twelve PAIDF appearances from MP4 or real ALOHA data | [Manual twelve-profile recipe](guides/paidf-appearance-12.md) |
 | Submit episode batches and choose concurrency | [Dataset batches](guides/paidf-dataset-batches.md) · [capacity planning](guides/paidf-dataset-batches.md#concurrency-and-existing-capacity) |
 | Inspect supported quality reports | [Shared report inspection](insights-reports.md) |
@@ -66,8 +67,14 @@ a standalone HTML report.
 | Train and evaluate a Cosmos 3 robot policy | [Experimental native LIBERO model-factory workflow](cosmos3-policy-model-factory.md) |
 | Measure Cosmos 3 WAM training across B200 nodes | [Experimental Slurm recipe](cookbooks/cosmos3-wam-slurm.md) · [Measured 8/16-GPU results](evidence/cosmos3-wam-scaling/README.md) |
 | Scenes and digital twins | [NuRec reconstruction](guides/neural-reconstruction.md) · [RTX campus rendering and infrastructure](guides/digital-twin.md) · [living-lab fan-out](guides/living-lab-nurec-fanout.md) |
+| Image to rigid-object generation | [EmbodiedGen V2](embodiedgen.md) — qualified operator-private TRELLIS → generated URDF/collision bundle → PyBullet evidence; each selected target still needs its own preflight |
 | USD object preparation | [Content Agents](content-agents.md) |
-| Other video models | [Wan 2.2](wan2.2.md) · [LTX-2](ltx2.md) |
+| Video restoration and generation | [SeedVR2](seedvr2.md) · [Wan 2.2](wan2.2.md) · [LTX-2](ltx2.md) |
+
+SeedVR2 keeps H100/sample defaults; [explicit conditioning and hardware controls](seedvr2.md#explicit-conditioning-and-hardware) expose the experimental posterior-mode and qualified B200 paths without claiming quality improvement.
+
+SeedVR2 image maintainers can set `NPA_E2E_SEEDVR_READABILITY_BASE_IMAGE` to an
+existing tagged local SeedVR image ID for the [nonroot packaging check](seedvr2.md#check-nonroot-packaging-locally).
 
 ## Robotics and simulation
 

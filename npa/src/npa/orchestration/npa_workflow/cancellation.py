@@ -27,6 +27,7 @@ _NONTERMINAL = {
     "RETRYING",
     "CANCELLING",
     "MANIFEST_PENDING",
+    "FAILED_CONTROLLER",
 }
 
 
@@ -36,6 +37,9 @@ def normalize_workflow_state(value: object) -> str:
     state = str(value or "").strip().upper().replace("-", "_")
     if not state:
         return ""
+    if state == "FAILED_CONTROLLER":
+        # Scheduler termination does not establish that its workload drained.
+        return state
     if state in {"OK", "SUCCESS", "COMPLETED"}:
         return "SUCCEEDED"
     if state.startswith("FAILED") or state in {"FAILURE", "ERROR", "BLOCKED"}:

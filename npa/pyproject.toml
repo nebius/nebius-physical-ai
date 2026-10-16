@@ -118,6 +118,13 @@ leisaac = [
     # FFmpeg executable; LeIsaac packaging scans and records those bytes.
     "imageio-ffmpeg==0.6.0",
 ]
+# Apache-2.0 Pixar USD Python runtime used only to reopen post-S3-readback
+# NuRec USDZ packages during objective qualification.
+nurec-audit = [
+    "usd-core==26.8",
+    # Decode every retained MP4 using the same wrapper as the native receipt.
+    "imageio-ffmpeg==0.6.0",
+]
 genesis = [
     "genesis-world>=1.4.1,<2.0",
     # Upstream compatibility fix preserves the repository Pillow security minimum.
@@ -157,6 +164,8 @@ sonic = [
 # standard (non-e2e) test suite collects without pulling in the GPU-heavy
 # extras (genesis, groot, sonic).
 dev = [
+    # RRD semantic tests exercise ChunkStore.reader's real DataFusion path.
+    "rerun-sdk[catalog]==0.38.1",
     "langgraph==1.2.12",
     "langgraph-checkpoint-sqlite==3.1.1",
     # Parse real raw USD layers/variants in sensor-rig scene preflight tests.
@@ -193,6 +202,7 @@ dev = [
 
 [dependency-groups]
 dev = [
+    "rerun-sdk[catalog]==0.38.1",
     "langgraph==1.2.12",
     "langgraph-checkpoint-sqlite==3.1.1",
     "usd-core==26.8",
@@ -259,7 +269,7 @@ sonic = "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T0341
 sonic-mujoco = "0.2.0-runtime"
 retargeting = "0.1.1"
 envgen = "0.1.2-sim2real-coherent-20260904"
-robocasa = "0.1.0"
+robocasa = "0.1.1"
 robomimic = "0.1.0-neutral-unbuilt"
 reference-policy = "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
 lerobot-vlm-rl = "cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
@@ -284,7 +294,9 @@ curobo = "0.8.0-cuda13-blackwell-unbuilt"
 open3d = "0.20.0-cpu-20260918"
 
 
-mjlab = "dev-0202f396fb23f7d066fd452b469578e67151d382"
+# Public RTX-qualified development candidate; supported-release quarantine remains.
+mjlab = "dev-d5cfdcc261d586c25caa877d332feab052369a1f"
+seedvr2 = "0.1.0-cu130-unbuilt"
 content-agents = "0.5.2-npa2"
 # Source inventory only: use an explicit validated image until release acceptance.
 ncore = "59c698d206da92b406a4f72619fce3b3a2c64bfd-unbuilt"
@@ -327,6 +339,7 @@ path = "src/npa/workflow_build.py"
 "src/npa/deploy/terraform/.terraform.lock.hcl" = "src/npa/deploy/terraform/.terraform.lock.hcl"
 
 [tool.hatch.build.targets.wheel.force-include]
+"src/npa/workbench/robocasa/fixture-controls.json" = "npa/workbench/robocasa/fixture-controls.json"
 "src/npa/solutions/solutions.toml" = "npa/solutions/solutions.toml"
 "src/npa/deploy/sonic_image_manifest.json" = "npa/deploy/sonic_image_manifest.json"
 "src/npa/deploy/wan2_2_image_manifest.json" = "npa/deploy/wan2_2_image_manifest.json"

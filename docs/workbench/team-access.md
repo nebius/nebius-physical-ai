@@ -42,7 +42,10 @@ need an explicit per-user allocation to execute a workflow.
 
 The service is a trusted administrator of enrolled worker namespaces. Worker
 isolation protects users from other workers; it does not isolate a compromised
-gateway. The deployment and its workload boundaries still require live
+gateway. The scheduler also needs cluster-wide read access to nodes, namespaces,
+and pods so SkyPilot can calculate available GPU capacity. Its execution writes
+remain limited to enrolled worker namespaces; it cannot grant cluster roles.
+The deployment and its workload boundaries still require live
 qualification before production use.
 
 ## Administrator: establish local accounts and policy
@@ -151,6 +154,15 @@ Use `npa workbench access storage-create` only when its Nebius storage setup
 matches the deployment you operate; otherwise provide an equivalently narrow
 storage grant through the private configuration. Workload storage keys are
 separate from personal API access keys.
+
+For workloads that fetch gated models or use hosted inference, an allocation's
+`workload_secrets_file` may reference a private mode-0600 JSON object containing
+`HF_TOKEN`, `HUGGING_FACE_HUB_TOKEN`, `NGC_API_KEY`, `NVIDIA_API_KEY`, or
+`NEBIUS_TOKEN_FACTORY_KEY`. The service injects only those explicitly allocated
+provider credentials. IAM tokens, Kubernetes credentials, and storage keys
+cannot be supplied through that file. The server's ambient credentials are not
+inherited by a user's task. See [team PAIDF](team-paidf.md) for Cosmos3 input and
+source-overlay preparation.
 
 Account membership updates do not generate or enroll allocations. After changing
 allocation policy, render and enroll the selected destinations, regenerate the

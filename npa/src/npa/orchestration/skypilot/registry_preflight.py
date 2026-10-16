@@ -1196,6 +1196,14 @@ def check_image_pulls_with_credentials(
                     f"declare an operator-managed imagePullSecret for {host} in "
                     f"namespace {target_namespace!r}"
                 )
+            if target_status == "service_account_unverified":
+                target_remedy = (
+                    f"verify ServiceAccount read permission in namespace "
+                    f"{target_namespace!r} and context {context or '<missing>'!r}; "
+                    "allow creation if SkyPilot's native account is absent; "
+                    "custom accounts must already exist; preserve configured "
+                    "pull-secret defaults and retry"
+                )
         remedy = operator_check.remedy if requires_operator else ""
         checks.append(
             ImagePullCheck(
@@ -1241,7 +1249,8 @@ def _target_pull_status_detail(status: str) -> str:
         "placement_mismatch": "admitted pull probe placement differs from the request",
         "authority_mismatch": "admitted pull probe authority differs from the request",
         "service_account_unverified": (
-            "the exact ServiceAccount's default pull Secrets could not be verified"
+            "the exact ServiceAccount's preparation or default pull Secrets "
+            "could not be verified"
         ),
         "target_probe_failed": "target probe could not start after pulling the image",
         "pull_secret_required": "private Kubernetes path requires an imagePullSecret",
@@ -1732,6 +1741,54 @@ def _cleanup_kubernetes_pull_probe(
     return "unverified", interrupted
 
 
+def _native_service_account_matches(body: str, namespace: str) -> bool:
+    """Verify the native account's type and exact target without trusting stderr."""
+
+    try:
+        account = json.loads(body)
+        return (
+            account["apiVersion"] == "v1"
+            and account["kind"] == "ServiceAccount"
+            and account["metadata"]["name"] == SKYPILOT_DEFAULT_SERVICE_ACCOUNT_NAME
+            and account["metadata"]["namespace"] == namespace
+        )
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+def _prepare_native_service_account(
+    run: Callable[..., subprocess.CompletedProcess[str]], *, namespace: str
+) -> bool:
+    """Create only SkyPilot's missing native account; retain existing authority."""
+
+    name = SKYPILOT_DEFAULT_SERVICE_ACCOUNT_NAME
+    query = ["get", "serviceaccount", name, "-o", "json", "--ignore-not-found=true"]
+    try:
+        existing = run(query)
+        if existing.returncode != 0:
+            return False
+        if existing.stdout.strip():
+            return _native_service_account_matches(existing.stdout, namespace)
+        manifest = {
+            "apiVersion": "v1",
+            "kind": "ServiceAccount",
+            "metadata": {
+                "name": name,
+                "namespace": namespace,
+                "labels": {"parent": "skypilot"},
+            },
+        }
+        # Create never changes an existing account. A concurrent native launcher
+        # may win the race; only a subsequent exact-target read establishes it.
+        run(["create", "-f", "-", "-o", "json"], input_text=json.dumps(manifest))
+        observed = run(query)
+        return observed.returncode == 0 and _native_service_account_matches(
+            observed.stdout, namespace
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def _service_account_pull_secrets(
     run: Callable[..., subprocess.CompletedProcess[str]],
     *,
@@ -1818,6 +1875,7 @@ def _pull_probe_admission_status(
     if (
         not isinstance(observed, Mapping)
         or observed.get("serviceAccountName") != requested["serviceAccountName"]
+        or observed.get("automountServiceAccountToken") is not False
         or observed.get("imagePullSecrets", []) != pull_secrets
     ):
         return "authority_mismatch"
@@ -1926,6 +1984,7 @@ def verify_kubernetes_image_pull(
         {
             "restartPolicy": "Never",
             "serviceAccountName": service_account_name,
+            "automountServiceAccountToken": False,
             "terminationGracePeriodSeconds": 0,
             "containers": [
                 {
@@ -1957,6 +2016,14 @@ def verify_kubernetes_image_pull(
             env=({**os.environ, "KUBECONFIG": kubeconfig} if kubeconfig else None),
         )
 
+    # Native SkyPilot creates this account during launch, after NPA preflight.
+    # Prepare the same identity in a fresh namespace without granting RBAC or
+    # creating custom accounts. Keep it for the subsequent native launch.
+    if (
+        service_account_name == SKYPILOT_DEFAULT_SERVICE_ACCOUNT_NAME
+        and not _prepare_native_service_account(run, namespace=namespace)
+    ):
+        return KubernetesPullCheck(status="service_account_unverified")
     expected_pull_secrets = manifest["spec"]["imagePullSecrets"]
     if not expected_pull_secrets:
         expected_pull_secrets = _service_account_pull_secrets(

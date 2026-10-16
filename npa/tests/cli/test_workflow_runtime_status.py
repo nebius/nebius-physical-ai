@@ -914,6 +914,10 @@ def test_direct_strict_task_query_errors_redact_credentials(mocker, detail):
         (0, "[]", "permission denied"),
         (0, '{"jobs": []}', "error: queue unavailable"),
         (0, "[]\n[]", ""),
+        (0, '[{"job_id": 11, "status": "SUCCEEDED"}, {"status": "RUNNING"}]', ""),
+        (0, '[{"job_id": 11, "status": "SUCCEEDED"}, {"job_id": true}]', ""),
+        (0, '[{"job_id": 11, "status": "SUCCEEDED"}, {"job_id": 7.0}]', ""),
+        (0, '[{"job_id": 11, "status": "SUCCEEDED"}, {"job_id": "07"}]', ""),
     ],
 )
 @pytest.mark.parametrize("surface", ["callback", "json", "watch"])
@@ -1506,7 +1510,13 @@ def test_real_completion_still_requires_actual_final_artifact(
     payload = json.loads(result.stdout)
     assert payload["status"] == "partial" and payload["verified"] is False
     assert "no .rrd artifact exists" in payload["detail"]
-    head.assert_called_once_with(Bucket="bucket", Key="run-test/reports/sim2real.rrd")
+    assert [call.kwargs for call in head.call_args_list] == [
+        {
+            "Bucket": "bucket",
+            "Key": "run-test/reports/.sim2real-publication.json",
+        },
+        {"Bucket": "bucket", "Key": "run-test/reports/sim2real.rrd"},
+    ]
     agents.assert_not_called()
 
 

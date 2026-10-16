@@ -1,6 +1,6 @@
 {
   "format": "npa_blackwell_dc_image_manifest_v1",
-  "as_of": "2026-09-18T00:00:00Z",
+  "as_of": "2026-09-20T00:00:00Z",
   "registry_ref": "${NPA_REGISTRY}",
   "registry_note": "Resolve official public development and release tags through npa.deploy.images. Development tags are immutable full-SHA tags and release provenance is digest-bound.",
   "target": {
@@ -82,7 +82,7 @@
       "verdict": "ready",
       "validation": "pending-hardware",
       "smoke": "npa.smoke.test_mjlab_functional: native CUDA Cartpole PPO update, checkpoint-backed complete episodes and checked ONNX policy export.",
-      "notes": "Current CUDA 13.0 operator image dev-0202f396fb23f7d066fd452b469578e67151d382 has run G1 checkpoint resume, independent-seed evaluation, MP4/HTML rendering and ONNX export on RTX PRO 6000. Torch 2.13.0+cu130 reports sm_100 and sm_120, but these current bytes have not run on B200/B300. The older CUDA 12.8 image has separate B200 one/eight-GPU and RTX acceptance in docs/workbench/validation/mjlab-gpu-20260924.json. Current trained rollout: docs/workbench/validation/mjlab-trained-g1-20260925.json. Public publication remains quarantined.",
+      "notes": "The public CUDA 13.0 development image dev-d5cfdcc261d586c25caa877d332feab052369a1f passed fresh unmodified SkyPilot VM startup, native Cartpole/G1/Go1/YAM train/eval/ONNX cycles, service resume/auth/scope/concurrency and native NVIDIA 1920x1080 G1 rendering on one RTX PRO 6000. It re-evaluated an unchanged independently trained 3000-update G1 checkpoint across 64 complete episodes; the training image identity is retained separately. All 1000 video frames decoded at 50 fps; offline HTML playback and seeking passed. This digest has not run on B200/B300 or multiple GPUs. Supported release promotion remains quarantined.",
       "measured_arch_list": [
         "sm_75",
         "sm_80",
@@ -90,7 +90,10 @@
         "sm_90",
         "sm_100",
         "sm_120"
-      ]
+      ],
+      "candidate_digest": "sha256:ec8c099dc8ab34c8a390c6076d3cc3c07a88e27818d0eb0b6b6cf819663f242e",
+      "candidate_tag": "dev-d5cfdcc261d586c25caa877d332feab052369a1f",
+      "qualification": "docs/workbench/validation/mjlab-native-hd-gpu-20261010.json"
     },
     {
       "name": "npa-sam3",
@@ -237,6 +240,40 @@
         "platform": "gpu-rtx6000",
         "result": "CUDA_BASE_RTX_PRO_6000_VALIDATION_PASSED"
       }
+    },
+    {
+      "name": "npa-seedvr2",
+      "dockerfile": "seedvr2/Dockerfile",
+      "build_script": "seedvr2/build.sh",
+      "redistribution": "public",
+      "verdict": "ready",
+      "validation": "pending-hardware",
+      "torch": "2.13.0+cu130",
+      "measured_torch": "2.13.0+cu130",
+      "measured_arch_list": [
+        "sm_75",
+        "sm_80",
+        "sm_86",
+        "sm_90",
+        "sm_100",
+        "sm_120"
+      ],
+      "source_compiled_extensions": [
+        "flash-attn 2.8.3.post1",
+        "NVIDIA Apex fused normalization"
+      ],
+      "measured_extension_sass": {
+        "flash-attn": [
+          "sm_90"
+        ],
+        "apex": [
+          "sm_90"
+        ]
+      },
+      "smoke": "Pending acceptance target: pinned official SeedVR2-3B must restore a real degraded robot-observation clip and emit a fully decoded, hash-bound MP4; objective temporal and object-preservation evidence is a separate post-workflow gate, not a current smoke result.",
+      "build_target": "The built H100 candidate carries native sm_90 SASS and no PTX in both FlashAttention and Apex. Its Torch wheel also carries sm_100, but the extensions make the image inapplicable to datacenter Blackwell. A separate sm_100 extension rebuild followed by the same real restoration and objective gates is required; wheel arch presence or imports alone are insufficient.",
+      "upstream_tracking": "https://github.com/Dao-AILab/flash-attention and https://github.com/NVIDIA/apex",
+      "notes": "The quarantined first candidate was built, its complete saved-image payload scan passed, and its extension SASS inventories were read from the image. Route it only to one H100 until real restoration acceptance completes. No B200/B300 compatibility is inferred from CUDA 13 or the Torch wheel."
     },
     {
       "name": "npa-lerobot",
@@ -1017,12 +1054,12 @@
       "build_script": "robocasa/build.sh",
       "verdict": "blocked",
       "validation": "pending-build",
-      "torch": "none baked (CUDA 12.4 base; robosuite/MuJoCo CPU/EGL)",
+      "torch": "2.13.0+cu129 (validation candidate; architecture set pending exact-image measurement)",
       "source_compiled_extensions": [],
       "smoke": "Gymnasium task registration, kitchen asset availability, headless EGL reset, random rollout with video",
-      "notes": "Built on the CUDA 12.4 base from the live-accepted BYOF evidence. cu124 wheels stop at sm_90, so the image cannot run on datacenter Blackwell (sm_100/sm_103) without a CUDA 13 rebuild; RTX PRO 6000 (sm_120) also requires a cu130 rebuild. RoboCasa/robosuite are Apache-2.0 and kitchen assets are runtime downloads. Validation candidate: not yet built or GPU-validated.",
-      "blocked_reason": "CUDA 12.4 base wheels stop at sm_90; datacenter Blackwell (sm_100/sm_103) and RTX PRO 6000 (sm_120) need a CUDA 13 rebuild",
-      "upstream_tracking": "robosuite/MuJoCo CUDA 13 wheel availability and a cu130 rebuild of the npa-robocasa image"
+      "notes": "Built on the digest-pinned nvidia/cuda:12.9.1-base-ubuntu22.04 runtime base without cuDNN or development toolkits and installs the fixed PyTorch 2.13.0+cu129 closure. Exact wheel architecture coverage and hardware support remain pending exact-image inspection and real GPU validation; no B200, B300, or RTX support is claimed yet. RoboCasa is MIT with a bundled Apache-2.0 notice for partial DeepMind MuJoCo; robosuite and LeRobot are Apache-2.0. The resolved closure includes LGPL-3.0 qpsolvers 4.13.0 and GPL-2.0-or-later quadprog 0.1.13; exact official source archives and license texts are installed in the image for corresponding-source delivery. The exact sources are rebuilt as NPA ACT derivatives with fixed Datasets 5.0.1: RoboCasa 1.0.0+npa5 includes packaging, recorded-action reader import compatibility, and order-preserving native counter reset-region deduplication; LeRobot 0.6.1+npa2 remains packaging-only; other LeRobot policies remain unqualified. The RoboCasa derivative omits tianshou because it is used only by the unqualified upstream vectorized speed-benchmark script. Kitchen assets are runtime downloads. Validation candidate: exact-image acceptance and GPU validation remain pending.",
+      "blocked_reason": "No accepted exact image, measured wheel architecture set, or real GPU capability evidence has been recorded",
+      "upstream_tracking": "exact-image architecture inspection and real L40S RoboCasa ACT rollout, paired-video, objective, and visual-evaluation qualification"
     },
     {
       "name": "npa-openarm",
@@ -1223,6 +1260,20 @@
       ],
       "smoke": "A future exact-digest gate must run the official beat_block_hammer bimanual task through SAPIEN/Vulkan on exactly one STRICT RTX PRO 6000 and validate real HDF5 plus rendered video/frame artifacts.",
       "notes": "Phase A is a zero-vendor-payload, incomplete-lock bootstrap candidate. No image, digest, wheel architecture set, built-byte scan, public availability, or hardware result exists. It remains publication-quarantined, and its renderer workload is not routed to B200/B300. Replace unknown/pending-build only with the future build and exact-image evidence; this inventory entry is not permission to build, fetch, run, or publish."
+    },
+    {
+      "name": "npa-embodiedgen",
+      "dockerfile": "embodiedgen/Dockerfile",
+      "build_script": "embodiedgen/build.sh",
+      "redistribution": "restricted",
+      "verdict": "unknown",
+      "validation": "pending-build",
+      "runtime": "CUDA 12.8 development base; EmbodiedGen, TRELLIS, Torch, and model weights are exact runtime fetches",
+      "source_compiled_extensions": [
+        "TRELLIS CUDA extensions (runtime-built)"
+      ],
+      "smoke": "On one exact-digest operator-private RTX PRO 6000 image, run upstream img3d-cli with the TRELLIS backend on a real input, export mesh and URDF, invoke the upstream URDF-to-MJCF conversion, load that generated URDF in PyBullet, verify collision geometry and gravity/contact settling, and decode the rendered MP4 with provenance.",
+      "notes": "No image artifact, exact built-byte scan, resolved Torch architecture set, generated mesh/URDF, or GPU result exists. The CUDA 12.8 base is a build input, not a B200, B300, or RTX PRO 6000 compatibility result. The functional smoke is deliberately routed to RTX PRO 6000 because the upstream TRELLIS path and artifact rendering require the declared RTX target; no datacenter Blackwell capability is claimed. The candidate stays operator-private and release-quarantined until the exact image, byte scans, and real capability evidence exist."
     }
   ],
   "validation_evidence": {

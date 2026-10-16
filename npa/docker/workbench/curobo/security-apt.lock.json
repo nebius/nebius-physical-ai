@@ -1,0 +1,50 @@
+{
+  "schema": "npa.curobo.security-apt.v1",
+  "snapshot": "20261004T000000Z",
+  "purpose": "Exact OpenSSL security replacement before the apt installation layer is exported; unaffected packages retain the original snapshot.",
+  "signed_release": {
+    "url": "https://snapshot.ubuntu.com/ubuntu/20261004T000000Z/dists/noble-security/InRelease",
+    "sha256": "a7ed9f9b84a70795e01c3763cd8fbcaf678a5683b14074fcd880f442f379e19a"
+  },
+  "binary_index_sha256": "9736348a03098fc12dd70f3eec09501a08717a81d232fc87e2bc0ac22ef1425b",
+  "source_index_sha256": "e732731f8822786bd5605666694da905c5ecd9d535775f8de9f78368c797683f",
+  "packages": [
+    {
+      "name": "libssl3t64",
+      "version": "3.0.13-0ubuntu3.16",
+      "architecture": "amd64",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261004T000000Z/pool/main/o/openssl/libssl3t64_3.0.13-0ubuntu3.16_amd64.deb",
+      "sha256": "219f43b1cd836a4da550938db5fda93160d269d39a4edcf1f1ce698a470db797",
+      "bytes": 1945300
+    },
+    {
+      "name": "openssl",
+      "version": "3.0.13-0ubuntu3.16",
+      "architecture": "amd64",
+      "url": "https://snapshot.ubuntu.com/ubuntu/20261004T000000Z/pool/main/o/openssl/openssl_3.0.13-0ubuntu3.16_amd64.deb",
+      "sha256": "675b84971ffd4467707008c25ef7520f90ea7c23ef27b7a76b0dccf1d7c4dc3f",
+      "bytes": 1003702
+    }
+  ],
+  "source": {
+    "name": "openssl",
+    "version": "3.0.13-0ubuntu3.16",
+    "files": [
+      {
+        "url": "https://snapshot.ubuntu.com/ubuntu/20261004T000000Z/pool/main/o/openssl/openssl_3.0.13.orig.tar.gz",
+        "sha256": "88525753f79d3bec27d2fa7c66aa0b92b3aa9498dafd93d7cfa4b3780cdae313",
+        "bytes": 15294843
+      },
+      {
+        "url": "https://snapshot.ubuntu.com/ubuntu/20261004T000000Z/pool/main/o/openssl/openssl_3.0.13-0ubuntu3.16.debian.tar.xz",
+        "sha256": "77893129922c917792dd187c2853fb36ce1c98597c442b42d8190252959b7f6c",
+        "bytes": 223332
+      },
+      {
+        "url": "https://snapshot.ubuntu.com/ubuntu/20261004T000000Z/pool/main/o/openssl/openssl_3.0.13-0ubuntu3.16.dsc",
+        "sha256": "7d1e552a6f519836c352407e521bafdda7552ec6d1ba242968c35fc0e17f47b6",
+        "bytes": 2516
+      }
+    ]
+  }
+}

@@ -153,10 +153,21 @@ def compile_catalog(catalog, detector_identity, proof_loader):
 
 def match_fresh_population(entries, report, rows):
     """Conserve every fresh occurrence; confidentiality findings are always fatal."""
-    occurrences = A.population(report, rows)
+    if callable(rows):
+        row_pass = rows
+    else:
+        W.require(isinstance(rows, (list, tuple)), "public_policy_replayable_ledger")
+
+        def row_pass():
+            return iter(rows)
+
+    occurrences = A.population(report, row_pass())
     accepted = set()
-    records = {r["record_ordinal"]: r for r in rows if r.get("type") == "record"}
-    for row in rows:
+    required_ordinals = {
+        occurrence["record_ordinal"] for occurrence in occurrences.values()
+    }
+    observed_ordinals = set()
+    for row in row_pass():
         if row.get("type") == "finding":
             raise W.ScanError("public_policy_confidentiality_fatal")
         if row.get("type") != "record" or not row["findings"]:
@@ -168,10 +179,12 @@ def match_fresh_population(entries, report, rows):
             expected is not None and expected == (row["bytes"], native),
             "public_policy_unreviewed_content_or_population",
         )
+        if row["record_ordinal"] in required_ordinals:
+            observed_ordinals.add(row["record_ordinal"])
     for identity, occurrence in occurrences.items():
-        row = records[occurrence["record_ordinal"]]
         W.require(
-            row["kind"] in KINDS and occurrence["finding_index"] is not None,
+            occurrence["record_ordinal"] in observed_ordinals
+            and occurrence["finding_index"] is not None,
             "public_policy_unreviewed_occurrence",
         )
         accepted.add(identity)
@@ -281,8 +294,10 @@ class FreshPolicyReview:
             "path": str(directory / "records.jsonl"),
             "sha256": self._ledger_digest.hexdigest(),
         }
-        row_bytes = A.bound_bytes(rows_spec)
-        rows = [A.decode(line) for line in row_bytes.splitlines()]
+
+        def rows():
+            return A.iter_bound_jsonl(rows_spec)
+
         verdict = match_fresh_population(self.entries, report, rows)
         report_bytes = (json.dumps(report, sort_keys=True, indent=2) + "\n").encode()
         report_spec = {
@@ -335,7 +350,10 @@ class FreshPolicyReview:
         )
         W.output_identity(directory, self.output_fd)
         self.receipt_identity = W.write_private_json(
-            directory, "public-policy-acceptance.json", receipt
+            directory,
+            "public-policy-acceptance.json",
+            receipt,
+            held_fd=self.output_fd,
         )
         self.receipt = receipt
         self.verify_output(directory)

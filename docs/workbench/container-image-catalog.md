@@ -59,6 +59,14 @@ cache in its layers. It has no accepted release build and remains release
 quarantined; it has no public image row, but now has a truthful immutable
 development-build path for byte and capability validation.
 
+EmbodiedGen V2 is intentionally absent from the public-image table. Its
+operator-private CUDA development image exists solely to compile the upstream
+TRELLIS extensions; it carries no upstream source, model, input, cache, output,
+or credential bytes. One private digest has completed live qualification, but
+its CUDA distribution terms do not establish anonymous registry delivery: only
+configured private delivery may supply a digest, and each target still needs
+its own pull preflight.
+
 The September 18 accepted-release manifest contained **38 release references**, including
 Flex-Pi r2, Isaac Arena and OpenArm. The incoming Flex-Pi qualification records
 an anonymous digest audit on **2026-09-18** and retained `linux/amd64` runtime
@@ -107,9 +115,9 @@ complete SDXL generations. The opt-in FA4 inference profile improves selected
 attention calls; complete-model performance is effectively tied with FA2.
 These candidates do not change the accepted images listed below.
 
-The current source inventory has **62 packaging entries** (53 redistribution-eligible
-and nine restricted) and **53 mapped tools**: 27 public-release members, two
-restricted tools, and 24 quarantined tools. These counts come from
+The current source inventory has **63 packaging entries** (54 redistribution-eligible
+and nine restricted) and **54 mapped tools**: 27 public-release members, two
+restricted tools, and 25 quarantined tools. These counts come from
 `packaging-contract.yaml` and `npa.deploy.images`;
 the seven restricted PAIDF images have no mapped tool entry. These counts do not
 constitute acceptance of the quarantined images.
@@ -203,7 +211,8 @@ documented BF16 tolerance and five durable read-back objects per final target.
   [development build](https://github.com/nebius/nebius-physical-ai/actions/runs/36092335522)
   is bound to its GPU report, artifact manifest, provenance, SBOM, and recorded
   image inputs in the [development evidence manifest](validation/habitat-sim-development-image-manifest.json).
-  The current SDK package initializer differs from that producer. A rebuild
+  The current runtime lock, SDK package initializer and shared signed
+  source-descriptor parser differ from that producer. A rebuild
   from current source requires fresh image qualification; these retained
   results apply only to the recorded digest.
   This 19-step functional workload is not a long benchmark or policy-training
@@ -312,8 +321,31 @@ it redistribution-eligible but quarantined from public publication until its
 exact-image scans and real capability evidence are accepted. There is no
 accepted public release row or verified anonymous pull claim for this image.
 Select development bytes only with an explicit immutable image digest.
-The existing NRE GPU consumer remains separately licensed. The new full
-COLMAP-to-reconstruction workflow is **not yet live validated**.
+The shared Actions publisher excludes this candidate: no private reviewed
+acceptance-bundle transport is configured. The private OCI CLI preserves
+qualification and requires an exact reviewed acceptance bundle for any separately
+authorized publication. The existing NRE GPU consumer remains separately
+licensed. Source execution evidence and supported-image acceptance are separate;
+neither successful stage completion nor a local diagnostic scan proves acceptance.
+
+## Pending SeedVR2 restoration image
+
+`npa-seedvr2` is a zero-weight, zero-input public-image candidate for official
+SeedVR2-3B video restoration. It bakes pinned Apache-2.0 source and a
+hash-locked CUDA/PyTorch inference closure; the public Apache-2.0 model
+payloads, sensor clips, outputs, credentials, and populated caches remain
+runtime-only. Repository packaging marks it redistribution-eligible but
+publication-quarantined until complete built-byte scans, anonymous digest
+verification, real H100 or B200 workflow execution, objective preservation metrics,
+calibrated VLM review, and independent review are accepted for the same commit
+and digest. There is no accepted public release row or verified anonymous pull
+claim for this image.
+
+The candidate recipe now exports its repaired runtime filesystem through a
+clean-root stage, separately pins the full setuptools bootstrap seed, and
+requires the measured NVIDIA/NPA runtime-config contract. This source change
+does not repair prior image digests or qualify a replacement image; complete
+byte, bootstrap, GPU and quality evidence remain separate gates.
 
 ## Pending Open3D registration image
 
@@ -905,13 +937,27 @@ historical evidence.
   only the SkyPilot worker bootstrap closure and must be built into the
   operator's own registry; it is deliberately excluded from the public catalog.
 - **`npa-robocasa`** is a validation candidate, not yet in the public publishing
-  plan. It is licence-eligible for public redistribution (Apache-2.0 RoboCasa and
-  robosuite), but its built-image payload scan and real GPU capability validation
-  have not yet been recorded, so it is quarantined from `publicly_publishable_tools()`
+  plan. It is licence-eligible for public redistribution (MIT RoboCasa, whose
+  license includes a separate Apache-2.0 notice for partial DeepMind MuJoCo, and
+  Apache-2.0 robosuite). Its resolved closure also includes LGPL-3.0
+  qpsolvers and GPL-2.0-or-later quadprog, whose exact source archives and
+  license texts must remain in every distributed image. Its built-image payload
+  scan and real GPU capability validation have not yet been recorded, so it is quarantined from `publicly_publishable_tools()`
   via `VALIDATION_CANDIDATE_TOOLS`. It will gain a public row only when its accepted
   digest and GPU evidence are recorded.
   It is a non-root service image with no passwordless-sudo grant; workflow
   toolRefs call the deployed service from the standard task image.
+  The candidate recipe upgrades inherited Ubuntu packages before dependency
+  installation, requires the fixed GnuPG/OpenSSL versions, and hash-locks pip.
+  Its scratch final stage copies the prepared filesystem while retaining exact
+  CUDA/service settings and notices, so superseded base-layer binaries are not
+  shipped merely because a later layer installed their replacements.
+  Those source controls do not qualify the older image bytes or establish that
+  the replacement image has no vulnerabilities; exact-image scans and runtime
+  validation remain required.
+  Its [candidate runtime boundary](../../npa/docker/workbench/robocasa/REDISTRIBUTION.md)
+  uses a minimal CUDA12.9 base and same-layer, exact-hash cuDNN runtime packaging;
+  older cuDNN development layers are not inherited or reclassified.
 
 The historical SONIC L40S and inherited MuJoCo variants remain restricted and
 quarantined in `sonic_image_manifest.json`. The old SONIC `0.1.2` alias was
@@ -977,10 +1023,36 @@ or newer. The published Genesis release tags above continue to identify their
 original immutable builds; GPU train/save/load/export and demo validation must
 complete before promoting a replacement release.
 
-MJLab's dedicated `npa-mjlab` recipe is excluded from the public table and the
-publication plan. A historical private CUDA 12.8 image completed native B200 and
-RTX PRO 6000 GPU qualification. The current CUDA 13.0 candidate replaces vulnerable
-Torch and setuptools pins and has separate [trained G1 rollout evidence](validation/mjlab-trained-g1-20260925.json)
-on RTX PRO 6000. Public promotion still requires the exact-image security,
-licensing and bootstrap gates. See [MJLab](mjlab.md) for the measured scope,
-operator builds and workflow overrides.
+## MJLab public development candidate
+
+MJLab has an anonymously pullable development image, built through the trusted
+publication workflow and qualified on one RTX PRO 6000. It remains excluded
+from the supported-release table and automatic public-release plan.
+
+The immutable `npa-mjlab:dev-d5cfdcc261d586c25caa877d332feab052369a1f`
+tag resolves to
+`sha256:ec8c099dc8ab34c8a390c6076d3cc3c07a88e27818d0eb0b6b6cf819663f242e`.
+Its measured RTX scope covers Cartpole, G1, Go1 and YAM native train/eval/ONNX;
+service resume/auth/scope/concurrency; fresh unmodified SkyPilot VM startup;
+and native NVIDIA G1 video at 1920 × 1080 and 50 fps.
+
+The [2026-10-10 native HD image and GPU record](validation/mjlab-native-hd-gpu-20261010.json)
+binds those results to the published digest and source commit. The four task
+cycles each trained for two updates and read back 49 artifacts in total; these
+are functional checks. Separately, the current image re-evaluated a verified
+3,000-update G1 checkpoint across 64 complete episodes, exported checked ONNX,
+and produced an unchanged 20-second native HD MP4. All 1,000 frames decoded;
+standalone HTML passed offline playback, seeking and mobile layout checks.
+The record preserves the original training image identity separately.
+The current digest has no B200 or multi-GPU qualification. Earlier CUDA 12.8 acceptance and the
+[2026-09-25 trained G1 rollout](validation/mjlab-trained-g1-20260925.json) apply
+only to their recorded image bytes.
+
+The trusted build passed vulnerability/license and all-severity secret gates,
+payload scans before and after publication, non-root SkyPilot bootstrap checks,
+and signed provenance/SPDX verification. The image delivers source for 239
+Debian components and 23 locked Python/native archives, retains required
+notices, and removes cuDNN SDK files before the dependency layer commits.
+The catalog audit verified all 27 accepted release digests anonymously on
+2026-10-10; this development candidate is separate from that release inventory.
+Use the explicit digest override in [MJLab](mjlab.md).

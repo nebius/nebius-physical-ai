@@ -1017,6 +1017,47 @@ def test_submit_preflight_does_not_reach_skypilot(mocker) -> None:
     submit_workflow.assert_not_called()
 
 
+def test_raw_execution_preflight_defers_stopped_api_recovery(mocker, tmp_path) -> None:
+    runtime = mocker.Mock(
+        global_config_path=None,
+        isolated_config_dir=tmp_path,
+        sky_bin=tmp_path / "sky",
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot._bin.resolve_config",
+        return_value=runtime,
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot._bin.ensure_skypilot_version",
+        return_value=runtime.sky_bin,
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot.workflow._load_base_config",
+        return_value={},
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot.workflow._controller_config_for_execution",
+        return_value={},
+    )
+    environment = mocker.patch(
+        "npa.orchestration.skypilot.workflow.sky_environment",
+        return_value={},
+    )
+    preflight = mocker.patch(
+        "npa.execution_preflight.preflight_skypilot_submission",
+        return_value=("ok", {}, {}),
+    )
+
+    result = workflow_cli._raw_execution_preflight([{"name": "demo"}])
+
+    assert result == ("ok", {}, {})
+    environment.assert_called_once_with(
+        tmp_path,
+        recover_isolated_api=False,
+    )
+    preflight.assert_called_once()
+
+
 def test_sim2real_submit_collects_pipeline_prerequisites_before_image_or_launch(
     monkeypatch: pytest.MonkeyPatch, mocker
 ) -> None:
@@ -2195,6 +2236,7 @@ def test_preflight_images_accepts_the_same_config_vars_as_submit(mocker) -> None
         "--infra",
         "k8s/target-context",
     ]
+    args.extend(["--var", "source_sha=" + "a" * 40])
     for name in (
         "controller_image",
         "transfer_image",
@@ -2711,6 +2753,7 @@ def test_preflight_images_scopes_explicit_pull_secret_to_bootstrap(
         "--infra",
         "k8s/target-context",
     ]
+    args.extend(["--var", "source_sha=" + "a" * 40])
     for name in (
         "controller_image",
         "transfer_image",
@@ -2903,6 +2946,107 @@ def test_preflight_images_reports_valid_empty_plan(mocker) -> None:
     assert result.output == "images: none pinned by this spec\n"
     pulls.assert_not_called()
     contracts.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "configured_roles",
+    [(), ("controller_image", "transfer_image", "envgen_image", "isaac_image")],
+)
+def test_sim2real_image_preflight_rejects_incomplete_bundle_before_probes(
+    mocker, configured_roles
+) -> None:
+    pulls = mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials"
+    )
+    contracts = mocker.patch(
+        "npa.cli.workbench.workflow._preflight_image_bootstrap_contracts"
+    )
+    overrides = ["--var", "source_sha=" + "a" * 40]
+    for role in configured_roles:
+        overrides.extend(["--var", role + "=ghcr.io/example/test@sha256:" + "a" * 64])
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "preflight-images",
+            str(SIM2REAL_SPEC),
+            "--json",
+            *overrides,
+        ],
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "Sim2Real image preflight blocked" in result.output
+    assert "viewer_image" in result.output
+    assert "images: none pinned" not in result.output
+    pulls.assert_not_called()
+    contracts.assert_not_called()
+
+
+@pytest.mark.parametrize("namespace", ["manual-user", None])
+def test_sim2real_cache_preflight_uses_selected_context_namespace(
+    monkeypatch, tmp_path, namespace
+) -> None:
+    from subprocess import CompletedProcess
+
+    calls = []
+    kubeconfig = str(tmp_path / "user-kubeconfig")
+    selected = {"namespace": namespace} if namespace else {}
+
+    def reader(args, **kwargs):
+        calls.append((args, kwargs))
+        contexts = [{"name": "user-context", "context": selected}]
+        payload = json.dumps({"contexts": contexts}) if args[0] == "config" else ""
+        return CompletedProcess(args, 0 if payload else 1, stdout=payload)
+
+    monkeypatch.delenv("NPA_SIM2REAL_K8S_NAMESPACE", raising=False)
+    monkeypatch.setattr("npa.clients.kubernetes_namespace.run_kubectl", reader)
+    issues = workflow_cli._sim2real_kubernetes_prerequisites_for_submit(
+        {"isaac_cache_pvc": "npa-isaac-cache"},
+        runner=reader,
+        context="user-context",
+        kubeconfig=kubeconfig,
+        isaac_placements=None,
+    )
+
+    assert issues
+    assert calls[0][1] == {
+        "context": "user-context",
+        "kubeconfig": kubeconfig,
+    }
+    lookup, options = calls[-1]
+    assert lookup[:3] == ["get", "pvc", "npa-isaac-cache"]
+    assert lookup[3:5] == ["-n", namespace or "default"]
+    assert options == {}
+
+
+def test_sim2real_cache_preflight_refuses_unreadable_context(
+    monkeypatch, tmp_path
+) -> None:
+    from subprocess import CompletedProcess
+
+    monkeypatch.delenv("NPA_SIM2REAL_K8S_NAMESPACE", raising=False)
+    monkeypatch.setattr(
+        "npa.clients.kubernetes_namespace.run_kubectl",
+        lambda *args, **kwargs: CompletedProcess([], 1, stderr="private detail"),
+    )
+    calls = []
+    issues = workflow_cli._sim2real_kubernetes_prerequisites_for_submit(
+        {"isaac_cache_pvc": "npa-isaac-cache"},
+        runner=calls.append,
+        context="user-context",
+        kubeconfig=str(tmp_path / "user-kubeconfig"),
+        isaac_placements=None,
+    )
+
+    assert any(
+        reason == "Sim2Real cache namespace could not be verified"
+        for reason, _ in issues
+    )
+    assert "private detail" not in str(issues)
+    assert calls == [["get", "nodes", "-o", "json"]]
 
 
 @pytest.mark.parametrize("error_type", [ValueError, NpaWorkflowError])

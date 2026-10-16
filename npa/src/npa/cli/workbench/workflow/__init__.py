@@ -2279,7 +2279,6 @@ def submit_cmd(
                 from npa.clients.token_factory import validate_model_access
                 from npa.clients.kube import run_kubectl
                 from npa.orchestration.npa_workflow.sim2real_preflight import (
-                    kubernetes_prerequisites,
                     static_prerequisites,
                 )
 
@@ -2330,14 +2329,12 @@ def submit_cmd(
                     )
                 else:
                     missing.extend(
-                        kubernetes_prerequisites(
+                        _sim2real_kubernetes_prerequisites_for_submit(
                             spec_config,
                             runner=_run_sim2real_kubectl,
+                            context=infra_context,
+                            kubeconfig=kubeconfig,
                             isaac_placements=isaac_placements,
-                            namespace=(
-                                os.environ.get("NPA_SIM2REAL_K8S_NAMESPACE", "").strip()
-                                or "default"
-                            ),
                         )
                     )
             if missing:
@@ -4485,6 +4482,54 @@ def _image_preflight_steps(
     )
 
 
+def _sim2real_cache_namespace(context, kubeconfig):
+    """Resolve the explicit legacy cache override or the selected context.
+
+    Args:
+        context: Selected Kubernetes context.
+        kubeconfig: Selected authenticated kubeconfig.
+    Returns:
+        Validated cache namespace.
+    Raises:
+        ValueError: The namespace or selected context cannot be verified.
+    """
+    from npa.clients.kubernetes_namespace import context_namespace, validate_namespace
+
+    namespace = os.environ.get("NPA_SIM2REAL_K8S_NAMESPACE", "").strip()
+    if namespace:
+        return validate_namespace(namespace)
+    return context_namespace(context=context, kubeconfig=kubeconfig)
+
+
+def _sim2real_kubernetes_prerequisites_for_submit(
+    config, *, runner, context, kubeconfig, isaac_placements
+):
+    """Check the Isaac cache in the namespace selected for this submission.
+
+    Args:
+        config: Resolved Sim2Real configuration.
+        runner: Exact-context Kubernetes reader.
+        context: Selected Kubernetes context.
+        kubeconfig: Selected authenticated kubeconfig.
+        isaac_placements: Effective Isaac render placement constraints.
+    Returns:
+        Missing prerequisites, including unreadable namespace evidence.
+    Raises:
+        None.
+    """
+    from npa.orchestration.npa_workflow.sim2real_preflight import (
+        kubernetes_prerequisites,
+    )
+
+    try:
+        namespace = _sim2real_cache_namespace(context, kubeconfig)
+    except ValueError:
+        namespace = None
+    return kubernetes_prerequisites(
+        config, runner=runner, namespace=namespace, isaac_placements=isaac_placements
+    )
+
+
 def _plan_preflight_image_requirements(
     spec: NpaWorkflowSpec,
     *,
@@ -4957,6 +5002,7 @@ def _preflight_image_bootstrap_contracts(
         try:
             reference = parse_image_reference(image)
             image_tool = tool_for_image_name(reference.repository.rsplit("/", 1)[-1])
+            pull_digest = str(getattr(check_by_image.get(image), "digest", "") or "")
             if image_tool and image_tool not in SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS:
                 # The packaging contract deliberately scopes this attestation to
                 # a subset of NPA images. Anonymous manifest pullability is the
@@ -4964,6 +5010,10 @@ def _preflight_image_bootstrap_contracts(
                 pull_digest = str(
                     getattr(check_by_image.get(image), "digest", "") or ""
                 ).lower()
+                if not pull_digest:
+                    raise ImageBootstrapContractError(
+                        "pullability preflight did not return an immutable digest"
+                    )
                 evidence = ImageContractEvidence(
                     image=immutable_image_reference(image, pull_digest),
                     digest=pull_digest,
@@ -4972,7 +5022,10 @@ def _preflight_image_bootstrap_contracts(
                     source="registry_pull_preflight",
                     checks=("immutable_registry_pull",),
                 )
-                results.append(evidence.to_dict())
+                result = evidence.to_dict()
+                if bind_requested_images:
+                    result["_requested_image"] = image
+                results.append(result)
                 continue
             host = reference.registry
             username, password = resolve_registry_credentials(
@@ -4981,7 +5034,6 @@ def _preflight_image_bootstrap_contracts(
             digest, labels = fetch_image_config_metadata(
                 image, username=username, password=password
             )
-            pull_digest = str(getattr(check_by_image.get(image), "digest", "") or "")
             if pull_digest and pull_digest != digest:
                 raise ImageBootstrapContractError(
                     "mutable tag resolved to a different digest between pull and contract checks"
@@ -6093,7 +6145,10 @@ def _raw_execution_preflight(
         controller_backend=controller_backend,
         infra=kwargs.get("infra", ""),
     )
-    env = sky_environment(runtime.isolated_config_dir)
+    env = sky_environment(
+        runtime.isolated_config_dir,
+        recover_isolated_api=False,
+    )
     env.update(kwargs.pop("extra_env", None) or {})
     return preflight_skypilot_submission(
         documents,
@@ -9354,6 +9409,17 @@ def cancel_cmd(
                             "reported exact job/provider failures."
                         ),
                     }
+                    if getattr(cleanup, "outcome", "") == "controller_state_lost":
+                        result.update(
+                            outcome="controller_state_lost",
+                            controller_state_lost_job_ids=(
+                                cleanup.controller_state_lost_job_ids
+                            ),
+                            recovery=cleanup.recovery,
+                            owned_teardown_allowed=False,
+                            message="Controller state is lost; workload drain is unverified. "
+                            "Preserve recovery handles and follow the scoped recovery guidance.",
+                        )
     except (WorkflowStateError, OSError, RuntimeError, ValueError) as exc:
         result = {
             "run_id": resolved_run_id or str(run_id),
@@ -9395,7 +9461,19 @@ def cancel_cmd(
                 "kind": "managed_job_cancel" if result.get("cloud_calls") else "none",
                 "cancelled_job_ids": result.get("cancelled_job_ids", []),
             },
-            verification={"outcome": result.get("outcome", "")},
+            verification={
+                "outcome": result.get("outcome", ""),
+                **(
+                    {
+                        "controller_state_lost_job_ids": result[
+                            "controller_state_lost_job_ids"
+                        ],
+                        "recovery": result["recovery"],
+                    }
+                    if result.get("outcome") == "controller_state_lost"
+                    else {}
+                ),
+            },
             errors=[str(item) for item in result.get("errors", [])],
         )
     except (OSError, RuntimeError, ValueError) as exc:
@@ -9403,7 +9481,8 @@ def cancel_cmd(
             result.setdefault("errors", []).append(
                 f"durable teardown receipt could not be written: {exc}"
             )
-            result["outcome"] = "partial_cancellation"
+            if result.get("outcome") != "controller_state_lost":
+                result["outcome"] = "partial_cancellation"
         else:
             result.setdefault("diagnostics", []).append(
                 f"teardown receipt unavailable: {exc}"
@@ -9427,7 +9506,11 @@ def cancel_cmd(
             typer.echo(str(result["message"]))
         for error in result.get("errors", []):
             typer.echo(f"cleanup warning: {error}", err=True)
-    if result["outcome"] in {"verification_failed", "partial_cancellation"}:
+    if result["outcome"] in {
+        "verification_failed",
+        "partial_cancellation",
+        "controller_state_lost",
+    }:
         raise typer.Exit(code=2)
 
 
@@ -10202,6 +10285,18 @@ def preflight_images_cmd(
     spec = merge_config_overrides(
         _load_npa_workflow(yaml_path), _parse_submit_vars(var)
     )
+    if spec.name == "sim2real":
+        from npa.orchestration.npa_workflow.sim2real_preflight import (
+            image_prerequisites,
+        )
+
+        issues = image_prerequisites(spec.config)
+        if issues:
+            _fail(
+                "Sim2Real image preflight blocked: "
+                + "; ".join(f"{reason}; fix: {remedy}" for reason, remedy in issues)
+            )
+            return
     image_overrides: dict[str, str] = {}
     if image.strip():
         image_overrides["*"] = image.strip()

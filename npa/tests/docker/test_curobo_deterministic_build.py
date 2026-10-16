@@ -13,8 +13,18 @@ ROOT = Path(__file__).resolve().parents[3]
 IMAGE = ROOT / "npa/docker/workbench/curobo"
 
 
-@pytest.mark.parametrize("tool", ["curobo", "lerobot", "cosmos3-serving"])
-def test_trusted_workflow_passes_commit_epoch_only_to_curobo(tmp_path, tool):
+@pytest.mark.parametrize(
+    ("tool", "requires_epoch"),
+    [
+        ("curobo", True),
+        ("seedvr2", True),
+        ("lerobot", False),
+        ("cosmos3-serving", False),
+    ],
+)
+def test_trusted_workflow_passes_commit_epoch_to_reproducible_builds(
+    tmp_path, tool, requires_epoch
+):
     steps = yaml.safe_load(
         (ROOT / ".github/workflows/publish-public-images.yml").read_text()
     )["jobs"]["build-development"]["steps"]
@@ -49,8 +59,8 @@ def test_trusted_workflow_passes_commit_epoch_only_to_curobo(tmp_path, tool):
     assert result.returncode == 0, result.stderr
     args = json.loads((tmp_path / "docker.json").read_text())
     assert "NPA_SOURCE_SHA=" + "a" * 40 in args
-    assert ("SOURCE_DATE_EPOCH=1700000000" in args) == (tool == "curobo")
-    assert (tmp_path / "git.json").exists() == (tool == "curobo")
+    assert ("SOURCE_DATE_EPOCH=1700000000" in args) is requires_epoch
+    assert (tmp_path / "git.json").exists() is requires_epoch
     assert "--push" not in args
 
 
@@ -66,7 +76,12 @@ def test_dockerfile_validates_build_only_epoch_before_any_install(epoch):
     start = text.index("RUN [[")
     end = text.index("\nRUN ", start)
     instruction = text[start + 4 : end]
-    env = {**os.environ, "NPA_SOURCE_SHA": "a" * 40, "SOURCE_DATE_EPOCH": epoch}
+    env = {
+        **os.environ,
+        "NPA_SOURCE_SHA": "a" * 40,
+        "SOURCE_DATE_EPOCH": epoch,
+        "UBUNTU_SNAPSHOT": "20260920T000000Z",
+    }
     result = subprocess.run(
         ["bash", "-c", instruction],
         env=env,
