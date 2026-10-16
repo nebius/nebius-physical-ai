@@ -29,6 +29,19 @@ operator host, not from GitHub Actions. See
 
 ## What E2E Tests Cover
 
+For a read-only check of default project quota allowances, set
+`NPA_PROJECT_QUOTA_LIVE_CONFIG` to an owner-only JSON file containing
+`project_id`, `tenant_id`, `region`, and `profile`. Select a project without
+explicit caps on the required VM, disk, SSD, public-IP, and CPU quotas, then run:
+
+```bash
+NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest \
+  npa/tests/e2e/test_project_quota_defaults_live.py -q
+```
+
+This checks a reserved five-GPU plan against real project quota data. It does
+not allocate GPUs or prove remaining tenant capacity or reservation availability.
+
 Current Python e2e tests cover:
 
 - `npa demo stage` against real S3:

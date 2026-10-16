@@ -671,18 +671,83 @@ def read_provider_quotas(
     )
 
 
+def _project_quota_row(row: Any, *, project_id: str, region: str) -> Mapping[str, Any]:
+    """Normalize an exact project's provider default without changing its response."""
+    if not isinstance(row, Mapping) or any(
+        not isinstance(row.get(key, {}), Mapping)
+        for key in ("metadata", "spec", "status")
+    ):
+        raise ValueError("malformed project quota allowance")
+    metadata, spec, status = (
+        row.get(key, {}) for key in ("metadata", "spec", "status")
+    )
+    parent = metadata.get("parent_id")
+    if parent is not None and parent != project_id:
+        raise ValueError("quota allowance belongs to a different project")
+    usage = _int_or_none(status.get("usage", 0))
+    if (
+        "limit" not in spec
+        and parent == project_id
+        and spec.get("region") == region
+        and ("state" not in status or status["state"] == "STATE_ACTIVE")
+        and status.get("usage_state")
+        in {"USAGE_STATE_USED", "USAGE_STATE_NOT_USED", "USAGE_STATE_NOT_APPLICABLE"}
+        and usage is not None
+        and usage >= 0
+        and "available" not in status
+    ):
+        # QuotaAllowanceSpec.limit is optional. Omission on an existing project
+        # allowance means no project-specific cap; tenant limits still apply.
+        return {**row, "spec": {**spec, "limit": "unbounded"}}
+    return row
+
+
+def _project_quota_payload(
+    payload: Mapping[str, Any], *, project_id: str, region: str
+) -> Mapping[str, Any]:
+    """Require a complete project catalog before interpreting default allowances."""
+    if (
+        not isinstance(payload, Mapping)
+        or not isinstance(payload.get("items"), list)
+        or payload.get("next_page_token")
+    ):
+        raise ValueError("malformed or incomplete project quota catalog")
+    return {
+        **payload,
+        "items": [
+            _project_quota_row(row, project_id=project_id, region=region)
+            for row in payload["items"]
+        ],
+    }
+
+
 def read_project_quota_observations(
     project_id: str, region: str, names: Sequence[str]
 ) -> Mapping[str, QuotaObservation]:
     """Read exact-project quota constraints after tenant scope is denied.
 
     Project allowances are an additional provider-enforced boundary. An absent
-    row does not establish that a quota is unconstrained, so it remains unknown
-    and blocks a mutation until the provider returns explicit allowance data.
+    row remains unknown. An existing default allowance with an omitted optional
+    limit has no project-specific cap; the provider still enforces tenant limits.
+
+    Args:
+        project_id: Exact deployment project to query.
+        region: Region whose allowances apply to the request.
+        names: Required quota names.
+
+    Returns:
+        Observations preserving explicit limits and unknown or missing evidence.
+
+    Raises:
+        ValueError: The catalog is malformed, incomplete, or from another project.
+        NebiusError: The provider quota query fails.
     """
     from npa.clients.nebius import list_quota_allowances
 
-    payload = list_quota_allowances(str(project_id or "").strip())
+    project_id = str(project_id or "").strip()
+    payload = _project_quota_payload(
+        list_quota_allowances(project_id), project_id=project_id, region=region
+    )
     parsed = parse_quota_allowances(payload, region=region, names=names)
     return {
         name: (
