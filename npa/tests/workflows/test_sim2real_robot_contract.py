@@ -736,11 +736,15 @@ def test_isaac_prepare_converts_urdf_and_publishes_digest_manifest(
 
 
 class _FakeTargetPrim:
-    def __init__(self, valid: bool) -> None:
+    def __init__(self, path: object, valid: bool) -> None:
+        self._path = str(path)
         self._valid = valid
 
     def IsValid(self) -> bool:
         return self._valid
+
+    def GetName(self) -> str:
+        return self._path.rsplit("/", 1)[-1]
 
 
 class _FakeRelationship:
@@ -768,9 +772,10 @@ class _FakeJointPrim:
 
 
 class _FakeRelativePath:
-    def __init__(self, value: str, absolute: str) -> None:
+    def __init__(self, value: str, absolute: str, prim_path: str) -> None:
         self.value = value
         self.absolute = absolute
+        self.prim_path = prim_path
         self.anchor: str | None = None
 
     def IsAbsolutePath(self) -> bool:
@@ -778,7 +783,10 @@ class _FakeRelativePath:
 
     def MakeAbsolutePath(self, anchor: str) -> str:
         self.anchor = anchor
-        return self.absolute
+        return self
+
+    def GetPrimPath(self) -> str:
+        return self.prim_path
 
     def __str__(self) -> str:
         return self.value
@@ -809,7 +817,7 @@ def _joint_target_stage(valid_paths: set[str]) -> tuple[object, object]:
         Traverse=lambda predicate: (
             joints if predicate is instance_proxy_predicate else []
         ),
-        GetPrimAtPath=lambda path: _FakeTargetPrim(str(path) in valid_paths),
+        GetPrimAtPath=lambda path: _FakeTargetPrim(path, str(path) in valid_paths),
     )
     return stage, instance_proxy_predicate
 
@@ -840,7 +848,11 @@ def test_isaac_usd_validation_resolves_relative_joint_body_targets(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     targets = {
-        name: _FakeRelativePath(f"../../{name}", f"/panda/Physics/{name}")
+        name: _FakeRelativePath(
+            f"../../{name}.physics:body",
+            f"/panda/Physics/{name}.physics:body",
+            f"/panda/Physics/{name}",
+        )
         for name in ("base", "hand", "left_finger", "right_finger")
     }
     joints = [
@@ -848,12 +860,12 @@ def test_isaac_usd_validation_resolves_relative_joint_body_targets(
         _FakeJointPrim("finger_joint", targets["left_finger"], targets["right_finger"]),
     ]
     instance_proxy_predicate = object()
-    valid_paths = {target.absolute for target in targets.values()}
+    valid_paths = {target.prim_path for target in targets.values()}
     stage = SimpleNamespace(
         Traverse=lambda predicate: (
             joints if predicate is instance_proxy_predicate else []
         ),
-        GetPrimAtPath=lambda path: _FakeTargetPrim(str(path) in valid_paths),
+        GetPrimAtPath=lambda path: _FakeTargetPrim(path, str(path) in valid_paths),
     )
     pxr = SimpleNamespace(
         Usd=SimpleNamespace(
@@ -868,6 +880,17 @@ def test_isaac_usd_validation_resolves_relative_joint_body_targets(
 
     assert targets["base"].anchor == "/panda/Physics/arm_joint"
     assert targets["left_finger"].anchor == "/panda/Physics/finger_joint"
+
+
+def test_isaac_cli_returns_nonzero_without_closing_kit_on_conversion_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail(_argv: list[str] | None = None) -> int:
+        raise isaac_robot_asset.IsaacRobotAssetError("native conversion failed")
+
+    monkeypatch.setattr(isaac_robot_asset, "main", fail)
+
+    assert isaac_robot_asset._run_cli() == 1
 
 
 def test_isaac_usd_validation_rejects_dangling_joint_body_target(

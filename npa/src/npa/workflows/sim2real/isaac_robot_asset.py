@@ -235,9 +235,11 @@ def _physics_body_names(
                 is_absolute = getattr(target, "IsAbsolutePath", None)
                 if callable(is_absolute) and not is_absolute():
                     resolved = target.MakeAbsolutePath(prim.GetPath())
-                target_prim = stage.GetPrimAtPath(resolved)
+                get_prim_path = getattr(resolved, "GetPrimPath", None)
+                prim_path = get_prim_path() if callable(get_prim_path) else resolved
+                target_prim = stage.GetPrimAtPath(prim_path)
                 if target_prim and target_prim.IsValid():
-                    names.add(str(resolved).rsplit("/", 1)[-1])
+                    names.add(str(target_prim.GetName()))
     return names
 
 
@@ -384,15 +386,11 @@ def prepare() -> dict:
             "NPA_ISAAC_KIT_ARGS", "--portable-root /tmp/npa-isaac-kit"
         ),
     ).app
-    try:
-        manifest = prepare_with_running_app()
-    except BaseException:
-        # Isaac Kit may terminate the process with exit code 0 from ``close()``.
-        # Do not cross that boundary while an exception is active: doing so hides
-        # the traceback and lets orchestration report success without the durable
-        # manifest. Process teardown releases Kit after the non-zero exit.
-        traceback.print_exc()
-        raise
+    # Isaac Kit may terminate the process with exit code 0 from ``close()``.
+    # Do not cross that boundary while an exception is active. The module entry
+    # point hard-exits non-zero after reporting the exception, and process teardown
+    # releases Kit without letting its launcher rewrite the failed exit status.
+    manifest = prepare_with_running_app()
     app.close()
     return manifest
 
@@ -466,5 +464,18 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _run_cli() -> int:
+    """Return a stable non-zero code for conversion failures before Kit teardown."""
+
+    try:
+        return main()
+    except Exception:  # noqa: BLE001 - the CLI must preserve every failed conversion
+        traceback.print_exc()
+        return 1
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    _exit_code = _run_cli()
+    if _exit_code:
+        os._exit(_exit_code)
+    raise SystemExit(_exit_code)
