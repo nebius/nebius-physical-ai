@@ -142,11 +142,12 @@ def _assert_private_metadata_absent(source, manifest_text, metadata):
         assert private_value not in json.dumps(metadata)
 
 
-def _video(path, rate):
+def _video(path, rate, color_trc=2):
     with av.open(str(path), "w") as container:
         container.metadata["title"] = "private-fixture-attribution"
         stream = container.add_stream("libx264", rate=rate)
         stream.width, stream.height, stream.pix_fmt = 1024, 512, "yuv420p"
+        stream.codec_context.color_trc = color_trc
         for color in ("red", "green", "blue", "white"):
             frame = av.VideoFrame.from_image(Image.new("RGB", (1024, 512), color))
             for packet in stream.encode(frame):
@@ -181,6 +182,27 @@ def test_perspective_video_strips_source_metadata_and_preserves_rgb_order(
         assert "private-fixture-attribution" not in json.dumps(
             dict(cleaned.streams[0].metadata)
         )
+
+
+@pytest.mark.parametrize("color_trc", [16, 18], ids=["pq", "hlg"])
+@pytest.mark.parametrize("entrypoint", ["panorama", "video"])
+def test_signaled_hdr_requires_sdr_export_before_rgb_conversion(
+    tmp_path, color_trc, entrypoint
+):
+    from npa.workflows import lyra_capture
+
+    source = tmp_path / "hdr.mp4"
+    _video(source, Fraction(30), color_trc=color_trc)
+    with av.open(str(source)) as original:
+        assert original.streams.video[0].codec_context.color_trc == color_trc
+    output = tmp_path / "prepared"
+    output.mkdir()
+    with pytest.raises(ValueError, match="tone-mapped SDR export"):
+        if entrypoint == "panorama":
+            capture._prepare(_arguments(source), output)
+        else:
+            lyra_capture._prepare_video(source, output)
+    assert list(output.iterdir()) == []
 
 
 def test_video_preserves_rate_order_and_source_times(tmp_path):

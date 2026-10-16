@@ -54,6 +54,7 @@ The command decodes the video and writes a checksummed RGB-only H.264 bundle
 (CRF 17), omitting source container tags, frame side data, audio and other tracks.
 It preserves decoded frame order and dimensions, with constant presentation
 cadence at the source average frame rate. Source HDR encoding is not retained.
+Signaled PQ/HLG video requires a tone-mapped SDR export before preparation.
 Add `--calibration-path ./calibration.json` when measured camera poses accompany
 the video. The file uses schema `npa.lyra-camera-calibration.v1`,
 `camera_convention: optical_x_right_y_down_z_forward`,

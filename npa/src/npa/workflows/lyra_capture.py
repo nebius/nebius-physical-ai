@@ -71,6 +71,7 @@ def _prepare(args, output):
 def _prepare_video(source, output):
     with av.open(str(source)) as container:
         stream = container.streams.video[0]
+        _require_sdr(stream)
         if not stream.average_rate:
             raise ValueError("Lyra requires a decodable video with at least two frames")
         count = _clean_video(container, stream, output / "capture.mp4")
@@ -88,6 +89,13 @@ def _prepare_video(source, output):
     (output / "ATTRIBUTION.txt").write_text(
         "Operator-supplied capture; source rights remain with its provider.\n"
     )
+
+
+def _require_sdr(stream):
+    if stream.codec_context.color_trc in (16, 18):
+        raise ValueError(
+            "HDR video requires a tone-mapped SDR export; PQ/HLG input is unsupported"
+        )
 
 
 def _clean_video(incoming, source, destination):

@@ -13,6 +13,7 @@ import av
 from PIL import Image
 
 from npa.workflows.lerobot_transfer_data import file_sha256, publish, write_json
+from npa.workflows.lyra_capture import _require_sdr
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png"}
 VIDEO_SUFFIXES = {".mp4", ".mov", ".mkv"}
@@ -205,6 +206,7 @@ def _prepare(args, output):
                     "A decodable video with a known frame rate is required"
                 )
             rate = container.streams.video[0].average_rate
+            _require_sdr(container.streams.video[0])
             prepared = _encode(
                 args, _video_frames(container), rate, output / "capture.mp4"
             )

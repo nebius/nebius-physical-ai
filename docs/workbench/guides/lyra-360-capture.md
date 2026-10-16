@@ -21,6 +21,8 @@ JPG/PNG images using the camera's calibrated stitching software. Raw dual-fishey
 A 2:1 aspect ratio alone does not prove the projection; `--input-projection` is
 the operator's explicit declaration. Inspect stitching seams and exposure
 discontinuities first. Image rotation metadata is not applied.
+Use a tone-mapped SDR export for video and sRGB for images. Signaled PQ/HLG
+HDR video is rejected before RGB conversion; removing HDR tags is not tone mapping.
 
 Run from a current Workbench checkout with its installed Python dependencies:
 
