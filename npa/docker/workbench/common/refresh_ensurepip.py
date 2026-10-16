@@ -14,7 +14,7 @@ import zipfile
 
 PIP_VERSION = "26.2.1+npa.1"
 SETUPTOOLS_VERSION = "84.0.0"
-SETUPTOOLS_SHA256 = "f4695c21257f0d9b537ec2692c941d02ee143b7cc1276941349a546573b2ef73"
+SETUPTOOLS_SHA256 = "51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670"
 
 
 def _wheel(path: Path, name: str, version: str, expected_sha256: str) -> bytes:
