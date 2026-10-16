@@ -792,6 +792,17 @@ class _FakeRelativePath:
         return self.value
 
 
+class _FakeRelationshipTargetPath:
+    def __init__(self, nested: _FakeRelativePath) -> None:
+        self.nested = nested
+
+    def ContainsTargetPath(self) -> bool:
+        return True
+
+    def GetTargetPath(self) -> _FakeRelativePath:
+        return self.nested
+
+
 class _FakeUsdJoint:
     def __init__(self, prim: _FakeJointPrim) -> None:
         self._prim = prim
@@ -880,6 +891,47 @@ def test_isaac_usd_validation_resolves_relative_joint_body_targets(
 
     assert targets["base"].anchor == "/panda/Physics/arm_joint"
     assert targets["left_finger"].anchor == "/panda/Physics/finger_joint"
+
+
+def test_isaac_usd_validation_unwraps_relationship_target_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    targets = {
+        name: _FakeRelativePath(
+            f"../../{name}.physics:body",
+            f"/panda/Physics/{name}.physics:body",
+            f"/panda/Physics/{name}",
+        )
+        for name in ("base", "hand", "left_finger", "right_finger")
+    }
+    wrapped = {
+        name: _FakeRelationshipTargetPath(target) for name, target in targets.items()
+    }
+    joints = [
+        _FakeJointPrim("arm_joint", wrapped["base"], wrapped["hand"]),
+        _FakeJointPrim("finger_joint", wrapped["left_finger"], wrapped["right_finger"]),
+    ]
+    instance_proxy_predicate = object()
+    valid_paths = {target.prim_path for target in targets.values()}
+    stage = SimpleNamespace(
+        Traverse=lambda predicate: (
+            joints if predicate is instance_proxy_predicate else []
+        ),
+        GetPrimAtPath=lambda path: _FakeTargetPrim(path, str(path) in valid_paths),
+    )
+    pxr = SimpleNamespace(
+        Usd=SimpleNamespace(
+            Stage=SimpleNamespace(Open=lambda _path: stage),
+            TraverseInstanceProxies=lambda: instance_proxy_predicate,
+        ),
+        UsdPhysics=SimpleNamespace(Joint=_FakeUsdJoint),
+    )
+    monkeypatch.setitem(sys.modules, "pxr", pxr)
+
+    isaac_robot_asset._validate_usd(Path("robot.usd"), _doc())
+
+    assert targets["base"].anchor == "/panda/Physics/arm_joint"
+    assert targets["right_finger"].anchor == "/panda/Physics/finger_joint"
 
 
 def test_isaac_cli_returns_nonzero_without_closing_kit_on_conversion_failure(

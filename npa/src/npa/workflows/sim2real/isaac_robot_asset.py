@@ -232,9 +232,21 @@ def _physics_body_names(
         for relationship in relationships:
             for target in relationship.GetTargets():
                 resolved = target
-                is_absolute = getattr(target, "IsAbsolutePath", None)
+                visited: set[str] = set()
+                contains_target_path = getattr(resolved, "ContainsTargetPath", None)
+                while callable(contains_target_path) and contains_target_path():
+                    identity = str(resolved)
+                    if identity in visited:
+                        break
+                    visited.add(identity)
+                    nested = resolved.GetTargetPath()
+                    if not nested or nested == resolved:
+                        break
+                    resolved = nested
+                    contains_target_path = getattr(resolved, "ContainsTargetPath", None)
+                is_absolute = getattr(resolved, "IsAbsolutePath", None)
                 if callable(is_absolute) and not is_absolute():
-                    resolved = target.MakeAbsolutePath(prim.GetPath())
+                    resolved = resolved.MakeAbsolutePath(prim.GetPath())
                 get_prim_path = getattr(resolved, "GetPrimPath", None)
                 prim_path = get_prim_path() if callable(get_prim_path) else resolved
                 target_prim = stage.GetPrimAtPath(prim_path)
