@@ -747,6 +747,36 @@ class _FakeTargetPrim:
         return self._path.rsplit("/", 1)[-1]
 
 
+class _FakeBodyPrim:
+    def __init__(
+        self,
+        path: str,
+        *,
+        rigid: bool,
+        rigid_body_api: object,
+        parent: _FakeBodyPrim | None = None,
+    ) -> None:
+        self.path = path
+        self.rigid = rigid
+        self.rigid_body_api = rigid_body_api
+        self.parent = parent
+
+    def IsValid(self) -> bool:
+        return True
+
+    def GetName(self) -> str:
+        return self.path.rsplit("/", 1)[-1]
+
+    def GetPath(self) -> str:
+        return self.path
+
+    def GetParent(self) -> _FakeBodyPrim | None:
+        return self.parent
+
+    def HasAPI(self, schema: object) -> bool:
+        return schema is self.rigid_body_api and self.rigid
+
+
 class _FakeRelationship:
     def __init__(self, target: str) -> None:
         self._target = target
@@ -932,6 +962,54 @@ def test_isaac_usd_validation_unwraps_relationship_target_paths(
 
     assert targets["base"].anchor == "/panda/Physics/arm_joint"
     assert targets["right_finger"].anchor == "/panda/Physics/finger_joint"
+
+
+def test_isaac_usd_validation_resolves_child_targets_to_rigid_body_ancestors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rigid_body_api = object()
+    body_names = ("base", "hand", "left_finger", "right_finger")
+    bodies = {
+        name: _FakeBodyPrim(f"/panda/{name}", rigid=True, rigid_body_api=rigid_body_api)
+        for name in body_names
+    }
+    children = {
+        name: _FakeBodyPrim(
+            f"/panda/{name}/collisions/collider",
+            rigid=False,
+            rigid_body_api=rigid_body_api,
+            parent=bodies[name],
+        )
+        for name in body_names
+    }
+    children_by_path = {child.GetPath(): child for child in children.values()}
+    targets = {name: child.GetPath() for name, child in children.items()}
+    joints = [
+        _FakeJointPrim("arm_joint", targets["base"], targets["hand"]),
+        _FakeJointPrim("finger_joint", targets["left_finger"], targets["right_finger"]),
+    ]
+    instance_proxy_predicate = object()
+    stage = SimpleNamespace(
+        Traverse=lambda predicate: (
+            joints if predicate is instance_proxy_predicate else []
+        ),
+        GetPrimAtPath=lambda path: children_by_path.get(
+            str(path), _FakeTargetPrim(path, False)
+        ),
+    )
+    pxr = SimpleNamespace(
+        Usd=SimpleNamespace(
+            Stage=SimpleNamespace(Open=lambda _path: stage),
+            TraverseInstanceProxies=lambda: instance_proxy_predicate,
+        ),
+        UsdPhysics=SimpleNamespace(Joint=_FakeUsdJoint, RigidBodyAPI=rigid_body_api),
+    )
+    monkeypatch.setitem(sys.modules, "pxr", pxr)
+
+    assert isaac_robot_asset._physics_body_names(stage, joints, pxr.UsdPhysics) == set(
+        body_names
+    )
+    isaac_robot_asset._validate_usd(Path("robot.usd"), _doc())
 
 
 def test_isaac_cli_returns_nonzero_without_closing_kit_on_conversion_failure(

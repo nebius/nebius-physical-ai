@@ -220,9 +220,37 @@ def _validate_spec(spec: dict) -> None:
         )
 
 
+def _constrained_rigid_body(target_prim: object, usd_physics: object) -> object | None:
+    """Find the rigid body that contains a joint's target Xformable."""
+
+    current = target_prim
+    visited: set[str] = set()
+    while current and current.IsValid():
+        get_path = getattr(current, "GetPath", None)
+        identity = str(get_path()) if callable(get_path) else str(current)
+        if identity in visited:
+            return None
+        visited.add(identity)
+        has_api = getattr(current, "HasAPI", None)
+        rigid_body_api = getattr(usd_physics, "RigidBodyAPI", None)
+        if callable(has_api) and rigid_body_api is not None:
+            if has_api(rigid_body_api):
+                return current
+        elif current is target_prim:
+            # Lightweight test doubles predating RigidBodyAPI model the
+            # relationship target itself as the constrained body.
+            return current
+        get_parent = getattr(current, "GetParent", None)
+        if not callable(get_parent):
+            return None
+        current = get_parent()
+    return None
+
+
 def _physics_body_names(
     stage: object, prims: list[object], usd_physics: object
 ) -> set[str]:
+
     names: set[str] = set()
     for prim in prims:
         if not prim.IsA(usd_physics.Joint):
@@ -251,7 +279,9 @@ def _physics_body_names(
                 prim_path = get_prim_path() if callable(get_prim_path) else resolved
                 target_prim = stage.GetPrimAtPath(prim_path)
                 if target_prim and target_prim.IsValid():
-                    names.add(str(target_prim.GetName()))
+                    body_prim = _constrained_rigid_body(target_prim, usd_physics)
+                    if body_prim is not None:
+                        names.add(str(body_prim.GetName()))
     return names
 
 
