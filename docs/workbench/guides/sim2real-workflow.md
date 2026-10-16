@@ -682,6 +682,10 @@ newest training checkpoint; a three-pass loop performs 6,000 new updates while
 retaining stronger validation candidates. Strict success and placement rank
 first, followed by stable grasp and lift achieved in the same episode. Extra
 lifts without stable grasp cannot displace a stronger paired-skill candidate.
+Before a resumed rollout or PPO pass starts, the candidate and its validation
+report must agree on the checkpoint URI, SHA-256, byte size, and generator
+digest. An incomplete or contradictory byte identity fails closed; it cannot
+select a resume checkpoint.
 
 Fresh canonical stock-Franka training initializes the actor with
 `franka-cartesian-gru-distillation-v2` before PPO. The actor commands the native

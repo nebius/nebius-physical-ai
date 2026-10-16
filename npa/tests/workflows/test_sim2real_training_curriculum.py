@@ -20,11 +20,20 @@ def _candidate(reliable_lifts: int, iteration: int = 1) -> dict:
         "inner_iteration": iteration,
         "checkpoint_uri": checkpoint,
         "checkpoint_sha256": checksum,
+        "checkpoint_size_bytes": 128,
+        "generator_policy_sha256": checksum,
         "validation_report_uri": f"s3://example-bucket/sim2real/run/validation/{iteration}.json",
         "validation_report": {
             "evaluation_split": "validation",
             "policy_checkpoint": checkpoint,
             "policy_checkpoint_sha256": checksum,
+            "policy_checkpoint_size_bytes": 128,
+            "policy_inference_provenance": {
+                "checkpoint_uri": checkpoint,
+                "checkpoint_sha256": checksum,
+                "checkpoint_size_bytes": 128,
+                "generator_policy_sha256": checksum,
+            },
             "success_rate": 0.0,
             "decomposed_metrics": {"lift": {"rate": reliable_lifts / 64}},
             "per_env": [
@@ -130,6 +139,28 @@ def test_resume_rejects_unbound_or_invalid_validation(mutation):
 
 def test_first_pass_disables_unvalidated_automatic_resume():
     assert resume_environment({}) == {"NPA_BYO_ISAAC_AUTO_RESUME": "0"}
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [
+        (("checkpoint_size_bytes",), 0),
+        (("validation_report", "policy_checkpoint_size_bytes"), 127),
+        (
+            ("validation_report", "policy_inference_provenance", "checkpoint_sha256"),
+            "a" * 64,
+        ),
+    ],
+)
+def test_resume_rejects_missing_or_mismatched_checkpoint_byte_identity(path, value):
+    candidate = _candidate(40)
+    payload = candidate
+    for key in path[:-1]:
+        payload = payload[key]
+    payload[path[-1]] = value
+
+    with pytest.raises(ValueError):
+        resume_environment({"checkpoint_candidates": [candidate]})
 
 
 def test_grasp_and_lift_must_succeed_in_the_same_validation_episode():

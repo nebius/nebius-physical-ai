@@ -87,6 +87,9 @@ protects the learned warm start when later PPO updates reduce strict success.
 Selection still requires the complete configured PPO pass. It retains the
 strongest actor and records that checkpoint's actual completed updates separately
 from the full pass count. Resumed rollouts and PPO use its exact checkpoint.
+The resume boundary requires the candidate and validation report to agree on
+the checkpoint URI, SHA-256, byte size, and generator digest; incomplete byte
+identity fails closed before either consumer runs.
 Recurrent inference clears each environment's hidden state at its real reset
 boundary, using the same Torch inference context as prediction.
 PPO telemetry counts consecutive updates with measured value and surrogate losses.

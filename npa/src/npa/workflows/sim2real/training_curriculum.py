@@ -7,7 +7,10 @@ import math
 import re
 from typing import Any
 
-from npa.workflows.sim2real.checkpoint_selection import select_best_checkpoint
+from npa.workflows.sim2real.checkpoint_selection import (
+    require_complete_checkpoint_candidate_pool,
+    select_best_checkpoint,
+)
 
 
 def _goal_approach_count(rows: list[dict[str, Any]]) -> int:
@@ -45,12 +48,35 @@ def _validated_skill_progress(candidate: dict[str, Any]) -> dict[str, Any]:
     report = candidate["validation_report"]
     checkpoint = candidate["checkpoint_uri"]
     checksum = str(candidate.get("checkpoint_sha256") or "")
+    checkpoint_size = candidate.get("checkpoint_size_bytes")
     if not re.fullmatch(r"[0-9a-f]{64}", checksum):
         raise ValueError("resume candidate requires an exact checkpoint SHA-256")
+    if (
+        type(checkpoint_size) is not int
+        or isinstance(checkpoint_size, bool)
+        or checkpoint_size <= 0
+    ):
+        raise ValueError("resume candidate requires a positive checkpoint byte size")
     if report.get("evaluation_split", candidate["evaluation_split"]) != "validation":
         raise ValueError("resume curriculum may consume only validation evidence")
-    if (report.get("policy_checkpoint"), report.get("policy_checkpoint_sha256")) != (
+    provenance = report.get("policy_inference_provenance")
+    if not isinstance(provenance, dict):
+        raise ValueError("resume validation lacks checkpoint inference provenance")
+    if (
+        report.get("policy_checkpoint"),
+        report.get("policy_checkpoint_sha256"),
+        report.get("policy_checkpoint_size_bytes"),
+        provenance.get("checkpoint_uri"),
+        provenance.get("checkpoint_sha256"),
+        provenance.get("checkpoint_size_bytes"),
+        provenance.get("generator_policy_sha256"),
+    ) != (
         checkpoint,
+        checksum,
+        checkpoint_size,
+        checkpoint,
+        checksum,
+        checkpoint_size,
         checksum,
     ):
         raise ValueError("resume validation checkpoint identity differs")
@@ -93,9 +119,9 @@ def resume_environment(evidence: dict[str, Any]) -> dict[str, str]:
     environment = {"NPA_BYO_ISAAC_AUTO_RESUME": "0"}
     if not evidence:
         return environment
-    candidate = select_best_checkpoint(
-        list(evidence.get("checkpoint_candidates") or [])
-    )
+    candidates = list(evidence.get("checkpoint_candidates") or [])
+    require_complete_checkpoint_candidate_pool(candidates)
+    candidate = select_best_checkpoint(candidates)
     progress = _validated_skill_progress(candidate)
     environment.update(
         {
