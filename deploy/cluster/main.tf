@@ -117,5 +117,5 @@ module "k8s_training" {
   # through a one-entry Fleet and the shared mk8s backend (docs/fleet-kuberay.md).
   enable_kuberay_cluster = false
   enable_kuberay_service = false
-  enable_opa_gatekeeper  = false
+  opa_gatekeeper_enable  = false
 }

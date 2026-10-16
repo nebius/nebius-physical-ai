@@ -194,13 +194,12 @@ def test_render_tfvars_emits_multi_preset_and_io_m3_cache() -> None:
     assert "accounting_enabled = false" in tf
     assert 'active_checks_scope    = "essential"' in tf
     assert "slurm_rest_enabled = false" in tf
-    # The pinned upstream contract requires an explicit node-group bundle and
-    # resolves omitted control-plane presets from its worker-count sizing tier.
-    assert 'k8s_version        = "1.34"' in tf
-    assert 'node_group_version = "72"' in tf
-    assert 'slurm_operator_version = "4.1.6"' in tf
+    assert 'k8s_version        = "1.35"' in tf
+    assert "node_group_version" not in tf
+    assert 'slurm_operator_version = "4.1.13"' in tf
     assert "max_size = 24" in tf
-    assert tf.count("preset   = null") >= 2
+    assert "preset   = null" not in tf
+    assert tf.count('preset   = "16vcpu-64gb"') >= 2
     assert "system_resources =" not in tf
 
 
@@ -262,19 +261,22 @@ def test_explicit_rest_contract_rejects_operator_unsupported_no_accounting() -> 
     assert 'active_checks_scope    = "essential"' in tf
 
 
-def test_k8s_and_node_group_versions_parse_and_must_be_non_empty() -> None:
+def test_k8s_version_and_removed_node_bundle_input() -> None:
     data = _base_spec_mapping()
     data["k8s_version"] = "1.35"
-    data["node_group_version"] = "80"
     spec = spec_from_mapping(data)
     spec.validate()
     assert spec.k8s_version == "1.35"
-    assert spec.node_group_version == "80"
+    assert spec.node_group_version == ""
     assert 'k8s_version        = "1.35"' in render_tfvars(spec)
-    assert 'node_group_version = "80"' in render_tfvars(spec)
+    assert "node_group_version" not in render_tfvars(spec)
 
+    spec.node_group_version = "80"
+    with pytest.raises(SoperatorSpecError, match="node_group_version was removed"):
+        spec.validate()
     spec.node_group_version = ""
-    with pytest.raises(SoperatorSpecError, match="must both be non-empty"):
+    spec.k8s_version = ""
+    with pytest.raises(SoperatorSpecError, match="k8s_version must be non-empty"):
         spec.validate()
 
 
@@ -545,23 +547,22 @@ def test_operator_override_validation_and_verified_userns_contract() -> None:
     with pytest.raises(SoperatorSpecError, match="semantic version"):
         spec.validate()
 
-    spec.slurm_operator_version = "4.1.7"
-    with pytest.raises(
-        SoperatorSpecError, match="user-namespace override is verified only"
-    ):
+    for use_profile in (False, True):
+        spec.use_default_apparmor_profile = use_profile
+        spec.slurm_operator_version = "4.1.13"
         spec.validate()
-
-    spec.use_default_apparmor_profile = True
-    spec.validate()  # explicit newer chart is possible when the pinned sysctl override is unused
+        spec.slurm_operator_version = "4.1.7"
+        with pytest.raises(SoperatorSpecError, match="outside the pinned runtime"):
+            spec.validate()
 
     spec.slurm_operator_version = "4.2.0"
-    with pytest.raises(SoperatorSpecError, match="use 4.1.6"):
+    with pytest.raises(SoperatorSpecError, match="use 4.1.13"):
         spec.validate()
 
     spec.slurm_operator_version = "4.1.0"
     with pytest.raises(
         SoperatorSpecError,
-        match="4.1.0 is no longer verified; replace it with 4.1.6",
+        match="4.1.0 is no longer verified; replace it with 4.1.13",
     ):
         spec.validate()
 
@@ -942,6 +943,35 @@ def test_deploy_path_reconciles_legacy_source_before_provider_mutation(
     assert result["status"] == "source-preflight-passed"
     assert result["provider_mutation"] is False
     assert result["control_plane"]["system_max_size"] == 24
+
+
+def test_legacy_release_ref_is_rejected_before_source_or_provider_mutation(
+    tmp_path, monkeypatch
+) -> None:
+    """The old release is destroy-only; a deploy must not even resolve it."""
+
+    from npa.soperator import lifecycle
+    from npa.soperator.spec import LEGACY_SOLUTIONS_LIBRARY_REF
+
+    spec = SoperatorSpec(
+        name="cluster",
+        root_login_ssh_public_key="ssh-ed25519 AAAA operator",
+        workers=[WorkerPoolSpec(name="cpu")],
+    )
+    monkeypatch.setattr(
+        lifecycle,
+        "_resolve_solutions_library",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("source resolution must not start")
+        ),
+    )
+
+    with pytest.raises(lifecycle.UpstreamContractError, match="destroy only"):
+        lifecycle.deploy_cluster(
+            spec,
+            work_root=tmp_path,
+            solutions_library_ref=LEGACY_SOLUTIONS_LIBRARY_REF,
+        )
 
 
 @pytest.mark.parametrize(

@@ -7,8 +7,10 @@ lifecycle at the call site for deploy/destroy paths.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 import stat
 import sys
 import textwrap
@@ -769,8 +771,11 @@ def test_vendored_filestore_contract_matches_official_guide() -> None:
     )
     assert main_tf.count('attach_mode = "READ_WRITE"') == 2
     assert main_tf.count("mount_tag   = local.filestore.mount_tag") == 2
-    assert main_tf.count("filestore_mount_tag  = local.filestore.mount_tag") == 2
-    assert 'filestore_mount_tag  = "data"' in egress_tf
+    assert (
+        len(re.findall(r"filestore_mount_tag\s*= local.filestore.mount_tag", main_tf))
+        == 2
+    )
+    assert re.search(r'filestore_mount_tag\s*= "data"', egress_tf)
     assert "grep -Fq \\" in mount_validation
     # kubectl 1.36 suppresses attached output and the created pod name under
     # --quiet, defeating both evidence checking and debugger-pod cleanup.
@@ -786,6 +791,21 @@ def test_vendored_filestore_contract_matches_official_guide() -> None:
         'chart_version                       = optional(string, "0.1.6")'
         in variables_tf
     )
+
+
+def test_vendored_binpacking_template_is_module_relative() -> None:
+    """Terraform validation must not depend on the caller's working directory."""
+
+    repo_root = Path(__file__).resolve().parents[3]
+    applications = (
+        repo_root
+        / "deploy/cluster/vendor/nebius-solutions-library/k8s-training/applications.tf"
+    ).read_text()
+
+    assert (
+        'templatefile("${path.module}/../modules/binpacking/files/'
+        'opa_gatekeeper_mutator.yaml.tftpl", {'
+    ) in applications
 
 
 def test_render_tfvars_capacity_block_is_strict() -> None:
@@ -1875,6 +1895,40 @@ def test_prepare_install_dir_patches_fetched_recipe_debug_quiet(
             / "01-verify-node-filesystem-mounts.sh"
         ).read_text()
     )
+
+
+def test_ref_selected_recipe_clones_use_distinct_cache_paths(
+    tmp_path, monkeypatch
+) -> None:
+    """A newer requested ref must never reuse a prior ref's checkout."""
+
+    from npa.fleet import lifecycle as L
+
+    cloned: list[Path] = []
+
+    def clone(args, **_kwargs):
+        clone_root = Path(args[-1])
+        cloned.append(clone_root)
+        (clone_root / "k8s-training").mkdir(parents=True)
+        (clone_root / "modules").mkdir()
+
+    monkeypatch.setattr(L, "_require_bin", lambda name: name)
+    monkeypatch.setattr(L, "_run_stream", clone)
+    work_root = tmp_path / "fetch"
+    first_ref = "main-v2026-10-12"
+    second_ref = "main-v2026-10-26"
+
+    first = L._resolve_recipe_root(
+        None, ref=first_ref, work_root=work_root, on_status=None
+    )
+    second = L._resolve_recipe_root(
+        None, ref=second_ref, work_root=work_root, on_status=None
+    )
+
+    assert first != second
+    assert first.name.endswith(hashlib.sha256(first_ref.encode()).hexdigest()[:16])
+    assert second.name.endswith(hashlib.sha256(second_ref.encode()).hexdigest()[:16])
+    assert cloned == [first, second]
 
 
 # --------------------------------------------------------------------------- #

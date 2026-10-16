@@ -788,6 +788,9 @@ def test_reserved_cluster_plan_cannot_fall_back(tmp_path, monkeypatch):
     assert spec.workers[0].capacity_mode() == "reserved"
     assert not spec.workers[0].preemptible
     assert spec.workers[0].size == 2
+    assert spec.slurm_operator_version == "4.1.13"
+    assert spec.k8s_version == "1.35"
+    assert spec.node_group_version == ""
     assert args.output.stat().st_mode & 0o077 == 0
 
 

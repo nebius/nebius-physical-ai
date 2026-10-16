@@ -326,7 +326,7 @@ def test_status_json_includes_terraform_outputs(monkeypatch, tmp_path) -> None:
                     "endpoints": {"public_endpoint": "https://cluster.example"},
                 }
             },
-            "k8s_training_ref": {"value": "main-v2026-05-25"},
+            "k8s_training_ref": {"value": "main-v2026-10-12+local-cluster-patches"},
             "shared_filesystem": {"value": {"id": "computefilesystem-a"}},
             "filesystem_csi": {
                 "value": {
@@ -346,7 +346,7 @@ def test_status_json_includes_terraform_outputs(monkeypatch, tmp_path) -> None:
     payload = json.loads(result.output)
     assert payload[0]["name"] == "cluster-tf"
     assert payload[0]["cluster_id"] == "mk8scluster-tf"
-    assert payload[0]["k8s_training_ref"] == "main-v2026-05-25"
+    assert payload[0]["k8s_training_ref"] == "main-v2026-10-12+local-cluster-patches"
     assert payload[0]["filesystem_csi_storage_class"] == "csi-mounted-fs-path-sc"
 
 

@@ -124,8 +124,8 @@ def collect_prereqs() -> list[Prereq]:
             'self-skips via pytest.importorskip("torch") in '
             "npa/tests/workbench/test_checkpoint_security.py and similar "
             "security tests; presence here does not confirm it is the CPU "
-            "torch==2.13.0 wheel CI pins, only that some torch import works",
-            "pip install --index-url https://download.pytorch.org/whl/cpu torch==2.13.0 "
+            "torch==2.14.0 wheel CI pins, only that some torch import works",
+            "pip install --index-url https://download.pytorch.org/whl/cpu torch==2.14.0 "
             '&& pip install -e "npa[sonic]"',
         ),
         Prereq(

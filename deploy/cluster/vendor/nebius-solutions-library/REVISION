@@ -5,15 +5,16 @@
 # ref in deploy/cluster/outputs.tf as `k8s_training_ref`.
 
 upstream: https://github.com/nebius/nebius-solutions-library
-revision: 5b058cb99a881e76b57cadc3881ba5e56962782c
-revision_date: 2026-05-23T09:27:45Z
-revision_subject: SCHED-1604 Wait for the controller pod to terminate so it can't recreate the Service before deletion.
-declared_ref: main-v2026-05-25+local-cluster-patches
+revision: fba7148cecd8bd38bccf60ba194ab8f5fdb02194
+revision_date: 2026-10-09T18:09:59Z
+revision_subject: Merge pull request #1228 from nebius/SCHED-2697/0
+declared_ref: main-v2026-10-12+local-cluster-patches
 
-# How the revision was determined (2026-09-15, re-verified 2026-09-16):
-# - outputs.tf declares the vendored base as main @ 2026-05-25 plus local patches.
-# - 5b058cb99a881e76b57cadc3881ba5e56962782c is the newest commit on upstream
-#   main before 2026-05-26 (no upstream main commits landed 2026-05-24/25).
+# How the revision was determined (re-verified 2026-10-16):
+# - GitHub's tag ref for main-v2026-10-12 resolves directly to this commit.
+# - This was the newest published main-v tag; vendoring follows a release tag,
+#   never the moving upstream main branch.
+# - LICENSE is the upstream Apache-2.0 source notice copied with this subset.
 #
 # Vendored subset: k8s-training/ and selected modules/ only. Deliberately
 # excluded from the vendor (present upstream, not vendored):
@@ -26,7 +27,7 @@ declared_ref: main-v2026-05-25+local-cluster-patches
 # - k8s-training/rbac_bindings.tf         (wires the RBAC module into the root)
 # - modules/kuberay/files/ray-values-cpu.yaml.tftpl  (CPU-cluster Ray values)
 # - "Kubernetes RBAC access bindings" section in k8s-training/README.md
-# Modified files (~40 across k8s-training/ and modules/):
+# Maintained local changes (across k8s-training/ and modules/):
 # - CPU node-group support: local.create_cpu_node_group gating in
 #   k8s-training/main.tf, k8s-training/variables.tf, k8s-training/locals.tf
 # - Filestore mount tags: local.filestore.mount_tag threading through
@@ -43,9 +44,18 @@ declared_ref: main-v2026-05-25+local-cluster-patches
 #   k8s-training/{applications,filesystem,helm,locals,output,provider}.tf,
 #   k8s-training/egress_policy_example.yaml, filesystem-csi-validation/,
 #   k8s-training/tests/
+# - The upstream binpacking Gatekeeper template call is anchored to path.module
+#   so Terraform validation is independent of the invoking working directory.
+# - NCCL test-mode and unified-runner defaults use the existing pinned public
+#   GHCR image rather than an upstream private registry; Grace/GB300 runners
+#   require an explicit operator-reviewed multi-architecture image.
+# - GB300 Terraform-test fixture identifiers are neutral placeholders; they are
+#   mock-provider inputs, not a reference to live infrastructure.
 # - One trailing-whitespace normalization pass.
 #
-# To re-vendor: copy the new upstream tree over this directory, then
+# This refresh also adopts upstream GB300, binpacking, filesystem validation,
+# GPU-soak, and unified-runner additions. To re-vendor: copy the new upstream
+# tree over this directory, then
 # 1. re-apply every patch listed above (the new-module additions first),
 # 2. update `revision`, `revision_date`, `revision_subject`, and
 #    `declared_ref` above, plus the `k8s_training_ref` output in

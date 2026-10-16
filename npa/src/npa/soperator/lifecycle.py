@@ -42,6 +42,7 @@ from npa.clients.config import resolve_environment
 from npa.soperator.spec import (
     DEFAULT_SOLUTIONS_LIBRARY_REF,
     DEFAULT_SLURM_OPERATOR_VERSION,
+    LEGACY_SOLUTIONS_LIBRARY_REF,
     SoperatorSpec,
     WorkerPoolSpec,
     validate_ssh_public_key_record,
@@ -1780,28 +1781,26 @@ def _assert_solutions_library_contract(
     critical_fragments = {
         "soperator/installations/example/terraform.tfvars": (
             f'slurm_operator_version = "{DEFAULT_SLURM_OPERATOR_VERSION}"',
-            "k8s_version = 1.34",
-            "node_group_version = 72",
+            "k8s_version = 1.35",
         ),
         "soperator/installations/example/main.tf": (
-            "rest_enabled                    = var.slurm_rest_enabled",
-            "accounting_enabled              = var.accounting_enabled",
-            "sizing_tier_override = module.sizing.sizing_tier",
+            "rest_enabled        = var.slurm_rest_enabled",
+            "accounting_enabled  = var.accounting_enabled",
+            "node_group_workers_v2 = [",
         ),
         "soperator/installations/example/variables.tf": (
             'variable "slurm_rest_enabled"',
             'variable "accounting_enabled"',
-            'variable "sizing_tier_override"',
+            'variable "platform_driver_presets"',
+            'variable "slurm_nodeset_system"',
         ),
-        "soperator/modules/sizing_tier/main.tf": (
-            'var.worker_count < 10 ? "XS"',
-            'var.worker_count < 100 ? "S"',
-            'var.worker_count < 500 ? "M"',
-            'var.worker_count < 2000 ? "L" : "XL"',
-            'L  = "32vcpu-128gb"',
-            'XL = "64vcpu-256gb"',
+        "soperator/modules/k8s/k8s_ng_workers_v2.tf": (
+            "version = var.k8s_version",
+            "reservation_policy",
         ),
     }
+    if ref == LEGACY_SOLUTIONS_LIBRARY_REF:
+        critical_fragments = _legacy_source_contract()
     for relative, fragments in critical_fragments.items():
         pristine = _git_checkout_text(repo_root, ref, relative)
         current_path = repo_root / relative
@@ -1859,6 +1858,36 @@ def _assert_solutions_library_contract(
             raise UpstreamContractError(
                 f"unexpected local mutation in pinned patch target {relative}"
             )
+
+
+def _legacy_source_contract() -> dict[str, tuple[str, ...]]:
+    """Retain the previous immutable source contract for exact-state teardown."""
+
+    return {
+        "soperator/installations/example/terraform.tfvars": (
+            'slurm_operator_version = "4.1.6"',
+            "k8s_version = 1.34",
+            "node_group_version = 72",
+        ),
+        "soperator/installations/example/main.tf": (
+            "rest_enabled                    = var.slurm_rest_enabled",
+            "accounting_enabled              = var.accounting_enabled",
+            "sizing_tier_override = module.sizing.sizing_tier",
+        ),
+        "soperator/installations/example/variables.tf": (
+            'variable "slurm_rest_enabled"',
+            'variable "accounting_enabled"',
+            'variable "sizing_tier_override"',
+        ),
+        "soperator/modules/sizing_tier/main.tf": (
+            'var.worker_count < 10 ? "XS"',
+            'var.worker_count < 100 ? "S"',
+            'var.worker_count < 500 ? "M"',
+            'var.worker_count < 2000 ? "L" : "XL"',
+            'L  = "32vcpu-128gb"',
+            'XL = "64vcpu-256gb"',
+        ),
+    }
 
 
 def _prepare_installation(recipe_dir: Path, spec: SoperatorSpec, region: str) -> Path:
@@ -3234,6 +3263,12 @@ def deploy_cluster(
     """Deploy or reconcile *spec* after pinned-contract and key preflight."""
 
     spec.validate()
+    if solutions_library_ref == LEGACY_SOLUTIONS_LIBRARY_REF:
+        raise UpstreamContractError(
+            "the previous recipe is supported for exact-state destroy only; "
+            "use its original Workbench version to reconcile it, or deploy a "
+            "new target with the current release"
+        )
     _validate_gpu_creation_check_timeout(gpu_creation_check_timeout_seconds)
     root_login_key = _resolve_root_login_ssh_public_key(
         spec, explicit_file=root_login_ssh_public_key_file
@@ -4366,7 +4401,7 @@ def _run_gpu_creation_checks(
 ) -> list[dict[str, Any]]:
     """Run real CUDA samples on every GPU worker through the login jail.
 
-    The pinned 4.1.6 Terraform surface exposes REST separately from accounting,
+    The pinned 4.1.13 Terraform surface exposes REST separately from accounting,
     but the exact operator implementation skips REST reconciliation when
     accounting is disabled. Its REST-backed ActiveCheck controller therefore
     cannot provide creation-time GPU validation for that combination. This

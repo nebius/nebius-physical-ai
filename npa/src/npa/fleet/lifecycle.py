@@ -201,7 +201,7 @@ _TARGET_BACKEND_OWNER = ".npa-backend-owner.json"
 # Pinned ref cloned when no local recipe is available, matching the repo-vendored
 # copy (deploy/cluster/vendor + the single-cluster wrapper) so a fleet run from an
 # installed package doesn't silently drift onto upstream ``main`` HEAD.
-_PINNED_LIBRARY_REF = "main-v2026-05-25+local-cluster-patches"
+_PINNED_LIBRARY_REF = "main-v2026-10-12"
 _FILESYSTEM_VERIFIER = (
     Path("filesystem-csi-validation") / "01-verify-node-filesystem-mounts.sh"
 )
@@ -408,7 +408,8 @@ def _resolve_recipe_root(
         return _coerce_recipe_root(Path(env_dir))
 
     if ref:
-        clone_dir = work_root / "nebius-solutions-library"
+        source_key = hashlib.sha256(ref.encode("utf-8")).hexdigest()[:16]
+        clone_dir = work_root / f"nebius-solutions-library-{source_key}"
         if not _is_recipe_root(clone_dir):
             work_root.mkdir(parents=True, exist_ok=True)
             git = _require_bin("git")
