@@ -76,9 +76,9 @@ def test_security_fixed_runtime_and_baked_image_are_fully_pinned() -> None:
     assert "transformers==5.14.1" in baked
     assert "accelerate==1.15.0" in baked
     assert "sentencepiece==0.2.1" in baked
-    assert "pip==26.2" in baked
-    assert "setuptools==83.0.0" in baked
-    assert "wheel==0.46.2" in baked
+    assert "pip==26.2.1+npa.1" in baked
+    assert "setuptools==84.0.0" in baked
+    assert "wheel==0.47.0" in baked
     assert not any(
         line.startswith(("torch==", "torchvision==", "torchaudio=="))
         for line in baked.splitlines()

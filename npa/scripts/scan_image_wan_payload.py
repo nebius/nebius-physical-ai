@@ -211,6 +211,14 @@ AUDITED_SECRET_LITERAL_FILE_SHA256: dict[str, str] = {
     "opt/wan-base/lib/python3.10/site-packages/diffusers/loaders/textual_inversion.py": (
         "9cc89fb4b0ac9762e4434723f8447d8833d26b03844804ee11493ce4b5f7512a"
     ),
+    # Hugging Face Hub 1.26 token-variable references, bound to the independently
+    # checked upstream wheel in wan2-2/oss-literal-audits.json.
+    "opt/wan-base/lib/python3.10/site-packages/huggingface_hub/_sandbox.py": (
+        "5c45d98b94b7ad8cb0fe8ded777ac1d313957668690259f2532901b00c3d28ff"
+    ),
+    "opt/wan-base/lib/python3.10/site-packages/huggingface_hub/cli/sandbox.py": (
+        "ad30997fa5a1a036bb522361b1353fe0b879b8aa8a60eb3bdf15c6000a8919d0"
+    ),
     "usr/bin/ssh": "04f2ff5f506a3f332e7adeb1478a4c551ae74acdd328e6fb5c2495664d4064e6",
     "usr/bin/ssh-add": (
         "1e02d3fca3c8d72570c11ded9681dcacd4775a33560786a27c489b9e4388ec06"

@@ -1,7 +1,16 @@
 # Public-eligible Wan 2.2 image: Apache-2.0 source plus OSS CPU dependencies.
 # CUDA PyTorch and every nvidia-* distribution are runtime-fetched into a volume
 # only after the operator accepts NVIDIA's terms. No model/tokenizer is baked.
-FROM python:3.10-slim-bookworm@sha256:019e31cc1f52e4139d338bca44f27b71339a9da261738fd80fab9cf4595152fc
+FROM python:3.11.16-slim-bookworm@sha256:528257d48c1da0dcecc2e725d1ae34498d60c965f1241e39cd6a85a8859bdf84 AS installer-build
+
+COPY docker/workbench/common/secure_pip /opt/secure-pip
+COPY docker/workbench/sonic/packaging-requirements.txt /opt/packaging-requirements.txt
+RUN python /opt/secure-pip/build.py \
+      --work-dir /tmp/pip-build --output-dir /opt/repaired-installer \
+    && python -m pip download --no-cache-dir --only-binary=:all: --require-hashes \
+      --dest /opt/bootstrap-wheels -r /opt/packaging-requirements.txt
+
+FROM python:3.10-slim-trixie@sha256:6ff506466f8b1e981719b468cc0023b8ef000b983cdec0eafe119d01f379e31d
 
 ARG WAN_SOURCE_URL=https://github.com/Wan-Video/Wan2.2.git
 ARG WAN_SOURCE_REF=42bf4cfaa384bc21833865abc2f9e6c0e67233dc
@@ -32,6 +41,7 @@ USER root
 
 RUN rm -f /etc/apt/sources.list.d/*.list \
     && apt-get update \
+    && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
       ca-certificates ffmpeg git git-lfs libgl1 libglib2.0-0 \
       openssh-server procps rsync sudo util-linux \
@@ -61,6 +71,28 @@ COPY --chmod=0444 docker/workbench/wan2-2/wan_init_ti2v.py /opt/byof/wan/__init_
 COPY --chmod=0444 docker/workbench/wan2-2/input_contract.py /opt/byof/npa_wan_input_contract.py
 COPY --chmod=0444 docker/workbench/wan2-2/runtime-requirements.txt /opt/npa/wan2-2/runtime-requirements.txt
 COPY --chmod=0444 src/npa/solutions/wan2_2/dependency_closure.py /opt/npa/wan2-2/dependency_closure.py
+COPY --chmod=0444 docker/workbench/common/refresh_ensurepip.py /opt/npa/wan2-2/refresh_ensurepip.py
+COPY --chmod=0444 docker/workbench/common/secure_pip/inputs.json /opt/npa/wan2-2/installer-inputs.json
+
+# Only verified repaired wheels enter this stage. Build inputs and the original
+# pip wheel stay in the disposable stage. Refresh ensurepip as well as the
+# global installer so a newly created runtime venv cannot restore old vendors.
+RUN --mount=from=installer-build,source=/opt/repaired-installer,target=/mnt/repaired-installer \
+    --mount=from=installer-build,source=/opt/bootstrap-wheels,target=/mnt/bootstrap-wheels \
+    python /opt/npa/wan2-2/refresh_ensurepip.py \
+      --pip-wheel /mnt/repaired-installer/pip-26.2.1+npa.1-py3-none-any.whl \
+      --pip-receipt /mnt/repaired-installer/build-receipt.json \
+      --setuptools-wheel /mnt/bootstrap-wheels/setuptools-84.0.0-py3-none-any.whl \
+      --inputs /opt/npa/wan2-2/installer-inputs.json \
+      --report /opt/npa/wan2-2/ensurepip-repair.json \
+    && python -m pip install --no-cache-dir --no-index --no-deps --upgrade \
+      /mnt/repaired-installer/pip-26.2.1+npa.1-py3-none-any.whl \
+      /mnt/bootstrap-wheels/setuptools-84.0.0-py3-none-any.whl \
+      /mnt/bootstrap-wheels/wheel-0.47.0-py3-none-any.whl \
+      /mnt/bootstrap-wheels/packaging-26.3-py3-none-any.whl \
+    && cp /mnt/repaired-installer/build-receipt.json /opt/npa/wan2-2/installer-build-receipt.json \
+    && python -m pip check \
+    && test "$(python -m ensurepip --version)" = 'pip 26.2.1+npa.1'
 
 # Install the complete reviewed OSS closure without dependency resolution so
 # packages such as Accelerate and PEFT cannot pull Torch/CUDA into an image
@@ -70,8 +102,7 @@ COPY --chmod=0444 src/npa/solutions/wan2_2/dependency_closure.py /opt/npa/wan2-2
 # not reproducible evidence across Python patch releases. Keep audited source,
 # remove only third-party caches, and scan the stable source bytes instead.
 RUN python -m venv /opt/wan-base \
-    && /opt/wan-base/bin/python -m pip install --no-cache-dir --upgrade \
-      "pip==26.2" "setuptools==83.0.0" "wheel==0.46.2" \
+    && /opt/wan-base/bin/python -m pip --version | grep -F 'pip 26.2.1+npa.1 ' \
     && /opt/wan-base/bin/python -m pip install --no-cache-dir \
       --no-binary imageio-ffmpeg \
       --constraint /opt/npa/wan2-2/baked-constraints.txt \
@@ -116,6 +147,7 @@ RUN python -m venv /opt/wan-base \
       /opt/byof /opt/npa/wan2-2/dependency_closure.py \
     && test -n "$(find /opt/byof/wan -type f -path '*/__pycache__/*.pyc' -print -quit)" \
     && find /opt/wan-base -type d -name __pycache__ -prune -exec rm -rf {} + \
+    && find /usr/local/lib/python3.10/site-packages -type d -name __pycache__ -prune -exec rm -rf {} + \
     && test -z "$(find /opt/wan-base -type f -name '*.pyc' -print -quit)" \
     && rm -rf /root/.cache /tmp/pip-* \
     && ln -s /workspace/.cache/npa/wan2-2/runtime/current/venv /opt/byof/.venv

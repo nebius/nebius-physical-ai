@@ -39,6 +39,33 @@ def test_libssh2_audit_matches_reviewed_debian_package() -> None:
     )
 
 
+def test_hub_literal_review_binds_the_selected_package_and_exact_source_files() -> None:
+    root = _SCRIPT.parents[1] / "docker/workbench/wan2-2"
+    review = json.loads((root / "oss-literal-audits.json").read_text())["artifacts"][0]
+    assert review["distribution"] == "huggingface-hub"
+    assert (
+        f"huggingface_hub=={review['version']}"
+        in (root / "baked-constraints.txt").read_text()
+    )
+    for file in review["files"]:
+        assert (
+            scanner.AUDITED_SECRET_LITERAL_FILE_SHA256[file["image_path"]]
+            == file["sha256"]
+        )
+
+
+@pytest.mark.parametrize("relative", ["_sandbox.py", "cli/sandbox.py"])
+def test_hub_literal_paths_cannot_admit_credential_or_other_byte_drift(
+    tmp_path, relative
+) -> None:
+    path = "opt/wan-base/lib/python3.10/site-packages/huggingface_hub/" + relative
+    payload = b"hf_token = hf_actual_secret_value\n"
+    findings = scanner.scan(_tar(tmp_path / "changed-hub.tar", {path: payload}), {})
+    assert {"audited_literal_byte_drift", "credential_content"} <= {
+        item.kind for item in findings
+    }
+
+
 def _gzip(payload: bytes) -> bytes:
     """Stable gzip bytes so xdist workers collect identical parametrized IDs."""
 

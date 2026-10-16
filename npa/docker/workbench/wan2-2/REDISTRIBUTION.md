@@ -1,5 +1,15 @@
 # Wan 2.2 container redistribution record
 
+The security candidate uses the digest-pinned Python 3.10.22 Debian Trixie base
+and upgrades inherited Debian packages before installing runtime dependencies. It
+rebuilds pip from pinned upstream sources with repaired vendored dependencies,
+installs verified Setuptools 84 wheels, and replaces Python's bundled ensurepip
+wheels so new runtime environments retain those repairs. The pip build inputs
+remain in a disposable image stage; source provenance and licenses accompany the
+installed derivative. See [the installer repair record](../common/secure_pip/README.md).
+It still needs exact-image vulnerability, payload, bootstrap, and GPU qualification;
+the accepted release's immutable bytes are unchanged.
+
 Review date: 2026-08-13. This is an engineering classification, not a legal
 opinion or substitute for counsel.
 
