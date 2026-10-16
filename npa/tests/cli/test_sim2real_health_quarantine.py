@@ -239,13 +239,19 @@ def test_s3_accepts_prefix_without_execution_image_resolution(
     )
 
     assert result.exit_code == 0, result.output
-    assert json.loads(result.output)["selected_checks"] == ["s3"]
+    payload = json.loads(result.output)
+    assert payload["selected_checks"] == ["s3"]
+    assert payload["checks"][0]["details"] == [
+        "The image-independent S3 health check verifies bucket reachability; "
+        "--s3-prefix is not probed."
+    ]
     diagnostic_spies.execution.assert_not_called()
     diagnostic_spies.image_inspector.assert_not_called()
 
 
+@pytest.mark.parametrize("checks", ["tokens", "config"])
 def test_project_requires_the_s3_health_check(
-    diagnostic_spies: SimpleNamespace,
+    diagnostic_spies: SimpleNamespace, checks: str
 ) -> None:
     result = runner.invoke(
         app,
@@ -254,7 +260,7 @@ def test_project_requires_the_s3_health_check(
             "health",
             "sim2real",
             "--checks",
-            "tokens",
+            checks,
             "--project",
             "selected-project",
         ],

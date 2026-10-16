@@ -707,6 +707,20 @@ def sim2real_command(
         selected_check_order = [check for check in ALL_CHECKS if check in selected]
         s3_position = selected_check_order.index("s3")
         results.insert(s3_position, project_storage_failure)
+    if s3_prefix is not None and "s3" in selected:
+        results = [
+            replace(
+                result,
+                details=(
+                    *result.details,
+                    "The image-independent S3 health check verifies bucket "
+                    "reachability; --s3-prefix is not probed.",
+                ),
+            )
+            if result.name == "s3"
+            else result
+            for result in results
+        ]
 
     if output_json:
         payload = {

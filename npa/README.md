@@ -24,7 +24,8 @@ than falling back to host credentials or environment settings. Without
 `--project`, the existing Sim2Real environment settings apply. For `workbench
 health sim2real`, `--project` applies when the selected checks include `s3`: it
 supplies the reachability-probe target and isolated credentials unless the
-corresponding S3 flag is explicit. It has no effect on selections without `s3`.
+corresponding S3 flag is explicit. A selection without `s3` refuses `--project`
+with an explicit error.
 See the [Sim2Real guide](../docs/workbench/guides/sim2real-workflow.md).
 
 Optional [Workbench access](../docs/workbench/team-access.md) adds CLI/API/SDK shared
