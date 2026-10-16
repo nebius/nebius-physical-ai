@@ -85,6 +85,18 @@ def test_incomplete_episode_cannot_certify_handoff(torch, assessment_runtime):
     assert not assessment.successful_rows.any()
 
 
+def test_partial_terminal_coverage_is_rejected_before_fitting(
+    torch, assessment_runtime
+):
+    task, assessment = assessment_runtime
+    for _ in range(3):
+        _advance(torch, task, assessment)
+    _advance(torch, task, assessment, done=True)
+    assert int(assessment.successful_rows.sum()) * 2 == len(assessment.successful_rows)
+    with pytest.raises(RuntimeError, match="2/4 training scenarios"):
+        assessment.require_complete()
+
+
 def test_reset_dwell_and_later_retry_cannot_repair_first_episode(
     torch, assessment_runtime
 ):

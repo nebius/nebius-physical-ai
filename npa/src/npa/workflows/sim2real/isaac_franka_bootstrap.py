@@ -227,6 +227,7 @@ def _training_round(env, actor, *, learner_fraction):
             teacher.reset(dones)
             actor.reset(dones)
     actor.reset()
+    assessment.require_complete()
     return collection.finish(steps, assessment, teacher.successful_rows)
 
 
@@ -277,6 +278,15 @@ class _TerminalPlacementAssessment:
             "terminal_training_scenarios": int(self.completed_rows.sum()),
             "ever_training_placements": int(ever_successful_rows.sum()),
         }
+
+    def require_complete(self):
+        completed = int(self.completed_rows.sum())
+        expected = len(self.completed_rows)
+        if completed != expected:
+            raise RuntimeError(
+                "native training collection lacks completed first episodes: "
+                f"{completed}/{expected} training scenarios"
+            )
 
 
 def _report_teacher_progress(teacher, step, total_steps, learner_fraction):
