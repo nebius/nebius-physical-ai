@@ -355,6 +355,7 @@ def _run_gpu_check(gpu_check: Callable[[], Any]) -> None:
     """Preserve actionable failure categories without publishing provider text."""
     from npa.orchestration.skypilot.k8s_gpu_catalog import (
         PendingGpuPlacementError,
+        SkyPilotGpuLabelError,
         UnsatisfiableAcceleratorError,
     )
 
@@ -362,6 +363,13 @@ def _run_gpu_check(gpu_check: Callable[[], Any]) -> None:
         gpu_check()
     except ExecutionPreflightError:
         raise
+    except SkyPilotGpuLabelError as exc:
+        raise ExecutionPreflightError(
+            "gpu",
+            "reviewed GPU nodes cannot satisfy SkyPilot's effective accelerator selector; "
+            "rerun supported GPU setup for the exact context with label_known_gpus=True; "
+            "submission preflight does not modify node labels",
+        ) from exc
     except PendingGpuPlacementError as exc:
         raise ExecutionPreflightError(
             "gpu",
@@ -1930,7 +1938,7 @@ def preflight_skypilot_submission(
     def gpu_check() -> None:
         from npa.orchestration.skypilot.k8s_gpu_catalog import (
             discover_kubernetes_gpu_inventory,
-            preflight_kubernetes_gpu_gang,
+            preflight_skypilot_gpu_gang,
         )
         from npa.orchestration.skypilot.resource_quantities import (
             kubernetes_ephemeral_storage_quantity,
@@ -2023,7 +2031,7 @@ def preflight_skypilot_submission(
                     status="unknown",
                 )
             cpus, memory = kubernetes_gpu_quantities(resources, accelerator=str(gpu))
-            preflight_kubernetes_gpu_gang(
+            preflight_skypilot_gpu_gang(
                 discover_kubernetes_gpu_inventory(context=context),
                 accelerator=str(gpu),
                 node_count=int(document.get("num_nodes") or 1),

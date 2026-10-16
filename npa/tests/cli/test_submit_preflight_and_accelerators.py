@@ -319,7 +319,7 @@ def _two_gpu_inventory():
         2,
         2,
         ("RTXPRO6000",),
-        {},
+        {"unit-node": {"skypilot.co/accelerator": "rtxpro6000"}},
         nodes=(
             KubernetesGpuNode(
                 "unit-node",
@@ -336,6 +336,7 @@ def _two_gpu_inventory():
                 allocatable_cpu_millis=8000,
                 allocatable_memory_bytes=32 * 10**9,
                 allocatable_pods=1,
+                labels=(("skypilot.co/accelerator", "rtxpro6000"),),
             ),
         ),
     )
@@ -357,6 +358,181 @@ def test_gang_preflight_uses_single_mapping_request(
     row = workflow_cli._preflight_submit_gang_capacity(spec, context="unit-context")[0]
 
     assert row["accelerator"] == "RTXPRO6000:2"
+
+
+def _gfd_gpu_inventory():
+    from npa.orchestration.skypilot.k8s_gpu_catalog import (
+        KubernetesGpuInventory,
+        KubernetesGpuNode,
+    )
+
+    labels = {"nvidia.com/gpu.product": "NVIDIA-B200"}
+    return KubernetesGpuInventory(
+        "unit-context",
+        1,
+        1,
+        1,
+        1,
+        ("NVIDIA-B200",),
+        {"gfd-node": labels},
+        nodes=(
+            KubernetesGpuNode(
+                "gfd-node",
+                True,
+                True,
+                ("NVIDIA-B200",),
+                1,
+                1,
+                0,
+                1,
+                free_cpu_millis=8000,
+                free_memory_bytes=32 * 10**9,
+                free_pod_slots=1,
+                allocatable_cpu_millis=8000,
+                allocatable_memory_bytes=32 * 10**9,
+                allocatable_pods=1,
+                labels=tuple(labels.items()),
+            ),
+        ),
+    )
+
+
+def _compact_nebius_rtx_inventory():
+    from npa.orchestration.skypilot.k8s_gpu_catalog import (
+        KubernetesGpuInventory,
+        KubernetesGpuNode,
+    )
+
+    labels = {"nebius.com/gpu-name": "RTX6000"}
+    return KubernetesGpuInventory(
+        "unit-context",
+        1,
+        1,
+        1,
+        1,
+        ("RTX6000",),
+        {"native-rtx": labels},
+        nodes=(
+            KubernetesGpuNode(
+                "native-rtx",
+                True,
+                True,
+                ("RTX6000",),
+                1,
+                1,
+                0,
+                1,
+                free_cpu_millis=8000,
+                free_memory_bytes=32 * 10**9,
+                free_pod_slots=1,
+                allocatable_cpu_millis=8000,
+                allocatable_memory_bytes=32 * 10**9,
+                allocatable_pods=1,
+                labels=tuple(labels.items()),
+            ),
+        ),
+    )
+
+
+def test_npa_spec_gang_preflight_accepts_gfd_formatter_without_sky_label(
+    monkeypatch: pytest.MonkeyPatch, mocker
+) -> None:
+    """The normal NPA-spec capacity boundary uses SkyPilot's GFD formatter."""
+    from npa.orchestration.skypilot import k8s_gpu_catalog
+
+    inventory = _gfd_gpu_inventory()
+    assert "skypilot.co/accelerator" not in inventory.node_labels["gfd-node"]
+    monkeypatch.setattr(
+        k8s_gpu_catalog,
+        "discover_kubernetes_gpu_inventory",
+        lambda **_kwargs: inventory,
+    )
+    skypilot_preflight = mocker.spy(k8s_gpu_catalog, "preflight_skypilot_gpu_gang")
+    spec = SimpleNamespace(
+        states={"train": SimpleNamespace(name="train", resources="gpu")},
+        resources={"gpu": {"accelerators": "B200:1"}},
+        config={},
+    )
+
+    row = workflow_cli._preflight_submit_gang_capacity(spec, context="unit-context")[0]
+
+    skypilot_preflight.assert_called_once()
+    assert row["compatible_free_nodes"] == 1
+    assert row["selected_nodes"] == ["gfd-node"]
+
+
+def test_npa_spec_submit_rejects_effective_label_mismatch_before_side_effects(
+    monkeypatch: pytest.MonkeyPatch, mocker, tmp_path: Path
+) -> None:
+    """NPA-spec submission refuses before its S3 probes, staging, or controller."""
+    from npa import execution_preflight
+    from npa.orchestration.skypilot import k8s_gpu_catalog
+
+    monkeypatch.delenv("NPA_SRC_S3_URI", raising=False)
+    monkeypatch.setattr(workflow_cli, "_adopt_npa_kubeconfig", lambda _context: True)
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.model_cache_preflight.adopt_model_cache_claim",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(workflow_cli, "_local_source_fingerprint", lambda: "f" * 64)
+    monkeypatch.setattr(
+        execution_preflight,
+        "resolve_execution_target",
+        lambda **_kwargs: SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        execution_preflight,
+        "verify_execution_scope",
+        lambda *_args, **_kwargs: {"scope": "pass"},
+    )
+    monkeypatch.setattr(
+        k8s_gpu_catalog,
+        "discover_kubernetes_gpu_inventory",
+        lambda **_kwargs: _compact_nebius_rtx_inventory(),
+    )
+    storage_probe = mocker.patch(
+        "npa.clients.storage_validation.probe_storage_write",
+        side_effect=AssertionError("S3 probe reached after label refusal"),
+    )
+    stage_source = mocker.patch(
+        "npa.cli.workbench.workflow._stage_npa_src_for_submit",
+        side_effect=AssertionError("S3 source staging reached after label refusal"),
+    )
+    controller = mocker.patch(
+        "npa.orchestration.skypilot.workflow.submit_workflow",
+        side_effect=AssertionError("controller creation reached after label refusal"),
+    )
+    provision = mocker.patch(
+        "npa.orchestration.npa_workflow.deploy.ensure_infra_present",
+        side_effect=AssertionError("provisioning reached after label refusal"),
+    )
+    spec_path = tmp_path / "label-mismatch.yaml"
+    spec_path.write_text(yaml.safe_dump(SPEC, sort_keys=False), encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(spec_path),
+            "--run-id",
+            "label-mismatch-refusal",
+            "--infra",
+            "k8s/unit-context",
+            "--no-deploy-if-absent",
+            "--skip-preflight",
+            "--var",
+            "bucket=unit-bucket",
+        ],
+    )
+
+    assert result.exit_code == 1, result.output
+    assert "effective accelerator selector" in result.output
+    storage_probe.assert_not_called()
+    stage_source.assert_not_called()
+    controller.assert_not_called()
+    provision.assert_not_called()
 
 
 def test_submit_accelerator_readiness_uses_resolved_config_overrides(
