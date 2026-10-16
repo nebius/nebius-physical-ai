@@ -230,7 +230,8 @@ def main():
     """
     args = _arguments()
     with tempfile.TemporaryDirectory(prefix="lyra-panorama-") as temporary:
-        output = Path(temporary)
+        output = Path(temporary) / "prepared"
+        output.mkdir(mode=0o700)
         _prepare(args, output)
         publish(output, args.output_path)
 

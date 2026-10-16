@@ -2,6 +2,7 @@
 
 from fractions import Fraction
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import av
@@ -263,3 +264,63 @@ def test_existing_output_is_never_overwritten(tmp_path, monkeypatch):
     with pytest.raises(FileExistsError):
         capture.main()
     assert (output / "keep.txt").read_text() == "existing evidence"
+
+
+class _ReadbackStorage:
+    def __init__(self, failure):
+        self.failure = failure
+        self.private_parent = False
+
+    def upload_directory(self, source, destination):
+        if self.failure == "upload":
+            raise OSError("synthetic upload failure")
+        self.files = {
+            path.name: path.read_bytes()
+            for path in Path(source).iterdir()
+            if path.is_file()
+        }
+
+    def download_directory(self, source, destination):
+        root = Path(destination)
+        self.private_parent = root.parent.stat().st_mode & 0o777 == 0o700
+        root.mkdir()
+        for name, content in self.files.items():
+            (root / name).write_bytes(content)
+        if self.failure == "download":
+            raise OSError("synthetic download failure")
+        if self.failure == "checksum":
+            (root / "capture.mp4").write_bytes(b"synthetic mismatch")
+
+
+@pytest.mark.parametrize("failure", [None, "upload", "download", "checksum"])
+def test_s3_readback_stays_private_and_is_cleaned_on_every_exit(
+    tmp_path, monkeypatch, failure
+):
+    from contextlib import nullcontext
+    import tempfile
+
+    from npa.workflows import lerobot_transfer_data
+
+    source = tmp_path / "panoramas"
+    _image_sequence(source)
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    temporary_directory = tempfile.TemporaryDirectory
+    monkeypatch.setattr(
+        capture.tempfile,
+        "TemporaryDirectory",
+        lambda **kwargs: temporary_directory(dir=scratch, **kwargs),
+    )
+    args = _arguments(source)
+    args.output_path = "s3://synthetic-bucket/cleanup-regression/"
+    storage = _ReadbackStorage(failure)
+    monkeypatch.setattr(capture, "_arguments", lambda: args)
+    monkeypatch.setattr(
+        lerobot_transfer_data.StorageClient, "from_environment", lambda: storage
+    )
+    expected = ValueError if failure == "checksum" else OSError
+    with pytest.raises(expected) if failure else nullcontext():
+        capture.main()
+    assert list(scratch.iterdir()) == []
+    if failure != "upload":
+        assert storage.private_parent
