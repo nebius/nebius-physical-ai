@@ -136,9 +136,14 @@ not the synthetic workflow explainer. `npa.workflows.lyra_validated_example`
 requires the retained HTML's qualified digest, native identities and embedded
 video hashes; it fully decodes paired media and measures RGB replay PSNR before
 packaging real playback, depth samples, evidence and workflow YAML. Keep the
-generated file private under the recorded internal R&D scope. This revalidates
-retained perspective artifacts; it does not qualify panorama input or claim a
-new GPU run, held-out quality or haze improvement.
+generated file private under the recorded internal R&D scope. The
+`lyra2-panorama-rtx-20261016.json` qualification records a separate real 5.7K
+Insta360 One X run: full 827-frame preparation, normal 128-view GPU inference,
+8,658,944 native Gaussians and complete artifact verification. The older TUM
+perspective qualification and its CPU repackaging remain separate evidence.
+Packaging does not launch GPU work. Neither replay establishes held-out
+quality, haze improvement, raw-fisheye support or X5 performance; 8K preparation
+tests remain synthetic.
 
 For a first BEHAVIOR DEV evaluation, use
 [the one-file onboarding guide](../../../docs/workbench/challenge-onboarding.md)

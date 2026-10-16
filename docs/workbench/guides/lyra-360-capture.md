@@ -99,10 +99,13 @@ baseline and report that outcome. More pixels, a different camera or reprojectio
 does not establish a quality win.
 
 Preparation is CPU-validated with synthetic direction-coded panoramas, image
-and video sequences, and 8192×4096 images. These checks establish projection,
-dimensions, ordering, metadata handling and bundle integrity. They do not
-qualify panorama captures through Lyra GPU inference or measure reconstruction
-quality. Existing RTX qualification used a separate perspective capture.
+and video sequences, and 8192×4096 images. A separate
+[real 5.7K panorama run](lyra-validated-example.md) processed all 827 frames of a
+public Insta360 One X capture, then completed normal 128-view native Lyra
+inference on an RTX PRO 6000. Its source/render videos, native Gaussian output,
+geometry, cameras and complete S3 readback were independently verified.
+This qualifies that 5760×2880-to-640×480 path; the 8K tests remain synthetic.
+Neither result establishes reduced haze, raw-fisheye support or X5 quality.
 The panorama bundle has `metric_calibration=false` and cannot serve as calibrated
 collision geometry. Existing Lyra model/output rights and internal R&D scope
 still apply.

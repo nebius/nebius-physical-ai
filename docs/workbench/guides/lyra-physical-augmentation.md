@@ -173,8 +173,9 @@ quality of a particular real wrist reconstruction.
 ## Standalone Lyra HTML
 
 For a concrete completed result, use the
-[validated reference review](lyra-validated-example.md). It revalidates retained
-native media, measures RGB replay fidelity and packages the real result with
+[validated 5.7K panorama review](lyra-validated-example.md). Its new native GPU
+run used a complete public Insta360 capture. The packager independently checks
+native media, measures RGB replay fidelity and embeds the real result with
 workflow downloads in one offline file.
 
 Reconstruction can be reviewed independently of the collision and Isaac action
@@ -245,7 +246,7 @@ surfaces, scale or occluded geometry.
 | Source | Upstream Apache-2.0 code and pinned submodule are fetched at runtime; source attribution remains upstream. |
 | Baked runtime | Dedicated digest-pinned CUDA/Python/NPA bootstrap, independent of Isaac; Lyra source, inference dependencies and checkpoint remain runtime fetches. |
 | Weights | Exact Lyra reconstruction checkpoint is fetched anonymously from its official immutable URL and SHA-256 verified. |
-| Input data | Operator-owned private capture, or separately attributed public TUM sample; no customer capture is committed. |
+| Input data | Operator-owned private capture, or separately attributed public reference data such as OmniPhotos or TUM; no customer capture is committed. |
 | Cache | Ephemeral per-stage source/environment/checkpoint directory; model bytes are not exported in run artifacts or an image. |
 | Outputs | Private non-production internal R&D reconstruction and simulation evidence; no production or customer redistribution permission is claimed. |
 
