@@ -1090,6 +1090,19 @@ def test_invalid_json_runtime_locks_cannot_disappear(
         dependencies._python_manifest_pins(source)
 
 
+@pytest.mark.parametrize("text", ["[]", "null", '{"schema":', "", "not-json"])
+def test_malformed_known_json_runtime_lock_is_rejected(
+    security_modules, tmp_path, text
+):
+    _, dependencies = security_modules
+    directory = tmp_path / "robomimic"
+    directory.mkdir()
+    source = directory / "runtime-requirements.lock"
+    source.write_text(text)
+    with pytest.raises((ValueError, TypeError)):
+        dependencies._python_manifest_pins(source)
+
+
 def _installation_source_pins(root: Path) -> list[str]:
     pattern = re.compile(
         r"(?<![A-Za-z0-9_.-])([A-Za-z0-9_.-]+)==([0-9][A-Za-z0-9.!+_-]*)"

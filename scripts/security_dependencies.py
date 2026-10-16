@@ -137,11 +137,27 @@ def _write_pins(destination: Path, pins: list[str]) -> None:
 def _python_manifest_pins(source: Path) -> list[str]:
     """Include exact package maps in maintained JSON runtime locks."""
     text = source.read_text()
-    if not text.lstrip().startswith("{"):
+    known_json = (
+        source.parent.name == "robomimic" and source.name == "runtime-requirements.lock"
+    )
+    if not known_json and not text.lstrip().startswith(("{", "[")):
         return _exact_pins(text)
     lock = json.loads(text)
+    if not isinstance(lock, dict):
+        raise TypeError("JSON Python runtime lock must be a mapping")
     if lock.get("schema") != "npa.robomimic.runtime-lock.v1":
         raise ValueError("Unsupported JSON Python runtime lock schema")
+    pins = {}
+    for name, version in _runtime_packages(lock).items():
+        normalized = _runtime_package_name(name, version)
+        if normalized in pins and pins[normalized] != version:
+            raise ValueError("JSON runtime package names have contradictory versions")
+        pins[normalized] = version
+    return [f"{name}=={version}" for name, version in pins.items()]
+
+
+def _runtime_packages(lock: dict) -> dict:
+    """Collect the workload and bootstrap installer declarations."""
     packages = lock.get("packages")
     if not isinstance(packages, dict) or not packages:
         raise ValueError("JSON Python runtime lock requires a nonempty package map")
@@ -166,20 +182,19 @@ def _python_manifest_pins(source: Path) -> list[str]:
         ):
             raise ValueError("JSON runtime installer contradicts its package map")
         packages[installer["name"]] = installer["version"]
-    pins = {}
-    for name, version in packages.items():
-        if not isinstance(name, str) or not re.fullmatch(
-            r"[A-Za-z0-9][A-Za-z0-9._-]*", name
-        ):
-            raise ValueError("Invalid JSON runtime package name")
-        if not isinstance(version, str):
-            raise TypeError("JSON runtime package versions must be exact strings")
-        Version(version)
-        normalized = canonicalize_name(name)
-        if normalized in pins and pins[normalized] != version:
-            raise ValueError("JSON runtime package names have contradictory versions")
-        pins[normalized] = version
-    return [f"{name}=={version}" for name, version in pins.items()]
+    return packages
+
+
+def _runtime_package_name(name: str, version: str) -> str:
+    """Validate a JSON declaration before rendering requirement syntax."""
+    if not isinstance(name, str) or not re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9._-]*", name
+    ):
+        raise ValueError("Invalid JSON runtime package name")
+    if not isinstance(version, str):
+        raise TypeError("JSON runtime package versions must be exact strings")
+    Version(version)
+    return canonicalize_name(name)
 
 
 def _is_python_dependency_manifest(source: Path) -> bool:
