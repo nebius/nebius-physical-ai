@@ -3,6 +3,9 @@
 # only after the operator accepts NVIDIA's terms. No model/tokenizer is baked.
 FROM python:3.11.16-slim-bookworm@sha256:528257d48c1da0dcecc2e725d1ae34498d60c965f1241e39cd6a85a8859bdf84 AS installer-build
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
 COPY docker/workbench/common/secure_pip /opt/secure-pip
 COPY docker/workbench/sonic/packaging-requirements.txt /opt/packaging-requirements.txt
 RUN python /opt/secure-pip/build.py \
