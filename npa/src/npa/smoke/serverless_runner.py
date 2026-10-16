@@ -177,8 +177,9 @@ def submit_golden_eval(
             )
         if tag is None or not _DIGEST.fullmatch(tag) or tag != expected_image_digest:
             raise RuntimeError(
-                "strict golden qualification requires --tag sha256:<exact digest> "
-                "identical to --expected-image-digest"
+                "strict golden qualification requires a frozen --tag "
+                "sha256:<exact digest> identical to --expected-image-digest; "
+                "the tag or expected digest differs or is missing"
             )
 
     image = resolve_golden_image(tool, registry=registry, tag=tag)
