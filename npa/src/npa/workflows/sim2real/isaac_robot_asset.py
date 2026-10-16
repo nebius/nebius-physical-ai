@@ -220,7 +220,9 @@ def _validate_spec(spec: dict) -> None:
         )
 
 
-def _physics_body_names(stage: object, prims: list[object], usd_physics: object) -> set[str]:
+def _physics_body_names(
+    stage: object, prims: list[object], usd_physics: object
+) -> set[str]:
     names: set[str] = set()
     for prim in prims:
         if not prim.IsA(usd_physics.Joint):
