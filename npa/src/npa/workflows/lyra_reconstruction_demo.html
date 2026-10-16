@@ -494,7 +494,9 @@
           <div class="eyebrow" id="case-label">
             NATIVE LYRA 2 / COMPLETED RUN
           </div>
-          <h1>A real capture.<br /><span>A native reconstruction.</span></h1>
+          <h1 id="result-title">
+            A real capture.<br /><span>A native reconstruction.</span>
+          </h1>
         </div>
         <div class="header-proof">
           <span class="badge">NATIVE ARTIFACTS VERIFIED</span>
@@ -514,7 +516,7 @@
         <div class="grid comparison-grid">
           <article class="card">
             <div class="cardhead">
-              <h3>Recorded input</h3>
+              <h3 id="input-title">Recorded input</h3>
               <span class="small">SOURCE RGB</span>
             </div>
             <video
@@ -524,7 +526,7 @@
               playsinline
               preload="auto"
             ></video>
-            <div class="caption">
+            <div class="caption" id="input-caption">
               Recorded camera pixels. Compare edges, texture and visibility with
               the native render.
             </div>
@@ -560,7 +562,7 @@
           />
           <span id="time" class="small">0.0 s</span>
         </div>
-        <p class="scope-line">
+        <p class="scope-line" id="scope-line">
           Perspective reference capture. Original-view replay does not establish
           held-out quality, reduced haze, or 360° / fisheye performance.
         </p>
@@ -649,8 +651,10 @@
         <div class="boundary">
           <div>
             <span class="eyebrow">VALIDATED HERE</span>
-            <h3>A completed perspective reconstruction.</h3>
-            <p>
+            <h3 id="validated-title">
+              A completed perspective reconstruction.
+            </h3>
+            <p id="validated-copy">
               Native RGB inference, Gaussian export, rendered replay and
               retained model depth/cameras. The media and 3D samples are
               embedded in this one file.
@@ -658,8 +662,10 @@
           </div>
           <div>
             <span class="eyebrow">STILL TO VALIDATE</span>
-            <h3>The 360° capture path and splatting baseline.</h3>
-            <p>
+            <h3 id="remaining-title">
+              The 360° capture path and splatting baseline.
+            </h3>
+            <p id="remaining-copy">
               High-resolution panorama reconstruction, fisheye calibration and a
               matched COLMAP → gsplat comparison need their own real runs. No
               quality improvement is inferred from the workflow.
@@ -701,6 +707,11 @@
       }
       byId("attribution").textContent = data.attribution;
       const validation = data.validation;
+      const renderTimeScale = validation
+        ? validation.replay.fps /
+          (validation.replay.rendered_fps || validation.replay.fps)
+        : 1;
+      reconstruction.playbackRate = renderTimeScale;
       const evidence = {
         native: data.evidence,
         validation: validation || null,
@@ -722,7 +733,7 @@
                   " × " +
                   validation.replay.height +
                   " · " +
-                  validation.replay.fps +
+                  Number(validation.replay.fps.toFixed(3)) +
                   " Hz",
               ],
               [
@@ -763,6 +774,41 @@
         if (validation && data.attribution.includes("TUM RGB-D benchmark"))
           byId("case-label").textContent =
             "PUBLIC REFERENCE / TUM RGB-D · FR3 OFFICE";
+        const capture = validation && validation.capture;
+        if (!capture || capture.input_projection !== "equirectangular") return;
+        byId("case-label").textContent =
+          "PUBLIC REFERENCE / " + capture.dataset + " · " + capture.camera;
+        byId("result-title").firstChild.textContent = "A 360° capture.";
+        byId("input-title").textContent = "Prepared perspective input";
+        byId("input-caption").textContent =
+          capture.source_width +
+          " × " +
+          capture.source_height +
+          " stitched panorama → " +
+          capture.output_width +
+          " × " +
+          capture.output_height +
+          " perspective. Fixed yaw " +
+          capture.yaw_degrees +
+          "°, horizontal FOV " +
+          capture.h_fov_degrees +
+          "°. Native v360 reprojection; no sharpening or dehazing.";
+        byId("scope-line").textContent =
+          "Full panorama preparation and native GPU inference on this public capture. Original-view replay does not establish held-out quality, reduced haze, raw-fisheye support, or Insta360 X5 performance.";
+        byId("validated-title").textContent =
+          "Panorama → native GPU reconstruction.";
+        byId("validated-copy").textContent =
+          "All " +
+          capture.frames +
+          " source frames prepared. Lyra inference across " +
+          preview.views +
+          " views at " +
+          data.evidence.resolution +
+          " processing resolution, native Gaussian export and rendered replay. Actual media and depth samples are embedded here.";
+        byId("remaining-title").textContent =
+          "Capture quality and the splatting comparison.";
+        byId("remaining-copy").textContent =
+          "This run does not prove a haze improvement. Raw fisheye calibration, X5 input, higher model processing resolution and a matched COLMAP → gsplat comparison require separate evidence.";
       }
       function validationCards() {
         return [
@@ -778,9 +824,15 @@
               : "Both native videos embedded.",
             validation
               ? validation.replay.paired_frames +
-                " matching presentation timestamps at " +
-                validation.replay.fps +
-                " Hz; paired decoded RGB frames measured without alignment or enhancement."
+                " frames paired by index. Source " +
+                Number(validation.replay.fps.toFixed(3)) +
+                " Hz; native render " +
+                Number(
+                  (
+                    validation.replay.rendered_fps || validation.replay.fps
+                  ).toFixed(3),
+                ) +
+                " Hz. Each stream fully decoded at its recorded cadence; no alignment or enhancement."
               : "Complete source and native render are embedded. Native artifact hashes were checked before this viewer was generated.",
           ],
           [
@@ -853,7 +905,7 @@
       renderReplayMetric();
       renderWorkflows();
       function playBoth() {
-        reconstruction.currentTime = source.currentTime;
+        reconstruction.currentTime = source.currentTime * renderTimeScale;
         Promise.all([source.play(), reconstruction.play()]).catch(() => {
           byId("play").textContent = "Play together";
         });
@@ -878,8 +930,12 @@
         byId("scrub").value = source.duration
           ? (source.currentTime / source.duration) * 1000
           : 0;
-        if (Math.abs(source.currentTime - reconstruction.currentTime) > 0.2)
-          reconstruction.currentTime = source.currentTime;
+        if (
+          Math.abs(
+            source.currentTime * renderTimeScale - reconstruction.currentTime,
+          ) > 0.2
+        )
+          reconstruction.currentTime = source.currentTime * renderTimeScale;
       };
       byId("restart").onclick = () => {
         source.currentTime = 0;
@@ -889,7 +945,7 @@
       byId("scrub").oninput = (event) => {
         if (Number.isFinite(source.duration)) {
           source.currentTime = (source.duration * event.target.value) / 1000;
-          reconstruction.currentTime = source.currentTime;
+          reconstruction.currentTime = source.currentTime * renderTimeScale;
         }
       };
       byId("download-evidence").onclick = () => {

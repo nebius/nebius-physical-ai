@@ -88,9 +88,16 @@ def _poster(frame):
     return "data:image/jpeg;base64," + base64.b64encode(output.getvalue()).decode()
 
 
-def _compare_videos(source, rendered, expected):
+def _compare_videos(source, rendered, expected, rendered_expected=None):
     errors, posters = [], None
     fps = float(Fraction(expected["r_frame_rate"]))
+    rendered_expected = rendered_expected or expected
+    rendered_fps = float(Fraction(rendered_expected["r_frame_rate"]))
+    if any(
+        expected[key] != rendered_expected[key]
+        for key in ("width", "height", "nb_read_frames")
+    ):
+        raise ValueError("Qualified source and render shapes or counts differ")
     for pair in zip_longest(_frames(source), _frames(rendered)):
         if any(frame is None for frame in pair):
             raise ValueError("Source and native render have different frame counts")
@@ -98,8 +105,13 @@ def _compare_videos(source, rendered, expected):
         shape = (int(expected["height"]), int(expected["width"]), 3)
         if left.shape != shape or right.shape != shape:
             raise ValueError("Decoded videos differ from qualified dimensions")
-        expected_time = len(errors) / fps
-        if max(abs(left_time - expected_time), abs(right_time - expected_time)) > 1e-6:
+        if (
+            max(
+                abs(left_time - len(errors) / fps),
+                abs(right_time - len(errors) / rendered_fps),
+            )
+            > 1e-6
+        ):
             raise ValueError("Reference videos are not paired at the recorded cadence")
         difference = left.astype(np.float64) - right
         errors.append(float(np.mean(np.square(difference))))
@@ -113,9 +125,10 @@ def _compare_videos(source, rendered, expected):
         "width": int(expected["width"]),
         "height": int(expected["height"]),
         "fps": fps,
+        "rendered_fps": rendered_fps,
         "rgb_mse": mean_error,
         "psnr_db": 10 * math.log10(255**2 / mean_error) if mean_error else None,
-        "scope": "Decoded RGB replay on the original camera trajectory; not held-out novel-view quality or a haze-improvement measurement.",
+        "scope": "Decoded RGB paired by frame index on the original camera trajectory, each at its recorded cadence; not held-out novel-view quality or a haze-improvement measurement.",
     }, posters
 
 
@@ -127,7 +140,10 @@ def _example_payload(input_path, qualification_path, workflows):
         payload, qualification, "reconstruction_video", "gs_trajectory.mp4"
     )
     replay, posters = _compare_videos(
-        source, rendered, qualification["artifacts"]["videos"]["capture.mp4"]
+        source,
+        rendered,
+        qualification["artifacts"]["videos"]["capture.mp4"],
+        qualification["artifacts"]["videos"]["gs_trajectory.mp4"],
     )
     payload["validation"] = {
         "source_html_sha256": digest,
@@ -136,7 +152,11 @@ def _example_payload(input_path, qualification_path, workflows):
         "image": qualification["image"],
         "recorded_native_artifact_verification": qualification["artifacts"],
         "replay": replay,
-        "scope": "Revalidated retained artifacts from the recorded native GPU run; inference was not rerun during packaging. Perspective capture, not 360/fisheye qualification.",
+        "scope": qualification.get(
+            "scope",
+            "Revalidated retained artifacts from the recorded native GPU run; inference was not rerun during packaging. Perspective capture, not 360/fisheye qualification.",
+        ),
+        "capture": qualification.get("capture"),
     }
     payload["posters"] = posters
     payload["workflows"] = {path.name: path.read_text() for path in workflows}

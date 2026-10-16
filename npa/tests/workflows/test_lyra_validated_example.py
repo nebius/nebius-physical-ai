@@ -57,6 +57,25 @@ def test_identical_replay_uses_json_safe_psnr():
     json.dumps(replay, allow_nan=False)
 
 
+def test_native_rounded_render_cadence_pairs_frames_without_retiming():
+    source_fps = Fraction(30000, 1001)
+    source_probe = {**_expected(), "r_frame_rate": "30000/1001"}
+    replay, _ = _compare_videos(
+        _video(20, fps=source_fps), _video(21), source_probe, _expected()
+    )
+    assert replay["rgb_mse"] == 1
+    assert replay["fps"] == float(source_fps)
+    assert replay["rendered_fps"] == 30
+    assert "frame index" in replay["scope"]
+
+
+def test_qualification_disagreement_on_render_frame_count_is_rejected():
+    with pytest.raises(ValueError, match="shapes or counts differ"):
+        _compare_videos(
+            _video(20), _video(21), _expected(), {**_expected(), "nb_read_frames": "4"}
+        )
+
+
 @pytest.mark.parametrize(
     "changed,message",
     [
