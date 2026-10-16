@@ -50,7 +50,10 @@ npa/.venv/bin/python -m npa.workflows.lyra_capture \
   --input-path ./capture.mp4 --output-path ./lyra-input
 ```
 
-The command verifies that the video decodes and writes a checksummed bundle.
+The command decodes the video and writes a checksummed RGB-only H.264 bundle
+(CRF 17), omitting source container tags, frame side data, audio and other tracks.
+It preserves decoded frame order and dimensions, with constant presentation
+cadence at the source average frame rate. Source HDR encoding is not retained.
 Add `--calibration-path ./calibration.json` when measured camera poses accompany
 the video. The file uses schema `npa.lyra-camera-calibration.v1`,
 `camera_convention: optical_x_right_y_down_z_forward`,

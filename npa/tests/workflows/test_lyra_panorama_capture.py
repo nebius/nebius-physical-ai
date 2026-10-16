@@ -155,6 +155,34 @@ def _video(path, rate):
             container.mux(packet)
 
 
+@pytest.mark.parametrize("rate", [Fraction(30), Fraction(24000, 1001)])
+def test_perspective_video_strips_source_metadata_and_preserves_rgb_order(
+    tmp_path, rate
+):
+    from npa.workflows import lyra_capture
+
+    source = tmp_path / "private-source.mp4"
+    _video(source, rate)
+    output = tmp_path / "prepared"
+    output.mkdir()
+    lyra_capture._prepare_video(source, output)
+    frames, actual_rate, metadata = _decode(output / "capture.mp4")
+    assert actual_rate == rate and len(frames) == 4
+    assert all(frame.shape == (512, 1024, 3) for frame in frames)
+    expected_colors = ([255, 0, 0], [0, 128, 0], [0, 0, 255], [255, 255, 255])
+    for frame, expected in zip(frames, expected_colors):
+        np.testing.assert_allclose(frame[256, 512], expected, atol=8)
+    manifest_text = (output / "capture.json").read_text()
+    _assert_private_metadata_absent(source, manifest_text, metadata)
+    with av.open(str(source)) as original:
+        assert original.metadata["title"] == "private-fixture-attribution"
+    with av.open(str(output / "capture.mp4")) as cleaned:
+        assert len(cleaned.streams) == 1 and cleaned.streams[0].type == "video"
+        assert "private-fixture-attribution" not in json.dumps(
+            dict(cleaned.streams[0].metadata)
+        )
+
+
 def test_video_preserves_rate_order_and_source_times(tmp_path):
     source = tmp_path / "panorama.mp4"
     _video(source, Fraction(24000, 1001))

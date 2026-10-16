@@ -6,7 +6,6 @@ import argparse
 from copy import deepcopy
 import json
 from pathlib import Path
-import shutil
 import tempfile
 
 import av
@@ -72,8 +71,10 @@ def _prepare(args, output):
 def _prepare_video(source, output):
     with av.open(str(source)) as container:
         stream = container.streams.video[0]
-        count = sum(1 for _ in container.decode(stream))
-        if count < 2 or not stream.average_rate:
+        if not stream.average_rate:
+            raise ValueError("Lyra requires a decodable video with at least two frames")
+        count = _clean_video(container, stream, output / "capture.mp4")
+        if count < 2:
             raise ValueError("Lyra requires a decodable video with at least two frames")
         metadata = {
             "schema": "npa.lyra-video.v1",
@@ -83,11 +84,30 @@ def _prepare_video(source, output):
             "fps": float(stream.average_rate),
             "metric_calibration": False,
         }
-    shutil.copy2(source, output / "capture.mp4")
     write_json(output / "capture.json", metadata)
     (output / "ATTRIBUTION.txt").write_text(
         "Operator-supplied capture; source rights remain with its provider.\n"
     )
+
+
+def _clean_video(incoming, source, destination):
+    count = 0
+    with av.open(str(destination), "w") as outgoing:
+        target = outgoing.add_stream("libx264", rate=source.average_rate)
+        target.width, target.height = source.width, source.height
+        target.pix_fmt, target.options = "yuv420p", {"crf": "17"}
+        for decoded in incoming.decode(source):
+            # Fresh RGB frames omit source tags, side data, audio and other tracks.
+            frame = av.VideoFrame.from_ndarray(
+                decoded.to_ndarray(format="rgb24"), format="rgb24"
+            )
+            frame.pts, frame.time_base = count, 1 / source.average_rate
+            for packet in target.encode(frame):
+                outgoing.mux(packet)
+            count += 1
+        for packet in target.encode():
+            outgoing.mux(packet)
+    return count
 
 
 def _attach_calibration(path, output):
