@@ -13,6 +13,7 @@ from urllib.parse import unquote, urlsplit
 
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name, parse_wheel_filename
+from packaging.version import Version
 
 try:
     import tomllib
@@ -133,6 +134,54 @@ def _write_pins(destination: Path, pins: list[str]) -> None:
     destination.write_text("\n".join(sorted(set(pins))) + "\n")
 
 
+def _python_manifest_pins(source: Path) -> list[str]:
+    """Include exact package maps in maintained JSON runtime locks."""
+    text = source.read_text()
+    if not text.lstrip().startswith("{"):
+        return _exact_pins(text)
+    lock = json.loads(text)
+    if lock.get("schema") != "npa.robomimic.runtime-lock.v1":
+        raise ValueError("Unsupported JSON Python runtime lock schema")
+    packages = lock.get("packages")
+    if not isinstance(packages, dict) or not packages:
+        raise ValueError("JSON Python runtime lock requires a nonempty package map")
+    packages = dict(packages)
+    fetch = lock.get("runtime_fetch", {})
+    if not isinstance(fetch, dict):
+        raise TypeError("JSON runtime fetch configuration must be a mapping")
+    installer = fetch.get("installer")
+    if installer is not None:
+        if (
+            not isinstance(installer, dict)
+            or not {"name", "version"} <= installer.keys()
+        ):
+            raise ValueError(
+                "JSON runtime installer requires an exact name and version"
+            )
+        if not isinstance(installer["name"], str):
+            raise ValueError("Invalid JSON runtime installer name")
+        if (
+            installer["name"] in packages
+            and packages[installer["name"]] != installer["version"]
+        ):
+            raise ValueError("JSON runtime installer contradicts its package map")
+        packages[installer["name"]] = installer["version"]
+    pins = {}
+    for name, version in packages.items():
+        if not isinstance(name, str) or not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9._-]*", name
+        ):
+            raise ValueError("Invalid JSON runtime package name")
+        if not isinstance(version, str):
+            raise TypeError("JSON runtime package versions must be exact strings")
+        Version(version)
+        normalized = canonicalize_name(name)
+        if normalized in pins and pins[normalized] != version:
+            raise ValueError("JSON runtime package names have contradictory versions")
+        pins[normalized] = version
+    return [f"{name}=={version}" for name, version in pins.items()]
+
+
 def _is_python_dependency_manifest(source: Path) -> bool:
     """Recognize maintained Python requirement, constraint, and dependency pins."""
     if source.suffix not in {".txt", ".lock", ".in"}:
@@ -240,7 +289,7 @@ def _inventory(root: Path, output: Path, cache: Path) -> dict[str, str]:
             shutil.copyfile(source, destination)
         elif _is_python_dependency_manifest(source):
             destination = output / "inputs" / relative / "requirements.txt"
-            _write_pins(destination, _exact_pins(source.read_text()))
+            _write_pins(destination, _python_manifest_pins(source))
         elif source.name == "pyproject.toml":
             project = tomllib.loads(source.read_text()).get("project", {})
             declarations = list(project.get("dependencies", []))

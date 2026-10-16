@@ -919,6 +919,12 @@ historical evidence.
   62-entry runtime is a separately authorized, exact-inventory read-only mount;
   access records do not grant redistribution rights.
 
+  The next source runtime lock updates urllib3 and fsspec and reconciles
+  Safetensors with Diffusers' declared minimum. Dependency scans now cover its
+  JSON package map and installer. The source candidate still contains a legacy
+  Torch/CUDA closure and needs a new independently bound inventory and functional
+  qualification; these changes do not update the development image above.
+
   A supplemental qualification of that same image with a separately declared
   runtime bundle completed 2,000 epochs and 200,000 CUDA optimizer updates on
   RTX PRO 6000, then succeeded on 50/50 Lift episodes and decoded 2,244 frames.

@@ -64,6 +64,12 @@ manifest leak before the patch and deny it afterward, exercise NLTK sandbox
 boundaries, encode/decode MoviePy output with patched Pillow, and validate
 Wan's installed baked/hash-bound runtime dependency union.
 
+Dependency scanning now includes the JSON package map and bootstrap installer
+in the robomimic runtime lock. Its source candidate updates urllib3 and fsspec;
+the remaining legacy Torch/CUDA packages still require remediation and a new
+independently selected runtime inventory. Historical text-lock findings are
+kept separate from the runtime that the bootstrap actually fetches.
+
 Remaining work includes reconciliation of Isaac's exact vendor dependency
 requirements with the security-upgraded OSS closure, dependency/API compatibility
 for the legacy Torch/CUDA and vLLM families; exact rebuilt-image vulnerability, secret,

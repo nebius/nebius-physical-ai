@@ -54,6 +54,16 @@ def _dependency_fixture(root: Path) -> None:
     _write_fixture(root, "named-wheel-requirements.txt", named_wheel)
     _write_fixture(root, "isaac-oss-deps.txt", "requests==2.19.1\n")
     _write_fixture(root, "baked-constraints.txt", "requests==2.19.1\n")
+    _write_fixture(
+        root,
+        "runtime-requirements.lock",
+        json.dumps(
+            {
+                "schema": "npa.robomimic.runtime-lock.v1",
+                "packages": {"requests": "2.19.1"},
+            }
+        ),
+    )
     lock = {
         "name": "synthetic-security-regression",
         "version": "1.0.0",
@@ -123,6 +133,7 @@ def _check_dependencies(root: Path, output: Path) -> dict:
         ("named-wheel-requirements.txt", "requests"),
         ("isaac-oss-deps.txt", "requests"),
         ("baked-constraints.txt", "requests"),
+        ("runtime-requirements.lock", "requests"),
     )
     for manifest, package in declarations:
         matched = [
