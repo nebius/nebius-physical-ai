@@ -28,7 +28,7 @@ corresponding S3 flag is explicit. A selection without `s3` refuses `--project`
 with an explicit error.
 `--s3-prefix` is an execution-config seam. An S3 reachability check accepts it
 but probes only the bucket and endpoint; image-independent selections that
-include neither `s3` nor `config`/`registry` refuse it.
+include none of `s3`, `config`, or `registry` refuse it.
 See the [Sim2Real guide](../docs/workbench/guides/sim2real-workflow.md).
 
 Optional [Workbench access](../docs/workbench/team-access.md) adds CLI/API/SDK shared
