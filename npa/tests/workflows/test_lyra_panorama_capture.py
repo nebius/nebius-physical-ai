@@ -293,8 +293,9 @@ class _ReadbackStorage:
 
 
 @pytest.mark.parametrize("failure", [None, "upload", "download", "checksum"])
+@pytest.mark.parametrize("entrypoint", ["panorama", "video"])
 def test_s3_readback_stays_private_and_is_cleaned_on_every_exit(
-    tmp_path, monkeypatch, failure
+    tmp_path, monkeypatch, failure, entrypoint
 ):
     from contextlib import nullcontext
     import tempfile
@@ -313,14 +314,33 @@ def test_s3_readback_stays_private_and_is_cleaned_on_every_exit(
     )
     args = _arguments(source)
     args.output_path = "s3://synthetic-bucket/cleanup-regression/"
+    module = capture
+    if entrypoint == "video":
+        from npa.workflows import lyra_capture
+
+        prepared = tmp_path / "source-video"
+        prepared.mkdir()
+        capture._prepare(args, prepared)
+        module = lyra_capture
+        monkeypatch.setattr(
+            "sys.argv",
+            [
+                "lyra_capture",
+                "--input-path",
+                str(prepared / "capture.mp4"),
+                "--output-path",
+                args.output_path,
+            ],
+        )
+    else:
+        monkeypatch.setattr(capture, "_arguments", lambda: args)
     storage = _ReadbackStorage(failure)
-    monkeypatch.setattr(capture, "_arguments", lambda: args)
     monkeypatch.setattr(
         lerobot_transfer_data.StorageClient, "from_environment", lambda: storage
     )
     expected = ValueError if failure == "checksum" else OSError
     with pytest.raises(expected) if failure else nullcontext():
-        capture.main()
+        module.main()
     assert list(scratch.iterdir()) == []
     if failure != "upload":
         assert storage.private_parent

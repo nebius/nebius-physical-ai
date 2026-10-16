@@ -136,7 +136,8 @@ def main():
     parser.add_argument("--frame-count", type=int, default=320)
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="lyra-capture-") as temporary:
-        output = Path(temporary)
+        output = Path(temporary) / "prepared"
+        output.mkdir(mode=0o700)
         _prepare(args, output)
         publish(output, args.output_path)
 
