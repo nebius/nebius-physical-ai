@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import math
@@ -33,6 +34,7 @@ from npa.workflows.sim2real.interchange_isaac_runtime import (
     _write_teacher_episode,
     _write_png_rgb8,
 )
+from npa.workflows.sim2real.interchange_isaac_entry import _child_command
 from npa.workflows.sim2real.interchange_teacher_runtime import _scenario_offset
 from npa.workflows.sim2real.interchange_teacher_export import (
     EPISODE_FILES,
@@ -515,3 +517,39 @@ def test_native_visual_evidence_preserves_exact_rgb_bytes(tmp_path: Path) -> Non
     assert zlib.decompress(encoded[41 : 41 + length]) == b"\x00" + raw
     assert receipt["raw_rgb_sha256"] and receipt["bytes"] == len(encoded)
     assert _visual_evidence_decisions(192) == {0, 96, 191}
+
+
+def test_native_child_command_uses_every_explicit_binding(tmp_path: Path) -> None:
+    paths = [
+        tmp_path / name
+        for name in (
+            "prepared",
+            "preparation.json",
+            "service.json",
+            "manifest.json",
+            "robot.usd",
+            "output",
+        )
+    ]
+    command = _child_command(argparse.Namespace(decisions=12, seed=7), *paths)
+    assert command == [
+        "/isaac-sim/python.sh",
+        "-m",
+        "npa.workflows.sim2real.interchange_isaac_runtime",
+        "--input-path",
+        str(paths[0]),
+        "--preparation-path",
+        str(paths[1]),
+        "--service-receipt-path",
+        str(paths[2]),
+        "--robot-usd-path",
+        str(paths[4]),
+        "--robot-asset-manifest-path",
+        str(paths[3]),
+        "--output-path",
+        str(paths[5]),
+        "--decisions",
+        "12",
+        "--seed",
+        "7",
+    ]

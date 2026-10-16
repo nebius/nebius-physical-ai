@@ -162,13 +162,7 @@ def action_layout_from_live_isaac(
         )
     arm = manager.get_term("arm_action")
     gripper = manager.get_term("gripper_action")
-    if (
-        getattr(getattr(arm, "cfg", None), "clip", None) is not None
-        or getattr(arm, "_clip", None) is not None
-    ):
-        raise InterchangeContractError(
-            "absolute joint interchange requires an unclipped affine Isaac action"
-        )
+    _require_unclipped_arm_action(arm)
     arm_names = tuple(arm.IO_descriptor.joint_names)
     gripper_names = tuple(gripper.IO_descriptor.joint_names)
     return IsaacActionLayout(
@@ -184,6 +178,79 @@ def action_layout_from_live_isaac(
             getattr(arm, "_scale", None), dof, "arm action scales", scalar=True
         ),
     )
+
+
+def _require_unclipped_arm_action(arm: Any) -> None:
+    """Reject native clipping that would invalidate absolute target evidence."""
+
+    configured = getattr(getattr(arm, "cfg", None), "clip", None)
+    runtime = getattr(arm, "_clip", None)
+    if configured is not None or runtime is not None:
+        raise InterchangeContractError(
+            "absolute joint interchange requires an unclipped affine Isaac action"
+        )
+
+
+def _controller_targets(
+    robot: Any, profile: RobotSensorProfile
+) -> tuple[list[float], list[float]]:
+    """Read ordered physical targets from the live articulation controller."""
+
+    arm_indices = [robot.joint_names.index(name) for name in profile.arm_joint_names]
+    gripper_indices = [
+        robot.joint_names.index(name) for name in profile.gripper.joint_names
+    ]
+    controller = robot.data.joint_pos_target
+    if hasattr(controller, "torch"):
+        controller = controller.torch
+    arm = controller[0, arm_indices].detach().cpu().tolist()
+    gripper = controller[0, gripper_indices].detach().cpu().tolist()
+    return arm, gripper
+
+
+def _require_applied_targets(
+    target: Sequence[float],
+    mapping: dict[str, Any],
+    arm: list[float],
+    gripper: list[float],
+) -> None:
+    """Prove the controller consumed both physical target components."""
+
+    if not _close(arm, [float(value) for value in target[:-1]], tolerance=1.0e-5):
+        raise InterchangeContractError(
+            "live Isaac arm controller target differs from the typed policy action"
+        )
+    expected = list(mapping["physical_gripper_joint_targets"].values())
+    if not _close(gripper, expected, tolerance=1.0e-5):
+        raise InterchangeContractError(
+            "live Isaac gripper target differs from the declared physical mapping"
+        )
+
+
+def _applied_control_receipt(
+    *,
+    binding: dict[str, Any],
+    mapping: dict[str, Any],
+    before: float,
+    after: float,
+    arm: list[float],
+    gripper: list[float],
+    terminated: Any,
+    truncated: Any,
+) -> dict[str, Any]:
+    """Build the causal native-controller receipt after verification."""
+
+    return {
+        "schema": "npa.sim2real.isaac_applied_control.v1",
+        "binding": binding,
+        "mapping": mapping,
+        "command_application_time_s": before,
+        "resulting_state_time_s": after,
+        "controller_arm_target_rad": arm,
+        "controller_gripper_joint_targets": gripper,
+        "terminated": bool(terminated[0]),
+        "truncated": bool(truncated[0]),
+    }
 
 
 def apply_absolute_joint_target(
@@ -208,45 +275,38 @@ def apply_absolute_joint_target(
     rendered, mapping = render_absolute_joint_action(
         target, profile=profile, layout=layout
     )
-    action = torch.as_tensor([rendered], dtype=torch.float32, device=native.device)
+    before, after, terminated, truncated = _step_absolute_action(
+        env,
+        native,
+        torch.as_tensor([rendered], dtype=torch.float32, device=native.device),
+    )
+    arm_targets, gripper_targets = _controller_targets(robot, profile)
+    _require_applied_targets(target, mapping, arm_targets, gripper_targets)
+    return _applied_control_receipt(
+        binding=binding,
+        mapping=mapping,
+        before=before,
+        after=after,
+        arm=arm_targets,
+        gripper=gripper_targets,
+        terminated=terminated,
+        truncated=truncated,
+    )
+
+
+def _step_absolute_action(
+    env: Any, native: Any, action: Any
+) -> tuple[float, float, Any, Any]:
+    """Apply one native action and verify the measured controller cadence."""
+
     before = _simulator_time(native)
     _, _, terminated, truncated, _ = env.step(action)
     after = _simulator_time(native)
-    expected_dt = float(native.step_dt)
-    if abs((after - before) - expected_dt) > 1.0e-6:
+    if abs((after - before) - float(native.step_dt)) > 1.0e-6:
         raise InterchangeContractError(
             "native controller cadence differs from the measured simulator step"
         )
-    arm_indices = [robot.joint_names.index(name) for name in profile.arm_joint_names]
-    gripper_indices = [
-        robot.joint_names.index(name) for name in profile.gripper.joint_names
-    ]
-    controller = robot.data.joint_pos_target
-    if hasattr(controller, "torch"):
-        controller = controller.torch
-    arm_targets = controller[0, arm_indices].detach().cpu().tolist()
-    gripper_targets = controller[0, gripper_indices].detach().cpu().tolist()
-    expected_arm = [float(value) for value in target[:-1]]
-    expected_gripper = list(mapping["physical_gripper_joint_targets"].values())
-    if not _close(arm_targets, expected_arm, tolerance=1.0e-5):
-        raise InterchangeContractError(
-            "live Isaac arm controller target differs from the typed policy action"
-        )
-    if not _close(gripper_targets, expected_gripper, tolerance=1.0e-5):
-        raise InterchangeContractError(
-            "live Isaac gripper target differs from the declared physical mapping"
-        )
-    return {
-        "schema": "npa.sim2real.isaac_applied_control.v1",
-        "binding": binding,
-        "mapping": mapping,
-        "command_application_time_s": before,
-        "resulting_state_time_s": after,
-        "controller_arm_target_rad": arm_targets,
-        "controller_gripper_joint_targets": gripper_targets,
-        "terminated": bool(terminated[0]),
-        "truncated": bool(truncated[0]),
-    }
+    return before, after, terminated, truncated
 
 
 def assert_live_robot_matches_profile(
@@ -260,20 +320,7 @@ def assert_live_robot_matches_profile(
 
     joints = tuple(robot_joint_names)
     bodies = tuple(robot_body_names)
-    missing_joints = [
-        name
-        for name in (*profile.arm_joint_names, *profile.gripper.joint_names)
-        if name not in joints
-    ]
-    missing_bodies = [
-        name
-        for name in (
-            profile.base_link,
-            profile.ee_link,
-            *profile.gripper.finger_links,
-        )
-        if name not in bodies
-    ]
+    missing_joints, missing_bodies = _missing_live_names(joints, bodies, profile)
     if missing_joints or missing_bodies:
         raise InterchangeContractError(
             "live Isaac articulation lacks sealed joints or links: "
@@ -300,6 +347,95 @@ def assert_live_robot_matches_profile(
     }
 
 
+def _missing_live_names(
+    joints: tuple[str, ...], bodies: tuple[str, ...], profile: RobotSensorProfile
+) -> tuple[list[str], list[str]]:
+    """Return sealed articulation names absent from the initialized task."""
+
+    missing_joints = [
+        name
+        for name in (*profile.arm_joint_names, *profile.gripper.joint_names)
+        if name not in joints
+    ]
+    missing_bodies = [
+        name
+        for name in (profile.base_link, profile.ee_link, *profile.gripper.finger_links)
+        if name not in bodies
+    ]
+    return missing_joints, missing_bodies
+
+
+def _normalized_arm_target(
+    values: tuple[float, ...], profile: RobotSensorProfile, layout: IsaacActionLayout
+) -> list[float]:
+    """Validate physical joint limits and return the native affine action."""
+
+    normalized: list[float] = []
+    rows = zip(
+        values[:-1],
+        profile.joint_limits_rad,
+        layout.default_arm_positions_rad,
+        layout.arm_scales_rad,
+        strict=True,
+    )
+    for index, (value, limits, default, scale) in enumerate(rows):
+        lower, upper = limits
+        if value < lower - 1.0e-9 or value > upper + 1.0e-9:
+            raise InterchangeContractError(
+                f"policy joint {profile.arm_joint_names[index]!r} is outside physical limits"
+            )
+        normalized.append((value - default) / scale)
+    return normalized
+
+
+def _binary_gripper_target(
+    score: float, profile: RobotSensorProfile
+) -> tuple[bool, float, tuple[float, ...]]:
+    """Map the declared semantic scalar to one binary native command."""
+
+    low, high = sorted((profile.gripper.model_open, profile.gripper.model_closed))
+    if score < low - 1.0e-9 or score > high + 1.0e-9:
+        raise InterchangeContractError(
+            "policy gripper scalar is outside declared endpoints"
+        )
+    midpoint = (profile.gripper.model_open + profile.gripper.model_closed) / 2.0
+    increases = profile.gripper.model_closed > profile.gripper.model_open
+    close = score >= midpoint if increases else score <= midpoint
+    binary = -1.0 if close else 1.0
+    endpoint = profile.gripper.model_closed if close else profile.gripper.model_open
+    return close, binary, profile.gripper.model_to_joint_positions(endpoint)
+
+
+def _action_mapping_receipt(
+    *,
+    profile: RobotSensorProfile,
+    values: tuple[float, ...],
+    normalized: list[float],
+    score: float,
+    close: bool,
+    binary: float,
+    physical: tuple[float, ...],
+    rendered: list[float],
+) -> dict[str, Any]:
+    """Record the semantic-to-native action translation."""
+
+    return {
+        "schema": "npa.sim2real.isaac_action_mapping.v1",
+        "robot_identity": profile.identity,
+        "representation": "absolute_joint_position",
+        "policy_action_names": list(profile.action_names),
+        "policy_target": list(values),
+        "normalized_arm_action": normalized,
+        "model_gripper_score": score,
+        "binary_gripper_command": "close" if close else "open",
+        "native_gripper_action": binary,
+        "physical_gripper_joint_targets": dict(
+            zip(profile.gripper.joint_names, physical, strict=True)
+        ),
+        "native_action": rendered,
+    }
+
+
 def render_absolute_joint_action(
     target: Sequence[float],
     *,
@@ -314,6 +450,31 @@ def render_absolute_joint_action(
     resulting physical joint endpoints are retained in the receipt.
     """
 
+    values = _validated_policy_target(target, profile, layout)
+    normalized_arm = _normalized_arm_target(values, profile, layout)
+    rendered = [0.0] * layout.total_dimension
+    rendered[layout.arm_start : layout.arm_start + len(normalized_arm)] = normalized_arm
+    score = values[-1]
+    close, binary_native, physical = _binary_gripper_target(score, profile)
+    rendered[layout.gripper_start] = binary_native
+    receipt = _action_mapping_receipt(
+        profile=profile,
+        values=values,
+        normalized=normalized_arm,
+        score=score,
+        close=close,
+        binary=binary_native,
+        physical=physical,
+        rendered=rendered,
+    )
+    return tuple(rendered), receipt
+
+
+def _validated_policy_target(
+    target: Sequence[float], profile: RobotSensorProfile, layout: IsaacActionLayout
+) -> tuple[float, ...]:
+    """Validate one exact ordered policy target before native translation."""
+
     expected = len(profile.arm_joint_names) + 1
     if len(target) != expected:
         raise InterchangeContractError(
@@ -326,57 +487,7 @@ def render_absolute_joint_action(
         raise InterchangeContractError("Isaac arm action order does not match policy")
     if layout.gripper_joint_names != profile.gripper.joint_names:
         raise InterchangeContractError("Isaac gripper mapping does not match policy")
-    rendered = [0.0] * layout.total_dimension
-    normalized_arm: list[float] = []
-    for index, (value, limits, default, scale) in enumerate(
-        zip(
-            values[:-1],
-            profile.joint_limits_rad,
-            layout.default_arm_positions_rad,
-            layout.arm_scales_rad,
-            strict=True,
-        )
-    ):
-        lower, upper = limits
-        if value < lower - 1.0e-9 or value > upper + 1.0e-9:
-            raise InterchangeContractError(
-                f"policy joint {profile.arm_joint_names[index]!r} is outside physical limits"
-            )
-        normalized = (value - default) / scale
-        normalized_arm.append(normalized)
-        rendered[layout.arm_start + index] = normalized
-
-    score = values[-1]
-    low, high = sorted((profile.gripper.model_open, profile.gripper.model_closed))
-    if score < low - 1.0e-9 or score > high + 1.0e-9:
-        raise InterchangeContractError(
-            "policy gripper scalar is outside declared endpoints"
-        )
-    midpoint = (profile.gripper.model_open + profile.gripper.model_closed) / 2.0
-    closes_as_score_increases = (
-        profile.gripper.model_closed > profile.gripper.model_open
-    )
-    close = score >= midpoint if closes_as_score_increases else score <= midpoint
-    binary_native = -1.0 if close else 1.0
-    rendered[layout.gripper_start] = binary_native
-    physical = profile.gripper.model_to_joint_positions(
-        profile.gripper.model_closed if close else profile.gripper.model_open
-    )
-    return tuple(rendered), {
-        "schema": "npa.sim2real.isaac_action_mapping.v1",
-        "robot_identity": profile.identity,
-        "representation": "absolute_joint_position",
-        "policy_action_names": list(profile.action_names),
-        "policy_target": list(values),
-        "normalized_arm_action": normalized_arm,
-        "model_gripper_score": score,
-        "binary_gripper_command": "close" if close else "open",
-        "native_gripper_action": binary_native,
-        "physical_gripper_joint_targets": dict(
-            zip(profile.gripper.joint_names, physical, strict=True)
-        ),
-        "native_action": rendered,
-    }
+    return values
 
 
 def camera_world_pose(

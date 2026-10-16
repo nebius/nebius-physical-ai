@@ -41,6 +41,8 @@ def _slug(value: str) -> str:
 
 
 def resource_names(run_id: str, role: str) -> dict[str, str]:
+    """Return deterministic Kubernetes resource names for one sealed run."""
+
     if role not in {"base", "adapted"}:
         raise SmolVLAServiceError("checkpoint role must be base or adapted")
     stem = f"npa-smolvla-{_slug(run_id)}-{role}"
@@ -105,7 +107,9 @@ client.download_file({parsed.netloc!r},{parsed.path.lstrip("/")!r},str(target))
 """
 
 
-def build_manifests(args: argparse.Namespace) -> dict[str, dict[str, Any]]:
+def _validate_manifest_args(args: argparse.Namespace) -> None:
+    """Validate immutable runtime and Kubernetes resource identities."""
+
     if not IMAGE_RE.fullmatch(args.runtime_image):
         raise SmolVLAServiceError("SmolVLA runtime image must be digest-pinned")
     if not re.fullmatch(r"[0-9a-f]{40}", args.source_commit):
@@ -116,53 +120,74 @@ def build_manifests(args: argparse.Namespace) -> dict[str, dict[str, Any]]:
         raise SmolVLAServiceError(
             "policy cache PVC must be an explicit Kubernetes DNS subdomain"
         )
-    names = resource_names(args.run_id, args.checkpoint_role)
-    labels = _labels(args.run_id, args.checkpoint_role, names["deployment"])
-    selector = {"app": names["deployment"]}
-    python = "/opt/lerobot/venv/bin/python"
-    policy_root = f"/workspace/{names['deployment']}"
-    policy_path = f"{policy_root}/policy"
-    adapter_path = f"{policy_root}/adapter.json"
+
+
+def _checkpoint_shell(args: argparse.Namespace, root: str, path: str) -> str:
+    """Build the idempotent exact-checkpoint download shell fragment."""
+
     checkpoint_identity = hashlib.sha256(args.checkpoint_uri.encode()).hexdigest()
-    checkpoint_marker = f"{policy_root}/checkpoint-{checkpoint_identity}.complete"
-    shell = (
-        "set -euo pipefail; "
-        + "mkdir -p "
-        + shlex.quote(policy_root)
-        + "; if test -f "
-        + shlex.quote(checkpoint_marker)
+    marker = f"{root}/checkpoint-{checkpoint_identity}.complete"
+    python = "/opt/lerobot/venv/bin/python"
+    return (
+        "if test -f "
+        + shlex.quote(marker)
         + "; then test -d "
-        + shlex.quote(policy_path)
+        + shlex.quote(path)
         + "; else test ! -e "
-        + shlex.quote(policy_path)
+        + shlex.quote(path)
         + "; "
         + python
         + " -c "
-        + shlex.quote(_download_program(args.checkpoint_uri, policy_path))
+        + shlex.quote(_download_program(args.checkpoint_uri, path))
         + "; touch "
-        + shlex.quote(checkpoint_marker)
+        + shlex.quote(marker)
         + "; fi; "
-        + (
-            python
-            + " -c "
-            + shlex.quote(
-                _adapter_download_program(args.bind_adapter_uri, adapter_path)
-            )
-            + "; "
-            + python
-            + " -m npa.workbench.lerobot.policy_container bind-interchange "
-            + f"--checkpoint-path {shlex.quote(policy_path)} "
-            + f"--adapter-spec {shlex.quote(adapter_path)} "
-            + f"--output-json {shlex.quote(policy_root + '/base-binding.json')}; "
-            if args.bind_adapter_uri
-            else ""
-        )
-        + f"export NPA_POLICY_CHECKPOINT={shlex.quote(policy_path)}; "
+    )
+
+
+def _adapter_shell(args: argparse.Namespace, root: str, path: str) -> str:
+    """Build optional checkpoint-to-embodiment binding shell."""
+
+    if not args.bind_adapter_uri:
+        return ""
+    python = "/opt/lerobot/venv/bin/python"
+    adapter = f"{root}/adapter.json"
+    return (
+        python
+        + " -c "
+        + shlex.quote(_adapter_download_program(args.bind_adapter_uri, adapter))
+        + "; "
+        + python
+        + " -m npa.workbench.lerobot.policy_container bind-interchange "
+        + f"--checkpoint-path {shlex.quote(path)} "
+        + f"--adapter-spec {shlex.quote(adapter)} "
+        + f"--output-json {shlex.quote(root + '/base-binding.json')}; "
+    )
+
+
+def _service_shell(args: argparse.Namespace, names: dict[str, str]) -> str:
+    """Build the fail-closed checkpoint, binding, and service command."""
+
+    python = "/opt/lerobot/venv/bin/python"
+    root = f"/workspace/{names['deployment']}"
+    path = f"{root}/policy"
+    return (
+        "set -euo pipefail; mkdir -p "
+        + shlex.quote(root)
+        + "; "
+        + _checkpoint_shell(args, root, path)
+        + _adapter_shell(args, root, path)
+        + f"export NPA_POLICY_CHECKPOINT={shlex.quote(path)}; "
         + "exec "
         + python
         + " -m npa.workbench.lerobot.policy_container serve --host 0.0.0.0 --port 8080"
     )
-    env: list[dict[str, Any]] = [
+
+
+def _base_environment(args: argparse.Namespace) -> list[dict[str, Any]]:
+    """Build topology and application-auth environment entries."""
+
+    return [
         {"name": "NPA_POLICY_HARDWARE_TOPOLOGY", "value": args.hardware_topology},
         {
             "name": "NPA_POLICY_AUTH_TOKEN",
@@ -171,45 +196,55 @@ def build_manifests(args: argparse.Namespace) -> dict[str, dict[str, Any]]:
             },
         },
     ]
-    manifests: dict[str, dict[str, Any]] = {}
-    if args.checkpoint_uri.startswith("s3://") or args.bind_adapter_uri:
-        required = {
-            key: os.environ.get(key, "")
-            for key in (
-                "AWS_ENDPOINT_URL",
-                "AWS_ACCESS_KEY_ID",
-                "AWS_SECRET_ACCESS_KEY",
-            )
-        }
-        if args.command == "start" and not all(required.values()):
-            raise SmolVLAServiceError(
-                "private checkpoint or adapter requires exact task-scoped S3 credentials"
-            )
-        manifests["secret"] = {
-            "apiVersion": "v1",
-            "kind": "Secret",
-            "metadata": {
-                "name": names["credentials"],
-                "namespace": args.namespace,
-                "labels": labels,
-            },
-            "type": "Opaque",
-            "data": {
-                key: base64.b64encode(value.encode()).decode()
-                for key, value in required.items()
-            }
-            if args.command == "start"
-            else {},
-        }
-        env.extend(
-            {
-                "name": key,
-                "valueFrom": {
-                    "secretKeyRef": {"name": names["credentials"], "key": key}
-                },
-            }
-            for key in required
+
+
+def _storage_secret(
+    args: argparse.Namespace, names: dict[str, str], labels: dict[str, str]
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Build the exact task-scoped S3 Secret and environment references."""
+
+    keys = ("AWS_ENDPOINT_URL", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY")
+    required = {key: os.environ.get(key, "") for key in keys}
+    if args.command == "start" and not all(required.values()):
+        raise SmolVLAServiceError(
+            "private checkpoint or adapter requires exact task-scoped S3 credentials"
         )
+    secret = {
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "metadata": {
+            "name": names["credentials"],
+            "namespace": args.namespace,
+            "labels": labels,
+        },
+        "type": "Opaque",
+        "data": {
+            key: base64.b64encode(value.encode()).decode()
+            for key, value in required.items()
+        }
+        if args.command == "start"
+        else {},
+    }
+    env = [
+        {
+            "name": key,
+            "valueFrom": {"secretKeyRef": {"name": names["credentials"], "key": key}},
+        }
+        for key in keys
+    ]
+    return secret, env
+
+
+def _credential_environment(
+    args: argparse.Namespace, names: dict[str, str], labels: dict[str, str]
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    """Build model auth and optional task-scoped storage credentials."""
+
+    env = _base_environment(args)
+    secret = None
+    if args.checkpoint_uri.startswith("s3://") or args.bind_adapter_uri:
+        secret, storage_env = _storage_secret(args, names, labels)
+        env.extend(storage_env)
     elif args.hf_token_secret:
         env.append(
             {
@@ -223,33 +258,47 @@ def build_manifests(args: argparse.Namespace) -> dict[str, dict[str, Any]]:
                 },
             }
         )
-    pod_spec: dict[str, Any] = {
+    return env, secret
+
+
+def _container_spec(
+    args: argparse.Namespace, shell: str, env: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Build the digest-pinned GPU policy container specification."""
+
+    return {
+        "name": "smolvla-policy",
+        "image": args.runtime_image,
+        "imagePullPolicy": "IfNotPresent",
+        "command": ["/bin/bash", "-lc", shell],
+        "ports": [{"name": "http", "containerPort": PORT}],
+        "env": env,
+        "resources": {
+            "requests": {
+                "cpu": args.server_cpu,
+                "memory": args.server_memory,
+                "nvidia.com/gpu": str(args.gpu_count),
+            },
+            "limits": {"nvidia.com/gpu": str(args.gpu_count)},
+        },
+        "volumeMounts": [{"name": "policy", "mountPath": "/workspace"}],
+        "readinessProbe": {
+            "httpGet": {"path": "/health", "port": PORT},
+            "periodSeconds": 5,
+            "failureThreshold": 240,
+        },
+    }
+
+
+def _pod_spec(
+    args: argparse.Namespace, shell: str, env: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Build the single-GPU private service pod specification."""
+
+    result: dict[str, Any] = {
         "restartPolicy": "Always",
         "serviceAccountName": args.service_account,
-        "containers": [
-            {
-                "name": "smolvla-policy",
-                "image": args.runtime_image,
-                "imagePullPolicy": "IfNotPresent",
-                "command": ["/bin/bash", "-lc", shell],
-                "ports": [{"name": "http", "containerPort": PORT}],
-                "env": env,
-                "resources": {
-                    "requests": {
-                        "cpu": args.server_cpu,
-                        "memory": args.server_memory,
-                        "nvidia.com/gpu": str(args.gpu_count),
-                    },
-                    "limits": {"nvidia.com/gpu": str(args.gpu_count)},
-                },
-                "volumeMounts": [{"name": "policy", "mountPath": "/workspace"}],
-                "readinessProbe": {
-                    "httpGet": {"path": "/health", "port": PORT},
-                    "periodSeconds": 5,
-                    "failureThreshold": 240,
-                },
-            }
-        ],
+        "containers": [_container_spec(args, shell, env)],
         "volumes": [
             {
                 "name": "policy",
@@ -258,10 +307,21 @@ def build_manifests(args: argparse.Namespace) -> dict[str, dict[str, Any]]:
         ],
     }
     if args.gpu_node_selector_key:
-        pod_spec["nodeSelector"] = {
+        result["nodeSelector"] = {
             args.gpu_node_selector_key: args.gpu_node_selector_value
         }
-    manifests["deployment"] = {
+    return result
+
+
+def _deployment_manifest(
+    args: argparse.Namespace,
+    names: dict[str, str],
+    labels: dict[str, str],
+    pod_spec: dict[str, Any],
+) -> dict[str, Any]:
+    """Build the owned one-replica deployment manifest."""
+
+    return {
         "apiVersion": "apps/v1",
         "kind": "Deployment",
         "metadata": {
@@ -271,14 +331,21 @@ def build_manifests(args: argparse.Namespace) -> dict[str, dict[str, Any]]:
         },
         "spec": {
             "replicas": 1,
-            "selector": {"matchLabels": selector},
+            "selector": {"matchLabels": {"app": names["deployment"]}},
             "template": {
                 "metadata": {"labels": labels},
                 "spec": pod_spec,
             },
         },
     }
-    manifests["service"] = {
+
+
+def _service_manifest(
+    args: argparse.Namespace, names: dict[str, str], labels: dict[str, str]
+) -> dict[str, Any]:
+    """Build the private ClusterIP service manifest."""
+
+    return {
         "apiVersion": "v1",
         "kind": "Service",
         "metadata": {
@@ -288,10 +355,27 @@ def build_manifests(args: argparse.Namespace) -> dict[str, dict[str, Any]]:
         },
         "spec": {
             "type": "ClusterIP",
-            "selector": selector,
+            "selector": {"app": names["deployment"]},
             "ports": [{"name": "http", "port": PORT, "targetPort": PORT}],
         },
     }
+
+
+def build_manifests(args: argparse.Namespace) -> dict[str, dict[str, Any]]:
+    """Build owned private lifecycle resources without applying them."""
+
+    _validate_manifest_args(args)
+    names = resource_names(args.run_id, args.checkpoint_role)
+    labels = _labels(args.run_id, args.checkpoint_role, names["deployment"])
+    shell = _service_shell(args, names)
+    env, secret = _credential_environment(args, names, labels)
+    pod_spec = _pod_spec(args, shell, env)
+    manifests = {
+        "deployment": _deployment_manifest(args, names, labels, pod_spec),
+        "service": _service_manifest(args, names, labels),
+    }
+    if secret is not None:
+        manifests["secret"] = secret
     return manifests
 
 
@@ -388,14 +472,11 @@ def _owned(actual: Any, expected: dict[str, Any]) -> bool:
     return all(labels.get(key) == value for key, value in expected_labels.items())
 
 
-def _cleanup(
-    api: Any,
-    apps: Any,
-    manifests: dict[str, dict[str, Any]],
-    *,
-    created: set[str] | None = None,
-) -> dict[str, bool]:
-    namespace = manifests["deployment"]["metadata"]["namespace"]
+def _cleanup_targets(
+    api: Any, apps: Any, manifests: dict[str, dict[str, Any]]
+) -> list[tuple[str, Any, Any, dict[str, Any]]]:
+    """Return exact owned resources and their read/delete operations."""
+
     targets = [
         (
             "deployment",
@@ -419,8 +500,19 @@ def _cleanup(
                 manifests["secret"],
             )
         )
+    return targets
+
+
+def _cleanup(
+    api: Any,
+    apps: Any,
+    manifests: dict[str, dict[str, Any]],
+    *,
+    created: set[str] | None = None,
+) -> dict[str, bool]:
+    namespace = manifests["deployment"]["metadata"]["namespace"]
     result: dict[str, bool] = {}
-    for kind, reader, deleter, manifest in targets:
+    for kind, reader, deleter, manifest in _cleanup_targets(api, apps, manifests):
         if created is not None and kind not in created:
             result[kind] = True
             continue
@@ -438,48 +530,60 @@ def _cleanup(
     return result
 
 
-def _run(args: argparse.Namespace) -> dict[str, Any]:
-    manifests = build_manifests(args)
-    api, apps = _clients()
-    if args.command == "start":
-        _assert_absent(api, apps, manifests)
-        created: set[str] = set()
-        try:
-            _create(api, apps, manifests, created=created)
-            host, health = _ready(api, apps, manifests, args.ready_timeout_seconds)
-        except Exception:
-            _cleanup(api, apps, manifests, created=created)
-            raise
-        result = {
-            "schema": "npa.sim2real.smolvla_service_start.v1",
-            "run_id": args.run_id,
-            "checkpoint_role": args.checkpoint_role,
-            "checkpoint_uri_sha256": hashlib.sha256(
-                args.checkpoint_uri.encode()
-            ).hexdigest(),
-            "runtime_image": args.runtime_image,
-            "source_commit": args.source_commit,
-            "policy_cache_pvc_sha256": hashlib.sha256(
-                args.policy_cache_pvc.encode()
-            ).hexdigest(),
-            "service_host": host,
-            "port": PORT,
-            "public_ingress": False,
-            "application_authentication": "kubernetes_secret_bearer",
-            "checkpoint": health["checkpoint"],
-            "interchange": health["interchange"],
-            "status": "ready",
-        }
-        stage = 5 if args.checkpoint_role == "base" else 10
-    else:
-        result = {
-            "schema": "npa.sim2real.smolvla_service_cleanup.v1",
-            "run_id": args.run_id,
-            "checkpoint_role": args.checkpoint_role,
-            "deleted": _cleanup(api, apps, manifests),
-            "status": "absent",
-        }
-        stage = 7 if args.checkpoint_role == "base" else 13
+def _start(
+    args: argparse.Namespace, api: Any, apps: Any, manifests: dict[str, Any]
+) -> dict[str, Any]:
+    """Create one absent owned service and return its readiness receipt."""
+
+    _assert_absent(api, apps, manifests)
+    created: set[str] = set()
+    try:
+        _create(api, apps, manifests, created=created)
+        host, health = _ready(api, apps, manifests, args.ready_timeout_seconds)
+    except Exception:
+        _cleanup(api, apps, manifests, created=created)
+        raise
+    return {
+        "schema": "npa.sim2real.smolvla_service_start.v1",
+        "run_id": args.run_id,
+        "checkpoint_role": args.checkpoint_role,
+        "checkpoint_uri_sha256": hashlib.sha256(
+            args.checkpoint_uri.encode()
+        ).hexdigest(),
+        "runtime_image": args.runtime_image,
+        "source_commit": args.source_commit,
+        "policy_cache_pvc_sha256": hashlib.sha256(
+            args.policy_cache_pvc.encode()
+        ).hexdigest(),
+        "service_host": host,
+        "port": PORT,
+        "public_ingress": False,
+        "application_authentication": "kubernetes_secret_bearer",
+        "checkpoint": health["checkpoint"],
+        "interchange": health["interchange"],
+        "status": "ready",
+    }
+
+
+def _cleanup_receipt(
+    args: argparse.Namespace, api: Any, apps: Any, manifests: dict[str, Any]
+) -> dict[str, Any]:
+    """Delete only exact owned resources and record their absence."""
+
+    return {
+        "schema": "npa.sim2real.smolvla_service_cleanup.v1",
+        "run_id": args.run_id,
+        "checkpoint_role": args.checkpoint_role,
+        "deleted": _cleanup(api, apps, manifests),
+        "status": "absent",
+    }
+
+
+def _publish_lifecycle(
+    args: argparse.Namespace, result: dict[str, Any], stage: int
+) -> None:
+    """Publish the lifecycle receipt and ComponentRecord."""
+
     with tempfile.TemporaryDirectory(prefix="npa-smolvla-lifecycle-") as directory:
         write_json(args.output_uri, result, directory=Path(directory))
     publish_component_record(
@@ -491,10 +595,26 @@ def _run(args: argparse.Namespace) -> dict[str, Any]:
         evidence="Owned digest-pinned private SmolVLA service lifecycle.",
         artifacts={"receipt": args.output_uri, "status": result["status"]},
     )
+
+
+def _run(args: argparse.Namespace) -> dict[str, Any]:
+    """Execute one owned start or cleanup operation."""
+
+    manifests = build_manifests(args)
+    api, apps = _clients()
+    if args.command == "start":
+        result = _start(args, api, apps, manifests)
+        stage = 5 if args.checkpoint_role == "base" else 10
+    else:
+        result = _cleanup_receipt(args, api, apps, manifests)
+        stage = 7 if args.checkpoint_role == "base" else 13
+    _publish_lifecycle(args, result, stage)
     return result
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the authenticated SmolVLA service lifecycle parser."""
+
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     for command in ("start", "cleanup"):
@@ -525,6 +645,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Start or clean up one exact owned SmolVLA service."""
+
     result = _run(build_parser().parse_args(argv))
     print(json.dumps(result, sort_keys=True), flush=True)
     return 0

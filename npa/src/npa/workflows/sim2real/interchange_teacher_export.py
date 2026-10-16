@@ -74,6 +74,72 @@ def _validated_episodes(root: Path, report: dict[str, Any]) -> dict[str, list[Pa
     return splits
 
 
+def _copy_training_input(episodes: list[Path], destination: Path) -> None:
+    """Copy only sealed training arrays into the LeRobot adapter input."""
+
+    for index, source in enumerate(episodes):
+        episode = destination / f"episode_{index:06d}"
+        episode.mkdir(parents=True)
+        for name in DATASET_FILES:
+            shutil.copy2(source / name, episode / name)
+
+
+def _heldout_lineage(report: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    """Retain immutable validation and gold episode artifact identities."""
+
+    return {
+        split: [
+            {
+                "episode_index": row["episode_index"],
+                "scenario": row["scenario"],
+                "artifacts": row["artifacts"],
+            }
+            for row in report["episodes"]
+            if row["split"] == split
+        ]
+        for split in ("validation", "gold")
+    }
+
+
+def _dataset_report(
+    collection: dict[str, Any], splits: dict[str, list[Path]], info: dict[str, Any]
+) -> dict[str, Any]:
+    """Build the dataset and held-out-lineage receipt."""
+
+    return {
+        "schema": SCHEMA,
+        "status": "passed",
+        "robot_identity": collection["robot_identity"],
+        "object_identity": collection["object_identity"],
+        "task_identity": collection["task_identity"],
+        "training_episodes": len(splits["train"]),
+        "validation_episodes_held_out": len(splits["validation"]),
+        "gold_episodes_held_out": len(splits["gold"]),
+        "lerobot_frames": info.get("total_frames"),
+        "timestamp_source": info.get("timestamp_source"),
+        "policy_adapter": "lerobot-v3/meta/npa_policy_adapter.json",
+        "normalization_source": "training_split_only",
+        "heldout_episode_artifacts": _heldout_lineage(collection),
+    }
+
+
+def _publish_component(args: argparse.Namespace) -> None:
+    """Publish the standard dataset ComponentRecord."""
+
+    publish_component_record(
+        component_schema=POLICY_INTERCHANGE_COMPONENT_SCHEMA,
+        root_uri=args.component_root_uri,
+        stage=3,
+        name="policy_interchange_lerobot_dataset",
+        tier="WORKS",
+        evidence=(
+            "Exported native dynamic-dimension teacher data with training-only "
+            "normalization and sealed held-out lineage."
+        ),
+        artifacts={"dataset": args.output_uri},
+    )
+
+
 def run(args: argparse.Namespace) -> dict[str, Any]:
     """Export only training episodes while retaining immutable held-out lineage."""
 
@@ -88,11 +154,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         adapter_path = work / "policy-adapter.json"
         write_json(adapter_path, adapter)
         lerobot_input = work / "lerobot-input"
-        for index, source in enumerate(splits["train"]):
-            destination = lerobot_input / f"episode_{index:06d}"
-            destination.mkdir(parents=True)
-            for name in DATASET_FILES:
-                shutil.copy2(source / name, destination / name)
+        _copy_training_input(splits["train"], lerobot_input)
         output = work / "output"
         dataset = convert(
             lerobot_input,
@@ -105,50 +167,16 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         info = json.loads((dataset / "meta" / "info.json").read_text(encoding="utf-8"))
         if info.get("total_episodes") != len(splits["train"]):
             raise RuntimeError("LeRobot readback episode count mismatch")
-        result = {
-            "schema": SCHEMA,
-            "status": "passed",
-            "robot_identity": collection_report["robot_identity"],
-            "object_identity": collection_report["object_identity"],
-            "task_identity": collection_report["task_identity"],
-            "training_episodes": len(splits["train"]),
-            "validation_episodes_held_out": len(splits["validation"]),
-            "gold_episodes_held_out": len(splits["gold"]),
-            "lerobot_frames": info.get("total_frames"),
-            "timestamp_source": info.get("timestamp_source"),
-            "policy_adapter": "lerobot-v3/meta/npa_policy_adapter.json",
-            "normalization_source": "training_split_only",
-            "heldout_episode_artifacts": {
-                split: [
-                    {
-                        "episode_index": row["episode_index"],
-                        "scenario": row["scenario"],
-                        "artifacts": row["artifacts"],
-                    }
-                    for row in collection_report["episodes"]
-                    if row["split"] == split
-                ]
-                for split in ("validation", "gold")
-            },
-        }
+        result = _dataset_report(collection_report, splits, info)
         write_json(output / "dataset-report.json", result)
         publish(output, args.output_uri)
-    publish_component_record(
-        component_schema=POLICY_INTERCHANGE_COMPONENT_SCHEMA,
-        root_uri=args.component_root_uri,
-        stage=3,
-        name="policy_interchange_lerobot_dataset",
-        tier="WORKS",
-        evidence=(
-            "Exported native dynamic-dimension teacher data with training-only "
-            "normalization and sealed held-out lineage."
-        ),
-        artifacts={"dataset": args.output_uri},
-    )
+    _publish_component(args)
     return result
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the teacher-to-LeRobot export argument parser."""
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--collection-uri", required=True)
     parser.add_argument("--policy-adapter-uri", required=True)
@@ -159,6 +187,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Validate and export native teacher episodes for training."""
+
     args = build_parser().parse_args(argv)
     if args.fps < 1:
         raise ValueError("fps must be positive")

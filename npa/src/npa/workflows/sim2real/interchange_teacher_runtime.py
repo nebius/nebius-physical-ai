@@ -103,34 +103,71 @@ def _episode_artifacts(directory: Path) -> dict[str, str]:
     return {name: _sha256(directory / name) for name in names}
 
 
-def run(args: argparse.Namespace) -> dict[str, Any]:
-    """Collect the configured split counts and reject any unsuccessful teacher."""
-
-    import gymnasium as gym
+def _profiles(args: argparse.Namespace) -> tuple[dict, dict, Any, Any, Any, Any, Path]:
+    """Load and validate the sealed native collection profiles."""
 
     preparation = _load(args.preparation_path)
     manifest = _load(args.robot_asset_manifest_path)
     _asset_binding(preparation, manifest, args.robot_usd_path)
-    asset = preparation["robot_asset"]
     robot = robot_sensor_profile_from_dict(preparation.get("robot") or {})
     prop = rigid_object_profile_from_dict(preparation.get("object") or {})
     task = surface_placement_task_from_dict(preparation.get("task") or {})
     policy = policy_profile_from_dict(preparation.get("policy") or {})
-    object_usd_path = _local_object_asset(args.input_path, prop)
-    args.output_path.mkdir(parents=True, exist_ok=False)
-    counts = {
-        "train": args.train_episodes,
-        "validation": args.validation_episodes,
-        "gold": args.gold_episodes,
+    return (
+        preparation,
+        manifest,
+        robot,
+        prop,
+        task,
+        policy,
+        _local_object_asset(args.input_path, prop),
+    )
+
+
+def _episode_record(
+    split: str,
+    index: int,
+    seed: int,
+    scenario: dict[str, Any],
+    teacher: dict[str, Any],
+    directory: Path,
+) -> dict[str, Any]:
+    """Build one immutable teacher episode receipt."""
+
+    return {
+        "split": split,
+        "episode_index": index,
+        "seed": seed,
+        "scenario": scenario,
+        "frames": len(teacher["controls"]),
+        "ordered_event_steps": teacher["ordered_event_steps"],
+        "task_success": teacher["task_success"],
+        "artifacts": _episode_artifacts(directory),
     }
+
+
+def _collect_episodes(
+    *,
+    gym: Any,
+    args: argparse.Namespace,
+    asset: dict,
+    robot: Any,
+    prop: Any,
+    task: Any,
+    policy: Any,
+    object_usd_path: Path,
+    counts: dict[str, int],
+) -> list[dict[str, Any]]:
+    """Collect every configured split with deterministic disjoint scenarios."""
+
     episodes: list[dict[str, Any]] = []
     for split in SPLITS:
         for index in range(counts[split]):
             scenario_prop, scenario = _scenario_prop(prop, split, index)
-            episode = args.output_path / "splits" / split / f"episode_{index:04d}"
+            directory = args.output_path / "splits" / split / f"episode_{index:04d}"
             episode_args = argparse.Namespace(**vars(args))
             episode_args.seed = args.seed + SPLITS.index(split) * 1_000_000 + index
-            episode_args.output_path = episode
+            episode_args.output_path = directory
             teacher = _run_teacher(
                 gym=gym,
                 args=episode_args,
@@ -140,21 +177,28 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 task=task,
                 object_usd_path=object_usd_path,
                 control_hz=policy.action.control_hz,
-                episode_directory=episode,
+                episode_directory=directory,
             )
             episodes.append(
-                {
-                    "split": split,
-                    "episode_index": index,
-                    "seed": episode_args.seed,
-                    "scenario": scenario,
-                    "frames": len(teacher["controls"]),
-                    "ordered_event_steps": teacher["ordered_event_steps"],
-                    "task_success": teacher["task_success"],
-                    "artifacts": _episode_artifacts(episode),
-                }
+                _episode_record(
+                    split, index, episode_args.seed, scenario, teacher, directory
+                )
             )
-    report = {
+    return episodes
+
+
+def _report(
+    manifest: dict,
+    robot: Any,
+    prop: Any,
+    task: Any,
+    policy: Any,
+    counts: dict[str, int],
+    episodes: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Build the complete collection and lineage report."""
+
+    return {
         "schema": SCHEMA,
         "status": "passed",
         "robot_identity": robot.identity,
@@ -170,11 +214,40 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "train_only_normalization_required": True,
         "privileged_object_state_policy_input": False,
     }
+
+
+def run(args: argparse.Namespace) -> dict[str, Any]:
+    """Collect the configured split counts and reject any unsuccessful teacher."""
+
+    import gymnasium as gym
+
+    preparation, manifest, robot, prop, task, policy, object_usd_path = _profiles(args)
+    asset = preparation["robot_asset"]
+    args.output_path.mkdir(parents=True, exist_ok=False)
+    counts = {
+        "train": args.train_episodes,
+        "validation": args.validation_episodes,
+        "gold": args.gold_episodes,
+    }
+    episodes = _collect_episodes(
+        gym=gym,
+        args=args,
+        asset=asset,
+        robot=robot,
+        prop=prop,
+        task=task,
+        policy=policy,
+        object_usd_path=object_usd_path,
+        counts=counts,
+    )
+    report = _report(manifest, robot, prop, task, policy, counts, episodes)
     write_json(args.output_path / "report.json", report)
     return report
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the isolated native teacher runtime argument parser."""
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input-path", type=Path, required=True)
     parser.add_argument("--preparation-path", type=Path, required=True)
@@ -189,6 +262,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the native teacher runtime and write its episode receipt."""
+
     args = build_parser().parse_args(argv)
     if min(args.train_episodes, args.validation_episodes, args.gold_episodes) < 1:
         raise ValueError("every teacher split requires at least one episode")

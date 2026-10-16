@@ -100,6 +100,36 @@ def backend_contract(name: str) -> BackendAdapterContract:
         ) from exc
 
 
+def _manifest_action(action: Mapping[str, Any]) -> PolicyAction:
+    """Parse the declared SmolVLA action contract."""
+
+    return PolicyAction(
+        representation=str(action.get("representation") or ""),
+        names=tuple(action.get("names") or ()),
+        units=tuple(action.get("units") or ()),
+        frame=str(action.get("frame") or "joint"),
+        gripper_semantics=str(action.get("gripper_semantics") or ""),
+        horizon=int(action.get("horizon") or 0),
+        control_hz=float(action.get("control_hz") or 0.0),
+        execute_prefix=int(action.get("execute_prefix") or 0),
+    )
+
+
+def _smolvla_capabilities(hardware_topologies: tuple[str, ...]) -> PolicyCapabilities:
+    """Declare only capabilities implemented by the pinned SmolVLA runtime."""
+
+    return PolicyCapabilities(
+        inference=True,
+        native_training=True,
+        checkpoint_reload=True,
+        model_loss=True,
+        action_metrics=True,
+        deterministic_noise_coupling=False,
+        repeated_paired_trials=True,
+        hardware_topologies=hardware_topologies,
+    )
+
+
 def smolvla_policy_profile(
     manifest: Mapping[str, Any],
     *,
@@ -127,26 +157,8 @@ def smolvla_policy_profile(
         camera_keys=tuple(str(row.get("key") or "") for row in cameras),
         measured_state_names=tuple(manifest.get("measured_state_names") or ()),
         measured_state_units=tuple(manifest.get("measured_state_units") or ()),
-        action=PolicyAction(
-            representation=str(action.get("representation") or ""),
-            names=tuple(action.get("names") or ()),
-            units=tuple(action.get("units") or ()),
-            frame=str(action.get("frame") or "joint"),
-            gripper_semantics=str(action.get("gripper_semantics") or ""),
-            horizon=int(action.get("horizon") or 0),
-            control_hz=float(action.get("control_hz") or 0.0),
-            execute_prefix=int(action.get("execute_prefix") or 0),
-        ),
-        capabilities=PolicyCapabilities(
-            inference=True,
-            native_training=True,
-            checkpoint_reload=True,
-            model_loss=True,
-            action_metrics=True,
-            deterministic_noise_coupling=False,
-            repeated_paired_trials=True,
-            hardware_topologies=hardware_topologies,
-        ),
+        action=_manifest_action(action),
+        capabilities=_smolvla_capabilities(hardware_topologies),
         normalization_identity=str(manifest.get("normalization_identity") or ""),
     )
     if (
@@ -157,6 +169,34 @@ def smolvla_policy_profile(
             "SmolVLA manifest robot/task binding does not match the run"
         )
     return profile
+
+
+def _require_pi05_franka(robot: RobotSensorProfile) -> None:
+    """Reject kinematics outside the retained DROID/Franka profile."""
+
+    if len(robot.arm_joint_names) != 7 or len(robot.gripper.joint_names) != 2:
+        raise InterchangeContractError(
+            "pi0.5 DROID profile requires seven arm joints and two Franka fingers"
+        )
+    if abs(robot.gripper.maximum_width_m - 0.08) > 1.0e-9:
+        raise InterchangeContractError(
+            "pi0.5 DROID profile requires the calibrated 80 mm Franka aperture"
+        )
+
+
+def _pi05_capabilities(hardware_topologies: tuple[str, ...]) -> PolicyCapabilities:
+    """Declare the retained OpenPI training and replay capabilities."""
+
+    return PolicyCapabilities(
+        inference=True,
+        native_training=True,
+        checkpoint_reload=True,
+        model_loss=True,
+        action_metrics=True,
+        deterministic_noise_coupling=True,
+        repeated_paired_trials=False,
+        hardware_topologies=hardware_topologies,
+    )
 
 
 def openpi_pi05_policy_profile(
@@ -170,14 +210,7 @@ def openpi_pi05_policy_profile(
 ) -> PolicyProfile:
     """Build the retained exact pi0.5 profile without pretending other kinematics."""
 
-    if len(robot.arm_joint_names) != 7 or len(robot.gripper.joint_names) != 2:
-        raise InterchangeContractError(
-            "pi0.5 DROID profile requires seven arm joints and two Franka fingers"
-        )
-    if abs(robot.gripper.maximum_width_m - 0.08) > 1.0e-9:
-        raise InterchangeContractError(
-            "pi0.5 DROID profile requires the calibrated 80 mm Franka aperture"
-        )
+    _require_pi05_franka(robot)
     return PolicyProfile(
         backend="openpi_pi05",
         identity=policy_identity,
@@ -197,15 +230,6 @@ def openpi_pi05_policy_profile(
             control_hz=15.0,
             execute_prefix=1,
         ),
-        capabilities=PolicyCapabilities(
-            inference=True,
-            native_training=True,
-            checkpoint_reload=True,
-            model_loss=True,
-            action_metrics=True,
-            deterministic_noise_coupling=True,
-            repeated_paired_trials=False,
-            hardware_topologies=hardware_topologies,
-        ),
+        capabilities=_pi05_capabilities(hardware_topologies),
         normalization_identity=normalization_identity,
     )

@@ -101,26 +101,18 @@ def _task(value: Mapping[str, Any]) -> SurfacePlacementTask:
     )
 
 
-def _validated_robot_asset_binding(
-    robot_contract: Mapping[str, Any], robot: Any
-) -> dict[str, Any]:
-    """Retain the exact canonical RobotSpec and reject incomplete GPU inputs."""
+def _validate_robot_spec_vectors(
+    robot_spec: Mapping[str, Any], expected: list[str]
+) -> None:
+    """Validate ordered finite controller vectors for every physical joint."""
 
-    robot_spec = robot_contract.get("robot_spec")
-    isaac_asset = robot_contract.get("isaac_asset")
-    if not isinstance(robot_spec, Mapping) or not isinstance(isaac_asset, Mapping):
-        raise InterchangeContractError(
-            "non-stock policy interchange requires the normalized RobotSpec and "
-            "resolved Isaac asset contract"
-        )
-    expected_names = [*robot.arm_joint_names, *robot.gripper.joint_names]
-    if list(robot_spec.get("joint_names") or ()) != expected_names:
+    if list(robot_spec.get("joint_names") or ()) != expected:
         raise InterchangeContractError(
             "RobotSpec joint order differs from the policy robot profile"
         )
     for field in ("home_qpos", "kp", "kv", "force_lower", "force_upper"):
         values = robot_spec.get(field)
-        if not isinstance(values, list) or len(values) != len(expected_names):
+        if not isinstance(values, list) or len(values) != len(expected):
             raise InterchangeContractError(
                 f"RobotSpec {field} must cover every ordered physical joint"
             )
@@ -134,6 +126,23 @@ def _validated_robot_asset_binding(
             raise InterchangeContractError(
                 f"RobotSpec {field} must contain finite values"
             )
+
+
+def _validated_robot_asset_binding(
+    robot_contract: Mapping[str, Any], robot: Any
+) -> dict[str, Any]:
+    """Retain the exact canonical RobotSpec and reject incomplete GPU inputs."""
+
+    robot_spec = robot_contract.get("robot_spec")
+    isaac_asset = robot_contract.get("isaac_asset")
+    if not isinstance(robot_spec, Mapping) or not isinstance(isaac_asset, Mapping):
+        raise InterchangeContractError(
+            "non-stock policy interchange requires the normalized RobotSpec and "
+            "resolved Isaac asset contract"
+        )
+    _validate_robot_spec_vectors(
+        robot_spec, [*robot.arm_joint_names, *robot.gripper.joint_names]
+    )
     if (
         robot_spec.get("embodiment_digest") != robot.identity
         or robot_spec.get("source_tree_sha256") != robot.bundle_sha256
@@ -151,8 +160,8 @@ def _validated_robot_asset_binding(
     }
 
 
-def build_preparation(profile_root: Path, *, run_id: str) -> dict[str, Any]:
-    """Validate a materialized sealed profile and return its launch authority."""
+def _sealed_profile(profile_root: Path) -> tuple[dict[str, str], dict[str, Any], Any]:
+    """Validate profile checksums and resolve the declared backend."""
 
     checksums = _object(profile_root / "checksums.json")
     if not checksums or checksums != tree_hashes(profile_root):
@@ -167,46 +176,55 @@ def build_preparation(profile_root: Path, *, run_id: str) -> dict[str, Any]:
     profile = _object(profile_root / "profile.json")
     if profile.get("schema") != PROFILE_SCHEMA:
         raise InterchangeContractError("unsupported interchange profile schema")
-    backend_name = str(profile.get("backend") or "")
-    backend = backend_contract(backend_name)
+    return checksums, profile, backend_contract(str(profile.get("backend") or ""))
+
+
+def _robot_and_object(profile_root: Path) -> tuple[dict[str, Any], Any, Any]:
+    """Materialize canonical robot/sensor and rigid-object profiles."""
 
     robot_contract = _object(profile_root / "robot-contract.json")
-    robot_identity = assert_robot_contract(robot_contract)
+    identity = assert_robot_contract(robot_contract)
     robot = robot_sensor_profile_from_resolved(
         robot_contract, sensor_config=_object(profile_root / "sensor-config.json")
     )
-    if robot.identity != robot_identity:
+    if robot.identity != identity:
         raise InterchangeContractError("robot sensor profile identity is stale")
-
-    object_config = _object(profile_root / "object-config.json")
+    config = _object(profile_root / "object-config.json")
     prop = rigid_object_profile_from_asset_manifest(
         _object(profile_root / "object-manifest.json"),
-        target=str(object_config.get("target") or ""),
-        source_root_uri=str(object_config.get("source_root_uri") or ""),
+        target=str(config.get("target") or ""),
+        source_root_uri=str(config.get("source_root_uri") or ""),
         world_from_root=_transform(
-            object_config.get("world_from_root"), name="world_from_root"
+            config.get("world_from_root"), name="world_from_root"
         ),
         root_from_reference=_transform(
-            object_config.get("root_from_reference"), name="root_from_reference"
+            config.get("root_from_reference"), name="root_from_reference"
         ),
         root_from_grasp=_transform(
-            object_config.get("root_from_grasp"), name="root_from_grasp"
+            config.get("root_from_grasp"), name="root_from_grasp"
         ),
-        grasp_extents_m=tuple(object_config.get("grasp_extents_m") or ()),
-        grasp_axis=str(object_config.get("grasp_axis") or ""),  # type: ignore[arg-type]
-        scale_xyz=tuple(object_config.get("scale_xyz") or ()),
+        grasp_extents_m=tuple(config.get("grasp_extents_m") or ()),
+        grasp_axis=str(config.get("grasp_axis") or ""),  # type: ignore[arg-type]
+        scale_xyz=tuple(config.get("scale_xyz") or ()),
     )
-    task = _task(_object(profile_root / "task.json"))
-    geometry_receipt = assert_surface_placement_compatible(robot, prop, task)
+    return robot_contract, robot, prop
 
-    adapter = _object(profile_root / "policy-adapter.json")
-    topologies = tuple(str(value) for value in profile.get("hardware_topologies") or ())
+
+def _policy_profile(
+    backend_name: str,
+    adapter: dict[str, Any],
+    robot: Any,
+    task: SurfacePlacementTask,
+    topologies: tuple[str, ...],
+) -> Any:
+    """Dispatch the closed backend catalog into one typed policy profile."""
+
     if backend_name == "lerobot_smolvla":
-        policy = smolvla_policy_profile(
+        return smolvla_policy_profile(
             adapter, robot=robot, task=task, hardware_topologies=topologies
         )
-    elif backend_name == "openpi_pi05":
-        policy = openpi_pi05_policy_profile(
+    if backend_name == "openpi_pi05":
+        return openpi_pi05_policy_profile(
             robot=robot,
             task=task,
             policy_identity=str(adapter.get("policy_identity") or ""),
@@ -214,8 +232,21 @@ def build_preparation(profile_root: Path, *, run_id: str) -> dict[str, Any]:
             normalization_identity=str(adapter.get("normalization_identity") or ""),
             hardware_topologies=topologies,
         )
-    else:  # backend_contract already rejects this; retain exhaustive dispatch.
-        raise InterchangeContractError(f"unsupported backend {backend_name!r}")
+    raise InterchangeContractError(f"unsupported backend {backend_name!r}")
+
+
+def build_preparation(profile_root: Path, *, run_id: str) -> dict[str, Any]:
+    """Validate a materialized sealed profile and return its launch authority."""
+
+    checksums, profile, backend = _sealed_profile(profile_root)
+    backend_name = str(profile.get("backend") or "")
+    robot_contract, robot, prop = _robot_and_object(profile_root)
+    task = _task(_object(profile_root / "task.json"))
+    geometry_receipt = assert_surface_placement_compatible(robot, prop, task)
+
+    adapter = _object(profile_root / "policy-adapter.json")
+    topologies = tuple(str(value) for value in profile.get("hardware_topologies") or ())
+    policy = _policy_profile(backend_name, adapter, robot, task, topologies)
     policy_receipt = assert_policy_compatible(
         robot,
         task,
@@ -271,56 +302,91 @@ def assert_execution_profile(
     policy = preparation.get("policy")
     if not isinstance(robot, Mapping) or not isinstance(policy, Mapping):
         raise InterchangeContractError("preparation lacks robot/policy profiles")
-    expected_arm = [f"panda_joint{index}" for index in range(1, 8)]
-    expected_gripper = ["panda_finger_joint1", "panda_finger_joint2"]
-    expected_state = [*expected_arm, "gripper"]
-    cameras = robot.get("cameras")
-    by_role = {
-        str(camera.get("role") or ""): camera
-        for camera in cameras or ()
-        if isinstance(camera, Mapping)
-    }
-    checks = {
-        "backend": policy.get("backend") == "lerobot_smolvla",
-        "base_link": robot.get("base_link") == "panda_link0",
-        "ee_link": robot.get("ee_link") == "panda_hand",
-        "arm_joint_names": robot.get("arm_joint_names") == expected_arm,
-        "gripper_joint_names": (
-            (robot.get("gripper") or {}).get("joint_names") == expected_gripper
-            if isinstance(robot.get("gripper"), Mapping)
-            else False
-        ),
-        "finger_links": (
-            (robot.get("gripper") or {}).get("finger_links")
-            == ["panda_leftfinger", "panda_rightfinger"]
-            if isinstance(robot.get("gripper"), Mapping)
-            else False
-        ),
-        "maximum_width_m": (
-            abs(float((robot.get("gripper") or {}).get("maximum_width_m", -1.0)) - 0.08)
-            <= 1.0e-9
-            if isinstance(robot.get("gripper"), Mapping)
-            else False
-        ),
-        "measured_state_names": robot.get("measured_state_names") == expected_state,
-        "controller_representation": (
-            robot.get("controller_representation") == "absolute_joint_position"
-        ),
-        "exterior_camera": (
-            isinstance(by_role.get("exterior"), Mapping)
-            and by_role["exterior"].get("mount_link") == "world"
-        ),
-        "wrist_camera": (
-            isinstance(by_role.get("wrist"), Mapping)
-            and by_role["wrist"].get("mount_link") == "panda_hand"
-        ),
-    }
+    checks = _pi05_franka_checks(robot, policy)
     failed = sorted(name for name, passed in checks.items() if not passed)
     if failed:
         raise InterchangeContractError(
             "pi05 Franka execution profile is incompatible before GPU submission: "
             + ", ".join(failed)
         )
+
+
+def _franka_gripper_checks(gripper: object) -> dict[str, bool]:
+    """Validate the exact parallel-jaw Franka mapping."""
+
+    if not isinstance(gripper, Mapping):
+        return {
+            "gripper_joint_names": False,
+            "finger_links": False,
+            "maximum_width_m": False,
+        }
+    return {
+        "gripper_joint_names": gripper.get("joint_names")
+        == ["panda_finger_joint1", "panda_finger_joint2"],
+        "finger_links": gripper.get("finger_links")
+        == ["panda_leftfinger", "panda_rightfinger"],
+        "maximum_width_m": abs(float(gripper.get("maximum_width_m", -1.0)) - 0.08)
+        <= 1.0e-9,
+    }
+
+
+def _franka_camera_checks(cameras: object) -> dict[str, bool]:
+    """Validate semantic exterior and calibrated hand-mounted camera roles."""
+
+    by_role = {
+        str(camera.get("role") or ""): camera
+        for camera in cameras or ()
+        if isinstance(camera, Mapping)
+    }
+    return {
+        "exterior_camera": isinstance(by_role.get("exterior"), Mapping)
+        and by_role["exterior"].get("mount_link") == "world",
+        "wrist_camera": isinstance(by_role.get("wrist"), Mapping)
+        and by_role["wrist"].get("mount_link") == "panda_hand",
+    }
+
+
+def _pi05_franka_checks(
+    robot: Mapping[str, Any], policy: Mapping[str, Any]
+) -> dict[str, bool]:
+    """Return explicit bounded compatibility checks for the legacy adapter."""
+
+    arm = [f"panda_joint{index}" for index in range(1, 8)]
+    return {
+        "backend": policy.get("backend") == "lerobot_smolvla",
+        "base_link": robot.get("base_link") == "panda_link0",
+        "ee_link": robot.get("ee_link") == "panda_hand",
+        "arm_joint_names": robot.get("arm_joint_names") == arm,
+        **_franka_gripper_checks(robot.get("gripper")),
+        "measured_state_names": robot.get("measured_state_names") == [*arm, "gripper"],
+        "controller_representation": (
+            robot.get("controller_representation") == "absolute_joint_position"
+        ),
+        **_franka_camera_checks(robot.get("cameras")),
+    }
+
+
+def _adapter_cameras(cameras: list[Any]) -> list[dict[str, Any]]:
+    """Map supported semantic camera roles to LeRobot feature keys."""
+
+    feature_by_role = {
+        "exterior": "observation.images.workspace",
+        "wrist": "observation.images.wrist",
+    }
+    result = []
+    for camera in cameras:
+        if not isinstance(camera, Mapping) or camera.get("role") not in feature_by_role:
+            raise InterchangeContractError("unsupported prepared camera role")
+        result.append(
+            {
+                "key": camera.get("key"),
+                "feature_key": feature_by_role[str(camera["role"])],
+                "layout": camera.get("layout"),
+                "image_size_wh": camera.get("image_size_wh"),
+                "maximum_state_skew_s": camera.get("maximum_state_skew_s"),
+            }
+        )
+    return result
 
 
 def training_adapter(preparation: Mapping[str, Any]) -> dict[str, Any]:
@@ -341,23 +407,7 @@ def training_adapter(preparation: Mapping[str, Any]) -> dict[str, Any]:
     cameras = robot.get("cameras")
     if not isinstance(cameras, list):
         raise InterchangeContractError("prepared camera declarations are required")
-    feature_by_role = {
-        "exterior": "observation.images.workspace",
-        "wrist": "observation.images.wrist",
-    }
-    adapter_cameras = []
-    for camera in cameras:
-        if not isinstance(camera, Mapping) or camera.get("role") not in feature_by_role:
-            raise InterchangeContractError("unsupported prepared camera role")
-        adapter_cameras.append(
-            {
-                "key": camera.get("key"),
-                "feature_key": feature_by_role[str(camera["role"])],
-                "layout": camera.get("layout"),
-                "image_size_wh": camera.get("image_size_wh"),
-                "maximum_state_skew_s": camera.get("maximum_state_skew_s"),
-            }
-        )
+    adapter_cameras = _adapter_cameras(cameras)
     return {
         "schema": "npa.sim2real.lerobot_policy_adapter.v1",
         "backend": "lerobot_smolvla",
@@ -439,7 +489,11 @@ def _external_seam(args: argparse.Namespace) -> dict[str, Any]:
     return result
 
 
-def _artifact_preflight(args: argparse.Namespace) -> dict[str, Any]:
+def _download_snapshot(
+    args: argparse.Namespace, destination: Path
+) -> tuple[Any, list[dict[str, Any]]]:
+    """Download and hash one exact-revision complete SmolVLA snapshot."""
+
     match = _HF_SOURCE_RE.fullmatch(args.checkpoint_uri)
     if not match:
         raise InterchangeContractError(
@@ -449,6 +503,19 @@ def _artifact_preflight(args: argparse.Namespace) -> dict[str, Any]:
         from huggingface_hub import snapshot_download
     except ImportError as exc:
         raise InterchangeContractError("huggingface_hub is required") from exc
+    snapshot_download(
+        repo_id=match.group("repo"),
+        revision=match.group("revision"),
+        token=os.environ.get("HF_TOKEN") or None,
+        local_dir=destination,
+    )
+    _validate_snapshot_files(destination)
+    return match, _snapshot_file_receipts(destination)
+
+
+def _validate_snapshot_files(destination: Path) -> None:
+    """Require the model and both native processor state files."""
+
     required = (
         "config.json",
         "model.safetensors",
@@ -457,55 +524,83 @@ def _artifact_preflight(args: argparse.Namespace) -> dict[str, Any]:
         "policy_preprocessor_step_5_normalizer_processor.safetensors",
         "policy_postprocessor_step_0_unnormalizer_processor.safetensors",
     )
+    missing = [name for name in required if not (destination / name).is_file()]
+    if missing:
+        raise InterchangeContractError(
+            "exact SmolVLA snapshot lacks required files: " + ", ".join(missing)
+        )
+
+
+def _snapshot_file_receipts(destination: Path) -> list[dict[str, Any]]:
+    """Hash every exact snapshot payload outside the local HF cache."""
+
+    return [
+        {
+            "path": path.relative_to(destination).as_posix(),
+            "bytes": path.stat().st_size,
+            "sha256": _sha256_path(path),
+        }
+        for path in sorted(destination.rglob("*"))
+        if path.is_file() and ".cache" not in path.parts
+    ]
+
+
+def _prepare_base(args: argparse.Namespace, work: Path, base: Path) -> dict[str, Any]:
+    """Bind native processors to the real dataset and publish exact bytes."""
+
+    dataset = materialize_lerobot_dataset(
+        args.dataset_uri, work / "dataset", repo_id=args.dataset_repo_id
+    )
+    adapter = read_json(args.adapter_uri, directory=work / "adapter")
+    prepared = work / "prepared"
+    receipt = prepare_smolvla_base_checkpoint(
+        base,
+        dataset_root=dataset,
+        dataset_repo_id=args.dataset_repo_id,
+        adapter=adapter,
+        output_dir=prepared,
+    )
+    (prepared / "prepared-base-receipt.json").write_text(
+        json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    (prepared / "checksums.json").write_text(
+        json.dumps(tree_hashes(prepared), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    storage().upload_directory(
+        str(prepared), args.prepared_checkpoint_uri, require_empty=True
+    )
+    materialize(args.prepared_checkpoint_uri, work / "prepared-readback")
+    return receipt
+
+
+def _publish_artifact_preflight(
+    args: argparse.Namespace, result: dict[str, Any]
+) -> None:
+    """Publish the exact artifact preflight ComponentRecord."""
+
+    publish_component_record(
+        component_schema=POLICY_INTERCHANGE_COMPONENT_SCHEMA,
+        root_uri=args.component_root_uri,
+        stage=4,
+        name="smolvla_exact_artifact_preflight",
+        tier="WORKS",
+        evidence="Downloaded and hashed exact-revision base weights and processors.",
+        artifacts={
+            "preflight": args.output_uri,
+            "revision": result["revision"],
+            "prepared_checkpoint": args.prepared_checkpoint_uri,
+        },
+    )
+
+
+def _artifact_preflight(args: argparse.Namespace) -> dict[str, Any]:
+    """Validate, bind, publish, and read back the exact base checkpoint."""
+
     with tempfile.TemporaryDirectory(prefix="npa-smolvla-preflight-") as directory:
-        work = Path(directory)
-        base = work / "base"
-        snapshot_download(
-            repo_id=match.group("repo"),
-            revision=match.group("revision"),
-            token=os.environ.get("HF_TOKEN") or None,
-            local_dir=base,
-        )
-        missing = [name for name in required if not (base / name).is_file()]
-        if missing:
-            raise InterchangeContractError(
-                "exact SmolVLA snapshot lacks required files: " + ", ".join(missing)
-            )
-        files = [
-            {
-                "path": path.relative_to(base).as_posix(),
-                "bytes": path.stat().st_size,
-                "sha256": _sha256_path(path),
-            }
-            for path in sorted(base.rglob("*"))
-            if path.is_file() and ".cache" not in path.parts
-        ]
-        dataset = materialize_lerobot_dataset(
-            args.dataset_uri,
-            work / "dataset",
-            repo_id=args.dataset_repo_id,
-        )
-        adapter = read_json(args.adapter_uri, directory=work / "adapter")
-        prepared = work / "prepared"
-        prepared_receipt = prepare_smolvla_base_checkpoint(
-            base,
-            dataset_root=dataset,
-            dataset_repo_id=args.dataset_repo_id,
-            adapter=adapter,
-            output_dir=prepared,
-        )
-        (prepared / "prepared-base-receipt.json").write_text(
-            json.dumps(prepared_receipt, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-        (prepared / "checksums.json").write_text(
-            json.dumps(tree_hashes(prepared), indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-        storage().upload_directory(
-            str(prepared), args.prepared_checkpoint_uri, require_empty=True
-        )
-        materialize(args.prepared_checkpoint_uri, work / "prepared-readback")
+        work, base = Path(directory), Path(directory) / "base"
+        match, files = _download_snapshot(args, base)
+        prepared_receipt = _prepare_base(args, work, base)
         result = {
             "schema": "npa.sim2real.smolvla_artifact_preflight.v1",
             "checkpoint_uri": args.checkpoint_uri,
@@ -520,19 +615,7 @@ def _artifact_preflight(args: argparse.Namespace) -> dict[str, Any]:
             "prepared_base": prepared_receipt,
         }
         write_json(args.output_uri, result, directory=work / "result")
-    publish_component_record(
-        component_schema=POLICY_INTERCHANGE_COMPONENT_SCHEMA,
-        root_uri=args.component_root_uri,
-        stage=4,
-        name="smolvla_exact_artifact_preflight",
-        tier="WORKS",
-        evidence="Downloaded and hashed exact-revision base weights and processors.",
-        artifacts={
-            "preflight": args.output_uri,
-            "revision": result["revision"],
-            "prepared_checkpoint": args.prepared_checkpoint_uri,
-        },
-    )
+    _publish_artifact_preflight(args, result)
     return result
 
 
@@ -561,58 +644,104 @@ def _fresh_rate(report: Mapping[str, Any]) -> float:
     return float(modes["fresh"].get("success_rate"))
 
 
+def _final_inputs(
+    args: argparse.Namespace, work: Path
+) -> tuple[dict, dict, dict, dict, dict]:
+    """Materialize the five immutable finalization inputs."""
+
+    return (
+        read_json(args.baseline_uri, directory=work / "baseline"),
+        read_json(args.adapted_uri, directory=work / "adapted"),
+        read_json(args.training_uri, directory=work / "training"),
+        read_json(args.reload_uri, directory=work / "reload"),
+        read_json(args.external_seam_uri, directory=work / "external"),
+    )
+
+
+def _validate_reload_binding(
+    reload: Mapping[str, Any],
+    training: Mapping[str, Any],
+    checkpoint_uri: str,
+    checkpoint_sha256: Any,
+) -> None:
+    """Bind training selection, native reload, and served checkpoint identity."""
+
+    if (
+        reload.get("schema") != "npa.sim2real.smolvla_reload_validation.v1"
+        or reload.get("status") != "native_checkpoint_reloaded"
+        or (reload.get("interchange") or {}).get("checkpoint_sha256")
+        != checkpoint_sha256
+        or training.get("selected_checkpoint_uri") != checkpoint_uri
+    ):
+        raise InterchangeContractError(
+            "training, native reload and adapted service checkpoint differ"
+        )
+
+
+def _validate_closed_loop_pair(baseline: dict, adapted: dict) -> tuple[dict, dict]:
+    """Validate identical closed-loop protocol/runtime and distinct checkpoints."""
+
+    expected = "npa.sim2real.policy_interchange.closed_loop_eval.v1"
+    if baseline.get("schema") != expected or adapted.get("schema") != expected:
+        raise InterchangeContractError("closed-loop interchange reports are invalid")
+    before = baseline.get("checkpoint_provenance") or {}
+    after = adapted.get("checkpoint_provenance") or {}
+    same = bool(
+        baseline.get("split") == adapted.get("split") == "gold"
+        and (baseline.get("protocol") or {}).get("sha256")
+        == (adapted.get("protocol") or {}).get("sha256")
+        and baseline.get("episode_count") == adapted.get("episode_count")
+        and before.get("source_commit") == after.get("source_commit")
+        and before.get("image_digest") == after.get("image_digest")
+    )
+    if not same:
+        raise InterchangeContractError(
+            "baseline and adapted trials do not share an identical protocol/runtime"
+        )
+    if before.get("checkpoint_sha256") == after.get("checkpoint_sha256"):
+        raise InterchangeContractError("adapted checkpoint is not distinct")
+    return before, after
+
+
+def _review_artifacts(args: argparse.Namespace, work: Path) -> dict[str, Any]:
+    """Copy exact final MP4 and RRD bytes with hashes."""
+
+    root = args.adapted_artifact_root_uri.rstrip("/")
+    return {
+        "mp4": _copy_artifact(root + "/rollouts.mp4", args.final_mp4_uri, work),
+        "rrd": _copy_artifact(root + "/rollouts.rrd", args.final_rrd_uri, work),
+    }
+
+
+def _publish_final(
+    args: argparse.Namespace, *, name: str, evidence: str, media: bool
+) -> None:
+    """Publish one final ComponentRecord with optional review media."""
+
+    artifacts = {"report": args.output_uri}
+    if media:
+        artifacts.update(mp4=args.final_mp4_uri, rrd=args.final_rrd_uri)
+    publish_component_record(
+        component_schema=POLICY_INTERCHANGE_COMPONENT_SCHEMA,
+        root_uri=args.component_root_uri,
+        stage=14,
+        name=name,
+        tier="WORKS",
+        evidence=evidence,
+        artifacts=artifacts,
+    )
+
+
 def _finalize(args: argparse.Namespace) -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="npa-policy-finalize-") as directory:
         work = Path(directory)
-        baseline = read_json(args.baseline_uri, directory=work / "baseline")
-        adapted = read_json(args.adapted_uri, directory=work / "adapted")
-        training = read_json(args.training_uri, directory=work / "training")
-        reload = read_json(args.reload_uri, directory=work / "reload")
-        external = read_json(args.external_seam_uri, directory=work / "external")
-        expected = "npa.sim2real.policy_interchange.closed_loop_eval.v1"
-        if baseline.get("schema") != expected or adapted.get("schema") != expected:
-            raise InterchangeContractError(
-                "closed-loop interchange reports are invalid"
-            )
-        before = baseline.get("checkpoint_provenance") or {}
-        after = adapted.get("checkpoint_provenance") or {}
-        same_protocol = bool(
-            baseline.get("split") == adapted.get("split") == "gold"
-            and (baseline.get("protocol") or {}).get("sha256")
-            == (adapted.get("protocol") or {}).get("sha256")
-            and baseline.get("episode_count") == adapted.get("episode_count")
-            and before.get("source_commit") == after.get("source_commit")
-            and before.get("image_digest") == after.get("image_digest")
+        baseline, adapted, training, reload, external = _final_inputs(args, work)
+        _, after = _validate_closed_loop_pair(baseline, adapted)
+        _validate_reload_binding(
+            reload, training, args.checkpoint_uri, after.get("checkpoint_sha256")
         )
-        if not same_protocol:
-            raise InterchangeContractError(
-                "baseline and adapted trials do not share an identical protocol/runtime"
-            )
-        if before.get("checkpoint_sha256") == after.get("checkpoint_sha256"):
-            raise InterchangeContractError("adapted checkpoint is not distinct")
-        if (
-            reload.get("schema") != "npa.sim2real.smolvla_reload_validation.v1"
-            or reload.get("status") != "native_checkpoint_reloaded"
-            or (reload.get("interchange") or {}).get("checkpoint_sha256")
-            != after.get("checkpoint_sha256")
-            or training.get("selected_checkpoint_uri") != args.checkpoint_uri
-        ):
-            raise InterchangeContractError(
-                "training, native reload and adapted service checkpoint differ"
-            )
         before_rate, after_rate = _fresh_rate(baseline), _fresh_rate(adapted)
-        copied = {
-            "mp4": _copy_artifact(
-                args.adapted_artifact_root_uri.rstrip("/") + "/rollouts.mp4",
-                args.final_mp4_uri,
-                work / "media",
-            ),
-            "rrd": _copy_artifact(
-                args.adapted_artifact_root_uri.rstrip("/") + "/rollouts.rrd",
-                args.final_rrd_uri,
-                work / "media",
-            ),
-        }
+        copied = _review_artifacts(args, work / "media")
         result = {
             "schema": "npa.sim2real.policy_interchange.final_report.v1",
             "run_id": args.run_id,
@@ -634,22 +763,77 @@ def _finalize(args: argparse.Namespace) -> dict[str, Any]:
             "physical_robot": external,
         }
         write_json(args.output_uri, result, directory=work / "output")
-    publish_component_record(
-        component_schema=POLICY_INTERCHANGE_COMPONENT_SCHEMA,
-        root_uri=args.component_root_uri,
-        stage=14,
+    _publish_final(
+        args,
         name="policy_interchange_finalize",
-        tier="WORKS",
-        evidence=(
-            "Bound same-task repeated trials, selected native checkpoint and factual media."
-        ),
-        artifacts={
-            "report": args.output_uri,
-            "mp4": args.final_mp4_uri,
-            "rrd": args.final_rrd_uri,
-        },
+        evidence="Bound same-task repeated trials, selected native checkpoint and factual media.",
+        media=True,
     )
     return result
+
+
+def _validate_non_franka_pair(baseline: dict, adapted: dict) -> tuple[dict, dict]:
+    """Validate identical non-Franka protocol/runtime and distinct checkpoints."""
+
+    expected = "npa.sim2real.policy_interchange.non_franka_execution.v1"
+    if baseline.get("schema") != expected or adapted.get("schema") != expected:
+        raise InterchangeContractError("non-Franka execution reports are invalid")
+    same = all(
+        baseline.get(name) == adapted.get(name)
+        for name in (
+            "robot_identity",
+            "object_identity",
+            "task_identity",
+            "seed",
+            "decisions",
+            "success_contract",
+        )
+    )
+    before = baseline.get("service_provenance") or {}
+    after = adapted.get("service_provenance") or {}
+    if (
+        not same
+        or before.get("source_commit") != after.get("source_commit")
+        or before.get("image_digest") != after.get("image_digest")
+    ):
+        raise InterchangeContractError(
+            "non-Franka base and adapted trials must share one sealed protocol/runtime"
+        )
+    if before.get("checkpoint_sha256") == after.get("checkpoint_sha256"):
+        raise InterchangeContractError("adapted checkpoint is not distinct")
+    return before, after
+
+
+def _non_franka_result(
+    args: argparse.Namespace, baseline: dict, adapted: dict, after: dict, external: dict
+) -> dict[str, Any]:
+    """Build the factual single-pair non-Franka final report."""
+
+    return {
+        "schema": "npa.sim2real.policy_interchange.non_franka_final_report.v1",
+        "run_id": args.run_id,
+        "backend": "lerobot_smolvla",
+        "robot_identity": baseline["robot_identity"],
+        "object_identity": baseline["object_identity"],
+        "task_identity": baseline["task_identity"],
+        "comparison_protocol_identical": True,
+        "baseline_execution_valid": baseline.get("execution_valid") is True,
+        "adapted_execution_valid": adapted.get("execution_valid") is True,
+        "baseline_task_success": baseline.get("task_success") is True,
+        "adapted_task_success": adapted.get("task_success") is True,
+        "improvement_claimed": False,
+        "reason_improvement_withheld": "one paired trial is execution qualification, not a powered task comparison",
+        "cross_model_loss_ranking": False,
+        "checkpoint": {
+            "selected_uri": args.checkpoint_uri,
+            "sha256": after.get("checkpoint_sha256"),
+            "native_reload_verified": True,
+        },
+        "visual_evidence": adapted.get("visual_evidence") or [],
+        "teacher_visual_evidence": (adapted.get("teacher") or {}).get("visual_evidence")
+        or [],
+        "physical_robot": external,
+    }
 
 
 def _non_franka_finalize(args: argparse.Namespace) -> dict[str, Any]:
@@ -657,93 +841,28 @@ def _non_franka_finalize(args: argparse.Namespace) -> dict[str, Any]:
 
     with tempfile.TemporaryDirectory(prefix="npa-non-franka-finalize-") as directory:
         work = Path(directory)
-        baseline = read_json(args.baseline_uri, directory=work / "baseline")
-        adapted = read_json(args.adapted_uri, directory=work / "adapted")
-        training = read_json(args.training_uri, directory=work / "training")
-        reload = read_json(args.reload_uri, directory=work / "reload")
-        external = read_json(args.external_seam_uri, directory=work / "external")
-        expected = "npa.sim2real.policy_interchange.non_franka_execution.v1"
-        if baseline.get("schema") != expected or adapted.get("schema") != expected:
-            raise InterchangeContractError("non-Franka execution reports are invalid")
-        same_protocol = all(
-            baseline.get(name) == adapted.get(name)
-            for name in (
-                "robot_identity",
-                "object_identity",
-                "task_identity",
-                "seed",
-                "decisions",
-                "success_contract",
-            )
+        baseline, adapted, training, reload, external = _final_inputs(args, work)
+        _, after = _validate_non_franka_pair(baseline, adapted)
+        _validate_reload_binding(
+            reload, training, args.checkpoint_uri, after.get("checkpoint_sha256")
         )
-        before = baseline.get("service_provenance") or {}
-        after = adapted.get("service_provenance") or {}
-        if (
-            not same_protocol
-            or before.get("source_commit") != after.get("source_commit")
-            or before.get("image_digest") != after.get("image_digest")
-        ):
-            raise InterchangeContractError(
-                "non-Franka base and adapted trials must share one sealed protocol/runtime"
-            )
-        if before.get("checkpoint_sha256") == after.get("checkpoint_sha256"):
-            raise InterchangeContractError("adapted checkpoint is not distinct")
-        if (
-            reload.get("schema") != "npa.sim2real.smolvla_reload_validation.v1"
-            or reload.get("status") != "native_checkpoint_reloaded"
-            or (reload.get("interchange") or {}).get("checkpoint_sha256")
-            != after.get("checkpoint_sha256")
-            or training.get("selected_checkpoint_uri") != args.checkpoint_uri
-        ):
-            raise InterchangeContractError(
-                "training, native reload and adapted non-Franka service differ"
-            )
-        result = {
-            "schema": "npa.sim2real.policy_interchange.non_franka_final_report.v1",
-            "run_id": args.run_id,
-            "backend": "lerobot_smolvla",
-            "robot_identity": baseline["robot_identity"],
-            "object_identity": baseline["object_identity"],
-            "task_identity": baseline["task_identity"],
-            "comparison_protocol_identical": True,
-            "baseline_execution_valid": baseline.get("execution_valid") is True,
-            "adapted_execution_valid": adapted.get("execution_valid") is True,
-            "baseline_task_success": baseline.get("task_success") is True,
-            "adapted_task_success": adapted.get("task_success") is True,
-            "improvement_claimed": False,
-            "reason_improvement_withheld": "one paired trial is execution qualification, not a powered task comparison",
-            "cross_model_loss_ranking": False,
-            "checkpoint": {
-                "selected_uri": args.checkpoint_uri,
-                "sha256": after.get("checkpoint_sha256"),
-                "native_reload_verified": True,
-            },
-            "visual_evidence": adapted.get("visual_evidence") or [],
-            "teacher_visual_evidence": (adapted.get("teacher") or {}).get(
-                "visual_evidence"
-            )
-            or [],
-            "physical_robot": external,
-        }
+        result = _non_franka_result(args, baseline, adapted, after, external)
         write_json(args.output_uri, result, directory=work / "output")
-    publish_component_record(
-        component_schema=POLICY_INTERCHANGE_COMPONENT_SCHEMA,
-        root_uri=args.component_root_uri,
-        stage=14,
+    _publish_final(
+        args,
         name="policy_interchange_non_franka_finalize",
-        tier="WORKS",
         evidence=(
-            "Bound identical-protocol native non-Franka executions and exact reload "
-            "without converting one trial into an improvement claim."
+            "Bound identical-protocol native non-Franka executions and exact "
+            "reload without converting one trial into an improvement claim."
         ),
-        artifacts={"report": args.output_uri},
+        media=False,
     )
     return result
 
 
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__)
-    commands = parser.add_subparsers(dest="command", required=True)
+def _prepare_parsers(commands: Any) -> None:
+    """Register preparation and physical-seam command arguments."""
+
     prepare = commands.add_parser("prepare")
     prepare.add_argument("--run-id", required=True)
     prepare.add_argument("--profile-uri", required=True)
@@ -755,6 +874,11 @@ def build_parser() -> argparse.ArgumentParser:
     external.add_argument("--run-id", required=True)
     external.add_argument("--output-uri", required=True)
     external.add_argument("--component-root-uri", required=True)
+
+
+def _artifact_parser(commands: Any) -> None:
+    """Register exact base-artifact preflight arguments."""
+
     artifact = commands.add_parser("artifact-preflight")
     artifact.add_argument("--checkpoint-uri", required=True)
     artifact.add_argument("--dataset-uri", required=True)
@@ -763,39 +887,55 @@ def build_parser() -> argparse.ArgumentParser:
     artifact.add_argument("--prepared-checkpoint-uri", required=True)
     artifact.add_argument("--output-uri", required=True)
     artifact.add_argument("--component-root-uri", required=True)
-    final = commands.add_parser("finalize")
-    final.add_argument("--run-id", required=True)
-    for name in (
+
+
+def _final_parser(commands: Any, name: str, fields: tuple[str, ...]) -> None:
+    """Register one finalization command's URI arguments."""
+
+    parser = commands.add_parser(name)
+    parser.add_argument("--run-id", required=True)
+    for field in fields:
+        parser.add_argument(f"--{field}", required=True)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Build the closed stage-adapter command catalog."""
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    _prepare_parsers(commands)
+    _artifact_parser(commands)
+    common = (
         "baseline-uri",
         "adapted-uri",
         "training-uri",
         "reload-uri",
         "checkpoint-uri",
         "external-seam-uri",
-        "adapted-artifact-root-uri",
-        "final-mp4-uri",
-        "final-rrd-uri",
-        "output-uri",
-        "component-root-uri",
-    ):
-        final.add_argument(f"--{name}", required=True)
-    non_franka_final = commands.add_parser("non-franka-finalize")
-    non_franka_final.add_argument("--run-id", required=True)
-    for name in (
-        "baseline-uri",
-        "adapted-uri",
-        "training-uri",
-        "reload-uri",
-        "checkpoint-uri",
-        "external-seam-uri",
-        "output-uri",
-        "component-root-uri",
-    ):
-        non_franka_final.add_argument(f"--{name}", required=True)
+    )
+    _final_parser(
+        commands,
+        "finalize",
+        common
+        + (
+            "adapted-artifact-root-uri",
+            "final-mp4-uri",
+            "final-rrd-uri",
+            "output-uri",
+            "component-root-uri",
+        ),
+    )
+    _final_parser(
+        commands,
+        "non-franka-finalize",
+        common + ("output-uri", "component-root-uri"),
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Execute the selected policy-interchange workflow stage."""
+
     args = build_parser().parse_args(argv)
     result = {
         "prepare": _prepare,

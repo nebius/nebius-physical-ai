@@ -30,134 +30,168 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def run(args: argparse.Namespace) -> dict:
-    with tempfile.TemporaryDirectory(prefix="npa-policy-interchange-isaac-") as value:
-        work = Path(value)
-        prepared = materialize(args.prepared_robot_uri, work / "prepared-robot")
-        preparation = read_json(args.preparation_uri, directory=work / "preparation")
-        service = read_json(args.service_receipt_uri, directory=work / "service")
-        preparation_path = work / "preparation.json"
-        service_path = work / "service.json"
-        write_json(preparation_path, preparation)
-        write_json(service_path, service)
-        asset = preparation.get("robot_asset")
-        spec = asset.get("robot_spec") if isinstance(asset, dict) else None
-        if not isinstance(spec, dict):
-            raise RuntimeError("preparation lacks the exact resolved RobotSpec")
-        robot_work = work / "robot-asset"
-        os.environ["NPA_BYO_ROBOT_SPEC_JSON"] = json.dumps(
-            spec, sort_keys=True, separators=(",", ":")
+def _materialized_inputs(
+    args: argparse.Namespace, work: Path
+) -> tuple[Path, dict, Path, Path]:
+    """Materialize immutable inputs and write child-process JSON bindings."""
+
+    prepared = materialize(args.prepared_robot_uri, work / "prepared-robot")
+    preparation = read_json(args.preparation_uri, directory=work / "preparation")
+    service = read_json(args.service_receipt_uri, directory=work / "service")
+    preparation_path = work / "preparation.json"
+    service_path = work / "service.json"
+    write_json(preparation_path, preparation)
+    write_json(service_path, service)
+    return prepared, preparation, preparation_path, service_path
+
+
+def _fetch_robot(preparation: dict, work: Path) -> tuple[dict, Path, Path]:
+    """Fetch the exact resolved robot USD declared by preparation."""
+
+    asset = preparation.get("robot_asset")
+    spec = asset.get("robot_spec") if isinstance(asset, dict) else None
+    if not isinstance(spec, dict):
+        raise RuntimeError("preparation lacks the exact resolved RobotSpec")
+    robot_work = work / "robot-asset"
+    os.environ["NPA_BYO_ROBOT_SPEC_JSON"] = json.dumps(
+        spec, sort_keys=True, separators=(",", ":")
+    )
+    os.environ["NPA_ROBOT_WORK_DIR"] = str(robot_work)
+    manifest = isaac_robot_asset.fetch()
+    return (
+        manifest,
+        robot_work / "resolved" / "manifest.json",
+        robot_work / "resolved" / "robot.usd",
+    )
+
+
+def _child_command(
+    args: argparse.Namespace,
+    prepared: Path,
+    preparation: Path,
+    service: Path,
+    manifest: Path,
+    usd: Path,
+    output: Path,
+) -> list[str]:
+    """Build the native Isaac child command from explicit file bindings."""
+
+    return [
+        os.environ.get("ISAAC_LAB_PYTHON", "/isaac-sim/python.sh"),
+        "-m",
+        "npa.workflows.sim2real.interchange_isaac_runtime",
+        "--input-path",
+        str(prepared),
+        "--preparation-path",
+        str(preparation),
+        "--service-receipt-path",
+        str(service),
+        "--robot-usd-path",
+        str(usd),
+        "--robot-asset-manifest-path",
+        str(manifest),
+        "--output-path",
+        str(output),
+        "--decisions",
+        str(args.decisions),
+        "--seed",
+        str(args.seed),
+    ]
+
+
+def _run_child(command: list[str], output: Path, log: Path) -> dict:
+    """Execute native Isaac and return its complete report."""
+
+    env = dict(os.environ)
+    env["OMNI_TELEMETRY_DISABLE_ANONYMOUS_DATA"] = "1"
+    with log.open("w", encoding="utf-8") as stream:
+        result = subprocess.run(
+            command, env=env, stdout=stream, stderr=subprocess.STDOUT, check=False
         )
-        os.environ["NPA_ROBOT_WORK_DIR"] = str(robot_work)
-        robot_manifest = isaac_robot_asset.fetch()
-        robot_manifest_path = robot_work / "resolved" / "manifest.json"
-        robot_usd_path = robot_work / "resolved" / "robot.usd"
-        output = work / "output"
-        log = work / "isaac-runtime.log"
-        child = [
-            os.environ.get("ISAAC_LAB_PYTHON", "/isaac-sim/python.sh"),
-            "-m",
-            "npa.workflows.sim2real.interchange_isaac_runtime",
-            "--input-path",
-            str(prepared),
-            "--preparation-path",
-            str(preparation_path),
-            "--service-receipt-path",
-            str(service_path),
-            "--robot-usd-path",
-            str(robot_usd_path),
-            "--robot-asset-manifest-path",
-            str(robot_manifest_path),
-            "--output-path",
-            str(output),
-            "--decisions",
-            str(args.decisions),
-            "--seed",
-            str(args.seed),
-        ]
-        env = dict(os.environ)
-        env["OMNI_TELEMETRY_DISABLE_ANONYMOUS_DATA"] = "1"
-        with log.open("w", encoding="utf-8") as stream:
-            result = subprocess.run(
-                child,
-                env=env,
-                stdout=stream,
-                stderr=subprocess.STDOUT,
-                check=False,
-            )
-        if result.returncode or not (output / "report.json").is_file():
-            excerpt = log.read_text(encoding="utf-8", errors="replace")[-12_000:]
-            raise RuntimeError(
-                f"native non-Franka policy trial failed with {result.returncode}\n{excerpt}"
-            )
-        report = json.loads((output / "report.json").read_text(encoding="utf-8"))
-        teacher = report.get("teacher") or {}
+    if result.returncode or not (output / "report.json").is_file():
+        excerpt = log.read_text(encoding="utf-8", errors="replace")[-12_000:]
+        raise RuntimeError(
+            f"native non-Franka policy trial failed with {result.returncode}\n{excerpt}"
+        )
+    return json.loads((output / "report.json").read_text(encoding="utf-8"))
+
+
+def _validate_report_shape(report: dict, decisions: int) -> dict:
+    """Validate required native policy and teacher evidence collections."""
+
+    teacher = report.get("teacher") or {}
+    if (
+        report.get("schema") != SCHEMA
+        or report.get("execution_valid") is not True
+        or report.get("decisions") != decisions
+        or len(report.get("controls") or []) != decisions
+        or len(report.get("camera_hashes") or []) != decisions
+        or report.get("all_camera_decisions_hashed") is not True
+        or not report.get("visual_evidence")
+        or teacher.get("schema") != "npa.sim2real.policy_interchange.native_teacher.v1"
+        or teacher.get("execution_valid") is not True
+        or not teacher.get("controls")
+        or not teacher.get("visual_evidence")
+        or len(teacher.get("camera_hashes") or ()) != len(teacher.get("controls") or ())
+        or len(teacher.get("camera_clocks") or ()) != len(teacher.get("controls") or ())
+        or len(report.get("observation_clocks") or ()) != decisions
+    ):
+        raise RuntimeError("native non-Franka execution report is incomplete")
+    return teacher
+
+
+def _validate_camera_clocks(report: dict, teacher: dict) -> None:
+    """Prove teacher and policy images causally precede applied controls."""
+
+    for clock in teacher["camera_clocks"]:
+        poses = clock.get("camera_world_poses")
+        if not isinstance(poses, dict) or set(poses) != set(
+            clock["capture_timestamps_s"]
+        ):
+            raise RuntimeError("native teacher camera poses are incomplete")
+        limit = float(clock["command_application_time_s"]) + 1.0e-9
+        if any(
+            float(value) > limit for value in clock["capture_timestamps_s"].values()
+        ):
+            raise RuntimeError("native teacher camera/control clock is noncausal")
+    for clock, control in zip(
+        report["observation_clocks"], report["controls"], strict=True
+    ):
+        state_time = float(clock["state_timestamp_s"])
+        command_time = float(control["command_application_time_s"])
+        poses = clock.get("camera_world_poses")
         if (
-            report.get("schema") != SCHEMA
-            or report.get("execution_valid") is not True
-            or report.get("decisions") != args.decisions
-            or len(report.get("controls") or []) != args.decisions
-            or len(report.get("camera_hashes") or []) != args.decisions
-            or report.get("all_camera_decisions_hashed") is not True
-            or not report.get("visual_evidence")
-            or teacher.get("schema")
-            != "npa.sim2real.policy_interchange.native_teacher.v1"
-            or teacher.get("execution_valid") is not True
-            or not teacher.get("controls")
-            or not teacher.get("visual_evidence")
-            or len(teacher.get("camera_hashes") or ())
-            != len(teacher.get("controls") or ())
-            or len(teacher.get("camera_clocks") or ())
-            != len(teacher.get("controls") or ())
-            or len(report.get("observation_clocks") or ()) != args.decisions
-        ):
-            raise RuntimeError("native non-Franka execution report is incomplete")
-        for clock in teacher["camera_clocks"]:
-            poses = clock.get("camera_world_poses")
-            if not isinstance(poses, dict) or set(poses) != set(
-                clock["capture_timestamps_s"]
-            ):
-                raise RuntimeError("native teacher camera poses are incomplete")
-            if any(
-                float(value) > float(clock["command_application_time_s"]) + 1.0e-9
+            not isinstance(poses, dict)
+            or set(poses) != set(clock["capture_timestamps_s"])
+            or any(
+                float(value) > state_time + 1.0e-9
                 for value in clock["capture_timestamps_s"].values()
-            ):
-                raise RuntimeError("native teacher camera/control clock is noncausal")
-        for clock, control in zip(
-            report["observation_clocks"], report["controls"], strict=True
+            )
+            or state_time > command_time + 1.0e-9
+            or control.get("terminated") is not False
+            or control.get("truncated") is not False
         ):
-            state_time = float(clock["state_timestamp_s"])
-            command_time = float(control["command_application_time_s"])
-            poses = clock.get("camera_world_poses")
-            if (
-                not isinstance(poses, dict)
-                or set(poses) != set(clock["capture_timestamps_s"])
-                or any(
-                    float(value) > state_time + 1.0e-9
-                    for value in clock["capture_timestamps_s"].values()
-                )
-                or state_time > command_time + 1.0e-9
-                or control.get("terminated") is not False
-                or control.get("truncated") is not False
-            ):
-                raise RuntimeError("native policy camera/control clock is noncausal")
-        for visual in [
-            *teacher["visual_evidence"],
-            *report["visual_evidence"],
-        ]:
-            path = output / str(visual.get("path") or "")
-            if (
-                not path.is_file()
-                or path.stat().st_size != visual.get("bytes")
-                or _sha256(path) != visual.get("sha256")
-            ):
-                raise RuntimeError("native non-Franka visual evidence is incomplete")
-        if report.get("robot_asset", {}).get("usd_sha256") != robot_manifest.get(
-            "usd_sha256"
+            raise RuntimeError("native policy camera/control clock is noncausal")
+
+
+def _validate_outputs(report: dict, teacher: dict, output: Path, robot: dict) -> None:
+    """Validate visual bytes and exact fetched-USD consumption."""
+
+    for visual in [*teacher["visual_evidence"], *report["visual_evidence"]]:
+        path = output / str(visual.get("path") or "")
+        if (
+            not path.is_file()
+            or path.stat().st_size != visual.get("bytes")
+            or _sha256(path) != visual.get("sha256")
         ):
-            raise RuntimeError("native execution did not consume the fetched robot USD")
-        (output / "isaac-runtime.log").write_bytes(log.read_bytes())
-        publish(output, args.output_uri)
+            raise RuntimeError("native non-Franka visual evidence is incomplete")
+    if report.get("robot_asset", {}).get("usd_sha256") != robot.get("usd_sha256"):
+        raise RuntimeError("native execution did not consume the fetched robot USD")
+
+
+def _publish_component(args: argparse.Namespace) -> None:
+    """Publish the standard component record after native evidence is durable."""
+
     publish_component_record(
         component_schema=POLICY_INTERCHANGE_COMPONENT_SCHEMA,
         root_uri=args.component_root_uri,
@@ -170,10 +204,34 @@ def run(args: argparse.Namespace) -> dict:
         ),
         artifacts={"execution": args.output_uri},
     )
+
+
+def run(args: argparse.Namespace) -> dict:
+    """Run, validate, and publish one native non-Franka policy trial."""
+
+    with tempfile.TemporaryDirectory(prefix="npa-policy-interchange-isaac-") as value:
+        work = Path(value)
+        prepared, preparation, prep_path, service_path = _materialized_inputs(
+            args, work
+        )
+        robot, manifest_path, usd_path = _fetch_robot(preparation, work)
+        output, log = work / "output", work / "isaac-runtime.log"
+        command = _child_command(
+            args, prepared, prep_path, service_path, manifest_path, usd_path, output
+        )
+        report = _run_child(command, output, log)
+        teacher = _validate_report_shape(report, args.decisions)
+        _validate_camera_clocks(report, teacher)
+        _validate_outputs(report, teacher, output, robot)
+        (output / "isaac-runtime.log").write_bytes(log.read_bytes())
+        publish(output, args.output_uri)
+    _publish_component(args)
     return report
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the non-Franka Isaac entrypoint argument parser."""
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--prepared-robot-uri", required=True)
     parser.add_argument("--preparation-uri", required=True)
@@ -188,6 +246,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Materialize inputs, execute Isaac, and publish the report."""
+
     args = build_parser().parse_args(argv)
     if args.decisions < 1 or args.seed < 0:
         raise ValueError("decisions must be positive and seed nonnegative")

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 import hashlib
 import json
 import math
@@ -40,6 +40,49 @@ TARGET_DISTANCE_M = 0.05
 TRANSPORT_DISTANCE_M = 0.08
 STABLE_SPEED_M_S = 0.03
 STABLE_STEPS = 3
+
+
+@dataclass
+class TeacherTrace:
+    """Mutable evidence streams for one native teacher rollout."""
+
+    controls: list[dict[str, Any]] = field(default_factory=list)
+    physics: list[dict[str, Any]] = field(default_factory=list)
+    camera_hashes: list[dict[str, str]] = field(default_factory=list)
+    camera_clocks: list[dict[str, Any]] = field(default_factory=list)
+    states: list[list[float]] = field(default_factory=list)
+    actions: list[list[float]] = field(default_factory=list)
+    frames: list[dict[str, tuple[bytes, int, int, str]]] = field(default_factory=list)
+    timestamps: list[float] = field(default_factory=list)
+    visuals: list[dict[str, Any]] = field(default_factory=list)
+    step: int = 0
+
+
+@dataclass(frozen=True)
+class RuntimeInputs:
+    """Identity-bound inputs consumed by one native policy rollout."""
+
+    receipt: dict[str, Any]
+    robot_manifest: dict[str, Any]
+    robot_spec: dict[str, Any]
+    robot: Any
+    prop: Any
+    task: Any
+    policy: Any
+    loaded: dict[str, Any]
+    object_usd_path: Path
+
+
+@dataclass
+class PolicyTrace:
+    """Mutable evidence streams for one native policy rollout."""
+
+    controls: list[dict[str, Any]] = field(default_factory=list)
+    physics: list[dict[str, Any]] = field(default_factory=list)
+    inference: list[dict[str, Any]] = field(default_factory=list)
+    camera_hashes: list[dict[str, str]] = field(default_factory=list)
+    observation_clocks: list[dict[str, Any]] = field(default_factory=list)
+    visuals: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -100,11 +143,17 @@ def _camera_frame(native: Any, key: str, profile: Any) -> tuple[Any, float, dict
     return frame, _sim_time(native), pose.to_dict()
 
 
-def _observation(
-    native: Any, robot: Any, policy: Any, decision: int
-) -> tuple[Any, dict, dict[str, tuple[bytes, int, int, str]], dict[str, Any]]:
-    state = measured_policy_state(native, robot)
-    state_time = _sim_time(native)
+def _camera_payloads(
+    native: Any, robot: Any, state_time: float
+) -> tuple[
+    dict[str, Any],
+    dict[str, str],
+    dict[str, tuple[bytes, int, int, str]],
+    dict[str, float],
+    dict[str, dict],
+]:
+    """Capture all declared views with hashes, roles, poses, and clocks."""
+
     cameras: dict[str, Any] = {}
     hashes: dict[str, str] = {}
     frames: dict[str, tuple[bytes, int, int, str]] = {}
@@ -132,6 +181,19 @@ def _observation(
             "rgb8": payload,
             "image_sha256": digest,
         }
+    return cameras, hashes, frames, capture_timestamps, camera_world_poses
+
+
+def _observation(
+    native: Any, robot: Any, policy: Any, decision: int
+) -> tuple[Any, dict, dict[str, tuple[bytes, int, int, str]], dict[str, Any]]:
+    """Build one causal typed observation and its native camera evidence."""
+
+    state = measured_policy_state(native, robot)
+    state_time = _sim_time(native)
+    cameras, hashes, frames, capture_timestamps, camera_world_poses = _camera_payloads(
+        native, robot, state_time
+    )
     observation = validate_observation(
         robot=robot,
         policy=policy,
@@ -264,8 +326,36 @@ def _sample(native: Any, robot: Any, prop: Any, task: Any, initial_z: float) -> 
 
 
 def _update_events(context: dict[str, Any], sample: dict[str, Any], step: int) -> None:
+    """Advance ordered physical success events and stability state."""
+
     events = context["ordered_event_steps"]
-    ordered = (
+    for name, condition in _event_conditions(context, sample):
+        predecessors = list(
+            context["required_events"][: context["required_events"].index(name)]
+        )
+        if (
+            condition
+            and name not in events
+            and all(item in events for item in predecessors)
+        ):
+            events[name] = step
+    stable = (
+        "support_contact" in events
+        and sample["target_xy_distance_m"] < TARGET_DISTANCE_M
+        and sample["object_speed_m_s"] < STABLE_SPEED_M_S
+    )
+    context["stable_steps"] = context["stable_steps"] + 1 if stable else 0
+    if context["stable_steps"] >= STABLE_STEPS and "stable" not in events:
+        events["stable"] = step
+
+
+def _event_conditions(
+    context: dict[str, Any], sample: dict[str, Any]
+) -> tuple[tuple[str, bool], ...]:
+    """Evaluate physical event predicates without mutating chronology."""
+
+    events = context["ordered_event_steps"]
+    return (
         ("contact", sample["bilateral_finger_contact"]),
         (
             "grasp",
@@ -289,24 +379,6 @@ def _update_events(context: dict[str, Any], sample: dict[str, Any], step: int) -
             "release" in events and sample["object_support_force_n"] > CONTACT_FORCE_N,
         ),
     )
-    for name, condition in ordered:
-        predecessors = list(
-            context["required_events"][: context["required_events"].index(name)]
-        )
-        if (
-            condition
-            and name not in events
-            and all(item in events for item in predecessors)
-        ):
-            events[name] = step
-    stable = (
-        "support_contact" in events
-        and sample["target_xy_distance_m"] < TARGET_DISTANCE_M
-        and sample["object_speed_m_s"] < STABLE_SPEED_M_S
-    )
-    context["stable_steps"] = context["stable_steps"] + 1 if stable else 0
-    if context["stable_steps"] >= STABLE_STEPS and "stable" not in events:
-        events["stable"] = step
 
 
 def _native_tensor(value: Any) -> Any:
@@ -318,16 +390,7 @@ def _native_tensor(value: Any) -> Any:
 def _teacher_layout(native: Any, robot: Any) -> dict[str, Any]:
     """Bind the native differential-IK action to the sealed morphology."""
 
-    names = list(native.action_manager.active_terms)
-    dimensions = [int(value) for value in native.action_manager.action_term_dim]
-    if names.count("arm_action") != 1 or names.count("gripper_action") != 1:
-        raise RuntimeError("teacher requires one named arm and gripper action")
-    arm_index = names.index("arm_action")
-    gripper_index = names.index("gripper_action")
-    if dimensions[arm_index] != 6 or dimensions[gripper_index] != 1:
-        raise RuntimeError("teacher requires six-axis relative IK plus gripper")
-    arm = native.action_manager.get_term("arm_action")
-    gripper = native.action_manager.get_term("gripper_action")
+    names, dimensions, arm, gripper, arm_index, gripper_index = _teacher_terms(native)
     arm_names = tuple(
         getattr(getattr(arm, "IO_descriptor", None), "joint_names", ())
         or getattr(arm, "_joint_names", ())
@@ -336,20 +399,10 @@ def _teacher_layout(native: Any, robot: Any) -> dict[str, Any]:
         getattr(getattr(gripper, "IO_descriptor", None), "joint_names", ())
         or getattr(gripper, "_joint_names", ())
     )
-    if arm_names != robot.arm_joint_names:
-        raise RuntimeError("teacher IK joint order differs from the sealed robot")
-    if gripper_names != robot.gripper.joint_names:
-        raise RuntimeError("teacher gripper order differs from the sealed robot")
+    _require_teacher_action_order(arm_names, gripper_names, robot)
     if str(arm.cfg.body_name) != robot.ee_link:
         raise RuntimeError("teacher IK end-effector differs from the sealed robot")
-    scale = _native_tensor(getattr(arm, "_scale", None))
-    if scale is None or not hasattr(scale, "detach"):
-        raise RuntimeError("teacher IK action does not expose its native scale")
-    values = scale[0].detach().cpu().numpy().astype(float)
-    if values.shape != (6,) or not all(
-        math.isfinite(item) and item > 0 for item in values
-    ):
-        raise RuntimeError("teacher IK native scale is invalid")
+    values = _teacher_scale(arm)
     return {
         "total_dimension": sum(dimensions),
         "arm_start": sum(dimensions[:arm_index]),
@@ -359,6 +412,52 @@ def _teacher_layout(native: Any, robot: Any) -> dict[str, Any]:
         "gripper_joint_names": list(robot.gripper.joint_names),
         "ee_link": robot.ee_link,
     }
+
+
+def _require_teacher_action_order(
+    arm_names: tuple[str, ...], gripper_names: tuple[str, ...], robot: Any
+) -> None:
+    """Reject either native controller order mismatch explicitly."""
+
+    if arm_names != robot.arm_joint_names:
+        raise RuntimeError("teacher IK joint order differs from the sealed robot")
+    if gripper_names != robot.gripper.joint_names:
+        raise RuntimeError("teacher gripper order differs from the sealed robot")
+
+
+def _teacher_terms(native: Any) -> tuple[list[str], list[int], Any, Any, int, int]:
+    """Resolve the named six-axis IK and binary gripper terms."""
+
+    names = list(native.action_manager.active_terms)
+    dimensions = [int(value) for value in native.action_manager.action_term_dim]
+    if names.count("arm_action") != 1 or names.count("gripper_action") != 1:
+        raise RuntimeError("teacher requires one named arm and gripper action")
+    arm_index = names.index("arm_action")
+    gripper_index = names.index("gripper_action")
+    if dimensions[arm_index] != 6 or dimensions[gripper_index] != 1:
+        raise RuntimeError("teacher requires six-axis relative IK plus gripper")
+    return (
+        names,
+        dimensions,
+        native.action_manager.get_term("arm_action"),
+        native.action_manager.get_term("gripper_action"),
+        arm_index,
+        gripper_index,
+    )
+
+
+def _teacher_scale(arm: Any) -> Any:
+    """Validate and return the native six-axis IK scale."""
+
+    scale = _native_tensor(getattr(arm, "_scale", None))
+    if scale is None or not hasattr(scale, "detach"):
+        raise RuntimeError("teacher IK action does not expose its native scale")
+    values = scale[0].detach().cpu().numpy().astype(float)
+    if values.shape != (6,) or not all(
+        math.isfinite(item) and item > 0 for item in values
+    ):
+        raise RuntimeError("teacher IK native scale is invalid")
+    return values
 
 
 def _axis_angle_error(current: Any, target: tuple[float, ...]) -> Any:
@@ -439,64 +538,64 @@ def _teacher_camera_capture(
     return hashes, frames, timestamps, poses
 
 
-def _write_teacher_episode(
-    *,
-    directory: Path,
-    robot: Any,
-    task: Any,
-    prop: Any,
-    states: list[list[float]],
-    actions: list[list[float]],
+def _teacher_views(
     camera_frames: list[dict[str, tuple[bytes, int, int, str]]],
-    timestamps: list[float],
-    teacher: dict[str, Any],
-) -> dict[str, Any]:
-    """Materialize one native teacher rollout in the generic adapter layout."""
+) -> dict[str, list[Any]]:
+    """Decode exactly one exterior and one wrist view per teacher step."""
 
     import numpy as np
 
-    if not teacher.get("task_success"):
-        raise RuntimeError("only successful native teacher episodes may enter training")
-    count = len(states)
-    if not count or not (
-        len(actions) == len(camera_frames) == len(timestamps) == count
-    ):
-        raise RuntimeError("teacher dataset streams have inconsistent lengths")
-    expected_dimension = len(robot.measured_state_names)
-    if any(len(row) != expected_dimension for row in [*states, *actions]):
-        raise RuntimeError("teacher state/action width differs from the sealed robot")
     by_role: dict[str, list[Any]] = {"exterior": [], "wrist": []}
     for frame_set in camera_frames:
         roles: dict[str, Any] = {}
         for payload, width, height, role in frame_set.values():
             if role in roles:
                 raise RuntimeError(f"teacher episode has multiple {role!r} cameras")
-            pixels = np.frombuffer(payload, dtype=np.uint8).reshape(height, width, 3)
-            roles[role] = pixels.copy()
+            roles[role] = (
+                np.frombuffer(payload, dtype=np.uint8).reshape(height, width, 3).copy()
+            )
         if set(roles) != set(by_role):
             raise RuntimeError(
                 "teacher episode requires one exterior and one wrist view"
             )
         for role, pixels in roles.items():
             by_role[role].append(pixels)
-    directory.mkdir(parents=True, exist_ok=True)
-    outputs = (
+    return by_role
+
+
+def _write_teacher_arrays(
+    directory: Path,
+    views: dict[str, list[Any]],
+    states: list[list[float]],
+    actions: list[list[float]],
+    timestamps: list[float],
+) -> None:
+    """Write native teacher arrays without replacing existing evidence."""
+
+    import numpy as np
+
+    names = (
         "obs_workspace.npy",
         "obs_wrist.npy",
         "state.npy",
         "actions.npy",
         "timestamps.npy",
-        "metadata.json",
-        "native_teacher.json",
     )
-    if any((directory / name).exists() for name in outputs):
+    if any((directory / name).exists() for name in names):
         raise RuntimeError("teacher episode output already exists")
-    np.save(directory / "obs_workspace.npy", np.stack(by_role["exterior"]))
-    np.save(directory / "obs_wrist.npy", np.stack(by_role["wrist"]))
+    np.save(directory / "obs_workspace.npy", np.stack(views["exterior"]))
+    np.save(directory / "obs_wrist.npy", np.stack(views["wrist"]))
     np.save(directory / "state.npy", np.asarray(states, dtype=np.float32))
     np.save(directory / "actions.npy", np.asarray(actions, dtype=np.float32))
     np.save(directory / "timestamps.npy", np.asarray(timestamps, dtype=np.float64))
-    metadata = {
+
+
+def _teacher_metadata(
+    robot: Any, prop: Any, task: Any, count: int, teacher: dict[str, Any]
+) -> dict[str, Any]:
+    """Build model-neutral teacher episode metadata."""
+
+    return {
         "schema": "npa.sim2real.policy_interchange.teacher_episode.v1",
         "robot_identity": robot.identity,
         "object_identity": prop.identity,
@@ -512,13 +611,69 @@ def _write_teacher_episode(
         "privileged_object_state_policy_input": False,
         "ordered_event_steps": teacher["ordered_event_steps"],
     }
+
+
+def _write_teacher_episode(
+    *,
+    directory: Path,
+    robot: Any,
+    task: Any,
+    prop: Any,
+    states: list[list[float]],
+    actions: list[list[float]],
+    camera_frames: list[dict[str, tuple[bytes, int, int, str]]],
+    timestamps: list[float],
+    teacher: dict[str, Any],
+) -> dict[str, Any]:
+    """Materialize one native teacher rollout in the generic adapter layout."""
+    count = _validate_teacher_episode(
+        robot, teacher, states, actions, camera_frames, timestamps
+    )
+    directory.mkdir(parents=True, exist_ok=True)
+    outputs = (
+        "obs_workspace.npy",
+        "obs_wrist.npy",
+        "state.npy",
+        "actions.npy",
+        "timestamps.npy",
+        "metadata.json",
+        "native_teacher.json",
+    )
+    if any((directory / name).exists() for name in outputs):
+        raise RuntimeError("teacher episode output already exists")
+    _write_teacher_arrays(
+        directory, _teacher_views(camera_frames), states, actions, timestamps
+    )
+    metadata = _teacher_metadata(robot, prop, task, count, teacher)
     write_json(directory / "metadata.json", metadata)
     write_json(directory / "native_teacher.json", teacher)
     return metadata
 
 
-def _run_teacher(
-    *,
+def _validate_teacher_episode(
+    robot: Any,
+    teacher: dict[str, Any],
+    states: list[list[float]],
+    actions: list[list[float]],
+    camera_frames: list[dict[str, Any]],
+    timestamps: list[float],
+) -> int:
+    """Validate synchronized successful teacher streams before materialization."""
+
+    if not teacher.get("task_success"):
+        raise RuntimeError("only successful native teacher episodes may enter training")
+    count = len(states)
+    if not count or not (
+        len(actions) == len(camera_frames) == len(timestamps) == count
+    ):
+        raise RuntimeError("teacher dataset streams have inconsistent lengths")
+    expected_dimension = len(robot.measured_state_names)
+    if any(len(row) != expected_dimension for row in [*states, *actions]):
+        raise RuntimeError("teacher state/action width differs from the sealed robot")
+    return count
+
+
+def _teacher_environment(
     gym: Any,
     args: argparse.Namespace,
     robot: Any,
@@ -527,9 +682,8 @@ def _run_teacher(
     task: Any,
     object_usd_path: Path,
     control_hz: float,
-    episode_directory: Path | None = None,
-) -> dict[str, Any]:
-    """Execute one geometry-aware native teacher before policy evaluation."""
+) -> tuple[Any, dict[str, Any], dict[str, Any]]:
+    """Configure the embodiment-aware relative-IK teacher environment."""
 
     from npa.workflows.franka_rl_environment import (
         POLICY_INTERCHANGE_SCAFFOLD_TASK,
@@ -555,168 +709,467 @@ def _run_teacher(
         config, robot, prop, task, object_usd_path=object_usd_path
     )
     configure_policy_interchange_cameras(config, robot)
-    env = gym.make(POLICY_INTERCHANGE_SCAFFOLD_TASK, cfg=config)
+    return gym.make(POLICY_INTERCHANGE_SCAFFOLD_TASK, cfg=config), timing, configuration
+
+
+def _teacher_visuals(
+    args: argparse.Namespace,
+    trace: TeacherTrace,
+    frames: dict[str, tuple[bytes, int, int, str]],
+    phase: str,
+) -> None:
+    """Write one factual camera pair at the start of a teacher phase."""
+
+    for key, (payload, width, height, role) in frames.items():
+        relative = Path("visuals") / f"teacher-{phase}-{role}.png"
+        trace.visuals.append(
+            {
+                "step": trace.step,
+                "phase": phase,
+                "camera_key": key,
+                "camera_role": role,
+                **_write_png_rgb8(args.output_path / relative, payload, width, height),
+                "path": relative.as_posix(),
+            }
+        )
+
+
+def _teacher_step(
+    *,
+    env: Any,
+    native: Any,
+    args: argparse.Namespace,
+    robot: Any,
+    prop: Any,
+    task: Any,
+    layout: dict[str, Any],
+    waypoint: Any,
+    initial_z: float,
+    context: dict[str, Any],
+    trace: TeacherTrace,
+    first: bool,
+) -> tuple[float, float]:
+    """Capture, apply, measure, and record one causal native teacher control."""
+
+    hashes, frames, captures, poses, measured_before = _teacher_step_inputs(
+        native, robot, args, trace, waypoint, first
+    )
+    command, errors, times, sample, measured_after = _apply_teacher_step(
+        env, native, robot, prop, task, layout, waypoint, initial_z, captures
+    )
+    _update_events(context, sample, trace.step)
+    _record_teacher_transition(
+        trace,
+        waypoint,
+        command,
+        times,
+        errors,
+        sample,
+        hashes,
+        captures,
+        poses,
+        measured_before,
+        measured_after,
+        robot,
+        frames,
+    )
+    return errors
+
+
+def _record_teacher_transition(
+    trace: TeacherTrace,
+    waypoint: Any,
+    command: Any,
+    times: tuple[float, float],
+    errors: tuple[float, float],
+    sample: dict[str, Any],
+    hashes: dict[str, str],
+    captures: dict[str, float],
+    poses: dict[str, dict],
+    measured_before: dict[str, float],
+    measured_after: dict[str, float],
+    robot: Any,
+    frames: dict[str, Any],
+) -> None:
+    _record_teacher_step(
+        trace=trace,
+        waypoint=waypoint,
+        command=command,
+        before=times[0],
+        after=times[1],
+        position_error=errors[0],
+        orientation_error=errors[1],
+        sample=sample,
+        hashes=hashes,
+        captures=captures,
+        poses=poses,
+        measured_before=measured_before,
+        measured_after=measured_after,
+        robot=robot,
+        frames=frames,
+    )
+
+
+def _teacher_step_inputs(
+    native: Any,
+    robot: Any,
+    args: argparse.Namespace,
+    trace: TeacherTrace,
+    waypoint: Any,
+    first: bool,
+) -> tuple[dict, dict, dict, dict, dict]:
+    """Capture causal cameras and the pre-control measured robot state."""
+
+    hashes, frames, captures, poses = _teacher_camera_capture(native, robot)
+    measured_before = measured_policy_state(native, robot)
+    if first:
+        _teacher_visuals(args, trace, frames, waypoint.phase)
+    return hashes, frames, captures, poses, measured_before
+
+
+def _apply_teacher_step(
+    env: Any,
+    native: Any,
+    robot: Any,
+    prop: Any,
+    task: Any,
+    layout: dict[str, Any],
+    waypoint: Any,
+    initial_z: float,
+    captures: dict[str, float],
+) -> tuple[
+    Any, tuple[float, float], tuple[float, float], dict[str, Any], dict[str, float]
+]:
+    """Apply one teacher command after proving its cameras are causal."""
+
+    command, position_error, orientation_error = _teacher_command(
+        native, layout, waypoint
+    )
+    before = _sim_time(native)
+    if any(value > before + 1.0e-9 for value in captures.values()):
+        raise RuntimeError("teacher camera capture followed its control")
+    _, _, terminated, truncated, _ = env.step(command)
+    after = _sim_time(native)
+    if bool(terminated[0]) or bool(truncated[0]):
+        raise RuntimeError(f"native teacher reset during {waypoint.phase}")
+    sample = _sample(native, robot, prop, task, initial_z)
+    measured_after = measured_policy_state(native, robot)
+    return (
+        command,
+        (position_error, orientation_error),
+        (before, after),
+        sample,
+        measured_after,
+    )
+
+
+def _record_teacher_step(
+    *,
+    trace: TeacherTrace,
+    waypoint: Any,
+    command: Any,
+    before: float,
+    after: float,
+    position_error: float,
+    orientation_error: float,
+    sample: dict[str, Any],
+    hashes: dict[str, str],
+    captures: dict[str, float],
+    poses: dict[str, dict],
+    measured_before: dict[str, float],
+    measured_after: dict[str, float],
+    robot: Any,
+    frames: dict[str, tuple[bytes, int, int, str]],
+) -> None:
+    """Append one native teacher transition to every evidence stream."""
+
+    trace.controls.append(
+        _teacher_control_receipt(
+            trace.step,
+            waypoint,
+            command,
+            before,
+            after,
+            position_error,
+            orientation_error,
+        )
+    )
+    trace.physics.append(sample)
+    trace.camera_hashes.append(hashes)
+    trace.camera_clocks.append(
+        _teacher_clock(trace.step, captures, poses, before, after)
+    )
+    _record_teacher_arrays(
+        trace, robot, measured_before, measured_after, frames, before
+    )
+    trace.step += 1
+
+
+def _record_teacher_arrays(
+    trace: TeacherTrace,
+    robot: Any,
+    measured_before: dict[str, float],
+    measured_after: dict[str, float],
+    frames: dict[str, Any],
+    before: float,
+) -> None:
+    trace.states.append([measured_before[name] for name in robot.measured_state_names])
+    trace.actions.append([measured_after[name] for name in robot.measured_state_names])
+    trace.frames.append(frames)
+    trace.timestamps.append(before)
+
+
+def _teacher_control_receipt(
+    step: int,
+    waypoint: Any,
+    command: Any,
+    before: float,
+    after: float,
+    position_error: float,
+    orientation_error: float,
+) -> dict[str, Any]:
+    return {
+        "step": step,
+        "phase": waypoint.phase,
+        "command_application_time_s": before,
+        "resulting_state_time_s": after,
+        "native_action": command[0].detach().cpu().tolist(),
+        "position_error_m": position_error,
+        "orientation_error_rad": orientation_error,
+        "gripper_closed": waypoint.gripper_closed,
+    }
+
+
+def _teacher_clock(
+    step: int,
+    captures: dict[str, float],
+    poses: dict[str, dict],
+    before: float,
+    after: float,
+) -> dict[str, Any]:
+    return {
+        "step": step,
+        "capture_timestamps_s": captures,
+        "camera_world_poses": poses,
+        "command_application_time_s": before,
+        "resulting_state_time_s": after,
+    }
+
+
+def _teacher_waypoint(
+    *,
+    env: Any,
+    native: Any,
+    args: argparse.Namespace,
+    robot: Any,
+    prop: Any,
+    task: Any,
+    layout: dict[str, Any],
+    waypoint: Any,
+    initial_z: float,
+    context: dict[str, Any],
+    trace: TeacherTrace,
+) -> None:
+    """Drive one geometry-derived waypoint to convergence."""
+
+    consecutive = 0
+    for phase_step in range(90):
+        position, orientation = _teacher_step(
+            env=env,
+            native=native,
+            args=args,
+            robot=robot,
+            prop=prop,
+            task=task,
+            layout=layout,
+            waypoint=waypoint,
+            initial_z=initial_z,
+            context=context,
+            trace=trace,
+            first=phase_step == 0,
+        )
+        consecutive = consecutive + 1 if position < 0.012 and orientation < 0.08 else 0
+        hold = 12 if waypoint.phase in {"grasp", "release"} else 3
+        if waypoint.phase == "retreat" and context["stable_steps"] >= 3:
+            return
+        if consecutive >= hold:
+            return
+    raise RuntimeError(f"geometry-aware teacher failed to reach {waypoint.phase}")
+
+
+def _teacher_result(
+    *,
+    task: Any,
+    prop: Any,
+    timing: dict[str, Any],
+    configuration: dict[str, Any],
+    layout: dict[str, Any],
+    context: dict[str, Any],
+    trace: TeacherTrace,
+) -> dict[str, Any]:
+    """Build the native teacher execution and camera provenance report."""
+
+    from npa.workflows.franka_rl_environment import POLICY_INTERCHANGE_SCAFFOLD_TASK
+
+    return {
+        "schema": "npa.sim2real.policy_interchange.native_teacher.v1",
+        "execution_valid": bool(trace.controls),
+        "task_success": tuple(context["ordered_event_steps"]) == task.success_events,
+        "ordered_event_steps": context["ordered_event_steps"],
+        "native_scaffold_task": POLICY_INTERCHANGE_SCAFFOLD_TASK,
+        "timing": timing,
+        "controller": configuration,
+        "layout": _serializable_layout(layout),
+        "waypoints": _teacher_waypoint_receipts(prop, task),
+        "controls": trace.controls,
+        "physics": trace.physics,
+        "camera_hashes": trace.camera_hashes,
+        "camera_clocks": trace.camera_clocks,
+        "visual_evidence": trace.visuals,
+        "privileged_object_state_policy_input": False,
+    }
+
+
+def _serializable_layout(layout: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value.tolist() if hasattr(value, "tolist") else value
+        for key, value in layout.items()
+    }
+
+
+def _teacher_waypoint_receipts(prop: Any, task: Any) -> list[dict[str, Any]]:
+    return [
+        {
+            "phase": item.phase,
+            "world_from_ee": item.world_from_ee.to_dict(),
+            "gripper_closed": item.gripper_closed,
+        }
+        for item in surface_teacher_waypoints(prop, task)
+    ]
+
+
+def _run_teacher(
+    *,
+    gym: Any,
+    args: argparse.Namespace,
+    robot: Any,
+    robot_spec: dict[str, Any],
+    prop: Any,
+    task: Any,
+    object_usd_path: Path,
+    control_hz: float,
+    episode_directory: Path | None = None,
+) -> dict[str, Any]:
+    """Execute one geometry-aware native teacher before policy evaluation."""
+
+    env, timing, configuration = _teacher_environment(
+        gym, args, robot, robot_spec, prop, task, object_usd_path, control_hz
+    )
     try:
         env.reset(seed=args.seed)
         native = env.unwrapped
         layout = _teacher_layout(native, robot)
         initial_z = _reference_position(native, prop)[2]
-        context = {
-            "ordered_event_steps": {},
-            "required_events": task.success_events,
-            "retreat_distance_m": task.retreat_distance_m,
-            "stable_steps": 0,
-        }
-        controls: list[dict[str, Any]] = []
-        physics: list[dict[str, Any]] = []
-        camera_hashes: list[dict[str, str]] = []
-        camera_clocks: list[dict[str, Any]] = []
-        dataset_states: list[list[float]] = []
-        dataset_actions: list[list[float]] = []
-        dataset_frames: list[dict[str, tuple[bytes, int, int, str]]] = []
-        dataset_timestamps: list[float] = []
-        visual_evidence: list[dict[str, Any]] = []
-        global_step = 0
-        for waypoint in surface_teacher_waypoints(prop, task):
-            consecutive = 0
-            for phase_step in range(90):
-                hashes, frames, capture_timestamps, camera_world_poses = (
-                    _teacher_camera_capture(native, robot)
-                )
-                measured_before = measured_policy_state(native, robot)
-                if phase_step == 0:
-                    for key, (payload, width, height, role) in frames.items():
-                        relative = (
-                            Path("visuals") / f"teacher-{waypoint.phase}-{role}.png"
-                        )
-                        visual_evidence.append(
-                            {
-                                "step": global_step,
-                                "phase": waypoint.phase,
-                                "camera_key": key,
-                                "camera_role": role,
-                                **_write_png_rgb8(
-                                    args.output_path / relative,
-                                    payload,
-                                    width,
-                                    height,
-                                ),
-                                "path": relative.as_posix(),
-                            }
-                        )
-                command, position_error, orientation_error = _teacher_command(
-                    native, layout, waypoint
-                )
-                before = _sim_time(native)
-                if any(
-                    value > before + 1.0e-9 for value in capture_timestamps.values()
-                ):
-                    raise RuntimeError("teacher camera capture followed its control")
-                _, _, terminated, truncated, _ = env.step(command)
-                after = _sim_time(native)
-                if bool(terminated[0]) or bool(truncated[0]):
-                    raise RuntimeError(f"native teacher reset during {waypoint.phase}")
-                sample = _sample(native, robot, prop, task, initial_z)
-                measured_after = measured_policy_state(native, robot)
-                _update_events(context, sample, global_step)
-                controls.append(
-                    {
-                        "step": global_step,
-                        "phase": waypoint.phase,
-                        "command_application_time_s": before,
-                        "resulting_state_time_s": after,
-                        "native_action": command[0].detach().cpu().tolist(),
-                        "position_error_m": position_error,
-                        "orientation_error_rad": orientation_error,
-                        "gripper_closed": waypoint.gripper_closed,
-                    }
-                )
-                physics.append(sample)
-                camera_hashes.append(hashes)
-                camera_clocks.append(
-                    {
-                        "step": global_step,
-                        "capture_timestamps_s": capture_timestamps,
-                        "camera_world_poses": camera_world_poses,
-                        "command_application_time_s": before,
-                        "resulting_state_time_s": after,
-                    }
-                )
-                dataset_states.append(
-                    [measured_before[name] for name in robot.measured_state_names]
-                )
-                dataset_actions.append(
-                    [measured_after[name] for name in robot.measured_state_names]
-                )
-                dataset_frames.append(frames)
-                dataset_timestamps.append(before)
-                global_step += 1
-                converged = position_error < 0.012 and orientation_error < 0.08
-                consecutive = consecutive + 1 if converged else 0
-                hold = 12 if waypoint.phase in {"grasp", "release"} else 3
-                if waypoint.phase == "retreat" and context["stable_steps"] >= 3:
-                    break
-                if consecutive >= hold:
-                    break
-            else:
-                raise RuntimeError(
-                    f"geometry-aware teacher failed to reach {waypoint.phase}"
-                )
-        result = {
-            "schema": "npa.sim2real.policy_interchange.native_teacher.v1",
-            "execution_valid": bool(controls),
-            "task_success": tuple(context["ordered_event_steps"])
-            == task.success_events,
-            "ordered_event_steps": context["ordered_event_steps"],
-            "native_scaffold_task": POLICY_INTERCHANGE_SCAFFOLD_TASK,
-            "timing": timing,
-            "controller": configuration,
-            "layout": {
-                key: value.tolist() if hasattr(value, "tolist") else value
-                for key, value in layout.items()
-            },
-            "waypoints": [
-                {
-                    "phase": item.phase,
-                    "world_from_ee": item.world_from_ee.to_dict(),
-                    "gripper_closed": item.gripper_closed,
-                }
-                for item in surface_teacher_waypoints(prop, task)
-            ],
-            "controls": controls,
-            "physics": physics,
-            "camera_hashes": camera_hashes,
-            "camera_clocks": camera_clocks,
-            "visual_evidence": visual_evidence,
-            "privileged_object_state_policy_input": False,
-        }
-        if episode_directory is not None:
-            result["dataset_episode"] = _write_teacher_episode(
-                directory=episode_directory,
-                robot=robot,
-                task=task,
-                prop=prop,
-                states=dataset_states,
-                actions=dataset_actions,
-                camera_frames=dataset_frames,
-                timestamps=dataset_timestamps,
-                teacher=result,
-            )
-        return result
+        context = _event_context(task)
+        trace = _execute_teacher_waypoints(
+            env, native, args, robot, prop, task, layout, initial_z, context
+        )
+        return _finish_teacher(
+            robot=robot,
+            prop=prop,
+            task=task,
+            timing=timing,
+            configuration=configuration,
+            layout=layout,
+            context=context,
+            trace=trace,
+            episode_directory=episode_directory,
+        )
     finally:
         env.close()
 
 
-def run(args: argparse.Namespace) -> dict[str, Any]:
-    import gymnasium as gym
+def _event_context(task: Any) -> dict[str, Any]:
+    return {
+        "ordered_event_steps": {},
+        "required_events": task.success_events,
+        "retreat_distance_m": task.retreat_distance_m,
+        "stable_steps": 0,
+    }
 
-    from npa.workflows.franka_rl_environment import (
-        POLICY_INTERCHANGE_SCAFFOLD_TASK,
-        configure_policy_interchange_cameras,
-        configure_policy_interchange_robot,
-        configure_policy_interchange_surface_task,
-        policy_interchange_environment_config,
+
+def _execute_teacher_waypoints(
+    env: Any,
+    native: Any,
+    args: argparse.Namespace,
+    robot: Any,
+    prop: Any,
+    task: Any,
+    layout: dict[str, Any],
+    initial_z: float,
+    context: dict[str, Any],
+) -> TeacherTrace:
+    """Execute every geometry-derived phase into one evidence trace."""
+
+    trace = TeacherTrace()
+    for waypoint in surface_teacher_waypoints(prop, task):
+        _teacher_waypoint(
+            env=env,
+            native=native,
+            args=args,
+            robot=robot,
+            prop=prop,
+            task=task,
+            layout=layout,
+            waypoint=waypoint,
+            initial_z=initial_z,
+            context=context,
+            trace=trace,
+        )
+    return trace
+
+
+def _finish_teacher(
+    *,
+    robot: Any,
+    prop: Any,
+    task: Any,
+    timing: dict[str, Any],
+    configuration: dict[str, Any],
+    layout: dict[str, Any],
+    context: dict[str, Any],
+    trace: TeacherTrace,
+    episode_directory: Path | None,
+) -> dict[str, Any]:
+    """Finalize teacher evidence and optionally seal its dataset episode."""
+
+    result = _teacher_result(
+        task=task,
+        prop=prop,
+        timing=timing,
+        configuration=configuration,
+        layout=layout,
+        context=context,
+        trace=trace,
     )
+    if episode_directory is not None:
+        result["dataset_episode"] = _write_teacher_episode(
+            directory=episode_directory,
+            robot=robot,
+            task=task,
+            prop=prop,
+            states=trace.states,
+            actions=trace.actions,
+            camera_frames=trace.frames,
+            timestamps=trace.timestamps,
+            teacher=result,
+        )
+    return result
+
+
+def _runtime_inputs(args: argparse.Namespace) -> RuntimeInputs:
+    """Load and bind all immutable rollout inputs before Isaac starts."""
+
     from npa.workflows.sim2real.interchange_contract import assert_policy_compatible
 
     preparation = _load(args.preparation_path)
@@ -727,16 +1180,44 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     if not isinstance(robot_spec, dict):
         raise RuntimeError("preparation lacks normalized RobotSpec bytes")
     robot = robot_sensor_profile_from_dict(preparation.get("robot") or {})
-    if (
-        robot_manifest.get("embodiment_digest") != robot.identity
-        or robot_manifest.get("source_tree_sha256") != robot.bundle_sha256
-        or robot_manifest.get("usd_sha256") != _sha256(args.robot_usd_path)
-    ):
-        raise RuntimeError("fetched robot asset manifest does not bind this profile")
+    _assert_robot_asset_binding(args, robot_manifest, robot)
     prop = rigid_object_profile_from_dict(preparation.get("object") or {})
     task = surface_placement_task_from_dict(preparation.get("task") or {})
     policy = policy_profile_from_dict(preparation.get("policy") or {})
     loaded = receipt.get("interchange") or {}
+    policy = _bound_policy(receipt, loaded, robot, task, policy)
+    assert_policy_compatible(robot, task, policy)
+    return RuntimeInputs(
+        receipt=receipt,
+        robot_manifest=robot_manifest,
+        robot_spec=robot_spec,
+        robot=robot,
+        prop=prop,
+        task=task,
+        policy=policy,
+        loaded=loaded,
+        object_usd_path=_local_object_asset(args.input_path, prop),
+    )
+
+
+def _assert_robot_asset_binding(
+    args: argparse.Namespace, manifest: dict[str, Any], robot: Any
+) -> None:
+    """Reject robot bytes that do not match the resolved profile."""
+
+    if (
+        manifest.get("embodiment_digest") != robot.identity
+        or manifest.get("source_tree_sha256") != robot.bundle_sha256
+        or manifest.get("usd_sha256") != _sha256(args.robot_usd_path)
+    ):
+        raise RuntimeError("fetched robot asset manifest does not bind this profile")
+
+
+def _bound_policy(
+    receipt: dict[str, Any], loaded: dict[str, Any], robot: Any, task: Any, policy: Any
+) -> Any:
+    """Bind the declared policy to the exact ready service checkpoint."""
+
     if (
         receipt.get("status") != "ready"
         or policy.backend != "lerobot_smolvla"
@@ -745,180 +1226,325 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         or loaded.get("task_identity") != task.identity
     ):
         raise RuntimeError("service, robot, task and policy identities are not bound")
-    policy = replace(
+    return replace(
         policy,
         checkpoint_sha256=str(loaded.get("checkpoint_sha256") or ""),
         normalization_identity=str(loaded.get("normalization_identity") or ""),
     )
-    assert_policy_compatible(robot, task, policy)
-    object_usd_path = _local_object_asset(args.input_path, prop)
-    args.output_path.mkdir(parents=True, exist_ok=False)
-    teacher = _run_teacher(
-        gym=gym,
-        args=args,
-        robot=robot,
-        robot_spec=robot_spec,
-        prop=prop,
-        task=task,
-        object_usd_path=object_usd_path,
-        control_hz=policy.action.control_hz,
+
+
+def _policy_environment(
+    gym: Any, args: argparse.Namespace, inputs: RuntimeInputs
+) -> tuple[Any, dict]:
+    """Configure the sealed embodiment for absolute-joint policy control."""
+
+    from npa.workflows.franka_rl_environment import (
+        POLICY_INTERCHANGE_SCAFFOLD_TASK,
+        configure_policy_interchange_cameras,
+        configure_policy_interchange_robot,
+        configure_policy_interchange_surface_task,
+        policy_interchange_environment_config,
     )
+
     config = policy_interchange_environment_config(
-        seed=args.seed, control_hz=policy.action.control_hz
+        seed=args.seed, control_hz=inputs.policy.action.control_hz
     )
     robot_configuration = configure_policy_interchange_robot(
-        config, robot, robot_spec, args.robot_usd_path
+        config, inputs.robot, inputs.robot_spec, args.robot_usd_path
     )
     configure_policy_interchange_surface_task(
-        config, robot, prop, task, object_usd_path=object_usd_path
+        config,
+        inputs.robot,
+        inputs.prop,
+        inputs.task,
+        object_usd_path=inputs.object_usd_path,
     )
-    configure_policy_interchange_cameras(config, robot)
-    env = gym.make(POLICY_INTERCHANGE_SCAFFOLD_TASK, cfg=config)
+    configure_policy_interchange_cameras(config, inputs.robot)
+    return gym.make(POLICY_INTERCHANGE_SCAFFOLD_TASK, cfg=config), robot_configuration
+
+
+def _live_binding(
+    native: Any, inputs: RuntimeInputs, configuration: dict
+) -> tuple[dict, dict]:
+    """Bind the live Isaac articulation to the sealed robot asset."""
+
+    layout = action_layout_from_live_isaac(native, inputs.robot)
+    binding = assert_live_robot_matches_profile(
+        robot_joint_names=native.scene["robot"].joint_names,
+        robot_body_names=native.scene["robot"].body_names,
+        layout=layout,
+        profile=inputs.robot,
+    )
+    manifest = inputs.robot_manifest
+    embodiment = {
+        "schema": "npa.sim2real.exact_robot_asset_binding.v1",
+        "robot_identity": inputs.robot.identity,
+        "source_sha256": inputs.robot.source_sha256,
+        "source_tree_sha256": inputs.robot.bundle_sha256,
+        "usd_sha256": manifest["usd_sha256"],
+        "usd_size_bytes": manifest["usd_size_bytes"],
+        "asset_tree_sha256": manifest["asset_tree_sha256"],
+        "converter": manifest["converter"],
+        "configuration": configuration,
+        "live_joint_names": list(native.scene["robot"].joint_names),
+        "live_body_names": list(native.scene["robot"].body_names),
+        "exact_resolved_usd_consumed": True,
+    }
+    return binding, embodiment
+
+
+def _policy_visuals(
+    args: argparse.Namespace,
+    trace: PolicyTrace,
+    decision: int,
+    frames: dict[str, tuple[bytes, int, int, str]],
+) -> None:
+    """Persist one selected factual policy camera pair."""
+
+    for key, (payload, width, height, role) in frames.items():
+        relative = Path("visuals") / f"decision-{decision:06d}-{role}.png"
+        trace.visuals.append(
+            {
+                "decision": decision,
+                "camera_key": key,
+                "camera_role": role,
+                **_write_png_rgb8(args.output_path / relative, payload, width, height),
+                "path": relative.as_posix(),
+            }
+        )
+
+
+def _policy_step(
+    *,
+    env: Any,
+    native: Any,
+    args: argparse.Namespace,
+    inputs: RuntimeInputs,
+    client: SmolVLAPolicyClient,
+    decision: int,
+    initial_z: float,
+    context: dict[str, Any],
+    trace: PolicyTrace,
+    evidence_decisions: set[int],
+) -> None:
+    """Capture, infer, apply, and record one causal policy decision."""
+
+    observation, hashes, frames, clock = _observation(
+        native, inputs.robot, inputs.policy, decision
+    )
+    if decision in evidence_decisions:
+        _policy_visuals(args, trace, decision, frames)
+    output, inference = client.infer_typed(
+        observation=observation, policy=inputs.policy
+    )
+    if len(output.action_chunk) != 1:
+        raise RuntimeError("native service must return one current queued action")
+    control = apply_absolute_joint_target(
+        env, output.action_chunk[0], profile=inputs.robot
+    )
+    if control["terminated"] or control["truncated"]:
+        raise RuntimeError("native policy environment reset during evaluation")
+    sample = _sample(native, inputs.robot, inputs.prop, inputs.task, initial_z)
+    _update_events(context, sample, decision)
+    trace.controls.append(control)
+    trace.physics.append(sample)
+    trace.inference.append(inference)
+    trace.camera_hashes.append(hashes)
+    trace.observation_clocks.append(clock)
+
+
+def _policy_rollout(
+    env: Any,
+    native: Any,
+    args: argparse.Namespace,
+    inputs: RuntimeInputs,
+    client: SmolVLAPolicyClient,
+) -> tuple[dict[str, Any], PolicyTrace, set[int]]:
+    """Run the fixed decision cohort and retain every causal receipt."""
+
+    context = {
+        "ordered_event_steps": {},
+        "required_events": inputs.task.success_events,
+        "retreat_distance_m": inputs.task.retreat_distance_m,
+        "stable_steps": 0,
+    }
+    trace = PolicyTrace()
+    evidence_decisions = _visual_evidence_decisions(args.decisions)
+    initial_z = _reference_position(native, inputs.prop)[2]
+    for decision in range(args.decisions):
+        _policy_step(
+            env=env,
+            native=native,
+            args=args,
+            inputs=inputs,
+            client=client,
+            decision=decision,
+            initial_z=initial_z,
+            context=context,
+            trace=trace,
+            evidence_decisions=evidence_decisions,
+        )
+    return context, trace, evidence_decisions
+
+
+def _success_contract(task: Any) -> dict[str, Any]:
+    return {
+        "required_event_order": list(task.success_events),
+        "target_xy_distance_m_lt": TARGET_DISTANCE_M,
+        "object_speed_m_s_lt": STABLE_SPEED_M_S,
+        "stable_steps_gte": STABLE_STEPS,
+        "contact_force_n_gt": CONTACT_FORCE_N,
+        "lift_delta_m_gte": task.lift_delta_m,
+        "retreat_distance_m_gte": task.retreat_distance_m,
+    }
+
+
+def _object_asset(prop: Any) -> dict[str, Any]:
+    return {
+        "identity": prop.identity,
+        "source_sha256": prop.source_sha256,
+        "bundle_sha256": prop.bundle_sha256,
+        "mass_kg": prop.mass_kg,
+        "static_friction": prop.static_friction,
+        "dynamic_friction": prop.dynamic_friction,
+        "restitution": prop.restitution,
+        "exact_local_bytes_consumed": True,
+    }
+
+
+def _service_provenance(inputs: RuntimeInputs) -> dict[str, Any]:
+    image = str(inputs.receipt.get("runtime_image") or "")
+    return {
+        "source_commit": inputs.receipt.get("source_commit"),
+        "runtime_image": image,
+        "image_digest": image.rsplit("@sha256:", 1)[-1],
+        "checkpoint_sha256": inputs.loaded.get("checkpoint_sha256"),
+        "checkpoint_manifest_sha256": inputs.loaded.get("manifest_sha256"),
+    }
+
+
+def _execution_report(
+    *,
+    args: argparse.Namespace,
+    inputs: RuntimeInputs,
+    teacher: dict[str, Any],
+    binding: dict,
+    embodiment: dict,
+    reset: dict,
+    context: dict[str, Any],
+    trace: PolicyTrace,
+    evidence_decisions: set[int],
+) -> dict[str, Any]:
+    """Assemble the immutable execution, provenance, and camera report."""
+
+    from npa.workflows.franka_rl_environment import POLICY_INTERCHANGE_SCAFFOLD_TASK
+
+    report = {
+        "schema": "npa.sim2real.policy_interchange.non_franka_execution.v1",
+        "execution_valid": len(trace.controls) == args.decisions,
+        "task_success": tuple(context["ordered_event_steps"])
+        == inputs.task.success_events,
+        "ordered_event_steps": context["ordered_event_steps"],
+        "success_contract": _success_contract(inputs.task),
+        "robot_binding": binding,
+        "embodiment": embodiment,
+        "robot_asset": inputs.robot_manifest,
+        "object_asset": _object_asset(inputs.prop),
+        **_report_identity_block(inputs, teacher),
+        "native_scaffold_task": POLICY_INTERCHANGE_SCAFFOLD_TASK,
+        "service_provenance": _service_provenance(inputs),
+        "service_reset": reset,
+        "teacher": teacher,
+        "seed": args.seed,
+        "decisions": args.decisions,
+    }
+    report.update(_trace_report(args, trace, evidence_decisions))
+    return report
+
+
+def _report_identity_block(
+    inputs: RuntimeInputs, teacher: dict[str, Any]
+) -> dict[str, Any]:
+    return {
+        "robot_identity": inputs.robot.identity,
+        "object_identity": inputs.prop.identity,
+        "task_identity": inputs.task.identity,
+        "timing": teacher["timing"],
+        "policy_identity": inputs.policy.identity,
+        "checkpoint_sha256": inputs.policy.checkpoint_sha256,
+        "normalization_identity": inputs.policy.normalization_identity,
+    }
+
+
+def _trace_report(
+    args: argparse.Namespace, trace: PolicyTrace, evidence_decisions: set[int]
+) -> dict[str, Any]:
+    return {
+        "controls": trace.controls,
+        "physics": trace.physics,
+        "inference": trace.inference,
+        "camera_hashes": trace.camera_hashes,
+        "observation_clocks": trace.observation_clocks,
+        "visual_evidence": trace.visuals,
+        "visual_evidence_decisions": sorted(evidence_decisions),
+        "all_camera_decisions_hashed": len(trace.camera_hashes) == args.decisions,
+        "privileged_object_state_policy_input": False,
+        "physical_robot_tested": False,
+    }
+
+
+def run(args: argparse.Namespace) -> dict[str, Any]:
+    """Execute the sealed teacher and SmolVLA policy in native Isaac."""
+
+    import gymnasium as gym
+
+    inputs = _runtime_inputs(args)
+    args.output_path.mkdir(parents=True, exist_ok=False)
+    teacher = _policy_teacher(gym, args, inputs)
+    env, configuration = _policy_environment(gym, args, inputs)
     try:
         env.reset(seed=args.seed)
         native = env.unwrapped
-        layout = action_layout_from_live_isaac(native, robot)
-        binding = assert_live_robot_matches_profile(
-            robot_joint_names=native.scene["robot"].joint_names,
-            robot_body_names=native.scene["robot"].body_names,
-            layout=layout,
-            profile=robot,
+        binding, embodiment = _live_binding(native, inputs, configuration)
+        client = _policy_client(inputs)
+        reset = client.reset(policy=inputs.policy)
+        context, trace, evidence = _policy_rollout(env, native, args, inputs, client)
+        report = _execution_report(
+            args=args,
+            inputs=inputs,
+            teacher=teacher,
+            binding=binding,
+            embodiment=embodiment,
+            reset=reset,
+            context=context,
+            trace=trace,
+            evidence_decisions=evidence,
         )
-        embodiment = {
-            "schema": "npa.sim2real.exact_robot_asset_binding.v1",
-            "robot_identity": robot.identity,
-            "source_sha256": robot.source_sha256,
-            "source_tree_sha256": robot.bundle_sha256,
-            "usd_sha256": robot_manifest["usd_sha256"],
-            "usd_size_bytes": robot_manifest["usd_size_bytes"],
-            "asset_tree_sha256": robot_manifest["asset_tree_sha256"],
-            "converter": robot_manifest["converter"],
-            "configuration": robot_configuration,
-            "live_joint_names": list(native.scene["robot"].joint_names),
-            "live_body_names": list(native.scene["robot"].body_names),
-            "exact_resolved_usd_consumed": True,
-        }
-        client = SmolVLAPolicyClient(
-            str(receipt["service_host"]), int(receipt.get("port", 8080))
-        )
-        reset = client.reset(policy=policy)
-        initial_z = _reference_position(native, prop)[2]
-        context = {
-            "ordered_event_steps": {},
-            "required_events": task.success_events,
-            "retreat_distance_m": task.retreat_distance_m,
-            "stable_steps": 0,
-        }
-        controls, physics, inference, camera_hashes, observation_clocks = (
-            [],
-            [],
-            [],
-            [],
-            [],
-        )
-        visual_evidence: list[dict[str, Any]] = []
-        evidence_decisions = _visual_evidence_decisions(args.decisions)
-        for decision in range(args.decisions):
-            observation, hashes, frames, observation_clock = _observation(
-                native, robot, policy, decision
-            )
-            if decision in evidence_decisions:
-                for key, (payload, width, height, role) in frames.items():
-                    relative = Path("visuals") / f"decision-{decision:06d}-{role}.png"
-                    visual_evidence.append(
-                        {
-                            "decision": decision,
-                            "camera_key": key,
-                            "camera_role": role,
-                            **_write_png_rgb8(
-                                args.output_path / relative, payload, width, height
-                            ),
-                            "path": relative.as_posix(),
-                        }
-                    )
-            output, inference_receipt = client.infer_typed(
-                observation=observation, policy=policy
-            )
-            if len(output.action_chunk) != 1:
-                raise RuntimeError(
-                    "native service must return one current queued action"
-                )
-            control = apply_absolute_joint_target(
-                env, output.action_chunk[0], profile=robot
-            )
-            if control["terminated"] or control["truncated"]:
-                raise RuntimeError("native policy environment reset during evaluation")
-            sample = _sample(native, robot, prop, task, initial_z)
-            _update_events(context, sample, decision)
-            controls.append(control)
-            physics.append(sample)
-            inference.append(inference_receipt)
-            camera_hashes.append(hashes)
-            observation_clocks.append(observation_clock)
-        success = tuple(context["ordered_event_steps"]) == task.success_events
-        report = {
-            "schema": "npa.sim2real.policy_interchange.non_franka_execution.v1",
-            "execution_valid": len(controls) == args.decisions,
-            "task_success": success,
-            "ordered_event_steps": context["ordered_event_steps"],
-            "success_contract": {
-                "required_event_order": list(task.success_events),
-                "target_xy_distance_m_lt": TARGET_DISTANCE_M,
-                "object_speed_m_s_lt": STABLE_SPEED_M_S,
-                "stable_steps_gte": STABLE_STEPS,
-                "contact_force_n_gt": CONTACT_FORCE_N,
-                "lift_delta_m_gte": task.lift_delta_m,
-                "retreat_distance_m_gte": task.retreat_distance_m,
-            },
-            "robot_binding": binding,
-            "embodiment": embodiment,
-            "robot_asset": robot_manifest,
-            "object_asset": {
-                "identity": prop.identity,
-                "source_sha256": prop.source_sha256,
-                "bundle_sha256": prop.bundle_sha256,
-                "mass_kg": prop.mass_kg,
-                "static_friction": prop.static_friction,
-                "dynamic_friction": prop.dynamic_friction,
-                "restitution": prop.restitution,
-                "exact_local_bytes_consumed": True,
-            },
-            "robot_identity": robot.identity,
-            "object_identity": prop.identity,
-            "task_identity": task.identity,
-            "native_scaffold_task": POLICY_INTERCHANGE_SCAFFOLD_TASK,
-            "timing": teacher["timing"],
-            "policy_identity": policy.identity,
-            "checkpoint_sha256": policy.checkpoint_sha256,
-            "normalization_identity": policy.normalization_identity,
-            "service_provenance": {
-                "source_commit": receipt.get("source_commit"),
-                "runtime_image": receipt.get("runtime_image"),
-                "image_digest": str(receipt.get("runtime_image") or "").rsplit(
-                    "@sha256:", 1
-                )[-1],
-                "checkpoint_sha256": loaded.get("checkpoint_sha256"),
-                "checkpoint_manifest_sha256": loaded.get("manifest_sha256"),
-            },
-            "service_reset": reset,
-            "teacher": teacher,
-            "seed": args.seed,
-            "decisions": args.decisions,
-            "controls": controls,
-            "physics": physics,
-            "inference": inference,
-            "camera_hashes": camera_hashes,
-            "observation_clocks": observation_clocks,
-            "visual_evidence": visual_evidence,
-            "visual_evidence_decisions": sorted(evidence_decisions),
-            "all_camera_decisions_hashed": len(camera_hashes) == args.decisions,
-            "privileged_object_state_policy_input": False,
-            "physical_robot_tested": False,
-        }
         write_json(args.output_path / "report.json", report)
         return report
     finally:
         env.close()
+
+
+def _policy_teacher(
+    gym: Any, args: argparse.Namespace, inputs: RuntimeInputs
+) -> dict[str, Any]:
+    return _run_teacher(
+        gym=gym,
+        args=args,
+        robot=inputs.robot,
+        robot_spec=inputs.robot_spec,
+        prop=inputs.prop,
+        task=inputs.task,
+        object_usd_path=inputs.object_usd_path,
+        control_hz=inputs.policy.action.control_hz,
+    )
+
+
+def _policy_client(inputs: RuntimeInputs) -> SmolVLAPolicyClient:
+    return SmolVLAPolicyClient(
+        str(inputs.receipt["service_host"]), int(inputs.receipt.get("port", 8080))
+    )
 
 
 def _sim_time(native: Any) -> float:
@@ -926,6 +1552,8 @@ def _sim_time(native: Any) -> float:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the native Isaac policy-rollout argument parser."""
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input-path", type=Path, required=True)
     parser.add_argument("--preparation-path", type=Path, required=True)
@@ -939,6 +1567,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run one native Isaac rollout and emit its factual report."""
+
     args = build_parser().parse_args(argv)
     if args.decisions < 1 or args.seed < 0:
         raise ValueError("decisions must be positive and seed nonnegative")

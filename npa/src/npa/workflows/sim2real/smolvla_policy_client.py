@@ -88,6 +88,8 @@ class SmolVLAPolicyClient:
     def infer_typed(
         self, *, observation: Any, policy: Any
     ) -> tuple[Any, dict[str, Any]]:
+        """Infer one typed action and return transport provenance."""
+
         if policy.backend != "lerobot_smolvla":
             raise SmolVLAPolicyClientError(
                 "typed SmolVLA client requires lerobot_smolvla"
@@ -96,7 +98,19 @@ class SmolVLAPolicyClient:
         body = json.dumps(
             request_payload, sort_keys=True, separators=(",", ":")
         ).encode("utf-8")
-        request = urllib.request.Request(
+        request = self._inference_request(body)
+        started = time.perf_counter()
+        response_body = self._send_inference(request)
+        output = self._typed_output(response_body, observation, policy)
+        latency_ms = round((time.perf_counter() - started) * 1000.0, 3)
+        return output, self._inference_receipt(
+            body, response_body, latency_ms, observation
+        )
+
+    def _inference_request(self, body: bytes) -> urllib.request.Request:
+        """Build one authenticated request without ambient proxy routing."""
+
+        return urllib.request.Request(
             self._url,
             data=body,
             method="POST",
@@ -105,15 +119,23 @@ class SmolVLAPolicyClient:
                 "Content-Type": "application/json",
             },
         )
-        started = time.perf_counter()
+
+    def _send_inference(self, request: urllib.request.Request) -> bytes:
+        """Send one request and normalize transport failures."""
+
         try:
             opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
             with opener.open(request, timeout=self._timeout_s) as response:
-                response_body = response.read()
+                return response.read()
         except (OSError, urllib.error.HTTPError) as exc:
             raise SmolVLAPolicyClientError(
                 f"SmolVLA inference request failed: {exc}"
             ) from exc
+
+    @staticmethod
+    def _typed_output(response_body: bytes, observation: Any, policy: Any) -> Any:
+        """Decode and identity-bind one typed response."""
+
         try:
             payload = json.loads(response_body)
             output = policy_output_from_wire(payload, expected_action=policy.action)
@@ -133,11 +155,18 @@ class SmolVLAPolicyClient:
             raise SmolVLAPolicyClientError(
                 "SmolVLA response identities do not match the request/profile"
             )
-        latency_ms = round((time.perf_counter() - started) * 1000.0, 3)
-        return output, {
+        return output
+
+    @staticmethod
+    def _inference_receipt(
+        body: bytes, response: bytes, latency_ms: float, observation: Any
+    ) -> dict[str, Any]:
+        """Build transport and camera-byte provenance for one response."""
+
+        return {
             "backend": "lerobot_smolvla",
             "request_sha256": hashlib.sha256(body).hexdigest(),
-            "response_sha256": hashlib.sha256(response_body).hexdigest(),
+            "response_sha256": hashlib.sha256(response).hexdigest(),
             "latency_ms": latency_ms,
             "round_trip_ms": latency_ms,
             "deterministic_noise_coupled": False,

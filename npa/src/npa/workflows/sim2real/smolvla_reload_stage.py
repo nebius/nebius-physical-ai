@@ -76,25 +76,10 @@ def build_reload_receipt(
     hardware_topology: str,
 ) -> dict[str, Any]:
     """Bind the loaded native objects back to the pre-submit contract."""
-
-    compatibility = preparation.get("policy_compatibility") or {}
     manifest = runtime.manifest
-    expected = {
-        "backend": compatibility.get("backend"),
-        "policy_identity": compatibility.get("policy_identity"),
-        "robot_identity": compatibility.get("robot_identity"),
-        "task_identity": compatibility.get("task_identity"),
-    }
+    expected = _expected_binding(preparation)
     actual = {key: manifest.get(key) for key in expected}
-    policy = preparation.get("policy") or {}
-    stable_match = bool(
-        actual == expected
-        and manifest.get("action") == policy.get("action")
-        and manifest.get("measured_state_names") == policy.get("measured_state_names")
-        and [row.get("key") for row in manifest.get("cameras") or []]
-        == policy.get("camera_keys")
-    )
-    if not stable_match:
+    if not _stable_policy_binding(manifest, actual, expected, preparation):
         raise SmolVLAReloadError(
             "loaded SmolVLA checkpoint differs from the prepared policy contract"
         )
@@ -125,7 +110,39 @@ def build_reload_receipt(
     }
 
 
+def _expected_binding(preparation: dict[str, Any]) -> dict[str, Any]:
+    """Extract immutable policy identities from preparation."""
+
+    compatibility = preparation.get("policy_compatibility") or {}
+    return {
+        "backend": compatibility.get("backend"),
+        "policy_identity": compatibility.get("policy_identity"),
+        "robot_identity": compatibility.get("robot_identity"),
+        "task_identity": compatibility.get("task_identity"),
+    }
+
+
+def _stable_policy_binding(
+    manifest: dict[str, Any],
+    actual: dict[str, Any],
+    expected: dict[str, Any],
+    preparation: dict[str, Any],
+) -> bool:
+    """Compare native processors and action metadata to preparation."""
+
+    policy = preparation.get("policy") or {}
+    return bool(
+        actual == expected
+        and manifest.get("action") == policy.get("action")
+        and manifest.get("measured_state_names") == policy.get("measured_state_names")
+        and [row.get("key") for row in manifest.get("cameras") or []]
+        == policy.get("camera_keys")
+    )
+
+
 def run(args: argparse.Namespace) -> dict[str, Any]:
+    """Reload the exact native checkpoint and validate held-out actions."""
+
     with tempfile.TemporaryDirectory(prefix="npa-smolvla-reload-") as directory:
         root = Path(directory)
         preparation = read_json(args.preparation_uri, directory=root / "preparation")
@@ -155,6 +172,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the native SmolVLA reload-stage argument parser."""
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoint-uri", required=True)
     parser.add_argument("--preparation-uri", required=True)
@@ -165,6 +184,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Execute checkpoint reload validation and publish its receipt."""
+
     result = run(build_parser().parse_args(argv))
     print(json.dumps(result, sort_keys=True), flush=True)
     return 0
