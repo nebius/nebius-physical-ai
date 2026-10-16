@@ -84,7 +84,7 @@ def test_resolve_local_rrd_path_env_override(
     )
 
 
-def test_regen_heldout_gate_rejects_rollout_only_evidence() -> None:
+def test_regen_heldout_gate_requires_camera_evidence() -> None:
     rollout_only = Sim2RealVizResult(
         status="succeeded",
         output_rrd_path="/tmp/rollout-only.rrd",
@@ -100,7 +100,7 @@ def test_regen_heldout_gate_rejects_rollout_only_evidence() -> None:
         output_rrd_path="/tmp/sealed-scores.rrd",
         heldout_env_count=1,
     )
-    assert _has_regen_heldout_evidence(sealed_scores)
+    assert not _has_regen_heldout_evidence(sealed_scores)
 
 
 @pytest.mark.parametrize("config_factory", [_config, _artifact_config])

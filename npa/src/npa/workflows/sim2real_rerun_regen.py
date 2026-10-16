@@ -3114,9 +3114,9 @@ def _emit_regen_mcap(
 
 
 def _has_regen_heldout_evidence(result: Sim2RealVizResult) -> bool:
-    """Return whether regeneration has held-out render or score evidence."""
+    """Return whether regeneration has held-out render evidence."""
 
-    return result.heldout_frame_count > 0 or result.heldout_env_count > 0
+    return result.heldout_frame_count > 0
 
 
 def _assert_regen_heldout_frames(result: Sim2RealVizResult) -> None:
