@@ -21,6 +21,7 @@ from npa.workflows.sim2real_rerun_regen import (
     _latest_completed_inner_evidence_rel,
     _latest_inner_evidence_rel,
     _policy_access_record,
+    _regen_result_from_viz,
     _stage_components,
     _update_stage14_component,
     regen_sim2real_rrd,
@@ -125,6 +126,19 @@ def test_regen_sim2real_rrd_requires_factual_observation_evidence(
 
     with pytest.raises(Sim2RealRerunRegenError, match="heldout_frame_count=0"):
         regen_sim2real_rrd(_config(), local_dir=local_dir, sync_inputs=False)
+
+
+def test_regen_result_rejects_rollout_only_observations(tmp_path: Path) -> None:
+    class RolloutOnlyResult:
+        output_rrd_path = str(tmp_path / "sim2real.rrd")
+        heldout_frame_count = 0
+        heldout_env_count = 0
+        rollout_count = 1
+        frame_count = 1
+        has_factual_observation_evidence = True
+
+    with pytest.raises(Sim2RealRerunRegenError, match="no factual held-out"):
+        _regen_result_from_viz("rollout-only", tmp_path, RolloutOnlyResult())
 
 
 @pytest.mark.parametrize("config_factory", [_config, _artifact_config])
@@ -2065,6 +2079,7 @@ def test_gold_render_sync_rejects_missing_or_validation_lineage(tmp_path: Path) 
             tmp_path,
             heldout_report={
                 "evaluation_split": "gold_heldout",
+                "per_env": [{"env_id": "heldout-0000", "score": 0.7}],
                 "render_lineage": {
                     "evaluation_split": "validation",
                     "renders_s3_uri": "s3://bucket/validation/renders/",

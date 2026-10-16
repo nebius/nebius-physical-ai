@@ -1072,9 +1072,15 @@ def sync_heldout_renders(
     try:
         canonical, sealed = _heldout_render_source(config, report)
     except Sim2RealRerunRegenError:
-        if report.get(
-            "evaluation_split"
-        ) == "gold_heldout" and _has_factual_heldout_scores(report):
+        lineage, sealed = _heldout_render_lineage(report)
+        if (
+            sealed
+            and not any(
+                lineage.get(key) not in (None, "")
+                for key in ("canonical_s3_uri", "renders_s3_uri")
+            )
+            and _has_factual_heldout_scores(report)
+        ):
             return False
         raise
     renders_dir = _renders_dir_for_report(config, local_dir, report)
@@ -1474,27 +1480,6 @@ def download_rrd_from_s3(
     requested_uri = rrd_uri.strip()
     if rrd_uri and requested_uri != rrd_uri:
         raise Sim2RealRerunRegenError("requested Rerun recording URI has whitespace")
-    if requested_uri and requested_uri != canonical_uri:
-        try:
-            requested_bucket, _requested_key = _parse_s3(requested_uri)
-        except (TypeError, ValueError) as exc:
-            raise Sim2RealRerunRegenError(
-                "requested Rerun recording URI is malformed"
-            ) from exc
-        if requested_bucket != config.s3_bucket:
-            raise Sim2RealRerunRegenError(
-                "requested Rerun recording is outside the configured artifact bucket"
-            )
-        if not _download_if_exists(
-            storage,
-            requested_uri,
-            absolute_dest,
-            containment_root=containment_root,
-        ):
-            raise Sim2RealRerunRegenError(
-                f"Rerun recording not found at {requested_uri}"
-            )
-        return dest_path
     try:
         publication = resolve_committed_publication_snapshot(storage, canonical_uri)
         uri = publication.resolve(canonical_uri)
@@ -4510,9 +4495,9 @@ def _regen_result_from_viz(
     mcap_result: dict[str, Any] | None = None,
     mcap_upload_uri: str = "",
 ) -> RegenResult:
-    if not result.has_factual_observation_evidence:
+    if result.heldout_frame_count <= 0 and result.heldout_env_count <= 0:
         raise Sim2RealRerunRegenError(
-            "regenerated .rrd has no factual rollout observations, held-out cameras, or held-out scores"
+            "regenerated .rrd has no factual held-out camera or environment evidence"
         )
     mcap = mcap_result or {}
     return RegenResult(

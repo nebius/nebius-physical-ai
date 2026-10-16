@@ -1251,10 +1251,67 @@ def test_regeneration_reader_resolves_committed_immutable_recording(
     monkeypatch.setattr(regen, "_download_if_exists", download)
     destination = tmp_path / "sim2real.rrd"
 
-    regen.download_rrd_from_s3(_config(), dest_path=destination, client=storage)
+    regen.download_rrd_from_s3(
+        _config(),
+        dest_path=destination,
+        rrd_uri=immutable_uri,
+        client=storage,
+    )
 
     assert requested == [immutable_uri]
     assert destination.read_bytes() == b"rrd"
+
+
+def test_regeneration_reader_rejects_uncommitted_selected_recording(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    canonical_uri = f"{ROOT}/reports/sim2real.rrd"
+    immutable_uri = f"{ROOT}/reports/generations/generation-a/sim2real.rrd"
+    uncommitted_uri = f"{ROOT}/reports/generations/uncommitted/sim2real.rrd"
+    lock_uri = f"{ROOT}/reports/.sim2real-publication.json"
+    journal = publication._journal_bytes(
+        transaction_id="generation-a",
+        attempt_id="a" * 32,
+        state="committed",
+        objects=_complete_journal_objects(
+            "generation-a",
+            [
+                {
+                    "uri": canonical_uri,
+                    "state": "present",
+                    "sha256": hashlib.sha256(b"rrd").hexdigest(),
+                    "size_bytes": 3,
+                    "immutable_uri": immutable_uri,
+                }
+            ],
+        ),
+    )
+    storage = _ObjectStore(
+        {
+            lock_uri: journal,
+            immutable_uri: b"rrd",
+            uncommitted_uri: b"uncommitted",
+        }
+    )
+    monkeypatch.setattr(
+        regen,
+        "_download_if_exists",
+        lambda *_args, **_kwargs: pytest.fail(
+            "reader must not consume an uncommitted selected recording"
+        ),
+    )
+
+    with pytest.raises(
+        regen.Sim2RealRerunRegenError,
+        match="does not match the committed publication",
+    ):
+        regen.download_rrd_from_s3(
+            _config(),
+            dest_path=tmp_path / "sim2real.rrd",
+            rrd_uri=uncommitted_uri,
+            client=storage,
+        )
 
 
 def test_regeneration_reader_rejects_in_progress_generation(

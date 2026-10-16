@@ -22,7 +22,11 @@ from npa.workflows.sim2real.artifact_config import (
     build_artifact_config_from_env,
 )
 from npa.workflows.sim2real.config import artifact_uris, build_config_from_env
-from npa.workflows.sim2real_rerun_regen import RegenResult, download_rrd_from_s3
+from npa.workflows.sim2real_rerun_regen import (
+    RegenResult,
+    Sim2RealRerunRegenError,
+    download_rrd_from_s3,
+)
 
 
 def _reject_execution_images(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -661,20 +665,27 @@ def test_sdk_output_paths_matches_execution_trigger_dataset_precedence(
     assert paths["trigger_dataset"] == artifact_uris(execution)["trigger_dataset"]
 
 
-def test_recording_download_uses_exact_selected_uri(tmp_path: Path) -> None:
+def test_recording_download_requires_committed_selected_uri(tmp_path: Path) -> None:
     selected = "s3://example-bucket/archived/custom.rrd"
     downloads: list[str] = []
 
-    def download(uri: str, destination: str) -> None:
-        downloads.append(uri)
-        Path(destination).write_bytes(b"existing-recording")
+    class Storage:
+        def read_bytes_with_etag(self, _uri: str) -> None:
+            return None
+
+        def download_path(self, uri: str, destination: str) -> None:
+            downloads.append(uri)
+            Path(destination).write_bytes(b"existing-recording")
 
     config = Sim2RealArtifactConfig(run_id="archived-run", s3_bucket="example-bucket")
-    path = download_rrd_from_s3(
-        config,
-        dest_path=tmp_path / "review.rrd",
-        rrd_uri=selected,
-        client=SimpleNamespace(download_path=download),
-    )
-    assert downloads == [selected]
-    assert path.read_bytes() == b"existing-recording"
+    with pytest.raises(
+        Sim2RealRerunRegenError,
+        match="does not match the committed publication",
+    ):
+        download_rrd_from_s3(
+            config,
+            dest_path=tmp_path / "review.rrd",
+            rrd_uri=selected,
+            client=Storage(),
+        )
+    assert downloads == []

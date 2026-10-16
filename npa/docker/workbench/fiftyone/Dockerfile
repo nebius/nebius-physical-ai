@@ -12,7 +12,6 @@ ARG PILLOW_VERSION=12.3.0
 # which graphql-core 3.3 removed. Keep the compatible current 3.2 patch line
 # explicit so a future resolver update cannot produce an image that fails on
 # its first FiftyOne import.
-ARG GRAPHQL_CORE_VERSION=3.2.13
 # MongoDB server for FiftyOne's metadata DB. The prebuilt fiftyone_db wheel does
 # NOT ship a mongod binary for this platform (trixie), so real curation
 # (compute_uniqueness / compute_similarity / compute_visualization, which all need
@@ -106,13 +105,12 @@ RUN python -m venv "${FIFTYONE_VENV}" \
       -r /opt/npa-packaging-requirements.txt \
     && python -m pip install --no-cache-dir \
       "fiftyone[multimodal]==${FIFTYONE_VERSION}" \
-      "graphql-core @ https://files.pythonhosted.org/packages/00/15/b92b4e1d88d02c6eff9733c9eea21846ab435cc4d813d84ccc5d335955df/graphql_core-3.2.11-py3-none-any.whl#sha256=0b3e35ff41e9adba53021ab0cef475eb18f57c7f53f0f2ca55567fbf3c537ea0" \
+      "graphql-core @ https://files.pythonhosted.org/packages/1f/b4/b52a324b0b297ddc49b8ea31a51d39fae63132f694a267b9381d94e2e0af/graphql_core-3.2.13-py3-none-any.whl#sha256=b0eb04f2c31556b2310a77c8fb53c74e8b56570f8fea594d89c6ef7827dbb497" \
       "boto3==${BOTO3_VERSION}" \
       "datasets==${DATASETS_VERSION}" \
       "huggingface_hub==${HUGGINGFACE_HUB_VERSION}" \
       "pyarrow==${PYARROW_VERSION}" \
       "pillow==${PILLOW_VERSION}" \
-      "graphql-core==${GRAPHQL_CORE_VERSION}" \
       "paramiko==5.0.0" \
       "scikit-image==0.26.0" \
     && python /opt/npa-remove-scikit-image-recipe.py \

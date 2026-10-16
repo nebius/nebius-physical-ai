@@ -156,9 +156,10 @@ def test_envgen_corrects_inert_dependency_recipe_before_flattening() -> None:
     assert text.index("FROM ${BASE_IMAGE} AS sanitized") < correction
     assert correction < text.index("FROM scratch AS runtime")
     assert text.index("COPY --from=sanitized / /") > correction
-    assert 'import sysconfig; print(sysconfig.get_path("purelib"))' in text
+    assert "--site-packages /opt/npa/venv/lib/python3.11/site-packages" in text
     assert "--capability envgen" in text
     assert "/usr/share/doc/npa-envgen/dependency-source-correction.json" in text
+    assert text.count("python /usr/local/lib/npa/remove-scikit-image-recipe.py") == 1
 
 
 def test_genesis_workflow_runtime_upgrades_fixed_kernel_headers() -> None:
