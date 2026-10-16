@@ -42,7 +42,7 @@ def test_clip_model_and_processor_share_the_same_immutable_snapshot(monkeypatch)
     monkeypatch.setattr(udfs, "_CLIP_CACHE", {})
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
 
-    loaded, *_ = udfs._load_clip("cpu", "float32")
+    loaded, *_ = udfs._clip_components(device="cpu", precision="float32")
 
     assert loaded is model
     for loader in (model_loader, processor_loader):

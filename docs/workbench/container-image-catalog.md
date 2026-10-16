@@ -128,10 +128,11 @@ updates Wan's Accelerate and Transformers dependencies. Isaac's constrained
 Setuptools 81 receives the same hash-bound Unicode manifest backport used by
 Cosmos3 serving. MoviePy 2.2.1 retains its released code while its exact,
 hash-checked metadata adopts upstream Pillow 12 compatibility and requires the
-actual patched Pillow 12.3 installation. Dependency checks and real resize,
-MP4 encode/decode, NLTK sandbox, and source-distribution regression checks pass.
-These source repairs require fresh image builds, complete artifact scans, and
-compatible GPU qualification; they do not repair existing release digests.
+actual patched Pillow 12.3 installation. Wan's dependency union, real MoviePy
+resize/MP4 encode/decode, NLTK sandbox, and source-distribution regression checks
+pass. Isaac's vendor version constraints still need reconciliation and GPU
+qualification. These source repairs require fresh image builds and complete
+artifact scans; they do not repair existing release digests.
 
 Gymnasium-Robotics is selected by the immutable development-build matrix but
 remains separately tracked outside the mapped release inventory. It appears in the GPU
