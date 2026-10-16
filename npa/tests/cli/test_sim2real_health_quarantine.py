@@ -242,9 +242,32 @@ def test_s3_accepts_prefix_without_execution_image_resolution(
     payload = json.loads(result.output)
     assert payload["selected_checks"] == ["s3"]
     assert payload["checks"][0]["details"] == [
-        "The image-independent S3 health check verifies bucket reachability; "
-        "--s3-prefix is not probed."
+        "The image-independent S3 health check does not probe --s3-prefix; it "
+        "uses only bucket and endpoint configuration."
     ]
+    diagnostic_spies.execution.assert_not_called()
+    diagnostic_spies.image_inspector.assert_not_called()
+
+
+def test_s3_prefix_requires_the_s3_health_check(
+    diagnostic_spies: SimpleNamespace,
+) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "health",
+            "sim2real",
+            "--checks",
+            "tokens,cluster",
+            "--s3-prefix",
+            "diagnostic-prefix",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "--s3-prefix is only used by the S3 health check" in result.output
+    diagnostic_spies.loaded.assert_not_called()
     diagnostic_spies.execution.assert_not_called()
     diagnostic_spies.image_inspector.assert_not_called()
 
@@ -432,16 +455,21 @@ def test_project_bucket_is_normalized_for_image_dependent_config(
 
 
 @pytest.mark.parametrize(
-    "failure",
+    ("failure", "expected_remedy"),
     [
-        ConfigError("unknown project alias"),
-        ProjectCredentialStoreError("malformed project credential record"),
+        (ConfigError("unknown project alias"), "unknown project alias"),
+        (
+            ProjectCredentialStoreError("malformed project credential record"),
+            "Save a complete isolated storage record for --project, then rerun "
+            "the S3 health check.",
+        ),
     ],
 )
 def test_selected_project_storage_failure_is_structured_health_result(
     diagnostic_spies: SimpleNamespace,
     monkeypatch: pytest.MonkeyPatch,
     failure: Exception,
+    expected_remedy: str,
 ) -> None:
     select_project = Mock(side_effect=failure)
     monkeypatch.setattr(health, "_project_credentials", select_project)
@@ -472,15 +500,15 @@ def test_selected_project_storage_failure_is_structured_health_result(
         {
             "details": [],
             "name": "s3",
-            "remedy": (
-                "Save a complete isolated storage record for --project, then rerun "
-                "the S3 health check."
-            ),
+            "remedy": expected_remedy,
             "status": "FAIL",
             "summary": "Configured project storage could not be resolved.",
         }
     ]
-    assert "unknown project alias" not in result.output
+    if isinstance(failure, ConfigError):
+        assert str(failure) in result.output
+    else:
+        assert str(failure) not in result.output
     assert "malformed project credential record" not in result.output
     select_project.assert_called_once_with(
         "selected-project", diagnostic_spies.loaded.return_value

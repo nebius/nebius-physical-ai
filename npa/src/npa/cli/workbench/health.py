@@ -645,6 +645,10 @@ def sim2real_command(
         raise typer.BadParameter(
             "--project is only used by the S3 health check. Include --checks s3."
         )
+    if s3_prefix is not None and "s3" not in selected:
+        raise typer.BadParameter(
+            "--s3-prefix is only used by the S3 health check. Include --checks s3."
+        )
 
     credentials = None
     project_storage_failure: CheckResult | None = None
@@ -659,7 +663,14 @@ def sim2real_command(
                 overrides["s3_bucket"] = credentials.s3_bucket.removeprefix("s3://")
             if not s3_endpoint.strip():
                 overrides["s3_endpoint"] = credentials.s3_endpoint
-        except (ConfigError, ProjectCredentialStoreError):
+        except ConfigError as exc:
+            project_storage_failure = CheckResult(
+                name="s3",
+                status=FAIL,
+                summary="Configured project storage could not be resolved.",
+                remedy=str(exc),
+            )
+        except ProjectCredentialStoreError:
             project_storage_failure = CheckResult(
                 name="s3",
                 status=FAIL,
@@ -713,8 +724,8 @@ def sim2real_command(
                 result,
                 details=(
                     *result.details,
-                    "The image-independent S3 health check verifies bucket "
-                    "reachability; --s3-prefix is not probed.",
+                    "The image-independent S3 health check does not probe "
+                    "--s3-prefix; it uses only bucket and endpoint configuration.",
                 ),
             )
             if result.name == "s3"
