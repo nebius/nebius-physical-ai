@@ -90,6 +90,7 @@ module "k8s_training" {
   gpu_mig_manager_version         = var.gpu_mig_manager_version
   gpu_mig_with_reboot             = var.gpu_mig_with_reboot
   gpu_operator_rdma_enabled       = var.gpu_operator_rdma_enabled
+  gpu_operator_rtx_driver_profile = var.gpu_operator_rtx_driver_profile
 
   enable_filestore               = local.enable_filestore
   existing_filestore             = var.existing_filestore
