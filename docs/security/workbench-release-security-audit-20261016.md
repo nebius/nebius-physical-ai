@@ -56,6 +56,8 @@ No zero claim applies to those unverified areas.
 
 The repair candidate hardens authenticated LeIsaac/GR00T transport, YAML and
 URDF parsing, immutable model downloads, and workflow token permissions. It
+also rejects entity declarations in SONIC MuJoCo scenes and included robot XML
+before simulator construction, while preserving ordinary scene loading. It
 updates Isaac and Wan dependency closures and applies verified upstream NLTK
 and constrained Setuptools fixes. Real CPU tests reproduce the Setuptools
 manifest leak before the patch and deny it afterward, exercise NLTK sandbox

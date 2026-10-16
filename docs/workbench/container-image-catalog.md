@@ -847,8 +847,8 @@ verified SSH or Kubernetes port-forward access; see the
 [FiftyOne access guidance](../../skills/tools/fiftyone/SKILL.md).
 
 The source security candidates update the SONIC MuJoCo evaluator to the
-hash-locked Torch 2.13 closure
-on a patched Python base. The Cosmos3 native Ray candidate selects the pinned
+hash-locked Torch 2.13 closure on a patched Python base, and reject XML entity
+declarations in its scene and robot includes. The Cosmos3 native Ray candidate selects the pinned
 framework's supported Torch 2.13 CUDA 13 group, including its matching NATTEN
 extension, and removes inherited attention binaries from the older Torch ABI.
 The Cosmos3 serving bootstrap also uses a patched Python base and verified
