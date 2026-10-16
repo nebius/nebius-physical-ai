@@ -320,6 +320,25 @@ def reservation_shortfall_message(shortfalls: list[ReservationShortfall]) -> str
     )
 
 
+def _worker_instance_requirements(cluster: Any) -> dict[str, int]:
+    """Budget rendered regular CPU nodes and the GPU pool's allocation mode."""
+
+    needed = {"compute.instance.count": cluster.cpu_count()}
+    gpu = cluster.gpu_nodes
+    if not gpu or cluster.gpu_count() <= 0:
+        return needed
+    if gpu.preemptible:
+        needed["compute.instance.preemptible.count"] = cluster.gpu_count()
+        return needed
+    needed["compute.instance.count"] += cluster.gpu_count()
+    family = gpu_family(gpu.platform)
+    if family and not gpu.capacity_block_group:
+        needed[f"compute.instance.gpu.{family}"] = cluster.gpu_count() * _preset_gpus(
+            gpu.preset
+        )
+    return needed
+
+
 def required_quotas(
     clusters: Iterable[Any],
     *,
@@ -329,7 +348,8 @@ def required_quotas(
     """Aggregate the tenant quota amounts *clusters* need in one region.
 
     GPU-node vCPUs are deliberately not added to ``compute.instance.non-gpu.vcpu``
-    -- a GPU instance is accounted against its GPU family quota instead.
+    -- regular GPU instances use the GPU family quota and preemptible GPU
+    instances use the preemptible VM count instead.
     """
 
     needed: dict[str, int] = {}
@@ -350,7 +370,8 @@ def required_quotas(
         # Managed control-plane etcd is service-owned: it consumes control-plane
         # IP allocations, but not the tenant's Compute VM or disk quotas. Only
         # node-group VMs and their explicitly rendered boot disks count here.
-        add("compute.instance.count", nodes)
+        for quota_name, amount in _worker_instance_requirements(cluster).items():
+            add(quota_name, amount)
         add("compute.disk.count", nodes)  # one boot disk per node
         if cpu and cpu.count > 0:
             cpu_disk_gib = cpu.disk_size_gib if cpu.disk_size_gib > 0 else _CPU_DISK_GIB
@@ -360,13 +381,6 @@ def required_quotas(
             add("compute.disk.size.network-ssd", gpu.count * gpu_disk_gib * _GIB)
         if cpu and cpu.count > 0:
             add("compute.instance.non-gpu.vcpu", cpu.count * _preset_vcpus(cpu.preset))
-        if gpu and gpu.count > 0 and not gpu.capacity_block_group:
-            family = gpu_family(gpu.platform)
-            if family:
-                add(
-                    f"compute.instance.gpu.{family}",
-                    gpu.count * _preset_gpus(gpu.preset),
-                )
         if cluster.resolved_enable_gpu_cluster():
             add("compute.gpucluster.count", 1)
         if cluster.enable_filestore and not cluster.existing_filestore:
