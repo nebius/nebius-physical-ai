@@ -231,9 +231,13 @@ def _physics_body_names(
         relationships = (joint.GetBody0Rel(), joint.GetBody1Rel())
         for relationship in relationships:
             for target in relationship.GetTargets():
-                target_prim = stage.GetPrimAtPath(target)
+                resolved = target
+                is_absolute = getattr(target, "IsAbsolutePath", None)
+                if callable(is_absolute) and not is_absolute():
+                    resolved = target.MakeAbsolutePath(prim.GetPath())
+                target_prim = stage.GetPrimAtPath(resolved)
                 if target_prim and target_prim.IsValid():
-                    names.add(str(target).rsplit("/", 1)[-1])
+                    names.add(str(resolved).rsplit("/", 1)[-1])
     return names
 
 
