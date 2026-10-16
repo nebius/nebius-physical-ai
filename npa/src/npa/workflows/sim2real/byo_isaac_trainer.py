@@ -557,7 +557,7 @@ def _load_s3_json(uri: str, *, endpoint: str) -> dict[str, Any]:
 def enumerate_periodic_checkpoints(
     *, s3_output: str, endpoint: str, validation_interval: int
 ) -> list[dict[str, Any]]:
-    """Retain the first periodic and final native checkpoints for validation.
+    """Retain and identify periodic native checkpoints for validation selection.
 
     Args:
         s3_output: Durable trainer output prefix containing numbered checkpoints.
@@ -565,6 +565,8 @@ def enumerate_periodic_checkpoints(
         validation_interval: Positive interval between periodic update indices.
     Returns:
         Ordered checkpoint identities with exact native completed-update counts.
+        The one-update checkpoint remains audited, but is ineligible for selection
+        when a later periodic actor exists.
     Raises:
         ValueError: The validation interval is not positive.
         RuntimeError: The trainer published no numbered native checkpoints.
@@ -576,6 +578,7 @@ def enumerate_periodic_checkpoints(
     if not discovered:
         raise RuntimeError("trainer published no numbered RSL checkpoints")
     highest = max(discovered)
+    has_post_initial_checkpoint = any(iteration > 0 for iteration in discovered)
     selected = [
         iteration
         for iteration in sorted(discovered)
@@ -596,6 +599,13 @@ def enumerate_periodic_checkpoints(
                 "checkpoint_sha256": identity["sha256"],
                 "checkpoint_size_bytes": identity["size_bytes"],
                 "generator_policy_sha256": identity["sha256"],
+                # The initial native save follows one PPO update, but it can
+                # still be dominated by the training-only bootstrap. Keep its
+                # bytes and validation evidence, while requiring a later actor
+                # for selection whenever the complete pass produced one.
+                "validation_selection_eligible": (
+                    iteration > 0 or not has_post_initial_checkpoint
+                ),
             }
         )
     return checkpoints

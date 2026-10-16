@@ -1193,6 +1193,10 @@ def test_enumerate_periodic_checkpoints_keeps_first_periodic_and_final(
     )
     assert [item["training_iteration"] for item in checkpoints] == [0, 100, 200, 250]
     assert checkpoints[0]["checkpoint_completed_updates"] == 1
+    assert checkpoints[0]["validation_selection_eligible"] is False
+    assert all(
+        item["validation_selection_eligible"] is True for item in checkpoints[1:]
+    )
     assert (
         checkpoints[0]["checkpoint_iteration_semantics"] == "last_completed_zero_based"
     )

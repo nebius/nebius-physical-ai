@@ -275,6 +275,23 @@ def _ranked_checkpoint(candidate: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _is_selection_eligible(candidate: dict[str, Any]) -> bool:
+    """Return the producer-declared validation-selection eligibility.
+
+    Args:
+        candidate: Byte-bound validation candidate from the native trainer.
+    Returns:
+        ``True`` when this candidate may compete in validation ranking.
+    Raises:
+        ValueError: If the optional eligibility marker is not a literal boolean.
+    """
+
+    eligible = candidate.get("validation_selection_eligible", True)
+    if type(eligible) is not bool:
+        raise ValueError("checkpoint selection eligibility must be a literal boolean")
+    return eligible
+
+
 def select_best_checkpoint(candidates: list[dict[str, Any]]) -> dict[str, Any]:
     """Select the best exact checkpoint using only a fixed validation split.
 
@@ -297,14 +314,22 @@ def select_best_checkpoint(candidates: list[dict[str, Any]]) -> dict[str, Any]:
             raise ValueError(
                 "checkpoint candidate lacks per-environment validation evidence"
             )
-    ranked = sorted(candidates, key=checkpoint_rank_key, reverse=True)
+    eligible_candidates = [
+        candidate for candidate in candidates if _is_selection_eligible(candidate)
+    ]
+    if not eligible_candidates:
+        raise ValueError(
+            "checkpoint selection requires one eligible validation candidate"
+        )
+    ranked = sorted(eligible_candidates, key=checkpoint_rank_key, reverse=True)
     best = dict(ranked[0])
     best["rank_key"] = list(checkpoint_rank_key(best))
     best["selection_policy"] = (
-        "strict_success,place,stable_grasp_and_lift,lift,stable_grasp,reach,contact,"
-        "lower_mean_final_distance,earlier_checkpoint"
+        "eligible_validation_candidates,strict_success,place,stable_grasp_and_lift,"
+        "lift,stable_grasp,reach,contact,lower_mean_final_distance,earlier_checkpoint"
     )
     best["candidate_count"] = len(ranked)
+    best["audited_candidate_count"] = len(candidates)
     best["ranked_candidates"] = [_ranked_checkpoint(candidate) for candidate in ranked]
     return best
 

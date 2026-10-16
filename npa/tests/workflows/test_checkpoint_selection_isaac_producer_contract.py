@@ -117,6 +117,44 @@ def test_strict_success_still_outranks_paired_precursor_skills():
     )
 
 
+def test_selection_audits_but_excludes_bootstrap_dominated_initial_actor() -> None:
+    """A later trained actor must outrank an ineligible one-update actor."""
+
+    initial = _validation_candidate(
+        checkpoint_uri="s3://bucket/initial/model_0.pt",
+        training_iteration=0,
+        report=_real_zero_distance_report(),
+    )
+    initial["validation_selection_eligible"] = False
+    trained = _validation_candidate(
+        checkpoint_uri="s3://bucket/trained/model_100.pt",
+        training_iteration=100,
+        report=_controlled_lift_report(set(range(36)), set(range(36))),
+    )
+
+    selected = select_best_checkpoint([initial, trained])
+
+    assert selected["checkpoint_uri"] == trained["checkpoint_uri"]
+    assert selected["candidate_count"] == 1
+    assert selected["audited_candidate_count"] == 2
+    assert "eligible_validation_candidates" in selected["selection_policy"]
+
+
+@pytest.mark.parametrize("value", [1, "true", None])
+def test_selection_rejects_nonliteral_eligibility_marker(value: Any) -> None:
+    """Do not silently coerce a malformed producer eligibility marker."""
+
+    candidate = _validation_candidate(
+        checkpoint_uri="s3://bucket/controlled/model.pt",
+        training_iteration=1,
+        report=_controlled_lift_report(set(range(34)), set(range(59))),
+    )
+    candidate["validation_selection_eligible"] = value
+
+    with pytest.raises(ValueError, match="eligibility must be a literal boolean"):
+        select_best_checkpoint([candidate])
+
+
 @pytest.mark.parametrize("value", [1, "true", None])
 def test_selection_rejects_incomplete_or_nonliteral_paired_verdicts(value):
     candidate = _validation_candidate(
