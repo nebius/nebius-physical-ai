@@ -62,6 +62,7 @@ TOOL_REF_IMAGE_TOOL: dict[str, str | None] = {
     "workflow.video_sweep.generate_cosmos3": "cosmos3",
     "workflow.habitat_sim.smoke": "habitat-sim",
     "workbench.nurec.convert_colmap": "ncore",
+    "workbench.nurec.audit_colmap": "ncore",
     # Visualization only needs the prebuilt pinned Rerun runtime, not NuRec.
     "workbench.nurec.visualize": "rerun-viewer",
     # Blinded preference is API-only, even under a global self-hosted backend.
@@ -69,6 +70,9 @@ TOOL_REF_IMAGE_TOOL: dict[str, str | None] = {
     # Paired judging is hosted API-only and must not inherit the self-hosted
     # VLM family's heavy Cosmos image.
     "workbench.vlm_eval.compare_judges": None,
+    # Gemini Robotics is a hosted API adapter.  It uses the default CPU image
+    # with staged source and must not inherit a model or accelerator image.
+    "workbench.gemini_robotics": None,
     "workbench.vlm_eval": "cosmos",
     "workbench.cosmos2": "cosmos2-transfer",
     # Generation runs in the Cosmos 3 framework image; the reason stage runs in the
@@ -96,6 +100,7 @@ TOOL_REF_IMAGE_TOOL: dict[str, str | None] = {
     "workbench.alpamayo2_super": "alpamayo2-super",
     "workbench.flex_pi": "flex-pi",
     "workbench.curobo": "curobo",
+    "workbench.seedvr2": "seedvr2",
     "workbench.fiftyone": "fiftyone",
     "workbench.rl": "isaac-lab",
     "workbench.isaac_lab": "isaac-lab",
@@ -139,6 +144,7 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
         "MLFLOW_TRACKING_URI",
         "MLFLOW_EXPERIMENT_ID",
     ),
+    "workbench.gemini_robotics": ("GOOGLE_API_KEY",),
     "workbench.encord": ("ENCORD_SSH_KEY_B64",),
     "workflow.paidf": (),
     "workflow.paidf.run_iaa_augmentation": ("HF_TOKEN", "NEBIUS_TOKEN_FACTORY_KEY"),
@@ -906,6 +912,59 @@ def _image_override_matches(selector: str, tool_ref: str) -> bool:
     return tool_ref == selector or tool_ref.startswith(selector + ".")
 
 
+def _embodiedgen_image_reference(
+    spec: NpaWorkflowSpec, options: SkypilotRenderOptions
+) -> str:
+    """Return the effective BYOF image for the EmbodiedGen-only contract."""
+
+    reference = str(spec.config.get("base_image") or "")
+    matches = [
+        (len(str(selector)), str(value))
+        for selector, value in options.image_overrides.items()
+        if str(selector) == "*"
+        or _image_override_matches(str(selector), "workbench.byof.repo")
+    ]
+    if matches:
+        reference = max(matches, key=lambda item: item[0])[1]
+    return reference.strip().removeprefix("docker:")
+
+
+def _validate_embodiedgen_private_image(
+    spec: NpaWorkflowSpec, options: SkypilotRenderOptions
+) -> None:
+    if str(spec.config.get("solution_name") or "").strip().lower() != "embodiedgen":
+        return
+    declared = str(spec.config.get("base_image") or "").strip().removeprefix("docker:")
+    resolved = _embodiedgen_image_reference(spec, options)
+    for reference in (declared, resolved):
+        _validate_embodiedgen_private_reference(reference)
+    if declared != resolved:
+        raise NpaWorkflowRenderError(
+            "EmbodiedGen config.base_image and its image override must name the same "
+            "immutable private image"
+        )
+
+
+def _validate_embodiedgen_private_reference(reference: str) -> None:
+    if re.fullmatch(r"[^\s@]+/npa-embodiedgen@sha256:[0-9a-f]{64}", reference) is None:
+        raise NpaWorkflowRenderError(
+            "EmbodiedGen requires an operator-private immutable image; supply "
+            "--image-override workbench.byof.repo=REGISTRY/npa-embodiedgen@sha256:DIGEST"
+        )
+    from npa.deploy.images import is_public_registry
+
+    registry = reference.split("@", 1)[0].rsplit("/", 1)[0]
+    host = registry.split("/", 1)[0]
+    if host != "localhost" and "." not in host and ":" not in host:
+        raise NpaWorkflowRenderError(
+            "EmbodiedGen requires a fully-qualified private registry host"
+        )
+    if is_public_registry(registry):
+        raise NpaWorkflowRenderError(
+            "EmbodiedGen is runtime-fetch/private and cannot use a public registry image"
+        )
+
+
 def validate_image_override_selectors(
     spec: NpaWorkflowSpec,
     options: SkypilotRenderOptions,
@@ -943,6 +1002,7 @@ def validate_image_override_selectors(
             "toolRef, a boundary-safe family prefix without glob characters, or "
             f"the bare '*' selector. Available toolRefs: {available}"
         )
+    _validate_embodiedgen_private_image(spec, options)
 
 
 def resolve_task_image(
@@ -1368,6 +1428,8 @@ def render_run_preamble_for_tool(tool_ref: str, *, config: Mapping[str, Any]) ->
     shells — a server started in setup is gone by the time the command runs.
     """
 
+    if tool_ref.startswith("workbench.seedvr2."):
+        return SEEDVR2_IMMUTABLE_SETUP
     if tool_ref == "workbench.token_factory.robot_sdg":
         return "export MUJOCO_GL=osmesa\nexport PYOPENGL_PLATFORM=osmesa\n"
     content_agents_pythonpath = (
@@ -1739,6 +1801,17 @@ def default_npa_setup() -> str:
         '      || "$npa_setup_python" -m pip install -q "$target" "$@" --break-system-packages \\\n'
         '      || "$npa_setup_python" -m pip install -q "$target" "$@" --user\n'
         "  elif command -v uv >/dev/null 2>&1; then\n"
+        # SkyPilot supplies uv, but a non-root Ubuntu image can still select a
+        # root-owned system Python without pip. Keep control-plane dependencies
+        # in a fresh task-local environment; do not replace a vendor venv.
+        '    if "$npa_setup_python" -c \'import os, sys, sysconfig; '
+        "sys.exit(not (sys.prefix == sys.base_prefix and not "
+        'os.access(sysconfig.get_path("purelib"), os.W_OK)))\'; then\n'
+        '      npa_setup_env="$(mktemp -d /tmp/npa-setup-venv.XXXXXX)" || return\n'
+        '      uv venv --python "$npa_setup_python" "$npa_setup_env" || return\n'
+        '      npa_setup_python="$npa_setup_env/bin/python"\n'
+        '      export PATH="$npa_setup_env/bin:$PATH"\n'
+        "    fi\n"
         '    uv pip install -q --python "$npa_setup_python" "$target" "$@"\n'
         "  else\n"
         '    echo "selected python has no pip and uv is unavailable: $npa_setup_python" >&2\n'
@@ -1967,6 +2040,8 @@ def default_npa_setup() -> str:
 #: not exist and silently fell back to this literal, so its "cannot drift" promise
 #: never actually engaged.)
 NUREC_RERUN_PIN = "rerun-sdk==0.38.1"
+# Receipt decoding uses this Python wrapper, not merely the ffmpeg executable.
+NUREC_FFMPEG_PIN = "imageio-ffmpeg==0.6.0"
 # Keep the independent NuRec consumer stable when it reads newly converted V4
 # sequences. This official Apache-2.0 wheel is fetched at runtime, not rebaked
 # into NVIDIA's proprietary NRE image.
@@ -2101,6 +2176,35 @@ def _habitat_sim_setup(config: Mapping[str, Any]) -> str:
     return HABITAT_SIM_IMMUTABLE_SETUP
 
 
+SEEDVR2_IMMUTABLE_SETUP = (
+    "set -euo pipefail\n"
+    "test -x /opt/npa-venv/bin/python\n"
+    "test ! -e /tmp/npa-src -a ! -e /tmp/npa-src-overlay -a ! -e /tmp/npa-src-root\n"
+    'export PATH="/opt/npa-venv/bin:$PATH"\n'
+    "/opt/npa-venv/bin/python - <<'PY'\n"
+    "from npa.workbench.seedvr2.runtime import _require_baked_source\n"
+    "_require_baked_source()\n"
+    "PY\n"
+    "printf '%s\\n' /opt/npa-venv/bin/python > /tmp/npa-python\n"
+)
+
+
+def _require_seedvr2_baked_config(config: Mapping[str, Any]) -> None:
+    import os
+
+    overlays = (config.get("source_overlay"), os.environ.get("NPA_SRC_OVERLAY"))
+    if (
+        any(
+            str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+            for value in overlays
+        )
+        or str(config.get("pip_extra") or "").strip()
+    ):
+        raise NpaWorkflowRenderError(
+            "SeedVR2's immutable image forbids dependency and source overlays"
+        )
+
+
 def _marble_runtime_setup() -> str:
     """Keep staged Marble dependencies writable while inheriting baked CUDA libraries."""
     return (
@@ -2128,12 +2232,19 @@ def render_setup_for_tool(
 
     if not options.default_setup:
         return ""
+    if tool_ref.startswith("workbench.seedvr2."):
+        _require_seedvr2_baked_config(config)
+        return SEEDVR2_IMMUTABLE_SETUP
     if tool_ref == HABITAT_SIM_TOOL_REF:
         return _habitat_sim_setup(config)
-    if tool_ref == "workbench.nurec.convert_colmap":
-        # Conversion uses the committed CPU image and its hash-locked runtime
-        # bootstrap. Do not run the NRE vendor-image dependency installer or overlay
-        # a floating PyPI nvidia-ncore onto the actual pinned source reader.
+    if tool_ref in {
+        "workbench.nurec.convert_colmap",
+        "workbench.nurec.audit_colmap",
+    }:
+        # Conversion and its independent read-back use the committed CPU image and
+        # its hash-locked runtime bootstrap. Do not run the NRE vendor-image
+        # dependency installer or overlay a floating PyPI nvidia-ncore onto the
+        # actual pinned source reader.
         return (
             "set -e\n"
             "export PATH=/opt/venv/bin:/opt/ncore/bin:$PATH\n"
@@ -2339,8 +2450,9 @@ def render_setup_for_tool(
             "    return 1\n"
             "  fi\n"
             "}\n"
-            f"npa_nurec_pip 'huggingface_hub>=0.30' '{NUREC_NCORE_PIN}' '{NUREC_RERUN_PIN}' 'pillow>=10.0'\n"
-            '"$npa_nurec_py" -c \'import ncore, rerun; print("nurec runtime deps ready")\'\n'
+            f"npa_nurec_pip 'huggingface_hub>=0.30' '{NUREC_NCORE_PIN}' '{NUREC_RERUN_PIN}' '{NUREC_FFMPEG_PIN}' 'pillow>=10.0'\n"
+            '"$npa_nurec_py" -c \'import ncore, rerun, imageio_ffmpeg; '
+            'imageio_ffmpeg.get_ffmpeg_exe(); print("nurec runtime deps ready")\'\n'
         )
     return "".join(parts)
 
@@ -2716,6 +2828,9 @@ def _build_skypilot_task_doc(
     scheduler_task = build_scheduler_task(spec, step, run_id=run_id)
     tool_ref = str(scheduler_task.get("tool_ref") or "")
     immutable_narrow_image = tool_ref == HABITAT_SIM_TOOL_REF
+    seedvr2_baked_image = tool_ref.startswith("workbench.seedvr2.")
+    if seedvr2_baked_image:
+        _require_seedvr2_baked_config(spec.config)
     resources = normalize_resources(
         scheduler_task.get("resources") or {},
         accelerator_overrides=options.gpu_accelerator_overrides,
@@ -2737,7 +2852,7 @@ def _build_skypilot_task_doc(
         "on",
     }
     expected_source_sha = str(spec.config.get("source_sha") or "").strip().lower()
-    if require_baked or immutable_narrow_image:
+    if require_baked or immutable_narrow_image or seedvr2_baked_image:
         from npa.orchestration.skypilot.image_bootstrap_contract import (
             ImageBootstrapContractError,
             parse_oci_reference,
@@ -2746,6 +2861,8 @@ def _build_skypilot_task_doc(
         reason = (
             "Habitat-Sim requires an immutable runtime"
             if immutable_narrow_image
+            else "SeedVR2 requires an immutable runtime"
+            if seedvr2_baked_image
             else "config.require_baked_npa is enabled"
         )
         image_error = (
@@ -2758,7 +2875,7 @@ def _build_skypilot_task_doc(
             raise NpaWorkflowRenderError(image_error) from exc
         if not parsed_image.digest:
             raise NpaWorkflowRenderError(image_error)
-        if immutable_narrow_image and not (
+        if (immutable_narrow_image or seedvr2_baked_image) and not (
             parsed_image.registry == "localhost"
             or "." in parsed_image.registry
             or ":" in parsed_image.registry
@@ -3008,7 +3125,7 @@ def _build_skypilot_task_doc(
     src_uri = (
         resolve_src_s3_uri() if options.source_s3_uri is None else options.source_s3_uri
     )
-    if require_baked or immutable_narrow_image:
+    if require_baked or immutable_narrow_image or seedvr2_baked_image:
         # Exact images must contain the full runtime and pinned dependencies. Never
         # inject a source tree or install packages after a task acquires a GPU.
         pass

@@ -3515,8 +3515,10 @@ def test_resume_attaches_to_an_in_flight_job_instead_of_resubmitting(
         assert [call["tasks"] for call in second_submitter.calls] == refreshed
 
 
+@pytest.mark.parametrize("cancel_status", ["CANCELLED", "FAILED_CONTROLLER"])
 def test_resume_cancels_phantom_pending_record_before_new_attempt(
     tmp_path: Path,
+    cancel_status: str,
 ) -> None:
     from npa.orchestration.skypilot.workflow import ManagedJobEvidence
 
@@ -3544,7 +3546,7 @@ def test_resume_cancels_phantom_pending_record_before_new_attempt(
         spec,
         run_id="rt-phantom",
         submitter=submitter,
-        status_fn=FakeStatus(["CANCELLED"]),
+        status_fn=FakeStatus([cancel_status]),
         options=options,
         store=store,
         cancels=cancellations,
@@ -3560,7 +3562,6 @@ def test_resume_cancels_phantom_pending_record_before_new_attempt(
         spec, run_id="rt-phantom", executor=executor, options=options
     )
 
-    assert report.status == "succeeded"
     assert cancellations == [
         {
             "job_id": "125",
@@ -3568,6 +3569,12 @@ def test_resume_cancels_phantom_pending_record_before_new_attempt(
             "cluster": "rt-phantom-01-shards",
         }
     ]
+    if cancel_status == "FAILED_CONTROLLER":
+        assert report.status == "failed"
+        assert "controller completion blocked" in report.error
+        assert submitter.calls == []
+        return
+    assert report.status == "succeeded"
     assert submitter.calls[0]["job_name"].endswith("-a2")
     attempts = [
         item
@@ -4159,12 +4166,15 @@ def test_explicit_terminal_recovery_replays_a_prior_recovery_before_later_failur
     steps = build_plan(spec, run_id=run_id).steps
 
     replayed = resumed._run_wave([steps[0]], kind="serial", group="")
-    later = resumed._run_wave([steps[1]], kind="serial", group="")
 
     assert replayed.job_id == "3"
     assert replayed.replayed is True
     assert resumed._explicit_terminal_recovery_consumed is True
-    assert later.key != replayed.key
+    # A later controller-failed record cannot be adopted without a valid
+    # launch sequence.  The explicit recovery remains consumed, but the
+    # follow-on wave must fail closed rather than accepting stale evidence.
+    with pytest.raises(NpaWorkflowError, match="launch_sequence"):
+        resumed._run_wave([steps[1]], kind="serial", group="")
     assert "3" not in reconciled_ids
 
 

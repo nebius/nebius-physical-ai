@@ -223,6 +223,30 @@ def test_colmap_bad_source_hash_still_fails_before_upload(
     assert storage[0].writes == []
 
 
+def _unit_conversion_audit(report):
+    """Invented audit for object-root routing; no native conversion is claimed."""
+    return {
+        "format": "npa_ncore_colmap_conversion_audit_v1",
+        "status": "pass",
+        "converter_revision": report["converter"]["revision"],
+        "source": {
+            "archive_sha256": report["source"]["archive_sha256"],
+            "counts": report["source"]["counts"],
+        },
+        "conversion": {
+            "counts": report["counts"],
+            "origin_points_filtered": report["source"]["origin_points_filtered"],
+            "report_sha256": hashlib.sha256(json.dumps(report).encode()).hexdigest(),
+            "all_members_reopened": True,
+            "member_hashes_verified": True,
+            "calibration_verified": True,
+            "poses_verified": True,
+            "finite_geometry": True,
+        },
+        "s3_readback": {"stable_listing": True, "object_count": 0, "objects": []},
+    }
+
+
 def _unit_colmap_outputs(helpers, root, client):
     """Invented provenance for readback unit tests; not a real NCore artifact."""
     prefix = f"{root}/nurec-colmap-reconstruct/"
@@ -258,12 +282,22 @@ def _unit_colmap_outputs(helpers, root, client):
     }
     client.objects.update({sequence + name: body for name, body in members.items()})
     client.objects[sequence + "conversion.json"] = json.dumps(report).encode()
+    client.objects[prefix + "evidence/ncore-conversion-audit.json"] = json.dumps(
+        _unit_conversion_audit(report)
+    ).encode()
     client.objects[prefix + "source/attribution.json"] = json.dumps(
         {"revision": helpers.NUREC_COLMAP_REVISION, "license": "CC-BY-4.0"}
     ).encode()
     client.objects[prefix + "reports/final.json"] = json.dumps(
         {"has_usdz": True, "has_novel_views": True, "has_rrd": True}
     ).encode()
+    # Synthetic receipt bytes: this test isolates complete object-root routing.
+    for relative in (
+        "reconstruction/reconstruction.json",
+        "novel_views/nre-render.json",
+        "evidence/nre-runtime.json",
+    ):
+        client.objects[prefix + relative] = b'{"unit_fixture": true}'
     client.objects[prefix + "reconstruction/metrics.yaml"] = b"unit: true"
     client.objects[prefix + "reconstruction/parsed.yaml"] = b"unit: true"
     client.objects[prefix + "reconstruction/last.usdz"] = b"unit fixture, not a USDZ"

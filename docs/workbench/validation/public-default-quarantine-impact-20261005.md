@@ -113,7 +113,7 @@ quarantine and full capability acceptance gates remain enforced.
 
 ## Other defaults without an accepted public release
 
-These four workflows are additional qualification gaps, separate from the
+These five workflows are additional qualification gaps, separate from the
 previously accepted images withdrawn by #807. Curobo, LIBERO and NCore
 were already publication candidates before #807. That PR made the common
 publication quarantine apply to default consumption as well; NCore's explicit
@@ -127,6 +127,7 @@ a development tag as evidence that its full workload is accepted.
 | `workflows/testing/curobo-benchmark.yaml` | `curobo` |
 | `workflows/testing/nurec-colmap-reconstruct.yaml` | `ncore` |
 | `workflows/testing/open3d-registration.yaml` | `open3d` |
+| `workflows/testing/seedvr2-video-restoration.yaml` | `seedvr2` |
 
 These paths need exact independently qualified operator images or a separately
 reviewed public default. Their existing license, customer authorization, model

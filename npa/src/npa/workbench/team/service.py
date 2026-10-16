@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import threading
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 
 from .authorization import authorize, bind_execution
@@ -12,6 +13,8 @@ from .engine import execute_run
 from .errors import ConflictError, RunNotFoundError
 from .ledger import TeamLedger
 from .lifecycle import classify_runtime_report
+from .models import Allocation
+from .progress import recorded_progress
 from .sky_backend import SkyBackend
 from .storage import PersonalStorage
 from .workflow_policy import load_bound_spec
@@ -118,11 +121,15 @@ class TeamService:
         Args:
             actor, run_id: Verified identity and server-issued run ID.
         Returns:
-            Public run status.
+            Public run status and latest safely recorded stage progress, when available.
         Raises:
             TeamError: Ownership or current access cannot be established.
         """
-        return public_run(self._owned(actor, run_id))
+        result = public_run(self._owned(actor, run_id))
+        progress = recorded_progress(self.initial.state_dir, run_id)
+        if progress is not None:
+            result["progress"] = progress
+        return result
 
     def cancel(self, actor, run_id):
         """Stop new launches and cancel exact recorded jobs, retaining uncertainty.
@@ -215,7 +222,9 @@ class TeamService:
         binding = bind_execution(
             self.config(), actor, record["workspace"], record["cluster"], role=role
         )
-        if binding_snapshot(binding) != json.loads(record["binding"]):
+        recorded = json.loads(record["binding"])
+        binding = _with_recorded_source(binding, recorded)
+        if binding_snapshot(binding) != recorded:
             raise ConflictError(
                 "run allocation changed; restore its original boundary before access"
             )
@@ -272,6 +281,22 @@ class TeamService:
         if self.ledger.get(record["id"])["status"] != "running":
             raise ConflictError("run no longer accepts new work")
         self._binding(actor, record, role="runner")
+
+
+def _with_recorded_source(binding, recorded):
+    """Retain a run's source version within its currently authorized input scope."""
+    source = recorded.get("source_s3_uri", "")
+    if source == binding.allocation.source_s3_uri:
+        return binding
+    values = binding.allocation.model_dump()
+    values["source_s3_uri"] = source
+    try:
+        allocation = Allocation.model_validate(values)
+    except ValueError as exc:
+        raise ConflictError(
+            "recorded runtime source no longer uses an allocated input scope"
+        ) from exc
+    return replace(binding, allocation=allocation)
 
 
 def binding_snapshot(binding):

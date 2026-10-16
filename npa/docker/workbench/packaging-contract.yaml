@@ -463,14 +463,40 @@ images:
     ports: [8791]
     redistribution: public
     notes: >-
-      Bakes immutable Apache-2.0 RoboCasa source (pinned v1.0) and robosuite
-      (pinned commit) plus the exact MuJoCo 3.3.1 / Gymnasium 0.29.1 / CUDA 12.4
-      closure from the live-accepted BYOF evidence. Kitchen assets (textures,
-      fixtures, objects) are NOT baked and download at run time under the
-      operator's own network access. No model weights, credentials, or accepted
-      terms are baked. Built-image byte/layer scanning is mandatory before
-      publication. Workflow toolRefs are service clients and therefore run in
-      the standard task image; this service image grants no passwordless sudo.
+      Bakes immutable MIT RoboCasa source at
+      8f3c96ec8d1bfcd8126cad2bca887da98d30e997, retaining its bundled
+      Apache-2.0 notice for partial DeepMind MuJoCo, and Apache-2.0 robosuite at
+      its pinned commit. RoboCasa is locally versioned 1.0.0+npa5 by a packaging
+      patch, one recorded-action reader compatibility import, and deterministic
+      first-occurrence counter reset-region enumeration. Candidate membership,
+      seeds, settling, replay, action ordering and success predicates are unchanged.
+      Its ACT path binds to exact Apache-2.0 LeRobot v0.6.1 source at
+      7e241bd630a3719a56157a497ce5d08f244784f1. LeRobot is rebuilt as the
+      locally versioned 0.6.1+npa2 NPA ACT derivative; its reviewed patch changes
+      packaging metadata only so normal dependency resolution accepts the fixed
+      Torch 2.13, RoboCasa Gymnasium, OpenCV, and fixed Datasets 5.0.1 closure.
+      The closure includes
+      qpsolvers 4.13.0 under LGPL-3.0 and quadprog 0.1.13 under
+      GPL-2.0-or-later; their exact official source archives and license texts
+      are shipped in the image to preserve corresponding-source obligations.
+      The RoboCasa derivative omits tianshou because exact-source inspection
+      found it only in the unqualified upstream vectorized speed-benchmark
+      script; the NPA service
+      and matched ACT rollout path do not import it. Other RoboCasa benchmark and
+      LeRobot policy and training paths remain unqualified. The image uses a
+      uv-generated,
+      hash-verified Python 3.12 linux/amd64 closure on one digest-pinned
+      nvidia/cuda:12.9.1-base-ubuntu22.04 runtime base without cuDNN or
+      development toolkits. Ubuntu's system FFmpeg replaces the
+      imageio-ffmpeg wheel-bundled static executable, and
+      the unused Robosuite Omniverse rendering helper is excluded in the same
+      dependency layer. Kitchen assets (textures, fixtures, objects) are NOT
+      baked and download at run time under the operator's own network access.
+      No model weights, credentials, or accepted terms are baked. The local
+      build script cannot publish; built-image payload, complete-byte, Trivy,
+      SBOM, and real-GPU gates remain mandatory before publication. Workflow
+      toolRefs are service clients and therefore run in the standard task
+      image; this service image grants no passwordless sudo.
   openarm:
     dockerfile: openarm/Dockerfile
     isaac_runtime_fetch: true
@@ -612,6 +638,29 @@ images:
       record is docs/workbench/validation/mjlab-native-hd-gpu-20261010.json.
       Supported release promotion remains quarantined; current-digest B200 and
       multi-GPU coverage are unverified. See docs/workbench/mjlab.md.
+  seedvr2:
+    dockerfile: seedvr2/Dockerfile
+    tier: service
+    ports: [8080]
+    passwordless_root_exemption: "SkyPilot Kubernetes bootstrap only; the final runtime user is non-root, no sshd service is enabled by default, and no credentials are baked into the image."
+    redistribution: public
+    notes: >-
+      Bakes immutable Apache-2.0 ByteDance SeedVR source, a repaired CUDA 13
+      runtime filesystem, hash-locked PyTorch runtime closure, BSD-3-Clause Apex, and required
+      notices. Compilation occurs in a separate devel stage that is not in the
+      final image. A clean-root final stage excludes superseded base ancestors;
+      the full setuptools 84 seed is separate from the service pip derivative's
+      limited donor. Exact runtime-config and layer contracts remain required.
+      The cuDNN wheel SDK headers/static archives are validated and
+      removed before its runtime-only venv is copied; NVSHMEM SDK headers,
+      device archive, and bitcode are likewise removed while shared runtimes
+      plus the wheel and exact v3.4.5-0 product/third-party licenses remain
+      inventoried. The public Apache-2.0 SeedVR2-3B weights, credentials, sensor
+      inputs, generated media, and populated caches are absent and fetched only
+      at runtime. Publication is
+      quarantined pending complete built-byte security/license scans, a real
+      H100 restoration through the S3 workflow path, objective preservation
+      measurements, calibrated VLM review, and independent review.
   curobo:
     dockerfile: curobo/Dockerfile
     tier: service
@@ -622,9 +671,15 @@ images:
       Apache-2.0 cuRobo V2 source and robot assets, MIT/BSD pinned benchmark data,
       non-cuDNN CUDA 13 base with a hash-locked Python closure. The cuDNN wheel
       headers/static SDK files are excluded during the install RUN before its
-      layer commits; only runtime shared libraries and notices remain. No weights or populated
-      runtime cache. Publication quarantined pending exact-byte security/license
-      scans and independent real B200 and RTX PRO 6000 capability validation.
+      layer commits; only runtime shared libraries and notices remain. Pinocchio's
+      OpenMP boundary is supplied by exact Noble-snapshot libgomp1 bytes under
+      GPL-3.0-or-later WITH GCC-exception-3.1, with the matching notice, complete
+      license text, SONAME link and immutable gcc-14 corresponding-source
+      identities recorded in the baked redistribution record and runtime payload
+      contract. The build imports the real upstream benchmark and verifies both
+      pinned dataset populations. No weights or populated runtime cache.
+      Publication quarantined pending exact-byte security/license scans and
+      independent real B200 and RTX PRO 6000 capability validation.
   open3d:
     dockerfile: open3d/Dockerfile
     tier: job
@@ -688,6 +743,26 @@ images:
       use/service claims. Public redistribution and real RTX capability claims
       remain quarantined pending the native-content policy, trusted build,
       complete exact-byte scans, anonymous pull, and exact-digest one-RTX gates.
+  embodiedgen:
+    dockerfile: embodiedgen/Dockerfile
+    tier: job
+    final_user: ubuntu
+    redistribution: restricted
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
+    passwordless_root_exemption: >-
+      SkyPilot Kubernetes bootstrap only. The final workload runs as uid 1000,
+      password and root SSH login are disabled, and no credential is baked.
+    notes: >-
+      Operator-private CUDA development image for upstream EmbodiedGen V2.1.0
+      and its supported TRELLIS backend. The pinned CUDA development base is
+      retained only for operator execution because its distribution terms do
+      not establish anonymous-registry delivery. The CUDA/OS base is baked;
+      EmbodiedGen, TRELLIS, runtime Python application packages, model weights,
+      input images, credentials, caches, generated meshes/URDFs, and simulator
+      outputs are runtime-only.
+      The VLM fills estimated physical metadata; it does not provide calibrated
+      ground truth. No release, public image, articulated-object, or policy
+      improvement capability is asserted by this candidate.
   alpamayo2-super:
     dockerfile: alpamayo2-super/Dockerfile
     tier: service
@@ -920,7 +995,10 @@ images:
       CPU-only official NVIDIA NCore COLMAP converter and V4 reader at
       59c698d206da92b406a4f72619fce3b3a2c64bfd (Apache-2.0), with the MIT
       trueprice/pycolmap reader at fe7a7c45df803b6c391777e349f0d8d65d39d777
-      and NVIDIA's Python 3 patch. A narrow NPA adapter downloads the exact
+      and NVIDIA's Python 3 patch. Source-checked NPA converter patches retain
+      per-frame world poses for native NRE independent-camera pose overwrite,
+      with virtual static calibration rather than a claimed physical rig.
+      A narrow NPA adapter downloads the exact
       hash-locked converter/reader Python closure into an explicit writable
       runtime cache with locking and atomic ready state. No application wheels,
       Torch, CUDA, NRE, models, datasets or populated runtime caches are baked.

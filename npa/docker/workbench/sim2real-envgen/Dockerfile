@@ -51,6 +51,7 @@ COPY --chmod=0644 docker/workbench/common/envgen_compat/tetgen.py \
 # The shared Genesis requirements own the GitPython pin; keep its installed-version
 # check aligned with that file rather than installing a second version here.
 RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" "${ENVGEN_LINUX_LIBC_DEV_VERSION}" \
+    && test "$(dpkg-query --show --showformat='${Version}' linux-libc-dev)" = "${ENVGEN_LINUX_LIBC_DEV_VERSION}" \
     && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && find /opt/npa/src /opt/npa/workflows -type d -exec chmod a+rx {} + \
     && find /opt/npa/src /opt/npa/workflows -type f -exec chmod a+r {} + \
