@@ -92,7 +92,7 @@ def test_regen_heldout_gate_requires_camera_evidence() -> None:
         frame_count=1,
     )
     assert not _has_regen_heldout_evidence(rollout_only)
-    with pytest.raises(Sim2RealRerunRegenError, match="held-out cameras"):
+    with pytest.raises(Sim2RealRerunRegenError, match="held-out camera"):
         _assert_regen_heldout_frames(rollout_only)
 
     sealed_scores = Sim2RealVizResult(
@@ -138,7 +138,7 @@ def test_regen_sim2real_rrd_requires_heldout_frames(
         lambda **_kwargs: FakeResult(),
     )
 
-    with pytest.raises(Sim2RealRerunRegenError, match="no held-out cameras"):
+    with pytest.raises(Sim2RealRerunRegenError, match="no held-out camera"):
         regen_sim2real_rrd(_config(), local_dir=local_dir, sync_inputs=False)
 
 

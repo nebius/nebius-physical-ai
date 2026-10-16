@@ -3122,7 +3122,7 @@ def _has_regen_heldout_evidence(result: Sim2RealVizResult) -> bool:
 def _assert_regen_heldout_frames(result: Sim2RealVizResult) -> None:
     if not _has_regen_heldout_evidence(result):
         raise Sim2RealRerunRegenError(
-            "regenerated .rrd has no held-out cameras or held-out scores"
+            "regenerated .rrd has no held-out camera frames"
         )
 
 
@@ -4496,7 +4496,7 @@ def _regen_result_from_viz(
 ) -> RegenResult:
     if not _has_regen_heldout_evidence(result):
         raise Sim2RealRerunRegenError(
-            "regenerated .rrd has no held-out cameras or held-out scores"
+            "regenerated .rrd has no held-out camera frames"
         )
     mcap = mcap_result or {}
     return RegenResult(
