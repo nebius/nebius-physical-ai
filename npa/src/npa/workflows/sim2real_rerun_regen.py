@@ -3119,10 +3119,10 @@ def _emit_regen_mcap(
     )
 
 
-def _assert_regen_heldout_frames(result: Sim2RealVizResult) -> None:
-    if result.heldout_frame_count <= 0:
+def _assert_regen_heldout_evidence(result: Sim2RealVizResult) -> None:
+    if result.heldout_frame_count <= 0 and result.heldout_env_count <= 0:
         raise Sim2RealRerunRegenError(
-            "regenerated .rrd has heldout_frame_count=0; "
+            "regenerated .rrd has no factual held-out camera or environment evidence; "
             "sync gold held-out renders or rerun held-out eval"
         )
 
@@ -3137,7 +3137,7 @@ def _finalize_regen_result(
     upload: bool,
     output_rrd: Path | None = None,
 ) -> RegenResult:
-    _assert_regen_heldout_frames(result)
+    _assert_regen_heldout_evidence(result)
     mcap_result = _emit_regen_mcap(work_dir, state)
     if upload:
         _capture_regen_mcap_identity(
@@ -3281,7 +3281,7 @@ def _regenerate_sim2real_rrd(
             outer_history,
             viewer_command,
         )
-        _assert_regen_heldout_frames(result)
+        _assert_regen_heldout_evidence(result)
         _persist_regen_report(
             config,
             work_dir,

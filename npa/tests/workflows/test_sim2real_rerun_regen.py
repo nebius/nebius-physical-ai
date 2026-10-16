@@ -124,7 +124,7 @@ def test_regen_sim2real_rrd_requires_factual_observation_evidence(
         lambda **_kwargs: FakeResult(),
     )
 
-    with pytest.raises(Sim2RealRerunRegenError, match="heldout_frame_count=0"):
+    with pytest.raises(Sim2RealRerunRegenError, match="no factual held-out"):
         regen_sim2real_rrd(_config(), local_dir=local_dir, sync_inputs=False)
 
 
@@ -139,6 +139,40 @@ def test_regen_result_rejects_rollout_only_observations(tmp_path: Path) -> None:
 
     with pytest.raises(Sim2RealRerunRegenError, match="no factual held-out"):
         _regen_result_from_viz("rollout-only", tmp_path, RolloutOnlyResult())
+
+
+def test_regen_sim2real_rrd_accepts_heldout_environment_evidence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    local_dir = tmp_path / "run"
+    (local_dir / "inner_loop/outer-01").mkdir(parents=True)
+    (local_dir / "eval/heldout").mkdir(parents=True)
+    (local_dir / "inner_loop/outer-01/evidence.json").write_text(
+        json.dumps({"outer_iteration": 1, "iterations": []}),
+        encoding="utf-8",
+    )
+    (local_dir / "eval/heldout/report.json").write_text(
+        json.dumps({"success_rate": 1.0, "render_manifest": {"episodes": []}}),
+        encoding="utf-8",
+    )
+
+    class FakeResult:
+        output_rrd_path = str(local_dir / "reports" / "sim2real.rrd")
+        heldout_frame_count = 0
+        heldout_env_count = 1
+        rollout_count = 0
+        frame_count = 0
+        has_factual_observation_evidence = True
+
+    monkeypatch.setattr(
+        "npa.workflows.sim2real_rerun_regen.emit_sim2real_rerun",
+        lambda **_kwargs: FakeResult(),
+    )
+
+    result = regen_sim2real_rrd(
+        _config(), local_dir=local_dir, sync_inputs=False, upload=False
+    )
+    assert result.heldout_frame_count == 0
 
 
 @pytest.mark.parametrize("config_factory", [_config, _artifact_config])

@@ -2780,12 +2780,14 @@ def test_default_npa_setup_uses_an_importable_baked_runtime_without_reinstalling
     shim = home / ".local" / "bin" / "npa"
     assert shim.is_file()
     assert os.access(shim, os.X_OK)
+    shim_environment = dict(environment)
+    shim_environment.pop("NPA_BAKED_PYTHON")
     result = subprocess.run(
         [str(shim), "--help"],
         check=False,
         capture_output=True,
         text=True,
-        env=environment,
+        env=shim_environment,
     )
     assert result.returncode == 0, result.stderr
     assert "-m pip" not in invocations.read_text(encoding="utf-8")

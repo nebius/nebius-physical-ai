@@ -1657,7 +1657,7 @@ def default_npa_setup() -> str:
         '[ "$npa_setup_python" = "${NPA_BAKED_PYTHON:-}" ] && '
         "\"$npa_setup_python\" -c 'import npa.cli.main' >/dev/null 2>&1; then\n"
         '  mkdir -p "$HOME/.local/bin"\n'
-        "  printf '%s\\n' '#!/bin/sh' 'exec \"$NPA_BAKED_PYTHON\" -m npa.cli.main \"$@\"' "
+        '  printf "%s\\n" "#!/bin/sh" "exec ${npa_setup_python@Q} -m npa.cli.main \\"\\$@\\"" '
         '> "$HOME/.local/bin/npa"\n'
         '  chmod 0755 "$HOME/.local/bin/npa"\n'
         "fi\n"
