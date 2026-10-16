@@ -308,6 +308,54 @@ def _validate_usd(path: Path, spec: dict) -> None:
         )
 
 
+def _install_usd_entrypoint(produced: Path, resolved: Path) -> None:
+    """Create the stable entrypoint without relocating relative composition arcs."""
+
+    if produced.resolve() == resolved.resolve():
+        return
+    try:
+        relative = produced.resolve().relative_to(resolved.parent.resolve())
+    except ValueError as exc:
+        raise IsaacRobotAssetError(
+            "Isaac UrdfConverter produced USD outside the resolved asset tree"
+        ) from exc
+
+    from pxr import Usd
+
+    source_stage = Usd.Stage.Open(str(produced), Usd.Stage.LoadNone)
+    if source_stage is None:
+        raise IsaacRobotAssetError(
+            f"Isaac UrdfConverter produced an unreadable USD: {produced}"
+        )
+    source_prim = source_stage.GetDefaultPrim()
+    if not source_prim or not source_prim.IsValid():
+        raise IsaacRobotAssetError(
+            "Isaac UrdfConverter produced USD without a default prim"
+        )
+
+    entrypoint = Usd.Stage.CreateNew(str(resolved))
+    if entrypoint is None:
+        raise IsaacRobotAssetError(
+            f"could not create resolved USD entrypoint: {resolved}"
+        )
+    prim_path = f"/{source_prim.GetName()}"
+    prim = entrypoint.DefinePrim(prim_path, source_prim.GetTypeName() or "Xform")
+    reference_path = relative.as_posix()
+    if not prim.GetReferences().AddReference(reference_path):
+        raise IsaacRobotAssetError(
+            f"could not reference converted USD from entrypoint: {reference_path}"
+        )
+    entrypoint.SetDefaultPrim(prim)
+    for metadata in ("upAxis", "metersPerUnit", "kilogramsPerUnit"):
+        value = source_stage.GetMetadata(metadata)
+        if value is not None:
+            entrypoint.SetMetadata(metadata, value)
+    if not entrypoint.GetRootLayer().Save():
+        raise IsaacRobotAssetError(
+            f"could not save resolved USD entrypoint: {resolved}"
+        )
+
+
 def prepare_with_running_app() -> dict:
     """Convert and publish while the caller's Isaac application is running."""
 
@@ -356,8 +404,7 @@ def prepare_with_running_app() -> dict:
                 raise IsaacRobotAssetError(
                     f"Isaac UrdfConverter produced no USD for {source.name}"
                 )
-            if produced.resolve() != resolved.resolve():
-                shutil.copy2(produced, resolved)
+            _install_usd_entrypoint(produced, resolved)
         elif spec["source_format"] == "usd":
             shutil.copy2(source, resolved)
         else:
