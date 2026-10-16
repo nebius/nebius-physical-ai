@@ -775,7 +775,7 @@ class _FakeUsdJoint:
         return _FakeRelationship(self._prim.body1)
 
 
-def _joint_target_stage(valid_paths: set[str]) -> object:
+def _joint_target_stage(valid_paths: set[str]) -> tuple[object, object]:
     joints = [
         _FakeJointPrim("arm_joint", "/panda/Physics/base", "/panda/Physics/hand"),
         _FakeJointPrim(
@@ -784,10 +784,14 @@ def _joint_target_stage(valid_paths: set[str]) -> object:
             "/panda/Physics/right_finger",
         ),
     ]
-    return SimpleNamespace(
-        Traverse=lambda: joints,
+    instance_proxy_predicate = object()
+    stage = SimpleNamespace(
+        Traverse=lambda predicate: (
+            joints if predicate is instance_proxy_predicate else []
+        ),
         GetPrimAtPath=lambda path: _FakeTargetPrim(str(path) in valid_paths),
     )
+    return stage, instance_proxy_predicate
 
 
 def test_isaac_usd_validation_accepts_valid_joint_body_targets(
@@ -799,9 +803,12 @@ def test_isaac_usd_validation_accepts_valid_joint_body_targets(
         "/panda/Physics/left_finger",
         "/panda/Physics/right_finger",
     }
-    stage = _joint_target_stage(body_paths)
+    stage, instance_proxy_predicate = _joint_target_stage(body_paths)
     pxr = SimpleNamespace(
-        Usd=SimpleNamespace(Stage=SimpleNamespace(Open=lambda _path: stage)),
+        Usd=SimpleNamespace(
+            Stage=SimpleNamespace(Open=lambda _path: stage),
+            TraverseInstanceProxies=lambda: instance_proxy_predicate,
+        ),
         UsdPhysics=SimpleNamespace(Joint=_FakeUsdJoint),
     )
     monkeypatch.setitem(sys.modules, "pxr", pxr)
@@ -812,9 +819,14 @@ def test_isaac_usd_validation_accepts_valid_joint_body_targets(
 def test_isaac_usd_validation_rejects_dangling_joint_body_target(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    stage = _joint_target_stage({"/panda/Physics/base", "/panda/Physics/hand"})
+    stage, instance_proxy_predicate = _joint_target_stage(
+        {"/panda/Physics/base", "/panda/Physics/hand"}
+    )
     pxr = SimpleNamespace(
-        Usd=SimpleNamespace(Stage=SimpleNamespace(Open=lambda _path: stage)),
+        Usd=SimpleNamespace(
+            Stage=SimpleNamespace(Open=lambda _path: stage),
+            TraverseInstanceProxies=lambda: instance_proxy_predicate,
+        ),
         UsdPhysics=SimpleNamespace(Joint=_FakeUsdJoint),
     )
     monkeypatch.setitem(sys.modules, "pxr", pxr)

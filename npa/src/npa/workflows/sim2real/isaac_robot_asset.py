@@ -243,7 +243,7 @@ def _validate_usd(path: Path, spec: dict) -> None:
     stage = Usd.Stage.Open(str(path))
     if stage is None:
         raise IsaacRobotAssetError(f"Isaac produced an unreadable USD: {path}")
-    prims = list(stage.Traverse())
+    prims = list(stage.Traverse(Usd.TraverseInstanceProxies()))
     names = {prim.GetName() for prim in prims}
     names.update(_physics_body_names(stage, prims, UsdPhysics))
     required_links = {
