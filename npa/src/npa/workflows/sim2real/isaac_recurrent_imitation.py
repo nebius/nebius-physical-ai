@@ -55,6 +55,16 @@ class RecurrentDemonstrationReplay:
     def _retain(self, observations, labels):
         import torch
 
+        if len(labels) == 0 or len(labels) != len(observations):
+            raise RuntimeError("native demonstration replay requires aligned samples")
+        if len(labels) % self.num_envs:
+            raise RuntimeError(
+                "native demonstration replay requires complete vector steps"
+            )
+        # Each collection starts with a simulator and actor reset. Close every
+        # retained batch independently, including interrupted physical episodes.
+        observations = observations.clone()
+        observations["__done"][-self.num_envs :] = True
         self.batches.append((observations, labels))
         combined = torch.cat([batch[0] for batch in self.batches], dim=0)
         targets = torch.cat([batch[1] for batch in self.batches], dim=0)

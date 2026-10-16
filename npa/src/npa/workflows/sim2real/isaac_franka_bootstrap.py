@@ -199,8 +199,10 @@ def _training_round(env, actor, *, learner_fraction):
     """Collect native observations, separate fit annotations, and strict actor outcomes."""
     import torch
 
+    env.reset()
     task = env.unwrapped
     teacher = _FrankaTeacher(task)
+    assessment = _TerminalPlacementAssessment(task)
     cycles = math.ceil(len(task.npa_scenario_rows) / task.num_envs) + 1
     steps = cycles * int(task.max_episode_length)
     collection = _DemonstrationCollection(actor)
@@ -220,11 +222,61 @@ def _training_round(env, actor, *, learner_fraction):
             if (step + 1) % int(task.max_episode_length) == 0:
                 _report_teacher_progress(teacher, step + 1, steps, learner_fraction)
             _, _, dones, _ = env.step(actions)
+            assessment.advance(task, dones)
             collection.resets.append(dones.bool().clone().unsqueeze(1))
             teacher.reset(dones)
             actor.reset(dones)
     actor.reset()
-    return collection.finish(steps, task.num_envs, teacher.successful_rows)
+    return collection.finish(steps, assessment, teacher.successful_rows)
+
+
+class _TerminalPlacementAssessment:
+    """Seal each scenario's first physical episode using its last pre-reset state."""
+
+    def __init__(self, task):
+        import torch
+
+        self.stable_steps = torch.zeros(
+            task.num_envs, dtype=torch.long, device=task.device
+        )
+        self.scenario_indices = task.npa_scenario_indices.clone()
+        self.completed_rows = torch.zeros(
+            len(task.npa_scenario_rows), dtype=torch.bool, device=task.device
+        )
+        self.successful_rows = torch.zeros_like(self.completed_rows)
+
+    def advance(self, task, dones):
+        import torch
+        import isaac_scenario_task
+
+        completed = dones.bool()
+        self._seal_completed(completed, isaac_scenario_task.STABLE_PLACEMENT_STEPS)
+        distance, speed, _, _ = isaac_scenario_task._placement_state(
+            task, command_name="object_pose", object_name="object"
+        )
+        stable = (distance < isaac_scenario_task.STABLE_PLACEMENT_DISTANCE_M) & (
+            speed < isaac_scenario_task.STABLE_PLACEMENT_SPEED_MPS
+        )
+        # A done environment already exposes its next episode's reset state.
+        self.stable_steps = torch.where(stable & ~completed, self.stable_steps + 1, 0)
+        self.scenario_indices = task.npa_scenario_indices.clone()
+
+    def _seal_completed(self, completed, required_steps):
+        rows = self.scenario_indices[completed]
+        first_episode = ~self.completed_rows[rows]
+        rows = rows[first_episode]
+        stable = self.stable_steps[completed][first_episode] >= required_steps
+        self.successful_rows[rows] = True
+        # If identical scenarios finish together, any failure remains a failure.
+        self.successful_rows[rows[~stable]] = False
+        self.completed_rows[rows] = True
+
+    def evidence(self, ever_successful_rows):
+        return {
+            "placement_criterion": "first_episode_last_pre_reset",
+            "terminal_training_scenarios": int(self.completed_rows.sum()),
+            "ever_training_placements": int(ever_successful_rows.sum()),
+        }
 
 
 def _report_teacher_progress(teacher, step, total_steps, learner_fraction):
@@ -238,6 +290,7 @@ def _report_teacher_progress(teacher, step, total_steps, learner_fraction):
         "phase_counts": torch.bincount(teacher.phase, minlength=5).tolist(),
         "training_scenarios": len(teacher.successful_rows),
         "stable_training_placements": int(teacher.successful_rows.sum()),
+        "placement_criterion": "any_episode_any_stable_event_diagnostic_only",
         "gold_used": False,
     }
     print(
@@ -321,8 +374,6 @@ def _guarded_demonstrations(env, actor, optimizer, *, index, replay):
         recovery.append(
             _recover_mixed_demonstrations(env, actor, optimizer, replay, failed)
         )
-        env.reset()
-        actor.reset()
 
 
 def _collection_evidence(successes, diagnostics, *, fraction):
@@ -339,8 +390,6 @@ def _collection_evidence(successes, diagnostics, *, fraction):
 
 
 def _recover_mixed_demonstrations(env, actor, optimizer, replay, failed):
-    env.reset()
-    actor.reset()
     batch, labels, successes, diagnostics = _training_round(
         env, actor, learner_fraction=0.0
     )
@@ -369,7 +418,7 @@ def _publish_bootstrap_audit(task, runner, rounds, profile, output_dir, evidence
     if int(runner.current_learning_iteration) != 0:
         raise RuntimeError("training bootstrap changed the PPO update counter")
     audit = {
-        "schema": "npa.sim2real.franka_bootstrap.v2",
+        "schema": "npa.sim2real.franka_bootstrap.v3",
         "profile": profile,
         "scope": "sealed_training_only",
         "gold_used": False,
@@ -461,24 +510,28 @@ class _DemonstrationCollection:
         self.arm_error += error[:, :-1].square().mean()
         self.gripper_error += error[:, -1].square().mean()
 
-    def finish(self, steps, num_envs, successes):
+    def finish(self, steps, assessment, ever_successful_rows):
         import torch
         from tensordict import TensorDict
 
         combined = {name: torch.cat(rows) for name, rows in self.observations.items()}
         combined["__done"] = torch.cat(self.resets)
         combined["__phase"] = torch.cat(self.phases)
-        observations = TensorDict(combined, batch_size=[steps * num_envs])
+        observations = TensorDict(combined, batch_size=[len(combined["__done"])])
         diagnostics = {
             "arm_label_mse": float(self.arm_error / steps),
             "gripper_label_mse": float(self.gripper_error / steps),
+            **assessment.evidence(ever_successful_rows),
         }
-        return observations, torch.cat(self.targets), successes, diagnostics
+        return (
+            observations,
+            torch.cat(self.targets),
+            assessment.successful_rows,
+            diagnostics,
+        )
 
 
 def _actor_collection_evidence(env, actor, *, learner_fraction):
-    env.reset()
-    actor.reset()
     batch, labels, successes, diagnostics = _training_round(
         env, actor, learner_fraction=learner_fraction
     )

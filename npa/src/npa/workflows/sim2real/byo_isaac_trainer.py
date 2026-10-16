@@ -1518,7 +1518,26 @@ def _validated_bootstrap_round(row, *, index, scenario_count):
         or row["optimizer_updates"] <= 0
     ):
         raise RuntimeError("native demonstration round is incomplete or unsuccessful")
+    _validated_terminal_placement_evidence(
+        row, scenario_count=scenario_count, successes=row["teacher_stable_placements"]
+    )
     _validated_fitting_losses(row)
+
+
+def _validated_terminal_placement_evidence(row, *, scenario_count, successes):
+    """Require complete first-episode terminal outcomes, with ever-events diagnostic only."""
+    completed = row.get("terminal_training_scenarios")
+    ever = row.get("ever_training_placements")
+    if (
+        row.get("placement_criterion") != "first_episode_last_pre_reset"
+        or type(completed) is not int
+        or completed != scenario_count
+        or type(ever) is not int
+        or not successes <= ever <= scenario_count
+    ):
+        raise RuntimeError(
+            "native training collection lacks complete first-episode terminal evidence"
+        )
 
 
 def _validated_fitting_losses(row):
@@ -1552,7 +1571,7 @@ def _validated_bootstrap_audit(audit, *, profile, checksum, scenario_count):
     from npa.workflows.sim2real.isaac_franka_control import franka_control_contract
 
     expected = {
-        "schema": "npa.sim2real.franka_bootstrap.v2",
+        "schema": "npa.sim2real.franka_bootstrap.v3",
         "profile": profile,
         "scope": "sealed_training_only",
         "gold_used": False,
@@ -1600,6 +1619,9 @@ def _validated_actor_collection(row, *, fraction, scenario_count, require_succes
         raise RuntimeError(
             "native actor collection has invalid strict placement evidence"
         )
+    _validated_terminal_placement_evidence(
+        row, scenario_count=scenario_count, successes=count
+    )
     if require_success and count * 2 < scenario_count:
         raise RuntimeError(
             "native learned actor did not establish the training handoff"

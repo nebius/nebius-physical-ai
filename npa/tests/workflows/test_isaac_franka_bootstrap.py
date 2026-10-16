@@ -140,7 +140,11 @@ class TestNativeBootstrapCheckpoint:
                 observations,
                 observations["policy"][:, :8] * 0.1,
                 self.torch.ones(4, dtype=self.torch.bool),
-                {"arm_label_mse": 0.01, "gripper_label_mse": 0.01},
+                {
+                    "arm_label_mse": 0.01,
+                    "gripper_label_mse": 0.01,
+                    **_terminal_evidence(scenario_count=4, ever=4),
+                },
             ),
         )
         return observations
@@ -173,7 +177,11 @@ class TestNativeBootstrapCheckpoint:
             success = self.torch.ones(4, dtype=self.torch.bool)
             if len(fractions) == 1:
                 success.zero_()
-            diagnostics = {"arm_label_mse": 0.01, "gripper_label_mse": 0.01}
+            diagnostics = {
+                "arm_label_mse": 0.01,
+                "gripper_label_mse": 0.01,
+                **_terminal_evidence(scenario_count=4, ever=4),
+            }
             labels = observations["policy"][:, :8] * 0.1
             return observations, labels, success, diagnostics
 
@@ -525,6 +533,14 @@ def _recurrent_fit(batches):
     }
 
 
+def _terminal_evidence(*, scenario_count=64, ever=48):
+    return {
+        "placement_criterion": "first_episode_last_pre_reset",
+        "terminal_training_scenarios": scenario_count,
+        "ever_training_placements": ever,
+    }
+
+
 def _actor_collection(fraction):
     return {
         "scope": "sealed_training_only",
@@ -538,6 +554,7 @@ def _actor_collection(fraction):
         "ppo_updates": 0,
         "arm_label_mse": 0.01,
         "gripper_label_mse": 0.01,
+        **_terminal_evidence(),
     }
 
 
@@ -560,9 +577,10 @@ def _audit():
         "optimizer_updates": 12,
         "first_loss": 0.8,
         "last_loss": 0.01,
+        **_terminal_evidence(),
     }
     return {
-        "schema": "npa.sim2real.franka_bootstrap.v2",
+        "schema": "npa.sim2real.franka_bootstrap.v3",
         "profile": "franka-cartesian-gru-distillation-v2",
         "scope": "sealed_training_only",
         "gold_used": False,
@@ -597,6 +615,38 @@ def _validate_audit(audit):
 def test_bootstrap_audit_binds_exact_training_identity_and_zero_ppo_updates():
     audit = _audit()
     assert _validate_audit(audit) == audit
+
+
+def test_legacy_ever_event_audit_cannot_be_used_as_terminal_evidence():
+    audit = _audit()
+    audit["schema"] = "npa.sim2real.franka_bootstrap.v2"
+    with pytest.raises(RuntimeError, match="training boundary"):
+        _validate_audit(audit)
+
+
+@pytest.mark.parametrize("collection", ["round", "actor_handoff", "actor_baseline"])
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("placement_criterion", "any_episode_any_stable_event"),
+        ("placement_criterion", None),
+        ("terminal_training_scenarios", 63),
+        ("terminal_training_scenarios", 64.0),
+        ("terminal_training_scenarios", True),
+        ("ever_training_placements", 47),
+        ("ever_training_placements", 65),
+        ("ever_training_placements", 48.0),
+        ("ever_training_placements", True),
+    ],
+)
+def test_bootstrap_audit_requires_complete_literal_terminal_evidence(
+    collection, field, value
+):
+    audit = _audit()
+    row = audit["rounds"][0] if collection == "round" else audit[collection]
+    row[field] = value
+    with pytest.raises(RuntimeError, match="first-episode terminal evidence"):
+        _validate_audit(audit)
 
 
 def _warmup_recovery_audit():
