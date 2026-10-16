@@ -12,6 +12,7 @@ from npa.workflows.sim2real.models import Sim2RealLoopConfig
 from npa.workflows.sim2real.reporting import build_progress_metrics
 from npa.workflows.sim2real_rerun_regen import (
     Sim2RealRerunRegenError,
+    _assert_regen_heldout_frames,
     _download_directory_fresh,
     _download_if_exists,
     _download_render_tree,
@@ -19,6 +20,7 @@ from npa.workflows.sim2real_rerun_regen import (
     _gold_report_path,
     _latest_completed_inner_evidence_rel,
     _latest_inner_evidence_rel,
+    _has_regen_heldout_evidence,
     _policy_access_record,
     _stage_components,
     _update_stage14_component,
@@ -27,6 +29,7 @@ from npa.workflows.sim2real_rerun_regen import (
     run_prefix_uri,
     sync_heldout_renders,
 )
+from npa.workflows.sim2real_viz import Sim2RealVizResult
 
 pytestmark = pytest.mark.usefixtures("operator_sim2real_image_defaults")
 _TEST_IMAGE = f"ghcr.io/example/sim2real-test@sha256:{'0' * 64}"
@@ -81,6 +84,25 @@ def test_resolve_local_rrd_path_env_override(
     )
 
 
+def test_regen_heldout_gate_rejects_rollout_only_evidence() -> None:
+    rollout_only = Sim2RealVizResult(
+        status="succeeded",
+        output_rrd_path="/tmp/rollout-only.rrd",
+        rollout_count=1,
+        frame_count=1,
+    )
+    assert not _has_regen_heldout_evidence(rollout_only)
+    with pytest.raises(Sim2RealRerunRegenError, match="held-out cameras"):
+        _assert_regen_heldout_frames(rollout_only)
+
+    sealed_scores = Sim2RealVizResult(
+        status="succeeded",
+        output_rrd_path="/tmp/sealed-scores.rrd",
+        heldout_env_count=1,
+    )
+    assert _has_regen_heldout_evidence(sealed_scores)
+
+
 @pytest.mark.parametrize("config_factory", [_config, _artifact_config])
 def test_run_prefix_uri_uses_shared_artifact_coordinates(config_factory) -> None:
     config = config_factory()
@@ -116,7 +138,7 @@ def test_regen_sim2real_rrd_requires_heldout_frames(
         lambda **_kwargs: FakeResult(),
     )
 
-    with pytest.raises(Sim2RealRerunRegenError, match="no factual rollout"):
+    with pytest.raises(Sim2RealRerunRegenError, match="no held-out cameras"):
         regen_sim2real_rrd(_config(), local_dir=local_dir, sync_inputs=False)
 
 
