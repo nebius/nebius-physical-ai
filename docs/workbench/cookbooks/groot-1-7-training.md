@@ -64,6 +64,12 @@ for the output bucket and run prefix before submission. The final stage must
 reach the authenticated agent from the worker and discover those exact outputs;
 agent health alone does not prove artifact access.
 
+Agent verification requires HTTPS with a valid certificate, or HTTP through a
+loopback SSH tunnel. For a private CA or self-signed certificate, obtain the
+trust anchor through verified SSH and expose it to the worker through
+`NPA_AGENT_CA_FILE`. Disabling TLS verification is rejected. Authenticated
+requests refuse redirects and artifact downloads outside the selected origin.
+
 ```bash
 npa/.venv/bin/npa workbench workflow submit "$SPEC" \
   --run-id "$RUN_ID" \

@@ -2296,7 +2296,7 @@ def bucket_name_for(tenant_id: str, project_id: str) -> str:
     Matches the logic in ``environment.sh`` so existing buckets are reused.
     """
     raw = f"{tenant_id}-{project_id}"
-    suffix = hashlib.md5(raw.encode()).hexdigest()[:8]
+    suffix = hashlib.md5(raw.encode(), usedforsecurity=False).hexdigest()[:8]
     return f"{DEFAULT_BUCKET_BASENAME}-{suffix}"
 
 

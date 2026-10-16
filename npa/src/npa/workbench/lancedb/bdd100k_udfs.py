@@ -20,6 +20,7 @@ from PIL import Image
 
 
 CLIP_MODEL_NAME = "openai/clip-vit-base-patch32"
+CLIP_MODEL_REVISION = "3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268"
 CLIP_EMBEDDING_DIM = 512
 CLIP_OUTPUT_TYPE = pa.list_(pa.float32(), list_size=CLIP_EMBEDDING_DIM)
 PERSON_CATEGORIES = frozenset({"person", "pedestrian"})
@@ -289,8 +290,10 @@ def _clip_components(
     )
     if resolved_precision not in {"float16", "float32"}:
         raise ValueError("precision must be 'float16' or 'float32'")
-    model = CLIPModel.from_pretrained(CLIP_MODEL_NAME)
-    processor = CLIPProcessor.from_pretrained(CLIP_MODEL_NAME)
+    model = CLIPModel.from_pretrained(CLIP_MODEL_NAME, revision=CLIP_MODEL_REVISION)
+    processor = CLIPProcessor.from_pretrained(
+        CLIP_MODEL_NAME, revision=CLIP_MODEL_REVISION
+    )
     model = model.to(device)
     if resolved_precision == "float16" and device.startswith("cuda"):
         model = model.half()

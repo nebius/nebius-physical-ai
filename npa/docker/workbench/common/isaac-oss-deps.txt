@@ -87,7 +87,7 @@ onnxscript==0.7.1
 opencv-python-headless==4.11.0.86
 orjson==3.11.9
 packaging==23.2
-pillow==11.3.0
+pillow==12.3.0
 pluggy==1.6.0
 prettytable==3.3.0
 proglog==0.1.12
@@ -114,7 +114,7 @@ six==1.17.0
 skrl==2.1.0
 smmap==5.0.3
 stable_baselines3==2.9.0
-starlette==0.45.3
+starlette==1.7.0
 sympy==1.14.0
 tensorboard==2.21.0
 tensorboard-data-server==0.7.2

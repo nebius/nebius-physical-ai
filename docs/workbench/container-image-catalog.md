@@ -122,6 +122,17 @@ restricted tools, and 25 quarantined tools. These counts come from
 the seven restricted PAIDF images have no mapped tool entry. These counts do not
 constitute acceptance of the quarantined images.
 
+The October 16 security repair candidate updates the shared Isaac Python
+closures, uses the verified upstream NLTK sandbox fix for Cosmos Transfer, and
+updates Wan's Accelerate and Transformers dependencies. Isaac's constrained
+Setuptools 81 receives the same hash-bound Unicode manifest backport used by
+Cosmos3 serving. MoviePy 2.2.1 retains its released code while its exact,
+hash-checked metadata adopts upstream Pillow 12 compatibility and requires the
+actual patched Pillow 12.3 installation. Dependency checks and real resize,
+MP4 encode/decode, NLTK sandbox, and source-distribution regression checks pass.
+These source repairs require fresh image builds, complete artifact scans, and
+compatible GPU qualification; they do not repair existing release digests.
+
 Gymnasium-Robotics is selected by the immutable development-build matrix but
 remains separately tracked outside the mapped release inventory. It appears in the GPU
 compatibility matrix only as a development-candidate/no-accepted-image row. An

@@ -118,6 +118,16 @@ tool's artifact independently; the preflight and renderer share that same map.
 
 ## Inventory
 
+Shared Isaac builds apply the upstream Setuptools Unicode manifest fix to exact
+81.0.0 source hashes when Torch's `<82` constraint prevents a version upgrade.
+Cosmos3 serving uses the same verifier for its constrained 80.10.2 runtime.
+Both reject unknown source bytes and update installed `RECORD` hashes.
+Isaac's Python 3.11 closure installs Pillow 12.3 and applies the upstream
+MoviePy Pillow compatibility bound to exact 2.2.1 metadata; the released
+MoviePy code and package versions stay intact. The compatibility patch rejects
+unknown metadata or an unpatched Pillow installation. A successful source or
+dependency check does not qualify an existing or replacement image digest.
+
 The Sim2Real controller and Rerun viewer builds use the October 2, 2026 Debian
 snapshot and explicitly install `perl-base=5.40.1-6+deb13u1` to remove the three
 fixable critical findings in the prior CPU builds. EnvGen clears inherited NPA
