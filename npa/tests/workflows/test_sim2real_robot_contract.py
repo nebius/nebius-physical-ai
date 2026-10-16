@@ -735,6 +735,37 @@ def test_isaac_prepare_converts_urdf_and_publishes_digest_manifest(
     assert published_manifest["embodiment_digest"] == spec["embodiment_digest"]
 
 
+def test_isaac_prepare_does_not_let_kit_close_hide_conversion_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    closed = False
+
+    class FakeApp:
+        def close(self) -> None:
+            nonlocal closed
+            closed = True
+
+    class FakeLauncher:
+        def __init__(self, **_: object) -> None:
+            self.app = FakeApp()
+
+    app_module = types.ModuleType("isaaclab.app")
+    app_module.AppLauncher = FakeLauncher
+    monkeypatch.setitem(sys.modules, "isaaclab.app", app_module)
+
+    def fail() -> dict:
+        raise isaac_robot_asset.IsaacRobotAssetError("conversion failed before publish")
+
+    monkeypatch.setattr(isaac_robot_asset, "prepare_with_running_app", fail)
+
+    with pytest.raises(
+        isaac_robot_asset.IsaacRobotAssetError,
+        match="conversion failed before publish",
+    ):
+        isaac_robot_asset.prepare()
+    assert closed is False
+
+
 def test_isaac_download_tree_rejects_traversal_keys(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

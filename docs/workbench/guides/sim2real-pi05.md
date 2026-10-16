@@ -420,6 +420,23 @@ The interchange boundary keeps those details out of the shared contract:
   units, exact action representation/names/units/frame, gripper semantics,
   horizon, cadence, normalization, checkpoint, and backend capabilities.
 
+Each substitution changes one named profile and its adapter while retaining the
+standard workflow runtime:
+
+| Swap | Change | Held fixed | Pre-submit rejection |
+| --- | --- | --- | --- |
+| Policy | `policy_backend` and that backend's export/train/reload/serve adapters | robot, object, cameras, task scorer and sealed evaluation cohort | unsupported action names/order/units/frame, horizon, controller mapping or reload binding |
+| Robot/controller | resolved robot bundle plus `robot_profile` | policy contract, rigid-object contract and task protocol where compatible | joint/link mismatch, unsupported gripper, missing limits/home pose, or controller representation without an implementation |
+| Object | sealed rigid-asset bundle plus `object_profile` grasp/reference transforms | robot, sensors, policy and placement-event scorer | articulated/deformable asset, missing collision/inertia/material data, or incompatible grasp width |
+| Sensors | calibrated camera entries in `robot_profile` | remaining robot morphology, task and policy backend | unknown mount link, stale capture/state clocks, missing mask/layout, or absent exterior/wrist role |
+| Data/evaluation | backend-native exporter and sealed cohort identities | physical controller semantics and scorer for a comparison | train/evaluation lineage overlap, non-training normalization, or incomparable task protocol |
+
+The checked-in non-Franka reference requests 12 CPUs for each Isaac stage. That
+value includes controller headroom and is intentionally below the observed
+node's allocatable ceiling; a rendered plan must still be checked before every
+submission. Runtime resource overrides may narrow a request, but cannot change
+robot, object, policy, cohort, or scorer identity.
+
 `sim2real-policy-interchange-smolvla.yaml` is the model-neutral 14-stage
 reference. It uses real LeRobotDataset materialization and native SmolVLA
 training, processor-bound reload and typed serving. OpenPI/DROID translation,
@@ -447,8 +464,8 @@ Current support matrix:
 | Combination | Source contract | Native execution | Task success | Claim |
 | --- | --- | --- | --- | --- |
 | Franka + cube-size family + pi0.5 | qualified | completed | adapted fresh 1/8; baseline provenance invalid | exercised only; no valid improvement or wrist-benefit comparison |
-| Franka + cube-size family + SmolVLA | implemented | pending exact-image/native run | unmeasured | unsupported pending qualification |
-| UR10e/Robotiq + spool + SmolVLA | implemented six-axis/tool/calibration bridge | pending exact-image/native run | unmeasured | unsupported pending qualification |
+| Franka + cube-size family + SmolVLA | implemented; exact-source DEV image bytes independently verified | native task pending | unmeasured | unsupported pending qualification |
+| UR10e/Robotiq + offset-origin spool + SmolVLA | implemented six-axis/tool/calibration bridge; exact-source DEV image bytes independently verified | first conversion returned success without its declared manifest; successor makes the hidden conversion failure observable | unmeasured | unsupported pending successful conversion and full run |
 | Historical UR10e/Robotiq + spool + PPO | exercised on native Isaac | 0/1024 lifts | failed | diagnostic only; privileged PPO state is not a VLA input |
 | Articulated/deformable props, mobile bases, non-parallel-jaw grippers, Cartesian policies without qualified IK | rejected or unimplemented | not run | unmeasured | unsupported |
 

@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import shutil
+import traceback
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
 
@@ -361,9 +362,16 @@ def prepare() -> dict:
         ),
     ).app
     try:
-        return prepare_with_running_app()
-    finally:
-        app.close()
+        manifest = prepare_with_running_app()
+    except BaseException:
+        # Isaac Kit may terminate the process with exit code 0 from ``close()``.
+        # Do not cross that boundary while an exception is active: doing so hides
+        # the traceback and lets orchestration report success without the durable
+        # manifest. Process teardown releases Kit after the non-zero exit.
+        traceback.print_exc()
+        raise
+    app.close()
+    return manifest
 
 
 def fetch() -> dict:

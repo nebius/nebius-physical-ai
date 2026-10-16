@@ -41,7 +41,7 @@ config:
   gpu_disk_size: "100"
   isaac_gpu_type: RTXPRO6000
   isaac_runtime_class: nvidia
-  isaac_cpus: "16"
+  isaac_cpus: "12"
   isaac_memory: 128Gi
   isaac_disk_size: "100"
   cpu_cpus: "8"

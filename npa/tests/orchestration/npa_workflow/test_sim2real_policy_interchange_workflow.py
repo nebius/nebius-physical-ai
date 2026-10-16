@@ -160,28 +160,33 @@ def test_runtime_fetch_isaac_stages_use_the_cache_bound_interpreter() -> None:
 
 
 def test_isaac_default_leaves_standard_runtime_controller_headroom() -> None:
-    spec = load_spec(SPEC)
-    spec.config["source_sha"] = "0123456789abcdef0123456789abcdef01234567"
-    rendered = render_skypilot_yaml(
-        spec,
-        build_plan(spec, run_id="controller-headroom"),
-        run_id="controller-headroom",
-        options=SkypilotRenderOptions(
-            image_overrides={
-                "*": "registry.example.invalid/npa@sha256:"
-                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-            },
-            materialize_registry_secrets=False,
-        ),
+    cases = (
+        (SPEC, {"collect-expert", "evaluate-base-gold", "evaluate-adapted-gold"}),
+        (NON_FRANKA_SPEC, {"collect-expert", "evaluate-base", "evaluate-adapted"}),
     )
-    tasks = [
-        doc for doc in yaml.safe_load_all(rendered) if doc and doc.get("resources")
-    ]
-    isaac_tasks = [task for task in tasks if task["name"] == "collect-expert"]
+    for path, isaac_state_names in cases:
+        spec = load_spec(path)
+        spec.config["source_sha"] = "0123456789abcdef0123456789abcdef01234567"
+        rendered = render_skypilot_yaml(
+            spec,
+            build_plan(spec, run_id="controller-headroom"),
+            run_id="controller-headroom",
+            options=SkypilotRenderOptions(
+                image_overrides={
+                    "*": "registry.example.invalid/npa@sha256:"
+                    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                },
+                materialize_registry_secrets=False,
+            ),
+        )
+        tasks = [
+            doc for doc in yaml.safe_load_all(rendered) if doc and doc.get("resources")
+        ]
+        isaac_tasks = [task for task in tasks if task["name"] in isaac_state_names]
 
-    assert spec.config["isaac_cpus"] == "12"
-    assert len(isaac_tasks) == 1
-    assert isaac_tasks[0]["resources"]["cpus"] == "12+"
+        assert spec.config["isaac_cpus"] == "12"
+        assert {task["name"] for task in isaac_tasks} == isaac_state_names
+        assert all(task["resources"]["cpus"] == "12+" for task in isaac_tasks)
 
 
 def test_non_franka_acceptance_uses_standard_runtime_and_real_native_seams() -> None:

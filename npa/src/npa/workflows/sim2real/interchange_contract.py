@@ -58,6 +58,74 @@ def _sha(payload: Mapping[str, Any]) -> str:
     ).hexdigest()
 
 
+def _lowercase_sha256(value: str, *, name: str) -> None:
+    if len(value) != 64 or any(char not in "0123456789abcdef" for char in value):
+        raise InterchangeContractError(f"{name} must be lowercase SHA-256")
+
+
+def _validate_gripper_endpoints(mapping: "GripperMapping") -> None:
+    if mapping.model_semantics not in GRIPPER_SEMANTICS:
+        raise InterchangeContractError("unsupported gripper model semantics")
+    if not all(math.isfinite(v) for v in (mapping.model_open, mapping.model_closed)):
+        raise InterchangeContractError("model gripper endpoints must be finite")
+    if mapping.model_open == mapping.model_closed:
+        raise InterchangeContractError("model gripper endpoints must differ")
+    expected = {
+        "normalized_open": (1.0, 0.0),
+        "normalized_closed": (0.0, 1.0),
+        "binary_open": (1.0, 0.0),
+    }.get(mapping.model_semantics)
+    endpoints = (mapping.model_open, mapping.model_closed)
+    if expected is not None and any(
+        abs(actual - required) > 1.0e-9
+        for actual, required in zip(endpoints, expected, strict=True)
+    ):
+        raise InterchangeContractError(
+            f"{mapping.model_semantics} gripper endpoints must be "
+            f"open={expected[0]:g}, closed={expected[1]:g}"
+        )
+
+
+def _validate_joint_limits(limits: Sequence[Sequence[float]], *, size: int) -> None:
+    if len(limits) != size:
+        raise InterchangeContractError(
+            "one physical joint limit is required per arm joint"
+        )
+    for lower, upper in limits:
+        if not math.isfinite(lower) or not math.isfinite(upper) or lower >= upper:
+            raise InterchangeContractError(
+                "arm joint limits must be finite and ordered"
+            )
+
+
+def _validate_camera_set(cameras: Sequence["CameraView"]) -> None:
+    roles = [camera.role for camera in cameras]
+    if roles.count("exterior") < 1 or roles.count("wrist") < 1:
+        raise InterchangeContractError("one exterior and one wrist camera are required")
+    keys = [camera.key for camera in cameras]
+    if len(keys) != len(set(keys)):
+        raise InterchangeContractError("camera keys must be unique")
+
+
+def _validate_rigid_material(profile: "RigidObjectProfile") -> None:
+    declarations = (
+        profile.collision_declared,
+        profile.inertia_declared,
+        profile.material_declared,
+    )
+    if not all(declarations):
+        raise InterchangeContractError(
+            "rigid props require explicit collision, inertia, and material data"
+        )
+    values = (profile.static_friction, profile.dynamic_friction, profile.restitution)
+    if not all(math.isfinite(value) for value in values):
+        raise InterchangeContractError("object material values are invalid")
+    if not 0.0 <= profile.dynamic_friction <= profile.static_friction:
+        raise InterchangeContractError("object material values are invalid")
+    if not 0.0 <= profile.restitution <= 1.0:
+        raise InterchangeContractError("object material values are invalid")
+
+
 @dataclass(frozen=True)
 class Transform:
     """One explicit parent-to-child rigid transform in XYZW convention."""
@@ -193,26 +261,7 @@ class GripperMapping:
         width = float(self.maximum_width_m)
         if not math.isfinite(width) or width <= 0.0:
             raise InterchangeContractError("maximum gripper width must be positive")
-        if self.model_semantics not in GRIPPER_SEMANTICS:
-            raise InterchangeContractError("unsupported gripper model semantics")
-        if not all(math.isfinite(v) for v in (self.model_open, self.model_closed)):
-            raise InterchangeContractError("model gripper endpoints must be finite")
-        if self.model_open == self.model_closed:
-            raise InterchangeContractError("model gripper endpoints must differ")
-        expected_endpoints = {
-            "normalized_open": (1.0, 0.0),
-            "normalized_closed": (0.0, 1.0),
-            "binary_open": (1.0, 0.0),
-        }
-        expected = expected_endpoints.get(self.model_semantics)
-        if expected is not None and (
-            abs(self.model_open - expected[0]) > 1.0e-9
-            or abs(self.model_closed - expected[1]) > 1.0e-9
-        ):
-            raise InterchangeContractError(
-                f"{self.model_semantics} gripper endpoints must be open={expected[0]:g}, "
-                f"closed={expected[1]:g}"
-            )
+        _validate_gripper_endpoints(self)
 
     def width_to_model(self, width_m: float) -> float:
         width = float(width_m)
@@ -319,13 +368,8 @@ class RobotSensorProfile:
             raise InterchangeContractError(
                 "robot identity, base_link and ee_link are required"
             )
-        for digest in (self.bundle_sha256, self.source_sha256):
-            if len(digest) != 64 or any(
-                char not in "0123456789abcdef" for char in digest
-            ):
-                raise InterchangeContractError(
-                    "robot source digests must be lowercase SHA-256"
-                )
+        _lowercase_sha256(self.bundle_sha256, name="robot bundle digest")
+        _lowercase_sha256(self.source_sha256, name="robot source digest")
         arm = _names(self.arm_joint_names, name="arm_joint_names")
         measured = _names(self.measured_state_names, name="measured_state_names")
         if measured[: len(arm)] != arm or len(measured) != len(arm) + 1:
@@ -339,15 +383,7 @@ class RobotSensorProfile:
                 "measured_state_units must declare radians for ordered arm joints "
                 "and the gripper model semantics for the final value"
             )
-        if len(self.joint_limits_rad) != len(arm):
-            raise InterchangeContractError(
-                "one physical joint limit is required per arm joint"
-            )
-        for lower, upper in self.joint_limits_rad:
-            if not math.isfinite(lower) or not math.isfinite(upper) or lower >= upper:
-                raise InterchangeContractError(
-                    "arm joint limits must be finite and ordered"
-                )
+        _validate_joint_limits(self.joint_limits_rad, size=len(arm))
         _finite(self.home_positions_rad, size=len(arm), name="home_positions_rad")
         if self.controller_representation not in ACTION_REPRESENTATIONS:
             raise InterchangeContractError("unsupported controller representation")
@@ -355,14 +391,7 @@ class RobotSensorProfile:
             raise InterchangeContractError(
                 "only fixed-base arms are currently supported"
             )
-        roles = [camera.role for camera in self.cameras]
-        if roles.count("exterior") < 1 or roles.count("wrist") < 1:
-            raise InterchangeContractError(
-                "one exterior and one wrist camera are required"
-            )
-        keys = [camera.key for camera in self.cameras]
-        if len(keys) != len(set(keys)):
-            raise InterchangeContractError("camera keys must be unique")
+        _validate_camera_set(self.cameras)
 
     @property
     def action_names(self) -> tuple[str, ...]:
@@ -385,6 +414,40 @@ class RobotSensorProfile:
             "gripper": self.gripper.to_dict(),
             "cameras": [camera.to_dict() for camera in self.cameras],
         }
+
+
+def _gripper_mapping_from_dict(value: Mapping[str, Any]) -> GripperMapping:
+    return GripperMapping(
+        joint_names=tuple(value.get("joint_names") or ()),
+        joint_units=tuple(value.get("joint_units") or ()),
+        finger_links=tuple(value.get("finger_links") or ()),
+        open_joint_positions=tuple(value.get("open_joint_positions") or ()),
+        closed_joint_positions=tuple(value.get("closed_joint_positions") or ()),
+        maximum_width_m=float(value.get("maximum_width_m", math.nan)),
+        model_semantics=str(value.get("model_semantics") or ""),
+        model_open=float(value.get("model_open", math.nan)),
+        model_closed=float(value.get("model_closed", math.nan)),
+    )
+
+
+def _camera_view_from_dict(value: Mapping[str, Any]) -> CameraView:
+    transform = value.get("mount_from_camera") or {}
+    return CameraView(
+        key=str(value.get("key") or ""),
+        role=str(value.get("role") or ""),  # type: ignore[arg-type]
+        mount_link=str(value.get("mount_link") or ""),
+        mount_from_camera=Transform(
+            tuple(transform.get("translation_m") or ()),
+            tuple(transform.get("quaternion_xyzw") or ()),
+        ),
+        intrinsics=tuple(value.get("intrinsics_fx_fy_cx_cy") or ()),
+        image_size=tuple(value.get("image_size_wh") or ()),
+        layout=str(value.get("layout") or ""),  # type: ignore[arg-type]
+        mask_key=str(value.get("mask_key") or ""),
+        capture_timestamp_key=str(value.get("capture_timestamp_key") or ""),
+        state_timestamp_key=str(value.get("state_timestamp_key") or ""),
+        maximum_state_skew_s=float(value.get("maximum_state_skew_s", math.nan)),
+    )
 
 
 def robot_sensor_profile_from_dict(value: Mapping[str, Any]) -> RobotSensorProfile:
@@ -412,59 +475,18 @@ def robot_sensor_profile_from_dict(value: Mapping[str, Any]) -> RobotSensorProfi
         ),
         home_positions_rad=tuple(value.get("home_positions_rad") or ()),
         controller_representation=str(value.get("controller_representation") or ""),
-        gripper=GripperMapping(
-            joint_names=tuple(gripper.get("joint_names") or ()),
-            joint_units=tuple(gripper.get("joint_units") or ()),
-            finger_links=tuple(gripper.get("finger_links") or ()),
-            open_joint_positions=tuple(gripper.get("open_joint_positions") or ()),
-            closed_joint_positions=tuple(gripper.get("closed_joint_positions") or ()),
-            maximum_width_m=float(gripper.get("maximum_width_m", math.nan)),
-            model_semantics=str(gripper.get("model_semantics") or ""),
-            model_open=float(gripper.get("model_open", math.nan)),
-            model_closed=float(gripper.get("model_closed", math.nan)),
-        ),
+        gripper=_gripper_mapping_from_dict(gripper),
         cameras=tuple(
-            CameraView(
-                key=str(camera.get("key") or ""),
-                role=str(camera.get("role") or ""),
-                mount_link=str(camera.get("mount_link") or ""),
-                mount_from_camera=Transform(
-                    tuple(
-                        (camera.get("mount_from_camera") or {}).get("translation_m")
-                        or ()
-                    ),
-                    tuple(
-                        (camera.get("mount_from_camera") or {}).get("quaternion_xyzw")
-                        or ()
-                    ),
-                ),
-                intrinsics=tuple(camera.get("intrinsics_fx_fy_cx_cy") or ()),
-                image_size=tuple(camera.get("image_size_wh") or ()),
-                layout=str(camera.get("layout") or ""),
-                mask_key=str(camera.get("mask_key") or ""),
-                capture_timestamp_key=str(camera.get("capture_timestamp_key") or ""),
-                state_timestamp_key=str(camera.get("state_timestamp_key") or ""),
-                maximum_state_skew_s=float(
-                    camera.get("maximum_state_skew_s", math.nan)
-                ),
-            )
+            _camera_view_from_dict(camera)
             for camera in cameras
             if isinstance(camera, Mapping)
         ),
     )
 
 
-def robot_sensor_profile_from_resolved(
-    contract: Mapping[str, Any], *, sensor_config: Mapping[str, Any]
-) -> RobotSensorProfile:
-    """Build a policy profile from the canonical immutable robot contract.
-
-    The canonical lift contract predates policy-camera interchange and does not
-    guarantee physical joint limits, aperture, or camera calibration.  Those
-    values are therefore required here instead of silently inheriting Franka
-    constants for a new embodiment.
-    """
-
+def _resolved_embodiment(
+    contract: Mapping[str, Any],
+) -> tuple[Mapping[str, Any], Mapping[str, Any]]:
     embodiment = contract.get("embodiment")
     if not isinstance(embodiment, Mapping):
         raise InterchangeContractError("resolved robot contract lacks embodiment")
@@ -473,9 +495,64 @@ def robot_sensor_profile_from_resolved(
         raise InterchangeContractError(
             "resolved robot contract lacks source provenance"
         )
+    return embodiment, source
+
+
+def _camera_views_from_config(
+    sensor_config: Mapping[str, Any],
+) -> tuple[CameraView, ...]:
+    cameras_config = sensor_config.get("cameras")
+    if not isinstance(cameras_config, Sequence) or isinstance(
+        cameras_config, (str, bytes)
+    ):
+        raise InterchangeContractError("explicit calibrated cameras are required")
+    cameras = []
+    for raw in cameras_config:
+        if not isinstance(raw, Mapping):
+            raise InterchangeContractError("camera configuration must be an object")
+        transform = raw.get("mount_from_camera")
+        if not isinstance(transform, Mapping):
+            raise InterchangeContractError("camera mount transform is required")
+        cameras.append(_camera_view_from_dict({**raw, "mount_from_camera": transform}))
+    return tuple(cameras)
+
+
+def _gripper_from_resolved(
+    embodiment: Mapping[str, Any], sensor_config: Mapping[str, Any]
+) -> GripperMapping:
+    config = sensor_config.get("gripper")
+    commands = embodiment.get("gripper_commands")
+    if not isinstance(config, Mapping):
+        raise InterchangeContractError("explicit gripper width mapping is required")
+    if not isinstance(commands, Mapping):
+        raise InterchangeContractError("resolved robot contract lacks gripper commands")
+    names = tuple(embodiment.get("gripper_joint_names") or ())
+    open_positions = config.get("open_joint_positions")
+    closed_positions = config.get("closed_joint_positions")
+    if open_positions is None:
+        open_positions = [commands.get("open")] * len(names)
+    if closed_positions is None:
+        closed_positions = [commands.get("close")] * len(names)
+    return GripperMapping(
+        joint_names=names,
+        joint_units=tuple(config.get("joint_units") or ()),
+        finger_links=tuple(embodiment.get("finger_links") or ()),
+        open_joint_positions=tuple(open_positions),
+        closed_joint_positions=tuple(closed_positions),
+        maximum_width_m=float(config.get("maximum_width_m", math.nan)),
+        model_semantics=str(config.get("model_semantics") or ""),  # type: ignore[arg-type]
+        model_open=float(config.get("model_open", math.nan)),
+        model_closed=float(config.get("model_closed", math.nan)),
+    )
+
+
+def robot_sensor_profile_from_resolved(
+    contract: Mapping[str, Any], *, sensor_config: Mapping[str, Any]
+) -> RobotSensorProfile:
+    """Build a profile without inheriting unknown embodiment calibration."""
+
+    embodiment, source = _resolved_embodiment(contract)
     arm_names = tuple(embodiment.get("arm_joint_names") or ())
-    gripper_names = tuple(embodiment.get("gripper_joint_names") or ())
-    finger_links = tuple(embodiment.get("finger_links") or ())
     limits = sensor_config.get("joint_limits_rad")
     if not isinstance(limits, Sequence) or isinstance(limits, (str, bytes)):
         raise InterchangeContractError(
@@ -483,9 +560,6 @@ def robot_sensor_profile_from_resolved(
         )
     limit_values = tuple(_finite(limit, size=2, name="joint limit") for limit in limits)
     home = tuple(embodiment.get("home_qpos") or ())[: len(arm_names)]
-    gripper_config = sensor_config.get("gripper")
-    if not isinstance(gripper_config, Mapping):
-        raise InterchangeContractError("explicit gripper width mapping is required")
     measured_state = sensor_config.get("measured_state")
     if not isinstance(measured_state, Mapping):
         raise InterchangeContractError(
@@ -493,45 +567,6 @@ def robot_sensor_profile_from_resolved(
         )
     measured_state_names = tuple(measured_state.get("names") or ())
     measured_state_units = tuple(measured_state.get("units") or ())
-    cameras_config = sensor_config.get("cameras")
-    if not isinstance(cameras_config, Sequence) or isinstance(
-        cameras_config, (str, bytes)
-    ):
-        raise InterchangeContractError("explicit calibrated cameras are required")
-    cameras: list[CameraView] = []
-    for raw in cameras_config:
-        if not isinstance(raw, Mapping):
-            raise InterchangeContractError("camera configuration must be an object")
-        transform = raw.get("mount_from_camera")
-        if not isinstance(transform, Mapping):
-            raise InterchangeContractError("camera mount transform is required")
-        cameras.append(
-            CameraView(
-                key=str(raw.get("key") or ""),
-                role=str(raw.get("role") or ""),  # type: ignore[arg-type]
-                mount_link=str(raw.get("mount_link") or ""),
-                mount_from_camera=Transform(
-                    tuple(transform.get("translation_m") or ()),  # type: ignore[arg-type]
-                    tuple(transform.get("quaternion_xyzw") or ()),  # type: ignore[arg-type]
-                ),
-                intrinsics=tuple(raw.get("intrinsics_fx_fy_cx_cy") or ()),  # type: ignore[arg-type]
-                image_size=tuple(raw.get("image_size_wh") or ()),  # type: ignore[arg-type]
-                layout=str(raw.get("layout") or ""),  # type: ignore[arg-type]
-                mask_key=str(raw.get("mask_key") or ""),
-                capture_timestamp_key=str(raw.get("capture_timestamp_key") or ""),
-                state_timestamp_key=str(raw.get("state_timestamp_key") or ""),
-                maximum_state_skew_s=float(raw.get("maximum_state_skew_s", math.nan)),
-            )
-        )
-    commands = embodiment.get("gripper_commands")
-    if not isinstance(commands, Mapping):
-        raise InterchangeContractError("resolved robot contract lacks gripper commands")
-    open_positions = gripper_config.get("open_joint_positions")
-    closed_positions = gripper_config.get("closed_joint_positions")
-    if open_positions is None:
-        open_positions = [commands.get("open")] * len(gripper_names)
-    if closed_positions is None:
-        closed_positions = [commands.get("close")] * len(gripper_names)
     return RobotSensorProfile(
         identity=str(contract.get("embodiment_digest") or ""),
         bundle_sha256=str(source.get("source_tree_sha256") or ""),
@@ -546,18 +581,8 @@ def robot_sensor_profile_from_resolved(
         controller_representation=str(
             sensor_config.get("controller_representation") or ""
         ),  # type: ignore[arg-type]
-        gripper=GripperMapping(
-            joint_names=gripper_names,
-            joint_units=tuple(gripper_config.get("joint_units") or ()),
-            finger_links=finger_links,
-            open_joint_positions=tuple(open_positions),
-            closed_joint_positions=tuple(closed_positions),
-            maximum_width_m=float(gripper_config.get("maximum_width_m", math.nan)),
-            model_semantics=str(gripper_config.get("model_semantics") or ""),  # type: ignore[arg-type]
-            model_open=float(gripper_config.get("model_open", math.nan)),
-            model_closed=float(gripper_config.get("model_closed", math.nan)),
-        ),
-        cameras=tuple(cameras),
+        gripper=_gripper_from_resolved(embodiment, sensor_config),
+        cameras=_camera_views_from_config(sensor_config),
         fixed_base=bool(sensor_config.get("fixed_base", True)),
     )
 
@@ -595,11 +620,8 @@ class RigidObjectProfile:
             raise InterchangeContractError(
                 "object identity and source_uri are required"
             )
-        for digest in (self.source_sha256, self.bundle_sha256):
-            if len(digest) != 64 or any(
-                char not in "0123456789abcdef" for char in digest
-            ):
-                raise InterchangeContractError("object source digests must be SHA-256")
+        _lowercase_sha256(self.source_sha256, name="object source digest")
+        _lowercase_sha256(self.bundle_sha256, name="object bundle digest")
         units = float(self.units_m_per_unit)
         if not math.isfinite(units) or units <= 0.0:
             raise InterchangeContractError("object units must be positive")
@@ -609,22 +631,9 @@ class RigidObjectProfile:
             raise InterchangeContractError(
                 "object scale and grasp extents must be positive"
             )
-        if not all(
-            (self.collision_declared, self.inertia_declared, self.material_declared)
-        ):
-            raise InterchangeContractError(
-                "rigid props require explicit collision, inertia, and material data"
-            )
+        _validate_rigid_material(self)
         if not math.isfinite(self.mass_kg) or self.mass_kg <= 0.0:
             raise InterchangeContractError("object mass_kg must be positive")
-        if not (
-            math.isfinite(self.static_friction)
-            and math.isfinite(self.dynamic_friction)
-            and math.isfinite(self.restitution)
-            and 0.0 <= self.dynamic_friction <= self.static_friction
-            and 0.0 <= self.restitution <= 1.0
-        ):
-            raise InterchangeContractError("object material values are invalid")
         if self.grasp_axis not in GRASP_AXES:
             raise InterchangeContractError("object grasp_axis must be x, y, or z")
 
@@ -694,26 +703,9 @@ def rigid_object_profile_from_dict(value: Mapping[str, Any]) -> RigidObjectProfi
     )
 
 
-def rigid_object_profile_from_asset_manifest(
-    manifest: Mapping[str, Any],
-    *,
-    target: str,
-    source_root_uri: str,
-    world_from_root: Transform,
-    root_from_reference: Transform,
-    root_from_grasp: Transform,
-    grasp_extents_m: Sequence[float],
-    grasp_axis: Literal["x", "y", "z"] = "y",
-    scale_xyz: Sequence[float] = (1.0, 1.0, 1.0),
-) -> RigidObjectProfile:
-    """Bind a sealed rigid USD asset to explicit task and grasp frames.
-
-    The reusable boundary consumes an existing asset manifest instead of
-    guessing geometry from a USD filename or visual bounds.  Frame transforms
-    remain task inputs because an asset's root need not be centered on either
-    its stable placement reference or a gripper-compatible grasp.
-    """
-
+def _sealed_rigid_asset(
+    manifest: Mapping[str, Any], target: str
+) -> tuple[str, dict[str, str]]:
     files = manifest.get("files")
     if not isinstance(files, Mapping) or not files:
         raise InterchangeContractError("object asset manifest lacks sealed files")
@@ -732,6 +724,10 @@ def rigid_object_profile_from_asset_manifest(
     units = str(manifest.get("units") or "").strip().lower()
     if units not in {"metres", "meters"}:
         raise InterchangeContractError("object asset units must be metres")
+    return source_sha256, {str(key): str(value) for key, value in sorted(files.items())}
+
+
+def _rigid_physics(manifest: Mapping[str, Any]) -> tuple[float, Mapping[str, Any]]:
     physics = manifest.get("physics")
     if not isinstance(physics, Mapping):
         raise InterchangeContractError(
@@ -756,13 +752,35 @@ def rigid_object_profile_from_asset_manifest(
         and 0 <= float(material["restitution"]) <= 1
     ):
         raise InterchangeContractError("object physics material values are invalid")
+    return float(mass), material
+
+
+def _object_source_uri(source_root_uri: str, target: str) -> str:
     root = source_root_uri.rstrip("/")
     if not root:
         raise InterchangeContractError("object source root URI is required")
-    sealed = {str(key): str(value) for key, value in sorted(files.items())}
-    return RigidObjectProfile(
+    return f"{root}/assets/{target}.usda"
+
+
+def rigid_object_profile_from_asset_manifest(
+    manifest: Mapping[str, Any],
+    *,
+    target: str,
+    source_root_uri: str,
+    world_from_root: Transform,
+    root_from_reference: Transform,
+    root_from_grasp: Transform,
+    grasp_extents_m: Sequence[float],
+    grasp_axis: Literal["x", "y", "z"] = "y",
+    scale_xyz: Sequence[float] = (1.0, 1.0, 1.0),
+) -> RigidObjectProfile:
+    """Bind a sealed rigid asset to explicit task, reference, and grasp frames."""
+
+    source_sha256, sealed = _sealed_rigid_asset(manifest, target)
+    mass, material = _rigid_physics(manifest)
+    profile = RigidObjectProfile(
         identity=f"{manifest.get('schema')}:{target}:{source_sha256}",
-        source_uri=f"{root}/{selected}",
+        source_uri=_object_source_uri(source_root_uri, target),
         source_sha256=source_sha256,
         bundle_sha256=_sha({"files": sealed}),
         kind="rigid",
@@ -781,6 +799,7 @@ def rigid_object_profile_from_asset_manifest(
         restitution=float(material["restitution"]),
         grasp_axis=grasp_axis,
     )
+    return profile
 
 
 @dataclass(frozen=True)
@@ -1027,6 +1046,32 @@ class PolicyProfile:
         }
 
 
+def _policy_action_from_dict(value: Mapping[str, Any]) -> PolicyAction:
+    return PolicyAction(
+        representation=str(value.get("representation") or ""),
+        names=tuple(value.get("names") or ()),
+        units=tuple(value.get("units") or ()),
+        frame=str(value.get("frame") or ""),
+        gripper_semantics=str(value.get("gripper_semantics") or ""),
+        horizon=int(value.get("horizon") or 0),
+        control_hz=float(value.get("control_hz") or 0.0),
+        execute_prefix=int(value.get("execute_prefix") or 0),
+    )
+
+
+def _policy_capabilities_from_dict(value: Mapping[str, Any]) -> PolicyCapabilities:
+    return PolicyCapabilities(
+        inference=bool(value.get("inference")),
+        native_training=bool(value.get("native_training")),
+        checkpoint_reload=bool(value.get("checkpoint_reload")),
+        model_loss=bool(value.get("model_loss")),
+        action_metrics=bool(value.get("action_metrics")),
+        deterministic_noise_coupling=bool(value.get("deterministic_noise_coupling")),
+        repeated_paired_trials=bool(value.get("repeated_paired_trials")),
+        hardware_topologies=tuple(value.get("hardware_topologies") or ()),
+    )
+
+
 def policy_profile_from_dict(value: Mapping[str, Any]) -> PolicyProfile:
     """Rebuild a validated policy profile without backend-specific defaults."""
 
@@ -1043,28 +1088,8 @@ def policy_profile_from_dict(value: Mapping[str, Any]) -> PolicyProfile:
         camera_keys=tuple(value.get("camera_keys") or ()),
         measured_state_names=tuple(value.get("measured_state_names") or ()),
         measured_state_units=tuple(value.get("measured_state_units") or ()),
-        action=PolicyAction(
-            representation=str(action.get("representation") or ""),
-            names=tuple(action.get("names") or ()),
-            units=tuple(action.get("units") or ()),
-            frame=str(action.get("frame") or ""),
-            gripper_semantics=str(action.get("gripper_semantics") or ""),
-            horizon=int(action.get("horizon") or 0),
-            control_hz=float(action.get("control_hz") or 0.0),
-            execute_prefix=int(action.get("execute_prefix") or 0),
-        ),
-        capabilities=PolicyCapabilities(
-            inference=bool(capabilities.get("inference")),
-            native_training=bool(capabilities.get("native_training")),
-            checkpoint_reload=bool(capabilities.get("checkpoint_reload")),
-            model_loss=bool(capabilities.get("model_loss")),
-            action_metrics=bool(capabilities.get("action_metrics")),
-            deterministic_noise_coupling=bool(
-                capabilities.get("deterministic_noise_coupling")
-            ),
-            repeated_paired_trials=bool(capabilities.get("repeated_paired_trials")),
-            hardware_topologies=tuple(capabilities.get("hardware_topologies") or ()),
-        ),
+        action=_policy_action_from_dict(action),
+        capabilities=_policy_capabilities_from_dict(capabilities),
         normalization_identity=str(value.get("normalization_identity") or ""),
     )
 
@@ -1174,6 +1199,31 @@ class PolicyObservation:
         }
 
 
+def _camera_observation_from_wire(
+    raw: Mapping[str, Any],
+) -> TimestampedCameraObservation:
+    capture = float(raw.get("capture_timestamp_s", math.nan))
+    state = float(raw.get("state_timestamp_s", math.nan))
+    if not math.isfinite(capture) or not math.isfinite(state) or capture > state:
+        raise InterchangeContractError("camera timestamps are invalid")
+    try:
+        rgb8 = base64.b64decode(str(raw.get("image_rgb8_base64") or ""), validate=True)
+    except ValueError as exc:
+        raise InterchangeContractError("camera RGB payload is not base64") from exc
+    return TimestampedCameraObservation(
+        key=str(raw.get("key") or ""),
+        role=str(raw.get("role") or ""),  # type: ignore[arg-type]
+        calibration_sha256=str(raw.get("calibration_sha256") or ""),
+        image_size=tuple(raw.get("image_size_wh") or ()),  # type: ignore[arg-type]
+        layout=str(raw.get("layout") or ""),  # type: ignore[arg-type]
+        mask=raw.get("mask") is True,
+        capture_timestamp_s=capture,
+        state_timestamp_s=state,
+        rgb8=rgb8,
+        rgb_sha256=str(raw.get("image_sha256") or ""),
+    )
+
+
 def policy_observation_from_wire(payload: Mapping[str, Any]) -> PolicyObservation:
     """Decode the exact public wire schema into the typed observation contract."""
 
@@ -1185,41 +1235,16 @@ def policy_observation_from_wire(payload: Mapping[str, Any]) -> PolicyObservatio
     raw_views = payload.get("views")
     if not isinstance(raw_views, Sequence) or isinstance(raw_views, (str, bytes)):
         raise InterchangeContractError("camera views must be an ordered list")
-    views: list[TimestampedCameraObservation] = []
-    for raw in raw_views:
-        if not isinstance(raw, Mapping):
-            raise InterchangeContractError("camera view must be an object")
-        capture = float(raw.get("capture_timestamp_s", math.nan))
-        state = float(raw.get("state_timestamp_s", math.nan))
-        if not math.isfinite(capture) or not math.isfinite(state) or capture > state:
-            raise InterchangeContractError("camera timestamps are invalid")
-        try:
-            rgb8 = base64.b64decode(
-                str(raw.get("image_rgb8_base64") or ""), validate=True
-            )
-        except ValueError as exc:
-            raise InterchangeContractError("camera RGB payload is not base64") from exc
-        views.append(
-            TimestampedCameraObservation(
-                key=str(raw.get("key") or ""),
-                role=str(raw.get("role") or ""),  # type: ignore[arg-type]
-                calibration_sha256=str(raw.get("calibration_sha256") or ""),
-                image_size=tuple(raw.get("image_size_wh") or ()),  # type: ignore[arg-type]
-                layout=str(raw.get("layout") or ""),  # type: ignore[arg-type]
-                mask=raw.get("mask") is True,
-                capture_timestamp_s=capture,
-                state_timestamp_s=state,
-                rgb8=rgb8,
-                rgb_sha256=str(raw.get("image_sha256") or ""),
-            )
-        )
+    if not all(isinstance(raw, Mapping) for raw in raw_views):
+        raise InterchangeContractError("camera view must be an object")
+    views = tuple(_camera_observation_from_wire(raw) for raw in raw_views)
     return PolicyObservation(
         input_identity=str(payload.get("input_identity") or ""),
         robot_identity=str(payload.get("robot_identity") or ""),
         task_identity=str(payload.get("task_identity") or ""),
         policy_identity=str(payload.get("policy_identity") or ""),
         prompt=str(payload.get("prompt") or ""),
-        views=tuple(views),
+        views=views,
         measured_state_names=tuple(payload.get("measured_state_names") or ()),
         measured_state_units=tuple(payload.get("measured_state_units") or ()),
         measured_state=tuple(payload.get("measured_state") or ()),
@@ -1312,15 +1337,9 @@ def policy_output_from_wire(
     )
 
 
-def assert_policy_compatible(
-    robot: RobotSensorProfile,
-    task: SurfacePlacementTask,
-    policy: PolicyProfile,
-    *,
-    cartesian_controller_available: bool = False,
-) -> dict[str, Any]:
-    """Validate exact kinematics, cameras, units, cadence, and controller mapping."""
-
+def _assert_policy_inputs_compatible(
+    robot: RobotSensorProfile, task: SurfacePlacementTask, policy: PolicyProfile
+) -> tuple[str, ...]:
     if policy.robot_identity != robot.identity or policy.task_identity != task.identity:
         raise InterchangeContractError(
             "policy robot/task identities do not match the run"
@@ -1338,6 +1357,15 @@ def assert_policy_compatible(
         raise InterchangeContractError(
             "policy measured state units do not match the embodiment"
         )
+    return robot_cameras
+
+
+def _assert_policy_action_compatible(
+    robot: RobotSensorProfile,
+    policy: PolicyProfile,
+    *,
+    cartesian_controller_available: bool,
+) -> None:
     if policy.action.names != robot.action_names:
         raise InterchangeContractError(
             "policy action names/order do not match the embodiment; padding is forbidden"
@@ -1361,6 +1389,23 @@ def assert_policy_compatible(
         raise InterchangeContractError(
             "policy action representation does not match the physical controller"
         )
+
+
+def assert_policy_compatible(
+    robot: RobotSensorProfile,
+    task: SurfacePlacementTask,
+    policy: PolicyProfile,
+    *,
+    cartesian_controller_available: bool = False,
+) -> dict[str, Any]:
+    """Validate exact kinematics, cameras, units, cadence, and controller mapping."""
+
+    robot_cameras = _assert_policy_inputs_compatible(robot, task, policy)
+    _assert_policy_action_compatible(
+        robot,
+        policy,
+        cartesian_controller_available=cartesian_controller_available,
+    )
     receipt = {
         "schema": SCHEMA,
         "robot_identity": robot.identity,
@@ -1378,6 +1423,79 @@ def assert_policy_compatible(
     return {**receipt, "compatibility_sha256": _sha(receipt)}
 
 
+def _validated_camera_observation(
+    camera: CameraView, payload: Mapping[str, Any]
+) -> TimestampedCameraObservation:
+    if payload.get("layout") != camera.layout:
+        raise InterchangeContractError(f"camera {camera.key!r} layout does not match")
+    if tuple(payload.get("image_size_wh") or ()) != camera.image_size:
+        raise InterchangeContractError(
+            f"camera {camera.key!r} image size does not match"
+        )
+    if payload.get("mask") is not True:
+        raise InterchangeContractError(f"camera {camera.key!r} is masked unavailable")
+    capture = float(payload.get("capture_timestamp_s", math.nan))
+    state = float(payload.get("state_timestamp_s", math.nan))
+    camera.validate_timestamps(capture_s=capture, state_s=state)
+    rgb8 = payload.get("rgb8")
+    if not isinstance(rgb8, bytes):
+        raise InterchangeContractError(f"camera {camera.key!r} RGB bytes are required")
+    return TimestampedCameraObservation(
+        key=camera.key,
+        role=camera.role,
+        calibration_sha256=_sha(camera.to_dict()),
+        image_size=camera.image_size,
+        layout=camera.layout,
+        mask=True,
+        capture_timestamp_s=capture,
+        state_timestamp_s=state,
+        rgb8=rgb8,
+        rgb_sha256=str(payload.get("image_sha256") or ""),
+    )
+
+
+def _validate_observation_identity(
+    *, policy: PolicyProfile, prompt: str, input_identity: str, task_identity: str
+) -> None:
+    if not prompt.strip() or not input_identity.strip():
+        raise InterchangeContractError("prompt and input identity are required")
+    if task_identity != policy.task_identity:
+        raise InterchangeContractError(
+            "observation task identity does not match policy"
+        )
+
+
+def _ordered_measured_state(
+    policy: PolicyProfile, measured_state: Mapping[str, float]
+) -> tuple[float, ...]:
+    if tuple(measured_state) != policy.measured_state_names:
+        raise InterchangeContractError("measured state names/order do not match policy")
+    return _finite(
+        tuple(measured_state.values()),
+        size=len(policy.measured_state_names),
+        name="measured state",
+    )
+
+
+def _validated_camera_views(
+    robot: RobotSensorProfile,
+    policy: PolicyProfile,
+    camera_payloads: Mapping[str, Mapping[str, Any]],
+) -> tuple[TimestampedCameraObservation, ...]:
+    unexpected = set(camera_payloads) - set(policy.camera_keys)
+    missing = set(policy.camera_keys) - set(camera_payloads)
+    if unexpected or missing:
+        raise InterchangeContractError(
+            f"camera payload mismatch; missing={sorted(missing)}, "
+            f"unexpected={sorted(unexpected)}"
+        )
+    by_key = {camera.key: camera for camera in robot.cameras}
+    return tuple(
+        _validated_camera_observation(by_key[key], camera_payloads[key])
+        for key in policy.camera_keys
+    )
+
+
 def validate_observation(
     *,
     robot: RobotSensorProfile,
@@ -1390,66 +1508,21 @@ def validate_observation(
 ) -> PolicyObservation:
     """Validate one causal model observation without privileged object state."""
 
-    if not prompt.strip() or not input_identity.strip():
-        raise InterchangeContractError("prompt and input identity are required")
-    if task_identity != policy.task_identity:
-        raise InterchangeContractError(
-            "observation task identity does not match policy"
-        )
-    unexpected = set(camera_payloads) - set(policy.camera_keys)
-    missing = set(policy.camera_keys) - set(camera_payloads)
-    if unexpected or missing:
-        raise InterchangeContractError(
-            f"camera payload mismatch; missing={sorted(missing)}, unexpected={sorted(unexpected)}"
-        )
-    if tuple(measured_state) != policy.measured_state_names:
-        raise InterchangeContractError("measured state names/order do not match policy")
-    state_values = _finite(
-        tuple(measured_state.values()),
-        size=len(policy.measured_state_names),
-        name="measured state",
+    _validate_observation_identity(
+        policy=policy,
+        prompt=prompt,
+        input_identity=input_identity,
+        task_identity=task_identity,
     )
-    views: list[TimestampedCameraObservation] = []
-    by_key = {camera.key: camera for camera in robot.cameras}
-    for key in policy.camera_keys:
-        payload = camera_payloads[key]
-        camera = by_key[key]
-        if payload.get("layout") != camera.layout:
-            raise InterchangeContractError(f"camera {key!r} layout does not match")
-        if tuple(payload.get("image_size_wh") or ()) != camera.image_size:
-            raise InterchangeContractError(f"camera {key!r} image size does not match")
-        if payload.get("mask") is not True:
-            raise InterchangeContractError(f"camera {key!r} is masked unavailable")
-        camera.validate_timestamps(
-            capture_s=float(payload.get("capture_timestamp_s", math.nan)),
-            state_s=float(payload.get("state_timestamp_s", math.nan)),
-        )
-        image_sha256 = str(payload.get("image_sha256") or "")
-        rgb8 = payload.get("rgb8")
-        if not isinstance(rgb8, bytes):
-            raise InterchangeContractError(f"camera {key!r} RGB bytes are required")
-        calibration_sha256 = _sha(camera.to_dict())
-        views.append(
-            TimestampedCameraObservation(
-                key=key,
-                role=camera.role,
-                calibration_sha256=calibration_sha256,
-                image_size=camera.image_size,
-                layout=camera.layout,
-                mask=True,
-                capture_timestamp_s=float(payload["capture_timestamp_s"]),
-                state_timestamp_s=float(payload["state_timestamp_s"]),
-                rgb8=rgb8,
-                rgb_sha256=image_sha256,
-            )
-        )
+    state_values = _ordered_measured_state(policy, measured_state)
+    views = _validated_camera_views(robot, policy, camera_payloads)
     return PolicyObservation(
         input_identity=input_identity,
         robot_identity=robot.identity,
         task_identity=task_identity,
         policy_identity=policy.identity,
         prompt=prompt,
-        views=tuple(views),
+        views=views,
         measured_state_names=policy.measured_state_names,
         measured_state_units=robot.measured_state_units,
         measured_state=state_values,
