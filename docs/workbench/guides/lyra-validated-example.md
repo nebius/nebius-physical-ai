@@ -80,6 +80,13 @@ quality, raw-fisheye support, Insta360 X5 performance or a matched comparison
 with the [COLMAP → gsplat reference](gaussian-splatting-reference.md).
 Inspect the actual input and native render before accepting scene quality.
 
+A real COLMAP attempt on 128 frozen frames from this prepared capture did not
+pass camera registration: its exported model contained 2 registered images and
+1 3D point. The full-coverage gate stopped before gsplat training. The native
+database and model archive were retained and read back with matching SHA-256;
+their identities are in the qualification record. This failed baseline is not
+evidence of a trained splat or a comparison between reconstruction quality.
+
 The [earlier RTX qualification](../validation/lyra2-rtx-20261009.json) used a
 public TUM RGB-D perspective office capture. Its
 [retained-artifact review](../validation/lyra2-reference-review-20261015.json)

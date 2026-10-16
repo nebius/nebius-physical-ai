@@ -635,6 +635,14 @@
           YAML remains an unqualified reference requiring an operator runtime
           image.
         </p>
+        <details id="preparation-command" hidden>
+          <summary>Prepare the stitched video before GPU submission</summary>
+          <pre id="preparation-code"></pre>
+          <p class="muted">
+            Use an upright mono 2:1 SDR export. Publish the prepared bundle to
+            the private input prefix configured in the workflow YAML.
+          </p>
+        </details>
         <div class="toolbar">
           <label for="workflow-choice">Workflow</label
           ><select id="workflow-choice" aria-label="Workflow YAML"></select
@@ -676,8 +684,8 @@
       <footer>
         <p id="attribution"></p>
         <p>
-          Private, non-production internal R&amp;D review. Native artifacts
-          retained from the recorded run; packaging is not a new GPU execution.
+          Private, non-production internal R&amp;D review. This offline file
+          embeds verified artifacts from the recorded native GPU execution.
           <a
             href="https://github.com/nv-tlabs/lyra/tree/9fffc9adc37004091ecf26ef03abfb3abdf4d59a"
             >Pinned Lyra source</a
@@ -809,6 +817,40 @@
           "Capture quality and the splatting comparison.";
         byId("remaining-copy").textContent =
           "This run does not prove a haze improvement. Raw fisheye calibration, X5 input, higher model processing resolution and a matched COLMAP → gsplat comparison require separate evidence.";
+        const baseline = validation.splatting_baseline;
+        if (baseline && baseline.status === "blocked-before-training") {
+          byId("remaining-copy").textContent +=
+            " The attempted COLMAP baseline exported a model with " +
+            baseline.registered_images +
+            " of " +
+            baseline.submitted_images +
+            " submitted views. The full-coverage gate stopped the pipeline before training; no trained gsplat result or quality comparison is claimed.";
+        }
+        const parameters = [
+          capture.output_width,
+          capture.output_height,
+          capture.h_fov_degrees,
+          capture.yaw_degrees,
+          capture.pitch_degrees,
+        ];
+        if (parameters.every(Number.isFinite)) {
+          byId("preparation-command").hidden = false;
+          byId("preparation-code").textContent = [
+            "npa/.venv/bin/python -m npa.workflows.lyra_panorama_capture",
+            "--input-path ./stitched-video.mp4 --input-projection equirectangular",
+            "--output-path ./lyra-panorama-input",
+            "--width " +
+              capture.output_width +
+              " --height " +
+              capture.output_height,
+            "--h-fov " +
+              capture.h_fov_degrees +
+              " --yaw " +
+              capture.yaw_degrees +
+              " --pitch " +
+              capture.pitch_degrees,
+          ].join(" \\\n  ");
+        }
       }
       function validationCards() {
         return [

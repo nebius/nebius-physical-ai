@@ -269,5 +269,19 @@
     "external_requests": 0,
     "workflow_download_matches_canonical": true,
     "all_native_media_unchanged": true
+  },
+  "splatting_baseline": {
+    "status": "blocked-before-training",
+    "mechanism": "Native COLMAP through the standard NPA workflow runtime; full submitted-image coverage required before training.",
+    "submitted_images": 128,
+    "registered_images": 2,
+    "points3D": 1,
+    "gsplat_training_started": false,
+    "matched_quality_comparison_available": false,
+    "diagnostics_readback_verified": true,
+    "diagnostic_sha256": {
+      "component-info.json": "aa85d3152aa4c5a3e0f75b025f2160ca641dcfab10e7769918b7d7fb2cdbe09b",
+      "registration-source.tar.gz": "6fe3585e0ccb702c85c2c010a97cf037053d4bcc9096cd3d81e4c0a5967936b1"
+    }
   }
 }

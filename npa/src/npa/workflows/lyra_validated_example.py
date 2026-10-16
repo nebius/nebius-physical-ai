@@ -157,6 +157,7 @@ def _example_payload(input_path, qualification_path, workflows):
             "Revalidated retained artifacts from the recorded native GPU run; inference was not rerun during packaging. Perspective capture, not 360/fisheye qualification.",
         ),
         "capture": qualification.get("capture"),
+        "splatting_baseline": qualification.get("splatting_baseline"),
     }
     payload["posters"] = posters
     payload["workflows"] = {path.name: path.read_text() for path in workflows}
