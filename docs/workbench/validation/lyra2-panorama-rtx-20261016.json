@@ -250,7 +250,7 @@
   },
   "html_export": {
     "source_html_sha256": "83242fd0ed191b460651f9319b31b9b848060c8489fcc29948c9be7c65df59dd",
-    "export_html_sha256": "b6f0238554a5fd77cda3cabff90a2ca0c7532c35437fbbcedad494c4a5b2f1fa"
+    "export_html_sha256": "5f652e982b8eb91838e0fd575c44c591057c8642b6100d016ef57684ffc75228"
   },
   "scope": "Completed native GPU reconstruction of a public 5760x2880 stitched 360-degree capture after perspective preparation to 640x480, using normal 128-view Lyra settings. Original-view replay; not held-out quality, a haze-improvement measurement, raw-fisheye support, or Insta360 X5 qualification. Model/output use remains private internal non-production R&D.",
   "replay": {
@@ -264,7 +264,7 @@
     "scope": "Decoded RGB paired by frame index on the original camera trajectory, each at its recorded cadence; not held-out novel-view quality or a haze-improvement measurement."
   },
   "packaging": {
-    "source_revision": "07347463ff369cb6d53088b99abc96d7140472cd",
+    "source_revision": "ff1e3fecf828da988efc27adc99c4aaf7c3871c8",
     "browser": "Chrome desktop1440x1100 and mobile390x844",
     "external_requests": 0,
     "workflow_download_matches_canonical": true,
