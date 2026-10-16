@@ -17,6 +17,7 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 
 | Workflow | Guide | Purpose |
 | --- | --- | --- |
+| [`gaussian-splatting-reference.yaml`](gaussian-splatting-reference.yaml) | [COLMAP → gsplat reference](../../docs/workbench/guides/gaussian-splatting-reference.md) · [Standalone HTML](../../docs/demos/lyra-splatting-overview.html) | Calibrated perspective images → native COLMAP poses → pinned gsplat training; immutable operator runtime image required, execution and quality unqualified |
 | [`marble-go1-inspection.yaml`](marble-go1-inspection.yaml) | [Choose one preset](../../docs/workbench/guides/marble-robot-presets.md#run-one-preset) · [Add a world](../../docs/workbench/guides/marble-robot-presets.md#add-a-new-world) | One selected situation: warehouse, shipyard, home, factory or utility → one Marble world → one RTX PRO 6000 Go1 collection → continuous standalone HTML |
 | [`marble-warehouse-rover.yaml`](marble-warehouse-rover.yaml) | [Rover collection guide](../../docs/workbench/guides/marble-warehouse-rover.md) | Generate a warehouse → wheel-driven rover dynamics → CUDA RGB/depth and standalone HTML |
 | [`marble-navigation-rl.yaml`](marble-navigation-rl.yaml) | [Guide](../../docs/workbench/guides/marble-navigation-rl.md) | Existing generated Marble collider → native ANYmal GPU physics/PPO → held-out checkpoint evaluation; qualified runtime required, GPU acceptance pending |

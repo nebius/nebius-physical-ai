@@ -16,6 +16,12 @@ quality remain separate validation work.
 
 ## Prepare captured video
 
+For stitched 360° video or image sequences, first follow
+[panorama preparation and quality comparison](lyra-360-capture.md). It produces
+a fixed perspective input bundle at configurable dimensions; ordinary resizing
+does not correct spherical or fisheye distortion. Raw fisheye requires a
+calibrated export before using that path.
+
 The public `npa-lyra2:2.0-rtfetch2` image packages the CUDA compiler, Python and
 hash-locked NPA dependencies independently of Isaac Lab. The pinned Lyra/DA3
 source, inference dependencies and reconstruction checkpoint are fetched into
@@ -44,7 +50,11 @@ npa/.venv/bin/python -m npa.workflows.lyra_capture \
   --input-path ./capture.mp4 --output-path ./lyra-input
 ```
 
-The command verifies that the video decodes and writes a checksummed bundle.
+The command decodes the video and writes a checksummed RGB-only H.264 bundle
+(CRF 17), omitting source container tags, frame side data, audio and other tracks.
+It preserves decoded frame order and dimensions, with constant presentation
+cadence at the source average frame rate. Source HDR encoding is not retained.
+Signaled PQ/HLG video requires a tone-mapped SDR export before preparation.
 Add `--calibration-path ./calibration.json` when measured camera poses accompany
 the video. The file uses schema `npa.lyra-camera-calibration.v1`,
 `camera_convention: optical_x_right_y_down_z_forward`,
@@ -162,6 +172,12 @@ quality of a particular real wrist reconstruction.
 
 ## Standalone Lyra HTML
 
+For a concrete completed result, use the
+[validated 5.7K panorama review](lyra-validated-example.md). Its new native GPU
+run used a complete public Insta360 capture. The packager independently checks
+native media, measures RGB replay fidelity and embeds the real result with
+workflow downloads in one offline file.
+
 Reconstruction can be reviewed independently of the collision and Isaac action
 workflow. Its completed output bundle includes `index.html`, a single offline
 file. To regenerate the viewer from a downloaded bundle:
@@ -230,7 +246,7 @@ surfaces, scale or occluded geometry.
 | Source | Upstream Apache-2.0 code and pinned submodule are fetched at runtime; source attribution remains upstream. |
 | Baked runtime | Dedicated digest-pinned CUDA/Python/NPA bootstrap, independent of Isaac; Lyra source, inference dependencies and checkpoint remain runtime fetches. |
 | Weights | Exact Lyra reconstruction checkpoint is fetched anonymously from its official immutable URL and SHA-256 verified. |
-| Input data | Operator-owned private capture, or separately attributed public TUM sample; no customer capture is committed. |
+| Input data | Operator-owned private capture, or separately attributed public reference data such as OmniPhotos or TUM; no customer capture is committed. |
 | Cache | Ephemeral per-stage source/environment/checkpoint directory; model bytes are not exported in run artifacts or an image. |
 | Outputs | Private non-production internal R&D reconstruction and simulation evidence; no production or customer redistribution permission is claimed. |
 
