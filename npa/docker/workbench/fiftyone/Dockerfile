@@ -113,9 +113,11 @@ RUN python -m venv "${FIFTYONE_VENV}" \
       "pillow==${PILLOW_VERSION}" \
       "paramiko==5.0.0" \
       "scikit-image==0.26.0" \
+    && mkdir -p /usr/share/doc/npa-fiftyone \
     && python /opt/npa-remove-scikit-image-recipe.py \
       --site-packages "$(python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \
       --capability fiftyone \
+      > /usr/share/doc/npa-fiftyone/dependency-source-correction.json \
     && curl --fail --location --silent --show-error \
       -o /tmp/mongodb.tgz "https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu2204-${MONGODB_VERSION}.tgz" \
     && echo "${MONGODB_SHA256}  /tmp/mongodb.tgz" | sha256sum -c - \

@@ -65,3 +65,10 @@ def test_fiftyone_pins_graphql_core_compatible_with_its_strawberry_release() -> 
     )
     assert pin in dockerfile
     assert dockerfile.count('"graphql-core @ ') == 1
+
+
+def test_fiftyone_retains_its_dependency_source_correction_receipt() -> None:
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+
+    assert "--capability fiftyone" in dockerfile
+    assert "/usr/share/doc/npa-fiftyone/dependency-source-correction.json" in dockerfile

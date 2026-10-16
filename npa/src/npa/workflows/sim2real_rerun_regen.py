@@ -3119,10 +3119,22 @@ def _emit_regen_mcap(
     )
 
 
-def _assert_regen_heldout_evidence(result: Sim2RealVizResult) -> None:
-    if result.heldout_frame_count <= 0 and result.heldout_env_count <= 0:
+def _has_factual_heldout_observation(
+    result: Sim2RealVizResult,
+    heldout_report: dict[str, Any] | None,
+) -> bool:
+    return result.heldout_frame_count > 0 or (
+        result.heldout_env_count > 0 and _has_factual_heldout_scores(heldout_report)
+    )
+
+
+def _assert_regen_heldout_evidence(
+    result: Sim2RealVizResult,
+    heldout_report: dict[str, Any] | None,
+) -> None:
+    if not _has_factual_heldout_observation(result, heldout_report):
         raise Sim2RealRerunRegenError(
-            "regenerated .rrd has no factual held-out camera or environment evidence; "
+            "regenerated .rrd has no factual held-out camera or scored environment evidence; "
             "sync gold held-out renders or rerun held-out eval"
         )
 
@@ -3137,7 +3149,7 @@ def _finalize_regen_result(
     upload: bool,
     output_rrd: Path | None = None,
 ) -> RegenResult:
-    _assert_regen_heldout_evidence(result)
+    _assert_regen_heldout_evidence(result, state.heldout_report)
     mcap_result = _emit_regen_mcap(work_dir, state)
     if upload:
         _capture_regen_mcap_identity(
@@ -3157,6 +3169,7 @@ def _finalize_regen_result(
         config.run_id,
         work_dir,
         result,
+        heldout_report=state.heldout_report,
         upload_uri=upload_uri,
         mcap_result=mcap_result,
         mcap_upload_uri=mcap_upload_uri,
@@ -3281,7 +3294,7 @@ def _regenerate_sim2real_rrd(
             outer_history,
             viewer_command,
         )
-        _assert_regen_heldout_evidence(result)
+        _assert_regen_heldout_evidence(result, state.heldout_report)
         _persist_regen_report(
             config,
             work_dir,
@@ -4491,13 +4504,14 @@ def _regen_result_from_viz(
     local_dir: Path,
     result: Sim2RealVizResult,
     *,
+    heldout_report: dict[str, Any] | None = None,
     upload_uri: str = "",
     mcap_result: dict[str, Any] | None = None,
     mcap_upload_uri: str = "",
 ) -> RegenResult:
-    if result.heldout_frame_count <= 0 and result.heldout_env_count <= 0:
+    if not _has_factual_heldout_observation(result, heldout_report):
         raise Sim2RealRerunRegenError(
-            "regenerated .rrd has no factual held-out camera or environment evidence"
+            "regenerated .rrd has no factual held-out camera or scored environment evidence"
         )
     mcap = mcap_result or {}
     return RegenResult(

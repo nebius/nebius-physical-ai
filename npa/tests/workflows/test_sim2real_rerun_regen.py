@@ -107,7 +107,13 @@ def test_regen_sim2real_rrd_requires_factual_observation_evidence(
         encoding="utf-8",
     )
     (local_dir / "eval/heldout/report.json").write_text(
-        json.dumps({"success_rate": 1.0, "render_manifest": {"episodes": []}}),
+        json.dumps(
+            {
+                "success_rate": 1.0,
+                "per_env": [{"env_id": "heldout-0000", "score": 0.7}],
+                "render_manifest": {"episodes": []},
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -152,7 +158,13 @@ def test_regen_sim2real_rrd_accepts_heldout_environment_evidence(
         encoding="utf-8",
     )
     (local_dir / "eval/heldout/report.json").write_text(
-        json.dumps({"success_rate": 1.0, "render_manifest": {"episodes": []}}),
+        json.dumps(
+            {
+                "success_rate": 1.0,
+                "per_env": [{"env_id": "heldout-0000", "score": 0.7}],
+                "render_manifest": {"episodes": []},
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -173,6 +185,24 @@ def test_regen_sim2real_rrd_accepts_heldout_environment_evidence(
         _config(), local_dir=local_dir, sync_inputs=False, upload=False
     )
     assert result.heldout_frame_count == 0
+
+
+def test_regen_result_rejects_unscored_heldout_environment(tmp_path: Path) -> None:
+    class UnscoredHeldoutResult:
+        output_rrd_path = str(tmp_path / "sim2real.rrd")
+        heldout_frame_count = 0
+        heldout_env_count = 1
+        rollout_count = 0
+        frame_count = 0
+        has_factual_observation_evidence = True
+
+    with pytest.raises(Sim2RealRerunRegenError, match="no factual held-out"):
+        _regen_result_from_viz(
+            "unscored-heldout",
+            tmp_path,
+            UnscoredHeldoutResult(),
+            heldout_report={"per_env": [{"env_id": "heldout-0000"}]},
+        )
 
 
 @pytest.mark.parametrize("config_factory", [_config, _artifact_config])

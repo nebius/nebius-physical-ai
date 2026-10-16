@@ -2790,6 +2790,18 @@ def test_default_npa_setup_uses_an_importable_baked_runtime_without_reinstalling
         env=shim_environment,
     )
     assert result.returncode == 0, result.stderr
+    assert "Usage" in result.stdout
+    assert "-c from npa.cli.entry import main; main()" in invocations.read_text(
+        encoding="utf-8"
+    )
+    unknown = subprocess.run(
+        [str(shim), "not-a-command"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=shim_environment,
+    )
+    assert unknown.returncode != 0
     assert "-m pip" not in invocations.read_text(encoding="utf-8")
 
 
