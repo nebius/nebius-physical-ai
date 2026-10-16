@@ -273,6 +273,7 @@ if SIM_DEVICE != "cpu" and not (
     raise RuntimeError("ROLLOUT_SIM_DEVICE must be cpu or cuda:<index>")
 CKPT_URI = os.environ.get("ROLLOUT_CKPT_URI", "").strip()
 trained = False
+actor_initialization = None
 def checkpoint_provenance():
     if not CKPT or not os.path.isfile(CKPT):
         return {"uri": CKPT_URI, "sha256": "", "size_bytes": 0}
@@ -285,6 +286,7 @@ def upload_and_exit(rollouts, note, applied=None):
     # rollouts: list of {rollout_id, frames:[names], actions:[{step,action}]}
     checkpoint = checkpoint_provenance()
     meta = {"rollouts": rollouts, "note": note, "policy_trained": bool(trained),
+            "actor_initialization": actor_initialization,
             "applied_scenarios": applied or {},
             "policy_checkpoint": checkpoint,
             "camera_metadata": CAMERA_VIEWS,
@@ -479,6 +481,17 @@ try:
             pass
         return o
     obs = _batched_obs(obs)
+    if stock_policy and not trained:
+        from npa.workflows.sim2real.isaac_franka_initialization import (
+            initialize_fresh_stock_franka_actor,
+        )
+        actor_initialization = initialize_fresh_stock_franka_actor(
+            runner.alg.actor, env.unwrapped, checkpoint_loaded=trained,
+        )
+        print(
+            "ROLLOUT_FRESH_ACTOR_INITIALIZATION "
+            + json.dumps(actor_initialization, sort_keys=True), flush=True,
+        )
     print(
         "ROLLOUT realN", realN, "DECISION_POINTS", STEPS,
         "HORIZON_STEPS", HORIZON_STEPS, flush=True,

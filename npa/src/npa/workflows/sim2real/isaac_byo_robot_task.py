@@ -1731,6 +1731,13 @@ try:
         if stock_policy:
             from npa.workflows.sim2real.isaac_franka_normalization import checkpoint_normalization_metadata
             print("ROBOT_NORMALIZATION_RESTORED", json.dumps(checkpoint_normalization_metadata(runner.alg.actor), sort_keys=True), flush=True)
+    if stock_policy and not resume_ckpt:
+        from npa.workflows.sim2real.isaac_franka_initialization import initialize_fresh_stock_franka_actor
+        env.reset()
+        initialization = initialize_fresh_stock_franka_actor(
+            runner.alg.actor, env.unwrapped, checkpoint_loaded=False,
+        )
+        print("ROBOT_FRESH_ACTOR_INITIALIZATION " + json.dumps(initialization, sort_keys=True), flush=True)
     bootstrap_profile = os.environ.get("ROBOT_BOOTSTRAP_PROFILE", "none")
     if bootstrap_profile != "none":
         if resume_ckpt:
