@@ -242,14 +242,14 @@ def test_s3_accepts_prefix_without_execution_image_resolution(
     payload = json.loads(result.output)
     assert payload["selected_checks"] == ["s3"]
     assert payload["checks"][0]["details"] == [
-        "The image-independent S3 health check does not probe --s3-prefix; it "
-        "uses only bucket and endpoint configuration."
+        "S3 reachability uses only bucket and endpoint configuration; "
+        "--s3-prefix is not probed."
     ]
     diagnostic_spies.execution.assert_not_called()
     diagnostic_spies.image_inspector.assert_not_called()
 
 
-def test_s3_prefix_requires_the_s3_health_check(
+def test_image_independent_prefix_requires_an_execution_check(
     diagnostic_spies: SimpleNamespace,
 ) -> None:
     result = runner.invoke(
@@ -266,7 +266,9 @@ def test_s3_prefix_requires_the_s3_health_check(
     )
 
     assert result.exit_code == 2
-    assert "--s3-prefix is only used by the S3 health check" in result.output
+    message = " ".join(result.output.replace("│", "").split())
+    assert "--s3-prefix is not used by the selected image-independent checks" in message
+    assert "Include --checks config or registry" in message
     diagnostic_spies.loaded.assert_not_called()
     diagnostic_spies.execution.assert_not_called()
     diagnostic_spies.image_inspector.assert_not_called()
@@ -636,6 +638,27 @@ def test_preflight_config_uses_the_canonical_image_dependent_checks(
         "k8s_kubeconfig": "",
     }
     assert health._sim2real_preflight_config(["tokens"], overrides) is execution
+
+
+def test_execution_config_receives_s3_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    execution = object()
+    builder = Mock(return_value=execution)
+    monkeypatch.setattr(health, "build_config_from_env", builder)
+
+    overrides = {
+        "run_id": "diagnostic-run",
+        "s3_bucket": "example-bucket",
+        "s3_prefix": "operator-prefix",
+        "s3_endpoint": "https://storage.example.invalid",
+        "k8s_namespace": "",
+        "k8s_context": "",
+        "k8s_kubeconfig": "",
+    }
+
+    assert health._sim2real_preflight_config(["config"], overrides) is execution
+    builder.assert_called_once_with(**overrides)
 
 
 def test_unknown_checks_fail_before_any_config_or_credentials(

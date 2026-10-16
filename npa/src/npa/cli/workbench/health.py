@@ -645,11 +645,6 @@ def sim2real_command(
         raise typer.BadParameter(
             "--project is only used by the S3 health check. Include --checks s3."
         )
-    if s3_prefix is not None and "s3" not in selected:
-        raise typer.BadParameter(
-            "--s3-prefix is only used by the S3 health check. Include --checks s3."
-        )
-
     credentials = None
     project_storage_failure: CheckResult | None = None
     if project.strip() and "s3" in selected:
@@ -718,14 +713,18 @@ def sim2real_command(
         selected_check_order = [check for check in ALL_CHECKS if check in selected]
         s3_position = selected_check_order.index("s3")
         results.insert(s3_position, project_storage_failure)
-    if s3_prefix is not None and "s3" in selected:
+    if (
+        s3_prefix is not None
+        and "s3" in selected
+        and not any(name in IMAGE_DEPENDENT_CHECKS for name in selected)
+    ):
         results = [
             replace(
                 result,
                 details=(
                     *result.details,
-                    "The image-independent S3 health check does not probe "
-                    "--s3-prefix; it uses only bucket and endpoint configuration.",
+                    "S3 reachability uses only bucket and endpoint configuration; "
+                    "--s3-prefix is not probed.",
                 ),
             )
             if result.name == "s3"
@@ -785,12 +784,13 @@ def _sim2real_preflight_config(
     diagnostic_keys = {
         "run_id",
         "s3_bucket",
-        "s3_prefix",
         "s3_endpoint",
         "k8s_namespace",
         "k8s_context",
         "k8s_kubeconfig",
     }
+    if "s3" in selected:
+        diagnostic_keys.add("s3_prefix")
     ignored = sorted(
         key
         for key, value in overrides.items()
