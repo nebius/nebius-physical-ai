@@ -220,13 +220,30 @@ def _validate_spec(spec: dict) -> None:
         )
 
 
+def _physics_body_names(stage: object, prims: list[object], usd_physics: object) -> set[str]:
+    names: set[str] = set()
+    for prim in prims:
+        if not prim.IsA(usd_physics.Joint):
+            continue
+        joint = usd_physics.Joint(prim)
+        relationships = (joint.GetBody0Rel(), joint.GetBody1Rel())
+        for relationship in relationships:
+            for target in relationship.GetTargets():
+                target_prim = stage.GetPrimAtPath(target)
+                if target_prim and target_prim.IsValid():
+                    names.add(str(target).rsplit("/", 1)[-1])
+    return names
+
+
 def _validate_usd(path: Path, spec: dict) -> None:
-    from pxr import Usd
+    from pxr import Usd, UsdPhysics
 
     stage = Usd.Stage.Open(str(path))
     if stage is None:
         raise IsaacRobotAssetError(f"Isaac produced an unreadable USD: {path}")
-    names = {prim.GetName() for prim in stage.Traverse()}
+    prims = list(stage.Traverse())
+    names = {prim.GetName() for prim in prims}
+    names.update(_physics_body_names(stage, prims, UsdPhysics))
     required_links = {
         str(spec.get("base_link") or ""),
         str(spec.get("ee_link") or ""),

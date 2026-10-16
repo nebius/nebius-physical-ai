@@ -735,6 +735,97 @@ def test_isaac_prepare_converts_urdf_and_publishes_digest_manifest(
     assert published_manifest["embodiment_digest"] == spec["embodiment_digest"]
 
 
+class _FakeTargetPrim:
+    def __init__(self, valid: bool) -> None:
+        self._valid = valid
+
+    def IsValid(self) -> bool:
+        return self._valid
+
+
+class _FakeRelationship:
+    def __init__(self, target: str) -> None:
+        self._target = target
+
+    def GetTargets(self) -> list[str]:
+        return [self._target]
+
+
+class _FakeJointPrim:
+    def __init__(self, name: str, body0: str, body1: str) -> None:
+        self.name = name
+        self.body0 = body0
+        self.body1 = body1
+
+    def GetName(self) -> str:
+        return self.name
+
+    def IsA(self, _schema: object) -> bool:
+        return True
+
+
+class _FakeUsdJoint:
+    def __init__(self, prim: _FakeJointPrim) -> None:
+        self._prim = prim
+
+    def GetBody0Rel(self) -> _FakeRelationship:
+        return _FakeRelationship(self._prim.body0)
+
+    def GetBody1Rel(self) -> _FakeRelationship:
+        return _FakeRelationship(self._prim.body1)
+
+
+def _joint_target_stage(valid_paths: set[str]) -> object:
+    joints = [
+        _FakeJointPrim("arm_joint", "/panda/Physics/base", "/panda/Physics/hand"),
+        _FakeJointPrim(
+            "finger_joint",
+            "/panda/Physics/left_finger",
+            "/panda/Physics/right_finger",
+        ),
+    ]
+    return SimpleNamespace(
+        Traverse=lambda: joints,
+        GetPrimAtPath=lambda path: _FakeTargetPrim(str(path) in valid_paths),
+    )
+
+
+def test_isaac_usd_validation_accepts_valid_joint_body_targets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body_paths = {
+        "/panda/Physics/base",
+        "/panda/Physics/hand",
+        "/panda/Physics/left_finger",
+        "/panda/Physics/right_finger",
+    }
+    stage = _joint_target_stage(body_paths)
+    pxr = SimpleNamespace(
+        Usd=SimpleNamespace(Stage=SimpleNamespace(Open=lambda _path: stage)),
+        UsdPhysics=SimpleNamespace(Joint=_FakeUsdJoint),
+    )
+    monkeypatch.setitem(sys.modules, "pxr", pxr)
+
+    isaac_robot_asset._validate_usd(Path("robot.usd"), _doc())
+
+
+def test_isaac_usd_validation_rejects_dangling_joint_body_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stage = _joint_target_stage({"/panda/Physics/base", "/panda/Physics/hand"})
+    pxr = SimpleNamespace(
+        Usd=SimpleNamespace(Stage=SimpleNamespace(Open=lambda _path: stage)),
+        UsdPhysics=SimpleNamespace(Joint=_FakeUsdJoint),
+    )
+    monkeypatch.setitem(sys.modules, "pxr", pxr)
+
+    with pytest.raises(
+        isaac_robot_asset.IsaacRobotAssetError,
+        match="left_finger, right_finger",
+    ):
+        isaac_robot_asset._validate_usd(Path("robot.usd"), _doc())
+
+
 def test_isaac_prepare_does_not_let_kit_close_hide_conversion_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
