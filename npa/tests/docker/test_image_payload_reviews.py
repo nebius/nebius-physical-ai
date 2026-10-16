@@ -16,10 +16,14 @@ sys.path.insert(0, str(SCRIPTS))
 reviews_module = importlib.import_module("image_payload_reviews")
 credentials = importlib.import_module("image_payload_credentials")
 
-REFERENCE = b"hf_token = credentials.hf_token\n"
+# This is deliberately a literal value, rather than an operator-variable
+# reference.  It is synthetic test data, but it must remain detectable so the
+# catalog disposition checks exercise the refusal path for changed bytes.
+SYNTHETIC_LITERAL = b'hf_token = "synthetic-test-token"\n'
+NONLITERAL_REFERENCE = b"hf_token = credentials.hf_token\n"
 
 
-def _review(payload=REFERENCE):
+def _review(payload=SYNTHETIC_LITERAL):
     digest = hashlib.sha256(payload).hexdigest()
     return {
         digest: {
@@ -32,24 +36,35 @@ def _review(payload=REFERENCE):
     }
 
 
-def test_detector_still_finds_the_reviewed_expression():
+def test_detector_still_finds_the_reviewed_literal():
     assert (
-        credentials.content_credential(io.BytesIO(REFERENCE)) == "credential_assignment"
+        credentials.content_credential(io.BytesIO(SYNTHETIC_LITERAL))
+        == "credential_assignment"
     )
     kind, receipt = reviews_module.reviewed_content_credential(
-        io.BytesIO(REFERENCE), _review()
+        io.BytesIO(SYNTHETIC_LITERAL), _review()
     )
     assert kind is None
-    assert receipt["sha256"] == hashlib.sha256(REFERENCE).hexdigest()
+    assert receipt["sha256"] == hashlib.sha256(SYNTHETIC_LITERAL).hexdigest()
+
+
+def test_harmless_nonliteral_reference_has_no_finding_or_receipt():
+    kind, receipt = reviews_module.reviewed_content_credential(
+        io.BytesIO(NONLITERAL_REFERENCE), _review(NONLITERAL_REFERENCE)
+    )
+    assert kind is None
+    assert receipt is None
 
 
 @pytest.mark.parametrize(
     "payload",
     [
-        REFERENCE.replace(b"credentials.hf_token", b"abcdefghijk"),
-        REFERENCE + b"AKIA" + b"A" * 16,
-        REFERENCE + b"\0" * (credentials.CONTENT_CHUNK + 10) + b"hf_token=abcdefghijk",
-        REFERENCE + b"\n",
+        SYNTHETIC_LITERAL.replace(b"synthetic-test-token", b"abcdefghijk"),
+        SYNTHETIC_LITERAL + b"AKIA" + b"A" * 16,
+        SYNTHETIC_LITERAL
+        + b"\0" * (credentials.CONTENT_CHUNK + 10)
+        + b"hf_token=abcdefghijk",
+        SYNTHETIC_LITERAL + b"\n",
     ],
 )
 def test_any_changed_or_appended_bytes_refuse_the_disposition(payload):
@@ -69,7 +84,7 @@ def test_wrong_review_size_or_finding_kind_fails(mutation):
     else:
         row["match_counts"] = {"private_key_content": 1}
     kind, receipt = reviews_module.reviewed_content_credential(
-        io.BytesIO(REFERENCE), rows
+        io.BytesIO(SYNTHETIC_LITERAL), rows
     )
     assert kind == "credential_assignment"
     assert receipt is None
