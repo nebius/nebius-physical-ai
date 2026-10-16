@@ -352,10 +352,15 @@ Transfer and EnvGen default to `RTXPRO6000:1` so one reserved RTX pool can run
 the entire graph. On a mixed cluster, pass `--var transfer_accelerator=B200:1`
 and `--var envgen_accelerator=B200:1` to use reserved B200 compute capacity.
 The Isaac resource remains `RTXPRO6000:1` because it requires RT cores and the
-graphics driver stack. Keep `gpu_concurrency` within the selected EnvGen pool's
-actual schedulable GPU count. If reserved placement fails, provision an
-operator-authorized preemptible fallback; application or model-access failures
-require fixing their cause before retrying.
+graphics driver stack. The canonical `gpu_concurrency` default is deliberately
+`1`: static YAML cannot know the target's live capacity. Before planning,
+submitting, or resuming, a task-scoped driver must discover the selected
+EnvGen-compatible GPUs that are actually schedulable and set
+`gpu_concurrency=min(shard_count, measured_capacity)`. Do not use nominal,
+enumerated, or total pool capacity. For example, a measured two-GPU target uses
+`2`, rendering the eight shards in four bounded waves. If reserved placement
+fails, provision an operator-authorized preemptible fallback; application or
+model-access failures require fixing their cause before retrying.
 
 ### Select a private workload namespace and verify the target
 
@@ -494,10 +499,13 @@ and must not be used to establish a sustained grasp or placement.
 
 ## 6. Keep one argument set for planning, submit, and resume
 
-Create a fresh ID and choose compatible GPU concurrency (1–8). The single-GPU
-cluster above uses `1`. Concurrency batches the eight EnvGen shards without
-reducing training quality or iteration counts. Discovery and submit preflight
-must establish capacity; a wave plan does not reserve it.
+Create a fresh ID. The canonical default is `1`; only replace it with the
+measured compatible, schedulable EnvGen capacity, bounded by eight shards. The
+single-GPU cluster above uses `1`; a measured two-GPU target uses `2`. Keep the
+same value for planning, submit, and every same-run resume. Concurrency batches
+the eight EnvGen shards without reducing training quality or iteration counts.
+Discovery and submit preflight must establish capacity; a wave plan does not
+reserve it.
 
 ```bash
 RUN_ID="sim2real-$(date -u +%Y%m%d-%H%M%S)"

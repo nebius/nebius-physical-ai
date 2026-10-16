@@ -45,16 +45,16 @@ config:
   allow_early_exit: "1"
   env_count: "10000"
   train_fraction: "0.8"
-  # EnvGen is rank-aware and scales horizontally; use half of a 16-GPU pool so
-  # adjacent GPU stages retain scheduling headroom.
+  # EnvGen is rank-aware and uses eight deterministic shards; the task-scoped
+  # submitter waves those shards according to live placement capacity.
   shard_count: "8"
-  # Concurrent Stage 4 tasks per JobGroup. Must not exceed the cluster's
-  # concurrent-GPU capacity: a group larger than the schedulable GPU count
-  # deadlocks, because the admitted shards' pods are only reaped when the whole
-  # group starts, while the remaining shards wait on the GPUs those pods hold.
-  # Set to min(shard_count, concurrent GPUs), e.g. --var gpu_concurrency=2 on a
-  # 2-GPU cluster (renders ceil(8/2)=4 sequential batches).
-  gpu_concurrency: "8"
+  # Fail closed at one concurrent Stage 4 task.  A static workflow cannot know
+  # the dynamic, compatible, schedulable GPU capacity of its submit target.
+  # A task-scoped submit wrapper must first measure that capacity and set this
+  # to min(shard_count, measured capacity); for example, 2 GPUs renders four
+  # batches of the eight shards.  Never infer this value from nominal or total
+  # pool size: exceeding schedulable capacity can deadlock a JobGroup.
+  gpu_concurrency: "1"
   envgen_seed: "42"
   rollout_count: "64"
   steps_per_rollout: "32"

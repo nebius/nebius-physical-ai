@@ -12,6 +12,7 @@ import yaml
 from typer.testing import CliRunner
 
 from npa.orchestration.npa_workflow import build_plan, load_spec
+from npa.orchestration.npa_workflow.waves import build_wave_plan
 from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
 from npa.orchestration.npa_workflow.detect import detect_submit_format
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
@@ -478,6 +479,17 @@ def test_default_shard_count_matches_declared_parallel_lanes() -> None:
     spec = merge_config_overrides(load_spec(SPEC), {"shard_count": "8"})
     assert spec.states["stage-04-wave"].parallel_count == "{{config.shard_count}}"
     assert len(spec.states["stage-04-wave"].parallel) == 8
+
+
+def test_default_envgen_concurrency_requires_run_bound_capacity_override() -> None:
+    """A static spec must never silently fan eight GPU shards onto a small pool."""
+    payload = yaml.safe_load(SPEC.read_text())
+    assert payload["config"]["gpu_concurrency"] == "1"
+
+    waves = build_wave_plan(load_spec(SPEC), run_id="capacity-safe-default")
+    envgen_wave = next(wave for wave in waves.waves if wave.group == "stage-04-wave")
+    assert envgen_wave.max_concurrency == 1
+    assert [len(batch) for batch in envgen_wave.batches()] == [1] * 8
 
 
 @pytest.mark.parametrize(
