@@ -429,6 +429,38 @@ def test_private_json_report_does_not_follow_a_symlink(tmp_path):
     assert "archive_sha256" in json.loads(full_result.stdout)
 
 
+def test_clean_private_json_report_fails_closed_on_symlink(tmp_path):
+    path, _, _ = _image(tmp_path, [[("source.py", b"value = 42\n")]])
+    target = tmp_path / "target.json"
+    target.write_text("unchanged", encoding="utf-8")
+    output = tmp_path / "report.json"
+    output.symlink_to(target)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCANNER_PATH),
+            "--tarball",
+            str(path),
+            "--json",
+            str(output),
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 2
+    assert output.is_symlink()
+    assert target.read_text(encoding="utf-8") == "unchanged"
+    assert json.loads(result.stderr) == {
+        "error": "report-write-failed",
+        "errno": errno.errorcode[errno.ELOOP],
+    }
+    stdout_report = json.loads(result.stdout)
+    assert stdout_report["verdict"] == "clean"
+    assert stdout_report["report_scope"] == "redacted-summary"
+
+
 def test_native_cli_nonzero_codes_include_scan_and_usage_errors(tmp_path):
     malformed = tmp_path / "not-a-docker-save.tar"
     malformed.write_bytes(b"not a tar archive")
@@ -446,7 +478,19 @@ def test_native_cli_nonzero_codes_include_scan_and_usage_errors(tmp_path):
 
     assert scan_error.returncode == 1
     assert scan_error.stdout == ""
-    assert json.loads(scan_error.stderr) == {"error": "scan-failed"}
+    assert json.loads(scan_error.stderr) == {
+        "error": "scan-failed",
+        "error_class": "ReadError",
+    }
     assert str(malformed) not in scan_error.stderr
     assert "not a tar archive" not in scan_error.stderr
     assert usage_error.returncode == 2
+
+
+def test_scan_failure_reports_safe_class_and_os_error_code(capsys):
+    assert SCANNER._emit_scan_failure(OSError(errno.ENOSPC, "private detail")) == 1
+    assert json.loads(capsys.readouterr().err) == {
+        "error": "scan-failed",
+        "error_class": "OSError",
+        "errno": "ENOSPC",
+    }

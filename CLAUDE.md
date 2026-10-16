@@ -93,8 +93,8 @@ making architecture, review, or domain judgments.
 and separately rebuilt-candidate validation. The retained image is quarantined and
 must not be deployed or started.
 - `skills/tools/seedvr2/SKILL.md`: package, run, validate, or review official
-SeedVR2-3B restoration of robot observation video, its S3 workflow, and
-objective/visual evidence without treating generated detail as sensor truth.
+ SeedVR2-3B restoration of robot observation video, its S3 workflow, and
+ objective/visual evidence without treating generated detail as sensor truth.
 - `skills/tools/burst/SKILL.md`: one gang-scheduled multi-node GPU job with
  torchrun rendezvous, deliberately not a workflow surface.
 - `skills/tools/gpu-cluster-provisioning/SKILL.md`: managed-image vs GPU-Operator

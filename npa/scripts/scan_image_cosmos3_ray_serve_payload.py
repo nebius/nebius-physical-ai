@@ -344,9 +344,15 @@ def _emit_report(
     return 0 if report["verdict"] == "clean" else 1
 
 
-def _emit_scan_failure() -> int:
-    """Return a redacted nonzero result when archive scanning cannot complete."""
-    print(json.dumps({"error": "scan-failed"}), file=sys.stderr)
+def _emit_scan_failure(error: Exception) -> int:
+    """Return a redacted, diagnosable result when archive scanning cannot complete."""
+    failure: dict[str, str] = {
+        "error": "scan-failed",
+        "error_class": type(error).__name__,
+    }
+    if isinstance(error, OSError):
+        failure["errno"] = errno.errorcode.get(error.errno, "unknown")
+    print(json.dumps(failure, sort_keys=True), file=sys.stderr)
     return 1
 
 
@@ -381,8 +387,13 @@ def main() -> int:
                     ["docker", "save", "--output", saved, args.image], check=True
                 )
                 report = scan_tarball(saved)
-    except (OSError, RuntimeError, subprocess.CalledProcessError, tarfile.TarError):
-        return _emit_scan_failure()
+    except (
+        OSError,
+        RuntimeError,
+        subprocess.CalledProcessError,
+        tarfile.TarError,
+    ) as error:
+        return _emit_scan_failure(error)
     return _emit_report(
         report,
         json.dumps(report, indent=2, sort_keys=True),
