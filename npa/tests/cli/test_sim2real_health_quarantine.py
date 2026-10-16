@@ -221,6 +221,51 @@ def test_tokens_and_s3_use_explicit_storage_without_image_resolution(
     diagnostic_spies.writes.assert_not_called()
 
 
+def test_s3_accepts_prefix_without_execution_image_resolution(
+    diagnostic_spies: SimpleNamespace,
+) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "health",
+            "sim2real",
+            "--checks",
+            "s3",
+            "--s3-prefix",
+            "diagnostic-prefix",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["selected_checks"] == ["s3"]
+    diagnostic_spies.execution.assert_not_called()
+    diagnostic_spies.image_inspector.assert_not_called()
+
+
+def test_project_requires_the_s3_health_check(
+    diagnostic_spies: SimpleNamespace,
+) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "health",
+            "sim2real",
+            "--checks",
+            "tokens",
+            "--project",
+            "selected-project",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "--project is only used by the S3 health check" in result.output
+    diagnostic_spies.loaded.assert_not_called()
+    diagnostic_spies.execution.assert_not_called()
+
+
 def test_s3_uses_selected_project_storage_credentials(
     diagnostic_spies: SimpleNamespace,
     monkeypatch: pytest.MonkeyPatch,

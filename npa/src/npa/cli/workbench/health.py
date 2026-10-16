@@ -641,6 +641,10 @@ def sim2real_command(
         raise typer.BadParameter(
             f"unknown check(s): {', '.join(unknown)}. Choices: {', '.join(ALL_CHECKS)}."
         )
+    if project.strip() and "s3" not in selected:
+        raise typer.BadParameter(
+            "--project is only used by the S3 health check. Include --checks s3."
+        )
 
     credentials = None
     project_storage_failure: CheckResult | None = None
@@ -756,6 +760,7 @@ def _sim2real_preflight_config(
     diagnostic_keys = {
         "run_id",
         "s3_bucket",
+        "s3_prefix",
         "s3_endpoint",
         "k8s_namespace",
         "k8s_context",
