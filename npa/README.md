@@ -369,6 +369,17 @@ UR10e's new sealed physics profile preserves its USD mimic-joint mechanics.
 
 ## Workbench Runtimes
 
+LeIsaac relay setup reads the agent's TLS certificate fingerprint through
+host-key-verified SSH before sending HTTPS or WSS credentials. To check an
+existing agent's certificate without changing it, set
+`NPA_LEISAAC_CERTIFICATE_LIVE_PROJECT` to its saved project alias and
+`NPA_LEISAAC_CERTIFICATE_LIVE_AGENT` to its saved agent name, then run
+`NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest
+npa/tests/e2e/test_leisaac_certificate_live.py -q` from the repository root.
+Both variables are required for this opt-in check; there is no default target.
+See [LeIsaac transport security](../docs/workbench/leisaac-teleoperation.md)
+for certificate rotation and SSH trust requirements.
+
 Choose a runtime supported by the selected tool:
 
 | Mode | Runs on |

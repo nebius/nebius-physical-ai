@@ -189,8 +189,14 @@ pod initiates an authenticated WSS backhaul through nginx `443` to it. A
 digest-pinned coturn sidecar shares the simulator's pod network for the
 compatibility WebRTC path. The
 backhaul uses the agent's existing basic-auth credential, pins the public HTTPS
-certificate SHA-256, and authenticates again with a random session nonce. The
-relay binds status to `127.0.0.1:48080`, signaling to `127.0.0.1:49100`, and
+certificate SHA-256, and authenticates again with a random session nonce. Launch
+and `reconnect-agent` obtain that pin from `/etc/nginx/ssl/npa-agent.crt` over
+host-key-verified SSH to the selected agent. An unknown or changed SSH host key,
+unreadable certificate, or malformed fingerprint stops setup. The public TLS
+peer must match this independently obtained pin before receiving credentials.
+After rotating the agent's certificate, use `reconnect-agent` to update the
+existing relay's pin. The relay binds status to `127.0.0.1:48080`, signaling to
+`127.0.0.1:49100`, and
 its raw backhaul socket to `127.0.0.1:48081`. Status, signaling, and public
 UDP `3478` TURN control datagrams use the authenticated WSS backhaul. The
 coturn allocation's private UDP `47999-48015` relay range and Isaac Sim's
