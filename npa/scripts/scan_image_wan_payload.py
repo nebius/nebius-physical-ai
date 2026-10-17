@@ -334,6 +334,68 @@ AUDITED_TRIXIE_LITERAL_LIBRARY_SHA256: dict[str, str] = {
 }
 
 
+# Ubuntu replacements retain separate exact identities after signed-package and
+# source-consumer review. Evidence: wan2-2/ubuntu-literal-audits.json. These
+# dispositions never accept changed content or waive vulnerability findings.
+AUDITED_UBUNTU_SECRET_LITERAL_FILE_SHA256: dict[str, str] = {
+    "usr/lib/x86_64-linux-gnu/libmbedcrypto.so.3.6.5": (
+        "811e07a0b295829a748ee5d307c2bb375ea7cd9f237cf8306f364983f29b20e3"
+    ),
+    "usr/lib/x86_64-linux-gnu/libssh.so.4.10.3": (
+        "8ae94cd73cf654c2cc9bafe7c7cb8abefd084e8484e04bc6f3a8a8db4ae315fe"
+    ),
+    "usr/lib/x86_64-linux-gnu/libssh2.so.1.0.1": (
+        "34287a1e8942e6fdf1c154e8c615a8dab7a69dc6a4e8d76913afb323fdc6fd6f"
+    ),
+    "usr/lib/x86_64-linux-gnu/libunistring.so.5.2.0": (
+        "c762a289c02f716a12549d544a811715126067b9a6377057671d3fad9453a1fc"
+    ),
+    "usr/bin/ssh": ("af809334cc71603f0e27a53e2234e15bd3c36503b3af7d367d103d2db2ffc15f"),
+    "usr/bin/ssh-add": (
+        "ef84cc90864c0944f2229249764f7d7017a54486c1aded9ac77f9092ad4014b6"
+    ),
+    "usr/bin/ssh-agent": (
+        "1d4fd753eff8985343168143c248798c004e2394ec151ef1401c90f7049ebb38"
+    ),
+    "usr/bin/ssh-keygen": (
+        "2dd834413c9d3f4c0e3535b9fcf2e96e14c11f3d36fd23b6c5fc24e50411d051"
+    ),
+    "usr/bin/ssh-keyscan": (
+        "1d4db24a1a24c276c81b3ac184ac7d72a29b68d3e604240e7140dc5334d5d1bc"
+    ),
+    "usr/lib/openssh/ssh-keysign": (
+        "ce99415cad4292da10279a8014702a0a65206f50de556429d6810f8c96650d08"
+    ),
+    "usr/lib/openssh/ssh-pkcs11-helper": (
+        "385f63b4d80b8f6b3407f2fb584e7b9166fbd8728e14346d354a9b0667dd4fdb"
+    ),
+    "usr/lib/openssh/ssh-sk-helper": (
+        "4c852fbe63351b5c3060f1409daefb30015c428fd4f23d5071e101a4f3cdb9ac"
+    ),
+    "usr/lib/openssh/sshd-auth": (
+        "d61881f0978c5c426438de3d437c91475bd8e5c1e8d54d326b577665852b2a5f"
+    ),
+    "usr/lib/openssh/sshd-session": (
+        "9599ebe4a3095d95b9c9d777ddce65f4cbef7adb8215d548c2d837294e70079d"
+    ),
+    "usr/sbin/sshd": (
+        "e029de38facea6ff85a63db0d84c6e53f49185f34838093e9ddf4aaef4e509cb"
+    ),
+}
+
+AUDITED_UBUNTU_LITERAL_LIBRARY_SHA256: dict[str, str] = {
+    "usr/lib/x86_64-linux-gnu/libavcodec.so.62.11.100": (
+        "f2f7634772627cd3180700f2c7bfb81377d6367042136a576fea9230c45a0beb"
+    ),
+    "usr/lib/x86_64-linux-gnu/libavutil.so.60.8.100": (
+        "56557dd89c99afd4c7c1f62297fc0f4c19ed97e29bd903937fac480d38fbe3a5"
+    ),
+    "usr/lib/x86_64-linux-gnu/libgnutls.so.30.41.1": (
+        "ebcc6a4dfae904dc956feb61cef5c36917cf36c19c5718d3c2be7e377ac65d27"
+    ),
+}
+
+
 def _audited_hashes(path: str, *catalogs: dict[str, str]) -> set[str]:
     """Retain independently reviewed base revisions at their exact paths."""
     approved = set()
@@ -655,6 +717,24 @@ def _add_content_findings(
             findings.append(Finding(kind, path, f"{detail} in {source}"))
 
 
+def _literal_hashes(path: str) -> tuple[set[str], set[str]]:
+    """Collect reviewed distributions without merging conflicting path hashes."""
+    return (
+        _audited_hashes(
+            path,
+            AUDITED_SECRET_LITERAL_FILE_SHA256,
+            AUDITED_TRIXIE_SECRET_LITERAL_FILE_SHA256,
+            AUDITED_UBUNTU_SECRET_LITERAL_FILE_SHA256,
+        ),
+        _audited_hashes(
+            path,
+            AUDITED_LITERAL_LIBRARY_SHA256,
+            AUDITED_TRIXIE_LITERAL_LIBRARY_SHA256,
+            AUDITED_UBUNTU_LITERAL_LIBRARY_SHA256,
+        ),
+    )
+
+
 def _scan_file_stream(
     *,
     path: str,
@@ -665,14 +745,7 @@ def _scan_file_stream(
     budget: _NestedArchiveBudget,
 ) -> None:
     _add_forbidden_path_findings(path, source, findings)
-    secret_hashes = _audited_hashes(
-        path,
-        AUDITED_SECRET_LITERAL_FILE_SHA256,
-        AUDITED_TRIXIE_SECRET_LITERAL_FILE_SHA256,
-    )
-    library_hashes = _audited_hashes(
-        path, AUDITED_LITERAL_LIBRARY_SHA256, AUDITED_TRIXIE_LITERAL_LIBRARY_SHA256
-    )
+    secret_hashes, library_hashes = _literal_hashes(path)
     # Python 3.10 nested ZIP inspection requires a seekable disk-backed copy.
     with tempfile.TemporaryFile() as captured:
         inspection = _inspect_content(

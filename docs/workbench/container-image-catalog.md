@@ -877,6 +877,10 @@ bytes from every shipped layer. This preserves the
 installer repair when runtime venvs are created. A composed runtime passed
 shared-library, strict TLS, complete video decoding, fresh-venv and CPU checkpoint
 checks; exact replacement-image scans and GPU qualification remain required.
+The Ubuntu parser, cryptographic self-test, Unicode name and optional hardware
+loader literals have a separate [exact-byte source review](../../npa/docker/workbench/wan2-2/ubuntu-literal-audits.json).
+Its signed-package identities do not waive vulnerabilities or the independent
+complete-byte audit.
 These source changes do not republish or qualify
 the existing supported image digests listed above.
 

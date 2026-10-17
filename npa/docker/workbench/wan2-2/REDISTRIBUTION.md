@@ -17,6 +17,12 @@ installed derivative. See [the installer repair record](../common/secure_pip/REA
 It still needs exact-image vulnerability, payload, bootstrap, and GPU qualification;
 the accepted release's immutable bytes are unchanged.
 
+[The Ubuntu literal review](ubuntu-literal-audits.json) binds 18 exact binaries
+to signed package indexes and their source consumers. It covers parser format
+boundaries, fixed cryptographic self-test vectors, a generated Unicode name
+array and optional FFmpeg hardware-loader names. Changed bytes or paths are
+rejected. Vulnerability and complete-byte findings retain their separate gates.
+
 Review date: 2026-08-13. This is an engineering classification, not a legal
 opinion or substitute for counsel.
 

@@ -77,12 +77,28 @@ def test_trixie_literal_catalog_matches_the_exact_reviewed_binary_population() -
     }
 
 
+def test_ubuntu_literal_catalog_matches_the_exact_reviewed_binary_population() -> None:
+    root = _SCRIPT.parents[1] / "docker/workbench/wan2-2"
+    review = json.loads((root / "ubuntu-literal-audits.json").read_text())
+    recorded = {file["path"]: file["sha256"] for file in review["files"]}
+    assert len(recorded) == len(review["files"]) == 18
+    assert review["independent_authentication"][
+        "all_package_artifacts_independently_authenticated"
+    ]
+    assert recorded == {
+        **scanner.AUDITED_UBUNTU_SECRET_LITERAL_FILE_SHA256,
+        **scanner.AUDITED_UBUNTU_LITERAL_LIBRARY_SHA256,
+    }
+
+
 @pytest.mark.parametrize(
     "path",
     sorted(
         {
             **scanner.AUDITED_TRIXIE_SECRET_LITERAL_FILE_SHA256,
             **scanner.AUDITED_TRIXIE_LITERAL_LIBRARY_SHA256,
+            **scanner.AUDITED_UBUNTU_SECRET_LITERAL_FILE_SHA256,
+            **scanner.AUDITED_UBUNTU_LITERAL_LIBRARY_SHA256,
         }
     ),
 )
@@ -108,6 +124,8 @@ def test_trixie_binary_dispositions_reject_changed_credentials_and_driver_bytes(
     [
         "AUDITED_TRIXIE_SECRET_LITERAL_FILE_SHA256",
         "AUDITED_TRIXIE_LITERAL_LIBRARY_SHA256",
+        "AUDITED_UBUNTU_SECRET_LITERAL_FILE_SHA256",
+        "AUDITED_UBUNTU_LITERAL_LIBRARY_SHA256",
     ],
 )
 def test_reviewed_trixie_content_requires_both_its_path_and_unchanged_bytes(
