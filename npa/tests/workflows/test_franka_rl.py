@@ -660,11 +660,7 @@ def test_every_franka_worker_uses_staged_source_instead_of_stale_image_modules(
     )
     spec = merge_config_overrides(
         load_spec(path),
-        {
-            "isaac_image": (
-                "registry.example.invalid/npa-isaac-lab@sha256:" + "a" * 64
-            )
-        },
+        {"isaac_image": ("registry.example.invalid/npa-isaac-lab@sha256:" + "a" * 64)},
     )
     rendered = render_skypilot_yaml(
         spec,
