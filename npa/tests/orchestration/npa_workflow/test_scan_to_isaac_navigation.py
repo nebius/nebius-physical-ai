@@ -109,8 +109,9 @@ def test_scene_live_case_requires_operator_inputs_and_readiness_matches_bytes() 
         AssertionError: Registration or readiness incorrectly claims qualification.
     """
     case = next(case for case in SUBMIT_LIVE_MATRIX if case.spec == SPEC.name)
-    assert case.tier == "gpu" and case.runtime and not case.plan_only
+    assert case.tier == "gpu" and case.runtime and case.plan_only
     assert case.rotation_skip and "operator" in case.skip_reason
+    assert "qualified immutable" in case.plan_only_justification
     assert case.max_wait_seconds == 0
     readiness = json.loads(SPEC.with_suffix(".readiness.json").read_text())
     assert readiness["workflow_sha256"] == hashlib.sha256(SPEC.read_bytes()).hexdigest()
@@ -150,7 +151,8 @@ def test_metric_capture_workflow_uses_real_reconstruction_and_surface_handoff():
         f"{reconstruct.argv[-1]}/surface.npz",
     }
     case = next(case for case in SUBMIT_LIVE_MATRIX if case.spec == path.name)
-    assert case.runtime and case.tier == "gpu" and not case.plan_only
+    assert case.runtime and case.tier == "gpu" and case.plan_only
+    assert "qualified immutable" in case.plan_only_justification
     assert case.max_wait_seconds == 0
     readiness = json.loads(path.with_suffix(".readiness.json").read_text())
     assert readiness["workflow_sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
