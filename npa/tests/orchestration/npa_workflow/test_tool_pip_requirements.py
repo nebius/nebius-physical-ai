@@ -21,14 +21,21 @@ import yaml
 
 from npa.orchestration.npa_workflow.interpreter import build_plan
 from npa.orchestration.npa_workflow.skypilot_render import (
+    FASTWAM_PYAV_REQUIREMENT,
     TOOL_REF_PIP_REQUIREMENTS,
     SkypilotRenderOptions,
     assert_no_unresolved_placeholders,
     render_pip_requirements_setup,
+    render_setup_for_tool,
     render_skypilot_yaml,
     tool_pip_requirements,
 )
 from npa.orchestration.npa_workflow.spec import load_spec
+from vendor_interpreter_contract import (
+    VENDOR_INTERPRETER_CLI_DIAGNOSTIC,
+    VENDOR_INTERPRETER_CLI_INSTALL_GUARD,
+    VENDOR_INTERPRETER_CLI_PROBE,
+)
 
 SPECS = Path(__file__).resolve().parents[4] / "workflows" / "testing"
 
@@ -252,6 +259,42 @@ def test_groot_mcap_stage_installs_and_probes_native_writer_dependency() -> None
     assert "uv pip install -q --python \"$npa_req_python\" 'mcap>=1.3,<2'" in setup
 
 
+def test_fastwam_stages_replace_an_importable_incompatible_pyav() -> None:
+    """LeRobot 0.6.1 requires PyAV's 15.x ``av.option`` API on every stage."""
+
+    fastwam_refs = (
+        "workbench.lerobot.fastwam_prepare",
+        "workbench.lerobot.fastwam_train",
+        "workbench.lerobot.fastwam_rollout",
+        "workbench.lerobot.fastwam_evaluate",
+        "workbench.lerobot.fastwam_report",
+    )
+    for tool_ref in fastwam_refs:
+        requirements = tool_pip_requirements(tool_ref)
+        assert FASTWAM_PYAV_REQUIREMENT in requirements
+        setup = render_pip_requirements_setup(requirements)
+        assert (
+            'import av;assert(__import__("importlib.metadata").metadata.version("av")'
+            '.startswith("15."))'
+        ) in setup
+        assert "-m pip install -q 'av>=15.0,<16.0'" in setup
+
+
+def test_fastwam_setup_refreshes_staged_metadata_before_pyav_install() -> None:
+    """Do not leave the baked NPA ``Requires-Dist`` pin ahead of the overlay."""
+
+    setup = render_setup_for_tool(
+        "workbench.lerobot.fastwam_report",
+        config={},
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+        command=("python3", "-m", "npa.workflows.fastwam_policy", "--help"),
+    )
+    metadata = '"$npa_fastwam_python" -m pip install -q -e "$npa_fastwam_src" --no-deps'
+    pyav = "-m pip install -q 'av>=15.0,<16.0'"
+    assert metadata in setup
+    assert setup.index(metadata) < setup.index(pyav)
+
+
 def test_executable_and_module_probes_can_coexist() -> None:
     setup = render_pip_requirements_setup(
         (("huggingface-cli", "huggingface_hub[cli]"), ("python:numpy", "numpy>=1.24"))
@@ -329,23 +372,22 @@ def test_vendor_setup_installs_npa_there_and_records_it() -> None:
     no_deps = setup.index("-m pip install -q --no-deps -e")
     # ... and a with-deps attempt only AFTER it, for vendor environments that carry none of
     # npa's dependencies (live job 268: Isaac's kit python, where --no-deps alone left
-    # npa.workbench unimportable). Order is the whole safety property.
+    # npa.cli.main unimportable). Order is the whole safety property.
     with_deps = setup.index('-m pip install -q -e "$npa_vendor_src"')
     assert no_deps < with_deps
     # The second attempt is guarded by the probe, so it never runs when the first sufficed.
-    assert setup.count("if ! \"$npa_vendor_python\" -c 'import npa.workbench'") == 2
+    assert setup.count(VENDOR_INTERPRETER_CLI_INSTALL_GUARD) == 2
     # Records it as THE stage interpreter, which is what the run shim reads.
     assert 'echo "$npa_vendor_python" > /tmp/npa-python' in setup
-    # Probes a real subpackage: a vendor image may bake a PARTIAL npa on PYTHONPATH that makes
-    # `import npa` pass while `import npa.workbench` fails (live job 250).
-    assert "-c 'import npa.workbench'" in setup
+    # Probes the stage's real CLI surface: a shallow overlay can make a subpackage importable
+    # while dependencies required by `npa.cli.main` are absent.
+    assert VENDOR_INTERPRETER_CLI_PROBE in setup
+    assert "-c 'import npa.workbench'" not in setup
     # Skips a candidate that is not present, rather than failing the stage.
     assert '[ -x "$npa_vendor_python" ] || continue' in setup
     # And when it gives up on a candidate it says why: job 268's bare warning blamed a
     # shadowing partial npa when the cause was missing dependencies.
-    assert (
-        "\"$npa_vendor_python\" -c 'import npa.workbench' 2>&1 | tail -3 >&2" in setup
-    )
+    assert VENDOR_INTERPRETER_CLI_DIAGNOSTIC in setup
     assert "${" not in setup
 
 
