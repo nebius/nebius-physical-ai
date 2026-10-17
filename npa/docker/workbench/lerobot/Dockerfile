@@ -82,11 +82,14 @@ WORKDIR /opt/lerobot
 # 0.6.0 also moved diffusers/transformers behind extras and enforces them in each
 # policy's __init__, so diffusion and smolvla must be requested explicitly or
 # --policy.type=diffusion fails inside make_policy() at run time, not at build.
+# LeRobot declares PyAV 15 only through its optional av-dep extra. Pin it here
+# because the dataset reader imports av.option, which newer PyAV removed.
 RUN python3.12 -m venv /opt/lerobot/venv \
     && /opt/lerobot/venv/bin/python -m pip install --upgrade pip setuptools wheel \
     && if [ "${LEROBOT_VERSION}" = "0.6.0" ]; then \
          /opt/lerobot/venv/bin/pip install \
            "lerobot[training,evaluation,pusht,libero,diffusion,smolvla]==${LEROBOT_VERSION}" \
+           "av==15.1.0" \
            boto3 \
            fastapi~=0.136.1 \
            num2words \
@@ -96,6 +99,7 @@ RUN python3.12 -m venv /opt/lerobot/venv \
        else \
          /opt/lerobot/venv/bin/pip install \
            "lerobot[pusht,libero]==${LEROBOT_VERSION}" \
+           "av==15.1.0" \
            boto3 \
            fastapi~=0.136.1 \
            num2words \
@@ -127,7 +131,7 @@ COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
 
 RUN python -m npa.smoke.test_lerobot_env \
     && test "$NPA_BAKED_PYTHON" = /opt/lerobot/venv/bin/python \
-    && "$NPA_BAKED_PYTHON" -c "import pyarrow.parquet; import npa.workflows.lerobot_dataset; import npa.workbench.lerobot.policy_container"
+    && "$NPA_BAKED_PYTHON" -c "import av; assert hasattr(av, 'option'); from lerobot.datasets.lerobot_dataset import LeRobotDataset; import pyarrow.parquet; import npa.workflows.lerobot_dataset; import npa.workbench.lerobot.policy_container"
 
 USER root
 
