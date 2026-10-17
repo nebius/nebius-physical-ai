@@ -883,7 +883,8 @@ def _ensure_isolated_api(**kwargs) -> ApiDaemonCwdProbe:
     try:
         return ApiDaemonCwdProbe(**ensure_isolated_api(**kwargs))
     except IsolatedApiError as exc:
-        raise SkyPilotSubmitError(str(exc)) from None
+        # API configuration validation precedes the workflow launch transaction.
+        raise SkyPilotSubmitError(str(exc), launch_attempted=False) from None
 
 
 def ensure_local_api_daemon_health(
@@ -2835,9 +2836,10 @@ def workflow_task_statuses(
     )
     if raise_on_error:
         _verify_task_queue_result(result)
-    if result.returncode != 0:
+    jobs = verified_structured_queue_rows(result)
+    if jobs is None:
         return []
-    return parse_task_statuses(result.stdout, job_id)
+    return _task_statuses_from_rows(jobs, job_id)
 
 
 def workflow_controller_logs(
@@ -2916,7 +2918,7 @@ def find_job_ids_by_name(
         timeout=timeout,
         check=False,
     )
-    if result.returncode != 0:
+    if verified_structured_queue_rows(result) is None:
         return []
     return parse_job_ids_by_name(result.stdout, job_name)
 
@@ -3025,7 +3027,7 @@ def lookup_managed_job(
             ),
         )
     selected = str(max(matching_ids))
-    rows = tuple(parse_task_statuses(result.stdout, selected))
+    rows = tuple(_task_statuses_from_rows(jobs, selected))
     markers = sorted(
         {
             marker
@@ -3037,7 +3039,7 @@ def lookup_managed_job(
     return ManagedJobEvidence(
         "found",
         job_id=selected,
-        status=_status_from_queue_payload(result.stdout, selected) or "UNKNOWN",
+        status=_status_from_queue_rows(jobs, selected) or "UNKNOWN",
         task_rows=rows,
         workload_observable=bool(markers),
         workload_evidence=",".join(markers),
@@ -3198,7 +3200,7 @@ def _reconcile_managed_job_env(
             error=_redact_private_text(detail, redactions),
         )
     else:
-        parsed_rows = queue_rows_from_output(result.stdout)
+        parsed_rows = verified_structured_queue_rows(result)
         if parsed_rows is None:
             return ReconciliationEvidence(
                 ReconciliationState.AMBIGUOUS,
@@ -3480,7 +3482,7 @@ def _libero_launch_binding_candidates(
                 "binding could not be read; preserving indeterminate state and "
                 "refusing retry",
             )
-        rows = queue_rows_from_output(result.stdout)
+        rows = verified_structured_queue_rows(result)
     except Exception:  # noqa: BLE001 - missing confirmation must fail closed
         return (
             "",
@@ -3879,49 +3881,60 @@ def parse_job_ids_by_name(output: str, job_name: str) -> list[str]:
     return [str(value) for value in sorted(ids, reverse=True)]
 
 
+def _task_status_row(job: dict[str, Any], current_id: str) -> dict[str, Any]:
+    """Normalize task timing and recovery fields without reparsing queue output."""
+
+    row = {
+        "job_id": current_id,
+        "task_id": job.get("task_id"),
+        "task_name": job.get("task_name") or job.get("job_name") or "",
+        "status": str(job.get("status") or "").upper(),
+        "submitted_at": job.get("submitted_at"),
+        "start_at": job.get("start_at"),
+        "end_at": job.get("end_at"),
+        "is_job_group": job.get("is_job_group"),
+        "execution": job.get("execution"),
+        "cluster_name": job.get("cluster_name_on_cloud")
+        or job.get("current_cluster_name")
+        or "",
+    }
+    # Preserve scheduler/recovery evidence without binding to one SkyPilot
+    # release's field spelling.  The actionable status projector consumes
+    # these normalized names and keeps the raw status separately.
+    for target, aliases in {
+        "retry_count": ("retry_count", "recovery_count", "num_restarts", "attempt"),
+        "last_progress_at": ("last_progress_at", "last_transition_at"),
+        "last_updated_at": ("last_updated_at", "updated_at"),
+        "failure_reason": ("failure_reason", "failure_message", "error"),
+    }.items():
+        for alias in aliases:
+            if job.get(alias) not in (None, ""):
+                row[target] = job[alias]
+                break
+    return row
+
+
+def _task_statuses_from_rows(
+    jobs: list[dict[str, Any]], job_id: str
+) -> list[dict[str, Any]]:
+    """Select task rows from the already parsed or verified queue evidence."""
+
+    rows: list[dict[str, Any]] = []
+    for job in jobs:
+        if not isinstance(job, dict):
+            continue
+        current_id = str(job.get("job_id") or job.get("id") or "")
+        if current_id == str(job_id):
+            rows.append(_task_status_row(job, current_id))
+    rows.sort(key=lambda row: (row.get("task_id") is None, row.get("task_id") or 0))
+    return rows
+
+
 def parse_task_statuses(output: str, job_id: str) -> list[dict[str, Any]]:
     """Extract per-task rows for ``job_id`` from ``sky jobs queue --output json``."""
 
     jobs = queue_rows_from_output(output)
-    if jobs is None:
-        return []
-    rows: list[dict[str, Any]] = []
-    for job in jobs or []:
-        if not isinstance(job, dict):
-            continue
-        current_id = str(job.get("job_id") or job.get("id") or "")
-        if current_id != str(job_id):
-            continue
-        row = {
-            "job_id": current_id,
-            "task_id": job.get("task_id"),
-            "task_name": job.get("task_name") or job.get("job_name") or "",
-            "status": str(job.get("status") or "").upper(),
-            "submitted_at": job.get("submitted_at"),
-            "start_at": job.get("start_at"),
-            "end_at": job.get("end_at"),
-            "is_job_group": job.get("is_job_group"),
-            "execution": job.get("execution"),
-            "cluster_name": job.get("cluster_name_on_cloud")
-            or job.get("current_cluster_name")
-            or "",
-        }
-        # Preserve scheduler/recovery evidence without binding to one SkyPilot
-        # release's field spelling.  The actionable status projector consumes
-        # these normalized names and keeps the raw status separately.
-        for target, aliases in {
-            "retry_count": ("retry_count", "recovery_count", "num_restarts", "attempt"),
-            "last_progress_at": ("last_progress_at", "last_transition_at"),
-            "last_updated_at": ("last_updated_at", "updated_at"),
-            "failure_reason": ("failure_reason", "failure_message", "error"),
-        }.items():
-            for alias in aliases:
-                if job.get(alias) not in (None, ""):
-                    row[target] = job[alias]
-                    break
-        rows.append(row)
-    rows.sort(key=lambda row: (row.get("task_id") is None, row.get("task_id") or 0))
-    return rows
+    return _task_statuses_from_rows(jobs, job_id) if jobs is not None else []
 
 
 class _LaunchStreamer:
@@ -5256,7 +5269,7 @@ def _verified_job_id(
             timeout=60,
             check=False,
         )
-        if result.returncode != 0:
+        if verified_structured_queue_rows(result) is None:
             return parsed
         ids = parse_job_ids_by_name(result.stdout, job_name)
     except Exception:  # noqa: BLE001 - never fail a successful submit over a lookup

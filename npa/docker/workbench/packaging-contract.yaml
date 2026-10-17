@@ -426,6 +426,20 @@ images:
     ports: [8080]
     passwordless_root_exemption: "SkyPilot Kubernetes bootstrap only; non-root runtime user, no default sshd service, and no baked credentials."
     redistribution: public
+  lerobot-vla-jepa:
+    dockerfile: lerobot-vla-jepa/Dockerfile
+    tier: job
+    redistribution: unvalidated
+    skypilot_bootstrap_contract: skypilot-0.12.2-v1
+    notes: >-
+      Separate LeRobot v0.6.1 VLA-JEPA validation candidate. The generic
+      LeRobot acceptance does not cover this newer upstream policy or its
+      extras. The image bakes no policy checkpoint, Qwen, V-JEPA2, LIBERO data,
+      populated cache, credentials, or generated artifacts; all are immutable
+      operator-run runtime fetches. It carries the non-root SkyPilot bootstrap
+      contract with runtime-generated SSH host keys only. It remains private and
+      publication-quarantined pending exact built-byte, SBOM, source-closure,
+      and real GPU evidence.
   lerobot-policy:
     dockerfile: lerobot-policy/Dockerfile
     tier: service

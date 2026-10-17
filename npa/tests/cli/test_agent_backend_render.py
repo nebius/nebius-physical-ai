@@ -2003,6 +2003,8 @@ def _capture_setup_script(
 ) -> str:
     from npa.cli import agent as agent_module
 
+    # These tests inspect the rendered backend after successful source staging.
+    monkeypatch.setattr(agent_module, "_stage_agent_npa_source", lambda _ssh: None)
     captured: dict[str, str] = {}
 
     class _DummySsh:

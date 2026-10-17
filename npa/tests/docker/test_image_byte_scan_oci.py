@@ -360,6 +360,30 @@ def test_ncore_verifier_generates_real_archive_binding_and_counts(tmp_path):
     assert report == {**expected, "archive_sha256": archive["sha256"]}
 
 
+def test_generic_verifier_generates_product_neutral_archive_binding(tmp_path):
+    from image_byte_scan import generic_oci_verification as G
+
+    files, expected, _ = oci_fixture()
+    archive = write(
+        tmp_path / "image.tar",
+        tar_data([file(name, data) for name, data in files.items()]),
+    )
+    report = G.verify(archive, expected["expected_image_id"])
+    assert report == {
+        **expected,
+        "schema_version": "npa.generic-oci-verification.v1",
+        "archive_sha256": archive["sha256"],
+    }
+
+
+def test_complete_scanner_rebinds_the_generic_oci_verifier(tmp_path):
+    files, verification, _ = oci_fixture()
+    verification["schema_version"] = "npa.generic-oci-verification.v1"
+    report, _ = run(tmp_path, authorize(tmp_path, files, verification))
+    assert report["complete"] is True
+    assert report["valid"] is True
+
+
 @pytest.mark.parametrize(
     "schema", ["npa.unrecognized.image-verification.v1", None, [], {}]
 )

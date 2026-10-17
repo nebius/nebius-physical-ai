@@ -3539,6 +3539,7 @@ def graph(fd, length, verification, expected_id):
         S.bind(result, verification, expected_id)
         return result["layers"]
     if verification.get("schema_version") in (
+        "npa.generic-oci-verification.v1",
         "npa.ncore.oci-verification.v1",
         "npa.image.oci-verification.v1",
         "npa.robotwin.image-verification.v1",
@@ -3547,6 +3548,8 @@ def graph(fd, length, verification, expected_id):
             from . import robotwin_verification as N
         elif verification["schema_version"] == "npa.image.oci-verification.v1":
             from . import oci_verification as N
+        elif verification["schema_version"] == "npa.generic-oci-verification.v1":
+            from . import generic_oci_verification as N
         else:
             from . import ncore_verification as N
         result = N.inspect(fd, length, expected_id)
@@ -3908,6 +3911,7 @@ def verification_archive_digest(verification):
         schema
         in (
             "npa.curobo.image-verification.v1",
+            "npa.generic-oci-verification.v1",
             "npa.docker-save.image-verification.v1",
             "npa.ncore.oci-verification.v1",
             "npa.image.oci-verification.v1",
@@ -4054,6 +4058,7 @@ def _scan(authorization, directory, detector_type=Detector, *, record_observer=N
     }
     try:
         if verification["schema_version"] in (
+            "npa.generic-oci-verification.v1",
             "npa.ncore.oci-verification.v1",
             "npa.image.oci-verification.v1",
             "npa.robotwin.image-verification.v1",
@@ -4062,6 +4067,8 @@ def _scan(authorization, directory, detector_type=Detector, *, record_observer=N
                 from . import robotwin_verification as N
             elif verification["schema_version"] == "npa.image.oci-verification.v1":
                 from . import oci_verification as N
+            elif verification["schema_version"] == "npa.generic-oci-verification.v1":
+                from . import generic_oci_verification as N
             else:
                 from . import ncore_verification as N
             result = N.inspect(fd, initial.st_size, authorization["expected_image_id"])

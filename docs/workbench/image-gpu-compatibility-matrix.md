@@ -113,6 +113,7 @@ likewise predates its current coherent release.
 | `npa-workbench-cuda-base` | supported | supported | supported | supported | supported |
 | `npa-seedvr2` | blocked by `sm_90`-only extensions | H100 candidate built with native `sm_90`, real restoration pending; H200 is not accepted by the current H100-only runtime policy | blocked by `sm_90`-only extensions | blocked pending an `sm_100` extension rebuild and real restoration | blocked pending an `sm_100` extension rebuild and real restoration |
 | `npa-lerobot` | supported | **verified** [41] | **verified** [42] | **verified** [39], optional 0.6.0 [68] | **verified** [40] |
+| `npa-lerobot-vla-jepa` (private unbuilt candidate) | not built; not validated | not built; not validated | not built; required RTX PRO 6000 route is unvalidated | not built; no B200 claim | not built; no B300 claim |
 | `npa-lerobot-policy` | supported | supported | supported | supported | supported |
 | `npa-lancedb` | supported | **verified** [26] | **verified** [27] | **verified** [24] | **verified** [25] |
 | `npa-detection-training` | supported | **historical evidence** [29] | **verified** [current release evidence](#current-detection-runtime-evidence) | **historical evidence** [28] | **historical evidence** [31] |

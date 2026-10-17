@@ -218,6 +218,12 @@ DECLARATIVE_PIP_EXTRAS = frozenset({"viz"})
 #: `huggingface_hub`, and the interpreter running npa in a vendor image is not the vendor's own
 #: venv, so the library is not necessarily importable there (live job 244).
 TOOL_REF_PIP_REQUIREMENTS: dict[str, tuple[tuple[str, str], ...]] = {
+    "workbench.lerobot.vla_jepa": (
+        ("python:huggingface_hub", "huggingface_hub>=0.23,<1.0"),
+        ("python:pyarrow", "pyarrow>=15,<22"),
+        ("python:av", "av>=12,<17"),
+        ("python:rerun", "rerun-sdk==0.38.1"),
+    ),
     "workbench.marble.report": (("python:imageio_ffmpeg", "imageio-ffmpeg==0.6.0"),),
     "workbench.marble.quadruped_collect": (
         ("python:gsplat", "gsplat==1.5.3"),

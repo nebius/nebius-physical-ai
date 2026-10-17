@@ -767,7 +767,7 @@ def _become_child_subreaper() -> None:
 def _process_identity(pid: int) -> _ProcessIdentity | None:
     try:
         raw = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
-    except FileNotFoundError:
+    except (FileNotFoundError, ProcessLookupError):
         return None
     end = raw.rfind(")")
     if end < 0:
