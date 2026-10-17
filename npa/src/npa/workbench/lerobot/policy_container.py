@@ -9,6 +9,7 @@ import importlib.metadata
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -1570,16 +1571,34 @@ def _materialize_eval_checkpoint(args: argparse.Namespace) -> Path:
             f"--checkpoint-path {raw!r} is neither a local path, an s3:// prefix, nor a "
             "Hugging Face repo id (owner/name)"
         )
+    target = _download_eval_checkpoint(repo_id, cache)
+    print(f"NPA_LEROBOT_POLICY_READY {target}", flush=True)
+    return target
+
+
+def _download_eval_checkpoint(repo_id: str, cache: Path) -> Path:
     try:
-        from huggingface_hub import snapshot_download
+        from huggingface_hub import HfApi, snapshot_download
     except ImportError as exc:  # pragma: no cover - guarded by the stage's requirements
         raise PolicyContainerError(
             f"huggingface_hub is required to fetch the policy {repo_id!r}"
         ) from exc
+    revision = HfApi().model_info(repo_id=repo_id, revision="main").sha
+    if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise PolicyContainerError(
+            "Hugging Face policy did not resolve to an immutable commit"
+        )
     target = Path(
-        snapshot_download(repo_id=repo_id, local_dir=cache / repo_id.replace("/", "__"))
+        snapshot_download(
+            repo_id=repo_id,
+            revision=revision,
+            local_dir=cache / repo_id.replace("/", "__") / revision,
+        )
     )
-    print(f"NPA_LEROBOT_POLICY_READY {target}", flush=True)
+    (target / ".npa-hf-source.json").write_text(
+        json.dumps({"repo_id": repo_id, "repo_type": "model", "revision": revision})
+        + "\n"
+    )
     return target
 
 

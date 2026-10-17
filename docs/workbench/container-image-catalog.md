@@ -142,6 +142,13 @@ repaired versions with CPU Torch 2.13. The upstream 1.15 wheel still reproduced
 the traversal, so its version alone is not a fix. These recipe changes introduce
 no new published image and do not qualify any replacement GPU stack.
 
+The FiftyOne LeRobot importer and LeRobot policy-container source also freeze
+each Hub transfer to a resolved commit and record its provenance. Model caches
+use a directory per commit to prevent stale files crossing revisions. Real Hub
+SDK 0.36.2 and 1.26 HTTP tests exercise a branch moving during download. This
+source behavior requires deployment of the updated code; the accepted image
+digests in this catalog retain their original bytes.
+
 Gymnasium-Robotics is selected by the immutable development-build matrix but
 remains separately tracked outside the mapped release inventory. It appears in the GPU
 compatibility matrix only as a development-candidate/no-accepted-image row. An

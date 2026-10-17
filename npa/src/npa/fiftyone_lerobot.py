@@ -447,8 +447,11 @@ def _download_s3_source(uri: str, name: str, datasets_dir: Path) -> Path:
 
 
 def _download_huggingface_source(repo_id: str, name: str, datasets_dir: Path) -> Path:
-    from huggingface_hub import snapshot_download
+    from huggingface_hub import HfApi, snapshot_download
 
+    revision = HfApi().dataset_info(repo_id=repo_id, revision="main").sha
+    if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise ValueError("Hugging Face dataset did not resolve to an immutable commit")
     target_root = datasets_dir / name / "lerobot_source" / "hf"
     if target_root.exists():
         shutil.rmtree(target_root)
@@ -456,7 +459,12 @@ def _download_huggingface_source(repo_id: str, name: str, datasets_dir: Path) ->
     snapshot_download(
         repo_id=repo_id,
         repo_type="dataset",
+        revision=revision,
         local_dir=str(target_root),
+    )
+    (target_root / ".npa-hf-source.json").write_text(
+        json.dumps({"repo_id": repo_id, "repo_type": "dataset", "revision": revision})
+        + "\n"
     )
     return target_root
 

@@ -751,6 +751,14 @@ GitHub Actions dependencies daily and groups version updates into one
 regenerate CI pins after Python input changes, and validate the combined batch. Reproduce the scan
 with the [security gate instructions](../docs/security/merge-security-gate.md#reproduce-locally).
 
+FiftyOne's LeRobot importer and the policy container's Hub checkpoint downloader
+resolve the selected `main` reference to a full commit before transferring files.
+Each download records its repository, type and commit in `.npa-hf-source.json`.
+Model checkpoints use a directory per commit so files removed from a later
+revision cannot survive from an older download. Invalid resolved commits stop
+before downloading or replacing the existing dataset cache. This freezes each
+transfer; it does not establish trust in an operator-selected repository.
+
 Dependabot excludes `ci/**` relative to `/npa`: omitting `/npa/ci` from the
 directory list does not exclude its nested manifests. Generated CI pins must
 still be refreshed with `ci_requirements.py --update` after a Python input
