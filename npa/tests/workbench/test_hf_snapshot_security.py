@@ -18,13 +18,17 @@ from npa.workbench.lerobot.policy_container import (
 def consumer(request, tmp_path):
     if request.param == "dataset":
         return (
-            lambda: _download_huggingface_source("owner/dataset", "review", tmp_path),
+            lambda reference="owner/dataset@" + "a" * 40: _download_huggingface_source(
+                reference, "review", tmp_path
+            ),
             tmp_path / "review/lerobot_source/hf",
             ValueError,
             "dataset",
         )
     return (
-        lambda: _download_eval_checkpoint("owner/policy", tmp_path),
+        lambda reference="owner/policy@" + "a" * 40: _download_eval_checkpoint(
+            reference, tmp_path
+        ),
         tmp_path / "owner__policy",
         PolicyContainerError,
         "model",
@@ -37,7 +41,7 @@ def test_download_and_receipt_use_the_resolved_commit(consumer, monkeypatch):
     calls = []
 
     def metadata(**kwargs):
-        assert kwargs["revision"] == "main"
+        assert kwargs["revision"] == revision
         return SimpleNamespace(sha=revision)
 
     def snapshot(**kwargs):
@@ -65,7 +69,7 @@ def test_download_and_receipt_use_the_resolved_commit(consumer, monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "revision", [None, "", "main", "a" * 7, "A" * 40, "a" * 39, "a" * 41, 3]
+    "revision", [None, "", "main", "a" * 7, "A" * 40, "a" * 39, "a" * 41, "b" * 40, 3]
 )
 def test_invalid_resolved_revision_never_downloads_or_removes_cache(
     consumer, monkeypatch, revision
@@ -92,6 +96,42 @@ def test_invalid_resolved_revision_never_downloads_or_removes_cache(
     assert retained.read_text() == "previous verified bytes"
 
 
+@pytest.mark.parametrize(
+    "reference",
+    ["owner/custom", "owner/custom@main", "owner/custom@v1", "owner/custom@" + "a" * 7],
+)
+def test_custom_sources_require_operator_selected_commit_before_network(
+    consumer, monkeypatch, reference
+):
+    download, _, error, _ = consumer
+
+    def unexpected_network():
+        pytest.fail("unreviewed reference reached Hub metadata")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "huggingface_hub",
+        SimpleNamespace(HfApi=unexpected_network, snapshot_download=unexpected_network),
+    )
+    with pytest.raises(error, match="require owner/repository@<full commit>"):
+        download(reference)
+
+
+def test_bundled_examples_use_reviewed_commits():
+    from npa.fiftyone_lerobot import _dataset_snapshot_reference
+    from npa.workbench.lerobot.policy_container import _checkpoint_snapshot_reference
+    from npa.workflows.lerobot_dataset import DEFAULT_PUBLIC_LEROBOT_REVISION
+
+    assert _dataset_snapshot_reference("lerobot/pusht") == (
+        "lerobot/pusht",
+        DEFAULT_PUBLIC_LEROBOT_REVISION,
+    )
+    assert _checkpoint_snapshot_reference("lerobot/diffusion_pusht") == (
+        "lerobot/diffusion_pusht",
+        "84a7c23178445c6bbf7e1a884ff497017910f653",
+    )
+
+
 def test_distinct_model_revisions_cannot_share_stale_files(tmp_path, monkeypatch):
     revisions = iter(["a" * 40, "b" * 40])
 
@@ -107,9 +147,9 @@ def test_distinct_model_revisions_cannot_share_stale_files(tmp_path, monkeypatch
         "huggingface_hub",
         SimpleNamespace(HfApi=lambda: api, snapshot_download=snapshot),
     )
-    first = _download_eval_checkpoint("owner/policy", tmp_path)
+    first = _download_eval_checkpoint("owner/policy@" + "a" * 40, tmp_path)
     (first / "obsolete-file.bin").write_bytes(b"only present in the first revision")
-    second = _download_eval_checkpoint("owner/policy", tmp_path)
+    second = _download_eval_checkpoint("owner/policy@" + "b" * 40, tmp_path)
     assert first != second
     assert (first / "obsolete-file.bin").is_file()
     assert not (second / "obsolete-file.bin").exists()

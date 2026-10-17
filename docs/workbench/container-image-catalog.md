@@ -143,7 +143,8 @@ the traversal, so its version alone is not a fix. These recipe changes introduce
 no new published image and do not qualify any replacement GPU stack.
 
 The FiftyOne LeRobot importer and LeRobot policy-container source also freeze
-each Hub transfer to a resolved commit and record its provenance. Model caches
+custom Hub transfers to operator-selected full commits and record provenance.
+Bundled examples have fixed reviewed commits. Model caches
 use a directory per commit to prevent stale files crossing revisions. Real Hub
 SDK 0.36.2 and 1.26 HTTP tests exercise a branch moving during download. This
 source behavior requires deployment of the updated code; the accepted image

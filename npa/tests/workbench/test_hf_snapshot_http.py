@@ -81,10 +81,10 @@ class _HubHandler(BaseHTTPRequestHandler):
 def _child_code(kind, directory):
     call = (
         "from npa.fiftyone_lerobot import _download_huggingface_source as download\n"
-        f"target=download('{REPOSITORY}', 'review', root)\n"
+        f"target=download('{REPOSITORY}@{FIRST}', 'review', root)\n"
         if kind == "dataset"
         else "from npa.workbench.lerobot.policy_container import _download_eval_checkpoint as download\n"
-        f"target=download('{REPOSITORY}', root)\n"
+        f"target=download('{REPOSITORY}@{FIRST}', root)\n"
     )
     return (
         "from pathlib import Path\nimport json\n"
@@ -130,6 +130,7 @@ def test_real_sdk_download_uses_original_commit_after_main_moves(tmp_path, kind)
         thread.join()
     assert result.returncode == 0, result.stderr
     assert server.revision == SECOND
+    assert not any(path.endswith("/main") for path in server.paths)
     downloads = [path for path in server.paths if "/resolve/" in path]
     assert downloads
     assert all(f"/resolve/{FIRST}/" in path for path in downloads)

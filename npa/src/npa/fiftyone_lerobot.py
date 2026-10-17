@@ -23,6 +23,8 @@ from urllib.parse import urlparse
 
 IMAGE_EXTENSIONS = {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}
 VIDEO_EXTENSIONS = {".avi", ".m4v", ".mkv", ".mov", ".mp4", ".webm"}
+_PUBLIC_DATASET_REPOSITORY = "lerobot/pusht"
+_PUBLIC_DATASET_REVISION = "7628202a2180972f291ba1bc6723834921e72c19"
 SUCCESS_TERMS = (
     "task_success",
     "is_success",
@@ -446,12 +448,22 @@ def _download_s3_source(uri: str, name: str, datasets_dir: Path) -> Path:
     return target_root
 
 
-def _download_huggingface_source(repo_id: str, name: str, datasets_dir: Path) -> Path:
+def _dataset_snapshot_reference(reference: str) -> tuple[str, str]:
+    repository, separator, revision = reference.partition("@")
+    if not separator and repository == _PUBLIC_DATASET_REPOSITORY:
+        revision = _PUBLIC_DATASET_REVISION
+    if not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise ValueError("Custom Hub datasets require owner/repository@<full commit>")
+    return repository, revision
+
+
+def _download_huggingface_source(reference: str, name: str, datasets_dir: Path) -> Path:
+    repo_id, revision = _dataset_snapshot_reference(reference)
     from huggingface_hub import HfApi, snapshot_download
 
-    revision = HfApi().dataset_info(repo_id=repo_id, revision="main").sha
-    if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision):
-        raise ValueError("Hugging Face dataset did not resolve to an immutable commit")
+    resolved = HfApi().dataset_info(repo_id=repo_id, revision=revision).sha
+    if resolved != revision:
+        raise ValueError("Hugging Face dataset did not verify the immutable commit")
     target_root = datasets_dir / name / "lerobot_source" / "hf"
     if target_root.exists():
         shutil.rmtree(target_root)
