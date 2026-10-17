@@ -58,7 +58,9 @@ def test_explicit_project_limits_remain_enforced(monkeypatch, limit) -> None:
     assert assess_quota(observation, required=6).status == "blocked"
 
 
-@pytest.mark.parametrize("limit", [None, "", "invalid", False, "1.5"])
+@pytest.mark.parametrize(
+    "limit", [None, "", "invalid", False, "1.5", -1, "-1", -2, "unbounded", "inf"]
+)
 def test_invalid_explicit_limit_is_not_treated_as_an_absent_field(
     monkeypatch, limit
 ) -> None:

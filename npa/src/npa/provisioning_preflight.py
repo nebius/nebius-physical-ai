@@ -717,6 +717,12 @@ def _project_quota_row(row: Any, *, project_id: str, region: str) -> Mapping[str
     parent = metadata.get("parent_id")
     if parent is not None and parent != project_id:
         raise ValueError("quota allowance belongs to a different project")
+    if "limit" in spec:
+        limit = _int_or_none(spec["limit"])
+        if limit is None or limit < 0:
+            # Only omission is a provider default. Generic parser sentinels
+            # such as -1 or "unbounded" are invalid explicit project limits.
+            return {**row, "spec": {**spec, "limit": None}}
     usage = _int_or_none(status.get("usage", 0))
     if (
         "limit" not in spec

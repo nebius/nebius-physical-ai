@@ -350,7 +350,7 @@ def test_non_provider_exception_cannot_trigger_scope_fallback():
     assert calls == [TENANT]
 
 
-@pytest.mark.parametrize("limit", [None, False, "bad", -1, "1.5"])
+@pytest.mark.parametrize("limit", [None, False, "bad", -1, "-1", "unbounded", "1.5"])
 def test_backend_invalid_explicit_project_limit_cannot_become_unlimited(
     monkeypatch, limit
 ):
