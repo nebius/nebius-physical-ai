@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -22,6 +23,9 @@ SOURCE_REF = "a43bec7f8091c83e9b30b16b912f6fc906236fa6"
 MODEL_ID = "robbyant/lingbot-world-base-cam"
 MODEL_REF = "6fc824ffc338d64c97c77e2eb8c0f4cfc24d82bd"
 TEXT_ENCODER_REF = "66cb9e7e85526fe440a945569e42c72fb6cbc0ad"
+FRAME_COUNT = 161
+CONTROL_FILENAMES = ("poses.npy", "intrinsics.npy")
+SUPPORTED_DISTRIBUTED_DEGREES = (2, 4, 8)
 
 
 def _checkpoint(cache: Path) -> Path:
@@ -46,26 +50,100 @@ def _checkpoint(cache: Path) -> Path:
     return overlay
 
 
-def _controls(directory: Path) -> dict:
+def create_camera_controls(
+    directory: Path,
+    *,
+    translation_x: float,
+    translation_z: float,
+    yaw_radians: float,
+    frame_count: int = FRAME_COUNT,
+) -> dict[str, str]:
+    """Create an upstream-compatible authored camera trajectory.
+
+    Args:
+        directory: New directory that will contain ``poses.npy`` and
+            ``intrinsics.npy``.
+        translation_x: Final OpenCV-camera X translation in metres.
+        translation_z: Final OpenCV-camera Z translation in metres.
+        yaw_radians: Final yaw rotation in radians.
+        frame_count: Number of camera control records to emit.
+
+    Returns:
+        SHA-256 identities keyed by the emitted control-file names.
+
+    Raises:
+        ValueError: A trajectory parameter is nonfinite or frame count is invalid.
+        FileExistsError: The output directory already exists.
+    """
     import numpy as np
 
+    values = (translation_x, translation_z, yaw_radians)
+    if frame_count <= 1 or not all(np.isfinite(value) for value in values):
+        raise ValueError("Camera trajectory must have finite values and two frames")
     directory.mkdir()
-    time = np.linspace(0, 1, 161, dtype=np.float32)
+    time = np.linspace(0, 1, frame_count, dtype=np.float32)
     smooth = time * time * (3 - 2 * time)
-    poses = np.repeat(np.eye(4, dtype=np.float32)[None], 161, axis=0)
-    angles = 0.1 * smooth
+    poses = np.repeat(np.eye(4, dtype=np.float32)[None], frame_count, axis=0)
+    angles = yaw_radians * smooth
     poses[:, 0, 0], poses[:, 0, 2] = np.cos(angles), np.sin(angles)
     poses[:, 2, 0], poses[:, 2, 2] = -np.sin(angles), np.cos(angles)
-    poses[:, 0, 3], poses[:, 2, 3] = 0.7 * smooth, 1.5 * smooth
+    poses[:, 0, 3], poses[:, 2, 3] = translation_x * smooth, translation_z * smooth
     intrinsics = np.repeat(
-        np.array([[900, 900, 640, 360]], dtype=np.float32), 161, axis=0
+        np.array([[900, 900, 640, 360]], dtype=np.float32), frame_count, axis=0
     )
     np.save(directory / "poses.npy", poses)
     np.save(directory / "intrinsics.npy", intrinsics)
+    return _control_hashes(directory)
+
+
+def _controls(directory: Path) -> dict[str, str]:
+    """Create the historical default authored camera trajectory."""
+
+    return create_camera_controls(
+        directory,
+        translation_x=0.7,
+        translation_z=1.5,
+        yaw_radians=0.1,
+    )
+
+
+def _control_hashes(directory: Path) -> dict[str, str]:
+    """Validate control files and return their byte identities."""
+
+    _validate_controls(directory)
     return {
-        path.name: hashlib.sha256(path.read_bytes()).hexdigest()
-        for path in directory.iterdir()
+        filename: hashlib.sha256((directory / filename).read_bytes()).hexdigest()
+        for filename in CONTROL_FILENAMES
     }
+
+
+def _validate_controls(directory: Path) -> None:
+    """Reject camera controls that do not match the pinned native contract."""
+
+    import numpy as np
+
+    poses = np.load(directory / "poses.npy", allow_pickle=False)
+    intrinsics = np.load(directory / "intrinsics.npy", allow_pickle=False)
+    if poses.shape != (FRAME_COUNT, 4, 4) or intrinsics.shape != (FRAME_COUNT, 4):
+        raise ValueError(
+            "LingBot camera controls must match the 161-frame native shape"
+        )
+    if not np.isfinite(poses).all() or not np.isfinite(intrinsics).all():
+        raise ValueError("LingBot camera controls must contain finite values")
+
+
+def _prepare_controls(output: Path, controls_dir: Path | None) -> dict[str, str]:
+    """Create or copy the control files consumed by the native entrypoint."""
+
+    target = output / "controls"
+    if controls_dir is None:
+        return _controls(target)
+    controls_dir = Path(controls_dir)
+    _validate_controls(controls_dir)
+    target.mkdir()
+    for filename in CONTROL_FILENAMES:
+        shutil.copy2(controls_dir / filename, target / filename)
+    return _control_hashes(target)
 
 
 def _command(checkpoint, image, output, prompt, seed, degree):
@@ -105,7 +183,12 @@ def _command(checkpoint, image, output, prompt, seed, degree):
 
 
 def generate_camera_video(
-    image: Path, prompt: str, seed: int, output: Path, degree: int = 4
+    image: Path,
+    prompt: str,
+    seed: int,
+    output: Path,
+    degree: int = 4,
+    controls_dir: Path | None = None,
 ) -> dict:
     """Generate a world continuation with the native authored-camera path.
 
@@ -114,7 +197,10 @@ def generate_camera_video(
         prompt: Native generation prompt.
         seed: Nonnegative generation seed.
         output: New writable output directory.
-        degree: Two or four GPUs for FSDP and Ulysses.
+        degree: Supported FSDP/Ulysses GPU count. The upstream Base (Cam)
+            example prescribes eight ranks; two and four remain available only
+            for the separately qualified legacy BYOF capability.
+        controls_dir: Optional upstream-compatible authored camera controls.
 
     Returns:
         Model, camera, rank execution, and decoded-media evidence.
@@ -126,9 +212,12 @@ def generate_camera_video(
     import torch
     from PIL import Image
 
-    if degree not in (2, 4) or torch.cuda.device_count() != degree:
+    if (
+        degree not in SUPPORTED_DISTRIBUTED_DEGREES
+        or torch.cuda.device_count() != degree
+    ):
         raise ValueError(
-            "LingBot camera capability requires exactly two or four CUDA GPUs"
+            "LingBot camera capability requires exactly 2, 4, or 8 CUDA GPUs"
         )
     if not prompt.strip() or type(seed) is not int or seed < 0:
         raise ValueError("A nonempty prompt and nonnegative integer seed are required")
@@ -138,7 +227,7 @@ def generate_camera_video(
     source = output / "input.png"
     with Image.open(image) as decoded:
         decoded.convert("RGB").save(source)
-    controls = _controls(output / "controls")
+    controls = _prepare_controls(output, controls_dir)
     with tempfile.TemporaryDirectory(prefix="npa-lingbot-camera-") as cache:
         checkpoint = _checkpoint(Path(cache))
         command = _command(checkpoint, source, output, prompt, seed, degree)

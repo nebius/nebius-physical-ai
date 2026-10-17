@@ -6,6 +6,13 @@ The upstream license and included notices remain in `/opt/byof`.
 NPA adapters are Apache-2.0. The inherited digest-pinned Wan runtime's
 redistribution records remain under `/usr/share/doc/npa-wan2-2`.
 
+As a disclosed NPA packaging modification, the two upstream configuration
+imports of the historical LGPL `easydict` distribution are rewritten to use the
+Apache-2.0 compatibility mapping retained from the inherited Wan runtime. The
+upstream `easydict` requirement is removed before installation; no `easydict`
+distribution is shipped. This does not change LingBot source, model, dataset, or
+output terms.
+
 The image contains source and open-source CPU dependencies. It does not contain
 model weights, CUDA Python distributions, user media, credentials, or terms
 acceptance. CUDA dependencies are installed into a writable runtime volume by
