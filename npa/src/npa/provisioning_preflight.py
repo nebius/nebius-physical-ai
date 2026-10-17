@@ -419,9 +419,17 @@ def build_whole_path_plan(
             )
 
     requirements = topology.quota_requirements()
-    reader = quota_reader or read_provider_quotas
     try:
-        observations = reader(tenant_id, region, tuple(requirements))
+        if quota_reader is None:
+            observations, scope = _read_scoped_plan_quotas(
+                project_id,
+                tenant_id,
+                region,
+                tuple(name for name, amount in requirements.items() if amount > 0),
+            )
+            identity_checks.append(scope)
+        else:
+            observations = quota_reader(tenant_id, region, tuple(requirements))
     except Exception as exc:  # noqa: BLE001 - normalized without provider secrets
         observations = {
             name: QuotaObservation(
@@ -669,6 +677,31 @@ def read_provider_quotas(
     return parse_quota_allowances(
         list_quota_allowances(tenant_id), region=region, names=names
     )
+
+
+def _read_scoped_plan_quotas(project_id, tenant_id, region, names):
+    from npa.quota_scope import read_scoped_quota_catalog
+
+    def read(parent_id):
+        if parent_id == tenant_id:
+            return read_provider_quotas(parent_id, region, names)
+        return read_project_quota_observations(parent_id, region, names)
+
+    catalog = read_scoped_quota_catalog(tenant_id, project_id, reader=read)
+    observations = catalog.payload
+    complete = all(
+        item.state in {"known", "unbounded"} for item in observations.values()
+    )
+    scope = PreflightCheck(
+        name="quota_evidence_scope",
+        status="ready" if complete else "unknown",
+        reason=(
+            PROJECT_QUOTA_RBAC_FALLBACK_REASON
+            if catalog.scope == "project"
+            else "tenant-wide quota allowances verified"
+        ),
+    )
+    return observations, scope
 
 
 def _project_quota_row(row: Any, *, project_id: str, region: str) -> Mapping[str, Any]:

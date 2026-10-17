@@ -2974,6 +2974,17 @@ def _preflight_instance_count_quota(
     )
 
 
+def _announce_project_quota_scope(plan) -> None:
+    from npa.provisioning_preflight import PROJECT_QUOTA_RBAC_FALLBACK_REASON
+
+    if any(check.reason == PROJECT_QUOTA_RBAC_FALLBACK_REASON for check in plan.checks):
+        typer.echo(
+            "WARNING: project-scoped quota allowances verified; tenant aggregate "
+            "is unavailable due to RBAC and remains enforced during provider apply.",
+            err=True,
+        )
+
+
 def _preflight_whole_path_capacity(
     tfvars: dict[str, Any],
     env: dict[str, str],
@@ -2999,6 +3010,7 @@ def _preflight_whole_path_capacity(
             inherited_plan.assert_mutation_ready()
         except Exception as exc:
             raise typer.BadParameter(str(exc)) from exc
+        _announce_project_quota_scope(inherited_plan)
         topology = inherited_plan.topology
         typer.echo(
             "Whole-path preflight ready: "
@@ -3093,6 +3105,7 @@ def _preflight_whole_path_capacity(
         plan.assert_mutation_ready()
     except Exception as exc:
         raise typer.BadParameter(str(exc)) from exc
+    _announce_project_quota_scope(plan)
     typer.echo(
         "Whole-path preflight ready: "
         f"cpu={topology.cpu_nodes}x{topology.cpu_platform}/{topology.cpu_preset}, "
@@ -3101,6 +3114,36 @@ def _preflight_whole_path_capacity(
         f"new instances={topology.required_instances}, disks={topology.required_disks}, "
         f"network-ssd={topology.required_network_ssd_bytes} bytes."
     )
+
+
+def _preflight_project_reservation(nebius_bin, tfvars, env, reservation_id, required):
+    from npa.clients.nebius_auth import nebius_profile
+    from npa.cluster_backends.project_preflight import ProjectCapacityReader
+    from npa.cluster_backends.quotas import ReservationRequirement
+
+    project_id = str(_tfvar_value(tfvars, env, "parent_id", "") or "")
+    if not project_id:
+        return False
+    tenant_id = str(_tfvar_value(tfvars, env, "tenant_id", "") or "")
+    requirement = ReservationRequirement(
+        reservation_id=reservation_id,
+        region=str(_tfvar_value(tfvars, env, "region", "") or ""),
+        platform=str(_tfvar_value(tfvars, env, "gpu_nodes_platform", "") or ""),
+        fabric=str(_tfvar_value(tfvars, env, "infiniband_fabric", "") or ""),
+        required_gpus=required,
+    )
+    reader = ProjectCapacityReader(
+        nebius_bin,
+        tenant_id,
+        project_id,
+        nebius_profile(),
+        env,
+        _run_capture,
+        lambda binary, profile: [binary, "--profile", profile] if profile else [binary],
+    )
+    requirements = {reservation_id: requirement}
+    reader.verify_reservations(requirements, lambda text: typer.echo(text, err=True))
+    return True
 
 
 def _preflight_gpu_capacity(
@@ -3126,17 +3169,20 @@ def _preflight_gpu_capacity(
         return
     preemptible = _tfvar_bool(tfvars, env, "gpu_nodes_preemptible", False)
     required = gpu_nodes * _gpus_per_node(preset)
-    capture = lambda args: _run_capture(args, env=env, check=False)  # noqa: E731 - passed through
+    reservation_reads = []
+
+    def capture(args):
+        result = _run_capture(args, env=env, check=False)
+        if "capacity-block-group" in args:
+            reservation_reads.append(result)
+        return result
+
     capacity_block_group = str(
         _tfvar_value(tfvars, env, "capacity_block_group", "") or ""
     ).strip()
-    # A STRICT capacity-block-backed pool consumes the named reservation, not
-    # the ordinary on-demand GPU quota. For MIG the shared mk8s preflight used
-    # to be the only validator; the whole-path preflight now proves the block
-    # itself (owner tenant, region, platform, active state, remaining GPUs) for
-    # MIG and non-MIG STRICT pools alike before apply, so we do not also charge
-    # the ordinary GPU-family allowance. AUTO/omitted capacity stays covered by
-    # the on-demand GPU quota check below and may never fall back to it.
+    # Reserved pools consume the explicit capacity block rather than ordinary
+    # on-demand GPU quota. A tenant read denial can use the exact project's
+    # allowance; actual tenant capacity and compatibility remain provider-enforced.
     if capacity_block_group:
         from npa.cli.cluster.capacity import capacity_block_group_error
 
@@ -3149,6 +3195,16 @@ def _preflight_gpu_capacity(
             platform=platform,
             required_gpus=required,
         )
+        if message and reservation_reads:
+            from npa.clients.nebius import is_permission_denied
+
+            denied = is_permission_denied(
+                str(getattr(reservation_reads[-1], "stderr", ""))
+            )
+            if denied and _preflight_project_reservation(
+                nebius_bin, tfvars, env, capacity_block_group, required
+            ):
+                return
         if message:
             raise typer.BadParameter(message)
         return

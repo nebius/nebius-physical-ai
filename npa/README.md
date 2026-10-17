@@ -12,6 +12,16 @@ and follow [installation](../docs/install.md) and
 The [command reference](../docs/cli/workbench.md) lists the installed tools;
 `npa workbench <tool> --help` exposes each tool's actual commands.
 
+Existing-project setup supports project-admin credentials. Agent setup,
+`provision-if-absent`, and direct `cluster up` share the same quota scope rules:
+only a tenant-level IAM denial permits fallback to the exact project's complete
+quota catalog. Existing project rows with an omitted optional limit impose no
+additional project cap; explicit limits and incomplete evidence still block.
+Strict GPU reservations can likewise use an active allowance for the exact
+reservation under that project. NPA reports the unavailable tenant view;
+Nebius still enforces tenant limits, reservation compatibility and free capacity
+at apply time. No tenant-wide grant is added during setup.
+
 Optional [Workbench access](../docs/workbench/team-access.md) adds CLI/API/SDK shared
 execution through `npa workbench submit`, `runs`, `run`, and `whoami`, and the
 existing `npa.sdk.workbench.team` SDK. Administrators use `npa workbench access`.
