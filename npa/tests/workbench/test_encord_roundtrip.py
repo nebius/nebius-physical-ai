@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from npa.workbench.encord.schemas import (
+    CurateReceipt,
     EncordToolError,
     OutcomeCounts,
     PullItem,
@@ -26,6 +27,7 @@ NOW = "2026-08-30T00:00:00+00:00"
 RECEIPT_URI = "s3://result-bucket/run/push_receipt.json"
 MANIFEST_URI = "s3://result-bucket/run/manifest.json"
 REPORT_URI = "s3://result-bucket/run/roundtrip_report.json"
+CURATE_URI = "s3://result-bucket/run/curate_receipt.json"
 DESTINATION = "s3://result-bucket/run/media/uuid-1__clip.mp4"
 
 
@@ -125,6 +127,107 @@ def test_roundtrip_happy_path_persists_completed_report() -> None:
     assert report.passed
     assert report.matched == 1
     assert REPORT_URI in store.payloads
+
+
+def test_curated_subset_verifies_exact_selected_uuids() -> None:
+    receipt, manifest = artifacts()
+    first = receipt.items[0]
+    second = first.model_copy(
+        update={
+            "source_uri": "s3://source-bucket/incoming/other.mp4",
+            "object_key": "incoming/other.mp4",
+            "submitted_object_url": "https://storage.test.example/source-bucket/incoming/other.mp4",
+            "item_uuid": "uuid-2",
+        }
+    )
+    receipt = PushReceipt.model_validate(
+        {
+            **receipt.model_dump(by_alias=True),
+            "items": [first.model_dump(), second.model_dump()],
+            "counts": OutcomeCounts.from_outcomes(
+                ["successful", "successful"]
+            ).model_dump(),
+        }
+    )
+    manifest = PullManifest.model_validate(
+        {
+            **manifest.model_dump(by_alias=True),
+            "source_kind": "collection",
+            "source_id": "collection-id",
+        }
+    )
+    curation = CurateReceipt(
+        phase="final",
+        status="completed",
+        revision=3,
+        generated_at=NOW,
+        updated_at=NOW,
+        source_receipt_uri=RECEIPT_URI,
+        encord_domain=receipt.encord_domain,
+        folder_name=receipt.folder_name,
+        folder_uuid=receipt.folder_uuid,
+        collection_name="keepers",
+        collection_uuid="collection-id",
+        preset_name="preset",
+        preset_uuid="preset-id",
+        preset_deleted=True,
+        filters=["width:128:4096"],
+        filter_preset_json={"global_filters": {"filters": []}},
+        items_total=2,
+        items_selected=1,
+        selected_item_uuids=["uuid-1"],
+        receipt_uri=CURATE_URI,
+    )
+    store, storage = setup(receipt, manifest)
+    store.create_json(CURATE_URI, curation.model_dump(by_alias=True))
+    report = verify_roundtrip(
+        receipt_uri=RECEIPT_URI,
+        curate_receipt_uri=CURATE_URI,
+        manifest_uri=MANIFEST_URI,
+        output_path=REPORT_URI,
+        artifact_store=store,
+        storage_client=storage,
+    )
+    assert report.passed and report.expected == report.matched == 1
+    assert report.curate_receipt_uri == CURATE_URI
+
+
+def test_curated_subset_fails_when_pull_contains_an_unselected_item() -> None:
+    receipt, manifest = artifacts()
+    store, storage = setup(receipt, manifest)
+    curation = CurateReceipt(
+        phase="final",
+        status="completed",
+        revision=1,
+        generated_at=NOW,
+        updated_at=NOW,
+        encord_domain=receipt.encord_domain,
+        folder_name=receipt.folder_name,
+        collection_name="keepers",
+        collection_uuid="collection-id",
+        preset_name="preset",
+        preset_uuid="preset-id",
+        preset_deleted=True,
+        filters=["width:128:4096"],
+        filter_preset_json={},
+        items_total=1,
+        items_selected=1,
+        selected_item_uuids=["uuid-other"],
+        receipt_uri=CURATE_URI,
+    )
+    store.create_json(CURATE_URI, curation.model_dump(by_alias=True))
+    with pytest.raises(EncordToolError, match="verification failed"):
+        verify_roundtrip(
+            receipt_uri=RECEIPT_URI,
+            curate_receipt_uri=CURATE_URI,
+            manifest_uri=MANIFEST_URI,
+            output_path=REPORT_URI,
+            artifact_store=store,
+            storage_client=storage,
+        )
+    report = json.loads(store.payloads[REPORT_URI])
+    assert report["unexpected"] == report["unresolved"] == 1
+    assert "curation selected item UUIDs absent from push receipt" in report["defects"]
 
 
 @pytest.mark.parametrize("returned_bytes", [b"video", b"wrong"])
