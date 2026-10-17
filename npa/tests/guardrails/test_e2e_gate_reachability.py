@@ -25,6 +25,11 @@ def metadata_live_contract() -> dict[str, object]:
 # These specialized suites intentionally remain operator-invoked. The reason is
 # machine-reviewed here instead of letting an environment gate silently rot.
 MANUAL_GATES = {
+    "NPA_PROJECT_SETUP_LIVE_CONFIG": (
+        "requires a real project-only principal denied tenant quota reads, a private "
+        "isolated project configuration, and optional owned CPU cluster creation/cleanup; "
+        "run the command in docs/testing/e2e.md"
+    ),
     "NPA_PROJECT_QUOTA_LIVE_CONFIG": (
         "read-only default quota verification requires an operator-selected project "
         "without explicit caps; run the command in docs/testing/e2e.md"

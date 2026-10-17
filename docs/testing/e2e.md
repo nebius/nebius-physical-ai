@@ -42,6 +42,28 @@ NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest \
 This checks a reserved five-GPU plan against real project quota data. It does
 not allocate GPUs or prove remaining tenant capacity or reservation availability.
 
+To reproduce setup under project-admin IAM, use a dedicated existing test
+project and a principal whose tenant quota reads genuinely return
+`PermissionDenied`. Set `NPA_CONFIG_DIR` and `NPA_OPERATION_JOURNAL_DIR` to
+separate owner-only directories. Configure the project through `npa configure`
+and complete `npa workbench health preflight --checks nebius --json` first.
+Point `NPA_PROJECT_SETUP_LIVE_CONFIG` at an owner-only JSON file containing
+`project_id`, `tenant_id`, `region`, `profile`, `project_alias`, an unused
+`cluster_name`, and an owner-only `evidence_dir` outside the repository, then run:
+
+```bash
+NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest \
+  npa/tests/e2e/test_project_scoped_setup_live.py -q
+```
+
+The default checks use real quota and backend APIs without creating resources.
+An optional exact `reservation_id`, `gpu_platform`, `gpu_preset`, and
+`reserved_gpu_nodes` test project entitlement without allocating GPUs or
+claiming tenant capacity is available. Explicit `create_cluster: true` adds a
+validated one-CPU-node, zero-GPU direct `cluster up`/`down` cycle and requires
+the unused cloud identity. Cleanup runs even if creation fails. GPU health and
+full workload allocation require separate real execution evidence.
+
 Current Python e2e tests cover:
 
 - `npa demo stage` against real S3:

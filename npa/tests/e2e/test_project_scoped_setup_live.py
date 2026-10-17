@@ -62,8 +62,8 @@ def _preflight(config, *, reserved=False):
     gpu = (
         NodePoolSpec(
             count=int(config.get("reserved_gpu_nodes", 5)),
-            platform="gpu-rtx6000",
-            preset="1gpu-24vcpu-218gb",
+            platform=config.get("gpu_platform", "gpu-rtx6000"),
+            preset=config.get("gpu_preset", "1gpu-24vcpu-218gb"),
             capacity_block_group=config["reservation_id"],
         )
         if reserved
