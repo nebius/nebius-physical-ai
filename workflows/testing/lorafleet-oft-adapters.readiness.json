@@ -1,0 +1,58 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "8bb0de242eb9aea093e0bce8c83ab9d362aa261ccf3c413930e1db82a1c8bca7",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "The five-state specification passed validate-spec and plan-spec with the committed source and digest sentinel.",
+      "evidence": [
+        "/home/ubuntu/codex-runs/npa-onboarding-20261002/tasks/lorafleet-oft-adapters/workflow-validate.json",
+        "/home/ubuntu/codex-runs/npa-onboarding-20261002/tasks/lorafleet-oft-adapters/workflow-plan.json"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Targeted contracts prove five connected executable BYOF stages, exact prior-stage URI use, factor arithmetic guardrails, and paired output requirements.",
+      "evidence": [
+        "npa/tests/workflows/test_lorafleet_oft_adapters.py"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "The configured run-scoped S3 prefixes have not yet received and been independently read back from a live workflow.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "verified",
+      "reason": "The public model/reconstruction records and exact source revisions were retrieved for implementation review; the runtime verifier will repeat immutable Hub and publisher checksum checks.",
+      "evidence": [
+        "docs/workbench/lorafleet-oft-adapters.md"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "NPA health preflight including the Nebius check passed; these public model artifacts require no new acceptance flag or EULA gate.",
+      "evidence": [
+        "/home/ubuntu/codex-runs/npa-onboarding-20261002/tasks/lorafleet-oft-adapters/health-preflight.json"
+      ]
+    },
+    "source_image": {
+      "status": "verified",
+      "reason": "An operator-private immutable image was built, remotely pulled, inspected, and scanned after removing the wheel-bundled static FFmpeg payload. It is deliberately not a public NPA catalog image; the committed configuration remains a non-routable digest sentinel and the private digest is supplied only at submit time.",
+      "evidence": [
+        "docs/workbench/lorafleet-oft-adapters.md",
+        "npa/tests/workflows/test_lorafleet_oft_adapters.py",
+        "operator-private image qualification receipt (not distributed)"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "The scoped Kubernetes submission passed workflow validation, image pull preflight, source staging, and controller-isolation checks, then scheduler preflight reported no compatible free placement before any managed job was created. No workflow stage, model fetch, rollout, or final artifact is represented as complete.",
+      "evidence": [
+        "operator-private scoped-submit receipt (not distributed)"
+      ]
+    }
+  }
+}
