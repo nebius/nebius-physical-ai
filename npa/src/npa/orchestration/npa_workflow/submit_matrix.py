@@ -304,6 +304,20 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Pinned upstream Lyra reconstruction, real Gaussian render and retained depth/camera predictions.",
     ),
     SubmitLiveCase(
+        "gaussian-splatting-reference.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        plan_only=True,
+        plan_only_justification=(
+            "Reference workflow has an explicit placeholder runtime image; an "
+            "operator must supply a qualified immutable COLMAP/gsplat environment."
+        ),
+        rotation_skip=True,
+        skip_reason="Requires calibrated private images, intrinsics and a qualified operator CUDA runtime.",
+        notes="Real native COLMAP and gsplat commands; no GPU execution or quality claim.",
+    ),
+    SubmitLiveCase(
         "lyra-scene-actions.yaml",
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
