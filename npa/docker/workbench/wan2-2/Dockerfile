@@ -37,37 +37,13 @@ RUN --mount=from=installer-build,source=/opt/repaired-installer,target=/mnt/repa
     && test -s /usr/local/lib/python3.10/LICENSE.txt \
     && find /usr/local/lib/python3.10/site-packages -type d -name __pycache__ -prune -exec rm -rf {} +
 
-FROM ubuntu:26.04@sha256:42527649dbc4f9197a6073f426f488cbff0e9cc9f2afce32d91c383e4875634a
+FROM ubuntu:26.04@sha256:42527649dbc4f9197a6073f426f488cbff0e9cc9f2afce32d91c383e4875634a AS runtime-os
 COPY --from=python-runtime /usr/local /usr/local
 COPY --from=python-runtime /opt/npa/wan2-2/ensurepip-repair.json /opt/npa/wan2-2/ensurepip-repair.json
 COPY --from=python-runtime /opt/npa/wan2-2/installer-build-receipt.json /opt/npa/wan2-2/installer-build-receipt.json
 
-ARG WAN_SOURCE_URL=https://github.com/Wan-Video/Wan2.2.git
-ARG WAN_SOURCE_REF=42bf4cfaa384bc21833865abc2f9e6c0e67233dc
-ARG NPA_SOURCE_COMMIT=unknown
 ARG NPA_RUNTIME_USER=ubuntu
-
-LABEL npa.tool="wan2-2" \
-      npa.version="2.2-ti2v5b-runtime-fetch" \
-      npa.source.repo="${WAN_SOURCE_URL}" \
-      npa.source.ref="${WAN_SOURCE_REF}" \
-      npa.cuda.provisioning="operator-accepted-runtime-fetch" \
-      npa.weights="runtime-only" \
-      npa.security.runtime-user="uid-1000-with-skypilot-bootstrap-sudo" \
-      org.opencontainers.image.licenses="Apache-2.0" \
-      org.opencontainers.image.revision="${NPA_SOURCE_COMMIT}"
-
-ENV DEBIAN_FRONTEND=noninteractive \
-    LANG=C.UTF-8 \
-    PYTHON_VERSION=3.10.22 \
-    NPA_WAN_BASE_PYTHON=/opt/wan-base/bin/python \
-    NPA_WAN_RUNTIME_REQUIREMENTS=/opt/npa/wan2-2/runtime-requirements.txt \
-    NPA_WAN_RUNTIME_CACHE=/workspace/.cache/npa/wan2-2/runtime \
-    WAN22_CACHE_DIR=/workspace/model-cache/wan2.2 \
-    IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg \
-    PYTHONUNBUFFERED=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
-
+ENV DEBIAN_FRONTEND=noninteractive
 SHELL ["/bin/bash", "-lc"]
 USER root
 
@@ -93,7 +69,44 @@ RUN printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d \
     && (id -u "${NPA_RUNTIME_USER}" >/dev/null 2>&1 \
        || useradd -m -s /bin/bash -u 1000 "${NPA_RUNTIME_USER}") \
     && printf '%s\n' "${NPA_RUNTIME_USER} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/npa-runtime \
-    && chmod 0440 /etc/sudoers.d/npa-runtime
+    && chmod 0440 /etc/sudoers.d/npa-runtime \
+    && rm -f /usr/bin/pebble \
+    && test ! -e /usr/bin/pebble
+
+# Wan uses its own entrypoint and SkyPilot's SSH bootstrap. Exclude the unused
+# base service manager and superseded package bytes from every shipped layer.
+FROM scratch
+COPY --from=runtime-os / /
+
+ARG WAN_SOURCE_URL=https://github.com/Wan-Video/Wan2.2.git
+ARG WAN_SOURCE_REF=42bf4cfaa384bc21833865abc2f9e6c0e67233dc
+ARG NPA_SOURCE_COMMIT=unknown
+ARG NPA_RUNTIME_USER=ubuntu
+
+LABEL npa.tool="wan2-2" \
+      npa.version="2.2-ti2v5b-runtime-fetch" \
+      npa.source.repo="${WAN_SOURCE_URL}" \
+      npa.source.ref="${WAN_SOURCE_REF}" \
+      npa.cuda.provisioning="operator-accepted-runtime-fetch" \
+      npa.weights="runtime-only" \
+      npa.security.runtime-user="uid-1000-with-skypilot-bootstrap-sudo" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.revision="${NPA_SOURCE_COMMIT}"
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    LANG=C.UTF-8 \
+    PYTHON_VERSION=3.10.22 \
+    NPA_WAN_BASE_PYTHON=/opt/wan-base/bin/python \
+    NPA_WAN_RUNTIME_REQUIREMENTS=/opt/npa/wan2-2/runtime-requirements.txt \
+    NPA_WAN_RUNTIME_CACHE=/workspace/.cache/npa/wan2-2/runtime \
+    WAN22_CACHE_DIR=/workspace/model-cache/wan2.2 \
+    IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+SHELL ["/bin/bash", "-lc"]
+USER root
 
 RUN git clone --filter=blob:none --no-checkout "${WAN_SOURCE_URL}" /opt/byof \
     && git -C /opt/byof checkout --detach "${WAN_SOURCE_REF}" \

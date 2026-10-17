@@ -300,7 +300,9 @@ The source security candidate uses an upgraded, digest-pinned Ubuntu 26.04
 runtime with Python 3.10.22 copied from a disposable official Python stage.
 Its global and bundled installers are repaired before copying, so the final
 artifact does not inherit the donor's Debian layers or its original installer
-wheels. A composed runtime passed shared-library resolution, verified TLS with
+wheels. The final filesystem copy excludes the unused base Pebble service
+manager and superseded package bytes; Wan's entrypoint and explicit SSH
+bootstrap remain. A composed runtime passed shared-library resolution, verified TLS with
 wrong-host rejection, full 24-frame H.264 encoding/decoding, offline source-wheel
 building, fresh-venv installation and both repaired Accelerate checkpoint APIs
 on Torch 2.13 CPU. This proof does not qualify a rebuilt image or GPU runtime.

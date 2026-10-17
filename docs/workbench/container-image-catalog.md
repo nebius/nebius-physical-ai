@@ -871,7 +871,9 @@ The Cosmos3 serving bootstrap also uses a patched Python base and verified
 runtime installation tools. The Wan candidate uses an upgraded Ubuntu 26.04
 runtime and copies Python 3.10.22 from a separate, pinned official Python stage
 after repairing its global and ensurepip installers. The donor's Debian layers
-and shared libraries are excluded from the final image. This preserves the
+and shared libraries are excluded from the final image. The prepared filesystem
+copy also excludes the unused Pebble service manager and superseded package
+bytes from every shipped layer. This preserves the
 installer repair when runtime venvs are created. A composed runtime passed
 shared-library, strict TLS, complete video decoding, fresh-venv and CPU checkpoint
 checks; exact replacement-image scans and GPU qualification remain required.

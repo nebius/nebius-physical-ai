@@ -6,6 +6,9 @@ a separate, digest-pinned official Python image after repairing its installers;
 the donor's Debian layers and shared libraries are not copied. Python's license
 remains in `/usr/local/lib/python3.10/LICENSE.txt`. The build checks every
 interpreter/extension shared-library dependency against the Ubuntu runtime. It
+copies the prepared filesystem into the final image, excluding the unused
+inherited Pebble service manager and superseded package bytes from every shipped
+layer. Wan retains its own entrypoint and the explicit SkyPilot SSH packages. It
 rebuilds pip from pinned upstream sources with repaired vendored dependencies,
 installs verified Setuptools 84 wheels, and replaces Python's bundled ensurepip
 wheels so new runtime environments retain those repairs. The pip build inputs
