@@ -172,6 +172,7 @@ COPY --chmod=0644 \
     src/npa/workbench/robocasa/fixture-controls.json \
     /opt/robocasa/derivative/
 
+COPY --chmod=0444 docker/workbench/common/repair_accelerate_checkpoints.py /opt/robocasa/repair_accelerate_checkpoints.py
 RUN PIP_CONFIG_FILE=/dev/null python -m pip install \
         --disable-pip-version-check --no-cache-dir \
         --index-url https://pypi.org/simple \
@@ -183,6 +184,7 @@ RUN PIP_CONFIG_FILE=/dev/null python -m pip install \
         --extra-index-url https://download.pytorch.org/whl/cu129 \
         --require-hashes --no-build-isolation --no-binary=imageio-ffmpeg \
         -r /opt/robocasa/locks/requirements.lock \
+    && python /opt/robocasa/repair_accelerate_checkpoints.py \
     && install -d -m 0755 /usr/share/doc/robocasa-npa-act \
     && python /opt/robocasa/derivative/filter_cudnn_runtime.py \
         > /usr/share/doc/robocasa-npa-act/cudnn-runtime-boundary.json \
@@ -324,6 +326,7 @@ RUN git init /opt/robocasa/source \
       --index-url https://pypi.org/simple \
       --no-build-isolation -e /opt/robocasa/source \
     && python -c "from importlib.metadata import version; assert version('robocasa') == '1.0.0+npa5'" \
+    && python /opt/robocasa/repair_accelerate_checkpoints.py \
     && echo \
       "5da18670b3f00c59847b1ded9c28dee59940d963b1e03b528b0108d9c5a09885  /opt/robocasa/source/LICENSE" \
       | sha256sum --check --strict - \

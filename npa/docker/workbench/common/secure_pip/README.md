@@ -46,3 +46,11 @@ actual installer/import/negative-control results. This is a reproducible source
 repair, not an image security waiver. Every consuming image still requires its
 own complete ancestor-layer, vulnerability, license, bootstrap and workload
 gates. No image publication or upstream endorsement is implied.
+
+The Setuptools donor version remains visible in scanner output even though pip
+retains its `pkg_resources` subset. For the exact Python 3.10 Wan candidate,
+[the applicability review](../../../../../docs/security/wan-installer-applicability-20261016.json)
+records absence of the manifest-building modules affected by CVE-2026-59890,
+the actual wheel identity, and successful regression checks on the installed
+Setuptools 84. The raw finding remains recorded. This assessment does not carry
+to another image or waive its remaining security and workload gates.

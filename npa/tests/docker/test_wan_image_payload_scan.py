@@ -39,6 +39,106 @@ def test_libssh2_audit_matches_reviewed_debian_package() -> None:
     )
 
 
+def test_hub_literal_review_binds_the_selected_package_and_exact_source_files() -> None:
+    root = _SCRIPT.parents[1] / "docker/workbench/wan2-2"
+    review = json.loads((root / "oss-literal-audits.json").read_text())["artifacts"][0]
+    assert review["distribution"] == "huggingface-hub"
+    assert (
+        f"huggingface_hub=={review['version']}"
+        in (root / "baked-constraints.txt").read_text()
+    )
+    for file in review["files"]:
+        assert (
+            scanner.AUDITED_SECRET_LITERAL_FILE_SHA256[file["image_path"]]
+            == file["sha256"]
+        )
+
+
+@pytest.mark.parametrize("relative", ["_sandbox.py", "cli/sandbox.py"])
+def test_hub_literal_paths_cannot_admit_credential_or_other_byte_drift(
+    tmp_path, relative
+) -> None:
+    path = "opt/wan-base/lib/python3.10/site-packages/huggingface_hub/" + relative
+    payload = b"hf_token = hf_actual_secret_value\n"
+    findings = scanner.scan(_tar(tmp_path / "changed-hub.tar", {path: payload}), {})
+    assert {"audited_literal_byte_drift", "credential_content"} <= {
+        item.kind for item in findings
+    }
+
+
+def test_trixie_literal_catalog_matches_the_exact_reviewed_binary_population() -> None:
+    root = _SCRIPT.parents[1] / "docker/workbench/wan2-2"
+    review = json.loads((root / "debian-literal-audits.json").read_text())
+    recorded = {file["path"]: file["sha256"] for file in review["files"]}
+    assert len(recorded) == len(review["files"]) == 18
+    assert recorded == {
+        **scanner.AUDITED_TRIXIE_SECRET_LITERAL_FILE_SHA256,
+        **scanner.AUDITED_TRIXIE_LITERAL_LIBRARY_SHA256,
+    }
+
+
+def test_ubuntu_literal_catalog_matches_the_exact_reviewed_binary_population() -> None:
+    root = _SCRIPT.parents[1] / "docker/workbench/wan2-2"
+    review = json.loads((root / "ubuntu-literal-audits.json").read_text())
+    recorded = {file["path"]: file["sha256"] for file in review["files"]}
+    assert len(recorded) == len(review["files"]) == 18
+    assert review["independent_authentication"][
+        "all_package_artifacts_independently_authenticated"
+    ]
+    assert recorded == {
+        **scanner.AUDITED_UBUNTU_SECRET_LITERAL_FILE_SHA256,
+        **scanner.AUDITED_UBUNTU_LITERAL_LIBRARY_SHA256,
+    }
+
+
+@pytest.mark.parametrize(
+    "path",
+    sorted(
+        {
+            **scanner.AUDITED_TRIXIE_SECRET_LITERAL_FILE_SHA256,
+            **scanner.AUDITED_TRIXIE_LITERAL_LIBRARY_SHA256,
+            **scanner.AUDITED_UBUNTU_SECRET_LITERAL_FILE_SHA256,
+            **scanner.AUDITED_UBUNTU_LITERAL_LIBRARY_SHA256,
+        }
+    ),
+)
+@pytest.mark.parametrize(
+    "payload", [b"hf_token=hf_actual_secret_value", b"libcuda.so.1"]
+)
+def test_trixie_binary_dispositions_reject_changed_credentials_and_driver_bytes(
+    tmp_path, path, payload
+) -> None:
+    findings = scanner.scan(
+        _tar(tmp_path / "changed-trixie.tar", {path: b"\x7fELF\x00" + payload}), {}
+    )
+    expected = (
+        "credential_content"
+        if payload.startswith(b"hf_token")
+        else "cuda_elf_dependency"
+    )
+    assert {"audited_literal_byte_drift", expected} <= {item.kind for item in findings}
+
+
+@pytest.mark.parametrize(
+    "catalog",
+    [
+        "AUDITED_TRIXIE_SECRET_LITERAL_FILE_SHA256",
+        "AUDITED_TRIXIE_LITERAL_LIBRARY_SHA256",
+        "AUDITED_UBUNTU_SECRET_LITERAL_FILE_SHA256",
+        "AUDITED_UBUNTU_LITERAL_LIBRARY_SHA256",
+    ],
+)
+def test_reviewed_trixie_content_requires_both_its_path_and_unchanged_bytes(
+    tmp_path, monkeypatch, catalog
+) -> None:
+    path = "usr/lib/reviewed-example.so"
+    payload = b"\x7fELF\x00-----BEGIN OPENSSH PRIVATE KEY-----\x00"
+    monkeypatch.setattr(scanner, catalog, {path: hashlib.sha256(payload).hexdigest()})
+    assert scanner.scan(_tar(tmp_path / "reviewed.tar", {path: payload}), {}) == []
+    findings = scanner.scan(_tar(tmp_path / "renamed.tar", {"other.so": payload}), {})
+    assert "credential_content" in {item.kind for item in findings}
+
+
 def _gzip(payload: bytes) -> bytes:
     """Stable gzip bytes so xdist workers collect identical parametrized IDs."""
 

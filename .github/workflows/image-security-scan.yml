@@ -20,7 +20,6 @@ on:
 permissions:
   contents: read
   packages: read
-  security-events: write
 
 concurrency:
   # The caller owns candidate/main cancellation. Direct scheduled and manual
@@ -31,6 +30,10 @@ concurrency:
 jobs:
   image-policy:
     name: Image policy and complete-byte security
+    permissions:
+      contents: read
+      packages: read
+      security-events: write
     runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_TEST_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
     steps:
       - name: Check out full history
@@ -195,6 +198,10 @@ jobs:
 
   base-image-entry:
     name: Base image CVE / ${{ matrix.entry }}
+    permissions:
+      contents: read
+      packages: read
+      security-events: write
     needs: base-image-plan
     if: needs.base-image-plan.outputs.deep == 'true'
     runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_TEST_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}

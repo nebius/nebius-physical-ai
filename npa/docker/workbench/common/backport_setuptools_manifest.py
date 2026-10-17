@@ -1,7 +1,8 @@
 """Backport Setuptools' official Unicode manifest exclusion fix.
 
 The exact upstream dd9f436a36486b4cb8a4c70a2321548b0be09b8f change preserves
-vLLM's Setuptools<81 constraint. Unknown source bytes are rejected. Installed
+vLLM's Setuptools<81 and Isaac's Torch Setuptools<82 constraints.
+Unknown source bytes are rejected. Installed
 license, version, APIs, RECORD hashes, and checked-hash bytecode are preserved.
 
 The patch fragments below are derived from Setuptools under its MIT license:
@@ -34,7 +35,7 @@ from importlib import metadata
 from pathlib import Path
 import py_compile
 
-SOURCE_HASHES = {
+_SETUPTOOLS_80_HASHES = {
     "setuptools/command/egg_info.py": (
         "e7177956d81f43a53a873f1702ce2971eb6fd4212f56b68a7d9a53131c67bc99",
         "cb71f019b6e6c0fca6d0d4739a323e27c9a60d074e2a0f0f1f485d379747ce78",
@@ -43,6 +44,16 @@ SOURCE_HASHES = {
         "ba430687ca44030e85fc4cdbf8ae43ddcfb4efc46003f19c174a16ea5838952b",
         "0e400678e34254f1f7e8ef29a85515473e9df98699ea4d4314098ee414721d52",
     ),
+}
+SOURCE_HASHES = {
+    "80.10.2": _SETUPTOOLS_80_HASHES,
+    "81.0.0": {
+        **_SETUPTOOLS_80_HASHES,
+        "setuptools/command/egg_info.py": (
+            "ff2658273e42acb874698793d865c1a7a6e31746b442062fa03477b8174a2597",
+            "75fde7317f70bedfe7ab2ac596aa16fc79e869e04dc429d6ee36377459ef1ddd",
+        ),
+    },
 }
 
 MATCHER = '''class _NormalizedMatcher:
@@ -92,8 +103,8 @@ NORMALIZE = '''def normalize(text):
 '''
 
 
-def patched_source(name: str, source: bytes) -> bytes:
-    original, patched = SOURCE_HASHES[name]
+def patched_source(name: str, source: bytes, *, version: str = "80.10.2") -> bytes:
+    original, patched = SOURCE_HASHES[version][name]
     digest = hashlib.sha256(source).hexdigest()
     if digest == patched:
         return source
@@ -122,25 +133,31 @@ def patched_source(name: str, source: bytes) -> bytes:
 
 def main() -> None:
     distribution = metadata.distribution("setuptools")
-    if distribution.version != "80.10.2":
-        raise RuntimeError("the manifest backport requires exact Setuptools 80.10.2")
+    if distribution.version not in SOURCE_HASHES:
+        raise RuntimeError(
+            "the manifest backport requires exact Setuptools 80.10.2 or 81.0.0"
+        )
+    source_hashes = SOURCE_HASHES[distribution.version]
     root = Path(distribution.locate_file(""))
     record = Path(
         distribution.locate_file(
             next(
                 path
                 for path in distribution.files or ()
-                if str(path) == "setuptools-80.10.2.dist-info/RECORD"
+                if str(path) == f"setuptools-{distribution.version}.dist-info/RECORD"
             )
         )
     )
     rows = list(csv.reader(io.StringIO(record.read_text())))
     recorded = {row[0] for row in rows}
-    if not set(SOURCE_HASHES) <= recorded:
+    if not set(source_hashes) <= recorded:
         raise RuntimeError("Setuptools RECORD does not contain both reviewed modules")
     # Validate both originals before replacing either file.
     patched = {
-        name: patched_source(name, (root / name).read_bytes()) for name in SOURCE_HASHES
+        name: patched_source(
+            name, (root / name).read_bytes(), version=distribution.version
+        )
+        for name in source_hashes
     }
     updates = {}
     for name, content in patched.items():

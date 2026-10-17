@@ -107,8 +107,10 @@ npa/.venv/bin/python -m pytest npa/tests/docker/test_image_byte_go_build.py -q
 
 ## What successful preparation produces
 
-The bootstrap pins [Go 1.27.1](https://go.dev/dl/) Linux amd64 to SHA-256
-`63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445`.
+The bootstrap pins [Go 1.27.2](https://go.dev/dl/) Linux amd64 to SHA-256
+`ecbadb99091a3f46e31f5f934b068b1864eafa7995211b39eaddf76996045fe5`.
+This includes the October standard-library security fixes; the native helper
+must be rebuilt from this pin rather than reusing a Go 1.27.1 executable.
 It uses isolated module, compilation and temporary caches, disables automatic
 Go toolchain switching and workspace discovery, verifies the locked module
 checksums, and builds a source snapshot without changing `go.mod` or `go.sum`.

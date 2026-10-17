@@ -1,7 +1,82 @@
 # Public-eligible Wan 2.2 image: Apache-2.0 source plus OSS CPU dependencies.
 # CUDA PyTorch and every nvidia-* distribution are runtime-fetched into a volume
 # only after the operator accepts NVIDIA's terms. No model/tokenizer is baked.
-FROM python:3.10-slim-bookworm@sha256:019e31cc1f52e4139d338bca44f27b71339a9da261738fd80fab9cf4595152fc
+FROM python:3.11.16-slim-bookworm@sha256:528257d48c1da0dcecc2e725d1ae34498d60c965f1241e39cd6a85a8859bdf84 AS installer-build
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+COPY docker/workbench/common/secure_pip /opt/secure-pip
+COPY docker/workbench/sonic/packaging-requirements.txt /opt/packaging-requirements.txt
+RUN python /opt/secure-pip/build.py \
+      --work-dir /tmp/pip-build --output-dir /opt/repaired-installer \
+    && python -m pip download --no-cache-dir --only-binary=:all: --require-hashes \
+      --dest /opt/bootstrap-wheels -r /opt/packaging-requirements.txt
+
+# Repair the interpreter before copying it. Neither the Debian donor layers nor
+# its original global/ensurepip installer bytes belong in the final artifact.
+FROM python:3.10-slim-trixie@sha256:6ff506466f8b1e981719b468cc0023b8ef000b983cdec0eafe119d01f379e31d AS python-runtime
+COPY --chmod=0444 docker/workbench/common/refresh_ensurepip.py /opt/npa/wan2-2/refresh_ensurepip.py
+COPY --chmod=0444 docker/workbench/common/secure_pip/inputs.json /opt/npa/wan2-2/installer-inputs.json
+RUN --mount=from=installer-build,source=/opt/repaired-installer,target=/mnt/repaired-installer \
+    --mount=from=installer-build,source=/opt/bootstrap-wheels,target=/mnt/bootstrap-wheels \
+    python /opt/npa/wan2-2/refresh_ensurepip.py \
+      --pip-wheel /mnt/repaired-installer/pip-26.2.1+npa.1-py3-none-any.whl \
+      --pip-receipt /mnt/repaired-installer/build-receipt.json \
+      --setuptools-wheel /mnt/bootstrap-wheels/setuptools-84.0.0-py3-none-any.whl \
+      --inputs /opt/npa/wan2-2/installer-inputs.json \
+      --report /opt/npa/wan2-2/ensurepip-repair.json \
+    && python -m pip install --no-cache-dir --no-index --no-deps --upgrade \
+      /mnt/repaired-installer/pip-26.2.1+npa.1-py3-none-any.whl \
+      /mnt/bootstrap-wheels/setuptools-84.0.0-py3-none-any.whl \
+      /mnt/bootstrap-wheels/wheel-0.47.0-py3-none-any.whl \
+      /mnt/bootstrap-wheels/packaging-26.3-py3-none-any.whl \
+    && cp /mnt/repaired-installer/build-receipt.json /opt/npa/wan2-2/installer-build-receipt.json \
+    && python -m pip check \
+    && test "$(python -m ensurepip --version)" = 'pip 26.2.1+npa.1' \
+    && test -s /usr/local/lib/python3.10/LICENSE.txt \
+    && find /usr/local/lib/python3.10/site-packages -type d -name __pycache__ -prune -exec rm -rf {} +
+
+FROM ubuntu:26.04@sha256:42527649dbc4f9197a6073f426f488cbff0e9cc9f2afce32d91c383e4875634a AS runtime-os
+COPY --from=python-runtime /usr/local /usr/local
+COPY --from=python-runtime /opt/npa/wan2-2/ensurepip-repair.json /opt/npa/wan2-2/ensurepip-repair.json
+COPY --from=python-runtime /opt/npa/wan2-2/installer-build-receipt.json /opt/npa/wan2-2/installer-build-receipt.json
+
+ARG NPA_RUNTIME_USER=ubuntu
+ENV DEBIAN_FRONTEND=noninteractive
+SHELL ["/bin/bash", "-lc"]
+USER root
+
+RUN printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d \
+    && chmod 0755 /usr/sbin/policy-rc.d \
+    && apt-get update \
+    && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends \
+      ca-certificates ffmpeg git git-lfs libgl1 libglib2.0-0t64 \
+      openssh-server procps rsync sudo util-linux \
+      libbz2-1.0 libcrypt1 libdb5.3t64 libexpat1 libffi8 libgdbm6t64 liblzma5 \
+      libncursesw6 libreadline8t64 libsqlite3-0 libssl3t64 libtcl8.6 libtk8.6 \
+      libuuid1 zlib1g libzstd1 \
+    && rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub \
+    && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' openssh-client)" ge '1:10.2p1-2ubuntu3.8' \
+    && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' libxml2-16)" ge '2.15.2+dfsg-0.1ubuntu0.3' \
+    && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' libssl3t64)" ge '3.5.5-1ubuntu3.7' \
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
+    && ldconfig \
+    && dependencies="$(ldd /usr/local/bin/python3.10 /usr/local/lib/python3.10/lib-dynload/*.so)" \
+    && ! grep -q 'not found' <<< "$dependencies" \
+    && python -c 'import _bz2, _ctypes, _dbm, _gdbm, _lzma, _ssl, _sqlite3, _tkinter, readline, zlib; assert _ssl.OPENSSL_VERSION_NUMBER >= 0x30500050' \
+    && (id -u "${NPA_RUNTIME_USER}" >/dev/null 2>&1 \
+       || useradd -m -s /bin/bash -u 1000 "${NPA_RUNTIME_USER}") \
+    && printf '%s\n' "${NPA_RUNTIME_USER} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/npa-runtime \
+    && chmod 0440 /etc/sudoers.d/npa-runtime \
+    && rm -f /usr/bin/pebble \
+    && test ! -e /usr/bin/pebble
+
+# Wan uses its own entrypoint and SkyPilot's SSH bootstrap. Exclude the unused
+# base service manager and superseded package bytes from every shipped layer.
+FROM scratch
+COPY --from=runtime-os / /
 
 ARG WAN_SOURCE_URL=https://github.com/Wan-Video/Wan2.2.git
 ARG WAN_SOURCE_REF=42bf4cfaa384bc21833865abc2f9e6c0e67233dc
@@ -19,6 +94,9 @@ LABEL npa.tool="wan2-2" \
       org.opencontainers.image.revision="${NPA_SOURCE_COMMIT}"
 
 ENV DEBIAN_FRONTEND=noninteractive \
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    LANG=C.UTF-8 \
+    PYTHON_VERSION=3.10.22 \
     NPA_WAN_BASE_PYTHON=/opt/wan-base/bin/python \
     NPA_WAN_RUNTIME_REQUIREMENTS=/opt/npa/wan2-2/runtime-requirements.txt \
     NPA_WAN_RUNTIME_CACHE=/workspace/.cache/npa/wan2-2/runtime \
@@ -29,18 +107,6 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 SHELL ["/bin/bash", "-lc"]
 USER root
-
-RUN rm -f /etc/apt/sources.list.d/*.list \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends \
-      ca-certificates ffmpeg git git-lfs libgl1 libglib2.0-0 \
-      openssh-server procps rsync sudo util-linux \
-    && rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub \
-    && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
-    && (id -u "${NPA_RUNTIME_USER}" >/dev/null 2>&1 \
-       || useradd -m -s /bin/bash -u 1000 "${NPA_RUNTIME_USER}") \
-    && printf '%s\n' "${NPA_RUNTIME_USER} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/npa-runtime \
-    && chmod 0440 /etc/sudoers.d/npa-runtime
 
 RUN git clone --filter=blob:none --no-checkout "${WAN_SOURCE_URL}" /opt/byof \
     && git -C /opt/byof checkout --detach "${WAN_SOURCE_REF}" \
@@ -61,6 +127,9 @@ COPY --chmod=0444 docker/workbench/wan2-2/wan_init_ti2v.py /opt/byof/wan/__init_
 COPY --chmod=0444 docker/workbench/wan2-2/input_contract.py /opt/byof/npa_wan_input_contract.py
 COPY --chmod=0444 docker/workbench/wan2-2/runtime-requirements.txt /opt/npa/wan2-2/runtime-requirements.txt
 COPY --chmod=0444 src/npa/solutions/wan2_2/dependency_closure.py /opt/npa/wan2-2/dependency_closure.py
+COPY --chmod=0444 docker/workbench/common/refresh_ensurepip.py /opt/npa/wan2-2/refresh_ensurepip.py
+COPY --chmod=0444 docker/workbench/common/repair_accelerate_checkpoints.py /opt/npa/wan2-2/repair_accelerate_checkpoints.py
+COPY --chmod=0444 docker/workbench/common/secure_pip/inputs.json /opt/npa/wan2-2/installer-inputs.json
 
 # Install the complete reviewed OSS closure without dependency resolution so
 # packages such as Accelerate and PEFT cannot pull Torch/CUDA into an image
@@ -70,14 +139,14 @@ COPY --chmod=0444 src/npa/solutions/wan2_2/dependency_closure.py /opt/npa/wan2-2
 # not reproducible evidence across Python patch releases. Keep audited source,
 # remove only third-party caches, and scan the stable source bytes instead.
 RUN python -m venv /opt/wan-base \
-    && /opt/wan-base/bin/python -m pip install --no-cache-dir --upgrade \
-      "pip==26.2" "setuptools==83.0.0" "wheel==0.46.2" \
+    && /opt/wan-base/bin/python -m pip --version | grep -F 'pip 26.2.1+npa.1 ' \
     && /opt/wan-base/bin/python -m pip install --no-cache-dir \
       --no-binary imageio-ffmpeg \
       --constraint /opt/npa/wan2-2/baked-constraints.txt \
       "imageio-ffmpeg==0.6.0" \
     && /opt/wan-base/bin/python -m pip install --no-cache-dir --no-deps \
       -r /opt/npa/wan2-2/baked-constraints.txt \
+    && /opt/wan-base/bin/python /opt/npa/wan2-2/repair_accelerate_checkpoints.py \
     && sed -i \
       's/^from \.attention import flash_attention$/from .attention import attention as flash_attention/' \
       /opt/byof/wan/modules/model.py \
@@ -116,6 +185,7 @@ RUN python -m venv /opt/wan-base \
       /opt/byof /opt/npa/wan2-2/dependency_closure.py \
     && test -n "$(find /opt/byof/wan -type f -path '*/__pycache__/*.pyc' -print -quit)" \
     && find /opt/wan-base -type d -name __pycache__ -prune -exec rm -rf {} + \
+    && find /usr/local/lib/python3.10/site-packages -type d -name __pycache__ -prune -exec rm -rf {} + \
     && test -z "$(find /opt/wan-base -type f -name '*.pyc' -print -quit)" \
     && rm -rf /root/.cache /tmp/pip-* \
     && ln -s /workspace/.cache/npa/wan2-2/runtime/current/venv /opt/byof/.venv
