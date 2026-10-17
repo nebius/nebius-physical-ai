@@ -346,8 +346,14 @@ Kubernetes context. Provision a render-capable RTX node with
 capacity group. The profile verifies CUDA and the graphics-driver interfaces.
 See [GPU provisioning](../../../skills/tools/gpu-cluster-provisioning/SKILL.md).
 
-The workflow pins the existing payload-clean Isaac Lab 3.0 beta 2 patch 1 image
-and LeRobot image by digest. Isaac Lab remains a **beta** runtime. Its NVIDIA
+The GPU profile uses governed `tool://isaac-lab` resolution. Its former Isaac
+Lab 3.0 beta 2 patch 1 digest is quarantined and remains only in archived
+evidence. Supply an independently qualified immutable image through
+`--var "isaac_image=$NPA_ISAAC_IMAGE"` for both planning and submission. The CPU
+profile retains the optional LeRobot 0.6 image; this is a separate version from
+the quarantined LeRobot 0.5 default and requires its own current qualification.
+Historical training does not qualify replacement image bytes. Isaac Lab remains
+a **beta** runtime. Its NVIDIA
 runtime is fetched under the existing [Isaac acceptance and explicit opt-out
 policy](../../../skills/atomic/third-party-eula-preflight/SKILL.md); optional
 telemetry remains disabled. No model weights or gated dataset are downloaded.
@@ -372,13 +378,16 @@ npa/.venv/bin/npa workbench token-factory verify
 npa/.venv/bin/npa workbench token-factory models
 npa/.venv/bin/npa workbench workflow stage-src --project "$NPA_PROJECT" --bucket "$NPA_OUTPUT_BUCKET"
 npa/.venv/bin/npa workbench workflow validate-spec workflows/testing/franka-rl-transfer.yaml --json
-npa/.venv/bin/npa workbench workflow plan-spec workflows/testing/franka-rl-transfer.yaml --run-id "$NPA_RUN_ID" --waves --json
-npa/.venv/bin/npa workbench workflow preflight-images workflows/testing/franka-rl-transfer.yaml --json
+npa/.venv/bin/npa workbench workflow plan-spec workflows/testing/franka-rl-transfer.yaml \
+  --run-id "$NPA_RUN_ID" --waves --json --var "isaac_image=$NPA_ISAAC_IMAGE"
+npa/.venv/bin/npa workbench workflow preflight-images workflows/testing/franka-rl-transfer.yaml \
+  --json --var "isaac_image=$NPA_ISAAC_IMAGE"
 npa/.venv/bin/npa workbench workflow submit workflows/testing/franka-rl-transfer.yaml \
   --project "$NPA_PROJECT" --infra "k8s/$NPA_KUBE_CONTEXT" \
   --isolated-config-dir "$NPA_SKYPILOT_ISOLATED_CONFIG_DIR" \
   --run-id "$NPA_RUN_ID" --runtime --stage-src --max-wait-seconds 0 \
   --var "bucket=$NPA_OUTPUT_BUCKET" \
+  --var "isaac_image=$NPA_ISAAC_IMAGE" \
   --var "prefix=franka-rl-transfer/$NPA_RUN_ID" \
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY \
   --secret-env NEBIUS_TOKEN_FACTORY_KEY
