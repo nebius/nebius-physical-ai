@@ -12,9 +12,7 @@ import argparse
 import hashlib
 import json
 import math
-import os
 import re
-import shlex
 import shutil
 import subprocess
 import sys
@@ -39,6 +37,7 @@ from npa.workflows.sim2real.pi05_contract import (
     release_width_threshold,
     width_to_droid_gripper,
 )
+from npa.workflows.sim2real.isaac_kit_state import validated_kit_args
 
 
 EXPERT_BASE_TASK_ID = "Isaac-Lift-Cube-Franka-IK-Rel-v0"
@@ -2812,39 +2811,7 @@ def _make_environment(
 def _validated_kit_args() -> str:
     """Bind Kit mutable state to the launcher-created writable job directory."""
 
-    state_text = os.environ.get("NPA_ISAAC_STATE_DIR", "").strip()
-    state = Path(state_text)
-    if not state_text or not state.is_absolute() or not state.is_dir():
-        raise RuntimeError("NPA_ISAAC_STATE_DIR must be an existing absolute directory")
-    if not os.access(state, os.W_OK):
-        raise RuntimeError("NPA_ISAAC_STATE_DIR is not writable")
-    raw = os.environ.get("NPA_ISAAC_KIT_ARGS", "").strip()
-    try:
-        argv = shlex.split(raw)
-    except ValueError as error:
-        raise RuntimeError("NPA_ISAAC_KIT_ARGS is malformed") from error
-    roots = _portable_roots(argv)
-    if len(roots) != 1:
-        raise RuntimeError("NPA_ISAAC_KIT_ARGS must declare one --portable-root")
-    portable = Path(roots[0])
-    if not portable.is_absolute():
-        raise RuntimeError("Kit portable root must be absolute")
-    state, portable = state.resolve(strict=True), portable.resolve(strict=False)
-    if portable == state or not portable.is_relative_to(state):
-        raise RuntimeError("Kit portable root must be inside NPA_ISAAC_STATE_DIR")
-    return raw
-
-
-def _portable_roots(argv: list[str]) -> list[str]:
-    roots = []
-    for index, value in enumerate(argv):
-        if value == "--portable-root":
-            if index + 1 >= len(argv) or argv[index + 1].startswith("--"):
-                raise RuntimeError("--portable-root requires a path")
-            roots.append(argv[index + 1])
-        elif value.startswith("--portable-root="):
-            roots.append(value.partition("=")[2])
-    return roots
+    return validated_kit_args()
 
 
 def _launch_camera_app() -> Any:

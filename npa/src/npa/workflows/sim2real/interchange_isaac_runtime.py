@@ -31,6 +31,7 @@ from npa.workflows.sim2real.interchange_isaac import (
     measured_policy_state,
     surface_teacher_waypoints,
 )
+from npa.workflows.sim2real.isaac_kit_state import validated_kit_args
 from npa.workflows.sim2real.smolvla_policy_client import SmolVLAPolicyClient
 
 
@@ -1573,9 +1574,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.decisions < 1 or args.seed < 0:
         raise ValueError("decisions must be positive and seed nonnegative")
     os.environ["OMNI_TELEMETRY_DISABLE_ANONYMOUS_DATA"] = "1"
+    kit_args = validated_kit_args()
     from isaaclab.app import AppLauncher
 
-    app = AppLauncher(headless=True, enable_cameras=True).app
+    app = AppLauncher(headless=True, enable_cameras=True, kit_args=kit_args).app
     try:
         started = time.monotonic()
         result = run(args)

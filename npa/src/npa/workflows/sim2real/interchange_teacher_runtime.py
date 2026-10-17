@@ -25,6 +25,7 @@ from npa.workflows.sim2real.interchange_isaac_runtime import (
     _run_teacher,
     _sha256,
 )
+from npa.workflows.sim2real.isaac_kit_state import validated_kit_args
 
 
 SCHEMA = "npa.sim2real.policy_interchange.teacher_collection.v1"
@@ -288,9 +289,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.seed < 0:
         raise ValueError("seed must be nonnegative")
     os.environ["OMNI_TELEMETRY_DISABLE_ANONYMOUS_DATA"] = "1"
+    kit_args = validated_kit_args()
     from isaaclab.app import AppLauncher
 
-    app = AppLauncher(headless=True, enable_cameras=True).app
+    app = AppLauncher(headless=True, enable_cameras=True, kit_args=kit_args).app
     result = _run_with_app(args, app)
     print(json.dumps(result, sort_keys=True), flush=True)
     return 0
