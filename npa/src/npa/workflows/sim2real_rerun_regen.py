@@ -18,6 +18,7 @@ from typing import Any
 
 from botocore.exceptions import ClientError
 
+from npa.agent_backend.publication_reader import canonical_publication_uri
 from npa.clients.storage import StorageClient, StorageError
 from npa.workflows.sim2real.checkpoint_selection import (
     CHECKPOINT_DIGEST_ALIASES,
@@ -1455,6 +1456,14 @@ def download_rrd_from_s3(
         raise Sim2RealRerunRegenError(
             "explicit Rerun recording must remain under the configured run prefix"
         )
+    try:
+        selected_uri = (
+            canonical_publication_uri(requested_uri) if requested_uri else canonical_uri
+        )
+    except ValueError as exc:
+        raise Sim2RealRerunRegenError(
+            "explicit Rerun recording must name a canonical or committed RRD URI"
+        ) from exc
     dest_path = Path(dest_path)
     absolute_dest = Path(os.path.abspath(dest_path))
     default_root = Path(os.path.abspath(DEFAULT_REGEN_ROOT))
@@ -1472,19 +1481,21 @@ def download_rrd_from_s3(
         containment_root=containment_root,
     )
     try:
-        publication = resolve_committed_publication_snapshot(
-            storage, requested_uri or canonical_uri
-        )
-        uri = publication.resolve(requested_uri or canonical_uri)
+        publication = resolve_committed_publication_snapshot(storage, selected_uri)
+        uri = publication.resolve(selected_uri)
     except PublicationConflict as exc:
         raise Sim2RealRerunRegenError(str(exc)) from exc
     if uri is None:
         raise Sim2RealRerunRegenError(f"Rerun recording is disabled at {canonical_uri}")
+    if requested_uri and requested_uri != selected_uri and uri != requested_uri:
+        raise Sim2RealRerunRegenError(
+            f"Rerun generation is not the committed publication: {requested_uri}"
+        )
     _download_verified_rrd(
         storage,
         uri,
         publication,
-        requested_uri or canonical_uri,
+        selected_uri,
         absolute_dest,
         containment_root,
     )

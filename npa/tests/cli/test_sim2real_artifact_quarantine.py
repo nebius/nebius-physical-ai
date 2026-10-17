@@ -665,12 +665,17 @@ def test_sdk_output_paths_matches_execution_trigger_dataset_precedence(
     assert paths["trigger_dataset"] == artifact_uris(execution)["trigger_dataset"]
 
 
-def test_recording_download_uses_exact_selected_uri(
+def test_recording_download_uses_selected_committed_generation_uri(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    selected = "s3://example-bucket/sim2real-b/archived-run/reports/sim2real.rrd"
+    selected = (
+        "s3://example-bucket/sim2real-b/archived-run/"
+        "reports/generations/committed/sim2real.rrd"
+    )
+    canonical = "s3://example-bucket/sim2real-b/archived-run/reports/sim2real.rrd"
     downloads: list[str] = []
     resolved: list[str] = []
+    verified: list[str] = []
 
     def download(uri: str, destination: str) -> None:
         downloads.append(uri)
@@ -678,7 +683,7 @@ def test_recording_download_uses_exact_selected_uri(
 
     def resolve(uri: str) -> str:
         resolved.append(uri)
-        return uri
+        return selected
 
     publication = SimpleNamespace(resolve=resolve)
     monkeypatch.setattr(
@@ -687,7 +692,7 @@ def test_recording_download_uses_exact_selected_uri(
     )
     monkeypatch.setattr(
         "npa.workflows.sim2real_rerun_regen.verify_committed_publication_file",
-        lambda *_args, **_kwargs: None,
+        lambda _publication, uri, *_args, **_kwargs: verified.append(uri),
     )
 
     config = Sim2RealArtifactConfig(run_id="archived-run", s3_bucket="example-bucket")
@@ -697,9 +702,54 @@ def test_recording_download_uses_exact_selected_uri(
         rrd_uri=selected,
         client=SimpleNamespace(download_path=download),
     )
-    assert resolved == [selected]
+    assert resolved == [canonical]
     assert downloads == [selected]
+    assert verified == [canonical]
     assert path.read_bytes() == b"existing-recording"
+
+
+def test_recording_download_refuses_selected_stale_generation_uri(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    selected = (
+        "s3://example-bucket/sim2real-b/archived-run/"
+        "reports/generations/stale/sim2real.rrd"
+    )
+    current = (
+        "s3://example-bucket/sim2real-b/archived-run/"
+        "reports/generations/committed/sim2real.rrd"
+    )
+    publication = SimpleNamespace(resolve=lambda _uri: current)
+    monkeypatch.setattr(
+        "npa.workflows.sim2real_rerun_regen.resolve_committed_publication_snapshot",
+        lambda *_args: publication,
+    )
+
+    config = Sim2RealArtifactConfig(run_id="archived-run", s3_bucket="example-bucket")
+    with pytest.raises(Sim2RealRerunRegenError, match="not the committed publication"):
+        download_rrd_from_s3(
+            config,
+            dest_path=tmp_path / "review.rrd",
+            rrd_uri=selected,
+            client=SimpleNamespace(),
+        )
+
+
+def test_recording_download_refuses_nonpublication_uri_inside_run_prefix(
+    tmp_path: Path,
+) -> None:
+    config = Sim2RealArtifactConfig(run_id="archived-run", s3_bucket="example-bucket")
+
+    with pytest.raises(
+        Sim2RealRerunRegenError,
+        match="must name a canonical or committed RRD URI",
+    ):
+        download_rrd_from_s3(
+            config,
+            dest_path=tmp_path / "review.rrd",
+            rrd_uri=("s3://example-bucket/sim2real-b/archived-run/reports/custom.rrd"),
+            client=SimpleNamespace(),
+        )
 
 
 def test_recording_download_refuses_selected_uri_outside_run_prefix(
