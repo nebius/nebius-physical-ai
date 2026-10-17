@@ -285,11 +285,15 @@ def _probe_remote_lerobot_version(ssh: Any, cfg: Any) -> str:
     if code != 0:
         return resolve_lerobot_version(None)
     version = (stdout or "").strip().splitlines()[-1].strip() if stdout else ""
+    # Images built from the secure 0.5.1 closure report a valid PEP 440
+    # local version (for example ``0.5.1+npa.secure1``). Compatibility is
+    # selected from the upstream release line, not the integration label.
+    upstream_version = version.split("+", 1)[0]
     try:
-        return resolve_lerobot_version(version)
+        return resolve_lerobot_version(upstream_version)
     except LeRobotVersionError:
         # Unknown patch/build still maps by major.minor when possible.
-        parts = version.split(".")
+        parts = upstream_version.split(".")
         if len(parts) >= 2:
             candidate = f"{parts[0]}.{parts[1]}.0"
             try:
@@ -2006,7 +2010,9 @@ def serve(
     # Deprecated path alias: keep --checkpoint working for existing scripts.
     checkpoint: str = typer.Option("", "--checkpoint", hidden=True),
     env_type: str = typer.Option(
-        "", "--env-type", help="Environment type (needed for shape resolution)."
+        "",
+        "--env-type",
+        help="Environment type for environment-shaped or PEFT checkpoints.",
     ),
     env_task: str = typer.Option("", "--env-task", help="Environment task."),
     port: int = typer.Option(8080, "--port", help="Server port."),
@@ -2362,10 +2368,13 @@ def deploy(
 
     container_image = ""
     if not destroy and not skip_app and runtime_uses_container(runtime):
-        container_image = image.strip() or container_image_for_tool(
-            "lerobot",
-            tag=resolved_lerobot_version,
-        )
+        try:
+            container_image = image.strip() or container_image_for_tool(
+                "lerobot",
+                tag=resolved_lerobot_version,
+            )
+        except ValueError as exc:
+            _fail(str(exc))
     cloud_init_workbench_type = (
         "lerobot-container" if runtime_uses_container(runtime) else "lerobot"
     )

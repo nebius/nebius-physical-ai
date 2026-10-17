@@ -155,6 +155,11 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         runtime=True,
+        rotation_skip=True,
+        skip_reason=(
+            "Requires an operator-supplied immutable runtime_image; no accepted "
+            "public SONIC default exists."
+        ),
         notes="RTX OptiX campus rendering, native geometry counts, four camera routes and private offline HTML.",
     ),
     SubmitLiveCase(
@@ -162,6 +167,11 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         runtime=True,
+        rotation_skip=True,
+        skip_reason=(
+            "Requires an operator-supplied immutable runtime_image; no accepted "
+            "public SONIC default exists."
+        ),
         notes="Native Blender Cycles CUDA reference scene, OpenUSD/glTF export, and offline HTML with bound rendering evidence.",
     ),
     SubmitLiveCase(
@@ -207,6 +217,11 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         runtime=True,
+        rotation_skip=True,
+        skip_reason=(
+            "Requires operator-supplied immutable assembly_image, "
+            "reconstruction_image, and isaac_image inputs."
+        ),
         notes="Full public RGB-D sample download, measured scene, 4,000-case native training/evaluation, and HTML evidence.",
     ),
     SubmitLiveCase(
@@ -214,6 +229,11 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         runtime=True,
+        rotation_skip=True,
+        skip_reason=(
+            "Requires operator-supplied immutable navigation_image and "
+            "reconstruction_image inputs."
+        ),
         notes="Public baseline training and office/warehouse replay; disjoint development/final evaluation and measured HTML evidence.",
     ),
     SubmitLiveCase(
@@ -242,6 +262,8 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         runtime=True,
+        rotation_skip=True,
+        skip_reason="Requires an operator-supplied immutable isaac_image input.",
         notes="Public runtime-fetched warehouse with full USD/MDL dependencies; four 1280x720 RGB-D streams and independently verified fused clouds.",
     ),
     SubmitLiveCase(

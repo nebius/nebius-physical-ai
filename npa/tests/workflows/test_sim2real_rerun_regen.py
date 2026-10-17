@@ -7,10 +7,12 @@ from pathlib import Path
 import pytest
 from botocore.exceptions import ClientError
 
+from npa.workflows.sim2real.artifact_config import Sim2RealArtifactConfig
 from npa.workflows.sim2real.models import Sim2RealLoopConfig
 from npa.workflows.sim2real.reporting import build_progress_metrics
 from npa.workflows.sim2real_rerun_regen import (
     Sim2RealRerunRegenError,
+    _assert_regen_heldout_frames,
     _download_directory_fresh,
     _download_if_exists,
     _download_render_tree,
@@ -18,13 +20,16 @@ from npa.workflows.sim2real_rerun_regen import (
     _gold_report_path,
     _latest_completed_inner_evidence_rel,
     _latest_inner_evidence_rel,
+    _has_regen_heldout_evidence,
     _policy_access_record,
     _stage_components,
     _update_stage14_component,
     regen_sim2real_rrd,
     resolve_local_rrd_path,
+    run_prefix_uri,
     sync_heldout_renders,
 )
+from npa.workflows.sim2real_viz import Sim2RealVizResult
 
 pytestmark = pytest.mark.usefixtures("operator_sim2real_image_defaults")
 _TEST_IMAGE = f"ghcr.io/example/sim2real-test@sha256:{'0' * 64}"
@@ -43,6 +48,17 @@ def _config(run_id: str = "sim2real-staged-20260616t093101z") -> Sim2RealLoopCon
         vlm_image=_TEST_IMAGE,
         eval_image=_TEST_IMAGE,
         isaac_image=_TEST_IMAGE,
+    )
+
+
+def _artifact_config(
+    run_id: str = "sim2real-staged-20260616t093101z",
+) -> Sim2RealArtifactConfig:
+    return Sim2RealArtifactConfig(
+        run_id=run_id,
+        s3_bucket="demo-bucket",
+        s3_prefix="sim2real-b",
+        s3_endpoint="https://storage.example",
     )
 
 
@@ -68,6 +84,35 @@ def test_resolve_local_rrd_path_env_override(
     )
 
 
+def test_regen_heldout_gate_requires_camera_evidence(tmp_path: Path) -> None:
+    rollout_only = Sim2RealVizResult(
+        status="succeeded",
+        output_rrd_path=str(tmp_path / "rollout-only.rrd"),
+        rollout_count=1,
+        frame_count=1,
+    )
+    assert not _has_regen_heldout_evidence(rollout_only)
+    with pytest.raises(Sim2RealRerunRegenError, match="held-out camera"):
+        _assert_regen_heldout_frames(rollout_only)
+
+    sealed_scores = Sim2RealVizResult(
+        status="succeeded",
+        output_rrd_path=str(tmp_path / "sealed-scores.rrd"),
+        heldout_env_count=1,
+    )
+    assert not _has_regen_heldout_evidence(sealed_scores)
+
+
+@pytest.mark.parametrize("config_factory", [_config, _artifact_config])
+def test_run_prefix_uri_uses_shared_artifact_coordinates(config_factory) -> None:
+    config = config_factory()
+
+    assert (
+        run_prefix_uri(config)
+        == "s3://demo-bucket/sim2real-b/sim2real-staged-20260616t093101z/"
+    )
+
+
 def test_regen_sim2real_rrd_requires_heldout_frames(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -88,13 +133,15 @@ def test_regen_sim2real_rrd_requires_heldout_frames(
         heldout_frame_count = 0
         rollout_count = 0
         frame_count = 0
+        heldout_env_count = 0
+        has_factual_observation_evidence = False
 
     monkeypatch.setattr(
         "npa.workflows.sim2real_rerun_regen.emit_sim2real_rerun",
         lambda **_kwargs: FakeResult(),
     )
 
-    with pytest.raises(Sim2RealRerunRegenError, match="heldout_frame_count=0"):
+    with pytest.raises(Sim2RealRerunRegenError, match="no held-out camera"):
         regen_sim2real_rrd(_config(), local_dir=local_dir, sync_inputs=False)
 
 
@@ -118,6 +165,8 @@ def test_regen_sim2real_rrd_success(
         heldout_frame_count = 4
         rollout_count = 0
         frame_count = 0
+        heldout_env_count = 0
+        has_factual_observation_evidence = True
 
     monkeypatch.setattr(
         "npa.workflows.sim2real_rerun_regen.emit_sim2real_rerun",
@@ -331,6 +380,8 @@ def test_regen_preserves_strict_heldout_policy_evidence(
         heldout_frame_count = 4
         rollout_count = 0
         frame_count = 0
+        heldout_env_count = 0
+        has_factual_observation_evidence = True
 
     def fake_emit(**kwargs):
         captured.update(kwargs)
@@ -393,6 +444,8 @@ def _patch_rrd_emit(monkeypatch: pytest.MonkeyPatch, local_dir: Path) -> None:
         heldout_frame_count = 4
         rollout_count = 1
         frame_count = 4
+        heldout_env_count = 0
+        has_factual_observation_evidence = True
 
     monkeypatch.setattr(
         "npa.workflows.sim2real_rerun_regen.emit_sim2real_rerun",
@@ -2037,6 +2090,25 @@ def test_gold_render_sync_rejects_missing_or_validation_lineage(tmp_path: Path) 
             },
             client=UnusedStorage(),
         )
+
+
+def test_gold_score_only_sync_never_guesses_camera_lineage(tmp_path: Path) -> None:
+    class UnusedStorage:
+        def download_directory(self, *_args, **_kwargs) -> None:
+            raise AssertionError("score-only evidence must not fetch guessed renders")
+
+    assert not sync_heldout_renders(
+        _config("gold-score-only"),
+        tmp_path,
+        heldout_report={
+            "evaluation_split": "gold_heldout",
+            "per_env": [
+                {"env_id": "heldout-0000", "score": 0.7},
+                {"env_id": "heldout-0001", "score": 0.6},
+            ],
+        },
+        client=UnusedStorage(),
+    )
 
 
 def test_stage14_component_digest_is_refreshed_after_regen_mutation(

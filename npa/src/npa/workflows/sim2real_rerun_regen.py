@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import logging
+import math
 import os
 import shlex
 import shutil
@@ -17,6 +18,7 @@ from typing import Any
 
 from botocore.exceptions import ClientError
 
+from npa.agent_backend.publication_reader import canonical_publication_uri
 from npa.clients.storage import StorageClient, StorageError
 from npa.workflows.sim2real.checkpoint_selection import (
     CHECKPOINT_DIGEST_ALIASES,
@@ -46,6 +48,7 @@ from npa.workflows.sim2real.stage10_authority import (
     validate_stage10_input_scope,
 )
 from npa.workflows.sim2real.models import Sim2RealLoopConfig
+from npa.workflows.sim2real.artifact_config import Sim2RealArtifactConfig
 from npa.workflows.sim2real.publication import (
     CommittedPublicationSnapshot,
     MutablePublicationTransaction,
@@ -87,6 +90,8 @@ from npa.workflows.sim2real_viz import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+Sim2RealRegenConfig = Sim2RealLoopConfig | Sim2RealArtifactConfig
 
 
 class Sim2RealRerunRegenError(ValueError):
@@ -130,6 +135,7 @@ class RegenResult:
     heldout_frame_count: int
     rollout_count: int
     frame_count: int
+    heldout_env_count: int = 0
     local_mcap_path: str = ""
     mcap_upload_uri: str = ""
     mcap_status: str = ""
@@ -144,6 +150,7 @@ class RegenResult:
             "heldout_frame_count": self.heldout_frame_count,
             "rollout_count": self.rollout_count,
             "frame_count": self.frame_count,
+            "heldout_env_count": self.heldout_env_count,
             "local_mcap_path": self.local_mcap_path,
             "mcap_upload_uri": self.mcap_upload_uri,
             "mcap_status": self.mcap_status,
@@ -174,7 +181,7 @@ def default_regen_local_dir(run_id: str, *, override: str = "") -> Path:
     return _default_regen_dir(run_id)
 
 
-def run_prefix_uri(config: Sim2RealLoopConfig) -> str:
+def run_prefix_uri(config: Sim2RealRegenConfig) -> str:
     return f"{_artifact_root_uri(config).rstrip('/')}/"
 
 
@@ -439,7 +446,9 @@ def _sibling_uri(uri: str, filename: str) -> str:
     return f"{base.rstrip('/')}/{filename}"
 
 
-def _storage_client_for_config(config: Sim2RealLoopConfig) -> StorageClient:
+def _storage_client_for_config(config: Sim2RealRegenConfig) -> StorageClient:
+    if isinstance(config, Sim2RealArtifactConfig):
+        return StorageClient.from_environment(endpoint_url=config.s3_endpoint)
     from npa.workflows.sim2real.engine import _storage_client
 
     return _storage_client(config)
@@ -796,7 +805,7 @@ def _rewrite_synced_inner_evidence(local_dir: Path, prefix: str) -> None:
 
 
 def _sync_selected_heldout_renders(
-    config: Sim2RealLoopConfig,
+    config: Sim2RealRegenConfig,
     storage: StorageClient,
     local_dir: Path,
     inner_evidence_rel: str,
@@ -805,6 +814,8 @@ def _sync_selected_heldout_renders(
     inner_path = local_dir / inner_evidence_rel
     heldout_path = local_dir / gold_eval_rel / "report.json"
     heldout_report = _read_retained_json(heldout_path, source="held-out report")
+    if _is_sealed_score_only_report(heldout_report):
+        return inner_path, heldout_path
     sync_heldout_renders(
         config, local_dir, heldout_report=heldout_report, client=storage
     )
@@ -812,7 +823,7 @@ def _sync_selected_heldout_renders(
 
 
 def sync_regen_inputs(
-    config: Sim2RealLoopConfig,
+    config: Sim2RealRegenConfig,
     local_dir: Path,
     *,
     client: StorageClient | None = None,
@@ -883,6 +894,36 @@ def _sealed_render_uri(lineage: dict[str, Any]) -> str:
     if len(set(values)) != 1:
         raise Sim2RealRerunRegenError("sealed gold render lineage URI sources disagree")
     return values[0]
+
+
+def _is_sealed_score_only_report(report: dict[str, Any]) -> bool:
+    """Return whether a sealed report has factual scores but no render lineage.
+
+    Args:
+        report: The current held-out report.
+    Returns:
+        Whether regeneration may retain score evidence without guessing renders.
+    Raises:
+        None.
+    """
+
+    if report.get("evaluation_split") != "gold_heldout":
+        return False
+    lineage = report.get("render_lineage")
+    if lineage not in (None, {}):
+        return False
+    evaluations = report.get("per_env")
+    if not isinstance(evaluations, list) or not evaluations:
+        return False
+    try:
+        return all(
+            isinstance(item, dict)
+            and item.get("score") is not None
+            and math.isfinite(float(item["score"]))
+            for item in evaluations
+        )
+    except (TypeError, ValueError):
+        return False
 
 
 def _heldout_render_lineage(
@@ -1047,7 +1088,7 @@ def _sync_legacy_heldout_renders(
 
 
 def sync_heldout_renders(
-    config: Sim2RealLoopConfig,
+    config: Sim2RealRegenConfig,
     local_dir: Path,
     *,
     heldout_report: dict[str, Any] | None = None,
@@ -1057,6 +1098,8 @@ def sync_heldout_renders(
 
     storage = client or _storage_client_for_config(config)
     report = heldout_report or {}
+    if _is_sealed_score_only_report(report):
+        return False
     canonical, sealed = _heldout_render_source(config, report)
     renders_dir = _renders_dir_for_report(config, local_dir, report)
     _assert_safe_render_destination(local_dir, renders_dir)
@@ -1398,15 +1441,33 @@ def _write_report_render_manifest(
 
 
 def download_rrd_from_s3(
-    config: Sim2RealLoopConfig,
+    config: Sim2RealRegenConfig,
     *,
     dest_path: Path,
     client: StorageClient | None = None,
+    rrd_uri: str = "",
 ) -> Path:
     """Download reports/sim2real.rrd for a run to dest_path."""
 
     storage = client or _storage_client_for_config(config)
     canonical_uri = f"{run_prefix_uri(config)}reports/sim2real.rrd"
+    requested_uri = rrd_uri.strip()
+    if requested_uri and not requested_uri.startswith(run_prefix_uri(config)):
+        raise Sim2RealRerunRegenError(
+            "explicit Rerun recording must remain under the configured run prefix"
+        )
+    try:
+        selected_uri = (
+            canonical_publication_uri(requested_uri) if requested_uri else canonical_uri
+        )
+    except ValueError as exc:
+        raise Sim2RealRerunRegenError(
+            "explicit Rerun recording must name a canonical or committed RRD URI"
+        ) from exc
+    if not selected_uri.endswith("/reports/sim2real.rrd"):
+        raise Sim2RealRerunRegenError(
+            "explicit Rerun recording must name a canonical or committed RRD URI"
+        )
     dest_path = Path(dest_path)
     absolute_dest = Path(os.path.abspath(dest_path))
     default_root = Path(os.path.abspath(DEFAULT_REGEN_ROOT))
@@ -1424,14 +1485,23 @@ def download_rrd_from_s3(
         containment_root=containment_root,
     )
     try:
-        publication = resolve_committed_publication_snapshot(storage, canonical_uri)
-        uri = publication.resolve(canonical_uri)
+        publication = resolve_committed_publication_snapshot(storage, selected_uri)
+        uri = publication.resolve(selected_uri)
     except PublicationConflict as exc:
         raise Sim2RealRerunRegenError(str(exc)) from exc
     if uri is None:
         raise Sim2RealRerunRegenError(f"Rerun recording is disabled at {canonical_uri}")
+    if requested_uri and requested_uri != selected_uri and uri != requested_uri:
+        raise Sim2RealRerunRegenError(
+            f"Rerun generation is not the committed publication: {requested_uri}"
+        )
     _download_verified_rrd(
-        storage, uri, publication, canonical_uri, absolute_dest, containment_root
+        storage,
+        uri,
+        publication,
+        selected_uri,
+        absolute_dest,
+        containment_root,
     )
     return dest_path
 
@@ -3058,12 +3128,15 @@ def _emit_regen_mcap(
     )
 
 
+def _has_regen_heldout_evidence(result: Sim2RealVizResult) -> bool:
+    """Return whether regeneration has held-out render evidence."""
+
+    return result.heldout_frame_count > 0
+
+
 def _assert_regen_heldout_frames(result: Sim2RealVizResult) -> None:
-    if result.heldout_frame_count <= 0:
-        raise Sim2RealRerunRegenError(
-            "regenerated .rrd has heldout_frame_count=0; "
-            "sync gold held-out renders or rerun held-out eval"
-        )
+    if not _has_regen_heldout_evidence(result):
+        raise Sim2RealRerunRegenError("regenerated .rrd has no held-out camera frames")
 
 
 def _finalize_regen_result(
@@ -3244,7 +3317,7 @@ def _regenerate_sim2real_rrd(
 
 
 def regen_sim2real_rrd(
-    config: Sim2RealLoopConfig,
+    config: Sim2RealRegenConfig,
     *,
     local_dir: Path | None = None,
     local_rrd_path: Path | None = None,
@@ -4434,10 +4507,8 @@ def _regen_result_from_viz(
     mcap_result: dict[str, Any] | None = None,
     mcap_upload_uri: str = "",
 ) -> RegenResult:
-    if result.heldout_frame_count <= 0:
-        raise Sim2RealRerunRegenError(
-            "regenerated .rrd has heldout_frame_count=0; sync eval/heldout/renders or rerun held-out eval"
-        )
+    if not _has_regen_heldout_evidence(result):
+        raise Sim2RealRerunRegenError("regenerated .rrd has no held-out camera frames")
     mcap = mcap_result or {}
     return RegenResult(
         run_id=run_id,
@@ -4447,6 +4518,7 @@ def _regen_result_from_viz(
         heldout_frame_count=result.heldout_frame_count,
         rollout_count=result.rollout_count,
         frame_count=result.frame_count,
+        heldout_env_count=result.heldout_env_count,
         local_mcap_path=str(mcap.get("output_mcap_path") or ""),
         mcap_upload_uri=mcap_upload_uri,
         mcap_status=str(mcap.get("status") or ""),

@@ -66,6 +66,7 @@ def test_old_paidf_release_defaults_stay_quarantined(tool: str) -> None:
     "tool_ref, tool",
     [
         ("workbench.cosmos3.generate_variants", "cosmos3"),
+        ("workbench.cosmos3.generate", "cosmos3"),
         ("workbench.cosmos_evaluator.evaluate", "cosmos-evaluator"),
         ("workbench.cosmos_curate.curate", "cosmos-curate"),
     ],
@@ -82,6 +83,7 @@ def test_paidf_explicit_operator_registry_still_wins(tool_ref: str, tool: str) -
     "tool_ref",
     [
         "workbench.cosmos3.generate_variants",
+        "workbench.cosmos3.generate",
         "workbench.cosmos_evaluator.evaluate",
         "workbench.cosmos_curate.curate",
     ],
@@ -96,13 +98,24 @@ def test_other_public_registries_cannot_select_official_candidates(
 
 
 @pytest.mark.parametrize(
-    "selector", ["*", "workbench.cosmos3", "workbench.cosmos3.generate_variants"]
+    ("tool_ref", "selector"),
+    [
+        ("workbench.cosmos3.generate_variants", "*"),
+        ("workbench.cosmos3.generate_variants", "workbench.cosmos3"),
+        (
+            "workbench.cosmos3.generate_variants",
+            "workbench.cosmos3.generate_variants",
+        ),
+        ("workbench.cosmos3.generate", "*"),
+        ("workbench.cosmos3.generate", "workbench.cosmos3"),
+        ("workbench.cosmos3.generate", "workbench.cosmos3.generate"),
+    ],
 )
-def test_paidf_explicit_image_override_still_wins(selector: str) -> None:
+def test_explicit_image_override_still_wins(tool_ref: str, selector: str) -> None:
     image = "registry.example.invalid/operator/custom@sha256:" + "a" * 64
     assert (
         resolve_task_image(
-            "workbench.cosmos3.generate_variants",
+            tool_ref,
             {},
             options=SkypilotRenderOptions(image_overrides={selector: image}),
         )

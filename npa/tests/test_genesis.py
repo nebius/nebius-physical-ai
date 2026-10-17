@@ -164,6 +164,64 @@ def test_resolve_pretrained_dir_accepts_lerobot_checkpoint_layouts(
         eval_student._resolve_pretrained_dir(tmp_path / "missing")
 
 
+@pytest.mark.parametrize("policy_type", ["diffusion", "smolvla", "vla"])
+def test_public_image_rejects_unavailable_policies_before_framework_imports(
+    genesis_modules, monkeypatch, tmp_path, policy_type
+):
+    module = genesis_modules["eval_student"]
+    monkeypatch.setenv("NPA_GENESIS_SUPPORTED_STUDENT_POLICIES", "act")
+    (tmp_path / "config.json").write_text(json.dumps({"type": policy_type}))
+    with pytest.raises(module.EvalError, match="separately qualified operator image"):
+        module._load_student_policy(tmp_path)
+
+
+def test_public_image_retains_act_and_operator_images_keep_policy_classes(
+    genesis_modules, monkeypatch
+):
+    module = genesis_modules["eval_student"]
+    monkeypatch.setenv("NPA_GENESIS_SUPPORTED_STUDENT_POLICIES", "act")
+    module._require_image_policy_capability("act")
+    module._require_image_policy_capability("actpolicy")
+    monkeypatch.delenv("NPA_GENESIS_SUPPORTED_STUDENT_POLICIES")
+    for policy_type in module._POLICY_CLASS_MAP:
+        module._require_image_policy_capability(policy_type)
+
+
+def test_image_policy_capability_tolerates_a_trailing_separator(
+    genesis_modules, monkeypatch
+):
+    module = genesis_modules["eval_student"]
+    monkeypatch.setenv("NPA_GENESIS_SUPPORTED_STUDENT_POLICIES", "act,")
+    module._require_image_policy_capability("act")
+
+
+def test_missing_lerobot_keeps_actionable_student_evaluation_guidance(
+    genesis_modules, monkeypatch, tmp_path
+):
+    module = genesis_modules["eval_student"]
+    (tmp_path / "config.json").write_text(json.dumps({"type": "act"}))
+    real_import_module = importlib.import_module
+
+    def missing_lerobot(name, package=None):
+        if name.startswith("lerobot."):
+            raise ModuleNotFoundError("No module named 'lerobot'", name="lerobot")
+        return real_import_module(name, package)
+
+    monkeypatch.setattr(importlib, "import_module", missing_lerobot)
+    with pytest.raises(module.EvalError, match="Install with: pip install lerobot"):
+        module._load_student_policy(tmp_path)
+
+
+@pytest.mark.parametrize("declared", [" , ", "unknown", "act,unknown"])
+def test_invalid_image_policy_declaration_fails_closed(
+    genesis_modules, monkeypatch, declared
+):
+    module = genesis_modules["eval_student"]
+    monkeypatch.setenv("NPA_GENESIS_SUPPORTED_STUDENT_POLICIES", declared)
+    with pytest.raises(module.EvalError, match="invalid student policy capability"):
+        module._require_image_policy_capability("diffusion")
+
+
 def test_tune_serializes_and_writes_env_overrides(genesis_modules, tmp_path):
     tune = genesis_modules["tune"]
 

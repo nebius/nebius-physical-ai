@@ -1862,7 +1862,7 @@ def test_resolve_task_image_uses_override() -> None:
 def test_resolve_task_image_reports_quarantine_as_workflow_error() -> None:
     with pytest.raises(NpaWorkflowError, match="no consumable public release"):
         resolve_task_image(
-            "workbench.cosmos3.generate",
+            "workbench.cosmos3.checkpoint_eval",
             {},
             options=SkypilotRenderOptions(),
         )

@@ -187,10 +187,12 @@ npa workbench health preflight --project twin --checks nebius,s3 --json
 npa workbench workflow validate-spec workflows/testing/digital-twin-campus-render.yaml
 npa workbench workflow prepare-run 'workflows/testing/digital-twin-campus-render.yaml' --project twin
 npa workbench workflow preflight-images workflows/testing/digital-twin-campus-render.yaml \
-  --project twin --infra 'k8s/<rtx-context>'
+  --project twin --infra 'k8s/<rtx-context>' \
+  --var runtime_image='<registry>/<repository>@sha256:<64-hex-digest>'
 npa workbench workflow submit workflows/testing/digital-twin-campus-render.yaml \
   --run-id '<prepared-run-id>' --project twin --infra 'k8s/<rtx-context>' \
   --var bucket='<your-bucket>' --var prefix='digital-twin/<prepared-run-id>' \
+  --var runtime_image='<registry>/<repository>@sha256:<64-hex-digest>' \
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 ```
 
@@ -199,7 +201,9 @@ example below. The default renders 32 views at 2560 × 1440 and 128 path-tracing
 samples. `views` and `samples` are quality controls; the campus requires at least
 four views so every inspection route has real rendered media. Native OptiX
 selection disables both CPU and CUDA render devices and refuses fallback if
-OptiX is unavailable. GPU activity is required before the campus HTML is emitted.
+OptiX is unavailable. Supply only a registry-qualified digest for `runtime_image`:
+the retired SONIC digest is not a fallback. GPU activity is required before the
+campus HTML is emitted.
 
 The scene contains 32 industrial robots, 600 modeled warehouse inventory units,
 108 solar arrays, autonomous carriers, stacked freight containers, two gantry
@@ -256,8 +260,8 @@ partially provisioned RTX pool into B200 or select GPU Operator on an NVSwitch
 system. Reconcile the owned failed allocation before choosing another profile.
 
 The [CUDA workflow](../../../workflows/testing/digital-twin-cuda-render.yaml)
-uses an existing immutable workbench image and the submitting checkout's source
-overlay. It downloads the official Blender 4.5.3 Linux archive at runtime and
+uses an operator-selected immutable workbench image and the submitting checkout's
+source overlay. It downloads the official Blender 4.5.3 Linux archive at runtime and
 checks its pinned SHA-256 before extraction. Blender is GPL-licensed; see
 [Blender's license information](https://www.blender.org/about/license/).
 No Blender distribution or third-party scene assets are added to an image or
@@ -268,13 +272,17 @@ npa workbench health preflight --project twin --checks nebius,s3 --json
 npa skypilot bootstrap
 export NPA_SKYPILOT_BIN="$(npa skypilot status --bin-path)"
 npa workbench workflow validate-spec workflows/testing/digital-twin-cuda-render.yaml
-npa workbench workflow plan-spec workflows/testing/digital-twin-cuda-render.yaml --run-id twin-render
+npa workbench workflow plan-spec workflows/testing/digital-twin-cuda-render.yaml \
+  --run-id twin-render \
+  --var runtime_image='<registry>/<repository>@sha256:<64-hex-digest>'
 npa workbench workflow prepare-run 'workflows/testing/digital-twin-cuda-render.yaml' --project twin
 npa workbench workflow preflight-images workflows/testing/digital-twin-cuda-render.yaml \
-  --project twin --infra 'k8s/<b200-context>'
+  --project twin --infra 'k8s/<b200-context>' \
+  --var runtime_image='<registry>/<repository>@sha256:<64-hex-digest>'
 npa workbench workflow submit workflows/testing/digital-twin-cuda-render.yaml \
   --run-id '<prepared-run-id>' --project twin --infra 'k8s/<b200-context>' \
   --var bucket='<your-bucket>' --var prefix='digital-twin/<prepared-run-id>' \
+  --var runtime_image='<registry>/<repository>@sha256:<64-hex-digest>' \
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 ```
 

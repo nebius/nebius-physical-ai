@@ -28,7 +28,10 @@ from npa.orchestration.skypilot.image_bootstrap_contract import (
     ImageContractEvidence,
     store_cached_evidence,
 )
-from npa.orchestration.skypilot.k8s_gpu_catalog import KubernetesGpuCatalog
+from npa.orchestration.skypilot.k8s_gpu_catalog import (
+    KubernetesGpuCatalog,
+    KubernetesGpuInventory,
+)
 from npa.orchestration.skypilot.registry_preflight import ImagePullCheck
 from npa.orchestration.skypilot.workflow import SkyPilotSubmitError
 from npa.provisioning_journal import OperationJournalError
@@ -921,6 +924,7 @@ def test_workflow_gpus_json_reports_the_exact_alias_resolution(
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
+    assert payload["spec_error"] == ""
     assert payload["spec_resolutions"] == [
         {
             "requested": "RTXPRO6000:1",
@@ -928,6 +932,94 @@ def test_workflow_gpus_json_reports_the_exact_alias_resolution(
             "remapped": True,
         }
     ]
+
+
+def test_workflow_gpus_json_reports_missing_required_images_without_traceback(
+    monkeypatch: pytest.MonkeyPatch, sky_bin: str, owned_gpu_discovery
+) -> None:
+    monkeypatch.setenv("NPA_SKYPILOT_BIN", sky_bin)
+    _stub_catalog(monkeypatch, CATALOG_OUTPUT)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "gpus",
+            "--context",
+            "npa-cluster",
+            "--spec",
+            str(REPO_ROOT / "workflows/testing/digital-twin-campus-render.yaml"),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["spec_resolutions"] == []
+    assert "Each of config.runtime_image requires an explicit" in payload["spec_error"]
+
+
+def test_workflow_gpus_text_reports_missing_required_images_with_empty_catalog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inventory = KubernetesGpuInventory("npa-cluster", 0, 0, 0, 0, (), {})
+    catalog = KubernetesGpuCatalog({}, context="npa-cluster")
+    monkeypatch.setattr(
+        workflow_cli,
+        "_inspect_workflow_gpus",
+        lambda *_args: (inventory, catalog, ""),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "gpus",
+            "--spec",
+            str(REPO_ROOT / "workflows/testing/digital-twin-campus-render.yaml"),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "accelerators: none advertised" in result.output
+    assert (
+        "spec_error: Each of config.runtime_image requires an explicit" in result.output
+    )
+
+
+def test_workflow_gpus_text_reports_unsatisfied_accelerator(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    sky_bin: str,
+    owned_gpu_discovery,
+) -> None:
+    monkeypatch.setenv("NPA_SKYPILOT_BIN", sky_bin)
+    _stub_catalog(monkeypatch, CATALOG_OUTPUT)
+    spec = yaml.safe_load(yaml.safe_dump(SPEC))
+    spec["resources"]["gpu"]["accelerators"] = "H100:1"
+    path = tmp_path / "unavailable-accelerator.yaml"
+    path.write_text(yaml.safe_dump(spec, sort_keys=False), encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "gpus",
+            "--context",
+            "npa-cluster",
+            "--spec",
+            str(path),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert (
+        "H100:1: Accelerator 'H100' is not advertised by this cluster" in result.output
+    )
+    assert "Traceback" not in result.output
 
 
 def test_workflow_gpus_resolves_templated_accelerator_config(
@@ -958,7 +1050,9 @@ def test_workflow_gpus_resolves_templated_accelerator_config(
     )
 
     assert result.exit_code == 0, result.output
-    assert json.loads(result.output)["spec_resolutions"] == [
+    payload = json.loads(result.output)
+    assert payload["spec_error"] == ""
+    assert payload["spec_resolutions"] == [
         {
             "requested": "RTXPRO6000:1",
             "resolved": "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1",
@@ -2115,6 +2209,24 @@ def test_parse_exact_image_overrides() -> None:
         "workbench.fiftyone.curate_augmented": "cr.example/fiftyone@sha256:abc",
         "workbench.cosmos_evaluator.evaluate": "cr.example/evaluator@sha256:def",
     }
+
+
+@pytest.mark.parametrize(
+    ("image", "specific", "expected"),
+    [
+        ("", {}, {}),
+        ("cr.example.invalid/global:1", {}, {"*": "cr.example.invalid/global:1"}),
+        (
+            "none",
+            {"workbench.example": "cr.example.invalid/tool:1"},
+            {"*": "", "workbench.example": "cr.example.invalid/tool:1"},
+        ),
+    ],
+)
+def test_submit_image_overrides_have_one_shared_normalization(
+    image: str, specific: dict[str, str], expected: dict[str, str]
+) -> None:
+    assert workflow_cli._submit_image_overrides(image, specific) == expected
 
 
 @pytest.mark.parametrize(

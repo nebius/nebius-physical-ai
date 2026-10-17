@@ -96,7 +96,14 @@ def _prepare_registry_workflow(spec_path):
     }
     public_prefix = f"{DEFAULT_PUBLIC_CONTAINER_REGISTRY}/npa-"
     image_overrides = {"*": f"{public_prefix}runtime@sha256:{'0' * 64}"}
-    config_overrides = {"source_sha": "0" * 40} if requires_baked_image else {}
+    # Required exact inputs are inert ownership fixtures. The no-override guard
+    # separately verifies denial when the operator has not supplied these values.
+    config_overrides = {
+        key: f"{public_prefix}runtime@sha256:{'0' * 64}"
+        for key in spec.config.get("required_immutable_images", [])
+    }
+    if requires_baked_image:
+        config_overrides["source_sha"] = "0" * 40
     if spec_path.name == "byof-gymnasium-robotics.yaml":
         # This neutral BYOF candidate intentionally keeps no-new-privileges;
         # the ownership guard must not reclassify it as a trusted first-party
