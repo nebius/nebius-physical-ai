@@ -752,6 +752,25 @@ def test_recording_download_refuses_nonpublication_uri_inside_run_prefix(
         )
 
 
+def test_recording_download_refuses_non_rrd_publication_uri(
+    tmp_path: Path,
+) -> None:
+    config = Sim2RealArtifactConfig(run_id="archived-run", s3_bucket="example-bucket")
+
+    with pytest.raises(
+        Sim2RealRerunRegenError,
+        match="must name a canonical or committed RRD URI",
+    ):
+        download_rrd_from_s3(
+            config,
+            dest_path=tmp_path / "review.rrd",
+            rrd_uri=(
+                "s3://example-bucket/sim2real-b/archived-run/reports/sim2real.mcap"
+            ),
+            client=SimpleNamespace(),
+        )
+
+
 def test_recording_download_refuses_selected_uri_outside_run_prefix(
     tmp_path: Path,
 ) -> None:

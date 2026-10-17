@@ -1464,6 +1464,10 @@ def download_rrd_from_s3(
         raise Sim2RealRerunRegenError(
             "explicit Rerun recording must name a canonical or committed RRD URI"
         ) from exc
+    if not selected_uri.endswith("/reports/sim2real.rrd"):
+        raise Sim2RealRerunRegenError(
+            "explicit Rerun recording must name a canonical or committed RRD URI"
+        )
     dest_path = Path(dest_path)
     absolute_dest = Path(os.path.abspath(dest_path))
     default_root = Path(os.path.abspath(DEFAULT_REGEN_ROOT))
