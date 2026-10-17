@@ -342,7 +342,10 @@ def test_render_steps_yaml_dispatches(parallel_spec) -> None:
         execution="serial",
     )
     assert "execution: parallel" in parallel_text
-    assert "execution: serial" in serial_text
+    serial_docs = [doc for doc in yaml.safe_load_all(serial_text) if doc]
+    assert len(serial_docs) == 1
+    assert serial_docs[0]["name"] == "join"
+    assert serial_docs[0]["run"]
 
 
 def test_serial_renderer_still_rejects_parallel_option(parallel_spec) -> None:
@@ -717,6 +720,48 @@ def test_setup_pip_uses_a_working_baked_interpreter(tmp_path: Path) -> None:
     assert calls
     assert all(line.startswith(f"{baked}:") for line in calls)
     assert not any(line.startswith(f"{system}:") for line in calls)
+
+
+def test_setup_does_not_reinstall_an_importable_baked_entrypoint(
+    tmp_path: Path,
+) -> None:
+    """A non-root workbench venv needs no pip install when its entrypoint is baked."""
+
+    from npa.orchestration.npa_workflow.skypilot_render import default_npa_setup
+
+    binaries = tmp_path / "bin"
+    binaries.mkdir()
+    trace = tmp_path / "trace"
+    baked = binaries / "baked-python"
+    baked.write_text(
+        "#!/bin/sh\n"
+        'printf \'%s\\n\' "$*" >> "$TRACE"\n'
+        'case "$2" in\n'
+        "  *'import sys'*|*'from npa.cli.entry import main'*|*'import npa'*) exit 0 ;;\n"
+        "esac\n"
+        "exit 91\n"
+    )
+    baked.chmod(0o700)
+
+    setup = default_npa_setup()
+    start = setup.index('npa_setup_python="')
+    end = setup.index('if [ "$NPA_SRC_OVERLAY"')
+    absent_root = tmp_path / "no-baked-source"
+    script = "set -e\n" + setup[start:end]
+    script = script.replace("/opt/nebius-physical-ai/npa", str(absent_root))
+    script = script.replace("/opt/npa", str(absent_root))
+    environment = {
+        **os.environ,
+        "NPA_BAKED_PYTHON": str(baked),
+        "NPA_SRC_S3_URI": "",
+        "PATH": f"{binaries}:/usr/bin:/bin",
+        "TRACE": str(trace),
+    }
+    subprocess.run(["/bin/bash", "-c", script], env=environment, check=True)
+
+    calls = trace.read_text().splitlines()
+    assert any("from npa.cli.entry import main" in call for call in calls)
+    assert not any("-m pip install" in call for call in calls)
 
 
 def test_shipped_trigger_spec_reads_its_knobs_from_config() -> None:

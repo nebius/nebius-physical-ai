@@ -517,6 +517,7 @@ def test_cosmos3_serving_requests_its_documented_eight_gpu_node() -> None:
 
 def test_non_candidate_quarantined_images_are_not_reported_as_runnable() -> None:
     from npa.deploy.images import (
+        NEUTRAL_UNBUILT_CANDIDATE_TOOLS,
         PUBLICATION_QUARANTINE_TOOLS,
         VALIDATION_CANDIDATE_TOOLS,
     )
@@ -525,11 +526,19 @@ def test_non_candidate_quarantined_images_are_not_reported_as_runnable() -> None
     # Explicit dev-SHA candidates can remain GPU-gated so maintainers can run
     # the acceptance workload that promotes them. Every other quarantined
     # release must stay out of the runnable default batch.
-    for name in PUBLICATION_QUARANTINE_TOOLS - VALIDATION_CANDIDATE_TOOLS:
+    # Neutral workflow-only candidates deliberately lack a synthetic container
+    # golden eval: their acceptance is the separately declared native workflow
+    # with an explicitly supplied operator-private digest.
+    for name in (
+        PUBLICATION_QUARANTINE_TOOLS
+        - VALIDATION_CANDIDATE_TOOLS
+        - NEUTRAL_UNBUILT_CANDIDATE_TOOLS
+    ):
         assert specs[name].golden_eval.status in {
             "blocked-on-upstream",
             "needs-image-update",
         }, name
+    assert not (set(NEUTRAL_UNBUILT_CANDIDATE_TOOLS) & set(specs))
 
 
 def test_runnable_defaults_exist_in_shared_serverless_project() -> None:

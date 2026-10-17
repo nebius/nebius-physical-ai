@@ -486,6 +486,9 @@ class SkypilotRenderOptions:
     # When False (``--plan-only``), embed placeholders instead of explicit live
     # private-registry credentials in YAML that may be printed to stdout.
     materialize_registry_secrets: bool = True
+    # Existing operator-managed Kubernetes pull Secrets to attach to rendered
+    # Kubernetes tasks and bind into their target-pull preflight path.
+    image_pull_secret_names: tuple[str, ...] = ()
     # None retains CLI source discovery; an explicit value isolates a server run
     # from process-wide source configuration. Empty disables source injection.
     source_s3_uri: str | None = None
@@ -1649,17 +1652,27 @@ def default_npa_setup() -> str:
         "    return 1\n"
         "  fi\n"
         "}\n"
+        # Some workbench images expose the lightweight NPA console entrypoint through
+        # their declared runtime without installing a shell-visible ``npa`` script.
+        # The stage preamble creates a shim for that exact entrypoint, so do not try to
+        # mutate an intentionally non-root baked environment just to create the script.
+        # Restrict the exception to the declared baked interpreter: an arbitrary module
+        # on PATH is not evidence that a vendor image has a usable NPA runtime.
+        "npa_baked_entry_available=0\n"
+        'if [ -n "${NPA_BAKED_PYTHON:-}" ] && [ "$npa_setup_python" = "$NPA_BAKED_PYTHON" ] \\\n'
+        "  && \"$npa_setup_python\" -c 'from npa.cli.entry import main' >/dev/null 2>&1; then\n"
+        "  npa_baked_entry_available=1\n"
+        "fi\n"
         # An explicit staged overlay is the complete source of truth. Thin vendor
         # images may contain a partial /opt/npa tree without the build hook; do
         # not try installing it before the requested overlay can be fetched.
-        "if ! command -v npa >/dev/null 2>&1 && { "
+        "if ! command -v npa >/dev/null 2>&1 "
+        '&& [ "$npa_baked_entry_available" != "1" ] && { '
         '[ "$NPA_SRC_OVERLAY" != "1" ] || [ -z "$NPA_SRC_S3_URI" ]; }; then\n'
         # The active runtime-fetch images intentionally ship the installable
-        # project under /opt/npa but not a shell-visible `npa` launcher. Recording
-        # that tree alone is insufficient: the first task then skips the legacy
-        # branch, has no staged source URI, and exits before its GPU command runs.
-        # Install from the image-local source before falling back to the legacy
-        # layout or external source staging.
+        # project under /opt/npa but not a shell-visible `npa` launcher. When the
+        # declared baked runtime cannot supply the lightweight entrypoint, install
+        # from the image-local source before falling back to legacy or staged source.
         "  if [ -f /opt/npa/pyproject.toml ] && [ -d /opt/npa/src/npa ]; then\n"
         "    npa_pip_install -e /opt/npa\n"
         "    npa_record_src_root /opt/npa\n"
@@ -2431,6 +2444,66 @@ def _task_pull_secret_names(
     return tuple(names)
 
 
+def _requested_image_pull_secret_names(
+    options: SkypilotRenderOptions,
+) -> tuple[str, ...]:
+    """Return validated operator-managed pull Secret names from render options."""
+
+    names = tuple(
+        dict.fromkeys(
+            str(name).strip()
+            for name in options.image_pull_secret_names
+            if str(name).strip()
+        )
+    )
+    if any(not _KUBERNETES_NAME_RE.fullmatch(name) for name in names):
+        raise NpaWorkflowRenderError(
+            "--image-pull-secret requires valid Kubernetes Secret names"
+        )
+    return names
+
+
+def _effective_task_pull_secret_names(
+    pod_spec: Mapping[str, Any],
+    options: SkypilotRenderOptions,
+) -> tuple[str, ...] | None:
+    """Resolve one task's pull authority without silently replacing its config."""
+
+    requested = _requested_image_pull_secret_names(options)
+    declared = _task_pull_secret_names(pod_spec)
+    if requested and declared is not None and declared != requested:
+        raise NpaWorkflowRenderError(
+            "--image-pull-secret conflicts with workflow-declared imagePullSecrets"
+        )
+    return requested or declared
+
+
+def _with_requested_image_pull_secrets(
+    task_config: Mapping[str, Any],
+    resources: Mapping[str, Any],
+    options: SkypilotRenderOptions,
+) -> dict[str, Any]:
+    """Attach requested pull Secrets to Kubernetes tasks that lack their own."""
+
+    requested = _requested_image_pull_secret_names(options)
+    cloud = str(resources.get("cloud") or "").strip().casefold()
+    if not requested or cloud not in {"kubernetes", "k8s"}:
+        return dict(task_config)
+    import copy
+
+    rendered = copy.deepcopy(dict(task_config))
+    pod_spec = (
+        rendered.setdefault("kubernetes", {})
+        .setdefault("pod_config", {})
+        .setdefault("spec", {})
+    )
+    declared = _task_pull_secret_names(pod_spec)
+    _effective_task_pull_secret_names(pod_spec, options)
+    if declared is None:
+        pod_spec["imagePullSecrets"] = [{"name": name} for name in requested]
+    return rendered
+
+
 def _task_service_account_name(pod_spec: Mapping[str, Any]) -> str | None:
     """Read a task ServiceAccount override, preserving an absent key."""
 
@@ -2512,10 +2585,10 @@ def plan_image_pull_requirements(
         pod_config = pod_config if isinstance(pod_config, dict) else {}
         pod_spec = pod_config.get("spec")
         pod_spec = pod_spec if isinstance(pod_spec, dict) else {}
-        names = _task_pull_secret_names(pod_spec)
         service_account_name = _task_service_account_name(pod_spec)
         pod_placement_json = _task_pull_placement_json(pod_spec)
         cloud = str(resources.get("cloud") or "").strip().casefold()
+        names = _effective_task_pull_secret_names(pod_spec, options)
         if not cloud:
             paths.setdefault(image, []).append(
                 ("unresolved", names, service_account_name, pod_placement_json)
@@ -2885,7 +2958,11 @@ def _build_skypilot_task_doc(
         envs["JAX_PLATFORMS"] = "cpu"
     if num_nodes > 1:
         doc["num_nodes"] = num_nodes
-    task_config = normalize_task_config(scheduler_task.get("resources") or {})
+    task_config = _with_requested_image_pull_secrets(
+        normalize_task_config(scheduler_task.get("resources") or {}),
+        resources,
+        options,
+    )
     if require_baked and cache_on_kubernetes:
         task_config = _with_writable_bootstrap_cache(task_config)
     if image and task_config:
@@ -2962,9 +3039,9 @@ def _build_skypilot_task_doc(
         # A pinned image is EITHER an NPA workbench image with npa baked in, OR a
         # VENDOR image that has never heard of npa (e.g. NVIDIA's NRE container,
         # which is the runtime for the neural-reconstruction workflow). Propagating
-        # the source URI serves both: setup's primary install path is guarded by
-        # `command -v npa`, so it is a no-op when npa is already present and
-        # installs it WITH dependencies when it is not. Without this, a vendor image
+        # the source URI serves both: setup's primary install path is guarded by a
+        # shell-visible launcher or a verified declared baked entrypoint, so it is a
+        # no-op only when the task can already run NPA. Without this, a vendor image
         # fails setup with "npa CLI not found; set NPA_SRC_S3_URI or use a workbench
         # image" (observed live on the NRE image).
         if src_uri:
@@ -3135,6 +3212,25 @@ def render_skypilot_steps_yaml(
         )
     if not steps:
         raise NpaWorkflowRenderError(f"workflow {spec.name!r} planned zero steps")
+    if execution == "serial" and len(steps) == 1:
+        # Runtime execution submits serial waves one at a time.  The pinned
+        # managed-jobs launcher interprets the first document as the task, so a
+        # pipeline header with no ``run`` makes a one-task wave fail before the
+        # stage command starts.  Keep the header-based form for complete
+        # multi-task plans, but submit this wave as the one executable task.
+        task_docs = build_skypilot_task_docs(spec, steps, run_id=run_id, options=opts)
+        assert len(task_docs) == 1
+        rendered = (
+            yaml.safe_dump(
+                task_docs[0],
+                sort_keys=False,
+                default_flow_style=False,
+                width=10_000,
+            ).rstrip()
+            + "\n"
+        )
+        assert_literal_python_heredocs_compile(rendered)
+        return rendered
     return _render_docs(
         spec,
         steps,

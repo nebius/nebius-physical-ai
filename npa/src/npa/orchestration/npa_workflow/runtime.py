@@ -228,6 +228,7 @@ def _image_identity(render_options: SkypilotRenderOptions) -> str:
     bindings = sorted(
         (str(reference), str(resolved))
         for reference, resolved in render_options.image_digest_pins.items()
+        if str(reference) != str(resolved)
     )
     overrides = sorted(
         (str(selector), str(reference))
@@ -241,6 +242,15 @@ def _image_identity(render_options: SkypilotRenderOptions) -> str:
             "image_variant": str(render_options.image_variant),
             "registry": str(render_options.registry),
             "schema": "npa.workflow.image-selection/v3",
+            **(
+                {
+                    "image_pull_secret_names": list(
+                        render_options.image_pull_secret_names
+                    )
+                }
+                if render_options.image_pull_secret_names
+                else {}
+            ),
         },
         ensure_ascii=False,
         separators=(",", ":"),

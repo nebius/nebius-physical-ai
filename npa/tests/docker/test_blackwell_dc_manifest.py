@@ -505,6 +505,9 @@ def test_names_match_the_real_container_image_names(entries: list[dict]) -> None
         "npa-cosmos3-serving",
         "npa-content-agents",
         "npa-sim2real-control",
+        # Operator-private job image selected only by the OpenWAM workflow;
+        # it has no generic deployment or public-release resolver.
+        "npa-openwam",
         # Restricted workflow-only runtime; the EmbodiedGen renderer must use
         # its explicit operator-private digest rather than a deploy default.
         "npa-embodiedgen",
