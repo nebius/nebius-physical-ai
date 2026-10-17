@@ -37,6 +37,7 @@ from npa.workflows.sim2real_health import (
     CheckResult,
     DoctorProbes,
     FAIL,
+    IMAGE_DEPENDENT_CHECKS,
     KubeResult,
     PASS,
     SKIP,
@@ -46,6 +47,11 @@ from npa.workflows.sim2real_health import (
     run_preflight,
 )
 from npa.workflows.sim2real.config import build_config_from_env
+from npa.workflows.sim2real.diagnostic_config import (
+    Sim2RealDiagnosticConfig,
+    build_diagnostic_config_from_env,
+)
+from npa.workflows.sim2real.models import Sim2RealLoopConfig
 from npa.workbench.model_access import (
     all_capabilities,
     check_workbench_access,
@@ -491,6 +497,7 @@ def access_command(
 
 
 @app.command("sim2real")
+@intent_boundary(OperationIntent.OBSERVE)
 def sim2real_command(
     run_id: str = typer.Option(
         "sim2real-doctor", "--run-id", help="Run id for the probed config."
@@ -503,6 +510,15 @@ def sim2real_command(
     ),
     s3_endpoint: str = typer.Option(
         "", "--s3-endpoint", help="Non-default S3-compatible endpoint."
+    ),
+    project: str = typer.Option(
+        "",
+        "--project",
+        "-p",
+        help=(
+            "Configured project alias whose isolated storage record supplies the S3 "
+            "probe target and credentials; explicit S3 flags take precedence."
+        ),
     ),
     trigger_dataset_uri: str = typer.Option(
         "", "--trigger-dataset-uri", help="Trigger dataset path."
@@ -616,37 +632,85 @@ def sim2real_command(
     # script use `--checks all`) — expand it to the full check set.
     if "all" in selected:
         selected = list(ALL_CHECKS)
+    if not selected:
+        raise typer.BadParameter(
+            f"at least one check is required. Choices: {', '.join(ALL_CHECKS)}."
+        )
     unknown = [item for item in selected if item not in ALL_CHECKS]
     if unknown:
         raise typer.BadParameter(
             f"unknown check(s): {', '.join(unknown)}. Choices: {', '.join(ALL_CHECKS)}."
         )
 
+    credentials = None
+    project_storage_failure: CheckResult | None = None
+    if project.strip() and "s3" in selected:
+        credentials = load_credentials()
+        try:
+            credentials = _project_credentials(project.strip(), credentials)
+            if not s3_bucket.strip():
+                # CredentialsConfig keeps a URI because it is also consumed by
+                # credential preflight.  The execution config, however, owns a
+                # bucket *name* and derives its own s3:// artifact URIs.
+                overrides["s3_bucket"] = credentials.s3_bucket.removeprefix("s3://")
+            if not s3_endpoint.strip():
+                overrides["s3_endpoint"] = credentials.s3_endpoint
+        except (ConfigError, ProjectCredentialStoreError):
+            project_storage_failure = CheckResult(
+                name="s3",
+                status=FAIL,
+                summary="Configured project storage could not be resolved.",
+                remedy=(
+                    "Save a complete isolated storage record for --project, then "
+                    "rerun the S3 health check."
+                ),
+            )
+
     try:
-        config = build_config_from_env(**overrides)
+        config = _sim2real_preflight_config(selected, overrides)
     except ValueError as exc:
         # Image resolution deliberately fails closed for quarantined public
         # releases. Surface that policy as an actionable CLI error instead of
         # leaking an unrendered exception (and only after validating --checks).
         raise typer.BadParameter(str(exc)) from exc
-    credentials = load_credentials()
+    if credentials is None:
+        credentials = load_credentials()
 
     probes = DoctorProbes(
         s3_client_factory=lambda: StorageClient.from_environment(
-            endpoint_url=config.s3_endpoint
+            endpoint_url=config.s3_endpoint,
+            aws_access_key_id=credentials.s3_access_key_id,
+            aws_secret_access_key=credentials.s3_secret_access_key,
         ),
         image_inspector=_image_inspector,
         credentials=credentials,
         kube_runner=_kube_runner_factory(config.k8s_context, config.k8s_kubeconfig),
     )
 
-    results = run_preflight(
-        config, repo_root=_repo_root(), probes=probes, checks=selected
+    probe_checks = (
+        [check for check in selected if check != "s3"]
+        if project_storage_failure is not None
+        else selected
     )
+    results = (
+        run_preflight(
+            config, repo_root=_repo_root(), probes=probes, checks=probe_checks
+        )
+        if probe_checks
+        else []
+    )
+    if project_storage_failure is not None:
+        selected_check_order = [check for check in ALL_CHECKS if check in selected]
+        s3_position = selected_check_order.index("s3")
+        results.insert(s3_position, project_storage_failure)
 
     if output_json:
         payload = {
             "run_id": config.run_id,
+            "selected_checks": selected,
+            "image_policy_evaluated": any(
+                check in IMAGE_DEPENDENT_CHECKS for check in selected
+            ),
             "checks": [result.as_dict() for result in results],
             "ok": not has_failure(results),
         }
@@ -670,3 +734,30 @@ def sim2real_command(
 
     if has_failure(results) and not warn_only:
         raise typer.Exit(code=1)
+
+
+def _sim2real_preflight_config(
+    selected: list[str], overrides: dict[str, object]
+) -> Sim2RealLoopConfig | Sim2RealDiagnosticConfig:
+    """Build the configuration shape required by the selected health checks.
+
+    Args:
+        selected: Validated Sim2Real health-check names.
+        overrides: CLI values to apply before environment fallbacks.
+    Returns:
+        An execution configuration for image-dependent checks or an image-free
+        diagnostic configuration for every other selection.
+    Raises:
+        ValueError: Execution image resolution fails for an image-dependent check.
+    """
+
+    if any(name in IMAGE_DEPENDENT_CHECKS for name in selected):
+        return build_config_from_env(**overrides)
+    return build_diagnostic_config_from_env(
+        run_id=str(overrides["run_id"]),
+        s3_bucket=str(overrides["s3_bucket"]),
+        s3_endpoint=str(overrides["s3_endpoint"]),
+        k8s_namespace=str(overrides["k8s_namespace"]),
+        k8s_context=str(overrides["k8s_context"]),
+        k8s_kubeconfig=str(overrides["k8s_kubeconfig"]),
+    )
