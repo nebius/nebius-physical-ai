@@ -13,7 +13,34 @@ RUN python /opt/secure-pip/build.py \
     && python -m pip download --no-cache-dir --only-binary=:all: --require-hashes \
       --dest /opt/bootstrap-wheels -r /opt/packaging-requirements.txt
 
-FROM python:3.10-slim-trixie@sha256:6ff506466f8b1e981719b468cc0023b8ef000b983cdec0eafe119d01f379e31d
+# Repair the interpreter before copying it. Neither the Debian donor layers nor
+# its original global/ensurepip installer bytes belong in the final artifact.
+FROM python:3.10-slim-trixie@sha256:6ff506466f8b1e981719b468cc0023b8ef000b983cdec0eafe119d01f379e31d AS python-runtime
+COPY --chmod=0444 docker/workbench/common/refresh_ensurepip.py /opt/npa/wan2-2/refresh_ensurepip.py
+COPY --chmod=0444 docker/workbench/common/secure_pip/inputs.json /opt/npa/wan2-2/installer-inputs.json
+RUN --mount=from=installer-build,source=/opt/repaired-installer,target=/mnt/repaired-installer \
+    --mount=from=installer-build,source=/opt/bootstrap-wheels,target=/mnt/bootstrap-wheels \
+    python /opt/npa/wan2-2/refresh_ensurepip.py \
+      --pip-wheel /mnt/repaired-installer/pip-26.2.1+npa.1-py3-none-any.whl \
+      --pip-receipt /mnt/repaired-installer/build-receipt.json \
+      --setuptools-wheel /mnt/bootstrap-wheels/setuptools-84.0.0-py3-none-any.whl \
+      --inputs /opt/npa/wan2-2/installer-inputs.json \
+      --report /opt/npa/wan2-2/ensurepip-repair.json \
+    && python -m pip install --no-cache-dir --no-index --no-deps --upgrade \
+      /mnt/repaired-installer/pip-26.2.1+npa.1-py3-none-any.whl \
+      /mnt/bootstrap-wheels/setuptools-84.0.0-py3-none-any.whl \
+      /mnt/bootstrap-wheels/wheel-0.47.0-py3-none-any.whl \
+      /mnt/bootstrap-wheels/packaging-26.3-py3-none-any.whl \
+    && cp /mnt/repaired-installer/build-receipt.json /opt/npa/wan2-2/installer-build-receipt.json \
+    && python -m pip check \
+    && test "$(python -m ensurepip --version)" = 'pip 26.2.1+npa.1' \
+    && test -s /usr/local/lib/python3.10/LICENSE.txt \
+    && find /usr/local/lib/python3.10/site-packages -type d -name __pycache__ -prune -exec rm -rf {} +
+
+FROM ubuntu:26.04@sha256:42527649dbc4f9197a6073f426f488cbff0e9cc9f2afce32d91c383e4875634a
+COPY --from=python-runtime /usr/local /usr/local
+COPY --from=python-runtime /opt/npa/wan2-2/ensurepip-repair.json /opt/npa/wan2-2/ensurepip-repair.json
+COPY --from=python-runtime /opt/npa/wan2-2/installer-build-receipt.json /opt/npa/wan2-2/installer-build-receipt.json
 
 ARG WAN_SOURCE_URL=https://github.com/Wan-Video/Wan2.2.git
 ARG WAN_SOURCE_REF=42bf4cfaa384bc21833865abc2f9e6c0e67233dc
@@ -31,6 +58,8 @@ LABEL npa.tool="wan2-2" \
       org.opencontainers.image.revision="${NPA_SOURCE_COMMIT}"
 
 ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8 \
+    PYTHON_VERSION=3.10.22 \
     NPA_WAN_BASE_PYTHON=/opt/wan-base/bin/python \
     NPA_WAN_RUNTIME_REQUIREMENTS=/opt/npa/wan2-2/runtime-requirements.txt \
     NPA_WAN_RUNTIME_CACHE=/workspace/.cache/npa/wan2-2/runtime \
@@ -42,14 +71,24 @@ ENV DEBIAN_FRONTEND=noninteractive \
 SHELL ["/bin/bash", "-lc"]
 USER root
 
-RUN rm -f /etc/apt/sources.list.d/*.list \
+RUN printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d \
+    && chmod 0755 /usr/sbin/policy-rc.d \
     && apt-get update \
     && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
-      ca-certificates ffmpeg git git-lfs libgl1 libglib2.0-0 \
+      ca-certificates ffmpeg git git-lfs libgl1 libglib2.0-0t64 \
       openssh-server procps rsync sudo util-linux \
+      libbz2-1.0 libcrypt1 libdb5.3t64 libexpat1 libffi8 libgdbm6t64 liblzma5 \
+      libncursesw6 libreadline8t64 libsqlite3-0 libssl3t64 libtcl8.6 libtk8.6 \
+      libuuid1 zlib1g libzstd1 \
     && rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub \
+    && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' openssh-client)" ge '1:10.2p1-2ubuntu3.8' \
+    && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' libxml2-16)" ge '2.15.2+dfsg-0.1ubuntu0.3' \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
+    && ldconfig \
+    && dependencies="$(ldd /usr/local/bin/python3.10 /usr/local/lib/python3.10/lib-dynload/*.so)" \
+    && ! grep -q 'not found' <<< "$dependencies" \
+    && python -c 'import _bz2, _ctypes, _dbm, _gdbm, _lzma, _ssl, _sqlite3, _tkinter, readline, zlib; assert _ssl.OPENSSL_VERSION_INFO >= (3, 5, 5)' \
     && (id -u "${NPA_RUNTIME_USER}" >/dev/null 2>&1 \
        || useradd -m -s /bin/bash -u 1000 "${NPA_RUNTIME_USER}") \
     && printf '%s\n' "${NPA_RUNTIME_USER} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/npa-runtime \
@@ -77,26 +116,6 @@ COPY --chmod=0444 src/npa/solutions/wan2_2/dependency_closure.py /opt/npa/wan2-2
 COPY --chmod=0444 docker/workbench/common/refresh_ensurepip.py /opt/npa/wan2-2/refresh_ensurepip.py
 COPY --chmod=0444 docker/workbench/common/repair_accelerate_checkpoints.py /opt/npa/wan2-2/repair_accelerate_checkpoints.py
 COPY --chmod=0444 docker/workbench/common/secure_pip/inputs.json /opt/npa/wan2-2/installer-inputs.json
-
-# Only verified repaired wheels enter this stage. Build inputs and the original
-# pip wheel stay in the disposable stage. Refresh ensurepip as well as the
-# global installer so a newly created runtime venv cannot restore old vendors.
-RUN --mount=from=installer-build,source=/opt/repaired-installer,target=/mnt/repaired-installer \
-    --mount=from=installer-build,source=/opt/bootstrap-wheels,target=/mnt/bootstrap-wheels \
-    python /opt/npa/wan2-2/refresh_ensurepip.py \
-      --pip-wheel /mnt/repaired-installer/pip-26.2.1+npa.1-py3-none-any.whl \
-      --pip-receipt /mnt/repaired-installer/build-receipt.json \
-      --setuptools-wheel /mnt/bootstrap-wheels/setuptools-84.0.0-py3-none-any.whl \
-      --inputs /opt/npa/wan2-2/installer-inputs.json \
-      --report /opt/npa/wan2-2/ensurepip-repair.json \
-    && python -m pip install --no-cache-dir --no-index --no-deps --upgrade \
-      /mnt/repaired-installer/pip-26.2.1+npa.1-py3-none-any.whl \
-      /mnt/bootstrap-wheels/setuptools-84.0.0-py3-none-any.whl \
-      /mnt/bootstrap-wheels/wheel-0.47.0-py3-none-any.whl \
-      /mnt/bootstrap-wheels/packaging-26.3-py3-none-any.whl \
-    && cp /mnt/repaired-installer/build-receipt.json /opt/npa/wan2-2/installer-build-receipt.json \
-    && python -m pip check \
-    && test "$(python -m ensurepip --version)" = 'pip 26.2.1+npa.1'
 
 # Install the complete reviewed OSS closure without dependency resolution so
 # packages such as Accelerate and PEFT cannot pull Torch/CUDA into an image

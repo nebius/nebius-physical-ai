@@ -1,7 +1,11 @@
 # Wan 2.2 container redistribution record
 
-The security candidate uses the digest-pinned Python 3.10.22 Debian Trixie base
-and upgrades inherited Debian packages before installing runtime dependencies. It
+The security candidate uses a digest-pinned Ubuntu 26.04 base and upgrades its
+packages before installing runtime dependencies. Python 3.10.22 is copied from
+a separate, digest-pinned official Python image after repairing its installers;
+the donor's Debian layers and shared libraries are not copied. Python's license
+remains in `/usr/local/lib/python3.10/LICENSE.txt`. The build checks every
+interpreter/extension shared-library dependency against the Ubuntu runtime. It
 rebuilds pip from pinned upstream sources with repaired vendored dependencies,
 installs verified Setuptools 84 wheels, and replaces Python's bundled ensurepip
 wheels so new runtime environments retain those repairs. The pip build inputs
@@ -17,14 +21,14 @@ opinion or substitute for counsel.
 
 1. **Shipped source.** `Wan-Video/Wan2.2` is checked out at immutable commit
    `42bf4cfaa384bc21833865abc2f9e6c0e67233dc`. Its Apache-2.0 `LICENSE.txt`
-   and notices remain in `/opt/byof`. The Debian/Python base and baked Python
+   and notices remain in `/opt/byof`. The Ubuntu/Python base and baked Python
    dependency closure are OSS; the complete closure is pinned in
    `/opt/npa/wan2-2/baked-constraints.txt` and its installed identity is
    recorded in `/opt/byof/npa_baked_python_inventory.txt`. Two checked-in,
    Apache-2.0 patches select only TI2V exports and replace the historical
    LGPL-3.0 EasyDict dependency; the S2V-only LGPL audio closure is absent.
-2. **Shipped runtime.** Only the digest-pinned official Python base, Debian
-   packages, and OSS Wan dependencies are image bytes. No Torch, torchvision,
+2. **Shipped runtime.** Only the digest-pinned Ubuntu base, repaired official
+   Python interpreter, Ubuntu packages, and OSS Wan dependencies are image bytes. No Torch, torchvision,
    torchaudio, CUDA, cuDNN, NCCL, TensorRT, `nvidia-*` Python distribution,
    NVIDIA SDK, checkpoint, tokenizer, credential, or cache is shipped.
 3. **Runtime-fetched software, weights, and data.** CUDA-enabled PyTorch 2.13.0

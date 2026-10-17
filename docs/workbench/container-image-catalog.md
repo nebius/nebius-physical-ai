@@ -868,10 +868,13 @@ declarations in its scene and robot includes. The Cosmos3 native Ray candidate s
 framework's supported Torch 2.13 CUDA 13 group, including its matching NATTEN
 extension, and removes inherited attention binaries from the older Torch ABI.
 The Cosmos3 serving bootstrap also uses a patched Python base and verified
-runtime installation tools. The Wan candidate moves its Python 3.10 base to Trixie
-and upgrades inherited Debian packages before installing dependencies. It also
-uses the source-built repaired pip installer in the global environment and
-Python's ensurepip bundle, preserving the repair when runtime venvs are created.
+runtime installation tools. The Wan candidate uses an upgraded Ubuntu 26.04
+runtime and copies Python 3.10.22 from a separate, pinned official Python stage
+after repairing its global and ensurepip installers. The donor's Debian layers
+and shared libraries are excluded from the final image. This preserves the
+installer repair when runtime venvs are created. A composed runtime passed
+shared-library, strict TLS, complete video decoding, fresh-venv and CPU checkpoint
+checks; exact replacement-image scans and GPU qualification remain required.
 These source changes do not republish or qualify
 the existing supported image digests listed above.
 
