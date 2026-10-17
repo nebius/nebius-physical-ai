@@ -1638,7 +1638,21 @@ def test_nested_validation_verifies_then_drops_parent_api_identity(
     kubeconfig = tmp_path / "kubeconfig"
     kubeconfig.write_text("apiVersion: v1\n", encoding="utf-8")
     parent = tmp_path / "workflow-state"
+    parent_config = tmp_path / "parent-config.yaml"
+    parent_config.write_text(
+        yaml.safe_dump(
+            {
+                "api_server": {
+                    "endpoint": "http://127.0.0.1:46321/",
+                    "request_timeout_seconds": 45,
+                },
+                "admin_policy": "example.Policy",
+            }
+        ),
+        encoding="utf-8",
+    )
     monkeypatch.setenv("NPA_SKYPILOT_ISOLATED_CONFIG_DIR", str(parent))
+    monkeypatch.setenv("SKYPILOT_GLOBAL_CONFIG", str(parent_config))
     monkeypatch.setenv("SKYPILOT_API_SERVER_ENDPOINT", "http://127.0.0.1:46321")
     monkeypatch.setenv("NPA_OWNED_SKYPILOT_API_ID", "parent-marker")
     monkeypatch.setenv(
@@ -1682,6 +1696,11 @@ def test_nested_validation_verifies_then_drops_parent_api_identity(
     assert "NPA_OWNED_SKYPILOT_API_ID" not in children[0]
     assert "NPA_SKYPILOT_ISOLATED_API_DIR" not in children[0]
     assert "SKYPILOT_SERVER_PLUGINS_CONFIG" not in children[0]
+    child_config = yaml.safe_load(
+        Path(children[0]["SKYPILOT_GLOBAL_CONFIG"]).read_text(encoding="utf-8")
+    )
+    assert child_config["api_server"] == {"request_timeout_seconds": 45}
+    assert child_config["admin_policy"] == "example.Policy"
     assert result["SKYPILOT_API_SERVER_ENDPOINT"] == "http://127.0.0.1:46322"
 
 

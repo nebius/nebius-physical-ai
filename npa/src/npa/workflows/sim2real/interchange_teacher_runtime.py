@@ -261,6 +261,24 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _run_with_app(args: argparse.Namespace, app: Any) -> dict[str, Any]:
+    """Run collection and preserve premature native exits as failures."""
+
+    try:
+        started = time.monotonic()
+        result = run(args)
+        result["duration_seconds"] = time.monotonic() - started
+        write_json(args.output_path / "report.json", result)
+        return result
+    except SystemExit as exc:
+        raise RuntimeError(
+            "native teacher runtime exited before completing its report "
+            f"(SystemExit code={exc.code!r})"
+        ) from exc
+    finally:
+        app.close()
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the native teacher runtime and write its episode receipt."""
 
@@ -273,13 +291,7 @@ def main(argv: list[str] | None = None) -> int:
     from isaaclab.app import AppLauncher
 
     app = AppLauncher(headless=True, enable_cameras=True).app
-    try:
-        started = time.monotonic()
-        result = run(args)
-        result["duration_seconds"] = time.monotonic() - started
-        write_json(args.output_path / "report.json", result)
-    finally:
-        app.close()
+    result = _run_with_app(args, app)
     print(json.dumps(result, sort_keys=True), flush=True)
     return 0
 

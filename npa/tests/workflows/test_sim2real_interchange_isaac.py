@@ -35,6 +35,7 @@ from npa.workflows.sim2real.interchange_isaac_runtime import (
     _write_png_rgb8,
 )
 from npa.workflows.sim2real.interchange_isaac_entry import _child_command
+from npa.workflows.sim2real import interchange_teacher_runtime
 from npa.workflows.sim2real.interchange_teacher_runtime import _scenario_offset
 from npa.workflows.sim2real.interchange_teacher_export import (
     EPISODE_FILES,
@@ -92,6 +93,31 @@ def _camera(key: str, role: str, mount: str) -> CameraView:
         state_timestamp_key="state_timestamp_s",
         maximum_state_skew_s=0.02,
     )
+
+
+def test_teacher_runtime_turns_premature_zero_exit_into_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    class App:
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    app = App()
+    args = argparse.Namespace(output_path=tmp_path)
+    monkeypatch.setattr(
+        interchange_teacher_runtime,
+        "run",
+        lambda _args: (_ for _ in ()).throw(SystemExit(0)),
+    )
+
+    with pytest.raises(RuntimeError, match="SystemExit code=0") as failure:
+        interchange_teacher_runtime._run_with_app(args, app)
+
+    assert isinstance(failure.value.__cause__, SystemExit)
+    assert app.closed is True
+    assert not (tmp_path / "report.json").exists()
 
 
 def _layout(profile: RobotSensorProfile) -> IsaacActionLayout:
