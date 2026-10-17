@@ -66,6 +66,7 @@ def test_needs_image_update_exclusions_can_only_shrink() -> None:
         "lerobot-vlm-rl",
         "libero",
         "loop-eval",
+        "molmoact2",
         "ncore",
         "openpi",
         "reference-policy",

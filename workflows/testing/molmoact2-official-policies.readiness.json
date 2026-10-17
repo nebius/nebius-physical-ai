@@ -1,0 +1,59 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "27bbc0ba0623a8e864012eaf1fdfc2b41f01ec619c7e45e58befcd38788b5827",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "The five-state, source-overlay-free spec passed schema validation and static planning with one run-scoped S3 lineage from preparation through factual visualization.",
+      "evidence": [
+        "npa/.venv/bin/npa workbench workflow validate-spec workflows/testing/molmoact2-official-policies.yaml --json",
+        "npa/.venv/bin/npa workbench workflow plan-spec workflows/testing/molmoact2-official-policies.yaml --run-id molmoact2-onboarding-20261002-static --json"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Focused tests prove five reachable non-stub stages, exact artifact handoffs, deterministic disjoint episode split, the two-camera LIBERO contract, and that closed-loop rollout cannot receive the foundation checkpoint directly.",
+      "evidence": [
+        "npa/tests/workflows/test_molmoact2_official_policies.py"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "The committed workflow deliberately retains example-bucket. The selected operator prefix must be writable and independently read back after a real run.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "verified",
+      "reason": "Exact immutable metadata probes succeeded for the foundation model, official LIBERO policy normalization statistics, and official LIBERO dataset. With Hub token environment variables and cached Hub login absent, the pinned foundation config and dataset metadata downloaded successfully and a ranged foundation-weight read returned HTTP 206. The workflow still rechecks the full real dataset feature contract before any train stage.",
+      "evidence": [
+        "Private sanitized anonymous exact-revision Hugging Face payload probe, 2026-10-04",
+        "docs/workbench/molmoact2-official-policies.md"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "Nebius and object-storage health preflights passed for this operator session. The active pinned LIBERO foundation/data path is anonymously accessible, so it does not require HF_TOKEN; standard runtime forwarding remains optional when an operator already supplies one. No new EULA or acceptance mechanism is added.",
+      "evidence": [
+        "Private sanitized npa workbench health preflight evidence, 2026-10-03"
+      ]
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "A corrected source-pinned private BYOF image is rebuilding after the exact-byte scan caught test-fixture, torchmetrics reference-weight, and bundled static-FFmpeg bytes retained in older layers. The replacement removes those bytes in their creating layers, but remote immutable-digest qualification is not complete yet.",
+      "evidence": [
+        "npa/docker/workbench/molmoact2/Dockerfile",
+        "npa/docker/workbench/molmoact2/REDISTRIBUTION.md",
+        "Private image build and exact-byte scan evidence, 2026-10-04"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "No real NPA/SkyPilot/Kubernetes execution or independent S3 artifact inspection has completed. A manager-provided private registry route has been write-probed, but this solution's corrected image has not yet qualified at an immutable remote digest or passed worker image preflight. Do not infer LIBERO success, convergence, or physical-robot readiness from planning or local image validation.",
+      "evidence": [
+        "Private registry-route write probe and image-qualification evidence, 2026-10-04"
+      ]
+    }
+  }
+}

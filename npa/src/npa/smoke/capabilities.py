@@ -64,6 +64,13 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "trajectory-disjoint held-out loss and actions plus exact image and "
         "GPU evidence are required in libero-smoke.json",
     ],
+    "molmoact2": [
+        "private exact-digest BYOF image is built and scanned before any rollout",
+        "real two-camera LIBERO episodes are deterministically split before upstream LoRA fine-tuning",
+        "upstream closed-loop evaluation retains evaluator JSON and MP4 evidence",
+        "held-out raw-action MSE and a decoded factual RRD are independently inspected",
+        "unbuilt candidate remains excluded from the default golden-eval batch and does not claim B200/B300 support",
+    ],
     "ncore": [
         "pinned official NCore V4 reader imports in the NPA interpreter on CPU",
         "native COLMAP converter CLI schema loads with patched trueprice/pycolmap",

@@ -150,6 +150,7 @@ IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
             "npa/demo/generate_observation.py",
             "npa/src/npa/workflows/behavior_challenge/comet_training_data.py",
             "npa/src/npa/workflows/lerobot_dataset.py",
+            "npa/src/npa/workflows/byof/molmoact2_pipeline.py",
             "npa/src/npa/workflows/policy_training/public_vla_verify.py",
         ),
     ),
@@ -157,6 +158,11 @@ IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
         "lerobot.datasets",
         "LeRobotDataset",
         ("npa/src/npa/setup/install_lerobot.sh",),
+    ),
+    (
+        "lerobot.datasets.dataset_tools",
+        "split_dataset",
+        ("npa/src/npa/workflows/byof/molmoact2_pipeline.py",),
     ),
     (
         "lerobot.datasets.video_utils",
