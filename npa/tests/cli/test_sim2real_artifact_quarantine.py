@@ -22,7 +22,11 @@ from npa.workflows.sim2real.artifact_config import (
     build_artifact_config_from_env,
 )
 from npa.workflows.sim2real.config import artifact_uris, build_config_from_env
-from npa.workflows.sim2real_rerun_regen import RegenResult, download_rrd_from_s3
+from npa.workflows.sim2real_rerun_regen import (
+    RegenResult,
+    Sim2RealRerunRegenError,
+    download_rrd_from_s3,
+)
 
 
 def _reject_execution_images(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -661,13 +665,25 @@ def test_sdk_output_paths_matches_execution_trigger_dataset_precedence(
     assert paths["trigger_dataset"] == artifact_uris(execution)["trigger_dataset"]
 
 
-def test_recording_download_uses_exact_selected_uri(tmp_path: Path) -> None:
-    selected = "s3://example-bucket/archived/custom.rrd"
+def test_recording_download_uses_exact_selected_uri(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    selected = "s3://example-bucket/sim2real-b/archived-run/reports/custom.rrd"
     downloads: list[str] = []
 
     def download(uri: str, destination: str) -> None:
         downloads.append(uri)
         Path(destination).write_bytes(b"existing-recording")
+
+    publication = SimpleNamespace(resolve=lambda uri: uri)
+    monkeypatch.setattr(
+        "npa.workflows.sim2real_rerun_regen.resolve_committed_publication_snapshot",
+        lambda *_args: publication,
+    )
+    monkeypatch.setattr(
+        "npa.workflows.sim2real_rerun_regen.verify_committed_publication_file",
+        lambda *_args, **_kwargs: None,
+    )
 
     config = Sim2RealArtifactConfig(run_id="archived-run", s3_bucket="example-bucket")
     path = download_rrd_from_s3(
@@ -678,3 +694,20 @@ def test_recording_download_uses_exact_selected_uri(tmp_path: Path) -> None:
     )
     assert downloads == [selected]
     assert path.read_bytes() == b"existing-recording"
+
+
+def test_recording_download_refuses_selected_uri_outside_run_prefix(
+    tmp_path: Path,
+) -> None:
+    config = Sim2RealArtifactConfig(run_id="archived-run", s3_bucket="example-bucket")
+
+    with pytest.raises(
+        Sim2RealRerunRegenError,
+        match="must remain under the configured run prefix",
+    ):
+        download_rrd_from_s3(
+            config,
+            dest_path=tmp_path / "review.rrd",
+            rrd_uri="s3://example-bucket/archived/custom.rrd",
+            client=SimpleNamespace(),
+        )
