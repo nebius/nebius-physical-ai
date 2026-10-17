@@ -57,6 +57,7 @@ EXCUSED: dict[str, str] = {
     "NPA_ISAAC_CACHE_DIR": "Isaac wheel closure (warm-isaac-cache.yaml)",
     "NPA_LTX_RUNTIME_CACHE": "CUDA wheel closure",
     "NPA_WAN_RUNTIME_CACHE": "CUDA wheel closure",
+    "NPA_SWITCHWORLD_VISUALIZE_RUNTIME_CACHE": "hash-locked CPU visualization wheel closure, not model weights",
     "NPA_ANTIOCH_RUNTIME_CACHE": "Antioch CLI/simulator closure, not model weights",
     # Per-tool data mounts that the VM deploy already bind-mounts from the host,
     # so they outlive the container by their own mechanism.

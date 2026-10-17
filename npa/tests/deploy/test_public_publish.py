@@ -478,7 +478,9 @@ def test_rebuilt_surfaces_including_detection_training_are_gpu_accepted() -> Non
         frozenset({"seedvr2", "openpi", "curobo", "ncore", "libero", "sam3"})
         | ({"robotwin", "robomimic", "habitat-sim"} & CONTAINER_IMAGE_NAMES.keys())
     )
-    assert NEUTRAL_UNBUILT_CANDIDATE_TOOLS == frozenset()
+    assert NEUTRAL_UNBUILT_CANDIDATE_TOOLS == frozenset(
+        {"lingbot-world-switchworld-private"}
+    )
     assert is_publicly_redistributable("robomimic")
     assert STALE_PUBLICATION_TOOLS == frozenset(
         {
@@ -773,13 +775,14 @@ def test_contract_marks_active_isaac_images_public_and_runtime_fetch() -> None:
 
 
 def test_the_restriction_mechanism_still_exists() -> None:
-    """The general refusal API covers every restricted PAIDF compatibility runtime."""
+    """The general refusal API covers restricted and neutral-quarantined runtimes."""
     assert hasattr(images, "OMNIVERSE_RESTRICTED_TOOLS")
     assert hasattr(images, "OMNIVERSE_RESTRICTED_DERIVED_IMAGES")
     assert restricted_image_names() == [
         "cosmos3-nano-video",
         "cosmos3-super-benchmark",
         "embodiedgen",
+        "lingbot-world-switchworld-private",
         "paidf-anomalygen-sky",
         "paidf-attribute-search-sky",
         "paidf-captioning-sky",
@@ -813,6 +816,7 @@ def test_public_refusal_union_preserves_pending_and_permanent_reasons() -> None:
         images.RESTRICTED_PUBLICATION_TOOLS
         | images.RESTRICTED_DERIVED_IMAGES
         | images.PENDING_REDISTRIBUTION_TOOLS
+        | images.NEUTRAL_UNBUILT_CANDIDATE_TOOLS
     )
     assert restricted_image_names() == sorted(expected)
     assert images.omniverse_restricted_image_names() == sorted(expected)
