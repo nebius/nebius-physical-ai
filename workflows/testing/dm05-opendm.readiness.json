@@ -1,0 +1,55 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "139c71062228b2d645ae76922e8a5386631be48218bba5f82209d7bda2e26f65",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "The saved five-stage workflow passed validate-spec and plan-spec --check-render using only its placeholder configuration; neither command submits a workload.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/dm05-opendm.yaml --json",
+        "npa workbench workflow plan-spec workflows/testing/dm05-opendm.yaml --run-id dm05-opendm-static-current --check-render --json"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Static contract coverage binds prepare, native training, HTTP rollout, closed-loop evaluation, and factual RRD/MP4 reporting into one artifact-connected path with explicit state, camera, action, and chunk normalization. This is not native execution evidence.",
+      "evidence": [
+        "npa/tests/workflows/test_dm05_opendm.py",
+        "docs/workbench/dm05-opendm.md"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "verified",
+      "reason": "The selected operator-private route passed its exact object-storage preflight. No identifier is retained in this repository record.",
+      "evidence": [
+        "sanitized private health-preflight receipt"
+      ]
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "The runtime dataset conversion and full materialization have not yet completed. Metadata and range probes do not stand in for the converted native training input.",
+      "evidence": []
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "The selected operator-private route completed its scoped credential and exact immutable model/data payload preflights. No credential value, account, or infrastructure identifier is retained in this repository record.",
+      "evidence": [
+        "sanitized private exact-payload access receipt"
+      ]
+    },
+    "source_image": {
+      "status": "verified",
+      "reason": "An operator-private immutable image completed source and dependency provenance review, runtime-fetch byte classification, complete-byte scanning, and metadata inspection. Its digest and delivery route remain only in access-controlled evidence; this is not a public redistribution claim.",
+      "evidence": [
+        "access-controlled operator-private image qualification receipt"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "The separately qualified operator-private image completed target pull/bootstrap preflight, but GPU device qualification was refused before managed-job admission because no current node satisfies the workflow's declared 1000 GiB disk requirement. Native training, HTTP rollout, closed-loop evaluation, metrics, RRD, and MP4 remain unverified.",
+      "evidence": []
+    }
+  }
+}

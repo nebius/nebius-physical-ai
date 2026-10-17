@@ -3,6 +3,7 @@ set -u
 
 real_apt_get=/usr/bin/apt-get
 real_timeout=/usr/bin/timeout
+real_sudo=/usr/bin/sudo
 real_ssh_keygen=/usr/bin/ssh-keygen
 guard_runtime_dir=/run/npa-skypilot-bootstrap
 guard_owner_uid=0
@@ -226,6 +227,13 @@ bootstrap_apt_get() {
 }
 
 bootstrap_timeout() {
+    if [ "$(id -u)" -ne "$guard_owner_uid" ]; then
+        if [ "$#" -eq 3 ] && [ "$1" = 2 ] && [ "$2" = sudo ] && [ "$3" = -l ]; then
+            exec "$real_timeout" --signal=TERM --kill-after=5s 2 "$real_sudo" -l
+        fi
+        contract_failure timeout-requires-root 87
+        exit $?
+    fi
     trusted_bootstrap_mode || exit $?
     "$real_timeout" --signal=TERM --kill-after=5s "$@"
     status=$?
