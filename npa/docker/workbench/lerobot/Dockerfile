@@ -118,6 +118,7 @@ RUN python3.12 -m venv /opt/lerobot/venv \
 
 ENV PATH=/opt/lerobot/venv/bin:$PATH \
     PYTHONPATH=/opt/npa/src \
+    NPA_BAKED_PYTHON=/opt/lerobot/venv/bin/python \
     NPA_SKIP_EAGER_IMPORTS=1
 
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
@@ -125,7 +126,8 @@ COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
 
 RUN python -m npa.smoke.test_lerobot_env \
-    && python -c "import pyarrow.parquet; import npa.workflows.lerobot_dataset; import npa.workbench.lerobot.policy_container"
+    && test "$NPA_BAKED_PYTHON" = /opt/lerobot/venv/bin/python \
+    && "$NPA_BAKED_PYTHON" -c "import pyarrow.parquet; import npa.workflows.lerobot_dataset; import npa.workbench.lerobot.policy_container"
 
 USER root
 

@@ -115,6 +115,8 @@ def test_lerobot_image_build_smoke_imports_npa_dataset_runtime() -> None:
         encoding="utf-8"
     )
     assert dockerfile.count('"pyarrow>=23.0.1"') == 2
+    assert "NPA_BAKED_PYTHON=/opt/lerobot/venv/bin/python" in dockerfile
+    assert '"$NPA_BAKED_PYTHON" -c' in dockerfile
     assert "import pyarrow.parquet" in dockerfile
     assert "import npa.workflows.lerobot_dataset" in dockerfile
     assert "import npa.workbench.lerobot.policy_container" in dockerfile
