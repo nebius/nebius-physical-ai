@@ -38,7 +38,7 @@ The source of truth is `skills/index.yaml`. The tree is organized as:
 - `skills/tools/golden-eval/SKILL.md`: prove a container image actually works — per-container hello-world manifest, dry-run/local/serverless tiers, batch runs, and the offline manifest validation that gates CI.
 - `skills/tools/alpamayo2-super/SKILL.md`: real Alpamayo 2 Super VLA inference, separate OpenMDW model and gated PhysicalAI-AV dataset terms, runtime-fetch packaging, and B200/RTX PRO 6000 validation.
 - `skills/tools/marble/SKILL.md`: hosted Marble world acquisition, gsplat/Warp CUDA consumers, native workflow composition, and factual interactive HTML reports.
-- `skills/tools/cosmos3-ray-serve/SKILL.md`: persistent Cosmos3-Nano serving through cosmos-framework's native Ray Serve batching path, authenticated readiness, S3 provenance, and independent B200/RTX PRO 6000 validation.
+- `skills/tools/cosmos3-ray-serve/SKILL.md`: retained Cosmos3-Nano Ray Serve history and separately rebuilt-candidate validation. The retained image is quarantined and must not be deployed or started.
 - `skills/tools/ray-workbench/SKILL.md`: route Ray requests to the supported native Jobs/Core, Train V2, Cosmos3 native Serve, or fixed CPU KubeRay paths and state unsupported library boundaries.
 - `skills/tools/seedvr2/SKILL.md`: package, run, validate, or review official SeedVR2-3B restoration of robot observation video, its S3 workflow, and objective/visual evidence without treating generated detail as sensor truth.
 - `skills/tools/burst/SKILL.md`: one gang-scheduled multi-node GPU job with torchrun rendezvous, deliberately not a workflow surface.
