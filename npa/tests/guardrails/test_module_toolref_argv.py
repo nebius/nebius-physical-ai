@@ -37,6 +37,8 @@ PARSER_FACTORIES = {
     "npa.workflows.video_sweep": "build_parser",
     "npa.workflows.xr1_antioch.training": "build_parser",
     "npa.workflows.lerobot_transfer": "build_parser",
+    "npa.workflows.dm05_lerobot_libero": "build_parser",
+    "npa.workflows.dm05_opendm_libero_baseline": "build_parser",
     "npa.workflows.habitat_sim_smoke": "build_parser",
     "npa.workflows.sim2real_envgen": "build_parser",
     "npa.workflows.token_factory_triage": "build_parser",

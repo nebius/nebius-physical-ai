@@ -1,0 +1,49 @@
+# Operator-private qualification image for the released DM05-Lerobot-LIBERO
+# checkpoint. It deliberately contains no checkpoint or dataset bytes.
+FROM ghcr.io/nebius/nebius-physical-ai/npa-lerobot@sha256:8d513f8558253fc484808a1e53a63a5da5a0c280ff973c4e590dd3e04b228643
+
+LABEL org.opencontainers.image.source="https://github.com/hbzfeng/lerobot" \
+      org.opencontainers.image.revision="6eede4f7d2efe6b4f6a58ddb7b13ed55e2346b9c" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.nebius.npa.libero.source="https://github.com/Lifelong-Robot-Learning/LIBERO" \
+      org.nebius.npa.libero.revision="8f1084e3132a39270c3a13ebe37270a43ece2a01" \
+      org.nebius.npa.libero.license="MIT" \
+      org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1" \
+      org.nebius.npa.validation-disposition="operator-private-no-publication"
+
+USER ubuntu
+WORKDIR /opt/lerobot
+
+# The original PR implementation is required for the checkpoint's processor
+# format. Disable LFS filters before checkout: source code and its Apache notice
+# are included, while LFS payloads are neither fetched nor embedded. Install the
+# original source's LIBERO extra and retain the MIT-licensed benchmark closure
+# (code, BDDL files, init states, and simulator assets) at an explicit pinned
+# location. It does not include LIBERO demonstrations or checkpoint bytes.
+RUN git clone --no-checkout https://github.com/hbzfeng/lerobot.git /opt/lerobot/dm05-source \
+    && git -C /opt/lerobot/dm05-source config filter.lfs.process '' \
+    && git -C /opt/lerobot/dm05-source config filter.lfs.smudge '' \
+    && git -C /opt/lerobot/dm05-source config filter.lfs.required false \
+    && git -C /opt/lerobot/dm05-source checkout --detach 6eede4f7d2efe6b4f6a58ddb7b13ed55e2346b9c \
+    && /opt/lerobot/venv/bin/python -m pip install --no-cache-dir --upgrade \
+      --upgrade-strategy only-if-needed '/opt/lerobot/dm05-source[training,libero,dm05]' 'hf-libero==0.1.4' \
+    && /opt/lerobot/venv/bin/python -m pip uninstall -y wandb \
+    && /opt/lerobot/venv/bin/python -c "from lerobot.configs import PreTrainedConfig; from lerobot.policies.dm05.configuration_dm05 import DM05Config; from lerobot.policies.dm05.modeling_dm05 import DM05Policy; from lerobot.policies.factory import get_policy_class; assert PreTrainedConfig.get_choice_class('dm05') is DM05Config; assert get_policy_class('dm05') is DM05Policy" \
+    && rm -rf /opt/lerobot/dm05-source/.git
+
+RUN git clone --no-checkout https://github.com/Lifelong-Robot-Learning/LIBERO.git /opt/lerobot/libero-benchmark \
+    && git -C /opt/lerobot/libero-benchmark config filter.lfs.process '' \
+    && git -C /opt/lerobot/libero-benchmark config filter.lfs.smudge '' \
+    && git -C /opt/lerobot/libero-benchmark config filter.lfs.required false \
+    && git -C /opt/lerobot/libero-benchmark checkout --detach 8f1084e3132a39270c3a13ebe37270a43ece2a01 \
+    && test -f /opt/lerobot/libero-benchmark/LICENSE \
+    && test -d /opt/lerobot/libero-benchmark/libero/libero/bddl_files \
+    && test -d /opt/lerobot/libero-benchmark/libero/libero/init_files \
+    && test -d /opt/lerobot/libero-benchmark/libero/libero/assets \
+    && rm -rf /opt/lerobot/libero-benchmark/.git
+
+COPY --chown=ubuntu:ubuntu docker/workbench/lerobot/dm05-runtime-manifest.json /opt/lerobot/dm05-runtime.json
+COPY --chown=ubuntu:ubuntu docker/workbench/lerobot/DM05-ATTRIBUTION.md /opt/lerobot/DM05-ATTRIBUTION.md
+
+ENV NPA_DM05_RUNTIME_MANIFEST=/opt/lerobot/dm05-runtime.json
+ENV NPA_DM05_LIBERO_BENCHMARK_ROOT=/opt/lerobot/libero-benchmark/libero/libero

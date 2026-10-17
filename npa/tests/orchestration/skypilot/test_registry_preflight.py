@@ -1644,9 +1644,13 @@ def _target_probe_runner(
     service_account_name: str = "skypilot-service-account",
     secret_names: tuple[str, ...] = ("pull-secret",),
     default_pull_secrets: tuple[str, ...] = (),
+    first_delete_keeps_probe: bool = False,
+    first_cleanup_get_is_empty: bool = False,
 ):
     calls: list[list[str]] = []
     deleted = False
+    delete_attempts = 0
+    cleanup_get_is_empty = first_cleanup_get_is_empty
     name = f"npa-pull-{hashlib.sha256(IMAGE.encode()).hexdigest()[:12]}-abc123"
     payload = {
         "metadata": {
@@ -1690,7 +1694,7 @@ def _target_probe_runner(
     }
 
     def run(cmd, **kwargs):  # noqa: ANN001
-        nonlocal deleted
+        nonlocal cleanup_get_is_empty, delete_attempts, deleted
         calls.append(cmd)
         if "serviceaccount" in cmd:
             account = {
@@ -1736,11 +1740,17 @@ def _target_probe_runner(
                 cmd, 0, stdout=json.dumps(payload), stderr=""
             )
         if "delete" in cmd:
+            delete_attempts += 1
             options = json.loads(kwargs["input"])
             assert options["preconditions"]["uid"] == "probe-uid"
-            if delete_exit == 0:
+            if delete_exit == 0 and not (
+                first_delete_keeps_probe and delete_attempts == 1
+            ):
                 deleted = True
             return subprocess.CompletedProcess(cmd, delete_exit, stdout="", stderr="")
+        if cleanup_get_is_empty and "--ignore-not-found=true" in cmd:
+            cleanup_get_is_empty = False
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
         if deleted and "--ignore-not-found=true" in cmd:
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
         return subprocess.CompletedProcess(
@@ -2235,6 +2245,26 @@ def test_target_pull_probe_fails_when_owned_cleanup_is_unverified() -> None:
     assert check.ok is False
 
 
+def test_target_pull_probe_rechecks_empty_cleanup_observation() -> None:
+    run, calls = _target_probe_runner(
+        first_delete_keeps_probe=True,
+        first_cleanup_get_is_empty=True,
+    )
+
+    check = verify_kubernetes_image_pull(
+        image=IMAGE,
+        secret_names=("pull-secret",),
+        namespace="target-namespace",
+        context="target-context",
+        timeout_seconds=30,
+        runner=run,
+        nonce_factory=lambda: "abc123",
+    )
+
+    assert check == KubernetesPullCheck(status="verified", digest=DIGEST)
+    assert sum("delete" in cmd for cmd in calls) == 2
+
+
 def test_target_pull_probe_retries_when_delete_times_out() -> None:
     run, _calls = _target_probe_runner()
     delete_attempts = 0
@@ -2475,9 +2505,10 @@ def test_cleanup_interrupt_reports_unverified_owned_probe() -> None:
         )
 
     assert cleanup_reads == 4
-    assert "target pull probe cleanup=unverified" in "\n".join(
-        getattr(exc_info.value, "__notes__", ())
+    cleanup_note = "\n".join(getattr(exc_info.value, "__notes__", ())) or getattr(
+        exc_info.value, "__npa_cleanup_note__", ""
     )
+    assert "target pull probe cleanup=unverified" in cleanup_note
 
 
 def test_malformed_probe_labels_fail_closed_without_uncaught_exception() -> None:

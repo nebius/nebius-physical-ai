@@ -1660,7 +1660,9 @@ def _cleanup_pull_probe_iteration(
     if current.returncode != 0:
         return "retry", expected_uid
     if not current.stdout.strip():
-        return "absent", expected_uid
+        if _pull_probe_absence_confirmed(run=run, name=name):
+            return "absent", expected_uid
+        return "retry", expected_uid
     identity = _pull_probe_identity(
         current.stdout,
         name=name,
@@ -1691,6 +1693,20 @@ def _cleanup_pull_probe_iteration(
     except (OSError, subprocess.SubprocessError):
         return "retry", observed_uid
     return ("deleted" if deleted.returncode == 0 else "retry"), observed_uid
+
+
+def _pull_probe_absence_confirmed(
+    *, run: Callable[..., subprocess.CompletedProcess[str]], name: str
+) -> bool:
+    """Require a second empty observation before accepting a probe is absent."""
+
+    try:
+        confirmation = run(
+            ["get", "pod", name, "--ignore-not-found=true", "-o", "json"]
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return confirmation.returncode == 0 and not confirmation.stdout.strip()
 
 
 def _cleanup_kubernetes_pull_probe(

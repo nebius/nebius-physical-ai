@@ -1,0 +1,124 @@
+# Operator-private runtime for the released OpenDM DM05 LIBERO comparison
+# baseline. Checkpoint, model cache, dataset, and rollout bytes are runtime-only.
+FROM ghcr.io/nebius/nebius-physical-ai/npa-lerobot@sha256:8d513f8558253fc484808a1e53a63a5da5a0c280ff973c4e590dd3e04b228643 AS dm05-sanitized-parent
+
+USER root
+
+# The parent already has the pinned CUDA runtime, EGL, and Python 3.10 with
+# pip, but its held CUDA packages make its APT resolver unable to install
+# python3.10-venv or OSMesa without changing those pinned bytes.  The evaluator
+# explicitly selects EGL below, so create its isolated Python environments with
+# a pinned virtualenv instead of mutating that resolver transaction.  No source,
+# model, or model cache is fetched here.
+# virtualenv 21.7.13 satisfies the deployed-workbench security floor.
+RUN python3.10 -m pip install --no-cache-dir 'virtualenv==21.7.13' \
+    && python3.10 -m virtualenv --no-download --python=/usr/bin/python3.10 /opt/opendm-venv \
+    && python3.10 -m virtualenv --no-download --python=/usr/bin/python3.10 /opt/libero-venv \
+    && install -d -m 0755 -o ubuntu -g ubuntu /opt/opendm /opt/dexbotic-benchmark \
+    && chown -R ubuntu:ubuntu /opt/opendm-venv /opt/libero-venv
+
+USER ubuntu
+WORKDIR /opt/opendm
+
+# Source closures are cloned without LFS filters. The image retains each
+# upstream LICENSE but never includes checkpoint, benchmark demonstration, or
+# model-derived bytes.
+RUN git clone --no-checkout https://github.com/dexmal/opendm.git /opt/opendm \
+    && git -C /opt/opendm config filter.lfs.process '' \
+    && git -C /opt/opendm config filter.lfs.smudge '' \
+    && git -C /opt/opendm config filter.lfs.required false \
+    && git -C /opt/opendm checkout --detach 7d52f1591437332cb0157be3303c1c46da811344 \
+    && test -f /opt/opendm/LICENSE \
+    && git clone --no-checkout https://github.com/dexmal/dexbotic-benchmark.git /opt/dexbotic-benchmark \
+    && git -C /opt/dexbotic-benchmark config filter.lfs.process '' \
+    && git -C /opt/dexbotic-benchmark config filter.lfs.smudge '' \
+    && git -C /opt/dexbotic-benchmark config filter.lfs.required false \
+    && git -C /opt/dexbotic-benchmark checkout --detach 789b87f50d9fadc7663d2e8bac057941221aab81 \
+    && test -f /opt/dexbotic-benchmark/LICENSE \
+    && git clone --no-checkout https://github.com/Lifelong-Robot-Learning/LIBERO.git /opt/dexbotic-benchmark/libero \
+    && git -C /opt/dexbotic-benchmark/libero config filter.lfs.process '' \
+    && git -C /opt/dexbotic-benchmark/libero config filter.lfs.smudge '' \
+    && git -C /opt/dexbotic-benchmark/libero config filter.lfs.required false \
+    && git -C /opt/dexbotic-benchmark/libero checkout --detach 8f1084e3132a39270c3a13ebe37270a43ece2a01 \
+    && test -f /opt/dexbotic-benchmark/libero/LICENSE \
+    && printf '%s\n' \
+      'benchmark_root: /opt/dexbotic-benchmark/libero/libero/libero' \
+      'bddl_files: /opt/dexbotic-benchmark/libero/libero/libero/bddl_files' \
+      'init_states: /opt/dexbotic-benchmark/libero/libero/libero/init_files' \
+      'datasets: /opt/dexbotic-benchmark/libero/libero/datasets' \
+      'assets: /opt/dexbotic-benchmark/libero/libero/libero/assets' \
+      > /opt/dexbotic-benchmark/libero/libero/libero/config.yaml \
+    && rm -rf /opt/opendm/.git /opt/dexbotic-benchmark/.git /opt/dexbotic-benchmark/libero/.git
+
+# OpenDM declares Python >=3.10 and an inference dependency closure. Keep it
+# separate from the evaluator's older LIBERO dependency set. W&B is removed:
+# native inference/evaluation does not use it and this image must not enable
+# optional telemetry.
+RUN /opt/opendm-venv/bin/python --version \
+    && /opt/opendm-venv/bin/python -m pip install --no-cache-dir --upgrade pip setuptools wheel \
+    && /opt/opendm-venv/bin/python -m pip install --no-cache-dir -e /opt/opendm \
+    && /opt/opendm-venv/bin/python -m pip uninstall -y wandb \
+    && PYTHONPATH=/opt/opendm /opt/opendm-venv/bin/python -c "from opendm.constants.robot import ActionMode; from playground.dm05_libero import DM05DataConfig, DM05InferenceConfig, DM05ModelConfig; assert DM05DataConfig().action_mode is ActionMode.ABSOLUTE; assert not DM05DataConfig().add_state; assert DM05ModelConfig().chunk_size == 10; assert DM05InferenceConfig().output_action_dim == 7"
+
+# Dexbotic's upstream local LIBERO guide uses a distinct environment. These are
+# the evaluator imports exercised by its native run script; W&B and unrelated
+# benchmark families are deliberately not installed.
+# hydra-core 1.3.7 satisfies the deployed-workbench security floor.
+RUN /opt/libero-venv/bin/python --version \
+    && /opt/libero-venv/bin/python -m pip install --no-cache-dir --upgrade pip 'setuptools==57.5.0' wheel \
+    && /opt/libero-venv/bin/python -m pip install --no-cache-dir \
+      'torch==2.11.0' 'torchvision==0.26.0' --index-url https://download.pytorch.org/whl/cu128 \
+    && /opt/libero-venv/bin/python -m pip install --no-cache-dir \
+      'bddl==1.0.1' 'cloudpickle==2.1.0' 'easydict==1.9' 'einops==0.4.1' 'future==1.0.0' \
+      'gym==0.25.2' 'hydra-core==1.3.7' 'imageio' 'matplotlib==3.5.3' 'numpy==1.22.4' \
+      'omegaconf' 'opencv-python-headless==4.6.0.66' 'Pillow' 'requests' \
+      'robomimic==0.2.0' 'robosuite==1.4.0' 'tqdm' \
+    && /opt/libero-venv/bin/python -m pip install --no-cache-dir -e /opt/dexbotic-benchmark/libero \
+    && LIBERO_CONFIG_PATH=/opt/dexbotic-benchmark/libero/libero/libero PYTHONPATH=/opt/dexbotic-benchmark:/opt/dexbotic-benchmark/libero /opt/libero-venv/bin/python -c "from evaluation.evaluator.libero_evaluator import LiberoEvaluator; from libero.libero import benchmark; assert 'libero_spatial' in benchmark.get_benchmark_dict()"
+
+# The pinned parent includes a static, sample-media JWT URL in scikit-image's
+# documentation-only fetcher. It is not used by this baseline; redact that
+# one literal before scanning so the private image carries no token-shaped byte.
+RUN fetcher=/opt/lerobot/venv/lib/python3.12/site-packages/skimage/data/_fetchers.py \
+    && test "$(grep -Eoc 'eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+' "$fetcher")" -eq 1 \
+    && sed -Ei 's#eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+#redacted-static-jwt#' "$fetcher" \
+    && grep -Fq 'redacted-static-jwt' "$fetcher" \
+    && python3.10 -m py_compile "$fetcher"
+
+# The parent has the original sample token in an inherited layer. Copy its
+# sanitized filesystem into a final scratch stage so image-layer scanners see
+# only the redacted bytes, then restore the parent runtime metadata explicitly.
+FROM scratch
+COPY --from=dm05-sanitized-parent / /
+
+LABEL org.opencontainers.image.source="https://github.com/dexmal/opendm" \
+      org.opencontainers.image.revision="7d52f1591437332cb0157be3303c1c46da811344" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.nebius.npa.dexbotic.source="https://github.com/dexmal/dexbotic-benchmark" \
+      org.nebius.npa.dexbotic.revision="789b87f50d9fadc7663d2e8bac057941221aab81" \
+      org.nebius.npa.dexbotic.license="MIT" \
+      org.nebius.npa.libero.source="https://github.com/Lifelong-Robot-Learning/LIBERO" \
+      org.nebius.npa.libero.revision="8f1084e3132a39270c3a13ebe37270a43ece2a01" \
+      org.nebius.npa.libero.license="MIT" \
+      org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1" \
+      org.nebius.npa.validation-disposition="operator-private-no-publication"
+
+ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+WORKDIR /opt/opendm
+
+USER root
+
+COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh \
+    /usr/local/bin/npa-workflow-entrypoint
+COPY --chown=ubuntu:ubuntu docker/workbench/lerobot/dm05-opendm-baseline-runtime-manifest.json /opt/opendm/dm05-libero-baseline-runtime.json
+COPY --chown=ubuntu:ubuntu docker/workbench/lerobot/DM05-OPENDM-BASELINE-ATTRIBUTION.md /opt/opendm/DM05-OPENDM-BASELINE-ATTRIBUTION.md
+
+ENV NPA_DM05_OPENDM_RUNTIME_MANIFEST=/opt/opendm/dm05-libero-baseline-runtime.json \
+    NPA_DM05_OPENDM_ROOT=/opt/opendm \
+    NPA_DM05_DEXBOTIC_ROOT=/opt/dexbotic-benchmark \
+    NPA_DM05_OPENDM_PYTHON=/opt/opendm-venv/bin/python \
+    NPA_DM05_DEXBOTIC_PYTHON=/opt/libero-venv/bin/python \
+    IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg
+
+USER ubuntu
+ENTRYPOINT ["/usr/local/bin/npa-workflow-entrypoint"]
