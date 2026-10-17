@@ -619,6 +619,7 @@ def test_disabled_mcap_does_not_upload_stale_bytes(
     )
     result = SimpleNamespace(
         heldout_frame_count=1,
+        heldout_env_count=0,
         output_rrd_path=str(rrd),
         rollout_count=0,
         frame_count=1,

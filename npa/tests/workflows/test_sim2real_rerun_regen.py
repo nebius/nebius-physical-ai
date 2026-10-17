@@ -84,10 +84,10 @@ def test_resolve_local_rrd_path_env_override(
     )
 
 
-def test_regen_heldout_gate_requires_camera_evidence() -> None:
+def test_regen_heldout_gate_requires_camera_evidence(tmp_path: Path) -> None:
     rollout_only = Sim2RealVizResult(
         status="succeeded",
-        output_rrd_path="/tmp/rollout-only.rrd",
+        output_rrd_path=str(tmp_path / "rollout-only.rrd"),
         rollout_count=1,
         frame_count=1,
     )
@@ -97,7 +97,7 @@ def test_regen_heldout_gate_requires_camera_evidence() -> None:
 
     sealed_scores = Sim2RealVizResult(
         status="succeeded",
-        output_rrd_path="/tmp/sealed-scores.rrd",
+        output_rrd_path=str(tmp_path / "sealed-scores.rrd"),
         heldout_env_count=1,
     )
     assert not _has_regen_heldout_evidence(sealed_scores)
@@ -107,7 +107,10 @@ def test_regen_heldout_gate_requires_camera_evidence() -> None:
 def test_run_prefix_uri_uses_shared_artifact_coordinates(config_factory) -> None:
     config = config_factory()
 
-    assert run_prefix_uri(config) == "s3://demo-bucket/sim2real-b/sim2real-staged-20260616t093101z/"
+    assert (
+        run_prefix_uri(config)
+        == "s3://demo-bucket/sim2real-b/sim2real-staged-20260616t093101z/"
+    )
 
 
 def test_regen_sim2real_rrd_requires_heldout_frames(

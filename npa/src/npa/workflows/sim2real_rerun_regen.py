@@ -3121,9 +3121,7 @@ def _has_regen_heldout_evidence(result: Sim2RealVizResult) -> bool:
 
 def _assert_regen_heldout_frames(result: Sim2RealVizResult) -> None:
     if not _has_regen_heldout_evidence(result):
-        raise Sim2RealRerunRegenError(
-            "regenerated .rrd has no held-out camera frames"
-        )
+        raise Sim2RealRerunRegenError("regenerated .rrd has no held-out camera frames")
 
 
 def _finalize_regen_result(
@@ -4495,9 +4493,7 @@ def _regen_result_from_viz(
     mcap_upload_uri: str = "",
 ) -> RegenResult:
     if not _has_regen_heldout_evidence(result):
-        raise Sim2RealRerunRegenError(
-            "regenerated .rrd has no held-out camera frames"
-        )
+        raise Sim2RealRerunRegenError("regenerated .rrd has no held-out camera frames")
     mcap = mcap_result or {}
     return RegenResult(
         run_id=run_id,

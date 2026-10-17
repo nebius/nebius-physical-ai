@@ -138,7 +138,7 @@ access and workload acceptance requirements continue to apply.
 The preceding tables preserve the original dated resolver observation. That
 audit missed literal Isaac and SONIC digests, which bypassed tool-default
 quarantine. The follow-up removes those automatic selections. Across all 147
-shipped specs, there are **40 blocked default selections**: 30 quarantined
+shipped specs, there are **41 blocked default selections**: 31 quarantined
 tool-image selections and ten missing exact-operator config-input selections
 across seven workflows. These categories are audited independently: supplying exact operator
 inputs can reveal additional quarantined task-image defaults. This is planning
@@ -168,6 +168,7 @@ evidence only, not fresh image or GPU acceptance.
 | `workflows/testing/rgbd-scan-to-isaac.yaml` | `sonic` |
 | `workflows/testing/rl-policy-training-sim-success.yaml` | `isaac-lab` |
 | `workflows/testing/robocasa-data-policy.yaml` | `lerobot` |
+| `workflows/testing/seedvr2-video-restoration.yaml` | `seedvr2` |
 | `workflows/testing/shared-scene-navigation.yaml` | `isaac-lab` |
 | `workflows/testing/sonic-eval.yaml` | `sonic` |
 | `workflows/testing/sonic-export-eval.yaml` | `sonic` |
