@@ -65,6 +65,19 @@ def test_workflow_command_help(command: str) -> None:
     assert "Usage:" in result.output
 
 
+def test_raw_plan_only_help_discloses_its_non_submission_contract() -> None:
+    result = runner.invoke(
+        app, ["workbench", "workflow", "submit", "--help"], terminal_width=200
+    )
+
+    assert result.exit_code == 0
+    assert "raw SkyPilot" in result.output
+    assert "PLANNED" in result.output
+    assert "NOT_SUBMITTED" in result.output
+    assert "durable" in result.output
+    assert "submission" in result.output
+
+
 def test_raw_submit_preflight_rejects_explicit_missing_config(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -245,6 +258,61 @@ def test_workbench_workflow_submit_dispatches_skypilot(
     assert submit_mock.call_args.kwargs["secret_envs"] == ["AWS_ACCESS_KEY_ID"]
 
 
+def test_raw_sky_plan_only_never_starts_a_launch_or_lifecycle_transaction(
+    mocker, monkeypatch, tmp_path
+) -> None:
+    """Raw SkyPilot planning is observational, not a deferred submission."""
+    yaml_path = tmp_path / "raw-plan.yaml"
+    yaml_path.write_text("name: raw-plan\nrun: echo plan\n", encoding="utf-8")
+    operation_root = tmp_path / "operations"
+    monkeypatch.setenv("NPA_OPERATION_JOURNAL_DIR", str(operation_root))
+    _patch_workflow_s3(monkeypatch, FakeWorkflowS3())
+    submit = mocker.patch(
+        "npa.orchestration.skypilot.workflow.submit_workflow",
+        side_effect=AssertionError("raw --plan-only must not submit"),
+    )
+    prepare = mocker.patch(
+        "npa.provisioning_journal.ProvisioningOperation.prepare",
+        side_effect=AssertionError("raw --plan-only must not prepare a journal"),
+    )
+    stage_source = mocker.patch(
+        "npa.cli.workbench.workflow._stage_npa_src_for_submit",
+        side_effect=AssertionError("raw --plan-only must not stage source"),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(yaml_path),
+            "--run-id",
+            "raw-plan-only",
+            "--durable-s3",
+            "--workflow-s3-uri",
+            "s3://test-bucket/raw-plan-only/",
+            "--plan-only",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload == {
+        "lifecycle_state": "PLAN_ONLY",
+        "run_id": "raw-plan-only",
+        "status": "PLANNED",
+        "submission_state": "NOT_SUBMITTED",
+        "workflow": "raw-skypilot-yaml",
+    }
+    submit.assert_not_called()
+    prepare.assert_not_called()
+    stage_source.assert_not_called()
+    assert not operation_root.exists()
+
+
 def _raw_recovery_submit_args(
     yaml_path: Path, isolated_dir: Path, config_path: Path
 ) -> list[str]:
@@ -345,6 +413,7 @@ def test_raw_sky_recovery_argv_replays_same_journal_and_launch_options(
     assert first.exit_code == 1, first.output
     [journal_path] = raw_recovery_case.operation_root.glob("*/journal.json")
     initial = json.loads(journal_path.read_text(encoding="utf-8"))
+    assert initial["phase"] == "recovery-required"
     recovery_argv = initial["recovery_commands"]["resume_argv"]
 
     resumed = runner.invoke(app, recovery_argv[1:])
@@ -362,6 +431,35 @@ def test_raw_sky_recovery_argv_replays_same_journal_and_launch_options(
     assert replay.args[1] == "raw-recovery-run"
     assert replay.kwargs["infra"] == "k8s/synthetic-context"
     assert replay.kwargs["controller_backend"] == "kubernetes"
+
+
+def test_verified_prelaunch_submit_failure_rolls_back_new_journal(
+    raw_recovery_case,
+) -> None:
+    """A proven pre-launch error never strands a recoverable operation."""
+    from npa.orchestration.skypilot.workflow import SkyPilotSubmitError
+
+    raw_recovery_case.submit.side_effect = SkyPilotSubmitError(
+        "synthetic isolated API identity refusal", launch_attempted=False
+    )
+
+    result = runner.invoke(
+        app,
+        _raw_recovery_submit_args(
+            raw_recovery_case.yaml_path,
+            raw_recovery_case.isolated_dir,
+            raw_recovery_case.config_path,
+        ),
+    )
+
+    assert result.exit_code == 1, result.output
+    [journal_path] = raw_recovery_case.operation_root.glob("*/journal.json")
+    final = json.loads(journal_path.read_text(encoding="utf-8"))
+    assert final["phase"] == "rolled-back"
+    assert final["rollback"]["attempted"] is False
+    assert final["rollback"]["completed"] is True
+    assert final["events"][-1]["details"]["launch_attempted"] is False
+    raw_recovery_case.submit.assert_called_once()
 
 
 def test_secret_shaped_var_fails_cleanly_before_launch(raw_recovery_case) -> None:

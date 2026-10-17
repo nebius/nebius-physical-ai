@@ -289,11 +289,30 @@ def _attach_runtime_state(result: RunResolution, state: WorkflowS3Config) -> Non
 
     from npa.orchestration.skypilot.workflow_state import get_json
 
-    try:
-        payload = get_json(state, "runtime.json")
-    except WorkflowStateError as exc:
-        if not workflow_state_error_is_missing(exc):
+    # ``workflow_s3_uri`` passed to submit names the run root.  Runtime-ledger
+    # storage deliberately nests its immutable control documents under
+    # ``npa-workflow/`` so they cannot be mistaken for workload outputs.
+    # Status also accepts older callers that already point at that control
+    # prefix, plus legacy raw-workflow roots that stored ``runtime.json``
+    # directly.  Prefer the canonical nested ledger for a run root and never
+    # search outside the exact requested prefix.
+    direct_parts: tuple[str, ...] = ("runtime.json",)
+    candidates: tuple[tuple[str, ...], ...] = (
+        (direct_parts,)
+        if state.prefix.rstrip("/").endswith("/npa-workflow")
+        else (("npa-workflow", "runtime.json"), direct_parts)
+    )
+    payload: dict[str, Any] | None = None
+    for parts in candidates:
+        try:
+            payload = get_json(state, *parts)
+            break
+        except WorkflowStateError as exc:
+            if workflow_state_error_is_missing(exc):
+                continue
             result.runtime_state_error = redact_text(str(exc))
+            return
+    if payload is None:
         return
     if str(payload.get("run_id") or "") != result.run_id:
         result.runtime_state_error = (

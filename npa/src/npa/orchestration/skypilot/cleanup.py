@@ -2028,6 +2028,15 @@ def _run(
         progress.finish(outcome, "attempt=1")
 
 
+def _prepend_pythonpath_once(environment: dict[str, str], entry: str) -> None:
+    """Keep the selected NPA source first without duplicating that entry."""
+
+    entries = environment.get("PYTHONPATH", "").split(os.pathsep)
+    environment["PYTHONPATH"] = (
+        entry + os.pathsep + os.pathsep.join(item for item in entries if item != entry)
+    )
+
+
 def sky_environment(
     isolated_config_dir: Path | None = None,
     *,
@@ -2102,7 +2111,7 @@ def sky_environment(
         env["SKYPILOT_USER_ID"] = f"npa-{state_digest}"
     env["PYTHONUNBUFFERED"] = "1"
     repo_src = Path(__file__).resolve().parents[3]
-    env["PYTHONPATH"] = str(repo_src) + os.pathsep + env.get("PYTHONPATH", "")
+    _prepend_pythonpath_once(env, str(repo_src))
     from npa.clients.config import NPA_CONFIG_DIR
     from npa.orchestration.skypilot.local_api import isolated_api_environment
 

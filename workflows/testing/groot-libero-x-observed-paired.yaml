@@ -1,0 +1,113 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: groot-libero-x-observed-paired
+  description: >
+    Run a paired native LIBERO-X comparison for the public GR00T N1.7 derivative
+    when its exact training-task inventory is unavailable. Every report labels
+    training coverage unknown and task disjointness unverified; this is not a
+    held-out or generalization result.
+
+config:
+  bucket: example-bucket
+  prefix: "groot-libero-x-observed-paired/{{run.id}}"
+  source_overlay: true
+  native_groot_runtime_revision: 51d4c89f72fda44cbf77285c6a8114b52676b8a1
+  baseline_model_repo: nvidia/GR00T-N1.7-LIBERO
+  baseline_model_revision: 2ea293aa20ba7cf5bbf3ba17a5fbcb1a01cbfe21
+  baseline_model_subdir: libero_10
+  derivative_model_repo: rohansiva/gr00t-libero-x
+  derivative_model_revision: b9dfbdcce8da61950db4f34199fff30b286b8f13
+  derivative_model_subdir: ""
+  evaluation_accelerator: RTXPRO6000:1
+  episodes_per_task: "10"
+  n_envs: "5"
+  max_episode_steps: "720"
+  n_action_steps: "8"
+  evaluation_seed: "20261002"
+
+  observed_task_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/inputs/observed-paired-tasks.json"
+  evaluation_dataset_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/inputs/evaluation-dataset.json"
+  protocol_uri: "s3://{{config.bucket}}/{{config.prefix}}/prepared/observed-paired-protocol.json"
+  baseline_rollout_uri: "s3://{{config.bucket}}/{{config.prefix}}/rollouts/baseline/report.json"
+  baseline_rollout_media_uri: "s3://{{config.bucket}}/{{config.prefix}}/rollouts/baseline/mp4"
+  baseline_failure_uri: "s3://{{config.bucket}}/{{config.prefix}}/diagnostics/baseline-failure.json"
+  derivative_rollout_uri: "s3://{{config.bucket}}/{{config.prefix}}/rollouts/derivative/report.json"
+  derivative_rollout_media_uri: "s3://{{config.bucket}}/{{config.prefix}}/rollouts/derivative/mp4"
+  derivative_failure_uri: "s3://{{config.bucket}}/{{config.prefix}}/diagnostics/derivative-failure.json"
+  comparison_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/observed-paired-comparison.json"
+  rrd_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/groot-libero-x-observed-paired.rrd"
+  evidence_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/observed-paired-evidence.json"
+
+resources:
+  evaluation-gpu:
+    cloud: kubernetes
+    accelerators: "{{config.evaluation_accelerator}}"
+    cpus: 16
+    memory: 96Gi
+  artifact-cpu:
+    cloud: kubernetes
+    cpus: 8
+    memory: 32Gi
+
+initial: prepare_observed_paired_evaluation
+
+states:
+  prepare_observed_paired_evaluation:
+    description: Bind real manifest-selected LIBERO-X tasks, dataset bytes, state/seed protocol, and the explicit unknown-coverage claim classification.
+    toolRef: workflow.groot_libero_x.prepare_observed_paired_evaluation
+    resources: artifact-cpu
+    inputs:
+      - {uri: "{{config.observed_task_manifest_uri}}", schema: npa.groot_libero_x.observed_tasks.v1}
+      - {uri: "{{config.evaluation_dataset_manifest_uri}}", schema: npa.groot_libero_x.evaluation_dataset.v1}
+    outputs:
+      - {uri: "{{config.protocol_uri}}", schema: npa.groot_libero_x.evaluation_protocol.v1}
+    next: run_nvidia_baseline_closed_loop
+
+  run_nvidia_baseline_closed_loop:
+    description: Execute the NVIDIA base checkpoint on exactly the prepared native LIBERO-X tasks and retain actual MP4s.
+    toolRef: workbench.groot.libero_x_baseline
+    resources: evaluation-gpu
+    inputs:
+      - {uri: "{{config.protocol_uri}}", schema: npa.groot_libero_x.evaluation_protocol.v1}
+    outputs:
+      - {uri: "{{config.baseline_rollout_uri}}", schema: npa.groot_libero_x.closed_loop_rollout.v1}
+      - {uri: "{{config.baseline_rollout_media_uri}}", schema: video.mp4.native-libero-rollout-prefix}
+    next: run_derivative_closed_loop
+
+  run_derivative_closed_loop:
+    description: Execute the derivative checkpoint on the identical prepared task, state, seed, camera, and action protocol and retain actual MP4s.
+    toolRef: workbench.groot.libero_x_derivative
+    resources: evaluation-gpu
+    inputs:
+      - {uri: "{{config.protocol_uri}}", schema: npa.groot_libero_x.evaluation_protocol.v1}
+    outputs:
+      - {uri: "{{config.derivative_rollout_uri}}", schema: npa.groot_libero_x.closed_loop_rollout.v1}
+      - {uri: "{{config.derivative_rollout_media_uri}}", schema: video.mp4.native-libero-rollout-prefix}
+    next: compare_observed_paired_metrics
+
+  compare_observed_paired_metrics:
+    description: Compare matched native success and GR00T action errors while retaining training coverage unknown and disjointness unverified.
+    toolRef: workflow.groot_libero_x.compare_closed_loop
+    resources: artifact-cpu
+    inputs:
+      - {uri: "{{config.protocol_uri}}", schema: npa.groot_libero_x.evaluation_protocol.v1}
+      - {uri: "{{config.baseline_rollout_uri}}", schema: npa.groot_libero_x.closed_loop_rollout.v1}
+      - {uri: "{{config.derivative_rollout_uri}}", schema: npa.groot_libero_x.closed_loop_rollout.v1}
+    outputs:
+      - {uri: "{{config.comparison_uri}}", schema: npa.groot_libero_x.closed_loop_comparison.v1}
+    next: emit_verified_observed_paired_evidence
+
+  emit_verified_observed_paired_evidence:
+    description: Independently inspect all native rollout MP4s and emit an RRD/report that preserves the unknown-coverage classification.
+    toolRef: workflow.groot_libero_x.emit_evidence
+    resources: artifact-cpu
+    inputs:
+      - {uri: "{{config.comparison_uri}}", schema: npa.groot_libero_x.closed_loop_comparison.v1}
+      - {uri: "{{config.baseline_rollout_uri}}", schema: npa.groot_libero_x.closed_loop_rollout.v1}
+      - {uri: "{{config.derivative_rollout_uri}}", schema: npa.groot_libero_x.closed_loop_rollout.v1}
+    outputs:
+      - {uri: "{{config.rrd_uri}}", schema: rerun.rrd.v1}
+      - {uri: "{{config.evidence_uri}}", schema: npa.groot_libero_x.closed_loop_evidence.v1}
+    terminal: true

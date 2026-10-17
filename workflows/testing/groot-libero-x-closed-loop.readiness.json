@@ -1,0 +1,60 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "f0f4887ea3309102c9070a47dcfa365f664115b8aceb125bece971637b4276f7",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "The five-state workflow passed validate-spec, plan-spec, and submit --plan-only. All resolved inputs and outputs are run-scoped S3 contracts; the evaluation GPU is resolved from the NPA evaluation_accelerator configuration input, and this native-LIBERO route does not invoke Isaac Sim or add an EULA control.",
+      "evidence": [
+        "npa/.venv/bin/npa workbench workflow validate-spec workflows/testing/groot-libero-x-closed-loop.yaml --json",
+        "npa/.venv/bin/npa workbench workflow plan-spec workflows/testing/groot-libero-x-closed-loop.yaml --run-id groot-libero-x-plan --json",
+        "npa/.venv/bin/npa workbench workflow submit workflows/testing/groot-libero-x-closed-loop.yaml --run-id groot-libero-x-plan --plan-only"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Contract tests prove five connected substantive stages, exact task/data hash binding, NPA-configured GPU placement, current upstream server/client handoff, real-result refusal, decoded-MP4 hash verification, matched closed-loop comparison, and independent RRD inspection. They do not assert model performance.",
+      "evidence": [
+        "npa/.venv/bin/python -m pytest npa/tests/workflows/test_groot_libero_x.py npa/tests/orchestration/npa_workflow/test_groot_libero_x_closed_loop_workflow.py npa/tests/orchestration/npa_workflow/test_submit_live_matrix.py npa/tests/guardrails/test_module_toolref_argv.py npa/tests/guardrails/test_tool_catalog_argv.py npa/tests/guardrails/test_shown_workflow_catalog.py npa/tests/orchestration/npa_workflow/test_catalog_doc_sync.py -q"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "Configured S3 credentials passed a private preflight, but the committed workflow retains example-bucket and no owner-selected output prefix has been used or read back.",
+      "evidence": [
+        "Sanitized private npa workbench health preflight --checks nebius,s3,hf --json record"
+      ]
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "The public source cards do not supply the exact 60 derivative training task identities or a native simulator mapping. No operator task manifests, GR00T-format materialization, or immutable object inventory have been supplied.",
+      "evidence": [
+        "docs/workbench/groot-libero-x.md#required-inputs-and-workflow"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "Nebius, S3, and Hugging Face preflight plus usable exact-revision payload probes for the baseline, derivative, LIBERO-X, and required Cosmos dependency passed under existing operator credentials. This records access only, not redistribution permission.",
+      "evidence": [
+        "Sanitized private npa workbench health preflight --checks nebius,s3,hf --json record",
+        "Sanitized private npa workbench health access --capability groot-libero-x --recheck --json record"
+      ]
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "The selected Kubernetes target's exact npa-groot image pull remains unverified. No new image was built or published.",
+      "evidence": [
+        "Sanitized private npa workbench workflow preflight-images record"
+      ]
+    },
+    "target_runtime": {
+      "status": "blocked",
+      "reason": "SkyPilot reports Kubernetes disabled for the selected target, and its exact image preflight reports target-pull verification unresolved. Therefore no safe GPU allocation, workflow submission, native rollout, or final artifact readback can occur from this session.",
+      "evidence": [
+        "Sanitized private kubectl and workflow image-preflight diagnostics"
+      ]
+    }
+  }
+}
