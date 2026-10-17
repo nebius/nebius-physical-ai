@@ -84,11 +84,12 @@ RUN printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d \
     && rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub \
     && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' openssh-client)" ge '1:10.2p1-2ubuntu3.8' \
     && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' libxml2-16)" ge '2.15.2+dfsg-0.1ubuntu0.3' \
+    && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' libssl3t64)" ge '3.5.5-1ubuntu3.7' \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
     && ldconfig \
     && dependencies="$(ldd /usr/local/bin/python3.10 /usr/local/lib/python3.10/lib-dynload/*.so)" \
     && ! grep -q 'not found' <<< "$dependencies" \
-    && python -c 'import _bz2, _ctypes, _dbm, _gdbm, _lzma, _ssl, _sqlite3, _tkinter, readline, zlib; assert _ssl.OPENSSL_VERSION_INFO >= (3, 5, 5)' \
+    && python -c 'import _bz2, _ctypes, _dbm, _gdbm, _lzma, _ssl, _sqlite3, _tkinter, readline, zlib; assert _ssl.OPENSSL_VERSION_NUMBER >= 0x30500050' \
     && (id -u "${NPA_RUNTIME_USER}" >/dev/null 2>&1 \
        || useradd -m -s /bin/bash -u 1000 "${NPA_RUNTIME_USER}") \
     && printf '%s\n' "${NPA_RUNTIME_USER} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/npa-runtime \
