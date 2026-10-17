@@ -520,6 +520,13 @@ SDK; previously published container pins retain their recorded build versions.
 
 ## Developing and testing npa
 
+The `npa agent verify-live` command delegates endpoint and pytest gates to
+`npa/src/npa/cli/agent_verification.py`; UI wiring checks live in
+`npa/src/npa/cli/agent_verification_ui.py`. Keep new verification checks in these
+modules so the deployment CLI remains reviewable. Run
+`npa/.venv/bin/python -m pytest npa/tests/cli/test_agent_verification.py npa/tests/cli/test_agent.py -q`
+from the repository root to check verification failures and command integration.
+
 The [served-model VLM sampling lane](../docs/workbench/cookbooks/vlm-eval-loop-runbook.md#served-model-sampling-live-lane)
 extends `npa/scripts/vlm_provenance_live_recheck.py` against an operator-owned GPU
 endpoint. Set `NPA_INTEGRATION_E2E=1` and `NPA_VLM_PROVENANCE_LIVE_CONFIG` to a

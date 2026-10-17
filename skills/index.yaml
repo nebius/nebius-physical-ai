@@ -1391,6 +1391,21 @@ skills:
     when_to_use: "Reference npa.workflow specs, runner scripts, cookbooks, customer-adaptable pipeline implementations, and guarded tool-specific YAML examples that are not authoring surfaces."
     path: skills/workflows/workbench-reference-workflows/SKILL.md
     smoke:
+      - type: file_exists
+        path: npa/src/npa/workflows/lyra_panorama_capture.py
+      - type: file_exists
+        path: docs/workbench/guides/lyra-360-capture.md
+      - type: file_exists
+        path: docs/workbench/guides/gaussian-splatting-reference.md
+      - type: file_exists
+        path: docs/demos/lyra-splatting-overview.html
+      - type: file_exists
+        path: docs/workbench/guides/lyra-validated-example.md
+      - type: file_exists
+        path: npa/src/npa/workflows/lyra_validated_example.py
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/testing/gaussian-splatting-reference.yaml
       - type: cli_help
         args: ["workbench", "workflow", "challenge", "prepare", "--help"]
         contains: "prescribed DEV cases"
