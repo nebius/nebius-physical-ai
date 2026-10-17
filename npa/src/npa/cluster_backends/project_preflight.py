@@ -12,6 +12,10 @@ from npa.quota_scope import (
 )
 
 
+class TenantCapacityAccessDenied(ValueError):
+    """Tenant inventory was denied before any exact-project fallback was possible."""
+
+
 @dataclass(frozen=True)
 class ProjectCapacityReader:
     """Bind every capacity read to one explicit provider profile and environment."""
@@ -80,7 +84,13 @@ class ProjectCapacityReader:
         except QuotaCatalogUnavailable as exc:
             if self.project_id:
                 raise
-            raise ValueError(
+            failure = (
+                TenantCapacityAccessDenied
+                if isinstance(exc.__cause__, NebiusError)
+                and is_permission_denied(str(exc.__cause__))
+                else ValueError
+            )
+            raise failure(
                 f"could not read tenant quota allowances for {region}; refusing to "
                 "create projects or resources without capacity evidence"
             ) from exc
@@ -105,11 +115,35 @@ class ProjectCapacityReader:
                 ("capacity", "capacity-block-group"), self.tenant_id
             )
         except NebiusError as exc:
+            if not self.project_id and is_permission_denied(str(exc)):
+                raise TenantCapacityAccessDenied(
+                    "tenant reservation inventory is unavailable due to RBAC"
+                ) from exc
             if not self.project_id or not is_permission_denied(str(exc)):
                 raise ValueError(
                     "could not read capacity block groups; refusing to bypass STRICT "
                     "reservation preflight"
                 ) from exc
+        self.verify_project_allowances(requirements)
+        if on_status:
+            on_status(
+                "Project reservation allowances verified; tenant inventory is unavailable "
+                "due to RBAC. Provider apply enforces actual reserved capacity and compatibility."
+            )
+        return None
+
+    def verify_project_allowances(self, requirements: Mapping) -> None:
+        """Verify exact project entitlement without consulting tenant inventory.
+
+        Args:
+            requirements: Cumulative incremental GPU demand by reservation ID.
+        Returns:
+            None after the complete project catalog verifies every requirement.
+        Raises:
+            ValueError: Identity, allowance state, usage or headroom is unverified.
+        """
+        if not self.project_id:
+            raise ValueError("project reservation validation requires an exact project")
         try:
             payload = self.list_resources(
                 ("capacity", "capacity-allowance"), self.project_id
@@ -117,12 +151,6 @@ class ProjectCapacityReader:
         except (NebiusError, ValueError) as exc:
             raise ValueError("could not verify project reservation allowances") from exc
         _verify_project_reservations(payload, self.project_id, requirements)
-        if on_status:
-            on_status(
-                "Project reservation allowances verified; tenant inventory is unavailable "
-                "due to RBAC. Provider apply enforces actual reserved capacity and compatibility."
-            )
-        return None
 
     def verify_reservations(self, requirements: Mapping, on_status=None) -> None:
         """Validate strict placement using the permitted reservation evidence.

@@ -91,6 +91,50 @@ def _preflight(config, *, reserved=False):
     return report, messages
 
 
+def test_live_project_only_fleet_aggregate_preflight(target):
+    from npa.fleet.capacity_preflight import ProjectDemand
+    from npa.fleet.lifecycle import _preflight_quotas
+
+    config, evidence = target
+    cluster = ClusterSpec(name="proof", cpu_nodes=NodePoolSpec(count=1))
+    _preflight_quotas(
+        "nebius",
+        tenant_id=config["tenant_id"],
+        by_region={config["region"]: [cluster]},
+        new_projects_by_region={},
+        env=os.environ.copy(),
+        profile=config["profile"],
+        on_status=None,
+        project_demands={
+            config["region"]: [ProjectDemand(config["project_id"], [cluster])]
+        },
+    )
+    (evidence / "fleet-project-only-preflight.json").write_text(
+        json.dumps({"result": "passed", "tenant_denial": "genuine", "mutation": False})
+    )
+
+
+def test_live_project_only_legacy_filestore_quota_preflight(target):
+    from npa.cli.cluster.terraform_lifecycle import _preflight_filestore_quota
+
+    config, evidence = target
+    _preflight_filestore_quota(
+        "nebius",
+        {
+            "tenant_id": config["tenant_id"],
+            "parent_id": config["project_id"],
+            "region": config["region"],
+            "enable_filestore": True,
+            "filestore_disk_size_gibibytes": 1,
+            "filesystem_csi_chart_repository": "oci://example.invalid/charts",
+        },
+        os.environ.copy(),
+    )
+    (evidence / "legacy-filestore-project-only-preflight.json").write_text(
+        json.dumps({"result": "passed", "tenant_denial": "genuine", "mutation": False})
+    )
+
+
 def test_live_project_only_whole_path_and_backend_preflight(target):
     config, evidence = target
     plan = build_whole_path_plan(

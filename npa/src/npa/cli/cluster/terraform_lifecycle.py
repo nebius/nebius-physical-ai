@@ -2810,16 +2810,40 @@ def _guard_unmanaged_duplicate(
 def _preflight_filestore_quota(
     nebius_bin: str, tfvars: dict[str, Any], env: dict[str, str]
 ) -> None:
-    # The Terraform default is enable_filestore = false (deploy/cluster/variables.tf),
-    # so the default FTUE / PAIDF cluster needs no Shared Filesystem SSD quota. Only
-    # check the quota when the shared filesystem is explicitly opted into and is being
-    # created (not attached via existing_filestore).
+    from npa.cluster_backends.quotas import preflight_quota_requirements
+
+    requested_bytes = _requested_filestore_bytes(tfvars, env)
+    if not requested_bytes:
+        return
+    reader = _project_capacity_reader(nebius_bin, tfvars, env)
+    region = str(_tfvar_value(tfvars, env, "region", "") or "").strip()
+    if not reader.tenant_id or not region:
+        raise typer.BadParameter(
+            "Shared filesystem quota preflight requires tenant_id and region"
+        )
+    try:
+        shortfalls = preflight_quota_requirements(
+            reader,
+            region,
+            {"compute.filesystem.size.network-ssd": requested_bytes},
+            lambda message: typer.echo(message, err=True),
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    if shortfalls:
+        raise typer.BadParameter(
+            "Shared filesystem quota is insufficient for Terraform creation: "
+            + "; ".join(item.describe() for item in shortfalls)
+        )
+
+
+def _requested_filestore_bytes(tfvars, env):
     enable_filestore = _tfvar_bool(tfvars, env, "enable_filestore", False)
     existing_filestore = str(
         _tfvar_value(tfvars, env, "existing_filestore", "") or ""
     ).strip()
     if not enable_filestore and not existing_filestore:
-        return
+        return 0
     chart_repository = str(
         _tfvar_value(tfvars, env, "filesystem_csi_chart_repository", "") or ""
     ).strip()
@@ -2831,38 +2855,13 @@ def _preflight_filestore_quota(
             "TF_VAR_filesystem_csi_chart_repository before running apply."
         )
     if existing_filestore:
-        return
-    tenant_id = str(_tfvar_value(tfvars, env, "tenant_id", "") or "").strip()
-    region = str(_tfvar_value(tfvars, env, "region", "") or "").strip()
-    if not tenant_id or not region:
-        typer.echo(
-            "Skipping shared filesystem quota preflight: tenant_id or region is not set in tfvars or env.",
-            err=True,
-        )
-        return
+        return 0
     size_gib = int(
         _tfvar_value(
             tfvars, env, "filestore_disk_size_gibibytes", _DEFAULT_FILESTORE_SIZE_GIB
         )
     )
-    requested_bytes = size_gib * _GIB
-    quota = _quota_allowance(
-        nebius_bin,
-        parent_id=tenant_id,
-        region=region,
-        name="compute.filesystem.size.network-ssd",
-        env=env,
-    )
-    limit = _quota_limit(quota)
-    usage = _quota_usage(quota)
-    available = limit - usage
-    if available < requested_bytes:
-        raise typer.BadParameter(
-            "Shared filesystem quota is insufficient for Terraform creation: "
-            f"compute.filesystem.size.network-ssd available {available} bytes, "
-            f"requested {requested_bytes} bytes in {region}. "
-            "Provide existing_filestore or raise Shared Filesystem SSD quota before running apply."
-        )
+    return size_gib * _GIB
 
 
 def _apply_node_count_override(tfvars: dict[str, Any], key: str, value: int) -> None:
@@ -3116,15 +3115,27 @@ def _preflight_whole_path_capacity(
     )
 
 
-def _preflight_project_reservation(nebius_bin, tfvars, env, reservation_id, required):
+def _project_capacity_reader(nebius_bin, tfvars, env):
     from npa.clients.nebius_auth import nebius_profile
     from npa.cluster_backends.project_preflight import ProjectCapacityReader
+
+    return ProjectCapacityReader(
+        nebius_bin,
+        str(_tfvar_value(tfvars, env, "tenant_id", "") or "").strip(),
+        str(_tfvar_value(tfvars, env, "parent_id", "") or "").strip(),
+        nebius_profile(),
+        env,
+        _run_capture,
+        lambda binary, profile: [binary, "--profile", profile] if profile else [binary],
+    )
+
+
+def _preflight_project_reservation(nebius_bin, tfvars, env, reservation_id, required):
     from npa.cluster_backends.quotas import ReservationRequirement
 
     project_id = str(_tfvar_value(tfvars, env, "parent_id", "") or "")
     if not project_id:
         return False
-    tenant_id = str(_tfvar_value(tfvars, env, "tenant_id", "") or "")
     requirement = ReservationRequirement(
         reservation_id=reservation_id,
         region=str(_tfvar_value(tfvars, env, "region", "") or ""),
@@ -3132,15 +3143,7 @@ def _preflight_project_reservation(nebius_bin, tfvars, env, reservation_id, requ
         fabric=str(_tfvar_value(tfvars, env, "infiniband_fabric", "") or ""),
         required_gpus=required,
     )
-    reader = ProjectCapacityReader(
-        nebius_bin,
-        tenant_id,
-        project_id,
-        nebius_profile(),
-        env,
-        _run_capture,
-        lambda binary, profile: [binary, "--profile", profile] if profile else [binary],
-    )
+    reader = _project_capacity_reader(nebius_bin, tfvars, env)
     requirements = {reservation_id: requirement}
     reader.verify_reservations(requirements, lambda text: typer.echo(text, err=True))
     return True
@@ -3599,44 +3602,6 @@ def _shared_filesystem_requested(tfvars: dict[str, Any], env: dict[str, str]) ->
     if _tfvar_bool(tfvars, env, "enable_filestore", False):
         return True
     return bool(str(_tfvar_value(tfvars, env, "existing_filestore", "") or "").strip())
-
-
-def _quota_allowance(
-    nebius_bin: str,
-    *,
-    parent_id: str,
-    region: str,
-    name: str,
-    env: dict[str, str],
-) -> dict[str, Any]:
-    result = _run_capture(
-        [
-            nebius_bin,
-            "quotas",
-            "quota-allowance",
-            "get-by-name",
-            "--parent-id",
-            parent_id,
-            "--region",
-            region,
-            "--name",
-            name,
-            "--format",
-            "json",
-        ],
-        env=env,
-    )
-    return json.loads(result.stdout or "{}")
-
-
-def _quota_limit(quota: dict[str, Any]) -> int:
-    raw_limit = quota.get("spec", {}).get("limit")
-    return int(raw_limit or 0)
-
-
-def _quota_usage(quota: dict[str, Any]) -> int:
-    raw_usage = quota.get("status", {}).get("usage")
-    return int(raw_usage or 0)
 
 
 def _terraform_state_cluster_ids(

@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from collections.abc import Mapping
 from decimal import Decimal, InvalidOperation, ROUND_FLOOR
 from typing import Any, Callable, Iterable
 
@@ -752,6 +753,24 @@ def preflight_region(
     needed = required_quotas(
         clusters, new_projects=new_projects, object_storage=object_storage
     )
+    return preflight_quota_requirements(reader, region, needed, on_status)
+
+
+def preflight_quota_requirements(
+    reader, region: str, needed: Mapping[str, int], on_status=None
+) -> list[QuotaShortfall]:
+    """Check cumulative quota demand independently of reservation inventory.
+
+    Args:
+        reader: Explicitly scoped provider capacity reader.
+        region: Exact deployment region.
+        needed: Cumulative quota requirements.
+        on_status: Optional non-secret progress sink.
+    Returns:
+        Verified quota shortfalls.
+    Raises:
+        ValueError: Evidence is unreadable, incomplete or incompatible.
+    """
     if not needed:
         return []
     catalog = reader.quota_catalog(region, needed)
@@ -759,7 +778,9 @@ def preflight_region(
         json.dumps(catalog.payload),
         region,
         required=needed,
-        container_id=project_id if catalog.scope == "project" else tenant_id,
+        container_id=reader.project_id
+        if catalog.scope == "project"
+        else reader.tenant_id,
     )
     if catalog.scope == "project" and on_status is not None:
         on_status(
@@ -775,6 +796,13 @@ def preflight_region(
             f"{catalog.scope} quota response for {region} omitted required allowances: "
             f"{', '.join(required_missing)}"
         )
+    _report_quota_allowances(
+        needed, allowances, missing, region, catalog.scope, on_status
+    )
+    return find_shortfalls(needed, allowances, region, scope=catalog.scope)
+
+
+def _report_quota_allowances(needed, allowances, missing, region, scope, on_status):
     if on_status is not None:
         for name in missing:
             on_status(
@@ -789,7 +817,7 @@ def preflight_region(
             if allowance.get("unlimited"):
                 on_status(
                     f"quota {name} [{region}]: needs {required_amount}{unit}; "
-                    f"{catalog.scope} allowance has no additional limit"
+                    f"{scope} allowance has no additional limit"
                 )
             else:
                 on_status(
@@ -798,4 +826,3 @@ def preflight_region(
                     f"{allowance['limit']} (usage evidence: "
                     f"{allowance['usage_source']})"
                 )
-    return find_shortfalls(needed, allowances, region, scope=catalog.scope)

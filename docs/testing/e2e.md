@@ -56,7 +56,9 @@ NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest \
   npa/tests/e2e/test_project_scoped_setup_live.py -q
 ```
 
-The default checks use real quota and backend APIs without creating resources.
+The default checks use real quota and backend APIs without creating resources,
+including Fleet's existing-project aggregate gate and the legacy
+shared-filesystem quota gate under genuine tenant IAM denial.
 An optional exact `reservation_id`, `gpu_platform`, `gpu_preset`, and
 `reserved_gpu_nodes` test project entitlement without allocating GPUs or
 claiming tenant capacity is available. Explicit `create_cluster: true` adds a

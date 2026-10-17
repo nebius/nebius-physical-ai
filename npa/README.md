@@ -22,6 +22,16 @@ reservation under that project. NPA reports the unavailable tenant view;
 Nebius still enforces tenant limits, reservation compatibility and free capacity
 at apply time. No tenant-wide grant is added during setup.
 
+Fleet applies the same fallback to verified existing projects, combining every
+selected cluster and pending bucket in each project before checking its cap.
+Creating projects still requires tenant evidence. Reserved Soperator workers
+can use project allowances with explicit immutable reservation IDs; resolving
+reservation names requires tenant inventory. Legacy shared-filesystem creation
+uses the same scoped quota parser. A readable tenant constraint remains enforced
+even if a different tenant inventory API is denied.
+Creating a legacy shared filesystem requires a resolved tenant and region;
+missing identity now stops provisioning before apply.
+
 Optional [Workbench access](../docs/workbench/team-access.md) adds CLI/API/SDK shared
 execution through `npa workbench submit`, `runs`, `run`, and `whoami`, and the
 existing `npa.sdk.workbench.team` SDK. Administrators use `npa workbench access`.
