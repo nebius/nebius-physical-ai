@@ -109,6 +109,17 @@ def test_060_image_build_and_smoke_cover_real_diffusion_construction() -> None:
     assert "lerobot[training,evaluation,pusht,libero,diffusion,smolvla]" in cloud_init
 
 
+def test_lerobot_image_build_smoke_imports_npa_dataset_runtime() -> None:
+    root = Path(__file__).resolve().parents[2]
+    dockerfile = (root / "npa/docker/workbench/lerobot/Dockerfile").read_text(
+        encoding="utf-8"
+    )
+    assert dockerfile.count('"pyarrow>=23.0.1"') == 2
+    assert "import pyarrow.parquet" in dockerfile
+    assert "import npa.workflows.lerobot_dataset" in dockerfile
+    assert "import npa.workbench.lerobot.policy_container" in dockerfile
+
+
 def test_lerobot_image_bakes_exact_npa_workflow_source() -> None:
     root = Path(__file__).resolve().parents[2]
     dockerfile = (root / "npa/docker/workbench/lerobot/Dockerfile").read_text(

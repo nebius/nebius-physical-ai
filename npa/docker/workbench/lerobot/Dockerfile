@@ -90,6 +90,7 @@ RUN python3.12 -m venv /opt/lerobot/venv \
            boto3 \
            fastapi~=0.136.1 \
            num2words \
+           "pyarrow>=23.0.1" \
            tensorboard \
            "uvicorn[standard]"; \
        else \
@@ -98,6 +99,7 @@ RUN python3.12 -m venv /opt/lerobot/venv \
            boto3 \
            fastapi~=0.136.1 \
            num2words \
+           "pyarrow>=23.0.1" \
            tensorboard \
            "uvicorn[standard]" \
          && /opt/lerobot/venv/bin/pip install --no-cache-dir --upgrade \
@@ -122,7 +124,8 @@ COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
 
-RUN python -m npa.smoke.test_lerobot_env
+RUN python -m npa.smoke.test_lerobot_env \
+    && python -c "import pyarrow.parquet; import npa.workflows.lerobot_dataset; import npa.workbench.lerobot.policy_container"
 
 USER root
 
