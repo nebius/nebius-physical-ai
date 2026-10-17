@@ -32,8 +32,9 @@ OPERATOR_INPUT_SPECS = (
     *EXACT_INPUT_SPECS,
     "digital-twin-campus-render.yaml",
     "digital-twin-cuda-render.yaml",
+    "franka-rl-transfer.yaml",
 )
-GOVERNED_SPECS = ("franka-rl-transfer.yaml",)
+GPU_OPERATOR_INPUT_SPECS = ("franka-rl-transfer.yaml",)
 
 
 def _workflow_path(name):
@@ -311,22 +312,7 @@ def test_exact_operator_images_reach_real_renderer_and_native_provenance(
     assert "tool://isaac-lab" not in text
 
 
-@pytest.mark.parametrize("name", GOVERNED_SPECS)
-def test_governed_gpu_defaults_remain_quarantined_until_accepted(name, monkeypatch):
-    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/source-fixture")
-    spec = load_spec(ROOT / "workflows/testing" / name)
-    with pytest.raises(NpaWorkflowError, match="isaac-lab.*quarantined"):
-        render_skypilot_yaml(
-            spec,
-            interpreter.build_plan(spec),
-            run_id="denied",
-            options=SkypilotRenderOptions(
-                materialize_registry_secrets=False,
-            ),
-        )
-
-
-@pytest.mark.parametrize("name", GOVERNED_SPECS)
+@pytest.mark.parametrize("name", GPU_OPERATOR_INPUT_SPECS)
 def test_governed_gpu_resource_accepts_exact_operator_var_without_changing_cpu(
     name, monkeypatch
 ):
@@ -372,7 +358,7 @@ def test_no_shipped_workflow_automatically_selects_withdrawn_isaac_or_sonic_byte
                 ), path
 
 
-@pytest.mark.parametrize("name", [*EXACT_INPUT_SPECS, *GOVERNED_SPECS])
+@pytest.mark.parametrize("name", [*EXACT_INPUT_SPECS, *GPU_OPERATOR_INPUT_SPECS])
 def test_historical_records_remain_bound_and_current_records_await_workload_proof(name):
     archived = ROOT / "docs/workbench/evidence/workflow-defaults-807" / name
     old = load_readiness_record(archived.with_suffix(".readiness.json"))

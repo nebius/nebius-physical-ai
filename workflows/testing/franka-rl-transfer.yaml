@@ -15,6 +15,7 @@ config:
   bucket: example-bucket
   prefix: "franka-rl-transfer/{{run.id}}"
   source_overlay: "1"
+  required_immutable_images: [isaac_image]
   isaac_image: tool://isaac-lab
   seed: "42"
   iterations: "1500"

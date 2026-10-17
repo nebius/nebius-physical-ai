@@ -650,6 +650,7 @@ def test_every_franka_worker_uses_staged_source_instead_of_stale_image_modules(
         render_skypilot_yaml,
     )
     from npa.orchestration.npa_workflow.spec import load_spec
+    from npa.orchestration.npa_workflow.submit import merge_config_overrides
 
     monkeypatch.delenv("NPA_SRC_OVERLAY", raising=False)
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/staged-source/npa/")
@@ -657,7 +658,14 @@ def test_every_franka_worker_uses_staged_source_instead_of_stale_image_modules(
         Path(__file__).resolve().parents[3]
         / "workflows/testing/franka-rl-transfer.yaml"
     )
-    spec = load_spec(path)
+    spec = merge_config_overrides(
+        load_spec(path),
+        {
+            "isaac_image": (
+                "registry.example.invalid/npa-isaac-lab@sha256:" + "a" * 64
+            )
+        },
+    )
     rendered = render_skypilot_yaml(
         spec,
         build_plan(spec, run_id="test-franka"),

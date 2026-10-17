@@ -646,6 +646,30 @@ def test_regen_result_rejects_missing_factual_evidence_field(tmp_path: Path) -> 
         regen._regen_result_from_viz(RUN_ID, tmp_path, SimpleNamespace())
 
 
+def test_finalize_regen_rejects_missing_heldout_evidence_fields(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        regen,
+        "_emit_regen_mcap",
+        lambda *_args, **_kwargs: pytest.fail("must reject before emitting MCAP"),
+    )
+    state = regen._RegenState({}, {}, tmp_path / "report.json", {}, {})
+    with pytest.raises(
+        regen.Sim2RealRerunRegenError,
+        match="no held-out cameras or held-out scores",
+    ):
+        regen._finalize_regen_result(
+            _config(),
+            tmp_path,
+            object(),
+            state,
+            SimpleNamespace(),
+            upload=False,
+        )
+
+
 def test_byo_eval_propagates_inprocess_render_upload_failure() -> None:
     assert "_upload_succeeded = False" in byo_isaac_eval.ISAAC_EVAL_SCRIPT
     assert "os._exit(0 if _upload_succeeded else 1)" in byo_isaac_eval.ISAAC_EVAL_SCRIPT
