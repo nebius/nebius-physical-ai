@@ -3127,6 +3127,13 @@ def _emit_regen_mcap(
     )
 
 
+def _assert_regen_factual_observations(result: Sim2RealVizResult) -> None:
+    if not getattr(result, "has_factual_observation_evidence", False):
+        raise Sim2RealRerunRegenError(
+            "regenerated .rrd has no factual rollout observations, held-out cameras, or held-out scores"
+        )
+
+
 def _assert_regen_heldout_frames(result: Sim2RealVizResult) -> None:
     if (
         getattr(result, "heldout_frame_count", 0) <= 0
@@ -3136,6 +3143,7 @@ def _assert_regen_heldout_frames(result: Sim2RealVizResult) -> None:
             "regenerated .rrd has no held-out cameras or held-out scores; "
             "sync gold held-out renders or rerun held-out eval"
         )
+    _assert_regen_factual_observations(result)
 
 
 def _finalize_regen_result(
@@ -4506,10 +4514,7 @@ def _regen_result_from_viz(
     mcap_result: dict[str, Any] | None = None,
     mcap_upload_uri: str = "",
 ) -> RegenResult:
-    if not getattr(result, "has_factual_observation_evidence", False):
-        raise Sim2RealRerunRegenError(
-            "regenerated .rrd has no factual rollout observations, held-out cameras, or held-out scores"
-        )
+    _assert_regen_factual_observations(result)
     mcap = mcap_result or {}
     return RegenResult(
         run_id=run_id,

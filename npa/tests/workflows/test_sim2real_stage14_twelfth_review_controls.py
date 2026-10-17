@@ -670,6 +670,34 @@ def test_finalize_regen_rejects_missing_heldout_evidence_fields(
         )
 
 
+def test_finalize_regen_rejects_missing_factual_evidence_before_emitting(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        regen,
+        "_emit_regen_mcap",
+        lambda *_args, **_kwargs: pytest.fail("must reject before emitting MCAP"),
+    )
+    state = regen._RegenState({}, {}, tmp_path / "report.json", {}, {})
+    with pytest.raises(
+        regen.Sim2RealRerunRegenError,
+        match="no factual rollout observations",
+    ):
+        regen._finalize_regen_result(
+            _config(),
+            tmp_path,
+            object(),
+            state,
+            SimpleNamespace(
+                heldout_frame_count=1,
+                heldout_env_count=1,
+                has_factual_observation_evidence=False,
+            ),
+            upload=False,
+        )
+
+
 @pytest.mark.parametrize(
     ("heldout_frame_count", "heldout_env_count"),
     [(-1, 0), (0, -1), (-1, -1)],
