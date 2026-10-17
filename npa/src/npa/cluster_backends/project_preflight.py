@@ -157,19 +157,17 @@ class ProjectCapacityReader:
 
 
 def _validate_project_defaults(payload, project_id, region, names):
-    from npa.provisioning_preflight import _project_quota_payload
+    from npa.provisioning_preflight import (
+        _project_quota_payload,
+        parse_quota_allowances,
+    )
 
     normalized = _project_quota_payload(payload, project_id=project_id, region=region)
-    for row, checked in zip(payload["items"], normalized["items"], strict=True):
-        if row.get("metadata", {}).get("name") not in names:
-            continue
-        if row.get("spec", {}).get("region") != region:
-            continue
-        if (
-            "limit" not in row.get("spec", {})
-            and checked["spec"].get("limit") != "unbounded"
-        ):
-            raise ValueError("project quota default has unusable status evidence")
+    observations = parse_quota_allowances(normalized, region=region, names=tuple(names))
+    # Preserve the raw catalog for the backend's stricter unit and fractional
+    # usage accounting, after the shared parser has ruled out ambiguous limits.
+    if any(item.state == "unknown" for item in observations.values()):
+        raise ValueError("project quota has unusable limit or status evidence")
 
 
 def _project_allowance_rows(payload, project_id):
@@ -195,6 +193,8 @@ def _verify_project_reservations(payload, project_id, requirements):
     from npa.cluster_backends.quotas import _finite_allowance, _unlimited_allowance
 
     allowances = _project_allowance_rows(payload, project_id)
+    # This resource proves project entitlement, not the tenant block's region,
+    # platform, fabric or remaining physical capacity. Apply still checks those.
     for reservation_id, requirement in requirements.items():
         row = allowances.get(reservation_id)
         if row is None:

@@ -348,3 +348,16 @@ def test_non_provider_exception_cannot_trigger_scope_fallback():
     with pytest.raises(ValueError, match="reason other than an RBAC"):
         read_scoped_quota_catalog(TENANT, PROJECT, reader=read)
     assert calls == [TENANT]
+
+
+@pytest.mark.parametrize("limit", [None, False, "bad", -1, "1.5"])
+def test_backend_invalid_explicit_project_limit_cannot_become_unlimited(
+    monkeypatch, limit
+):
+    cluster = _cluster(False)
+    payload = _catalog(required_quotas([cluster]))
+    payload["items"][0]["spec"]["limit"] = limit
+    _capture(monkeypatch, cluster, quotas=payload)
+
+    with pytest.raises(ValueError):
+        get_backend("mk8s").preflight(cluster, _request([]))
