@@ -116,6 +116,7 @@ def test_lerobot_image_build_smoke_imports_npa_dataset_runtime() -> None:
     )
     assert dockerfile.count('"pyarrow>=23.0.1"') == 2
     assert dockerfile.count('"av==15.1.0"') == 2
+    assert dockerfile.count('"kubernetes==36.0.3"') == 2
     assert "NPA_BAKED_PYTHON=/opt/lerobot/venv/bin/python" in dockerfile
     assert "pip install --no-deps -e /opt/npa" in dockerfile
     assert 'test "$(command -v npa)" = /opt/lerobot/venv/bin/npa' in dockerfile
@@ -127,6 +128,8 @@ def test_lerobot_image_build_smoke_imports_npa_dataset_runtime() -> None:
     assert "import pyarrow.parquet" in dockerfile
     assert "import npa.workflows.lerobot_dataset" in dockerfile
     assert "import npa.workbench.lerobot.policy_container" in dockerfile
+    assert "from kubernetes import client, config" in dockerfile
+    assert "import npa.workflows.sim2real.smolvla_service_lifecycle" in dockerfile
 
 
 def test_lerobot_image_bakes_exact_npa_workflow_source() -> None:

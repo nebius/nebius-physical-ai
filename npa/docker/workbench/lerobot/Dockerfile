@@ -92,6 +92,7 @@ RUN python3.12 -m venv /opt/lerobot/venv \
            "av==15.1.0" \
            boto3 \
            fastapi~=0.136.1 \
+           "kubernetes==36.0.3" \
            num2words \
            "pyarrow>=23.0.1" \
            tensorboard \
@@ -102,6 +103,7 @@ RUN python3.12 -m venv /opt/lerobot/venv \
            "av==15.1.0" \
            boto3 \
            fastapi~=0.136.1 \
+           "kubernetes==36.0.3" \
            num2words \
            "pyarrow>=23.0.1" \
            tensorboard \
@@ -138,7 +140,7 @@ RUN "$NPA_BAKED_PYTHON" -m pip install --no-deps -e /opt/npa \
     && "$NPA_BAKED_PYTHON" -c "import importlib.metadata as metadata; assert metadata.version('npa')" \
     && python -m npa.smoke.test_lerobot_env \
     && test "$NPA_BAKED_PYTHON" = /opt/lerobot/venv/bin/python \
-    && "$NPA_BAKED_PYTHON" -c "import av; assert hasattr(av, 'option'); from lerobot.datasets.lerobot_dataset import LeRobotDataset; import pyarrow.parquet; import npa.workflows.lerobot_dataset; import npa.workbench.lerobot.policy_container"
+    && "$NPA_BAKED_PYTHON" -c "import av; assert hasattr(av, 'option'); from kubernetes import client, config; from lerobot.datasets.lerobot_dataset import LeRobotDataset; import pyarrow.parquet; import npa.workflows.lerobot_dataset; import npa.workbench.lerobot.policy_container; import npa.workflows.sim2real.smolvla_service_lifecycle"
 
 USER root
 
@@ -192,7 +194,7 @@ USER ubuntu
 # Verify the final runtime shape after PATH changes and security cleanup, not only
 # the earlier dependency layer used by the build cache.
 RUN test "$(command -v npa)" = /opt/lerobot/venv/bin/npa \
-    && "$NPA_BAKED_PYTHON" -c "import av; assert av.__version__ == '15.1.0'; assert hasattr(av, 'option'); from lerobot.datasets.lerobot_dataset import LeRobotDataset; import npa.workflows.lerobot_dataset; import npa.workbench.lerobot.policy_container"
+    && "$NPA_BAKED_PYTHON" -c "import av; assert av.__version__ == '15.1.0'; assert hasattr(av, 'option'); from kubernetes import client, config; from lerobot.datasets.lerobot_dataset import LeRobotDataset; import npa.workflows.lerobot_dataset; import npa.workbench.lerobot.policy_container; import npa.workflows.sim2real.smolvla_service_lifecycle"
 
 EXPOSE 8080
 
