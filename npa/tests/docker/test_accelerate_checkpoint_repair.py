@@ -22,10 +22,13 @@ def repair():
 
 
 @pytest.fixture
-def checkpoint_files(repair):
-    namespace = {"os": os, "json": json}
-    exec(repair.INDEX_GUARD, namespace)
-    return namespace["_npa_checkpoint_files"]
+def checkpoint_files(repair, tmp_path):
+    path = tmp_path / "checkpoint_guard.py"
+    path.write_text("import os\nimport json\n\n" + repair.INDEX_GUARD)
+    spec = importlib.util.spec_from_file_location("checkpoint_guard", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module._npa_checkpoint_files
 
 
 def _index(folder, value):

@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -132,6 +133,42 @@ def _exact_pins(text: str) -> list[str]:
 def _write_pins(destination: Path, pins: list[str]) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text("\n".join(sorted(set(pins))) + "\n")
+
+
+def _dockerfile_inventory(source: Path, relative: str, output: Path) -> dict[str, str]:
+    """Include literal Python pins in build instructions, including build stages."""
+    pins = set()
+    literal_pin = r"[A-Za-z0-9][A-Za-z0-9._-]*(?:\[[^]]+\])?==[0-9]"
+    for line in source.read_text().replace("\\\n", "").splitlines():
+        if not re.match(r"^\s*RUN\s", line, re.IGNORECASE):
+            continue
+        if not re.search(literal_pin, line):
+            continue
+        for word in _dockerfile_words(line):
+            if re.match("^" + literal_pin, word):
+                pins.update(_exact_pins(word))
+    inventory = {}
+    # Distinct versions can occur in independent stages. Separate inputs avoid
+    # a requirements parser collapsing them into one package/version record.
+    for index, pin in enumerate(sorted(pins)):
+        target = f"{relative}/python-pins/{index}/requirements.txt"
+        _write_pins(output / "inputs" / target, [pin])
+        inventory[target] = relative
+    return inventory
+
+
+def _dockerfile_words(line: str) -> list[str]:
+    command = re.sub(r"^\s*RUN\s+", "", line, count=1, flags=re.IGNORECASE)
+    if command.startswith("["):
+        words = json.loads(command)
+        if not isinstance(words, list) or not all(
+            isinstance(word, str) for word in words
+        ):
+            raise ValueError("Dockerfile exec instruction requires string arguments")
+        return words
+    words = shlex.shlex(command, posix=True, punctuation_chars=";&|()<>")
+    words.whitespace_split = True
+    return list(words)
 
 
 def _python_manifest_pins(source: Path) -> list[str]:
@@ -302,6 +339,9 @@ def _inventory(root: Path, output: Path, cache: Path) -> dict[str, str]:
             destination = output / "inputs" / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source, destination)
+        elif source.name == "Dockerfile" or source.name.startswith("Dockerfile."):
+            inventory.update(_dockerfile_inventory(source, relative, output))
+            continue
         elif _is_python_dependency_manifest(source):
             destination = output / "inputs" / relative / "requirements.txt"
             _write_pins(destination, _python_manifest_pins(source))
