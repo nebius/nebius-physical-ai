@@ -59,6 +59,7 @@ COPY --chmod=0644 docker/workbench/cosmos3-serving/access_preflight.py /opt/npa-
 COPY --chmod=0644 docker/workbench/cosmos3-serving/hf_snapshot_pin.py /opt/npa-cosmos3-serving/hf_snapshot_pin.py
 COPY --chmod=0644 docker/workbench/cosmos3-serving/prepare_guardrail_runtime.py /opt/npa-cosmos3-serving/prepare_guardrail_runtime.py
 COPY --chmod=0644 docker/workbench/common/backport_setuptools_manifest.py /opt/npa-cosmos3-serving/backport_setuptools_manifest.py
+COPY --chmod=0644 docker/workbench/common/repair_accelerate_checkpoints.py /opt/npa-cosmos3-serving/repair_accelerate_checkpoints.py
 COPY --chmod=0644 docker/workbench/cosmos3-serving/verify_env.py /opt/npa-cosmos3-serving/verify_env.py
 
 RUN useradd -m -s /bin/bash -u 1000 ubuntu \

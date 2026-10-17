@@ -134,6 +134,14 @@ pass. Isaac's vendor version constraints still need reconciliation and GPU
 qualification. These source repairs require fresh image builds and complete
 artifact scans; they do not repair existing release digests.
 
+The subsequent [checkpoint-loader source repair](../../npa/docker/workbench/common/README.md)
+rejects malicious shard paths and named pipes in the exact Accelerate 1.12–1.15
+sources used by Wan, Cosmos, Cosmos3 Reason/Serving and RoboCasa. Both real
+checkpoint APIs pass regular/nested tensor and cache-symlink checks on all four
+repaired versions with CPU Torch 2.13. The upstream 1.15 wheel still reproduced
+the traversal, so its version alone is not a fix. These recipe changes introduce
+no new published image and do not qualify any replacement GPU stack.
+
 Gymnasium-Robotics is selected by the immutable development-build matrix but
 remains separately tracked outside the mapped release inventory. It appears in the GPU
 compatibility matrix only as a development-candidate/no-accepted-image row. An

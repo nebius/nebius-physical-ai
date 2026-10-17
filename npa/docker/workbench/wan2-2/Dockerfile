@@ -75,6 +75,7 @@ COPY --chmod=0444 docker/workbench/wan2-2/input_contract.py /opt/byof/npa_wan_in
 COPY --chmod=0444 docker/workbench/wan2-2/runtime-requirements.txt /opt/npa/wan2-2/runtime-requirements.txt
 COPY --chmod=0444 src/npa/solutions/wan2_2/dependency_closure.py /opt/npa/wan2-2/dependency_closure.py
 COPY --chmod=0444 docker/workbench/common/refresh_ensurepip.py /opt/npa/wan2-2/refresh_ensurepip.py
+COPY --chmod=0444 docker/workbench/common/repair_accelerate_checkpoints.py /opt/npa/wan2-2/repair_accelerate_checkpoints.py
 COPY --chmod=0444 docker/workbench/common/secure_pip/inputs.json /opt/npa/wan2-2/installer-inputs.json
 
 # Only verified repaired wheels enter this stage. Build inputs and the original
@@ -112,6 +113,7 @@ RUN python -m venv /opt/wan-base \
       "imageio-ffmpeg==0.6.0" \
     && /opt/wan-base/bin/python -m pip install --no-cache-dir --no-deps \
       -r /opt/npa/wan2-2/baked-constraints.txt \
+    && /opt/wan-base/bin/python /opt/npa/wan2-2/repair_accelerate_checkpoints.py \
     && sed -i \
       's/^from \.attention import flash_attention$/from .attention import attention as flash_attention/' \
       /opt/byof/wan/modules/model.py \

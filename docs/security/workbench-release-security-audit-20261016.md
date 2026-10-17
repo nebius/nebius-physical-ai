@@ -64,6 +64,17 @@ manifest leak before the patch and deny it afterward, exercise NLTK sandbox
 boundaries, encode/decode MoviePy output with patched Pillow, and validate
 Wan's installed baked/hash-bound runtime dependency union.
 
+Follow-up real-loader tests also reproduced checkpoint directory traversal and
+FIFO opening in Accelerate 1.15.0, beyond the advisory's declared affected
+version range. The [source repair](../../npa/docker/workbench/common/README.md)
+binds original and repaired module hashes for versions 1.12–1.15, preserves
+dependency versions and licenses, and updates RECORD and bytecode. Actual
+PyTorch 2.13 CPU tests on all four repaired official wheels reject traversal,
+malformed shard values, FIFO shards, FIFO symlinks and FIFO indexes through both
+public loading APIs, while preserving nested checkpoints, flat indexes and
+Safetensors cache symlinks with exact model output checks. It does not establish
+GPU qualification or clear other image findings.
+
 Dependency scanning now includes the JSON package map and bootstrap installer
 in the robomimic runtime lock. Its source candidate updates urllib3 and fsspec;
 the remaining legacy Torch/CUDA packages still require remediation and a new
