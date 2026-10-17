@@ -623,6 +623,7 @@ def test_disabled_mcap_does_not_upload_stale_bytes(
         rollout_count=0,
         frame_count=1,
         synthetic_frame_count=0,
+        has_factual_observation_evidence=True,
     )
     state = regen._RegenState({}, {}, tmp_path / "report.json", {}, {})
     regen._finalize_regen_result(
@@ -635,6 +636,14 @@ def test_disabled_mcap_does_not_upload_stale_bytes(
         output_rrd=rrd,
     )
     assert f"{ROOT}/reports/sim2real.mcap" not in uploads
+
+
+def test_regen_result_rejects_missing_factual_evidence_field(tmp_path: Path) -> None:
+    with pytest.raises(
+        regen.Sim2RealRerunRegenError,
+        match="no factual rollout observations",
+    ):
+        regen._regen_result_from_viz(RUN_ID, tmp_path, SimpleNamespace())
 
 
 def test_byo_eval_propagates_inprocess_render_upload_failure() -> None:
