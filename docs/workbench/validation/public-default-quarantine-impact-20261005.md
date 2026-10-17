@@ -4,17 +4,17 @@ PR #807 intentionally quarantined published images that violate the current
 image contract. PR #869 supplies repaired, digest-bound development defaults for
 the PAIDF actions. Historical release tags remain quarantined.
 
-This audit examines both planning dispositions in all 147 shipped declarative
+This audit examines both planning dispositions in all 148 shipped declarative
 workflows, using their real resource profiles and no image or registry overrides.
 It includes shell states whose resource profile selects a quarantined tool.
 It checks image selection; it does not claim GPU execution or acceptance of the
 blocked images. The guardrail compares the table below with actual default
 resolution, so a wildcard image override cannot conceal another regression.
 
-After PAIDF's repaired defaults and MJLab's qualified RTX pins, 31 workflows
-still fail default image planning: 26 select the stale image families withdrawn
-by #807, and five require images
-without an accepted public release. The audit checks every task, including
+After PAIDF's repaired defaults, 32 workflows still fail default image planning:
+27 select the stale image families withdrawn by #807, and five require images
+without an accepted public release. This inventory includes MJLab's qualified
+RTX pins described below. The audit checks every task, including
 unbuilt and validation candidates outside the stale-image inventory.
 
 ## Repaired workflow defaults
@@ -50,7 +50,7 @@ artifact behavior.
 
 ## Still blocked shipped workflows
 
-These 26 workflows need a repaired, scanned and capability-qualified image or an
+These 27 workflows need a repaired, scanned and capability-qualified image or an
 explicit operator-owned image. A repaired parent does not repair the layers of
 an already-published derivative. The table is an outstanding qualification
 inventory, not an instruction to remove quarantine.
@@ -60,6 +60,7 @@ inventory, not an instruction to remove quarantine.
 | `workflows/partners/antioch/antioch-offline-policy-train.yaml` | `lerobot` |
 | `workflows/testing/adversarial-scenario-hardening.yaml` | `isaac-lab` |
 | `workflows/testing/cosmos3-checkpoint-eval.yaml` | `cosmos3` |
+| `workflows/testing/cosmos3-fastwam-k2-eval.yaml` | `cosmos3` |
 | `workflows/testing/cosmos3-generate.yaml` | `cosmos3` |
 | `workflows/testing/cosmos3-policy-model-factory.yaml` | `cosmos3` |
 | `workflows/testing/cosmos3-ray-batch.yaml` | `cosmos3-ray-serve` |

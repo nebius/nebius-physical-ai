@@ -14,6 +14,11 @@ policy-train  Run native LIBERO-10 action-policy SFT and publish its complete DC
 policy-eval  Measure the trained policy in native LIBERO closed-loop simulation.
 policy-feedback  Qualify complete evaluation evidence and derive failed-task video targets.
 failure-candidates  Generate guarded video candidates from measured failed-task feedback.
+fastwam-k2-prepare  Prepare pinned, matched RoboLab task inputs for the two policy arms.
+fastwam-k2-full-wam  Run the exact full-WAM baseline through native closed-loop RoboLab.
+fastwam-k2-eval  Run the K=2 runtime overlay against the matched full-WAM preparation.
+fastwam-k2-compare  Compare matched closed-loop task success and native latency only.
+fastwam-k2-visualize  Write a factual RRD and copied rollout MP4s from completed evidence.
 nano-video-augment  Augment every source interval with Cosmos3-Nano structural edge control.
 nano-video-augment-recover  Recover existing generation or retry publication without generating again.
 nano-video-batch  Run measured chunked video requests through the Nano vLLM-Omni Ray service.
@@ -43,6 +48,11 @@ text-to-image  Generate an image from a prompt with the Cosmos3 framework, and p
 | `policy-eval` | Measure the trained policy in native LIBERO closed-loop simulation. |
 | `policy-feedback` | Qualify complete evaluation evidence and derive failed-task video targets. |
 | `failure-candidates` | Generate guarded video candidates from measured failed-task feedback. |
+| `fastwam-k2-prepare` | Prepare pinned, matched RoboLab task inputs for the two policy arms. |
+| `fastwam-k2-full-wam` | Run the exact full-WAM baseline through native closed-loop RoboLab. |
+| `fastwam-k2-eval` | Run the K=2 runtime overlay against the matched full-WAM preparation. |
+| `fastwam-k2-compare` | Compare matched closed-loop task success and native latency only. |
+| `fastwam-k2-visualize` | Write a factual RRD and copied rollout MP4s from completed evidence. |
 | `nano-video-augment` | Augment every source interval with Cosmos3-Nano structural edge control. |
 | `nano-video-augment-recover` | Recover existing generation or retry publication without generating again. |
 | `nano-video-batch` | Run measured chunked video requests through the Nano vLLM-Omni Ray service. |

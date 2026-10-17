@@ -70,7 +70,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # executable instead of exempting the scanner finding. Reinstalling
 # linux-libc-dev from the refreshed Ubuntu index updates the stale copy inherited
 # from the CUDA devel base; inference/JIT compatibility keeps those headers in
-# place, so removing the package is not an equivalent fix.
+# place, so removing the package is not an equivalent fix. RoboLab's
+# Isaac/MaterialX rendering loaders require libGLU.so.1 and libXt.so.6 at runtime.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
@@ -78,6 +79,8 @@ RUN apt-get update \
         ffmpeg \
         git \
         git-lfs \
+        libglu1-mesa \
+        libxt6 \
         linux-libc-dev \
         openssh-server \
         rsync \
