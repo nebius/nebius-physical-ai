@@ -117,6 +117,10 @@ def test_lerobot_image_build_smoke_imports_npa_dataset_runtime() -> None:
     assert dockerfile.count('"pyarrow>=23.0.1"') == 2
     assert dockerfile.count('"av==15.1.0"') == 2
     assert "NPA_BAKED_PYTHON=/opt/lerobot/venv/bin/python" in dockerfile
+    assert "pip install --no-deps -e /opt/npa" in dockerfile
+    assert 'test "$(command -v npa)" = /opt/lerobot/venv/bin/npa' in dockerfile
+    assert "metadata.version('npa')" in dockerfile
+    assert "assert av.__version__ == '15.1.0'" in dockerfile
     assert '"$NPA_BAKED_PYTHON" -c' in dockerfile
     assert "hasattr(av, 'option')" in dockerfile
     assert "from lerobot.datasets.lerobot_dataset import LeRobotDataset" in dockerfile

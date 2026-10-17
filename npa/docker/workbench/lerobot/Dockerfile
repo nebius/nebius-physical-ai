@@ -129,7 +129,14 @@ COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
 
-RUN python -m npa.smoke.test_lerobot_env \
+# Register the baked NPA source without resolving dependencies again. The vendor
+# environment above is already complete and version-pinned; leaving only source
+# files made runtime setup run `pip install -e /opt/npa`, which upgraded PyAV and
+# invalidated the LeRobot reader before the first dataset frame was loaded.
+RUN "$NPA_BAKED_PYTHON" -m pip install --no-deps -e /opt/npa \
+    && test "$(command -v npa)" = /opt/lerobot/venv/bin/npa \
+    && "$NPA_BAKED_PYTHON" -c "import importlib.metadata as metadata; assert metadata.version('npa')" \
+    && python -m npa.smoke.test_lerobot_env \
     && test "$NPA_BAKED_PYTHON" = /opt/lerobot/venv/bin/python \
     && "$NPA_BAKED_PYTHON" -c "import av; assert hasattr(av, 'option'); from lerobot.datasets.lerobot_dataset import LeRobotDataset; import pyarrow.parquet; import npa.workflows.lerobot_dataset; import npa.workbench.lerobot.policy_container"
 
@@ -181,6 +188,11 @@ RUN apt-get update \
 
 
 USER ubuntu
+
+# Verify the final runtime shape after PATH changes and security cleanup, not only
+# the earlier dependency layer used by the build cache.
+RUN test "$(command -v npa)" = /opt/lerobot/venv/bin/npa \
+    && "$NPA_BAKED_PYTHON" -c "import av; assert av.__version__ == '15.1.0'; assert hasattr(av, 'option'); from lerobot.datasets.lerobot_dataset import LeRobotDataset; import npa.workflows.lerobot_dataset; import npa.workbench.lerobot.policy_container"
 
 EXPOSE 8080
 
