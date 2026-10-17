@@ -248,6 +248,61 @@ def test_submission_state_allows_only_names_under_image_pull_secret_references(
         )
 
 
+def test_submission_state_allows_kubernetes_secret_key_references_without_values(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    storage_reference = {
+        "name": "task-owned-storage",
+        "key": "AWS_ACCESS_KEY_ID",
+    }
+
+    payload = update_submission_state(
+        "demo",
+        "run-storage-secret-reference",
+        {
+            "workflow": {
+                "resources_profile": {
+                    "kubernetes": {
+                        "pod_config": {
+                            "spec": {
+                                "containers": [
+                                    {
+                                        "env": [
+                                            {
+                                                "name": "AWS_ACCESS_KEY_ID",
+                                                "valueFrom": {
+                                                    "secretKeyRef": storage_reference
+                                                },
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                }
+            }
+        },
+    )
+
+    stored_reference = payload["workflow"]["resources_profile"]["kubernetes"][
+        "pod_config"
+    ]["spec"]["containers"][0]["env"][0]["valueFrom"]["secretKeyRef"]
+    assert stored_reference == storage_reference
+    with pytest.raises(ValueError, match="must not contain credentials"):
+        update_submission_state(
+            "demo",
+            "run-malformed-storage-secret-reference",
+            {
+                "secretKeyRef": {
+                    "name": "task-owned-storage",
+                    "password": "forbidden-inline-value",
+                }
+            },
+        )
+
+
 @pytest.mark.parametrize("enabled", [False, True])
 def test_submission_state_preserves_boolean_service_account_token_setting(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, enabled: bool

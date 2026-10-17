@@ -187,7 +187,12 @@ def test_receipt_controller_route_binds_live_lookup(
 
     def lookup(*args, **kwargs):
         calls.append(kwargs)
-        return ManagedJobEvidence("found", job_id="18", status="PENDING")
+        return ManagedJobEvidence(
+            "found",
+            job_id="18",
+            job_name=f"{run_id}-01-prepare",
+            status="PENDING",
+        )
 
     monkeypatch.setattr(
         "npa.orchestration.npa_workflow.run_resolution.lookup_managed_job", lookup
@@ -198,6 +203,7 @@ def test_receipt_controller_route_binds_live_lookup(
     assert resolved.controller_route_recorded is True
     assert resolved.sky_bin == "/opt/npa/sky"
     assert resolved.isolated_config_dir == controller_dir
+    assert resolved.job_name == f"{run_id}-01-prepare"
     assert calls == [
         {
             "job_id": "18",

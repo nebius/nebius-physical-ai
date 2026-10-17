@@ -141,6 +141,7 @@ likewise predates its current coherent release.
 | `npa-embodiedgen` (operator-private candidate) | not built; no resolved runtime | not built; no resolved runtime | not built; exact-digest RTX PRO 6000 capability gate pending | not built; no resolved runtime | not built; no resolved runtime |
 | `npa-ltx2` | unverified runtime | unverified runtime | **verified** [accepted records](#accepted-release-evidence) | unverified runtime | unverified runtime |
 | `npa-openpi` | blocked (RTX-only runtime contract) | blocked (RTX-only runtime contract) | pending exact-digest full-DROID qualification | blocked (`sm_120`-only probe/runtime contract) | blocked (`sm_120`-only probe/runtime contract) |
+| `npa-openvla-oft` (private candidate; publication quarantined) | unverified | unverified | unverified; five-stage native workflow has not reached OFT setup | unverified | unverified |
 | `npa-lyra2` (`2.0-rtfetch2`) | unverified | unverified | **verified** [native reconstruction](validation/lyra2-rtx-20261009.json) | **historical evidence** [rtfetch1](validation/lyra2-b200-20261008.json); rtfetch2 unverified | unverified |
 | `npa-curobo` | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated |
 | `npa-libero` (payload-free public-development staging permitted; not qualified) | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated | unbuilt; not validated |

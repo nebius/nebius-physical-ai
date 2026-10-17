@@ -38,7 +38,7 @@ gemini-robotics  Gemini Robotics hosted planning and evaluation (plan, eval). Br
 ros2  ROS 2 Jazzy prerequisite detection and deployment planning (bridge/bag-conversion/fleet execution not implemented).
 namespace  Create or select Kubernetes namespaces.
 molmoact  MolmoAct VLA: validate fine-tune/serve/eval configs (planning only; execution not implemented).
-openvla  OpenVLA: OFT fine-tuning, checkpoint serving, evaluation.
+openvla  OpenVLA-OFT LIBERO preparation, training, rollout, and evidence.
 openarm  Enactic OpenArm simulation with real MuJoCo and Isaac Sim/Isaac Lab.
 open3d  Open3D point-cloud registration and surface reconstruction.
 robocasa  RoboCasa kitchen-task simulation workbench.
@@ -103,7 +103,7 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 | `ros2` | ROS 2 Jazzy prerequisite detection and deployment planning (bridge/bag-conversion/fleet execution not implemented). |
 | `namespace` | Create or select Kubernetes namespaces. |
 | `molmoact` | MolmoAct VLA: validate fine-tune/serve/eval configs (planning only; execution not implemented). |
-| `openvla` | OpenVLA: OFT fine-tuning, checkpoint serving, evaluation. |
+| `openvla` | OpenVLA-OFT LIBERO preparation, training, rollout, and evidence. |
 | `openarm` | Enactic OpenArm simulation with real MuJoCo and Isaac Sim/Isaac Lab. |
 | `open3d` | Open3D point-cloud registration and surface reconstruction. |
 | `robocasa` | RoboCasa kitchen-task simulation workbench. |

@@ -1320,6 +1320,111 @@ def test_submit_uses_shared_libero_classification_for_secret_channel(
     assert not any(value in prepared.read_text() for value in secret_values.values())
 
 
+def test_libero_submit_uses_kubernetes_storage_secret_without_skypilot_values(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.execution_preflight import (
+        LIBERO_KUBERNETES_STORAGE_SECRET_ENV_NAMES,
+        LIBERO_SKYPILOT_SECRET_ENV_NAMES,
+    )
+
+    storage_secret = "unit-libero-storage"
+    yaml_path = tmp_path / "libero-kubernetes-secret.yaml"
+    yaml_path.write_bytes(
+        yaml.safe_dump_all(
+            [
+                {
+                    "name": "renamed",
+                    "resources": {
+                        "cloud": "kubernetes",
+                        "kubernetes": {
+                            "pod_config": {
+                                "spec": {
+                                    "containers": [
+                                        {
+                                            "name": "ray-node",
+                                            "env": [
+                                                {
+                                                    "name": name,
+                                                    "valueFrom": {
+                                                        "secretKeyRef": {
+                                                            "name": storage_secret,
+                                                            "key": name,
+                                                            **(
+                                                                {"optional": True}
+                                                                if name
+                                                                == "AWS_SESSION_TOKEN"
+                                                                else {}
+                                                            ),
+                                                        }
+                                                    },
+                                                }
+                                                for name in LIBERO_KUBERNETES_STORAGE_SECRET_ENV_NAMES
+                                            ],
+                                        }
+                                    ]
+                                }
+                            }
+                        },
+                    },
+                    "run": "true",
+                }
+            ],
+            sort_keys=False,
+        ).encode()
+    )
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        workflow_module,
+        "_execution_preflight",
+        lambda *_args, **_kwargs: (
+            None,
+            {"checks": {"libero_customer_authorization_validated": "validated"}},
+            {},
+        ),
+    )
+
+    def fake_run(command, **_kwargs):
+        calls.append(command)
+        if _is_status_cmd(command):
+            return _healthy_status(command)
+        return subprocess.CompletedProcess(
+            command, 0, stdout="Job submitted, ID: 42\n", stderr=""
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    secret_values = {
+        name: f"unit-{index}"
+        for index, name in enumerate(LIBERO_SKYPILOT_SECRET_ENV_NAMES)
+    }
+
+    submit_workflow(
+        yaml_path,
+        "libero-kubernetes-storage-secret-0001",
+        isolated_config_dir=tmp_path / "sky-state",
+        sky_bin=_fake_sky(tmp_path),
+        extra_env=secret_values,
+    )
+
+    launch = next(command for command in calls if "launch" in command)
+    selected = {
+        launch[index + 1] for index, value in enumerate(launch) if value == "--secret"
+    }
+    assert selected == set(LIBERO_SKYPILOT_SECRET_ENV_NAMES) - set(
+        LIBERO_KUBERNETES_STORAGE_SECRET_ENV_NAMES
+    )
+    prepared = (
+        tmp_path
+        / "sky-state"
+        / "submissions"
+        / "libero-kubernetes-storage-secret-0001"
+        / "workflow.yaml"
+    )
+    prepared_text = prepared.read_text(encoding="utf-8")
+    assert not any(value in prepared_text for value in secret_values.values())
+    assert f"name: {storage_secret}" in prepared_text
+
+
 def test_load_base_config_distinguishes_omitted_from_explicit_missing(
     tmp_path: Path,
 ) -> None:
@@ -2525,6 +2630,118 @@ def test_submit_workflow_secrets_can_come_from_extra_env(monkeypatch, tmp_path) 
     assert rendered["kubernetes"]["allowed_contexts"] == ["npa-rtxpro-mk8s"]
     assert rendered["allowed_clouds"] == ["kubernetes", "nebius"]
     assert rendered["nebius"]["capabilities"] == ["storage"]
+
+
+def test_submit_workflow_keeps_configured_secrets_out_of_prepared_yaml(
+    monkeypatch, tmp_path
+) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text("name: demo\n", encoding="utf-8")
+    sky_bin = _fake_sky(tmp_path)
+    access_key = "test-access-key-must-not-be-rendered"
+    secret_key = "test-secret-key-must-not-be-rendered"
+    session_token = "test-session-token-must-not-be-rendered"
+    captured: dict[str, str] = {}
+    calls: list[list[str]] = []
+
+    def preflight(documents, **_kwargs):
+        documents[0].setdefault("envs", {}).update(
+            {
+                "AWS_ACCESS_KEY_ID": access_key,
+                "AWS_SECRET_ACCESS_KEY": secret_key,
+                "AWS_SESSION_TOKEN": session_token,
+                "NPA_S3_BUCKET": "safe-bucket-name",
+            }
+        )
+        return (
+            None,
+            {"checks": {}},
+            {
+                "AWS_ACCESS_KEY_ID": access_key,
+                "AWS_SECRET_ACCESS_KEY": secret_key,
+                "AWS_SESSION_TOKEN": session_token,
+            },
+        )
+
+    def fake_run(cmd, **kwargs):
+        if _is_status_cmd(cmd):
+            return _healthy_status(cmd)
+        calls.append(list(cmd))
+        captured["prepared"] = Path(cmd[-1]).read_text(encoding="utf-8")
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout="Job submitted, ID: 10\n", stderr=""
+        )
+
+    monkeypatch.setattr(workflow_module, "_execution_preflight", preflight)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    submit_workflow(
+        yaml_path,
+        "run-secret-rendering",
+        isolated_config_dir=tmp_path / "sky-state",
+        sky_bin=sky_bin,
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SESSION_TOKEN",
+        ),
+    )
+
+    prepared = captured["prepared"]
+    assert access_key not in prepared
+    assert secret_key not in prepared
+    assert session_token not in prepared
+    environment = yaml.safe_load(prepared)["envs"]
+    assert environment["AWS_ACCESS_KEY_ID"] == "${AWS_ACCESS_KEY_ID}"
+    assert environment["AWS_SECRET_ACCESS_KEY"] == "${AWS_SECRET_ACCESS_KEY}"
+    assert environment["AWS_SESSION_TOKEN"] == "${AWS_SESSION_TOKEN}"
+    assert environment["NPA_S3_BUCKET"] == "safe-bucket-name"
+    launch = calls[0]
+    assert ["--secret", "AWS_ACCESS_KEY_ID"] == launch[
+        launch.index("--secret") : launch.index("--secret") + 2
+    ]
+    second_secret = launch.index("--secret", launch.index("--secret") + 1)
+    assert ["--secret", "AWS_SECRET_ACCESS_KEY"] == launch[
+        second_secret : second_secret + 2
+    ]
+    third_secret = launch.index("--secret", second_secret + 1)
+    assert ["--secret", "AWS_SESSION_TOKEN"] == launch[third_secret : third_secret + 2]
+
+
+def test_submit_workflow_refuses_declared_secret_without_native_transport(
+    monkeypatch, tmp_path
+) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text("name: demo\n", encoding="utf-8")
+    launched: list[list[str]] = []
+
+    def preflight(documents, **_kwargs):
+        documents[0].setdefault("envs", {})["AWS_ACCESS_KEY_ID"] = "inline-value"
+        return None, {"checks": {}}, {}
+
+    def fake_run(cmd, **_kwargs):
+        if _is_status_cmd(cmd):
+            return _healthy_status(cmd)
+        launched.append(list(cmd))
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
+    monkeypatch.setattr(workflow_module, "_execution_preflight", preflight)
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    with pytest.raises(
+        SkyPilotSubmitError,
+        match="configured secret AWS_ACCESS_KEY_ID has no native secret transport value",
+    ):
+        submit_workflow(
+            yaml_path,
+            "run-missing-secret-transport",
+            isolated_config_dir=tmp_path / "sky-state",
+            sky_bin=_fake_sky(tmp_path),
+            secret_envs=("AWS_ACCESS_KEY_ID",),
+        )
+
+    assert launched == []
 
 
 def test_submit_workflow_replaces_stale_kubernetes_context_allowlist(
@@ -7218,12 +7435,12 @@ def test_exact_managed_job_lookup_refuses_ambiguous_name_without_immutable_id(
 
 
 @pytest.mark.parametrize(
-    "names,expected",
+    "names,expected,expected_outcome",
     [
-        (["exact-run", "exact-run"], "exact-run"),
-        (["exact-run", "other-run"], ""),
-        (["exact-run", None], ""),
-        ([None, None], ""),
+        (["exact-run", "exact-run"], "exact-run", "found"),
+        (["exact-run", "other-run"], "", "unavailable"),
+        (["exact-run", None], "", "found"),
+        ([None, None], "", "found"),
     ],
 )
 def test_exact_lookup_retains_only_unanimous_native_job_name(
@@ -7231,6 +7448,7 @@ def test_exact_lookup_retains_only_unanimous_native_job_name(
     tmp_path,
     names,
     expected,
+    expected_outcome,
 ) -> None:
     from npa.orchestration.skypilot.workflow import lookup_managed_job
 
@@ -7256,7 +7474,7 @@ def test_exact_lookup_retains_only_unanimous_native_job_name(
         ),
     )
     evidence = lookup_managed_job("exact-run", job_id="42", sky_bin=sky_bin)
-    assert evidence.outcome == "found"
+    assert evidence.outcome == expected_outcome
     assert evidence.job_name == expected
 
 
@@ -7748,3 +7966,479 @@ def test_native_cleanup_rechecks_actual_provider_incarnation(monkeypatch, tmp_pa
     )
     assert result.job_id == "42" and len(checks) == 2
     assert cleanup_check() == "c" * 64 and len(checks) == 3
+
+
+@pytest.mark.parametrize("has_job", [False, True])
+@pytest.mark.parametrize("stderr", ["", "PermissionDenied: queue access denied\n"])
+def test_reconciliation_requires_noncontradictory_queue_diagnostics(
+    monkeypatch, has_job, stderr
+) -> None:
+    rows = (
+        [{"job_id": 126, "job_name": "exact-run", "status": "RUNNING"}]
+        if has_job
+        else []
+    )
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps(rows), stderr=stderr
+        ),
+    )
+
+    evidence = workflow_module._reconcile_managed_job_env(
+        "exact-run", env={}, sky_executable="sky", cwd="/durable"
+    )
+
+    if stderr:
+        assert evidence.state is workflow_module.ReconciliationState.AMBIGUOUS
+        assert evidence.job_id == ""
+        assert not evidence.workload_observable
+    else:
+        assert evidence.state.value == ("found" if has_job else "absent")
+        assert evidence.job_id == ("126" if has_job else "")
+
+
+@pytest.mark.parametrize("stderr", ["", "PermissionDenied: queue access denied\n"])
+def test_libero_launch_binding_requires_noncontradictory_queue_diagnostics(
+    monkeypatch, stderr
+) -> None:
+    row = {
+        "job_id": 126,
+        "job_name": "exact-run",
+        "status": "RUNNING",
+        "submitted_at": 101.0,
+        "metadata": {"executable_profile_sha256": "a" * 64},
+    }
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps([row]), stderr=stderr
+        ),
+    )
+
+    verified, plausible, error = workflow_module._libero_launch_binding_candidates(
+        "126",
+        "exact-run",
+        env={},
+        sky_executable="sky",
+        cwd="/durable",
+        expected_profile_sha256="a" * 64,
+        launch_started_at=100.0,
+    )
+
+    if stderr:
+        assert verified == ""
+        assert plausible == ("126",)
+        assert "preserving indeterminate state and refusing retry" in error
+    else:
+        assert verified == "126"
+        assert plausible == ()
+        assert error == ""
+
+
+@pytest.mark.parametrize(
+    ("stderr", "expected_outcome"),
+    [
+        ("", "absent"),
+        ("PermissionDenied: queue access denied\n", "unavailable"),
+    ],
+)
+def test_exact_managed_job_lookup_requires_noncontradictory_queue_diagnostics(
+    monkeypatch, tmp_path, stderr, expected_outcome
+) -> None:
+    """Only an empty queue without conflicting diagnostics proves absence."""
+
+    from npa.orchestration.skypilot.workflow import lookup_managed_job
+
+    sky_bin = _fake_sky(tmp_path)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout="[]\n", stderr=stderr
+        ),
+    )
+
+    evidence = lookup_managed_job("exact-run", sky_bin=sky_bin)
+
+    assert evidence.outcome == expected_outcome
+    if expected_outcome == "unavailable":
+        assert "malformed rows or conflicting diagnostics" in evidence.error
+        assert stderr.strip() in evidence.error
+
+
+@pytest.mark.parametrize(
+    ("returncode", "stdout", "stderr", "expected"),
+    [
+        (0, '[{"job_id": 42, "job_name": "exact-run"}]', "", ["42"]),
+        (
+            0,
+            '[{"job_id": 42, "job_name": "exact-run"}]',
+            "PermissionDenied: queue access denied\n",
+            [],
+        ),
+        (0, "[]", "", []),
+        (0, "not-json", "", []),
+        (1, '[{"job_id": 42, "job_name": "exact-run"}]', "", []),
+    ],
+)
+def test_named_job_ids_require_noncontradictory_queue_streams(
+    monkeypatch, tmp_path, returncode, stdout, stderr, expected
+) -> None:
+    """Contradictory diagnostics cannot supply a managed job's identity."""
+
+    from npa.orchestration.skypilot.workflow import find_job_ids_by_name
+
+    sky_bin = _fake_sky(tmp_path)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, returncode, stdout=stdout, stderr=stderr
+        ),
+    )
+
+    assert find_job_ids_by_name("exact-run", sky_bin=sky_bin) == expected
+
+
+@pytest.mark.parametrize(
+    ("returncode", "stdout", "stderr", "expected"),
+    [
+        (0, '[{"job_id": 42, "job_name": "exact-run"}]', "", "42"),
+        (
+            0,
+            '[{"job_id": 42, "job_name": "exact-run"}]',
+            "PermissionDenied: queue access denied\n",
+            "41",
+        ),
+        (0, "[]", "", "41"),
+        (0, "not-json", "", "41"),
+        (1, '[{"job_id": 42, "job_name": "exact-run"}]', "", "41"),
+    ],
+)
+def test_job_id_cross_check_preserves_fallback_on_contradictory_queue_streams(
+    monkeypatch, returncode, stdout, stderr, expected
+) -> None:
+    """A queue error cannot replace the launch ID with an unrelated queue ID."""
+
+    from npa.orchestration.skypilot.workflow import _verified_job_id
+
+    monkeypatch.delenv("NPA_SKYPILOT_VERIFY_JOB_ID", raising=False)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, returncode, stdout=stdout, stderr=stderr
+        ),
+    )
+
+    assert (
+        _verified_job_id("41", "exact-run", env={}, sky_executable="sky", cwd=None)
+        == expected
+    )
+
+
+@pytest.mark.parametrize(
+    ("stderr", "expected_outcome"),
+    [
+        ("", "absent"),
+        ("PermissionDenied: queue access denied\n", "unavailable"),
+    ],
+)
+def test_exact_managed_job_lookup_requires_noncontradictory_queue_streams(
+    monkeypatch, tmp_path, stderr, expected_outcome
+) -> None:
+    """Only an uncontradicted empty queue can establish managed-job absence."""
+
+    sky_bin = _fake_sky(tmp_path)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout="[]\n", stderr=stderr
+        ),
+    )
+
+    evidence = workflow_module.lookup_managed_job("exact-run", sky_bin=sky_bin)
+
+    assert evidence.outcome == expected_outcome
+    if expected_outcome == "unavailable":
+        assert "malformed rows or conflicting diagnostics" in evidence.error
+        assert stderr.strip() in evidence.error
+
+
+@pytest.mark.parametrize("stderr", ["", "PermissionDenied: queue access denied\n"])
+def test_job_id_cross_check_preserves_launch_id_on_contradictory_queue_streams(
+    monkeypatch, stderr
+) -> None:
+    """Conflicting queue output must not replace a launch's parsed job identity."""
+
+    monkeypatch.delenv("NPA_SKYPILOT_VERIFY_JOB_ID", raising=False)
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout='[{"job_id": 42, "job_name": "exact-run"}]',
+            stderr=stderr,
+        ),
+    )
+
+    assert workflow_module._verified_job_id(
+        "41", "exact-run", env={}, sky_executable="sky", cwd=None
+    ) == ("41" if stderr else "42")
+
+
+@pytest.mark.parametrize("stderr", ["", "PermissionDenied: queue access denied\n"])
+def test_libero_launch_binding_requires_noncontradictory_queue_streams(
+    monkeypatch, stderr
+) -> None:
+    """A queue diagnostic cannot bind a successful launch to a managed job."""
+
+    row = {
+        "job_id": 126,
+        "job_name": "exact-run",
+        "status": "RUNNING",
+        "submitted_at": 101.0,
+        "metadata": {"executable_profile_sha256": "a" * 64},
+    }
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps([row]), stderr=stderr
+        ),
+    )
+
+    verified, plausible, error = workflow_module._libero_launch_binding_candidates(
+        "126",
+        "exact-run",
+        env={},
+        sky_executable="sky",
+        cwd="/durable",
+        expected_profile_sha256="a" * 64,
+        launch_started_at=100.0,
+    )
+
+    if stderr:
+        assert verified == ""
+        assert plausible == ("126",)
+        assert "preserving indeterminate state and refusing retry" in error
+    else:
+        assert verified == "126"
+        assert plausible == ()
+        assert error == ""
+
+
+@pytest.mark.parametrize("stderr", ["", "PermissionDenied: queue access denied\n"])
+def test_reconciliation_requires_noncontradictory_queue_streams(
+    monkeypatch, stderr
+) -> None:
+    """Conflicting queue diagnostics keep cleanup reconciliation indeterminate."""
+
+    row = {"job_id": 126, "job_name": "exact-run", "status": "RUNNING"}
+    monkeypatch.setattr(
+        workflow_module.subprocess,
+        "run",
+        lambda cmd, **_kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps([row]), stderr=stderr
+        ),
+    )
+
+    evidence = workflow_module._reconcile_managed_job_env(
+        "exact-run", env={}, sky_executable="sky", cwd="/durable"
+    )
+
+    if stderr:
+        assert evidence.state is workflow_module.ReconciliationState.AMBIGUOUS
+        assert evidence.job_id == ""
+        assert not evidence.workload_observable
+    else:
+        assert evidence.state is workflow_module.ReconciliationState.FOUND
+        assert evidence.job_id == "126"
+
+
+@pytest.mark.parametrize("raise_on_error", [False, True])
+@pytest.mark.parametrize(
+    ("returncode", "stdout", "stderr", "has_rows", "ambiguous"),
+    [
+        (0, _QUEUE_JSON, "", True, False),
+        (0, _QUEUE_JSON, "Warning: optional metrics unavailable\n", True, False),
+        (0, _QUEUE_JSON, "PermissionDenied: queue access denied\n", False, True),
+        (0, "PermissionDenied: queue access denied\n" + _QUEUE_JSON, "", False, True),
+        (0, _QUEUE_JSON + "\nPermissionDenied: queue access denied", "", False, True),
+        (0, "[]", "", False, False),
+        (1, "", "No in-progress managed jobs.\n", False, False),
+        (0, "not-json", "", False, True),
+        (1, _QUEUE_JSON, "", False, True),
+        (0, _QUEUE_JSON + "\n[]", "", False, True),
+        (0, _QUEUE_JSON, "RUNNING job_id=999\n", False, True),
+        (0, "[]", "PermissionDenied: queue access denied\n", False, True),
+    ],
+)
+def test_task_statuses_verify_both_queue_streams(
+    monkeypatch,
+    tmp_path,
+    raise_on_error,
+    returncode,
+    stdout,
+    stderr,
+    has_rows,
+    ambiguous,
+) -> None:
+    """Optional diagnostics omit ambiguous rows; strict callers retain errors."""
+    from npa.orchestration.skypilot.workflow import workflow_task_statuses
+
+    sky_bin = _fake_sky(tmp_path)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, returncode, stdout=stdout, stderr=stderr
+        ),
+    )
+
+    if raise_on_error and ambiguous:
+        with pytest.raises(RuntimeError, match="SkyPilot task queue"):
+            workflow_task_statuses("75", sky_bin=sky_bin, raise_on_error=True)
+        return
+
+    rows = workflow_task_statuses("75", sky_bin=sky_bin, raise_on_error=raise_on_error)
+    if not has_rows:
+        assert rows == []
+        return
+    assert [row["task_id"] for row in rows] == [0, 1, 2]
+    assert {row["job_id"] for row in rows} == {"75"}
+    assert [row["status"] for row in rows] == ["SUCCEEDED", "RUNNING", "SUCCEEDED"]
+    assert rows[0]["submitted_at"] == 1785297417.2239287
+    assert rows[0]["end_at"] == 1785297483.0891774
+    assert rows[1]["end_at"] is None
+
+
+def test_workflow_status_allows_benign_queue_diagnostics(monkeypatch, tmp_path) -> None:
+    """Structured queue output retains the pinned benign-warning policy."""
+
+    sky_bin = _fake_sky(tmp_path)
+
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout='[{"job_id": 42, "name": "run", "status": "RUNNING"}]',
+            stderr="warning: refreshing managed jobs queue\n",
+        ),
+    )
+
+    result = workflow_status("42", sky_bin=sky_bin)
+
+    assert result.status == "RUNNING"
+
+
+def test_workflow_status_rejects_conflicting_queue_diagnostics(
+    monkeypatch, tmp_path
+) -> None:
+    """A successful queue payload cannot override an error on stderr."""
+
+    sky_bin = _fake_sky(tmp_path)
+
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout='[{"job_id": 42, "name": "run", "status": "RUNNING"}]',
+            stderr="error: controller connection was refused\n",
+        ),
+    )
+
+    result = workflow_status("42", sky_bin=sky_bin)
+
+    assert result.status == "UNKNOWN"
+    assert "malformed rows or conflicting diagnostics" in result.error
+    assert "stderr: error: controller connection was refused" in result.error
+    assert "restore queue access before resuming" in result.error
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"), [(None, "UNKNOWN"), ("RUNNING", "RUNNING")]
+)
+def test_positive_queue_status_distinguishes_present_unverifiable_job(
+    monkeypatch, tmp_path, status, expected
+) -> None:
+    """A present row without a scheduler status does not imply a lost job."""
+    sky_bin = _fake_sky(tmp_path)
+    row = {"job_id": 42}
+    if status is not None:
+        row["status"] = status
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps([row]), stderr=""
+        ),
+    )
+    result = workflow_status("42", sky_bin=sky_bin)
+    assert result.status == expected
+    if status is None:
+        assert "a matching task has a missing or unrecognized status" in result.error
+        assert 'stdout: [{"job_id": 42}]' in result.error
+        assert "restore queue access before resuming" in result.error
+    else:
+        assert result.error == ""
+
+
+def test_exact_managed_job_lookup_recovers_runtime_wave_name_with_immutable_id(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.orchestration.skypilot.workflow import lookup_managed_job
+
+    sky_bin = _fake_sky(tmp_path)
+    payload = [
+        {
+            "job_id": 43,
+            "job_name": "exact-run-01-prepare",
+            "task_id": 0,
+            "task_name": "prepare",
+            "status": "PENDING",
+        }
+    ]
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps(payload), stderr=""
+        ),
+    )
+
+    evidence = lookup_managed_job("exact-run", job_id="43", sky_bin=sky_bin)
+
+    assert evidence.outcome == "found"
+    assert evidence.job_id == "43"
+    assert evidence.job_name == "exact-run-01-prepare"
+
+
+def test_exact_managed_job_lookup_rejects_noncanonical_wave_name(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.orchestration.skypilot.workflow import lookup_managed_job
+
+    sky_bin = _fake_sky(tmp_path)
+    payload = [{"job_id": 43, "job_name": "exact-run-other", "status": "PENDING"}]
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps(payload), stderr=""
+        ),
+    )
+
+    evidence = lookup_managed_job("exact-run", job_id="43", sky_bin=sky_bin)
+
+    assert evidence.outcome == "unavailable"
+    assert "not exact run" in evidence.error

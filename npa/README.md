@@ -12,6 +12,12 @@ and follow [installation](../docs/install.md) and
 The [command reference](../docs/cli/workbench.md) lists the installed tools;
 `npa workbench <tool> --help` exposes each tool's actual commands.
 
+`npa workbench workflow stage-src --no-persist` stages source without changing
+project configuration, preserving an existing isolated runtime's configuration
+identity. The default still saves the source URI. See the
+[workflow guide](../docs/workbench/npa-workflow-guide.md#source-staging-and-run-ids)
+for passing the returned URI and selecting the same project across commands.
+
 Optional [Workbench access](../docs/workbench/team-access.md) adds CLI/API/SDK shared
 execution through `npa workbench submit`, `runs`, `run`, and `whoami`, and the
 existing `npa.sdk.workbench.team` SDK. Administrators use `npa workbench access`.

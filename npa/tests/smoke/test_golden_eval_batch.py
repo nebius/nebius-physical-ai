@@ -67,6 +67,9 @@ def test_needs_image_update_exclusions_can_only_shrink() -> None:
         "libero",
         "loop-eval",
         "ncore",
+        # Explicitly reviewed: the neutral, publication-quarantined OFT
+        # bootstrap awaits its native five-stage qualification.
+        "openvla-oft",
         "openpi",
         "reference-policy",
         "robocasa",

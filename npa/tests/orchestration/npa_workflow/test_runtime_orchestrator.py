@@ -49,6 +49,7 @@ from npa.orchestration.npa_workflow.runtime import (
     _wave_image_references,
     plan_fingerprint,
     run_workflow_runtime,
+    secret_env_names,
     s3_artifact_exists,
     s3_trigger_waiter,
     wave_key,
@@ -58,6 +59,29 @@ from npa.orchestration.npa_workflow.skypilot_render import (
     build_skypilot_task_doc,
 )
 from npa.orchestration.npa_workflow.supervisor import SupervisorLedger
+
+
+def test_secret_env_names_forwards_an_available_session_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in (
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    assert secret_env_names(
+        values={
+            "AWS_ACCESS_KEY_ID": "test-access",
+            "AWS_SECRET_ACCESS_KEY": "test-secret",
+            "AWS_SESSION_TOKEN": "test-session",
+        }
+    ) == (
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+    )
 
 
 def test_wave_attempt_persists_exact_rendered_claim_names() -> None:

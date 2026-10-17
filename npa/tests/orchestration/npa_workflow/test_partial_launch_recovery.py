@@ -80,8 +80,8 @@ def partial_runtime(tmp_path, runtime_sdk_submission):
     case.sdk.job.side_effect = launch
     case.lookup = lambda name, job_id="": ManagedJobEvidence(
         "found",
-        job_name=name,
         job_id=job_id,
+        job_name=name,
         status=case.terminal if case.cancels else "PENDING",
         workload_observable=bool(case.cancels),
     )
@@ -206,6 +206,7 @@ def test_cancellation_race_retains_actual_success(partial_runtime, valid):
         "wrong_id",
         "wrong_name",
         "empty_name",
+        "missing_name",
         "running",
         "unknown_terminal",
     ],
@@ -221,6 +222,10 @@ def test_uncertain_exact_identity_or_terminal_blocks(partial_runtime, outcome):
                 job_name=name,
                 status="PENDING",
                 workload_observable=False,
+            )
+        if outcome == "missing_name":
+            return ManagedJobEvidence(
+                "found", job_id=job_id, status="PENDING", workload_observable=False
             )
         return SimpleNamespace(
             outcome=outcome if outcome in {"absent", "unavailable"} else "found",

@@ -1,70 +1,69 @@
-"""OpenVLA workbench SDK; mirrors the npa openvla CLI stages.
+"""Native OpenVLA-OFT SDK stages.
 
-The three stages are stubs in this release: they expose the intended
-signatures but raise NotImplementedError naming the tracking issue,
-matching the honest stub behavior of npa.cli.workbench.openvla and
-npa.workflows.byof.openvla_pipeline. The three-tier contract checks
-signatures, not behavior, so the SDK functions stay thin until the
-OpenVLA-OFT fine-tuning pipeline lands (nebius/nebius-physical-ai#500).
-
-Model weights are never bundled: the base model (default
-``openvla/openvla-7b``) is resolved at runtime through the HF Hub cache
-(``npa.workbench.model_access``), using the operator's HF token.
+Every method delegates to the OFT pipeline. The training/rollout path rejects
+stock OpenVLA-only checkpoints because their decoder lacks OFT's continuous
+action head and proprioception projector.
 """
 
 from __future__ import annotations
 
-_ISSUE_REF = "nebius/nebius-physical-ai#500"
+from typing import Any
 
-_NOT_IMPLEMENTED = (
-    "OpenVLA workbench pipeline stages are stubs in this release "
-    f"(tracking issue {_ISSUE_REF})."
-)
+from npa.workflows.byof import openvla_pipeline as pipeline
 
 
-def _not_implemented(stage: str) -> None:
-    """Raise the stub notice for *stage*."""
-    raise NotImplementedError(f"stage {stage!r}: {_NOT_IMPLEMENTED}")
+def prepare(
+    *,
+    dataset_uri: str,
+    dataset_name: str,
+    task_suite: str,
+    runtime_root: str,
+    output_uri: str,
+) -> dict[str, Any]:
+    """Decode RLDS through pinned dlimp and publish normalization provenance."""
+    return pipeline.prepare(
+        pipeline.PrepareConfig(
+            dataset_uri, output_uri, dataset_name, task_suite, runtime_root
+        )
+    )
 
 
 def train(
     *,
-    model_id: str = "openvla/openvla-7b",
-    dataset_uri: str,
-    dataset_name: str = "finetune",
-    output_dir: str = "runs/openvla-oft",
-    batch_size: int = 16,
-    max_steps: int = 200_000,
-    learning_rate: float = 5e-4,
-    lora_rank: int = 32,
-    lora_dropout: float = 0.0,
-    image_aug: bool = True,
-    seed: int = 7,
-    dry_run: bool = False,
-) -> None:
-    """Fine-tune OpenVLA with the OpenVLA-OFT LoRA recipe (stub)."""
-    _not_implemented("train")
+    prepared_manifest_uri: str,
+    output_uri: str,
+    runtime_root: str,
+    model_id: str = pipeline.DEFAULT_MODEL_ID,
+    model_revision: str = pipeline.MODEL_REVISION,
+    batch_size: int = pipeline.DEFAULT_BATCH_SIZE,
+    max_steps: int = pipeline.DEFAULT_MAX_STEPS,
+    learning_rate: float = pipeline.DEFAULT_LEARNING_RATE,
+    lora_rank: int = pipeline.DEFAULT_LORA_RANK,
+    processes: int = 8,
+    seed: int = pipeline.DEFAULT_SEED,
+) -> dict[str, Any]:
+    """Run upstream OpenVLA-OFT continuous-action fine-tuning."""
+    return pipeline.train(pipeline.TrainConfig(**locals()))
 
 
-def serve(
+def rollout(
     *,
-    checkpoint: str = "openvla/openvla-7b",
-    host: str = "127.0.0.1",
-    port: int = 8000,
-    dry_run: bool = False,
-) -> None:
-    """Serve an OpenVLA checkpoint over HTTP (stub)."""
-    _not_implemented("serve")
+    training_manifest_uri: str,
+    output_uri: str,
+    runtime_root: str,
+    task_suite: str,
+    trials_per_task: int = pipeline.DEFAULT_TRIALS,
+    seed: int = pipeline.DEFAULT_SEED,
+) -> dict[str, Any]:
+    """Run upstream closed-loop LIBERO rollouts and keep MP4 evidence."""
+    return pipeline.rollout(pipeline.RolloutConfig(**locals()))
 
 
-def eval(
-    *,
-    checkpoint: str,
-    dataset_uri: str,
-    num_episodes: int = 10,
-    output_uri: str = "",
-    seed: int = 7,
-    dry_run: bool = False,
-) -> None:
-    """Evaluate an OpenVLA checkpoint (stub)."""
-    _not_implemented("eval")
+def evaluate(*, rollout_manifest_uri: str, output_uri: str) -> dict[str, Any]:
+    """Verify raw rollout counts and calculate held-out success statistics."""
+    return pipeline.evaluate(pipeline.EvaluateConfig(**locals()))
+
+
+def visualize(*, evaluation_manifest_uri: str, output_uri: str) -> dict[str, Any]:
+    """Produce factual CSV/SVG comparison artifacts."""
+    return pipeline.visualize(pipeline.VisualizeConfig(**locals()))

@@ -49,6 +49,7 @@ def _build_text(tool: str) -> str:
 # npa.workflow spec, its image MUST be able to host a SkyPilot task.
 SKYPILOT_HOSTED_IMAGES = (
     "mjlab",
+    "openvla-oft",
     "cosmos2-transfer",
     "cosmos3-reason",
     "groot",

@@ -26,11 +26,12 @@ SCHEMA_VERSION = "npa.workflow.submission.v1"
 _SECRET_KEY = re.compile(
     r"(secret|password|credential|token|access_key)", re.IGNORECASE
 )
-# Kubernetes imagePullSecrets contains only names of separately stored Secret
-# objects. Keeping that placement reference in a resource profile is necessary
-# for an exact receipt and does not persist credential material. Child values
-# remain recursively scanned, so malformed embedded credentials still fail.
-_SAFE_REFERENCE_KEYS = frozenset({"imagePullSecrets", "secret_safe"})
+# Kubernetes imagePullSecrets and env.secretKeyRef contain only names/keys of
+# separately stored Secret objects. Keeping those placement references in a
+# resource profile is necessary for an exact receipt and does not persist
+# credential material. Child values remain recursively scanned, so malformed
+# embedded credentials still fail.
+_SAFE_REFERENCE_KEYS = frozenset({"imagePullSecrets", "secretKeyRef", "secret_safe"})
 # This Kubernetes PodSpec field contains a boolean, despite matching the
 # credential-key heuristic through its ``Token`` suffix. The parent/key pair
 # keeps the exemption tied to the rendered Kubernetes structure.
