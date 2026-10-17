@@ -668,14 +668,19 @@ def test_sdk_output_paths_matches_execution_trigger_dataset_precedence(
 def test_recording_download_uses_exact_selected_uri(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    selected = "s3://example-bucket/sim2real-b/archived-run/reports/custom.rrd"
+    selected = "s3://example-bucket/sim2real-b/archived-run/reports/sim2real.rrd"
     downloads: list[str] = []
+    resolved: list[str] = []
 
     def download(uri: str, destination: str) -> None:
         downloads.append(uri)
         Path(destination).write_bytes(b"existing-recording")
 
-    publication = SimpleNamespace(resolve=lambda uri: uri)
+    def resolve(uri: str) -> str:
+        resolved.append(uri)
+        return uri
+
+    publication = SimpleNamespace(resolve=resolve)
     monkeypatch.setattr(
         "npa.workflows.sim2real_rerun_regen.resolve_committed_publication_snapshot",
         lambda *_args: publication,
@@ -692,6 +697,7 @@ def test_recording_download_uses_exact_selected_uri(
         rrd_uri=selected,
         client=SimpleNamespace(download_path=download),
     )
+    assert resolved == [selected]
     assert downloads == [selected]
     assert path.read_bytes() == b"existing-recording"
 
