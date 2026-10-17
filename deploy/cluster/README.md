@@ -137,7 +137,7 @@ common failures.
 
 ## Terraform reproducibility
 
-The vendored recipe is based on `main-v2026-05-25` with local reservation,
+The vendored recipe is based on `main-v2026-10-12` with local reservation,
 managed-driver, spot-pricing, and node-group patches. Preemptible GPU nodes set
 `follows_spot_price = {}` as required by the
 [Nebius spot API](https://docs.nebius.com/compute/virtual-machines/preemptible);
@@ -147,6 +147,26 @@ on AMD64 and ARM64. NPA checks the SHA-bound platform metadata, initializes with
 `-lockfile=readonly`, and stores provider caches outside this source directory.
 On a lock mismatch, intentionally regenerate and review the provider lock;
 removing it would discard the verification contract.
+
+### Existing-state provider migration
+
+This wrapper now uses the official `registry.terraform.io/nebius/nebius`
+provider address. A pre-refresh, operator-owned Terraform state can still record
+the retired regional provider address. Before planning or applying that exact
+existing installation, back up its state privately, inspect `terraform
+providers`, then migrate only that address from the installation's original
+Terraform directory:
+
+```bash
+terraform state replace-provider \
+  'terraform-provider.storage.eu-north1.nebius.cloud/nebius/nebius' \
+  'registry.terraform.io/nebius/nebius'
+```
+
+This is a state-address migration; it must use the same backend and workspace
+as the owned installation and does not create, replace, or delete cloud
+resources. Do not run it against a shared or unverified state. Re-run
+`terraform providers` and review a no-apply plan before any reconciliation.
 
 ### Provider request deadlines
 
