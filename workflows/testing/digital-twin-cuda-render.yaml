@@ -3,13 +3,14 @@ kind: Workflow
 metadata:
   name: digital-twin-cuda-render
   executionMode: runtime
-  description: Render an authored industrial reference scene with native Blender Cycles CUDA and publish offline HTML, OpenUSD, glTF, and measured rendering evidence.
+  description: Render an authored industrial reference scene with native Blender Cycles CUDA and publish offline HTML, OpenUSD, and glTF after current-runtime qualification.
 config:
   bucket: example-bucket
   prefix: digital-twin-cuda-render/{{run.id}}
   output_uri: s3://{{config.bucket}}/{{config.prefix}}/rendered
   source_overlay: true
-  runtime_image: ghcr.io/nebius/nebius-physical-ai/npa-sonic@sha256:c9ba0996b28f54b013e36da689638b386a7ef9c0c8c4413fc4b3c72ff1a808bb
+  required_immutable_images: [runtime_image]
+  runtime_image: ''
   accelerator: B200:1
   views: 24
   samples: 64
@@ -24,7 +25,7 @@ resources:
 initial: render
 states:
   render:
-    description: Fetch hash-pinned Blender, require CUDA devices, render every view, and bind the scene and media hashes before publication.
+    description: Require an operator-supplied immutable NPA runtime with the source overlay, fetch hash-pinned Blender, require CUDA devices, and bind scene/media hashes before publication.
     resources: renderer
     run:
       argv:

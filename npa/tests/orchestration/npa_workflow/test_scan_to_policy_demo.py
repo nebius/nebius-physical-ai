@@ -10,14 +10,23 @@ from npa.orchestration.npa_workflow.skypilot_render import (
     render_skypilot_yaml,
 )
 from npa.orchestration.npa_workflow.spec import load_spec
+from npa.orchestration.npa_workflow.submit import merge_config_overrides
 
 _SPEC = (
     Path(__file__).resolve().parents[4] / "workflows/main/rgbd-scan-to-policy-demo.yaml"
 )
+_ISAAC = "registry.example.invalid/npa-isaac-lab@sha256:" + "a" * 64
+_CPU = "registry.example.invalid/npa-sonic@sha256:" + "b" * 64
+
+
+def _operator_spec():
+    return merge_config_overrides(
+        load_spec(_SPEC), {"isaac_image": _ISAAC, "assembly_image": _CPU}
+    )
 
 
 def test_public_sample_plan_needs_no_operator_capture_or_cases():
-    spec = load_spec(_SPEC)
+    spec = _operator_spec()
     plan = build_plan(spec, run_id="sample-contract")
     assert [step.state for step in plan.steps] == [
         "sample",
@@ -44,7 +53,7 @@ def test_public_sample_plan_needs_no_operator_capture_or_cases():
 
 def test_sample_render_preserves_cpu_geometry_and_rtx_native_runtime(monkeypatch):
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/source-fixture")
-    spec = load_spec(_SPEC)
+    spec = _operator_spec()
     rendered = render_skypilot_yaml(
         spec,
         build_plan(spec, run_id="sample-render"),

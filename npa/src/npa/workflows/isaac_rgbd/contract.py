@@ -7,6 +7,10 @@ import json
 from pathlib import Path, PurePosixPath
 import re
 
+from npa.orchestration.npa_workflow.image_inputs import (
+    IMMUTABLE_IMAGE_REFERENCE_PATTERN,
+)
+
 from .geometry import _array, _intrinsics, _transform
 
 REQUEST_SCHEMA = "npa.isaac.rgbd.request.v1"
@@ -105,7 +109,7 @@ def _runtime_materials(value):
     if value["isaac_sim_version"] != ISAAC_SIM_VERSION:
         raise ValueError("runtime materials require the pinned Isaac version")
     if not isinstance(value["image"], str) or not re.fullmatch(
-        r"[A-Za-z0-9._:/-]+@sha256:[a-f0-9]{64}", value["image"]
+        IMMUTABLE_IMAGE_REFERENCE_PATTERN, value["image"]
     ):
         raise ValueError("runtime materials require an immutable image digest")
     _file_hashes({"library": value["library_sha256"]})

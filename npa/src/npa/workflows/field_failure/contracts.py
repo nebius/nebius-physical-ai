@@ -9,6 +9,10 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from npa.orchestration.npa_workflow.image_inputs import (
+    IMMUTABLE_IMAGE_REFERENCE_PATTERN,
+)
+
 _Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 _Name = Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")]
 _Seed = Annotated[int, Field(ge=0)]
@@ -73,7 +77,7 @@ class _Adapter(_Contract):
     ]
     source_sha256: _Digest
     runtime_image: Annotated[
-        str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._/:\-]*@sha256:[0-9a-f]{64}$")
+        str, Field(pattern=rf"^{IMMUTABLE_IMAGE_REFERENCE_PATTERN}$")
     ]
 
 

@@ -13,6 +13,11 @@ config:
   bucket: example-bucket
   prefix: "physical-augmentation/{{run.id}}"
   source_overlay: "1"
+  # The historical Isaac image digest is withdrawn. The operator supplies a
+  # separately qualified digest for both the CPU preparation/export and RTX
+  # collection stages so the run records one exact runtime identity.
+  required_immutable_images: [isaac_image]
+  isaac_image: ''
   seed: "42"
   episodes_per_condition: "3"
   episode_steps: "600"
@@ -25,13 +30,13 @@ resources:
     cloud: kubernetes
     cpus: 4
     memory: 16Gi
-    image: ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:bb735577809f9b427493fda78efebc543dcf02e3deac2ec8a36ac019bff8ee46
+    image: '{{config.isaac_image}}'
   isaac:
     cloud: kubernetes
     accelerators: RTXPRO6000:1
     cpus: 16
     memory: 96Gi
-    image: ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:bb735577809f9b427493fda78efebc543dcf02e3deac2ec8a36ac019bff8ee46
+    image: '{{config.isaac_image}}'
 
 initial: prepare
 

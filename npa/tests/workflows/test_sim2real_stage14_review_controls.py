@@ -162,6 +162,15 @@ class _FakeVizResult:
     heldout_env_count: int = 1
     synthetic_frame_count: int = 0
 
+    @property
+    def has_factual_observation_evidence(self) -> bool:
+        return bool(
+            self.frame_count
+            or self.rollout_count
+            or self.heldout_env_count
+            or self.heldout_frame_count
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "status": "written",
@@ -840,7 +849,7 @@ def test_publication_occurs_only_after_heldout_frame_gate(
                 report={},
                 policy_access={},
             ),
-            _FakeVizResult(heldout_frame_count=0),
+            _FakeVizResult(heldout_frame_count=0, heldout_env_count=0),
             upload=True,
         )
     assert calls == []

@@ -27,7 +27,9 @@ def test_workflow_argv_matches_stage_parser_and_gpu_requirement():
         Path(__file__).resolve().parents[3]
         / "workflows/testing/physical-augmentation.yaml"
     )
-    plan = build_plan(load_spec(path), run_id="test-physical")
+    spec = load_spec(path)
+    spec.config["isaac_image"] = "ghcr.io/example/isaac-lab@sha256:" + "a" * 64
+    plan = build_plan(spec, run_id="test-physical")
     assert [step.state for step in plan.steps] == ["prepare", "collect", "report"]
     for step in plan.steps:
         args = build_parser().parse_args(step.argv[3:])

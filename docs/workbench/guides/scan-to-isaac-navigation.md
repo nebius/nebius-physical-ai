@@ -123,7 +123,9 @@ OpenUSD only for this stage; no Content Agents inference or OVRTX rendering runs
 
 ```bash
 npa workbench workflow validate-spec workflows/testing/scan-to-isaac-navigation.yaml --json
-npa workbench workflow plan-spec workflows/testing/scan-to-isaac-navigation.yaml --run-id preview --json
+: "${NPA_ISAAC_IMAGE:?Set an independently qualified immutable Isaac image}"
+npa workbench workflow plan-spec workflows/testing/scan-to-isaac-navigation.yaml \
+  --run-id preview --json --var "isaac_image=$NPA_ISAAC_IMAGE"
 
 npa workbench workflow submit workflows/testing/scan-to-isaac-navigation.yaml \
   --runtime --max-wait-seconds 0 --run-id "$RUN_ID" --project "$NPA_PROJECT" --infra "$NPA_INFRA" \
@@ -135,8 +137,10 @@ npa workbench workflow submit workflows/testing/scan-to-isaac-navigation.yaml \
 Set the variables to your configured project, RTX Kubernetes target, fresh run
 ID, writable bucket, and prepared input prefix. `NPA_ISAAC_IMAGE` must name an
 immutable Isaac Lab image as `registry/repository@sha256:<64-hex-digest>`.
-The default `tool://isaac-lab` is for planning; physics execution refuses it with
-an instruction to select an immutable image. The workflow uses
+Planning now requires this exact operator image and rejects missing, tag-only,
+or `tool://` inputs before launch. The public Isaac release is quarantined;
+select a replacement only after the [image qualification procedure](../container-image-catalog.md).
+The workflow uses
 `source_overlay: true` so generic submission stages the checkout's NPA source
 with the image dependencies. `assembly_image` defaults to the catalog's Content
 Agents image and can also be overridden with an exact digest through `--var`.

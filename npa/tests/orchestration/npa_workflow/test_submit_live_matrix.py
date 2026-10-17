@@ -761,6 +761,19 @@ def test_lerobot_subtask_proof_seeds_real_parquet_rows(monkeypatch) -> None:
     ]
 
 
+def _secret_hint_spec(path):
+    from npa.orchestration.npa_workflow.submit import merge_config_overrides
+
+    spec = load_spec(path)
+    # Secret-name inspection uses an inert static plan; live execution still
+    # requires qualified operator images and normal submission preflight.
+    images = {
+        key: "registry.example.invalid/secret-hints@sha256:" + "0" * 64
+        for key in spec.config.get("required_immutable_images", [])
+    }
+    return merge_config_overrides(spec, images)
+
+
 def test_matrix_cases_declare_every_secret_the_renderer_hints_at() -> None:
     """A missing secret_env makes the CLI print an advisory line before its JSON.
 
@@ -777,7 +790,7 @@ def test_matrix_cases_declare_every_secret_the_renderer_hints_at() -> None:
     for case in SUBMIT_LIVE_MATRIX:
         path = resolve_npa_workflow_spec(case.spec)
         assert path is not None, case.spec
-        spec = load_spec(path)
+        spec = _secret_hint_spec(path)
         plan = build_plan(
             spec,
             run_id="matrix-check",

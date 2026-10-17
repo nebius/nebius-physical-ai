@@ -115,6 +115,16 @@ def _prepare_registry_workflow(spec_path):
         image_overrides["workflow.habitat_sim.smoke"] = (
             f"{public_prefix}habitat-sim@sha256:{'0' * 64}"
         )
+    # Required exact inputs are inert ownership fixtures. The no-override guard
+    # separately verifies denial when the operator has not supplied these values.
+    config_overrides.update(
+        {
+            key: f"{public_prefix}runtime@sha256:{'0' * 64}"
+            for key in spec.config.get("required_immutable_images", [])
+        }
+    )
+    if requires_baked_image:
+        config_overrides["source_sha"] = "0" * 40
     if spec_path.name == "byof-embodiedgen.yaml":
         # EmbodiedGen is an operator-private runtime-fetch image. This guardrail
         # must keep its inert restricted placeholder rather than applying its

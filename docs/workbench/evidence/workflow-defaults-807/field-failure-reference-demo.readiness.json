@@ -1,0 +1,50 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "baec66736efb19adbe280bc924a8327ee71747caa2577f541338b3f5a3d1d550",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Actual validate-spec and plan-spec --run-id preview --check-render passed with 19 tasks in an isolated empty configuration. Network and provider access were prohibited. This proves planning only.",
+      "evidence": [
+        "npa/tests/workflows/field_failure/test_reference_anchor_configuration.py",
+        "npa/tests/workflows/field_failure/test_reference_admission_pipeline.py"
+      ]
+    },
+    "task_fidelity": {
+      "status": "unverified",
+      "reason": "Full source-bound baseline/candidate learning, measured simulation-failure admission, reconstruction, development comparison and rejection were verified. The fixed coefficient-10.0 candidate scored 82.05% versus 82.475% baseline and failed 699 metric checks across 399 cases. Effective promotion remains unverified; the baseline was retained and final evaluation remained untouched. Cohorts, full budgets and quality gates are unchanged.",
+      "evidence": [
+        "docs/workbench/cookbooks/public-rl-improvement-demo.md",
+        "npa/tests/workflows/field_failure/test_reference_anchor_configuration.py",
+        "docs/workbench/evidence/public-demos/rl-improvement-rejection.json"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "Fresh run-scoped provider and RTX worker qualification is coordinated separately; no live execution is claimed by authoring tests.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "Fresh run-scoped provider and RTX worker qualification is coordinated separately; no live execution is claimed by authoring tests.",
+      "evidence": []
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "Fresh run-scoped provider and RTX worker qualification is coordinated separately; no live execution is claimed by authoring tests.",
+      "evidence": []
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "Fresh run-scoped provider and RTX worker qualification is coordinated separately; no live execution is claimed by authoring tests.",
+      "evidence": []
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "Fresh run-scoped provider and RTX worker qualification is coordinated separately; no live execution is claimed by authoring tests.",
+      "evidence": []
+    }
+  }
+}
