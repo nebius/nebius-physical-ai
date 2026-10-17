@@ -79,7 +79,7 @@ _PLAN_ONLY_IMAGE_DIGEST = "sha256:" + "0" * 64
 def plan_only_config_vars(
     case: SubmitLiveCase, registry: str
 ) -> tuple[tuple[str, str], ...]:
-    """Return safe render-only image pins for a plan-only matrix case.
+    """Return safe image pins for a render-only matrix preflight.
 
     Args:
         case: The matrix case being rendered without a live submission.
@@ -111,6 +111,15 @@ def plan_only_config_vars(
         values.setdefault("source_sha", "0" * 40)
         values.setdefault("isaac_cache_pvc", "plan-only-isaac-cache")
     return tuple(values.items())
+
+
+def execution_config_vars(case: SubmitLiveCase) -> tuple[tuple[str, str], ...]:
+    """Return only operator-declared overrides for a live matrix submission.
+
+    Render-preflight fixtures are intentionally excluded: an inert digest is a
+    valid planner input, never an execution image declaration.
+    """
+    return case.config_vars
 
 
 SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
@@ -415,8 +424,16 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         runtime=True,
+        plan_only=True,
+        plan_only_justification=(
+            "The required Isaac operator image lacks a current qualified immutable "
+            "candidate, so this workflow may render but cannot submit."
+        ),
         rotation_skip=True,
-        skip_reason="Requires matching Lyra reconstruction, metric geometry and an operator-calibrated robot mounting bundle.",
+        skip_reason=(
+            "Requires a qualified immutable Isaac operator image, matching Lyra "
+            "reconstruction, metric geometry, and a calibrated robot mounting bundle."
+        ),
         notes="Native RTX manipulation in the imported collision scene with a scene-matched offline HTML review.",
     ),
     SubmitLiveCase(
@@ -1403,10 +1420,16 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         runtime=True,
+        plan_only=True,
+        plan_only_justification=(
+            "The required Isaac operator image lacks a current qualified immutable "
+            "candidate, so this workflow may render but cannot submit."
+        ),
         rotation_skip=True,
         skip_reason=(
-            "Requires a complete hash-bound calibrated metric RGB-D capture with "
-            "measured poses and held-out depth frames; use the scan reference runbook."
+            "Requires a qualified immutable Isaac operator image plus a complete "
+            "hash-bound calibrated metric RGB-D capture with measured poses and "
+            "held-out depth frames; use the scan reference runbook."
         ),
         notes=(
             "Real Open3D TSDF reconstruction and held-out geometry qualification on "
@@ -1419,11 +1442,17 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         runtime=True,
+        plan_only=True,
+        plan_only_justification=(
+            "The required Isaac operator image lacks a current qualified immutable "
+            "candidate, so this workflow may render but cannot submit."
+        ),
         rotation_skip=True,
         skip_reason=(
-            "Requires operator-supplied reconstructed visual USD, static collision "
-            "mesh, measured coordinate transforms, capture lineage, and ray probes. "
-            "Use the dedicated opt-in scene handoff live test with these inputs."
+            "Requires a qualified immutable Isaac operator image plus an "
+            "operator-supplied reconstructed visual USD, static collision mesh, "
+            "measured coordinate transforms, capture lineage, and ray probes. Use "
+            "the dedicated opt-in scene handoff live test with these inputs."
         ),
         notes=(
             "Real USD scene assembly and portable packaging on CPU, then native "

@@ -34,6 +34,7 @@ from typer.testing import CliRunner
 
 from npa.cli.main import app
 from npa.orchestration.npa_workflow.submit_matrix import (
+    execution_config_vars,
     one_shot_submit_cases,
     plan_only_config_vars,
     runtime_submit_cases,
@@ -291,7 +292,7 @@ def test_npa_workflow_submit_live_reaches_terminal(
         project=e2e_project,
         assume_decision=assume,
         preset=case.preset,
-        config_vars=plan_only_config_vars(case, e2e_registry),
+        config_vars=execution_config_vars(case),
         image_args=_image_args(case, e2e_registry),
         secret_env_args=_secret_env_args(case),
         skypilot_config_args=_skypilot_config_args(),

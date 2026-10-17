@@ -3128,9 +3128,9 @@ def _emit_regen_mcap(
 
 
 def _assert_regen_heldout_frames(result: Sim2RealVizResult) -> None:
-    if not (
-        getattr(result, "heldout_frame_count", 0)
-        or getattr(result, "heldout_env_count", 0)
+    if (
+        getattr(result, "heldout_frame_count", 0) <= 0
+        and getattr(result, "heldout_env_count", 0) <= 0
     ):
         raise Sim2RealRerunRegenError(
             "regenerated .rrd has no held-out cameras or held-out scores; "

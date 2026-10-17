@@ -18,6 +18,7 @@ from npa.orchestration.npa_workflow.blueprints import (
 from npa.orchestration.npa_workflow.spec import load_spec
 from npa.orchestration.npa_workflow.submit_matrix import (
     SUBMIT_LIVE_MATRIX,
+    execution_config_vars,
     gpu_submit_cases,
     one_shot_submit_cases,
     plan_only_config_vars,
@@ -367,14 +368,12 @@ def test_governed_matrix_cases_are_render_only_with_exact_plan_pins() -> None:
     from npa.orchestration.npa_workflow.submit import merge_config_overrides
 
     governed = {
-        "digital-twin-campus-render.yaml",
-        "digital-twin-cuda-render.yaml",
-        "rgbd-scan-to-policy-demo.yaml",
-        "field-failure-reference-demo.yaml",
-        "multicamera-rgbd-warehouse.yaml",
-        "physical-augmentation.yaml",
-        "franka-rl-transfer.yaml",
+        case.spec
+        for case in SUBMIT_LIVE_MATRIX
+        if (path := resolve_npa_workflow_spec(case.spec)) is not None
+        and load_spec(path).config.get("required_immutable_images")
     }
+    assert governed
     registry = "registry.example.invalid/matrix"
     digest = "sha256:" + "0" * 64
     for case in (case for case in SUBMIT_LIVE_MATRIX if case.spec in governed):
@@ -388,6 +387,15 @@ def test_governed_matrix_cases_are_render_only_with_exact_plan_pins() -> None:
             merge_config_overrides(load_spec(path), supplied),
             run_id="governed-render-only",
         ).steps
+
+
+def test_execution_matrix_config_never_reuses_render_only_fixtures() -> None:
+    case = next(case for case in SUBMIT_LIVE_MATRIX if case.spec == "sim2real.yaml")
+    assert execution_config_vars(case) == case.config_vars
+    assert "controller_image" not in dict(execution_config_vars(case))
+    assert "controller_image" in dict(
+        plan_only_config_vars(case, "registry.example.invalid/matrix")
+    )
 
 
 def test_coverage_backfill_cases_are_honestly_plan_only() -> None:
