@@ -431,7 +431,7 @@ Neither mechanism grants redistribution rights or enables privacy/telemetry.
 | GR00T deployment | `nvidia/GR00T-N1.7-3B`, `nvidia/Cosmos-Reason2-2B` | Both runtime dependencies are probed before every deploy/update path. Gated access is determined only by the operator's HF token and actual upstream permission; there is no skip or NPA terms flag. |
 | Cosmos and Physical AI Data Factory | `nvidia/Cosmos-Transfer2.5-2B`, `nvidia/Cosmos-Reason2-2B`, `nvidia/Cosmos-Reason2-8B`, `nvidia/Cosmos-Reason1-7B`, `nvidia/Cosmos3-Nano`, `nvidia/Cosmos-Guardrail1`, `nvidia/Cosmos-1.0-Guardrail`, `nvidia/Cosmos-1.0-Diffusion-7B-Text2World` | Weights stay out of image layers. Public repositories may be fetched anonymously; gated repositories require a successful upstream HF probe with the operator's token. Deploy has no bypass or duplicate consent flag. |
 | Other runtime-fetched NVIDIA assets | `nvidia/GEAR-SONIC`, `nvidia/PhysicalAI-NuRec-PPISP`; NuRec NRE runtime | Public HF assets remain anonymous. NuRec's NGC-hosted NRE runtime requires a real `NGC_API_KEY` repository probe; no local EULA boolean substitutes for vendor access. |
-| OpenPI / Gemma | `pi05_droid_jointpos_polaris` | The exact operator-confirmed `NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES` value is forwarded only to accepted runtime jobs; refusal is attempt-scoped, and acceptance, weights, and credentials are never baked or persisted. |
+| OpenPI / Gemma | `pi05_droid_jointpos_polaris` | Public Polaris is fetched anonymously from its authoritative GCS URI after immutable generation/checksum/payload checks. NPA adds no consent flag. Explicitly gated HF alternatives require the operator's own token and exact-revision payload access. Weights and credentials are never baked or persisted. |
 | Antioch | proprietary `antioch-sim==0.4.289` CLI and Antioch Service | The exact operator-confirmed `NPA_ANTIOCH_ACCEPT_TERMS=YES` value is injected from a dedicated runtime Secret and checked before fetch or use. Durable state records only the public terms identity and scoped accepted boolean; the image and cache contain no acceptance. |
 | Other non-NVIDIA comparison surfaces | `Wan-AI/Wan2.2-TI2V-5B`, LeRobot, Qwen, self-hosted Llama | No local terms boolean or interactive confirmation duplicates upstream entitlement; external vendor terms still apply at the source. |
 | Separate controls retained | privacy/telemetry, image redistribution classification, third-party dataset delivery | Privacy and telemetry remain independently off by default. Packaging contracts and built-image scans still control redistribution. The public PAIDF starter asset remains `acceptance_required: false`; its generic third-party dataset-license mechanism is separate from NVIDIA image/model access. |
@@ -485,6 +485,11 @@ wrapper but deletes its wheel-bundled static executable and resolves video work
 through Ubuntu's dynamically packaged `/usr/bin/ffmpeg`. The built-image payload
 scanner fails if that bundled executable returns.
 
+The Isaac Lab 3 OSS closure pins PyJWT 2.14.0, the upstream fix for
+[CVE-2026-102268](https://github.com/jpadilla/pyjwt/security/advisories/GHSA-ffc3-869f-jxw9).
+Dependency-lock changes create a new bootstrap cache stamp. Verify `expected_tree`
+with the selected image before using an existing cache in offline mode.
+
 `pypi.nvidia.com` serves these wheels **anonymously**. The shared bootstrap checks
 the operator's acceptance before fetching the runtime closure; this does not
 change the Lab wheel's BSD license or the separate Sim/runtime terms. NVIDIA
@@ -507,6 +512,12 @@ Then run workload pods against the same volume with `NPA_ISAAC_CACHE_READONLY=1`
 runtime user never needs write access to the cache at all. Other knobs:
 `NPA_ISAAC_CACHE_DIR`, `NPA_ISAAC_INDEX_URL` (point it at an internal mirror; the wheels
 are sha256-pinned, so a mirror is verifiable), `NPA_ISAAC_BOOTSTRAP_OFFLINE=1`.
+Kit itself still needs mutable shader, log, configuration, and portable state.
+`/isaac-sim/python.sh` keeps that state below `NPA_ISAAC_STATE_DIR` (default
+`/tmp/npa-isaac-state`) rather than the dependency cache. Kubernetes workflows
+that mount the dependency cache read-only should back this separate path with a
+pod-local writable `emptyDir` and pass the exported `NPA_ISAAC_KIT_ARGS` to
+`AppLauncher`.
 
 **Why the published image is not "Isaac Sim with Omniverse Kit".** Because it does not
 contain Isaac Sim. That is verified mechanically against the *built* image, not by

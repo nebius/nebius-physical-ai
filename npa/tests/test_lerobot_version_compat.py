@@ -109,6 +109,42 @@ def test_060_image_build_and_smoke_cover_real_diffusion_construction() -> None:
     assert "lerobot[training,evaluation,pusht,libero,diffusion,smolvla]" in cloud_init
 
 
+def test_lerobot_image_build_smoke_imports_npa_dataset_runtime() -> None:
+    root = Path(__file__).resolve().parents[2]
+    dockerfile = (root / "npa/docker/workbench/lerobot/Dockerfile").read_text(
+        encoding="utf-8"
+    )
+    assert dockerfile.count('"pyarrow>=23.0.1"') == 2
+    assert dockerfile.count('"av==15.1.0"') == 2
+    assert "NPA_BAKED_PYTHON=/opt/lerobot/venv/bin/python" in dockerfile
+    assert "pip install --no-deps -e /opt/npa" in dockerfile
+    assert 'test "$(command -v npa)" = /opt/lerobot/venv/bin/npa' in dockerfile
+    assert "metadata.version('npa')" in dockerfile
+    assert "assert av.__version__ == '15.1.0'" in dockerfile
+    assert '"$NPA_BAKED_PYTHON" -c' in dockerfile
+    assert "hasattr(av, 'option')" in dockerfile
+    assert "from lerobot.datasets.lerobot_dataset import LeRobotDataset" in dockerfile
+    assert "import pyarrow.parquet" in dockerfile
+    assert "import npa.workflows.lerobot_dataset" in dockerfile
+    assert "import npa.workbench.lerobot.policy_container" in dockerfile
+
+
+def test_lerobot_image_bakes_exact_npa_workflow_source() -> None:
+    root = Path(__file__).resolve().parents[2]
+    dockerfile = (root / "npa/docker/workbench/lerobot/Dockerfile").read_text(
+        encoding="utf-8"
+    )
+    publication = (root / ".github/workflows/publish-public-images.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "ARG NPA_SOURCE_SHA=unknown" in dockerfile
+    assert "NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA}" in dockerfile
+    assert "COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa" in dockerfile
+    assert "COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows" in dockerfile
+    assert '{"isaac-lab", "lerobot", "openpi", "rerun-viewer"}' in publication
+
+
 def test_unsupported_version_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("NPA_LEROBOT_VERSION", raising=False)
     with pytest.raises(LeRobotVersionError, match="Unsupported"):

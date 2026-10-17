@@ -35,9 +35,6 @@ if os.environ.get("NPA_ANTIOCH_ACCEPT_TERMS") != "YES":
     pytest.skip("operator Antioch terms acceptance is absent", allow_module_level=True)
 if os.environ.get("ACCEPT_EULA") != "Y":
     pytest.skip("operator NVIDIA runtime acceptance is absent", allow_module_level=True)
-if os.environ.get("NPA_OPENPI_ACCEPT_GEMMA_TERMS") != "YES":
-    pytest.skip("operator Gemma terms acceptance is absent", allow_module_level=True)
-
 _RUNTIME_CONFIG_VALUE = os.environ.get("NPA_ANTIOCH_MK8S_RUNTIME_CONFIG", "").strip()
 if not _RUNTIME_CONFIG_VALUE:
     pytest.skip(

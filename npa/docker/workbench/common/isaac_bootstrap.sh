@@ -343,16 +343,20 @@ PY
 }
 
 deep_verify() {
-  local venv="$1" kit_args
+  local venv="$1" kit_args state_dir
   log "launching Isaac Sim headless (deep verify; needs a GPU with RT cores)"
   # This entrypoint bypasses isaac_python.sh. Apply the same privacy controls
   # before the interpreter starts, including when caller arguments enable them.
-  kit_args="${NPA_ISAAC_KIT_ARGS:---portable-root /tmp/npa-isaac-kit}"
+  state_dir="${NPA_ISAAC_STATE_DIR:-/tmp/npa-isaac-state}"
+  mkdir -p "$state_dir/kit" \
+    || die "$EX_CONFIG" "Isaac mutable state is not writable"
+  kit_args="${NPA_ISAAC_KIT_ARGS:---portable-root $state_dir/kit}"
   kit_args+=" --/telemetry/enableAnonymousData=false --/structuredLog/enable=false"
   # Emptying the upload URL preserves local crash diagnostics.
   kit_args+=" --/crashreporter/url= --/crashreporter/skipOldDumpUpload=true --/app/uploadDumpsOnStartup=false"
   OMNI_TELEMETRY_DISABLE_ANONYMOUS_DATA=1 \
   OMNI_CRASHREPORTER_URL="" OMNI_CRASHREPORTER_SKIPOLDDUMPUPLOAD=1 \
+  NPA_ISAAC_STATE_DIR="$state_dir" \
   NPA_ISAAC_KIT_ARGS="$kit_args" \
   "$venv/bin/python" - >&2 <<'PY'
 import os
@@ -363,7 +367,7 @@ launcher = AppLauncher(
     headless=True,
     enable_cameras=True,
     kit_args=os.environ.get(
-        "NPA_ISAAC_KIT_ARGS", "--portable-root /tmp/npa-isaac-kit"
+        "NPA_ISAAC_KIT_ARGS", "--portable-root /tmp/npa-isaac-state/kit"
     ),
 )
 app = launcher.app

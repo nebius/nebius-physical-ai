@@ -63,6 +63,31 @@ PYPI_JSON = "https://pypi.org/pypi/lerobot/{version}/json"
 # (module, symbol, call-site provenance). symbol=None checks the module only.
 IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
     (
+        "lerobot.configs",
+        "FeatureType",
+        ("npa/src/npa/workbench/lerobot/policy_container.py",),
+    ),
+    (
+        "lerobot.policies.smolvla.configuration_smolvla",
+        "SmolVLAConfig",
+        ("npa/src/npa/workbench/lerobot/policy_container.py",),
+    ),
+    (
+        "lerobot.utils.constants",
+        "POLICY_POSTPROCESSOR_DEFAULT_NAME",
+        ("npa/src/npa/workbench/lerobot/policy_container.py",),
+    ),
+    (
+        "lerobot.utils.constants",
+        "POLICY_PREPROCESSOR_DEFAULT_NAME",
+        ("npa/src/npa/workbench/lerobot/policy_container.py",),
+    ),
+    (
+        "lerobot.utils.feature_utils",
+        "dataset_to_policy_features",
+        ("npa/src/npa/workbench/lerobot/policy_container.py",),
+    ),
+    (
         "lerobot.datasets.lerobot_dataset",
         "LeRobotDataset",
         ("npa/src/npa/workflows/policy_training/turnkey_holdout.py",),
@@ -73,6 +98,7 @@ IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
         (
             "npa/src/npa/workflows/policy_training/turnkey_holdout.py",
             "npa/src/npa/workflows/policy_training/turnkey_server.py",
+            "npa/src/npa/workbench/lerobot/policy_container.py",
         ),
     ),
     (
@@ -81,12 +107,16 @@ IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
         (
             "npa/src/npa/workflows/policy_training/turnkey_holdout.py",
             "npa/src/npa/workflows/policy_training/turnkey_server.py",
+            "npa/src/npa/workbench/lerobot/policy_container.py",
         ),
     ),
     (
         "lerobot.datasets.dataset_metadata",
         "LeRobotDatasetMetadata",
-        ("npa/src/npa/workflows/policy_training/turnkey_holdout.py",),
+        (
+            "npa/src/npa/workflows/policy_training/turnkey_holdout.py",
+            "npa/src/npa/workbench/lerobot/policy_container.py",
+        ),
     ),
     (
         "lerobot.datasets.factory",

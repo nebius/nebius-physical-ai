@@ -83,26 +83,30 @@ if [ -d "$ISAAC_LAB_WORKDIR" ] && [ -w "$ISAAC_LAB_WORKDIR" ] && [ -d "$TREE/isa
 fi
 
 # Kit writes caches, logs and shader compilations; keep them off the (possibly
-# read-only) Isaac cache and out of the image, defaulting to per-container scratch.
-export OMNI_USER_DIR="${OMNI_USER_DIR:-/tmp/isaac-sim-cache}"
-export OMNI_LOG_DIR="${OMNI_LOG_DIR:-/tmp/isaac-sim-cache/logs}"
-export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/xdg-runtime}"
-export XDG_CACHE_HOME="${XDG_CACHE_HOME:-/tmp/isaac-sim-cache/xdg-cache}"
-export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-/tmp/isaac-sim-cache/xdg-config}"
-export XDG_DATA_HOME="${XDG_DATA_HOME:-/tmp/isaac-sim-cache/xdg-data}"
+# read-only) Isaac cache and out of the image in one explicit per-job state root.
+export NPA_ISAAC_STATE_DIR="${NPA_ISAAC_STATE_DIR:-/tmp/npa-isaac-state}"
+export OMNI_USER_DIR="${OMNI_USER_DIR:-$NPA_ISAAC_STATE_DIR/omni-user}"
+export OMNI_LOG_DIR="${OMNI_LOG_DIR:-$NPA_ISAAC_STATE_DIR/logs}"
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-$NPA_ISAAC_STATE_DIR/xdg-runtime}"
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$NPA_ISAAC_STATE_DIR/xdg-cache}"
+export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$NPA_ISAAC_STATE_DIR/xdg-config}"
+export XDG_DATA_HOME="${XDG_DATA_HOME:-$NPA_ISAAC_STATE_DIR/xdg-data}"
 # The pip Isaac distribution carries a Kit portable marker beside its binaries,
 # which takes precedence over XDG/OMNI path overrides. Every AppLauncher entrypoint
 # in the exact runtime consumes this argument so mutable user, shader, log, and data
 # state lands in Pod-local scratch instead of the read-only dependency closure.
 # Keep these final overrides after caller arguments: disabling structured logging
 # also prevents omni.kit.telemetry from launching its transmitter.
-export NPA_ISAAC_KIT_ARGS="${NPA_ISAAC_KIT_ARGS:---portable-root /tmp/npa-isaac-kit}"
+export NPA_ISAAC_KIT_ARGS="${NPA_ISAAC_KIT_ARGS:---portable-root $NPA_ISAAC_STATE_DIR/kit}"
 NPA_ISAAC_KIT_ARGS+=" --/telemetry/enableAnonymousData=false --/structuredLog/enable=false"
 NPA_ISAAC_KIT_ARGS+=" --/crashreporter/url= --/crashreporter/skipOldDumpUpload=true --/app/uploadDumpsOnStartup=false"
-mkdir -p \
+if ! mkdir -p \
   "$OMNI_USER_DIR" "$OMNI_LOG_DIR" "$XDG_RUNTIME_DIR" \
   "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" \
-  /tmp/npa-isaac-kit 2>/dev/null || true
+  "$NPA_ISAAC_STATE_DIR/kit" 2>/dev/null; then
+  echo "isaac-python: mutable Kit state is not writable" >&2
+  exit 70
+fi
 chmod 700 "$XDG_RUNTIME_DIR" 2>/dev/null || true
 
 exec "$PYTHON" "$@"

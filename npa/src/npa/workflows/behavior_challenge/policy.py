@@ -13,7 +13,6 @@ import subprocess
 import time
 import zipfile
 
-from npa.workflows.byof.openpi import require_openpi_terms
 
 from .protocol import file_digest, stream_digest
 
@@ -162,7 +161,6 @@ def _prepare_policy(args: argparse.Namespace, plan: dict, output: Path) -> list[
     from .policy_prompt import prompt_override
 
     prompt_override(args, train_panel=plan.get("recipe", {}).get("split") == "train")
-    require_openpi_terms()
     _verify_specialist_report_options(args)
     if args.host not in {"localhost", "127.0.0.1"}:
         raise ValueError("Managed policy requires a loopback evaluator host")

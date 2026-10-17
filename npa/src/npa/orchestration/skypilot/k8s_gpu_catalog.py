@@ -254,6 +254,29 @@ def kubernetes_sky_environment(
     from npa.orchestration.skypilot.local_api import ensure_isolated_api
     import yaml
 
+    # Submission readiness runs a short-lived validation API below the durable
+    # workflow API's isolated root.  Authenticate an inherited parent endpoint
+    # against that parent before removing its process-scoped identity from the
+    # child environment.  Passing the verified parent endpoint into
+    # ``sky_environment(scope, ...)`` would correctly be rejected as an attempt
+    # to bind one endpoint to two independently owned state directories.
+    verified_parent_endpoint = ""
+    if session is not None and env.get("SKYPILOT_API_SERVER_ENDPOINT"):
+        # ``session.scope`` is
+        # <explicit-root>/cluster-validation/<target-id>/<session-id>.
+        # Derive the parent from that selected session instead of re-reading an
+        # ambient root that the explicit selection deliberately superseded.
+        parent = session.scope.parents[2].resolve()
+        local_api.isolated_api_environment(parent, env, recover=False)
+        verified_parent_endpoint = str(env["SKYPILOT_API_SERVER_ENDPOINT"])
+        for name in (
+            "SKYPILOT_API_SERVER_ENDPOINT",
+            "NPA_OWNED_SKYPILOT_API_ID",
+            "NPA_SKYPILOT_ISOLATED_API_DIR",
+            "SKYPILOT_SERVER_PLUGINS_CONFIG",
+        ):
+            env.pop(name, None)
+
     validation_user_id = str(env.get("SKYPILOT_USER_ID") or "").strip()
     if not validation_user_id:
         validation_user_id = (
@@ -265,6 +288,11 @@ def kubernetes_sky_environment(
         config = yaml.safe_load(Path(inherited).read_text(encoding="utf-8")) or {}
         if not isinstance(config, dict):
             raise RuntimeError("SkyPilot configuration must be a mapping")
+    api_server = config.get("api_server")
+    if isinstance(api_server, dict) and verified_parent_endpoint:
+        inherited_endpoint = str(api_server.get("endpoint") or "")
+        if inherited_endpoint.rstrip("/") == verified_parent_endpoint.rstrip("/"):
+            api_server.pop("endpoint", None)
     kubernetes = config.setdefault("kubernetes", {})
     if not isinstance(kubernetes, dict):
         raise RuntimeError("SkyPilot Kubernetes configuration must be a mapping")

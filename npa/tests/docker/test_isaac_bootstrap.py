@@ -39,6 +39,7 @@ WHEELS = COMMON / "isaac-nvidia-wheels.txt"
 OSS_DEPS = COMMON / "isaac-oss-deps.txt"
 ISAAC3_WHEELS = COMMON / "isaac3-nvidia-wheels.txt"
 ISAAC3_OSS_DEPS = COMMON / "isaac3-oss-deps.txt"
+PI05_RUNTIME_SMOKE = COMMON.parent / "isaac-lab" / "verify_pi05_runtime.py"
 
 EX_CONFIG = 78
 EX_UNAVAILABLE = 69
@@ -704,6 +705,27 @@ def test_isaac3_oss_closure_merges_the_workflow_runtime_security_pins() -> None:
     assert "msal==1.38.0" in lines
 
 
+def test_isaac3_image_gates_pi05_native_client_and_artifact_runtime() -> None:
+    dependencies = ISAAC3_OSS_DEPS.read_text(encoding="utf-8")
+    dockerfile = (COMMON.parent / "isaac-lab" / "Dockerfile").read_text(
+        encoding="utf-8"
+    )
+    smoke = PI05_RUNTIME_SMOKE.read_text(encoding="utf-8")
+
+    assert "msgpack==1.2.1" in dependencies
+    assert "websockets==12.0" in dependencies
+    assert "rerun-sdk==0.38.1" in dependencies
+    assert "verify_pi05_runtime.py" in dockerfile
+    assert "_write_review_artifacts" in smoke
+    assert "pi05_closed_loop_entry import build_parser" in smoke
+    assert "msgpack.packb" in smoke
+    assert '{"additional_headers", "compression", "max_size"}' in smoke
+    closed_loop = (
+        REPO_ROOT / "npa/src/npa/workflows/sim2real/pi05_closed_loop.py"
+    ).read_text(encoding="utf-8")
+    assert '[sys.executable, "-m", "rerun"]' in closed_loop
+
+
 def test_baked_imageio_uses_snapshot_ffmpeg_without_nested_executable() -> None:
     installer = BASE_INSTALLER.read_text(encoding="utf-8")
     dockerfile = (COMMON.parent / "isaac-lab" / "Dockerfile").read_text(
@@ -835,7 +857,7 @@ def test_base_installer_upgrades_linux_headers_from_the_fixed_snapshot() -> None
     )
     assert '"linux-libc-dev=${LINUX_LIBC_DEV_VERSION}"' in installer
     assert "linux-libc-dev=5.15.0-186.196" in installer
-    assert "linux-libc-dev=6.8.0-138.138" in installer
+    assert "linux-libc-dev=6.8.0-147.147" in installer
     assert "NPA_UBUNTU_SUITE:-jammy" in installer
     assert "NPA_ISAAC_PYTHON_MINOR:-3.11" in installer
     assert '"$ISAAC_PYTHON_MINOR" = 3.12' in installer
@@ -849,9 +871,9 @@ def test_isaac3_image_uses_fixed_noble_snapshot_and_removes_optional_nsight() ->
     )
     installer = BASE_INSTALLER.read_text(encoding="utf-8")
 
-    assert "NPA_UBUNTU_SNAPSHOT=20260825T000000Z" in dockerfile
-    assert "NPA_LINUX_LIBC_DEV_VERSION=6.8.0-138.138" in dockerfile
-    assert "linux-libc-dev=6.8.0-138.138" in installer
+    assert "NPA_UBUNTU_SNAPSHOT=20261014T000000Z" in dockerfile
+    assert "NPA_LINUX_LIBC_DEV_VERSION=6.8.0-147.147" in dockerfile
+    assert "linux-libc-dev=6.8.0-147.147" in installer
     assert "NCOMPUTE_PKGS=$(dpkg-query" in installer
     assert "nsight-compute-*' 'cuda-nsight-compute-*'" in installer
     assert "apt-get purge -y $NCOMPUTE_PKGS" in installer
@@ -886,11 +908,12 @@ def test_isaac_image_installs_a_cli_for_skypilot_setup() -> None:
 def test_readonly_runtime_redirects_kit_portable_state_to_scratch() -> None:
     bootstrap = BOOTSTRAP.read_text(encoding="utf-8")
     shim = SHIM.read_text(encoding="utf-8")
-    expected = "--portable-root /tmp/npa-isaac-kit"
+    expected = "--portable-root $NPA_ISAAC_STATE_DIR/kit"
 
-    assert expected in bootstrap
+    assert "--portable-root $state_dir/kit" in bootstrap
     assert "kit_args=os.environ.get(" in bootstrap
     assert expected in shim
+    assert "export NPA_ISAAC_STATE_DIR=" in shim
     assert "export NPA_ISAAC_KIT_ARGS=" in shim
     for variable in (
         "OMNI_USER_DIR",
@@ -934,21 +957,31 @@ def test_shim_defaults_internal_kit_acceptance_without_manual_env(
     assert result.stdout.strip() == "YES"
 
 
-@pytest.mark.parametrize("entrypoint", ["shim", "verify"])
-@pytest.mark.parametrize("caller_enables_uploads", [False, True])
-def test_isaac_startup_disables_remote_diagnostics_before_import(
-    tmp_path: Path, entrypoint: str, caller_enables_uploads: bool
+def test_shim_refuses_unwritable_mutable_state_before_interpreter(
+    tmp_path: Path,
 ) -> None:
-    """Observe the real launch boundary; no Kit runtime or network is needed."""
     harness = Harness(tmp_path)
     harness.fake_ready_tree()
-    probe = tmp_path / "probe"
-    package = probe / "isaaclab"
-    package.mkdir(parents=True)
-    (package / "__init__.py").write_text("", encoding="utf-8")
-    observations = tmp_path / "startup.jsonl"
-    (package / "app.py").write_text(
-        """import json
+    state_file = tmp_path / "not-a-state-directory"
+    state_file.write_text("blocked", encoding="utf-8")
+    result = subprocess.run(
+        ["bash", str(SHIM), "-c", "print('MUST NOT RUN')"],
+        env=harness.env(
+            NPA_ISAAC_BOOTSTRAP=str(BOOTSTRAP),
+            NPA_ISAAC_CACHE_READONLY="1",
+            NPA_ISAAC_STATE_DIR=str(state_file),
+        ),
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert result.returncode == EX_SOFTWARE
+    assert "mutable Kit state is not writable" in result.stderr
+    assert "MUST NOT RUN" not in result.stdout
+
+
+_STARTUP_APP = """import json
 import os
 import shlex
 from pathlib import Path
@@ -972,9 +1005,16 @@ class AppLauncher:
         record("update")
     def close(self):
         record("close")
-""",
-        encoding="utf-8",
-    )
+"""
+
+
+def _startup_environment(tmp_path, harness, caller_enables_uploads):
+    probe = tmp_path / "probe"
+    package = probe / "isaaclab"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    observations = tmp_path / "startup.jsonl"
+    (package / "app.py").write_text(_STARTUP_APP, encoding="utf-8")
     environment = harness.env(
         NPA_ISAAC_BOOTSTRAP=str(BOOTSTRAP),
         NPA_ISAAC_CACHE_READONLY="1",
@@ -994,6 +1034,10 @@ class AppLauncher:
                 "--/crashreporter/skipOldDumpUpload=false --/app/uploadDumpsOnStartup=true"
             ),
         )
+    return environment, observations, custom_kit_root
+
+
+def _startup_command(entrypoint):
     command = ["bash", str(BOOTSTRAP), "verify"]
     if entrypoint == "shim":
         command = [
@@ -1003,18 +1047,10 @@ class AppLauncher:
             "import os; from isaaclab.app import AppLauncher; "
             "AppLauncher(kit_args=os.environ['NPA_ISAAC_KIT_ARGS']).app.close()",
         ]
+    return command
 
-    result = subprocess.run(
-        command,
-        env=environment,
-        capture_output=True,
-        text=True,
-        timeout=120,
-        check=False,
-    )
 
-    assert result.returncode == 0, result.stderr
-    events = [json.loads(line) for line in observations.read_text().splitlines()]
+def _assert_startup_events(events, caller_enables_uploads, custom_kit_root):
     assert [event["event"] for event in events[:2]] == ["import", "launch"]
     assert events[-1]["event"] == "close"
     assert events[0]["environment"] == {
@@ -1042,7 +1078,32 @@ class AppLauncher:
     else:
         assert arguments[0] == "--portable-root"
         portable_root = Path(arguments[1])
-        assert portable_root.is_absolute() and portable_root.name == "npa-isaac-kit"
+        assert portable_root.is_absolute()
+        assert portable_root.parts[-2:] == ("npa-isaac-state", "kit")
+
+
+@pytest.mark.parametrize("entrypoint", ["shim", "verify"])
+@pytest.mark.parametrize("caller_enables_uploads", [False, True])
+def test_isaac_startup_disables_remote_diagnostics_before_import(
+    tmp_path: Path, entrypoint: str, caller_enables_uploads: bool
+) -> None:
+    """Observe the real launch boundary; no Kit runtime or network is needed."""
+    harness = Harness(tmp_path)
+    harness.fake_ready_tree()
+    environment, observations, custom_root = _startup_environment(
+        tmp_path, harness, caller_enables_uploads
+    )
+    result = subprocess.run(
+        _startup_command(entrypoint),
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    events = [json.loads(line) for line in observations.read_text().splitlines()]
+    _assert_startup_events(events, caller_enables_uploads, custom_root)
     assert not harness.downloaded_anything()
 
 

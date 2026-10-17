@@ -3,6 +3,7 @@
 FROM nvidia/cuda:12.4.1-devel-ubuntu22.04@sha256:da6791294b0b04d7e65d87b7451d6f2390b4d36225ab0701ee7dfec5769829f5
 
 ARG LEROBOT_VERSION=0.5.1
+ARG NPA_SOURCE_SHA=unknown
 
 LABEL npa.tool="lerobot" \
       npa.version="${LEROBOT_VERSION}"
@@ -18,6 +19,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NPA_JOB_STATUS_DIR=/opt/lerobot/job_status \
     NPA_LOG_DIR=/var/log/npa-lerobot \
     NPA_LEROBOT_VERSION=${LEROBOT_VERSION} \
+    NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
     IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -80,22 +82,28 @@ WORKDIR /opt/lerobot
 # 0.6.0 also moved diffusers/transformers behind extras and enforces them in each
 # policy's __init__, so diffusion and smolvla must be requested explicitly or
 # --policy.type=diffusion fails inside make_policy() at run time, not at build.
+# LeRobot declares PyAV 15 only through its optional av-dep extra. Pin it here
+# because the dataset reader imports av.option, which newer PyAV removed.
 RUN python3.12 -m venv /opt/lerobot/venv \
     && /opt/lerobot/venv/bin/python -m pip install --upgrade pip setuptools wheel \
     && if [ "${LEROBOT_VERSION}" = "0.6.0" ]; then \
          /opt/lerobot/venv/bin/pip install \
            "lerobot[training,evaluation,pusht,libero,diffusion,smolvla]==${LEROBOT_VERSION}" \
+           "av==15.1.0" \
            boto3 \
            fastapi~=0.136.1 \
            num2words \
+           "pyarrow>=23.0.1" \
            tensorboard \
            "uvicorn[standard]"; \
        else \
          /opt/lerobot/venv/bin/pip install \
            "lerobot[pusht,libero]==${LEROBOT_VERSION}" \
+           "av==15.1.0" \
            boto3 \
            fastapi~=0.136.1 \
            num2words \
+           "pyarrow>=23.0.1" \
            tensorboard \
            "uvicorn[standard]" \
          && /opt/lerobot/venv/bin/pip install --no-cache-dir --upgrade \
@@ -114,14 +122,23 @@ RUN python3.12 -m venv /opt/lerobot/venv \
 
 ENV PATH=/opt/lerobot/venv/bin:$PATH \
     PYTHONPATH=/opt/npa/src \
+    NPA_BAKED_PYTHON=/opt/lerobot/venv/bin/python \
     NPA_SKIP_EAGER_IMPORTS=1
 
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
-COPY --chown=ubuntu:ubuntu src/npa/__init__.py /opt/npa/src/npa/__init__.py
-COPY --chown=ubuntu:ubuntu src/npa/server /opt/npa/src/npa/server
-COPY --chown=ubuntu:ubuntu src/npa/smoke /opt/npa/src/npa/smoke
+COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
+COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
 
-RUN python -m npa.smoke.test_lerobot_env
+# Register the baked NPA source without resolving dependencies again. The vendor
+# environment above is already complete and version-pinned; leaving only source
+# files made runtime setup run `pip install -e /opt/npa`, which upgraded PyAV and
+# invalidated the LeRobot reader before the first dataset frame was loaded.
+RUN "$NPA_BAKED_PYTHON" -m pip install --no-deps -e /opt/npa \
+    && test "$(command -v npa)" = /opt/lerobot/venv/bin/npa \
+    && "$NPA_BAKED_PYTHON" -c "import importlib.metadata as metadata; assert metadata.version('npa')" \
+    && python -m npa.smoke.test_lerobot_env \
+    && test "$NPA_BAKED_PYTHON" = /opt/lerobot/venv/bin/python \
+    && "$NPA_BAKED_PYTHON" -c "import av; assert hasattr(av, 'option'); from lerobot.datasets.lerobot_dataset import LeRobotDataset; import pyarrow.parquet; import npa.workflows.lerobot_dataset; import npa.workbench.lerobot.policy_container"
 
 USER root
 
@@ -171,6 +188,11 @@ RUN apt-get update \
 
 
 USER ubuntu
+
+# Verify the final runtime shape after PATH changes and security cleanup, not only
+# the earlier dependency layer used by the build cache.
+RUN test "$(command -v npa)" = /opt/lerobot/venv/bin/npa \
+    && "$NPA_BAKED_PYTHON" -c "import av; assert av.__version__ == '15.1.0'; assert hasattr(av, 'option'); from lerobot.datasets.lerobot_dataset import LeRobotDataset; import npa.workflows.lerobot_dataset; import npa.workbench.lerobot.policy_container"
 
 EXPOSE 8080
 
