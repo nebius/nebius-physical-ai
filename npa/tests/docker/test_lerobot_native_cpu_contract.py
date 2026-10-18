@@ -14,9 +14,12 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
 RECIPE = ROOT / "npa/docker/workbench/lerobot"
+RUNTIME_CONSTRAINT_NAMES = frozenset(
+    {"torch", "torchvision", "torchcodec", "diffusers", "datasets", "wandb"}
+)
 
 
-def _integration_bounds() -> dict[str, str]:
+def _secure_wheel_bounds() -> dict[str, str]:
     path = RECIPE / "prepare_secure_wheel.py"
     spec = importlib.util.spec_from_file_location("secure_lerobot", path)
     assert spec is not None and spec.loader is not None
@@ -28,10 +31,14 @@ def _integration_bounds() -> dict[str, str]:
     }
 
 
-# The wheel's rewritten bounds are the source of truth; stock upstream bounds
-# differ. Reading them here prevents the test fixture from drifting from the
-# wheel metadata it is meant to validate.
-INTEGRATION = _integration_bounds()
+# The post-install constraints deliberately govern only the native runtime ABI.
+# Security-only metadata rewrites remain inside the hash-locked secure wheel so
+# they cannot alter the separately accepted runtime image manifest.
+INTEGRATION = {
+    name: requirement
+    for name, requirement in _secure_wheel_bounds().items()
+    if name in RUNTIME_CONSTRAINT_NAMES
+}
 
 
 def _check_constraints(text):
@@ -98,6 +105,12 @@ def test_default_dependencies_identify_secure_integration_and_decoder_abi():
     assert recipe.index("ENV PATH=/usr/bin:$PATH") < recipe.index(
         'RUN if [ "${LEROBOT_VERSION}" = "0.5.1" ]; then'
     )
+
+
+def test_security_only_metadata_edges_do_not_become_runtime_manifest_pins():
+    bounds = _secure_wheel_bounds()
+    assert {"setuptools", "transformers"} <= set(bounds)
+    assert {"setuptools", "transformers"}.isdisjoint(INTEGRATION)
 
 
 @pytest.mark.parametrize(

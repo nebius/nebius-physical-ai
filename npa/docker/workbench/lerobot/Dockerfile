@@ -64,9 +64,11 @@ ENV PIP_NO_CACHE_DIR=1
 
 # 0.5.1 is an explicitly versioned, source-verified NPA integration: the upstream
 # model code and license are retained, and dependency changes face native gates.
-# 0.6.0 uses lean feature extras and must NOT force torch>=2.12 (upstream ceiling).
-# 0.6.0 also moved diffusers/transformers behind extras and enforces them in each
-# policy's __init__, so diffusion and smolvla must be requested explicitly or
+# 0.6.0 uses lean feature extras. Its secure candidate closure explicitly replaces
+# the upstream torch ceiling with a hash-locked security remediation; it is not an
+# acceptance claim for the separately pinned, previously qualified 0.6.0 image.
+# Diffusers and transformers remain behind extras and are enforced in each policy's
+# __init__, so diffusion and smolvla must be requested explicitly or
 # --policy.type=diffusion fails inside make_policy() at run time, not at build.
 # The runtime locks intentionally include hash-pinned source distributions. Keep
 # their build backends on the separately hash-pinned bootstrap toolchain instead

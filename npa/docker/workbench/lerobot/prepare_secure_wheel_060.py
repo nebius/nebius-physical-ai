@@ -33,10 +33,18 @@ SOURCE_ARCHIVE_ROOT = "lerobot-0.6.0"
 METADATA_SHA256 = "fc40aa431b6af49645091369697ab14db3dbfe91d1801bcc8aca0550531945cd"
 ORIGINAL_DIST_INFO = "lerobot-0.6.0.dist-info/"
 DIST_INFO = f"lerobot-{VERSION}.dist-info/"
-WAND_B_ORIGINAL = 'Requires-Dist: wandb<0.28.0,>=0.24.0; extra == "training"\n'
-WAND_B_REPLACEMENT = 'Requires-Dist: wandb<0.31.0,>=0.30.0; extra == "training"\n'
-DATASETS_ORIGINAL = 'Requires-Dist: datasets<5.0.0,>=4.7.0; extra == "dataset"\n'
-DATASETS_REPLACEMENT = 'Requires-Dist: datasets<5.1.0,>=5.0.1; extra == "dataset"\n'
+DEPENDENCIES = {
+    "torch<2.12.0,>=2.7": "torch<2.14.0,>=2.13.0",
+    "torchvision<0.27.0,>=0.22.0": "torchvision<0.29.0,>=0.28.0",
+    "torchcodec<0.12.0,>=0.3.0": "torchcodec<0.17.0,>=0.16.0",
+    "torchcodec<0.12.0,>=0.7.0": "torchcodec<0.17.0,>=0.16.0",
+    "torchcodec<0.12.0,>=0.11.0": "torchcodec<0.17.0,>=0.16.0",
+    "diffusers<0.36.0,>=0.27.2": "diffusers<0.39.0,>=0.38.0",
+    "setuptools<81.0.0,>=71.0.0": "setuptools<84.0.0,>=83.0.0",
+    "transformers<5.6.0,>=5.4.0": "transformers<5.11.0,>=5.10.0",
+    "wandb<0.28.0,>=0.24.0": "wandb<0.31.0,>=0.30.0",
+    "datasets<5.0.0,>=4.7.0": "datasets<5.1.0,>=5.0.1",
+}
 LOGGER_PATH = "lerobot/common/wandb_utils.py"
 LOGGER_SHA256 = "99fe4a82e8fde848ec586f8261a892447a051e7fe8b79022886c965436fb5125"
 LOGGER_MODIFICATION_NOTICE = (
@@ -111,19 +119,19 @@ def _metadata(original: bytes) -> bytes:
     lines = original.decode().splitlines(keepends=True)
     if lines.count("Version: 0.6.0\n") != 1:
         raise RuntimeError("unexpected upstream package version")
-    if lines.count(WAND_B_ORIGINAL) != 1:
-        raise RuntimeError("reviewed upstream W&B dependency edge changed")
-    if lines.count(DATASETS_ORIGINAL) != 1:
-        raise RuntimeError("reviewed upstream datasets dependency edge changed")
+    changes = {dependency: 0 for dependency in DEPENDENCIES}
     result = []
     for line in lines:
         if line == "Version: 0.6.0\n":
             line = f"Version: {VERSION}\n"
-        elif line == WAND_B_ORIGINAL:
-            line = WAND_B_REPLACEMENT
-        elif line == DATASETS_ORIGINAL:
-            line = DATASETS_REPLACEMENT
+        for dependency, replacement in DEPENDENCIES.items():
+            prefix = f"Requires-Dist: {dependency}"
+            if line == prefix + "\n" or line.startswith(prefix + ";"):
+                line = line.replace(prefix, "Requires-Dist: " + replacement, 1)
+                changes[dependency] += 1
         result.append(line)
+    if any(count != 1 for count in changes.values()):
+        raise RuntimeError("upstream reviewed dependency edges changed")
     return "".join(result).encode()
 
 
@@ -200,10 +208,9 @@ def _prepare(wheel: bytes, archive: bytes, destination: Path) -> dict[str, objec
         "source_patches": source_patches,
         "license_retained": "Apache-2.0",
         "dependency_changes": {
-            WAND_B_ORIGINAL.removeprefix("Requires-Dist: ").rstrip("\n"): WAND_B_REPLACEMENT.removeprefix("Requires-Dist: ").rstrip("\n"),
-            DATASETS_ORIGINAL.removeprefix("Requires-Dist: ").rstrip("\n"): DATASETS_REPLACEMENT.removeprefix("Requires-Dist: ").rstrip("\n"),
+            original: replacement for original, replacement in DEPENDENCIES.items()
         },
-        "security_rationale": "replace upstream W&B and datasets ranges with reviewed closures that satisfy the repository W&B and fsspec security floors",
+        "security_rationale": "candidate-only dependency closure replaces affected upstream ceilings with reviewed hash-locked security floors without changing acceptance of any prior image or permitting moving dependency resolution",
         "capability_qualification": "pending version-specific packaging, scanner, CPU, and GPU gates",
     }
     result[DIST_INFO + "npa-source-integration.json"] = json.dumps(

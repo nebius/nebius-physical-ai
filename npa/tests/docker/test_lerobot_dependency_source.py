@@ -148,12 +148,12 @@ def test_build_dependency_closure_has_no_moving_repository_or_python_resolution(
         (
             "requirements-051.lock",
             "lerobot-0.5.1+npa.secure2-py3-none-any.whl",
-            "694f8e38e8353ee6704159ab46788d8071531066ad02ef3a0a87cf59d77df9f9",
+            "61fd5e0a33f622bb28cba6b23b3647985b37d97bf72234405d56e9467bb73a9b",
         ),
         (
             "requirements-060.lock",
             "lerobot-0.6.0+npa.secure2-py3-none-any.whl",
-            "5c1ac4142acbf27cc4e45a4bb7eb86f119509bde048e847a1bbef2c229f85f25",
+            "ac87bf7b9b114defbd906163a41c67d77799686101123bb26e22d14d5807e5f9",
         ),
     ):
         lock = (RECIPE / name).read_text()
@@ -168,6 +168,38 @@ def test_build_dependency_closure_has_no_moving_repository_or_python_resolution(
         assert f"--hash=sha256:{wheel_hash}" in lock
         assert "--hash=sha256:" in lock
     assert "--find-links /opt/lerobot/secure-wheel" in text
+
+
+@pytest.mark.parametrize(
+    ("lock_name", "requirements"),
+    [
+        (
+            "requirements-051.lock",
+            ("setuptools==83.0.0", "transformers==5.10.0"),
+        ),
+        (
+            "requirements-060.lock",
+            (
+                "diffusers==0.38.0",
+                "setuptools==83.0.0",
+                "torch==2.13.0",
+                "transformers==5.10.0",
+            ),
+        ),
+    ],
+)
+def test_security_remediation_pins_are_hash_locked(lock_name, requirements):
+    """Keep the CI-remediated dependency fixes immutable in both image closures."""
+
+    lock = (RECIPE / lock_name).read_text().splitlines()
+    for requirement in requirements:
+        start = lock.index(requirement + " \\")
+        hashes = []
+        for line in lock[start + 1 :]:
+            if not line.startswith("    --hash=sha256:"):
+                break
+            hashes.append(line)
+        assert hashes
 
 
 @pytest.mark.parametrize(

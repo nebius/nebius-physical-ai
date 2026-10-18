@@ -16,6 +16,16 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[3]
+EXPECTED_DEPENDENCIES = {
+    "torch<2.11.0,>=2.7": "torch<2.14.0,>=2.13.0",
+    "torchvision<0.26.0,>=0.22.0": "torchvision<0.29.0,>=0.28.0",
+    "torchcodec<0.11.0,>=0.3.0": "torchcodec<0.17.0,>=0.16.0",
+    "diffusers<0.36.0,>=0.27.2": "diffusers<0.39.0,>=0.38.0",
+    "setuptools<81.0.0,>=71.0.0": "setuptools<84.0.0,>=83.0.0",
+    "datasets<5.0.0,>=4.0.0": "datasets<5.1.0,>=5.0.1",
+    "transformers==5.3.0": "transformers<5.11.0,>=5.10.0",
+    "wandb<0.25.0,>=0.24.0": "wandb<0.31.0,>=0.30.0",
+}
 
 
 @pytest.fixture
@@ -46,7 +56,7 @@ def _upstream(module, monkeypatch, *, model=b"native model source", wheel_model=
     original = (
         "Metadata-Version: 2.4\nName: lerobot\nVersion: 0.5.1\n"
         "License-File: LICENSE\nRequires-Dist: requests>=2.0\n"
-        + "".join(f"Requires-Dist: {value}\n" for value in module.DEPENDENCIES)
+        + "".join(f"Requires-Dist: {value}\n" for value in EXPECTED_DEPENDENCIES)
     ).encode()
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w") as wheel:
@@ -75,6 +85,7 @@ def _upstream(module, monkeypatch, *, model=b"native model source", wheel_model=
 def test_versioned_integration_preserves_native_source_notices_and_record(
     integration, monkeypatch, tmp_path
 ):
+    assert integration.DEPENDENCIES == EXPECTED_DEPENDENCIES
     wheel, archive = _upstream(integration, monkeypatch)
     first = integration._prepare(wheel, archive, tmp_path / "first")
     second = integration._prepare(wheel, archive, tmp_path / "second")
@@ -93,6 +104,10 @@ def test_versioned_integration_preserves_native_source_notices_and_record(
         metadata = contents.read(integration.DIST_INFO + "METADATA").decode()
         assert f"Version: {integration.VERSION}" in metadata
         assert "Requires-Dist: wandb<0.31.0,>=0.30.0" in metadata
+        assert "Requires-Dist: setuptools<84.0.0,>=83.0.0" in metadata
+        assert "Requires-Dist: transformers<5.11.0,>=5.10.0" in metadata
+        assert "Requires-Dist: setuptools<81.0.0,>=71.0.0" not in metadata
+        assert "Requires-Dist: transformers==5.3.0" not in metadata
         assert "Requires-Dist: requests>=2.0" in metadata
         assert "License-File: LICENSE" in metadata
         receipt = json.loads(
