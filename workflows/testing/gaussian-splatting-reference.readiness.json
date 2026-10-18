@@ -1,0 +1,51 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "b80188218e7897900b715da327ef9bb86ce2ab02845fc2845780164578f9bb4a",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Schema validation and the production renderer completed locally with provider actions and registry-secret materialization disabled.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/gaussian-splatting-reference.yaml --json",
+        "npa workbench workflow plan-spec workflows/testing/gaussian-splatting-reference.yaml --run-id share-preview --check-render --json"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "The resolved reference calls native camera registration, image export and pinned Gaussian training with S3 handoffs; this checks planned operations, not input content or GPU execution.",
+      "evidence": [
+        "workflows/testing/gaussian-splatting-reference.yaml",
+        "docs/workbench/guides/gaussian-splatting-reference.md"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "The bucket is a placeholder; no storage was created or probed.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "No private capture or calibrated input bundle was provided, staged or inspected for this authoring task.",
+      "evidence": []
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "Storage credentials and applicable model or evaluation-weight access/rights were not exercised.",
+      "evidence": []
+    },
+    "source_image": {
+      "status": "blocked",
+      "reason": "The default image is an explicit placeholder. Supply an immutable operator image with the documented COLMAP, gsplat, CUDA and startup contract.",
+      "evidence": [
+        "docs/workbench/guides/gaussian-splatting-reference.md"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "No GPU workflow was submitted. Target placement, runtime compatibility and real-capture quality remain unverified.",
+      "evidence": []
+    }
+  }
+}

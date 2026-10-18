@@ -406,6 +406,37 @@ def test_serve_local_record_uses_resolved_viewer_storage(
     ]
 
 
+def test_serve_local_record_refusal_precedes_viewer_deploy(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, mocker
+) -> None:
+    config = RerunServeConfig(
+        run_id="archived-run",
+        s3_bucket="resolved-bucket",
+        s3_prefix="completed",
+        s3_endpoint="https://storage.example.invalid",
+        rrd_s3_uri_override="s3://resolved-bucket/completed/uncommitted.rrd",
+    )
+    _mock_viewer_deploy(monkeypatch, config)
+    apply = mocker.patch("npa.cli.workbench.sim2real.apply_rerun_serve")
+
+    def refuse_download(*_args: object, **_kwargs: object) -> None:
+        raise Sim2RealRerunRegenError("does not match the committed publication")
+
+    monkeypatch.setattr(
+        "npa.cli.workbench.sim2real.download_rrd_from_s3", refuse_download
+    )
+    result = _invoke_rerun(
+        "serve",
+        "--local-record",
+        "--local-rrd-path",
+        str(tmp_path / "local.rrd"),
+    )
+
+    assert result.exit_code == 1
+    assert "does not match the committed publication" in result.output
+    apply.assert_not_called()
+
+
 def test_serve_local_record_ignores_unneeded_artifact_environment(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, mocker
 ) -> None:

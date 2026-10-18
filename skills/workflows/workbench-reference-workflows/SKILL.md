@@ -16,6 +16,8 @@ The catalog keeps promoted principal pipelines in `workflows/main/`; see
 selection and its measured validation scope.
 Partner integrations live in `workflows/partners/<partner>/`; general reference
 workflows, component tests, and fixtures live in `workflows/testing/`.
+IAA and EVG live in `workflows/cosmos-data-factory/` with their own workflow/guide
+table and adapted NVIDIA skills under `skills/cosmos-data-factory/`.
 Keep the catalog overview in `workflows/README.md`. Maintain a
 `Workflow | Guide | Purpose` table in `workflows/main/README.md` and
 `workflows/testing/README.md`, beside the YAMLs. Link to the existing guide
@@ -95,6 +97,53 @@ the pinned model provenance. The earlier image retains separate B200 evidence;
 do not transfer that claim to the repaired image. A reconstruction result does not qualify the
 separate `lyra-scene-actions.yaml` physics or wrist-camera path. Follow the
 [Lyra guide](../../../docs/workbench/guides/lyra-physical-augmentation.md).
+
+For stitched mono 2:1 panoramic video or JPG/PNG sequences, use
+`npa.workflows.lyra_panorama_capture` from the updated local checkout before
+submitting the unchanged reconstruction spec. Follow the
+[360° capture guide](../../../docs/workbench/guides/lyra-360-capture.md) for fixed
+perspective reprojection, output dimensions, source ordering and exact excerpts.
+Raw fisheye requires a calibrated stitched export; do not guess its lens model
+or treat a resized panorama as pinhole input. Keep each view direction in a
+separate sequence. Source filenames, paths and EXIF are omitted from the bundle,
+but pixels and reconstruction artifacts remain private. Synthetic CPU projection
+checks do not establish reduced haze or transfer the existing RTX qualification
+to panoramic captures. Preserve an independently validated splatting baseline
+and require a matched quality comparison before claiming improvement. Panorama
+preparation supplies no metric calibration for the collision/action path.
+
+When formalizing a splatting baseline without a supplied implementation, use
+the [COLMAP → gsplat reference runbook](../../../docs/workbench/guides/gaussian-splatting-reference.md).
+It specifies manual upstream camera registration, image/camera export, pinned
+gsplat training and private recipe notes. Label it as an unqualified reference;
+do not claim it reproduces an operator's original pipeline or invent results.
+Use calibrated perspective input and retain actual registration and appearance
+evaluation evidence. The upstream appearance split may share images with pose
+estimation, and Lyra's native replay does not supply a matched held-out benchmark.
+Keep commands with private paths and exact capture/scene details outside Git.
+
+`workflows/testing/gaussian-splatting-reference.yaml` encodes that reference as
+native COLMAP and gsplat states with private S3 handoffs. Its runtime image is
+an explicit placeholder; retain its readiness record and require a compatible
+operator digest before execution. The shareable
+`docs/demos/lyra-splatting-overview.html` contains a synthetic projection preview
+and exact downloadable YAML for both this reference and the existing Lyra path.
+It is a workflow explainer, not a report of real capture reconstruction quality.
+
+When a user needs a real validated example, start from the
+[native Lyra reference review](../../../docs/workbench/guides/lyra-validated-example.md),
+not the synthetic workflow explainer. `npa.workflows.lyra_validated_example`
+requires the retained HTML's qualified digest, native identities and embedded
+video hashes; it fully decodes paired media and measures RGB replay PSNR before
+packaging real playback, depth samples, evidence and workflow YAML. Keep the
+generated file private under the recorded internal R&D scope. The
+`lyra2-panorama-rtx-20261016.json` qualification records a separate real 5.7K
+Insta360 One X run: full 827-frame preparation, normal 128-view GPU inference,
+8,658,944 native Gaussians and complete artifact verification. The older TUM
+perspective qualification and its CPU repackaging remain separate evidence.
+Packaging does not launch GPU work. Neither replay establishes held-out
+quality, haze improvement, raw-fisheye support or X5 performance; 8K preparation
+tests remain synthetic.
 
 For a first BEHAVIOR DEV evaluation, use
 [the one-file onboarding guide](../../../docs/workbench/challenge-onboarding.md)

@@ -156,9 +156,12 @@ def test_envgen_corrects_inert_dependency_recipe_before_flattening() -> None:
     assert text.index("FROM ${BASE_IMAGE} AS sanitized") < correction
     assert correction < text.index("FROM scratch AS runtime")
     assert text.index("COPY --from=sanitized / /") > correction
+    assert "--site-packages /opt/npa/venv/lib/python3.11/site-packages" in text
     assert 'import sysconfig; print(sysconfig.get_path("purelib"))' in text
     assert "--capability envgen" in text
+    assert "/usr/share/doc/npa-envgen/dependency-source-correction.parent.json" in text
     assert "/usr/share/doc/npa-envgen/dependency-source-correction.json" in text
+    assert text.count("python /usr/local/lib/npa/remove-scikit-image-recipe.py") == 2
 
 
 def test_genesis_workflow_runtime_upgrades_fixed_kernel_headers() -> None:
@@ -177,7 +180,7 @@ def test_genesis_workflow_runtime_upgrades_fixed_kernel_headers() -> None:
     assert '"linux-libc-dev=${linux_libc_dev_version}"' in installer
     for relative, snapshot in (
         ("sim2real-envgen/Dockerfile", "20261009T000000Z"),
-        ("sim2real-eval/Dockerfile", "20260820T000000Z"),
+        ("sim2real-eval/Dockerfile", "20261002T000000Z"),
     ):
         text = (WORKBENCH / relative).read_text(encoding="utf-8")
         assert f"ARG UBUNTU_SNAPSHOT={snapshot}" in text, relative
