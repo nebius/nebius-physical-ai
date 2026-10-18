@@ -126,7 +126,8 @@ environment settings apply. `rerun serve --project` retains its legacy
 saved/default-project and environment fallback behavior. For `workbench
 health sim2real`, `--project` applies when the selected checks include `s3`: it
 supplies the reachability-probe target and isolated credentials unless the
-corresponding S3 flag is explicit. It has no effect on selections without `s3`.
+corresponding S3 flag is explicit. A selection without `s3` refuses `--project`
+with an explicit error.
 See the [Sim2Real guide](../docs/workbench/guides/sim2real-workflow.md).
 
 `npa workbench vlm-eval review-visual` and its SDK write a separate private rich
