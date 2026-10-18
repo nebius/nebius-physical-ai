@@ -48,7 +48,6 @@ from npa.workflows.sim2real.stage10_authority import (
 )
 from npa.workflows.sim2real.artifact_config import Sim2RealArtifactConfig
 from npa.workflows.sim2real.models import Sim2RealLoopConfig
-from npa.workflows.sim2real.artifact_config import Sim2RealArtifactConfig
 from npa.workflows.sim2real.publication import (
     CommittedPublicationSnapshot,
     MutablePublicationTransaction,
@@ -1465,7 +1464,7 @@ def download_rrd_from_s3(
     """
 
     storage = client or _storage_client_for_config(config)
-    canonical_uri = rrd_uri or f"{run_prefix_uri(config)}reports/sim2real.rrd"
+    canonical_uri = f"{run_prefix_uri(config)}reports/sim2real.rrd"
     dest_path = Path(dest_path)
     absolute_dest = Path(os.path.abspath(dest_path))
     default_root = Path(os.path.abspath(DEFAULT_REGEN_ROOT))
@@ -1485,18 +1484,20 @@ def download_rrd_from_s3(
     requested_uri = rrd_uri.strip()
     if rrd_uri and requested_uri != rrd_uri:
         raise Sim2RealRerunRegenError("requested Rerun recording URI has whitespace")
+    requested_uri = rrd_uri.strip()
+    if rrd_uri and requested_uri != rrd_uri:
+        raise Sim2RealRerunRegenError("requested Rerun recording URI has whitespace")
     try:
         publication = resolve_committed_publication_snapshot(storage, canonical_uri)
         uri = publication.resolve(canonical_uri)
-    except ValueError as exc:
-        if not rrd_uri:
-            raise Sim2RealRerunRegenError(str(exc)) from exc
-        publication = None
-        uri = rrd_uri
     except PublicationConflict as exc:
         raise Sim2RealRerunRegenError(str(exc)) from exc
     if uri is None:
         raise Sim2RealRerunRegenError(f"Rerun recording is disabled at {canonical_uri}")
+    if requested_uri and requested_uri not in {canonical_uri, uri}:
+        raise Sim2RealRerunRegenError(
+            "requested Rerun recording does not match the committed publication"
+        )
     if requested_uri and requested_uri not in {canonical_uri, uri}:
         raise Sim2RealRerunRegenError(
             "requested Rerun recording does not match the committed publication"
