@@ -91,6 +91,25 @@ aisle traversals and physical U-turns. Direct CLI/SDK callers retain
 turnaround --speed-mps 1.2` to enable the patrol. The standalone HTML embeds
 the resulting videos and measured motion for offline playback.
 
+Sim2Real's `rerun regen` and `rerun serve --local-record` operate on existing
+artifacts without resolving execution image defaults. Regeneration therefore
+remains available after an old runtime is quarantined. Executing new workloads,
+including `rerun heldout-only`, still requires qualified component images.
+For `rerun regen` and `rerun heldout-only`, explicit `--s3-bucket` and
+`--s3-endpoint` override their corresponding project coordinates. With
+`--project`, a complete isolated project record supplies the remaining bucket,
+endpoint, and client credentials for `regen` and its CLI-side artifact work in
+`heldout-only`; the submitted held-out evaluation stage keeps its configured
+workload storage authority and does not receive those project client credentials.
+An unknown or incomplete record refuses rather than falling back to host
+credentials or environment settings. Without `--project`, the existing Sim2Real
+environment settings apply. `rerun serve --project` retains its legacy
+saved/default-project and environment fallback behavior. For `workbench
+health sim2real`, `--project` applies when the selected checks include `s3`: it
+supplies the reachability-probe target and isolated credentials unless the
+corresponding S3 flag is explicit. It has no effect on selections without `s3`.
+See the [Sim2Real guide](../docs/workbench/guides/sim2real-workflow.md).
+
 `npa workbench vlm-eval review-visual` and its SDK write a separate private rich
 visual audit. Choose an exact hosted model, neutral task, and fresh output path;
 optional `--baseline-path` compares both sources in both A/B orders. See the
@@ -428,6 +447,13 @@ and the original private callback copy/paste helper.
 Managed workbench teardown reuses the saved Terraform backend. See
 [Terraform state](../docs/configuration.md#terraform-state-for-managed-workbenches)
 for its storage path and permissions.
+
+Genesis, Isaac Lab, and LeRobot container deployment resolves the selected image
+before bootstrapping an environment, provisioning a VM, or writing service
+credentials. A quarantined default fails with an actionable CLI error even in
+`--dry-run`; supply `--image` with an independently qualified operator image.
+Isaac Lab and LeRobot infrastructure-only deployment, and all teardown paths,
+do not need a runnable app image.
 
 ## SDK examples
 
@@ -813,6 +839,19 @@ cache, and isolated builder. Owned build state is removed before the archive
 scan; archives and temporary scan data are cleaned after each entry. The required
 inventory aggregate fails when any applicable entry fails or does not finish.
 This baseline check does not replace complete image scans before publication.
+
+The Cosmos3 Ray payload scanner records archive/config and blocked-member
+hashes, sizes, layer locations, and rule kinds in its JSON report while
+preserving blocking verdicts. Stdout is redacted by default, and `--json` writes
+the full report to the requested file, so a publication log cannot expose member
+commitments; `--full-stdout` is only for local operator attribution. See the
+[payload finding evidence](../docs/workbench/container-packaging.md#cosmos3-ray-payload-finding-evidence)
+contract. It exits 0 for clean, 1 for blocked findings or scan/archive errors,
+or 2 when the private report cannot be written (including a symlink target) or
+command-line usage is invalid. On a report-write failure, stderr has a safe
+errno-class diagnostic; any nonzero is blocking, including 2 after a blocked
+scan.
+A metadata report does not accept the image or its GPU capability.
 
 Use an **absolute** interpreter path: the recipes change into `npa/` before
 running. Without an override, Make prefers the contributor environment

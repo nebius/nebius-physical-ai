@@ -8,7 +8,9 @@ import pytest
 from botocore.exceptions import ClientError
 
 from npa.workflows.sim2real.models import Sim2RealLoopConfig
+from npa.workflows.sim2real.artifact_config import Sim2RealArtifactConfig
 from npa.workflows.sim2real.reporting import build_progress_metrics
+from npa.workflows.sim2real.utils import _artifact_root_uri
 from npa.workflows.sim2real_rerun_regen import (
     Sim2RealRerunRegenError,
     _download_directory_fresh,
@@ -19,10 +21,12 @@ from npa.workflows.sim2real_rerun_regen import (
     _latest_completed_inner_evidence_rel,
     _latest_inner_evidence_rel,
     _policy_access_record,
+    _regen_result_from_viz,
     _stage_components,
     _update_stage14_component,
     regen_sim2real_rrd,
     resolve_local_rrd_path,
+    run_prefix_uri,
     sync_heldout_renders,
 )
 
@@ -43,6 +47,17 @@ def _config(run_id: str = "sim2real-staged-20260616t093101z") -> Sim2RealLoopCon
         vlm_image=_TEST_IMAGE,
         eval_image=_TEST_IMAGE,
         isaac_image=_TEST_IMAGE,
+    )
+
+
+def _artifact_config(
+    run_id: str = "sim2real-staged-20260616t093101z",
+) -> Sim2RealArtifactConfig:
+    return Sim2RealArtifactConfig(
+        run_id=run_id,
+        s3_bucket="demo-bucket",
+        s3_prefix="sim2real-b",
+        s3_endpoint="https://storage.example",
     )
 
 
@@ -68,7 +83,20 @@ def test_resolve_local_rrd_path_env_override(
     )
 
 
-def test_regen_sim2real_rrd_requires_heldout_frames(
+@pytest.mark.parametrize("config_factory", [_config, _artifact_config])
+def test_run_prefix_uri_delegates_to_the_shared_artifact_root(
+    monkeypatch: pytest.MonkeyPatch, config_factory
+) -> None:
+    config = config_factory()
+    root = _artifact_root_uri(config)
+    monkeypatch.setattr(
+        "npa.workflows.sim2real_rerun_regen._artifact_root_uri",
+        lambda _config: root + "/",
+    )
+    assert run_prefix_uri(config) == f"{root}/"
+
+
+def test_regen_sim2real_rrd_requires_factual_observation_evidence(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     local_dir = tmp_path / "run"
@@ -79,7 +107,13 @@ def test_regen_sim2real_rrd_requires_heldout_frames(
         encoding="utf-8",
     )
     (local_dir / "eval/heldout/report.json").write_text(
-        json.dumps({"success_rate": 1.0, "render_manifest": {"episodes": []}}),
+        json.dumps(
+            {
+                "success_rate": 1.0,
+                "per_env": [{"env_id": "heldout-0000", "score": 0.7}],
+                "render_manifest": {"episodes": []},
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -88,18 +122,92 @@ def test_regen_sim2real_rrd_requires_heldout_frames(
         heldout_frame_count = 0
         rollout_count = 0
         frame_count = 0
+        heldout_env_count = 0
+        has_factual_observation_evidence = False
 
     monkeypatch.setattr(
         "npa.workflows.sim2real_rerun_regen.emit_sim2real_rerun",
         lambda **_kwargs: FakeResult(),
     )
 
-    with pytest.raises(Sim2RealRerunRegenError, match="heldout_frame_count=0"):
+    with pytest.raises(Sim2RealRerunRegenError, match="no factual held-out"):
         regen_sim2real_rrd(_config(), local_dir=local_dir, sync_inputs=False)
 
 
-def test_regen_sim2real_rrd_success(
+def test_regen_result_rejects_rollout_only_observations(tmp_path: Path) -> None:
+    class RolloutOnlyResult:
+        output_rrd_path = str(tmp_path / "sim2real.rrd")
+        heldout_frame_count = 0
+        heldout_env_count = 0
+        rollout_count = 1
+        frame_count = 1
+        has_factual_observation_evidence = True
+
+    with pytest.raises(Sim2RealRerunRegenError, match="no factual held-out"):
+        _regen_result_from_viz("rollout-only", tmp_path, RolloutOnlyResult())
+
+
+def test_regen_sim2real_rrd_accepts_heldout_environment_evidence(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    local_dir = tmp_path / "run"
+    (local_dir / "inner_loop/outer-01").mkdir(parents=True)
+    (local_dir / "eval/heldout").mkdir(parents=True)
+    (local_dir / "inner_loop/outer-01/evidence.json").write_text(
+        json.dumps({"outer_iteration": 1, "iterations": []}),
+        encoding="utf-8",
+    )
+    (local_dir / "eval/heldout/report.json").write_text(
+        json.dumps(
+            {
+                "success_rate": 1.0,
+                "per_env": [{"env_id": "heldout-0000", "score": 0.7}],
+                "render_manifest": {"episodes": []},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeResult:
+        output_rrd_path = str(local_dir / "reports" / "sim2real.rrd")
+        heldout_frame_count = 0
+        heldout_env_count = 1
+        rollout_count = 0
+        frame_count = 0
+        has_factual_observation_evidence = True
+
+    monkeypatch.setattr(
+        "npa.workflows.sim2real_rerun_regen.emit_sim2real_rerun",
+        lambda **_kwargs: FakeResult(),
+    )
+
+    result = regen_sim2real_rrd(
+        _config(), local_dir=local_dir, sync_inputs=False, upload=False
+    )
+    assert result.heldout_frame_count == 0
+
+
+def test_regen_result_rejects_unscored_heldout_environment(tmp_path: Path) -> None:
+    class UnscoredHeldoutResult:
+        output_rrd_path = str(tmp_path / "sim2real.rrd")
+        heldout_frame_count = 0
+        heldout_env_count = 1
+        rollout_count = 0
+        frame_count = 0
+        has_factual_observation_evidence = True
+
+    with pytest.raises(Sim2RealRerunRegenError, match="no factual held-out"):
+        _regen_result_from_viz(
+            "unscored-heldout",
+            tmp_path,
+            UnscoredHeldoutResult(),
+            heldout_report={"per_env": [{"env_id": "heldout-0000"}]},
+        )
+
+
+@pytest.mark.parametrize("config_factory", [_config, _artifact_config])
+def test_regen_sim2real_rrd_success(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, config_factory
 ) -> None:
     local_dir = tmp_path / "run"
     (local_dir / "inner_loop/outer-01").mkdir(parents=True)
@@ -118,6 +226,8 @@ def test_regen_sim2real_rrd_success(
         heldout_frame_count = 4
         rollout_count = 0
         frame_count = 0
+        has_factual_observation_evidence = True
+        heldout_env_count = 0
 
     monkeypatch.setattr(
         "npa.workflows.sim2real_rerun_regen.emit_sim2real_rerun",
@@ -125,7 +235,7 @@ def test_regen_sim2real_rrd_success(
     )
 
     result = regen_sim2real_rrd(
-        _config(), local_dir=local_dir, sync_inputs=False, upload=False
+        config_factory(), local_dir=local_dir, sync_inputs=False, upload=False
     )
     assert result.heldout_frame_count == 4
     assert result.local_rrd_path.endswith("sim2real.rrd")
@@ -331,6 +441,7 @@ def test_regen_preserves_strict_heldout_policy_evidence(
         heldout_frame_count = 4
         rollout_count = 0
         frame_count = 0
+        has_factual_observation_evidence = True
 
     def fake_emit(**kwargs):
         captured.update(kwargs)
@@ -393,6 +504,8 @@ def _patch_rrd_emit(monkeypatch: pytest.MonkeyPatch, local_dir: Path) -> None:
         heldout_frame_count = 4
         rollout_count = 1
         frame_count = 4
+        heldout_env_count = 0
+        has_factual_observation_evidence = True
 
     monkeypatch.setattr(
         "npa.workflows.sim2real_rerun_regen.emit_sim2real_rerun",
@@ -2030,6 +2143,7 @@ def test_gold_render_sync_rejects_missing_or_validation_lineage(tmp_path: Path) 
             tmp_path,
             heldout_report={
                 "evaluation_split": "gold_heldout",
+                "per_env": [{"env_id": "heldout-0000", "score": 0.7}],
                 "render_lineage": {
                     "evaluation_split": "validation",
                     "renders_s3_uri": "s3://bucket/validation/renders/",
@@ -2037,6 +2151,25 @@ def test_gold_render_sync_rejects_missing_or_validation_lineage(tmp_path: Path) 
             },
             client=UnusedStorage(),
         )
+
+
+def test_gold_score_only_sync_does_not_guess_camera_lineage(tmp_path: Path) -> None:
+    class UnusedStorage:
+        def download_directory(self, *_args, **_kwargs):
+            raise AssertionError("score-only evidence must not fetch guessed renders")
+
+    assert not sync_heldout_renders(
+        _config("gold-score-only"),
+        tmp_path,
+        heldout_report={
+            "evaluation_split": "gold_heldout",
+            "per_env": [
+                {"env_id": "heldout-0000", "score": 0.7},
+                {"env_id": "heldout-0001", "score": 0.6},
+            ],
+        },
+        client=UnusedStorage(),
+    )
 
 
 def test_stage14_component_digest_is_refreshed_after_regen_mutation(
