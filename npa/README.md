@@ -27,6 +27,26 @@ supplies the reachability-probe target and isolated credentials unless the
 corresponding S3 flag is explicit. It has no effect on selections without `s3`.
 See the [Sim2Real guide](../docs/workbench/guides/sim2real-workflow.md).
 
+Existing-project setup supports project-admin credentials. Agent setup,
+`provision-if-absent`, and direct `cluster up` share the same quota scope rules:
+only a tenant-level IAM denial permits fallback to the exact project's complete
+quota catalog. Existing project rows with an omitted optional limit impose no
+additional project cap; explicit limits and incomplete evidence still block.
+Strict GPU reservations can likewise use an active allowance for the exact
+reservation under that project. NPA reports the unavailable tenant view;
+Nebius still enforces tenant limits, reservation compatibility and free capacity
+at apply time. No tenant-wide grant is added during setup.
+
+Fleet applies the same fallback to verified existing projects, combining every
+selected cluster and pending bucket in each project before checking its cap.
+Creating projects still requires tenant evidence. Reserved Soperator workers
+can use project allowances with explicit immutable reservation IDs; resolving
+reservation names requires tenant inventory. Legacy shared-filesystem creation
+uses the same scoped quota parser. A readable tenant constraint remains enforced
+even if a different tenant inventory API is denied.
+Creating a legacy shared filesystem requires a resolved tenant and region;
+missing identity now stops provisioning before apply.
+
 Optional [Workbench access](../docs/workbench/team-access.md) adds CLI/API/SDK shared
 execution through `npa workbench submit`, `runs`, `run`, and `whoami`, and the
 existing `npa.sdk.workbench.team` SDK. Administrators use `npa workbench access`.
@@ -515,6 +535,13 @@ SDK; previously published container pins retain their recorded build versions.
 - `npa.workflows`: workflow implementations and artifact discovery
 
 ## Developing and testing npa
+
+The `npa agent verify-live` command delegates endpoint and pytest gates to
+`npa/src/npa/cli/agent_verification.py`; UI wiring checks live in
+`npa/src/npa/cli/agent_verification_ui.py`. Keep new verification checks in these
+modules so the deployment CLI remains reviewable. Run
+`npa/.venv/bin/python -m pytest npa/tests/cli/test_agent_verification.py npa/tests/cli/test_agent.py -q`
+from the repository root to check verification failures and command integration.
 
 The [served-model VLM sampling lane](../docs/workbench/cookbooks/vlm-eval-loop-runbook.md#served-model-sampling-live-lane)
 extends `npa/scripts/vlm_provenance_live_recheck.py` against an operator-owned GPU

@@ -22,7 +22,6 @@ from typing import TYPE_CHECKING
 
 from npa.provisioning_preflight import (
     PROJECT_QUOTA_RBAC_FALLBACK_REASON,
-    read_project_quota_observations,
 )
 
 _QUOTA_SCOPE_CHECK = "quota_evidence_scope"
@@ -73,11 +72,8 @@ def _agent_check_whole_path_capacity(
     from npa.provisioning_preflight import (
         ExistingCapacity,
         PreflightBlockedError,
-        PreflightCheck,
-        QuotaObservation,
         build_whole_path_plan,
         discover_existing_capacity,
-        read_provider_quotas,
         resolve_topology,
     )
 
@@ -121,52 +117,6 @@ def _agent_check_whole_path_capacity(
         gpu_preset=requested.gpu_preset,
         gpu_disk_gib=requested.gpu_disk_gib,
     )
-    quota_names = tuple(topology.quota_requirements())
-    quota_scope = PreflightCheck(
-        name=_QUOTA_SCOPE_CHECK,
-        status="ready",
-        reason="tenant-wide quota allowances verified",
-    )
-    try:
-        observations = read_provider_quotas(tenant_id, region, quota_names)
-    except Exception as exc:  # noqa: BLE001 - classify before choosing fallback
-        if nebius_client.is_permission_denied(str(exc)):
-            try:
-                observations = read_project_quota_observations(
-                    project_id, region, quota_names
-                )
-            except Exception as project_exc:  # noqa: BLE001 - fail closed, sanitized
-                observations = {
-                    name: QuotaObservation(
-                        name=name,
-                        state="unknown",
-                        reason=(
-                            "tenant-wide quota query is unavailable due to RBAC and "
-                            "the project-scoped quota query failed "
-                            f"({type(project_exc).__name__})"
-                        ),
-                    )
-                    for name in quota_names
-                }
-            else:
-                quota_scope = PreflightCheck(
-                    name=_QUOTA_SCOPE_CHECK,
-                    status="ready",
-                    reason=PROJECT_QUOTA_RBAC_FALLBACK_REASON,
-                )
-        else:
-            observations = {
-                name: QuotaObservation(
-                    name=name,
-                    state="unknown",
-                    reason=(
-                        "tenant-wide quota query failed for a reason other than "
-                        f"an RBAC scope limitation ({type(exc).__name__})"
-                    ),
-                )
-                for name in quota_names
-            }
-
     plan = build_whole_path_plan(
         project_alias="",
         project_id=project_id,
@@ -178,14 +128,16 @@ def _agent_check_whole_path_capacity(
         # impossible. Existing resources are deducted by the shared planner at
         # the provisioning entrypoint; an already-present agent is deducted here.
         topology=topology,
-        quota_reader=lambda _parent, _region, _names: observations,
-        checks=[existing.check, quota_scope],
+        checks=[existing.check],
         mutation=True,
+    )
+    quota_scope = next(
+        (item for item in plan.checks if item.name == _QUOTA_SCOPE_CHECK), None
     )
     try:
         plan.assert_mutation_ready()
     except PreflightBlockedError as exc:
-        if quota_scope.reason == PROJECT_QUOTA_RBAC_FALLBACK_REASON:
+        if quota_scope and quota_scope.reason == PROJECT_QUOTA_RBAC_FALLBACK_REASON:
             blocked = any(item.status == "blocked" for item in plan.quotas)
             description = (
                 "Project-scoped quota evidence denies the requested capacity"

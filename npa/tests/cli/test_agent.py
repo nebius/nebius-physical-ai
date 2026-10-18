@@ -231,6 +231,7 @@ def _agent_source() -> str:
     from npa.cli import agent_login as agent_login_module
     from npa.cli import agent_site as agent_site_module
     from npa.cli import agent_viewer_runtime as agent_viewer_runtime_module
+    from npa.cli import agent_verification
 
     sources = [
         Path(module.__file__).read_text(encoding="utf-8")
@@ -242,6 +243,7 @@ def _agent_source() -> str:
             agent_login_module,
             agent_site_module,
             agent_viewer_runtime_module,
+            agent_verification,
         )
     ]
     sources.append(

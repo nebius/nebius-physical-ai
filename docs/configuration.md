@@ -288,6 +288,13 @@ reports that HF/NGC access probes were skipped.
 
 Gate: after interactive setup, `nebius iam get-access-token` exits successfully.
 
+Quota preflight first reads tenant allowances. If tenant visibility is denied by
+RBAC, it checks allowances in the selected project. An existing project allowance
+with an omitted optional limit means no project-specific cap; an explicit zero
+still blocks allocation. Missing rows and unreadable responses remain blocking.
+This fallback cannot prove remaining tenant capacity, so the provider still
+enforces tenant limits during allocation.
+
 `npa agent preflight`, `agent setup`, and `agent fresh-setup` share this exact
 storage decision. Once configure has health-verified the bucket/key, agent setup
 reuses it and provisions only the separately named VM service account; it does
