@@ -76,7 +76,8 @@ from npa.soperator.lifecycle import (
     SoperatorDeploymentValidationError,
     SoperatorStateCaptureError,
 )
-from npa.cluster_backends.quotas import preflight_region, shortfall_message
+from npa.cluster_backends.quotas import shortfall_message
+from npa.fleet.capacity_preflight import group_project_demands, preflight_fleet_region
 from npa.fleet.spec import ClusterSpec, FleetSpec, ObjectStorageSpec, ProjectSpec
 from npa.cluster_backends.mk8s_render import (
     validate_recipe_kuberay_compatibility,
@@ -1113,6 +1114,30 @@ def _pending_project_object_storage(
 ) -> dict[str, list[ObjectStorageSpec]]:
     """Read all selected buckets before any Fleet resource can be mutated."""
 
+    pending = _pending_object_storage_by_project(
+        spec=spec,
+        projects=projects,
+        project_ids=project_ids,
+        tenant_id=tenant_id,
+        profile=profile,
+        fleet_root=fleet_root,
+    )
+    return _regional_object_storage(projects, pending)
+
+
+def _regional_object_storage(projects, pending):
+    regional = {}
+    for project, region in projects:
+        if project.key() in pending:
+            regional.setdefault(region, []).extend(pending[project.key()])
+    return regional
+
+
+def _pending_object_storage_by_project(
+    *, spec, projects, project_ids, tenant_id, profile, fleet_root
+):
+    """Keep exact project ownership attached to incremental bucket demand."""
+
     from npa.clients import nebius as nebius_client
 
     pending: dict[str, list[ObjectStorageSpec]] = {}
@@ -1140,7 +1165,7 @@ def _pending_project_object_storage(
                         region=region,
                     )
                     continue
-            pending.setdefault(region, []).append(storage)
+            pending.setdefault(project.key(), []).append(storage)
     return pending
 
 
@@ -1830,6 +1855,7 @@ def _deploy_mk8s_fleet(
     preflight_project_ids: dict[str, str] = {}
     if preflight:
         scoped: dict[str, list[ClusterSpec]] = {}
+        scoped_by_project: dict[str, list[ClusterSpec]] = {}
         new_projects_by_region: dict[str, int] = {}
         scoped_projects: list[tuple[ProjectSpec, str]] = []
         for project in spec.projects:
@@ -1860,6 +1886,7 @@ def _deploy_mk8s_fleet(
                     )
                     continue
                 scoped.setdefault(region, []).append(cluster)
+                scoped_by_project.setdefault(project.key(), []).append(cluster)
             if project_has_scoped_cluster:
                 scoped_projects.append((project, region))
 
@@ -1893,7 +1920,7 @@ def _deploy_mk8s_fleet(
                 new_projects_by_region[region] = (
                     new_projects_by_region.get(region, 0) + 1
                 )
-        pending_storage = _pending_project_object_storage(
+        project_storage = _pending_object_storage_by_project(
             spec=spec,
             projects=scoped_projects,
             project_ids=preflight_project_ids,
@@ -1901,6 +1928,7 @@ def _deploy_mk8s_fleet(
             profile=nebius_profile,
             fleet_root=fleet_root,
         )
+        pending_storage = _regional_object_storage(scoped_projects, project_storage)
         if scoped or pending_storage:
             _preflight_quotas(
                 nebius_bin,
@@ -1911,6 +1939,12 @@ def _deploy_mk8s_fleet(
                 profile=nebius_profile,
                 on_status=on_status,
                 object_storage_by_region=pending_storage,
+                project_demands=group_project_demands(
+                    scoped_projects,
+                    preflight_project_ids,
+                    scoped_by_project,
+                    project_storage,
+                ),
             )
 
     # Phase 1 (sequential, cheap): resolve/create each in-scope project and build
@@ -2117,6 +2151,7 @@ def _preflight_quotas(
     profile: str,
     on_status: Callable[[str], None] | None,
     object_storage_by_region: dict[str, list[ObjectStorageSpec]] | None = None,
+    project_demands: dict | None = None,
 ) -> None:
     """Raise when reservations or tenant quota cannot cover the scoped clusters."""
 
@@ -2128,7 +2163,8 @@ def _preflight_quotas(
             on_status,
             f"capacity/quota preflight: {len(clusters)} cluster(s) in {region}",
         )
-        shortfalls += preflight_region(
+        shortfalls += preflight_fleet_region(
+            project_demands=(project_demands or {}).get(region, ()),
             nebius_bin=nebius_bin,
             tenant_id=tenant_id,
             region=region,

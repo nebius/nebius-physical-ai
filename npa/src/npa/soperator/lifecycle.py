@@ -553,6 +553,10 @@ def cluster_status(
     }
 
 
+class _ProviderAccessDenied(ValueError):
+    """A provider read failed specifically because its IAM scope was denied."""
+
+
 def _provider_json(
     command: list[str],
     *,
@@ -572,7 +576,16 @@ def _provider_json(
         raise ValueError(
             f"{description} timed out; refusing provider mutation"
         ) from exc
-    if completed.returncode != 0 or not completed.stdout.strip():
+    if completed.returncode != 0:
+        from npa.clients.nebius import is_permission_denied
+
+        failure = (
+            _ProviderAccessDenied
+            if is_permission_denied(completed.stderr or "")
+            else ValueError
+        )
+        raise failure(f"{description} failed; refusing provider mutation")
+    if not completed.stdout.strip():
         raise ValueError(f"{description} failed; refusing provider mutation")
     try:
         payload = json.loads(completed.stdout)
@@ -653,6 +666,46 @@ def _current_reserved_gpu_usage(install_dir: Path) -> dict[tuple[str, str], int]
     return usage
 
 
+def _project_reserved_worker_capacity(
+    spec,
+    *,
+    install_dir,
+    nebius_bin,
+    tenant_id,
+    project_id,
+    region,
+    env,
+    on_status,
+    inventory=None,
+):
+    from npa.cluster_backends.project_preflight import ProjectCapacityReader
+    from npa.soperator.project_reservations import resolve_project_reservations
+
+    reader = ProjectCapacityReader(
+        nebius_bin,
+        tenant_id,
+        project_id,
+        str(env.get("NEBIUS_PROFILE") or ""),
+        env,
+        _run_capture,
+        lambda binary, profile: [binary, "--profile", profile] if profile else [binary],
+    )
+    resolved = resolve_project_reservations(
+        spec, reader, _current_reserved_gpu_usage(install_dir), region, inventory
+    )
+    _log(
+        on_status,
+        "Project reservation allowances verified; tenant inventory or preset advice "
+        "is unavailable due to RBAC. Provider apply enforces actual reserved "
+        "capacity and compatibility; STRICT placement is unchanged.",
+    )
+    summary = worker_capacity_summary(resolved, reservations_verified=True)
+    for pool in summary:
+        if pool["capacity_mode"] == "reserved":
+            pool["reservation_evidence_scope"] = "project"
+    return resolved, summary
+
+
 def _resolve_reserved_worker_capacity(
     spec: SoperatorSpec,
     *,
@@ -706,49 +759,72 @@ def _resolve_reserved_worker_capacity(
             "reserved-capacity provider mutation"
         )
 
-    inventory = _provider_json(
-        [
-            nebius_bin,
-            "capacity",
-            "capacity-block-group",
-            "list",
-            "--parent-id",
-            tenant_id,
-            "--all",
-            "--format",
-            "json",
-        ],
+    fallback = dict(
+        install_dir=install_dir,
+        nebius_bin=nebius_bin,
+        tenant_id=tenant_id,
+        project_id=project_id,
+        region=region,
         env=env,
-        description="capacity-block inventory preflight",
+        on_status=on_status,
     )
+    try:
+        inventory = _provider_json(
+            [
+                nebius_bin,
+                "capacity",
+                "capacity-block-group",
+                "list",
+                "--parent-id",
+                tenant_id,
+                "--all",
+                "--format",
+                "json",
+            ],
+            env=env,
+            description="capacity-block inventory preflight",
+        )
+    except _ProviderAccessDenied:
+        return _project_reserved_worker_capacity(spec, **fallback)
     items = inventory.get("items")
     if not isinstance(items, list):
         raise ValueError(
             "capacity-block inventory omitted a valid items list; refusing provider mutation"
         )
+    if inventory.get("next_page_token"):
+        raise ValueError(
+            "capacity-block inventory is incomplete; refusing provider mutation"
+        )
     from npa.cluster_backends.quotas import parse_capacity_blocks
 
     blocks = parse_capacity_blocks(json.dumps(inventory))
-    advice_inventory = _provider_json(
-        [
-            nebius_bin,
-            "capacity",
-            "resource-advice",
-            "list",
-            "--parent-id",
-            tenant_id,
-            "--all",
-            "--format",
-            "json",
-        ],
-        env=env,
-        description="reserved preset-availability preflight",
-    )
+    try:
+        advice_inventory = _provider_json(
+            [
+                nebius_bin,
+                "capacity",
+                "resource-advice",
+                "list",
+                "--parent-id",
+                tenant_id,
+                "--all",
+                "--format",
+                "json",
+            ],
+            env=env,
+            description="reserved preset-availability preflight",
+        )
+    except _ProviderAccessDenied:
+        return _project_reserved_worker_capacity(spec, inventory=inventory, **fallback)
     advice_items = advice_inventory.get("items")
     if not isinstance(advice_items, list):
         raise ValueError(
             "reserved preset-availability preflight omitted a valid items list; "
             "refusing provider mutation"
+        )
+    if advice_inventory.get("next_page_token"):
+        raise ValueError(
+            "reserved preset availability is incomplete; refusing provider mutation"
         )
     existing_usage = _current_reserved_gpu_usage(install_dir)
     resolved_workers: list[WorkerPoolSpec] = []
