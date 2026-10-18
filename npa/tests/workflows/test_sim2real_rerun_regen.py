@@ -22,6 +22,7 @@ from npa.workflows.sim2real_rerun_regen import (
     _latest_completed_inner_evidence_rel,
     _latest_inner_evidence_rel,
     _policy_access_record,
+    _regen_result_from_viz,
     _stage_components,
     _update_stage14_component,
     regen_sim2real_rrd,
@@ -107,7 +108,13 @@ def test_regen_sim2real_rrd_requires_factual_observation_evidence(
         encoding="utf-8",
     )
     (local_dir / "eval/heldout/report.json").write_text(
-        json.dumps({"success_rate": 1.0, "render_manifest": {"episodes": []}}),
+        json.dumps(
+            {
+                "success_rate": 1.0,
+                "per_env": [{"env_id": "heldout-0000", "score": 0.7}],
+                "render_manifest": {"episodes": []},
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -124,8 +131,79 @@ def test_regen_sim2real_rrd_requires_factual_observation_evidence(
         lambda **_kwargs: FakeResult(),
     )
 
-    with pytest.raises(Sim2RealRerunRegenError, match="no factual rollout"):
+    with pytest.raises(Sim2RealRerunRegenError, match="no factual held-out"):
         regen_sim2real_rrd(_config(), local_dir=local_dir, sync_inputs=False)
+
+
+def test_regen_result_rejects_rollout_only_observations(tmp_path: Path) -> None:
+    class RolloutOnlyResult:
+        output_rrd_path = str(tmp_path / "sim2real.rrd")
+        heldout_frame_count = 0
+        heldout_env_count = 0
+        rollout_count = 1
+        frame_count = 1
+        has_factual_observation_evidence = True
+
+    with pytest.raises(Sim2RealRerunRegenError, match="no factual held-out"):
+        _regen_result_from_viz("rollout-only", tmp_path, RolloutOnlyResult())
+
+
+def test_regen_sim2real_rrd_accepts_heldout_environment_evidence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    local_dir = tmp_path / "run"
+    (local_dir / "inner_loop/outer-01").mkdir(parents=True)
+    (local_dir / "eval/heldout").mkdir(parents=True)
+    (local_dir / "inner_loop/outer-01/evidence.json").write_text(
+        json.dumps({"outer_iteration": 1, "iterations": []}),
+        encoding="utf-8",
+    )
+    (local_dir / "eval/heldout/report.json").write_text(
+        json.dumps(
+            {
+                "success_rate": 1.0,
+                "per_env": [{"env_id": "heldout-0000", "score": 0.7}],
+                "render_manifest": {"episodes": []},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeResult:
+        output_rrd_path = str(local_dir / "reports" / "sim2real.rrd")
+        heldout_frame_count = 0
+        heldout_env_count = 1
+        rollout_count = 0
+        frame_count = 0
+        has_factual_observation_evidence = True
+
+    monkeypatch.setattr(
+        "npa.workflows.sim2real_rerun_regen.emit_sim2real_rerun",
+        lambda **_kwargs: FakeResult(),
+    )
+
+    result = regen_sim2real_rrd(
+        _config(), local_dir=local_dir, sync_inputs=False, upload=False
+    )
+    assert result.heldout_frame_count == 0
+
+
+def test_regen_result_rejects_unscored_heldout_environment(tmp_path: Path) -> None:
+    class UnscoredHeldoutResult:
+        output_rrd_path = str(tmp_path / "sim2real.rrd")
+        heldout_frame_count = 0
+        heldout_env_count = 1
+        rollout_count = 0
+        frame_count = 0
+        has_factual_observation_evidence = True
+
+    with pytest.raises(Sim2RealRerunRegenError, match="no factual held-out"):
+        _regen_result_from_viz(
+            "unscored-heldout",
+            tmp_path,
+            UnscoredHeldoutResult(),
+            heldout_report={"per_env": [{"env_id": "heldout-0000"}]},
+        )
 
 
 @pytest.mark.parametrize("config_factory", [_config, _artifact_config])
@@ -2172,6 +2250,7 @@ def test_gold_render_sync_rejects_missing_or_validation_lineage(tmp_path: Path) 
             tmp_path,
             heldout_report={
                 "evaluation_split": "gold_heldout",
+                "per_env": [{"env_id": "heldout-0000", "score": 0.7}],
                 "render_lineage": {
                     "evaluation_split": "validation",
                     "renders_s3_uri": "s3://bucket/validation/renders/",

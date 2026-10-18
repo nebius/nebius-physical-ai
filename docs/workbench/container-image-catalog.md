@@ -577,8 +577,9 @@ lock and Transfer's hash-verified security override both select PyJWT 2.15.1,
 which fixes the critical signature-verification issue that blocked their rebuilt
 image scans. The controller and viewer use the immutable
 2026-10-02 Debian snapshot with fixed Perl, GLib and Mbed TLS, and both upgrade
-inherited packages. EnvGen and Loop Eval use the 2026-10-02 Ubuntu snapshot with
-the fixed `linux-libc-dev` 5.15.0-198.208 package. EnvGen also applies cuRobo's
+inherited packages. EnvGen uses the 2026-10-09 Ubuntu snapshot and Loop Eval
+uses the 2026-10-02 Ubuntu snapshot; both pin the fixed `linux-libc-dev`
+5.15.0-198.208 package. EnvGen also applies cuRobo's
 existing exact-source correction to an inert scikit-image recipe containing a
 historical token. The correction preserves executable behavior and removes
 the original source and bytecode before flattening the sanitized filesystem;
@@ -586,7 +587,7 @@ derivatives must be rebuilt from that corrected parent to discard the old
 bytes from their layers. These are source repairs:
 newly built images must still pass all publication scans and real capability
 validation before any public default is restored. Historical releases remain
-quarantined.
+quarantined; this source repair does not change other published defaults.
 
 The scan-to-policy workflow selects repaired immutable development candidates
 for Isaac Lab and SONIC, and the GR00T training workflow selects a development

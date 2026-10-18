@@ -18,6 +18,7 @@ from npa.workflows.sim2real import (
 from npa.workflows.sim2real.byo_isaac_trainer import artifact_tag, k8s_job_name
 from npa.workflows.sim2real.decision_authority import gold_report_sha256
 from npa.workflows.sim2real.models import Sim2RealLoopConfig
+from npa.workflows.sim2real_viz import Sim2RealVizResult
 import npa.workflows.sim2real.stage14_finalize as stage14
 import npa.workflows.sim2real_rerun_regen as regen
 from npa.workflows.sim2real_viz import Sim2RealVizResult

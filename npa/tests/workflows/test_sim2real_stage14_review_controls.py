@@ -164,6 +164,8 @@ class _FakeVizResult:
 
     @property
     def has_factual_observation_evidence(self) -> bool:
+        """Mirror the factual-evidence contract of the production result."""
+
         return bool(
             self.frame_count
             or self.rollout_count
