@@ -138,8 +138,8 @@ access and workload acceptance requirements continue to apply.
 The preceding tables preserve the original dated resolver observation. That
 audit missed literal Isaac and SONIC digests, which bypassed tool-default
 quarantine. The follow-up removes those automatic selections. All 133 shipped
-specs now have **41 blocked defaults**: 31 workflows deny quarantined tool-image
-selection, and ten deny missing exact operator image inputs before task
+specs now have **40 blocked defaults**: 31 workflows deny quarantined tool-image
+selection, and nine deny missing exact operator image inputs before task
 expansion. These categories are audited independently: supplying exact operator
 inputs can reveal additional quarantined task-image defaults. This is planning
 evidence only, not fresh image or GPU acceptance.

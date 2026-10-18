@@ -1484,9 +1484,6 @@ def download_rrd_from_s3(
     requested_uri = rrd_uri.strip()
     if rrd_uri and requested_uri != rrd_uri:
         raise Sim2RealRerunRegenError("requested Rerun recording URI has whitespace")
-    requested_uri = rrd_uri.strip()
-    if rrd_uri and requested_uri != rrd_uri:
-        raise Sim2RealRerunRegenError("requested Rerun recording URI has whitespace")
     try:
         publication = resolve_committed_publication_snapshot(storage, canonical_uri)
         uri = publication.resolve(canonical_uri)
@@ -1494,10 +1491,6 @@ def download_rrd_from_s3(
         raise Sim2RealRerunRegenError(str(exc)) from exc
     if uri is None:
         raise Sim2RealRerunRegenError(f"Rerun recording is disabled at {canonical_uri}")
-    if requested_uri and requested_uri not in {canonical_uri, uri}:
-        raise Sim2RealRerunRegenError(
-            "requested Rerun recording does not match the committed publication"
-        )
     if requested_uri and requested_uri not in {canonical_uri, uri}:
         raise Sim2RealRerunRegenError(
             "requested Rerun recording does not match the committed publication"
@@ -1521,13 +1514,12 @@ def _download_verified_rrd(
             storage, uri, staged, containment_root=containment_root
         ):
             raise Sim2RealRerunRegenError(f"Rerun recording not found at {uri}")
-        if publication is not None:
-            try:
-                verify_committed_publication_file(
-                    publication, canonical_uri, staged, client=storage
-                )
-            except PublicationConflict as exc:
-                raise Sim2RealRerunRegenError(str(exc)) from exc
+        try:
+            verify_committed_publication_file(
+                publication, canonical_uri, staged, client=storage
+            )
+        except PublicationConflict as exc:
+            raise Sim2RealRerunRegenError(str(exc)) from exc
         _assert_no_symlinked_ancestors(absolute_dest, containment_root=containment_root)
         os.replace(staged, absolute_dest)
 

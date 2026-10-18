@@ -21,7 +21,6 @@ from npa.workflows.sim2real.models import Sim2RealLoopConfig
 from npa.workflows.sim2real_viz import Sim2RealVizResult
 import npa.workflows.sim2real.stage14_finalize as stage14
 import npa.workflows.sim2real_rerun_regen as regen
-from npa.workflows.sim2real_viz import Sim2RealVizResult
 
 pytestmark = pytest.mark.usefixtures("operator_sim2real_image_defaults")
 
