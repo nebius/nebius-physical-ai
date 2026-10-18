@@ -778,7 +778,13 @@ def _rerun_serve_credentials() -> tuple[str, str]:
 def rerun_serve_command(
     run_id: str = typer.Option(..., "--run-id", help="Completed Sim2Real run id."),
     project: str = typer.Option(
-        "", "--project", "-p", help="Project alias for storage resolution."
+        "",
+        "--project",
+        "-p",
+        help=(
+            "Project alias for legacy serve storage resolution; saved/default and "
+            "environment fallback remain enabled."
+        ),
     ),
     cluster_name: str = typer.Option(
         "",
@@ -803,9 +809,8 @@ def rerun_serve_command(
         "",
         "--rrd-uri",
         help=(
-            "Explicit s3:// URI for reports/sim2real.rrd; --local-record downloads a "
-            "noncanonical URI as operator-asserted, while the canonical run URI is "
-            "publication-verified."
+            "Explicit s3:// URI for reports/sim2real.rrd; --local-record verifies "
+            "it against the committed publication before deploying."
         ),
     ),
     report_uri: str = typer.Option(
@@ -870,6 +875,7 @@ def rerun_serve_command(
     ),
 ) -> None:
     """Deploy a hosted Rerun viewer; pod init container pulls reports/sim2real.rrd from S3."""
+    local_record_dest: Path | None = None
     try:
         access_key, secret_key = _rerun_serve_credentials()
         cluster_context = cluster_name.strip() or resolve_cluster_name_from_config()
@@ -897,6 +903,13 @@ def rerun_serve_command(
             rrd_s3_uri=rrd_uri,
             report_uri=report_uri,
         )
+        if local_record and not destroy:
+            artifact_config = Sim2RealArtifactConfig(
+                run_id=config.run_id,
+                s3_bucket=config.s3_bucket,
+                s3_prefix=config.s3_prefix,
+                s3_endpoint=config.s3_endpoint,
+            )
         if dry_run:
             manifest = build_rerun_serve_manifest(config)
             if output == OutputFormat.json:
@@ -912,6 +925,26 @@ def rerun_serve_command(
                     )
                 )
             return
+        if local_record and not destroy:
+            dest = resolve_local_rrd_path(
+                run_id,
+                override=str(local_rrd_path) if local_rrd_path is not None else "",
+            )
+            try:
+                download_rrd_from_s3(
+                    artifact_config,
+                    dest_path=dest,
+                    rrd_uri=config.rrd_s3_uri,
+                    client=StorageClient.from_environment(
+                        endpoint_url=config.s3_endpoint,
+                        aws_access_key_id=access_key,
+                        aws_secret_access_key=secret_key,
+                    ),
+                )
+            except (Sim2RealRerunRegenError, PublicationConflict) as exc:
+                typer.echo(f"Error: {exc}", err=True)
+                raise typer.Exit(1) from exc
+            local_record_dest = dest
         resolved_kubeconfig = require_kubeconfig(
             cluster_name=cluster_context,
             kubeconfig=kubeconfig,
@@ -936,32 +969,8 @@ def rerun_serve_command(
             f"basic-auth enabled — user={config.auth_user} password={config.auth_password}",
             err=True,
         )
-    if local_record and not destroy:
-        artifact_config = Sim2RealArtifactConfig(
-            run_id=config.run_id,
-            s3_bucket=config.s3_bucket,
-            s3_prefix=config.s3_prefix,
-            s3_endpoint=config.s3_endpoint,
-        )
-        dest = resolve_local_rrd_path(
-            run_id,
-            override=str(local_rrd_path) if local_rrd_path is not None else "",
-        )
-        try:
-            download_rrd_from_s3(
-                artifact_config,
-                dest_path=dest,
-                rrd_uri=config.rrd_s3_uri_override.strip(),
-                client=StorageClient.from_environment(
-                    endpoint_url=config.s3_endpoint,
-                    aws_access_key_id=access_key,
-                    aws_secret_access_key=secret_key,
-                ),
-            )
-        except (Sim2RealRerunRegenError, PublicationConflict) as exc:
-            typer.echo(f"Error: {exc}", err=True)
-            raise typer.Exit(1) from exc
-        payload["local_rrd_path"] = str(dest)
+    if local_record_dest is not None:
+        payload["local_rrd_path"] = str(local_record_dest)
 
     _emit_rerun_serve_result(payload, output=output)
 

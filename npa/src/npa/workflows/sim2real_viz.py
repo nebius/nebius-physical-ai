@@ -134,14 +134,11 @@ class Sim2RealVizResult:
     def has_factual_observation_evidence(self) -> bool:
         """Return whether the recording contains factual observations or scores."""
 
-        return any(
-            count > 0
-            for count in (
-                self.frame_count,
-                self.rollout_count,
-                self.heldout_env_count,
-                self.heldout_frame_count,
-            )
+        return bool(
+            self.frame_count
+            or self.rollout_count
+            or self.heldout_env_count
+            or self.heldout_frame_count
         )
 
     def to_dict(self) -> dict[str, Any]:

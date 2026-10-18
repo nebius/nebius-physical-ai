@@ -35,6 +35,8 @@ The table below describes the retained legacy CLI/SDK contract. Canonical
 workflow submissions use the runbook's `--var` arguments and five image keys;
 these legacy `run` flags are not its setup interface.
 
+## Image-independent health diagnostics
+
 Health selections containing only `coherence`, `tokens`, `s3`, or `cluster`
 resolve storage and Kubernetes settings without selecting execution images:
 

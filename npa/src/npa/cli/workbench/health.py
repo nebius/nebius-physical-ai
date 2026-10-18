@@ -658,14 +658,7 @@ def sim2real_command(
                 overrides["s3_bucket"] = credentials.s3_bucket.removeprefix("s3://")
             if not s3_endpoint.strip():
                 overrides["s3_endpoint"] = credentials.s3_endpoint
-        except ConfigError as exc:
-            project_storage_failure = CheckResult(
-                name="s3",
-                status=FAIL,
-                summary="Configured project storage could not be resolved.",
-                remedy=str(exc),
-            )
-        except ProjectCredentialStoreError:
+        except (ConfigError, ProjectCredentialStoreError):
             project_storage_failure = CheckResult(
                 name="s3",
                 status=FAIL,

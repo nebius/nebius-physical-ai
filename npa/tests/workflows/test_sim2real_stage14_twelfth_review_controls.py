@@ -18,6 +18,7 @@ from npa.workflows.sim2real import (
 from npa.workflows.sim2real.byo_isaac_trainer import artifact_tag, k8s_job_name
 from npa.workflows.sim2real.decision_authority import gold_report_sha256
 from npa.workflows.sim2real.models import Sim2RealLoopConfig
+from npa.workflows.sim2real_viz import Sim2RealVizResult
 import npa.workflows.sim2real.stage14_finalize as stage14
 import npa.workflows.sim2real_rerun_regen as regen
 
@@ -617,13 +618,13 @@ def test_disabled_mcap_does_not_upload_stale_bytes(
         "publish_regen_outputs",
         lambda *_a, **_k: f"{ROOT}/reports/sim2real.rrd",
     )
-    result = SimpleNamespace(
+    result = Sim2RealVizResult(
+        status="written",
         heldout_frame_count=1,
         output_rrd_path=str(rrd),
         rollout_count=0,
         frame_count=1,
         synthetic_frame_count=0,
-        has_factual_observation_evidence=True,
     )
     state = regen._RegenState({}, {}, tmp_path / "report.json", {}, {})
     regen._finalize_regen_result(
@@ -641,7 +642,7 @@ def test_disabled_mcap_does_not_upload_stale_bytes(
 def test_regen_result_rejects_missing_factual_evidence_field(tmp_path: Path) -> None:
     with pytest.raises(
         regen.Sim2RealRerunRegenError,
-        match="no factual rollout observations",
+        match="no factual held-out camera",
     ):
         regen._regen_result_from_viz(RUN_ID, tmp_path, SimpleNamespace())
 
@@ -658,7 +659,7 @@ def test_finalize_regen_rejects_missing_heldout_evidence_fields(
     state = regen._RegenState({}, {}, tmp_path / "report.json", {}, {})
     with pytest.raises(
         regen.Sim2RealRerunRegenError,
-        match="no held-out cameras or held-out scores",
+        match="no factual held-out camera",
     ):
         regen._finalize_regen_result(
             _config(),
@@ -682,18 +683,14 @@ def test_finalize_regen_rejects_missing_factual_evidence_before_emitting(
     state = regen._RegenState({}, {}, tmp_path / "report.json", {}, {})
     with pytest.raises(
         regen.Sim2RealRerunRegenError,
-        match="no factual rollout observations",
+        match="no factual held-out camera",
     ):
         regen._finalize_regen_result(
             _config(),
             tmp_path,
             object(),
             state,
-            SimpleNamespace(
-                heldout_frame_count=1,
-                heldout_env_count=1,
-                has_factual_observation_evidence=False,
-            ),
+            SimpleNamespace(),
             upload=False,
         )
 
@@ -716,7 +713,7 @@ def test_finalize_regen_rejects_nonpositive_heldout_evidence_fields(
     state = regen._RegenState({}, {}, tmp_path / "report.json", {}, {})
     with pytest.raises(
         regen.Sim2RealRerunRegenError,
-        match="no held-out cameras or held-out scores",
+        match="no factual held-out camera",
     ):
         regen._finalize_regen_result(
             _config(),

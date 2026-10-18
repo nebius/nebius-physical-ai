@@ -565,20 +565,22 @@ required operator images from legacy automatic public-image selection.
 
 The Ray Serve Dockerfile now derives from PAIDF's repaired Cosmos3 digest rather
 than retaining the withdrawn parent's SSH-key layers. The Isaac 3 OSS dependency
-lock also selects PyJWT 2.15.0, which fixes the critical signature-verification
-issue that blocked its rebuilt image scan; Transfer's hash-verified security
-override selects the same fix. The controller and viewer use the immutable
-2026-10-02 Debian snapshot with fixed Perl, GLib and Mbed TLS, and both upgrade
-inherited packages. EnvGen and Loop Eval use the 2026-10-02 Ubuntu snapshot with
-the fixed `linux-libc-dev` 5.15.0-198.208 package. EnvGen also applies cuRobo's
+lock selects PyJWT 2.15.0, while Transfer's hash-verified security override pins
+PyJWT 2.15.1; both carry the signature-verification fix that blocked rebuilt
+image scans. The controller and viewer use the immutable 2026-10-02 Debian
+snapshot with fixed Perl, GLib and Mbed TLS, and both upgrade inherited packages.
+EnvGen uses the 2026-10-09 Ubuntu snapshot and Loop Eval uses the 2026-10-02
+Ubuntu snapshot; both pin the fixed `linux-libc-dev` 5.15.0-198.208 package.
+EnvGen also applies cuRobo's
 existing exact-source correction to an inert scikit-image recipe containing a
 historical token. The correction preserves executable behavior and removes
 the original source and bytecode before flattening the sanitized filesystem;
 derivatives must be rebuilt from that corrected parent to discard the old
 bytes from their layers. These are source repairs:
 newly built images must still pass all publication scans and real capability
-validation before any public default is restored. Historical releases remain
-quarantined.
+validation before any public default is restored. The affected historical
+releases remain quarantined; this source repair does not change other published
+defaults.
 
 The scan-to-policy workflow selects repaired immutable development candidates
 for Isaac Lab and SONIC, and the GR00T training workflow selects a development

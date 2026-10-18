@@ -57,5 +57,18 @@ def test_fiftyone_pins_graphql_core_compatible_with_its_strawberry_release() -> 
     """A resolver update must not recreate the first-import failure in the image."""
     dockerfile = DOCKERFILE.read_text(encoding="utf-8")
 
-    assert "ARG GRAPHQL_CORE_VERSION=3.2.13" in dockerfile
-    assert '"graphql-core==${GRAPHQL_CORE_VERSION}"' in dockerfile
+    pin = (
+        "graphql-core @ https://files.pythonhosted.org/packages/1f/b4/"
+        "b52a324b0b297ddc49b8ea31a51d39fae63132f694a267b9381d94e2e0af/"
+        "graphql_core-3.2.13-py3-none-any.whl#sha256="
+        "b0eb04f2c31556b2310a77c8fb53c74e8b56570f8fea594d89c6ef7827dbb497"
+    )
+    assert pin in dockerfile
+    assert dockerfile.count('"graphql-core @ ') == 1
+
+
+def test_fiftyone_retains_its_dependency_source_correction_receipt() -> None:
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+
+    assert "--capability fiftyone" in dockerfile
+    assert "/usr/share/doc/npa-fiftyone/dependency-source-correction.json" in dockerfile

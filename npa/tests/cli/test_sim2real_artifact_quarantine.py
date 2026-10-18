@@ -24,8 +24,8 @@ from npa.workflows.sim2real.artifact_config import (
 from npa.workflows.sim2real.config import artifact_uris, build_config_from_env
 from npa.workflows.sim2real_rerun_regen import (
     RegenResult,
+    Sim2RealRerunRegenError,
     download_rrd_from_s3,
-    run_prefix_uri,
 )
 
 
@@ -357,7 +357,7 @@ def test_public_execution_defaults_remain_quarantined(
         build_config_from_env(run_id="execution-run")
 
 
-def test_serve_local_record_uses_explicit_viewer_storage(
+def test_serve_local_record_uses_resolved_viewer_storage(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _reject_execution_images(monkeypatch)
@@ -395,7 +395,7 @@ def test_serve_local_record_uses_explicit_viewer_storage(
     assert result.exit_code == 0, result.output
     assert downloads[0][0].s3_bucket == config.s3_bucket
     assert downloads[0][0].s3_endpoint == config.s3_endpoint
-    assert downloads[0][1]["rrd_uri"] == config.rrd_s3_uri_override
+    assert downloads[0][1]["rrd_uri"] == config.rrd_s3_uri
     assert downloads[0][1]["client"] is storage_client
     assert client_settings == [
         {
@@ -406,41 +406,35 @@ def test_serve_local_record_uses_explicit_viewer_storage(
     ]
 
 
-def test_serve_local_record_uses_verified_default_publication(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+def test_serve_local_record_refusal_precedes_viewer_deploy(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, mocker
 ) -> None:
-    _reject_execution_images(monkeypatch)
     config = RerunServeConfig(
         run_id="archived-run",
         s3_bucket="resolved-bucket",
         s3_prefix="completed",
         s3_endpoint="https://storage.example.invalid",
+        rrd_s3_uri_override="s3://resolved-bucket/completed/uncommitted.rrd",
     )
     _mock_viewer_deploy(monkeypatch, config)
-    downloads: list[dict[str, object]] = []
+    apply = mocker.patch("npa.cli.workbench.sim2real.apply_rerun_serve")
 
-    def download(_coordinates: Sim2RealArtifactConfig, **kwargs: object) -> Path:
-        downloads.append(kwargs)
-        return tmp_path / "local.rrd"
+    def refuse_download(*_args: object, **_kwargs: object) -> None:
+        raise Sim2RealRerunRegenError("does not match the committed publication")
 
-    monkeypatch.setattr("npa.cli.workbench.sim2real.download_rrd_from_s3", download)
     monkeypatch.setattr(
-        "npa.cli.workbench.sim2real.StorageClient.from_environment",
-        lambda **_kwargs: object(),
+        "npa.cli.workbench.sim2real.download_rrd_from_s3", refuse_download
     )
     result = _invoke_rerun(
         "serve",
-        "--project",
-        "operator-project",
         "--local-record",
         "--local-rrd-path",
         str(tmp_path / "local.rrd"),
-        "--output",
-        "json",
     )
 
-    assert result.exit_code == 0, result.output
-    assert downloads[0]["rrd_uri"] == ""
+    assert result.exit_code == 1
+    assert "does not match the committed publication" in result.output
+    apply.assert_not_called()
 
 
 def test_serve_local_record_ignores_unneeded_artifact_environment(
@@ -702,54 +696,27 @@ def test_sdk_output_paths_matches_execution_trigger_dataset_precedence(
     assert paths["trigger_dataset"] == artifact_uris(execution)["trigger_dataset"]
 
 
-def test_recording_download_uses_exact_selected_uri(tmp_path: Path) -> None:
+def test_recording_download_requires_committed_selected_uri(tmp_path: Path) -> None:
     selected = "s3://example-bucket/archived/custom.rrd"
     downloads: list[str] = []
 
-    def download(uri: str, destination: str) -> None:
-        downloads.append(uri)
-        Path(destination).write_bytes(b"existing-recording")
+    class Storage:
+        def read_bytes_with_etag(self, _uri: str) -> None:
+            return None
+
+        def download_path(self, uri: str, destination: str) -> None:
+            downloads.append(uri)
+            Path(destination).write_bytes(b"existing-recording")
 
     config = Sim2RealArtifactConfig(run_id="archived-run", s3_bucket="example-bucket")
-    path = download_rrd_from_s3(
-        config,
-        dest_path=tmp_path / "review.rrd",
-        rrd_uri=selected,
-        client=SimpleNamespace(download_path=download),
-    )
-    assert downloads == [selected]
-    assert path.read_bytes() == b"existing-recording"
-
-
-def test_recording_download_treats_explicit_canonical_uri_as_verified(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    config = Sim2RealArtifactConfig(run_id="archived-run", s3_bucket="example-bucket")
-    canonical_uri = f"{run_prefix_uri(config)}reports/sim2real.rrd"
-    immutable_uri = f"{canonical_uri}.immutable"
-    publication = SimpleNamespace(
-        resolve=lambda uri: immutable_uri if uri == canonical_uri else None
-    )
-    verified: list[tuple[object, ...]] = []
-    storage = object()
-
-    monkeypatch.setattr(
-        "npa.workflows.sim2real_rerun_regen.resolve_committed_publication_snapshot",
-        lambda client, uri: publication,
-    )
-    monkeypatch.setattr(
-        "npa.workflows.sim2real_rerun_regen._download_verified_rrd",
-        lambda *args: verified.append(args),
-    )
-
-    destination = tmp_path / "review.rrd"
-    assert (
+    with pytest.raises(
+        Sim2RealRerunRegenError,
+        match="does not match the committed publication",
+    ):
         download_rrd_from_s3(
             config,
-            dest_path=destination,
-            rrd_uri=canonical_uri,
-            client=storage,
-        )
-        == destination
+            dest_path=tmp_path / "review.rrd",
+            rrd_uri=selected,
+            client=Storage(),
     )
-    assert verified[0][0:4] == (storage, immutable_uri, publication, canonical_uri)
+    assert downloads == []

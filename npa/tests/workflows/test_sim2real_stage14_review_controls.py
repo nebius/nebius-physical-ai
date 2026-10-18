@@ -161,7 +161,17 @@ class _FakeVizResult:
     heldout_frame_count: int = 1
     heldout_env_count: int = 1
     synthetic_frame_count: int = 0
-    has_factual_observation_evidence: bool = True
+
+    @property
+    def has_factual_observation_evidence(self) -> bool:
+        """Mirror the factual-evidence contract of the production result."""
+
+        return bool(
+            self.frame_count
+            or self.rollout_count
+            or self.heldout_env_count
+            or self.heldout_frame_count
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
