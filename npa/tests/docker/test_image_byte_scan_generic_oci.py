@@ -162,6 +162,45 @@ def test_generic_direct_manifest_binds_unattested_runtime_without_seedvr_schema(
             O.bind_direct_manifest(result, altered, auth["expected_image_id"])
 
 
+def test_generic_direct_manifest_rejects_attestation_shaped_root_entry(tmp_path):
+    files, expected = _direct_manifest_fixture()
+    index = json.loads(files["index.json"])
+    index["manifests"][0]["annotations"] = {
+        "vnd.docker.reference.type": "attestation-manifest"
+    }
+    files["index.json"] = js(index)
+    archive = write(
+        tmp_path / "attestation-shaped.tar",
+        tar_data([file(name, data) for name, data in files.items()]),
+    )
+
+    with W.bound_open(archive) as (_path, fd, info):
+        with pytest.raises(W.ScanError, match="oci_direct_attestation_forbidden"):
+            O.inspect_direct_manifest(fd, info.st_size, expected)
+
+
+def test_generic_direct_manifest_rejects_runtime_config_binding_mismatch(tmp_path):
+    auth, verified, _ = _direct_authorization(tmp_path)
+    altered = {**verified, "image_config_digest": "sha256:" + "0" * 64}
+
+    with W.bound_open(auth["archive"]) as (_path, fd, info):
+        result = O.inspect_direct_manifest(fd, info.st_size, auth["expected_image_id"])
+        with pytest.raises(W.ScanError, match="oci_direct_manifest_graph_binding"):
+            O.bind_direct_manifest(result, altered, auth["expected_image_id"])
+
+
+def test_generic_direct_manifest_rejects_reordered_layer_binding(tmp_path):
+    auth, verified, _ = _direct_authorization(tmp_path)
+    reordered = list(reversed(verified["verified_layer_diff_ids"]))
+    assert reordered != verified["verified_layer_diff_ids"]
+    altered = {**verified, "verified_layer_diff_ids": reordered}
+
+    with W.bound_open(auth["archive"]) as (_path, fd, info):
+        result = O.inspect_direct_manifest(fd, info.st_size, auth["expected_image_id"])
+        with pytest.raises(W.ScanError, match="oci_direct_manifest_layer_binding"):
+            O.bind_direct_manifest(result, altered, auth["expected_image_id"])
+
+
 def test_generic_direct_manifest_cli_and_preparation_use_exact_schema(
     tmp_path, capsys, monkeypatch
 ):
