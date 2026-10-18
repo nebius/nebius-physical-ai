@@ -92,6 +92,8 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
          python3 python3-venv python3-pip rsync curl openssh-client openssh-server \
          procps sudo netcat-openbsd \
+    && rm -rf /opt/nvidia/nsight-compute \
+    && test ! -e /opt/nvidia/nsight-compute \
     && rm -rf /var/lib/apt/lists/* \
     && rm -f /etc/ssh/ssh_host_* \
     && test -z "$(find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*' -print -quit)" \

@@ -83,6 +83,7 @@ RUN useradd -m -s /bin/bash -u 1000 ubuntu \
       /opt/fiftyone/smoke \
       /opt/fiftyone/venv \
       /opt/npa/docker/workbench/fiftyone \
+      /usr/share/doc/npa-fiftyone \
     && printf '%s\n' \
       'export FIFTYONE_VENV=/opt/fiftyone/venv' \
       'export PATH=/opt/fiftyone/venv/bin:$PATH' \
@@ -113,7 +114,6 @@ RUN python -m venv "${FIFTYONE_VENV}" \
       "pillow==${PILLOW_VERSION}" \
       "paramiko==5.0.0" \
       "scikit-image==0.26.0" \
-    && mkdir -p /usr/share/doc/npa-fiftyone \
     && python /opt/npa-remove-scikit-image-recipe.py \
       --site-packages "$(python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \
       --capability fiftyone \

@@ -987,6 +987,31 @@ table. The independently rebuilt `sonic-mujoco:0.2.0-runtime` and zero-payload
 
 ## Verification scope
 
+The [2026-10-18 post-merge development build](https://github.com/nebius/nebius-physical-ai/actions/runs/39153996361)
+failed 19 of 31 image jobs after the source checks passed. Current build sources
+repair FiftyOne's non-root receipt directory, the MJLab/Lyra client dependency
+closure, unnecessary OpenPI/GR00T startup imports, the SONIC snapshot mismatch,
+and the reported header, PyJWT and optional Nsight vulnerability findings.
+Cosmos and Genesis install imageio-ffmpeg from source, omit its wheel-bundled
+executable before committing the dependency layer, and verify system FFmpeg
+with a tiny encode/decode probe during the build.
+These are source repairs; replacement images still require their own complete
+publication checks and functional validation.
+
+Loop Eval and LeRobot VLM-RL now derive from the EnvGen development digest
+`sha256:c84582e60d9cd593b0c75538818d540a378319ce55bb785e60869734d1a0f6b3`,
+built from main commit `d3845605b8de7f61eb0642d4c5cd0f28faafc98f` in that run.
+That parent passed the publication gates, including the dependency source
+correction; its build evidence does not establish GPU qualification for either
+new derivative. Supported release tags and their recorded digests are unchanged.
+
+The same run also stopped cuRobo, SeedVR2, Cosmos3 Ray Serve and Alpamayo at
+payload verification. Those four refusals remain unresolved and need
+exact-artifact investigation. In particular, unavailable cuRobo/SeedVR2 reports
+and credential-pattern matches cannot be treated as clean evidence or cleared
+by a scanner exclusion. The failed run retained no Actions artifacts for those
+reports.
+
 `npa-lyra2:2.0-rtfetch2` promotes the exact scanned development digest that
 completed native reconstruction on one preemptible RTX PRO 6000, with independent
 artifact readback and offline desktop/mobile HTML checks. The earlier

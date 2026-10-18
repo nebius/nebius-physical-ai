@@ -16,6 +16,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LEROBOT_VERSION=${LEROBOT_VERSION} \
     MUJOCO_GL=egl \
     PYOPENGL_PLATFORM=egl \
+    PIP_NO_CACHE_DIR=1 \
+    IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg \
     PYTHONUNBUFFERED=1 \
     NPA_GENESIS_HOME=/opt/genesis
 
@@ -72,7 +74,7 @@ RUN python3 -m venv /opt/genesis/venv \
       "torch==${TORCH_VERSION}" \
       "torchvision==${TORCHVISION_VERSION}" \
       --index-url https://download.pytorch.org/whl/cu124 \
-    && /opt/genesis/venv/bin/pip install \
+    && /opt/genesis/venv/bin/pip install --no-binary=imageio-ffmpeg \
       "genesis-world==${GENESIS_VERSION}" \
       "rsl-rl-lib==${RSL_RL_VERSION}" \
       "moviepy @ https://github.com/Zulko/moviepy/archive/97316f37f6a8d3843abfb53eba8f3bb0ea46a008.tar.gz#sha256=6bef8575b091f6a7342ed271ff5dba97dbb07255df0a5b81fec38f8248b143d9" \
@@ -88,8 +90,14 @@ RUN python3 -m venv /opt/genesis/venv \
       "jinja2==3.1.6" \
       "pyarrow==24.0.0" \
     && /opt/genesis/venv/bin/pip install --no-cache-dir --no-deps --upgrade "pillow>=12.3.0,<13.0" \
-    && /opt/genesis/venv/bin/pip install --no-cache-dir --upgrade "diffusers>=0.38.0" \
-    && /opt/genesis/venv/bin/pip uninstall -y wandb
+    && /opt/genesis/venv/bin/pip install --no-cache-dir --no-binary=imageio-ffmpeg --upgrade "diffusers>=0.38.0" \
+    && /opt/genesis/venv/bin/pip uninstall -y wandb \
+    && find /opt/genesis/venv -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
+    && test -z "$(find /opt/genesis/venv -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)" \
+    && /opt/genesis/venv/bin/python -c \
+      'import imageio_ffmpeg; assert imageio_ffmpeg.get_ffmpeg_exe() == "/usr/bin/ffmpeg"' \
+    && /opt/genesis/venv/bin/python -c \
+      'import imageio_ffmpeg, os; p="/tmp/genesis-ffmpeg-probe.mp4"; w=imageio_ffmpeg.write_frames(p,(2,2),fps=1,macro_block_size=1); w.send(None); w.send(bytes([0,0,0]*4)); w.close(); r=imageio_ffmpeg.read_frames(p,pix_fmt="rgb24"); m=next(r); f=next(r); r.close(); assert m["size"] == (2,2) and len(f) == 12; os.unlink(p)'
 
 ENV PATH=/opt/genesis/venv/bin:$PATH \
     PYTHONPATH=/opt/npa/src \

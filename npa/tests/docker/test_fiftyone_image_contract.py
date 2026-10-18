@@ -72,3 +72,16 @@ def test_fiftyone_retains_its_dependency_source_correction_receipt() -> None:
 
     assert "--capability fiftyone" in dockerfile
     assert "/usr/share/doc/npa-fiftyone/dependency-source-correction.json" in dockerfile
+
+
+def test_dependency_correction_receipt_is_writable_by_the_build_user() -> None:
+    """The correction runs after USER ubuntu and must retain its receipt."""
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+    root_setup, user_setup = dockerfile.split("USER ubuntu", 1)
+    owner_setup = root_setup[
+        root_setup.index("install -d -m 0755 -o ubuntu -g ubuntu") :
+    ]
+    assert "/usr/share/doc/npa-fiftyone" in owner_setup
+    assert (
+        "> /usr/share/doc/npa-fiftyone/dependency-source-correction.json" in user_setup
+    )

@@ -25,6 +25,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     HF_HOME=/opt/cosmos-data/hf_cache \
     HUGGINGFACE_HUB_CACHE=/opt/cosmos-data/hf_cache \
     PIP_NO_CACHE_DIR=1 \
+    IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg \
     PYTHONUNBUFFERED=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -94,7 +95,7 @@ RUN printf '%s\n' \
       "torchvision==${COSMOS_TORCHVISION_VERSION}" \
       "triton==${COSMOS_TRITON_VERSION}" \
       > /tmp/cosmos-cu128-constraints.txt \
-    && /opt/cosmos/venv/bin/pip install \
+    && /opt/cosmos/venv/bin/pip install --no-binary=imageio-ffmpeg \
       -r /tmp/cosmos-predict2-noncuda-requirements.txt \
       -c /tmp/cosmos-cu128-constraints.txt \
     && curl -L -o "/tmp/flash_attn-${COSMOS_FLASH_ATTN_VERSION}-cp310-cp310-linux_x86_64.whl" \
@@ -106,7 +107,7 @@ RUN printf '%s\n' \
     && curl -L -o "/tmp/transformer_engine-${COSMOS_TRANSFORMER_ENGINE_VERSION}-cp310-cp310-linux_x86_64.whl" \
       "https://github.com/nvidia-cosmos/cosmos-dependencies/releases/download/v1.2.0/transformer_engine-1.13.0%2Bcu128.torch27-cp310-cp310-linux_x86_64.whl" \
     && /opt/cosmos/venv/bin/pip install --no-deps "/tmp/transformer_engine-${COSMOS_TRANSFORMER_ENGINE_VERSION}-cp310-cp310-linux_x86_64.whl" \
-    && /opt/cosmos/venv/bin/pip install \
+    && /opt/cosmos/venv/bin/pip install --no-binary=imageio-ffmpeg \
       -c /tmp/cosmos-cu128-constraints.txt \
       "diffusers==0.38.0" \
       "peft==0.19.1" \
@@ -136,6 +137,12 @@ RUN printf '%s\n' \
       "sentencepiece>=0.2.1" \
       "transformers>=5.3.0" \
     && /opt/cosmos/venv/bin/pip uninstall -y wandb \
+    && find /opt/cosmos/venv -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
+    && test -z "$(find /opt/cosmos/venv -type f -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)" \
+    && /opt/cosmos/venv/bin/python -c \
+      'import imageio_ffmpeg; assert imageio_ffmpeg.get_ffmpeg_exe() == "/usr/bin/ffmpeg"' \
+    && /opt/cosmos/venv/bin/python -c \
+      'import imageio_ffmpeg, os; p="/tmp/cosmos-ffmpeg-probe.mp4"; w=imageio_ffmpeg.write_frames(p,(2,2),fps=1,macro_block_size=1); w.send(None); w.send(bytes([0,0,0]*4)); w.close(); r=imageio_ffmpeg.read_frames(p,pix_fmt="rgb24"); m=next(r); f=next(r); r.close(); assert m["size"] == (2,2) and len(f) == 12; os.unlink(p)' \
     && rm -f /tmp/flash_attn-*.whl /tmp/natten-*.whl /tmp/transformer_engine-*.whl \
       /tmp/cosmos-predict2-noncuda-requirements.txt /tmp/cosmos-cu128-constraints.txt
 
