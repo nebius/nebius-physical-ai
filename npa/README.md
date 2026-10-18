@@ -12,6 +12,26 @@ and follow [installation](../docs/install.md) and
 The [command reference](../docs/cli/workbench.md) lists the installed tools;
 `npa workbench <tool> --help` exposes each tool's actual commands.
 
+Existing-project setup supports project-admin credentials. Agent setup,
+`provision-if-absent`, and direct `cluster up` share the same quota scope rules:
+only a tenant-level IAM denial permits fallback to the exact project's complete
+quota catalog. Existing project rows with an omitted optional limit impose no
+additional project cap; explicit limits and incomplete evidence still block.
+Strict GPU reservations can likewise use an active allowance for the exact
+reservation under that project. NPA reports the unavailable tenant view;
+Nebius still enforces tenant limits, reservation compatibility and free capacity
+at apply time. No tenant-wide grant is added during setup.
+
+Fleet applies the same fallback to verified existing projects, combining every
+selected cluster and pending bucket in each project before checking its cap.
+Creating projects still requires tenant evidence. Reserved Soperator workers
+can use project allowances with explicit immutable reservation IDs; resolving
+reservation names requires tenant inventory. Legacy shared-filesystem creation
+uses the same scoped quota parser. A readable tenant constraint remains enforced
+even if a different tenant inventory API is denied.
+Creating a legacy shared filesystem requires a resolved tenant and region;
+missing identity now stops provisioning before apply.
+
 Sim2Real's `rerun regen` and `rerun serve --local-record` operate on existing
 artifacts without resolving execution image defaults. Regeneration therefore
 remains available after an old runtime is quarantined. Executing new workloads,

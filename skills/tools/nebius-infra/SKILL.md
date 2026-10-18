@@ -41,6 +41,15 @@ For these specific tasks, read the matching reference:
    npa provision-if-absent --project ci --dry-run --skip-validate --output-format json
    ```
 
+   Project-admin credentials suffice for setup within an existing project.
+   Agent, provisioning, and direct cluster quota gates fall back from a typed
+   tenant IAM denial to that exact project's complete allowance catalog. Strict
+   reserved GPU placement can verify the exact active project capacity allowance
+   when tenant reservation inventory is denied. Both cases report the unseen
+   tenant aggregate and retain provider enforcement at apply. Never add a
+   tenant-admin grant to compensate for a project discovery failure. Non-RBAC
+   failures, missing/malformed evidence, and explicit project shortfalls block.
+
    Real runs may ensure S3 and Kubernetes. Dry runs only resolve settings and
    print intended actions. The command must not teardown or replace resources.
    Storage setup declares `GetObject`, `HeadObject`, `PutObject`, `DeleteObject`,
