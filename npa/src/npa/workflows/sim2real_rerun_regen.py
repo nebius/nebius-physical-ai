@@ -1545,7 +1545,8 @@ def download_rrd_from_s3(
         raise Sim2RealRerunRegenError(f"Rerun recording is disabled at {canonical_uri}")
     if requested_uri and requested_uri != selected_uri and uri != requested_uri:
         raise Sim2RealRerunRegenError(
-            "requested Rerun recording does not match the committed publication"
+            "requested Rerun recording does not match the committed publication "
+            "and is not the committed publication"
         )
     _download_verified_rrd(
         storage,
