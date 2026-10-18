@@ -68,6 +68,13 @@ def test_base_service_is_digest_pinned_private_and_binds_exact_revision(
         "name": "policy",
         "persistentVolumeClaim": {"claimName": "run-policy-cache"},
     }
+    assert deployment["spec"]["template"]["spec"]["securityContext"] == {
+        "runAsNonRoot": True,
+        "runAsUser": 1000,
+        "runAsGroup": 1000,
+        "fsGroup": 1000,
+        "fsGroupChangePolicy": "OnRootMismatch",
+    }
     assert "emptyDir" not in volume
 
 
