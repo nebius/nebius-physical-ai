@@ -43,6 +43,62 @@ def _authorization(tmp_path, **options):
     return auth, verified, files, raws
 
 
+def _direct_manifest_fixture():
+    files, _, _ = oci_fixture(nested=False)
+    index = json.loads(files["index.json"])
+    descriptor = index["manifests"][0]
+    manifest = json.loads(files["blobs/sha256/" + descriptor["digest"][7:]])
+    selected = {
+        "oci-layout": files["oci-layout"],
+        "index.json": js(
+            {
+                "schemaVersion": 2,
+                "mediaType": "application/vnd.oci.image.index.v1+json",
+                "manifests": [descriptor],
+            }
+        ),
+        "manifest.json": js(
+            [
+                {
+                    "Config": "blobs/sha256/" + manifest["config"]["digest"][7:],
+                    "Layers": [
+                        "blobs/sha256/" + row["digest"][7:]
+                        for row in manifest["layers"]
+                    ],
+                }
+            ]
+        ),
+    }
+    selected["blobs/sha256/" + descriptor["digest"][7:]] = files[
+        "blobs/sha256/" + descriptor["digest"][7:]
+    ]
+    selected["blobs/sha256/" + manifest["config"]["digest"][7:]] = files[
+        "blobs/sha256/" + manifest["config"]["digest"][7:]
+    ]
+    for row in manifest["layers"]:
+        name = "blobs/sha256/" + row["digest"][7:]
+        selected[name] = files[name]
+    return selected, descriptor["digest"]
+
+
+def _direct_authorization(tmp_path):
+    files, expected = _direct_manifest_fixture()
+    placeholder = {
+        "expected_image_id": expected,
+        "image_index_digest": expected,
+        "image_manifest_digest": expected,
+        "image_config_digest": expected,
+        "verified_layer_diff_ids": [],
+        "layer_count": 0,
+        "regular_files_read": 0,
+        "content_bytes_read": 0,
+    }
+    auth = authorize(tmp_path, files, placeholder)
+    verified = O.verify_direct_manifest(auth["archive"], expected)
+    auth["verification_report"] = write(tmp_path / "verification.json", js(verified))
+    return auth, verified, files
+
+
 @pytest.mark.parametrize("artifact", [False, True])
 @pytest.mark.parametrize("nested", [False, True])
 def test_generic_original_oci_binds_every_physical_byte(tmp_path, artifact, nested):
@@ -82,6 +138,78 @@ def test_ncore_schema_and_fields_remain_identical(tmp_path):
     ncore = N.verify(auth["archive"], auth["expected_image_id"])
     assert ncore == {**verified, "schema_version": N.SCHEMA}
     assert N.SCHEMA != O.SCHEMA
+
+
+def test_generic_direct_manifest_binds_unattested_runtime_without_seedvr_schema(
+    tmp_path,
+):
+    auth, verified, files = _direct_authorization(tmp_path)
+    assert verified["schema_version"] == O.DIRECT_MANIFEST_SCHEMA
+    assert verified["expected_image_id"] == verified["image_manifest_digest"]
+    assert "image_index_digest" not in verified
+    report, _ = run(tmp_path, auth)
+    assert report["complete"] and report["valid"], report
+    assert report["direct_manifest_graph"]["image_manifest_digest"] == auth[
+        "expected_image_id"
+    ]
+    altered = {
+        **verified,
+        "expected_image_id": "sha256:" + digest(files["index.json"]),
+    }
+    with W.bound_open(auth["archive"]) as (_path, fd, info):
+        result = O.inspect_direct_manifest(fd, info.st_size, auth["expected_image_id"])
+        with pytest.raises(W.ScanError, match="oci_direct_manifest_identity"):
+            O.bind_direct_manifest(result, altered, auth["expected_image_id"])
+
+
+def test_generic_direct_manifest_cli_and_preparation_use_exact_schema(
+    tmp_path, capsys, monkeypatch
+):
+    auth, verified, _ = _direct_authorization(tmp_path)
+    output = tmp_path / "verified"
+    assert (
+        O.main(
+            [
+                "--analysis-root",
+                str(tmp_path),
+                "--trusted-root",
+                str(CHECKOUT),
+                "--archive",
+                auth["archive"]["path"],
+                "--expected-image-id",
+                auth["expected_image_id"],
+                "--direct-manifest",
+                "--output-dir",
+                str(output),
+            ]
+        )
+        == 0
+    )
+    assert json.loads((output / "verification.json").read_text()) == verified
+    assert capsys.readouterr().out == "OCI graph verification completed\n"
+    monkeypatch.setattr(P, "tools_bindings", lambda _: (auth["helper"], auth["config"]))
+    engine = {"kind": "synthetic-unexecuted-binding"}
+    engine.update(
+        {role: write(tmp_path / role, b"synthetic binding") for role in W.AHO_PINS}
+    )
+    monkeypatch.setattr(P, "native_engine", lambda _: engine)
+    monkeypatch.setattr(W, "Detector", FakeDetector)
+    args = SimpleNamespace(
+        tools_receipt=auth["tools_receipt"]["path"],
+        native_receipt=None,
+        archive=auth["archive"]["path"],
+        verification_report=auth["verification_report"]["path"],
+        expected_image_id=auth["expected_image_id"],
+        policy_mode="exact-literals",
+        literal_inventory=auth["literal_inventory"]["path"],
+        literal_matching_policy="exact-substring-v1",
+    )
+    directory = tmp_path / "prepared"
+    directory.mkdir(mode=0o700)
+    prepared = P.authorize(args, directory)
+    assert W.bound_json(prepared["verification_report"])["schema_version"] == (
+        O.DIRECT_MANIFEST_SCHEMA
+    )
 
 
 def test_generic_preparation_uses_existing_policy_and_dependency_contract(

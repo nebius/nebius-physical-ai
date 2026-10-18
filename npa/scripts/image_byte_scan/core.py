@@ -3531,6 +3531,15 @@ def graph(fd, length, verification, expected_id):
     """Rebind metadata to the accepted exact archive before scanning its layers."""
     if (
         verification.get("schema_version")
+        == "npa.image.direct-manifest-verification.v1"
+    ):
+        from . import oci_verification as O
+
+        result = O.inspect_direct_manifest(fd, length, expected_id)
+        O.bind_direct_manifest(result, verification, expected_id)
+        return result["layers"]
+    if (
+        verification.get("schema_version")
         == "npa.seedvr2.direct-manifest-verification.v1"
     ):
         from . import seedvr2_verification as S
@@ -3913,6 +3922,7 @@ def verification_archive_digest(verification):
             "npa.image.oci-verification.v1",
             "npa.robotwin.image-verification.v1",
             "npa.seedvr2.direct-manifest-verification.v1",
+            "npa.image.direct-manifest-verification.v1",
         ),
         "verification_schema",
     )
@@ -4025,6 +4035,7 @@ def _scan(authorization, directory, detector_type=Detector, *, record_observer=N
             "npa.curobo.image-verification.v1",
             "npa.docker-save.image-verification.v1",
             "npa.seedvr2.direct-manifest-verification.v1",
+            "npa.image.direct-manifest-verification.v1",
         )
         require(
             descriptor_digest(fd) == authorization["archive"]["sha256"],
@@ -4076,6 +4087,20 @@ def _scan(authorization, directory, detector_type=Detector, *, record_observer=N
 
             result = S.inspect(fd, initial.st_size, authorization["expected_image_id"])
             S.bind(result, verification, authorization["expected_image_id"])
+            layers = result["layers"]
+            report["direct_manifest_graph"] = result["receipt"]
+        elif (
+            verification["schema_version"]
+            == "npa.image.direct-manifest-verification.v1"
+        ):
+            from . import oci_verification as O
+
+            result = O.inspect_direct_manifest(
+                fd, initial.st_size, authorization["expected_image_id"]
+            )
+            O.bind_direct_manifest(
+                result, verification, authorization["expected_image_id"]
+            )
             layers = result["layers"]
             report["direct_manifest_graph"] = result["receipt"]
         elif verification["schema_version"] == "npa.habitat-sim.oci-verification.v1":
