@@ -20,40 +20,10 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NPA_LEROBOT_VERSION=${LEROBOT_VERSION} \
     IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates \
-      curl \
-      gnupg \
-      software-properties-common \
-    && add-apt-repository -y ppa:deadsnakes/ppa \
-    && apt-get update && apt-get install -y --no-install-recommends \
-      build-essential \
-      cmake \
-      ffmpeg \
-      git \
-      libegl1 \
-      libegl1-mesa-dev \
-      libffi-dev \
-      libgl1 \
-      libgl1-mesa-dev \
-      libglib2.0-0 \
-      libglvnd0 \
-      libsm6 \
-      libssl-dev \
-      libx11-dev \
-      libxext-dev \
-      libxext6 \
-      libxrender-dev \
-      ninja-build \
-      pkg-config \
-      python3.12 \
-      python3.12-dev \
-      python3.12-venv \
-      python3-pip \
-      wget \
-    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
-    && rm -rf /var/lib/apt/lists/*
+COPY docker/workbench/lerobot/install_immutable_system_packages.sh \
+    /usr/local/bin/install-immutable-lerobot-system-packages
+RUN chmod 0755 /usr/local/bin/install-immutable-lerobot-system-packages \
+    && /usr/local/bin/install-immutable-lerobot-system-packages
 
 RUN useradd -m -s /bin/bash -u 1000 ubuntu \
     && install -d -m 0755 -o ubuntu -g ubuntu \
@@ -83,6 +53,12 @@ COPY --chown=ubuntu:ubuntu docker/workbench/lerobot/smoke_native_cpu.py \
     /opt/lerobot/smoke-native-cpu.py
 COPY --chown=ubuntu:ubuntu docker/workbench/lerobot/prepare_secure_wheel.py \
     /opt/lerobot/prepare-secure-wheel.py
+COPY --chown=ubuntu:ubuntu docker/workbench/lerobot/prepare_secure_wheel_060.py \
+    /opt/lerobot/prepare-secure-wheel-060.py
+COPY --chown=ubuntu:ubuntu docker/workbench/lerobot/bootstrap-requirements.lock \
+    docker/workbench/lerobot/requirements-051.lock \
+    docker/workbench/lerobot/requirements-060.lock \
+    /opt/lerobot/
 
 ENV PIP_NO_CACHE_DIR=1
 
@@ -92,18 +68,23 @@ ENV PIP_NO_CACHE_DIR=1
 # 0.6.0 also moved diffusers/transformers behind extras and enforces them in each
 # policy's __init__, so diffusion and smolvla must be requested explicitly or
 # --policy.type=diffusion fails inside make_policy() at run time, not at build.
+# The runtime locks intentionally include hash-pinned source distributions. Keep
+# their build backends on the separately hash-pinned bootstrap toolchain instead
+# of letting pip create an unpinned isolated build environment.
 RUN python3.12 -m venv /opt/lerobot/venv \
-    && /opt/lerobot/venv/bin/python -m pip install --upgrade pip setuptools wheel \
+    && /opt/lerobot/venv/bin/python -m pip install \
+         --no-cache-dir --disable-pip-version-check --only-binary=:all: \
+         --require-hashes --no-deps -r /opt/lerobot/bootstrap-requirements.lock \
     && if [ "${LEROBOT_VERSION}" = "0.6.0" ]; then \
-         /opt/lerobot/venv/bin/pip install \
-           "lerobot[training,evaluation,pusht,libero,diffusion,smolvla]==${LEROBOT_VERSION}" \
-           "scikit-image==0.26.0" \
-           boto3 \
-           fastapi~=0.136.1 \
-           num2words \
-           tensorboard \
-           "uvicorn[standard]" \
-           "wandb>=0.30.0" \
+         /opt/lerobot/venv/bin/python /opt/lerobot/prepare-secure-wheel-060.py \
+           --output-dir /opt/lerobot/secure-wheel \
+         && /opt/lerobot/venv/bin/pip install \
+           --no-cache-dir --disable-pip-version-check --no-build-isolation \
+           --find-links /opt/lerobot/secure-wheel \
+           --require-hashes --no-deps -r /opt/lerobot/requirements-060.lock \
+         && cp /opt/lerobot/secure-wheel/source-integration.json \
+           /opt/lerobot/source-integration.json \
+         && rm -rf /opt/lerobot/secure-wheel \
          && /opt/lerobot/venv/bin/python /opt/lerobot/remove-scikit-image-recipe.py \
            --site-packages /opt/lerobot/venv/lib/python3.12/site-packages \
            --capability lerobot \
@@ -112,14 +93,9 @@ RUN python3.12 -m venv /opt/lerobot/venv \
          /opt/lerobot/venv/bin/python /opt/lerobot/prepare-secure-wheel.py \
            --output-dir /opt/lerobot/secure-wheel \
          && /opt/lerobot/venv/bin/pip install \
-           --constraint /opt/lerobot/default-constraints.txt \
-           'lerobot[pusht,libero] @ file:///opt/lerobot/secure-wheel/lerobot-0.5.1+npa.secure1-py3-none-any.whl' \
-           "scikit-image==0.26.0" \
-           boto3 \
-           fastapi~=0.136.1 \
-           num2words \
-           tensorboard \
-           "uvicorn[standard]" \
+           --no-cache-dir --disable-pip-version-check --no-build-isolation \
+           --find-links /opt/lerobot/secure-wheel \
+           --require-hashes --no-deps -r /opt/lerobot/requirements-051.lock \
          && cp /opt/lerobot/secure-wheel/source-integration.json \
            /opt/lerobot/source-integration.json \
          && rm -rf /opt/lerobot/secure-wheel \
@@ -175,11 +151,8 @@ RUN python -m npa.smoke.test_lerobot_env
 
 USER root
 
-# SkyPilot-on-Kubernetes runtime prerequisites. Installed BEFORE the CVE hardening below:
-# that step purges linux-libc-dev with --force-depends, which strands libc6-dev and its
-# reverse-dependencies and leaves apt refusing to install anything at all (observed
-# in-cluster: even plain `rsync` was blocked). Installing first keeps apt healthy and the
-# hardening intact.
+# SkyPilot-on-Kubernetes runtime prerequisites are part of the immutable system
+# package closure above. Keep setup and host-key removal here, before hardening.
 # SkyPilot prerequisites, so this image can host a workflow stage.
 # SkyPilot's bootstrap runs inside the task container; without these, provisioning fails with
 # "container not found (ray-node)" (see Dockerfile.k8s-prereqs and
@@ -195,15 +168,8 @@ USER root
 # package-generated host keys in this same layer; SkyPilot creates per-task keys later.
 # The system python3 the bootstrap needs is already present, so it is asserted rather than
 # installed.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-      openssh-server \
-      rsync \
-      sudo \
-      netcat-openbsd \
-    && rm -f /etc/ssh/ssh_host_* \
+RUN rm -f /etc/ssh/ssh_host_* \
     && test -z "$(find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*' -print -quit)" \
-    && rm -rf /var/lib/apt/lists/* \
     && printf '%s ALL=(ALL) NOPASSWD:ALL\n' ubuntu \
          > /etc/sudoers.d/99-npa-runtime-user \
     && chmod 0440 /etc/sudoers.d/99-npa-runtime-user \
@@ -214,19 +180,15 @@ ENV PATH=/usr/bin:$PATH
 
 USER root
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends --only-upgrade openssl libssl3 \
-    && apt-get purge -y --auto-remove \
-      dirmngr \
-      gnupg \
-      gnupg-utils \
-      gnupg2 \
-      gpg \
-      gpg-agent \
-      nodejs \
-      software-properties-common \
-    && dpkg --purge --force-depends linux-libc-dev \
-    && rm -rf /var/lib/apt/lists/*
+RUN packages='dirmngr gnupg gnupg-utils gnupg2 gpg gpg-agent nodejs software-properties-common' \
+    && installed='' \
+    && for package in $packages; do \
+         if dpkg-query -W -f='${db:Status-Status}' "$package" 2>/dev/null | grep -qx installed; then \
+           installed="$installed $package"; \
+         fi; \
+       done \
+    && if [ -n "$installed" ]; then apt-get purge -y --auto-remove $installed; fi \
+    && dpkg --purge --force-depends linux-libc-dev
 
 
 USER ubuntu

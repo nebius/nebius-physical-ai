@@ -382,6 +382,7 @@ def test_secure_integration_pins_are_checked_against_reviewed_constraints(
         "torchvision_pin": "torchvision==0.28.0",
         "torchcodec_pin": "torchcodec==0.16.0",
         "diffusers_pin": "diffusers==0.38.0",
+        "datasets_pin": "datasets==5.0.1",
         "wandb_pin": "wandb==0.30.0",
     }
     report = _run(monkeypatch, wheel, manifest=manifest)
@@ -389,6 +390,19 @@ def test_secure_integration_pins_are_checked_against_reviewed_constraints(
 
     manifest["torchcodec_pin"] = "torchcodec==0.15.0"
     report = _run(monkeypatch, wheel, manifest=manifest)
+    assert _status(report, "manifest torch pins") == "FAIL"
+
+
+def test_secure_integration_datasets_pin_must_match_reviewed_constraints(
+    monkeypatch, wheel
+):
+    manifest = {
+        "package_source": "npa-secure-integration",
+        "datasets_pin": "datasets==5.0.0",
+    }
+
+    report = _run(monkeypatch, wheel, manifest=manifest)
+
     assert _status(report, "manifest torch pins") == "FAIL"
 
 

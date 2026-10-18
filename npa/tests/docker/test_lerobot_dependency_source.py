@@ -8,6 +8,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
 DOCKERFILE = ROOT / "npa/docker/workbench/lerobot/Dockerfile"
+RECIPE = DOCKERFILE.parent
 CORRECTION = "/opt/lerobot/remove-scikit-image-recipe.py"
 
 
@@ -24,7 +25,7 @@ def _installation(text):
     index, body = next(
         (index, body)
         for index, (kind, body) in enumerate(instructions)
-        if kind == "RUN" and '"lerobot[' in body
+        if kind == "RUN" and "/opt/lerobot/requirements-060.lock" in body
     )
     assert any(
         kind == "ENV" and "PIP_NO_CACHE_DIR=1" in value
@@ -36,13 +37,32 @@ def _installation(text):
         and CORRECTION in value
         for kind, value in instructions[:index]
     )
-    optional_branch, default_branch = body.split(
+    assert any(
+        kind == "COPY"
+        and "bootstrap-requirements.lock" in value
+        and "requirements-051.lock" in value
+        and "requirements-060.lock" in value
+        for kind, value in instructions[:index]
+    )
+    bootstrap, versioned_branches = body.split(
+        '&& if [ "${LEROBOT_VERSION}" = "0.6.0" ]; then', 1
+    )
+    optional_branch, default_branch = versioned_branches.split(
         'elif [ "${LEROBOT_VERSION}" = "0.5.1" ]; then', 1
     )
     default_branch = default_branch.split("else", 1)[0]
-    assert optional_branch.count('"scikit-image==0.26.0"') == 1
-    assert default_branch.count('"scikit-image==0.26.0"') == 1
-    assert '"wandb>=0.30.0"' in optional_branch
+    assert "prepare-secure-wheel-060.py" in optional_branch
+    assert "requirements-060.lock" in optional_branch
+    assert "requirements-051.lock" in default_branch
+    assert "--require-hashes --no-deps" in optional_branch
+    assert "--require-hashes --no-deps" in default_branch
+    assert "--only-binary=:all:" in bootstrap
+    assert "--only-binary=:all:" not in optional_branch
+    assert "--only-binary=:all:" not in default_branch
+    assert "--no-build-isolation" in optional_branch
+    assert "--no-build-isolation" in default_branch
+    assert "pip install --upgrade" not in body
+    assert '"wandb>=0.30.0"' not in body
     assert "pip uninstall -y wandb" not in optional_branch
     assert "pip uninstall -y wandb" not in default_branch
     assert f"python {CORRECTION}" in optional_branch
@@ -80,7 +100,7 @@ def test_bootstrap_sshd_is_baked_before_apt_hardening_and_has_no_host_keys():
     prereq_index, prereq = next(
         (index, body)
         for index, (kind, body) in enumerate(instructions)
-        if kind == "RUN" and "netcat-openbsd" in body
+        if kind == "RUN" and "rm -f /etc/ssh/ssh_host_*" in body
     )
     hardening_index, hardening = next(
         (index, body)
@@ -88,19 +108,70 @@ def test_bootstrap_sshd_is_baked_before_apt_hardening_and_has_no_host_keys():
         if kind == "RUN" and "dpkg --purge --force-depends linux-libc-dev" in body
     )
 
-    assert "openssh-server" in prereq
+    system_packages = (RECIPE / "install_immutable_system_packages.sh").read_text()
+    assert "openssh-server=1:8.9p1-3ubuntu0.16" in system_packages
+    assert "netcat-openbsd=1.218-4ubuntu1" in system_packages
+    assert "python3=3.10.4-0ubuntu2" in system_packages
+    assert "https://snapshot.ubuntu.com/ubuntu/20260820T000000Z" in system_packages
+    assert "rm -f /etc/ssh/ssh_host_*" in system_packages
+    assert "test -z \"$(find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*'" in system_packages
     assert "rm -f /etc/ssh/ssh_host_*" in prereq
     assert (
         "test -z \"$(find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*' "
         '-print -quit)"'
     ) in prereq
-    assert prereq.index("openssh-server") < prereq.index("rm -f /etc/ssh/ssh_host_*")
     assert prereq_index < hardening_index
     assert "linux-libc-dev" in hardening
 
 
+def test_build_dependency_closure_has_no_moving_repository_or_python_resolution():
+    """Prevent a future build from reintroducing a moving bootstrap input."""
+
+    text = DOCKERFILE.read_text()
+    system_packages = (RECIPE / "install_immutable_system_packages.sh").read_text()
+    assert "add-apt-repository" not in text
+    assert "nodesource.com" not in text
+    assert "apt-get install" not in text
+    assert "pip install --upgrade" not in text
+    assert "--require-hashes --no-deps" in text
+    assert "python3.12_3.12.15-1+jammy1_amd64.deb" in system_packages
+    assert "sha256sum --check --status" in system_packages
+    assert "apt-get install -y --no-install-recommends" in system_packages
+    bootstrap_lock = (RECIPE / "bootstrap-requirements.lock").read_text()
+    assert (
+        "packaging==25.0 "
+        "--hash=sha256:29572ef2b1f17581046b3a2227d5c611fb25ec70ca1ba8554b24b0e69331a484"
+    ) in bootstrap_lock
+    assert ".venv-local/" in (ROOT / "npa/.dockerignore").read_text()
+    assert "/npa/.venv-local/" in (ROOT / ".gitignore").read_text()
+    for name, local_wheel, wheel_hash in (
+        (
+            "requirements-051.lock",
+            "lerobot-0.5.1+npa.secure2-py3-none-any.whl",
+            "694f8e38e8353ee6704159ab46788d8071531066ad02ef3a0a87cf59d77df9f9",
+        ),
+        (
+            "requirements-060.lock",
+            "lerobot-0.6.0+npa.secure2-py3-none-any.whl",
+            "5c1ac4142acbf27cc4e45a4bb7eb86f119509bde048e847a1bbef2c229f85f25",
+        ),
+    ):
+        lock = (RECIPE / name).read_text()
+        assert "file:///tmp" not in lock
+        version = local_wheel.removeprefix("lerobot-").removesuffix(
+            "-py3-none-any.whl"
+        )
+        assert f"lerobot=={version}" in lock
+        assert "wandb==0.30.0" in lock
+        assert "datasets==5.0.1" in lock
+        assert "fsspec==2026.6.0" in lock
+        assert f"--hash=sha256:{wheel_hash}" in lock
+        assert "--hash=sha256:" in lock
+    assert "--find-links /opt/lerobot/secure-wheel" in text
+
+
 @pytest.mark.parametrize(
-    "unsafe_change", ["later-layer", "wheel-cache", "unreviewed-version"]
+    "unsafe_change", ["later-layer", "wheel-cache", "unreviewed-lock"]
 )
 def test_unsafe_dependency_installation_is_rejected(unsafe_change):
     text = DOCKERFILE.read_text()
@@ -112,6 +183,6 @@ def test_unsafe_dependency_installation_is_rejected(unsafe_change):
     elif unsafe_change == "wheel-cache":
         text = text.replace("PIP_NO_CACHE_DIR=1", "PIP_NO_CACHE_DIR=0")
     else:
-        text = text.replace('"scikit-image==0.26.0"', '"scikit-image==0.27.0"')
+        text = text.replace("requirements-051.lock", "unreviewed-requirements.lock")
     with pytest.raises((AssertionError, ValueError)):
         _installation(text)

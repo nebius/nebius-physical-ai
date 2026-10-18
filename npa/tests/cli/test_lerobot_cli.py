@@ -32,7 +32,7 @@ _OPERATOR_LEROBOT_IMAGE = "registry.example.invalid/npa-lerobot:reviewed"
 @pytest.mark.parametrize(
     ("reported", "expected"),
     [
-        ("0.5.1+npa.secure1", "0.5.1"),
+        ("0.5.1+npa.secure2", "0.5.1"),
         ("0.6.0+local.integration", "0.6.0"),
     ],
 )

@@ -36,7 +36,9 @@ def _build_text(tool: str) -> str:
     assert dockerfile.is_file(), dockerfile
     text = dockerfile.read_text(encoding="utf-8")
     parts = [text]
-    for script in sorted((DOCKER_ROOT / "common").glob("*.sh")):
+    scripts = [*sorted((DOCKER_ROOT / "common").glob("*.sh"))]
+    scripts.extend(sorted(dockerfile.parent.glob("*.sh")))
+    for script in scripts:
         # Only scripts this Dockerfile actually invokes count towards the guard.
         if script.name in text:
             parts.append(script.read_text(encoding="utf-8"))
@@ -211,7 +213,15 @@ def test_openssh_install_layers_do_not_bake_reusable_host_keys() -> None:
             )
             assert instruction.index("openssh-server") < instruction.index(cleanup)
 
-    for installer in sorted((DOCKER_ROOT / "common").glob("*.sh")):
+    installers = [*sorted((DOCKER_ROOT / "common").glob("*.sh"))]
+    installers.extend(sorted((DOCKER_ROOT / "lerobot").glob("*.sh")))
+    for installer in installers:
+        if installer.parent != DOCKER_ROOT / "common":
+            dockerfile = installer.parent / "Dockerfile"
+            if not dockerfile.is_file() or installer.name not in dockerfile.read_text(
+                encoding="utf-8"
+            ):
+                continue
         text = installer.read_text(encoding="utf-8")
         if "apt-get install" not in text or "openssh-server" not in text:
             continue

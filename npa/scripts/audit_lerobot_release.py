@@ -374,6 +374,7 @@ MANIFEST_PIN_KEYS = {
     "torchvision_pin": "torchvision",
     "torchcodec_pin": "torchcodec",
     "diffusers_pin": "diffusers",
+    "datasets_pin": "datasets",
     "wandb_pin": "wandb",
 }
 
@@ -634,7 +635,14 @@ def _declared_bounds(root: Path, extras: Iterable[str]) -> dict[str, str]:
     ]
     for req in applicable:
         package = canonicalize_name(req.name)
-        if package not in {"torch", "torchvision", "diffusers", "torchcodec", "wandb"}:
+        if package not in {
+            "torch",
+            "torchvision",
+            "diffusers",
+            "torchcodec",
+            "datasets",
+            "wandb",
+        }:
             continue
         collected.setdefault(package, []).append(str(req.specifier))
     return {

@@ -428,7 +428,7 @@ images:
     redistribution: public
     notes: >-
       The generic 0.5.1 path builds the explicitly versioned NPA integration
-      0.5.1+npa.secure1 from hash-verified upstream commit
+      0.5.1+npa.secure2 from hash-verified upstream commit
       1396b9fab7aecddd10006c33c47a487ffdcb54b4. Native model source and the
       Apache-2.0 license are retained; reviewed dependency declarations select
       the patched Torch/Diffusers/W&B stack and matching TorchCodec decoder.

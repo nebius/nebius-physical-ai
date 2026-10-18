@@ -58,7 +58,11 @@ def _check_constraints(text):
 def test_default_dependencies_identify_secure_integration_and_decoder_abi():
     _check_constraints((RECIPE / "default-runtime-requirements.txt").read_text())
     recipe = (RECIPE / "Dockerfile").read_text()
-    assert "--constraint /opt/lerobot/default-constraints.txt" in recipe
+    lock = (RECIPE / "requirements-051.lock").read_text()
+    assert "--require-hashes --no-deps -r /opt/lerobot/requirements-051.lock" in recipe
+    assert "lerobot==0.5.1+npa.secure2" in lock
+    assert "torch==2.13.0" in lock
+    assert "torchcodec==0.16.0" in lock
     optional_branch, default_branch = recipe.split(
         'elif [ "${LEROBOT_VERSION}" = "0.5.1" ]; then', 1
     )
@@ -86,7 +90,7 @@ def test_default_dependencies_identify_secure_integration_and_decoder_abi():
     assert "stage's own NPA install" in recipe
     assert "shipping it here would make the repair's import" in recipe
     assert "prepare-secure-wheel.py" in recipe
-    assert "lerobot-0.5.1+npa.secure1-py3-none-any.whl" in recipe
+    assert "lerobot==0.5.1+npa.secure2" in lock
     assert (
         'ENTRYPOINT ["/opt/lerobot/venv/bin/python", "-m", "npa.server.app"]' in recipe
     )

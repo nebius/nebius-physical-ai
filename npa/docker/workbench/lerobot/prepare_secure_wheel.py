@@ -17,7 +17,7 @@ import zipfile
 
 
 UPSTREAM_COMMIT = "1396b9fab7aecddd10006c33c47a487ffdcb54b4"
-VERSION = "0.5.1+npa.secure1"
+VERSION = "0.5.1+npa.secure2"
 WHEEL_URL = (
     "https://files.pythonhosted.org/packages/60/8e/"
     "8e3763ad36ba0efb9ba0381ae06d328b54081587b45b0c1d049b26ed8d8c/"
@@ -37,6 +37,7 @@ DEPENDENCIES = {
     "torchvision<0.26.0,>=0.22.0": "torchvision<0.29.0,>=0.28.0",
     "torchcodec<0.11.0,>=0.3.0": "torchcodec<0.17.0,>=0.16.0",
     "diffusers<0.36.0,>=0.27.2": "diffusers<0.39.0,>=0.38.0",
+    "datasets<5.0.0,>=4.0.0": "datasets<5.1.0,>=5.0.1",
     "wandb<0.25.0,>=0.24.0": "wandb<0.31.0,>=0.30.0",
 }
 ORIGINAL_DIST_INFO = "lerobot-0.5.1.dist-info/"
