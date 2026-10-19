@@ -3,7 +3,7 @@ terraform {
   required_providers {
     nebius = {
       source  = "terraform-provider.storage.eu-north1.nebius.cloud/nebius/nebius"
-      version = "~> 0.5.201"
+      version = "~> 0.5.273"
     }
   }
 }
@@ -167,10 +167,10 @@ resource "nebius_compute_v1_instance" "workbench" {
 
   preemptible = var.enable_preemptible ? {
     on_preemption = "STOP"
-    priority      = 1
   } : null
 
-  recovery_policy = var.enable_preemptible ? "FAIL" : "RECOVER"
+  follows_spot_price = var.enable_preemptible ? {} : null
+  recovery_policy    = var.enable_preemptible ? "FAIL" : "RECOVER"
 
   service_account_id = trimspace(var.service_account_id) != "" ? trimspace(var.service_account_id) : null
 

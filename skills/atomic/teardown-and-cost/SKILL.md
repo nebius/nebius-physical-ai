@@ -68,6 +68,8 @@ npa destroy --project <alias> --all --delete-project --yes --json
 ```
 
 `npa destroy --all` without `--delete-project --yes` never deletes the project.
+Destroying the last workbench also retains the project's local identity and
+storage configuration so subsequent jobs can still resolve their output bucket.
 Full details of the ownership gating live in `skills/tools/nebius-infra/SKILL.md`;
 this skill is the operational ordering and the audit.
 
