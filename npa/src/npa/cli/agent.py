@@ -124,11 +124,11 @@ from npa.clients.network import (
     resolve_instance_network_context,
 )
 from npa.clients.ssh import SSHClient, SSHError
-from npa.clients.nebius import NebiusError
 from npa.smoke._versions import supported_tool_version
 from npa.cli.agent_public import (
     AgentConfig,
     build_agent_urls,
+    probe_agent_health,
     record_public_https as _record_public_https,
     record_tls_verify as _record_tls_verify,
     record_customer_url as _record_customer_url,
@@ -13008,25 +13008,17 @@ def status_cmd(
         )
     )
     public_url = _record_customer_url(record)
-    trust_error = ""
-    try:
-        tls_verify = _record_tls_verify(record)
-    except (ValueError, SSHError, NetworkIngressError, NebiusError, OSError) as exc:
-        trust_error = type(exc).__name__
-        ui_ok = rerun_ok = basic_auth_enforced = False
-        ui_code = rerun_code = unauthenticated_ui_code = 0
-    else:
-        ui_ok, ui_code = _health(
-            agent_url, user=auth_user, password=auth_password, verify=tls_verify
-        )
-        basic_auth_enforced, unauthenticated_ui_code = _basic_auth_protects_endpoint(
-            agent_url,
-            verify=tls_verify,
-        )
-        rerun_ok, rerun_code = _health(
-            sim_viz_url, user=auth_user, password=auth_password, verify=tls_verify
-        )
-    endpoint_disclosure_allowed = bool(ui_ok and basic_auth_enforced)
+    health = probe_agent_health(
+        record,
+        agent_url,
+        sim_viz_url,
+        user=auth_user,
+        password=auth_password,
+        tls_verifier=_record_tls_verify,
+        health_check=_health,
+        auth_check=_basic_auth_protects_endpoint,
+    )
+    endpoint_disclosure_allowed = health["endpoint_disclosure_allowed"]
     payload = {
         "project": project,
         "name": name,
@@ -13041,27 +13033,16 @@ def status_cmd(
         "sim_viz_url": sim_viz_url if endpoint_disclosure_allowed else "",
         "sim_assets_url": sim_assets_url if endpoint_disclosure_allowed else "",
         "cameras_api_url": cameras_api_url if endpoint_disclosure_allowed else "",
-        "health": bool(ui_ok and rerun_ok and basic_auth_enforced),
-        "basic_auth_enforced": basic_auth_enforced,
-        "unauthenticated_ui_status_code": unauthenticated_ui_code,
-        "endpoint_disclosure_allowed": endpoint_disclosure_allowed,
-        "ui_status_code": ui_code,
-        "rerun_status_code": rerun_code,
+        **health,
         "llm": record.get("llm", {}),
         "artifact_credentials": _artifact_credential_record_summary(record),
     }
-    if trust_error:
-        payload.update(
-            error_category=trust_error,
-            detail="Agent HTTPS identity could not be verified; check provider access "
-            "and the recorded SSH key before retrying.",
-        )
     if output_json:
         typer.echo(json.dumps(payload, indent=2, sort_keys=True))
     else:
         for key, value in payload.items():
             typer.echo(f"{key}: {value}")
-    if trust_error:
+    if health.get("error_category"):
         raise typer.Exit(code=1)
 
 
