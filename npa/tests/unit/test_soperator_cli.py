@@ -2354,6 +2354,97 @@ def test_destroy_retains_state_when_exact_auxiliary_cleanup_is_uncertain(
     assert (install / ".npa-soperator-env.json").is_file()
 
 
+def test_destroy_fallback_clears_state_after_exact_auxiliary_absence(
+    tmp_path, monkeypatch
+) -> None:
+    """A lost Terraform Kubernetes connection is recoverable only with exact proof."""
+
+    from npa.soperator import lifecycle
+
+    recipe = tmp_path / "soperator"
+    (recipe / "installations" / "example").mkdir(parents=True)
+    install = recipe / "installations" / "npafallback"
+    install.mkdir(parents=True)
+    state_path = install / "terraform.tfstate"
+    state_path.write_text("durable-state")
+    lifecycle._write_env_sidecar(
+        install,
+        region="us-central1",
+        tenant_id="tenant-abc",
+        project_id="project-xyz",
+        subnet_id="vpcsubnet-123",
+        o11y_profile="default",
+        cluster_id="mk8scluster-exact",
+        owned_filesystem_ids=["fs-exact"],
+        owned_allocation_ids=["allocation-exact"],
+        owned_auxiliary_resources=[
+            {
+                "kind": "filesystem",
+                "provider_type": "nebius_compute_v1_filesystem",
+                "id": "fs-exact",
+                "name": "soperator-npafallback-jail",
+            },
+            {
+                "kind": "allocation",
+                "provider_type": "nebius_vpc_v1_allocation",
+                "id": "allocation-exact",
+                "name": "soperator-npafallback-public-static-ip",
+            },
+        ],
+    )
+    monkeypatch.setattr(lifecycle, "_require_bin", lambda name: name)
+    monkeypatch.setattr(
+        lifecycle, "_assert_solutions_library_contract", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(lifecycle, "_terraform_env", lambda *args, **kwargs: {})
+    monkeypatch.setattr(lifecycle, "_run_stream", lambda *args, **kwargs: None)
+    monkeypatch.setenv("NPA_KUBECTL_BIN", "missing-kubectl-for-test")
+
+    class Done:
+        def __init__(self, stdout: str = "", returncode: int = 0) -> None:
+            self.stdout = stdout
+            self.stderr = ""
+            self.returncode = returncode
+
+    def capture(command, **kwargs):
+        if "state" in command and "pull" in command:
+            return Done(json.dumps({"resources": []}))
+        if "get-credentials" in command:
+            return Done()
+        if "destroy" in command:
+            return Done("lost Kubernetes provider connection", 1)
+        raise AssertionError(command)
+
+    cleanup_calls: list[tuple[str, tuple[str, ...]]] = []
+
+    def cleanup(**kwargs):
+        cleanup_calls.append(
+            (kwargs["description"], tuple(sorted(kwargs["owned_ids"])))
+        )
+        return []
+
+    monkeypatch.setattr(lifecycle, "_run_capture", capture)
+    monkeypatch.setattr(
+        lifecycle,
+        "_resolve_exact_cluster_presence",
+        lambda **kwargs: (False, ""),
+    )
+    monkeypatch.setattr(lifecycle, "_cleanup_owned_provider_ids", cleanup)
+    monkeypatch.setattr(
+        lifecycle, "_reconcile_recreated_auxiliary_resources", lambda **kwargs: []
+    )
+
+    result = lifecycle.destroy_cluster("npafallback", terraform_dir=recipe)
+
+    assert result and result["status"] == "destroyed"
+    assert cleanup_calls == [
+        ("filesystem", ("fs-exact",)),
+        ("VPC allocation", ("allocation-exact",)),
+    ]
+    assert not state_path.exists()
+    assert (install / ".npa-soperator-env.json").is_file()
+
+
 def test_nebius_cli_env_strips_stale_iam_token(monkeypatch) -> None:
     from npa.soperator import lifecycle
 
@@ -2945,6 +3036,29 @@ def test_cli_degraded_validation_exits_nonzero_with_metadata(
         assert "nebius-c-slurm" in invoked.output
         assert "/safe/installations/c" in invoked.output
         assert "Deployed soperator cluster" not in invoked.output
+
+
+def test_cli_destroy_incomplete_exits_nonzero_without_success_claim(
+    monkeypatch,
+) -> None:
+    from npa.soperator import lifecycle
+
+    monkeypatch.setattr(
+        lifecycle,
+        "destroy_cluster",
+        lambda *args, **kwargs: {
+            "name": "c",
+            "status": "destroy-incomplete",
+            "install_dir": "/safe/installations/c",
+            "errors": ["exact auxiliary-resource state retained"],
+        },
+    )
+
+    invoked = runner.invoke(app, ["soperator", "destroy", "--name", "c", "--force"])
+
+    assert invoked.exit_code == 1
+    assert "teardown is incomplete" in invoked.output
+    assert "Destroyed soperator cluster" not in invoked.output
 
 
 def test_json_mode_terraform_runner_captures_child_output(

@@ -277,6 +277,17 @@ def destroy_cmd(
             "no provider mutation was performed."
         )
         return
+    if result is None or result.get("status") != "destroyed":
+        # A direct cluster fallback can remove the control plane after Terraform
+        # fails while leaving exact auxiliary-resource ownership state intact.
+        # Never print a successful teardown in that recoverable-but-nonterminal
+        # state: the caller must retain the installation and retry its cleanup.
+        typer.echo(
+            f"Soperator cluster '{name}' teardown is incomplete; exact local "
+            "recovery state was retained.",
+            err=True,
+        )
+        raise typer.Exit(1)
     typer.echo(f"Destroyed soperator cluster '{name}'.")
 
 

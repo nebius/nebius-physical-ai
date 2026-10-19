@@ -4084,20 +4084,7 @@ def destroy_cluster(
                     ],
                 }
 
-    # A direct exact-ID cluster delete cannot prove that Terraform-owned
-    # filesystems, allocations, node groups, and cache disks were reclaimed.
-    # Retain the complete installation/state whenever Terraform itself failed;
-    # a later retry can reconcile those exact resource IDs. Never replace that
-    # ownership proof with prefix/name sweeps.
-    if destroy.returncode != 0:
-        return {
-            "name": name,
-            "status": "destroy-incomplete",
-            "install_dir": str(install_dir),
-            "errors": [
-                "Terraform teardown failed; exact auxiliary-resource state retained"
-            ],
-        }
+    terraform_destroy_failed = destroy.returncode != 0
 
     # Clean up only exact IDs captured from the applied Terraform state. Provider
     # inventory, delete, and post-delete absence evidence are all mandatory;
@@ -4161,6 +4148,18 @@ def destroy_cluster(
             "install_dir": str(install_dir),
             "errors": auxiliary_errors,
         }
+
+    if terraform_destroy_failed:
+        # Terraform can lose its Kubernetes-provider connection after a
+        # preemptible worker disappears even though the exact cluster deletion
+        # above succeeds. Once the saved IDs have each been inventoried and
+        # verified absent by the bounded cleanup below, that failure is no
+        # longer an ownership ambiguity. Do not retain stale state merely to
+        # force a retry that cannot add evidence.
+        _log(
+            on_status,
+            "terraform fallback cleanup verified all exact auxiliary resources absent",
+        )
 
     # Reset local terraform state so the install dir is clean for a redeploy.
     for stale in install_dir.glob("terraform.tfstate*"):
