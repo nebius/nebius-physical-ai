@@ -16,6 +16,7 @@
 **[Guides](docs/workbench/guides/README.md)** ·
 **[Manual workflows](docs/workbench/guides/manual-workflow-operations.md)** ·
 **[Workbench docs](docs/workbench/README.md)** ·
+**[Shared access](docs/workbench/shared-workbench-quickstart.md)** ·
 **[Benchmarks](benchmark/README.md)** ·
 **[Operator tools](docs/tools/README.md)** ·
 **[CLI reference](docs/cli/README.md)** ·
@@ -26,8 +27,15 @@
 </div>
 
 
-For shared Kubernetes clusters, use [team namespaces](docs/workbench/namespaces.md) to configure
-namespace selection and private SkyPilot contexts with `npa workbench namespace`.
+For a shared Workbench endpoint, start with the
+[shared-access quickstart](docs/workbench/shared-workbench-quickstart.md).
+Operators install the HTTPS service once; users and coding agents connect with
+`npa login` using a personal key or Nebius human sign-in. Workbench access adds
+personal namespaces, GPU caps, and scoped storage. The CLI and agents reuse
+the saved connection through the same authenticated API.
+Operators managing Kubernetes directly can use
+[team namespaces](docs/workbench/namespaces.md) to select namespaces and private
+SkyPilot contexts with `npa workbench namespace`.
 
 ## What is Workbench?
 
@@ -115,6 +123,11 @@ The prompts keep credentials private, stop at human approval gates, validate
 the plan before provisioning, and stay with the run through artifact inspection.
 The manual path below exposes the same control-plane steps.
 
+Joining an existing shared Workbench? Complete **1. Install**, then follow the
+[shared-access quickstart](docs/workbench/shared-workbench-quickstart.md).
+The project connection steps below are for operators; `npa configure` does not
+install the shared service or its LoadBalancer.
+
 ### 1. Install
 
 Use Python **3.10+** on macOS, Linux, or WSL2 Ubuntu. Clone the repository,
@@ -172,6 +185,10 @@ Keep the returned run ID: you use it to inspect logs, find artifacts, and resume
 For video augmentation, the [PAIDF + Cosmos 3 runbook](workflows/guides/paidf-cosmos3.md)
 includes a public source-video example and full submission commands.
 
+For a shared installation, [team PAIDF](docs/workbench/team-paidf.md) covers
+new-user sign-in, local groups, scoped allocations, and 20 LeRobot episodes
+submitted through the shared CLI or SDK.
+
 <a id="pick-your-first-win"></a>
 
 ## Choose your first workload
@@ -222,6 +239,8 @@ See the [workflow catalog](workflows/README.md),
 [14-stage Sim2Real pipeline](docs/workbench/guides/sim2real-workflow.md) uses this
 same runtime at [`workflows/main/sim2real.yaml`](workflows/main/sim2real.yaml)
 and requires its own prepared images, task data, and resource profiles.
+Its manual runbook starts with a fresh CLI install and a qualified five-image
+release gate before provisioning; running it requires no agent deployment.
 Its [data contracts](docs/workbench/guides/sim2real-data-contracts.md) preserve
 simulator episode resets across sparse samples and exclude reset intervals from
 training credit. The older `sim2real/runbook.yaml` is a legacy path.

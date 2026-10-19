@@ -27,6 +27,14 @@ from npa.orchestration.skypilot import controller as controller_module
 from npa.orchestration.skypilot import resources as resources_module
 
 
+_PINNED_CONFIG_NOTICE = (
+    'The following keys (["allowed_clouds"]) have different values in the client '
+    "SkyPilot config with the server and will be ignored. Remove these keys to "
+    "disable this warning. If you want to specify it, please modify it on server "
+    "side or contact your administrator."
+)
+
+
 def _fake_sky(tmp_path: Path) -> Path:
     sky = tmp_path / "sky"
     sky.write_text("#!/bin/sh\n", encoding="utf-8")
@@ -794,6 +802,64 @@ def test_jobs_controller_inventory_discovers_exact_name_without_refresh(
     assert error == ""
 
 
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_jobs_controller_inventory_accepts_pinned_config_notice(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, wrapped: bool
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    rows = [{"name": "sky-jobs-controller-example", "status": "UP"}]
+    payload = {"clusters": rows} if wrapped else rows
+    stdout = _PINNED_CONFIG_NOTICE + "\n" + json.dumps(payload)
+    monkeypatch.setattr(
+        cleanup_module,
+        "_run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 0, stdout, ""),
+    )
+
+    clusters, error = cleanup_module._jobs_controller_clusters(
+        isolated_config_dir=tmp_path,
+        config_path=None,
+        sky_bin=sky_bin,
+        refresh=False,
+    )
+
+    assert clusters == rows
+    assert error == ""
+
+
+@pytest.mark.parametrize(
+    "stdout",
+    [
+        "",
+        _PINNED_CONFIG_NOTICE,
+        _PINNED_CONFIG_NOTICE + "\n[]\n[]",
+        _PINNED_CONFIG_NOTICE + "\n[",
+        _PINNED_CONFIG_NOTICE.replace("allowed_clouds", "region") + "\n[]",
+        _PINNED_CONFIG_NOTICE[:-1] + "\n[]",
+        'Warning: unrecognized diagnostic ["allowed_clouds"]\n[]',
+    ],
+)
+def test_jobs_controller_inventory_rejects_unverified_status_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, stdout: str
+) -> None:
+    sky_bin = _fake_sky(tmp_path)
+    monkeypatch.setattr(
+        cleanup_module,
+        "_run",
+        lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 0, stdout, ""),
+    )
+
+    clusters, error = cleanup_module._jobs_controller_clusters(
+        isolated_config_dir=tmp_path,
+        config_path=None,
+        sky_bin=sky_bin,
+        refresh=False,
+    )
+
+    assert clusters == []
+    assert "non-json output" in error
+
+
 def test_controller_pod_scope_excludes_unrelated_shared_controller() -> None:
     pods = [
         ("default", "shared-head", "sky-jobs-controller-shared"),
@@ -1168,7 +1234,9 @@ def test_a_readable_queue_that_is_already_terminal_does_not_wait(
     assert slept == []
 
 
-@pytest.mark.parametrize("status", ["SUBMITTED", "WINDING_DOWN", "PAUSING"])
+@pytest.mark.parametrize(
+    "status", ["SUBMITTED", "WINDING_DOWN", "PAUSING", "FAILED_CONTROLLER"]
+)
 def test_wait_for_jobs_terminal_keeps_nonterminal_and_unrecognized_statuses(
     monkeypatch: pytest.MonkeyPatch, status: str
 ) -> None:
@@ -1188,7 +1256,9 @@ def test_wait_for_jobs_terminal_keeps_nonterminal_and_unrecognized_statuses(
     assert still_running == ["7"]
 
 
-@pytest.mark.parametrize("status", ["SUBMITTED", "WINDING_DOWN", "PAUSING"])
+@pytest.mark.parametrize(
+    "status", ["SUBMITTED", "WINDING_DOWN", "PAUSING", "FAILED_CONTROLLER"]
+)
 def test_job_group_stays_nonterminal_until_every_row_is_terminal(status: str) -> None:
     statuses = cleanup_module._job_statuses(
         [
@@ -1196,8 +1266,58 @@ def test_job_group_stays_nonterminal_until_every_row_is_terminal(status: str) ->
             {"job_id": "7", "status": "SUCCEEDED"},
         ]
     )
-
     assert statuses == {"7": status}
+
+
+@pytest.mark.parametrize("exact_job", [False, True])
+def test_controller_state_loss_is_typed_and_never_authorizes_down(
+    monkeypatch, exact_job
+):
+    from dataclasses import asdict
+
+    run_id = "synthetic-run-123456"
+    jobs = [{"job_id": "7", "job_name": run_id, "status": "FAILED_CONTROLLER"}]
+    calls = []
+    monkeypatch.setattr(
+        cleanup_module,
+        "_all_jobs",
+        lambda **_: cleanup_module.JobQueueSnapshot("verified_jobs", jobs=tuple(jobs)),
+    )
+    monkeypatch.setattr(
+        cleanup_module,
+        "_cancel_job",
+        lambda job_id, **_: CleanupResult(
+            commands=[["sky", "jobs", "cancel", "--yes", job_id]]
+        ),
+    )
+    monkeypatch.setattr(
+        cleanup_module,
+        "sky_down",
+        lambda cluster, **_: calls.append(cluster) or CleanupResult(),
+    )
+    if exact_job:
+        result = cleanup_module.cleanup_launched_workflows(
+            [("7", run_id)], run_id, job_drain_timeout=0
+        )
+    else:
+        result = cleanup_module.cleanup_all_for_run(run_id, job_drain_timeout=0)
+    assert not result.ok and calls == []
+    payload = asdict(result)
+    assert payload["outcome"] == "controller_state_lost"
+    assert payload["controller_state_lost_job_ids"] == ["7"]
+    assert payload["recovery"]["destructive_cleanup_allowed"] is False
+    assert payload["recovery"]["absence_only_command"].endswith("reconcile-absent")
+    assert payload["recovery"]["absence_only_scope"] == (
+        "supported_original_failed_submit_evidence_only"
+    )
+    assert payload["recovery"]["unsupported_case"] == (
+        "operator_recovery_required_no_automatic_teardown"
+    )
+    # A later authoritative empty queue permits the original guarded path.
+    # No operator assertion or new bypass flag is supplied.
+    jobs.clear()
+    assert cleanup_module.cleanup_all_for_run(run_id, job_drain_timeout=0).ok
+    assert calls == cleanup_module.cluster_name_patterns_for_run(run_id)
 
 
 @pytest.mark.parametrize(

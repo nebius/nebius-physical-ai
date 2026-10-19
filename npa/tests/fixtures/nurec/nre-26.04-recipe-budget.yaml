@@ -1,0 +1,6 @@
+# Exact non-identifying budget fields retained from the native parsed recipe.
+# This excerpt is not a complete recipe, training proof, or quality acceptance.
+trainer:
+  max_epochs: 1
+dataset:
+  n_samples_per_epoch: 30000

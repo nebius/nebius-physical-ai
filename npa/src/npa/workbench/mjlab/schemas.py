@@ -122,6 +122,8 @@ class EvalRequest(ExportRequest):
         episodes: Number of completed episodes to measure.
         success_threshold: Required survival fraction, not task success.
         video: Record the first episode as MP4 with a self-contained HTML page.
+        video_width: Native render width in pixels, default 1920; must be even.
+        video_height: Native render height in pixels, default 1080; must be even.
     Returns:
         Validated evaluation settings.
     Raises:
@@ -132,3 +134,5 @@ class EvalRequest(ExportRequest):
     episodes: int = Field(default=8, gt=0)
     success_threshold: float = Field(default=0.75, ge=0, le=1)
     video: bool = False
+    video_width: int = Field(default=1920, gt=0, multiple_of=2)
+    video_height: int = Field(default=1080, gt=0, multiple_of=2)

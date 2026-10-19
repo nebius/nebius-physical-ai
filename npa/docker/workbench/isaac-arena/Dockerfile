@@ -4,7 +4,7 @@
 # checkpoint, replay dataset, operator input, generated evaluation, credential,
 # registry object, or populated runtime cache is baked. Inherited OSS packages
 # retain their public examples/test fixtures and installed licenses.
-FROM ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:e321e8631c7e318b5012dad210d9cd1001b7dc833cbff0369e420c5c12657ab6
+FROM ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:ef7f4234839852ed7b48ea4b88fd61f1c45a37ca00294c10a0a23fb335807ef4
 
 ARG ISAAC_ARENA_VERSION=0.3.0
 ARG ISAAC_ARENA_REVISION=ed0fd12be862078be316c73eb7cf423ba9b1c5cd

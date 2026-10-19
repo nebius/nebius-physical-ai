@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "advisory": "https://github.com/advisories/GHSA-4j2p-28q2-5m79",
+  "repair": "npa-checkpoint-index-v1",
+  "source_module": "accelerate/utils/modeling.py",
+  "upstream_release_fix": false,
+  "scanner_suppression": false,
+  "artifacts": [
+    {
+      "version": "1.12.0",
+      "url": "https://files.pythonhosted.org/packages/9f/d2/c581486aa6c4fbd7394c23c47b83fa1a919d34194e16944241daf9e762dd/accelerate-1.12.0-py3-none-any.whl",
+      "wheel_sha256": "3e2091cd341423207e2f084a6654b1efcd250dc326f2a37d6dde446e07cabb11",
+      "source_sha256": "421a88fba25d6a50791fb54ea52e7eefd3beb678d1a131055176c09a87e820d6",
+      "repaired_source_sha256": "3056415b6c16df94225ba17e574cda657e6be6a44d30caf7dc3058048d15fa88"
+    },
+    {
+      "version": "1.13.0",
+      "url": "https://files.pythonhosted.org/packages/7e/46/02ac5e262d4af18054b3e922b2baedbb2a03289ee792162de60a865defc5/accelerate-1.13.0-py3-none-any.whl",
+      "wheel_sha256": "cf1a3efb96c18f7b152eb0fa7490f3710b19c3f395699358f08decca2b8b62e0",
+      "source_sha256": "d6052abc0625740115176a4d2dfc0861a189a2dba94443c09cc8500254b57e2e",
+      "repaired_source_sha256": "ef25cecdd324e22812e859251920992a3b493ee26be8917dc6db8a15e24007db"
+    },
+    {
+      "version": "1.14.0",
+      "url": "https://files.pythonhosted.org/packages/a8/db/253133d7e7cb40d3af384bb2f5c0b4a2b7fdcffbc95c688cc67a20a3c103/accelerate-1.14.0-py3-none-any.whl",
+      "wheel_sha256": "e94390c2863b873be18f623f9df48a0d8fe5eff13ea7f1a00092b0a7904888c6",
+      "source_sha256": "3f603a594d95afcf76df81bb487097095b3282b6aaab50728e691a2a6b17db80",
+      "repaired_source_sha256": "8c37bfa2c8c3a7932e2fc851524912fdd2398c79d8a6c7a43518c137564bc1a5"
+    },
+    {
+      "version": "1.15.0",
+      "url": "https://files.pythonhosted.org/packages/8a/4c/34f0450479d01195027260da68d8a3880683f1640c3ca5adf64acb3185f1/accelerate-1.15.0-py3-none-any.whl",
+      "wheel_sha256": "97eacca0b73e45cb867dbf8c5d5d4dc32219544300e0c8992c7334dc2ef33cec",
+      "source_sha256": "e341cb326d09833424816b484031c71113afdac6d95418531ae30256066a8478",
+      "repaired_source_sha256": "2dbd1c995788088a37f2d88b1fb6f131d148c0897e92df67660271a99b447efb"
+    }
+  ]
+}

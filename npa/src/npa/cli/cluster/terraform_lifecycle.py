@@ -445,6 +445,9 @@ def up_cmd(
     _preflight_provider_lock(tf_dir)
     tfvars = _read_tfvars(tf_dir)
     from npa.provisioning_preflight import current_resolved_plan
+    from npa.clients.nebius_auth import nebius_profile
+
+    profile = nebius_profile()
 
     inherited_plan = current_resolved_plan()
     if inherited_plan is not None:
@@ -690,6 +693,7 @@ def up_cmd(
             tenant_id=tenant_id_value,
             region=region_value,
             provider_env=env,
+            profile=profile,
             # Every fresh shared-backend apply uses the fleet capacity/quota
             # preflight, not only MIG targets. In particular, a non-MIG GPU
             # pool with a capacity block must prove the exact STRICT
@@ -742,6 +746,7 @@ def up_cmd(
                     project_id_value,
                     name_stem=context,
                     env=env,
+                    profile=profile,
                     network_state_path=(
                         backend_root / project_spec.key() / ".npa-fleet-network.json"
                     ),
@@ -776,6 +781,7 @@ def up_cmd(
                     recipe_root=recipe_dir.parent,
                     terraform_bin=terraform_bin,
                     nebius_bin=nebius_bin,
+                    profile=profile,
                     timeout_minutes=timeout,
                     on_status=lambda message: typer.echo(message, err=True),
                     standalone_context=context,
@@ -1031,7 +1037,9 @@ def up_cmd(
             operation.transition("state-durable")
 
         kubeconfig_path = kubeconfig or kubeconfig_file(context)
-        _write_kubeconfig(nebius_bin, cluster_id, kubeconfig_path, context)
+        _write_kubeconfig(
+            nebius_bin, cluster_id, kubeconfig_path, context, profile=profile
+        )
         _save_terraform_cluster_state(
             tfvars,
             cluster,
@@ -1259,6 +1267,21 @@ def down_cmd(
                 "nothing was deleted."
             )
         shared_metadata = candidate
+    if not metadata_present:
+        from npa.cluster_backends.standalone_recovery import partial_backend_metadata
+
+        try:
+            shared_metadata = partial_backend_metadata(
+                context=preview_context,
+                project_id=exact_project_id,
+                tenant_id=str(cleanup_identity.get("tenant_id") or ""),
+                region=str(cleanup_identity.get("region") or ""),
+                operation_id=operation_id,
+            )
+        except (OSError, ValueError, RuntimeError) as exc:
+            raise typer.BadParameter(
+                f"Partial standalone recovery failed: {exc}"
+            ) from exc
     if saved_cluster is not None and not metadata_present:
         raise typer.BadParameter(
             "Local cluster state exists without its ownership metadata; nothing was "
@@ -1357,6 +1380,11 @@ def down_cmd(
             raise RuntimeError(
                 "; ".join(str(item) for item in destroyed.get("errors") or [])
             )
+        recovery_id = str(shared_metadata.get("backend_recovery_operation_id") or "")
+        if recovery_id:
+            from npa.provisioning_journal import load_operation
+
+            load_operation(recovery_id).transition("destroyed")
         if not keep_local_state:
             delete_cluster_state(preview_context)
         response = {
@@ -2020,9 +2048,12 @@ def kubeconfig_cmd(
     `npa workbench workflow submit --infra k8s/<context>` read.
     """
     from npa.clients.config import resolve_environment
+    from npa.clients.nebius_auth import nebius_profile
 
     nebius_bin = _require_bin(os.environ.get("NPA_NEBIUS_BIN") or "nebius")
-    env = _terraform_env(nebius_bin)
+    profile = nebius_profile()
+    prefix = [nebius_bin, *(["--profile", profile] if profile else [])]
+    env = _terraform_env(nebius_bin, profile=profile)
     tfvars: dict[str, Any] = {}
     try:
         tfvars = _read_tfvars(_resolve_terraform_dir(terraform_dir))
@@ -2045,7 +2076,7 @@ def kubeconfig_cmd(
 
     result = _run_capture(
         [
-            nebius_bin,
+            *prefix,
             "mk8s",
             "cluster",
             "list",
@@ -2073,7 +2104,7 @@ def kubeconfig_cmd(
 
     context = context_name.strip() or name
     kubeconfig_path = kubeconfig or kubeconfig_file(context)
-    _write_kubeconfig(nebius_bin, cluster_id, kubeconfig_path, context)
+    _write_kubeconfig(nebius_bin, cluster_id, kubeconfig_path, context, profile=profile)
     _save_terraform_cluster_state(
         {**tfvars, "parent_id": resolved_project, "cluster_name": name},
         {"id": cluster_id, "name": name},
@@ -2226,9 +2257,12 @@ def _terraform_env(nebius_bin: str, *, profile: str = "") -> dict[str, str]:
     the machine's active profile.
     """
     from npa.cluster_backends.process import BackendCommandError, terraform_env
+    from npa.clients.nebius_auth import nebius_profile
 
     try:
-        return terraform_env(nebius_bin, profile=profile, capture_runner=_run_capture)
+        return terraform_env(
+            nebius_bin, profile=profile or nebius_profile(), capture_runner=_run_capture
+        )
     except BackendCommandError as exc:
         raise typer.BadParameter(str(exc)) from exc
 
@@ -2411,15 +2445,40 @@ def _preflight_provider_lock(terraform_dir: Path) -> str:
     return target_platform
 
 
+def _tfvars_paths(terraform_dir: Path) -> list[Path]:
+    """Select automatic variable files in Terraform's load order."""
+    return [
+        terraform_dir / "terraform.tfvars",
+        terraform_dir / "terraform.tfvars.json",
+        *sorted(
+            [
+                *terraform_dir.glob("*.auto.tfvars"),
+                *terraform_dir.glob("*.auto.tfvars.json"),
+            ]
+        ),
+    ]
+
+
 def _read_tfvars(terraform_dir: Path) -> dict[str, Any]:
     values: dict[str, Any] = {}
-    for path in [
-        terraform_dir / "terraform.tfvars",
-        *sorted(terraform_dir.glob("*.auto.tfvars")),
-    ]:
+    for path in _tfvars_paths(terraform_dir):
         if not path.exists():
             continue
-        for key, raw_value in _tfvar_assignments(path.read_text(encoding="utf-8")):
+        document = path.read_text(encoding="utf-8")
+        if path.suffix == ".json":
+            try:
+                variables = json.loads(document)
+            except ValueError:
+                raise typer.BadParameter(
+                    f"Invalid JSON variable file: {path.name}"
+                ) from None
+            if not isinstance(variables, dict):
+                raise typer.BadParameter(
+                    f"JSON variables must be an object: {path.name}"
+                )
+            values.update(variables)
+            continue
+        for key, raw_value in _tfvar_assignments(document):
             values[key] = _parse_tfvar_scalar(raw_value)
     return values
 
@@ -2663,12 +2722,7 @@ def _guard_tfvars_iam_token(terraform_dir: Path, tfvars: dict[str, Any]) -> None
     if "iam_token" not in tfvars:
         return
     files = ", ".join(
-        str(path.name)
-        for path in [
-            terraform_dir / "terraform.tfvars",
-            *sorted(terraform_dir.glob("*.auto.tfvars")),
-        ]
-        if path.exists()
+        str(path.name) for path in _tfvars_paths(terraform_dir) if path.exists()
     )
     raise typer.BadParameter(
         f"Remove the `iam_token` line from {files or 'terraform.tfvars'} in {terraform_dir}: "
@@ -2756,16 +2810,40 @@ def _guard_unmanaged_duplicate(
 def _preflight_filestore_quota(
     nebius_bin: str, tfvars: dict[str, Any], env: dict[str, str]
 ) -> None:
-    # The Terraform default is enable_filestore = false (deploy/cluster/variables.tf),
-    # so the default FTUE / PAIDF cluster needs no Shared Filesystem SSD quota. Only
-    # check the quota when the shared filesystem is explicitly opted into and is being
-    # created (not attached via existing_filestore).
+    from npa.cluster_backends.quotas import preflight_quota_requirements
+
+    requested_bytes = _requested_filestore_bytes(tfvars, env)
+    if not requested_bytes:
+        return
+    reader = _project_capacity_reader(nebius_bin, tfvars, env)
+    region = str(_tfvar_value(tfvars, env, "region", "") or "").strip()
+    if not reader.tenant_id or not region:
+        raise typer.BadParameter(
+            "Shared filesystem quota preflight requires tenant_id and region"
+        )
+    try:
+        shortfalls = preflight_quota_requirements(
+            reader,
+            region,
+            {"compute.filesystem.size.network-ssd": requested_bytes},
+            lambda message: typer.echo(message, err=True),
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    if shortfalls:
+        raise typer.BadParameter(
+            "Shared filesystem quota is insufficient for Terraform creation: "
+            + "; ".join(item.describe() for item in shortfalls)
+        )
+
+
+def _requested_filestore_bytes(tfvars, env):
     enable_filestore = _tfvar_bool(tfvars, env, "enable_filestore", False)
     existing_filestore = str(
         _tfvar_value(tfvars, env, "existing_filestore", "") or ""
     ).strip()
     if not enable_filestore and not existing_filestore:
-        return
+        return 0
     chart_repository = str(
         _tfvar_value(tfvars, env, "filesystem_csi_chart_repository", "") or ""
     ).strip()
@@ -2777,38 +2855,13 @@ def _preflight_filestore_quota(
             "TF_VAR_filesystem_csi_chart_repository before running apply."
         )
     if existing_filestore:
-        return
-    tenant_id = str(_tfvar_value(tfvars, env, "tenant_id", "") or "").strip()
-    region = str(_tfvar_value(tfvars, env, "region", "") or "").strip()
-    if not tenant_id or not region:
-        typer.echo(
-            "Skipping shared filesystem quota preflight: tenant_id or region is not set in tfvars or env.",
-            err=True,
-        )
-        return
+        return 0
     size_gib = int(
         _tfvar_value(
             tfvars, env, "filestore_disk_size_gibibytes", _DEFAULT_FILESTORE_SIZE_GIB
         )
     )
-    requested_bytes = size_gib * _GIB
-    quota = _quota_allowance(
-        nebius_bin,
-        parent_id=tenant_id,
-        region=region,
-        name="compute.filesystem.size.network-ssd",
-        env=env,
-    )
-    limit = _quota_limit(quota)
-    usage = _quota_usage(quota)
-    available = limit - usage
-    if available < requested_bytes:
-        raise typer.BadParameter(
-            "Shared filesystem quota is insufficient for Terraform creation: "
-            f"compute.filesystem.size.network-ssd available {available} bytes, "
-            f"requested {requested_bytes} bytes in {region}. "
-            "Provide existing_filestore or raise Shared Filesystem SSD quota before running apply."
-        )
+    return size_gib * _GIB
 
 
 def _apply_node_count_override(tfvars: dict[str, Any], key: str, value: int) -> None:
@@ -2920,6 +2973,17 @@ def _preflight_instance_count_quota(
     )
 
 
+def _announce_project_quota_scope(plan) -> None:
+    from npa.provisioning_preflight import PROJECT_QUOTA_RBAC_FALLBACK_REASON
+
+    if any(check.reason == PROJECT_QUOTA_RBAC_FALLBACK_REASON for check in plan.checks):
+        typer.echo(
+            "WARNING: project-scoped quota allowances verified; tenant aggregate "
+            "is unavailable due to RBAC and remains enforced during provider apply.",
+            err=True,
+        )
+
+
 def _preflight_whole_path_capacity(
     tfvars: dict[str, Any],
     env: dict[str, str],
@@ -2945,6 +3009,7 @@ def _preflight_whole_path_capacity(
             inherited_plan.assert_mutation_ready()
         except Exception as exc:
             raise typer.BadParameter(str(exc)) from exc
+        _announce_project_quota_scope(inherited_plan)
         topology = inherited_plan.topology
         typer.echo(
             "Whole-path preflight ready: "
@@ -3039,6 +3104,7 @@ def _preflight_whole_path_capacity(
         plan.assert_mutation_ready()
     except Exception as exc:
         raise typer.BadParameter(str(exc)) from exc
+    _announce_project_quota_scope(plan)
     typer.echo(
         "Whole-path preflight ready: "
         f"cpu={topology.cpu_nodes}x{topology.cpu_platform}/{topology.cpu_preset}, "
@@ -3047,6 +3113,40 @@ def _preflight_whole_path_capacity(
         f"new instances={topology.required_instances}, disks={topology.required_disks}, "
         f"network-ssd={topology.required_network_ssd_bytes} bytes."
     )
+
+
+def _project_capacity_reader(nebius_bin, tfvars, env):
+    from npa.clients.nebius_auth import nebius_profile
+    from npa.cluster_backends.project_preflight import ProjectCapacityReader
+
+    return ProjectCapacityReader(
+        nebius_bin,
+        str(_tfvar_value(tfvars, env, "tenant_id", "") or "").strip(),
+        str(_tfvar_value(tfvars, env, "parent_id", "") or "").strip(),
+        nebius_profile(),
+        env,
+        _run_capture,
+        lambda binary, profile: [binary, "--profile", profile] if profile else [binary],
+    )
+
+
+def _preflight_project_reservation(nebius_bin, tfvars, env, reservation_id, required):
+    from npa.cluster_backends.quotas import ReservationRequirement
+
+    project_id = str(_tfvar_value(tfvars, env, "parent_id", "") or "")
+    if not project_id:
+        return False
+    requirement = ReservationRequirement(
+        reservation_id=reservation_id,
+        region=str(_tfvar_value(tfvars, env, "region", "") or ""),
+        platform=str(_tfvar_value(tfvars, env, "gpu_nodes_platform", "") or ""),
+        fabric=str(_tfvar_value(tfvars, env, "infiniband_fabric", "") or ""),
+        required_gpus=required,
+    )
+    reader = _project_capacity_reader(nebius_bin, tfvars, env)
+    requirements = {reservation_id: requirement}
+    reader.verify_reservations(requirements, lambda text: typer.echo(text, err=True))
+    return True
 
 
 def _preflight_gpu_capacity(
@@ -3072,17 +3172,20 @@ def _preflight_gpu_capacity(
         return
     preemptible = _tfvar_bool(tfvars, env, "gpu_nodes_preemptible", False)
     required = gpu_nodes * _gpus_per_node(preset)
-    capture = lambda args: _run_capture(args, env=env, check=False)  # noqa: E731 - passed through
+    reservation_reads = []
+
+    def capture(args):
+        result = _run_capture(args, env=env, check=False)
+        if "capacity-block-group" in args:
+            reservation_reads.append(result)
+        return result
+
     capacity_block_group = str(
         _tfvar_value(tfvars, env, "capacity_block_group", "") or ""
     ).strip()
-    # A STRICT capacity-block-backed pool consumes the named reservation, not
-    # the ordinary on-demand GPU quota. For MIG the shared mk8s preflight used
-    # to be the only validator; the whole-path preflight now proves the block
-    # itself (owner tenant, region, platform, active state, remaining GPUs) for
-    # MIG and non-MIG STRICT pools alike before apply, so we do not also charge
-    # the ordinary GPU-family allowance. AUTO/omitted capacity stays covered by
-    # the on-demand GPU quota check below and may never fall back to it.
+    # Reserved pools consume the explicit capacity block rather than ordinary
+    # on-demand GPU quota. A tenant read denial can use the exact project's
+    # allowance; actual tenant capacity and compatibility remain provider-enforced.
     if capacity_block_group:
         from npa.cli.cluster.capacity import capacity_block_group_error
 
@@ -3095,6 +3198,16 @@ def _preflight_gpu_capacity(
             platform=platform,
             required_gpus=required,
         )
+        if message and reservation_reads:
+            from npa.clients.nebius import is_permission_denied
+
+            denied = is_permission_denied(
+                str(getattr(reservation_reads[-1], "stderr", ""))
+            )
+            if denied and _preflight_project_reservation(
+                nebius_bin, tfvars, env, capacity_block_group, required
+            ):
+                return
         if message:
             raise typer.BadParameter(message)
         return
@@ -3491,44 +3604,6 @@ def _shared_filesystem_requested(tfvars: dict[str, Any], env: dict[str, str]) ->
     return bool(str(_tfvar_value(tfvars, env, "existing_filestore", "") or "").strip())
 
 
-def _quota_allowance(
-    nebius_bin: str,
-    *,
-    parent_id: str,
-    region: str,
-    name: str,
-    env: dict[str, str],
-) -> dict[str, Any]:
-    result = _run_capture(
-        [
-            nebius_bin,
-            "quotas",
-            "quota-allowance",
-            "get-by-name",
-            "--parent-id",
-            parent_id,
-            "--region",
-            region,
-            "--name",
-            name,
-            "--format",
-            "json",
-        ],
-        env=env,
-    )
-    return json.loads(result.stdout or "{}")
-
-
-def _quota_limit(quota: dict[str, Any]) -> int:
-    raw_limit = quota.get("spec", {}).get("limit")
-    return int(raw_limit or 0)
-
-
-def _quota_usage(quota: dict[str, Any]) -> int:
-    raw_usage = quota.get("status", {}).get("usage")
-    return int(raw_usage or 0)
-
-
 def _terraform_state_cluster_ids(
     terraform_bin: str, terraform_dir: Path, env: dict[str, str]
 ) -> set[str]:
@@ -3781,12 +3856,18 @@ def _cluster_output(outputs: dict[str, Any]) -> dict[str, Any]:
 
 
 def _write_kubeconfig(
-    nebius_bin: str, cluster_id: str, kubeconfig_path: Path, context: str
+    nebius_bin: str,
+    cluster_id: str,
+    kubeconfig_path: Path,
+    context: str,
+    *,
+    profile: str = "",
 ) -> None:
     kubeconfig_path.parent.mkdir(parents=True, exist_ok=True)
     _run_stream(
         [
             nebius_bin,
+            *(["--profile", profile] if profile else []),
             "mk8s",
             "cluster",
             "get-credentials",

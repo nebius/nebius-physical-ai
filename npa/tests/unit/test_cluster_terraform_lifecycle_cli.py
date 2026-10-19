@@ -593,11 +593,33 @@ def _successful_stream(tf_dir: Path, calls: list[list[str]]):
     return run
 
 
+@pytest.mark.parametrize("legacy_state", [False, True], ids=["custom", "legacy"])
+@pytest.mark.parametrize("profile_env", [None, "NEBIUS_PROFILE", "NPA_NEBIUS_PROFILE"])
 def test_up_runs_terraform_writes_kubeconfig_and_validates(
-    monkeypatch, tmp_path: Path
+    monkeypatch, tmp_path: Path, legacy_state: bool, profile_env: str | None
 ) -> None:
+    profile_prefix = ["--profile", "selected-profile"] if profile_env else []
+    if profile_env:
+        monkeypatch.setenv(profile_env, "selected-profile")
+    if profile_env == "NPA_NEBIUS_PROFILE":
+        monkeypatch.setenv("NEBIUS_PROFILE", "different-profile")
     tf_dir = tmp_path / "deploy" / "cluster"
     tf_dir.mkdir(parents=True)
+    if legacy_state:
+        (tf_dir / "terraform.tfstate").write_text(
+            json.dumps({"version": 4, "resources": []})
+        )
+        recipe_dir = tf_dir / "vendor" / "nebius-solutions-library" / "k8s-training"
+        recipe_dir.mkdir(parents=True)
+        (recipe_dir / "variables.tf").write_text(
+            'variable "gpu_nodes_driverfull_image" {}\n'
+            'variable "gpu_nodes_driver_preset" {}\n'
+        )
+        (recipe_dir / "main.tf").write_text(
+            "gpu_settings { drivers_preset = var.gpu_nodes_driver_preset }\n"
+        )
+        (recipe_dir / "helm.tf").write_text('module "device-plugin" {}\n')
+        (recipe_dir.parent / "modules").mkdir()
     (tf_dir / "terraform.tfvars").write_text(
         "\n".join(
             [
@@ -632,14 +654,16 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(
         return _completed()
 
     def fake_capture(args, **kwargs):
+        if args == ["nebius", *profile_prefix, "iam", "get-access-token"]:
+            return _completed("token-a\n")
+        if args[:3] == ["nebius", "--profile", "selected-profile"]:
+            args = [args[0], *args[3:]]
         if args[:2] == ["terraform", "version"]:
             return _completed(json.dumps({"terraform_version": "1.12.2"}))
-        if args[:3] == ["nebius", "iam", "get-access-token"]:
-            return _completed("token-a\n")
         if args[:4] == ["nebius", "mk8s", "cluster", "list"]:
             return _completed('{"items":[]}')
-        if args[:4] == ["nebius", "quotas", "quota-allowance", "get-by-name"]:
-            return _completed(json.dumps({"spec": {"limit": str(2 * 1024**4)}}))
+        if args[:4] == ["nebius", "quotas", "quota-allowance", "list"]:
+            return _completed(_filesystem_catalog(2 * 1024**4))
         if args[:2] == ["terraform", "state"]:
             return _completed("", returncode=1)
         if args[:3] == ["terraform", "output", "-json"]:
@@ -807,9 +831,16 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(
     assert "capacity_block_group=capacityblockgroup-test" in apply_call
     apply_env = stream_envs[stream_calls.index(apply_call)]
     assert apply_env["TF_VAR_capacity_block_group"] == "capacityblockgroup-test"
+    assert apply_env["TF_VAR_iam_token"] == "token-a"
+    credential_prefix = [
+        "nebius",
+        *profile_prefix,
+        "mk8s",
+        "cluster",
+        "get-credentials",
+    ]
     assert any(
-        call[:4] == ["nebius", "mk8s", "cluster", "get-credentials"]
-        for call in stream_calls
+        call[: len(credential_prefix)] == credential_prefix for call in stream_calls
     )
     assert [state.last_seen_state for state in saved] == ["VALIDATING", "RUNNING"]
     assert saved[-1].cluster_id == "mk8scluster-a"
@@ -1252,6 +1283,27 @@ def test_up_allows_duplicate_managed_by_terraform_state(
     assert _find_call(stream_calls, "terraform", "apply", "-auto-approve")
 
 
+def _filesystem_catalog(limit):
+    return json.dumps(
+        {
+            "items": [
+                {
+                    "metadata": {
+                        "name": "compute.filesystem.size.network-ssd",
+                        "parent_id": "tenant-a",
+                    },
+                    "spec": {"region": "region-a", "limit": str(limit)},
+                    "status": {
+                        "state": "STATE_ACTIVE",
+                        "unit": "byte",
+                        "usage_state": "USAGE_STATE_NOT_USED",
+                    },
+                }
+            ]
+        }
+    )
+
+
 def test_up_stops_when_filestore_quota_is_too_small(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -1282,8 +1334,8 @@ def test_up_stops_when_filestore_quota_is_too_small(
             return _completed('{"items":[]}')
         if args[:2] == ["terraform", "state"]:
             return _completed("", returncode=1)
-        if args[:4] == ["nebius", "quotas", "quota-allowance", "get-by-name"]:
-            return _completed(json.dumps({"spec": {"limit": "0"}}))
+        if args[:4] == ["nebius", "quotas", "quota-allowance", "list"]:
+            return _completed(_filesystem_catalog(0))
         raise AssertionError(args)
 
     monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
@@ -2545,6 +2597,55 @@ def test_kubeconfig_cmd_adopts_a_running_cluster(monkeypatch, tmp_path: Path) ->
     assert saved[-1].provider_name == "npa-cluster"
 
 
+def _capture_profile_bound_adoption_calls(monkeypatch, prefix):
+    calls = []
+
+    def capture(args, **kwargs):
+        calls.append(args)
+        assert args[:3] == prefix
+        if args[3:] == ["iam", "get-access-token"]:
+            return _completed("synthetic-token\n")
+        assert args[3:6] == ["mk8s", "cluster", "list"]
+        return _completed(
+            '{"items":[{"metadata":{"name":"adopted","id":"cluster-test"}}]}'
+        )
+
+    monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
+    monkeypatch.setattr(tf_mod, "_run_capture", capture)
+    monkeypatch.setattr(
+        tf_mod, "_run_stream", lambda args, **kwargs: calls.append(args)
+    )
+    monkeypatch.setattr(tf_mod, "save_cluster_state", lambda *_args, **_kwargs: None)
+    return calls
+
+
+@pytest.mark.parametrize("npa_profile", ["selected-profile", ""])
+def test_kubeconfig_adoption_keeps_profile_selection_across_provider_calls(
+    monkeypatch, tmp_path, npa_profile
+):
+    monkeypatch.setenv("NEBIUS_PROFILE", "ambient-profile")
+    monkeypatch.setenv("NPA_NEBIUS_PROFILE", npa_profile)
+    prefix = ["nebius", "--profile", npa_profile or "ambient-profile"]
+    calls = _capture_profile_bound_adoption_calls(monkeypatch, prefix)
+    result = runner.invoke(
+        app,
+        [
+            "kubeconfig",
+            "--cluster-name",
+            "adopted",
+            "--project-id",
+            "project-test",
+            "--kubeconfig",
+            str(tmp_path / "kubeconfig"),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert len(calls) == 3
+    assert all(call[:3] == prefix for call in calls)
+    assert calls[-1][3:6] == ["mk8s", "cluster", "get-credentials"]
+
+
 def test_kubeconfig_cmd_names_what_exists_when_the_cluster_is_absent(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -3071,6 +3172,47 @@ region = "eu-north1"
     assert values["region"] == "eu-north1"
 
 
+def test_json_tfvars_select_gpu_topology_and_preserve_structured_values(tmp_path):
+    settings = {
+        "gpu_nodes_count": 4,
+        "gpu_nodes_platform": "gpu-h200-sxm",
+        "gpu_nodes_preset": "1gpu-16vcpu-200gb",
+        "gpu_disk_size": 512,
+        "enable_filestore": False,
+        "ssh_public_key": {"path": "~/.ssh/custom.pub"},
+    }
+    (tmp_path / "terraform.tfvars.json").write_text(json.dumps(settings))
+    assert tf_mod._read_tfvars(tmp_path) == settings
+
+
+def test_tfvars_load_order_matches_terraform_across_hcl_and_json(tmp_path):
+    (tmp_path / "terraform.tfvars").write_text('gpu_nodes_count = 1\nregion = "base"')
+    (tmp_path / "terraform.tfvars.json").write_text('{"gpu_nodes_count": 2}')
+    (tmp_path / "a.auto.tfvars.json").write_text('{"gpu_nodes_count": 3}')
+    (tmp_path / "b.auto.tfvars").write_text("gpu_nodes_count = 4")
+    values = tf_mod._read_tfvars(tmp_path)
+    assert values == {"gpu_nodes_count": 4, "region": "base"}
+
+
+@pytest.mark.parametrize("contents", ['{"iam_token": secret}', "[]", '"secret"'])
+def test_invalid_json_tfvars_fail_without_exposing_contents(tmp_path, contents):
+    (tmp_path / "terraform.tfvars.json").write_text(contents)
+    with pytest.raises(typer.BadParameter) as error:
+        tf_mod._read_tfvars(tmp_path)
+    assert "terraform.tfvars.json" in str(error.value)
+    assert "secret" not in str(error.value)
+
+
+@pytest.mark.parametrize("filename", ["terraform.tfvars.json", "z.auto.tfvars.json"])
+def test_json_tfvars_cannot_shadow_fresh_iam_token(tmp_path, filename):
+    (tmp_path / filename).write_text('{"iam_token": "private-credential"}')
+    values = tf_mod._read_tfvars(tmp_path)
+    with pytest.raises(typer.BadParameter) as error:
+        tf_mod._guard_tfvars_iam_token(tmp_path, values)
+    assert filename in str(error.value)
+    assert "private-credential" not in str(error.value)
+
+
 def test_up_explains_a_missing_ssh_public_key(monkeypatch, tmp_path: Path) -> None:
     tf_dir = tmp_path / "deploy" / "cluster"
     tf_dir.mkdir(parents=True)
@@ -3137,6 +3279,34 @@ def test_shared_filesystem_requested_covers_existing_filestore() -> None:
         )
         is False
     )
+
+
+@pytest.mark.parametrize("explicit", ["", "explicit-profile"])
+def test_terraform_env_uses_selected_profile_without_changing_native_default(
+    monkeypatch, explicit
+) -> None:
+    calls = []
+    monkeypatch.setenv("NPA_NEBIUS_PROFILE", "selected-profile")
+    monkeypatch.setenv("NEBIUS_PROFILE", "different-profile")
+    monkeypatch.delenv("NPA_REUSE_IAM_TOKEN", raising=False)
+
+    def capture_token(args, **_kwargs):
+        calls.append(args)
+        return _completed("token")
+
+    monkeypatch.setattr(tf_mod, "_run_capture", capture_token)
+    assert (
+        tf_mod._terraform_env("nebius", profile=explicit)["TF_VAR_iam_token"] == "token"
+    )
+    assert calls == [
+        [
+            "nebius",
+            "--profile",
+            explicit or "selected-profile",
+            "iam",
+            "get-access-token",
+        ]
+    ]
 
 
 def test_terraform_env_refreshes_stale_token_by_default(monkeypatch) -> None:

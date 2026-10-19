@@ -220,9 +220,15 @@ def staged_source_files(root: Path) -> dict[Path, Path]:
     """Map staged package-relative destinations to their local source files.
 
     The supported catalog is a sibling of the Python project in a checkout.
-    Include main/testing and partner YAMLs at packaged fallback paths so worker
-    editable installs remain self-contained. Apply the same secret, symlink,
-    and git-ignore filters as the package source itself.
+    Include the supported catalog at packaged fallback paths so worker installs
+    remain self-contained. Apply the package's secret, symlink, and ignore filters.
+
+    Args:
+        root: Local NPA package root containing pyproject.toml.
+    Returns:
+        Safe package destinations mapped to their authoritative local files.
+    Raises:
+        SrcStagingError: A required build input is missing or unsafe.
     """
 
     files = {relative: root / relative for relative in iter_source_files(root)}
@@ -231,34 +237,42 @@ def staged_source_files(root: Path) -> dict[Path, Path]:
     if (
         catalog.is_dir()
         and not catalog.is_symlink()
-        and any((catalog / tier).is_dir() for tier in ("main", "testing", "partners"))
+        and any(
+            (catalog / tier).is_dir()
+            for tier in ("main", "testing", "cosmos-data-factory", "partners")
+        )
     ):
-        # Exported checkouts have no git-ignore filtering. Do not upload stale
-        # generated copies beside a newer authoritative source catalog.
-        files = {
-            relative: path
-            for relative, path in files.items()
-            if relative.parts[:4]
-            not in {
-                ("src", "npa", "workflows", "main"),
-                ("src", "npa", "workflows", "testing"),
-                ("src", "npa", "workflows", "partners"),
-            }
-        }
-        for relative in iter_source_files(catalog):
-            if (
-                (
-                    (
-                        len(relative.parts) == 2
-                        and relative.parts[0] in {"main", "testing"}
-                    )
-                    or (len(relative.parts) == 3 and relative.parts[0] == "partners")
-                )
-                and relative.suffix == ".yaml"
-                and _is_safe_regular_source(root.parent, Path("workflows") / relative)
-            ):
-                files[Path("src/npa/workflows") / relative] = catalog / relative
+        files = _without_generated_catalog(files)
+        files.update(_staged_catalog_files(root, catalog))
     return dict(sorted(files.items()))
+
+
+def _without_generated_catalog(files: dict[Path, Path]) -> dict[Path, Path]:
+    # Exported checkouts have no git-ignore filtering. Generated copies must not
+    # shadow an authoritative source rename or deletion.
+    generated_roots = {
+        ("src", "npa", "workflows", tier)
+        for tier in ("main", "testing", "cosmos-data-factory", "partners")
+    }
+    return {
+        relative: path
+        for relative, path in files.items()
+        if relative.parts[:4] not in generated_roots
+    }
+
+
+def _staged_catalog_files(root: Path, catalog: Path) -> dict[Path, Path]:
+    files: dict[Path, Path] = {}
+    for relative in iter_source_files(catalog):
+        supported = (
+            len(relative.parts) == 2
+            and relative.parts[0] in {"main", "testing", "cosmos-data-factory"}
+        ) or (len(relative.parts) == 3 and relative.parts[0] == "partners")
+        if not supported or relative.suffix != ".yaml":
+            continue
+        if _is_safe_regular_source(root.parent, Path("workflows") / relative):
+            files[Path("src/npa/workflows") / relative] = catalog / relative
+    return files
 
 
 def _include_required_build_files(root: Path, files: dict[Path, Path]) -> None:
