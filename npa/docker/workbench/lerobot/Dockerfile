@@ -107,7 +107,8 @@ RUN python3.12 -m venv /opt/lerobot/venv \
          && /opt/lerobot/venv/bin/python /opt/lerobot/remove-scikit-image-recipe.py \
            --site-packages /opt/lerobot/venv/lib/python3.12/site-packages \
            --capability lerobot \
-           > /opt/lerobot/dependency-source-correction.json; \
+           > /opt/lerobot/dependency-source-correction.json \
+         && /opt/lerobot/venv/bin/pip uninstall -y wandb; \
        elif [ "${LEROBOT_VERSION}" = "0.5.1" ]; then \
          /opt/lerobot/venv/bin/python /opt/lerobot/prepare-secure-wheel.py \
            --output-dir /opt/lerobot/secure-wheel \
