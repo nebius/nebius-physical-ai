@@ -124,6 +124,7 @@ from npa.clients.network import (
     resolve_instance_network_context,
 )
 from npa.clients.ssh import SSHClient, SSHError
+from npa.clients.nebius import NebiusError
 from npa.smoke._versions import supported_tool_version
 from npa.cli.agent_public import (
     AgentConfig,
@@ -13007,17 +13008,24 @@ def status_cmd(
         )
     )
     public_url = _record_customer_url(record)
-    tls_verify = _record_tls_verify(record)
-    ui_ok, ui_code = _health(
-        agent_url, user=auth_user, password=auth_password, verify=tls_verify
-    )
-    basic_auth_enforced, unauthenticated_ui_code = _basic_auth_protects_endpoint(
-        agent_url,
-        verify=tls_verify,
-    )
-    rerun_ok, rerun_code = _health(
-        sim_viz_url, user=auth_user, password=auth_password, verify=tls_verify
-    )
+    trust_error = ""
+    try:
+        tls_verify = _record_tls_verify(record)
+    except (ValueError, SSHError, NetworkIngressError, NebiusError, OSError) as exc:
+        trust_error = type(exc).__name__
+        ui_ok = rerun_ok = basic_auth_enforced = False
+        ui_code = rerun_code = unauthenticated_ui_code = 0
+    else:
+        ui_ok, ui_code = _health(
+            agent_url, user=auth_user, password=auth_password, verify=tls_verify
+        )
+        basic_auth_enforced, unauthenticated_ui_code = _basic_auth_protects_endpoint(
+            agent_url,
+            verify=tls_verify,
+        )
+        rerun_ok, rerun_code = _health(
+            sim_viz_url, user=auth_user, password=auth_password, verify=tls_verify
+        )
     endpoint_disclosure_allowed = bool(ui_ok and basic_auth_enforced)
     payload = {
         "project": project,
@@ -13042,11 +13050,19 @@ def status_cmd(
         "llm": record.get("llm", {}),
         "artifact_credentials": _artifact_credential_record_summary(record),
     }
+    if trust_error:
+        payload.update(
+            error_category=trust_error,
+            detail="Agent HTTPS identity could not be verified; check provider access "
+            "and the recorded SSH key before retrying.",
+        )
     if output_json:
         typer.echo(json.dumps(payload, indent=2, sort_keys=True))
-        return
-    for key, value in payload.items():
-        typer.echo(f"{key}: {value}")
+    else:
+        for key, value in payload.items():
+            typer.echo(f"{key}: {value}")
+    if trust_error:
+        raise typer.Exit(code=1)
 
 
 @app.command("destroy")

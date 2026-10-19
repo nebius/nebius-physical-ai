@@ -236,6 +236,9 @@ credential.
 Agent status, verification and artifact handoff authenticate HTTPS using the
 installed certificate read over host-key-verified SSH. The recorded provider
 instance and public address must agree, and the saved SSH key must be usable.
+If trust setup fails, `status --json` exits with code 1 and emits an unhealthy
+status with an `error_category`, withheld endpoints, and no raw provider or SSH
+diagnostics. Live verification reports the failed trust check before probing HTTP.
 Missing or changed trust fails before sending HTTP credentials; certificate
 expiry and hostname checks remain enforced. Bootstrap recovery obtains the same
 certificate through its verified SSH connection before probing authenticated

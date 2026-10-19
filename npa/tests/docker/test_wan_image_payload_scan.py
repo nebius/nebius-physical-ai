@@ -24,6 +24,58 @@ sys.modules[_SPEC.name] = scanner
 _SPEC.loader.exec_module(scanner)
 
 
+def test_sibling_empty_policy_does_not_require_wan_binary_identities(tmp_path):
+    archive = _tar(tmp_path / "sibling.tar", {"usr/sbin/sshd": b"unrelated binary"})
+    with scanner.payload_policy(audited_secret_files={}, audited_libraries={}):
+        assert scanner.scan(archive, {}) == []
+    assert "audited_literal_byte_drift" in {
+        finding.kind for finding in scanner.scan(archive, {})
+    }
+
+
+@pytest.mark.parametrize(
+    "catalog",
+    [
+        "AUDITED_TRIXIE_SECRET_LITERAL_FILE_SHA256",
+        "AUDITED_UBUNTU_SECRET_LITERAL_FILE_SHA256",
+        "AUDITED_TRIXIE_LITERAL_LIBRARY_SHA256",
+        "AUDITED_UBUNTU_LITERAL_LIBRARY_SHA256",
+    ],
+)
+def test_sibling_policy_cannot_inherit_wan_exceptions(tmp_path, monkeypatch, catalog):
+    path = "opt/fixture/literal.dat"
+    payload = b"AKIAIOSFODNN7EXAMPLE"
+    expected = {"credential_content"}
+    if "LIBRARY" in catalog:
+        payload = b"\x7fELFlibcuda.so.1\x00" + payload
+        expected.add("cuda_elf_dependency")
+    approved = {path: hashlib.sha256(payload).hexdigest()}
+    monkeypatch.setattr(scanner, catalog, approved)
+    archive = _tar(tmp_path / "audited.tar", {path: payload})
+    assert scanner.scan(archive, {}) == []
+    with pytest.raises(RuntimeError, match="fixture failure"):
+        with scanner.payload_policy(audited_secret_files={}, audited_libraries={}):
+            assert {f.kind for f in scanner.scan(archive, {})} == expected
+            raise RuntimeError("fixture failure")
+    assert getattr(scanner, catalog) is approved
+    assert scanner.scan(archive, {}) == []
+
+
+def test_sibling_own_exact_exception_survives_isolation(tmp_path):
+    path = "usr/sbin/sshd"
+    payload = b"AKIAIOSFODNN7EXAMPLE"
+    approved = {path: hashlib.sha256(payload).hexdigest()}
+    with scanner.payload_policy(audited_secret_files=approved, audited_libraries={}):
+        assert scanner.scan(_tar(tmp_path / "own.tar", {path: payload}), {}) == []
+        findings = scanner.scan(
+            _tar(tmp_path / "mutated.tar", {path: payload + b" changed"}), {}
+        )
+        assert {f.kind for f in findings} == {
+            "audited_literal_byte_drift",
+            "credential_content",
+        }
+
+
 def test_libssh2_audit_matches_reviewed_debian_package() -> None:
     lock = json.loads(
         (

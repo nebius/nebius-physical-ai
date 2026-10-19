@@ -12,6 +12,8 @@ from unittest.mock import Mock
 
 import httpx
 import pytest
+import typer
+from typer.testing import CliRunner
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -25,6 +27,8 @@ from npa.cli import (
     agent_verification,
 )
 from npa.clients.ssh import SSHHostKeyError
+from npa.clients.network import NetworkIngressError
+from npa.clients.nebius import NebiusError
 from npa.orchestration.npa_workflow import artifact_load
 
 
@@ -223,6 +227,81 @@ def test_verification_uses_one_trust_identity_throughout_run(recorded_agent):
     )
     assert context.tls_verify is context.tls_verify
     recorded_agent.connect.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        ValueError("private diagnostic"),
+        SSHHostKeyError("private diagnostic"),
+        NetworkIngressError("private diagnostic"),
+        NebiusError("private diagnostic"),
+        PermissionError("private diagnostic"),
+    ],
+)
+def test_status_trust_failure_emits_safe_json_without_http(monkeypatch, error):
+    record = {"agent_url": "https://agent.invalid/", "public_https": True}
+    monkeypatch.setattr(agent, "_resolve_project_alias", lambda _: "fixture")
+    monkeypatch.setattr(agent, "_agent_record", lambda *_: record)
+    monkeypatch.setattr(
+        agent, "_load_auth_secret", lambda _: ("synthetic", "test-only")
+    )
+    monkeypatch.setattr(agent, "_record_tls_verify", Mock(side_effect=error))
+    request = Mock(side_effect=AssertionError("untrusted HTTP must not be sent"))
+    monkeypatch.setattr(agent.httpx, "get", request)
+    result = CliRunner().invoke(agent.app, ["status", "--project", "fixture", "--json"])
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["health"] is False
+    assert payload["endpoint_disclosure_allowed"] is False
+    assert payload["basic_auth_enforced"] is False
+    assert payload["error_category"] == type(error).__name__
+    for key in (
+        "public_ip",
+        "public_url",
+        "direct_url",
+        "ui_url",
+        "rerun_url",
+        "sim_viz_url",
+        "sim_assets_url",
+        "cameras_api_url",
+    ):
+        assert payload[key] == ""
+    assert "private diagnostic" not in result.output
+    assert "agent.invalid" not in result.output
+    request.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        ValueError("private diagnostic"),
+        SSHHostKeyError("private diagnostic"),
+        NetworkIngressError("private diagnostic"),
+        NebiusError("private diagnostic"),
+        PermissionError("private diagnostic"),
+    ],
+)
+def test_verification_reports_trust_failure_before_http(monkeypatch, error):
+    monkeypatch.setattr(
+        agent_verification, "record_tls_verify", Mock(side_effect=error)
+    )
+    request = Mock(side_effect=AssertionError("untrusted HTTP must not be sent"))
+    monkeypatch.setattr(agent_verification.httpx, "get", request)
+    failed = Mock(side_effect=typer.Exit(1))
+    with pytest.raises(typer.Exit):
+        agent_verification.verify_agent_endpoints(
+            {"agent_url": "https://agent.invalid/", "public_https": False},
+            auth=("synthetic", "test-only"),
+            ui_version="test",
+            health_check=Mock(),
+            fail=failed,
+        )
+    failed.assert_called_once()
+    message = failed.call_args.args[0]
+    assert type(error).__name__ in message
+    assert "private diagnostic" not in message
+    request.assert_not_called()
 
 
 def test_status_rejects_substituted_listener_before_auth(
