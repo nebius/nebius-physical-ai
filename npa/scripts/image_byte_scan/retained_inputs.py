@@ -84,11 +84,7 @@ def _retained_roles(directory, snapshots, sources):
 
 def _complete_original_report(authorization, snapshots, report_binding, ledger_binding):
     report = W.bound_json(report_binding)
-    rows = [
-        A.decode(line)
-        for line in W.bound_bytes(ledger_binding, secret=True).splitlines()
-    ]
-    A.population(report, rows)
+    A.population(report, A.iter_bound_jsonl(ledger_binding))
     W.require(
         report["input_snapshot_receipts"] == _snapshot_rows(snapshots),
         "retention_stale_snapshot",
