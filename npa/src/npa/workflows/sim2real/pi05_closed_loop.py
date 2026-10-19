@@ -6,6 +6,7 @@ import argparse
 from dataclasses import replace
 import hashlib
 import json
+import math
 import os
 import sys
 import tempfile
@@ -629,18 +630,13 @@ def _infer_smolvla_query(
     }
     frames_by_role = {"exterior": exterior, "wrist": wrist}
     camera_payloads = {}
+    camera_clock_provenance = {}
     for camera in robot_profile.cameras:
         frame = np.ascontiguousarray(frames_by_role[camera.role], dtype=np.uint8)
         receipt = receipts[camera.role]
-        camera_payloads[camera.key] = {
-            "layout": camera.layout,
-            "image_size_wh": list(camera.image_size),
-            "mask": True,
-            "capture_timestamp_s": receipt["capture_time_s"],
-            "state_timestamp_s": receipt["observation_time_s"],
-            "rgb8": frame.tobytes(),
-            "image_sha256": hashlib.sha256(frame.tobytes()).hexdigest(),
-        }
+        payload, provenance = _typed_camera_payload(camera, frame, receipt)
+        camera_payloads[camera.key] = payload
+        camera_clock_provenance[camera.key] = provenance
     observation = validate_observation(
         robot=robot_profile,
         policy=policy_profile,
@@ -672,9 +668,96 @@ def _infer_smolvla_query(
             if view.role == "wrist"
         ),
         "measured_state_names": list(observation.measured_state_names),
+        "camera_clock_provenance": camera_clock_provenance,
     }
     inference["wrist_intervention"] = intervention
     return actions, inference
+
+
+def _typed_camera_payload(camera: Any, frame: Any, receipt: dict) -> tuple[dict, dict]:
+    """Bind typed policy timestamps to validated Isaac sensor-clock evidence."""
+
+    import numpy as np
+
+    capture, state, provenance = _typed_camera_times(receipt)
+    rgb = np.ascontiguousarray(frame, dtype=np.uint8).tobytes()
+    payload = {
+        "layout": camera.layout,
+        "image_size_wh": list(camera.image_size),
+        "mask": True,
+        "capture_timestamp_s": capture,
+        "state_timestamp_s": state,
+        "rgb8": rgb,
+        "image_sha256": hashlib.sha256(rgb).hexdigest(),
+    }
+    return payload, provenance
+
+
+def _typed_camera_times(receipt: dict) -> tuple[float, float, dict]:
+    """Normalize representation jitter without hiding raw camera timing."""
+
+    import numpy as np
+
+    clock = receipt.get("sensor_clock")
+    clock_fields = {
+        "expected_sensor_time_s",
+        "physics_update_count",
+        "physics_period_s",
+        "reset_epoch",
+    }
+    if not isinstance(clock, dict) or not clock_fields.issubset(clock):
+        raise RuntimeError("camera receipt lacks validated sensor clock evidence")
+    try:
+        capture = float(receipt["capture_time_s"])
+        observation = float(receipt["observation_time_s"])
+        state = float(clock["expected_sensor_time_s"])
+        physics_updates = int(clock["physics_update_count"])
+        physics_period = float(clock["physics_period_s"])
+        reset_epoch = int(clock["reset_epoch"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise RuntimeError(
+            "camera receipt has malformed sensor clock evidence"
+        ) from error
+    values = (capture, observation, state, physics_period)
+    if not all(math.isfinite(value) for value in values) or physics_period <= 0.0:
+        raise RuntimeError("camera receipt timestamps must be finite")
+    if physics_updates < 0 or reset_epoch < 0:
+        raise RuntimeError("camera receipt sensor clock counters must be nonnegative")
+    tolerance = max(1.0e-7, 4.0 * abs(float(np.spacing(np.float32(state)))))
+    offset = state - observation
+    causal_age = state - capture
+    if abs(offset) > tolerance or capture > state + tolerance:
+        raise RuntimeError("camera receipt is not bound to the shared sensor clock")
+    try:
+        declared_offset = float(receipt["representation_offset_s"])
+        declared_age = float(receipt["sensor_causal_age_s"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise RuntimeError(
+            "camera receipt has malformed sensor clock evidence"
+        ) from error
+    if not math.isclose(
+        declared_offset,
+        offset,
+        rel_tol=0.0,
+        abs_tol=tolerance,
+    ) or not math.isclose(
+        declared_age,
+        causal_age,
+        rel_tol=0.0,
+        abs_tol=tolerance,
+    ):
+        raise RuntimeError("camera receipt sensor-clock evidence is inconsistent")
+    provenance = {
+        "raw_capture_timestamp_s": capture,
+        "raw_observation_timestamp_s": observation,
+        "typed_state_timestamp_s": state,
+        "representation_offset_s": offset,
+        "sensor_causal_age_s": causal_age,
+        "physics_update_count": physics_updates,
+        "physics_period_s": physics_period,
+        "reset_epoch": reset_epoch,
+    }
+    return capture, state, provenance
 
 
 def _retain_failed_camera(

@@ -73,6 +73,11 @@ from npa.workflows.sim2real.pi05_isaac import (
     configure_surface_goal,
     support_surface_contract,
 )
+from npa.workflows.sim2real.interchange_contract import (
+    CameraView,
+    InterchangeContractError,
+    Transform,
+)
 
 
 TARGET = np.asarray([0.0, -0.5, 0.0, -2.0, 0.0, 2.0, 0.7, 0.37], dtype=np.float32)
@@ -957,6 +962,111 @@ def test_smolvla_uses_current_native_action_without_fake_noise_pairing() -> None
     assert target.tolist() == list(range(8))
     assert selection["method"] == "native_policy_queue_current_action"
     assert selection["contributor_count"] == 1
+
+
+def _typed_clock_receipt(capture: float, observation: float, state: float) -> dict:
+    return {
+        "capture_time_s": capture,
+        "observation_time_s": observation,
+        "sensor_clock": {
+            "expected_sensor_time_s": state,
+            "physics_update_count": 8,
+            "physics_period_s": float(np.float32(1.0 / 60.0)),
+            "reset_epoch": 0,
+        },
+        "representation_offset_s": state - observation,
+        "sensor_causal_age_s": state - capture,
+    }
+
+
+def _typed_test_camera(maximum_skew: float = 0.1) -> CameraView:
+    return CameraView(
+        key="observation.images.wrist",
+        role="wrist",
+        mount_link="panda_hand",
+        mount_from_camera=Transform((0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)),
+        intrinsics=(100.0, 100.0, 1.0, 1.0),
+        image_size=(2, 2),
+        layout="HWC",
+        mask_key="observation.images.wrist_is_pad",
+        capture_timestamp_key="observation.images.wrist_capture_timestamp_s",
+        state_timestamp_key="observation.state_timestamp_s",
+        maximum_state_skew_s=maximum_skew,
+    )
+
+
+def test_smolvla_wire_uses_validated_sensor_clock_and_preserves_raw_times() -> None:
+    capture = 0.13333334028720856
+    observation = 0.13333333333333333
+    receipt = _typed_clock_receipt(capture, observation, capture)
+    camera = _typed_test_camera()
+
+    payload, provenance = pi05_closed_loop._typed_camera_payload(
+        camera, np.zeros((2, 2, 3), dtype=np.uint8), receipt
+    )
+
+    assert payload["capture_timestamp_s"] == capture
+    assert payload["state_timestamp_s"] == capture
+    assert provenance["raw_observation_timestamp_s"] == observation
+    assert provenance["representation_offset_s"] == capture - observation
+    camera.validate_timestamps(
+        capture_s=payload["capture_timestamp_s"],
+        state_s=payload["state_timestamp_s"],
+    )
+
+
+def test_smolvla_wire_rejects_camera_beyond_sensor_clock_tolerance() -> None:
+    state = 0.13333334028720856
+    capture = state + 2.0e-7
+    receipt = _typed_clock_receipt(capture, state, state)
+
+    with pytest.raises(RuntimeError, match="not bound to the shared sensor clock"):
+        pi05_closed_loop._typed_camera_payload(
+            _typed_test_camera(), np.zeros((2, 2, 3), dtype=np.uint8), receipt
+        )
+
+
+def test_smolvla_wire_retains_typed_stale_camera_rejection() -> None:
+    state = 0.5
+    receipt = _typed_clock_receipt(0.3, state, state)
+    camera = _typed_test_camera(maximum_skew=0.1)
+    payload, _ = pi05_closed_loop._typed_camera_payload(
+        camera, np.zeros((2, 2, 3), dtype=np.uint8), receipt
+    )
+
+    with pytest.raises(
+        InterchangeContractError, match="stale relative to measured state"
+    ):
+        camera.validate_timestamps(
+            capture_s=payload["capture_timestamp_s"],
+            state_s=payload["state_timestamp_s"],
+        )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (lambda receipt: receipt.pop("sensor_clock"), "lacks validated"),
+        (
+            lambda receipt: receipt.update(sensor_causal_age_s="invalid"),
+            "malformed sensor clock",
+        ),
+        (
+            lambda receipt: receipt["sensor_clock"].update(physics_period_s=0.0),
+            "timestamps must be finite",
+        ),
+    ],
+)
+def test_smolvla_wire_rejects_missing_or_malformed_clock_evidence(
+    mutation, message: str
+) -> None:
+    receipt = _typed_clock_receipt(0.5, 0.5, 0.5)
+    mutation(receipt)
+
+    with pytest.raises(RuntimeError, match=message):
+        pi05_closed_loop._typed_camera_payload(
+            _typed_test_camera(), np.zeros((2, 2, 3), dtype=np.uint8), receipt
+        )
 
 
 def test_smolvla_report_discloses_repeated_trials_not_noise_coupling() -> None:
