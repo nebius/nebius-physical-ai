@@ -995,6 +995,13 @@ class SkyPilotWaveExecutor:
                     "no replacement job submitted"
                 )
                 return attempt
+            elif not any(
+                str(record.get("status") or "") == "failed"
+                for record in self.ledger.state.waves
+            ):
+                raise NpaWorkflowError(
+                    f"wave {key}: --recover-managed-job-id requires one failed prior wave"
+                )
         reserved = None
         if self.options.resume:
             reserved = _resume_launch_recovery(self, steps, key, kind, group)

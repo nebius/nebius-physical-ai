@@ -4052,6 +4052,30 @@ def test_explicit_terminal_recovery_adopts_only_the_requested_exact_job(
     assert replay._submitter.calls == []
 
 
+def test_explicit_terminal_recovery_refuses_before_submission_without_failed_wave(
+    tmp_path: Path,
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, COMPLETED_REPLAY_SPEC))
+    store = MemoryStore()
+    submitter = FakeSubmitter()
+    executor = _executor(
+        spec,
+        run_id="rt-missing-exact-terminal-recovery",
+        store=store,
+        submitter=submitter,
+        options=RuntimeOptions(resume=True, recover_managed_job_id="2"),
+        reconcile_fn=lambda *_args, **_kwargs: pytest.fail(
+            "unmatched explicit recovery must not reconcile or submit"
+        ),
+    )
+    step = build_plan(spec, run_id="rt-missing-exact-terminal-recovery").steps[0]
+
+    with pytest.raises(NpaWorkflowError, match="requires one failed prior wave"):
+        executor.execute(step)
+    assert submitter.calls == []
+    assert store.read_runtime_state() is None
+
+
 def test_explicit_terminal_recovery_skips_completed_waves_before_failed_wave(
     tmp_path: Path,
 ) -> None:
