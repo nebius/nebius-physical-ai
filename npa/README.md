@@ -32,6 +32,25 @@ even if a different tenant inventory API is denied.
 Creating a legacy shared filesystem requires a resolved tenant and region;
 missing identity now stops provisioning before apply.
 
+Sim2Real's `rerun regen` and `rerun serve --local-record` operate on existing
+artifacts without resolving execution image defaults. Regeneration therefore
+remains available after an old runtime is quarantined. Executing new workloads,
+including `rerun heldout-only`, still requires qualified component images.
+For `rerun regen` and `rerun heldout-only`, explicit `--s3-bucket` and
+`--s3-endpoint` override their corresponding project coordinates. With
+`--project`, a complete isolated project record supplies the remaining bucket,
+endpoint, and client credentials; an unknown or incomplete record refuses rather
+than falling back to host credentials or environment settings. Without
+`--project`, the existing Sim2Real environment settings apply. For `workbench
+health sim2real`, `--project` applies when the selected checks include `s3`: it
+supplies the reachability-probe target and isolated credentials unless the
+corresponding S3 flag is explicit. A selection without `s3` refuses `--project`
+with an explicit error.
+`--s3-prefix` is an execution-config seam. An S3 reachability check accepts it
+but probes only the bucket and endpoint; image-independent selections that
+include none of `s3`, `config`, or `registry` refuse it.
+See the [Sim2Real guide](../docs/workbench/guides/sim2real-workflow.md).
+
 Optional [Workbench access](../docs/workbench/team-access.md) adds CLI/API/SDK shared
 execution through `npa workbench submit`, `runs`, `run`, and `whoami`, and the
 existing `npa.sdk.workbench.team` SDK. Administrators use `npa workbench access`.
@@ -107,7 +126,8 @@ environment settings apply. `rerun serve --project` retains its legacy
 saved/default-project and environment fallback behavior. For `workbench
 health sim2real`, `--project` applies when the selected checks include `s3`: it
 supplies the reachability-probe target and isolated credentials unless the
-corresponding S3 flag is explicit. It has no effect on selections without `s3`.
+corresponding S3 flag is explicit. A selection without `s3` refuses `--project`
+with an explicit error.
 See the [Sim2Real guide](../docs/workbench/guides/sim2real-workflow.md).
 
 `npa workbench vlm-eval review-visual` and its SDK write a separate private rich
@@ -408,6 +428,25 @@ UR10e's new sealed physics profile preserves its USD mimic-joint mechanics.
 
 ## Workbench Runtimes
 
+Agent status, live verification and final-artifact handoff verify HTTPS using
+the installed certificate read over authenticated SSH. The saved provider
+instance, public address and SSH key must still identify that agent. Unknown
+SSH keys, a substituted TLS certificate, expiry or a wrong hostname fail before
+HTTP credentials are sent. See [agent access](../docs/agent.md) for recovery.
+When trust setup fails, `agent status --json` returns an unhealthy status with
+an `error_category` and withheld endpoints, and exits with code 1.
+
+LeIsaac relay setup reads the agent's TLS certificate fingerprint through
+host-key-verified SSH before sending HTTPS or WSS credentials. To check an
+existing agent's certificate without changing it, set
+`NPA_LEISAAC_CERTIFICATE_LIVE_PROJECT` to its saved project alias and
+`NPA_LEISAAC_CERTIFICATE_LIVE_AGENT` to its saved agent name, then run
+`NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest
+npa/tests/e2e/test_leisaac_certificate_live.py -q` from the repository root.
+Both variables are required for this opt-in check; there is no default target.
+See [LeIsaac transport security](../docs/workbench/leisaac-teleoperation.md)
+for certificate rotation and SSH trust requirements.
+
 Choose a runtime supported by the selected tool:
 
 | Mode | Runs on |
@@ -535,6 +574,10 @@ SDK; previously published container pins retain their recorded build versions.
 - `npa.server`: FastAPI checkpoint-serving and inference server
 - `npa.adapter`: sim demo -> LeRobotDataset v3 conversion
 - `npa.genesis`: teacher training, demo generation, student evaluation
+  The [public Genesis image contract](docker/workbench/genesis/README.md) explains
+  its rigid workload, ACT dependencies and `NPA_GENESIS_SUPPORTED_STUDENT_POLICIES`
+  capability declaration; additional student policies require a qualified
+  operator image.
 
   Genesis teacher training uses RSL-RL 5.5.1 actor/critic models. The loader
   retains legacy ActorCritic checkpoint support and validates saved dimensions
@@ -805,6 +848,16 @@ GitHub Actions dependencies daily and groups version updates into one
 `dependencies` PR. Review package declarations and generated locks together,
 regenerate CI pins after Python input changes, and validate the combined batch. Reproduce the scan
 with the [security gate instructions](../docs/security/merge-security-gate.md#reproduce-locally).
+
+FiftyOne's LeRobot importer and the policy container's Hub checkpoint downloader
+require custom Hub sources as `owner/repository@<full lowercase commit SHA>`.
+Bundled `lerobot/pusht` and `lerobot/diffusion_pusht` examples have fixed reviewed
+commits. Each download verifies the requested commit against Hub metadata and
+records its repository, type and commit in `.npa-hf-source.json`.
+Model checkpoints use a directory per commit so files removed from a later
+revision cannot survive from an older download. Invalid resolved commits stop
+before downloading or replacing the existing dataset cache. This freezes each
+transfer and repeat selection; it does not establish trust in an operator-selected repository.
 
 Dependabot excludes `ci/**` relative to `/npa`: omitting `/npa/ci` from the
 directory list does not exclude its nested manifests. Generated CI pins must

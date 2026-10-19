@@ -639,6 +639,95 @@ def test_disabled_mcap_does_not_upload_stale_bytes(
     assert f"{ROOT}/reports/sim2real.mcap" not in uploads
 
 
+def test_regen_result_rejects_missing_factual_evidence_field(tmp_path: Path) -> None:
+    with pytest.raises(
+        regen.Sim2RealRerunRegenError,
+        match="no factual held-out camera",
+    ):
+        regen._regen_result_from_viz(RUN_ID, tmp_path, SimpleNamespace())
+
+
+def test_finalize_regen_rejects_missing_heldout_evidence_fields(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        regen,
+        "_emit_regen_mcap",
+        lambda *_args, **_kwargs: pytest.fail("must reject before emitting MCAP"),
+    )
+    state = regen._RegenState({}, {}, tmp_path / "report.json", {}, {})
+    with pytest.raises(
+        regen.Sim2RealRerunRegenError,
+        match="no factual held-out camera",
+    ):
+        regen._finalize_regen_result(
+            _config(),
+            tmp_path,
+            object(),
+            state,
+            SimpleNamespace(),
+            upload=False,
+        )
+
+
+def test_finalize_regen_rejects_missing_factual_evidence_before_emitting(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        regen,
+        "_emit_regen_mcap",
+        lambda *_args, **_kwargs: pytest.fail("must reject before emitting MCAP"),
+    )
+    state = regen._RegenState({}, {}, tmp_path / "report.json", {}, {})
+    with pytest.raises(
+        regen.Sim2RealRerunRegenError,
+        match="no factual held-out camera",
+    ):
+        regen._finalize_regen_result(
+            _config(),
+            tmp_path,
+            object(),
+            state,
+            SimpleNamespace(),
+            upload=False,
+        )
+
+
+@pytest.mark.parametrize(
+    ("heldout_frame_count", "heldout_env_count"),
+    [(-1, 0), (0, -1), (-1, -1)],
+)
+def test_finalize_regen_rejects_nonpositive_heldout_evidence_fields(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    heldout_frame_count: int,
+    heldout_env_count: int,
+) -> None:
+    monkeypatch.setattr(
+        regen,
+        "_emit_regen_mcap",
+        lambda *_args, **_kwargs: pytest.fail("must reject before emitting MCAP"),
+    )
+    state = regen._RegenState({}, {}, tmp_path / "report.json", {}, {})
+    with pytest.raises(
+        regen.Sim2RealRerunRegenError,
+        match="no factual held-out camera",
+    ):
+        regen._finalize_regen_result(
+            _config(),
+            tmp_path,
+            object(),
+            state,
+            SimpleNamespace(
+                heldout_frame_count=heldout_frame_count,
+                heldout_env_count=heldout_env_count,
+            ),
+            upload=False,
+        )
+
+
 def test_byo_eval_propagates_inprocess_render_upload_failure() -> None:
     assert "_upload_succeeded = False" in byo_isaac_eval.ISAAC_EVAL_SCRIPT
     assert "os._exit(0 if _upload_succeeded else 1)" in byo_isaac_eval.ISAAC_EVAL_SCRIPT

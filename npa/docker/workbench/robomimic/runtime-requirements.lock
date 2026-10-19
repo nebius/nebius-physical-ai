@@ -43,7 +43,7 @@
     "diffusers": "0.38.0",
     "filelock": "3.32.5",
     "fonttools": "4.64.0",
-    "fsspec": "2025.5.1",
+    "fsspec": "2026.7.0",
     "h11": "0.16.0",
     "h5py": "3.14.0",
     "hf-xet": "1.6.0",
@@ -84,7 +84,7 @@
     "regex": "2024.11.6",
     "requests": "2.34.2",
     "s3transfer": "0.13.0",
-    "safetensors": "0.5.3",
+    "safetensors": "0.8.0",
     "six": "1.17.0",
     "sympy": "1.13.3",
     "termcolor": "3.1.0",
@@ -93,10 +93,10 @@
     "tqdm": "4.67.1",
     "triton": "3.3.1",
     "typing-extensions": "4.14.0",
-    "urllib3": "2.7.0",
+    "urllib3": "2.8.0",
     "zipp": "3.23.0"
   },
-  "runtime_id": "robomimic-cu128-py311-v1",
+  "runtime_id": "robomimic-cu128-py311-v2",
   "runtime_fetch": {
     "allowed_hosts": [
       "download.pytorch.org",

@@ -10,6 +10,7 @@ import json
 import os
 import secrets
 import shlex
+import ssl
 import subprocess
 from pathlib import Path
 from typing import Any, NoReturn
@@ -127,6 +128,7 @@ from npa.smoke._versions import supported_tool_version
 from npa.cli.agent_public import (
     AgentConfig,
     build_agent_urls,
+    probe_agent_health,
     record_public_https as _record_public_https,
     record_tls_verify as _record_tls_verify,
     record_customer_url as _record_customer_url,
@@ -11136,7 +11138,7 @@ def _health(
     user: str,
     password: str,
     timeout: float = 5.0,
-    verify: bool = True,
+    verify: bool | ssl.SSLContext = True,
 ) -> tuple[bool, int]:
     try:
         response = httpx.get(url, auth=(user, password), timeout=timeout, verify=verify)
@@ -11149,7 +11151,7 @@ def _basic_auth_protects_endpoint(
     url: str,
     *,
     timeout: float = 5.0,
-    verify: bool = True,
+    verify: bool | ssl.SSLContext = True,
 ) -> tuple[bool, int]:
     """Prove that an unauthenticated request cannot reach the agent UI."""
     try:
@@ -11175,7 +11177,7 @@ def _verify_artifact_only_live(
     record: dict[str, Any],
     auth_user: str,
     auth_password: str,
-    tls_verify: bool,
+    tls_verify: bool | ssl.SSLContext,
     project: str,
     name: str,
 ) -> None:
@@ -13006,18 +13008,17 @@ def status_cmd(
         )
     )
     public_url = _record_customer_url(record)
-    tls_verify = _record_tls_verify(record)
-    ui_ok, ui_code = _health(
-        agent_url, user=auth_user, password=auth_password, verify=tls_verify
-    )
-    basic_auth_enforced, unauthenticated_ui_code = _basic_auth_protects_endpoint(
+    health = probe_agent_health(
+        record,
         agent_url,
-        verify=tls_verify,
+        sim_viz_url,
+        user=auth_user,
+        password=auth_password,
+        tls_verifier=_record_tls_verify,
+        health_check=_health,
+        auth_check=_basic_auth_protects_endpoint,
     )
-    rerun_ok, rerun_code = _health(
-        sim_viz_url, user=auth_user, password=auth_password, verify=tls_verify
-    )
-    endpoint_disclosure_allowed = bool(ui_ok and basic_auth_enforced)
+    endpoint_disclosure_allowed = health["endpoint_disclosure_allowed"]
     payload = {
         "project": project,
         "name": name,
@@ -13032,20 +13033,18 @@ def status_cmd(
         "sim_viz_url": sim_viz_url if endpoint_disclosure_allowed else "",
         "sim_assets_url": sim_assets_url if endpoint_disclosure_allowed else "",
         "cameras_api_url": cameras_api_url if endpoint_disclosure_allowed else "",
-        "health": bool(ui_ok and rerun_ok and basic_auth_enforced),
-        "basic_auth_enforced": basic_auth_enforced,
-        "unauthenticated_ui_status_code": unauthenticated_ui_code,
+        **health,
         "endpoint_disclosure_allowed": endpoint_disclosure_allowed,
-        "ui_status_code": ui_code,
-        "rerun_status_code": rerun_code,
         "llm": record.get("llm", {}),
         "artifact_credentials": _artifact_credential_record_summary(record),
     }
     if output_json:
         typer.echo(json.dumps(payload, indent=2, sort_keys=True))
-        return
-    for key, value in payload.items():
-        typer.echo(f"{key}: {value}")
+    else:
+        for key, value in payload.items():
+            typer.echo(f"{key}: {value}")
+    if health.get("error_category"):
+        raise typer.Exit(code=1)
 
 
 @app.command("destroy")

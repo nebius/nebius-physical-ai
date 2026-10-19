@@ -5,6 +5,7 @@ from npa.cli.agent import rendered_agent_ui_html
 
 import base64
 import json
+import ssl
 import subprocess
 import re
 import shutil
@@ -3067,6 +3068,10 @@ def test_normalize_llm_models_supports_repeated_and_csv_values() -> None:
 
 def test_agent_status_json(monkeypatch) -> None:
     monkeypatch.setattr(
+        "npa.cli.agent_tls.record_agent_tls_context",
+        lambda _record: ssl.create_default_context(),
+    )
+    monkeypatch.setattr(
         "npa.cli.agent._agent_record",
         lambda project, name: {
             "public_ip": "8.8.8.8",
@@ -3118,6 +3123,10 @@ def test_agent_status_json(monkeypatch) -> None:
 def test_agent_status_withholds_endpoint_when_basic_auth_is_not_enforced(
     monkeypatch,
 ) -> None:
+    monkeypatch.setattr(
+        "npa.cli.agent_tls.record_agent_tls_context",
+        lambda _record: ssl.create_default_context(),
+    )
     monkeypatch.setattr(
         "npa.cli.agent._agent_record",
         lambda project, name: {
@@ -3222,6 +3231,10 @@ def test_verify_live_requires_a_recorded_region(monkeypatch) -> None:
 
 
 def test_verify_live_runs_pytests(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "npa.cli.agent_tls.record_agent_tls_context",
+        lambda _record: ssl.create_default_context(),
+    )
     workflow_status_timeouts: list[float] = []
 
     class _Resp:
@@ -4752,6 +4765,10 @@ def test_agent_preflight_fails_when_storage_write_probe_is_forbidden(
 
 
 def test_agent_status_read_only_does_not_probe_storage(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        "npa.cli.agent_tls.record_agent_tls_context",
+        lambda _record: ssl.create_default_context(),
+    )
     from npa.cli import agent as agent_module
     from npa.clients import storage_validation
 

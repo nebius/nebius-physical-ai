@@ -221,6 +221,82 @@ def test_tokens_and_s3_use_explicit_storage_without_image_resolution(
     diagnostic_spies.writes.assert_not_called()
 
 
+def test_s3_accepts_prefix_without_execution_image_resolution(
+    diagnostic_spies: SimpleNamespace,
+) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "health",
+            "sim2real",
+            "--checks",
+            "s3",
+            "--s3-prefix",
+            "diagnostic-prefix",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["selected_checks"] == ["s3"]
+    assert payload["checks"][0]["details"] == [
+        "S3 reachability uses only bucket and endpoint configuration; "
+        "--s3-prefix is not probed."
+    ]
+    diagnostic_spies.execution.assert_not_called()
+    diagnostic_spies.image_inspector.assert_not_called()
+
+
+def test_image_independent_prefix_requires_an_execution_check(
+    diagnostic_spies: SimpleNamespace,
+) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "health",
+            "sim2real",
+            "--checks",
+            "tokens,cluster",
+            "--s3-prefix",
+            "diagnostic-prefix",
+        ],
+    )
+
+    assert result.exit_code == 2
+    message = " ".join(result.output.replace("│", "").split())
+    assert "--s3-prefix is not used by the selected image-independent checks" in message
+    assert "Include --checks config or registry" in message
+    diagnostic_spies.loaded.assert_not_called()
+    diagnostic_spies.execution.assert_not_called()
+    diagnostic_spies.image_inspector.assert_not_called()
+
+
+@pytest.mark.parametrize("checks", ["tokens", "config"])
+def test_project_requires_the_s3_health_check(
+    diagnostic_spies: SimpleNamespace, checks: str
+) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "health",
+            "sim2real",
+            "--checks",
+            checks,
+            "--project",
+            "selected-project",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "--project is only used by the S3 health check" in result.output
+    diagnostic_spies.loaded.assert_not_called()
+    diagnostic_spies.execution.assert_not_called()
+
+
 def test_s3_uses_selected_project_storage_credentials(
     diagnostic_spies: SimpleNamespace,
     monkeypatch: pytest.MonkeyPatch,
@@ -559,6 +635,27 @@ def test_preflight_config_uses_the_canonical_image_dependent_checks(
     assert health._sim2real_preflight_config(["tokens"], overrides) is execution
 
 
+def test_execution_config_receives_s3_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    execution = object()
+    builder = Mock(return_value=execution)
+    monkeypatch.setattr(health, "build_config_from_env", builder)
+
+    overrides = {
+        "run_id": "diagnostic-run",
+        "s3_bucket": "example-bucket",
+        "s3_prefix": "operator-prefix",
+        "s3_endpoint": "https://storage.example.invalid",
+        "k8s_namespace": "",
+        "k8s_context": "",
+        "k8s_kubeconfig": "",
+    }
+
+    assert health._sim2real_preflight_config(["config"], overrides) is execution
+    builder.assert_called_once_with(**overrides)
+
+
 def test_unknown_checks_fail_before_any_config_or_credentials(
     diagnostic_spies: SimpleNamespace,
 ) -> None:
@@ -570,6 +667,26 @@ def test_unknown_checks_fail_before_any_config_or_credentials(
     diagnostic_spies.execution.assert_not_called()
     diagnostic_spies.defaults.assert_not_called()
     diagnostic_spies.loaded.assert_not_called()
+
+
+def test_image_free_checks_reject_unused_execution_overrides(
+    diagnostic_spies: SimpleNamespace,
+) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "health",
+            "sim2real",
+            "--checks",
+            "s3",
+            "--policy-image",
+            "registry.example.invalid/policy:operator",
+        ],
+    )
+    assert result.exit_code == 2
+    assert "--policy-image is not used" in result.output
+    assert "--checks config or registry" in result.output
 
 
 def test_empty_checks_fail_before_any_config_or_credentials(

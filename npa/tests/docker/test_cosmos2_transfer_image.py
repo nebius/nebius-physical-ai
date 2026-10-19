@@ -102,10 +102,12 @@ def test_lfs_media_models_and_build_credentials_are_excluded() -> None:
     assert not re.search(r"(?im)^\s*(COPY|ADD)\s+.*assets", text)
 
     overrides = (IMAGE_DIR / "security-overrides.txt").read_text(encoding="utf-8")
-    assert "nltk-3.10.3-py3-none-any.whl" in overrides
+    assert "nltk-3.10.3-py3-none-any.whl" not in overrides
+    installer = (IMAGE_DIR.parent / "common/install_hardened_nltk.sh").read_text()
+    assert 'NLTK_SOURCE_COMMIT="cbc98458b43de5f792f0382583c16df39e5c5117"' in installer
     assert (
-        "sha256=ff9598a8e20518ee0d557745890cc4435b9578489e2dcbc69c4f81fa060caf7c"
-        in overrides
+        'NLTK_SOURCE_SHA256="3c4a9e92b53e34074ae5b7bbf21109868b5ef620b40c68b8542a2db37f7d9d0c"'
+        in installer
     )
     assert "defusedxml-0.7.1-py2.py3-none-any.whl" in overrides
     assert (
@@ -128,7 +130,9 @@ def test_lfs_media_models_and_build_credentials_are_excluded() -> None:
         in overrides
     )
     assert "files.pythonhosted.org" in overrides
-    assert overrides.count("#sha256=") == 23
+    assert overrides.count("#sha256=") == 22
+    assert "/opt/npa/install_hardened_nltk.sh .venv/bin/python" in text
+    assert ".venv/bin/python /opt/npa/verify_hardened_nltk.py" in text
     assert re.search(
         r"uv pip install --python \.venv/bin/python --no-deps\s+\\\s+"
         r"--requirement /tmp/cosmos2-security-overrides\.txt",
@@ -136,7 +140,7 @@ def test_lfs_media_models_and_build_credentials_are_excluded() -> None:
     )
     # The direct-URL security overrides carry URL-fragment hashes; the separate
     # NPA CLI wheel overlay below deliberately uses pip-style --require-hashes.
-    assert 'version("nltk") == "3.10.3"' in text
+    assert 'version("nltk") == "3.10.3.post1+npa.cbc98458"' in text
     assert 'version("defusedxml") == "0.7.1"' in text
     assert 'version("pip") == "26.2"' in text
     assert 'version("msgpack") == "1.2.1"' in text

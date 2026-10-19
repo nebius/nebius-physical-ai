@@ -274,6 +274,11 @@ def test_sim2real_access_includes_cosmos3_structural_transfer_dependencies() -> 
 )
 def test_cosmos2_access_checks_auxiliary_runtime_dependencies(denied_repo: str) -> None:
     observed = {}
+    assets = {asset.repo: asset for asset in assets_for(["cosmos2"])}
+    tokenizer = assets["nvidia/Cosmos-Predict2.5-2B"]
+    assert tokenizer.revision == "85f8ae7bfe8f5525c8d103429524dcf12f98bf7b"
+    assert tokenizer.probe_path == "tokenizer.pth"
+    assert tokenizer.gated
 
     def validate(_token, repo, _repo_type, revision, probe_path):
         observed[repo] = (revision, probe_path)
@@ -680,4 +685,5 @@ def test_known_public_nvidia_defaults_are_not_marked_gated() -> None:
 
 def test_sim2real_access_excludes_unrelated_pusht_dataset():
     assert "lerobot/pusht" not in [asset.repo for asset in assets_for(["sim2real"])]
-    assert "lerobot/pusht" in [asset.repo for asset in assets_for(["lerobot"])]
+    lerobot_assets = {asset.repo: asset for asset in assets_for(["lerobot"])}
+    assert lerobot_assets["lerobot/pusht"].repo_type == "dataset"

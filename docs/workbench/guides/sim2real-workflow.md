@@ -293,6 +293,29 @@ npa/.venv/bin/npa cluster kubeconfig \
   --project "$NPA_PROJECT" --context "$NPA_CLUSTER"
 ```
 
+`npa cluster kubeconfig` writes the kubeconfig and local cluster-identity
+record that `npa cluster status` and `workflow submit --infra k8s/<context>`
+read; without it, submit refuses with "No NPA cluster identity exists for
+context ...; refusing controller adoption." `npa skypilot bind-controller`
+records which project/context owns the shared SkyPilot jobs controller;
+without it, submit refuses with "No shared controller owner is bound."
+
+`npa workbench health sim2real` checks pod creation and Job patch permissions
+using the selected kubeconfig identity. It does not impersonate the retired
+Sim2Real sibling-Job controller's `agent-sa`. Keep the same project, kubeconfig,
+and context for health checks and canonical `workflow submit --runtime`.
+When selecting only image-independent health checks, omit image, threshold, and
+S3-prefix overrides: the CLI rejects inputs those checks cannot use. Select the
+`config` or `registry` check when validating execution settings.
+
+## 3. Add a schedulable CPU pool before GPU work
+
+SkyPilot's Kubernetes jobs controller requests 2 vCPU/8 GiB. Sim2Real CPU states
+request 8 vCPU/32 GiB and deliberately use the small
+`npa-sim2real-control` image. Give them a Ready, schedulable, appropriately
+untainted node with enough allocatable CPU and memory. It may also advertise GPUs;
+the CPU profile has no GPU exclusion:
+
 Require validated RTX graphics drivers, a working shared filesystem on the
 consuming node groups, and sufficient CPU capacity. If a CPU pool is absent,
 its owner can add one:

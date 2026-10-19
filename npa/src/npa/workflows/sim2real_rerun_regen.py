@@ -46,8 +46,8 @@ from npa.workflows.sim2real.stage10_authority import (
     expected_byo_render_prefix,
     validate_stage10_input_scope,
 )
-from npa.workflows.sim2real.models import Sim2RealLoopConfig
 from npa.workflows.sim2real.artifact_config import Sim2RealArtifactConfig
+from npa.workflows.sim2real.models import Sim2RealLoopConfig
 from npa.workflows.sim2real.publication import (
     CommittedPublicationSnapshot,
     MutablePublicationTransaction,
@@ -230,7 +230,9 @@ def _completed_local_outer_pair(local_dir: Path) -> tuple[Path, Path] | None:
     return evidence, report
 
 
-def _gold_report_path(_config: Sim2RealLoopConfig, local_dir: Path) -> Path:
+def _gold_report_path(
+    _config: Sim2RealLoopConfig | Sim2RealArtifactConfig, local_dir: Path
+) -> Path:
     completed = _completed_local_outer_pair(local_dir)
     if completed is not None:
         return completed[1]
@@ -1956,7 +1958,7 @@ def _publish_regen_final_report(
 
 
 def _capture_regen_publication_snapshots(
-    config: Sim2RealLoopConfig,
+    config: Sim2RealLoopConfig | Sim2RealArtifactConfig,
     storage: StorageClient,
 ) -> dict[str, RemoteObjectSnapshot | None]:
     """Capture every mutable generation target before authority validation."""
@@ -2367,7 +2369,7 @@ def _stage_components(report: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _regen_paths(
-    config: Sim2RealLoopConfig,
+    config: Sim2RealLoopConfig | Sim2RealArtifactConfig,
     local_dir: Path | None,
     local_rrd_path: Path | None,
 ) -> tuple[Path, Path]:
@@ -2395,7 +2397,7 @@ class _RegenInputs:
 
 
 def _selected_regen_paths(
-    config: Sim2RealLoopConfig,
+    config: Sim2RealLoopConfig | Sim2RealArtifactConfig,
     work_dir: Path,
     storage: StorageClient,
     sync_inputs: bool,
@@ -2730,7 +2732,7 @@ def _validate_regen_materialized_frames(
 
 
 def _load_regen_state(
-    config: Sim2RealLoopConfig,
+    config: Sim2RealLoopConfig | Sim2RealArtifactConfig,
     work_dir: Path,
     storage: StorageClient,
     *,
@@ -2953,7 +2955,7 @@ def _update_stage14_component(
 
 
 def _persist_regen_report(
-    config: Sim2RealLoopConfig,
+    config: Sim2RealLoopConfig | Sim2RealArtifactConfig,
     work_dir: Path,
     output_rrd: Path,
     state: _RegenState,
@@ -3041,7 +3043,7 @@ def _current_mcap_path(
 
 
 def _publish_regen_recordings(
-    config: Sim2RealLoopConfig,
+    config: Sim2RealLoopConfig | Sim2RealArtifactConfig,
     work_dir: Path,
     storage: StorageClient,
     *,
@@ -3123,8 +3125,9 @@ def _has_factual_heldout_observation(
     result: Sim2RealVizResult,
     heldout_report: dict[str, Any] | None,
 ) -> bool:
-    return result.heldout_frame_count > 0 or (
-        result.heldout_env_count > 0 and _has_factual_heldout_scores(heldout_report)
+    return getattr(result, "heldout_frame_count", 0) > 0 or (
+        getattr(result, "heldout_env_count", 0) > 0
+        and _has_factual_heldout_scores(heldout_report)
     )
 
 
@@ -3140,7 +3143,7 @@ def _assert_regen_heldout_evidence(
 
 
 def _finalize_regen_result(
-    config: Sim2RealLoopConfig,
+    config: Sim2RealLoopConfig | Sim2RealArtifactConfig,
     work_dir: Path,
     storage: StorageClient,
     state: _RegenState,

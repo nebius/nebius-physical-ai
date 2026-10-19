@@ -851,7 +851,7 @@ def test_publication_occurs_only_after_heldout_frame_gate(
                 report={},
                 policy_access={},
             ),
-            _FakeVizResult(heldout_frame_count=0),
+            _FakeVizResult(heldout_frame_count=0, heldout_env_count=0),
             upload=True,
         )
     assert calls == []

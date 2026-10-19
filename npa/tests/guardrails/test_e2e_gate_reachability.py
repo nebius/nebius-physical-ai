@@ -30,6 +30,14 @@ MANUAL_GATES = {
         "Token Factory credentials and a private writable S3 prefix; "
         "run with npa/tests/e2e/README.md"
     ),
+    "NPA_LEISAAC_CERTIFICATE_LIVE_PROJECT": (
+        "read-only TLS identity verification requires an operator-selected existing agent project "
+        "and verified SSH host key; run with npa/README.md"
+    ),
+    "NPA_LEISAAC_CERTIFICATE_LIVE_AGENT": (
+        "read-only TLS identity verification requires an operator-selected existing agent name "
+        "and verified SSH host key; run with npa/README.md"
+    ),
     "NPA_PROJECT_SETUP_LIVE_CONFIG": (
         "requires a real project-only principal denied tenant quota reads, a private "
         "isolated project configuration, and optional owned CPU cluster creation/cleanup; "

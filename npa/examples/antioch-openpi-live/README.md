@@ -170,10 +170,13 @@ This double-WSS route is not a public unauthenticated proxy. Both legs reconnect
 independently and the relay writes only fixed counters and error classes to its
 private state file.
 
-The project Dockerfile adds only pinned `msgpack` and `websockets` wire-protocol
+The project Dockerfile adds only pinned `msgpack` (1.2.3) and `websockets` wire-protocol
 dependencies to Antioch's version-matched Isaac Sim base. The small local codec
-is adapted from the pinned Apache-2.0 OpenPI client and rejects object arrays;
-neither OpenPI model code nor weights are included in the sim image.
+is adapted from the pinned Apache-2.0 OpenPI client. Both encoding and decoding
+reject object, structured/void and complex dtypes. Decoding validates the marker,
+primitive dtype, nonnegative integer shape and exact payload length before
+constructing an array; malformed replies fail before native array access.
+Neither OpenPI model code nor weights are included in the sim image.
 The controller copies the reviewed scenario, codec, and bounded WSS bridge through
 supported `service cp` and verifies their readability before dispatch. Because the
 current CLI restricts copies to `/workspace/project`, it uploads there and uses

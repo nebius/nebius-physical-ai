@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-envgen@sha256:08eb75118f5a04194d33a60308212db7706dd9c339d74afc5471a58608bf0422
+ARG BASE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-envgen@sha256:55f1541c1a86e9d865963753cfa38fa1dbf88928c8d28d9ee30e2851a5604b88
 FROM ${BASE_IMAGE}
 
 ARG SIM2REAL_EVAL_VERSION=cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z

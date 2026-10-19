@@ -65,8 +65,17 @@ def test_public_publisher_builds_only_immutable_public_development_refs() -> Non
         "paths": ["npa/docker/workbench/**"],
     }
     assert triggers["schedule"] == [{"cron": "0 6 * * 1"}]
-    assert spec["permissions"]["packages"] == "write"
-    assert spec["permissions"]["attestations"] == "write"
+    assert spec["permissions"] == {"contents": "read"}
+    jobs = spec["jobs"]
+    assert jobs["build-development"]["permissions"] == {
+        "contents": "read",
+        "packages": "write",
+        "attestations": "write",
+        "id-token": "write",
+    }
+    assert jobs["promote"]["permissions"] == {"contents": "read", "packages": "write"}
+    assert jobs["cleanup-requested"]["permissions"] == {"packages": "write"}
+    assert "permissions" not in jobs["resolve"]
     assert "development_image_for_tool" in text
     assert "dev-<sha>" in text
     assert "ghcr.io/nebius/nebius-physical-ai" in text

@@ -1,0 +1,49 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "7e526efdc4c1f0b02232e2295998bfe7303b79044a26ff64cd6bd71d4fe8a95f",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Local CLI schema validation succeeded and planning resolved both stages including the declared image argument. Empty input, example bucket, and unresolved tool:// Isaac image remain execution prerequisites.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/scan-to-isaac-navigation.yaml --json: status valid",
+        "npa workbench workflow plan-spec workflows/testing/scan-to-isaac-navigation.yaml --run-id preview --json: 2 stages",
+        "npa/tests/orchestration/npa_workflow/test_scan_to_isaac_navigation.py: 3 passed"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Offline graph/render checks confirm OpenUSD assembly feeds its exact run-scoped scene and provenance to the native Isaac PhysX module with distinct CPU/RTX images and staged source. Operator input contents remain unverified.",
+      "evidence": [
+        "npa/tests/orchestration/npa_workflow/test_scan_to_isaac_navigation.py: 3 passed"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "Operator must select and verify a writable run-scoped storage prefix.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "Operator must supply visual USD, collision mesh, measured transforms, capture lineage and ray probes.",
+      "evidence": []
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "Storage credentials and run-scoped Isaac runtime access were not checked.",
+      "evidence": []
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "Physics execution requires an operator-selected immutable isaac_image digest; it is recorded as a declaration, not independently verified running-image identity. No image pullability check was performed.",
+      "evidence": []
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "This separate supplied visual/collision workflow remains unqualified end to end. The shared native probe passed all 501 measured-depth queries on the full public RGB-D reconstruction in Isaac Sim 6.0.1 / PhysX 110.1.13 on RTX PRO 6000; see the RGB-D readiness record for that narrower evidence.",
+      "evidence": []
+    }
+  }
+}

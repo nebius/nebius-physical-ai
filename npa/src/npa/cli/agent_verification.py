@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import os
+import ssl
 import subprocess
 import sys
 from dataclasses import dataclass
+from functools import cached_property
 from pathlib import Path
 from typing import Any, Callable, NoReturn
 
@@ -21,6 +23,9 @@ from npa.cli.agent_public import (
     record_tls_verify,
 )
 from npa.cli.agent_verification_ui import verify_agent_ui
+from npa.clients.nebius import NebiusError
+from npa.clients.network import NetworkIngressError
+from npa.clients.ssh import SSHError
 
 
 @dataclass(frozen=True)
@@ -43,9 +48,15 @@ class _VerificationContext:
     def sim_assets_base(self) -> str:
         return str(self.record.get("sim_assets_url", self.agent_url)).rstrip("/")
 
-    @property
-    def tls_verify(self) -> bool:
-        return record_tls_verify(self.record)
+    @cached_property
+    def tls_verify(self) -> bool | ssl.SSLContext:
+        try:
+            return record_tls_verify(self.record)
+        except (ValueError, SSHError, NetworkIngressError, NebiusError, OSError) as exc:
+            self.fail(
+                f"Agent HTTPS identity verification failed ({type(exc).__name__}); "
+                "check provider access and the recorded SSH key before retrying."
+            )
 
 
 def _verify_public_access(context: _VerificationContext) -> None:

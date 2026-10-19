@@ -1,0 +1,960 @@
+{
+  "schema": "npa.wan-ubuntu-literal-review.v1",
+  "review_date": "2026-10-17",
+  "image_manifest_digest": "sha256:b9cf0e8702533d5614046d1828068de3da23bad2f3f2b113c445227dc72398a6",
+  "image_source_commit": "1995fce2f564d69c4088f13b25797a1b71837c31",
+  "scope": "Only these exact path and SHA-256 pairs. Modified bytes, other paths, compressed parents, vulnerabilities and independent complete-byte findings retain their own gates. This local artifact is not published or GPU-qualified.",
+  "binary_artifacts": [
+    {
+      "package": "libavcodec62",
+      "version": "7:8.0.1-3ubuntu2",
+      "source": "ffmpeg",
+      "source_version": "7:8.0.1-3ubuntu2",
+      "artifact_sha256": "3afab9dafae3b26b7c4cffcee92395c28c10ea026dece5ea1aaee2e72297ee9b",
+      "url": "https://archive.ubuntu.com/ubuntu/pool/universe/f/ffmpeg/libavcodec62_8.0.1-3ubuntu2_amd64.deb"
+    },
+    {
+      "package": "libavutil60",
+      "version": "7:8.0.1-3ubuntu2",
+      "source": "ffmpeg",
+      "source_version": "7:8.0.1-3ubuntu2",
+      "artifact_sha256": "708566c7b998afc1665a531ba712bbd440e12d260e8c7d102a0d9fd655886c52",
+      "url": "https://archive.ubuntu.com/ubuntu/pool/universe/f/ffmpeg/libavutil60_8.0.1-3ubuntu2_amd64.deb"
+    },
+    {
+      "package": "libgnutls30t64",
+      "version": "3.8.12-2ubuntu1.1",
+      "source": "gnutls28",
+      "source_version": "3.8.12-2ubuntu1.1",
+      "artifact_sha256": "b08d4e2842cd53dbe1565a46bd11d6f7ecb36bc08b236802ae4da744cae9f691",
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/g/gnutls28/libgnutls30t64_3.8.12-2ubuntu1.1_amd64.deb"
+    },
+    {
+      "package": "libmbedcrypto16",
+      "version": "3.6.5-0.1ubuntu2",
+      "source": "mbedtls",
+      "source_version": "3.6.5-0.1ubuntu2",
+      "artifact_sha256": "dd320215c1bd6e954d5aea07e640f7063865af9ef55bd64c5d9cd3cbd1bf7555",
+      "url": "https://archive.ubuntu.com/ubuntu/pool/universe/m/mbedtls/libmbedcrypto16_3.6.5-0.1ubuntu2_amd64.deb"
+    },
+    {
+      "package": "libssh-4",
+      "version": "0.11.3-1ubuntu2.1",
+      "source": "libssh",
+      "source_version": "0.11.3-1ubuntu2.1",
+      "artifact_sha256": "f2c70d1f4c88e3209d858d5a59a36b667e7eb5aa19a10e49675cca89f9905239",
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/libs/libssh/libssh-4_0.11.3-1ubuntu2.1_amd64.deb"
+    },
+    {
+      "package": "libssh2-1t64",
+      "version": "1.11.1-1ubuntu0.26.04.4",
+      "source": "libssh2",
+      "source_version": "1.11.1-1ubuntu0.26.04.4",
+      "artifact_sha256": "bb3e334dc885d124d38cd4350f1cb4606c03ce58e9f53dc51a84c2c8d11c84e1",
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/libs/libssh2/libssh2-1t64_1.11.1-1ubuntu0.26.04.4_amd64.deb"
+    },
+    {
+      "package": "libunistring5",
+      "version": "1.3-2build1",
+      "source": "libunistring",
+      "source_version": "1.3-2build1",
+      "artifact_sha256": "88c0163f1acb384abde07641b7e13fcaea36e0a3b88fc57a653779fc429fc46a",
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/libu/libunistring/libunistring5_1.3-2build1_amd64.deb"
+    },
+    {
+      "package": "openssh-client",
+      "version": "1:10.2p1-2ubuntu3.8",
+      "source": "openssh",
+      "source_version": "1:10.2p1-2ubuntu3.8",
+      "artifact_sha256": "81770282e1e007b399aca7de4e4e9f72e39a10ad65abaf83ef727c28cadfb22f",
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/o/openssh/openssh-client_10.2p1-2ubuntu3.8_amd64.deb"
+    },
+    {
+      "package": "openssh-server",
+      "version": "1:10.2p1-2ubuntu3.8",
+      "source": "openssh",
+      "source_version": "1:10.2p1-2ubuntu3.8",
+      "artifact_sha256": "d14910ed045bd4a2a4c9a4eeb6b3edf08d527fb4cdee5cf527fe66b8bb364c31",
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/o/openssh/openssh-server_10.2p1-2ubuntu3.8_amd64.deb"
+    }
+  ],
+  "source_artifacts": [
+    {
+      "source": "ffmpeg",
+      "version": "7:8.0.1-3ubuntu2",
+      "artifacts": [
+        {
+          "filename": "ffmpeg_8.0.1.orig.tar.xz",
+          "sha256": "05ee0b03119b45c0bdb4df654b96802e909e0a752f72e4fe3794f487229e5a41",
+          "bytes": 11388848,
+          "url": "https://archive.ubuntu.com/ubuntu/pool/universe/f/ffmpeg/ffmpeg_8.0.1.orig.tar.xz"
+        },
+        {
+          "filename": "ffmpeg_8.0.1.orig.tar.xz.asc",
+          "sha256": "54ab4020bb4eb280444da74d7aabc282acf6e8500cf6feaefd9821373fa9e72c",
+          "bytes": 520,
+          "url": "https://archive.ubuntu.com/ubuntu/pool/universe/f/ffmpeg/ffmpeg_8.0.1.orig.tar.xz.asc"
+        },
+        {
+          "filename": "ffmpeg_8.0.1-3ubuntu2.debian.tar.xz",
+          "sha256": "a32bd75677bca735105b04a0ebd190a3481e0d8c2fcacd7d9f17524e240ee879",
+          "bytes": 58084,
+          "url": "https://archive.ubuntu.com/ubuntu/pool/universe/f/ffmpeg/ffmpeg_8.0.1-3ubuntu2.debian.tar.xz"
+        },
+        {
+          "filename": "ffmpeg_8.0.1-3ubuntu2.dsc",
+          "sha256": "70ac30ebbb7e89fc4ebc4438457fab7c1deea5b62986577bfb1c866fee72436e",
+          "bytes": 6104,
+          "url": "https://archive.ubuntu.com/ubuntu/pool/universe/f/ffmpeg/ffmpeg_8.0.1-3ubuntu2.dsc"
+        }
+      ]
+    },
+    {
+      "source": "gnutls28",
+      "version": "3.8.12-2ubuntu1.1",
+      "artifacts": [
+        {
+          "filename": "gnutls28_3.8.12.orig.tar.xz",
+          "sha256": "a7b341421bfd459acf7a374ca4af3b9e06608dcd7bd792b2bf470bea012b8e51",
+          "bytes": 6949604,
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/g/gnutls28/gnutls28_3.8.12.orig.tar.xz"
+        },
+        {
+          "filename": "gnutls28_3.8.12.orig.tar.xz.asc",
+          "sha256": "7a70d4071502974666f2f661e4ab06ba06076efd20468e4198f5f09c7ace41e2",
+          "bytes": 996,
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/g/gnutls28/gnutls28_3.8.12.orig.tar.xz.asc"
+        },
+        {
+          "filename": "gnutls28_3.8.12-2ubuntu1.1.debian.tar.xz",
+          "sha256": "c6154db5511efc877f20b79753fbdb35c71b42e151b531f62b819db9466b3c45",
+          "bytes": 192052,
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/g/gnutls28/gnutls28_3.8.12-2ubuntu1.1.debian.tar.xz"
+        },
+        {
+          "filename": "gnutls28_3.8.12-2ubuntu1.1.dsc",
+          "sha256": "05af95f4a219bfa817324ac40c2d94d499e0b082e4cea63ea11693790d90673e",
+          "bytes": 3362,
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/g/gnutls28/gnutls28_3.8.12-2ubuntu1.1.dsc"
+        }
+      ]
+    },
+    {
+      "source": "libssh",
+      "version": "0.11.3-1ubuntu2.1",
+      "artifacts": [
+        {
+          "filename": "libssh_0.11.3.orig.tar.xz",
+          "sha256": "7d8a1361bb094ec3f511964e78a5a4dba689b5986e112afabe4f4d0d6c6125c3",
+          "bytes": 622776,
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/libs/libssh/libssh_0.11.3.orig.tar.xz"
+        },
+        {
+          "filename": "libssh_0.11.3.orig.tar.xz.asc",
+          "sha256": "2710f8785d21717097ee042884683ea14dd1be95c77d64e940ef7e58a9c8ca88",
+          "bytes": 833,
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/libs/libssh/libssh_0.11.3.orig.tar.xz.asc"
+        },
+        {
+          "filename": "libssh_0.11.3-1ubuntu2.1.debian.tar.xz",
+          "sha256": "6b4fb0388ec8897217e5d40d37d7d835f4a5512b450de5825d10f1c9c675de75",
+          "bytes": 51516,
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/libs/libssh/libssh_0.11.3-1ubuntu2.1.debian.tar.xz"
+        },
+        {
+          "filename": "libssh_0.11.3-1ubuntu2.1.dsc",
+          "sha256": "05a4a8cbf41b2bb1e433c805d88a29254f759bb7d2577379ad9a0d57a7a4ac54",
+          "bytes": 2716,
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/libs/libssh/libssh_0.11.3-1ubuntu2.1.dsc"
+        }
+      ]
+    },
+    {
+      "source": "libssh2",
+      "version": "1.11.1-1ubuntu0.26.04.4",
+      "artifacts": [
+        {
+          "filename": "libssh2_1.11.1.orig.tar.gz",
+          "sha256": "d9ec76cbe34db98eec3539fe2c899d26b0c837cb3eb466a56b0f109cabf658f7",
+          "bytes": 1093012,
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/libs/libssh2/libssh2_1.11.1.orig.tar.gz"
+        },
+        {
+          "filename": "libssh2_1.11.1.orig.tar.gz.asc",
+          "sha256": "f5618c9356a1d5a8059d6cf64015d86547f06b2b8b1f542fbbaf381a736c8075",
+          "bytes": 488,
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/libs/libssh2/libssh2_1.11.1.orig.tar.gz.asc"
+        },
+        {
+          "filename": "libssh2_1.11.1-1ubuntu0.26.04.4.debian.tar.xz",
+          "sha256": "b612e764ee6f0dc0487713d7c7738d00065fdddd0d13684279aa00298a875b07",
+          "bytes": 25696,
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/libs/libssh2/libssh2_1.11.1-1ubuntu0.26.04.4.debian.tar.xz"
+        },
+        {
+          "filename": "libssh2_1.11.1-1ubuntu0.26.04.4.dsc",
+          "sha256": "68b163e579ae9c7347d7329862176d68560b818812355106e0fc69707ad4cc70",
+          "bytes": 2458,
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/libs/libssh2/libssh2_1.11.1-1ubuntu0.26.04.4.dsc"
+        }
+      ]
+    },
+    {
+      "source": "libunistring",
+      "version": "1.3-2build1",
+      "artifacts": [
+        {
+          "filename": "libunistring_1.3.orig.tar.xz",
+          "sha256": "f245786c831d25150f3dfb4317cda1acc5e3f79a5da4ad073ddca58886569527",
+          "bytes": 2753448,
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/libu/libunistring/libunistring_1.3.orig.tar.xz"
+        },
+        {
+          "filename": "libunistring_1.3.orig.tar.xz.asc",
+          "sha256": "62201b5b7ce9c0b033c50cefa5d7769dff4b7cee8205572e0cf917653cae9e33",
+          "bytes": 833,
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/libu/libunistring/libunistring_1.3.orig.tar.xz.asc"
+        },
+        {
+          "filename": "libunistring_1.3-2build1.debian.tar.xz",
+          "sha256": "532952853fc91014d1946bf6620761b3f145d0db854b9cb50e9fba67ca31a31b",
+          "bytes": 28548,
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/libu/libunistring/libunistring_1.3-2build1.debian.tar.xz"
+        },
+        {
+          "filename": "libunistring_1.3-2build1.dsc",
+          "sha256": "4421618798ca69760ab82a5ad3758636ffea6ca9df61a80416114d83fd0bb9f0",
+          "bytes": 2210,
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/libu/libunistring/libunistring_1.3-2build1.dsc"
+        }
+      ]
+    },
+    {
+      "source": "mbedtls",
+      "version": "3.6.5-0.1ubuntu2",
+      "artifacts": [
+        {
+          "filename": "mbedtls_3.6.5.orig.tar.bz2",
+          "sha256": "4a11f1777bb95bf4ad96721cac945a26e04bf19f57d905f241fe77ebeddf46d8",
+          "bytes": 5367178,
+          "url": "https://archive.ubuntu.com/ubuntu/pool/universe/m/mbedtls/mbedtls_3.6.5.orig.tar.bz2"
+        },
+        {
+          "filename": "mbedtls_3.6.5-0.1ubuntu2.debian.tar.xz",
+          "sha256": "c5dfbb9c1f344fc2f7548377e20a03ba597239fb5c6400c54af4d40481d44694",
+          "bytes": 20732,
+          "url": "https://archive.ubuntu.com/ubuntu/pool/universe/m/mbedtls/mbedtls_3.6.5-0.1ubuntu2.debian.tar.xz"
+        },
+        {
+          "filename": "mbedtls_3.6.5-0.1ubuntu2.dsc",
+          "sha256": "6ccd5703166d133c2bef0d109a1f78b73c4d4b65a2c4912df0f758155d33c19e",
+          "bytes": 2486,
+          "url": "https://archive.ubuntu.com/ubuntu/pool/universe/m/mbedtls/mbedtls_3.6.5-0.1ubuntu2.dsc"
+        }
+      ]
+    },
+    {
+      "source": "openssh",
+      "version": "1:10.2p1-2ubuntu3.8",
+      "artifacts": [
+        {
+          "filename": "openssh_10.2p1.orig.tar.gz",
+          "sha256": "ccc42c0419937959263fa1dbd16dafc18c56b984c03562d2937ce56a60f798b2",
+          "bytes": 1974519,
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/o/openssh/openssh_10.2p1.orig.tar.gz"
+        },
+        {
+          "filename": "openssh_10.2p1-2ubuntu3.8.debian.tar.xz",
+          "sha256": "1ba81d3dc8061d6b128847030be6ce420230f81e74a9d7ababf7516a97073f51",
+          "bytes": 232896,
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/o/openssh/openssh_10.2p1-2ubuntu3.8.debian.tar.xz"
+        },
+        {
+          "filename": "openssh_10.2p1-2ubuntu3.8.dsc",
+          "sha256": "5f83862e65677da1dcb509642feb14a55da88544283949a70d46eb1e2aef2d3d",
+          "bytes": 3328,
+          "url": "https://archive.ubuntu.com/ubuntu/pool/main/o/openssh/openssh_10.2p1-2ubuntu3.8.dsc"
+        }
+      ]
+    }
+  ],
+  "source_file_identities": [
+    {
+      "archive": "ffmpeg_8.0.1.orig.tar.xz",
+      "member": "ffmpeg-8.0.1/libavcodec/nvenc.c",
+      "sha256": "13b3c8bca61c20803b1aba7af569851873fb60ffdddbe4bc6660fb99465b43f9",
+      "bytes": 120052
+    },
+    {
+      "archive": "ffmpeg_8.0.1.orig.tar.xz",
+      "member": "ffmpeg-8.0.1/libavcodec/cuviddec.c",
+      "sha256": "1641671c24bfd240254282d6acc4065c58334f613ab16d6f442e5e3d53ff117a",
+      "bytes": 45607
+    },
+    {
+      "archive": "ffmpeg_8.0.1.orig.tar.xz",
+      "member": "ffmpeg-8.0.1/libavutil/hwcontext_cuda.c",
+      "sha256": "d76fec3b4fea5a3d432470d6d3f20bfc413cd55e06f373c6f52d1bfd828a4e7d",
+      "bytes": 18066
+    },
+    {
+      "archive": "gnutls28_3.8.12.orig.tar.xz",
+      "member": "gnutls-3.8.12/lib/crypto-selftests-pk.c",
+      "sha256": "6e596be00754107fd7f7d1f132c2dc8cd0ff12bbdfc6de08c162a1dd5eedc7e8",
+      "bytes": 41894
+    },
+    {
+      "archive": "libssh_0.11.3.orig.tar.xz",
+      "member": "libssh-0.11.3/include/libssh/pki_priv.h",
+      "sha256": "1499d34d4c64a2c3b9b0912148ac967492c1c4f5cc2030d43aa5a48348f4e591",
+      "bytes": 6837
+    },
+    {
+      "archive": "libssh_0.11.3.orig.tar.xz",
+      "member": "libssh-0.11.3/src/pki.c",
+      "sha256": "5cf4b1376a5d193c6df05fc5b524e7e56585136ebc547ff9f69ee4d3694024f6",
+      "bytes": 82868
+    },
+    {
+      "archive": "libssh2_1.11.1.orig.tar.gz",
+      "member": "libssh2-1.11.1/src/pem.c",
+      "sha256": "eba1a89ba4beb0aa9aaf4e4da68be5f2f890e7367001e8bb705c697b9485d416",
+      "bytes": 29008
+    },
+    {
+      "archive": "libunistring_1.3.orig.tar.xz",
+      "member": "libunistring-1.3/lib/uniname/uniname.c",
+      "sha256": "0828641bba7d301e23a7b9b89ebf3cf76130d81bbf0147c8b24c3d071409aa12",
+      "bytes": 22482
+    },
+    {
+      "archive": "libunistring_1.3.orig.tar.xz",
+      "member": "libunistring-1.3/lib/uniname/uninames.h",
+      "sha256": "c8f20767f2c7cdc1882f7e420db077119b2925dd588a71934a563c054e6d325a",
+      "bytes": 3532641
+    },
+    {
+      "archive": "mbedtls_3.6.5.orig.tar.bz2",
+      "member": "mbedtls-3.6.5/library/pk_internal.h",
+      "sha256": "822b38a1c868521808896340e15134e04f980ba8117e7b14a193a44d229c0492",
+      "bytes": 8003
+    },
+    {
+      "archive": "mbedtls_3.6.5.orig.tar.bz2",
+      "member": "mbedtls-3.6.5/library/pkparse.c",
+      "sha256": "36c0590c516a1b4ad99bfefc213da1a19a2e27638ee3f267ea3365cc738ecf17",
+      "bytes": 43503
+    },
+    {
+      "archive": "mbedtls_3.6.5.orig.tar.bz2",
+      "member": "mbedtls-3.6.5/library/pkwrite.c",
+      "sha256": "d4bc68637ca49b40831a166cfdb47e38251f0ed8898148ecf32037f23fff36cf",
+      "bytes": 20717
+    },
+    {
+      "archive": "openssh_10.2p1.orig.tar.gz",
+      "member": "openssh-10.2p1/sshkey.c",
+      "sha256": "9a2b81372e68ec9fe2f1a34af0e962cd485055e26577de563d354f9729c40dcd",
+      "bytes": 91982
+    }
+  ],
+  "typed_constant_verification": {
+    "typed_unicode_pool_matches_compiled_bytes": true,
+    "unicode_pool_bytes": 159015,
+    "unicode_source_sha256": "c8f20767f2c7cdc1882f7e420db077119b2925dd588a71934a563c054e6d325a",
+    "unicode_consumer_sha256": "0828641bba7d301e23a7b9b89ebf3cf76130d81bbf0147c8b24c3d071409aa12",
+    "mbedtls_header_sha256": "822b38a1c868521808896340e15134e04f980ba8117e7b14a193a44d229c0492",
+    "parser_delimiters_and_selftest_constants_verified": true,
+    "dt_needed_contains_no_forbidden_driver_libraries": true,
+    "operational_credential_disposition": false
+  },
+  "independent_authentication": {
+    "keyring_sha256": "80a36b0a6de2f69f49d2df75ef473ccde121e9e190b9ea01d20a4f63778d5c31",
+    "verified_metadata": [
+      {
+        "inrelease": "archive.ubuntu.com_ubuntu_dists_resolute-backports_InRelease",
+        "sha256": "f5f689a44078cb068bab5c997935959acd6e3bca5c404fef6ae1414ba97b6733",
+        "fingerprints": [
+          "F6ECB3762474EDA9D21B7022871920D1991BC93C"
+        ]
+      },
+      {
+        "inrelease": "archive.ubuntu.com_ubuntu_dists_resolute-updates_InRelease",
+        "sha256": "6b17b79743ceb13a52f20e7902c2f56dcf1edbe0e5fa716184e1bfd0ff53f7a3",
+        "fingerprints": [
+          "F6ECB3762474EDA9D21B7022871920D1991BC93C"
+        ]
+      },
+      {
+        "inrelease": "archive.ubuntu.com_ubuntu_dists_resolute_InRelease",
+        "sha256": "45f95ce276cdba3e41870516a130e03c58b8b7a79e9546b0efe9e526d255740c",
+        "fingerprints": [
+          "F6ECB3762474EDA9D21B7022871920D1991BC93C"
+        ]
+      },
+      {
+        "inrelease": "security.ubuntu.com_ubuntu_dists_resolute-security_InRelease",
+        "sha256": "65fb2cdcce915910dd07cfa5de91113376fe5900413d1ee9a9f9e4a01a059301",
+        "fingerprints": [
+          "F6ECB3762474EDA9D21B7022871920D1991BC93C"
+        ]
+      },
+      {
+        "index": "archive.ubuntu.com_ubuntu_dists_resolute-backports_universe_binary-amd64_Packages.lz4",
+        "sha256": "56d8aefd9d7e90547a865902ac65da06429cc1771911e86dca0395ae19f19a03",
+        "bytes": 11149
+      },
+      {
+        "index": "archive.ubuntu.com_ubuntu_dists_resolute-updates_main_binary-amd64_Packages.lz4",
+        "sha256": "72a4087d80bd0c88e4a770de6733ec338ebbb3b52038e0a2b6134eb084958a54",
+        "bytes": 3927665
+      },
+      {
+        "index": "archive.ubuntu.com_ubuntu_dists_resolute-updates_multiverse_binary-amd64_Packages.lz4",
+        "sha256": "cfd4795cde004b66cfdae9bc203ef879a492fa1f03d4639c8a77198beecf6a94",
+        "bytes": 152662
+      },
+      {
+        "index": "archive.ubuntu.com_ubuntu_dists_resolute-updates_restricted_binary-amd64_Packages.lz4",
+        "sha256": "59e6508e795b8c7c1689a28d771b8636b60f5f77fd10bdd2a1742388583210b6",
+        "bytes": 3130674
+      },
+      {
+        "index": "archive.ubuntu.com_ubuntu_dists_resolute-updates_universe_binary-amd64_Packages.lz4",
+        "sha256": "09320929a03aaa23aae1312571bdeefe1fb95bb324b5dc687ac518805f7d3197",
+        "bytes": 1617618
+      },
+      {
+        "index": "archive.ubuntu.com_ubuntu_dists_resolute_main_binary-amd64_Packages.lz4",
+        "sha256": "92eb335c0ed27983d41a5a0efdf0edce3e67bfa34e8e987af9df260ca72d9bf9",
+        "bytes": 7581722
+      },
+      {
+        "index": "archive.ubuntu.com_ubuntu_dists_resolute_multiverse_binary-amd64_Packages.lz4",
+        "sha256": "e1fc663a0e6ca63ea0347f7bb36f1af195c1eea688a481adb721ac1556a70fa1",
+        "bytes": 1359201
+      },
+      {
+        "index": "archive.ubuntu.com_ubuntu_dists_resolute_restricted_binary-amd64_Packages.lz4",
+        "sha256": "a8dbe8c0a9c548652f85cb1ee93a0ce560c6ad3ca7269e13657d9481a289635d",
+        "bytes": 1087693
+      },
+      {
+        "index": "archive.ubuntu.com_ubuntu_dists_resolute_universe_binary-amd64_Packages.lz4",
+        "sha256": "9c009342905706a05822f6e751f5b1ac34b687f054bfca9a0a652178445fc44c",
+        "bytes": 76792699
+      },
+      {
+        "index": "security.ubuntu.com_ubuntu_dists_resolute-security_main_binary-amd64_Packages.lz4",
+        "sha256": "b66f99fb8009d8f1f66b1c05bfd0434f3db1ccb611a9ddd0ce66391c709017ad",
+        "bytes": 3173830
+      },
+      {
+        "index": "security.ubuntu.com_ubuntu_dists_resolute-security_multiverse_binary-amd64_Packages.lz4",
+        "sha256": "ff2f92fe625d89892843f837fc9c5905d5e4766a98bc6ab7b323815e4963168a",
+        "bytes": 148711
+      },
+      {
+        "index": "security.ubuntu.com_ubuntu_dists_resolute-security_restricted_binary-amd64_Packages.lz4",
+        "sha256": "706e850612bd7f747928894de767225534e0608cab41bc4aed9371e0a3e31898",
+        "bytes": 3055827
+      },
+      {
+        "index": "security.ubuntu.com_ubuntu_dists_resolute-security_universe_binary-amd64_Packages.lz4",
+        "sha256": "24987da10fd78b08e4bf0d91996f39be0dfcc1ecdc72019e2ec464fcf6316908",
+        "bytes": 972957
+      },
+      {
+        "inrelease": "archive.ubuntu.com_ubuntu_dists_resolute-backports_InRelease",
+        "sha256": "f5f689a44078cb068bab5c997935959acd6e3bca5c404fef6ae1414ba97b6733",
+        "fingerprints": [
+          "F6ECB3762474EDA9D21B7022871920D1991BC93C"
+        ]
+      },
+      {
+        "inrelease": "archive.ubuntu.com_ubuntu_dists_resolute-updates_InRelease",
+        "sha256": "6b17b79743ceb13a52f20e7902c2f56dcf1edbe0e5fa716184e1bfd0ff53f7a3",
+        "fingerprints": [
+          "F6ECB3762474EDA9D21B7022871920D1991BC93C"
+        ]
+      },
+      {
+        "inrelease": "archive.ubuntu.com_ubuntu_dists_resolute_InRelease",
+        "sha256": "45f95ce276cdba3e41870516a130e03c58b8b7a79e9546b0efe9e526d255740c",
+        "fingerprints": [
+          "F6ECB3762474EDA9D21B7022871920D1991BC93C"
+        ]
+      },
+      {
+        "inrelease": "security.ubuntu.com_ubuntu_dists_resolute-security_InRelease",
+        "sha256": "65fb2cdcce915910dd07cfa5de91113376fe5900413d1ee9a9f9e4a01a059301",
+        "fingerprints": [
+          "F6ECB3762474EDA9D21B7022871920D1991BC93C"
+        ]
+      },
+      {
+        "index": "archive.ubuntu.com_ubuntu_dists_resolute-backports_universe_binary-amd64_Packages.lz4",
+        "sha256": "56d8aefd9d7e90547a865902ac65da06429cc1771911e86dca0395ae19f19a03",
+        "bytes": 11149
+      },
+      {
+        "index": "archive.ubuntu.com_ubuntu_dists_resolute-backports_universe_source_Sources.lz4",
+        "sha256": "22a27546494e955b6b832fbf09a39b9ee6b84663e259190b406ab87f772f287f",
+        "bytes": 6287
+      },
+      {
+        "index": "archive.ubuntu.com_ubuntu_dists_resolute-updates_main_binary-amd64_Packages.lz4",
+        "sha256": "72a4087d80bd0c88e4a770de6733ec338ebbb3b52038e0a2b6134eb084958a54",
+        "bytes": 3927665
+      },
+      {
+        "index": "archive.ubuntu.com_ubuntu_dists_resolute-updates_main_source_Sources.lz4",
+        "sha256": "745721ec5917c90bc45c82a97dd821b95fee6c29abe6f444dafa5f98ccbc13f6",
+        "bytes": 1597013
+      },
+      {
+        "index": "archive.ubuntu.com_ubuntu_dists_resolute-updates_multiverse_binary-amd64_Packages.lz4",
+        "sha256": "cfd4795cde004b66cfdae9bc203ef879a492fa1f03d4639c8a77198beecf6a94",
+        "bytes": 152662
+      },
+      {
+        "index": "archive.ubuntu.com_ubuntu_dists_resolute-updates_multiverse_source_Sources.lz4",
+        "sha256": "8c7dc5002115b859ba864875651f61181d6831e9827b30a9960de5210d22b135",
+        "bytes": 53810
+      },
+      {
+        "index": "archive.ubuntu.com_ubuntu_dists_resolute-updates_restricted_binary-amd64_Packages.lz4",
+        "sha256": "59e6508e795b8c7c1689a28d771b8636b60f5f77fd10bdd2a1742388583210b6",
+        "bytes": 3130674
+      },
+      {
+        "index": "archive.ubuntu.com_ubuntu_dists_resolute-updates_restricted_source_Sources.lz4",
+        "sha256": "9cf2dab4560492e02d74de380176fe9b04346d0afdd434518a863540a10ec8ce",
+        "bytes": 346582
+      },
+      {
+        "index": "archive.ubuntu.com_ubuntu_dists_resolute-updates_universe_binary-amd64_Packages.lz4",
+        "sha256": "09320929a03aaa23aae1312571bdeefe1fb95bb324b5dc687ac518805f7d3197",
+        "bytes": 1617618
+      },
+      {
+        "index": "archive.ubuntu.com_ubuntu_dists_resolute-updates_universe_source_Sources.lz4",
+        "sha256": "6c686436c0be59ab79595e65bca72f6542d45a734ec108b8714569beff4945da",
+        "bytes": 478298
+      },
+      {
+        "index": "archive.ubuntu.com_ubuntu_dists_resolute_main_binary-amd64_Packages.lz4",
+        "sha256": "92eb335c0ed27983d41a5a0efdf0edce3e67bfa34e8e987af9df260ca72d9bf9",
+        "bytes": 7581722
+      },
+      {
+        "index": "archive.ubuntu.com_ubuntu_dists_resolute_main_source_Sources.lz4",
+        "sha256": "f54e264953689edeeb3e7d741ee94bc81aada8059ee62108500dda6392410446",
+        "bytes": 4890187
+      },
+      {
+        "index": "archive.ubuntu.com_ubuntu_dists_resolute_multiverse_binary-amd64_Packages.lz4",
+        "sha256": "e1fc663a0e6ca63ea0347f7bb36f1af195c1eea688a481adb721ac1556a70fa1",
+        "bytes": 1359201
+      },
+      {
+        "index": "archive.ubuntu.com_ubuntu_dists_resolute_multiverse_source_Sources.lz4",
+        "sha256": "57339c3e986071221bdaae59e97045298ac04ec1e952eccf02c37451937bdd9c",
+        "bytes": 957502
+      },
+      {
+        "index": "archive.ubuntu.com_ubuntu_dists_resolute_restricted_binary-amd64_Packages.lz4",
+        "sha256": "a8dbe8c0a9c548652f85cb1ee93a0ce560c6ad3ca7269e13657d9481a289635d",
+        "bytes": 1087693
+      },
+      {
+        "index": "archive.ubuntu.com_ubuntu_dists_resolute_restricted_source_Sources.lz4",
+        "sha256": "82e54d106764dd71bd8e07aac854753b832e6700fd68ae0f2e8a316d87d875a9",
+        "bytes": 212006
+      },
+      {
+        "index": "archive.ubuntu.com_ubuntu_dists_resolute_universe_binary-amd64_Packages.lz4",
+        "sha256": "9c009342905706a05822f6e751f5b1ac34b687f054bfca9a0a652178445fc44c",
+        "bytes": 76792699
+      },
+      {
+        "index": "archive.ubuntu.com_ubuntu_dists_resolute_universe_source_Sources.lz4",
+        "sha256": "e324d966b70cedc32d7c308b96574d2205f15822c25b4e93d2f7607c22bcf6a7",
+        "bytes": 66145096
+      },
+      {
+        "index": "security.ubuntu.com_ubuntu_dists_resolute-security_main_binary-amd64_Packages.lz4",
+        "sha256": "b66f99fb8009d8f1f66b1c05bfd0434f3db1ccb611a9ddd0ce66391c709017ad",
+        "bytes": 3173830
+      },
+      {
+        "index": "security.ubuntu.com_ubuntu_dists_resolute-security_main_source_Sources.lz4",
+        "sha256": "9a734ba382db6fd2ae7094bba567d5de8655249b2d29a8f8a9a65ef954cd62d2",
+        "bytes": 899742
+      },
+      {
+        "index": "security.ubuntu.com_ubuntu_dists_resolute-security_multiverse_binary-amd64_Packages.lz4",
+        "sha256": "ff2f92fe625d89892843f837fc9c5905d5e4766a98bc6ab7b323815e4963168a",
+        "bytes": 148711
+      },
+      {
+        "index": "security.ubuntu.com_ubuntu_dists_resolute-security_multiverse_source_Sources.lz4",
+        "sha256": "38308226f4d4e658eded351a8fceeb399170e1510b580c66a816e538e9afcdb9",
+        "bytes": 46771
+      },
+      {
+        "index": "security.ubuntu.com_ubuntu_dists_resolute-security_restricted_binary-amd64_Packages.lz4",
+        "sha256": "706e850612bd7f747928894de767225534e0608cab41bc4aed9371e0a3e31898",
+        "bytes": 3055827
+      },
+      {
+        "index": "security.ubuntu.com_ubuntu_dists_resolute-security_restricted_source_Sources.lz4",
+        "sha256": "f97cf7488b7926651df53f52a60dea272467b01699854010ffaeece703b05bbd",
+        "bytes": 343190
+      },
+      {
+        "index": "security.ubuntu.com_ubuntu_dists_resolute-security_universe_binary-amd64_Packages.lz4",
+        "sha256": "24987da10fd78b08e4bf0d91996f39be0dfcc1ecdc72019e2ec464fcf6316908",
+        "bytes": 972957
+      },
+      {
+        "index": "security.ubuntu.com_ubuntu_dists_resolute-security_universe_source_Sources.lz4",
+        "sha256": "e642c637360c1fd029de153238359923c621ec730d5d1e2881151261ea562a50",
+        "bytes": 229646
+      }
+    ],
+    "binary_packages": 9,
+    "source_packages": 7,
+    "all_package_artifacts_independently_authenticated": true
+  },
+  "files": [
+    {
+      "path": "usr/lib/x86_64-linux-gnu/libavcodec.so.62.11.100",
+      "sha256": "f2f7634772627cd3180700f2c7bfb81377d6367042136a576fea9230c45a0beb",
+      "bytes": 28258856,
+      "matches_authenticated_artifact": true,
+      "package": "libavcodec62",
+      "package_version": "7:8.0.1-3ubuntu2",
+      "category": "optional hardware-loader names",
+      "reason": "Reviewed FFmpeg source calls optional CUDA, NVENC and CUVID loaders; actual ELF DT_NEEDED contains no NVIDIA driver libraries.",
+      "dt_needed": [
+        "libswresample.so.6",
+        "libavutil.so.60",
+        "libvpx.so.12",
+        "libm.so.6",
+        "libwebpmux.so.3",
+        "liblzma.so.5",
+        "libdav1d.so.7",
+        "librsvg-2.so.2",
+        "libcairo.so.2",
+        "libgobject-2.0.so.0",
+        "libglib-2.0.so.0",
+        "libzvbi.so.0",
+        "libz.so.1",
+        "libsnappy.so.1",
+        "libaom.so.3",
+        "libcodec2.so.1.2",
+        "libgsm.so.1",
+        "libjxl.so.0.11",
+        "libjxl_threads.so.0.11",
+        "libmp3lame.so.0",
+        "libopenjp2.so.7",
+        "libopus.so.0",
+        "librav1e.so.0.8",
+        "libshine.so.3",
+        "libspeex.so.1",
+        "libSvtAv1Enc.so.2",
+        "libtheoraenc.so.2",
+        "libtheoradec.so.2",
+        "libtwolame.so.0",
+        "libvorbis.so.0",
+        "libvorbisenc.so.2",
+        "libwebp.so.7",
+        "libx264.so.165",
+        "libx265.so.215",
+        "libxvidcore.so.4",
+        "libstdc++.so.6",
+        "libva.so.2",
+        "libvpl.so.2",
+        "libc.so.6",
+        "ld-linux-x86-64.so.2"
+      ]
+    },
+    {
+      "path": "usr/lib/x86_64-linux-gnu/libavutil.so.60.8.100",
+      "sha256": "56557dd89c99afd4c7c1f62297fc0f4c19ed97e29bd903937fac480d38fbe3a5",
+      "bytes": 1235136,
+      "matches_authenticated_artifact": true,
+      "package": "libavutil60",
+      "package_version": "7:8.0.1-3ubuntu2",
+      "category": "optional hardware-loader names",
+      "reason": "Reviewed FFmpeg source calls optional CUDA, NVENC and CUVID loaders; actual ELF DT_NEEDED contains no NVIDIA driver libraries.",
+      "dt_needed": [
+        "libva-drm.so.2",
+        "libva.so.2",
+        "libva-x11.so.2",
+        "libvdpau.so.1",
+        "libX11.so.6",
+        "libm.so.6",
+        "libdrm.so.2",
+        "libvpl.so.2",
+        "libOpenCL.so.1",
+        "libc.so.6"
+      ]
+    },
+    {
+      "path": "usr/lib/x86_64-linux-gnu/libgnutls.so.30.41.1",
+      "sha256": "ebcc6a4dfae904dc956feb61cef5c36917cf36c19c5718d3c2be7e377ac65d27",
+      "bytes": 2148528,
+      "matches_authenticated_artifact": true,
+      "package": "libgnutls30t64",
+      "package_version": "3.8.12-2ubuntu1.1",
+      "category": "public cryptographic self-test constants",
+      "reason": "Every flagged constant matches the authenticated crypto-selftests-pk.c source. These fixed health-test vectors are not operator authentication identities.",
+      "dt_needed": [
+        "libp11-kit.so.0",
+        "libidn2.so.0",
+        "libunistring.so.5",
+        "libtasn1.so.6",
+        "libhogweed.so.6",
+        "libnettle.so.8",
+        "libgmp.so.10",
+        "libc.so.6",
+        "ld-linux-x86-64.so.2"
+      ]
+    },
+    {
+      "path": "usr/lib/x86_64-linux-gnu/libmbedcrypto.so.3.6.5",
+      "sha256": "811e07a0b295829a748ee5d307c2bb375ea7cd9f237cf8306f364983f29b20e3",
+      "bytes": 592320,
+      "matches_authenticated_artifact": true,
+      "package": "libmbedcrypto16",
+      "package_version": "3.6.5-0.1ubuntu2",
+      "category": "private-key format delimiters",
+      "reason": "Reviewed parser and serializer constants contain format boundaries without an encoded private-key body; exact unchanged bytes and paths are required.",
+      "dt_needed": [
+        "libc.so.6"
+      ]
+    },
+    {
+      "path": "usr/lib/x86_64-linux-gnu/libssh.so.4.10.3",
+      "sha256": "8ae94cd73cf654c2cc9bafe7c7cb8abefd084e8484e04bc6f3a8a8db4ae315fe",
+      "bytes": 511560,
+      "matches_authenticated_artifact": true,
+      "package": "libssh-4",
+      "package_version": "0.11.3-1ubuntu2.1",
+      "category": "private-key format delimiters",
+      "reason": "Reviewed parser and serializer constants contain format boundaries without an encoded private-key body; exact unchanged bytes and paths are required.",
+      "dt_needed": [
+        "libcrypto.so.3",
+        "libz.so.1",
+        "libgssapi_krb5.so.2",
+        "libc.so.6",
+        "ld-linux-x86-64.so.2"
+      ]
+    },
+    {
+      "path": "usr/lib/x86_64-linux-gnu/libssh2.so.1.0.1",
+      "sha256": "34287a1e8942e6fdf1c154e8c615a8dab7a69dc6a4e8d76913afb323fdc6fd6f",
+      "bytes": 314096,
+      "matches_authenticated_artifact": true,
+      "package": "libssh2-1t64",
+      "package_version": "1.11.1-1ubuntu0.26.04.4",
+      "category": "private-key format delimiters",
+      "reason": "Reviewed parser and serializer constants contain format boundaries without an encoded private-key body; exact unchanged bytes and paths are required.",
+      "dt_needed": [
+        "libcrypto.so.3",
+        "libz.so.1",
+        "libc.so.6"
+      ]
+    },
+    {
+      "path": "usr/lib/x86_64-linux-gnu/libunistring.so.5.2.0",
+      "sha256": "c762a289c02f716a12549d544a811715126067b9a6377057671d3fad9453a1fc",
+      "bytes": 1988864,
+      "matches_authenticated_artifact": true,
+      "package": "libunistring5",
+      "package_version": "1.3-2build1",
+      "category": "typed Unicode name-word pool",
+      "reason": "The complete 159015-byte generated name-word array occurs once in the binary and is consumed by unicode_character_name. Its adjacent words include the token-shaped substring.",
+      "dt_needed": [
+        "libc.so.6"
+      ]
+    },
+    {
+      "path": "usr/bin/ssh",
+      "sha256": "af809334cc71603f0e27a53e2234e15bd3c36503b3af7d367d103d2db2ffc15f",
+      "bytes": 924800,
+      "matches_authenticated_artifact": true,
+      "package": "openssh-client",
+      "package_version": "1:10.2p1-2ubuntu3.8",
+      "category": "private-key format delimiters",
+      "reason": "Reviewed parser and serializer constants contain format boundaries without an encoded private-key body; exact unchanged bytes and paths are required.",
+      "dt_needed": [
+        "libselinux.so.1",
+        "libgssapi_krb5.so.2",
+        "libcrypto.so.3",
+        "libz.so.1",
+        "libc.so.6"
+      ]
+    },
+    {
+      "path": "usr/bin/ssh-add",
+      "sha256": "ef84cc90864c0944f2229249764f7d7017a54486c1aded9ac77f9092ad4014b6",
+      "bytes": 297472,
+      "matches_authenticated_artifact": true,
+      "package": "openssh-client",
+      "package_version": "1:10.2p1-2ubuntu3.8",
+      "category": "private-key format delimiters",
+      "reason": "Reviewed parser and serializer constants contain format boundaries without an encoded private-key body; exact unchanged bytes and paths are required.",
+      "dt_needed": [
+        "libcrypto.so.3",
+        "libc.so.6"
+      ]
+    },
+    {
+      "path": "usr/bin/ssh-agent",
+      "sha256": "1d4fd753eff8985343168143c248798c004e2394ec151ef1401c90f7049ebb38",
+      "bytes": 313864,
+      "matches_authenticated_artifact": true,
+      "package": "openssh-client",
+      "package_version": "1:10.2p1-2ubuntu3.8",
+      "category": "private-key format delimiters",
+      "reason": "Reviewed parser and serializer constants contain format boundaries without an encoded private-key body; exact unchanged bytes and paths are required.",
+      "dt_needed": [
+        "libcrypto.so.3",
+        "libc.so.6"
+      ]
+    },
+    {
+      "path": "usr/bin/ssh-keygen",
+      "sha256": "2dd834413c9d3f4c0e3535b9fcf2e96e14c11f3d36fd23b6c5fc24e50411d051",
+      "bytes": 457232,
+      "matches_authenticated_artifact": true,
+      "package": "openssh-client",
+      "package_version": "1:10.2p1-2ubuntu3.8",
+      "category": "private-key format delimiters",
+      "reason": "Reviewed parser and serializer constants contain format boundaries without an encoded private-key body; exact unchanged bytes and paths are required.",
+      "dt_needed": [
+        "libselinux.so.1",
+        "libcrypto.so.3",
+        "libc.so.6"
+      ]
+    },
+    {
+      "path": "usr/bin/ssh-keyscan",
+      "sha256": "1d4db24a1a24c276c81b3ac184ac7d72a29b68d3e604240e7140dc5334d5d1bc",
+      "bytes": 399888,
+      "matches_authenticated_artifact": true,
+      "package": "openssh-client",
+      "package_version": "1:10.2p1-2ubuntu3.8",
+      "category": "private-key format delimiters",
+      "reason": "Reviewed parser and serializer constants contain format boundaries without an encoded private-key body; exact unchanged bytes and paths are required.",
+      "dt_needed": [
+        "libcrypto.so.3",
+        "libz.so.1",
+        "libc.so.6"
+      ]
+    },
+    {
+      "path": "usr/lib/openssh/ssh-keysign",
+      "sha256": "ce99415cad4292da10279a8014702a0a65206f50de556429d6810f8c96650d08",
+      "bytes": 342712,
+      "matches_authenticated_artifact": true,
+      "package": "openssh-client",
+      "package_version": "1:10.2p1-2ubuntu3.8",
+      "category": "private-key format delimiters",
+      "reason": "Reviewed parser and serializer constants contain format boundaries without an encoded private-key body; exact unchanged bytes and paths are required.",
+      "dt_needed": [
+        "libcrypto.so.3",
+        "libc.so.6"
+      ]
+    },
+    {
+      "path": "usr/lib/openssh/ssh-pkcs11-helper",
+      "sha256": "385f63b4d80b8f6b3407f2fb584e7b9166fbd8728e14346d354a9b0667dd4fdb",
+      "bytes": 256512,
+      "matches_authenticated_artifact": true,
+      "package": "openssh-client",
+      "package_version": "1:10.2p1-2ubuntu3.8",
+      "category": "private-key format delimiters",
+      "reason": "Reviewed parser and serializer constants contain format boundaries without an encoded private-key body; exact unchanged bytes and paths are required.",
+      "dt_needed": [
+        "libcrypto.so.3",
+        "libc.so.6"
+      ]
+    },
+    {
+      "path": "usr/lib/openssh/ssh-sk-helper",
+      "sha256": "4c852fbe63351b5c3060f1409daefb30015c428fd4f23d5071e101a4f3cdb9ac",
+      "bytes": 268800,
+      "matches_authenticated_artifact": true,
+      "package": "openssh-client",
+      "package_version": "1:10.2p1-2ubuntu3.8",
+      "category": "private-key format delimiters",
+      "reason": "Reviewed parser and serializer constants contain format boundaries without an encoded private-key body; exact unchanged bytes and paths are required.",
+      "dt_needed": [
+        "libfido2.so.1",
+        "libcrypto.so.3",
+        "libc.so.6"
+      ]
+    },
+    {
+      "path": "usr/lib/openssh/sshd-auth",
+      "sha256": "d61881f0978c5c426438de3d437c91475bd8e5c1e8d54d326b577665852b2a5f",
+      "bytes": 601432,
+      "matches_authenticated_artifact": true,
+      "package": "openssh-server",
+      "package_version": "1:10.2p1-2ubuntu3.8",
+      "category": "private-key format delimiters",
+      "reason": "Reviewed parser and serializer constants contain format boundaries without an encoded private-key body; exact unchanged bytes and paths are required.",
+      "dt_needed": [
+        "libaudit.so.1",
+        "libpam.so.0",
+        "libgssapi_krb5.so.2",
+        "libkrb5.so.3",
+        "libcom_err.so.2",
+        "libcrypto.so.3",
+        "libz.so.1",
+        "libc.so.6"
+      ]
+    },
+    {
+      "path": "usr/lib/openssh/sshd-session",
+      "sha256": "9599ebe4a3095d95b9c9d777ddce65f4cbef7adb8215d548c2d837294e70079d",
+      "bytes": 884512,
+      "matches_authenticated_artifact": true,
+      "package": "openssh-server",
+      "package_version": "1:10.2p1-2ubuntu3.8",
+      "category": "private-key format delimiters",
+      "reason": "Reviewed parser and serializer constants contain format boundaries without an encoded private-key body; exact unchanged bytes and paths are required.",
+      "dt_needed": [
+        "libcrypt.so.1",
+        "libwrap.so.0",
+        "libaudit.so.1",
+        "libpam.so.0",
+        "libselinux.so.1",
+        "libgssapi_krb5.so.2",
+        "libkrb5.so.3",
+        "libcom_err.so.2",
+        "libcrypto.so.3",
+        "libz.so.1",
+        "libc.so.6"
+      ]
+    },
+    {
+      "path": "usr/sbin/sshd",
+      "sha256": "e029de38facea6ff85a63db0d84c6e53f49185f34838093e9ddf4aaef4e509cb",
+      "bytes": 408536,
+      "matches_authenticated_artifact": true,
+      "package": "openssh-server",
+      "package_version": "1:10.2p1-2ubuntu3.8",
+      "category": "private-key format delimiters",
+      "reason": "Reviewed parser and serializer constants contain format boundaries without an encoded private-key body; exact unchanged bytes and paths are required.",
+      "dt_needed": [
+        "libcrypto.so.3",
+        "libc.so.6"
+      ]
+    }
+  ]
+}
