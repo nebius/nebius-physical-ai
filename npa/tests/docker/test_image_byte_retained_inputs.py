@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 from pathlib import Path
 import shutil
+import tracemalloc
 from types import SimpleNamespace
 
 import pytest
@@ -15,12 +17,82 @@ from test_image_byte_adjudication import (
     W,
     CHECKOUT,
     committed_source_oracle,  # noqa: F401
+    record,
 )
 from test_image_byte_scan import FakeDetector, js, write
 from test_image_byte_scan_oci import authorize, oci_fixture
 from image_byte_scan import oci_verification as O, retained_inputs as R
 
 pytestmark = pytest.mark.usefixtures("committed_source_oracle")
+
+
+def retained_population_case(directory, count):
+    directory.chmod(0o700)
+    policy = write(directory / "policy.json", js({"customer_pattern": "canary"}))
+    authorization = {"confidentiality": policy}
+    ledger = directory / "records.jsonl"
+    digest = hashlib.sha256()
+    with ledger.open("wb") as output:
+        for ordinal in range(1, count + 1):
+            payload = W.canonical(record(ordinal, b"", [])) + b"\n"
+            output.write(payload)
+            digest.update(payload)
+    ledger.chmod(0o600)
+    report = {
+        "schema_version": "npa.image-byte-scan.v1",
+        "complete": True,
+        "helper_joined": True,
+        "valid": True,
+        "records": count,
+        "scanned_bytes": 0,
+        "verified_zero_bytes": 0,
+        "regular_files": count,
+        "regular_bytes": 0,
+        "findings": 0,
+        "helper_summary": {
+            "type": "summary",
+            "files": count,
+            "bytes": 0,
+            "findings": 0,
+        },
+        "input_snapshot_receipts": [],
+        "authorization_sha256": W.sha(W.canonical(authorization)),
+        "confidentiality_policy": A.policy_receipt(authorization),
+    }
+    return (
+        authorization,
+        write(directory / "report.json", js(report)),
+        {"path": str(ledger), "sha256": digest.hexdigest()},
+    )
+
+
+def test_retained_capture_bounds_memory_for_large_clean_ledger(tmp_path):
+    with W.authorized_roots(tmp_path, CHECKOUT):
+        authorization, report, ledger = retained_population_case(tmp_path, 20_000)
+        assert Path(ledger["path"]).stat().st_size > 4 * 1024 * 1024
+        tracemalloc.start()
+        try:
+            result = R._complete_original_report(authorization, [], report, ledger)
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+        assert result["records"] == 20_000 and result["valid"] is True
+        assert peak < 8 * 1024 * 1024
+
+
+@pytest.mark.parametrize("malformed", ["unterminated", "oversized_line"])
+def test_retained_capture_enforces_ledger_framing(tmp_path, monkeypatch, malformed):
+    with W.authorized_roots(tmp_path, CHECKOUT):
+        authorization, report, ledger = retained_population_case(tmp_path, 1)
+        if malformed == "unterminated":
+            path = Path(ledger["path"])
+            ledger = write(path, path.read_bytes().rstrip(b"\n"))
+            code = "adjudication_ledger_unterminated"
+        else:
+            monkeypatch.setattr(W, "LEDGER_LINE_LIMIT", 128)
+            code = "ledger_line_limit"
+        with pytest.raises(W.ScanError, match=code):
+            R._complete_original_report(authorization, [], report, ledger)
 
 
 def original_case(directory):
