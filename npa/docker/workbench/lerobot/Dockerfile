@@ -73,6 +73,9 @@ ENV PIP_NO_CACHE_DIR=1
 # The runtime locks intentionally include hash-pinned source distributions. Keep
 # their build backends on the separately hash-pinned bootstrap toolchain instead
 # of letting pip create an unpinned isolated build environment.
+# The locked CMake wheel ships one Windows-only signing template. Remove that
+# exact inert path and prove the virtualenv tree has no PKCS#12 path before
+# the dependency-install layer commits.
 RUN python3.12 -m venv /opt/lerobot/venv \
     && /opt/lerobot/venv/bin/python -m pip install \
          --no-cache-dir --disable-pip-version-check --only-binary=:all: \
@@ -108,6 +111,11 @@ RUN python3.12 -m venv /opt/lerobot/venv \
        else \
          echo 'Unsupported LeRobot package version' >&2; exit 1; \
        fi \
+    && test -f /opt/lerobot/venv/lib/python3.12/site-packages/cmake/data/share/cmake-4.1/Templates/Windows/Windows_TemporaryKey.pfx \
+    && rm /opt/lerobot/venv/lib/python3.12/site-packages/cmake/data/share/cmake-4.1/Templates/Windows/Windows_TemporaryKey.pfx \
+    && test ! -e /opt/lerobot/venv/lib/python3.12/site-packages/cmake/data/share/cmake-4.1/Templates/Windows/Windows_TemporaryKey.pfx \
+    && test ! -L /opt/lerobot/venv/lib/python3.12/site-packages/cmake/data/share/cmake-4.1/Templates/Windows/Windows_TemporaryKey.pfx \
+    && test -z "$(find /opt/lerobot/venv \( -iname '*.p12' -o -iname '*.pfx' \) -print -quit)" \
     && /opt/lerobot/venv/bin/pip check \
     && find /opt/lerobot/venv -type f \
          -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
@@ -118,6 +126,11 @@ RUN python3.12 -m venv /opt/lerobot/venv \
          -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)"
 
 USER root
+
+# Dependency backends can write outside the ubuntu-owned venv. This root-owned
+# audit immediately follows that layer and fails before any later COPY can
+# create a successful image with a PKCS#12 path in an ancestor layer.
+RUN test -z "$(find / -xdev \( -iname '*.p12' -o -iname '*.pfx' \) -print -quit)"
 
 # These provenance receipts feed the version smoke and release audit. Keep the
 # runtime user from rewriting their source-integration or dependency claims.

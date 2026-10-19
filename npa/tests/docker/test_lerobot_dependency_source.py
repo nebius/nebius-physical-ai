@@ -10,6 +10,19 @@ ROOT = Path(__file__).resolve().parents[3]
 DOCKERFILE = ROOT / "npa/docker/workbench/lerobot/Dockerfile"
 RECIPE = DOCKERFILE.parent
 CORRECTION = "/opt/lerobot/remove-scikit-image-recipe.py"
+SYSTEM_PKCS12_TEMPLATE = (
+    "/usr/share/cmake-3.22/Templates/Windows/Windows_TemporaryKey.pfx"
+)
+VENV_PKCS12_TEMPLATE = (
+    "/opt/lerobot/venv/lib/python3.12/site-packages/"
+    "cmake/data/share/cmake-4.1/Templates/Windows/Windows_TemporaryKey.pfx"
+)
+VENV_PKCS12_GUARD = (
+    "find /opt/lerobot/venv \\( -iname '*.p12' -o -iname '*.pfx' \\) -print -quit"
+)
+SYSTEM_PKCS12_GUARD = (
+    "find / -xdev \\( -iname '*.p12' -o -iname '*.pfx' \\) -print -quit"
+)
 
 
 def _instructions(text):
@@ -79,6 +92,16 @@ def _installation(text):
     assert "--capability lerobot" in default_branch
     assert "dependency-source-correction.json" in optional_branch
     assert "dependency-source-correction.json" in default_branch
+    cleanup = re.compile(
+        rf"test -f {re.escape(VENV_PKCS12_TEMPLATE)}\s+"
+        rf"&& rm {re.escape(VENV_PKCS12_TEMPLATE)}\s+"
+        rf"&& test ! -e {re.escape(VENV_PKCS12_TEMPLATE)}\s+"
+        rf"&& test ! -L {re.escape(VENV_PKCS12_TEMPLATE)}\s+"
+        rf"&& test -z \"\$\({re.escape(VENV_PKCS12_GUARD)}\)\""
+    )
+    match = cleanup.search(body)
+    assert match is not None
+    assert match.start() < body.index("/opt/lerobot/venv/bin/pip check")
     return body
 
 
@@ -93,10 +116,50 @@ def test_both_versions_correct_the_reviewed_source_in_the_original_install_layer
     assert "install -o root -g root -m 0644" in text
 
 
+def test_root_owned_dependency_audit_precedes_later_source_copies():
+    """Catch backend output outside the ubuntu-owned virtualenv before later COPYs."""
+
+    instructions = _instructions(DOCKERFILE.read_text())
+    dependency_index = next(
+        index
+        for index, (kind, body) in enumerate(instructions)
+        if kind == "RUN" and "/opt/lerobot/requirements-060.lock" in body
+    )
+    root_user_index = next(
+        index
+        for index, (kind, body) in enumerate(
+            instructions[dependency_index + 1 :], dependency_index + 1
+        )
+        if kind == "USER" and body == "root"
+    )
+    audit_kind, audit_body = instructions[root_user_index + 1]
+    assert audit_kind == "RUN"
+    assert audit_body == f'test -z "$({SYSTEM_PKCS12_GUARD})"'
+    assert "rm " not in audit_body
+    first_runtime_copy = next(
+        index
+        for index, (kind, body) in enumerate(
+            instructions[root_user_index + 1 :], root_user_index + 1
+        )
+        if kind == "COPY" and "src/npa/server" in body
+    )
+    assert dependency_index < root_user_index < root_user_index + 1 < first_runtime_copy
+
+
 def test_bootstrap_sshd_is_baked_before_apt_hardening_and_has_no_host_keys():
     """Keep the non-root SkyPilot contract runnable after libc header hardening."""
 
     instructions = _instructions(DOCKERFILE.read_text())
+    installer_copy_index = next(
+        index
+        for index, (kind, body) in enumerate(instructions)
+        if kind == "COPY"
+        and "install_immutable_system_packages.sh" in body
+        and "/usr/local/bin/install-immutable-lerobot-system-packages" in body
+    )
+    installer_run_kind, installer_run = instructions[installer_copy_index + 1]
+    assert installer_run_kind == "RUN"
+    assert "/usr/local/bin/install-immutable-lerobot-system-packages" in installer_run
     prereq_index, prereq = next(
         (index, body)
         for index, (kind, body) in enumerate(instructions)
@@ -114,6 +177,20 @@ def test_bootstrap_sshd_is_baked_before_apt_hardening_and_has_no_host_keys():
     assert "python3=3.10.6-1~22.04.1" in system_packages
     assert "python3=3.10.4-0ubuntu2" not in system_packages
     assert "https://snapshot.ubuntu.com/ubuntu/20260820T000000Z" in system_packages
+    assert (
+        f'readonly CMAKE_WINDOWS_TEMPLATE="{SYSTEM_PKCS12_TEMPLATE}"' in system_packages
+    )
+    assert 'test -f "${CMAKE_WINDOWS_TEMPLATE}"' in system_packages
+    assert 'rm "${CMAKE_WINDOWS_TEMPLATE}"' in system_packages
+    assert 'test ! -e "${CMAKE_WINDOWS_TEMPLATE}"' in system_packages
+    assert 'test ! -L "${CMAKE_WINDOWS_TEMPLATE}"' in system_packages
+    assert f'test -z "$({SYSTEM_PKCS12_GUARD})"' in system_packages
+    assert system_packages.index(
+        "cmake=3.22.1-1ubuntu1.22.04.2"
+    ) < system_packages.index('test -f "${CMAKE_WINDOWS_TEMPLATE}"')
+    assert system_packages.index(
+        "apt-get install -y --no-install-recommends /tmp/npa-python312/*.deb"
+    ) < system_packages.index(f'test -z "$({SYSTEM_PKCS12_GUARD})"')
     assert "rm -f /etc/ssh/ssh_host_*" in system_packages
     assert (
         "test -z \"$(find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*'"
@@ -167,6 +244,7 @@ def test_build_dependency_closure_has_no_moving_repository_or_python_resolution(
         assert "wandb==0.30.0" in lock
         assert "datasets==5.0.1" in lock
         assert "fsspec==2026.6.0" in lock
+        assert "cmake==4.1.3" in lock
         assert f"--hash=sha256:{wheel_hash}" in lock
         assert "--hash=sha256:" in lock
     assert "--find-links /opt/lerobot/secure-wheel" in text
@@ -205,7 +283,8 @@ def test_security_remediation_pins_are_hash_locked(lock_name, requirements):
 
 
 @pytest.mark.parametrize(
-    "unsafe_change", ["later-layer", "wheel-cache", "unreviewed-lock"]
+    "unsafe_change",
+    ["later-layer", "pkcs12-later-layer", "wheel-cache", "unreviewed-lock"],
 )
 def test_unsafe_dependency_installation_is_rejected(unsafe_change):
     text = DOCKERFILE.read_text()
@@ -213,6 +292,25 @@ def test_unsafe_dependency_installation_is_rejected(unsafe_change):
         text = text.replace(
             f"    && /opt/lerobot/venv/bin/python {CORRECTION}",
             f"\nRUN /opt/lerobot/venv/bin/python {CORRECTION}",
+        )
+    elif unsafe_change == "pkcs12-later-layer":
+        cleanup = (
+            f"    && test -f {VENV_PKCS12_TEMPLATE} \\\n"
+            f"    && rm {VENV_PKCS12_TEMPLATE} \\\n"
+            f"    && test ! -e {VENV_PKCS12_TEMPLATE} \\\n"
+            f"    && test ! -L {VENV_PKCS12_TEMPLATE} \\\n"
+            f'    && test -z "$({VENV_PKCS12_GUARD})" \\\n'
+        )
+        assert cleanup in text
+        text = text.replace(
+            cleanup,
+            f"    && /opt/lerobot/venv/bin/pip check \\\n"
+            f"\nRUN test -f {VENV_PKCS12_TEMPLATE} \\\n"
+            f"    && rm {VENV_PKCS12_TEMPLATE} \\\n"
+            f"    && test ! -e {VENV_PKCS12_TEMPLATE} \\\n"
+            f"    && test ! -L {VENV_PKCS12_TEMPLATE} \\\n"
+            f'    && test -z "$({VENV_PKCS12_GUARD})" \\\n'
+            f"    && /opt/lerobot/venv/bin/pip check \\\n",
         )
     elif unsafe_change == "wheel-cache":
         text = text.replace("PIP_NO_CACHE_DIR=1", "PIP_NO_CACHE_DIR=0")

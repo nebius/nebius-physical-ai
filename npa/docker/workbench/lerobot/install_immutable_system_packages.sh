@@ -6,6 +6,7 @@ set -euo pipefail
 readonly UBUNTU_SNAPSHOT="https://snapshot.ubuntu.com/ubuntu/20260820T000000Z"
 readonly DEADSNakes_BASE="https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu"
 readonly PYTHON312_POOL="${DEADSNakes_BASE}/pool/main/p/python3.12"
+readonly CMAKE_WINDOWS_TEMPLATE="/usr/share/cmake-3.22/Templates/Windows/Windows_TemporaryKey.pfx"
 
 test -r /usr/share/keyrings/ubuntu-archive-keyring.gpg
 rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list
@@ -46,6 +47,14 @@ apt-get install -y --no-install-recommends \
   openssl=3.0.2-0ubuntu1.26 \
   libssl3=3.0.2-0ubuntu1.26
 
+# cmake-data ships a Windows-only signing template. Remove this known inert
+# PKCS#12 path in the same layer that installs cmake so it is never emitted in
+# an ancestor layer.
+test -f "${CMAKE_WINDOWS_TEMPLATE}"
+rm "${CMAKE_WINDOWS_TEMPLATE}"
+test ! -e "${CMAKE_WINDOWS_TEMPLATE}"
+test ! -L "${CMAKE_WINDOWS_TEMPLATE}"
+
 install -d -m 0700 /tmp/npa-python312
 while IFS=' ' read -r package sha256; do
   curl --fail --location --silent --show-error \
@@ -64,4 +73,8 @@ apt-get install -y --no-install-recommends /tmp/npa-python312/*.deb
 test "$(python3.12 --version)" = "Python 3.12.15"
 rm -f /etc/ssh/ssh_host_*
 test -z "$(find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*' -print -quit)"
+# The image-byte gate treats these as path-only findings in every layer. After
+# every system package is installed, fail before committing this layer if any
+# PKCS#12 path remains anywhere on the root filesystem.
+test -z "$(find / -xdev \( -iname '*.p12' -o -iname '*.pfx' \) -print -quit)"
 rm -rf /tmp/npa-python312 /var/lib/apt/lists/*
