@@ -1,0 +1,38 @@
+{
+  "schema": "npa.security-applicability-review.v1",
+  "review_date": "2026-10-16",
+  "finding_id": "CVE-2026-59890",
+  "advisory": "https://github.com/advisories/GHSA-h35f-9h28-mq5c",
+  "component": "pkg:pypi/setuptools@80.9.0",
+  "assessment": "affected code absent from the pip vendor subset",
+  "raw_scanner_finding_retained": true,
+  "scope": {
+    "image_manifest_digest": "sha256:1ddecf80a69d75b9b12bb37cfd7b20911453a8f46efd356d76748788da719b96",
+    "image_source_commit": "9c87d1dbebeea8e1c606c41b3b64261c6d0e192e",
+    "pip_version": "26.2.1+npa.1",
+    "pip_wheel_sha256": "a71a4e82929d20ecd881f3081749cbaad14875b99f162d6387c3f1889735ae27",
+    "installed_setuptools_version": "84.0.0",
+    "runtime_python_version": "3.10.22"
+  },
+  "evidence": {
+    "donor_usage": "Only pkg_resources is retained from the exact 80.9.0 wheel; its source version remains recorded in the vendor inventory and BOM.",
+    "absent_from_repaired_pip_wheel": [
+      "setuptools/command/egg_info.py",
+      "setuptools/unicode_utils.py",
+      "setuptools/_distutils/filelist.py"
+    ],
+    "pip_tree_contains_no_setuptools_modules": true,
+    "original_base_setuptools_79_0_1_exclusion_bypass_reproduced": true,
+    "installed_setuptools_84_unicode_exclusion_regression_passed": true,
+    "fresh_venv_repaired_vendor_imports_and_offline_install_passed": true,
+    "corrupted_bootstrap_wheel_rejected": true
+  },
+  "limitations": [
+    "This assessment covers only the recorded pip donor component in this exact final runtime.",
+    "It does not qualify other image digests or the retained ancestor-layer package bytes.",
+    "The image still has unresolved OS findings, payload review, complete-byte review, and GPU qualification.",
+    "No scanner ignore, advisory dismissal, publication, or zero-vulnerability claim is granted by this record."
+  ],
+  "upstream_fix": "https://github.com/pypa/setuptools/commit/dd9f436a36486b4cb8a4c70a2321548b0be09b8f",
+  "source_inputs": "npa/docker/workbench/common/secure_pip/inputs.json"
+}

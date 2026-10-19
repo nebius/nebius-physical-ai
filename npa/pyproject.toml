@@ -187,7 +187,7 @@ dev = [
     # Selected-policy fixtures exercise real BF16 checkpoint bytes.
     "ml-dtypes>=0.5.1",
     # Exercise the OpenPI simulator's real wire codec in the finite-loop tests.
-    "msgpack>=1.1.1,<2",
+    "msgpack>=1.2.3,<2",
     "pytest>=9.0.3",
     "pytest-mock>=3.14",
     "pytest-cov>=5.0",
@@ -215,7 +215,7 @@ dev = [
     "h5py==3.16.0",
     "trimesh==4.12.2",
     "ml-dtypes>=0.5.1",
-    "msgpack>=1.1.1,<2",
+    "msgpack>=1.2.3,<2",
     "pytest>=9.0.3",
     "pytest-mock>=3.14",
     "pytest-cov>=5.0",

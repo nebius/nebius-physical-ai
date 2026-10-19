@@ -144,6 +144,25 @@ def _materialize_surface(tmp_path: Path, storage: FakeStorage) -> dict:
     )
 
 
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        '<!ENTITY name "expanded-name">',
+        '<!ENTITY name SYSTEM "file:///outside/private.txt">',
+    ],
+)
+def test_urdf_entities_are_rejected_before_materialization(
+    tmp_path: Path, declaration: str
+) -> None:
+    urdf = tmp_path / "untrusted.urdf"
+    urdf.write_text(
+        f'<!DOCTYPE robot [{declaration}]><robot name="&name;">'
+        '<link name="base"/><joint name="arm"/></robot>'
+    )
+    with pytest.raises(RobotContractError, match="forbidden entities"):
+        _mesh_dependencies(urdf, tmp_path)
+
+
 def test_stage2_materializes_content_addressed_urdf_contract(tmp_path: Path) -> None:
     storage = FakeStorage(_doc())
     contract = _materialize(tmp_path, storage)

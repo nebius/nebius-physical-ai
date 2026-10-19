@@ -5,11 +5,13 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import xml.etree.ElementTree as ET
 from dataclasses import asdict
 from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import urlparse
+
+from defusedxml import ElementTree as ET
+from defusedxml.common import DefusedXmlException
 
 from npa.genesis import robot_assets
 from npa.workflows.sim2real import isaac_byo_robot_task, onboarding_derive
@@ -93,6 +95,10 @@ def _s3_relative(uri: str, root_uri: str) -> str:
 def _mesh_dependencies(urdf_path: Path, bundle_root: Path) -> list[str]:
     try:
         tree = ET.parse(urdf_path)
+    except DefusedXmlException as exc:
+        raise RobotContractError(
+            "URDF XML contains forbidden entities or external references"
+        ) from exc
     except ET.ParseError as exc:
         raise RobotContractError(
             f"invalid URDF XML in {urdf_path.name}: line {exc.position[0]}, "

@@ -25,6 +25,23 @@ def metadata_live_contract() -> dict[str, object]:
 # These specialized suites intentionally remain operator-invoked. The reason is
 # machine-reviewed here instead of letting an environment gate silently rot.
 MANUAL_GATES = {
+    "NPA_LEISAAC_CERTIFICATE_LIVE_PROJECT": (
+        "read-only TLS identity verification requires an operator-selected existing agent project "
+        "and verified SSH host key; run with npa/README.md"
+    ),
+    "NPA_LEISAAC_CERTIFICATE_LIVE_AGENT": (
+        "read-only TLS identity verification requires an operator-selected existing agent name "
+        "and verified SSH host key; run with npa/README.md"
+    ),
+    "NPA_PROJECT_SETUP_LIVE_CONFIG": (
+        "requires a real project-only principal denied tenant quota reads, a private "
+        "isolated project configuration, and optional owned CPU cluster creation/cleanup; "
+        "run the command in docs/testing/e2e.md"
+    ),
+    "NPA_PROJECT_QUOTA_LIVE_CONFIG": (
+        "read-only default quota verification requires an operator-selected project "
+        "without explicit caps; run the command in docs/testing/e2e.md"
+    ),
     "NPA_TEAM_SETUP_FRESH_LIVE": (
         "requires private server/TLS prerequisites in an operator-selected isolated CPU test namespace; "
         "creates and removes owned server resources and a retained allocation as documented in docs/workbench/team-access.md"

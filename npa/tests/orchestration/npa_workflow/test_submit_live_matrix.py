@@ -18,8 +18,10 @@ from npa.orchestration.npa_workflow.blueprints import (
 from npa.orchestration.npa_workflow.spec import load_spec
 from npa.orchestration.npa_workflow.submit_matrix import (
     SUBMIT_LIVE_MATRIX,
+    execution_config_vars,
     gpu_submit_cases,
     one_shot_submit_cases,
+    plan_only_config_vars,
     runtime_submit_cases,
     selected_submit_cases,
 )
@@ -359,6 +361,41 @@ def test_plan_only_cases_have_machine_checked_justifications() -> None:
             assert not case.plan_only_justification, (
                 f"{case.spec} executes live and must not carry a plan-only exemption"
             )
+
+
+def test_governed_matrix_cases_are_render_only_with_exact_plan_pins() -> None:
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.submit import merge_config_overrides
+
+    governed = {
+        case.spec
+        for case in SUBMIT_LIVE_MATRIX
+        if (path := resolve_npa_workflow_spec(case.spec)) is not None
+        and load_spec(path).config.get("required_immutable_images")
+    }
+    assert governed
+    registry = "registry.example.invalid/matrix"
+    digest = "sha256:" + "0" * 64
+    for case in (case for case in SUBMIT_LIVE_MATRIX if case.spec in governed):
+        assert case.plan_only and case.rotation_skip, case.spec
+        path = resolve_npa_workflow_spec(case.spec)
+        assert path is not None, case.spec
+        supplied = dict(plan_only_config_vars(case, registry))
+        for key in load_spec(path).config["required_immutable_images"]:
+            assert supplied[key] == f"{registry}/plan-only/{path.stem}-{key}@{digest}"
+        assert build_plan(
+            merge_config_overrides(load_spec(path), supplied),
+            run_id="governed-render-only",
+        ).steps
+
+
+def test_execution_matrix_config_never_reuses_render_only_fixtures() -> None:
+    case = next(case for case in SUBMIT_LIVE_MATRIX if case.spec == "sim2real.yaml")
+    assert execution_config_vars(case) == case.config_vars
+    assert "controller_image" not in dict(execution_config_vars(case))
+    assert "controller_image" in dict(
+        plan_only_config_vars(case, "registry.example.invalid/matrix")
+    )
 
 
 def test_coverage_backfill_cases_are_honestly_plan_only() -> None:
@@ -761,6 +798,19 @@ def test_lerobot_subtask_proof_seeds_real_parquet_rows(monkeypatch) -> None:
     ]
 
 
+def _secret_hint_spec(path):
+    from npa.orchestration.npa_workflow.submit import merge_config_overrides
+
+    spec = load_spec(path)
+    # Secret-name inspection uses an inert static plan; live execution still
+    # requires qualified operator images and normal submission preflight.
+    images = {
+        key: "registry.example.invalid/secret-hints@sha256:" + "0" * 64
+        for key in spec.config.get("required_immutable_images", [])
+    }
+    return merge_config_overrides(spec, images)
+
+
 def test_matrix_cases_declare_every_secret_the_renderer_hints_at() -> None:
     """A missing secret_env makes the CLI print an advisory line before its JSON.
 
@@ -777,7 +827,7 @@ def test_matrix_cases_declare_every_secret_the_renderer_hints_at() -> None:
     for case in SUBMIT_LIVE_MATRIX:
         path = resolve_npa_workflow_spec(case.spec)
         assert path is not None, case.spec
-        spec = load_spec(path)
+        spec = _secret_hint_spec(path)
         plan = build_plan(
             spec,
             run_id="matrix-check",

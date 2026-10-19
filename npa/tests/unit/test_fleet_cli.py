@@ -3613,6 +3613,49 @@ def _mock_deploy_fleet_boundary(monkeypatch, tmp_path):
     return L
 
 
+def test_deploy_existing_project_passes_verified_cumulative_fallback_demand(
+    monkeypatch, tmp_path
+):
+    L = _mock_deploy_fleet_boundary(monkeypatch, tmp_path)
+    spec = FleetSpec(
+        name="proof",
+        tenant_id="t",
+        projects=[
+            ProjectSpec(
+                project_id="project-test",
+                clusters=[
+                    ClusterSpec(name="first", cpu_nodes=NodePoolSpec(count=1)),
+                    ClusterSpec(name="second", cpu_nodes=NodePoolSpec(count=1)),
+                ],
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        L,
+        "_get_project",
+        lambda *a: {
+            "metadata": {"id": "project-test", "parent_id": "t"},
+            "status": {"region": "us-central1", "container_state": "ACTIVE"},
+        },
+    )
+    captured = []
+    monkeypatch.setattr(L, "_preflight_quotas", lambda *a, **kw: captured.append(kw))
+    monkeypatch.setattr(
+        L,
+        "_deploy_one_cluster",
+        lambda **kw: {
+            "project_key": kw["project"].key(),
+            "cluster_name": kw["cluster"].name,
+            "status": "deployed",
+        },
+    )
+    L.deploy_fleet(spec, work_root=tmp_path)
+    demand = captured[0]["project_demands"]["us-central1"]
+    assert len(demand) == 1 and demand[0].project_id == "project-test"
+    assert [cluster.name for cluster in demand[0].clusters] == ["first", "second"]
+    assert captured[0]["new_projects_by_region"] == {}
+
+
 def test_deploy_fleet_parallel_runs_all_targets_and_prewarms_once(
     tmp_path, monkeypatch
 ) -> None:

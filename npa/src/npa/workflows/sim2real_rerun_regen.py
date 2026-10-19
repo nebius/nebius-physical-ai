@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import logging
+import math
 import os
 import shlex
 import shutil
@@ -45,6 +46,7 @@ from npa.workflows.sim2real.stage10_authority import (
     expected_byo_render_prefix,
     validate_stage10_input_scope,
 )
+from npa.workflows.sim2real.artifact_config import Sim2RealArtifactConfig
 from npa.workflows.sim2real.models import Sim2RealLoopConfig
 from npa.workflows.sim2real.publication import (
     CommittedPublicationSnapshot,
@@ -174,7 +176,17 @@ def default_regen_local_dir(run_id: str, *, override: str = "") -> Path:
     return _default_regen_dir(run_id)
 
 
-def run_prefix_uri(config: Sim2RealLoopConfig) -> str:
+def run_prefix_uri(config: Sim2RealLoopConfig | Sim2RealArtifactConfig) -> str:
+    """Return the existing run's storage prefix.
+
+    Args:
+        config: Artifact coordinates for the run.
+    Returns:
+        The run's S3 URI with a trailing slash.
+    Raises:
+        None.
+    """
+
     return f"{_artifact_root_uri(config).rstrip('/')}/"
 
 
@@ -218,7 +230,9 @@ def _completed_local_outer_pair(local_dir: Path) -> tuple[Path, Path] | None:
     return evidence, report
 
 
-def _gold_report_path(_config: Sim2RealLoopConfig, local_dir: Path) -> Path:
+def _gold_report_path(
+    _config: Sim2RealLoopConfig | Sim2RealArtifactConfig, local_dir: Path
+) -> Path:
     completed = _completed_local_outer_pair(local_dir)
     if completed is not None:
         return completed[1]
@@ -379,7 +393,7 @@ def _reported_render_paths(
 
 
 def _renders_dir_for_report(
-    config: Sim2RealLoopConfig,
+    config: Sim2RealLoopConfig | Sim2RealArtifactConfig,
     local_dir: Path,
     heldout_report: dict[str, Any] | None,
 ) -> Path:
@@ -439,10 +453,10 @@ def _sibling_uri(uri: str, filename: str) -> str:
     return f"{base.rstrip('/')}/{filename}"
 
 
-def _storage_client_for_config(config: Sim2RealLoopConfig) -> StorageClient:
-    from npa.workflows.sim2real.engine import _storage_client
-
-    return _storage_client(config)
+def _storage_client_for_config(
+    config: Sim2RealLoopConfig | Sim2RealArtifactConfig,
+) -> StorageClient:
+    return StorageClient.from_environment(endpoint_url=config.s3_endpoint)
 
 
 def _list_common_prefixes(client: StorageClient, prefix_uri: str) -> list[str]:
@@ -796,7 +810,7 @@ def _rewrite_synced_inner_evidence(local_dir: Path, prefix: str) -> None:
 
 
 def _sync_selected_heldout_renders(
-    config: Sim2RealLoopConfig,
+    config: Sim2RealLoopConfig | Sim2RealArtifactConfig,
     storage: StorageClient,
     local_dir: Path,
     inner_evidence_rel: str,
@@ -812,7 +826,7 @@ def _sync_selected_heldout_renders(
 
 
 def sync_regen_inputs(
-    config: Sim2RealLoopConfig,
+    config: Sim2RealLoopConfig | Sim2RealArtifactConfig,
     local_dir: Path,
     *,
     client: StorageClient | None = None,
@@ -1047,7 +1061,7 @@ def _sync_legacy_heldout_renders(
 
 
 def sync_heldout_renders(
-    config: Sim2RealLoopConfig,
+    config: Sim2RealLoopConfig | Sim2RealArtifactConfig,
     local_dir: Path,
     *,
     heldout_report: dict[str, Any] | None = None,
@@ -1057,7 +1071,20 @@ def sync_heldout_renders(
 
     storage = client or _storage_client_for_config(config)
     report = heldout_report or {}
-    canonical, sealed = _heldout_render_source(config, report)
+    try:
+        canonical, sealed = _heldout_render_source(config, report)
+    except Sim2RealRerunRegenError:
+        lineage, sealed = _heldout_render_lineage(report)
+        if (
+            sealed
+            and not any(
+                lineage.get(key) not in (None, "")
+                for key in ("canonical_s3_uri", "renders_s3_uri")
+            )
+            and _has_factual_heldout_scores(report)
+        ):
+            return False
+        raise
     renders_dir = _renders_dir_for_report(config, local_dir, report)
     _assert_safe_render_destination(local_dir, renders_dir)
     if _download_render_tree(
@@ -1070,6 +1097,23 @@ def sync_heldout_renders(
     if sealed:
         return False
     return _sync_legacy_heldout_renders(config, local_dir, storage, renders_dir, report)
+
+
+def _has_factual_heldout_scores(report: dict[str, Any] | None) -> bool:
+    """Return whether a report has numeric per-environment score evidence."""
+
+    evaluations = (report or {}).get("per_env") or []
+    if not isinstance(evaluations, list) or not evaluations:
+        return False
+    try:
+        return all(
+            isinstance(item, dict)
+            and item.get("score") is not None
+            and math.isfinite(float(item["score"]))
+            for item in evaluations
+        )
+    except (TypeError, ValueError):
+        return False
 
 
 def _has_camera_pngs(renders_dir: Path) -> bool:
@@ -1369,7 +1413,7 @@ def _render_manifest_report_path(
 
 
 def _write_report_render_manifest(
-    config: Sim2RealLoopConfig,
+    config: Sim2RealLoopConfig | Sim2RealArtifactConfig,
     local_dir: Path,
     heldout_report: dict[str, Any] | None,
     manifest: dict[str, Any],
@@ -1398,12 +1442,24 @@ def _write_report_render_manifest(
 
 
 def download_rrd_from_s3(
-    config: Sim2RealLoopConfig,
+    config: Sim2RealLoopConfig | Sim2RealArtifactConfig,
     *,
     dest_path: Path,
     client: StorageClient | None = None,
+    rrd_uri: str = "",
 ) -> Path:
-    """Download reports/sim2real.rrd for a run to dest_path."""
+    """Download the selected Rerun recording for an existing run.
+
+    Args:
+        config: Artifact coordinates and storage endpoint.
+        dest_path: Local recording destination.
+        client: Optional existing storage client.
+        rrd_uri: Exact viewer recording URI, or the standard run recording.
+    Returns:
+        The downloaded recording path.
+    Raises:
+        Sim2RealRerunRegenError: The selected recording cannot be downloaded.
+    """
 
     storage = client or _storage_client_for_config(config)
     canonical_uri = f"{run_prefix_uri(config)}reports/sim2real.rrd"
@@ -1423,6 +1479,9 @@ def download_rrd_from_s3(
         absolute_dest,
         containment_root=containment_root,
     )
+    requested_uri = rrd_uri.strip()
+    if rrd_uri and requested_uri != rrd_uri:
+        raise Sim2RealRerunRegenError("requested Rerun recording URI has whitespace")
     try:
         publication = resolve_committed_publication_snapshot(storage, canonical_uri)
         uri = publication.resolve(canonical_uri)
@@ -1430,6 +1489,10 @@ def download_rrd_from_s3(
         raise Sim2RealRerunRegenError(str(exc)) from exc
     if uri is None:
         raise Sim2RealRerunRegenError(f"Rerun recording is disabled at {canonical_uri}")
+    if requested_uri and requested_uri not in {canonical_uri, uri}:
+        raise Sim2RealRerunRegenError(
+            "requested Rerun recording does not match the committed publication"
+        )
     _download_verified_rrd(
         storage, uri, publication, canonical_uri, absolute_dest, containment_root
     )
@@ -1895,7 +1958,7 @@ def _publish_regen_final_report(
 
 
 def _capture_regen_publication_snapshots(
-    config: Sim2RealLoopConfig,
+    config: Sim2RealLoopConfig | Sim2RealArtifactConfig,
     storage: StorageClient,
 ) -> dict[str, RemoteObjectSnapshot | None]:
     """Capture every mutable generation target before authority validation."""
@@ -1968,7 +2031,7 @@ def _publish_unjournaled_legacy_regen_aliases(
 
 
 def publish_regen_outputs(
-    config: Sim2RealLoopConfig,
+    config: Sim2RealLoopConfig | Sim2RealArtifactConfig,
     local_dir: Path,
     *,
     rrd_path: Path | None = None,
@@ -2247,7 +2310,7 @@ def _publish_heldout_eval_outputs(
 
 
 def publish_regen_mcap(
-    config: Sim2RealLoopConfig,
+    config: Sim2RealLoopConfig | Sim2RealArtifactConfig,
     local_dir: Path,
     *,
     emission: dict[str, Any],
@@ -2306,7 +2369,7 @@ def _stage_components(report: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _regen_paths(
-    config: Sim2RealLoopConfig,
+    config: Sim2RealLoopConfig | Sim2RealArtifactConfig,
     local_dir: Path | None,
     local_rrd_path: Path | None,
 ) -> tuple[Path, Path]:
@@ -2334,7 +2397,7 @@ class _RegenInputs:
 
 
 def _selected_regen_paths(
-    config: Sim2RealLoopConfig,
+    config: Sim2RealLoopConfig | Sim2RealArtifactConfig,
     work_dir: Path,
     storage: StorageClient,
     sync_inputs: bool,
@@ -2669,7 +2732,7 @@ def _validate_regen_materialized_frames(
 
 
 def _load_regen_state(
-    config: Sim2RealLoopConfig,
+    config: Sim2RealLoopConfig | Sim2RealArtifactConfig,
     work_dir: Path,
     storage: StorageClient,
     *,
@@ -2770,7 +2833,7 @@ def _heldout_metadata(
     return _heldout_policy_metadata(heldout_report, **heldout_identity_kwargs)
 
 
-def _viewer_command(config: Sim2RealLoopConfig) -> str:
+def _viewer_command(config: Sim2RealLoopConfig | Sim2RealArtifactConfig) -> str:
     return (
         "npa workbench sim2real rerun serve "
         f"--run-id {config.run_id} --s3-bucket {config.s3_bucket} "
@@ -2779,7 +2842,7 @@ def _viewer_command(config: Sim2RealLoopConfig) -> str:
 
 
 def _regen_run_metadata(
-    config: Sim2RealLoopConfig,
+    config: Sim2RealLoopConfig | Sim2RealArtifactConfig,
     state: _RegenState,
     viewer_command: str,
 ) -> dict[str, Any]:
@@ -2801,14 +2864,14 @@ def _regen_run_metadata(
         "policy_deployable": policy_access.get("deployable_policy", False),
         **_heldout_metadata(state.heldout_report, policy_access),
         "orchestrator_job_name": config.run_id,
-        "orchestrator_node_product": config.k8s_gpu_product,
+        "orchestrator_node_product": getattr(config, "k8s_gpu_product", ""),
         "viewer_command": viewer_command,
         "regeneration": state.regeneration_authority,
     }
 
 
 def _emit_regen_rrd(
-    config: Sim2RealLoopConfig,
+    config: Sim2RealLoopConfig | Sim2RealArtifactConfig,
     work_dir: Path,
     output_rrd: Path,
     state: _RegenState,
@@ -2892,7 +2955,7 @@ def _update_stage14_component(
 
 
 def _persist_regen_report(
-    config: Sim2RealLoopConfig,
+    config: Sim2RealLoopConfig | Sim2RealArtifactConfig,
     work_dir: Path,
     output_rrd: Path,
     state: _RegenState,
@@ -2980,7 +3043,7 @@ def _current_mcap_path(
 
 
 def _publish_regen_recordings(
-    config: Sim2RealLoopConfig,
+    config: Sim2RealLoopConfig | Sim2RealArtifactConfig,
     work_dir: Path,
     storage: StorageClient,
     *,
@@ -3058,16 +3121,29 @@ def _emit_regen_mcap(
     )
 
 
-def _assert_regen_heldout_frames(result: Sim2RealVizResult) -> None:
-    if result.heldout_frame_count <= 0:
+def _has_factual_heldout_observation(
+    result: Sim2RealVizResult,
+    heldout_report: dict[str, Any] | None,
+) -> bool:
+    return getattr(result, "heldout_frame_count", 0) > 0 or (
+        getattr(result, "heldout_env_count", 0) > 0
+        and _has_factual_heldout_scores(heldout_report)
+    )
+
+
+def _assert_regen_heldout_evidence(
+    result: Sim2RealVizResult,
+    heldout_report: dict[str, Any] | None,
+) -> None:
+    if not _has_factual_heldout_observation(result, heldout_report):
         raise Sim2RealRerunRegenError(
-            "regenerated .rrd has heldout_frame_count=0; "
+            "regenerated .rrd has no factual held-out camera or scored environment evidence; "
             "sync gold held-out renders or rerun held-out eval"
         )
 
 
 def _finalize_regen_result(
-    config: Sim2RealLoopConfig,
+    config: Sim2RealLoopConfig | Sim2RealArtifactConfig,
     work_dir: Path,
     storage: StorageClient,
     state: _RegenState,
@@ -3076,7 +3152,7 @@ def _finalize_regen_result(
     upload: bool,
     output_rrd: Path | None = None,
 ) -> RegenResult:
-    _assert_regen_heldout_frames(result)
+    _assert_regen_heldout_evidence(result, state.heldout_report)
     mcap_result = _emit_regen_mcap(work_dir, state)
     if upload:
         _capture_regen_mcap_identity(
@@ -3096,6 +3172,7 @@ def _finalize_regen_result(
         config.run_id,
         work_dir,
         result,
+        heldout_report=state.heldout_report,
         upload_uri=upload_uri,
         mcap_result=mcap_result,
         mcap_upload_uri=mcap_upload_uri,
@@ -3163,7 +3240,7 @@ def _regen_input_authority(
 
 
 def _regenerate_sim2real_rrd(
-    config: Sim2RealLoopConfig,
+    config: Sim2RealLoopConfig | Sim2RealArtifactConfig,
     local_dir: Path | None,
     local_rrd_path: Path | None,
     upload: bool,
@@ -3220,7 +3297,7 @@ def _regenerate_sim2real_rrd(
             outer_history,
             viewer_command,
         )
-        _assert_regen_heldout_frames(result)
+        _assert_regen_heldout_evidence(result, state.heldout_report)
         _persist_regen_report(
             config,
             work_dir,
@@ -3244,7 +3321,7 @@ def _regenerate_sim2real_rrd(
 
 
 def regen_sim2real_rrd(
-    config: Sim2RealLoopConfig,
+    config: Sim2RealLoopConfig | Sim2RealArtifactConfig,
     *,
     local_dir: Path | None = None,
     local_rrd_path: Path | None = None,
@@ -4430,13 +4507,14 @@ def _regen_result_from_viz(
     local_dir: Path,
     result: Sim2RealVizResult,
     *,
+    heldout_report: dict[str, Any] | None = None,
     upload_uri: str = "",
     mcap_result: dict[str, Any] | None = None,
     mcap_upload_uri: str = "",
 ) -> RegenResult:
-    if result.heldout_frame_count <= 0:
+    if not _has_factual_heldout_observation(result, heldout_report):
         raise Sim2RealRerunRegenError(
-            "regenerated .rrd has heldout_frame_count=0; sync eval/heldout/renders or rerun held-out eval"
+            "regenerated .rrd has no factual held-out camera or scored environment evidence"
         )
     mcap = mcap_result or {}
     return RegenResult(

@@ -25,8 +25,8 @@ import tempfile
 import time
 import urllib.request
 
-GO_VERSION = "1.27.1"
-GO_ARCHIVE_SHA256 = "63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445"
+GO_VERSION = "1.27.2"
+GO_ARCHIVE_SHA256 = "ecbadb99091a3f46e31f5f934b068b1864eafa7995211b39eaddf76996045fe5"
 GO_ARCHIVE_URL = f"https://go.dev/dl/go{GO_VERSION}.linux-amd64.tar.gz"
 GITLEAKS_VERSION = "v8.28.0"
 PROCESS_CONTAINMENT = "seccomp-process-group-v1"

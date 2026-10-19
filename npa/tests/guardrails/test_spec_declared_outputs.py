@@ -31,6 +31,7 @@ import pytest
 from npa.orchestration.npa_workflow.blueprints import iter_npa_workflow_specs
 from npa.orchestration.npa_workflow.interpreter import build_plan
 from npa.orchestration.npa_workflow.spec import load_spec
+from npa.orchestration.npa_workflow.submit import merge_config_overrides
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -47,6 +48,17 @@ def _checked_specs() -> tuple[Path, ...]:
     """Shipped specs plus skill examples that users are instructed to copy."""
 
     return (*iter_npa_workflow_specs(), *DIAGRAM_EXAMPLE_SPECS)
+
+
+def _contract_spec(path):
+    spec = load_spec(path)
+    # Static artifact checks use inert exact inputs; no image acceptance or
+    # provider work is claimed. The default-image audit never uses this fixture.
+    images = {
+        key: "registry.example.invalid/artifact-contract@sha256:" + "0" * 64
+        for key in spec.config.get("required_immutable_images", [])
+    }
+    return merge_config_overrides(spec, images)
 
 
 #: toolRef prefix -> (argv flag naming the output prefix, dotted `result_uri_for`).
@@ -203,7 +215,7 @@ def _cases() -> list[tuple[str, str, str, str, str]]:
 
     out: list[tuple[str, str, str, str, str]] = []
     for path in _checked_specs():
-        spec = load_spec(path)
+        spec = _contract_spec(path)
         assume = (
             "promote_checkpoint"
             if any(state.transitions for state in spec.states.values())
@@ -330,7 +342,7 @@ def test_declared_output_is_where_the_tool_writes(
 ) -> None:
     del declared_schema
     flag, dotted = RESULT_URI_TOOLS[tool_ref]
-    spec = load_spec(_spec_path(spec_name))
+    spec = _contract_spec(_spec_path(spec_name))
     assume = (
         "promote_checkpoint"
         if any(candidate.transitions for candidate in spec.states.values())

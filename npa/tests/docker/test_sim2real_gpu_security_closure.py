@@ -47,7 +47,7 @@ def test_envgen_uses_explicit_fixed_headers_without_changing_other_callers():
     assert '"${ENVGEN_LINUX_LIBC_DEV_VERSION}"' in text
     installer = (WORKBENCH / "common/install_workflow_runtime_prereqs.sh").read_text()
     assert 'linux_libc_dev_override="${2:-}"' in installer
-    assert 'linux_libc_dev_version="5.15.0-190.200"' in installer
+    assert 'linux_libc_dev_version="5.15.0-198.208"' in installer
     assert 'linux_libc_dev_version="6.8.0-139.139"' in installer
 
 

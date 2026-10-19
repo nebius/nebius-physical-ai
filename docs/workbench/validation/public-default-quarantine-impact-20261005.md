@@ -135,3 +135,78 @@ a development tag as evidence that its full workload is accepted.
 These paths need exact independently qualified operator images or a separately
 reviewed public default. Their existing license, customer authorization, model
 access and workload acceptance requirements continue to apply.
+
+## Current correction, 2026-10-06
+
+The preceding tables preserve the original dated resolver observation. That
+audit missed literal Isaac and SONIC digests, which bypassed tool-default
+quarantine. The follow-up removes those automatic selections. All 133 shipped
+specs now have **43 guarded default selections across 39 workflows**: 30 deny
+quarantined tool-image selection, and thirteen deny missing exact operator image
+inputs before task expansion. These categories are audited independently:
+supplying exact operator inputs can reveal additional quarantined task-image
+defaults. This is planning evidence only, not fresh image or GPU acceptance.
+
+### Current image-tool denials
+
+| Workflow | Quarantined image tools |
+| --- | --- |
+| `workflows/partners/antioch/antioch-offline-policy-train.yaml` | `lerobot` |
+| `workflows/testing/adversarial-scenario-hardening.yaml` | `isaac-lab` |
+| `workflows/testing/byof-libero.yaml` | `libero` |
+| `workflows/testing/cosmos3-checkpoint-eval.yaml` | `cosmos3` |
+| `workflows/testing/cosmos3-generate.yaml` | `cosmos3` |
+| `workflows/testing/cosmos3-policy-model-factory.yaml` | `cosmos3` |
+| `workflows/testing/cosmos3-ray-batch.yaml` | `cosmos3-ray-serve` |
+| `workflows/testing/video-variant-sweep-cosmos3.yaml` | `cosmos3` |
+| `workflows/testing/curobo-benchmark.yaml` | `curobo` |
+| `workflows/testing/hardening-with-insights.yaml` | `isaac-lab` |
+| `workflows/testing/isaac-arena-evaluation-b200.yaml` | `isaac-arena` |
+| `workflows/testing/isaac-arena-evaluation-rtxpro.yaml` | `isaac-arena` |
+| `workflows/testing/isaac-franka-capture-reason.yaml` | `isaac-lab` |
+| `workflows/testing/multicamera-rgbd-capture.yaml` | `isaac-lab` |
+| `workflows/testing/nurec-colmap-reconstruct.yaml` | `ncore` |
+| `workflows/testing/open3d-registration.yaml` | `open3d` |
+| `workflows/testing/rgbd-scan-to-isaac.yaml` | `sonic` |
+| `workflows/testing/rl-policy-training-sim-success.yaml` | `isaac-lab` |
+| `workflows/testing/robocasa-data-policy.yaml` | `lerobot` |
+| `workflows/testing/shared-scene-navigation.yaml` | `isaac-lab` |
+| `workflows/testing/sonic-eval.yaml` | `sonic` |
+| `workflows/testing/sonic-export-eval.yaml` | `sonic` |
+| `workflows/testing/sonic-export.yaml` | `sonic` |
+| `workflows/testing/sonic-locomotion-finetuning.yaml` | `sonic` |
+| `workflows/testing/sonic-train.yaml` | `sonic` |
+| `workflows/testing/seedvr2-video-restoration.yaml` | `seedvr2` |
+| `workflows/testing/tokenfactory-cosmos-gate.yaml` | `lerobot-vlm-rl` |
+| `workflows/testing/tokenfactory-rollout-judge-combo.yaml` | `lerobot` |
+| `workflows/testing/tokenfactory-scene-to-rollout-judge.yaml` | `lerobot` |
+| `workflows/testing/tokenfactory-train-triage.yaml` | `lerobot` |
+
+### Required exact operator image inputs
+
+These provenance/child-launch consumers use the opt-in
+`config.required_immutable_images` contract. Missing, tag-only or `tool://`
+inputs fail planning with an actionable `--var` instruction. Qualification is
+still required for the operator-selected bytes.
+
+| Workflow | Required config keys |
+| --- | --- |
+| `workflows/testing/digital-twin-campus-render.yaml` | `runtime_image` |
+| `workflows/testing/digital-twin-cuda-render.yaml` | `runtime_image` |
+| `workflows/testing/field-failure-reference-demo.yaml` | `navigation_image, reconstruction_image` |
+| `workflows/testing/franka-rl-transfer.yaml` | `isaac_image` |
+| `workflows/testing/lyra-scene-actions.yaml` | `isaac_image` |
+| `workflows/testing/multicamera-rgbd-warehouse.yaml` | `isaac_image` |
+| `workflows/testing/physical-augmentation.yaml` | `isaac_image` |
+| `workflows/main/rgbd-scan-to-policy-demo.yaml` | `assembly_image, reconstruction_image, isaac_image` |
+| `workflows/testing/rgbd-scan-to-isaac.yaml` | `isaac_image` |
+| `workflows/testing/scan-to-isaac-navigation.yaml` | `isaac_image` |
+
+Warehouse records native MDL runtime-material provenance, so it requires an
+exact operator `isaac_image` before planning. Franka GPU profiles also require
+an exact operator `isaac_image` before planning; the former
+`tool://isaac-lab` default remains quarantined and cannot be selected
+automatically. The optional LeRobot 0.6 image in Franka and
+LeRobot transfer remains a distinct exact-version qualification scope; the
+default LeRobot 0.5 quarantine is unchanged. Repaired explicit development
+candidates are not accepted public defaults.

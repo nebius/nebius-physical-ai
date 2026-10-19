@@ -1,0 +1,369 @@
+{
+  "format": "npa.workbench_release_security_audit.v1",
+  "audit_date": "2026-10-16",
+  "status": "nonzero",
+  "scope": "27 accepted public release digests; other maintained runtime bytes remain unverified",
+  "scanner": {
+    "Version": "0.74.0",
+    "VulnerabilityDB": {
+      "Version": 2,
+      "NextUpdate": "2026-10-17T01:13:54.947090202Z",
+      "UpdatedAt": "2026-10-16T01:13:54.947090392Z",
+      "DownloadedAt": "2026-10-16T03:32:44.174206425Z"
+    }
+  },
+  "release_manifest_commit": "f331310cfb278294c864cb737c6a0c3205a00f1d",
+  "counts_are_occurrences_not_unique_vulnerabilities": true,
+  "totals": {
+    "images": 27,
+    "findings": 66855,
+    "by_severity": {
+      "MEDIUM": 50046,
+      "LOW": 10060,
+      "HIGH": 6172,
+      "CRITICAL": 248,
+      "UNKNOWN": 329
+    },
+    "fix_available": 20149
+  },
+  "images": {
+    "alpamayo2-super": {
+      "image": "ghcr.io/nebius/nebius-physical-ai/npa-alpamayo2-super@sha256:17a3966a6e743cf34ecaeb2ef684272646c815d07a8a4668ccebf17de6aa0e07",
+      "status": "scanned",
+      "total": 5441,
+      "severity": {
+        "MEDIUM": 4817,
+        "LOW": 406,
+        "HIGH": 213,
+        "CRITICAL": 5
+      },
+      "fix_available": 1992
+    },
+    "content-agents": {
+      "image": "ghcr.io/nebius/nebius-physical-ai/npa-content-agents@sha256:c64aaf6201bdaa013f9d16e8497290cf166907932f036297d7abaa430cbad7db",
+      "status": "scanned",
+      "total": 479,
+      "severity": {
+        "MEDIUM": 374,
+        "LOW": 97,
+        "HIGH": 8
+      },
+      "fix_available": 326
+    },
+    "cosmos": {
+      "image": "ghcr.io/nebius/nebius-physical-ai/npa-cosmos@sha256:a7d2ba85ea4ad2d2036f6f8575b4e7a801d3f98ff202f6eb575329f1af9a41dd",
+      "status": "scanned",
+      "total": 1491,
+      "severity": {
+        "MEDIUM": 1236,
+        "LOW": 195,
+        "HIGH": 54,
+        "CRITICAL": 5,
+        "UNKNOWN": 1
+      },
+      "fix_available": 638
+    },
+    "cosmos2-transfer": {
+      "image": "ghcr.io/nebius/nebius-physical-ai/npa-cosmos2-transfer@sha256:0caddf68ccac1b69bd9fe3fb089bcc325a111059065452d31fdf0576629895d3",
+      "status": "scanned",
+      "total": 1014,
+      "severity": {
+        "MEDIUM": 863,
+        "LOW": 70,
+        "HIGH": 79,
+        "CRITICAL": 2
+      },
+      "fix_available": 345
+    },
+    "cosmos3-reason": {
+      "image": "ghcr.io/nebius/nebius-physical-ai/npa-cosmos3-reason@sha256:e708aa32b9247eaedf1a7a5b0d82adbe65b95a9af50721b9d09fddbfd508bbc9",
+      "status": "scanned",
+      "total": 1734,
+      "severity": {
+        "MEDIUM": 1425,
+        "LOW": 226,
+        "HIGH": 78,
+        "UNKNOWN": 4,
+        "CRITICAL": 1
+      },
+      "fix_available": 609
+    },
+    "cosmos3-serving": {
+      "image": "ghcr.io/nebius/nebius-physical-ai/npa-cosmos3-serving@sha256:3342bbe44bd1c00ebf05ab4c9d7286058a94bb5ce90b49b164b23604d3acf180",
+      "status": "scanned",
+      "total": 4905,
+      "severity": {
+        "LOW": 1306,
+        "HIGH": 589,
+        "MEDIUM": 2956,
+        "UNKNOWN": 42,
+        "CRITICAL": 12
+      },
+      "fix_available": 708
+    },
+    "detection-training": {
+      "image": "ghcr.io/nebius/nebius-physical-ai/npa-detection-training@sha256:a09126491bd660f314b8f412df7238746dc2b063e5d5b7ca87bba7596dafcb0d",
+      "status": "scanned",
+      "total": 4498,
+      "severity": {
+        "MEDIUM": 3980,
+        "LOW": 309,
+        "HIGH": 204,
+        "CRITICAL": 5
+      },
+      "fix_available": 1702
+    },
+    "diffusers": {
+      "image": "ghcr.io/nebius/nebius-physical-ai/npa-diffusers@sha256:6422a062a00c9816a945623b0c83a78977fa5d5cec1777a0e6d44d1d746fc42e",
+      "status": "scanned",
+      "total": 1324,
+      "severity": {
+        "LOW": 337,
+        "HIGH": 359,
+        "MEDIUM": 563,
+        "UNKNOWN": 42,
+        "CRITICAL": 23
+      },
+      "fix_available": 128
+    },
+    "envgen": {
+      "image": "ghcr.io/nebius/nebius-physical-ai/npa-envgen@sha256:08eb75118f5a04194d33a60308212db7706dd9c339d74afc5471a58608bf0422",
+      "status": "scanned",
+      "total": 5856,
+      "severity": {
+        "MEDIUM": 4703,
+        "LOW": 800,
+        "HIGH": 345,
+        "CRITICAL": 8
+      },
+      "fix_available": 1514
+    },
+    "fiftyone": {
+      "image": "ghcr.io/nebius/nebius-physical-ai/npa-fiftyone@sha256:9ba5e723b2af8bad4e442781f3e09e2e5649499352ae583b7508bfdd902d7119",
+      "status": "scanned",
+      "total": 1019,
+      "severity": {
+        "LOW": 316,
+        "HIGH": 271,
+        "MEDIUM": 406,
+        "UNKNOWN": 22,
+        "CRITICAL": 4
+      },
+      "fix_available": 98
+    },
+    "flex-pi": {
+      "image": "ghcr.io/nebius/nebius-physical-ai/npa-flex-pi@sha256:e27978b682056339fb332acfdd0df2369af1f180d93ba1e0fd86772d6649efe6",
+      "status": "scanned",
+      "total": 5032,
+      "severity": {
+        "MEDIUM": 3870,
+        "LOW": 795,
+        "HIGH": 358,
+        "CRITICAL": 7,
+        "UNKNOWN": 2
+      },
+      "fix_available": 1659
+    },
+    "foxglove-embed": {
+      "image": "ghcr.io/nebius/nebius-physical-ai/npa-foxglove-embed@sha256:dc8e55ca8697bae7e9473d32451614b7c4a1d508b29d98e2bc8063bde2ec7828",
+      "status": "scanned",
+      "total": 143,
+      "severity": {
+        "HIGH": 44,
+        "MEDIUM": 65,
+        "LOW": 29,
+        "UNKNOWN": 5
+      },
+      "fix_available": 142
+    },
+    "groot": {
+      "image": "ghcr.io/nebius/nebius-physical-ai/npa-groot@sha256:47fd6b727f249fbdb0ec237dc748c8bdc7cbf38474dc12c1cffe82f17fdde37b",
+      "status": "scanned",
+      "total": 1678,
+      "severity": {
+        "MEDIUM": 1432,
+        "LOW": 206,
+        "HIGH": 38,
+        "CRITICAL": 2
+      },
+      "fix_available": 583
+    },
+    "lancedb": {
+      "image": "ghcr.io/nebius/nebius-physical-ai/npa-lancedb@sha256:a303b53d0769e612101d468ba957656997838f4b8e6a03430f2b5a2c89e3f8b5",
+      "status": "scanned",
+      "total": 5829,
+      "severity": {
+        "MEDIUM": 4958,
+        "LOW": 476,
+        "HIGH": 374,
+        "CRITICAL": 21
+      },
+      "fix_available": 3033
+    },
+    "leisaac": {
+      "image": "ghcr.io/nebius/nebius-physical-ai/npa-leisaac@sha256:82069eb74a18a88f77ad3149b6c5ed220c4eed33b1d550c26d361947805e8280",
+      "status": "scanned",
+      "total": 6059,
+      "severity": {
+        "MEDIUM": 4825,
+        "LOW": 826,
+        "HIGH": 395,
+        "CRITICAL": 12,
+        "UNKNOWN": 1
+      },
+      "fix_available": 1739
+    },
+    "lerobot-policy": {
+      "image": "ghcr.io/nebius/nebius-physical-ai/npa-lerobot-policy@sha256:fe787495c11747995539b93f6192a1fee3e14b0f1683ea188a95109d762e6adb",
+      "status": "scanned",
+      "total": 1443,
+      "severity": {
+        "MEDIUM": 1228,
+        "LOW": 187,
+        "HIGH": 26,
+        "CRITICAL": 2
+      },
+      "fix_available": 596
+    },
+    "lichtblick": {
+      "image": "ghcr.io/nebius/nebius-physical-ai/npa-lichtblick@sha256:545a42effeec9a705fef12b92a3383db0649df0e66c088bcb14cd9fb3a93a70a",
+      "status": "scanned",
+      "total": 143,
+      "severity": {
+        "HIGH": 44,
+        "MEDIUM": 65,
+        "LOW": 29,
+        "UNKNOWN": 5
+      },
+      "fix_available": 142
+    },
+    "lingbot-world": {
+      "image": "ghcr.io/nebius/nebius-physical-ai/npa-lingbot-world@sha256:5e2a3998bf7d54987d0916f7c249b4963ef87f489e9e893ec8d94da196286277",
+      "status": "scanned",
+      "total": 1324,
+      "severity": {
+        "LOW": 337,
+        "HIGH": 359,
+        "MEDIUM": 563,
+        "UNKNOWN": 42,
+        "CRITICAL": 23
+      },
+      "fix_available": 128
+    },
+    "ltx2": {
+      "image": "ghcr.io/nebius/nebius-physical-ai/npa-ltx2@sha256:c04b5b4e4c7f1c26e21671b3826ce8da75755c98bab2c54cd46137c609c2410b",
+      "status": "scanned",
+      "total": 1316,
+      "severity": {
+        "LOW": 338,
+        "HIGH": 354,
+        "MEDIUM": 559,
+        "UNKNOWN": 42,
+        "CRITICAL": 23
+      },
+      "fix_available": 123
+    },
+    "lyra2": {
+      "image": "ghcr.io/nebius/nebius-physical-ai/npa-lyra2@sha256:c959e2338409195b8b2082e5f199a84c782ff81f2b2dac794e10c70f233a5bf6",
+      "status": "scanned",
+      "total": 4565,
+      "severity": {
+        "MEDIUM": 4111,
+        "LOW": 295,
+        "CRITICAL": 5,
+        "HIGH": 154
+      },
+      "fix_available": 1100
+    },
+    "openarm": {
+      "image": "ghcr.io/nebius/nebius-physical-ai/npa-openarm@sha256:c30da0d55de0b1b0528b1481a318bf43ad9d95c7128ae44b5d434203e7d1543a",
+      "status": "scanned",
+      "total": 5955,
+      "severity": {
+        "MEDIUM": 4775,
+        "LOW": 821,
+        "HIGH": 352,
+        "CRITICAL": 7
+      },
+      "fix_available": 1635
+    },
+    "rerun-viewer": {
+      "image": "ghcr.io/nebius/nebius-physical-ai/npa-rerun-viewer@sha256:4c09c9cf3c14606db8e45c8ee564388888cd3261448f7c3f1304bfdfb1b9e5b2",
+      "status": "scanned",
+      "total": 1191,
+      "severity": {
+        "LOW": 341,
+        "HIGH": 341,
+        "MEDIUM": 475,
+        "UNKNOWN": 24,
+        "CRITICAL": 10
+      },
+      "fix_available": 276
+    },
+    "retargeting": {
+      "image": "ghcr.io/nebius/nebius-physical-ai/npa-retargeting@sha256:e8782bd75084b59a82015a13c581fcd9520feeff6e00ea96367c820e7edfedff",
+      "status": "scanned",
+      "total": 549,
+      "severity": {
+        "LOW": 165,
+        "HIGH": 145,
+        "MEDIUM": 220,
+        "UNKNOWN": 6,
+        "CRITICAL": 13
+      },
+      "fix_available": 279
+    },
+    "sam2": {
+      "image": "ghcr.io/nebius/nebius-physical-ai/npa-sam2@sha256:fbe20454e97452e447e00f79260a267b552deef5538e3bbbc8c3567a3c576f16",
+      "status": "scanned",
+      "total": 1326,
+      "severity": {
+        "LOW": 337,
+        "HIGH": 361,
+        "MEDIUM": 563,
+        "UNKNOWN": 42,
+        "CRITICAL": 23
+      },
+      "fix_available": 130
+    },
+    "sim2real-control": {
+      "image": "ghcr.io/nebius/nebius-physical-ai/npa-sim2real-control@sha256:87fe8530710eea43364a21ad76dbe4b4c2d60e4b49705824fcdb62dc7d185af7",
+      "status": "scanned",
+      "total": 662,
+      "severity": {
+        "LOW": 259,
+        "HIGH": 153,
+        "MEDIUM": 241,
+        "UNKNOWN": 3,
+        "CRITICAL": 6
+      },
+      "fix_available": 272
+    },
+    "sonic-mujoco": {
+      "image": "ghcr.io/nebius/nebius-physical-ai/npa-sonic-mujoco@sha256:2388d9e97269afaa414966e83a27f676a3f44d4271e9828c57bc13fbdce80f57",
+      "status": "scanned",
+      "total": 555,
+      "severity": {
+        "LOW": 220,
+        "HIGH": 115,
+        "MEDIUM": 210,
+        "UNKNOWN": 4,
+        "CRITICAL": 6
+      },
+      "fix_available": 124
+    },
+    "wan2-2": {
+      "image": "ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@sha256:5780959ca6c6e7eb77ee7ea7d005fcf0f56db50783ce798dddee2809185eb837",
+      "status": "scanned",
+      "total": 1324,
+      "severity": {
+        "LOW": 337,
+        "HIGH": 359,
+        "MEDIUM": 563,
+        "UNKNOWN": 42,
+        "CRITICAL": 23
+      },
+      "fix_available": 128
+    }
+  }
+}

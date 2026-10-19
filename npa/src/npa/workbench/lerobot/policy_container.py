@@ -43,6 +43,7 @@ from npa.workbench.lerobot.version_compat import (
 
 
 DEFAULT_POLICY_CHECKPOINT = "lerobot/diffusion_pusht"
+_DEFAULT_POLICY_REVISION = "84a7c23178445c6bbf7e1a884ff497017910f653"
 DEFAULT_ACTION_DIM = 2
 DEFAULT_POLICY_TYPE = "act"
 DEFAULT_TRAIN_BATCH_SIZE = 8
@@ -2233,21 +2234,46 @@ def _materialize_policy_source(raw: str, cache: Path) -> Path:
             f"--checkpoint-path {raw!r} is neither a local path, an s3:// prefix, nor a "
             "Hugging Face repo id (owner/name)"
         )
+    target = _download_eval_checkpoint(repo_id, cache)
+    print(f"NPA_LEROBOT_POLICY_READY {target}", flush=True)
+    return target
+
+
+def _checkpoint_snapshot_reference(reference: str) -> tuple[str, str]:
+    repository, separator, revision = reference.partition("@")
+    if not separator and repository == DEFAULT_POLICY_CHECKPOINT:
+        revision = _DEFAULT_POLICY_REVISION
+    if not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise PolicyContainerError(
+            "Custom Hub policies require owner/repository@<full commit>"
+        )
+    return repository, revision
+
+
+def _download_eval_checkpoint(reference: str, cache: Path) -> Path:
+    repo_id, revision = _checkpoint_snapshot_reference(reference)
     try:
-        from huggingface_hub import snapshot_download
+        from huggingface_hub import HfApi, snapshot_download
     except ImportError as exc:  # pragma: no cover - guarded by the stage's requirements
         raise PolicyContainerError(
             f"huggingface_hub is required to fetch the policy {repo_id!r}"
         ) from exc
+    resolved = HfApi().model_info(repo_id=repo_id, revision=revision).sha
+    if resolved != revision:
+        raise PolicyContainerError(
+            "Hugging Face policy did not verify the immutable commit"
+        )
     target = Path(
         snapshot_download(
             repo_id=repo_id,
             revision=revision,
-            local_dir=cache
-            / (repo_id.replace("/", "__") + (f"--{revision}" if revision else "")),
+            local_dir=cache / repo_id.replace("/", "__") / revision,
         )
     )
-    print(f"NPA_LEROBOT_POLICY_READY {target}", flush=True)
+    (target / ".npa-hf-source.json").write_text(
+        json.dumps({"repo_id": repo_id, "repo_type": "model", "revision": revision})
+        + "\n"
+    )
     return target
 
 

@@ -32,7 +32,7 @@ COPY docker/workbench/curobo/remove_scikit_image_recipe.py \
 COPY --chmod=0644 docker/workbench/common/envgen_compat/tetgen.py \
     /opt/npa/compat/tetgen.py
 
-# The public Genesis parent includes three payloads that are outside this
+# The public Genesis parent includes payloads that are outside this
 # capability's public packaging/security contract:
 #
 # * imageio-ffmpeg's wheel-bundled static FFmpeg;
@@ -61,14 +61,17 @@ RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" "${ENVG
     && python -m pip uninstall -y npa \
     && python -m pip uninstall -y transformers imageio-ffmpeg wandb tetgen \
     && python /usr/local/lib/npa/sanitize-sim2real-envgen-parent.py \
-    && python /usr/local/lib/npa/remove-scikit-image-recipe.py \
-      --site-packages /opt/npa/venv/lib/python3.11/site-packages \
     && rm -rf /opt/nvidia/nsight-compute \
     && python -m pip install --no-deps \
       'imageio-ffmpeg @ https://files.pythonhosted.org/packages/44/bd/c3343c721f2a1b0c9fc71c1aebf1966a3b7f08c2eea8ed5437a2865611d6/imageio_ffmpeg-0.6.0.tar.gz#sha256=e2556bed8e005564a9f925bb7afa4002d82770d6b08825078b7697ab88ba1755' \
     && python -m pip install --no-deps \
       -r /opt/npa/sim2real-control-requirements.txt \
       -r /opt/npa/sim2real-genesis-requirements.txt \
+    && mkdir -p /usr/share/doc/npa-envgen \
+    && python /usr/local/lib/npa/remove-scikit-image-recipe.py \
+      --site-packages "$(python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \
+      --capability envgen \
+      > /usr/share/doc/npa-envgen/dependency-source-correction.json \
     && find /opt/npa/venv -type f \
       -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
     && test -z "$(find /opt/npa/venv -type f \
