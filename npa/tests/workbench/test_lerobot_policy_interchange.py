@@ -57,6 +57,11 @@ def test_exact_revision_policy_source_is_forwarded_to_huggingface(
     calls = []
     module = types.ModuleType("huggingface_hub")
 
+    class HfApi:
+        def model_info(self, *, repo_id: str, revision: str) -> SimpleNamespace:
+            assert repo_id == "lerobot/smolvla_base"
+            return SimpleNamespace(sha=revision)
+
     def snapshot_download(**kwargs):
         calls.append(kwargs)
         target = Path(kwargs["local_dir"])
@@ -64,6 +69,7 @@ def test_exact_revision_policy_source_is_forwarded_to_huggingface(
         return str(target)
 
     module.snapshot_download = snapshot_download
+    module.HfApi = HfApi
     monkeypatch.setitem(sys.modules, "huggingface_hub", module)
     revision = "a" * 40
     result = _materialize_policy_source(
@@ -74,9 +80,14 @@ def test_exact_revision_policy_source_is_forwarded_to_huggingface(
         {
             "repo_id": "lerobot/smolvla_base",
             "revision": revision,
-            "local_dir": tmp_path / "cache" / f"lerobot__smolvla_base--{revision}",
+            "local_dir": tmp_path / "cache" / "lerobot__smolvla_base" / revision,
         }
     ]
+    assert json.loads((result / ".npa-hf-source.json").read_text()) == {
+        "repo_id": "lerobot/smolvla_base",
+        "repo_type": "model",
+        "revision": revision,
+    }
 
 
 def test_malformed_huggingface_revision_is_rejected_before_download(

@@ -2234,7 +2234,8 @@ def _materialize_policy_source(raw: str, cache: Path) -> Path:
             f"--checkpoint-path {raw!r} is neither a local path, an s3:// prefix, nor a "
             "Hugging Face repo id (owner/name)"
         )
-    target = _download_eval_checkpoint(repo_id, cache)
+    reference = f"{repo_id}@{revision}" if revision is not None else repo_id
+    target = _download_eval_checkpoint(reference, cache)
     print(f"NPA_LEROBOT_POLICY_READY {target}", flush=True)
     return target
 
