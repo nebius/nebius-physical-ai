@@ -37,17 +37,24 @@ from npa.workflows.byof.openpi_service_lifecycle import (
 )
 from npa.workflows.sim2real.pi05_closed_loop import (
     _configure_eval_object,
+    _legacy_collection_object_binding,
     _policy_phase,
+    _resolve_interchange_object,
     _sampler_noise_pairing,
     _settle_policy_reset,
     _success,
     _validate_eval_geometry,
+    _validate_eval_object_source,
     _validate_eval_robot_plant,
     _validated_geometry_receipt,
     _validated_robot_plant,
     _wrist_variant,
 )
-from npa.workflows.sim2real.pi05_contract import EPISODE_SCHEMA, Pi05ContractError
+from npa.workflows.sim2real.pi05_contract import (
+    EPISODE_SCHEMA,
+    Pi05ContractError,
+    build_contract,
+)
 from npa.workflows.sim2real.pi05_collect_all import (
     SPLITS,
     _collector_argv,
@@ -783,6 +790,90 @@ def _comparison_geometry() -> dict:
         "grasp_width_m": 0.072,
         "support_height_m": 0.072,
     }
+
+
+def test_legacy_collection_object_binding_is_exact_and_disclosed() -> None:
+    collection = {"task_contract": build_contract()}
+    asset = {
+        "family": "isaac-multicolor-cube",
+        "identity": "isaac-multicolor-cube-072mm",
+        "usd": "task_default",
+    }
+
+    binding = _legacy_collection_object_binding(collection, asset)
+
+    assert binding == {
+        "authority": "sealed_legacy_collection",
+        "runtime_asset": pi05_closed_loop.LEGACY_DEFAULT_OBJECT_ASSET,
+        "collection_contract_sha256": collection["task_contract"]["contract_sha256"],
+        "source_hashes_available": False,
+    }
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("family", "another-family"),
+        ("identity", "another-object"),
+        ("usd", "s3://example/another.usda"),
+    ],
+)
+def test_legacy_collection_object_binding_rejects_different_assets(
+    key: str, value: str
+) -> None:
+    asset = {
+        "family": "isaac-multicolor-cube",
+        "identity": "isaac-multicolor-cube-072mm",
+        "usd": "task_default",
+        key: value,
+    }
+
+    with pytest.raises(RuntimeError, match="not the canonical cube"):
+        _legacy_collection_object_binding({"task_contract": build_contract()}, asset)
+
+
+def test_interchange_object_rejects_partial_collection_provenance(
+    tmp_path: Path,
+) -> None:
+    asset = {
+        "family": "isaac-multicolor-cube",
+        "identity": "isaac-multicolor-cube-072mm",
+        "usd": "task_default",
+        "profile_identity": "partial-profile",
+    }
+
+    with pytest.raises(RuntimeError, match="partial object source provenance"):
+        _resolve_interchange_object({}, asset, {}, {}, tmp_path)
+
+
+def test_eval_object_source_requires_exact_legacy_runtime_asset() -> None:
+    protocol = {
+        "object_binding": {
+            "authority": "sealed_legacy_collection",
+            "runtime_asset": pi05_closed_loop.LEGACY_DEFAULT_OBJECT_ASSET,
+        }
+    }
+    native = Namespace(
+        scene={
+            "object": Namespace(
+                cfg=Namespace(
+                    spawn=Namespace(
+                        usd_path=(
+                            "omniverse://assets/"
+                            + pi05_closed_loop.LEGACY_DEFAULT_OBJECT_ASSET
+                        )
+                    )
+                )
+            )
+        }
+    )
+
+    assert _validate_eval_object_source(native, protocol).endswith(
+        pi05_closed_loop.LEGACY_DEFAULT_OBJECT_ASSET
+    )
+    native.scene["object"].cfg.spawn.usd_path = "omniverse://assets/other.usd"
+    with pytest.raises(RuntimeError, match="legacy object asset"):
+        _validate_eval_object_source(native, protocol)
 
 
 def _comparison_scenarios() -> list[dict]:

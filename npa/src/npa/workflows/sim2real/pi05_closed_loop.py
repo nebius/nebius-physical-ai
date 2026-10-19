@@ -17,7 +17,11 @@ from npa.workflows.sim2real.pi05_contract import (
     CONTROL_HZ,
     EXECUTION_PREFIX,
     JOINT_NAMES,
+    SCHEMA as PI05_TASK_SCHEMA,
+    TASK_ID as PI05_TASK_ID,
     absolute_to_isaac_action,
+    assert_contract,
+    build_contract,
     release_width_threshold,
     verify_controller_roundtrip,
     width_to_droid_gripper,
@@ -86,6 +90,15 @@ PROMPT = (
     "Pick up the object and release it inside the cyan circular target on the table."
 )
 WRIST_ABLATION_MODES = ("fresh", "frozen", "pixel_channel_shuffle")
+LEGACY_DEFAULT_OBJECT_ASSET = (
+    "Isaac/Props/Blocks/MultiColorCube/multi_color_cube_instanceable.usd"
+)
+OBJECT_SOURCE_FIELDS = (
+    "profile_identity",
+    "source_uri",
+    "source_sha256",
+    "bundle_sha256",
+)
 PI05_SAMPLER_NOISE_SHAPE = [15, 32]
 CAMERA_MOTION_METRICS = (
     "wrist_world_motion_m",
@@ -1354,13 +1367,66 @@ def _load_gold_protocol(
     if not protocol["object_identity"] or not protocol["scene_id"]:
         raise RuntimeError("gold collection lacks object or scene identity")
     _validate_object_source(protocol["object_usd"])
-    _bind_protocol_hashes(protocol)
+    runtime_object = None
     if preparation is not None:
+        binding, runtime_object = _resolve_interchange_object(
+            collection, asset, protocol, preparation, work
+        )
+        protocol["object_binding"] = binding
+    _bind_protocol_hashes(protocol)
+    if runtime_object is not None:
+        protocol["_runtime_object_usd"] = str(runtime_object)
+    return protocol
+
+
+def _resolve_interchange_object(
+    collection: dict[str, Any],
+    asset: dict[str, Any],
+    protocol: dict[str, Any],
+    preparation: dict[str, Any],
+    work: Path,
+) -> tuple[dict[str, Any], Path | None]:
+    values = [asset.get(field) for field in OBJECT_SOURCE_FIELDS]
+    if any(values) and not all(values):
+        raise RuntimeError("gold collection has partial object source provenance")
+    if all(values):
         prepared = materialize_prepared_object(preparation, work / "runtime-object")
         assert_collection_object_binding(asset, prepared.profile)
         _validate_prepared_object_geometry(protocol, prepared.profile)
-        protocol["_runtime_object_usd"] = str(prepared.local_path)
-    return protocol
+        return {
+            "authority": "prepared_profile",
+            "profile_identity": prepared.profile.identity,
+        }, prepared.local_path
+    return _legacy_collection_object_binding(collection, asset), None
+
+
+def _legacy_collection_object_binding(
+    collection: dict[str, Any], asset: dict[str, Any]
+) -> dict[str, Any]:
+    expected = {
+        "family": "isaac-multicolor-cube",
+        "identity": "isaac-multicolor-cube-072mm",
+        "usd": "task_default",
+    }
+    if any(asset.get(key) != value for key, value in expected.items()):
+        raise RuntimeError("legacy gold collection object is not the canonical cube")
+    contract = collection.get("task_contract") or {}
+    assert_contract(contract)
+    current = build_contract()
+    if (
+        contract.get("schema") != PI05_TASK_SCHEMA
+        or contract.get("task_id") != PI05_TASK_ID
+        or contract.get("success") != current.get("success")
+    ):
+        raise RuntimeError(
+            "legacy gold task or success contract differs from evaluator"
+        )
+    return {
+        "authority": "sealed_legacy_collection",
+        "runtime_asset": LEGACY_DEFAULT_OBJECT_ASSET,
+        "collection_contract_sha256": contract["contract_sha256"],
+        "source_hashes_available": False,
+    }
 
 
 def _protocol_object_fields(
@@ -1542,6 +1608,21 @@ def _validate_eval_geometry(native: Any, protocol: dict[str, Any]) -> dict[str, 
     string_keys = ("grasp_width_axis", "measurement")
     if any(actual.get(key) != expected.get(key) for key in string_keys):
         raise RuntimeError("evaluator object provenance differs from gold collection")
+    return actual
+
+
+def _validate_eval_object_source(native: Any, protocol: dict[str, Any]) -> str:
+    spawn = native.scene["object"].cfg.spawn
+    actual = str(getattr(spawn, "usd_path", "") or "")
+    binding = protocol.get("object_binding") or {}
+    if binding.get("authority") == "sealed_legacy_collection":
+        expected = str(binding.get("runtime_asset") or "")
+        if not expected or not actual.endswith(expected):
+            raise RuntimeError("evaluator legacy object asset differs from collection")
+    elif binding.get("authority") == "prepared_profile":
+        expected = str(protocol.get("_runtime_object_usd") or "")
+        if not expected or actual != expected:
+            raise RuntimeError("evaluator prepared object source differs from profile")
     return actual
 
 
@@ -2356,6 +2437,7 @@ def _run_evaluation(
     env = gym.make(POLICY_SURFACE_TASK_ID, cfg=cfg)
     try:
         _verify_scene_semantics(env.unwrapped)
+        _validate_eval_object_source(env.unwrapped, protocol)
         _validate_eval_geometry(env.unwrapped, protocol)
         _validate_eval_robot_plant(env.unwrapped, protocol)
         episodes = _evaluate(
