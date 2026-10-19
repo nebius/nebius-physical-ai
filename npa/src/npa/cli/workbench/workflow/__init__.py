@@ -10899,8 +10899,8 @@ def _gpu_spec_resolutions(spec, catalog):
         from npa.orchestration.npa_workflow.errors import NpaWorkflowError
         from npa.orchestration.npa_workflow.submit import load_spec_for_submit
 
-        resolved_spec = load_spec_for_submit(spec)
         try:
+            resolved_spec = load_spec_for_submit(spec)
             plan = build_plan(
                 resolved_spec,
                 run_id=f"{resolved_spec.name}-gpu-discovery",

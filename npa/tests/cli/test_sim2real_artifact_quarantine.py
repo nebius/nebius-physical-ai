@@ -766,6 +766,31 @@ def test_recording_download_refuses_selected_stale_generation_uri(
         )
 
 
+def test_recording_download_reports_the_disabled_selected_publication_uri(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    selected = (
+        "s3://example-bucket/sim2real-b/archived-run/attempt-one/"
+        "reports/sim2real.rrd"
+    )
+    publication = SimpleNamespace(resolve=lambda _uri: None)
+    monkeypatch.setattr(
+        "npa.workflows.sim2real_rerun_regen.resolve_committed_publication_snapshot",
+        lambda *_args: publication,
+    )
+
+    config = Sim2RealArtifactConfig(run_id="archived-run", s3_bucket="example-bucket")
+    with pytest.raises(Sim2RealRerunRegenError) as error:
+        download_rrd_from_s3(
+            config,
+            dest_path=tmp_path / "review.rrd",
+            rrd_uri=selected,
+            client=SimpleNamespace(),
+        )
+
+    assert str(error.value) == f"Rerun recording is disabled at {selected}"
+
+
 def test_recording_download_refuses_nonpublication_uri_inside_run_prefix(
     tmp_path: Path,
 ) -> None:

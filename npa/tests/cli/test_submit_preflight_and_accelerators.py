@@ -960,6 +960,24 @@ def test_workflow_gpus_json_reports_missing_required_images_without_traceback(
     assert "Each of config.runtime_image requires an explicit" in payload["spec_error"]
 
 
+def test_gpu_spec_resolutions_reports_a_malformed_spec_without_traceback(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "malformed-workflow.yaml"
+    path.write_text(
+        "apiVersion: npa.workflow/v0.0.1\nkind: Workflow\nmetadata: {}\n",
+        encoding="utf-8",
+    )
+
+    resolutions, error = workflow_cli._gpu_spec_resolutions(
+        path,
+        KubernetesGpuCatalog({}, context="npa-cluster"),
+    )
+
+    assert resolutions == []
+    assert "non-empty 'states' mapping" in error
+
+
 def test_workflow_gpus_text_reports_missing_required_images_with_empty_catalog(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
