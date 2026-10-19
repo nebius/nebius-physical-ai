@@ -150,7 +150,6 @@ def test_envgen_corrects_inert_dependency_recipe_before_flattening() -> None:
 
     text = (WORKBENCH / "sim2real-envgen/Dockerfile").read_text(encoding="utf-8")
     assert "COPY docker/workbench/curobo/remove_scikit_image_recipe.py" in text
-    assert text.count("&& python /usr/local/lib/npa/remove-scikit-image-recipe.py") == 1
     correction = text.index(
         "&& python /usr/local/lib/npa/remove-scikit-image-recipe.py"
     )
@@ -159,8 +158,8 @@ def test_envgen_corrects_inert_dependency_recipe_before_flattening() -> None:
     assert text.index("COPY --from=sanitized / /") > correction
     assert 'import sysconfig; print(sysconfig.get_path("purelib"))' in text
     assert "--capability envgen" in text
-    assert "--allow-corrected" in text
     assert "/usr/share/doc/npa-envgen/dependency-source-correction.json" in text
+    assert text.count("python /usr/local/lib/npa/remove-scikit-image-recipe.py") == 1
 
 
 def test_genesis_workflow_runtime_upgrades_fixed_kernel_headers() -> None:
@@ -186,8 +185,7 @@ def test_genesis_workflow_runtime_upgrades_fixed_kernel_headers() -> None:
         if relative == "sim2real-envgen/Dockerfile":
             assert "ARG ENVGEN_LINUX_LIBC_DEV_VERSION=5.15.0-198.208" in text
             assert '"${UBUNTU_SNAPSHOT}" "${ENVGEN_LINUX_LIBC_DEV_VERSION}"' in text
-        else:
-            assert 'install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" \\' in text
+        assert 'install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}"' in text, relative
         assert "configure_ubuntu_snapshot.sh" in text, relative
 
 

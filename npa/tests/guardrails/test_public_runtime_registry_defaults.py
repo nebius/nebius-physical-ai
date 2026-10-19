@@ -117,12 +117,10 @@ def _prepare_registry_workflow(spec_path):
         )
     # Required exact inputs are inert ownership fixtures. The no-override guard
     # separately verifies denial when the operator has not supplied these values.
-    config_overrides.update(
-        {
-            key: f"{public_prefix}runtime@sha256:{'0' * 64}"
-            for key in spec.config.get("required_immutable_images", [])
-        }
-    )
+    config_overrides = {
+        key: f"{public_prefix}runtime@sha256:{'0' * 64}"
+        for key in spec.config.get("required_immutable_images", [])
+    }
     if requires_baked_image:
         config_overrides["source_sha"] = "0" * 40
     if spec_path.name == "byof-embodiedgen.yaml":
@@ -136,7 +134,7 @@ def _prepare_registry_workflow(spec_path):
         spec_path,
         run_id=f"registry-guard-{spec_path.stem}",
         assume_decision="promote_checkpoint",
-        config_overrides=config_overrides or None,
+        config_overrides=config_overrides,
         render_options=SkypilotRenderOptions(
             image_overrides=image_overrides,
             materialize_registry_secrets=False,

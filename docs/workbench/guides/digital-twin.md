@@ -21,12 +21,6 @@ industrial cell with native Blender Cycles and exports OpenUSD and binary glTF.
 It can target B200 compute infrastructure without depending on RT cores. These
 are separate renderer contracts: B200 availability does not make NuRec compatible.
 
-Both testing workflows require an operator-supplied immutable NPA runtime image.
-The image must provide the source-overlay execution contract used by the raw
-`/opt/npa/venv/bin/python -m npa.workflows.digital_twin_render` stage. The
-historical execution records below are bound to their previous runtime pins and
-do not qualify a newly selected image or a future workflow run.
-
 | Input and purpose | Renderer | Infrastructure |
 | --- | --- | --- |
 | Authored 18-hectare industrial campus → aerial and close inspection routes | Blender 4.5.3 Cycles OptiX | RTX PRO 6000, on-demand or explicitly authorized preemptible |
@@ -187,18 +181,22 @@ remain separate run artifacts.
 
 Prepare the dedicated RTX infrastructure and project storage above, then select
 the [campus workflow](../../../workflows/testing/digital-twin-campus-render.yaml):
+it deliberately has no shipped runtime-image default. Supply an operator-controlled,
+registry-qualified, untagged digest for a compatible image that the target cluster
+can pull. The earlier automatic SONIC digest is quarantined and must not be used as
+a default or substituted for this input.
 
 ```bash
-runtime_image='<registry>/<compatible-npa-runtime>@sha256:<immutable-digest>'
 npa workbench health preflight --project twin --checks nebius,s3 --json
 npa workbench workflow validate-spec workflows/testing/digital-twin-campus-render.yaml
 npa workbench workflow prepare-run 'workflows/testing/digital-twin-campus-render.yaml' --project twin
 npa workbench workflow preflight-images workflows/testing/digital-twin-campus-render.yaml \
-  --project twin --infra 'k8s/<rtx-context>' --var runtime_image="$runtime_image"
+  --project twin --infra 'k8s/<rtx-context>' \
+  --var runtime_image='<operator-controlled registry-qualified image@sha256:...>'
 npa workbench workflow submit workflows/testing/digital-twin-campus-render.yaml \
   --run-id '<prepared-run-id>' --project twin --infra 'k8s/<rtx-context>' \
-  --var runtime_image="$runtime_image" --var bucket='<your-bucket>' \
-  --var prefix='digital-twin/<prepared-run-id>' \
+  --var runtime_image='<operator-controlled registry-qualified image@sha256:...>' \
+  --var bucket='<your-bucket>' --var prefix='digital-twin/<prepared-run-id>' \
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 ```
 
@@ -233,7 +231,7 @@ This verifies native RTX OptiX selection, observed GPU activity, source hashes,
 full-resolution distinct frames, all four camera routes and a populated exported
 scene. The adjacent readiness record distinguishes planning from live execution.
 
-### Historical RTX campus execution (previous runtime pin)
+### Verified RTX campus execution
 
 The campus workflow completed on one preemptible NVIDIA RTX PRO 6000 with
 Blender 4.5.3 Cycles OptiX. It produced all 32 distinct 2560 × 1440 views at 128
@@ -264,29 +262,31 @@ partially provisioned RTX pool into B200 or select GPU Operator on an NVSwitch
 system. Reconcile the owned failed allocation before choosing another profile.
 
 The [CUDA workflow](../../../workflows/testing/digital-twin-cuda-render.yaml)
-requires an operator-supplied compatible immutable NPA runtime image and the
-submitting checkout's source overlay. It downloads the official Blender 4.5.3
-Linux archive at runtime and checks its pinned SHA-256 before extraction.
+requires an operator-qualified, registry-qualified immutable runtime image and
+the submitting checkout's source overlay; it deliberately has no automatic
+SONIC or Isaac image default. The former withdrawn SONIC digest is not repaired
+or selected by the historical B200 evidence. It downloads the official Blender
+4.5.3 Linux archive at runtime and checks its pinned SHA-256 before extraction.
 Blender is GPL-licensed; see
 [Blender's license information](https://www.blender.org/about/license/).
 No Blender distribution or third-party scene assets are added to an image or
 this repository. The workflow uses no Isaac, NGC, model weights or gated assets.
 
 ```bash
-runtime_image='<registry>/<compatible-npa-runtime>@sha256:<immutable-digest>'
 npa workbench health preflight --project twin --checks nebius,s3 --json
 npa skypilot bootstrap
 export NPA_SKYPILOT_BIN="$(npa skypilot status --bin-path)"
 npa workbench workflow validate-spec workflows/testing/digital-twin-cuda-render.yaml
-npa workbench workflow plan-spec workflows/testing/digital-twin-cuda-render.yaml \
-  --run-id twin-render --var runtime_image="$runtime_image"
+npa workbench workflow plan-spec workflows/testing/digital-twin-cuda-render.yaml --run-id twin-render \
+  --var runtime_image='<operator-controlled registry-qualified image@sha256:...>'
 npa workbench workflow prepare-run 'workflows/testing/digital-twin-cuda-render.yaml' --project twin
 npa workbench workflow preflight-images workflows/testing/digital-twin-cuda-render.yaml \
-  --project twin --infra 'k8s/<b200-context>' --var runtime_image="$runtime_image"
+  --project twin --infra 'k8s/<b200-context>' \
+  --var runtime_image='<operator-controlled registry-qualified image@sha256:...>'
 npa workbench workflow submit workflows/testing/digital-twin-cuda-render.yaml \
   --run-id '<prepared-run-id>' --project twin --infra 'k8s/<b200-context>' \
-  --var runtime_image="$runtime_image" --var bucket='<your-bucket>' \
-  --var prefix='digital-twin/<prepared-run-id>' \
+  --var runtime_image='<operator-controlled registry-qualified image@sha256:...>' \
+  --var bucket='<your-bucket>' --var prefix='digital-twin/<prepared-run-id>' \
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 ```
 
@@ -333,7 +333,7 @@ GPU activity, distinct non-flat full-resolution images, a populated glTF scene,
 bound OpenUSD bytes and an offline HTML viewer. The adjacent workflow readiness
 record reports which execution prerequisites have actually been verified.
 
-### Historical B200 execution (previous runtime pin)
+### Verified B200 execution
 
 The reference workflow completed on one NVIDIA B200 with Blender 4.5.3 Cycles
 CUDA, producing 24 distinct 1280 × 720 PNG views at 64 samples, OpenUSD/glTF

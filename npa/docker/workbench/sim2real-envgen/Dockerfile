@@ -39,9 +39,8 @@ COPY --chmod=0644 docker/workbench/common/envgen_compat/tetgen.py \
 # * the AGPL tetgen Python wrapper (used only for optional tetrahedralization);
 # * optional W&B and Nsight Compute tooling, including separately compiled Go
 #   binaries that are not part of canonical environment generation.
-# * an inert historical token-bearing scikit-image recipe, removed by the
-#   exact-source correction already used by cuRobo while preserving executable
-#   behavior, the image loader, and its license.
+# * an inert token-bearing scikit-image recipe, removed by the existing
+#   exact-source correction while preserving the image loader and license.
 #
 # Retain MoviePy while replacing imageio-ffmpeg with its hash-pinned
 # pure-Python sdist. Remove the optional packages and their parent metadata
@@ -72,7 +71,6 @@ RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" "${ENVG
     && python /usr/local/lib/npa/remove-scikit-image-recipe.py \
       --site-packages "$(python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \
       --capability envgen \
-      --allow-corrected \
       > /usr/share/doc/npa-envgen/dependency-source-correction.json \
     && find /opt/npa/venv -type f \
       -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \

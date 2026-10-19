@@ -89,9 +89,9 @@ making architecture, review, or domain judgments.
 - `skills/tools/golden-eval/SKILL.md`: prove a container image actually works —
  per-container hello-world manifest, dry-run/local/serverless tiers, batch runs,
  and the offline manifest validation that gates CI.
-- `skills/tools/cosmos3-ray-serve/SKILL.md`: deploy and operate persistent
- Cosmos3-Nano generation through NVIDIA Cosmos Framework's native dynamically
- batched Ray Serve path, with guarded runtime weight fetch and S3 provenance.
+- `skills/tools/cosmos3-ray-serve/SKILL.md`: retained Cosmos3-Nano Ray Serve history
+and separately rebuilt-candidate validation. The retained image is quarantined and
+must not be deployed or started.
 - `skills/tools/seedvr2/SKILL.md`: package, run, validate, or review official
  SeedVR2-3B restoration of robot observation video, its S3 workflow, and
  objective/visual evidence without treating generated detail as sensor truth.

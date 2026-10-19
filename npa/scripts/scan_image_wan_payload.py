@@ -211,6 +211,14 @@ AUDITED_SECRET_LITERAL_FILE_SHA256: dict[str, str] = {
     "opt/wan-base/lib/python3.10/site-packages/diffusers/loaders/textual_inversion.py": (
         "9cc89fb4b0ac9762e4434723f8447d8833d26b03844804ee11493ce4b5f7512a"
     ),
+    # Hugging Face Hub 1.26 token-variable references, bound to the independently
+    # checked upstream wheel in wan2-2/oss-literal-audits.json.
+    "opt/wan-base/lib/python3.10/site-packages/huggingface_hub/_sandbox.py": (
+        "5c45d98b94b7ad8cb0fe8ded777ac1d313957668690259f2532901b00c3d28ff"
+    ),
+    "opt/wan-base/lib/python3.10/site-packages/huggingface_hub/cli/sandbox.py": (
+        "ad30997fa5a1a036bb522361b1353fe0b879b8aa8a60eb3bdf15c6000a8919d0"
+    ),
     "usr/bin/ssh": "04f2ff5f506a3f332e7adeb1478a4c551ae74acdd328e6fb5c2495664d4064e6",
     "usr/bin/ssh-add": (
         "1e02d3fca3c8d72570c11ded9681dcacd4775a33560786a27c489b9e4388ec06"
@@ -264,10 +272,138 @@ AUDITED_LITERAL_LIBRARY_SHA256: dict[str, str] = {
 }
 
 
-def _is_audited_literal_library(path: str, sha256: str | None) -> bool:
-    """Whether path and bytes equal one independently audited Debian library."""
+# Trixie replacements were independently matched to authenticated Debian
+# packages and their source consumers; keep accepted Bookworm identities above.
+# Evidence: wan2-2/debian-literal-audits.json. Every changed byte still fails.
+AUDITED_TRIXIE_SECRET_LITERAL_FILE_SHA256: dict[str, str] = {
+    "usr/bin/ssh": ("af3b04ec5653755032fc18ad02445e4e51170e75d8bac4265647d423caa9a83e"),
+    "usr/bin/ssh-add": (
+        "64ae57eb0787b1c39af387edefb42456a8261830f1612fe77549a679067edfa0"
+    ),
+    "usr/bin/ssh-agent": (
+        "2e5cdfc7a49f257608fcca315671f419878e26f719c88b7305710f314bfc8937"
+    ),
+    "usr/bin/ssh-keygen": (
+        "4a16f170f7c80d6643d3ffada36d396c9d7b1d63238a218628e37af38d6107c0"
+    ),
+    "usr/bin/ssh-keyscan": (
+        "0a17e9f79c816a13c174747c8a7a89bf0f0c04ca9977181be59932762db596dc"
+    ),
+    "usr/lib/openssh/ssh-keysign": (
+        "2e17227e65689a3bfade7c7d7e5b80905130815c44b6134eba49bb51b4573186"
+    ),
+    "usr/lib/openssh/ssh-pkcs11-helper": (
+        "a055fb7b3188a14e7bd585ed0a97e74d128a0c9d362bfbbcb0c016292f814c8a"
+    ),
+    "usr/lib/openssh/ssh-sk-helper": (
+        "9655fac146313b8352bf125057085120dd5f9f3e5726381d89e3a19e712ffd67"
+    ),
+    "usr/lib/openssh/sshd-auth": (
+        "2b1ca22b077b106a6fb02ed229c13b9311f392267bea2e4d42933934e3c06afa"
+    ),
+    "usr/lib/openssh/sshd-session": (
+        "22644ab3c1a193b15061851eef5475d02d5ccd492351599bccbf526a55e16a9a"
+    ),
+    "usr/lib/x86_64-linux-gnu/libmbedcrypto.so.3.6.6": (
+        "d0fa156bfb6e7cd2d0ea0f8c164dfe50815b128fc4def6c44aa8a2f5d6ec85ef"
+    ),
+    "usr/lib/x86_64-linux-gnu/libssh.so.4.10.5": (
+        "d24409d053e8331edb578558a1f4b7a0ff3b7d35de55e7dd87d6843f74c718ac"
+    ),
+    "usr/lib/x86_64-linux-gnu/libssh2.so.1.0.1": (
+        "bea384b0ed8797abdba6cb31b2de38ae2a6ad38d5a1cc13fb3704863bcbb15ca"
+    ),
+    "usr/lib/x86_64-linux-gnu/libunistring.so.5.2.0": (
+        "9c200ec975ff24c0a259d4f6cf0d0fc1736d0c86da30fff3d499ad3d9a368b65"
+    ),
+    "usr/sbin/sshd": (
+        "379c5c895b2728e249acd62417cc1388245af3da2ed1cba2e407deae40c32f9d"
+    ),
+}
 
-    return sha256 is not None and AUDITED_LITERAL_LIBRARY_SHA256.get(path) == sha256
+AUDITED_TRIXIE_LITERAL_LIBRARY_SHA256: dict[str, str] = {
+    "usr/lib/x86_64-linux-gnu/libavcodec.so.61.19.101": (
+        "c01e80460c07b27883a61c53e549755b9ff052071a83f4912ff285168719219d"
+    ),
+    "usr/lib/x86_64-linux-gnu/libavutil.so.59.39.100": (
+        "6c463f7e033438989533aea3c35e4c9a98fd6b0a637ddb8529733c0f3db1850a"
+    ),
+    "usr/lib/x86_64-linux-gnu/libgnutls.so.30.40.3": (
+        "4b14edde42e7cbeefd8a6d88d035e096f2e6412a535388bb1d073a1c196e2822"
+    ),
+}
+
+
+# Ubuntu replacements retain separate exact identities after signed-package and
+# source-consumer review. Evidence: wan2-2/ubuntu-literal-audits.json. These
+# dispositions never accept changed content or waive vulnerability findings.
+AUDITED_UBUNTU_SECRET_LITERAL_FILE_SHA256: dict[str, str] = {
+    "usr/lib/x86_64-linux-gnu/libmbedcrypto.so.3.6.5": (
+        "811e07a0b295829a748ee5d307c2bb375ea7cd9f237cf8306f364983f29b20e3"
+    ),
+    "usr/lib/x86_64-linux-gnu/libssh.so.4.10.3": (
+        "8ae94cd73cf654c2cc9bafe7c7cb8abefd084e8484e04bc6f3a8a8db4ae315fe"
+    ),
+    "usr/lib/x86_64-linux-gnu/libssh2.so.1.0.1": (
+        "34287a1e8942e6fdf1c154e8c615a8dab7a69dc6a4e8d76913afb323fdc6fd6f"
+    ),
+    "usr/lib/x86_64-linux-gnu/libunistring.so.5.2.0": (
+        "c762a289c02f716a12549d544a811715126067b9a6377057671d3fad9453a1fc"
+    ),
+    "usr/bin/ssh": ("af809334cc71603f0e27a53e2234e15bd3c36503b3af7d367d103d2db2ffc15f"),
+    "usr/bin/ssh-add": (
+        "ef84cc90864c0944f2229249764f7d7017a54486c1aded9ac77f9092ad4014b6"
+    ),
+    "usr/bin/ssh-agent": (
+        "1d4fd753eff8985343168143c248798c004e2394ec151ef1401c90f7049ebb38"
+    ),
+    "usr/bin/ssh-keygen": (
+        "2dd834413c9d3f4c0e3535b9fcf2e96e14c11f3d36fd23b6c5fc24e50411d051"
+    ),
+    "usr/bin/ssh-keyscan": (
+        "1d4db24a1a24c276c81b3ac184ac7d72a29b68d3e604240e7140dc5334d5d1bc"
+    ),
+    "usr/lib/openssh/ssh-keysign": (
+        "ce99415cad4292da10279a8014702a0a65206f50de556429d6810f8c96650d08"
+    ),
+    "usr/lib/openssh/ssh-pkcs11-helper": (
+        "385f63b4d80b8f6b3407f2fb584e7b9166fbd8728e14346d354a9b0667dd4fdb"
+    ),
+    "usr/lib/openssh/ssh-sk-helper": (
+        "4c852fbe63351b5c3060f1409daefb30015c428fd4f23d5071e101a4f3cdb9ac"
+    ),
+    "usr/lib/openssh/sshd-auth": (
+        "d61881f0978c5c426438de3d437c91475bd8e5c1e8d54d326b577665852b2a5f"
+    ),
+    "usr/lib/openssh/sshd-session": (
+        "9599ebe4a3095d95b9c9d777ddce65f4cbef7adb8215d548c2d837294e70079d"
+    ),
+    "usr/sbin/sshd": (
+        "e029de38facea6ff85a63db0d84c6e53f49185f34838093e9ddf4aaef4e509cb"
+    ),
+}
+
+AUDITED_UBUNTU_LITERAL_LIBRARY_SHA256: dict[str, str] = {
+    "usr/lib/x86_64-linux-gnu/libavcodec.so.62.11.100": (
+        "f2f7634772627cd3180700f2c7bfb81377d6367042136a576fea9230c45a0beb"
+    ),
+    "usr/lib/x86_64-linux-gnu/libavutil.so.60.8.100": (
+        "56557dd89c99afd4c7c1f62297fc0f4c19ed97e29bd903937fac480d38fbe3a5"
+    ),
+    "usr/lib/x86_64-linux-gnu/libgnutls.so.30.41.1": (
+        "ebcc6a4dfae904dc956feb61cef5c36917cf36c19c5718d3c2be7e377ac65d27"
+    ),
+}
+
+
+def _audited_hashes(path: str, *catalogs: dict[str, str]) -> set[str]:
+    """Retain independently reviewed base revisions at their exact paths."""
+    approved = set()
+    for catalog in catalogs:
+        digest = catalog.get(path)
+        if digest is not None:
+            approved.add(digest)
+    return approved
 
 
 def _contains_secret(stream: IO[bytes]) -> bool:
@@ -547,6 +683,58 @@ def _scan_ar_archive(
             )
 
 
+def _add_content_findings(
+    path: str,
+    source: str,
+    findings: list[Finding],
+    inspection: tuple[bool, bool, str | None],
+    secret_hashes: set[str],
+    library_hashes: set[str],
+) -> None:
+    elf_dependency, secret, sha256 = inspection
+    audited_library = sha256 in library_hashes
+    audited_secret = sha256 in secret_hashes
+    expected = secret_hashes | library_hashes
+    checks = (
+        (
+            bool(expected) and sha256 not in expected,
+            "audited_literal_byte_drift",
+            "audited literal bytes changed",
+        ),
+        (
+            elf_dependency and not audited_library,
+            "cuda_elf_dependency",
+            "ELF references forbidden runtime",
+        ),
+        (
+            secret and not (audited_library or audited_secret),
+            "credential_content",
+            "secret-like bytes",
+        ),
+    )
+    for rejected, kind, detail in checks:
+        if rejected:
+            findings.append(Finding(kind, path, f"{detail} in {source}"))
+
+
+def _literal_hashes(path: str) -> tuple[set[str], set[str]]:
+    """Collect reviewed distributions without merging conflicting path hashes."""
+    return (
+        _audited_hashes(
+            path,
+            AUDITED_SECRET_LITERAL_FILE_SHA256,
+            AUDITED_TRIXIE_SECRET_LITERAL_FILE_SHA256,
+            AUDITED_UBUNTU_SECRET_LITERAL_FILE_SHA256,
+        ),
+        _audited_hashes(
+            path,
+            AUDITED_LITERAL_LIBRARY_SHA256,
+            AUDITED_TRIXIE_LITERAL_LIBRARY_SHA256,
+            AUDITED_UBUNTU_LITERAL_LIBRARY_SHA256,
+        ),
+    )
+
+
 def _scan_file_stream(
     *,
     path: str,
@@ -557,49 +745,18 @@ def _scan_file_stream(
     budget: _NestedArchiveBudget,
 ) -> None:
     _add_forbidden_path_findings(path, source, findings)
-    audited_secret_sha256 = AUDITED_SECRET_LITERAL_FILE_SHA256.get(path)
-    audited_library_sha256 = AUDITED_LITERAL_LIBRARY_SHA256.get(path)
-    # zipfile requires a fully seekable object; Python 3.10's
-    # SpooledTemporaryFile wrapper does not expose seekable(). Keep the captured
-    # bytes on disk so arbitrarily large image members do not consume RAM.
+    secret_hashes, library_hashes = _literal_hashes(path)
+    # Python 3.10 nested ZIP inspection requires a seekable disk-backed copy.
     with tempfile.TemporaryFile() as captured:
-        elf_dependency, secret, sha256 = _inspect_content(
+        inspection = _inspect_content(
             stream,
             scan_secret=True,
-            calculate_sha256=(
-                audited_secret_sha256 is not None or audited_library_sha256 is not None
-            ),
+            calculate_sha256=bool(secret_hashes or library_hashes),
             copy_to=captured,
         )
-        audited_literal_library = _is_audited_literal_library(path, sha256)
-        audited_secret_literal = (
-            audited_secret_sha256 is not None and sha256 == audited_secret_sha256
+        _add_content_findings(
+            path, source, findings, inspection, secret_hashes, library_hashes
         )
-        expected_audited_sha256 = audited_secret_sha256 or audited_library_sha256
-        if expected_audited_sha256 is not None and sha256 != expected_audited_sha256:
-            findings.append(
-                Finding(
-                    "audited_literal_byte_drift",
-                    path,
-                    f"audited literal bytes changed in {source}",
-                )
-            )
-        if elf_dependency and not audited_literal_library:
-            findings.append(
-                Finding(
-                    "cuda_elf_dependency",
-                    path,
-                    f"ELF links to forbidden runtime in {source}",
-                )
-            )
-        if secret and not (audited_literal_library or audited_secret_literal):
-            findings.append(
-                Finding(
-                    "credential_content",
-                    path,
-                    f"secret-like bytes in {source}",
-                )
-            )
         captured.seek(0)
         _scan_nested_archive(
             stream=captured,
@@ -734,12 +891,22 @@ def payload_policy(
 
     global FORBIDDEN_PATHS, FORBIDDEN_HISTORY
     global AUDITED_SECRET_LITERAL_FILE_SHA256, AUDITED_LITERAL_LIBRARY_SHA256
+    global \
+        AUDITED_TRIXIE_SECRET_LITERAL_FILE_SHA256, \
+        AUDITED_TRIXIE_LITERAL_LIBRARY_SHA256
+    global \
+        AUDITED_UBUNTU_SECRET_LITERAL_FILE_SHA256, \
+        AUDITED_UBUNTU_LITERAL_LIBRARY_SHA256
     global SECRET_CONTENT, FORBIDDEN_ELF_DEPENDENCY
     previous = (
         FORBIDDEN_PATHS,
         FORBIDDEN_HISTORY,
         AUDITED_SECRET_LITERAL_FILE_SHA256,
         AUDITED_LITERAL_LIBRARY_SHA256,
+        AUDITED_TRIXIE_SECRET_LITERAL_FILE_SHA256,
+        AUDITED_TRIXIE_LITERAL_LIBRARY_SHA256,
+        AUDITED_UBUNTU_SECRET_LITERAL_FILE_SHA256,
+        AUDITED_UBUNTU_LITERAL_LIBRARY_SHA256,
         SECRET_CONTENT,
         FORBIDDEN_ELF_DEPENDENCY,
     )
@@ -749,8 +916,12 @@ def payload_policy(
         FORBIDDEN_HISTORY = forbidden_history
     if audited_secret_files is not None:
         AUDITED_SECRET_LITERAL_FILE_SHA256 = audited_secret_files
+        AUDITED_TRIXIE_SECRET_LITERAL_FILE_SHA256 = {}
+        AUDITED_UBUNTU_SECRET_LITERAL_FILE_SHA256 = {}
     if audited_libraries is not None:
         AUDITED_LITERAL_LIBRARY_SHA256 = audited_libraries
+        AUDITED_TRIXIE_LITERAL_LIBRARY_SHA256 = {}
+        AUDITED_UBUNTU_LITERAL_LIBRARY_SHA256 = {}
     if secret_content is not None:
         SECRET_CONTENT = secret_content
     if forbidden_elf_dependency is not None:
@@ -763,6 +934,10 @@ def payload_policy(
             FORBIDDEN_HISTORY,
             AUDITED_SECRET_LITERAL_FILE_SHA256,
             AUDITED_LITERAL_LIBRARY_SHA256,
+            AUDITED_TRIXIE_SECRET_LITERAL_FILE_SHA256,
+            AUDITED_TRIXIE_LITERAL_LIBRARY_SHA256,
+            AUDITED_UBUNTU_SECRET_LITERAL_FILE_SHA256,
+            AUDITED_UBUNTU_LITERAL_LIBRARY_SHA256,
             SECRET_CONTENT,
             FORBIDDEN_ELF_DEPENDENCY,
         ) = previous

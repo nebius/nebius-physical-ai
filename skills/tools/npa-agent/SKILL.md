@@ -190,6 +190,12 @@ Token Factory model selection is configurable via `--llm-model` and `--llm-model
 ## Customer HTTPS Access
 
 - Public URL: `https://<public_ip>/` (self-signed cert on VM IP)
+- CLI status, live verification and artifact handoff obtain certificate trust
+  through the recorded instance's host-key-verified SSH connection. They verify
+  the provider address, TLS hostname and certificate validity before sending
+  HTTP credentials. Bootstrap recovery uses its verified SSH connection for
+  the same trust step. Missing SSH trust fails closed; never substitute a
+  certificate learned from an unauthenticated HTTPS connection.
 - `npa agent status` may print that canonical HTTPS endpoint in local operator
   output or an explicitly requested handoff only after its authenticated probe
   succeeds and an unauthenticated request returns `401`, proving HTTP Basic Auth

@@ -272,13 +272,13 @@ When selecting only image-independent health checks, omit image, threshold, and
 S3-prefix overrides: the CLI rejects inputs those checks cannot use. Select the
 `config` or `registry` check when validating execution settings.
 
-### Add a schedulable CPU pool before GPU work
+## 3. Add a schedulable CPU pool before GPU work
 
 SkyPilot's Kubernetes jobs controller requests 2 vCPU/8 GiB. Sim2Real CPU states
 request 8 vCPU/32 GiB and deliberately use the small
 `npa-sim2real-control` image. Give them a Ready, schedulable, appropriately
 untainted node with enough allocatable CPU and memory. It may also advertise GPUs;
-the CPU profile has no GPU exclusion.
+the CPU profile has no GPU exclusion:
 
 Require validated RTX graphics drivers, a working shared filesystem on the
 consuming node groups, and sufficient CPU capacity. If a CPU pool is absent,

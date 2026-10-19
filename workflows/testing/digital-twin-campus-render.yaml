@@ -3,14 +3,16 @@ kind: Workflow
 metadata:
   name: digital-twin-campus-render
   executionMode: runtime
-  description: Render an authored 18-hectare industrial campus with native RTX OptiX, four camera routes, and portable HTML and OpenUSD/glTF artifacts after current-runtime qualification.
+  description: Render an authored 18-hectare industrial campus with native RTX OptiX, four camera routes, and verified portable HTML and OpenUSD/glTF artifacts.
 config:
   bucket: example-bucket
   prefix: digital-twin-campus-render/{{run.id}}
   output_uri: s3://{{config.bucket}}/{{config.prefix}}/rendered
   source_overlay: true
-  required_immutable_images: [runtime_image]
-  runtime_image: ''
+  required_immutable_images:
+    - runtime_image
+  runtime_image: '{{config.operator_runtime_image}}'
+  operator_runtime_image: ''
   accelerator: RTXPRO6000:1
   views: 32
   samples: 128
@@ -25,7 +27,7 @@ resources:
 initial: render
 states:
   render:
-    description: Require an operator-supplied immutable NPA runtime with the source overlay, native OptiX GPU devices, and scene/media verification before publication.
+    description: Require native OptiX GPU devices, render all four campus routes at 2560x1440, and publish only after scene and media verification.
     resources: renderer
     env:
       NVIDIA_DRIVER_CAPABILITIES: all

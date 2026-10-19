@@ -1,46 +1,55 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "e4d128a414c8737a0282c9acb62f53d3354ae7653ddcea3ae654b02ed2d64abf",
+  "workflow_sha256": "71a1cf978358d84c81176b9e251059c68bee2eb4e924a377beb1568846257df3",
   "planning": {
     "validation": {
-      "status": "verified",
-      "reason": "Schema validation and local production-renderer planning passed with a syntactically valid operator-supplied immutable image; neither check pulls or qualifies that image.",
-      "evidence": [
-        "npa workbench workflow validate-spec workflows/testing/digital-twin-cuda-render.yaml --json",
-        "npa workbench workflow plan-spec workflows/testing/digital-twin-cuda-render.yaml --run-id digital-twin-reference --check-render --var runtime_image=registry.example.invalid/npa-runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --json"
-      ]
+      "status": "unverified",
+      "reason": "The changed workflow deliberately refuses before planning until an operator supplies a compatible registry-qualified immutable runtime_image; no current exact-image planning result is recorded.",
+      "evidence": []
     },
     "task_fidelity": {
       "status": "unverified",
-      "reason": "The workflow now requires an operator-supplied immutable runtime image. Its source-overlay, renderer, inputs, and outputs require fresh workload qualification together.",
+      "reason": "No current operator-selected runtime image has established task fidelity for these changed workflow bytes; prior CUDA rendering evidence remains historical only.",
       "evidence": []
     }
   },
   "prerequisites": {
     "output_storage": {
       "status": "unverified",
-      "reason": "No current run with the operator-supplied runtime image has completed immutable publication or independent object-storage readback.",
-      "evidence": []
+      "reason": "The cited immutable publication and object-storage readback are historical evidence; this changed workflow has no current exact-image run or readback binding.",
+      "evidence": [
+        "docs/workbench/guides/digital-twin.md#verified-b200-execution",
+        "npa/tests/e2e/test_digital_twin_render_live.py"
+      ]
     },
     "worker_input": {
       "status": "unverified",
-      "reason": "No current worker run has executed the source overlay and authored scene with the operator-supplied runtime image.",
-      "evidence": []
+      "reason": "The cited worker-source and scene checks are historical evidence, not proof for this changed workflow with an operator-selected runtime image.",
+      "evidence": [
+        "docs/workbench/guides/digital-twin.md#verified-b200-execution",
+        "npa/tests/e2e/test_digital_twin_render_live.py"
+      ]
     },
     "credentials": {
       "status": "unverified",
-      "reason": "Current project, storage, image-pull, and worker credentials require a fresh preflight for the selected operator runtime image.",
-      "evidence": []
+      "reason": "The cited project and storage evidence is historical; current credentials, selected image access, and a new run remain unverified.",
+      "evidence": [
+        "docs/workbench/guides/digital-twin.md#verified-b200-execution",
+        "npa/tests/e2e/test_digital_twin_render_live.py"
+      ]
     },
     "source_image": {
       "status": "unverified",
-      "reason": "The workflow intentionally has no default runtime image. A compatible immutable NPA image must be supplied by the operator and independently qualified.",
+      "reason": "No default source image is selected. The workflow requires an operator-supplied compatible immutable runtime_image, whose image, bootstrap, access, and entitlement checks remain unverified.",
       "evidence": []
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "The selected operator runtime image requires fresh native Cycles CUDA workload qualification on the target before this claim can be verified.",
-      "evidence": []
+      "reason": "The cited B200 CUDA render is historical and does not transfer to an operator-selected current runtime image. Compatible GPU evidence, artifact acceptance, and playback remain unverified.",
+      "evidence": [
+        "docs/workbench/guides/digital-twin.md#verified-b200-execution",
+        "npa/tests/e2e/test_digital_twin_render_live.py"
+      ]
     }
   }
 }

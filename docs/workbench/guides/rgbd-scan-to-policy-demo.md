@@ -38,7 +38,7 @@ npa workbench workflow submit workflows/main/rgbd-scan-to-policy-demo.yaml \
 
 The configured project, credentials, GPU capacity, and applicable Isaac runtime
 access must be ready. The workflow fetches the public sample itself; it requires
-no Hugging Face token. The CPU image must supply `/opt/npa/venv/bin/python` and
+no Hugging Face token. The CPU image must supply `/opt/npa/sim/venv/bin/python` and
 the Open3D/SciPy stack. USD assembly adds `usd-core==26.8` into an isolated
 temporary site directory. The Isaac image must support the native physics,
 training, and renderer workload. `reconstruction_image` defaults to the supplied
@@ -59,13 +59,12 @@ The GPU pods select `runtimeClassName: nvidia` and request all driver capabiliti
 CUDA availability alone does not establish rendering support: training can finish
 on a compute-only target while the final camera-based evaluation fails.
 
-The current main promotion record names repaired immutable development candidates
-for SONIC and Isaac Lab, and the fresh native qualification below is retained for
-those named source and image bytes. This workflow deliberately selects neither
-candidate automatically: each run supplies its own exact operator image inputs.
-The historical images used by the earlier public demo remain quarantined. Neither
-the recorded qualification nor an operator-supplied immutable reference promotes
-either image to a supported release.
+The recorded promotion run selected repaired development images for SONIC and
+Isaac Lab. Their publication checks and the native qualification below remain
+historical evidence. This workflow now requires explicitly supplied immutable
+operator images; neither that record nor an image digest promotes a replacement
+to a supported release. The historical images used by the earlier public demo
+remain quarantined.
 
 ## What it runs
 
@@ -138,7 +137,7 @@ transfer, four-camera policy learning, or physical-robot performance. Use the
 [generic calibrated capture workflow](rgbd-scan-to-isaac.md) for other sensor
 captures; the measured sample reset preset intentionally rejects another scan.
 
-## Recorded full-run qualification for the promoted main specification
+## Recorded full-run qualification
 
 The [fresh promotion evidence](../evidence/rgbd-scan-to-policy-promotion.json)
 records 500 PPO updates, 4,000 environments and 16 million transitions, followed
@@ -146,30 +145,27 @@ by 3,386 successful held-out routes out of 4,000 (84.65%). The success gate stay
 at 80%. Every episode reached its terminal outcome by step 20 within the configured
 300-step maximum. Both training and evaluation passed their four native controls;
 independent process observations bound the running CUDA process and container to
-the selected Isaac image digest.
+the recorded Isaac image digest. This is historical qualification for the
+recorded source and development-image inputs, not qualification of this
+operator-override workflow or any replacement image.
 
 The first seven stages completed on a CUDA-capable RTX target. Its evaluation
 failed before scoring because Vulkan graphics were unavailable. A separate
 evaluation recovery used the exact sealed checkpoint, recipe and source bundle
 on an RTX target that passed GLX, EGL and NVIDIA Vulkan checks. It wrote fresh
-evaluation/report prefixes and preserved the failed attempt. The promoted spec
-now explicitly selects the NVIDIA graphics runtime. This was a recovered
+evaluation/report prefixes and preserved the failed attempt. The workflow
+explicitly selects the NVIDIA graphics runtime. This was a recovered
 pipeline, not a single uninterrupted successful run.
 
 The standalone HTML preserves the native report's measurements and eight frames
 of the scored focal episode. Offline playback, desktop/mobile layout, native
 frame inspection and confidentiality checks passed. It demonstrates held-out
 navigation within this reconstructed scene. The [earlier public demo](../evidence/public-demos/real-to-sim.json)
-is separate historical evidence.
-
-The combined run's
-[archived readiness record](../evidence/workflow-defaults-807/rgbd-scan-to-policy-demo.readiness.json)
-and the main promotion evidence remain bound to their original workflow and
-image bytes. The [current readiness record](../../../workflows/main/rgbd-scan-to-policy-demo.readiness.json)
-for this explicit-image specification awaits exact replacement-image workload
-qualification. Each new run still requires current storage, credentials, image
-access, and GPU preflight; local validation and planning do not establish native
-execution success.
+is separate historical evidence. See the
+[readiness record](../../../workflows/main/rgbd-scan-to-policy-demo.readiness.json)
+for the source and runtime scope. Each new run still requires current storage,
+credentials, explicit image qualification, and GPU preflight; local validation
+and planning do not establish those prerequisites.
 
 ## Sample attribution
 

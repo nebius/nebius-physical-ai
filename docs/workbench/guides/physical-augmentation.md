@@ -12,11 +12,14 @@ evidence of improved robot-policy performance.
 
 ![Offline comparison viewer with actual RTX recordings](../evidence/physical-augmentation-demo-preview.png)
 
-From an editable checkout, launch and download the complete demo with one command:
+From an editable checkout, launch and download the complete demo with one command.
+Set `NPA_PHYSICAL_AUGMENTATION_IMAGE` to an independently qualified,
+digest-only `registry/repository@sha256:<64-hex-digest>` reference first:
 
 ```bash
 npa/.venv/bin/python npa/scripts/run_physical_augmentation_demo.py \
   --project "$NPA_PROJECT" --cluster "$NPA_CLUSTER" --provision \
+  --isaac-image "$NPA_PHYSICAL_AUGMENTATION_IMAGE" \
   --output-path ./physical-augmentation-demo
 ```
 
@@ -45,20 +48,20 @@ existing run without allocating compute, replace `--provision` with
 the runner generates a timestamped name. These are thin launch and fetch
 conveniences; the YAML still owns all three execution stages.
 
-Use a configured project with writable S3 storage, an RTX-capable cluster, and
-an independently qualified immutable Isaac Lab image digest. The workflow does
-not select the withdrawn historical digest. Preparation and export use the
-selected image's CPU Python environment, including the LeRobot-format writer and
-Rerun; only collection fetches and launches Isaac. B200 cannot supply the
-required RTX camera rendering.
+Use a configured project with writable S3 storage and an RTX-capable cluster.
+All stages use the pinned Isaac Lab runtime-fetch image. Preparation and export
+use its CPU Python environment, including the LeRobot-format writer and Rerun;
+only collection fetches and launches Isaac. B200 cannot supply the required RTX
+camera rendering.
 
 ```bash
 npa workbench workflow validate-spec workflows/testing/physical-augmentation.yaml
-npa workbench workflow plan-spec workflows/testing/physical-augmentation.yaml
+npa workbench workflow plan-spec workflows/testing/physical-augmentation.yaml \
+  --var "isaac_image=$NPA_PHYSICAL_AUGMENTATION_IMAGE"
 npa workbench workflow submit workflows/testing/physical-augmentation.yaml \
   --project "$NPA_PROJECT" --infra "k8s/$NPA_CLUSTER" --runtime \
   --run-id "$NPA_RUN_ID" --var "bucket=$NPA_S3_BUCKET" \
-  --var "isaac_image=$NPA_ISAAC_IMAGE" \
+  --var "isaac_image=$NPA_PHYSICAL_AUGMENTATION_IMAGE" \
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 ```
 

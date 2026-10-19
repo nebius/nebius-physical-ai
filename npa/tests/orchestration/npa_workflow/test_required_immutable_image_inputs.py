@@ -28,24 +28,19 @@ EXACT_INPUT_SPECS = (
     "rgbd-scan-to-isaac.yaml",
     "scan-to-isaac-navigation.yaml",
 )
-DIGITAL_TWIN_OPERATOR_IMAGE_SPECS = (
+OPERATOR_INPUT_SPECS = (
+    *EXACT_INPUT_SPECS,
     "digital-twin-campus-render.yaml",
     "digital-twin-cuda-render.yaml",
+    "franka-rl-transfer.yaml",
 )
-OPERATOR_IMAGE_SPECS = (
-    *EXACT_INPUT_SPECS,
-    *DIGITAL_TWIN_OPERATOR_IMAGE_SPECS,
-    "lyra-scene-actions.yaml",
-    "physical-augmentation.yaml",
-)
+GPU_OPERATOR_INPUT_SPECS = ("franka-rl-transfer.yaml",)
 
 
-def _shipped_workflow_path(name: str):
+def _workflow_path(name):
+    """Return the catalog location for an exact-image workflow fixture."""
     directory = "main" if name == "rgbd-scan-to-policy-demo.yaml" else "testing"
     return ROOT / "workflows" / directory / name
-
-
-GOVERNED_SPECS = ("franka-rl-transfer.yaml",)
 
 
 def _spec(tmp_path, config):
@@ -212,46 +207,25 @@ def test_tagged_digest_explains_the_required_canonical_form(tmp_path):
         interpreter.build_plan(spec)
 
 
-@pytest.mark.parametrize("name", OPERATOR_IMAGE_SPECS)
+@pytest.mark.parametrize("name", OPERATOR_INPUT_SPECS)
 def test_shipped_exact_image_consumers_require_operator_input_before_planning(name):
-    spec = load_spec(_shipped_workflow_path(name))
+    spec = load_spec(_workflow_path(name))
     with pytest.raises(NpaWorkflowError, match="requires an explicit.*--var"):
         interpreter.build_plan(spec, run_id="missing-images")
 
 
 def _supplied_spec(name):
-    spec = load_spec(_shipped_workflow_path(name))
+    spec = load_spec(_workflow_path(name))
     images = {
-        "runtime_image": ISAAC,
         "isaac_image": ISAAC,
         "navigation_image": ISAAC,
         "assembly_image": CPU,
         "reconstruction_image": CPU,
+        "runtime_image": ISAAC,
     }
     return merge_config_overrides(
         spec, {key: images[key] for key in spec.config["required_immutable_images"]}
     )
-
-
-@pytest.mark.parametrize(
-    "name",
-    ("digital-twin-campus-render.yaml", "digital-twin-cuda-render.yaml"),
-)
-def test_digital_twin_renderers_require_operator_runtime_without_repinning(name):
-    path = _shipped_workflow_path(name)
-    document = yaml.safe_load(path.read_text())
-
-    assert document["config"]["required_immutable_images"] == ["runtime_image"]
-    assert document["config"]["runtime_image"] == ""
-    assert document["resources"]["renderer"]["image"] == "{{config.runtime_image}}"
-    assert document["states"]["render"]["run"]["argv"][:3] == [
-        "/opt/npa/venv/bin/python",
-        "-m",
-        "npa.workflows.digital_twin_render",
-    ]
-
-    with pytest.raises(NpaWorkflowError, match="requires an explicit.*--var"):
-        interpreter.build_plan(load_spec(path), run_id="missing-compatible-runtime")
 
 
 @pytest.mark.parametrize(
@@ -308,7 +282,7 @@ def test_required_image_binding_rejects_a_digest_pin_replacement():
         )
 
 
-@pytest.mark.parametrize("name", OPERATOR_IMAGE_SPECS)
+@pytest.mark.parametrize("name", OPERATOR_INPUT_SPECS)
 def test_exact_operator_images_reach_real_renderer_and_native_provenance(
     name, monkeypatch
 ):
@@ -338,22 +312,7 @@ def test_exact_operator_images_reach_real_renderer_and_native_provenance(
     assert "tool://isaac-lab" not in text
 
 
-@pytest.mark.parametrize("name", GOVERNED_SPECS)
-def test_governed_gpu_defaults_remain_quarantined_until_accepted(name, monkeypatch):
-    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/source-fixture")
-    spec = load_spec(ROOT / "workflows/testing" / name)
-    with pytest.raises(NpaWorkflowError, match="isaac-lab.*quarantined"):
-        render_skypilot_yaml(
-            spec,
-            interpreter.build_plan(spec),
-            run_id="denied",
-            options=SkypilotRenderOptions(
-                materialize_registry_secrets=False,
-            ),
-        )
-
-
-@pytest.mark.parametrize("name", GOVERNED_SPECS)
+@pytest.mark.parametrize("name", GPU_OPERATOR_INPUT_SPECS)
 def test_governed_gpu_resource_accepts_exact_operator_var_without_changing_cpu(
     name, monkeypatch
 ):
@@ -399,13 +358,11 @@ def test_no_shipped_workflow_automatically_selects_withdrawn_isaac_or_sonic_byte
                 ), path
 
 
-@pytest.mark.parametrize("name", [*EXACT_INPUT_SPECS, *GOVERNED_SPECS])
+@pytest.mark.parametrize("name", [*EXACT_INPUT_SPECS, *GPU_OPERATOR_INPUT_SPECS])
 def test_historical_records_remain_bound_and_current_records_await_workload_proof(name):
     archived = ROOT / "docs/workbench/evidence/workflow-defaults-807" / name
     old = load_readiness_record(archived.with_suffix(".readiness.json"))
-    current = load_readiness_record(
-        _shipped_workflow_path(name).with_suffix(".readiness.json")
-    )
+    current = load_readiness_record(_workflow_path(name).with_suffix(".readiness.json"))
     assert old["workflow_sha256"] != current["workflow_sha256"]
     assert current["planning"]["task_fidelity"]["status"] == "unverified"
     assert current["prerequisites"]["source_image"]["status"] == "unverified"

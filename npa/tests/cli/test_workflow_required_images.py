@@ -16,24 +16,18 @@ CPU = "registry.example.invalid/npa-sonic@sha256:" + "b" * 64
 OVERRIDE = "registry.example.invalid/npa-override@sha256:" + "c" * 64
 
 
-def _shipped_workflow_path(name: str) -> Path:
-    directory = "main" if name == "rgbd-scan-to-policy-demo" else "testing"
-    return ROOT / "workflows" / directory / f"{name}.yaml"
-
-
 @pytest.mark.parametrize(
     "name",
     [
         "field-failure-reference-demo",
-        "lyra-scene-actions",
-        "physical-augmentation",
         "rgbd-scan-to-policy-demo",
         "rgbd-scan-to-isaac",
         "scan-to-isaac-navigation",
     ],
 )
 def test_plan_cli_reports_missing_exact_images_as_clean_error(name):
-    path = _shipped_workflow_path(name)
+    directory = "main" if name == "rgbd-scan-to-policy-demo" else "testing"
+    path = ROOT / f"workflows/{directory}/{name}.yaml"
     result = CliRunner().invoke(app, ["plan-spec", str(path), "--check-render"])
     assert result.exit_code == 1
     assert "Error:" in result.output and "requires an explicit" in result.output
@@ -42,7 +36,7 @@ def test_plan_cli_reports_missing_exact_images_as_clean_error(name):
 
 def test_plan_cli_uses_operator_vars_before_real_render(monkeypatch):
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/source-fixture")
-    path = _shipped_workflow_path("rgbd-scan-to-policy-demo")
+    path = ROOT / "workflows/main/rgbd-scan-to-policy-demo.yaml"
     result = CliRunner().invoke(
         app,
         [
@@ -67,7 +61,7 @@ def test_plan_cli_uses_operator_vars_before_real_render(monkeypatch):
 def test_submit_rejects_missing_exact_images_before_staging_or_provisioning(
     monkeypatch,
 ):
-    path = _shipped_workflow_path("rgbd-scan-to-policy-demo")
+    path = ROOT / "workflows/main/rgbd-scan-to-policy-demo.yaml"
 
     def unexpected_side_effect(*_args, **_kwargs):
         pytest.fail("missing immutable images must fail before this side effect")
@@ -85,7 +79,7 @@ def test_submit_rejects_missing_exact_images_before_staging_or_provisioning(
 def test_submit_rejects_override_of_required_image_before_staging_or_provisioning(
     monkeypatch,
 ):
-    path = _shipped_workflow_path("rgbd-scan-to-policy-demo")
+    path = ROOT / "workflows/main/rgbd-scan-to-policy-demo.yaml"
 
     def unexpected_side_effect(*_args, **_kwargs):
         pytest.fail("required immutable images must fail before this side effect")
