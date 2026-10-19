@@ -141,7 +141,7 @@ access and workload acceptance requirements continue to apply.
 The preceding tables preserve the original dated resolver observation. That
 audit missed literal Isaac and SONIC digests, which bypassed tool-default
 quarantine. The follow-up removes those automatic selections. All 133 shipped
-specs now have **43 guarded default selections across 39 workflows**: 30 deny
+specs now have **48 guarded default selections across 42 workflows**: 35 deny
 quarantined tool-image selection, and thirteen deny missing exact operator image
 inputs before task expansion. These categories are audited independently:
 supplying exact operator inputs can reveal additional quarantined task-image
@@ -171,6 +171,9 @@ defaults. This is planning evidence only, not fresh image or GPU acceptance.
 | `workflows/testing/rl-policy-training-sim-success.yaml` | `isaac-lab` |
 | `workflows/testing/robocasa-data-policy.yaml` | `lerobot` |
 | `workflows/testing/shared-scene-navigation.yaml` | `isaac-lab` |
+| `workflows/testing/sim2real-pi05.yaml` | `lerobot-vlm-rl` |
+| `workflows/testing/sim2real-policy-interchange-non-franka.yaml` | `lerobot, lerobot-vlm-rl` |
+| `workflows/testing/sim2real-policy-interchange-smolvla.yaml` | `lerobot, lerobot-vlm-rl` |
 | `workflows/testing/sonic-eval.yaml` | `sonic` |
 | `workflows/testing/sonic-export-eval.yaml` | `sonic` |
 | `workflows/testing/sonic-export.yaml` | `sonic` |
