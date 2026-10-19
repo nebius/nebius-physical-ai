@@ -3998,11 +3998,19 @@ def test_explicit_terminal_recovery_adopts_only_the_requested_exact_job(
         assert job_name == "rt-exact-terminal-recovery-01-export"
         if job_id == "1":
             return ManagedJobEvidence(
-                "found", job_id="1", status="SUCCEEDED", workload_observable=True
+                "found",
+                job_id="1",
+                job_name=job_name,
+                status="SUCCEEDED",
+                workload_observable=True,
             )
         assert job_id == "2"
         return ManagedJobEvidence(
-            "found", job_id="2", status="SUCCEEDED", workload_observable=True
+            "found",
+            job_id="2",
+            job_name=job_name,
+            status="SUCCEEDED",
+            workload_observable=True,
         )
 
     options = RuntimeOptions(
@@ -4086,9 +4094,10 @@ def test_explicit_terminal_recovery_skips_completed_waves_before_failed_wave(
             resume=True,
             recover_managed_job_id="3",
         ),
-        reconcile_fn=lambda _name, *, job_id="": ManagedJobEvidence(
+        reconcile_fn=lambda job_name, *, job_id="": ManagedJobEvidence(
             "found",
             job_id=job_id,
+            job_name=job_name,
             status="SUCCEEDED",
             workload_observable=True,
         ),
@@ -4218,9 +4227,10 @@ def test_explicit_terminal_recovery_rejects_unverified_replacement(
         submitter=submitter,
         options=options,
         output_checker=lambda _uri: output_present,
-        reconcile_fn=lambda _name, *, job_id="": ManagedJobEvidence(
+        reconcile_fn=lambda job_name, *, job_id="": ManagedJobEvidence(
             "found",
             job_id=("1" if job_id == "1" else str(evidence["job_id"])),
+            job_name=job_name,
             status=("SUCCEEDED" if job_id == "1" else str(evidence["status"])),
             workload_observable=(
                 True if job_id == "1" else bool(evidence["observable"])
@@ -4236,7 +4246,7 @@ def test_explicit_terminal_recovery_rejects_unverified_replacement(
     assert retained["status"] == "failed"
 
 
-def test_explicit_terminal_recovery_refuses_an_active_stale_job(
+def test_explicit_terminal_recovery_rejects_mismatched_job_name(
     tmp_path: Path,
 ) -> None:
     from npa.orchestration.skypilot.workflow import ManagedJobEvidence
@@ -4252,6 +4262,34 @@ def test_explicit_terminal_recovery_refuses_an_active_stale_job(
         reconcile_fn=lambda _name, *, job_id="": ManagedJobEvidence(
             "found",
             job_id=job_id,
+            job_name="other-managed-job",
+            status="SUCCEEDED",
+            workload_observable=True,
+        ),
+    )
+
+    with pytest.raises(NpaWorkflowError, match="stale recorded managed job"):
+        executor.execute(step)
+    assert submitter.calls == []
+
+
+def test_explicit_terminal_recovery_refuses_an_active_stale_job(
+    tmp_path: Path,
+) -> None:
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    spec, store, run_id, step = _seed_explicit_terminal_recovery_case(tmp_path)
+    submitter = FakeSubmitter()
+    executor = _executor(
+        spec,
+        run_id=run_id,
+        store=store,
+        submitter=submitter,
+        options=RuntimeOptions(resume=True, recover_managed_job_id="2"),
+        reconcile_fn=lambda job_name, *, job_id="": ManagedJobEvidence(
+            "found",
+            job_id=job_id,
+            job_name=job_name,
             status="RUNNING",
             workload_observable=True,
         ),

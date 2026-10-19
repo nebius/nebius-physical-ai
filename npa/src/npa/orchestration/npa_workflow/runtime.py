@@ -1640,6 +1640,7 @@ class SkyPilotWaveExecutor:
         if not (
             getattr(prior_evidence, "outcome", "") == "found"
             and str(getattr(prior_evidence, "job_id", "") or "") == attempt.job_id
+            and str(getattr(prior_evidence, "job_name", "") or "") == attempt.job_name
             and bool(getattr(prior_evidence, "workload_observable", False))
             and is_terminal(prior_status)
         ):
@@ -1651,6 +1652,7 @@ class SkyPilotWaveExecutor:
         if not (
             getattr(evidence, "outcome", "") == "found"
             and str(getattr(evidence, "job_id", "") or "") == requested_id
+            and str(getattr(evidence, "job_name", "") or "") == attempt.job_name
             and bool(getattr(evidence, "workload_observable", False))
             and is_terminal_ok(status)
         ):

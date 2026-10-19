@@ -198,6 +198,14 @@ def test_explicit_selected_version_matches_real_metadata(
     assert trainer._installed_training_version("act") == version
 
 
+def test_secure_local_version_matches_selected_upstream_version(installed, monkeypatch):
+    distribution, _ = installed
+    distribution.version = "0.5.1+npa.secure1"
+    monkeypatch.setenv("NPA_LEROBOT_VERSION", "0.5.1")
+
+    assert trainer._installed_training_version("act") == "0.5.1+npa.secure1"
+
+
 @pytest.mark.parametrize("selected", ["0.5.1", "0.6.0", "0.6.1", "0.6.1+npa3"])
 def test_installed_version_mismatch_rejected(installed, monkeypatch, selected):
     monkeypatch.setenv("NPA_LEROBOT_VERSION", selected)

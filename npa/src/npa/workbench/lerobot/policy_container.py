@@ -533,7 +533,12 @@ def _installed_training_version(policy_type: str) -> str:
             "LeRobot training package version is missing or invalid"
         )
     selected = os.environ.get(LEROBOT_VERSION_ENV, "").strip()
-    if selected and selected != installed:
+    selected_installed = (
+        installed
+        if installed == _ROBOCASA_ACT_TRAINING_VERSION
+        else installed.split("+", 1)[0]
+    )
+    if selected and selected != selected_installed:
         raise PolicyContainerError(
             f"Selected LeRobot version {selected!r} differs from installed {installed!r}"
         )
@@ -541,7 +546,7 @@ def _installed_training_version(policy_type: str) -> str:
         _verify_robocasa_training_runtime(distribution, policy_type)
     else:
         try:
-            resolve_lerobot_version(installed)
+            resolve_lerobot_version(selected_installed)
         except LeRobotVersionError as exc:
             raise PolicyContainerError(str(exc)) from exc
     return installed

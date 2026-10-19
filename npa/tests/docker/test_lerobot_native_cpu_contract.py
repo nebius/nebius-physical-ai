@@ -61,6 +61,7 @@ def test_default_dependencies_identify_secure_integration_and_decoder_abi():
     optional_branch, default_branch = recipe.split(
         'elif [ "${LEROBOT_VERSION}" = "0.5.1" ]; then', 1
     )
+    default_branch = default_branch.split("else", 1)[0]
     assert "pip uninstall -y wandb" in optional_branch
     assert "pip uninstall -y wandb" not in default_branch
     check = "/opt/lerobot/venv/bin/pip check"
