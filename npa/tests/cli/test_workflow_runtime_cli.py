@@ -715,6 +715,17 @@ def test_submit_runtime_forwards_explicit_terminal_recovery_id(fake_runtime) -> 
             ],
             "must be one decimal managed-job ID",
         ),
+        (
+            [
+                "--resume-run",
+                "rt-cli-terminal-recovery",
+                "--runtime",
+                "--plan-only",
+                "--recover-managed-job-id",
+                "2",
+            ],
+            "--recover-managed-job-id cannot be combined with --plan-only",
+        ),
     ],
 )
 def test_explicit_terminal_recovery_requires_resume_and_exact_id(

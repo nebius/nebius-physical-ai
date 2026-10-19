@@ -1717,6 +1717,9 @@ def submit_cmd(
     if recover_managed_job_id and not runtime:
         _fail("--recover-managed-job-id requires --runtime")
         return
+    if recover_managed_job_id and plan_only:
+        _fail("--recover-managed-job-id cannot be combined with --plan-only")
+        return
     if image_override and not is_npa_spec:
         _fail(
             "--image-override/--tool-image is supported only for "
