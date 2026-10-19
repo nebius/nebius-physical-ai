@@ -1557,6 +1557,29 @@ _STABLE_KUBECTL_CONTEXT_MARKER = (
 _STABLE_LOGIN_IP_MARKER = (
     "# npa: regenerate the login script only when its public IP changes"
 )
+_PREEMPTIBLE_SPOT_MARKER = "# npa: pair preemptible workers with spot pricing"
+
+
+def _patch_preemptible_spot_pricing_text(text: str) -> tuple[str, bool]:
+    """Patch the pinned recipe for the provider's current preemptible contract."""
+
+    if _PREEMPTIBLE_SPOT_MARKER in text:
+        return text, False
+    original = (
+        "    preemptible = var.node_group_workers_v2[count.index].preemptible\n\n"
+        "    reservation_policy = var.node_group_workers_v2[count.index].reservation_policy\n"
+    )
+    replacement = (
+        "    preemptible = var.node_group_workers_v2[count.index].preemptible\n"
+        f"    {_PREEMPTIBLE_SPOT_MARKER}\n"
+        "    follows_spot_price = var.node_group_workers_v2[count.index].preemptible != null ? {} : null\n\n"
+        "    reservation_policy = var.node_group_workers_v2[count.index].reservation_policy\n"
+    )
+    if text.count(original) != 1:
+        raise UpstreamContractError(
+            "pinned worker node-group preemptible block does not match the verified contract"
+        )
+    return text.replace(original, replacement), True
 
 
 def _patch_kubectl_context_trigger_text(text: str) -> tuple[str, bool]:
@@ -1890,6 +1913,10 @@ def _assert_solutions_library_contract(
 
     patch_contracts = (
         (
+            "soperator/modules/k8s/k8s_ng_workers_v2.tf",
+            _patch_preemptible_spot_pricing_text,
+        ),
+        (
             "soperator/modules/k8s/k8s_cluster.tf",
             _patch_kubectl_context_trigger_text,
         ),
@@ -1960,6 +1987,9 @@ def _legacy_source_contract() -> dict[str, tuple[str, ...]]:
 def _prepare_installation(recipe_dir: Path, spec: SoperatorSpec, region: str) -> Path:
     """Create installations/<name> with the recipe files + generated tfvars."""
 
+    worker_module = recipe_dir / "modules" / "k8s" / "k8s_ng_workers_v2.tf"
+    patched_workers, _ = _patch_preemptible_spot_pricing_text(worker_module.read_text())
+    worker_module.write_text(patched_workers)
     _patch_active_checks_locals(recipe_dir)
     _patch_stable_local_reconciliation_triggers(recipe_dir)
     if not spec.use_default_apparmor_profile:

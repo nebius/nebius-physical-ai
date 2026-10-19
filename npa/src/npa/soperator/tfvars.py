@@ -78,7 +78,14 @@ def _render_worker(pool: WorkerPoolSpec) -> str:
             f"worker pool {pool.name}: capacity block name must be provider-resolved "
             "before rendering Terraform"
         )
-    lines.append(f"    preemptible = {'{}' if pool.preemptible else 'null'}")
+    # The current Nebius provider requires the preemption action whenever the
+    # nested preemptible block is present; an empty object is rejected by the
+    # live MK8s node-group API as an invalid pricing model.
+    lines.append(
+        '    preemptible = { on_preemption = "STOP", priority = 1 }'
+        if pool.preemptible
+        else "    preemptible = null"
+    )
     if reservation_id:
         # STRICT is the only safe reservation policy for an explicit capacity
         # block. AUTO could silently fall back to ordinary on-demand capacity.

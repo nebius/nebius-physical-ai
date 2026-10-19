@@ -188,7 +188,7 @@ def test_render_tfvars_emits_multi_preset_and_io_m3_cache() -> None:
     assert 'disk_type       = "NETWORK_SSD_IO_M3"' in tf
     assert "enabled = true" in tf
     # Preemptible GPU pool.
-    assert "preemptible = {}" in tf
+    assert 'preemptible = { on_preemption = "STOP", priority = 1 }' in tf
     # AppArmor default off (unconfined) and accounting/telemetry off.
     assert "use_default_apparmor_profile = false" in tf
     assert "accounting_enabled = false" in tf
@@ -3523,6 +3523,30 @@ def test_patch_local_reconciliation_triggers_fails_closed_before_any_write(
 
     assert kubectl_context.read_bytes() == kubectl_original
     assert login.read_bytes() == login_original
+
+
+def test_patch_preemptible_spot_pricing_is_idempotent_and_contract_checked() -> None:
+    from npa.soperator import lifecycle
+
+    source = (
+        "    preemptible = var.node_group_workers_v2[count.index].preemptible\n\n"
+        "    reservation_policy = var.node_group_workers_v2[count.index].reservation_policy\n"
+    )
+
+    patched, changed = lifecycle._patch_preemptible_spot_pricing_text(source)
+
+    assert changed is True
+    assert "# npa: pair preemptible workers with spot pricing" in patched
+    assert (
+        "follows_spot_price = var.node_group_workers_v2[count.index].preemptible "
+        "!= null ? {} : null" in patched
+    )
+    assert lifecycle._patch_preemptible_spot_pricing_text(patched) == (patched, False)
+
+    with pytest.raises(lifecycle.UpstreamContractError, match="preemptible block"):
+        lifecycle._patch_preemptible_spot_pricing_text(
+            source.replace("reservation_policy", "capacity_policy")
+        )
 
 
 def test_patch_nodeconfigurator_allows_enroot_userns_and_is_idempotent(
