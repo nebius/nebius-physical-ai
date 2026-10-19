@@ -4139,6 +4139,59 @@ def test_explicit_terminal_recovery_skips_completed_waves_before_failed_wave(
     assert recovered["recovery_history"][-1]["prior_job_id"] == "2"
     assert recovered["recovery_history"][-1]["recovered_job_id"] == "3"
 
+    replay = _executor(
+        spec,
+        run_id=run_id,
+        store=store,
+        submitter=FakeSubmitter(),
+        options=resumed.options,
+        reconcile_fn=lambda *_args, **_kwargs: pytest.fail(
+            "recorded exact recovery must replay without reconciliation"
+        ),
+    )
+    replay_report = run_workflow_runtime(
+        spec, run_id=run_id, executor=replay, options=replay.options
+    )
+    assert replay_report.status == "succeeded"
+    assert replay._submitter.calls == []
+
+
+def test_explicit_terminal_recovery_ignores_superseded_failed_attempt(
+    tmp_path: Path,
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, COMPLETED_REPLAY_SPEC))
+    store = MemoryStore()
+    run_id = "rt-superseded-exact-terminal-recovery"
+    initial = _executor(spec, run_id=run_id, store=store)
+    assert run_workflow_runtime(spec, run_id=run_id, executor=initial).status == "succeeded"
+
+    state = store.read_runtime_state()
+    assert state is not None
+    failed = dict(state.waves[0])
+    failed.update({"status": "failed", "sky_status": "FAILED_CONTROLLER"})
+    retried = dict(state.waves[0])
+    retried["attempt"] = 2
+    state.record_wave(failed)
+    state.record_wave(retried)
+    store.write_runtime_state(state)
+
+    submitter = FakeSubmitter()
+    executor = _executor(
+        spec,
+        run_id=run_id,
+        store=store,
+        submitter=submitter,
+        options=RuntimeOptions(resume=True, recover_managed_job_id="2"),
+        reconcile_fn=lambda *_args, **_kwargs: pytest.fail(
+            "superseded failure must not be reconciled"
+        ),
+    )
+    step = build_plan(spec, run_id=run_id).steps[0]
+
+    with pytest.raises(NpaWorkflowError, match="requires one failed prior wave"):
+        executor.execute(step)
+    assert submitter.calls == []
+
 
 def test_explicit_terminal_recovery_replays_a_prior_recovery_before_later_failure(
     tmp_path: Path,

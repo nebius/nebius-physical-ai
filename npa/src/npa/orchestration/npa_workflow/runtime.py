@@ -984,6 +984,8 @@ class SkyPilotWaveExecutor:
             prior = self.ledger.latest_wave(key)
             if self._has_recorded_explicit_terminal_recovery(key):
                 self._explicit_terminal_recovery_consumed = True
+            elif self._has_recorded_explicit_terminal_recovery_anywhere():
+                self._explicit_terminal_recovery_consumed = True
             elif prior is not None and str(prior.get("status") or "") == "failed":
                 attempt = self._recover_explicit_terminal_job(
                     key, steps, kind=kind, group=group
@@ -995,10 +997,7 @@ class SkyPilotWaveExecutor:
                     "no replacement job submitted"
                 )
                 return attempt
-            elif not any(
-                str(record.get("status") or "") == "failed"
-                for record in self.ledger.state.waves
-            ):
+            elif not self._has_failed_current_wave():
                 raise NpaWorkflowError(
                     f"wave {key}: --recover-managed-job-id requires one failed prior wave"
                 )
@@ -1638,6 +1637,32 @@ class SkyPilotWaveExecutor:
             ):
                 return True
         return False
+
+    def _has_recorded_explicit_terminal_recovery_anywhere(self) -> bool:
+        """Whether this run already recorded the requested exact recovery."""
+        requested_id = self.options.recover_managed_job_id
+        for record in self.ledger.state.waves:
+            for item in record.get("recovery_history") or []:
+                if not isinstance(item, Mapping):
+                    continue
+                if (
+                    item.get("schema") == "npa.workflow.exact-terminal-recovery.v1"
+                    and str(item.get("recovered_job_id") or "") == requested_id
+                ):
+                    return True
+        return False
+
+    def _has_failed_current_wave(self) -> bool:
+        """Whether a current wave record remains eligible for exact recovery."""
+        latest_by_key: dict[str, Mapping[str, Any]] = {}
+        for record in self.ledger.state.waves:
+            key = str(record.get("key") or "")
+            if key:
+                latest_by_key[key] = record
+        return any(
+            str(record.get("status") or "") == "failed"
+            for record in latest_by_key.values()
+        )
 
     def _validate_explicit_terminal_recovery(
         self, attempt: WaveAttempt, *, key: str, requested_id: str
