@@ -954,8 +954,8 @@ def test_workflow_gpus_json_reports_missing_required_images_without_traceback(
         ],
     )
 
-    assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
+    assert result.exit_code == 2, result.output
+    payload = json.loads(result.stdout)
     assert payload["spec_resolutions"] == []
     assert "Each of config.runtime_image requires an explicit" in payload["spec_error"]
 
@@ -976,6 +976,41 @@ def test_gpu_spec_resolutions_reports_a_malformed_spec_without_traceback(
 
     assert resolutions == []
     assert "non-empty 'states' mapping" in error
+
+
+def test_workflow_gpus_json_reports_a_malformed_spec_as_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    sky_bin: str,
+    owned_gpu_discovery,
+) -> None:
+    monkeypatch.setenv("NPA_SKYPILOT_BIN", sky_bin)
+    _stub_catalog(monkeypatch, CATALOG_OUTPUT)
+    path = tmp_path / "malformed-workflow.yaml"
+    path.write_text(
+        "apiVersion: npa.workflow/v0.0.1\nkind: Workflow\nmetadata: {}\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "gpus",
+            "--context",
+            "npa-cluster",
+            "--spec",
+            str(path),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 2, result.output
+    payload = json.loads(result.stdout)
+    assert payload["spec_resolutions"] == []
+    assert "non-empty 'states' mapping" in payload["spec_error"]
+    assert "Traceback" not in result.output
 
 
 def test_workflow_gpus_text_reports_missing_required_images_with_empty_catalog(
@@ -1000,7 +1035,7 @@ def test_workflow_gpus_text_reports_missing_required_images_with_empty_catalog(
         ],
     )
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 2, result.output
     assert "accelerators: none advertised" in result.output
     assert (
         "spec_error: Each of config.runtime_image requires an explicit" in result.output

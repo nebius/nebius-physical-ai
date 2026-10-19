@@ -1540,6 +1540,10 @@ def download_rrd_from_s3(
     )
     try:
         publication = resolve_committed_publication_snapshot(storage, selected_uri)
+        if selected_uri != canonical_uri and not publication.journaled:
+            raise Sim2RealRerunRegenError(
+                "explicit nested Rerun recording requires a committed publication"
+            )
         uri = publication.resolve(selected_uri)
     except PublicationConflict as exc:
         raise Sim2RealRerunRegenError(str(exc)) from exc

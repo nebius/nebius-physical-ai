@@ -10968,7 +10968,8 @@ def _report_gpu_discovery(
         else:
             typer.echo(f"  {item['requested']} -> {item['resolved']}")
     if spec_error:
-        typer.echo(f"spec_error: {spec_error}")
+        typer.echo(f"spec_error: {spec_error}", err=True)
+        raise typer.Exit(code=2)
 
 
 def _emit_gpu_discovery_json(inventory, catalog, sky_error, resolutions, spec_error):
@@ -10989,7 +10990,7 @@ def _emit_gpu_discovery_json(inventory, catalog, sky_error, resolutions, spec_er
             sort_keys=True,
         )
     )
-    if sky_error:
+    if sky_error or spec_error:
         raise typer.Exit(code=2)
     return
 
