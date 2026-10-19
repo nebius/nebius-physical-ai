@@ -127,11 +127,11 @@ RUN python3.12 -m venv /opt/lerobot/venv \
          && /opt/lerobot/venv/bin/python /opt/lerobot/remove-scikit-image-recipe.py \
            --site-packages /opt/lerobot/venv/lib/python3.12/site-packages \
            --capability lerobot \
-           > /opt/lerobot/dependency-source-correction.json; \
+           > /opt/lerobot/dependency-source-correction.json \
+         && /opt/lerobot/venv/bin/pip check; \
        else \
          echo 'Unsupported LeRobot package version' >&2; exit 1; \
        fi \
-    && /opt/lerobot/venv/bin/pip check \
     && find /opt/lerobot/venv -type f \
          -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
     && test "$(/opt/lerobot/venv/bin/python -c \
