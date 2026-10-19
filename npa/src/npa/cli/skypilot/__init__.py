@@ -49,6 +49,13 @@ KUBERNETES_CLIENT_MAX_EXCLUSIVE = "36"
 KUBERNETES_CLIENT_SPEC = (
     f"kubernetes>=20.0.0,!=32.0.0,<{KUBERNETES_CLIENT_MAX_EXCLUSIVE}"
 )
+# SkyPilot 0.12.2 constructs its local API with FastAPI's ``prefix`` argument.
+# FastAPI 0.143 removed that constructor argument, so an unconstrained fresh
+# resolver installs a runtime that can import ``sky`` but dies before its API
+# becomes ready. Keep the isolated control plane inside the last compatible
+# minor range; NPA's own FastAPI dependency uses the same reviewed bound.
+FASTAPI_MAX_EXCLUSIVE = "0.143.0"
+FASTAPI_SPEC = f"fastapi>=0.136.1,<{FASTAPI_MAX_EXCLUSIVE}"
 DEFAULT_VENV_PATH = (
     Path(os.environ.get("NPA_CONFIG_DIR", "").strip() or (Path.home() / ".npa"))
     / "skypilot-venv"
@@ -130,6 +137,7 @@ class VenvState:
     importable: bool
     marker_path: Path
     kubernetes_version: str | None = None
+    fastapi_version: str | None = None
 
     @property
     def installed(self) -> bool:
@@ -140,6 +148,12 @@ class VenvState:
         """Whether the installed kubernetes client works with SkyPilot's pod_config."""
 
         return kubernetes_client_supported(self.kubernetes_version)
+
+    @property
+    def fastapi_compatible(self) -> bool:
+        """Whether the local SkyPilot API can use the installed FastAPI API."""
+
+        return fastapi_supported(self.fastapi_version)
 
 
 @dataclass(frozen=True)
@@ -905,7 +919,7 @@ def bootstrap_skypilot(
     with _BootstrapLock(lock_path):
         _recover_bootstrap_exchange(path)
         state = inspect_venv(path)
-        if state.installed and state.kubernetes_compatible:
+        if state.installed and state.kubernetes_compatible and state.fastapi_compatible:
             _write_marker(
                 state,
                 package_spec=package_spec,
@@ -1180,6 +1194,10 @@ def _validate_staged_runtime(state: VenvState, *, expected_version: str) -> None
         problems.append("kubernetes client import/version check failed")
     elif not state.kubernetes_compatible:
         problems.append(kubernetes_client_remedy(state.kubernetes_version))
+    if not state.fastapi_version:
+        problems.append("FastAPI import/version check failed")
+    elif not state.fastapi_compatible:
+        problems.append(fastapi_remedy(state.fastapi_version))
     if problems:
         raise SkyPilotBootstrapError(
             f"Staged SkyPilot runtime self-check failed in {state.path}: "
@@ -1200,6 +1218,7 @@ def inspect_venv(path: Path | str) -> VenvState:
     version = _sky_version(sky_bin) if has_sky else None
     importable = _sky_importable(python_bin) if has_python else False
     kubernetes_version = _kubernetes_client_version(python_bin) if has_python else None
+    fastapi_version = _fastapi_version(python_bin) if has_python else None
     return VenvState(
         path=resolved,
         python_bin=python_bin,
@@ -1213,6 +1232,7 @@ def inspect_venv(path: Path | str) -> VenvState:
         importable=importable,
         marker_path=resolved / MARKER_FILE,
         kubernetes_version=kubernetes_version,
+        fastapi_version=fastapi_version,
     )
 
 
@@ -1356,9 +1376,11 @@ def _install_package(state: VenvState, package_spec: str) -> None:
         # Kubernetes client 36 also changed model type strings from
         # ``dict(str, str)`` to ``dict[str, str]``; SkyPilot 0.12.2 tries to
         # import the latter as a model module while validating pod_config and
-        # fails before creating any Kubernetes workload. Re-pin both runtime
-        # edges after install so bootstrap stays launchable.
+        # fails before creating any Kubernetes workload. FastAPI 0.143 also
+        # removed the ``prefix`` parameter used by SkyPilot's local API.
+        # Re-pin each runtime edge after install so bootstrap stays launchable.
         _pin_skypilot_click(state)
+        _pin_skypilot_fastapi(inspect_venv(state.path))
         _pin_skypilot_kubernetes(inspect_venv(state.path))
         return
     detail = _combined_output(result) or "no output"
@@ -1391,6 +1413,26 @@ def kubernetes_client_supported(version: str | None) -> bool:
     if major >= int(KUBERNETES_CLIENT_MAX_EXCLUSIVE):
         return False
     return (major, minor, patch) != (32, 0, 0)
+
+
+def fastapi_supported(version: str | None) -> bool:
+    """Whether ``version`` still accepts SkyPilot 0.12.2's API constructor."""
+
+    if not version:
+        return False
+    match = re.match(r"\s*(\d+)(?:\.(\d+))?(?:\.(\d+))?", version)
+    if not match:
+        return False
+    major = int(match.group(1))
+    minor = int(match.group(2) or 0)
+    return major == 0 and 136 <= minor < 143
+
+
+def fastapi_remedy(version: str | None) -> str:
+    return (
+        f"FastAPI {version or 'unknown'} is incompatible with SkyPilot "
+        f"{SKYPILOT_VERSION}; expected {FASTAPI_SPEC}"
+    )
 
 
 def kubernetes_client_remedy(version: str | None) -> str:
@@ -1448,6 +1490,28 @@ def _pin_skypilot_click(state: VenvState) -> None:
     )
 
 
+def _pin_skypilot_fastapi(state: VenvState) -> None:
+    """Keep SkyPilot's local API on a FastAPI version that accepts ``prefix``."""
+
+    if state.fastapi_compatible and state.fastapi_version:
+        return
+    result = _run_no_raise(
+        [str(state.python_bin), "-m", "pip", "install", FASTAPI_SPEC]
+    )
+    if result.returncode == 0:
+        return
+    detail = _combined_output(result) or "no output"
+    if _looks_like_network_failure(detail):
+        raise SkyPilotBootstrapError(
+            f"Network failure while pinning FastAPI for SkyPilot: {detail}. "
+            "Suggested action: verify package index connectivity and rerun bootstrap."
+        )
+    raise SkyPilotBootstrapError(
+        f"pip failed while pinning FastAPI for SkyPilot: {detail}. "
+        "Suggested action: inspect the pip error above, fix the environment, and rerun bootstrap."
+    )
+
+
 def _write_marker(
     state: VenvState,
     *,
@@ -1465,6 +1529,8 @@ def _write_marker(
         "reused_existing_venv": reused,
         "kubernetes_client": state.kubernetes_version,
         "kubernetes_client_spec": KUBERNETES_CLIENT_SPEC,
+        "fastapi": state.fastapi_version,
+        "fastapi_spec": FASTAPI_SPEC,
     }
     state.marker_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
@@ -1484,6 +1550,16 @@ def _sky_importable(python_bin: Path) -> bool:
 def _kubernetes_client_version(python_bin: Path) -> str | None:
     result = _run_no_raise(
         [str(python_bin), "-c", "import kubernetes; print(kubernetes.__version__)"]
+    )
+    if result.returncode != 0:
+        return None
+    value = (result.stdout or "").strip().splitlines()
+    return value[0].strip() if value else None
+
+
+def _fastapi_version(python_bin: Path) -> str | None:
+    result = _run_no_raise(
+        [str(python_bin), "-c", "import fastapi; print(fastapi.__version__)"],
     )
     if result.returncode != 0:
         return None

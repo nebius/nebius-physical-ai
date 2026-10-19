@@ -5,3 +5,6 @@
 # range remains broad enough for resolver security updates.
 kubernetes>=20.0.0,!=32.0.0,<36
 click>=8.1,<8.2
+# SkyPilot 0.12.2 starts its API with FastAPI's removed ``prefix`` argument.
+# FastAPI 0.143+ rejects it before the API reports ready.
+fastapi>=0.136.1,<0.143.0
