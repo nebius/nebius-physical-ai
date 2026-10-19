@@ -233,6 +233,14 @@ Deploy output reports the credential file path but redacts the password, and
 `npa agent status` uses the file for its health probes without returning either
 credential.
 
+Agent status, verification and artifact handoff authenticate HTTPS using the
+installed certificate read over host-key-verified SSH. The recorded provider
+instance and public address must agree, and the saved SSH key must be usable.
+Missing or changed trust fails before sending HTTP credentials; certificate
+expiry and hostname checks remain enforced. Bootstrap recovery obtains the same
+certificate through its verified SSH connection before probing authenticated
+health. Refresh the agent record through bootstrap when its address changes.
+
 HTTPS uses a self-signed certificate. If a browser does not show the sign-in
 flow, open `<public_url>/healthz` once to accept the certificate, then open
 `<public_url>/login-help.html`. This is also the required order on phones.

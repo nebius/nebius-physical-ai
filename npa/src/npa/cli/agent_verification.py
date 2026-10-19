@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import os
+import ssl
 import subprocess
 import sys
 from dataclasses import dataclass
+from functools import cached_property
 from pathlib import Path
 from typing import Any, Callable, NoReturn
 
@@ -43,8 +45,8 @@ class _VerificationContext:
     def sim_assets_base(self) -> str:
         return str(self.record.get("sim_assets_url", self.agent_url)).rstrip("/")
 
-    @property
-    def tls_verify(self) -> bool:
+    @cached_property
+    def tls_verify(self) -> bool | ssl.SSLContext:
         return record_tls_verify(self.record)
 
 

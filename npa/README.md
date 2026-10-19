@@ -408,6 +408,12 @@ UR10e's new sealed physics profile preserves its USD mimic-joint mechanics.
 
 ## Workbench Runtimes
 
+Agent status, live verification and final-artifact handoff verify HTTPS using
+the installed certificate read over authenticated SSH. The saved provider
+instance, public address and SSH key must still identify that agent. Unknown
+SSH keys, a substituted TLS certificate, expiry or a wrong hostname fail before
+HTTP credentials are sent. See [agent access](../docs/agent.md) for recovery.
+
 LeIsaac relay setup reads the agent's TLS certificate fingerprint through
 host-key-verified SSH before sending HTTPS or WSS credentials. To check an
 existing agent's certificate without changing it, set

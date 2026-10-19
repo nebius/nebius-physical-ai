@@ -10,6 +10,7 @@ import json
 import os
 import secrets
 import shlex
+import ssl
 import subprocess
 from pathlib import Path
 from typing import Any, NoReturn
@@ -11136,7 +11137,7 @@ def _health(
     user: str,
     password: str,
     timeout: float = 5.0,
-    verify: bool = True,
+    verify: bool | ssl.SSLContext = True,
 ) -> tuple[bool, int]:
     try:
         response = httpx.get(url, auth=(user, password), timeout=timeout, verify=verify)
@@ -11149,7 +11150,7 @@ def _basic_auth_protects_endpoint(
     url: str,
     *,
     timeout: float = 5.0,
-    verify: bool = True,
+    verify: bool | ssl.SSLContext = True,
 ) -> tuple[bool, int]:
     """Prove that an unauthenticated request cannot reach the agent UI."""
     try:
@@ -11175,7 +11176,7 @@ def _verify_artifact_only_live(
     record: dict[str, Any],
     auth_user: str,
     auth_password: str,
-    tls_verify: bool,
+    tls_verify: bool | ssl.SSLContext,
     project: str,
     name: str,
 ) -> None:
