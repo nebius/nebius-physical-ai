@@ -120,9 +120,7 @@ def bind_direct_manifest(result, verification, expected_id):
         "oci_direct_manifest_identity",
     )
     for key in ("image_manifest_digest", "image_config_digest"):
-        W.require(
-            result[key] == verification[key], "oci_direct_manifest_graph_binding"
-        )
+        W.require(result[key] == verification[key], "oci_direct_manifest_graph_binding")
     W.require(
         type(verification["layer_count"]) is int
         and len(result["layers"]) == verification["layer_count"]

@@ -29,6 +29,7 @@ from npa.workflows.sim2real_rerun_regen import (
     run_prefix_uri,
     sync_heldout_renders,
 )
+
 pytestmark = pytest.mark.usefixtures("operator_sim2real_image_defaults")
 _TEST_IMAGE = f"ghcr.io/example/sim2real-test@sha256:{'0' * 64}"
 

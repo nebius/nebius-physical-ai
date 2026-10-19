@@ -149,9 +149,10 @@ def test_generic_direct_manifest_binds_unattested_runtime_without_seedvr_schema(
     assert "image_index_digest" not in verified
     report, _ = run(tmp_path, auth)
     assert report["complete"] and report["valid"], report
-    assert report["direct_manifest_graph"]["image_manifest_digest"] == auth[
-        "expected_image_id"
-    ]
+    assert (
+        report["direct_manifest_graph"]["image_manifest_digest"]
+        == auth["expected_image_id"]
+    )
     altered = {
         **verified,
         "expected_image_id": "sha256:" + digest(files["index.json"]),
