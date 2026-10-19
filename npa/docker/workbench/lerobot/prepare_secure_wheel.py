@@ -49,6 +49,26 @@ LOGGER_SHA256 = "9328a2254e840e1447cb2464fa0498102fe640ec8d68edfefae4592ada22591
 LOGGER_MODIFICATION_NOTICE = (
     b"# Modified by Nebius: uses the supported W&B Run.url property.\n"
 )
+GROOT_INIT_PATH = "lerobot/policies/groot/__init__.py"
+GROOT_INIT_SHA256 = "40411dc2b519d34f96cd68bed78817d98f10905778eea58a18a0d539ce2cd79d"
+GROOT_EAGER_IMPORTS = (
+    b"from .configuration_groot import GrootConfig\n"
+    b"from .modeling_groot import GrootPolicy\n"
+    b"from .processor_groot import make_groot_pre_post_processors\n"
+)
+GROOT_LAZY_IMPORTS = (
+    b"# Modified by Nebius: defer optional GR00T runtime imports so they cannot "
+    b"block core policy initialization.\n"
+    b"from .configuration_groot import GrootConfig\n\n\n"
+    b"def __getattr__(name: str):\n"
+    b'    if name == "GrootPolicy":\n'
+    b"        from .modeling_groot import GrootPolicy\n\n"
+    b"        return GrootPolicy\n"
+    b'    if name == "make_groot_pre_post_processors":\n'
+    b"        from .processor_groot import make_groot_pre_post_processors\n\n"
+    b"        return make_groot_pre_post_processors\n"
+    b'    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")\n'
+)
 
 
 def _download(url: str, expected_hash: str) -> bytes:
@@ -154,10 +174,38 @@ def _logger_source(original: bytes) -> bytes:
     )
 
 
-def _native_model_source_unchanged(source_patches: dict[str, dict]) -> bool:
-    """Derive the policy-source claim from the exact patched paths."""
+def _groot_init_source(original: bytes) -> bytes:
+    """Defer optional GR00T imports without changing the model implementation."""
 
-    return not any(path.startswith("lerobot/policies/") for path in source_patches)
+    if hashlib.sha256(original).hexdigest() != GROOT_INIT_SHA256:
+        raise RuntimeError("unreviewed upstream GR00T package initializer")
+    if original.count(GROOT_EAGER_IMPORTS) != 1:
+        raise RuntimeError("reviewed upstream GR00T import surface changed")
+    patched = original.replace(GROOT_EAGER_IMPORTS, GROOT_LAZY_IMPORTS)
+    _validate_groot_import_surface(patched)
+    return patched
+
+
+def _validate_groot_import_surface(source: bytes) -> None:
+    """Reject top-level optional model imports in the exact patched initializer."""
+
+    eager_imports = (
+        b"from .modeling_groot import GrootPolicy",
+        b"from .processor_groot import make_groot_pre_post_processors",
+    )
+    if any(line in eager_imports for line in source.splitlines()):
+        raise RuntimeError("eager optional GR00T model import remains")
+    if GROOT_LAZY_IMPORTS not in source:
+        raise RuntimeError("reviewed GR00T lazy import surface changed")
+
+
+def _native_model_source_unchanged(source_patches: dict[str, dict]) -> bool:
+    """Derive the model-implementation claim from the exact patched paths."""
+
+    return not any(
+        path.startswith("lerobot/policies/") and path != GROOT_INIT_PATH
+        for path in source_patches
+    )
 
 
 def _integration(files: dict[str, bytes]) -> tuple[dict[str, bytes], dict]:
@@ -168,12 +216,18 @@ def _integration(files: dict[str, bytes]) -> tuple[dict[str, bytes], dict]:
     }
     result[DIST_INFO + "METADATA"] = _metadata(files[ORIGINAL_DIST_INFO + "METADATA"])
     result[LOGGER_PATH] = _logger_source(files[LOGGER_PATH])
+    result[GROOT_INIT_PATH] = _groot_init_source(files[GROOT_INIT_PATH])
     source_patches = {
         LOGGER_PATH: {
             "original_sha256": LOGGER_SHA256,
             "patched_sha256": hashlib.sha256(result[LOGGER_PATH]).hexdigest(),
             "change": "added modification notice and replaced W&B Run.get_url() with supported Run.url property",
-        }
+        },
+        GROOT_INIT_PATH: {
+            "original_sha256": GROOT_INIT_SHA256,
+            "patched_sha256": hashlib.sha256(result[GROOT_INIT_PATH]).hexdigest(),
+            "change": "deferred optional GR00T runtime imports so core policy imports do not execute the optional model path",
+        },
     }
     receipt = {
         "integration_version": VERSION,
@@ -187,6 +241,9 @@ def _integration(files: dict[str, bytes]) -> tuple[dict[str, bytes], dict]:
         "license_retained": "Apache-2.0",
         "dependency_changes": DEPENDENCIES,
         "capability_qualification": "pending native ACT, Diffusion, default decoder, server and offline logger gates",
+        "deferred_optional_policy_qualification": {
+            "groot": "unqualified under the security-pinned transformers runtime; a request to instantiate GrootPolicy requires a separate runtime qualification"
+        },
     }
     result[DIST_INFO + "npa-source-integration.json"] = json.dumps(
         receipt, indent=2

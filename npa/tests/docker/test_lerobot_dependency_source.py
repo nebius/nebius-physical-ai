@@ -152,7 +152,7 @@ def test_build_dependency_closure_has_no_moving_repository_or_python_resolution(
         (
             "requirements-051.lock",
             "lerobot-0.5.1+npa.secure2-py3-none-any.whl",
-            "61fd5e0a33f622bb28cba6b23b3647985b37d97bf72234405d56e9467bb73a9b",
+            "d9cb2060e608fb25c86b0dddb98d98570753c8eaf0a2b861f7152a549ccd5b4c",
         ),
         (
             "requirements-060.lock",
