@@ -39,7 +39,7 @@ def test_isaac_arena_image_is_exact_source_and_payload_clean_by_construction() -
     assert "ed0fd12be862078be316c73eb7cf423ba9b1c5cd" in text
     assert "4e62ddbd7edc40fb47e62a0d5ba523eebc129482b4ce083612f17c79f1fc40a8" in text
     assert (
-        "npa-isaac-lab@sha256:e321e8631c7e318b5012dad210d9cd1001b7dc833cbff0369e420c5c12657ab6"
+        "npa-isaac-lab@sha256:ef7f4234839852ed7b48ea4b88fd61f1c45a37ca00294c10a0a23fb335807ef4"
         in text
     )
     assert "--output /tmp/isaac-arena.tar.gz" in text

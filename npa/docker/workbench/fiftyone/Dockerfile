@@ -8,6 +8,10 @@ ARG DATASETS_VERSION=5.0.1
 ARG HUGGINGFACE_HUB_VERSION=1.14.0
 ARG PYARROW_VERSION=24.0.0
 ARG PILLOW_VERSION=12.3.0
+# FiftyOne 1.22's pinned Strawberry GraphQL release imports ExecutionContext,
+# which graphql-core 3.3 removed. Keep the compatible current 3.2 patch line
+# explicit so a future resolver update cannot produce an image that fails on
+# its first FiftyOne import.
 # MongoDB server for FiftyOne's metadata DB. The prebuilt fiftyone_db wheel does
 # NOT ship a mongod binary for this platform (trixie), so real curation
 # (compute_uniqueness / compute_similarity / compute_visualization, which all need
@@ -92,13 +96,16 @@ COPY --chown=ubuntu:ubuntu docker/workbench/fiftyone/mongodb-source-version.json
 COPY --chown=ubuntu:ubuntu docker/workbench/fiftyone/SOURCE.md /opt/fiftyone/mongodb-notices/SOURCE.md
 COPY --chown=ubuntu:ubuntu docker/workbench/fiftyone/verify_source.py /opt/npa/docker/workbench/fiftyone/verify_source.py
 
+# FiftyOne 1.22 uses Strawberry 0.316, whose ExecutionContext import requires
+# GraphQL Core 3.2. Keep the compatible wheel pinned by its upstream SHA-256.
 # Replace any wheel-provided database binary before this installation layer is
 # committed, so an older executable cannot survive in an ancestor layer.
 RUN python -m venv "${FIFTYONE_VENV}" \
     && python -m pip install --no-cache-dir --require-hashes --only-binary=:all: \
       -r /opt/npa-packaging-requirements.txt \
     && python -m pip install --no-cache-dir \
-      "fiftyone==${FIFTYONE_VERSION}" \
+      "fiftyone[multimodal]==${FIFTYONE_VERSION}" \
+      "graphql-core @ https://files.pythonhosted.org/packages/1f/b4/b52a324b0b297ddc49b8ea31a51d39fae63132f694a267b9381d94e2e0af/graphql_core-3.2.13-py3-none-any.whl#sha256=b0eb04f2c31556b2310a77c8fb53c74e8b56570f8fea594d89c6ef7827dbb497" \
       "boto3==${BOTO3_VERSION}" \
       "datasets==${DATASETS_VERSION}" \
       "huggingface_hub==${HUGGINGFACE_HUB_VERSION}" \
@@ -106,8 +113,11 @@ RUN python -m venv "${FIFTYONE_VENV}" \
       "pillow==${PILLOW_VERSION}" \
       "paramiko==5.0.0" \
       "scikit-image==0.26.0" \
+    && mkdir -p /usr/share/doc/npa-fiftyone \
     && python /opt/npa-remove-scikit-image-recipe.py \
       --site-packages "$(python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \
+      --capability fiftyone \
+      > /usr/share/doc/npa-fiftyone/dependency-source-correction.json \
     && curl --fail --location --silent --show-error \
       -o /tmp/mongodb.tgz "https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu2204-${MONGODB_VERSION}.tgz" \
     && echo "${MONGODB_SHA256}  /tmp/mongodb.tgz" | sha256sum -c - \

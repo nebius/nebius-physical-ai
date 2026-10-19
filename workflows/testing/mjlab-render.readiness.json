@@ -1,0 +1,52 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "0f7f6a1c6f52cfeac3ddc02861edb996a811f78b464bd1a0e5a7ca3d99ff37a3",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "validate-spec and plan-spec --check-render passed; no provider actions or registry-secret materialization occurred.",
+      "evidence": [
+        "workflows/testing/mjlab-render.yaml"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Production renderer tests bind every stage to the qualified RTX image and verify native argv and declared MP4/HTML outputs for rendering stages.",
+      "evidence": [
+        "npa/tests/workflows/test_mjlab_workflow.py",
+        "workflows/testing/mjlab-render.yaml"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "blocked",
+      "reason": "The example-bucket placeholder must be replaced with operator-owned writable S3 storage.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "blocked",
+      "reason": "The checkpoint_uri example must be replaced with an existing native MJLab checkpoint accessible to the worker.",
+      "evidence": []
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "Configure and preflight the operator storage and cloud credentials; this template stores none. This flat G1 workflow requires no gated model fetch.",
+      "evidence": []
+    },
+    "source_image": {
+      "status": "verified",
+      "reason": "The exact pinned image is anonymously pullable, signature-verified and qualified on one RTX PRO 6000.",
+      "evidence": [
+        "docs/workbench/validation/mjlab-native-hd-gpu-20261010.json"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "Native components and NVIDIA HD rendering passed on a fresh SkyPilot RTX VM. The template selects Kubernetes; its concrete cluster placement and GPU runtime still require operator preflight, and the complete workflow graph was not submitted.",
+      "evidence": [
+        "docs/workbench/validation/mjlab-native-hd-gpu-20261010.json"
+      ]
+    }
+  }
+}

@@ -9,6 +9,7 @@ from typing import Any
 
 import httpx
 
+from npa.cli.agent_tls import trusted_agent_tls_context
 from npa.clients.config import ConfigError, resolve_ssh_config
 from npa.clients.ssh import SSHClient, SSHError
 from npa.provisioning_journal import operation_heartbeats
@@ -100,14 +101,15 @@ def reconcile_agent_setup(
     scheme = "https" if public_https else "http"
     port = "" if public_https else f":{agent_port}"
     try:
+        verify = trusted_agent_tls_context(ssh) if public_https else True
         response = httpx.get(
             f"{scheme}://{host}{port}/api/models",
             auth=(auth_user, auth_password),
             timeout=8.0,
-            verify=not public_https,
+            verify=verify,
         )
         evidence["models_healthy"] = response.status_code == 200
-    except httpx.HTTPError as exc:
+    except (httpx.HTTPError, SSHError, ValueError) as exc:
         evidence["error_category"] = type(exc).__name__
         return evidence
     if evidence["models_healthy"] and payload.get("phase") == "remote_health_ready":

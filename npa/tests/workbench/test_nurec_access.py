@@ -8,6 +8,7 @@ real stage commands, the Rerun recording the agent displays).
 
 from __future__ import annotations
 
+import tempfile
 from pathlib import Path
 
 import typer
@@ -459,9 +460,22 @@ def test_sdk_module_exposes_every_cli_verb() -> None:
     )
     for verb in sorted(cli_verbs):
         wrapper = getattr(sdk, verb)
-        if verb == "convert_colmap":
-            # New capabilities use the shared workbench module directly; their
-            # behavior is covered by test_nurec_colmap_cli.test_sdk_calls_module_directly.
+        if verb in {
+            "acquire_source",
+            "audit_colmap",
+            "audit_qualification",
+            "bundle_runtime",
+            "cleanup_qualification",
+            "control_source",
+            "convert_colmap",
+            "observe_runtime",
+            "probe_storage",
+            "publish_evidence",
+            "readback_qualification",
+            "stage_source",
+        }:
+            # Evidence capabilities use shared workbench modules directly; their
+            # behavior is covered by focused CLI/SDK and receipt tests.
             assert callable(wrapper)
             assert not hasattr(wrapper, "__npa_cli_module__")
             continue
@@ -783,13 +797,12 @@ def test_spec_reconstruct_reads_the_uri_the_fetch_stage_writes() -> None:
     assert resolved_consumed == resolved_published + "sequence/"
 
 
-def test_staging_the_source_is_inert_for_an_image_that_already_bakes_npa() -> None:
-    """Propagating NPA_SRC_S3_URI to every pinned image must not change baked ones.
+def test_explicit_source_overlay_precedes_baked_image_setup() -> None:
+    """An explicit overlay stages before any image-local NPA install path.
 
-    The renderer now injects the URI for ANY pinned image (it previously required
-    NPA_SRC_OVERLAY=1). That is safe only because the in-pod install is guarded on
-    `command -v npa`, so an image that already ships npa skips it entirely. This
-    pins that guard -- it is the whole reason the change is non-breaking.
+    A partial baked NPA tree cannot satisfy the editable-install hook. The
+    renderer must therefore stage an explicitly requested source overlay first,
+    even when an image advertises a baked project path.
     """
     from npa.orchestration.npa_workflow.skypilot_render import (
         SkypilotRenderOptions,
@@ -798,9 +811,11 @@ def test_staging_the_source_is_inert_for_an_image_that_already_bakes_npa() -> No
     )
 
     setup = default_npa_setup()
-    assert "if ! command -v npa >/dev/null 2>&1; then" in setup
-    # The baked-image path is tried before any S3 sync.
-    assert setup.index("/opt/nebius-physical-ai/npa") < setup.index("NPA_SRC_S3_URI")
+    assert "if ! command -v npa >/dev/null 2>&1 && {" in setup
+    # The explicit-overlay guard skips a thin baked project when its complete
+    # selected source is available, then stages that source in the overlay path.
+    assert 'NPA_SRC_OVERLAY" != "1"' in setup
+    assert str(Path(tempfile.gettempdir()) / "npa-src-overlay") in setup
 
     # And an unrelated tool's setup is unchanged by the NuRec additions.
     other = render_setup_for_tool(

@@ -15,8 +15,24 @@ export NPA_INTEGRATION_E2E=1
 SPECS_DIR="${REPO}/workflows"
 DYNAMIC="sim2real.yaml tokenfactory-cosmos-gate.yaml"
 RUN_ID="npa-workflow-live-$(date -u +%Y%m%dT%H%M%SZ)"
+WORKFLOW_SMOKE_DIGEST="$(printf '0%.0s' {1..64})"
 LOG="/tmp/${RUN_ID}.log"
 exec > >(tee -a "$LOG") 2>&1
+
+workflow_image_fixture_keys() {
+  "${PY}" - "$1" <<'PY'
+from pathlib import Path
+import sys
+
+import yaml
+
+payload = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+keys = payload.get("config", {}).get("required_immutable_images", [])
+if not isinstance(keys, list) or not all(isinstance(key, str) and key for key in keys):
+    raise SystemExit("required_immutable_images must be a list of non-empty strings")
+print("\n".join(keys))
+PY
+}
 
 echo "=== NPA workflow live e2e run_id=${RUN_ID} ==="
 echo "log: ${LOG}"
@@ -40,7 +56,7 @@ while true; do
   fi
 
   echo "--- CLI validate-spec / plan-spec (all golden YAMLs) ---"
-  for spec in "${SPECS_DIR}/main"/*.yaml "${SPECS_DIR}/testing"/*.yaml "${SPECS_DIR}/partners"/*/*.yaml; do
+  for spec in "${SPECS_DIR}/main"/*.yaml "${SPECS_DIR}/testing"/*.yaml "${SPECS_DIR}/cosmos-data-factory"/*.yaml "${SPECS_DIR}/partners"/*/*.yaml; do
     [[ -f "$spec" ]] || continue
     base=$(basename "$spec")
     echo "spec: ${spec}"
@@ -52,9 +68,19 @@ while true; do
     if [[ " ${DYNAMIC} " == *" ${base} "* ]]; then
       extra=(--assume-decision promote_checkpoint)
     fi
+    if ! fixture_keys="$(workflow_image_fixture_keys "${spec}")"; then
+      FAILED=1
+      continue
+    fi
+    image_args=()
+    while IFS= read -r key; do
+      [[ -n "${key}" ]] || continue
+      image_args+=(--var "${key}=registry.example.invalid/workflow-smoke@sha256:${WORKFLOW_SMOKE_DIGEST}")
+    done <<< "${fixture_keys}"
     if ! "${NPA}" workbench workflow plan-spec "${spec}" \
       --run-id "${RUN_ID}-r${round}" \
-      "${extra[@]}"; then
+      "${extra[@]}" \
+      "${image_args[@]}"; then
       FAILED=1
       continue
     fi
@@ -62,6 +88,7 @@ while true; do
       --run-id "${RUN_ID}-r${round}" \
       --plan-only \
       "${extra[@]}" \
+      "${image_args[@]}" \
       --json | "${PY}" -c "
 import json, sys
 report = json.load(sys.stdin)

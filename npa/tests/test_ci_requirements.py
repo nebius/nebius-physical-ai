@@ -175,6 +175,34 @@ def test_application_lock_matches_shared_ci_pins() -> None:
     assert not mismatches, f"Application pins differ from the CI closure: {mismatches}"
 
 
+def test_rerun_decoding_extra_is_dev_only_and_mirrored() -> None:
+    """Require the real RRD reader runtime without expanding production extras.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Either development entry point loses decoded RRD coverage.
+    """
+    manifest = ci_requirements.tomllib.loads(
+        (ci_requirements._ROOT / "npa/pyproject.toml").read_text()
+    )
+    project = manifest["project"]
+    core = next(
+        Requirement(item)
+        for item in project["dependencies"]
+        if Requirement(item).name == "rerun-sdk"
+    )
+    assert not core.extras
+    reader = f"rerun-sdk[catalog]{core.specifier}"
+    assert reader in project["optional-dependencies"]["dev"]
+    assert reader in manifest["dependency-groups"]["dev"]
+    assert "datafusion" not in {
+        Requirement(item).name for item in project["dependencies"]
+    }
+
+
 @pytest.mark.parametrize("version", ["3.10", "3.12", "3.14"])
 def test_ci_pins_select_one_cpu_runtime_per_interpreter(version: str) -> None:
     """Resolve marker-qualified pins without admitting a CUDA dependency.

@@ -18,26 +18,31 @@ ROOT = Path(__file__).resolve().parents[3]
 IMAGE = ROOT / "npa/docker/workbench/curobo"
 
 
-@pytest.fixture
-def installed(tmp_path, monkeypatch):
+def _correction_module():
     spec = importlib.util.spec_from_file_location(
         "curobo_dependency_correction", IMAGE / "remove_scikit_image_recipe.py"
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    return module
+
+
+def _synthetic_source(recipe_lines):
+    first, last = recipe_lines
     source = (
-        b"# Copyright and BSD notice preserved.\n" * 508
+        b"# Copyright and BSD notice preserved.\n" * (first - 3)
         + b'def grass():\n    """Primary public documentation."""\n    """\n'
-        + b"    synthetic noncredential historical recipe\n" * 23
+        + b"    synthetic noncredential historical recipe\n" * (last - first - 1)
         + b'    """\n    return _load("data/grass.png")\n'
     )
     sanitized = b"".join(
-        source.splitlines(keepends=True)[:510] + source.splitlines(keepends=True)[535:]
+        source.splitlines(keepends=True)[: first - 1]
+        + source.splitlines(keepends=True)[last:]
     )
-    monkeypatch.setattr(module, "SOURCE_SHA256", hashlib.sha256(source).hexdigest())
-    monkeypatch.setattr(
-        module, "SANITIZED_SHA256", hashlib.sha256(sanitized).hexdigest()
-    )
+    return source, sanitized
+
+
+def _create_installation(tmp_path, module, version, source):
     path = tmp_path / module.MODULE
     path.parent.mkdir(parents=True)
     path.write_bytes(source)
@@ -45,9 +50,9 @@ def installed(tmp_path, monkeypatch):
     py_compile.compile(str(path), doraise=True, optimize=1)
     unrelated = path.parent / "__pycache__/unrelated.pyc"
     unrelated.write_bytes(b"unrelated bytecode must stay identical")
-    dist = tmp_path / "scikit_image-0.26.0.dist-info"
+    dist = tmp_path / f"scikit_image-{version}.dist-info"
     dist.mkdir()
-    (dist / "METADATA").write_text("Name: scikit-image\nVersion: 0.26.0\n")
+    (dist / "METADATA").write_text(f"Name: scikit-image\nVersion: {version}\n")
     (dist / "LICENSE").write_bytes(b"complete original dependency license\n")
     rows = [
         [module.MODULE, "", str(len(source))],
@@ -58,6 +63,24 @@ def installed(tmp_path, monkeypatch):
         rows.append([str(pyc.relative_to(tmp_path)), "", ""])
     with (dist / "RECORD").open("w", newline="") as stream:
         csv.writer(stream).writerows(rows)
+    return path, dist, unrelated
+
+
+@pytest.fixture(params=("0.25.2", "0.26.0"))
+def installed(tmp_path, monkeypatch, request):
+    module = _correction_module()
+    version = request.param
+    correction = module.SOURCE_CORRECTIONS[version]
+    source, sanitized = _synthetic_source(correction.recipe_lines)
+    monkeypatch.setitem(
+        module.SOURCE_CORRECTIONS,
+        version,
+        correction._replace(
+            source_sha256=hashlib.sha256(source).hexdigest(),
+            sanitized_sha256=hashlib.sha256(sanitized).hexdigest(),
+        ),
+    )
+    path, dist, unrelated = _create_installation(tmp_path, module, version, source)
     return module, tmp_path, path, dist, source, sanitized, unrelated
 
 
@@ -68,6 +91,8 @@ def test_exact_correction_preserves_loader_and_notices_and_updates_record(instal
     assert (dist / "LICENSE").read_bytes() == b"complete original dependency license\n"
     assert unrelated.read_bytes() == b"unrelated bytecode must stay identical"
     assert report["executable_ast_preserved"] and report["primary_docstring_preserved"]
+    assert report["schema_version"] == "npa.dependency-source-correction.v2"
+    assert report["capability"] == "curobo"
     assert report["record_sha256_before"] != report["record_sha256_after"]
     rows = list(csv.reader(io.StringIO((dist / "RECORD").read_text())))
     source_row = next(row for row in rows if row[0] == module.MODULE)
@@ -97,9 +122,35 @@ def test_exact_correction_preserves_loader_and_notices_and_updates_record(instal
 
 
 @pytest.mark.parametrize(
+    "capability", ["curobo", "envgen", "fiftyone", "genesis", "lerobot"]
+)
+def test_correction_receipt_uses_a_shared_schema_and_declared_capability(
+    installed, capability
+):
+    module, root, _path, _dist, _source, _sanitized, _unrelated = installed
+    report = module.sanitize_installation(
+        root,
+        capability=capability,
+    )
+    assert report["schema_version"] == "npa.dependency-source-correction.v2"
+    assert report["capability"] == capability
+
+
+def test_correction_refuses_an_unsupported_capability(installed):
+    module, root, path, _dist, _source, _sanitized, _unrelated = installed
+    before = path.read_bytes()
+    with pytest.raises(
+        ValueError, match="unsupported dependency-correction capability"
+    ):
+        module.sanitize_installation(root, capability="unknown")
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize(
     "mutation",
     [
         "version",
+        "known_version_mismatch",
         "source",
         "record_duplicate",
         "record_missing",
@@ -115,6 +166,9 @@ def test_unrecognized_installation_refuses_before_source_mutation(
     module, root, path, dist, source, _sanitized, _unrelated = installed
     if mutation == "version":
         (dist / "METADATA").write_text("Name: scikit-image\nVersion: 0.26.1\n")
+    elif mutation == "known_version_mismatch":
+        other = "0.26.0" if "0.25.2" in dist.name else "0.25.2"
+        (dist / "METADATA").write_text(f"Name: scikit-image\nVersion: {other}\n")
     elif mutation == "source":
         path.write_bytes(source + b"# unreviewed source change\n")
     elif mutation == "record_duplicate":
@@ -152,13 +206,39 @@ def test_already_corrected_source_is_not_silently_reaccepted(installed):
 
 
 def test_runtime_statements_cannot_be_removed_as_a_recipe(installed, monkeypatch):
-    module, _root, _path, _dist, source, _sanitized, _unrelated = installed
+    module, root, _path, _dist, source, _sanitized, _unrelated = installed
     changed = source.replace(
         b'    """\n    return', b'    """\n    execute_work()\n    return'
     )
-    monkeypatch.setattr(module, "SOURCE_SHA256", hashlib.sha256(changed).hexdigest())
+    version = module._installed_distribution(root).version
+    correction = module.SOURCE_CORRECTIONS[version]
+    monkeypatch.setitem(
+        module.SOURCE_CORRECTIONS,
+        version,
+        correction._replace(source_sha256=hashlib.sha256(changed).hexdigest()),
+    )
     with pytest.raises(ValueError, match="unexpected image loader body"):
-        module.sanitize_source(changed, "0.26.0")
+        module.sanitize_source(changed, version)
+
+
+def test_wrong_corrected_digest_refuses_before_installation_mutation(
+    installed, monkeypatch
+):
+    module, root, path, dist, source, _sanitized, _unrelated = installed
+    version = module._installed_distribution(root).version
+    correction = module.SOURCE_CORRECTIONS[version]
+    monkeypatch.setitem(
+        module.SOURCE_CORRECTIONS,
+        version,
+        correction._replace(sanitized_sha256="0" * 64),
+    )
+    record = (dist / "RECORD").read_bytes()
+    caches = {p: p.read_bytes() for p in path.parent.glob("__pycache__/*.pyc")}
+    with pytest.raises(ValueError, match="unexpected corrected scikit-image"):
+        module.sanitize_installation(root)
+    assert path.read_bytes() == source
+    assert (dist / "RECORD").read_bytes() == record
+    assert {p: p.read_bytes() for p in caches} == caches
 
 
 @pytest.mark.parametrize("failure", ["compiler_error", "missing_cache", "linked_cache"])
@@ -189,9 +269,24 @@ def test_correction_runs_before_installation_layer_commits():
     end = dockerfile.index("\n\n", start)
     instruction = dockerfile[start:end]
     assert "python /opt/remove_scikit_image_recipe.py" in instruction
+    assert "--capability curobo" in instruction
     assert instruction.index("remove_scikit_image_recipe.py") < instruction.index(
         "pip check"
     )
     source = (IMAGE / "remove_scikit_image_recipe.py").read_text()
     assert "50e6234fa2170820eaf8d0f8f42b51905822afc3680a4f09113fa11d435f7fb4" in source
     assert "7f505612106adcc880746de642ceb91c9cbb74a6bd0c8100689c0da539c96abf" in source
+
+
+def test_correction_consumers_declare_their_capabilities() -> None:
+    consumers = {
+        "curobo/Dockerfile": "--capability curobo",
+        "sim2real-envgen/Dockerfile": "--capability envgen",
+        "fiftyone/Dockerfile": "--capability fiftyone",
+        "genesis/Dockerfile": "--capability genesis",
+        "genesis/Dockerfile.sm120": "--capability genesis",
+        "lerobot/Dockerfile": "--capability lerobot",
+    }
+    workbench = IMAGE.parent
+    for relative, capability in consumers.items():
+        assert capability in (workbench / relative).read_text()

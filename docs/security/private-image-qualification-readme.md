@@ -150,8 +150,8 @@ independently verifies and scans it again under the configured policy.
 ## Source, policy, and evidence boundaries
 
 The interface runs only from the reviewed default-branch workflow. The scanner
-is separately pinned to `e99f5f2de8224b0d7c21eea1fdfb2c369ec04f0b`, which includes
-the generic OCI verifier and retained-input adjudication support. The helper verifies that checkout is exact
+is separately pinned to `7e2f19c747ef11d086daf33b0db06a7b7d4606b7`, which includes
+the original-manifest verifier, retained-input adjudication and current scanner security hardening. The helper verifies that checkout is exact
 and clean, including ignored files such as pre-existing Python bytecode, before
 any scanner child starts. A scanner-pin update requires review; callers cannot select code.
 Its existing pinned Go and native matcher preparation plus real native

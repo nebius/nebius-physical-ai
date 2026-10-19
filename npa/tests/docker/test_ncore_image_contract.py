@@ -55,11 +55,15 @@ def test_ncore_is_public_eligible_but_has_no_automatic_release() -> None:
     assert images.build_and_push_command("local.invalid/npa-ncore:unbuilt") == ""
 
 
-def test_conversion_has_pinned_cpu_setup_without_vendor_reinstallation() -> None:
-    assert tool_image_key("workbench.nurec.convert_colmap") == "ncore"
-    setup = render_setup_for_tool(
-        "workbench.nurec.convert_colmap", config={}, options=SkypilotRenderOptions()
-    )
+@pytest.mark.parametrize(
+    "tool_ref",
+    ["workbench.nurec.convert_colmap", "workbench.nurec.audit_colmap"],
+)
+def test_conversion_has_pinned_cpu_setup_without_vendor_reinstallation(
+    tool_ref: str,
+) -> None:
+    assert tool_image_key(tool_ref) == "ncore"
+    setup = render_setup_for_tool(tool_ref, config={}, options=SkypilotRenderOptions())
     assert "/opt/venv/bin/python /opt/ncore/bin/verify-packaging.py" in setup
     # Setup must record the pinned interpreter at the path the run shell reads.
     # Read the actual writer/consumer contract instead of assuming a temp path.
@@ -247,6 +251,46 @@ MASK_SOURCE = """                if mask_path is not None:
                     masks_found += 1
 """
 
+FRAME_POSE_SOURCE = "                generic_data: dict[str, np.ndarray] = {}\n"
+VIRTUAL_TIME_SOURCE = (
+    '    reference_frame: str = "world"\n'
+    "start_time_sec + np.linspace(0.0, self.n_images - 1, self.n_images)\n"
+    "        # Use this to calculate the time span\n"
+    "        max_poses = np.max([camera.n_images for camera in self.cameras.values()])\n"
+)
+
+
+@pytest.mark.parametrize("count", [0, 2])
+def test_virtual_time_patch_rejects_missing_or_duplicate_anchor(tmp_path, count):
+    source = tmp_path / "converter.py"
+    original = VIRTUAL_TIME_SOURCE * count
+    source.write_text(original)
+    with pytest.raises(ValueError, match="virtual timeline source changed"):
+        _stager().patch_virtual_camera_times(source)
+    assert source.read_text() == original
+
+
+def test_virtual_time_patch_is_exact_and_rejects_reapplication(tmp_path):
+    source = tmp_path / "converter.py"
+    source.write_text(VIRTUAL_TIME_SOURCE)
+    _stager().patch_virtual_camera_times(source)
+    patched = source.read_text()
+    assert "camera.virtual_start_index = max_poses" in patched
+    assert "self.cameras[camera.reference_frame].virtual_start_index" in patched
+    with pytest.raises(ValueError, match="virtual timeline source changed"):
+        _stager().patch_virtual_camera_times(source)
+    assert source.read_text() == patched
+
+
+@pytest.mark.parametrize("count", [0, 2])
+def test_frame_pose_patch_rejects_changed_anchor_without_writing(tmp_path, count):
+    source = tmp_path / "converter.py"
+    original = DOWNSAMPLE_SOURCE + FRAME_POSE_SOURCE * count + MASK_SOURCE
+    source.write_text(original)
+    with pytest.raises(ValueError, match="camera frame source changed"):
+        _stager().patch_frame_world_poses(source)
+    assert source.read_text() == original
+
 
 def test_mask_patch_is_narrow_and_asserts_source_drift(tmp_path):
     source = tmp_path / "converter.py"
@@ -307,7 +351,12 @@ def test_staging_records_postpatch_converter_inventory(monkeypatch, tmp_path):
     }
     contents = {
         "ncore": {
-            "tools/data_converter/colmap/converter.py": DOWNSAMPLE_SOURCE + MASK_SOURCE,
+            "tools/data_converter/colmap/converter.py": (
+                DOWNSAMPLE_SOURCE
+                + FRAME_POSE_SOURCE
+                + MASK_SOURCE
+                + VIRTUAL_TIME_SOURCE
+            ),
             "deps/pycolmap/fix-python3-map.patch": "synthetic patch boundary",
         },
         "pycolmap": {"pycolmap/scene_manager.py": "INVALID_POINT3D = np.uint64(-1)\n"},
@@ -339,11 +388,14 @@ def test_staging_records_postpatch_converter_inventory(monkeypatch, tmp_path):
     patched = (output / relative).read_bytes()
     assert b"colmap_camera=camera," in patched
     assert b"PILImage.Resampling.NEAREST" in patched
+    assert b"'T_sensor_worlds': np.repeat(frame_pose[None], 2, axis=0)" in patched
     inventory = json.loads((output / "source-inventory.json").read_text())
     assert inventory["files"][relative] == hashlib.sha256(patched).hexdigest()
     assert (
         inventory["files"][relative]
-        != hashlib.sha256((DOWNSAMPLE_SOURCE + MASK_SOURCE).encode()).hexdigest()
+        != hashlib.sha256(
+            (DOWNSAMPLE_SOURCE + FRAME_POSE_SOURCE + MASK_SOURCE).encode()
+        ).hexdigest()
     )
     reader = "pycolmap/pycolmap/scene_manager.py"
     assert (output / reader).read_text().endswith("# text reader patched\n")

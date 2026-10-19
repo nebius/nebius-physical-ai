@@ -1,0 +1,52 @@
+--- a/src/pip/_vendor/pkg_resources/__init__.py
++++ b/src/pip/_vendor/pkg_resources/__init__.py
+@@ -66,9 +66,8 @@
+     overload,
+ )
+ 
+-sys.path.extend(((vendor_path := os.path.join(os.path.dirname(os.path.dirname(__file__)), 'setuptools', '_vendor')) not in sys.path) * [vendor_path])  # fmt: skip
+-# workaround for #4476
+-sys.modules.pop('backports', None)
++# The pip vendor namespace supplies these dependencies; do not search an
++# unrelated installed setuptools tree or mutate its backports module.
+ 
+ # capture these to bypass sandboxing
+ from os import open as os_open, utime  # isort: skip
+@@ -82,12 +81,13 @@
+     # no write support, probably under GAE
+     WRITE_SUPPORT = False
+ 
+-import packaging.markers
+-import packaging.requirements
+-import packaging.specifiers
+-import packaging.utils
+-import packaging.version
+-from jaraco.text import drop_comment, join_continuation, yield_lines
++from pip._vendor import packaging
++import pip._vendor.packaging.markers as _packaging_markers
++import pip._vendor.packaging.requirements as _packaging_requirements
++import pip._vendor.packaging.specifiers as _packaging_specifiers
++import pip._vendor.packaging.utils as _packaging_utils
++import pip._vendor.packaging.version as _packaging_version
++from pip._internal.utils._jaraco_text import drop_comment, join_continuation, yield_lines
+ from platformdirs import user_cache_dir as _user_cache_dir
+ 
+ if TYPE_CHECKING:
+@@ -95,15 +95,8 @@
+     from _typeshed.importlib import LoaderProtocol
+     from typing_extensions import Self, TypeAlias
+ 
+-warnings.warn(
+-    "pkg_resources is deprecated as an API. "
+-    "See https://setuptools.pypa.io/en/latest/pkg_resources.html. "
+-    "The pkg_resources package is slated for removal as early as "
+-    "2025-11-30. Refrain from using this package or pin to "
+-    "Setuptools<81.",
+-    UserWarning,
+-    stacklevel=2,
+-)
++# Preserve pip's upstream vendoring patch: its internal use must not emit the
++# standalone pkg_resources deprecation warning under PYTHONWARNINGS=error.
+ 
+ _T = TypeVar("_T")
+ _DistributionT = TypeVar("_DistributionT", bound="Distribution")

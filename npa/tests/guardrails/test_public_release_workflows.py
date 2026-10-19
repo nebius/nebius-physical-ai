@@ -65,8 +65,17 @@ def test_public_publisher_builds_only_immutable_public_development_refs() -> Non
         "paths": ["npa/docker/workbench/**"],
     }
     assert triggers["schedule"] == [{"cron": "0 6 * * 1"}]
-    assert spec["permissions"]["packages"] == "write"
-    assert spec["permissions"]["attestations"] == "write"
+    assert spec["permissions"] == {"contents": "read"}
+    jobs = spec["jobs"]
+    assert jobs["build-development"]["permissions"] == {
+        "contents": "read",
+        "packages": "write",
+        "attestations": "write",
+        "id-token": "write",
+    }
+    assert jobs["promote"]["permissions"] == {"contents": "read", "packages": "write"}
+    assert jobs["cleanup-requested"]["permissions"] == {"packages": "write"}
+    assert "permissions" not in jobs["resolve"]
     assert "development_image_for_tool" in text
     assert "dev-<sha>" in text
     assert "ghcr.io/nebius/nebius-physical-ai" in text
@@ -208,6 +217,88 @@ def test_prepublication_gates_run_before_the_public_dev_push() -> None:
         assert text.index(required) < push
     assert "exact pushed-byte gates and post-push anonymous verification apply" in text
     assert "if matrix and head != sha" in text
+
+
+def test_cosmos3_ray_payload_logs_keep_member_metadata_in_json() -> None:
+    """Require redacted scanner output, cleanup, and failure-status preservation."""
+    scanner = "scan_image_cosmos3_ray_serve_payload.py"
+    workflow_paths = [
+        path for pattern in ("*.yml", "*.yaml") for path in WORKFLOWS.glob(pattern)
+    ]
+    scanner_steps = [
+        script
+        for path in workflow_paths
+        for job in _spec(path).get("jobs", {}).values()
+        for step in job.get("steps", [])
+        if scanner in (script := str(step.get("run") or ""))
+    ]
+    assert len(scanner_steps) == 2, (
+        "both pre- and post-push scans must stay redacted; review any new scanner call "
+        "site before updating this count"
+    )
+    for script in scanner_steps:
+        assert "--json" in script
+        assert "--full-stdout" not in script
+        assert re.search(
+            r"else\s+(?P<status>[A-Za-z_][A-Za-z0-9_]*)=\$\?.*?"
+            r'exit "\$(?P=status)"',
+            script,
+            re.DOTALL,
+        )
+    assert "npa/tests/docker/test_cosmos3_ray_payload_evidence.py" in _runs(PUBLISH)
+    workflow_text = PUBLISH.read_text(encoding="utf-8")
+    for archive, report in (
+        (
+            "$RUNNER_TEMP/${TOOL}.tar",
+            "$RUNNER_TEMP/${TOOL}-cosmos3-ray-serve-payload.json",
+        ),
+        (
+            "$RUNNER_TEMP/${TOOL}-pushed.tar",
+            "$RUNNER_TEMP/${TOOL}-pushed-cosmos3-ray-serve-payload.json",
+        ),
+    ):
+        assert f'payload_report="{report}"' in workflow_text
+        normalized_workflow = workflow_text.replace("\\\n", " ")
+        assert re.search(
+            rf'rm -f "{re.escape(archive)}"\s+"\$payload_report"',
+            normalized_workflow,
+        )
+        assert re.search(
+            rf'rm -f "{re.escape(archive)}"\s+"{re.escape(report)}"',
+            normalized_workflow,
+        )
+    steps = _spec(PUBLISH)["jobs"]["build-development"]["steps"]
+    for step_name in (
+        "Enforce runtime, revision, bootstrap, config, and history contracts",
+        "Verify pushed bytes, revision, payload, visibility, and anonymous pull",
+    ):
+        cleanup_step = next(step for step in steps if step.get("name") == step_name)
+        assert 'payload_report=""' in cleanup_step["run"]
+        assert "trap cleanup_libero_export EXIT" in cleanup_step["run"]
+        assert (
+            'if [ -n "$payload_report" ] && ! rm -f "$payload_report"; then'
+            in cleanup_step["run"]
+        )
+    for directory in (
+        ROOT / ".github" / "actions",
+        ROOT / "npa" / "docker",
+        ROOT / "npa" / "scripts",
+        ROOT / "npa" / "src",
+        ROOT / "scripts",
+    ):
+        if directory.exists():
+            for path in directory.rglob("*"):
+                if path.is_file() and path.suffix in {".py", ".sh", ".yaml", ".yml"}:
+                    assert not re.search(
+                        rf"(?:^|[;\n])\s*(?:[^\s]*/)?python(?:[0-9.]+)?\s+"
+                        rf"(?:[^\s]+/)?{re.escape(scanner)}\b",
+                        path.read_text(encoding="utf-8", errors="ignore"),
+                    ), f"unreviewed non-workflow scanner invocation in {path}"
+    for path in (ROOT / "Makefile", ROOT / "npa" / "Makefile"):
+        if path.is_file():
+            assert scanner not in path.read_text(encoding="utf-8", errors="ignore"), (
+                path
+            )
 
 
 def test_public_base_pull_authentication_precedes_local_build() -> None:
@@ -358,16 +449,21 @@ def test_post_push_payload_scan_binds_remote_digest_to_local_full_tar() -> None:
     post_push = text[text.index("Verify pushed bytes") :]
 
     assert 'docker pull "$exact"' in post_push
-    # The remote config digest, pulled image, local image, and independent
-    # cuRobo archive verifier are each bound to the exact inspected image.
-    assert post_push.count("docker image inspect --format '{{.Id}}'") == 4
+    # Check each shared binding role, not an aggregate affected by new tools.
+    assert (
+        'config_digest="$(docker image inspect --format \'{{.Id}}\' "$exact")"'
+        in post_push
+    )
     assert (
         'test "$(docker image inspect --format \'{{.Id}}\' "$exact")" = \\\n'
         '                "$(docker image inspect --format \'{{.Id}}\' "$IMAGE")"'
     ) in post_push
+    curobo_verification = post_push.split(
+        "npa/docker/workbench/curobo/verify_image.py", 1
+    )[1].split("--json", 1)[0]
     assert (
         '--expected-image-id "$(docker image inspect --format \'{{.Id}}\' "$exact")"'
-        in post_push
+        in curobo_verification
     )
     assert (
         'docker save "${save_platform[@]}" --output "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact"'

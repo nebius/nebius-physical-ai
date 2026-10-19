@@ -1,4 +1,4 @@
 interface:
   display_name: "Cosmos3 Native Ray Serve"
-  short_description: "Operate persistent batched Cosmos3-Nano serving"
-  default_prompt: "Use native Cosmos Framework Ray Serve to deploy or submit durable Cosmos3-Nano SDG batches."
+  short_description: "Review quarantined Cosmos3-Nano Ray Serve history"
+  default_prompt: "Review retained Cosmos3-Nano Ray Serve evidence or prepare a separately rebuilt candidate for validation; do not deploy or operate the quarantined historical image."

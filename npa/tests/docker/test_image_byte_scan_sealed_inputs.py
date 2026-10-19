@@ -6,6 +6,7 @@ import errno
 import json
 import os
 from pathlib import Path
+import select
 import sys
 
 import pytest
@@ -29,6 +30,16 @@ def assert_closed(fd):
     with pytest.raises(OSError) as caught:
         os.fstat(fd)
     assert caught.value.errno == errno.EBADF
+
+
+def wait_for_exit_without_reaping(process):
+    pidfd = os.pidfd_open(process.pid, 0)
+    try:
+        poller = select.poll()
+        poller.register(pidfd, select.POLLIN)
+        assert poller.poll(5_000)
+    finally:
+        os.close(pidfd)
 
 
 @pytest.mark.parametrize("executable", [False, True])
@@ -151,7 +162,7 @@ def test_actual_exec_never_uses_mutated_source_before_audit_refusal(
             process = real_popen(argv, **kwargs)
             processes.append(process)
             observations.append(json.loads(process.stdout.readline()))
-            process.wait()
+            wait_for_exit_without_reaping(process)
             return process
         finally:
             if changed in ("helper", "both"):
@@ -197,7 +208,7 @@ def test_successful_actual_child_retains_sealed_inputs_after_parent_copy_closes(
     monkeypatch.setattr(
         W.Detector,
         "_validate_ready",
-        lambda self, _: observed.append(json.loads(self.process.stdout.readline())),
+        lambda self, _: observed.append(self._response()),
     )
     with W.authorized_roots(tmp_path, CHECKOUT):
         detector = W.Detector(authorization, tmp_path / "stderr")

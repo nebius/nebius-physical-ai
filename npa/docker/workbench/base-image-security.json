@@ -1,15 +1,21 @@
 [
   {
+    "name": "ubuntu-26-04",
+    "image": "ubuntu:26.04@sha256:42527649dbc4f9197a6073f426f488cbff0e9cc9f2afce32d91c383e4875634a",
+    "purge_linux_libc_dev": false,
+    "upgrade_os": true
+  },
+  {
     "name": "nvidia-cuda-12-4-1-devel-ubuntu22-04",
     "image": "nvidia/cuda:12.4.1-devel-ubuntu22.04@sha256:da6791294b0b04d7e65d87b7451d6f2390b4d36225ab0701ee7dfec5769829f5",
     "purge_linux_libc_dev": true,
     "upgrade_os": false
   },
   {
-    "name": "nvidia-cuda-12-4-1-cudnn-devel-ubuntu22-04",
-    "image": "nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04@sha256:622e78a1d02c0f90ed900e3985d6c975d8e2dc9ee5e61643aed587dcf9129f42",
+    "name": "nvidia-cuda-12-9-1-base-ubuntu22-04",
+    "image": "nvidia/cuda:12.9.1-base-ubuntu22.04@sha256:59436e8ac61921052d8f420be8b8cb8b117f1d7cc643397a289e37aaa0b83ea1",
     "purge_linux_libc_dev": true,
-    "upgrade_os": false
+    "upgrade_os": true
   },
   {
     "name": "nvidia-cuda-12-6-3-devel-ubuntu22-04",

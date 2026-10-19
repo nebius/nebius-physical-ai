@@ -1,0 +1,706 @@
+{
+  "schema": "npa.wan-debian-literal-review.v1",
+  "review_date": "2026-10-16",
+  "image_manifest_digest": "sha256:1ddecf80a69d75b9b12bb37cfd7b20911453a8f46efd356d76748788da719b96",
+  "image_source_commit": "9c87d1dbebeea8e1c606c41b3b64261c6d0e192e",
+  "scope": "Only these exact path and SHA-256 pairs. Modified bytes, other paths, compressed parents, vulnerabilities, and independent complete-byte findings remain subject to their gates.",
+  "binary_artifacts": [
+    {
+      "package": "libavcodec61",
+      "version": "7:7.1.5-0+deb13u1",
+      "source": "ffmpeg",
+      "source_version": "7:7.1.5-0+deb13u1",
+      "artifact_sha256": "6c07da16b276827973463bdd22607721df1c2877641c753d2418cf6bf49a0f2e",
+      "url": "https://deb.debian.org/debian/pool/main/f/ffmpeg/libavcodec61_7.1.5-0+deb13u1_amd64.deb"
+    },
+    {
+      "package": "libavutil59",
+      "version": "7:7.1.5-0+deb13u1",
+      "source": "ffmpeg",
+      "source_version": "7:7.1.5-0+deb13u1",
+      "artifact_sha256": "bb5fe4ea1eef338c8346bf67cc728dac20b94451ad31db391d03d1f2b3fa37c1",
+      "url": "https://deb.debian.org/debian/pool/main/f/ffmpeg/libavutil59_7.1.5-0+deb13u1_amd64.deb"
+    },
+    {
+      "package": "libgnutls30t64",
+      "version": "3.8.9-3+deb13u4",
+      "source": "gnutls28",
+      "source_version": "3.8.9-3+deb13u4",
+      "artifact_sha256": "18a8bdfd91c7e3bcb01719d55a2b56849c7160b34f1f52b1c4fdfdd41bf1352b",
+      "url": "https://deb.debian.org/debian/pool/main/g/gnutls28/libgnutls30t64_3.8.9-3+deb13u4_amd64.deb"
+    },
+    {
+      "package": "libmbedcrypto16",
+      "version": "3.6.6-0.1~deb13u1",
+      "source": "mbedtls",
+      "source_version": "3.6.6-0.1~deb13u1",
+      "artifact_sha256": "b38baf2ecaca7b28b3005d34b8108ee9b17681426b20662813995e939aea6dfa",
+      "url": "https://deb.debian.org/debian/pool/main/m/mbedtls/libmbedcrypto16_3.6.6-0.1~deb13u1_amd64.deb"
+    },
+    {
+      "package": "libssh-4",
+      "version": "0.11.5-0+deb13u1",
+      "source": "libssh",
+      "source_version": "0.11.5-0+deb13u1",
+      "artifact_sha256": "bc8cbc13617d1b21fa6f686f9f269a4f849f00624d5bb179785a058981701233",
+      "url": "https://deb.debian.org/debian/pool/main/libs/libssh/libssh-4_0.11.5-0+deb13u1_amd64.deb"
+    },
+    {
+      "package": "libssh2-1t64",
+      "version": "1.11.1-1+deb13u2",
+      "source": "libssh2",
+      "source_version": "1.11.1-1+deb13u2",
+      "artifact_sha256": "dbb1024c192d4d292b7cfa902b96076cfe81b56a5eed4fb28da36e8bf543e49a",
+      "url": "https://deb.debian.org/debian/pool/main/libs/libssh2/libssh2-1t64_1.11.1-1+deb13u2_amd64.deb"
+    },
+    {
+      "package": "libunistring5",
+      "version": "1.3-2",
+      "source": "libunistring",
+      "source_version": "1.3-2",
+      "artifact_sha256": "6dd3490bef06ea1096f32d10766b7e016cf579bfae8451d1b7df15ce05b8aa46",
+      "url": "https://deb.debian.org/debian/pool/main/libu/libunistring/libunistring5_1.3-2_amd64.deb"
+    },
+    {
+      "package": "openssh-client",
+      "version": "1:10.0p1-7+deb13u4",
+      "source": "openssh",
+      "source_version": "1:10.0p1-7+deb13u4",
+      "artifact_sha256": "8fff343654f86c3b3266f94cd338c7b4da2e386da029327815118ea00bce03b9",
+      "url": "https://deb.debian.org/debian/pool/main/o/openssh/openssh-client_10.0p1-7+deb13u4_amd64.deb"
+    },
+    {
+      "package": "openssh-server",
+      "version": "1:10.0p1-7+deb13u4",
+      "source": "openssh",
+      "source_version": "1:10.0p1-7+deb13u4",
+      "artifact_sha256": "b4a02524fd2be375624d917ee8102a16567e9e8dd786b41c35e22360cdd37f9d",
+      "url": "https://deb.debian.org/debian/pool/main/o/openssh/openssh-server_10.0p1-7+deb13u4_amd64.deb"
+    }
+  ],
+  "source_artifacts": [
+    {
+      "source": "ffmpeg",
+      "version": "7:7.1.5-0+deb13u1",
+      "artifacts": [
+        {
+          "filename": "ffmpeg_7.1.5-0+deb13u1.dsc",
+          "sha256": "9ed2ed34cbe7f056eeebbe9045c5e2d15e41b5b053fe7c8ba6979a0b6fb081ce",
+          "bytes": 5950,
+          "url": "https://deb.debian.org/debian/pool/main/f/ffmpeg/ffmpeg_7.1.5-0+deb13u1.dsc"
+        },
+        {
+          "filename": "ffmpeg_7.1.5.orig.tar.xz",
+          "sha256": "de668509caf9e35e3cd162473441fdb29538c6d96ed080292b3cf9e6fc5d558f",
+          "bytes": 11050340,
+          "url": "https://deb.debian.org/debian/pool/main/f/ffmpeg/ffmpeg_7.1.5.orig.tar.xz"
+        },
+        {
+          "filename": "ffmpeg_7.1.5.orig.tar.xz.asc",
+          "sha256": "7ce4b9d56e3ef0cd4c3a9c0b2c8a034ac91e6c4c011c1f10b05a8aa7292fca35",
+          "bytes": 520,
+          "url": "https://deb.debian.org/debian/pool/main/f/ffmpeg/ffmpeg_7.1.5.orig.tar.xz.asc"
+        },
+        {
+          "filename": "ffmpeg_7.1.5-0+deb13u1.debian.tar.xz",
+          "sha256": "a1be51d8a10744952fe94fa318bf71bbc8074bed0951382c079ab7ef227f74ef",
+          "bytes": 54176,
+          "url": "https://deb.debian.org/debian/pool/main/f/ffmpeg/ffmpeg_7.1.5-0+deb13u1.debian.tar.xz"
+        }
+      ]
+    },
+    {
+      "source": "gnutls28",
+      "version": "3.8.9-3+deb13u4",
+      "artifacts": [
+        {
+          "filename": "gnutls28_3.8.9-3+deb13u4.dsc",
+          "sha256": "f1153e91212bdf60acf66cb62713ad4ed577f2e85f578a04df31a5619624c1e1",
+          "bytes": 3271,
+          "url": "https://deb.debian.org/debian/pool/main/g/gnutls28/gnutls28_3.8.9-3+deb13u4.dsc"
+        },
+        {
+          "filename": "gnutls28_3.8.9.orig.tar.xz",
+          "sha256": "69e113d802d1670c4d5ac1b99040b1f2d5c7c05daec5003813c049b5184820ed",
+          "bytes": 6847364,
+          "url": "https://deb.debian.org/debian/pool/main/g/gnutls28/gnutls28_3.8.9.orig.tar.xz"
+        },
+        {
+          "filename": "gnutls28_3.8.9.orig.tar.xz.asc",
+          "sha256": "7631d47762865d4ef494492cca794cf0fe6a8be892a4aa02f362ae29006d3054",
+          "bytes": 833,
+          "url": "https://deb.debian.org/debian/pool/main/g/gnutls28/gnutls28_3.8.9.orig.tar.xz.asc"
+        },
+        {
+          "filename": "gnutls28_3.8.9-3+deb13u4.debian.tar.xz",
+          "sha256": "f0b9c7d182072f0bbdb281304686aa6e2bfd343dadefa432ec4dab4893e9841f",
+          "bytes": 140880,
+          "url": "https://deb.debian.org/debian/pool/main/g/gnutls28/gnutls28_3.8.9-3+deb13u4.debian.tar.xz"
+        }
+      ]
+    },
+    {
+      "source": "libssh",
+      "version": "0.11.5-0+deb13u1",
+      "artifacts": [
+        {
+          "filename": "libssh_0.11.5-0+deb13u1.dsc",
+          "sha256": "8aeaec786998691f4a2a320ae66943d3fa324882465d2a91f62658a13cd7bcff",
+          "bytes": 2371,
+          "url": "https://deb.debian.org/debian/pool/main/libs/libssh/libssh_0.11.5-0+deb13u1.dsc"
+        },
+        {
+          "filename": "libssh_0.11.5.orig.tar.xz",
+          "sha256": "6898ba9dd836d618b71dc7a4bb786a502c173cef5cafbf20fe5e0567ba4ea30c",
+          "bytes": 629716,
+          "url": "https://deb.debian.org/debian/pool/main/libs/libssh/libssh_0.11.5.orig.tar.xz"
+        },
+        {
+          "filename": "libssh_0.11.5-0+deb13u1.debian.tar.xz",
+          "sha256": "00576a30d068e87813f96b1b8405d249d7fdaf75b9e61c5af775910dc15022fd",
+          "bytes": 31932,
+          "url": "https://deb.debian.org/debian/pool/main/libs/libssh/libssh_0.11.5-0+deb13u1.debian.tar.xz"
+        }
+      ]
+    },
+    {
+      "source": "libssh2",
+      "version": "1.11.1-1+deb13u2",
+      "artifacts": [
+        {
+          "filename": "libssh2_1.11.1-1+deb13u2.dsc",
+          "sha256": "f584c22bccd948a432cc56f64adb896af2cb26d9b38bcaac13cdc7907e766599",
+          "bytes": 2351,
+          "url": "https://deb.debian.org/debian/pool/main/libs/libssh2/libssh2_1.11.1-1+deb13u2.dsc"
+        },
+        {
+          "filename": "libssh2_1.11.1.orig.tar.gz",
+          "sha256": "d9ec76cbe34db98eec3539fe2c899d26b0c837cb3eb466a56b0f109cabf658f7",
+          "bytes": 1093012,
+          "url": "https://deb.debian.org/debian/pool/main/libs/libssh2/libssh2_1.11.1.orig.tar.gz"
+        },
+        {
+          "filename": "libssh2_1.11.1.orig.tar.gz.asc",
+          "sha256": "f5618c9356a1d5a8059d6cf64015d86547f06b2b8b1f542fbbaf381a736c8075",
+          "bytes": 488,
+          "url": "https://deb.debian.org/debian/pool/main/libs/libssh2/libssh2_1.11.1.orig.tar.gz.asc"
+        },
+        {
+          "filename": "libssh2_1.11.1-1+deb13u2.debian.tar.xz",
+          "sha256": "ee81e3ea0d65fdbc979c50f1433966d0139e33ac09242d7dc7c83567139126a7",
+          "bytes": 20956,
+          "url": "https://deb.debian.org/debian/pool/main/libs/libssh2/libssh2_1.11.1-1+deb13u2.debian.tar.xz"
+        }
+      ]
+    },
+    {
+      "source": "libunistring",
+      "version": "1.3-2",
+      "artifacts": [
+        {
+          "filename": "libunistring_1.3-2.dsc",
+          "sha256": "0c09938cace7fbbf36c73af8bc2243fd2f70d3fe336539e8d4c10d0e61742571",
+          "bytes": 2215,
+          "url": "https://deb.debian.org/debian/pool/main/libu/libunistring/libunistring_1.3-2.dsc"
+        },
+        {
+          "filename": "libunistring_1.3.orig.tar.xz",
+          "sha256": "f245786c831d25150f3dfb4317cda1acc5e3f79a5da4ad073ddca58886569527",
+          "bytes": 2753448,
+          "url": "https://deb.debian.org/debian/pool/main/libu/libunistring/libunistring_1.3.orig.tar.xz"
+        },
+        {
+          "filename": "libunistring_1.3.orig.tar.xz.asc",
+          "sha256": "62201b5b7ce9c0b033c50cefa5d7769dff4b7cee8205572e0cf917653cae9e33",
+          "bytes": 833,
+          "url": "https://deb.debian.org/debian/pool/main/libu/libunistring/libunistring_1.3.orig.tar.xz.asc"
+        },
+        {
+          "filename": "libunistring_1.3-2.debian.tar.xz",
+          "sha256": "feaf9761d365430178ea46feefeb602b435c21acf5924918e2257238e0378fc9",
+          "bytes": 28480,
+          "url": "https://deb.debian.org/debian/pool/main/libu/libunistring/libunistring_1.3-2.debian.tar.xz"
+        }
+      ]
+    },
+    {
+      "source": "mbedtls",
+      "version": "3.6.6-0.1~deb13u1",
+      "artifacts": [
+        {
+          "filename": "mbedtls_3.6.6-0.1~deb13u1.dsc",
+          "sha256": "eb9ed1adbbddcb0d00276fac6fcee0056c64ce01481c2522a16dca75792eb5eb",
+          "bytes": 2490,
+          "url": "https://deb.debian.org/debian/pool/main/m/mbedtls/mbedtls_3.6.6-0.1~deb13u1.dsc"
+        },
+        {
+          "filename": "mbedtls_3.6.6.orig.tar.bz2",
+          "sha256": "8fb65fae8dcae5840f793c0a334860a411f884cc537ea290ce1c52bb64ca007a",
+          "bytes": 5508045,
+          "url": "https://deb.debian.org/debian/pool/main/m/mbedtls/mbedtls_3.6.6.orig.tar.bz2"
+        },
+        {
+          "filename": "mbedtls_3.6.6-0.1~deb13u1.debian.tar.xz",
+          "sha256": "210466c522eeebc85cf2f76bd5aef935b4ebac465559cc0a84f9e73a8ed6601c",
+          "bytes": 19084,
+          "url": "https://deb.debian.org/debian/pool/main/m/mbedtls/mbedtls_3.6.6-0.1~deb13u1.debian.tar.xz"
+        }
+      ]
+    },
+    {
+      "source": "openssh",
+      "version": "1:10.0p1-7+deb13u4",
+      "artifacts": [
+        {
+          "filename": "openssh_10.0p1-7+deb13u4.dsc",
+          "sha256": "73fed3fd77d60925ed342bcb0afd3c037e4ea0d39333107bf617aa90f859910f",
+          "bytes": 3763,
+          "url": "https://deb.debian.org/debian/pool/main/o/openssh/openssh_10.0p1-7+deb13u4.dsc"
+        },
+        {
+          "filename": "openssh_10.0p1.orig.tar.gz",
+          "sha256": "021a2e709a0edf4250b1256bd5a9e500411a90dddabea830ed59cef90eb9d85c",
+          "bytes": 1972675,
+          "url": "https://deb.debian.org/debian/pool/main/o/openssh/openssh_10.0p1.orig.tar.gz"
+        },
+        {
+          "filename": "openssh_10.0p1.orig.tar.gz.asc",
+          "sha256": "f71cf3240516ce59c2240532143982fcd97e2e286e6eb1eb6c3080a1ec012a04",
+          "bytes": 833,
+          "url": "https://deb.debian.org/debian/pool/main/o/openssh/openssh_10.0p1.orig.tar.gz.asc"
+        },
+        {
+          "filename": "openssh_10.0p1-7+deb13u4.debian.tar.xz",
+          "sha256": "102e1065030c6002acabd7f896eeba1462bf54b4d7393bac34b0308312868ec6",
+          "bytes": 215600,
+          "url": "https://deb.debian.org/debian/pool/main/o/openssh/openssh_10.0p1-7+deb13u4.debian.tar.xz"
+        }
+      ]
+    }
+  ],
+  "source_file_identities": [
+    {
+      "archive": "openssh_10.0p1.orig.tar.gz",
+      "member": "openssh-10.0p1/sshkey.c",
+      "sha256": "9db1649392de6299721a1032cb3ec5a7b79ea5d417acbcb20923af59a2d09717",
+      "bytes": 95218
+    },
+    {
+      "archive": "mbedtls_3.6.6.orig.tar.bz2",
+      "member": "mbedtls-3.6.6/library/pk_internal.h",
+      "sha256": "53eb8041def4909442a539ffbf8e3464cd453df2dc0d4cb0d5b5d0367ac33f44",
+      "bytes": 9422
+    },
+    {
+      "archive": "mbedtls_3.6.6.orig.tar.bz2",
+      "member": "mbedtls-3.6.6/library/pkparse.c",
+      "sha256": "36c0590c516a1b4ad99bfefc213da1a19a2e27638ee3f267ea3365cc738ecf17",
+      "bytes": 43503
+    },
+    {
+      "archive": "mbedtls_3.6.6.orig.tar.bz2",
+      "member": "mbedtls-3.6.6/library/pkwrite.c",
+      "sha256": "a9befea5ab74e3d9d7448f9790d7640b95fedf3c8386545bd7837962d26167c7",
+      "bytes": 20734
+    },
+    {
+      "archive": "libunistring_1.3.orig.tar.xz",
+      "member": "libunistring-1.3/lib/uniname/uninames.h",
+      "sha256": "c8f20767f2c7cdc1882f7e420db077119b2925dd588a71934a563c054e6d325a",
+      "bytes": 3532641
+    },
+    {
+      "archive": "libunistring_1.3.orig.tar.xz",
+      "member": "libunistring-1.3/lib/uniname/uniname.c",
+      "sha256": "0828641bba7d301e23a7b9b89ebf3cf76130d81bbf0147c8b24c3d071409aa12",
+      "bytes": 22482
+    },
+    {
+      "archive": "gnutls28_3.8.9.orig.tar.xz",
+      "member": "gnutls-3.8.9/lib/crypto-selftests-pk.c",
+      "sha256": "fce9355507865b53ba0b5c5587932b9d8519be2cd195650b0d9ff69ac2c335c7",
+      "bytes": 39930
+    },
+    {
+      "archive": "libssh_0.11.5.orig.tar.xz",
+      "member": "libssh-0.11.5/include/libssh/pki_priv.h",
+      "sha256": "1499d34d4c64a2c3b9b0912148ac967492c1c4f5cc2030d43aa5a48348f4e591",
+      "bytes": 6837
+    },
+    {
+      "archive": "libssh_0.11.5.orig.tar.xz",
+      "member": "libssh-0.11.5/src/pki.c",
+      "sha256": "bc8fb30f437f402247608f04bb29f6ad10d6a1175d95c1397320f0a2ed6738ef",
+      "bytes": 83256
+    },
+    {
+      "archive": "libssh2_1.11.1.orig.tar.gz",
+      "member": "libssh2-1.11.1/src/pem.c",
+      "sha256": "eba1a89ba4beb0aa9aaf4e4da68be5f2f890e7367001e8bb705c697b9485d416",
+      "bytes": 29008
+    },
+    {
+      "archive": "ffmpeg_7.1.5.orig.tar.xz",
+      "member": "ffmpeg-7.1.5/libavutil/hwcontext_cuda.c",
+      "sha256": "6c6d87fcab0dfd44ddae61d67bc4617a7f81c66ea095d118d3010cafd0ea2489",
+      "bytes": 17945
+    },
+    {
+      "archive": "ffmpeg_7.1.5.orig.tar.xz",
+      "member": "ffmpeg-7.1.5/libavcodec/cuviddec.c",
+      "sha256": "ecce50e0fd204e5f4a47cdbd1650ee22ea8c663e27b6068cb352b7b3410674b5",
+      "bytes": 42457
+    },
+    {
+      "archive": "ffmpeg_7.1.5.orig.tar.xz",
+      "member": "ffmpeg-7.1.5/libavcodec/nvenc.c",
+      "sha256": "c819db2d689757d41e6285e18aa2c921603d797a292a554af87da559ca02d836",
+      "bytes": 102125
+    }
+  ],
+  "typed_constant_verification": {
+    "typed_unicode_pool_matches_compiled_bytes": true,
+    "unicode_pool_bytes": 159015,
+    "unicode_source_sha256": "c8f20767f2c7cdc1882f7e420db077119b2925dd588a71934a563c054e6d325a",
+    "unicode_consumer_sha256": "0828641bba7d301e23a7b9b89ebf3cf76130d81bbf0147c8b24c3d071409aa12",
+    "mbedtls_header_sha256": "53eb8041def4909442a539ffbf8e3464cd453df2dc0d4cb0d5b5d0367ac33f44",
+    "parser_delimiters_and_selftest_constants_verified": true,
+    "dt_needed_contains_no_forbidden_driver_libraries": true,
+    "accepts_operational_credentials": false
+  },
+  "files": [
+    {
+      "path": "usr/lib/x86_64-linux-gnu/libavcodec.so.61.19.101",
+      "sha256": "c01e80460c07b27883a61c53e549755b9ff052071a83f4912ff285168719219d",
+      "bytes": 16895056,
+      "matches_authenticated_artifact": true,
+      "package": "libavcodec61",
+      "package_version": "7:7.1.5-0+deb13u1",
+      "category": "Optional hardware loading in FFmpeg source",
+      "reason": "Exact Debian FFmpeg libraries contain dynamic driver-loading names; their DT_NEEDED entries contain no NVIDIA driver libraries. The reviewed source calls the optional CUDA/NVENC/CUVID loaders.",
+      "dt_needed": [
+        "libswresample.so.5",
+        "libavutil.so.59",
+        "libvpx.so.9",
+        "libm.so.6",
+        "libwebpmux.so.3",
+        "liblzma.so.5",
+        "libdav1d.so.7",
+        "librsvg-2.so.2",
+        "libgobject-2.0.so.0",
+        "libglib-2.0.so.0",
+        "libcairo.so.2",
+        "libzvbi.so.0",
+        "libz.so.1",
+        "libsnappy.so.1",
+        "libaom.so.3",
+        "libcodec2.so.1.2",
+        "libgsm.so.1",
+        "libjxl.so.0.11",
+        "libjxl_threads.so.0.11",
+        "libmp3lame.so.0",
+        "libopenjp2.so.7",
+        "libopus.so.0",
+        "librav1e.so.0.7",
+        "libshine.so.3",
+        "libspeex.so.1",
+        "libSvtAv1Enc.so.2",
+        "libtheoraenc.so.1",
+        "libtheoradec.so.1",
+        "libtwolame.so.0",
+        "libvorbis.so.0",
+        "libvorbisenc.so.2",
+        "libwebp.so.7",
+        "libx264.so.164",
+        "libx265.so.215",
+        "libxvidcore.so.4",
+        "libva.so.2",
+        "libvpl.so.2",
+        "libc.so.6"
+      ]
+    },
+    {
+      "path": "usr/lib/x86_64-linux-gnu/libavutil.so.59.39.100",
+      "sha256": "6c463f7e033438989533aea3c35e4c9a98fd6b0a637ddb8529733c0f3db1850a",
+      "bytes": 1148960,
+      "matches_authenticated_artifact": true,
+      "package": "libavutil59",
+      "package_version": "7:7.1.5-0+deb13u1",
+      "category": "Optional hardware loading in FFmpeg source",
+      "reason": "Exact Debian FFmpeg libraries contain dynamic driver-loading names; their DT_NEEDED entries contain no NVIDIA driver libraries. The reviewed source calls the optional CUDA/NVENC/CUVID loaders.",
+      "dt_needed": [
+        "libva-drm.so.2",
+        "libva.so.2",
+        "libva-x11.so.2",
+        "libvdpau.so.1",
+        "libX11.so.6",
+        "libm.so.6",
+        "libdrm.so.2",
+        "libvpl.so.2",
+        "libOpenCL.so.1",
+        "libc.so.6"
+      ]
+    },
+    {
+      "path": "usr/lib/x86_64-linux-gnu/libgnutls.so.30.40.3",
+      "sha256": "4b14edde42e7cbeefd8a6d88d035e096f2e6412a535388bb1d073a1c196e2822",
+      "bytes": 2246712,
+      "matches_authenticated_artifact": true,
+      "package": "libgnutls30t64",
+      "package_version": "3.8.9-3+deb13u4",
+      "category": "Cryptographic self-test constants",
+      "reason": "All six flagged private-key constants match the authenticated crypto-selftests-pk.c source. Known-answer tests import them into temporary key objects and deinitialize those objects.",
+      "dt_needed": [
+        "libp11-kit.so.0",
+        "libidn2.so.0",
+        "libunistring.so.5",
+        "libtasn1.so.6",
+        "libhogweed.so.6",
+        "libnettle.so.8",
+        "libgmp.so.10",
+        "libc.so.6",
+        "ld-linux-x86-64.so.2"
+      ]
+    },
+    {
+      "path": "usr/lib/x86_64-linux-gnu/libmbedcrypto.so.3.6.6",
+      "sha256": "d0fa156bfb6e7cd2d0ea0f8c164dfe50815b128fc4def6c44aa8a2f5d6ec85ef",
+      "bytes": 624880,
+      "matches_authenticated_artifact": true,
+      "package": "libmbedcrypto16",
+      "package_version": "3.6.6-0.1~deb13u1",
+      "category": "PEM parser and writer delimiters",
+      "reason": "All four flagged constants equal public PEM_BEGIN_PRIVATE_KEY macros, optionally followed by the writer newline; pkparse.c and pkwrite.c consume those delimiters.",
+      "dt_needed": [
+        "libc.so.6"
+      ]
+    },
+    {
+      "path": "usr/lib/x86_64-linux-gnu/libssh.so.4.10.5",
+      "sha256": "d24409d053e8331edb578558a1f4b7a0ff3b7d35de55e7dd87d6843f74c718ac",
+      "bytes": 531776,
+      "matches_authenticated_artifact": true,
+      "package": "libssh-4",
+      "package_version": "0.11.5-0+deb13u1",
+      "category": "Private-key format delimiters",
+      "reason": "Flagged strings are format boundaries used by the OpenSSH or libssh/libssh2 key parser and serializer. They contain no encoded key body.",
+      "dt_needed": [
+        "libcrypto.so.3",
+        "libz.so.1",
+        "libgssapi_krb5.so.2",
+        "libc.so.6",
+        "ld-linux-x86-64.so.2"
+      ]
+    },
+    {
+      "path": "usr/lib/x86_64-linux-gnu/libssh2.so.1.0.1",
+      "sha256": "bea384b0ed8797abdba6cb31b2de38ae2a6ad38d5a1cc13fb3704863bcbb15ca",
+      "bytes": 297472,
+      "matches_authenticated_artifact": true,
+      "package": "libssh2-1t64",
+      "package_version": "1.11.1-1+deb13u2",
+      "category": "Private-key format delimiters",
+      "reason": "Flagged strings are format boundaries used by the OpenSSH or libssh/libssh2 key parser and serializer. They contain no encoded key body.",
+      "dt_needed": [
+        "libcrypto.so.3",
+        "libz.so.1",
+        "libc.so.6"
+      ]
+    },
+    {
+      "path": "usr/lib/x86_64-linux-gnu/libunistring.so.5.2.0",
+      "sha256": "9c200ec975ff24c0a259d4f6cf0d0fc1736d0c86da30fff3d499ad3d9a368b65",
+      "bytes": 1996840,
+      "matches_authenticated_artifact": true,
+      "package": "libunistring5",
+      "package_version": "1.3-2",
+      "category": "Unicode names in a static lookup table",
+      "reason": "The AWS-shaped span crosses Unicode-name words ISAKIA and ISLAND. Reconstruction of unicode_name_words from its typed C initializer matches the entire 159015-byte compiled table; unicode_character_name consumes that table.",
+      "dt_needed": [
+        "libc.so.6"
+      ]
+    },
+    {
+      "path": "usr/bin/ssh",
+      "sha256": "af3b04ec5653755032fc18ad02445e4e51170e75d8bac4265647d423caa9a83e",
+      "bytes": 1047584,
+      "matches_authenticated_artifact": true,
+      "package": "openssh-client",
+      "package_version": "1:10.0p1-7+deb13u4",
+      "category": "Private-key format delimiters",
+      "reason": "Flagged strings are format boundaries used by the OpenSSH or libssh/libssh2 key parser and serializer. They contain no encoded key body.",
+      "dt_needed": [
+        "libselinux.so.1",
+        "libgssapi_krb5.so.2",
+        "libcrypto.so.3",
+        "libz.so.1",
+        "libc.so.6"
+      ]
+    },
+    {
+      "path": "usr/bin/ssh-add",
+      "sha256": "64ae57eb0787b1c39af387edefb42456a8261830f1612fe77549a679067edfa0",
+      "bytes": 444864,
+      "matches_authenticated_artifact": true,
+      "package": "openssh-client",
+      "package_version": "1:10.0p1-7+deb13u4",
+      "category": "Private-key format delimiters",
+      "reason": "Flagged strings are format boundaries used by the OpenSSH or libssh/libssh2 key parser and serializer. They contain no encoded key body.",
+      "dt_needed": [
+        "libselinux.so.1",
+        "libcrypto.so.3",
+        "libc.so.6"
+      ]
+    },
+    {
+      "path": "usr/bin/ssh-agent",
+      "sha256": "2e5cdfc7a49f257608fcca315671f419878e26f719c88b7305710f314bfc8937",
+      "bytes": 420224,
+      "matches_authenticated_artifact": true,
+      "package": "openssh-client",
+      "package_version": "1:10.0p1-7+deb13u4",
+      "category": "Private-key format delimiters",
+      "reason": "Flagged strings are format boundaries used by the OpenSSH or libssh/libssh2 key parser and serializer. They contain no encoded key body.",
+      "dt_needed": [
+        "libcrypto.so.3",
+        "libc.so.6"
+      ]
+    },
+    {
+      "path": "usr/bin/ssh-keygen",
+      "sha256": "4a16f170f7c80d6643d3ffada36d396c9d7b1d63238a218628e37af38d6107c0",
+      "bytes": 567744,
+      "matches_authenticated_artifact": true,
+      "package": "openssh-client",
+      "package_version": "1:10.0p1-7+deb13u4",
+      "category": "Private-key format delimiters",
+      "reason": "Flagged strings are format boundaries used by the OpenSSH or libssh/libssh2 key parser and serializer. They contain no encoded key body.",
+      "dt_needed": [
+        "libselinux.so.1",
+        "libcrypto.so.3",
+        "libc.so.6"
+      ]
+    },
+    {
+      "path": "usr/bin/ssh-keyscan",
+      "sha256": "0a17e9f79c816a13c174747c8a7a89bf0f0c04ca9977181be59932762db596dc",
+      "bytes": 588256,
+      "matches_authenticated_artifact": true,
+      "package": "openssh-client",
+      "package_version": "1:10.0p1-7+deb13u4",
+      "category": "Private-key format delimiters",
+      "reason": "Flagged strings are format boundaries used by the OpenSSH or libssh/libssh2 key parser and serializer. They contain no encoded key body.",
+      "dt_needed": [
+        "libselinux.so.1",
+        "libcrypto.so.3",
+        "libz.so.1",
+        "libc.so.6"
+      ]
+    },
+    {
+      "path": "usr/lib/openssh/ssh-keysign",
+      "sha256": "2e17227e65689a3bfade7c7d7e5b80905130815c44b6134eba49bb51b4573186",
+      "bytes": 498240,
+      "matches_authenticated_artifact": true,
+      "package": "openssh-client",
+      "package_version": "1:10.0p1-7+deb13u4",
+      "category": "Private-key format delimiters",
+      "reason": "Flagged strings are format boundaries used by the OpenSSH or libssh/libssh2 key parser and serializer. They contain no encoded key body.",
+      "dt_needed": [
+        "libcrypto.so.3",
+        "libc.so.6"
+      ]
+    },
+    {
+      "path": "usr/lib/openssh/ssh-pkcs11-helper",
+      "sha256": "a055fb7b3188a14e7bd585ed0a97e74d128a0c9d362bfbbcb0c016292f814c8a",
+      "bytes": 395632,
+      "matches_authenticated_artifact": true,
+      "package": "openssh-client",
+      "package_version": "1:10.0p1-7+deb13u4",
+      "category": "Private-key format delimiters",
+      "reason": "Flagged strings are format boundaries used by the OpenSSH or libssh/libssh2 key parser and serializer. They contain no encoded key body.",
+      "dt_needed": [
+        "libcrypto.so.3",
+        "libc.so.6"
+      ]
+    },
+    {
+      "path": "usr/lib/openssh/ssh-sk-helper",
+      "sha256": "9655fac146313b8352bf125057085120dd5f9f3e5726381d89e3a19e712ffd67",
+      "bytes": 387440,
+      "matches_authenticated_artifact": true,
+      "package": "openssh-client",
+      "package_version": "1:10.0p1-7+deb13u4",
+      "category": "Private-key format delimiters",
+      "reason": "Flagged strings are format boundaries used by the OpenSSH or libssh/libssh2 key parser and serializer. They contain no encoded key body.",
+      "dt_needed": [
+        "libfido2.so.1",
+        "libcrypto.so.3",
+        "libc.so.6"
+      ]
+    },
+    {
+      "path": "usr/lib/openssh/sshd-auth",
+      "sha256": "2b1ca22b077b106a6fb02ed229c13b9311f392267bea2e4d42933934e3c06afa",
+      "bytes": 1076640,
+      "matches_authenticated_artifact": true,
+      "package": "openssh-server",
+      "package_version": "1:10.0p1-7+deb13u4",
+      "category": "Private-key format delimiters",
+      "reason": "Flagged strings are format boundaries used by the OpenSSH or libssh/libssh2 key parser and serializer. They contain no encoded key body.",
+      "dt_needed": [
+        "libcrypt.so.1",
+        "libaudit.so.1",
+        "libpam.so.0",
+        "libselinux.so.1",
+        "libgssapi_krb5.so.2",
+        "libkrb5.so.3",
+        "libcom_err.so.2",
+        "libcrypto.so.3",
+        "libz.so.1",
+        "libwtmpdb.so.0",
+        "libc.so.6"
+      ]
+    },
+    {
+      "path": "usr/lib/openssh/sshd-session",
+      "sha256": "22644ab3c1a193b15061851eef5475d02d5ccd492351599bccbf526a55e16a9a",
+      "bytes": 1122368,
+      "matches_authenticated_artifact": true,
+      "package": "openssh-server",
+      "package_version": "1:10.0p1-7+deb13u4",
+      "category": "Private-key format delimiters",
+      "reason": "Flagged strings are format boundaries used by the OpenSSH or libssh/libssh2 key parser and serializer. They contain no encoded key body.",
+      "dt_needed": [
+        "libcrypt.so.1",
+        "libwrap.so.0",
+        "libaudit.so.1",
+        "libpam.so.0",
+        "libselinux.so.1",
+        "libgssapi_krb5.so.2",
+        "libkrb5.so.3",
+        "libcom_err.so.2",
+        "libcrypto.so.3",
+        "libz.so.1",
+        "libwtmpdb.so.0",
+        "libc.so.6"
+      ]
+    },
+    {
+      "path": "usr/sbin/sshd",
+      "sha256": "379c5c895b2728e249acd62417cc1388245af3da2ed1cba2e407deae40c32f9d",
+      "bytes": 568224,
+      "matches_authenticated_artifact": true,
+      "package": "openssh-server",
+      "package_version": "1:10.0p1-7+deb13u4",
+      "category": "Private-key format delimiters",
+      "reason": "Flagged strings are format boundaries used by the OpenSSH or libssh/libssh2 key parser and serializer. They contain no encoded key body.",
+      "dt_needed": [
+        "libselinux.so.1",
+        "libcrypto.so.3",
+        "libc.so.6"
+      ]
+    }
+  ]
+}

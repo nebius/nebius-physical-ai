@@ -807,6 +807,15 @@ def test_isaac3_image_pins_runtime_source_and_python_contract() -> None:
     assert "read_pin isaac-lab" not in build_script
 
 
+def test_isaac3_dependency_lock_excludes_vulnerable_pyjwt() -> None:
+    """Keep the signature-confusion fix in the immutable Isaac OSS closure."""
+
+    dependencies = ISAAC3_OSS_DEPS.read_text(encoding="utf-8").splitlines()
+    assert "pyjwt==2.15.0" in dependencies
+    assert "pyjwt==2.14.0" not in dependencies
+    assert "pyjwt==2.13.0" not in dependencies
+
+
 def test_base_installer_uses_the_selected_isaac_dependency_lock() -> None:
     """Isaac 3 must not silently install the legacy Isaac dependency closure."""
 
@@ -1094,7 +1103,7 @@ def test_base_installer_uses_immutable_system_and_bootstrap_inputs() -> None:
     assert "https://snapshot.ubuntu.com/ubuntu/${UBUNTU_SNAPSHOT}/" in text
     assert "add-apt-repository" not in text
     assert "sha256sum --check --strict" in text
-    assert text.count("3.11.15-1+jammy1") >= 9
+    assert text.count("3.11.17-1+jammy1") >= 9
     for requirement in (
         "pip==26.2.1",
         "setuptools==84.0.0",

@@ -272,9 +272,9 @@ visibly rendered the 3,045,269-byte single-GPU RRD
 
 ## Licensing and publication
 
-The pinned source, model, and tokenizer declare Apache-2.0. The shipped runtime
-contains only the digest-pinned official Python/Debian base and audited OSS
-dependencies; Debian copyright records and wheel metadata carry
+The pinned source, model, and tokenizer declare Apache-2.0. The accepted runtime
+contains the digest-pinned official Python/Debian base and audited OSS
+dependencies; distribution copyright records and wheel metadata carry
 their GPL/LGPL/BSD/MIT/Apache notices. CUDA Python distributions, model/tokenizer,
 credentials, data, and caches are runtime-only. Public eligibility requires four
 separate checks: scan the pushed digest and every individual layer/history entry
@@ -295,6 +295,20 @@ repository's `ignore-unfixed` policy; any CRITICAL finding with an available fix
 still fails publication. Passing these gates remains an engineering
 classification and still requires the organization's human publication/legal
 approval.
+
+The source security candidate uses an upgraded, digest-pinned Ubuntu 26.04
+runtime with Python 3.10.22 copied from a disposable official Python stage.
+Its global and bundled installers are repaired before copying, so the final
+artifact does not inherit the donor's Debian layers or its original installer
+wheels. The final filesystem copy excludes the unused base Pebble service
+manager and superseded package bytes; Wan's entrypoint and explicit SSH
+bootstrap remain. A composed runtime passed shared-library resolution, verified TLS with
+wrong-host rejection, full 24-frame H.264 encoding/decoding, offline source-wheel
+building, fresh-venv installation and both repaired Accelerate checkpoint APIs
+on Torch 2.13 CPU. This proof does not qualify a rebuilt image or GPU runtime.
+The unfiltered Ubuntu OS-only probe retained medium/low findings; there is no
+zero-vulnerability claim. Exact built-image scans and live GPU acceptance remain
+required before replacing the accepted digest.
 
 ## Validation
 

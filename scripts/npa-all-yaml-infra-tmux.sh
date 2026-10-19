@@ -14,6 +14,22 @@ NPA="${REPO}/npa/.venv/bin/npa"
 export NPA_INTEGRATION_E2E=1
 
 NPA_SPECS="${REPO}/workflows"
+WORKFLOW_SMOKE_DIGEST="$(printf '0%.0s' {1..64})"
+
+workflow_image_fixture_keys() {
+  "${PY}" - "$1" <<'PY'
+from pathlib import Path
+import sys
+
+import yaml
+
+payload = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+keys = payload.get("config", {}).get("required_immutable_images", [])
+if not isinstance(keys, list) or not all(isinstance(key, str) and key for key in keys):
+    raise SystemExit("required_immutable_images must be a list of non-empty strings")
+print("\n".join(keys))
+PY
+}
 
 LOG="/tmp/npa-all-yaml-infra-$(date -u +%Y%m%dT%H%M%SZ).log"
 exec > >(tee -a "$LOG") 2>&1
@@ -106,7 +122,7 @@ YAML
   fi
 
   echo "--- [1/7] npa.workflow validate (all golden specs) ---"
-  for spec in "${NPA_SPECS}/main"/*.yaml "${NPA_SPECS}/testing"/*.yaml "${NPA_SPECS}/partners"/*/*.yaml; do
+  for spec in "${NPA_SPECS}/main"/*.yaml "${NPA_SPECS}/testing"/*.yaml "${NPA_SPECS}/cosmos-data-factory"/*.yaml "${NPA_SPECS}/partners"/*/*.yaml; do
     [[ -f "$spec" ]] || continue
     base=$(basename "$spec")
     echo "validate: ${base}"
@@ -117,7 +133,7 @@ YAML
 
   echo "--- [2/7] npa.workflow plan + scheduler (all golden specs) ---"
   RUN_ID="tmux-all-r${round}-$(date -u +%H%M%S)"
-  for spec in "${NPA_SPECS}/main"/*.yaml "${NPA_SPECS}/testing"/*.yaml "${NPA_SPECS}/partners"/*/*.yaml; do
+  for spec in "${NPA_SPECS}/main"/*.yaml "${NPA_SPECS}/testing"/*.yaml "${NPA_SPECS}/cosmos-data-factory"/*.yaml "${NPA_SPECS}/partners"/*/*.yaml; do
     [[ -f "$spec" ]] || continue
     base=$(basename "$spec")
     echo "plan: ${base}"
@@ -125,7 +141,16 @@ YAML
     if [[ "${base}" == "sim2real.yaml" || "${base}" == "tokenfactory-cosmos-gate.yaml" ]]; then
       extra=(--assume-decision loop_back)
     fi
-    if ! "${NPA}" workbench workflow plan-spec "${spec}" --run-id "${RUN_ID}" "${extra[@]}"; then
+    if ! fixture_keys="$(workflow_image_fixture_keys "${spec}")"; then
+      FAILED=1
+      continue
+    fi
+    image_args=()
+    while IFS= read -r key; do
+      [[ -n "${key}" ]] || continue
+      image_args+=(--var "${key}=registry.example.invalid/workflow-smoke@sha256:${WORKFLOW_SMOKE_DIGEST}")
+    done <<< "${fixture_keys}"
+    if ! "${NPA}" workbench workflow plan-spec "${spec}" --run-id "${RUN_ID}" "${extra[@]}" "${image_args[@]}"; then
       FAILED=1
       continue
     fi
@@ -134,6 +159,7 @@ YAML
       --plan-only \
       --scheduler-plan \
       "${extra[@]}" \
+      "${image_args[@]}" \
       --json | "${PY}" -c "import json,sys; r=json.load(sys.stdin); assert r.get('scheduler',{}).get('tasks'), r"; then
       FAILED=1
     fi
