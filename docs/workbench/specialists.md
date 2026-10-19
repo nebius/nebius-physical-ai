@@ -1,5 +1,9 @@
 # Self-hosted Workbench specialists
 
+For opt-in history-aware model, reasoning and context selection, see
+[configuration routing](configuration-routing.md). The existing explicit and
+model-only routing paths remain the defaults.
+
 The [matched repair benchmark](../../npa/examples/specialists/repair_benchmark/README.md)
 compares Astra alone with Astra coordinating routed Token Factory specialists
 on the same three code repairs and native Workbench workflow. It retains all
@@ -154,6 +158,17 @@ success. These gates use checkpointed tool results, including journal receipts
 recovered after a restart. They certify the configured commands' exit status;
 use commands that inspect actual remote status/artifacts when workload completion
 is required. A submission receipt alone cannot establish that a GPU job finished.
+
+For a bounded task whose declared commands fully define acceptance, opt into
+`finish_on_verified_operations: true`. The runtime then finishes immediately
+after all required operations pass against the latest recorded edits, with no
+queued tools, failed-operation handoff, unresolved effects or policy mismatch.
+This avoids asking a model to rediscover that verification already succeeded.
+The option defaults to `false` and requires nonempty `required_operations`.
+Choose verifiers that establish the whole task's result, including remote
+completion and artifacts when relevant. The report identifies this outcome as
+`completion_kind: runtime_verified`; `model_completed` remains `false`.
+Ordinary model final answers report `completion_kind: model`.
 
 ## Tools and authorization
 

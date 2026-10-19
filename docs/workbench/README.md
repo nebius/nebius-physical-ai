@@ -114,6 +114,7 @@ existing tagged local SeedVR image ID for the [nonroot packaging check](seedvr2.
 | Autonomous-driving inference | [Alpamayo 2 Super](alpamayo2-super.md) |
 | Native Ray jobs, training, and serving | [Ray](ray.md) |
 | Independent GLM/DeepSeek agents with durable tasks | [Self-hosted specialists](specialists.md) |
+| Context-aware model and agent configuration selection | [Configuration routing](configuration-routing.md) |
 
 ## Access, images, and operations
 

@@ -2,6 +2,8 @@
 
 import copy
 import json
+
+import pytest
 from types import SimpleNamespace
 
 from npa.agent_backend.specialists.context import model_messages
@@ -38,13 +40,14 @@ def _read(messages, text, digest="old", start=1, end=20):
     )
 
 
-def test_edit_invalidates_old_source_without_mutating_durable_history():
+@pytest.mark.parametrize("tool", ["edit_file", "replace_json"])
+def test_edit_invalidates_old_source_without_mutating_durable_history(tool):
     messages = [
         {"role": "system", "content": "Policy"},
         {"role": "user", "content": "Goal"},
     ]
     _read(messages, "old source " * 1000)
-    _observation(messages, "edit_file", path="source.py", sha256="new")
+    _observation(messages, tool, path="source.py", sha256="new")
     _read(messages, "current source", digest="new")
     original = copy.deepcopy(messages)
     result = model_messages(messages)

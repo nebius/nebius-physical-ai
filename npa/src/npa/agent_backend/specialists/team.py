@@ -279,10 +279,23 @@ class SpecialistTeam:
         self.store._event(task_id, event)
 
     def _complete(self, task_id, values):
+        if values.get("verified_completion"):
+            task = self.store._get(task_id)
+            if (
+                task["status"] == "cancelled"
+                or task["paused"]
+                or task["profile"] in self.store._paused_profiles()
+            ):
+                return task
+            if not self.task_report(task_id)["required_operations_passed"]:
+                raise ValueError("Verified completion evidence is no longer current")
         if self.store._originals(task_id):
             profile = self.config.profile(self.store._get(task_id)["profile"])
             WorkbenchTools(profile, self.store, task_id)._save_patch()
-        self.store._update(task_id, "completed", result=values.get("answer", ""))
+        self.store._update(
+            task_id, "completed", result=values.get("answer", ""),
+            only_active=bool(values.get("verified_completion")),
+        )
         return self.store._get(task_id)
 
     @contextmanager

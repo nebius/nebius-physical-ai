@@ -11,6 +11,7 @@ from npa.clients.token_factory import (
     TokenFactoryError,
     split_reasoning,
 )
+from .accounting import _normalized_usage
 
 _REVISION = "npa.specialist.model-router.v1"
 
@@ -51,22 +52,7 @@ def _messages(goal, candidates):
 
 
 def _usage(response):
-    raw = response.get("usage")
-    if not isinstance(raw, dict):
-        return {}
-    usage = {}
-    for source, target in (
-        ("prompt_tokens", "input_tokens"),
-        ("completion_tokens", "output_tokens"),
-    ):
-        value = raw.get(source)
-        if type(value) is int and value >= 0:
-            usage[target] = value
-    details = raw.get("prompt_tokens_details")
-    cached = details.get("cached_tokens") if isinstance(details, dict) else None
-    if type(cached) is int and 0 <= cached <= usage.get("input_tokens", -1):
-        usage["cached_input_tokens"] = cached
-    return usage
+    return _normalized_usage(response.get("usage"))
 
 
 def _selection(response, model, candidates):

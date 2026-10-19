@@ -176,10 +176,11 @@ class TaskStore:
             rows = connection.execute("SELECT * FROM workers").fetchall()
         return {row["name"]: dict(row) for row in rows}
 
-    def _update(self, task_id, status, *, result="", error=""):
+    def _update(self, task_id, status, *, result="", error="", only_active=False):
+        condition = " AND status='running' AND paused=0 AND NOT EXISTS (SELECT 1 FROM profiles WHERE name=tasks.profile AND paused<>0)" if only_active else ""
         with self._connection() as connection:
             connection.execute(
-                "UPDATE tasks SET status=?,result=?,error=? WHERE id=? AND status<>'cancelled'",
+                "UPDATE tasks SET status=?,result=?,error=? WHERE id=? AND status<>'cancelled'" + condition,
                 (status, result, error, task_id),
             )
 

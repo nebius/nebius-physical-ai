@@ -58,6 +58,7 @@ class Operation(BaseModel):
         observation_only: Operator attestation that execution only observes existing state.
         wait_for: Optional JSON state policy that suppresses routine model polling.
         handoff_on_failure: Opt into a configured backup after a recorded terminal failure.
+        deterministic_inputs: Complete scoped file dependencies for a deterministic verifier.
     Returns:
         Validated command policy.
     Raises:
@@ -71,11 +72,25 @@ class Operation(BaseModel):
     observation_only: StrictBool = False
     wait_for: ObservationWait | None = None
     handoff_on_failure: StrictBool = False
+    deterministic_inputs: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _wait_policy(self):
         if self.wait_for is not None and not self.observation_only:
             raise ValueError("wait_for requires observation_only=true")
+        if self.wait_for is not None and self.deterministic_inputs:
+            raise ValueError(
+                "deterministic verification inputs cannot describe remote observation waits"
+            )
+        for name in self.deterministic_inputs:
+            path = PurePosixPath(name)
+            if (
+                not name
+                or path.is_absolute()
+                or ".." in path.parts
+                or ".git" in path.parts
+            ):
+                raise ValueError("deterministic_inputs must name relative source files")
         return self
 
     @field_validator("argv")
@@ -160,6 +175,70 @@ class ModelEndpoint(BaseModel):
         return value
 
 
+class ContextEndpoint(ModelEndpoint):
+    """Require declared context capacity and an explicit output reservation.
+
+    Args: context_window: Total served token capacity. framing_tokens: Admission margin.
+        model_options: Must contain a positive integer max_tokens below context_window.
+    Returns: An endpoint with a checkable request capacity contract.
+    Raises: ValueError: Capacity or output reservation is invalid.
+    """
+
+    context_window: int = Field(gt=0, strict=True)
+    framing_tokens: int = Field(default=4096, ge=0, strict=True)
+
+    @model_validator(mode="after")
+    def _capacity(self):
+        output = self.model_options.get("max_tokens")
+        if type(output) is not int or not 0 < output < self.context_window:
+            raise ValueError(
+                "context routing requires explicit max_tokens below context_window"
+            )
+        if output + self.framing_tokens >= self.context_window:
+            raise ValueError("output and framing reservations exhaust context_window")
+        return self
+
+
+class AgentConfiguration(ContextEndpoint):
+    """Bind a model, reasoning options and observation policy into one route.
+
+    Args: name: Stable route ID. description: Operator routing criteria.
+        compact_context: Use the existing superseded-observation request view.
+        tools_verified: Operator attestation of the endpoint's native-tool contract.
+        input_price_per_million, output_price_per_million: Declared USD token prices.
+    Returns: A configuration that carries no workspace or execution grants.
+    Raises: ValueError: Identity, endpoint or capacity is invalid.
+    """
+
+    name: str = Field(pattern=r"^[a-z][a-z0-9_-]*$")
+    description: str = Field(min_length=1)
+    compact_context: StrictBool = False
+    tools_verified: StrictBool = False
+    input_price_per_million: float = Field(ge=0, allow_inf_nan=False)
+    output_price_per_million: float = Field(ge=0, allow_inf_nan=False)
+
+
+class ConfigurationRouting(BaseModel):
+    """Configure fail-closed, history-aware selection among explicit agent configurations.
+
+    Args: classifier: Hosted classifier with its own capacity contract.
+        candidates: Authorized inference and context configurations.
+    Returns: A validated opt-in routing policy.
+    Raises: ValueError: Candidate IDs are ambiguous or reserved.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    classifier: ContextEndpoint
+    candidates: list[AgentConfiguration] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _identities(self):
+        names = [item.name for item in self.candidates]
+        if len(names) != len(set(names)) or "none" in names:
+            raise ValueError("configuration route IDs must be unique and not none")
+        return self
+
+
 class Profile(ModelEndpoint):
     """Bind explicit inference choices to one workspace and tool policy.
 
@@ -171,6 +250,9 @@ class Profile(ModelEndpoint):
         routing_model: Explicit classifier endpoint for token_factory routing.
         require_model_route: Require an accepted routing decision before generation.
         compact_context: Omit superseded source content from model requests only.
+        configuration_routing: Optional capacity-checked model/context routing policy.
+        finish_on_verified_operations: Let declared successful checks finish the task.
+        verify_on_completion: Run deterministic required checks when the model stops.
         required_operations: Commands that must succeed after the latest edit.
         workspace, read_paths, write_paths, operations: Operator-owned grants.
     Returns:
@@ -188,6 +270,9 @@ class Profile(ModelEndpoint):
     require_model_route: StrictBool = False
     model_criteria: dict[str, str] = Field(default_factory=dict)
     compact_context: StrictBool = False
+    configuration_routing: ConfigurationRouting | None = None
+    finish_on_verified_operations: StrictBool = False
+    verify_on_completion: StrictBool = False
     required_operations: list[str] = Field(default_factory=list)
     workspace: Path
     read_paths: list[str] = Field(default_factory=list)
@@ -214,6 +299,45 @@ class Profile(ModelEndpoint):
 
     @model_validator(mode="after")
     def _completion_policy(self):
+        for operation in self.operations.values():
+            if any(
+                not any(
+                    PurePosixPath(name) == PurePosixPath(scope)
+                    or PurePosixPath(scope) in PurePosixPath(name).parents
+                    for scope in [*self.read_paths, *self.write_paths]
+                )
+                for name in operation.deterministic_inputs
+            ):
+                raise ValueError("deterministic_inputs must be granted readable files")
+        if self.verify_on_completion and not (
+            self.configuration_routing
+            and self.finish_on_verified_operations
+            and self.required_operations
+            and all(
+                self.operations.get(name) and self.operations[name].deterministic_inputs
+                for name in self.required_operations
+            )
+        ):
+            raise ValueError(
+                "verify_on_completion requires configuration routing, host completion and deterministic required checks"
+            )
+        if self.configuration_routing is not None:
+            if (
+                self.model_router != "explicit"
+                or self.fallback_models
+                or self.compact_context
+            ):
+                raise ValueError(
+                    "configuration_routing replaces legacy model routing, fallback and compact_context"
+                )
+            if self.model not in {
+                item.model for item in self.configuration_routing.candidates
+            }:
+                raise ValueError("profile model must be a configuration candidate")
+        if self.finish_on_verified_operations and not self.required_operations:
+            raise ValueError(
+                "finish_on_verified_operations requires required_operations"
+            )
         if self.require_model_route and self.model_router == "explicit":
             raise ValueError(
                 "require_model_route requires model_router=jev or token_factory"
@@ -318,6 +442,12 @@ def fingerprint(profile: Profile) -> str:
     Raises: None.
     """
     policy = profile.model_dump(mode="json")
+    if not profile.finish_on_verified_operations:
+        policy.pop("finish_on_verified_operations")
+    if not profile.verify_on_completion:
+        policy.pop("verify_on_completion")
+    if policy["configuration_routing"] is None:
+        del policy["configuration_routing"]
     for name in ("fallback_models", "required_operations"):
         if not policy[name]:
             del policy[name]
@@ -332,6 +462,8 @@ def fingerprint(profile: Profile) -> str:
     if policy["routing_model"] is None:
         del policy["routing_model"]
     for operation in policy["operations"].values():
+        if not operation["deterministic_inputs"]:
+            del operation["deterministic_inputs"]
         if not operation["handoff_on_failure"]:
             del operation["handoff_on_failure"]
         if not operation["observation_only"]:

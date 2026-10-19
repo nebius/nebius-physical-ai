@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 
+from .json_edit import _SOURCE_EDIT_TOOLS
+
 
 def _calls(messages):
     return {
@@ -58,7 +60,7 @@ def _read(result, files):
 
 
 def _observation(name, result, files, operations, observation_operations):
-    if name == "edit_file" and isinstance(result.get("path"), str):
+    if name in _SOURCE_EDIT_TOOLS and isinstance(result.get("path"), str):
         known = files.setdefault(
             result["path"], {"sha256": result.get("sha256"), "ranges": []}
         )

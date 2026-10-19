@@ -9,6 +9,7 @@ from pathlib import Path, PurePosixPath
 import subprocess
 import sys
 import tempfile
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -36,22 +37,32 @@ class _Edit(_Arguments):
     expected_sha256: str
     old: str
     new: str
+    json_pointer: str | None = None
 
 
 class _Operation(_Arguments):
     name: str
 
 
+class _ReplaceJson(_Arguments):
+    path: str
+    expected_sha256: str
+    json_pointer: str
+    value: Any
+
+
 _ARGUMENTS = {
     "list_files": _Read,
     "read_file": _ReadFile,
     "edit_file": _Edit,
+    "replace_json": _ReplaceJson,
     "run_operation": _Operation,
 }
 _DESCRIPTIONS = {
     "list_files": "List only readable scoped files below a workspace-relative directory. Use '.' or an ancestor of an authorized file to discover granted paths.",
     "read_file": "Read an authorized source file or inclusive 1-based line range, with the full-file SHA-256 for editing. Paths are workspace-relative.",
-    "edit_file": "Replace exactly one occurrence after verifying SHA-256. For a new file use empty old and the SHA-256 of empty bytes.",
+    "edit_file": "Replace exactly one occurrence after verifying SHA-256. Optional json_pointer (RFC6901) restricts old/new string replacement to one JSON string value; use this to change a known path suffix while preserving hidden URI text. Never copy redaction placeholders into source. For a new file use empty old and the SHA-256 of empty bytes.",
+    "replace_json": "Set one existing JSON value using an RFC6901 json_pointer and the full-file expected_sha256. value is native JSON, including arrays, objects, numbers or strings. An empty pointer replaces the document. No old-text match is required; use this for arrays or a known complete value hidden by redaction. Preserve all unrelated data.",
     "run_operation": "Execute one named operator-defined test, workflow or status command. Never supply shell commands or arguments.",
 }
 
@@ -77,7 +88,7 @@ class WorkbenchTools:
         """
         names = ["list_files", "read_file"]
         if self.profile.write_paths:
-            names.append("edit_file")
+            names.extend(["edit_file", "replace_json"])
         if self.profile.operations:
             names.append("run_operation")
         return [
@@ -208,6 +219,15 @@ class WorkbenchTools:
         current = original or ""
         if _digest(current) != arguments.expected_sha256:
             raise ValueError("file changed; read it again before editing")
+        if arguments.json_pointer is not None:
+            from .json_edit import _replace_json_text
+
+            if original is None:
+                raise ValueError("JSON pointer editing requires an existing file")
+            updated = _replace_json_text(
+                current, arguments.json_pointer, arguments.old, arguments.new
+            )
+            return self._save_edit(arguments.path, path, original, updated)
         if original is not None and (
             not arguments.old or current.count(arguments.old) != 1
         ):
@@ -219,20 +239,36 @@ class WorkbenchTools:
             if original is not None
             else arguments.new
         )
-        self.store._original(self.task_id, arguments.path, original)
+        return self._save_edit(arguments.path, path, original, updated)
+
+    def _save_edit(self, name, path, original, updated):
+        self.store._original(self.task_id, name, original)
         _atomic_text(path, updated)
         self._save_patch()
         return {
             "ok": True,
-            "path": arguments.path,
+            "path": name,
             "sha256": _digest(updated),
             "patch": "changes.diff",
         }
+
+    def _replace_json(self, arguments):
+        from .json_edit import _replace_json_value
+
+        path = self._path(arguments.path, write=True)
+        if not path.exists():
+            raise ValueError("replace_json requires an existing JSON file")
+        original = path.read_text()
+        if _digest(original) != arguments.expected_sha256:
+            raise ValueError("file changed; read it again before editing")
+        updated = _replace_json_value(original, arguments.json_pointer, arguments.value)
+        return self._save_edit(arguments.path, path, original, updated)
 
     def _run_operation(self, arguments):
         operation = self.profile.operations.get(arguments.name)
         if operation is None:
             raise ValueError("operation is not configured for this specialist")
+        inputs = self._verification_hashes(operation)
         substitutions = {
             "python": sys.executable,
             "workspace": str(self.root),
@@ -258,7 +294,17 @@ class WorkbenchTools:
             "stderr": result.stderr,
             "run_id": substitutions["run_id"],
         }
+        if inputs:
+            unchanged = inputs == self._verification_hashes(operation)
+            receipt.update(deterministic_inputs=inputs, inputs_unchanged=unchanged)
+            receipt["ok"] = receipt["ok"] and unchanged
         return _observation_result(receipt, operation.wait_for)
+
+    def _verification_hashes(self, operation):
+        return {
+            name: hashlib.sha256(self._path(name).read_bytes()).hexdigest()
+            for name in operation.deterministic_inputs
+        }
 
     def _save_patch(self):
         patch = []

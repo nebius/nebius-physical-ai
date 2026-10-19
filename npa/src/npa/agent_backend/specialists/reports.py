@@ -9,6 +9,7 @@ import threading
 
 from .tools import WorkbenchTools
 from .config import fingerprint
+from .json_edit import _SOURCE_EDIT_TOOLS
 
 _ATTENTION = {"completed", "needs_attention", "cancelled"}
 
@@ -23,7 +24,7 @@ def _changes(store, task, profile):
         event["result"]["path"]: event["result"].get("sha256")
         for event in task["events"]
         if event.get("type") == "tool"
-        and event.get("name") == "edit_file"
+        and event.get("name") in _SOURCE_EDIT_TOOLS
         and event.get("result", {}).get("ok") is True
     }
     changes = []
@@ -66,6 +67,14 @@ def _operation_receipt(event):
         "observation": result.get("observation"),
         "stdout_sha256": hashlib.sha256(result.get("stdout", "").encode()).hexdigest(),
         "stderr_sha256": hashlib.sha256(result.get("stderr", "").encode()).hexdigest(),
+        **(
+            {
+                "deterministic_inputs": result["deterministic_inputs"],
+                "inputs_unchanged": result["inputs_unchanged"],
+            }
+            if result.get("deterministic_inputs")
+            else {}
+        ),
     }
 
 
@@ -75,7 +84,7 @@ def _checks(task, required):
         if event.get("type") != "tool":
             continue
         result = event.get("result", {})
-        if event.get("name") == "edit_file" and result.get("ok") is True:
+        if event.get("name") in _SOURCE_EDIT_TOOLS and result.get("ok") is True:
             latest.clear()
         if event.get("name") == "run_operation":
             receipt = _operation_receipt(event)
@@ -94,7 +103,7 @@ def _checks(task, required):
 
 def _task_report(team, task_id):
     report = task_report_for_store(team.config, team.store, task_id)
-    return {**report, "model_completed": report["status_completed"]}
+    return {**report, "model_completed": report["completion_kind"] == "model"}
 
 
 def task_report_for_store(config, store, task_id):
@@ -116,15 +125,17 @@ def task_report_for_store(config, store, task_id):
 def _report(store, profile, task):
     changes = _changes(store, task, profile)
     checks, passed, failures = _checks(task, profile.required_operations)
+    passed = _current_check_inputs(store, profile, task, checks) and passed
     uncertain = [call for call in task["calls"] if call["status"] != "completed"]
     source_matches = all(item["matches_last_edit"] for item in changes)
     policy_matches = task["policy"] == fingerprint(profile)
-    return {
+    report = {
         "task_id": task["id"],
         "specialist": task["profile"],
         "status": task["status"],
         "paused": task["paused"] or profile.name in store._paused_profiles(),
         "status_completed": task["status"] == "completed",
+        "completion_kind": _completion_kind(task),
         "result": task["result"][:2000],
         "result_truncated": len(task["result"]) > 2000,
         "result_sha256": hashlib.sha256(task["result"].encode()).hexdigest(),
@@ -145,6 +156,61 @@ def _report(store, profile, task):
         "uncertain_calls": uncertain,
         "route": task["route"],
     }
+    if profile.configuration_routing is not None:
+        report["configuration_routing"] = _configuration_summary(task["events"])
+    return report
+
+
+def _current_check_inputs(store, profile, task, checks):
+    tools = WorkbenchTools(profile, store, task["id"])
+    matches = True
+    for receipt in checks.values():
+        if not receipt or not receipt.get("deterministic_inputs"):
+            continue
+        try:
+            current = {
+                name: hashlib.sha256(tools._path(name).read_bytes()).hexdigest()
+                for name in receipt["deterministic_inputs"]
+            }
+        except (OSError, ValueError):
+            current = None
+        receipt["inputs_match_current"] = (
+            receipt.get("inputs_unchanged") is True
+            and current == receipt["deterministic_inputs"]
+        )
+        matches = matches and receipt["inputs_match_current"]
+    return matches
+
+
+def _configuration_summary(events):
+    from .accounting import summarize_inference
+
+    decisions = [
+        event for event in events if event.get("type") == "configuration_routing"
+    ]
+    requests = [
+        event for event in events if event.get("type") == "configuration_request"
+    ]
+    finalized = {event["boundary_id"]: event for event in decisions}
+    return {
+        "current_configuration": requests[-1]["configuration"] if requests else None,
+        "classifier_attempts": len(finalized),
+        "classifier_receipts": list(finalized.values()),
+        "admission_count": len(requests),
+        "handoff_count": sum(
+            event.get("type") == "configuration_handoff" for event in events
+        ),
+        "exact_tokenization": False,
+        "inference_accounting": summarize_inference(events),
+    }
+
+
+def _completion_kind(task):
+    if task["status"] != "completed":
+        return None
+    if any(event.get("type") == "verified_completion" for event in task["events"]):
+        return "runtime_verified"
+    return "model"
 
 
 def _wait_for_attention(team, task_ids, poll_interval, stop_event):

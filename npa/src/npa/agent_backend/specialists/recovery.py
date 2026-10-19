@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 from .routing import _endpoints
+from .json_edit import _SOURCE_EDIT_TOOLS
 
 
 class _RejectedGeneration(ValueError):
@@ -28,7 +29,7 @@ def _require_operations(messages, required):
         seen.add(identifier)
         call = calls[identifier]["function"]
         result = json.loads(message["content"])
-        if call["name"] == "edit_file" and result.get("ok") is True:
+        if call["name"] in _SOURCE_EDIT_TOOLS and result.get("ok") is True:
             passed.clear()
         if call["name"] == "run_operation":
             name = json.loads(call["arguments"]).get("name")

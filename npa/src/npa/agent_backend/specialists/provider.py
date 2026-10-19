@@ -49,7 +49,7 @@ def _failure_kind(error, status):
     return "provider_error"
 
 
-def _record_failure(client, endpoint, tools, error):
+def _record_failure(client, endpoint, tools, error, *, attempt_id=None):
     status = _status(error)
     metrics = _metrics(client, status)
     tools.store._event(
@@ -63,16 +63,17 @@ def _record_failure(client, endpoint, tools, error):
             "api_call_attempted": True if metrics.get("attempts", 0) > 0 else "unknown",
             "usage": {},
             "usage_missing": True,
+            **({"attempt_id": attempt_id} if attempt_id else {}),
         },
     )
     return status
 
 
-def _request_model(client, endpoint, tools, **arguments):
+def _request_model(client, endpoint, tools, *, attempt_id=None, **arguments):
     try:
         return client.chat_completion(model=endpoint.model, **arguments)
     except TokenFactoryError as error:
-        status = _record_failure(client, endpoint, tools, error)
+        status = _record_failure(client, endpoint, tools, error, attempt_id=attempt_id)
         if status == 404:
             raise _RejectedGeneration(
                 "configured endpoint unavailable (HTTP 404)"
