@@ -4273,6 +4273,33 @@ def test_explicit_terminal_recovery_rejects_mismatched_job_name(
     assert submitter.calls == []
 
 
+def test_explicit_terminal_recovery_rejects_mismatched_replacement_job_name(
+    tmp_path: Path,
+) -> None:
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    spec, store, run_id, step = _seed_explicit_terminal_recovery_case(tmp_path)
+    submitter = FakeSubmitter()
+    executor = _executor(
+        spec,
+        run_id=run_id,
+        store=store,
+        submitter=submitter,
+        options=RuntimeOptions(resume=True, recover_managed_job_id="2"),
+        reconcile_fn=lambda job_name, *, job_id="": ManagedJobEvidence(
+            "found",
+            job_id=job_id,
+            job_name=(job_name if job_id == "1" else "other-managed-job"),
+            status="SUCCEEDED",
+            workload_observable=True,
+        ),
+    )
+
+    with pytest.raises(NpaWorkflowError, match="exact recovered managed job"):
+        executor.execute(step)
+    assert submitter.calls == []
+
+
 def test_explicit_terminal_recovery_refuses_an_active_stale_job(
     tmp_path: Path,
 ) -> None:

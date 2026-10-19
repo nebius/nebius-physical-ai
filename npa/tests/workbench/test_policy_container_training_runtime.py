@@ -25,6 +25,7 @@ def _command(**kwargs):
     ("version", "flag"),
     [
         ("0.5.1", "--eval_freq=1000000"),
+        ("0.5.1+npa.secure1", "--eval_freq=1000000"),
         ("0.6.0", "--env_eval_freq=1000000"),
         ("0.6.1+npa2", "--env_eval_freq=1000000"),
     ],
