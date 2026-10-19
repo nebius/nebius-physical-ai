@@ -21,7 +21,7 @@ import sys
 import tarfile
 import tempfile
 
-SCANNER_REVISION = "9e3a17fb567feee94254e535ccb1fea678bf8a01"
+SCANNER_REVISION = "94beff6f84963255a3d7bc6fd6ee2b8bd560dc9f"
 EXPORT_ROOT = Path(".local/share/npa/private-image-qualification/exports")
 RECEIPT_ROOT = Path(".local/share/npa/private-image-qualification/receipts")
 ADJUDICATION_ROOT = Path(".local/share/npa/private-image-adjudication/requests")
