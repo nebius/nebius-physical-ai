@@ -718,5 +718,5 @@ def test_recording_download_requires_committed_selected_uri(tmp_path: Path) -> N
             dest_path=tmp_path / "review.rrd",
             rrd_uri=selected,
             client=Storage(),
-    )
+        )
     assert downloads == []
