@@ -41,6 +41,7 @@ from npa.cluster_backends.process import (
 from npa.clients.config import resolve_environment
 from npa.soperator.spec import (
     DEFAULT_SOLUTIONS_LIBRARY_REF,
+    DEFAULT_SOLUTIONS_LIBRARY_TAG,
     DEFAULT_SLURM_OPERATOR_VERSION,
     LEGACY_SOLUTIONS_LIBRARY_REF,
     SoperatorSpec,
@@ -230,6 +231,8 @@ def _write_env_sidecar(
     cluster_name: str = "",
     provider_cluster_name: str = "",
     owned_auxiliary_resources: list[dict[str, str]] | None = None,
+    solutions_library_ref: str = DEFAULT_SOLUTIONS_LIBRARY_REF,
+    solutions_library_tag: str = DEFAULT_SOLUTIONS_LIBRARY_TAG,
 ) -> None:
     path = install_dir / _ENV_SIDECAR
     temporary = install_dir / f".{_ENV_SIDECAR}.{uuid.uuid4().hex}.tmp"
@@ -253,6 +256,8 @@ def _write_env_sidecar(
                     "owned_filesystem_ids": list(owned_filesystem_ids or []),
                     "owned_allocation_ids": list(owned_allocation_ids or []),
                     "owned_auxiliary_resources": list(owned_auxiliary_resources or []),
+                    "solutions_library_ref": solutions_library_ref,
+                    "solutions_library_tag": solutions_library_tag,
                 },
                 indent=2,
             )
@@ -434,6 +439,62 @@ def _status_installation_dir(
     return existing[0] if existing else None
 
 
+def _select_solutions_library_ref(
+    name: str,
+    *,
+    terraform_dir: Path | None,
+    work_root: Path,
+    requested_ref: str | None,
+) -> str:
+    """Choose the source commit once and retain an existing installation's commit.
+
+    Args:
+        name: Soperator cluster name.
+        terraform_dir: Optional authoritative source directory.
+        work_root: Private local root containing managed installations.
+        requested_ref: Explicit source commit, or None for default selection.
+
+    Returns:
+        Immutable solutions-library commit for this lifecycle action.
+
+    Raises:
+        UpstreamContractError: If existing source provenance is unsafe to use.
+        ValueError: If an explicit commit conflicts with persisted provenance.
+    """
+
+    install_dir = _status_installation_dir(
+        name, terraform_dir=terraform_dir, work_root=work_root
+    )
+    if install_dir is None:
+        return _validate_immutable_solutions_library_ref(
+            requested_ref or DEFAULT_SOLUTIONS_LIBRARY_REF
+        )
+    saved = _load_env_sidecar(install_dir)
+    persisted = str((saved or {}).get("solutions_library_ref") or "")
+    if not persisted:
+        if not (install_dir / "terraform.tfstate").is_file():
+            return _validate_immutable_solutions_library_ref(
+                requested_ref or DEFAULT_SOLUTIONS_LIBRARY_REF
+            )
+        if requested_ref is None:
+            raise UpstreamContractError(
+                "existing Soperator installation predates source provenance; pass its "
+                "original immutable --ref for exact-state recovery or create a reviewed "
+                "replacement instead of reconciling against a new default"
+            )
+        return _validate_immutable_solutions_library_ref(requested_ref)
+    selected = _validate_immutable_solutions_library_ref(persisted)
+    if (
+        requested_ref is not None
+        and selected != _validate_immutable_solutions_library_ref(requested_ref)
+    ):
+        raise UpstreamContractError(
+            "existing Soperator installation is pinned to a different source commit; "
+            "use a reviewed migration or replacement rather than an in-place update"
+        )
+    return selected
+
+
 def worker_capacity_status(
     name: str,
     *,
@@ -544,6 +605,10 @@ def cluster_status(
     workers = worker_capacity_status(
         name, terraform_dir=terraform_dir, work_root=work_root
     )
+    install_dir = _status_installation_dir(
+        name, terraform_dir=terraform_dir, work_root=work_root
+    )
+    saved = _load_env_sidecar(install_dir) if install_dir else None
     return {
         "name": name,
         "context": context,
@@ -551,6 +616,8 @@ def cluster_status(
         "workers": workers,
         "capacity_status": "applied" if workers else "unknown",
         "status": "running",
+        "solutions_library_ref": str((saved or {}).get("solutions_library_ref") or ""),
+        "solutions_library_tag": str((saved or {}).get("solutions_library_tag") or ""),
     }
 
 
@@ -3249,7 +3316,7 @@ def deploy_cluster(
     *,
     terraform_dir: Path | None = None,
     work_root: Path | None = None,
-    solutions_library_ref: str = DEFAULT_SOLUTIONS_LIBRARY_REF,
+    solutions_library_ref: str | None = None,
     root_login_ssh_public_key_file: Path | None = None,
     project: str | None = None,
     timeout_minutes: int = 90,
@@ -3263,7 +3330,14 @@ def deploy_cluster(
     """Deploy or reconcile *spec* after pinned-contract and key preflight."""
 
     spec.validate()
-    if solutions_library_ref == LEGACY_SOLUTIONS_LIBRARY_REF:
+    work_root = (work_root or Path.home() / ".npa" / "soperator").expanduser()
+    source_ref = _select_solutions_library_ref(
+        spec.name,
+        terraform_dir=terraform_dir,
+        work_root=work_root,
+        requested_ref=solutions_library_ref,
+    )
+    if source_ref == LEGACY_SOLUTIONS_LIBRARY_REF:
         raise UpstreamContractError(
             "the previous recipe is supported for exact-state destroy only; "
             "use its original Workbench version to reconcile it, or deploy a "
@@ -3284,12 +3358,9 @@ def deploy_cluster(
         "login-node root SSH access enabled: "
         f"source={root_login_key.source}; fingerprint={root_login_key.fingerprint}",
     )
-    work_root = (work_root or Path.home() / ".npa" / "soperator").expanduser()
-    recipe_dir = _resolve_solutions_library(
-        terraform_dir, work_root, solutions_library_ref
-    )
-    _assert_solutions_library_contract(recipe_dir, ref=solutions_library_ref)
-    _log(on_status, f"verified solutions-library contract {solutions_library_ref[:12]}")
+    recipe_dir = _resolve_solutions_library(terraform_dir, work_root, source_ref)
+    _assert_solutions_library_contract(recipe_dir, ref=source_ref)
+    _log(on_status, f"verified solutions-library contract {source_ref[:12]}")
     region, tenant_id, project_id, persisted_subnet_id, _saved = (
         _resolve_deploy_environment(spec, recipe_dir, project=project)
     )
@@ -3308,7 +3379,12 @@ def deploy_cluster(
                 "system_max_size": spec.effective_system_max_size(),
             },
             "workers": worker_capacity_summary(spec),
-            "solutions_library_ref": solutions_library_ref,
+            "solutions_library_ref": source_ref,
+            "solutions_library_tag": (
+                DEFAULT_SOLUTIONS_LIBRARY_TAG
+                if source_ref == DEFAULT_SOLUTIONS_LIBRARY_REF
+                else ""
+            ),
             "status": "source-preflight-passed",
             "provider_mutation": False,
         }
@@ -3370,6 +3446,12 @@ def deploy_cluster(
             owned_allocation_ids=list((_saved or {}).get("owned_allocation_ids") or []),
             owned_auxiliary_resources=list(
                 (_saved or {}).get("owned_auxiliary_resources") or []
+            ),
+            solutions_library_ref=source_ref,
+            solutions_library_tag=(
+                DEFAULT_SOLUTIONS_LIBRARY_TAG
+                if source_ref == DEFAULT_SOLUTIONS_LIBRARY_REF
+                else ""
             ),
         )
         sidecar_persisted = True
@@ -3443,6 +3525,12 @@ def deploy_cluster(
                 ),
                 owned_auxiliary_resources=list(
                     (_saved or {}).get("owned_auxiliary_resources") or []
+                ),
+                solutions_library_ref=source_ref,
+                solutions_library_tag=(
+                    DEFAULT_SOLUTIONS_LIBRARY_TAG
+                    if source_ref == DEFAULT_SOLUTIONS_LIBRARY_REF
+                    else ""
                 ),
             )
             _log(on_status, "refreshing kube admin credentials")
@@ -3553,6 +3641,12 @@ def deploy_cluster(
         owned_filesystem_ids=owned_filesystem_ids,
         owned_allocation_ids=owned_allocation_ids,
         owned_auxiliary_resources=owned_auxiliary_resources,
+        solutions_library_ref=source_ref,
+        solutions_library_tag=(
+            DEFAULT_SOLUTIONS_LIBRARY_TAG
+            if source_ref == DEFAULT_SOLUTIONS_LIBRARY_REF
+            else ""
+        ),
     )
 
     result: dict[str, Any] = {
@@ -3574,6 +3668,12 @@ def deploy_cluster(
             "replacement_count": 0,
             "safe_local_replacements_applied": safe_local_replacements_applied,
         },
+        "solutions_library_ref": source_ref,
+        "solutions_library_tag": (
+            DEFAULT_SOLUTIONS_LIBRARY_TAG
+            if source_ref == DEFAULT_SOLUTIONS_LIBRARY_REF
+            else ""
+        ),
     }
 
     if apply_fixes:
@@ -3632,7 +3732,7 @@ def destroy_cluster(
     *,
     terraform_dir: Path | None = None,
     work_root: Path | None = None,
-    solutions_library_ref: str = DEFAULT_SOLUTIONS_LIBRARY_REF,
+    solutions_library_ref: str | None = None,
     project: str | None = None,
     timeout_minutes: int = 90,
     source_preflight_only: bool = False,
@@ -3642,10 +3742,14 @@ def destroy_cluster(
     """Destroy an npa-managed soperator cluster by name."""
 
     work_root = (work_root or Path.home() / ".npa" / "soperator").expanduser()
-    recipe_dir = _resolve_solutions_library(
-        terraform_dir, work_root, solutions_library_ref
+    source_ref = _select_solutions_library_ref(
+        name,
+        terraform_dir=terraform_dir,
+        work_root=work_root,
+        requested_ref=solutions_library_ref,
     )
-    _assert_solutions_library_contract(recipe_dir, ref=solutions_library_ref)
+    recipe_dir = _resolve_solutions_library(terraform_dir, work_root, source_ref)
+    _assert_solutions_library_contract(recipe_dir, ref=source_ref)
     install_dir = recipe_dir / "installations" / name
     if not install_dir.exists():
         raise ValueError(f"no installation found for cluster {name!r} at {install_dir}")
@@ -3654,7 +3758,7 @@ def destroy_cluster(
             "name": name,
             "status": "source-preflight-passed",
             "install_dir": str(install_dir),
-            "solutions_library_ref": solutions_library_ref,
+            "solutions_library_ref": source_ref,
             "provider_mutation": False,
         }
         _log(

@@ -109,10 +109,15 @@ k8s_version: "1.35"
    `node_group_version` input was removed and NPA rejects it rather than
    silently ignoring an old value. Requires terraform >= 1.12 (set
    `NPA_TERRAFORM_BIN` if the system terraform is older).
-   Existing default checkouts, including legacy shallow clones on moving
-   `main`, are reconciled in place under a filesystem lock: NPA fetches the
-   exact missing commit and checks it out detached while preserving untracked
-   installations, Terraform state, and operator-owned files. Tracked changes
+   NPA records the chosen semantic tag and immutable commit in each installation
+   sidecar before Terraform mutation. Subsequent deploy, status, and destroy
+   retain that exact source; a conflicting `--ref` fails closed and requires a
+   reviewed migration or replacement. A legacy installation with Terraform
+   state but no recorded source requires its original immutable `--ref` for
+   exact-state recovery; NPA never silently switches it to a newer default.
+   Existing reviewed checkouts are reconciled under a filesystem lock: NPA
+   fetches the exact missing commit and checks it out detached while preserving
+   untracked installations, Terraform state, and operator-owned files. Tracked changes
    or conflicting untracked paths fail with recovery guidance; NPA never
    deletes or recreates an installation to repair source. Destroy uses the
    same resolver. `deploy --source-preflight-only` and

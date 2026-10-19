@@ -44,6 +44,7 @@ class MK8sApplyRequest:
     on_status: Callable[[str], None] | None = None
     log_path: Path | None = None
     provider_env: dict[str, str] | None = None
+    recipe_release: dict[str, str] | None = None
     provider_preflight: bool = False
     repair_stopped_placeholder: bool = False
     # Legacy-state compatibility only. New standalone targets use the native
@@ -357,6 +358,7 @@ class MK8sBackend:
             basic_validation_timeout_minutes=request.basic_validation_timeout_minutes,
             kubectl_bin=request.kubectl_bin,
             repair_stopped_placeholder=request.repair_stopped_placeholder,
+            recipe_release=request.recipe_release,
         )
         if request.standalone_context and result.get("status") == "deployed":
             result = self._adopt_standalone_result(desired, request, result)

@@ -2534,6 +2534,7 @@ def _deploy_one_cluster(
     basic_validation_timeout_minutes: int = 30,
     kubectl_bin: str = "",
     repair_stopped_placeholder: bool = False,
+    recipe_release: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     project_key = project.key()
     install_dir = fleet_root / project_key / cluster.name
@@ -2598,6 +2599,11 @@ def _deploy_one_cluster(
             ),
             "status": "provisioning",
             "provider_rpc_deadlines": rpc_deadlines,
+            **(
+                {"mk8s_recipe_release": recipe_release}
+                if recipe_release is not None
+                else {}
+            ),
         }
         if guarded.kuberay and guarded.kuberay.enabled:
             sidecar.update(
