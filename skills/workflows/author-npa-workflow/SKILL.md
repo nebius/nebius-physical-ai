@@ -17,8 +17,10 @@ Keep promoted principal pipelines in `workflows/main/`; the
 and validation scope. Promotion must retain the adjacent readiness record and
 update catalog discovery tests, guides, and skill references together.
 Add partner integrations under `workflows/partners/<partner>/` and other
-reference specs under `workflows/testing/`. Add each YAML and its guide to the
-README beside the spec; `workflows/README.md` is the catalog overview. Keep
+reference specs under `workflows/testing/`. IAA and EVG have a dedicated catalog
+at `workflows/cosmos-data-factory/`, with adapted NVIDIA skills under
+`skills/cosmos-data-factory/`. Add each YAML and its guide to the README beside
+the spec; `workflows/README.md` is the catalog overview. Keep
 detailed guides in their existing locations and link to them from the table.
 
 For **new creative pipelines**, also load `skills/workflows/generate-npa-workflow/SKILL.md`.
@@ -34,6 +36,11 @@ For **new creative pipelines**, also load `skills/workflows/generate-npa-workflo
 - **Tokens:** `{{config.key}}`, `{{run.id}}`, `{{run.prefix}}`, `{{state.NAME.uri}}` — no Jinja, no eval.
 - **Predicates:** closed set: `promote_checkpoint`, `loop_back`.
 - **Loops:** `loop.max: "{{config.attr}}"` or integer; `loop.until` for dynamic exit.
+- **Condition-only loops:** a sequence may omit `loop.max` when it declares
+  `loop.until`, uses `metadata.executionMode: runtime`, and ends in a
+  `writesDecision` child. Execution has no inferred iteration limit and fails
+  on missing/invalid measured decisions. Planning previews one iteration.
+  Use `{{loop.<state-name>}}` in every attempt's output paths.
 - **Parallel:** `parallel: [<leaf members>]` + optional `maxConcurrency`; the group's
   `next` state is the barrier. Members may not declare `next`/`transitions`.
   Use optional `parallelCount: "{{config.count}}"` when a public config count

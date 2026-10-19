@@ -21,6 +21,10 @@ from npa.workbench.cosmos.visual_grounding import (
 DEFAULT_REASON1_MODEL = "nvidia/Cosmos-Reason1-7B"
 DEFAULT_REASON2_MODEL = "nvidia/Cosmos-Reason2-8B"
 DEFAULT_COSMOS3_MODEL = "nvidia/Cosmos3-Super-Reasoner"
+_REASON_MODEL_REVISIONS = {
+    DEFAULT_REASON1_MODEL: "375e24000b24baed78f4618d3dd779e47cd96323",
+    DEFAULT_REASON2_MODEL: "a9fae2cf89dc64db96b12860417f0eb403013bb9",
+}
 DEFAULT_REASON1_CACHE = "/tmp/hf_home/cosmos-reason1"
 DEFAULT_REASON2_CACHE = "/tmp/hf_home/cosmos-reason2"
 DEFAULT_REASON3_CACHE = "/tmp/hf_home/cosmos-reason2-2b"
@@ -364,6 +368,21 @@ def merge_dual_reason_evaluations(
     )
 
 
+def _reason_model_revision(model_id: str) -> str | None:
+    """Pin remote weights and processor config without executing model code."""
+    if Path(model_id).is_dir():
+        return None
+    revision = os.environ.get(
+        "NPA_COSMOS_REASON_MODEL_REVISION"
+    ) or _REASON_MODEL_REVISIONS.get(model_id, "")
+    if re.fullmatch(r"[0-9a-f]{40}", revision) is None:
+        raise CosmosReasonError(
+            "custom Cosmos Reason repositories require an immutable 40-character "
+            "NPA_COSMOS_REASON_MODEL_REVISION"
+        )
+    return revision
+
+
 def run_cosmos_reason_vlm(
     *,
     model_id: str,
@@ -382,6 +401,7 @@ def run_cosmos_reason_vlm(
             "Cosmos3-Super-Reasoner is hosted by Token Factory; use the "
             "token_factory Stage 8 backend instead of the self-hosted loader"
         )
+    revision = _reason_model_revision(resolved_model)
     try:
         import torch
         from PIL import Image
@@ -435,17 +455,19 @@ def run_cosmos_reason_vlm(
     )
     processor = AutoProcessor.from_pretrained(
         resolved_model,
+        revision=revision,
         cache_dir=cache_dir,
-        trust_remote_code=True,
+        trust_remote_code=False,
     )
     dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
     model_cls = _reason_model_class(family, AutoModelForImageTextToText)
     model = model_cls.from_pretrained(
         resolved_model,
+        revision=revision,
         cache_dir=cache_dir,
         torch_dtype=dtype,
         device_map="auto",
-        trust_remote_code=True,
+        trust_remote_code=False,
     )
     first_device = next(model.parameters()).device
     inputs = _prepare_reason_inputs(

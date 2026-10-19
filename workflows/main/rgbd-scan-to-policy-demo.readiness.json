@@ -1,27 +1,29 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "182e87fef09fcdd7d081ba4b843d90c150a2ac9a8f74a62e3f05156b2c81d7c8",
+  "workflow_sha256": "ae4d842cf74b8d39f43b89978842e9517a6e551f5c815933c1a8d36490bf0edd",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "validate-spec and plan-spec --run-id preview pass; eight executable states.",
+      "reason": "Schema loads. Missing required operator images fail before planning where declared; supplied exact image fixtures reach the production renderer. Governed public Isaac defaults remain quarantined. Offline checks do not qualify image bytes or workloads.",
       "evidence": [
-        "npa/tests/orchestration/npa_workflow/test_scan_to_policy_demo.py"
+        "npa/tests/orchestration/npa_workflow/test_required_immutable_image_inputs.py",
+        "npa/tests/cli/test_workflow_required_images.py"
       ]
     },
     "task_fidelity": {
-      "status": "verified",
-      "reason": "Fresh native execution completed 500 PPO updates and 16 million transitions, then passed 3,386/4,000 held-out routes (84.65%) against the unchanged 80% gate. The first evaluation failed before scoring on a compute-only target; recovery reused the exact sealed checkpoint, recipe and source on a graphics-qualified RTX target. Eight logical stages completed across the original run and recovery. This qualifies navigation in the reconstructed scene, not unseen-site or physical-robot transfer.",
+      "status": "unverified",
+      "reason": "The preserved promotion record completed 500 PPO updates and passed 3,386/4,000 held-out routes (84.65%) on its recorded source and development-image inputs. This specification now requires explicit operator images, so that historical result does not qualify its current bytes, any replacement image, unseen-site transfer, or physical-robot performance.",
       "evidence": [
         "docs/workbench/guides/rgbd-scan-to-policy-demo.md",
-        "docs/workbench/evidence/rgbd-scan-to-policy-promotion.json"
+        "docs/workbench/evidence/rgbd-scan-to-policy-promotion.json",
+        "docs/workbench/evidence/workflow-defaults-807/rgbd-scan-to-policy-demo.readiness.json"
       ]
     }
   },
   "prerequisites": {
     "output_storage": {
       "status": "unverified",
-      "reason": "A configured project and writable run-scoped bucket must pass submission preflight.",
+      "reason": "The selected project and run-scoped storage must pass current submission preflight.",
       "evidence": []
     },
     "worker_input": {
@@ -36,19 +38,19 @@
     },
     "credentials": {
       "status": "unverified",
-      "reason": "Runtime requires configured object-storage credentials and access to the pinned Isaac image. Public TUM sample needs no model token.",
+      "reason": "Current storage and runtime credentials must pass preflight.",
       "evidence": []
     },
     "source_image": {
       "status": "unverified",
-      "reason": "The selected immutable SONIC and Isaac development images were exercised by the fresh pipeline. Independent observations bound both native main CUDA processes and their running containers to the exact Isaac digest. These workflow pins do not promote either image to a supported release; each future run still needs image and source preflight.",
+      "reason": "The promotion record exercised its recorded immutable SONIC and Isaac development images, but this specification requires current explicit operator images. An immutable identity binds provenance only; it neither qualifies replacement bytes nor promotes a quarantined image to the accepted-release table.",
       "evidence": [
         "docs/workbench/evidence/rgbd-scan-to-policy-promotion.json"
       ]
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "The full 4,000-environment, 500-update training and 4,000-case evaluation completed on RTX PRO 6000 Blackwell. Evaluation required a graphics-qualified target; CUDA availability alone was insufficient. Each new target must verify the NVIDIA runtime class, GLX/EGL mounts, NVIDIA Vulkan device and GPU/runtime/scratch health.",
+      "reason": "The recorded run completed on RTX PRO 6000 Blackwell after a graphics-qualified recovery; CUDA alone was insufficient. Each selected current image set must separately complete the native workload after NVIDIA runtime class, GLX/EGL, Vulkan, GPU, runtime, and scratch preflight.",
       "evidence": [
         "docs/workbench/evidence/rgbd-scan-to-policy-promotion.json"
       ]

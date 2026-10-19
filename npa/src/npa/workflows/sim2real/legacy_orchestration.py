@@ -60,7 +60,8 @@ from npa.workflows.sim2real.utils import (
     _utc_now,
     _write_json_artifact,
 )
-from npa.workflows.sim2real.viz_contract import visualization_run_metadata
+from npa.workflows.sim2real import viz_contract
+from npa.workflows.sim2real.workflow_io import parse_json_object
 from npa.workflows.sim2real.workflow_state_io import (
     _read_workflow_state,
     _workflow_state_path,  # noqa: F401 - legacy engine import surface
@@ -85,6 +86,12 @@ def _compat_call(symbol: str, *args: Any, **kwargs: Any) -> Any:
     from npa.workflows.sim2real import engine
 
     return getattr(engine, symbol)(*args, **kwargs)
+
+
+def _read_candidate_payload(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    return parse_json_object(path.read_text(encoding="utf-8"), source=str(path))
 
 
 def _component_env(*args: Any, **kwargs: Any) -> Any:
@@ -762,10 +769,20 @@ def run_finalize(
     durable_candidate = final_decision.get("candidate")
     if not candidate_path.is_file() and isinstance(durable_candidate, dict):
         _write_json_artifact(candidate_path, durable_candidate)
-    candidate_payload = (
-        json.loads(candidate_path.read_text(encoding="utf-8"))
-        if candidate_path.is_file()
-        else {}
+    candidate_payload = _read_candidate_payload(candidate_path)
+    policy_metadata = viz_contract.visualization_run_metadata(
+        config=config,
+        artifact_root=_artifact_root_uri(config),
+        policy_checkpoint=str(candidate_payload.get("policy_checkpoint_uri") or ""),
+        candidate=candidate_payload,
+        heldout_report=final_eval,
+    )
+    policy_access = viz_contract.compatibility_policy_access(
+        policy_metadata,
+        candidate_payload,
+        candidate_manifest_uri=(
+            f"{_artifact_root_uri(config)}/checkpoints/candidate/candidate.json"
+        ),
     )
     final_iterations = list(final_inner.get("iterations") or [])
     final_update = dict(
@@ -814,22 +831,7 @@ def run_finalize(
         },
         "progress_metrics": build_progress_metrics(local_dir, outer_history),
         "visualization": viz_info,
-        "policy_access": {
-            "deployable_policy": candidate_payload.get("deployable_policy", False),
-            "policy_bytes_available": candidate_payload.get(
-                "policy_bytes_available", False
-            ),
-            "identity": candidate_payload.get("policy_checkpoint_identity", ""),
-            "sha256": candidate_payload.get("policy_checkpoint_sha256", ""),
-            "size_bytes": candidate_payload.get("policy_checkpoint_size_bytes", 0),
-            "checkpoint_uri": candidate_payload.get("policy_checkpoint_uri", ""),
-            "candidate_manifest_uri": f"{_artifact_root_uri(config)}/checkpoints/candidate/candidate.json",
-            "authenticated_download_command": candidate_payload.get(
-                "policy_download_command", ""
-            ),
-            "ui_action": candidate_payload.get("policy_ui_action", ""),
-            "viewer_executes_policy": False,
-        },
+        "policy_access": policy_access,
         "image_completeness": {
             "required": [
                 config.augment_image,
@@ -987,11 +989,7 @@ def _run_sim2real_viz_stage(
         )
 
         candidate_path = local_dir / "checkpoints" / "candidate" / "candidate.json"
-        candidate_payload = (
-            json.loads(candidate_path.read_text(encoding="utf-8"))
-            if candidate_path.is_file()
-            else {}
-        )
+        candidate_payload = _read_candidate_payload(candidate_path)
 
         result = emit_sim2real_rerun(
             local_dir=local_dir,
@@ -999,7 +997,7 @@ def _run_sim2real_viz_stage(
             heldout_report=heldout_report,
             stage_components=stage_components,
             outer_history=outer_history,
-            run_metadata=visualization_run_metadata(
+            run_metadata=viz_contract.visualization_run_metadata(
                 config=config,
                 artifact_root=_artifact_root_uri(config),
                 policy_checkpoint=str(

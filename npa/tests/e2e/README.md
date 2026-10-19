@@ -1,4 +1,24 @@
-# Live storage tests
+# Live tests
+
+## Existing cluster adoption and profile selection
+
+Run the profile regression against an existing cluster the operator can read:
+
+```bash
+NPA_INTEGRATION_E2E=1 \
+NPA_E2E_PROJECT='<configured-project-alias>' \
+NPA_E2E_ADOPT_CLUSTER_NAME='<existing-cluster-name>' \
+NPA_NEBIUS_PROFILE='<verified-nebius-profile>' \
+  npa/.venv/bin/python -m pytest npa/tests/e2e/test_cluster_adoption_profile_live.py -q
+```
+
+All four variables are required; the test skips without them. There is no default
+target. The test reads the selected project's configuration and the live cluster,
+then fetches a temporary kubeconfig with a deliberately conflicting
+`NEBIUS_PROFILE`. It verifies that the generated credential plugin retains
+`NPA_NEBIUS_PROFILE`. Child-process NPA state stays under pytest's private
+temporary directory; the test creates no cloud resources or GPU jobs.
+Set `NPA_CONFIG_DIR` to select an isolated operator configuration.
 
 ## PAIDF native variant recovery
 
@@ -42,6 +62,25 @@ bucket-root URI forms. This additional opt-in has no default and enumerates
 key metadata across the named bucket. It does not read unrelated object
 bodies, and its writes and deletions remain inside the unique fixture prefix.
 See [the test module](test_insights_storage_live_e2e.py) for the full contract.
+
+## Stage14 publication transport
+
+Run the conditional-write, committed-generation, stale-writer, byte-replacement,
+and interrupted-publication recovery controls against an authorized project's S3:
+
+```bash
+NPA_INTEGRATION_E2E=1 NPA_STAGE14_PUBLICATION_LIVE=1 \
+NPA_E2E_PROJECT="<project-alias>" \
+  npa/.venv/bin/python -m pytest npa/tests/e2e/test_stage14_publication_live.py -q
+```
+
+`NPA_STAGE14_PUBLICATION_LIVE` has no default; the exact value `1` and an explicit
+`NPA_E2E_PROJECT` are required. Credentials come from that project's configuration,
+without borrowing environment or shared storage credentials. Fixtures create and
+remove only a unique test prefix. No cluster or GPU is provisioned. The injected
+interruption occurs between real S3 requests, and recovery verifies every committed
+object's size and SHA-256. These fixture bytes prove publication transport; they
+do not represent policy output or replace a full canonical Sim2Real live run.
 
 ## Soperator user namespaces
 

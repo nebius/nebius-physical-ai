@@ -3,15 +3,20 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-import logging
+import ssl
 from typing import Any, Callable, Mapping, Sequence
 from urllib.parse import quote, urlencode
 
 from npa.verification import sanitize_failure_reason
+from npa.workflows.sim2real.publication import (
+    PublicationConflict,
+    assert_legacy_publication_unjournaled,
+    resolve_committed_publication_snapshot,
+    verify_committed_publication_object,
+)
 
 
 FINAL_RERUN_KEY = "reports/sim2real.rrd"
-logger = logging.getLogger(__name__)
 
 
 class ArtifactLoadError(RuntimeError):
@@ -88,35 +93,53 @@ def discover_final_rerun_artifact(
 
     bucket, prefix = _parse_s3_uri(run_prefix_uri)
     exact_key = f"{prefix.rstrip('/')}/{FINAL_RERUN_KEY}"
+    canonical_uri = f"s3://{bucket}/{exact_key}"
     try:
-        client.s3.head_object(Bucket=bucket, Key=exact_key)
-        return f"s3://{bucket}/{exact_key}"
-    except Exception as exc:  # noqa: BLE001 - fall back to final-report discovery
-        logger.debug(
-            "Exact PAIDF Rerun object is unavailable; listing reports: %s",
-            sanitize_failure_reason(exc, secrets=diagnostic_secrets),
+        publication = resolve_committed_publication_snapshot(client, canonical_uri)
+        resolved_uri = verify_committed_publication_object(
+            client,
+            publication,
+            canonical_uri,
         )
-    report_prefix = f"{prefix.rstrip('/')}/reports/"
-    try:
-        paginator = client.s3.get_paginator("list_objects_v2")
-        keys = sorted(
-            str(item.get("Key") or "")
-            for page in paginator.paginate(Bucket=bucket, Prefix=report_prefix)
-            for item in page.get("Contents", [])
-            if str(item.get("Key") or "").endswith(".rrd")
-        )
-    except Exception as exc:  # noqa: BLE001 - include provider detail, never credentials
+        if resolved_uri is None:
+            raise ArtifactLoadError("committed publication contains no Rerun artifact")
+        resolved_bucket, resolved_key = _parse_s3_uri(resolved_uri)
+        if resolved_bucket != bucket:
+            raise ArtifactLoadError(
+                "committed Rerun artifact resolved outside the selected bucket"
+            )
+    except PublicationConflict as exc:
+        raise ArtifactLoadError(str(exc)) from exc
+    except ArtifactLoadError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - provider-specific read failure
         safe_reason = sanitize_failure_reason(exc, secrets=diagnostic_secrets)
         raise ArtifactLoadError(
-            f"Could not discover a final Rerun artifact below "
-            f"s3://{bucket}/{report_prefix}: {safe_reason}"
+            f"Could not verify the final Rerun artifact at {canonical_uri}: "
+            f"{safe_reason}"
         ) from exc
-    if not keys:
+    try:
+        client.s3.head_object(Bucket=resolved_bucket, Key=resolved_key)
+    except KeyError as exc:
+        raise ArtifactLoadError(f"no .rrd artifact exists at {canonical_uri}") from exc
+    except Exception as exc:  # noqa: BLE001 - provider-specific read failure
+        response = getattr(exc, "response", {})
+        error = response.get("Error", {}) if isinstance(response, dict) else {}
+        code = str(error.get("Code", "")) if isinstance(error, dict) else ""
+        if code in {"404", "NoSuchKey", "NotFound"}:
+            raise ArtifactLoadError(
+                f"no .rrd artifact exists at {canonical_uri}"
+            ) from exc
+        safe_reason = sanitize_failure_reason(exc, secrets=diagnostic_secrets)
         raise ArtifactLoadError(
-            f"Workflow succeeded but no .rrd artifact exists below "
-            f"s3://{bucket}/{report_prefix}"
-        )
-    return f"s3://{bucket}/{keys[-1]}"
+            f"Could not verify the final Rerun artifact at {canonical_uri}: "
+            f"{safe_reason}"
+        ) from exc
+    try:
+        assert_legacy_publication_unjournaled(client, publication)
+    except PublicationConflict as exc:
+        raise ArtifactLoadError(str(exc)) from exc
+    return resolved_uri
 
 
 def _status_matches(
@@ -152,7 +175,7 @@ def _request_agent_json(
     url: str,
     *,
     auth: tuple[str, str],
-    verify: bool,
+    verify: bool | ssl.SSLContext,
     operation: str,
     timeout: float,
     payload: dict[str, Any] | None = None,
@@ -214,7 +237,7 @@ def _initial_agent_artifact_page(
     request: Callable[..., Any],
     base_url: str,
     auth: tuple[str, str],
-    verify: bool,
+    verify: bool | ssl.SSLContext,
     run_id: str,
 ) -> dict[str, Any]:
     run_selector = quote(run_id, safe="")
@@ -276,7 +299,7 @@ def _continued_agent_artifact_page(
     request: Callable[..., Any],
     base_url: str,
     auth: tuple[str, str],
-    verify: bool,
+    verify: bool | ssl.SSLContext,
     run_ref: str,
     project_id: str,
     resource_bucket: str,
@@ -308,7 +331,7 @@ def _agent_artifact_matches(
     request: Callable[..., Any],
     base_url: str,
     auth: tuple[str, str],
-    verify: bool,
+    verify: bool | ssl.SSLContext,
     run_id: str,
     artifact_uri: str,
     expected_key: str,
@@ -370,7 +393,7 @@ def _discover_agent_selection(
     request: Callable[..., Any],
     base_url: str,
     auth: tuple[str, str],
-    verify: bool,
+    verify: bool | ssl.SSLContext,
     run_id: str,
     artifact_uri: str,
 ) -> _AgentArtifactSelection:
@@ -415,7 +438,7 @@ def _retry_command(run_id: str, project: str, agent_name: str) -> str:
 class _ArtifactLoadRuntime:
     agent_record: Callable[..., dict[str, Any]]
     load_auth_secret: Callable[[str], tuple[str, str]]
-    record_tls_verify: Callable[[dict[str, Any]], bool]
+    record_tls_verify: Callable[[dict[str, Any]], bool | ssl.SSLContext]
     resolve_project_agents: Callable[[str], dict[str, Any]]
     update_submission_state: Callable[[str, str, dict[str, Any]], Any]
 
@@ -424,7 +447,7 @@ class _ArtifactLoadRuntime:
 class _AgentConnection:
     base_url: str
     auth: tuple[str, str]
-    verify: bool
+    verify: bool | ssl.SSLContext
     request: Callable[..., Any]
 
 

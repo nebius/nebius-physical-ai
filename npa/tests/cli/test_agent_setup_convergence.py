@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import ssl
 import threading
 from types import SimpleNamespace
 
@@ -10,6 +11,17 @@ import pytest
 from npa.cli import agent_quota
 from npa.cli import agent_setup_convergence
 from npa.provisioning_journal import ProvisioningOperation, operation_heartbeats
+
+
+@pytest.fixture(autouse=True)
+def certificate_context(monkeypatch):
+    # These tests isolate setup-state transitions; real TLS and SSH refusal are
+    # exercised by test_agent_tls against actual authenticated HTTPS listeners.
+    monkeypatch.setattr(
+        agent_setup_convergence,
+        "trusted_agent_tls_context",
+        lambda _ssh: ssl.create_default_context(),
+    )
 
 
 def _remote_payload(**overrides):

@@ -381,6 +381,7 @@ def test_probe_attaches_declared_image_pull_secrets() -> None:
     override_spec = json.loads(raw_overrides)["spec"]
     assert override_spec["imagePullSecrets"] == [{"name": "operator-registry-secret"}]
     assert override_spec["serviceAccountName"] == "exact-service-account"
+    assert override_spec["automountServiceAccountToken"] is False
     assert override_spec["nodeSelector"] == {"nebius.com/node-group": "gpu-a"}
     assert override_spec["runtimeClassName"] == "nvidia"
 

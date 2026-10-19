@@ -1,0 +1,65 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: marble-spatial-scan
+  description: >-
+    Acquire a real Marble world, raycast its collision triangles with NVIDIA Warp
+    on a Nebius CUDA GPU, and publish interactive depth, point-cloud and evidence views.
+config:
+  source_overlay: true
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/marble-scan"
+  world_source: generate
+  world_model: marble-1.1
+  world_prompt: An industrial warehouse with wide aisles, shelving, concrete floors and overhead lights.
+  frames: 120
+  width: 480
+  height: 270
+
+  world_uri: "s3://{{config.bucket}}/{{config.prefix}}/world/"
+  results_uri: "s3://{{config.bucket}}/{{config.prefix}}/results/"
+  reports_uri: "s3://{{config.bucket}}/{{config.prefix}}/report/"
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 8Gi
+  gpu:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+    cpus: 8
+    memory: 32Gi
+initial: acquire
+states:
+  acquire:
+    description: Download the actual splat and collision mesh with source attribution and hashes.
+    toolRef: workbench.marble.acquire
+    resources: cpu
+    outputs:
+      - uri: "{{config.world_uri}}world.json"
+        schema: npa.marble.world.v1
+    next: scan
+  scan:
+    description: Execute Warp CUDA triangle intersections and save raw depth and measured timings.
+    toolRef: workbench.marble.scan
+    resources: gpu
+    inputs:
+      - uri: "{{config.world_uri}}world.json"
+    outputs:
+      - uri: "{{config.results_uri}}result.json"
+        schema: npa.marble.result.v1
+      - uri: "{{config.results_uri}}depth.npz"
+        schema: application/octet-stream
+    next: report
+  report:
+    description: Validate every output hash and build an interactive HTML spatial report.
+    toolRef: workbench.marble.report
+    resources: cpu
+    inputs:
+      - uri: "{{config.results_uri}}result.json"
+    outputs:
+      - uri: "{{config.reports_uri}}index.html"
+        schema: text/html
+      - uri: "{{config.reports_uri}}result.json"
+        schema: npa.marble.result.v1
+    terminal: true

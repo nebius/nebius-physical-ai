@@ -61,9 +61,6 @@ on:
 
 permissions:
   contents: read
-  packages: write
-  attestations: write
-  id-token: write
 
 concurrency:
   # Serialize additive aliases even when two reviewed development SHAs differ.
@@ -149,6 +146,8 @@ jobs:
           contract = yaml.safe_load(Path("npa/docker/workbench/packaging-contract.yaml").read_text())
           entries = contract["images"]
           build_tools = tools("BUILD_TOOLS")
+          if "ncore" in build_tools:
+              raise SystemExit("NCore Actions publication is quarantined: use the private acceptance-bundle CLI route")
           # #504: automatic triggers (push/schedule) must build dev images so
           # dev-<sha> tags track HEAD; `inputs.*` is undefined on those events,
           # so derive the tool list instead of resolving an empty matrix.
@@ -156,6 +155,8 @@ jobs:
               build_tools = _automatic_build_tools(
                   os.environ.get("EVENT_NAME", ""), entries, sha
               )
+          # No private, reviewed acceptance-bundle transport exists for Actions.
+          build_tools = [tool for tool in build_tools if tool != "ncore"]
           lerobot_version = os.environ.get("LEROBOT_VERSION", "").strip()
           if lerobot_version:
               manifest = json.loads(Path("npa/src/npa/deploy/lerobot_version_manifest.json").read_text())
@@ -225,6 +226,11 @@ jobs:
 
   build-development:
     needs: resolve
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
     if: ${{ needs.resolve.outputs.build_count != '0' }}
     strategy:
       fail-fast: false
@@ -240,16 +246,23 @@ jobs:
       NPA_PUBLIC_REGISTRY: ${{ needs.resolve.outputs.target }}
       ROBOTWIN_PUBLIC_NATIVE_POLICY_SHA256: df720d408e03ad08dea051b31af6755159cfffc6276cbb7fa60bd1ec0a37236a
       # Updated only after independent review of the exact public content proofs.
-      CUROBO_PUBLIC_NATIVE_POLICY_SHA256: 1b4d078637ae99cbc3191244c8338d006ac7df0ca9d0436693f4bca6485030ab
+      CUROBO_PUBLIC_NATIVE_POLICY_SHA256: d1b9354047eb8e9d337a85fc7fd64a64f1ce859192fb748f403d729c95b825dc
     steps:
+      - name: Refuse unsupported NCore Actions publication
+        if: matrix.tool == 'ncore'
+        run: |
+          set -euo pipefail
+          echo "NCore Actions publication is quarantined: no private acceptance-bundle transport is configured." >&2
+          exit 1
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          # The complete-byte paths require the verified CPython 3.12 wheel.
-          python-version: ${{ (matrix.tool == 'curobo' || matrix.tool == 'ncore' || matrix.tool == 'robotwin' || matrix.tool == 'libero') && '3.12' || '3.11' }}
+          # Every complete-byte path requires the verified CPython 3.12 wheel.
+          python-version: ${{ (matrix.tool == 'curobo' || matrix.tool == 'ncore' || matrix.tool == 'robocasa' || matrix.tool == 'robotwin' || matrix.tool == 'libero') && '3.12' || '3.11' }}
 
       - name: Preserve the RoboTwin attested OCI graph in Docker
         if: matrix.tool == 'robotwin'
@@ -260,7 +273,6 @@ jobs:
           set-host: true
           context: robotwin-publication
           daemon-config: '{"features":{"containerd-snapshotter":true}}'
-
 
       - name: Install NPA validation environment
         run: |
@@ -276,6 +288,9 @@ jobs:
             npa/tests/docker/test_libero_image_payload_scan.py \
             npa/tests/docker/test_libero_runtime_bootstrap.py \
             npa/tests/docker/test_image_payload_scan.py \
+            npa/tests/docker/test_image_payload_credentials.py \
+            npa/tests/docker/test_image_payload_reviews.py \
+            npa/tests/docker/test_alpamayo2_image_payload_scan.py \
             npa/tests/docker/test_isaac_bootstrap.py \
             npa/tests/docker/test_ltx_runtime_bootstrap.py \
             npa/tests/docker/test_sam3_runtime.py \
@@ -283,10 +298,15 @@ jobs:
             npa/tests/docker/test_ltx_image_payload_scan.py \
             npa/tests/docker/test_cosmos3_serving_image_contract.py \
             npa/tests/docker/test_cosmos3_ray_serve_image_contract.py \
+            npa/tests/docker/test_cosmos3_ray_payload_evidence.py \
             npa/tests/docker/test_sonic_mujoco_public_image_contract.py \
             npa/tests/docker/test_fiftyone_image_validation.py \
             npa/tests/docker/test_fiftyone_source_delivery.py \
+            npa/tests/docker/test_image_byte_publish_contract.py \
+            npa/tests/docker/test_mjlab_image_contract.py \
+            npa/tests/docker/test_mjlab_source_delivery.py \
             npa/tests/deploy/test_public_publish.py \
+            npa/tests/guardrails/test_public_release_workflows.py \
             npa/tests/guardrails/test_secure_image_build_skill.py \
             -q
           git diff origin/main...HEAD --no-ext-diff | \
@@ -318,6 +338,34 @@ jobs:
           umask 077
           scan_root="$(mktemp -d "$RUNNER_TEMP/curobo-byte-gate.XXXXXXXX")"
           echo "CUROBO_BYTE_GATE_ROOT=$scan_root" >> "$GITHUB_ENV"
+          npa/.venv/bin/python npa/scripts/image_byte_scan/go_helper/build.py \
+            --analysis-root "$scan_root" --trusted-root "$GITHUB_WORKSPACE" \
+            --output-dir "$scan_root/tools"
+          npa/.venv/bin/python npa/scripts/image_byte_scan/prepare.py dependencies \
+            --analysis-root "$scan_root" --trusted-root "$GITHUB_WORKSPACE" \
+            --output-dir "$scan_root/native"
+          npa/.venv/bin/python npa/scripts/image_byte_scan/real_helper_checks.py \
+            --analysis-root "$scan_root" --trusted-root "$GITHUB_WORKSPACE" \
+            --tools-receipt "$scan_root/tools/dependency-receipt.json" \
+            --native-receipt "$scan_root/native/dependencies.json" \
+            --output-dir "$scan_root/integration-checks"
+
+      - name: Validate required RoboCasa confidentiality policy before building
+        if: matrix.tool == 'robocasa'
+        env:
+          CUSTOMER_DENYLIST: ${{ secrets.CUSTOMER_DENYLIST }}
+          INFRA_DENYLIST: ${{ secrets.INFRA_DENYLIST }}
+        run: |
+          npa/.venv/bin/python npa/scripts/image_byte_scan/prepare.py check-policy \
+            --policy-mode ci-regex
+
+      - name: Prepare and test the RoboCasa complete-byte scanner
+        if: matrix.tool == 'robocasa'
+        run: |
+          set -euo pipefail
+          umask 077
+          scan_root="$(mktemp -d "$RUNNER_TEMP/robocasa-byte-gate.XXXXXXXX")"
+          echo "ROBOCASA_BYTE_GATE_ROOT=$scan_root" >> "$GITHUB_ENV"
           npa/.venv/bin/python npa/scripts/image_byte_scan/go_helper/build.py \
             --analysis-root "$scan_root" --trusted-root "$GITHUB_WORKSPACE" \
             --output-dir "$scan_root/tools"
@@ -378,16 +426,22 @@ jobs:
           package_api="/orgs/${owner}/packages/container/${encoded}"
           if [ "$status" = 0 ]; then
             visibility="$(gh api "$package_api" --jq .visibility)"
+            versions="$(mktemp)"
+            gh api --paginate --slurp "${package_api}/versions?per_page=100" | jq 'add' > "$versions"
+            development_tag="${IMAGE##*:}"
+            exact_tagged_count="$(jq --arg tag "$development_tag" '[.[] | select((.metadata.container.tags // []) | index($tag))] | length' "$versions")"
+            if [ "$exact_tagged_count" != 0 ]; then
+              echo "::error::Immutable public development tag already exists; refusing overwrite"
+              exit 1
+            fi
             if [ "$visibility" = public ]; then
-              echo "Existing package is already public." >> "$GITHUB_STEP_SUMMARY"
+              echo "Existing package is public and the exact development tag is absent." >> "$GITHUB_STEP_SUMMARY"
             elif [ "$visibility" = private ]; then
               # A failed first publication can leave private, untagged OCI
               # attestations behind after its exact tagged image version is deleted.
               # Those referrers must not prevent a clean retry, but a private package
               # containing any tagged image could expose unvalidated bytes when the
               # successful retry switches the package to public below.
-              versions="$(mktemp)"
-              gh api --paginate --slurp "${package_api}/versions?per_page=100" | jq 'add' > "$versions"
               tagged_count="$(jq '[.[] | select((.metadata.container.tags // []) | length > 0)] | length' "$versions")"
               if [ "$tagged_count" != 0 ]; then
                 echo "::error::Private destination contains tagged versions; refusing a visibility change"
@@ -470,7 +524,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Stage supported workflow catalog in the package build context
-        if: matrix.tool != 'ncore'
+        if: matrix.tool != 'ncore' && matrix.tool != 'robocasa'
         run: npa/.venv/bin/python npa/src/npa/workflow_build.py --stage-catalog --package-root npa
 
       - name: Prepare robomimic pinned build inputs and corresponding source
@@ -508,6 +562,13 @@ jobs:
         if: matrix.tool != 'ncore'
         run: |
           set -euo pipefail
+          if [[ "$TOOL" == robocasa ]]; then
+            NPA_SOURCE_SHA="$DEVELOPMENT_SHA" ROBOCASA_VERSION=0.1.1 \
+              npa/docker/workbench/robocasa/build.sh \
+                --registry "$NPA_PUBLIC_REGISTRY"
+            test "$IMAGE" = "$NPA_PUBLIC_REGISTRY/npa-robocasa:dev-$DEVELOPMENT_SHA"
+            exit 0
+          fi
           build_context=npa
           if [[ "$TOOL" == robomimic ]]; then
             build_context=npa/docker/workbench/robomimic
@@ -520,7 +581,7 @@ jobs:
             }
             build_args+=(--build-arg "LEROBOT_VERSION=$LEROBOT_VERSION")
           fi
-          if [[ "$TOOL" == curobo || "$TOOL" == libero || "$TOOL" == mjlab ]]; then
+          if [[ "$TOOL" == seedvr2 || "$TOOL" == curobo || "$TOOL" == libero || "$TOOL" == mjlab ]]; then
             source_epoch="$(git show -s --format=%ct "$DEVELOPMENT_SHA")"
             [[ "$source_epoch" =~ ^[1-9][0-9]*$ ]] || { echo "Positive source commit epoch is required" >&2; exit 1; }
             build_args+=(--build-arg "SOURCE_DATE_EPOCH=$source_epoch")
@@ -582,8 +643,8 @@ jobs:
       - name: Enforce runtime, revision, bootstrap, config, and history contracts
         if: matrix.tool != 'ncore'
         env:
-          CUSTOMER_DENYLIST: ${{ (matrix.tool == 'curobo' || matrix.tool == 'robotwin') && secrets.CUSTOMER_DENYLIST || '' }}
-          INFRA_DENYLIST: ${{ (matrix.tool == 'curobo' || matrix.tool == 'robotwin') && secrets.INFRA_DENYLIST || '' }}
+          CUSTOMER_DENYLIST: ${{ (matrix.tool == 'curobo' || matrix.tool == 'robocasa' || matrix.tool == 'robotwin') && secrets.CUSTOMER_DENYLIST || '' }}
+          INFRA_DENYLIST: ${{ (matrix.tool == 'curobo' || matrix.tool == 'robocasa' || matrix.tool == 'robotwin') && secrets.INFRA_DENYLIST || '' }}
           ROBOTWIN_PRIVATE_FAILURE_UPLOAD_URL: ${{ matrix.tool == 'robotwin' && secrets.ROBOTWIN_PRIVATE_FAILURE_UPLOAD_URL || '' }}
           ROBOTWIN_PRIVATE_REVIEW_REQUEST_URL: ${{ matrix.tool == 'robotwin' && secrets.ROBOTWIN_PRIVATE_REVIEW_PRE_REQUEST_URL || '' }}
           ROBOTWIN_PRIVATE_REVIEW_RESPONSE_URL: ${{ matrix.tool == 'robotwin' && secrets.ROBOTWIN_PRIVATE_REVIEW_PRE_RESPONSE_URL || '' }}
@@ -596,6 +657,7 @@ jobs:
           fi
 
           libero_export_container=""
+          payload_report=""
           cleanup_libero_export() {
             primary_status=$?
             trap - EXIT
@@ -604,6 +666,10 @@ jobs:
               ! docker container rm "$libero_export_container" >/dev/null; then
               cleanup_status=1
               echo "::error::LIBERO export-container cleanup failed"
+            fi
+            if [ -n "$payload_report" ] && ! rm -f "$payload_report"; then
+              cleanup_status=1
+              echo "::error::Cosmos3 Ray payload report cleanup failed"
             fi
             if [ "$primary_status" -ne 0 ]; then
               exit "$primary_status"
@@ -656,9 +722,11 @@ jobs:
               --docker-save "$RUNNER_TEMP/${TOOL}.tar" \
               --output "$RUNNER_TEMP/robomimic-payload.json"
           fi
-          npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
-            --tarball "$RUNNER_TEMP/${TOOL}.tar" \
-            --json "$RUNNER_TEMP/${TOOL}-payload.json"
+          if [ "$TOOL" = mjlab ]; then
+            npa/.venv/bin/python npa/docker/workbench/mjlab/verify_sources.py \
+              --image-archive "$RUNNER_TEMP/${TOOL}.tar" \
+              > "$RUNNER_TEMP/${TOOL}-source-delivery.json"
+          fi
           if [ "$TOOL" = habitat-sim ]; then
             npa/.venv/bin/python npa/docker/workbench/habitat-sim/verify_bootstrap.py \
               --docker-save "$RUNNER_TEMP/${TOOL}.tar" \
@@ -720,11 +788,21 @@ jobs:
               --tarball "$RUNNER_TEMP/${TOOL}.tar" \
               --json "$RUNNER_TEMP/${TOOL}-antioch-payload.json"
           fi
+          payload_binding=()
           if [ "$TOOL" = curobo ]; then
             npa/.venv/bin/python npa/docker/workbench/curobo/verify_image.py \
               --docker-save "$RUNNER_TEMP/${TOOL}.tar" \
               --expected-image-id "$(docker image inspect --format '{{.Id}}' "$IMAGE")" \
               --json "$RUNNER_TEMP/${TOOL}-curobo-payload.json"
+            payload_binding=(
+              --verification-report "$RUNNER_TEMP/${TOOL}-curobo-payload.json"
+            )
+          fi
+          npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
+            --tarball "$RUNNER_TEMP/${TOOL}.tar" \
+            "${payload_binding[@]}" \
+            --json "$RUNNER_TEMP/${TOOL}-payload.json"
+          if [ "$TOOL" = curobo ]; then
             umask 077
             phase="$CUROBO_BYTE_GATE_ROOT/pre"
             mkdir -m 0700 "$phase"
@@ -745,6 +823,31 @@ jobs:
               --output-dir "$phase/scan" \
               --public-native-policy "$GITHUB_WORKSPACE/npa/scripts/image_byte_scan/public_policies/curobo-v2.json" \
               --public-native-policy-sha256 "$CUROBO_PUBLIC_NATIVE_POLICY_SHA256"
+            rm -f "$phase/image.tar"
+          fi
+          if [ "$TOOL" = robocasa ]; then
+            umask 077
+            phase="$ROBOCASA_BYTE_GATE_ROOT/pre"
+            mkdir -m 0700 "$phase"
+            mv "$RUNNER_TEMP/${TOOL}.tar" "$phase/image.tar"
+            chmod 0600 "$phase/image.tar"
+            expected_image_id="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
+            npa/.venv/bin/python npa/scripts/image_byte_scan/docker_save_verification.py \
+              --analysis-root "$ROBOCASA_BYTE_GATE_ROOT" --trusted-root "$GITHUB_WORKSPACE" \
+              --archive "$phase/image.tar" --expected-image-id "$expected_image_id" \
+              --output-dir "$phase/verification"
+            npa/.venv/bin/python npa/scripts/image_byte_scan/prepare.py authorize \
+              --analysis-root "$ROBOCASA_BYTE_GATE_ROOT" --trusted-root "$GITHUB_WORKSPACE" \
+              --tools-receipt "$ROBOCASA_BYTE_GATE_ROOT/tools/dependency-receipt.json" \
+              --native-receipt "$ROBOCASA_BYTE_GATE_ROOT/native/dependencies.json" \
+              --archive "$phase/image.tar" \
+              --verification-report "$phase/verification/verification.json" \
+              --expected-image-id "$expected_image_id" \
+              --output-dir "$phase/authorization" --policy-mode ci-regex
+            npa/.venv/bin/python npa/scripts/scan_image_bytes.py \
+              --analysis-root "$ROBOCASA_BYTE_GATE_ROOT" --trusted-root "$GITHUB_WORKSPACE" \
+              --authorization "$phase/authorization/authorization.json" \
+              --output-dir "$phase/scan"
             rm -f "$phase/image.tar"
           fi
           if [ "$TOOL" = robotwin ]; then
@@ -770,21 +873,36 @@ jobs:
             npa/.venv/bin/python npa/scripts/scan_image_alpamayo2_payload.py \
               --tarball "$RUNNER_TEMP/${TOOL}.tar"
           fi
+          if [ "$TOOL" = seedvr2 ]; then
+            npa/.venv/bin/python npa/scripts/scan_image_seedvr2_payload.py \
+              --tarball "$RUNNER_TEMP/${TOOL}.tar" \
+              --clean-root-source-sha "$DEVELOPMENT_SHA" \
+              --expected-image-id "$(docker image inspect --format '{{.Id}}' "$IMAGE")" \
+              > "$RUNNER_TEMP/${TOOL}-seedvr2-payload.json"
+          fi
           if [ "$TOOL" = cosmos3-serving ]; then
             npa/.venv/bin/python npa/scripts/scan_image_cosmos3_serving_payload.py \
               --tarball "$RUNNER_TEMP/${TOOL}.tar" \
               --json "$RUNNER_TEMP/${TOOL}-cosmos3-serving-payload.json"
           fi
           if [ "$TOOL" = cosmos3-ray-serve ]; then
-            npa/.venv/bin/python npa/scripts/scan_image_cosmos3_ray_serve_payload.py \
+            payload_report="$RUNNER_TEMP/${TOOL}-cosmos3-ray-serve-payload.json"
+            if npa/.venv/bin/python npa/scripts/scan_image_cosmos3_ray_serve_payload.py \
               --tarball "$RUNNER_TEMP/${TOOL}.tar" \
-              --json "$RUNNER_TEMP/${TOOL}-cosmos3-ray-serve-payload.json"
+              --json "$payload_report"; then
+              :
+            else
+              status=$?
+              rm -f "$RUNNER_TEMP/${TOOL}.tar" "$payload_report"
+              exit "$status"
+            fi
           fi
           if [ "$TOOL" = sonic-mujoco ]; then
             docker run --rm --entrypoint /opt/npa/venv/bin/python "$IMAGE" \
               /opt/npa/docker/workbench/sonic/verify_mujoco_image.py
           fi
-          rm -f "$RUNNER_TEMP/${TOOL}.tar"
+          rm -f "$RUNNER_TEMP/${TOOL}.tar" \
+            "$RUNNER_TEMP/${TOOL}-cosmos3-ray-serve-payload.json"
 
       # CUDA/AI images can exceed 25 GB. Once the exact loaded image passes its
       # contract, BuildKit's duplicate cache is no longer evidence and can be
@@ -969,30 +1087,6 @@ jobs:
             .release_authorized == false
           ' "$payload" >/dev/null
 
-      - name: Gate and publish the exact NCore OCI graph
-        if: matrix.tool == 'ncore'
-        env:
-          CUSTOMER_DENYLIST: ${{ secrets.CUSTOMER_DENYLIST }}
-          INFRA_DENYLIST: ${{ secrets.INFRA_DENYLIST }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          umask 077
-          sudo apt-get update
-          sudo apt-get install -y skopeo
-          cp "${DOCKER_CONFIG:-$HOME/.docker}/config.json" "$NCORE_OCI_ROOT/registry-auth.json"
-          chmod 0600 "$NCORE_OCI_ROOT/registry-auth.json"
-          npa/.venv/bin/python npa/scripts/publish_ncore_oci.py publish \
-            --source-sha "$DEVELOPMENT_SHA" --analysis-root "$NCORE_OCI_ROOT" \
-            --output-dir "$NCORE_OCI_ROOT/prepublication" \
-            --annex "$NCORE_OCI_ROOT/sources" --native-source "$NCORE_OCI_ROOT/sources" \
-            --metadata "$NCORE_OCI_ROOT/metadata" --bootstrap-source "$NCORE_OCI_ROOT/bootstrap-source" \
-            --keyring "$NCORE_OCI_ROOT/keyring/debian-archive-keyring.gpg" \
-            --authfile "$NCORE_OCI_ROOT/registry-auth.json"
-          echo "NCore exact OCI development publication verified anonymously; RTX acceptance remains required." >> "$GITHUB_STEP_SUMMARY"
-          # Raw scanner output, denylist inputs and auth remain private. Never
-          # upload the analysis root as a public Actions artifact.
-
       - name: Push only after every pre-publication gate passes
         if: matrix.tool != 'ncore'
         id: push
@@ -1039,8 +1133,8 @@ jobs:
         env:
           DIGEST: ${{ steps.push.outputs.digest }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CUSTOMER_DENYLIST: ${{ (matrix.tool == 'curobo' || matrix.tool == 'robotwin') && secrets.CUSTOMER_DENYLIST || '' }}
-          INFRA_DENYLIST: ${{ (matrix.tool == 'curobo' || matrix.tool == 'robotwin') && secrets.INFRA_DENYLIST || '' }}
+          CUSTOMER_DENYLIST: ${{ (matrix.tool == 'curobo' || matrix.tool == 'robocasa' || matrix.tool == 'robotwin') && secrets.CUSTOMER_DENYLIST || '' }}
+          INFRA_DENYLIST: ${{ (matrix.tool == 'curobo' || matrix.tool == 'robocasa' || matrix.tool == 'robotwin') && secrets.INFRA_DENYLIST || '' }}
           ROBOTWIN_PRIVATE_FAILURE_UPLOAD_URL: ${{ matrix.tool == 'robotwin' && secrets.ROBOTWIN_PRIVATE_FAILURE_UPLOAD_URL || '' }}
           ROBOTWIN_PRIVATE_REVIEW_REQUEST_URL: ${{ matrix.tool == 'robotwin' && secrets.ROBOTWIN_PRIVATE_REVIEW_POST_REQUEST_URL || '' }}
           ROBOTWIN_PRIVATE_REVIEW_RESPONSE_URL: ${{ matrix.tool == 'robotwin' && secrets.ROBOTWIN_PRIVATE_REVIEW_POST_RESPONSE_URL || '' }}
@@ -1051,6 +1145,7 @@ jobs:
             save_platform=(--platform linux/amd64)
           fi
           libero_export_container=""
+          payload_report=""
           cleanup_libero_export() {
             primary_status=$?
             trap - EXIT
@@ -1059,6 +1154,10 @@ jobs:
               ! docker container rm "$libero_export_container" >/dev/null; then
               cleanup_status=1
               echo "::error::LIBERO export-container cleanup failed"
+            fi
+            if [ -n "$payload_report" ] && ! rm -f "$payload_report"; then
+              cleanup_status=1
+              echo "::error::Cosmos3 Ray payload report cleanup failed"
             fi
             if [ "$primary_status" -ne 0 ]; then
               exit "$primary_status"
@@ -1075,8 +1174,9 @@ jobs:
           # Bind the remote digest back to the exact local image whose complete
           # filesystem tar was scanned before publication. Pulling immediately after
           # push reuses local layers and avoids a second multi-GB `crane export`, which
-          # GHCR can rate-limit even for authenticated callers. Matching image IDs binds
-          # the remote manifest's config/rootfs diff IDs to that scanned tar.
+          # GHCR can rate-limit even for authenticated callers. The payload scanner
+          # fetches the exact raw registry manifest and binds its config/layer graph,
+          # the pulled image's rootfs diff IDs, and this saved archive.
           payload_attempt=1
           while true; do
             payload_log="$RUNNER_TEMP/${TOOL}-pushed-payload-attempt-${payload_attempt}.log"
@@ -1087,10 +1187,7 @@ jobs:
               layer_diff_ids="$(docker image inspect --format '{{json .RootFS.Layers}}' "$exact")" &&
               test "$(docker image inspect --format '{{.Id}}' "$exact")" = \
                 "$(docker image inspect --format '{{.Id}}' "$IMAGE")" &&
-              docker save "${save_platform[@]}" --output "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact" &&
-              npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
-                --tarball "$RUNNER_TEMP/${TOOL}-pushed.tar" \
-                --json "$RUNNER_TEMP/${TOOL}-pushed-payload.json"
+              docker save "${save_platform[@]}" --output "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact"
             } >"$payload_log" 2>&1; then
               cat "$payload_log"
               break
@@ -1103,6 +1200,11 @@ jobs:
             payload_attempt=$((payload_attempt + 1))
             sleep 5
           done
+          if [ "$TOOL" = mjlab ]; then
+            npa/.venv/bin/python npa/docker/workbench/mjlab/verify_sources.py \
+              --image-archive "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+              > "$RUNNER_TEMP/${TOOL}-pushed-source-delivery.json"
+          fi
           if [ "$TOOL" = robotwin ]; then
             bash npa/docker/workbench/robotwin/byte_gate.sh "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact" post
           fi
@@ -1192,11 +1294,23 @@ jobs:
               --tarball "$RUNNER_TEMP/${TOOL}-pushed.tar" \
               --json "$RUNNER_TEMP/${TOOL}-pushed-antioch-payload.json"
           fi
+          payload_binding=()
           if [ "$TOOL" = curobo ]; then
             npa/.venv/bin/python npa/docker/workbench/curobo/verify_image.py \
               --docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar" \
               --expected-image-id "$(docker image inspect --format '{{.Id}}' "$exact")" \
               --json "$RUNNER_TEMP/${TOOL}-pushed-curobo-payload.json"
+            payload_binding=(
+              --verification-report "$RUNNER_TEMP/${TOOL}-pushed-curobo-payload.json"
+              --registry-image "$exact"
+              --expected-manifest-digest "$DIGEST"
+            )
+          fi
+          npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
+            --tarball "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+            "${payload_binding[@]}" \
+            --json "$RUNNER_TEMP/${TOOL}-pushed-payload.json"
+          if [ "$TOOL" = curobo ]; then
             umask 077
             phase="$CUROBO_BYTE_GATE_ROOT/post"
             mkdir -m 0700 "$phase"
@@ -1219,6 +1333,31 @@ jobs:
               --public-native-policy-sha256 "$CUROBO_PUBLIC_NATIVE_POLICY_SHA256"
             rm -f "$phase/image.tar"
           fi
+          if [ "$TOOL" = robocasa ]; then
+            umask 077
+            phase="$ROBOCASA_BYTE_GATE_ROOT/post"
+            mkdir -m 0700 "$phase"
+            mv "$RUNNER_TEMP/${TOOL}-pushed.tar" "$phase/image.tar"
+            chmod 0600 "$phase/image.tar"
+            expected_image_id="$(docker image inspect --format '{{.Id}}' "$exact")"
+            npa/.venv/bin/python npa/scripts/image_byte_scan/docker_save_verification.py \
+              --analysis-root "$ROBOCASA_BYTE_GATE_ROOT" --trusted-root "$GITHUB_WORKSPACE" \
+              --archive "$phase/image.tar" --expected-image-id "$expected_image_id" \
+              --output-dir "$phase/verification"
+            npa/.venv/bin/python npa/scripts/image_byte_scan/prepare.py authorize \
+              --analysis-root "$ROBOCASA_BYTE_GATE_ROOT" --trusted-root "$GITHUB_WORKSPACE" \
+              --tools-receipt "$ROBOCASA_BYTE_GATE_ROOT/tools/dependency-receipt.json" \
+              --native-receipt "$ROBOCASA_BYTE_GATE_ROOT/native/dependencies.json" \
+              --archive "$phase/image.tar" \
+              --verification-report "$phase/verification/verification.json" \
+              --expected-image-id "$expected_image_id" \
+              --output-dir "$phase/authorization" --policy-mode ci-regex
+            npa/.venv/bin/python npa/scripts/scan_image_bytes.py \
+              --analysis-root "$ROBOCASA_BYTE_GATE_ROOT" --trusted-root "$GITHUB_WORKSPACE" \
+              --authorization "$phase/authorization/authorization.json" \
+              --output-dir "$phase/scan"
+            rm -f "$phase/image.tar"
+          fi
           if [ "$TOOL" = sam3 ]; then
             npa/.venv/bin/python npa/scripts/scan_image_sam3_payload.py \
               --docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar" \
@@ -1238,15 +1377,29 @@ jobs:
             npa/.venv/bin/python npa/scripts/scan_image_alpamayo2_payload.py \
               --tarball "$RUNNER_TEMP/${TOOL}-pushed.tar"
           fi
+          if [ "$TOOL" = seedvr2 ]; then
+            npa/.venv/bin/python npa/scripts/scan_image_seedvr2_payload.py \
+              --tarball "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+              --clean-root-source-sha "$DEVELOPMENT_SHA" \
+              --expected-image-id "$(docker image inspect --format '{{.Id}}' "$exact")" \
+              > "$RUNNER_TEMP/${TOOL}-pushed-seedvr2-payload.json"
+          fi
           if [ "$TOOL" = cosmos3-serving ]; then
             npa/.venv/bin/python npa/scripts/scan_image_cosmos3_serving_payload.py \
               --tarball "$RUNNER_TEMP/${TOOL}-pushed.tar" \
               --json "$RUNNER_TEMP/${TOOL}-pushed-cosmos3-serving-payload.json"
           fi
           if [ "$TOOL" = cosmos3-ray-serve ]; then
-            npa/.venv/bin/python npa/scripts/scan_image_cosmos3_ray_serve_payload.py \
+            payload_report="$RUNNER_TEMP/${TOOL}-pushed-cosmos3-ray-serve-payload.json"
+            if npa/.venv/bin/python npa/scripts/scan_image_cosmos3_ray_serve_payload.py \
               --tarball "$RUNNER_TEMP/${TOOL}-pushed.tar" \
-              --json "$RUNNER_TEMP/${TOOL}-pushed-cosmos3-ray-serve-payload.json"
+              --json "$payload_report"; then
+              :
+            else
+              status=$?
+              rm -f "$RUNNER_TEMP/${TOOL}-pushed.tar" "$payload_report"
+              exit "$status"
+            fi
           fi
           if [ "$TOOL" = sonic-mujoco ]; then
             docker pull "$exact"
@@ -1294,7 +1447,8 @@ jobs:
             test -s "$RUNNER_TEMP/libero-anonymous.oci/index.json"
             rm -rf -- "$RUNNER_TEMP/libero-anonymous.oci"
           fi
-          rm -f "$RUNNER_TEMP/${TOOL}-pushed.tar"
+          rm -f "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+            "$RUNNER_TEMP/${TOOL}-pushed-cosmos3-ray-serve-payload.json"
           echo "Validated public development digest: $DIGEST" >> "$GITHUB_STEP_SUMMARY"
           echo "The dev tag is public; later deletion cannot revoke prior downloads." >> "$GITHUB_STEP_SUMMARY"
 
@@ -1345,6 +1499,8 @@ jobs:
 
   cleanup-requested:
     needs: resolve
+    permissions:
+      packages: write
     if: ${{ always() && needs.resolve.result == 'success' && needs.resolve.outputs.cleanup_count != '0' }}
     strategy:
       fail-fast: false
@@ -1406,6 +1562,9 @@ jobs:
 
   promote:
     needs: [resolve, build-development]
+    permissions:
+      contents: read
+      packages: write
     # Promotion is deliberately a separate dispatch after exact-digest GPU
     # acceptance. A build or cleanup dispatch must never fall through into an
     # unrelated all-image release preflight (or a release write when dry_run is

@@ -209,7 +209,7 @@ def test_mjlab_eval_spec_invokes_the_real_cli_surface() -> None:
 
     assert step.tool_ref == "workbench.mjlab.eval"
     assert "npa workbench mjlab eval" in argv
-    assert spec.resources[step.resources]["accelerators"] == "H100:1"
+    assert spec.resources[step.resources]["accelerators"] == "RTXPRO6000:1"
     for flag in (
         "--task",
         "--checkpoint",

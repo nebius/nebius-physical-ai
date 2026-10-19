@@ -41,6 +41,15 @@ For these specific tasks, read the matching reference:
    npa provision-if-absent --project ci --dry-run --skip-validate --output-format json
    ```
 
+   Project-admin credentials suffice for setup within an existing project.
+   Agent, provisioning, and direct cluster quota gates fall back from a typed
+   tenant IAM denial to that exact project's complete allowance catalog. Strict
+   reserved GPU placement can verify the exact active project capacity allowance
+   when tenant reservation inventory is denied. Both cases report the unseen
+   tenant aggregate and retain provider enforcement at apply. Never add a
+   tenant-admin grant to compensate for a project discovery failure. Non-RBAC
+   failures, missing/malformed evidence, and explicit project shortfalls block.
+
    Real runs may ensure S3 and Kubernetes. Dry runs only resolve settings and
    print intended actions. The command must not teardown or replace resources.
    Storage setup declares `GetObject`, `HeadObject`, `PutObject`, `DeleteObject`,
@@ -69,6 +78,18 @@ For these specific tasks, read the matching reference:
 4. Use `--skip-s3` or `--skip-k8s` when the operator only wants one side
    checked. Use `--sky-smoke` only when live GPU validation is explicitly
    requested.
+
+5. For an explicitly selected shared Workbench installation, run the server-side
+   `npa workbench team setup --input-path <private-setup.yaml> --output-path
+   <private-installation.json>` phase after its namespace, private configuration,
+   state PVC and platform TLS Secret are ready. This creates/reuses the HTTPS
+   LoadBalancer and retains its address. Use the exact provider cluster/project,
+   kubeconfig/context and CPU-only selector. Keep the input and receipt private
+   and reuse both for retries; select an existing installation by its exact
+   public Service and Deployment UIDs. Provisioning requires operator infrastructure credentials,
+   not a personal team key or desktop client. DNS/connectivity qualification can
+   remain pending and must never be reported as ready. See
+   `docs/workbench/team-access.md#deploy-and-qualify-the-service`.
 
 ## Full Teardown
 
