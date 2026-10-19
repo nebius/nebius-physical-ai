@@ -9,6 +9,7 @@ import urllib.request
 
 import pytest
 
+from npa.orchestration.skypilot import registry_preflight
 from npa.orchestration.skypilot.registry_preflight import (
     _RegistryRedirectHandler,
     KubernetesPullCheck,
@@ -1186,6 +1187,63 @@ def test_config_metadata_fetch_bounds_transport_exception_text() -> None:
 
     assert str(exc_info.value) == "registry manifest request unavailable (OSError)"
     assert secret not in str(exc_info.value)
+
+
+def test_config_metadata_retries_one_transient_connection_reset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_digest = "sha256:" + "b" * 64
+    manifest_calls = 0
+    calls: list[tuple[str, dict[str, str]]] = []
+
+    def registry(url: str, headers: dict[str, str], timeout: int):
+        nonlocal manifest_calls
+        del timeout
+        calls.append((url, dict(headers)))
+        if "/manifests/" in url:
+            manifest_calls += 1
+            if manifest_calls == 1:
+                raise ConnectionResetError("peer closed before response")
+            return (
+                200,
+                {"docker-content-digest": DIGEST},
+                json.dumps({"config": {"digest": config_digest}}).encode(),
+            )
+        assert url.endswith(f"/blobs/{config_digest}")
+        return 200, {}, json.dumps({"config": {"Labels": {"stable": "true"}}}).encode()
+
+    slept: list[float] = []
+    monkeypatch.setattr(registry_preflight.time, "sleep", slept.append)
+
+    digest, labels = fetch_image_config_metadata(IMAGE, fetcher=registry)
+
+    assert digest == DIGEST
+    assert labels == {"stable": "true"}
+    assert [url for url, _headers in calls].count(MANIFEST_URL) == 2
+    assert slept == [0.2]
+
+
+def test_config_metadata_does_not_retry_nontransient_os_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    def unavailable(*args, **kwargs):  # noqa: ANN002,ANN003
+        nonlocal calls
+        del args, kwargs
+        calls += 1
+        raise OSError("Name or service not known")
+
+    monkeypatch.setattr(
+        registry_preflight.time,
+        "sleep",
+        lambda _delay: pytest.fail("nontransient error must not sleep"),
+    )
+
+    with pytest.raises(RegistryPreflightError, match=r"unavailable \(OSError\)"):
+        fetch_image_config_metadata(IMAGE, fetcher=unavailable)
+
+    assert calls == 1
 
 
 def test_effective_target_uses_selected_context_namespace() -> None:
