@@ -1575,15 +1575,22 @@ def submit_cmd(
             merged_npa_spec = load_spec_for_submit(
                 yaml_path, config_overrides=substitutions
             )
-            validate_immutable_image_inputs(
-                _make_context(merged_npa_spec, run_id=run_id or "preflight").config
-            )
             validate_image_override_selectors(
                 merged_npa_spec,
                 SkypilotRenderOptions(
                     image_overrides=specific_image_overrides,
                     materialize_registry_secrets=False,
                 ),
+            )
+            # Reject an invalid selector before the dedicated gate so callers
+            # receive the actionable input error.  Once selectors are valid,
+            # a dedicated-live workflow owns its refusal before generic image
+            # validation can obscure that boundary.
+            if not plan_only and _is_dedicated_live_gate_spec(merged_npa_spec):
+                _refuse_dedicated_live_gate_execution(merged_npa_spec)
+                return
+            validate_immutable_image_inputs(
+                _make_context(merged_npa_spec, run_id=run_id or "preflight").config
             )
             early_options = SkypilotRenderOptions(
                 image_overrides=_submit_image_overrides(
@@ -1601,9 +1608,6 @@ def submit_cmd(
                 run_id=run_id or "preflight",
                 options=early_options,
             )
-            if not plan_only and _is_dedicated_live_gate_spec(merged_npa_spec):
-                _refuse_dedicated_live_gate_execution(merged_npa_spec)
-                return
         except Exception as exc:
             _fail(str(exc))
             return
