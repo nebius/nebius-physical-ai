@@ -56,8 +56,7 @@ def test_metadata_rewrite_is_the_reviewed_secure_dependency_closure():
     assert b"Version: 0.6.0+npa.secure2\n" in rewritten
     for dependency, replacement in expected.items():
         assert (
-            f"Requires-Dist: {replacement}{markers[dependency]}\n".encode()
-            in rewritten
+            f"Requires-Dist: {replacement}{markers[dependency]}\n".encode() in rewritten
         )
         assert f"Requires-Dist: {dependency};".encode() not in rewritten
 

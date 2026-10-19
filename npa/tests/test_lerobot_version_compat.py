@@ -141,7 +141,9 @@ def test_060_image_build_and_smoke_cover_real_diffusion_construction() -> None:
         encoding="utf-8"
     )
 
-    assert "--require-hashes --no-deps -r /opt/lerobot/requirements-060.lock" in dockerfile
+    assert (
+        "--require-hashes --no-deps -r /opt/lerobot/requirements-060.lock" in dockerfile
+    )
     for dependency in ("diffusers==", "transformers==", "accelerate==", "num2words=="):
         assert dependency in lock
     assert "python -m npa.smoke.test_lerobot_env" in dockerfile

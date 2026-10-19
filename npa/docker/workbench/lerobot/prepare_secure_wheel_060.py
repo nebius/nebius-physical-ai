@@ -56,7 +56,9 @@ def _download(url: str, expected_hash: str) -> bytes:
     if url not in {WHEEL_URL, ARCHIVE_URL}:
         raise RuntimeError("unreviewed upstream download URL")
     parsed = urlsplit(url)
-    with closing(http.client.HTTPSConnection(parsed.hostname, timeout=60)) as connection:
+    with closing(
+        http.client.HTTPSConnection(parsed.hostname, timeout=60)
+    ) as connection:
         connection.request("GET", parsed.path)
         response = connection.getresponse()
         if response.status != 200:
@@ -220,7 +222,9 @@ def _prepare(wheel: bytes, archive: bytes, destination: Path) -> dict[str, objec
     destination.mkdir(parents=True, exist_ok=False)
     output = destination / f"lerobot-{VERSION}-py3-none-any.whl"
     _write_wheel(result, wheel, output)
-    receipt["integration_wheel_sha256"] = hashlib.sha256(output.read_bytes()).hexdigest()
+    receipt["integration_wheel_sha256"] = hashlib.sha256(
+        output.read_bytes()
+    ).hexdigest()
     (destination / "source-integration.json").write_text(
         json.dumps(receipt, indent=2) + "\n"
     )
