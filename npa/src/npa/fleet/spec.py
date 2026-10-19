@@ -452,6 +452,13 @@ class ClusterSpec:
                     f"cluster {self.name!r}: filestore_mount_tag must be a non-empty "
                     "value without whitespace or commas"
                 )
+        if self.enable_filestore or self.existing_filestore.strip():
+            if not self.filesystem_csi_chart_repository:
+                raise FleetSpecError(
+                    f"cluster {self.name!r}: shared filesystem CSI requires "
+                    "filesystem_csi_chart_repository when enable_filestore or "
+                    "existing_filestore is set"
+                )
             if any(ch.isspace() for ch in self.filesystem_csi_chart_repository):
                 raise FleetSpecError(
                     f"cluster {self.name!r}: filesystem_csi_chart_repository must "

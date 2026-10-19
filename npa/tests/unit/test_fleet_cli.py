@@ -19,6 +19,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+import yaml
 from typer.testing import CliRunner
 
 from npa.cli.main import app
@@ -53,6 +54,7 @@ def _rtx_profile() -> dict:
             "preset": "1gpu-24vcpu-218gb",
         },
         "enable_filestore": True,
+        "filesystem_csi_chart_repository": "oci://charts.example.invalid/nebius",
     }
 
 
@@ -707,7 +709,10 @@ def test_render_tfvars_rtx_single_gpu() -> None:
     assert 'existing_filestore = ""' in tf
     assert 'filestore_mount_path = "/mnt/data"' in tf
     assert 'filestore_mount_tag = "data"' in tf
-    assert 'filesystem_csi = { chart_version = "0.1.6"' in tf
+    assert (
+        'filesystem_csi = { chart_repository = "oci://charts.example.invalid/nebius", '
+        'chart_version = "0.1.6"' in tf
+    )
     # loki has no recipe default and must be emitted, plus o11y stays off.
     assert "loki = { enabled = false" in tf
     assert "enable_grafana           = false" in tf
@@ -728,6 +733,26 @@ def test_render_tfvars_uses_operator_filesystem_csi_repository() -> None:
         "filesystem_csi = { chart_repository = "
         '"oci://charts.example.invalid/nebius", chart_version = "0.1.6"' in tf
     )
+
+
+@pytest.mark.parametrize(
+    ("enable_filestore", "existing_filestore"),
+    [(True, ""), (False, "filesystem-existing")],
+)
+def test_shared_filesystem_requires_explicit_csi_chart_repository(
+    enable_filestore: bool, existing_filestore: str
+) -> None:
+    cluster = ClusterSpec(
+        name="storage",
+        enable_filestore=enable_filestore,
+        existing_filestore=existing_filestore,
+        cpu_nodes=NodePoolSpec(count=1),
+    )
+
+    with pytest.raises(
+        FleetSpecError, match="requires filesystem_csi_chart_repository"
+    ):
+        cluster.validate()
 
 
 def test_render_tfvars_8gpu_cluster_emits_fabric() -> None:
@@ -2408,6 +2433,7 @@ def _tainted_gpu_reconciliation_fixture(
         ),
         enable_filestore=True,
         filestore_mount_tag="npa-shared-fs",
+        filesystem_csi_chart_repository="oci://charts.example.invalid/nebius",
     )
     return state, provider, cluster
 
@@ -2435,6 +2461,7 @@ def _enable_gpu_cluster_for_tainted_fixture(state: dict, provider: dict) -> Clus
         infiniband_fabric="us-central1-a",
         enable_filestore=True,
         filestore_mount_tag="npa-shared-fs",
+        filesystem_csi_chart_repository="oci://charts.example.invalid/nebius",
     )
 
 
@@ -2699,6 +2726,7 @@ def test_tainted_node_group_rejects_malformed_or_mismatched_preemptibility(
         enable_gpu_cluster=False,
         enable_filestore=True,
         filestore_mount_tag="npa-shared-fs",
+        filesystem_csi_chart_repository="oci://charts.example.invalid/nebius",
     )
 
     _assert_tainted_reconciliation_refused(
@@ -4566,6 +4594,7 @@ def test_required_quotas_counts_nodes_vcpu_gpus_and_filesystem() -> None:
                 enable_gpu_cluster=False,
                 enable_filestore=True,
                 filestore_disk_size_gibibytes=2048,
+                filesystem_csi_chart_repository="oci://charts.example.invalid/nebius",
             )
         ]
     )
@@ -4623,6 +4652,7 @@ def test_required_quotas_counts_gpu_cluster_and_skips_existing_filestore() -> No
                 infiniband_fabric="us-central1-a",
                 enable_filestore=True,
                 existing_filestore="computefilesystem-abc",
+                filesystem_csi_chart_repository="oci://charts.example.invalid/nebius",
             )
         ]
     )
@@ -5095,9 +5125,18 @@ def _preflight_boundary(monkeypatch, tmp_path, allowances_json: str, *, rc: int 
 def test_object_storage_quotas_budget_each_class_separately_from_filesystems() -> None:
     from npa.fleet.quotas import required_quotas
 
-    spec = load_spec(
+    example_path = (
         Path(__file__).parents[2] / "examples/fleet/rtxpro-8gpu-five-cluster.yaml"
     )
+    data = yaml.safe_load(example_path.read_text(encoding="utf-8"))
+    data["defaults"].update(
+        {
+            "enable_filestore": True,
+            "filesystem_csi_chart_repository": "oci://charts.example.invalid/nebius",
+        }
+    )
+    spec = spec_from_mapping(data)
+    spec.validate()
     needed = required_quotas(
         [c for p, c in spec.cluster_targets()],
         object_storage=[p.object_storage for p in spec.projects],

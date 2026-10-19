@@ -31,6 +31,7 @@ def fleet_spec():
                 },
                 "enable_filestore": True,
                 "filestore_disk_size_gibibytes": 1024,
+                "filesystem_csi_chart_repository": "oci://charts.example.invalid/nebius",
             },
             "projects": [
                 {"name": "unit-project", "clusters": [{"name": "unit-cluster"}]}

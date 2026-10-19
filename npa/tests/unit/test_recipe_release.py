@@ -40,7 +40,7 @@ def _recipe_root(path: Path) -> Path:
 def test_new_install_selects_current_date_release_once(tmp_path: Path) -> None:
     selected = select_installation_release(tmp_path / "new")
 
-    assert selected.release_id == "mk8s-v2026-10-18"
+    assert selected.release_id == "mk8s-v2026-10-19"
     assert selected.upstream_tag == "main-v2026-10-12"
     assert len(selected.upstream_commit) == 40
 
@@ -51,6 +51,34 @@ def test_existing_install_keeps_exact_saved_release(tmp_path: Path) -> None:
     _write_mk8s_sidecar(install_dir, release.persistence())
 
     assert select_installation_release(install_dir) == release
+
+
+def test_prior_qualified_contract_remains_reconcilable(tmp_path: Path) -> None:
+    """A new default must not invalidate an already persisted release."""
+
+    prior = releases.resolve_mk8s_release("mk8s-v2026-10-18")
+    root = _recipe_root(tmp_path / "recipe")
+    lock = root.parent / ".terraform.lock.hcl"
+    lock.write_text("provider lock\n")
+    expected = replace(
+        prior,
+        bundle_sha256=recipe_bundle_sha256(root),
+        provider_lock_sha256=hashlib.sha256(lock.read_bytes()).hexdigest(),
+    )
+
+    validate_release_source(expected, root)
+
+
+def test_saved_prior_release_requires_explicit_same_release_for_reconcile(
+    tmp_path: Path,
+) -> None:
+    prior = releases.resolve_mk8s_release("mk8s-v2026-10-18")
+    install_dir = tmp_path / "install"
+    _write_mk8s_sidecar(install_dir, prior.persistence())
+
+    assert select_installation_release(install_dir, prior.release_id) == prior
+    with pytest.raises(MK8sReleaseError, match="reviewed migration or replacement"):
+        select_installation_release(install_dir)
 
 
 def test_saved_release_rejects_an_in_place_default_change(

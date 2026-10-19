@@ -10,15 +10,36 @@ from typing import Any
 
 
 _RELEASE_KEY = "mk8s_recipe_release"
-_CONFIGURATION_CONTRACT = {
-    "driver": "npa.cluster.gpu_driver:v1",
-    "renderer": "npa.cluster_backends.mk8s_render:v1",
-    "required_recipe_paths": [
-        "k8s-training/main.tf",
-        "k8s-training/variables.tf",
-        "modules",
-    ],
+_CONFIGURATION_CONTRACTS = {
+    # This contract is retained for installations which persisted the original
+    # qualified release. Do not mutate it: changing a release requires a new
+    # catalog entry rather than making an existing installation unrecoverable.
+    "v1": {
+        "driver": "npa.cluster.gpu_driver:v1",
+        "renderer": "npa.cluster_backends.mk8s_render:v1",
+        "required_recipe_paths": [
+            "k8s-training/main.tf",
+            "k8s-training/variables.tf",
+            "modules",
+        ],
+    },
+    # Fleet now rejects an enabled or adopted shared filesystem unless its CSI
+    # chart repository is explicit. The renderer already receives this value;
+    # the qualified contract records the fail-closed admission behavior too.
+    "v2": {
+        "driver": "npa.cluster.gpu_driver:v1",
+        "renderer": "npa.cluster_backends.mk8s_render:v1",
+        "required_recipe_paths": [
+            "k8s-training/main.tf",
+            "k8s-training/variables.tf",
+            "modules",
+        ],
+        "fleet_storage_preflight": (
+            "npa.fleet.spec.filesystem_csi_chart_repository:v1"
+        ),
+    },
 }
+_CURRENT_CONFIGURATION_CONTRACT_VERSION = "v2"
 
 
 class MK8sReleaseError(ValueError):
@@ -64,9 +85,17 @@ _MK8S_RELEASES = {
         bundle_sha256="d58ebfebc31bcfc6f8491e0f595015de37b1f17bdb68a580dbc6b059d0db07c0",
         provider_lock_sha256="f4d96577faf2f583803b1b1495681f24574730a0a00201db1440633238a40505",
         configuration_contract_sha256="df66bf041ca9a8b7f2cc48497cbfeb7c0eda6a7c4b863e5f7349088abf7f93b7",
-    )
+    ),
+    "mk8s-v2026-10-19": MK8sRecipeRelease(
+        release_id="mk8s-v2026-10-19",
+        upstream_tag="main-v2026-10-12",
+        upstream_commit="fba7148cecd8bd38bccf60ba194ab8f5fdb02194",
+        bundle_sha256="d58ebfebc31bcfc6f8491e0f595015de37b1f17bdb68a580dbc6b059d0db07c0",
+        provider_lock_sha256="f4d96577faf2f583803b1b1495681f24574730a0a00201db1440633238a40505",
+        configuration_contract_sha256="aa64e455a872d677292c4917ba6129bf18bf92b3c8c865f9a3f758f8c084a331",
+    ),
 }
-DEFAULT_MK8S_RELEASE_ID = "mk8s-v2026-10-18"
+DEFAULT_MK8S_RELEASE_ID = "mk8s-v2026-10-19"
 
 
 def default_mk8s_release() -> MK8sRecipeRelease:
@@ -140,6 +169,17 @@ def recipe_bundle_sha256(recipe_root: Path) -> str:
     return digest.hexdigest()
 
 
+def _configuration_contract_sha256(contract: dict[str, Any]) -> str:
+    """Return the canonical digest of one immutable compatibility contract."""
+
+    encoded = json.dumps(
+        contract,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def configuration_contract_sha256() -> str:
     """Return the digest of the NPA component/configuration compatibility contract.
 
@@ -153,12 +193,18 @@ def configuration_contract_sha256() -> str:
         None.
     """
 
-    encoded = json.dumps(
-        _CONFIGURATION_CONTRACT,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
+    return _configuration_contract_sha256(
+        _CONFIGURATION_CONTRACTS[_CURRENT_CONFIGURATION_CONTRACT_VERSION]
+    )
+
+
+def _supported_configuration_contract_sha256s() -> set[str]:
+    """Return digests accepted for releases already in the immutable catalog."""
+
+    return {
+        _configuration_contract_sha256(contract)
+        for contract in _CONFIGURATION_CONTRACTS.values()
+    }
 
 
 def provider_lock_path(recipe_root: Path) -> Path:
@@ -212,10 +258,14 @@ def validate_release_source(release: MK8sRecipeRelease, recipe_root: Path) -> No
             f"MK8s provider lock does not match {release.release_id}; create a "
             "reviewed replacement release instead of changing an install"
         )
-    if configuration_contract_sha256() != release.configuration_contract_sha256:
+    if (
+        release.configuration_contract_sha256
+        not in _supported_configuration_contract_sha256s()
+    ):
         raise MK8sReleaseError(
-            f"MK8s component/configuration contract does not match {release.release_id}; "
-            "create a reviewed replacement release instead of changing an install"
+            f"MK8s component/configuration contract is not supported for "
+            f"{release.release_id}; create a reviewed replacement release instead "
+            "of changing an install"
         )
 
 

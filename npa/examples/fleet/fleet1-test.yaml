@@ -54,6 +54,7 @@ defaults:
   # filestore_disk_size_gibibytes: 1024
   # filestore_mount_path: /mnt/data
   # filestore_mount_tag: npa-shared-fs
+  # filesystem_csi_chart_repository: "oci://<owner-approved-private-chart-source>"
 
 projects:
   - name: a   # -> project "fleet1-test-a"

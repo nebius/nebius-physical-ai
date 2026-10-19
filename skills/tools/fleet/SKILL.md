@@ -481,7 +481,7 @@ resolve those values from the provider inventory before deployment.
    `provider_name`, while still verifying the immutable project/cluster IDs
    and the saved kubeconfig against the live provider.
 7. **Select the qualified MK8s release**: omit source overrides to create a new
-   installation with the date-versioned `mk8s-v2026-10-18` release. It binds
+   installation with the date-versioned `mk8s-v2026-10-19` release. It binds
    upstream `main-v2026-10-12`, the exact upstream commit, the complete patched
    bundle digest, the Terraform provider-lock digest, and the component/config
    contract. NPA writes that record before Terraform applies. Reconcile, status,
