@@ -1582,6 +1582,21 @@ def _patch_preemptible_spot_pricing_text(text: str) -> tuple[str, bool]:
     return text.replace(original, replacement), True
 
 
+def _allowed_pinned_contract_forms(
+    relative_path: str, pristine: str, *, ref: str
+) -> tuple[str, ...]:
+    """Return the exact source forms permitted before any provider action."""
+
+    allowed = (pristine,)
+    if (
+        ref != LEGACY_SOLUTIONS_LIBRARY_REF
+        and relative_path == "soperator/modules/k8s/k8s_ng_workers_v2.tf"
+    ):
+        patched, _ = _patch_preemptible_spot_pricing_text(pristine)
+        allowed += (patched,)
+    return allowed
+
+
 def _patch_kubectl_context_trigger_text(text: str) -> tuple[str, bool]:
     """Remove the pinned recipe's perpetual timestamp replacement trigger."""
 
@@ -1900,7 +1915,12 @@ def _assert_solutions_library_contract(
             raise UpstreamContractError(
                 f"missing pinned contract file {relative}"
             ) from exc
-        if current != pristine:
+        # This module is intentionally rewritten by the audited provider
+        # compatibility patch below. A later deploy or destroy must therefore
+        # accept exactly that generated form while continuing to reject every
+        # other local edit before a provider action.
+        allowed = _allowed_pinned_contract_forms(relative, pristine, ref=ref)
+        if current not in allowed:
             raise UpstreamContractError(
                 f"unexpected local mutation in pinned contract file {relative}"
             )

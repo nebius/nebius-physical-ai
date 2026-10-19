@@ -3549,6 +3549,27 @@ def test_patch_preemptible_spot_pricing_is_idempotent_and_contract_checked() -> 
         )
 
 
+def test_worker_contract_allows_only_the_audited_preemptible_patch() -> None:
+    from npa.soperator import lifecycle
+
+    source = (
+        "    preemptible = var.node_group_workers_v2[count.index].preemptible\n\n"
+        "    reservation_policy = var.node_group_workers_v2[count.index].reservation_policy\n"
+    )
+    patched, _ = lifecycle._patch_preemptible_spot_pricing_text(source)
+    worker_module = "soperator/modules/k8s/k8s_ng_workers_v2.tf"
+
+    assert lifecycle._allowed_pinned_contract_forms(
+        worker_module, source, ref="a" * 40
+    ) == (source, patched)
+    assert lifecycle._allowed_pinned_contract_forms(
+        worker_module, source, ref=lifecycle.LEGACY_SOLUTIONS_LIBRARY_REF
+    ) == (source,)
+    assert lifecycle._allowed_pinned_contract_forms(
+        "soperator/installations/example/main.tf", source, ref="a" * 40
+    ) == (source,)
+
+
 def test_patch_nodeconfigurator_allows_enroot_userns_and_is_idempotent(
     tmp_path,
 ) -> None:
