@@ -13034,6 +13034,7 @@ def status_cmd(
         "sim_assets_url": sim_assets_url if endpoint_disclosure_allowed else "",
         "cameras_api_url": cameras_api_url if endpoint_disclosure_allowed else "",
         **health,
+        "endpoint_disclosure_allowed": endpoint_disclosure_allowed,
         "llm": record.get("llm", {}),
         "artifact_credentials": _artifact_credential_record_summary(record),
     }
