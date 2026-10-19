@@ -4300,6 +4300,38 @@ def test_explicit_terminal_recovery_rejects_mismatched_replacement_job_name(
     assert submitter.calls == []
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("partial_launch", {"phase": "prepared"}),
+        ("recovery_reservation", {"attempt": 2}),
+    ],
+)
+def test_explicit_terminal_recovery_refuses_unresolved_launch_recovery(
+    tmp_path: Path, field: str, value: dict[str, object]
+) -> None:
+    spec, store, run_id, step = _seed_explicit_terminal_recovery_case(tmp_path)
+    state = store.read_runtime_state()
+    state.waves[0][field] = value
+    store.write_runtime_state(state)
+    submitter = FakeSubmitter()
+    executor = _executor(
+        spec,
+        run_id=run_id,
+        store=store,
+        submitter=submitter,
+        options=RuntimeOptions(resume=True, recover_managed_job_id="2"),
+        reconcile_fn=lambda *_args, **_kwargs: pytest.fail(
+            "explicit recovery must not reconcile unresolved launch evidence"
+        ),
+    )
+
+    with pytest.raises(NpaWorkflowError, match="unresolved launch-recovery evidence"):
+        executor.execute(step)
+    assert submitter.calls == []
+    assert store.read_runtime_state().waves[0]["status"] == "failed"
+
+
 def test_explicit_terminal_recovery_refuses_an_active_stale_job(
     tmp_path: Path,
 ) -> None:

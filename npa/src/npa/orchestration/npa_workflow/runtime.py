@@ -1585,6 +1585,11 @@ class SkyPilotWaveExecutor:
             raise NpaWorkflowError(
                 f"wave {key}: --recover-managed-job-id requires one failed prior wave"
             )
+        if record.get("partial_launch") or record.get("recovery_reservation"):
+            raise NpaWorkflowError(
+                f"wave {key}: explicit terminal recovery refuses unresolved "
+                "launch-recovery evidence"
+            )
         if not all(
             record.get(field) for field in ("job_id", "job_name", "logical_launch_id")
         ):
