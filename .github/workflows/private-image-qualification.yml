@@ -28,7 +28,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Pin the integrated scanner with current security hardening.
-          ref: 94beff6f84963255a3d7bc6fd6ee2b8bd560dc9f
+          ref: 1d05d505e9ccf0beef7dc680788089ffc3147689
           path: scanner
           persist-credentials: false
 

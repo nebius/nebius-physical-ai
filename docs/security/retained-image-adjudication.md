@@ -15,6 +15,8 @@ workspace closes. The private receipt contains a retention manifest plus
 content-addressed files. It excludes confidentiality policy values and literal
 inventories. This hosted route supports CI regex policy only. A historical scan
 without this retention cannot acquire a reconstructed authorization afterward.
+Ledger records are authenticated and consumed incrementally, with per-line size
+bounds and required newline termination.
 
 ## Trust and transport
 
