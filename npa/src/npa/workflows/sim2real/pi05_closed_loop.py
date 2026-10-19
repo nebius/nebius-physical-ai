@@ -90,9 +90,7 @@ PROMPT = (
     "Pick up the object and release it inside the cyan circular target on the table."
 )
 WRIST_ABLATION_MODES = ("fresh", "frozen", "pixel_channel_shuffle")
-LEGACY_DEFAULT_OBJECT_ASSET = (
-    "Isaac/Props/Blocks/MultiColorCube/multi_color_cube_instanceable.usd"
-)
+LEGACY_DEFAULT_OBJECT_ASSET = "Isaac/Props/Blocks/DexCube/dex_cube_instanceable.usd"
 OBJECT_SOURCE_FIELDS = (
     "profile_identity",
     "source_uri",
@@ -1618,7 +1616,10 @@ def _validate_eval_object_source(native: Any, protocol: dict[str, Any]) -> str:
     if binding.get("authority") == "sealed_legacy_collection":
         expected = str(binding.get("runtime_asset") or "")
         if not expected or not actual.endswith(expected):
-            raise RuntimeError("evaluator legacy object asset differs from collection")
+            raise RuntimeError(
+                "evaluator legacy object asset differs from collection: "
+                f"expected suffix {expected!r}, got {actual!r}"
+            )
     elif binding.get("authority") == "prepared_profile":
         expected = str(protocol.get("_runtime_object_usd") or "")
         if not expected or actual != expected:

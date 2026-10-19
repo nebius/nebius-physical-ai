@@ -804,7 +804,7 @@ def test_legacy_collection_object_binding_is_exact_and_disclosed() -> None:
 
     assert binding == {
         "authority": "sealed_legacy_collection",
-        "runtime_asset": pi05_closed_loop.LEGACY_DEFAULT_OBJECT_ASSET,
+        "runtime_asset": ("Isaac/Props/Blocks/DexCube/dex_cube_instanceable.usd"),
         "collection_contract_sha256": collection["task_contract"]["contract_sha256"],
         "source_hashes_available": False,
     }
@@ -859,8 +859,8 @@ def test_eval_object_source_requires_exact_legacy_runtime_asset() -> None:
                 cfg=Namespace(
                     spawn=Namespace(
                         usd_path=(
-                            "omniverse://assets/"
-                            + pi05_closed_loop.LEGACY_DEFAULT_OBJECT_ASSET
+                            "omniverse://assets/Isaac/Props/Blocks/"
+                            "DexCube/dex_cube_instanceable.usd"
                         )
                     )
                 )
@@ -869,9 +869,12 @@ def test_eval_object_source_requires_exact_legacy_runtime_asset() -> None:
     )
 
     assert _validate_eval_object_source(native, protocol).endswith(
-        pi05_closed_loop.LEGACY_DEFAULT_OBJECT_ASSET
+        "Isaac/Props/Blocks/DexCube/dex_cube_instanceable.usd"
     )
-    native.scene["object"].cfg.spawn.usd_path = "omniverse://assets/other.usd"
+    native.scene["object"].cfg.spawn.usd_path = (
+        "omniverse://assets/Isaac/Props/Blocks/"
+        "MultiColorCube/multi_color_cube_instanceable.usd"
+    )
     with pytest.raises(RuntimeError, match="legacy object asset"):
         _validate_eval_object_source(native, protocol)
 
