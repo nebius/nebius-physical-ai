@@ -150,7 +150,7 @@ independently verifies and scans it again under the configured policy.
 ## Source, policy, and evidence boundaries
 
 The interface runs only from the reviewed default-branch workflow. The scanner
-is separately pinned to `1d05d505e9ccf0beef7dc680788089ffc3147689`, which includes
+is separately pinned to `99953df6f74c3c7f5ed61b0f9f27acc280b70e12`, which includes
 the original-manifest verifier, retained-input adjudication and current scanner security hardening. The helper verifies that checkout is exact
 and clean, including ignored files such as pre-existing Python bytecode, before
 any scanner child starts. A scanner-pin update requires review; callers cannot select code.

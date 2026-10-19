@@ -28,7 +28,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Exact implementation of original-graph and retained-input checks.
-          ref: 1d05d505e9ccf0beef7dc680788089ffc3147689
+          ref: 99953df6f74c3c7f5ed61b0f9f27acc280b70e12
           path: scanner
           persist-credentials: false
 
