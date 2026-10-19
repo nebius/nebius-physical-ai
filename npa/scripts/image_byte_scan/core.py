@@ -373,7 +373,7 @@ def bound_open(spec, *, secret=True):
         isinstance(spec.get("sha256"), str) and SHA.fullmatch(spec["sha256"]),
         "input_binding_digest",
     )
-    path, fd, info = open_private_fd(spec["path"], secret=secret)
+    path, fd, info = open_private_fd(input_location(spec), secret=secret)
     try:
         require(descriptor_digest(fd) == spec["sha256"], "input_binding_changed")
         require(
@@ -392,6 +392,45 @@ def bound_open(spec, *, secret=True):
 def bound_file(spec, *, secret=True):
     with bound_open(spec, secret=secret) as (path, _fd, _info):
         return path
+
+
+_RETAINED_INPUTS = ContextVar("retained_image_scan_inputs", default=None)
+
+
+def input_location(spec):
+    """Resolve an explicitly authenticated transport binding, preserving its hash.
+
+    Args:
+        spec: Original immutable input path and SHA-256 binding.
+    Returns:
+        The original path, or its independently verified retained location.
+    Raises:
+        ScanError: A mapped input has a different content identity.
+    """
+    locations = _RETAINED_INPUTS.get()
+    if locations is None or spec["path"] not in locations:
+        return spec["path"]
+    binding = locations[spec["path"]]
+    require(binding["sha256"] == spec["sha256"], "transport_input_digest")
+    return binding["path"]
+
+
+def source_bindings_match(bindings):
+    """Compare original source identities to this checkout after explicit transport.
+
+    Args:
+        bindings: Original scanner source bindings, never rewritten in place.
+    Returns:
+        Whether the complete source population and bytes match this checkout.
+    Raises:
+        ScanError: A transported source binding has a conflicting digest.
+    """
+    require(isinstance(bindings, dict), "scanner_source_binding_changed")
+    resolved = {
+        name: {"path": input_location(spec), "sha256": spec["sha256"]}
+        for name, spec in bindings.items()
+    }
+    return resolved == source_bindings()
 
 
 @contextmanager
@@ -3550,10 +3589,16 @@ def graph(fd, length, verification, expected_id):
     if verification.get("schema_version") in (
         "npa.ncore.oci-verification.v1",
         "npa.image.oci-verification.v1",
+        "npa.image.registry-manifest-verification.v1",
         "npa.robotwin.image-verification.v1",
     ):
         if verification["schema_version"] == "npa.robotwin.image-verification.v1":
             from . import robotwin_verification as N
+        elif (
+            verification["schema_version"]
+            == "npa.image.registry-manifest-verification.v1"
+        ):
+            from . import registry_manifest_verification as N
         elif verification["schema_version"] == "npa.image.oci-verification.v1":
             from . import oci_verification as N
         else:
@@ -3887,7 +3932,7 @@ def input_snapshots(authorization):
     items.append(("helper_ready", tools_receipt["ready"], True))
     items.extend(_optional_snapshot_specs(authorization))
     configured_sources = authorization.get("sources")
-    require(configured_sources == source_bindings(), "scanner_source_binding_changed")
+    require(source_bindings_match(configured_sources), "scanner_source_binding_changed")
     items.extend(
         ("source:" + role, spec, False) for role, spec in configured_sources.items()
     )
@@ -3920,6 +3965,7 @@ def verification_archive_digest(verification):
             "npa.docker-save.image-verification.v1",
             "npa.ncore.oci-verification.v1",
             "npa.image.oci-verification.v1",
+            "npa.image.registry-manifest-verification.v1",
             "npa.robotwin.image-verification.v1",
             "npa.seedvr2.direct-manifest-verification.v1",
             "npa.image.direct-manifest-verification.v1",
@@ -4067,10 +4113,16 @@ def _scan(authorization, directory, detector_type=Detector, *, record_observer=N
         if verification["schema_version"] in (
             "npa.ncore.oci-verification.v1",
             "npa.image.oci-verification.v1",
+            "npa.image.registry-manifest-verification.v1",
             "npa.robotwin.image-verification.v1",
         ):
             if verification["schema_version"] == "npa.robotwin.image-verification.v1":
                 from . import robotwin_verification as N
+            elif (
+                verification["schema_version"]
+                == "npa.image.registry-manifest-verification.v1"
+            ):
+                from . import registry_manifest_verification as N
             elif verification["schema_version"] == "npa.image.oci-verification.v1":
                 from . import oci_verification as N
             else:

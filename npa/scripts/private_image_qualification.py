@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
+from contextvars import ContextVar
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -12,16 +14,19 @@ from pathlib import Path
 import re
 import shlex
 import shutil
+import signal
 import stat
 import subprocess
 import sys
 import tarfile
 import tempfile
 
-SCANNER_REVISION = "551b5da4d9c62297236c103a30040c78e3b50dd6"
+SCANNER_REVISION = "99953df6f74c3c7f5ed61b0f9f27acc280b70e12"
 EXPORT_ROOT = Path(".local/share/npa/private-image-qualification/exports")
 RECEIPT_ROOT = Path(".local/share/npa/private-image-qualification/receipts")
+ADJUDICATION_ROOT = Path(".local/share/npa/private-image-adjudication/requests")
 MANIFEST_SCHEMA = "npa.private-image-qualification.v1"
+REGISTRY_MANIFEST_SCHEMA = "npa.private-registry-manifest-qualification.v1"
 CHUNK = 1024 * 1024
 MANIFEST_BYTES = 16384
 HEX = re.compile(r"[0-9a-f]{64}")
@@ -50,10 +55,42 @@ RECEIPT_FILES = (
     "scan/records.jsonl",
     "integration/native-checks.json",
     "integration/native-checks-failure.json",
+    "phases.jsonl",
+    "diagnostics/helper-build.log",
+    "diagnostics/native-dependencies.log",
+    "diagnostics/native-integration.log",
+    "diagnostics/graph-verification.log",
+    "diagnostics/image-scan.log",
+    "retained/retention.json",
 )
+PHASES = frozenset(
+    {
+        "manifest-transfer",
+        "capacity",
+        "scanner-preparation",
+        "policy-check",
+        "helper-build",
+        "native-dependencies",
+        "native-integration",
+        "capacity-after-preparation",
+        "archive-transfer",
+        "image-scan",
+        "graph-verification",
+        "scan-authorization",
+        "scan-report",
+        "scan-input-retention",
+        "review-request",
+        "review-evidence",
+        "review-binding",
+        "adjudication",
+        "receipt-retention",
+    }
+)
+_CURRENT_RUN = ContextVar("private_qualification_run", default=None)
 ERROR_CODES = frozenset(
     {
         "archive_digest",
+        "adjudication_failed",
         "archive_size",
         "directory_not_private",
         "directory_scope",
@@ -74,15 +111,19 @@ ERROR_CODES = frozenset(
         "output_replaced",
         "parent_replaced",
         "policy_unavailable",
+        "qualification_cancelled",
+        "progress_phase",
         "policy_receipt_invalid",
         "private_receipt_not_retained",
         "receipt_capacity",
         "receipt_identity",
         "report_counts",
         "report_identity",
+        "report_graph_scope",
         "report_missing",
         "run_identity",
         "scan_authorization_failed",
+        "scan_input_retention_failed",
         "helper_build_failed",
         "native_dependency_failed",
         "native_integration_failed",
@@ -309,7 +350,10 @@ def _manifest(data, selector):
         },
         "manifest_schema",
     )
-    _require(value["schema_version"] == MANIFEST_SCHEMA, "manifest_schema")
+    _require(
+        value["schema_version"] in (MANIFEST_SCHEMA, REGISTRY_MANIFEST_SCHEMA),
+        "manifest_schema",
+    )
     _require(
         type(value["archive_sha256"]) is str and HEX.fullmatch(value["archive_sha256"]),
         "archive_digest",
@@ -327,6 +371,7 @@ def _manifest(data, selector):
 def _copy_exact(source, destination, size, digest):
     observed, value = 0, hashlib.sha256()
     while observed < size:
+        _check_cancelled()
         data = source.read(min(CHUNK, size - observed))
         _require(bool(data), "transfer_truncated")
         destination.write(data)
@@ -362,6 +407,73 @@ def _remote_fetch(selector, role):
             == manifest["archive_sha256"],
             "input_changed",
         )
+
+
+def _adjudication_request(data, selector):
+    _require(
+        HEX.fullmatch(selector)
+        and _sha(data) == selector
+        and len(data) <= MANIFEST_BYTES,
+        "manifest_digest",
+    )
+    value = json.loads(data, object_pairs_hook=_unique_object)
+    digests = (
+        "image_manifest_sha256",
+        "scan_receipt_sha256",
+        "retention_sha256",
+        "review_tar_sha256",
+        "disposition_manifest_sha256",
+        "independent_review_sha256",
+    )
+    sizes = ("scan_receipt_bytes", "review_tar_bytes", "workspace_bytes")
+    _require(
+        type(value) is dict
+        and set(value) == {"schema_version", "scan_run_id", *digests, *sizes},
+        "manifest_schema",
+    )
+    _require(
+        value["schema_version"] == "npa.private-image-adjudication.v1",
+        "manifest_schema",
+    )
+    _require(
+        all(type(value[key]) is str and HEX.fullmatch(value[key]) for key in digests),
+        "manifest_digest",
+    )
+    _require(
+        all(type(value[key]) is int and value[key] > 0 for key in sizes),
+        "manifest_capacity",
+    )
+    _require(re.fullmatch(r"[0-9]+-[0-9]+", value["scan_run_id"]), "run_identity")
+    return value
+
+
+def _remote_review(selector, role):
+    _require(HEX.fullmatch(selector), "manifest_selector")
+    directory = Path.home() / ADJUDICATION_ROOT / selector
+    with _private_input(directory / "request.json") as (stream, _info):
+        data = stream.read(MANIFEST_BYTES + 1)
+    request = _adjudication_request(data, selector)
+    if role == "request":
+        sys.stdout.buffer.write(data)
+        return
+    _require(role in ("receipt", "review"), "transfer_role")
+    if role == "receipt":
+        _remote_manifest(request["image_manifest_sha256"])
+        path = (
+            Path.home()
+            / RECEIPT_ROOT
+            / request["image_manifest_sha256"]
+            / request["scan_run_id"]
+            / "result.tar"
+        )
+        size, digest = request["scan_receipt_bytes"], request["scan_receipt_sha256"]
+    else:
+        path = directory / "review.tar"
+        size, digest = request["review_tar_bytes"], request["review_tar_sha256"]
+    with _private_input(path) as (stream, info):
+        _require(info.st_size == size, "receipt_identity")
+        _copy_exact(stream, sys.stdout.buffer, size, digest)
+        _require(_descriptor_digest(stream.fileno(), size) == digest, "input_changed")
 
 
 def _remote_store(selector, run, size, digest):
@@ -469,7 +581,7 @@ def _transfer_failure(errors):
 def _fetch(ssh, selector, role, destination, *, size=None, digest=None):
     command = _remote_command(ssh, "fetch", selector, role)
     with _private_output(destination) as output, tempfile.TemporaryFile() as errors:
-        with subprocess.Popen(
+        with _child(
             command, stdout=subprocess.PIPE, stderr=errors, env=_clean_environment()
         ) as process:
             try:
@@ -491,7 +603,7 @@ def _fetch(ssh, selector, role, destination, *, size=None, digest=None):
                                 raise _transfer_failure(errors) from error
                         raise
             except BaseException:
-                process.kill()
+                process.terminate()
                 raise
             if process.wait() != 0:
                 raise _transfer_failure(errors)
@@ -541,17 +653,124 @@ def _scanner_command(scanner, script, root, *arguments, **options):
     return command
 
 
-def _execute(command, *, policy=False):
-    # Underlying errors can contain paths or matches; they never reach Actions logs.
-    with tempfile.TemporaryFile() as output:
-        result = subprocess.run(
+class _RunObserver:
+    """Keep fixed progress metadata and cancellation separate from private output."""
+
+    def __init__(self, root, journal):
+        self.root = root
+        self.journal = journal
+        self.phase = "manifest-transfer"
+        self.child = None
+        self.signum = None
+        self.force = False
+        self.retaining = False
+
+    def event(self, event, **details):
+        value = {"phase": self.phase, "event": event, **details}
+        record = {"time": datetime.now(timezone.utc).isoformat(), **value}
+        self.journal.write(_json_bytes(record))
+        self.journal.flush()
+        os.fsync(self.journal.fileno())
+        # Fixed phases and numeric exit/signal metadata are safe for Actions.
+        print(json.dumps(value, sort_keys=True), flush=True)
+
+    def cancel(self, signum, _frame):
+        self.force = self.signum is not None
+        self.signum = self.signum or signum
+        # The trusted child's own cancellation protocol joins its helpers.
+        # A repeated cancellation explicitly forces only the owned child.
+        # Do not interrupt the final private receipt transfer with another signal.
+        if not self.retaining and self.child is not None:
+            self.stop_child()
+
+    def stop_child(self):
+        if self.force:
+            self.child.kill()
+        else:
+            self.child.terminate()
+
+
+@contextmanager
+def _observe_run(root):
+    (root / "diagnostics").mkdir(mode=0o700)
+    with _private_output(root / "phases.jsonl") as journal:
+        observer = _RunObserver(root, journal)
+        token = _CURRENT_RUN.set(observer)
+        previous = {
+            number: signal.getsignal(number)
+            for number in (signal.SIGTERM, signal.SIGINT)
+        }
+        try:
+            for number in previous:
+                signal.signal(number, observer.cancel)
+            yield observer
+        finally:
+            for number, handler in previous.items():
+                signal.signal(number, handler)
+            _CURRENT_RUN.reset(token)
+
+
+def _check_cancelled():
+    observer = _CURRENT_RUN.get()
+    if observer is not None and not observer.retaining:
+        _require(observer.signum is None, "qualification_cancelled")
+
+
+def _phase(name):
+    _require(name in PHASES, "progress_phase")
+    _check_cancelled()
+    observer = _CURRENT_RUN.get()
+    if observer is not None:
+        observer.phase = name
+        observer.event("started")
+
+
+@contextmanager
+def _child(command, **options):
+    """Own a child handle across the signal-during-spawn window and always join it."""
+    _check_cancelled()
+    observer, process = _CURRENT_RUN.get(), None
+    try:
+        process = subprocess.Popen(command, start_new_session=True, **options)
+        if observer is not None:
+            observer.child = process
+            if observer.signum is not None and not observer.retaining:
+                observer.stop_child()
+        yield process
+    finally:
+        if process is not None:
+            if process.poll() is None:
+                process.terminate()
+            process.wait()
+            for stream in (process.stdin, process.stdout, process.stderr):
+                if stream is not None:
+                    stream.close()
+        if observer is not None:
+            observer.child = None
+
+
+def _execute(command, *, policy=False, phase=None):
+    observer = _CURRENT_RUN.get()
+    if phase is not None:
+        _phase(phase)
+    # A policy-bearing command may echo a malformed rule. Never retain its output.
+    output_context = (
+        _private_output(observer.root / "diagnostics" / (phase + ".log"))
+        if observer is not None and phase is not None and not policy
+        else tempfile.TemporaryFile()
+    )
+    with output_context as output:
+        with _child(
             command,
             stdout=output,
             stderr=subprocess.STDOUT,
             env=_clean_environment(policy=policy),
-            check=False,
-        )
-    return result.returncode
+        ) as process:
+            returncode = process.wait()
+    if observer is not None:
+        observer.event("child-exited", exit_code=returncode)
+    _check_cancelled()
+    return returncode
 
 
 def _check_policy(scanner):
@@ -560,6 +779,7 @@ def _check_policy(scanner):
         _execute(
             [sys.executable, str(prepare), "check-policy", "--policy-mode", "ci-regex"],
             policy=True,
+            phase="policy-check",
         )
         == 0,
         "policy_unavailable",
@@ -596,21 +816,47 @@ def _prepare_scanner(scanner, root):
         "native_dependency_failed",
         "native_integration_failed",
     )
-    for command, code in zip(commands, codes, strict=True):
-        _require(_execute(command) == 0, code)
+    phases = ("helper-build", "native-dependencies", "native-integration")
+    for command, code, phase in zip(commands, codes, phases, strict=True):
+        _require(_execute(command, phase=phase) == 0, code)
 
 
 def _scan(scanner, root, manifest):
+    _require(
+        manifest["schema_version"] in (MANIFEST_SCHEMA, REGISTRY_MANIFEST_SCHEMA),
+        "manifest_schema",
+    )
+    verifier = (
+        "registry_manifest_verification.py"
+        if manifest["schema_version"] == REGISTRY_MANIFEST_SCHEMA
+        else "oci_verification.py"
+    )
     graph = _scanner_command(
         scanner,
-        "image_byte_scan/oci_verification.py",
+        "image_byte_scan/" + verifier,
         root,
         archive=root / "image.tar",
         expected_image_id=manifest["expected_image_id"],
         output_dir=root / "graph",
     )
-    _require(_execute(graph) == 0, "oci_verification_failed")
-    authorize = _scanner_command(
+    _require(
+        _execute(graph, phase="graph-verification") == 0, "oci_verification_failed"
+    )
+    _authorize_scan(scanner, root, manifest)
+    return _execute(
+        _scanner_command(
+            scanner,
+            "scan_image_bytes.py",
+            root,
+            authorization=root / "authorization/authorization.json",
+            output_dir=root / "scan",
+        ),
+        phase="image-scan",
+    )
+
+
+def _authorize_scan(scanner, root, manifest):
+    command = _scanner_command(
         scanner,
         "image_byte_scan/prepare.py",
         root,
@@ -623,15 +869,9 @@ def _scan(scanner, root, manifest):
         output_dir=root / "authorization",
         policy_mode="ci-regex",
     )
-    _require(_execute(authorize, policy=True) == 0, "scan_authorization_failed")
-    return _execute(
-        _scanner_command(
-            scanner,
-            "scan_image_bytes.py",
-            root,
-            authorization=root / "authorization/authorization.json",
-            output_dir=root / "scan",
-        )
+    _require(
+        _execute(command, policy=True, phase="scan-authorization") == 0,
+        "scan_authorization_failed",
     )
 
 
@@ -658,6 +898,24 @@ def _policy_summary(report):
         "policy_receipt_invalid",
     )
     return {key: policy[key] for key in ("policy_sha256", "customer", "infra")}
+
+
+def _graph_scope_summary(report, manifest):
+    if manifest["schema_version"] != REGISTRY_MANIFEST_SCHEMA:
+        return {}
+    graph = report.get("oci_graph", {})
+    attestations = {
+        "manifests_in_bound_graph": 0,
+        "status": "not-present-in-original-manifest-graph",
+        "external_referrers": "not-inspected",
+    }
+    _require(
+        graph.get("identity_kind") == "original-registry-manifest"
+        and graph.get("image_manifest_digest") == manifest["expected_image_id"]
+        and graph.get("attestations") == attestations,
+        "report_graph_scope",
+    )
+    return {"identity_kind": "original-registry-manifest", "attestations": attestations}
 
 
 def _scan_summary(root, manifest, selector, returncode):
@@ -693,6 +951,7 @@ def _scan_summary(root, manifest, selector, returncode):
         "archive_sha256": manifest["archive_sha256"],
         "scanner_revision": SCANNER_REVISION,
         "confidentiality_policy": policy,
+        **_graph_scope_summary(report, manifest),
         **counts,
     }
 
@@ -701,7 +960,7 @@ def _bundle(root):
     target = root / "result.tar"
     with _private_output(target) as output:
         with tarfile.open(fileobj=output, mode="w|") as archive:
-            for name in RECEIPT_FILES:
+            for name in (*RECEIPT_FILES, *_retained_input_names(root)):
                 path = root / name
                 if not path.exists():
                     continue
@@ -710,66 +969,159 @@ def _bundle(root):
                     member.size, member.mode = info.st_size, 0o600
                     archive.addfile(member, stream)
     with _private_input(target) as (stream, info):
-        digest_state = hashlib.sha256()
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest_state.update(chunk)
-        value = digest_state.hexdigest()
+        value = _descriptor_digest(stream.fileno(), info.st_size)
     return target, info.st_size, value
+
+
+def _retained_input_names(root):
+    path = root / "retained/retention.json"
+    if not path.exists():
+        return []
+    with _private_input(path) as (stream, _info):
+        receipt = json.load(stream, object_pairs_hook=_unique_object)
+    _require(
+        receipt["schema_version"] == "npa.image-byte-retained-inputs.v1"
+        and receipt["policy_values_retained"] is False,
+        "scan_input_retention_failed",
+    )
+    names = set(receipt["files"].values())
+    for row in receipt["inputs"]:
+        _require(
+            row["role"] != "confidentiality"
+            or (row["delivery"] == "secret" and "file" not in row),
+            "scan_input_retention_failed",
+        )
+        if row["delivery"] == "retained":
+            names.add(row["file"])
+    _require(
+        all(type(name) is str and HEX.fullmatch(name) for name in names),
+        "scan_input_retention_failed",
+    )
+    for name in names:
+        with _private_input(root / "retained" / name) as (stream, info):
+            _require(
+                _descriptor_digest(stream.fileno(), info.st_size) == name,
+                "scan_input_retention_failed",
+            )
+    return ["retained/" + name for name in sorted(names)]
+
+
+def _retain_scan_inputs(scanner, root, run):
+    revision = subprocess.check_output(
+        ["git", "-C", str(Path(__file__).resolve().parents[2]), "rev-parse", "HEAD"],
+        text=True,
+        env=_clean_environment(),
+    ).strip()
+    command = _scanner_command(
+        scanner,
+        "image_byte_scan/retained_inputs.py",
+        root,
+        authorization=root / "authorization/authorization.json",
+        report=root / "scan/report.json",
+        records=root / "scan/records.jsonl",
+        output_dir=root / "retained",
+        native_checks=root / "integration/native-checks.json",
+        run_id=run,
+        interface_revision=revision,
+    )
+    _require(
+        _execute(command, phase="scan-input-retention") == 0,
+        "scan_input_retention_failed",
+    )
 
 
 def _retain(ssh, root, selector, run):
     path, size, digest = _bundle(root)
     command = _remote_command(ssh, "store", selector, run, str(size), digest)
     with _private_input(path) as (stream, _info), tempfile.TemporaryFile() as errors:
-        result = subprocess.run(
+        with _child(
             command,
             stdin=stream,
             stdout=subprocess.PIPE,
             stderr=errors,
             env=_clean_environment(),
-            check=False,
-        )
+        ) as process:
+            stdout, _ = process.communicate()
+            returncode = process.returncode
     _require(
-        result.returncode == 0
-        and json.loads(result.stdout) == {"sha256": digest, "bytes": size},
+        returncode == 0 and json.loads(stdout) == {"sha256": digest, "bytes": size},
         "private_receipt_not_retained",
     )
     return {"receipt_sha256": digest, "receipt_bytes": size}
 
 
-def _qualify(scanner, root, ssh, selector, run):
+def _qualification_steps(scanner, root, ssh, selector):
+    _phase("manifest-transfer")
     _fetch(ssh, selector, "manifest", root / "manifest.json")
     manifest = _manifest((root / "manifest.json").read_bytes(), selector)
+    _phase("capacity")
+    _capacity(root, manifest)
+    _phase("scanner-preparation")
+    _prepare_scanner(scanner, root)
+    _phase("capacity-after-preparation")
+    _capacity_after_preparation(root, manifest)
+    _phase("archive-transfer")
+    _fetch(
+        ssh,
+        selector,
+        "archive",
+        root / "image.tar",
+        size=manifest["archive_bytes"],
+        digest=manifest["archive_sha256"],
+    )
+    _phase("image-scan")
+    returncode = _scan(scanner, root, manifest)
+    _phase("scan-report")
+    return _scan_summary(root, manifest, selector, returncode)
+
+
+def _cancelled_summary(summary, observer):
+    if observer.signum is not None:
+        summary.update(status="failed", complete=False, signal=observer.signum)
+        summary.update(
+            _failure(_QualificationError("qualification_cancelled"), observer.phase)
+        )
+        observer.event("cancelled", signal=observer.signum)
+
+
+def _retain_summary(summary, ssh, root, selector, run):
+    try:
+        summary.update(_retain(ssh, root, selector, run))
+    except (OSError, ValueError, KeyError, TypeError, _QualificationError) as error:
+        failure = _failure(error, "receipt-retention")
+        summary["receipt_retention_failure"] = failure
+        if summary["status"] == "passed":
+            summary.update(failure)
+        summary.update(status="failed", complete=False)
+
+
+def _qualify(scanner, root, ssh, selector, run):
     summary = {
         "status": "failed",
         "manifest_sha256": selector,
         "scanner_revision": SCANNER_REVISION,
     }
-    stage = "capacity"
-    try:
-        _capacity(root, manifest)
-        stage = "scanner-preparation"
-        _prepare_scanner(scanner, root)
-        stage = "capacity-after-preparation"
-        _capacity_after_preparation(root, manifest)
-        stage = "archive-transfer"
-        _fetch(
-            ssh,
-            selector,
-            "archive",
-            root / "image.tar",
-            size=manifest["archive_bytes"],
-            digest=manifest["archive_sha256"],
-        )
-        stage = "image-scan"
-        returncode = _scan(scanner, root, manifest)
-        stage = "scan-report"
-        summary = _scan_summary(root, manifest, selector, returncode)
-    except (OSError, ValueError, KeyError, TypeError, _QualificationError) as error:
-        summary.update(_failure(error, stage))
-    _write(root / "summary.json", _json_bytes(summary))
-    summary.update(_retain(ssh, root, selector, run))
-    print(json.dumps(summary, sort_keys=True))
+    with _observe_run(root) as observer:
+        try:
+            summary = _qualification_steps(scanner, root, ssh, selector)
+            if summary.get("complete") is True:
+                _retain_scan_inputs(scanner, root, run)
+            _check_cancelled()
+        except (OSError, ValueError, KeyError, TypeError, _QualificationError) as error:
+            summary.update(
+                _failure(error, observer.phase), status="failed", complete=False
+            )
+        _cancelled_summary(summary, observer)
+        cancelled_before_retention = observer.signum
+        observer.retaining = True
+        _phase("receipt-retention")
+        _write(root / "summary.json", _json_bytes(summary))
+        _retain_summary(summary, ssh, root, selector, run)
+        # A late signal cannot turn an interrupted run into an accepted result,
+        # even when the receipt already contains a completed scanner report.
+        if cancelled_before_retention is None:
+            _cancelled_summary(summary, observer)
+        print(json.dumps(summary, sort_keys=True), flush=True)
     return 0 if summary["status"] == "passed" else 1
 
 
@@ -812,7 +1164,7 @@ def _arguments(argv):
     run.add_argument("--scanner-root", type=Path, required=True)
     run.add_argument("--work-parent", type=Path, required=True)
     remote = commands.add_parser("remote")
-    remote.add_argument("operation", choices=("fetch", "store"))
+    remote.add_argument("operation", choices=("fetch", "store", "review"))
     remote.add_argument("selector")
     remote.add_argument("values", nargs="+")
     return parser.parse_args(argv)
@@ -824,7 +1176,10 @@ def _main(argv=None):
         args = _arguments(argv)
         if args.command == "run":
             return _run(args)
-        if args.operation == "fetch":
+        if args.operation == "review":
+            _require(len(args.values) == 1, "transfer_arguments")
+            _remote_review(args.selector, args.values[0])
+        elif args.operation == "fetch":
             _require(len(args.values) == 1, "transfer_arguments")
             _remote_fetch(args.selector, args.values[0])
         else:
