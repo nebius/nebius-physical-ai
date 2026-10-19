@@ -700,6 +700,15 @@ def test_submit_runtime_forwards_explicit_terminal_recovery_id(fake_runtime) -> 
             [
                 "--resume-run",
                 "rt-cli-terminal-recovery",
+                "--recover-managed-job-id",
+                "2",
+            ],
+            "--recover-managed-job-id requires --runtime",
+        ),
+        (
+            [
+                "--resume-run",
+                "rt-cli-terminal-recovery",
                 "--runtime",
                 "--recover-managed-job-id",
                 "job-two",

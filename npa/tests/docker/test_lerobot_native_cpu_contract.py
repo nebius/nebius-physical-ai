@@ -74,11 +74,16 @@ def test_default_dependencies_identify_secure_integration_and_decoder_abi():
         "dependency-source-correction.json"
     )
     assert "COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa" not in recipe
-    for copied_path in ("__init__.py", "clients", "server", "smoke"):
+    for copied_path in ("__init__.py", "server", "smoke"):
         assert (
             f"COPY --chown=ubuntu:ubuntu src/npa/{copied_path} /opt/npa/src/npa/"
             in recipe
         )
+    assert (
+        "COPY --chown=ubuntu:ubuntu "
+        "src/npa/clients/__init__.py src/npa/clients/storage.py "
+        "/opt/npa/src/npa/clients/"
+    ) in recipe
     assert "stage's own NPA install" in recipe
     assert "shipping it here would make the repair's import" in recipe
     assert "prepare-secure-wheel.py" in recipe

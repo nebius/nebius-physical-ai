@@ -4332,6 +4332,53 @@ def test_explicit_terminal_recovery_refuses_unresolved_launch_recovery(
     assert store.read_runtime_state().waves[0]["status"] == "failed"
 
 
+def test_explicit_terminal_recovery_refuses_immutable_identity_mismatch(
+    tmp_path: Path,
+) -> None:
+    spec, store, run_id, step = _seed_explicit_terminal_recovery_case(tmp_path)
+    state = store.read_runtime_state()
+    state.waves[0]["immutable_identity"]["image_digest"] = "sha256:" + "f" * 64
+    store.write_runtime_state(state)
+    submitter = FakeSubmitter()
+    executor = _executor(
+        spec,
+        run_id=run_id,
+        store=store,
+        submitter=submitter,
+        options=RuntimeOptions(resume=True, recover_managed_job_id="2"),
+        reconcile_fn=lambda *_args, **_kwargs: pytest.fail(
+            "explicit recovery must not reconcile an identity-mismatched wave"
+        ),
+    )
+
+    with pytest.raises(NpaWorkflowError, match="IMMUTABLE_IDENTITY_MISMATCH"):
+        executor.execute(step)
+    assert submitter.calls == []
+    assert store.read_runtime_state().waves[0]["status"] == "failed"
+
+
+def test_explicit_terminal_recovery_refuses_the_stale_recorded_job_id(
+    tmp_path: Path,
+) -> None:
+    spec, store, run_id, step = _seed_explicit_terminal_recovery_case(tmp_path)
+    submitter = FakeSubmitter()
+    executor = _executor(
+        spec,
+        run_id=run_id,
+        store=store,
+        submitter=submitter,
+        options=RuntimeOptions(resume=True, recover_managed_job_id="1"),
+        reconcile_fn=lambda *_args, **_kwargs: pytest.fail(
+            "explicit recovery must reject the stale job before reconciliation"
+        ),
+    )
+
+    with pytest.raises(NpaWorkflowError, match="recovery ID must differ"):
+        executor.execute(step)
+    assert submitter.calls == []
+    assert store.read_runtime_state().waves[0]["status"] == "failed"
+
+
 def test_explicit_terminal_recovery_refuses_an_active_stale_job(
     tmp_path: Path,
 ) -> None:
