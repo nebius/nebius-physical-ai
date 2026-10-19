@@ -38,7 +38,7 @@ apt-get install -y --no-install-recommends \
   libxrender-dev=1:0.9.10-1build4 \
   ninja-build=1.10.1-1 \
   pkg-config=0.29.2-1ubuntu3 \
-  python3=3.10.4-0ubuntu2 \
+  python3=3.10.6-1~22.04.1 \
   openssh-server=1:8.9p1-3ubuntu0.16 \
   rsync=3.2.7-0ubuntu0.22.04.7 \
   sudo=1.9.9-1ubuntu2.6 \

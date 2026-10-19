@@ -111,7 +111,8 @@ def test_bootstrap_sshd_is_baked_before_apt_hardening_and_has_no_host_keys():
     system_packages = (RECIPE / "install_immutable_system_packages.sh").read_text()
     assert "openssh-server=1:8.9p1-3ubuntu0.16" in system_packages
     assert "netcat-openbsd=1.218-4ubuntu1" in system_packages
-    assert "python3=3.10.4-0ubuntu2" in system_packages
+    assert "python3=3.10.6-1~22.04.1" in system_packages
+    assert "python3=3.10.4-0ubuntu2" not in system_packages
     assert "https://snapshot.ubuntu.com/ubuntu/20260820T000000Z" in system_packages
     assert "rm -f /etc/ssh/ssh_host_*" in system_packages
     assert "test -z \"$(find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*'" in system_packages
