@@ -5,14 +5,14 @@ metadata:
   executionMode: runtime
   description: Render an authored industrial reference scene with native Blender Cycles CUDA and publish offline HTML, OpenUSD, glTF, and measured rendering evidence.
 config:
+  required_immutable_images:
+    - runtime_image
   bucket: example-bucket
   prefix: digital-twin-cuda-render/{{run.id}}
   output_uri: s3://{{config.bucket}}/{{config.prefix}}/rendered
   source_overlay: true
-  # This renderer has no accepted public SONIC default. The operator must bind
-  # the exact compatible image before planning or a GPU submission.
-  required_immutable_images: [runtime_image]
-  runtime_image: ''
+  runtime_image: '{{config.operator_runtime_image}}'
+  operator_runtime_image: ''
   accelerator: B200:1
   views: 24
   samples: 64

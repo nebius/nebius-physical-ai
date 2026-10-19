@@ -88,6 +88,7 @@ ENV PIP_NO_CACHE_DIR=1
 
 # 0.5.1 is an explicitly versioned, source-verified NPA integration: the upstream
 # model code and license are retained, and dependency changes face native gates.
+# 0.5.1 retains its historic [pusht,libero] extra bundle through that secured source.
 # 0.6.0 uses lean feature extras and must NOT force torch>=2.12 (upstream ceiling).
 # 0.6.0 also moved diffusers/transformers behind extras and enforces them in each
 # policy's __init__, so diffusion and smolvla must be requested explicitly or
@@ -130,6 +131,7 @@ RUN python3.12 -m venv /opt/lerobot/venv \
          echo 'Unsupported LeRobot package version' >&2; exit 1; \
        fi \
     && /opt/lerobot/venv/bin/pip check \
+    && /opt/lerobot/venv/bin/pip uninstall -y wandb \
     && find /opt/lerobot/venv -type f \
          -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
     && test "$(/opt/lerobot/venv/bin/python -c \

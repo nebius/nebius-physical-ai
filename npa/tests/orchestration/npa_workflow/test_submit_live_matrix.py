@@ -15,13 +15,13 @@ from npa.orchestration.npa_workflow.blueprints import (
     iter_npa_workflow_specs,
     resolve_npa_workflow_spec,
 )
-from npa.orchestration.npa_workflow.errors import NpaWorkflowError
-from npa.orchestration.npa_workflow.image_inputs import required_immutable_image_inputs
 from npa.orchestration.npa_workflow.spec import load_spec
 from npa.orchestration.npa_workflow.submit_matrix import (
     SUBMIT_LIVE_MATRIX,
+    execution_config_vars,
     gpu_submit_cases,
     one_shot_submit_cases,
+    plan_only_config_vars,
     runtime_submit_cases,
     selected_submit_cases,
 )
@@ -363,23 +363,39 @@ def test_plan_only_cases_have_machine_checked_justifications() -> None:
             )
 
 
-def test_unbound_required_images_are_skipped_by_the_daily_rotation() -> None:
-    """Do not schedule a live case that must first receive an operator image."""
+def test_governed_matrix_cases_are_render_only_with_exact_plan_pins() -> None:
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.submit import merge_config_overrides
 
-    for case in SUBMIT_LIVE_MATRIX:
+    governed = {
+        case.spec
+        for case in SUBMIT_LIVE_MATRIX
+        if (path := resolve_npa_workflow_spec(case.spec)) is not None
+        and load_spec(path).config.get("required_immutable_images")
+    }
+    assert governed
+    registry = "registry.example.invalid/matrix"
+    digest = "sha256:" + "0" * 64
+    for case in (case for case in SUBMIT_LIVE_MATRIX if case.spec in governed):
+        assert case.plan_only and case.rotation_skip, case.spec
         path = resolve_npa_workflow_spec(case.spec)
-        assert path is not None
-        spec = load_spec(path)
-        if "required_immutable_images" not in spec.config:
-            continue
-        try:
-            required_immutable_image_inputs(spec.config)
-        except NpaWorkflowError:
-            assert case.rotation_skip, (
-                f"{case.spec} requires an operator image but remains in the daily "
-                "GPU rotation"
-            )
-            assert case.skip_reason
+        assert path is not None, case.spec
+        supplied = dict(plan_only_config_vars(case, registry))
+        for key in load_spec(path).config["required_immutable_images"]:
+            assert supplied[key] == f"{registry}/plan-only/{path.stem}-{key}@{digest}"
+        assert build_plan(
+            merge_config_overrides(load_spec(path), supplied),
+            run_id="governed-render-only",
+        ).steps
+
+
+def test_execution_matrix_config_never_reuses_render_only_fixtures() -> None:
+    case = next(case for case in SUBMIT_LIVE_MATRIX if case.spec == "sim2real.yaml")
+    assert execution_config_vars(case) == case.config_vars
+    assert "controller_image" not in dict(execution_config_vars(case))
+    assert "controller_image" in dict(
+        plan_only_config_vars(case, "registry.example.invalid/matrix")
+    )
 
 
 def test_coverage_backfill_cases_are_honestly_plan_only() -> None:

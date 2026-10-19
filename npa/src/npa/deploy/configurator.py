@@ -10,7 +10,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Sequence
 
-from jinja2 import Environment, FileSystemLoader
+import yaml
 
 from npa.clients.env import render_docker_env_file, render_shell_env_file
 from npa.clients.ssh import SSHClient
@@ -22,9 +22,9 @@ from npa.workbench.model_cache import (
     resolve_model_cache_root,
 )
 
-_TEMPLATES_DIR = Path(__file__).parent / "templates"
 _DEPLOY_DIR = Path(__file__).parent.parent.parent.parent / "deploy"
 _NPA_PACKAGE_ROOT = Path(__file__).parent.parent.parent.parent
+_DEFAULT_SERVER_HOST = "0.0.0.0"
 
 
 class ConfiguratorError(Exception):
@@ -279,6 +279,39 @@ def deploy_workbench_container(
     ssh.run_or_raise(run_cmd)
 
 
+def _server_yaml(config: dict[str, Any]) -> str:
+    """Serialize configuration values as YAML data, including multiline strings."""
+    return yaml.safe_dump(
+        {
+            "server": {
+                "host": _DEFAULT_SERVER_HOST,
+                "port": config.get("server_port", 8080),
+                "log_dir": config.get("log_dir", "/var/log/npa-lerobot"),
+            },
+            "storage": {
+                "checkpoint_dir": config.get("checkpoint_dir", "/data/checkpoints"),
+                "checkpoint_bucket": config.get("checkpoint_bucket", ""),
+                "endpoint_url": config.get("storage_endpoint", ""),
+            },
+            "jobs": {
+                "status_dir": config.get("job_status_dir", "/data/jobs"),
+                "default_output_dir": config.get(
+                    "training_output_dir", "/data/training_outputs"
+                ),
+            },
+            "lerobot": {
+                "default_device": "cuda",
+                "hf_cache_dir": config.get("hf_cache_dir", "/data/huggingface"),
+            },
+            "credentials": {
+                "hf_token_file": "/etc/npa/secrets/hf_token",
+                "s3_credentials_file": "/etc/npa/secrets/s3",
+            },
+        },
+        sort_keys=False,
+    )
+
+
 def deploy_server(
     ssh: SSHClient,
     server_config: dict[str, Any],
@@ -301,15 +334,13 @@ def deploy_server(
         )
 
         # 3. Render and upload server.yaml
-        env = Environment(loader=FileSystemLoader(str(_TEMPLATES_DIR)))
-        template = env.get_template("server.yaml.j2")
-        rendered = template.render(**server_config)
-
-        write_remote_text_file(ssh, "/etc/npa/server.yaml", rendered, owner="root")
+        write_remote_text_file(
+            ssh, "/etc/npa/server.yaml", _server_yaml(server_config), owner="root"
+        )
 
         # 4. Write env file for systemd from the server config
         env_vars: dict[str, Any] = {
-            "NPA_SERVER_HOST": server_config.get("server_host", "0.0.0.0"),
+            "NPA_SERVER_HOST": server_config.get("server_host", _DEFAULT_SERVER_HOST),
             "NPA_SERVER_PORT": server_config.get("server_port", 8080),
             "NPA_CHECKPOINT_DIR": server_config.get(
                 "checkpoint_dir", "/opt/lerobot/checkpoints"
@@ -432,7 +463,7 @@ sudo usermod -aG docker {shlex.quote(ssh_user)} || true
     )
 
     env_args = {
-        "NPA_SERVER_HOST": server_config.get("server_host", "0.0.0.0"),
+        "NPA_SERVER_HOST": server_config.get("server_host", _DEFAULT_SERVER_HOST),
         "NPA_SERVER_PORT": "8080",
         "NPA_CHECKPOINT_DIR": server_config.get(
             "checkpoint_dir", "/opt/lerobot/checkpoints"

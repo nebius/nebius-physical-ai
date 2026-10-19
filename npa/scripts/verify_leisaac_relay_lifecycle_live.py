@@ -160,7 +160,8 @@ class _WebSocket:
         raw_headers, separator, remainder = bytes(response).partition(b"\r\n\r\n")
         expected_accept = base64.b64encode(
             hashlib.sha1(
-                (key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode("ascii")
+                (key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode("ascii"),
+                usedforsecurity=False,
             ).digest()
         )
         lowered = raw_headers.lower()

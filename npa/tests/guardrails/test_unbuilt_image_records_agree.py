@@ -7,7 +7,8 @@ guard reads:
 * the supported or quarantined-candidate version inventory — normally a tag
   ending ``-unbuilt``; neutral bootstrap display sentinels stay outside the
   accepted ``SUPPORTED_TOOL_VERSIONS`` inventory;
-* ``blackwell-dc-images.json`` — ``validation: pending-build``;
+* ``blackwell-dc-images.json`` — ``validation: pending-build`` when no accepted
+  current candidate or complete current byte-scan proof exists;
 * ``golden_evals.yaml`` — a golden eval that is not ``ready``.
 
 A quarantined local candidate may advance from ``pending-build`` through
@@ -15,6 +16,10 @@ A quarantined local candidate may advance from ``pending-build`` through
 remains ``-unbuilt``. Publication acceptance removes the quarantine and unbuilt
 tag. These are claims about what has been *proven*, so their allowed
 relationships are asserted rather than left implicit.
+
+Retained quarantined bytes are not current candidates. Build or qualification
+cannot silently make the other records current, so the guard asserts their
+allowed relationships rather than leaving them to manual release bookkeeping.
 """
 
 from __future__ import annotations
@@ -29,6 +34,7 @@ import yaml
 
 from npa.deploy.images import (
     CONTAINER_IMAGE_NAMES,
+    GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS,
     LAYER_STALE_PUBLICATION_TOOLS,
     METADATA_STALE_PUBLICATION_TOOLS,
     NEUTRAL_UNBUILT_CANDIDATE_TOOLS,
@@ -39,6 +45,8 @@ from npa.deploy.images import (
     UNBUILT_CANDIDATE_TOOL_VERSIONS,
     UNVALIDATED_PUBLICATION_TOOLS,
     VALIDATION_CANDIDATE_TOOLS,
+    public_release_tag_for_tool,
+    publicly_publishable_tools,
     supported_tool_version,
 )
 
@@ -197,6 +205,96 @@ def test_stale_publications_are_built_releases_awaiting_requalification() -> Non
     assert STALE_PUBLICATION_TOOLS.isdisjoint(VALIDATION_CANDIDATE_TOOLS)
     for tool in STALE_PUBLICATION_TOOLS:
         assert not SUPPORTED_TOOL_VERSIONS[tool].endswith(UNBUILT_TAG_SUFFIX), tool
+
+
+def test_ray_serve_catalog_does_not_overstate_layer_stale_bytes() -> None:
+    """A quarantined Ray Serve digest cannot advertise current acceptance."""
+
+    tool = "cosmos3-ray-serve"
+    assert tool in LAYER_STALE_PUBLICATION_TOOLS
+    entry = _blackwell_images()[_image_name(tool)]
+
+    assert entry["verdict"] == "quarantined"
+    assert entry["validation"] == PENDING_BUILD
+    assert str(entry["quarantine_reason"]).strip()
+    assert (
+        entry["historical_validation"]["invalidated_by_current_byte_security"] is True
+    )
+    assert re.fullmatch(
+        r"sha256:[0-9a-f]{64}", str(entry["historical_validation"]["digest"])
+    )
+    historical_publication = entry["historical_publication"]
+    # These resolver records identify the retained historical bytes; neither
+    # assertion restores current release or publication eligibility.
+    assert historical_publication["tag"] == SUPPORTED_TOOL_VERSIONS[tool]
+    assert historical_publication["digest"] == GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS[tool]
+    assert "H200" in str(entry["notes"])
+    assert "validated_digest" not in entry
+    assert "published_digest" not in entry
+
+
+def test_agent_indexes_describe_quarantined_ray_serve_as_unavailable() -> None:
+    """Agent routing must not direct deployment of quarantined historical bytes."""
+
+    expected = "quarantined and must not be deployed or started"
+    for index in (REPO_ROOT / "AGENTS.md", REPO_ROOT / "CLAUDE.md"):
+        text = re.sub(r"\s+", " ", index.read_text(encoding="utf-8"))
+        assert "cosmos3-ray-serve" in text
+        assert expected in text
+
+    routing = yaml.safe_load(
+        (REPO_ROOT / "skills/index.yaml").read_text(encoding="utf-8")
+    )
+    ray_serve = next(
+        skill for skill in routing["skills"] if skill["name"] == "cosmos3-ray-serve"
+    )
+    assert "quarantined" in ray_serve["when_to_use"]
+    assert "must not be deployed or operated" in ray_serve["when_to_use"]
+
+    skill_text = (REPO_ROOT / "skills/tools/cosmos3-ray-serve/SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    assert "must not be deployed or operated" in skill_text
+
+    agent_interface = yaml.safe_load(
+        (REPO_ROOT / "skills/tools/cosmos3-ray-serve/agents/openai.yaml").read_text(
+            encoding="utf-8"
+        )
+    )["interface"]
+    assert "quarantined" in agent_interface["short_description"]
+    assert "do not deploy or operate" in agent_interface["default_prompt"]
+
+    matrix = (REPO_ROOT / "docs/workbench/image-gpu-compatibility-matrix.md").read_text(
+        encoding="utf-8"
+    )
+    assert (
+        "2026-08-26 retained records show `ray1-cu130` historically resolved" in matrix
+    )
+    assert "the published `ray1-cu130` tag resolves" not in matrix
+
+
+def test_catalog_quarantines_are_excluded_from_public_selection() -> None:
+    """Every declared catalog quarantine must be excluded by release selection."""
+
+    image_to_tool = {image: tool for tool, image in CONTAINER_IMAGE_NAMES.items()}
+    publishable = set(publicly_publishable_tools())
+    quarantined = {
+        image_name
+        for image_name, entry in _blackwell_images().items()
+        if entry.get("verdict") == "quarantined"
+    }
+    assert quarantined
+
+    for image_name in quarantined:
+        tool = image_to_tool.get(image_name)
+        assert tool is not None, image_name
+        assert tool in PUBLICATION_QUARANTINE_TOOLS, tool
+        assert tool not in publishable, tool
+        try:
+            public_release_tag_for_tool(tool)
+        except ValueError:
+            continue
+        raise AssertionError(f"{tool} must not have a public release tag")
 
 
 def test_stale_publication_quarantine_propagates_to_derived_images() -> None:

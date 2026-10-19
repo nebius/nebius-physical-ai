@@ -28,6 +28,12 @@ This runbook runs the sim-to-real VLM-eval loop on the self-hosted serving path:
 serve a VLM with vLLM, score rollout directories with `vlm-eval`, and write a
 task-success report.
 
+The native Cosmos Reason adapter pins its default Reason1 and Reason2 model
+and processor downloads to immutable revisions and disables repository-supplied
+Python code. A custom remote repository requires a reviewed 40-character commit
+in `NPA_COSMOS_REASON_MODEL_REVISION`. Local model directories use their local
+files. The LanceDB CLIP backfill also pins the model and processor to one commit.
+
 Each evaluation records the requested `model` and the endpoint's returned
 `served_model`. Self-hosted servers that omit the model identity leave
 `served_model` null; NPA does not infer it from the requested alias. A supplied

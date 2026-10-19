@@ -13,11 +13,13 @@ import base64
 import hashlib
 import importlib.util
 import io
+import ipaddress
 import json
 import math
 import os
 import random
 import re
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -3457,6 +3459,47 @@ def publish_learning(
     return result
 
 
+class _AgentNoRedirects(urllib.request.HTTPRedirectHandler):
+    """Keep authenticated API requests on the selected, verified agent origin."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _agent_http_opener(origin: str) -> urllib.request.OpenerDirector:
+    """Require verified HTTPS, or HTTP through an explicit loopback tunnel."""
+    parsed = urllib.parse.urlsplit(origin)
+    try:
+        loopback = ipaddress.ip_address(parsed.hostname or "").is_loopback
+    except ValueError:
+        loopback = parsed.hostname == "localhost"
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path
+        or parsed.query
+        or parsed.fragment
+        or (parsed.scheme == "http" and not loopback)
+    ):
+        raise GrootVisualizationError(
+            "agent_url must be an HTTPS origin or a loopback HTTP tunnel"
+        )
+    if os.environ.get("NPA_AGENT_TLS_VERIFY", "1") == "0":
+        raise GrootVisualizationError(
+            "agent TLS verification is required; use NPA_AGENT_CA_FILE for a trusted certificate"
+        )
+    context = ssl.create_default_context(
+        cafile=os.environ.get("NPA_AGENT_CA_FILE") or None
+    )
+    return urllib.request.build_opener(
+        urllib.request.ProxyHandler({}),
+        urllib.request.HTTPSHandler(context=context),
+        _AgentNoRedirects(),
+    )
+
+
 def verify_agent_ui_handoff(
     agent_url: str,
     report_uri: str,
@@ -3476,7 +3519,8 @@ def verify_agent_ui_handoff(
     persisted or printed.
 
     Args:
-        agent_url: Authenticated Agent HTTP or HTTPS origin.
+        agent_url: Verified HTTPS origin or loopback HTTP tunnel. A custom trust
+            anchor may be supplied through ``NPA_AGENT_CA_FILE``.
         report_uri: Expected learning-report artifact URI.
         rrd_uri: Expected Rerun recording artifact URI.
         mcap_uri: Expected MCAP recording artifact URI.
@@ -3494,22 +3538,13 @@ def verify_agent_ui_handoff(
 
     client = _s3_client(s3_client)
     origin = str(agent_url or "").strip().rstrip("/")
-    if not origin.startswith(("http://", "https://")):
-        raise GrootVisualizationError("agent_url must be an HTTP(S) origin")
+    opener = _agent_http_opener(origin)
     credentials = os.environ.get("NPA_AGENT_BASIC_AUTH", "").strip()
     if not credentials or ":" not in credentials:
         raise GrootVisualizationError(
             "NPA_AGENT_BASIC_AUTH is required for UI verification"
         )
     authorization = "Basic " + base64.b64encode(credentials.encode()).decode()
-    context = None
-    if (
-        origin.startswith("https://")
-        and os.environ.get("NPA_AGENT_TLS_VERIFY", "1") == "0"
-    ):
-        import ssl
-
-        context = ssl._create_unverified_context()  # noqa: S323 - explicit operator setting
 
     def request_json(
         path: str, *, body: Mapping[str, Any] | None = None
@@ -3525,9 +3560,7 @@ def verify_agent_ui_handoff(
             method="POST" if payload is not None else "GET",
         )
         try:
-            with urllib.request.urlopen(
-                request, timeout=60, context=context
-            ) as response:
+            with opener.open(request, timeout=60) as response:
                 parsed = json.loads(response.read().decode())
         except (OSError, ValueError, urllib.error.URLError) as exc:
             raise GrootVisualizationError(
@@ -3538,15 +3571,16 @@ def verify_agent_ui_handoff(
         return parsed
 
     def range_ok(path: str) -> bool:
+        target = urllib.parse.urljoin(origin + "/", str(path))
+        if urllib.parse.urlsplit(target)[:2] != urllib.parse.urlsplit(origin)[:2]:
+            return False
         request = urllib.request.Request(
-            urllib.parse.urljoin(origin + "/", str(path).lstrip("/")),
+            target,
             headers={"Authorization": authorization, "Range": "bytes=0-63"},
         )
         try:
-            with urllib.request.urlopen(
-                request, timeout=60, context=context
-            ) as response:
-                body = response.read()
+            with opener.open(request, timeout=60) as response:
+                body = response.read(65)
                 return response.status in {200, 206} and 0 < len(body) <= 64
         except (OSError, urllib.error.URLError):
             return False

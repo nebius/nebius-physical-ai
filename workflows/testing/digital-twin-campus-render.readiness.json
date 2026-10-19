@@ -1,46 +1,55 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "a03f821331597d0153c274bc16e051124b90fb721f7f9dbeea286e1150ebb1c3",
+  "workflow_sha256": "6fa38b2a79f24bdad9feaa08d4ce2b9a32245b2810e66c361d2b8f5e2c9d9a16",
   "planning": {
     "validation": {
-      "status": "verified",
-      "reason": "Schema loads. Missing required operator runtime_image values refuse before planning; a supplied immutable fixture reaches the production renderer. Offline checks do not qualify image bytes or workloads.",
-      "evidence": [
-        "npa/tests/orchestration/npa_workflow/test_required_immutable_image_inputs.py",
-        "npa/tests/cli/test_workflow_required_images.py"
-      ]
+      "status": "unverified",
+      "reason": "The changed workflow deliberately refuses before planning until an operator supplies a compatible registry-qualified immutable runtime_image; no current exact-image planning result is recorded.",
+      "evidence": []
     },
     "task_fidelity": {
       "status": "unverified",
-      "reason": "The former fixed-image RTX evidence is bound to the prior workflow digest. The current operator-selected runtime image needs fresh workload qualification.",
+      "reason": "No current operator-selected runtime image has established task fidelity for these changed workflow bytes; prior rendering evidence remains historical only.",
       "evidence": []
     }
   },
   "prerequisites": {
     "output_storage": {
       "status": "unverified",
-      "reason": "The selected project and run-scoped storage must pass current submission preflight.",
-      "evidence": []
+      "reason": "The cited immutable publication and object-storage readback are historical evidence; this changed workflow has no current exact-image run or readback binding.",
+      "evidence": [
+        "docs/workbench/guides/digital-twin.md#verified-rtx-campus-execution",
+        "npa/tests/e2e/test_digital_twin_render_live.py"
+      ]
     },
     "worker_input": {
       "status": "unverified",
-      "reason": "Current scene inputs and applicable access terms must be checked for the selected operator image and run.",
-      "evidence": []
+      "reason": "The cited worker-source and route checks are historical evidence, not proof for this changed workflow with an operator-selected runtime image.",
+      "evidence": [
+        "docs/workbench/guides/digital-twin.md#verified-rtx-campus-execution",
+        "npa/tests/e2e/test_digital_twin_render_live.py"
+      ]
     },
     "credentials": {
       "status": "unverified",
-      "reason": "Current storage and runtime credentials must pass preflight.",
-      "evidence": []
+      "reason": "The cited project and storage evidence is historical; current credentials, selected image access, and a new run remain unverified.",
+      "evidence": [
+        "docs/workbench/guides/digital-twin.md#verified-rtx-campus-execution",
+        "npa/tests/e2e/test_digital_twin_render_live.py"
+      ]
     },
     "source_image": {
       "status": "unverified",
-      "reason": "Select an independently qualified immutable operator image; no public default is accepted.",
+      "reason": "No default source image is selected. The workflow requires an operator-supplied compatible immutable runtime_image, whose image, bootstrap, access, and entitlement checks remain unverified.",
       "evidence": []
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "The selected exact image must complete the advertised native OptiX workload on the selected RTX target.",
-      "evidence": []
+      "reason": "The cited RTX PRO 6000 render is historical and does not transfer to an operator-selected current runtime image. Compatible GPU evidence, artifact acceptance, and playback remain unverified.",
+      "evidence": [
+        "docs/workbench/guides/digital-twin.md#verified-rtx-campus-execution",
+        "npa/tests/e2e/test_digital_twin_render_live.py"
+      ]
     }
   }
 }

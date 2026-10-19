@@ -10,8 +10,7 @@ config:
   bucket: example-bucket
   prefix: rgbd-scan-to-policy-demo/{{run.id}}
   source_overlay: true
-  # Select qualified CPU and Isaac runtimes explicitly; the CPU image must expose
-  # /opt/npa/sim/venv/bin/python and the NPA Open3D/SciPy stack.
+  # Select qualified CPU and Isaac runtimes explicitly; provenance needs exact bytes.
   required_immutable_images: [assembly_image, reconstruction_image, isaac_image]
   assembly_image: ''
   isaac_image: ''

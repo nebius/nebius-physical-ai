@@ -39,6 +39,14 @@ jobs:
 
 
 def _dependency_fixture(root: Path) -> None:
+    _write_fixture(
+        root, "Dockerfile", 'FROM scratch\nRUN pip install "requests==2.19.1"\n'
+    )
+    _write_fixture(
+        root,
+        "Dockerfile.exec",
+        'FROM scratch\nRUN ["pip", "install", "requests==2.19.1"]\n',
+    )
     _write_fixture(root, "requirements.txt", "requests==2.19.1\n")
     hashed_pin = "requests==2.19.1 --hash=sha256:" + "0" * 64 + "\n"
     _write_fixture(root, "hashed-requirements.txt", hashed_pin)
@@ -54,6 +62,20 @@ def _dependency_fixture(root: Path) -> None:
     _write_fixture(root, "named-wheel-requirements.txt", named_wheel)
     _write_fixture(root, "isaac-oss-deps.txt", "requests==2.19.1\n")
     _write_fixture(root, "baked-constraints.txt", "requests==2.19.1\n")
+    _write_fixture(
+        root,
+        "runtime-requirements.lock",
+        json.dumps(
+            {
+                "schema": "npa.robomimic.runtime-lock.v1",
+                "packages": {"requests": "2.19.1"},
+            }
+        ),
+    )
+    _npm_fixture(root)
+
+
+def _npm_fixture(root: Path) -> None:
     lock = {
         "name": "synthetic-security-regression",
         "version": "1.0.0",
@@ -116,6 +138,8 @@ def _check_dependencies(root: Path, output: Path) -> dict:
     _dependency_fixture(root)
     findings = scan_dependencies(root, output / "dependencies", output / "cache")
     declarations = (
+        ("Dockerfile", "requests"),
+        ("Dockerfile.exec", "requests"),
         ("requirements.txt", "requests"),
         ("package-lock.json", "minimist"),
         ("hashed-requirements.txt", "requests"),
@@ -123,6 +147,7 @@ def _check_dependencies(root: Path, output: Path) -> dict:
         ("named-wheel-requirements.txt", "requests"),
         ("isaac-oss-deps.txt", "requests"),
         ("baked-constraints.txt", "requests"),
+        ("runtime-requirements.lock", "requests"),
     )
     for manifest, package in declarations:
         matched = [

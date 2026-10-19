@@ -1,0 +1,39 @@
+{
+  "schema": "npa.security-applicability-review.v1",
+  "review_date": "2026-10-18",
+  "finding_id": "CVE-2026-59890",
+  "advisory": "https://github.com/advisories/GHSA-h35f-9h28-mq5c",
+  "component": "pkg:pypi/setuptools@80.9.0",
+  "assessment": "affected code absent from the pip vendor subset",
+  "raw_scanner_finding_retained": true,
+  "scope": {
+    "image_manifest_digest": "sha256:b9cf0e8702533d5614046d1828068de3da23bad2f3f2b113c445227dc72398a6",
+    "image_source_commit": "1995fce2f564d69c4088f13b25797a1b71837c31",
+    "raw_trivy_report_sha256": "d381f2e218ad2d039130a2802f0c07ed18cacedcf4f9a934d4534f504e55f138",
+    "pip_version": "26.2.1+npa.1",
+    "pip_wheel_sha256": "a71a4e82929d20ecd881f3081749cbaad14875b99f162d6387c3f1889735ae27",
+    "installed_setuptools_version": "84.0.0",
+    "runtime_python_version": "3.10.22",
+    "tested_interpreters": ["/usr/local/bin/python", "/opt/wan-base/bin/python"]
+  },
+  "evidence": {
+    "donor_usage": "Only pkg_resources is retained from the exact 80.9.0 wheel; its source version remains recorded in the vendor inventory and BOM.",
+    "absent_from_repaired_pip_wheel": [
+      "setuptools/command/egg_info.py",
+      "setuptools/unicode_utils.py",
+      "setuptools/_distutils/filelist.py"
+    ],
+    "pip_tree_contains_no_setuptools_modules": true,
+    "installed_setuptools_84_unicode_exclusion_regression_passed_on_both_interpreters": true,
+    "actual_image_nonroot_readonly_network_disabled_proof_passed": true
+  },
+  "limitations": [
+    "This assessment covers only the recorded pip donor component in this exact final runtime.",
+    "It does not qualify another image digest or remove the raw scanner finding.",
+    "The unfiltered image scan still reports 385 package/CVE occurrences: 384 OS findings and this donor finding.",
+    "The complete-byte audit still has 220 unresolved matches, and this candidate has no GPU qualification.",
+    "No scanner ignore, advisory dismissal, image publication, or zero-vulnerability claim is granted by this record."
+  ],
+  "upstream_fix": "https://github.com/pypa/setuptools/commit/dd9f436a36486b4cb8a4c70a2321548b0be09b8f",
+  "source_inputs": "npa/docker/workbench/common/secure_pip/inputs.json"
+}

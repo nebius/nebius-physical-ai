@@ -147,8 +147,9 @@ def test_regen_result_rejects_rollout_only_observations(tmp_path: Path) -> None:
         _regen_result_from_viz("rollout-only", tmp_path, RolloutOnlyResult())
 
 
+@pytest.mark.parametrize("config_factory", [_config, _artifact_config])
 def test_regen_sim2real_rrd_accepts_heldout_environment_evidence(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, config_factory
 ) -> None:
     local_dir = tmp_path / "run"
     (local_dir / "inner_loop/outer-01").mkdir(parents=True)
@@ -182,7 +183,7 @@ def test_regen_sim2real_rrd_accepts_heldout_environment_evidence(
     )
 
     result = regen_sim2real_rrd(
-        _config(), local_dir=local_dir, sync_inputs=False, upload=False
+        config_factory(), local_dir=local_dir, sync_inputs=False, upload=False
     )
     assert result.heldout_frame_count == 0
 
@@ -239,6 +240,37 @@ def test_regen_sim2real_rrd_success(
     )
     assert result.heldout_frame_count == 4
     assert result.local_rrd_path.endswith("sim2real.rrd")
+
+
+def test_regen_sim2real_rrd_rejects_non_heldout_observation_evidence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    local_dir = tmp_path / "run"
+    (local_dir / "inner_loop/outer-01").mkdir(parents=True)
+    (local_dir / "eval/heldout").mkdir(parents=True)
+    (local_dir / "inner_loop/outer-01/evidence.json").write_text(
+        json.dumps({"outer_iteration": 1, "iterations": []}),
+        encoding="utf-8",
+    )
+    (local_dir / "eval/heldout/report.json").write_text(
+        json.dumps({"success_rate": 1.0}), encoding="utf-8"
+    )
+
+    class FakeResult:
+        output_rrd_path = str(local_dir / "reports" / "sim2real.rrd")
+        heldout_frame_count = 0
+        heldout_env_count = 0
+        rollout_count = 1
+        frame_count = 1
+        has_factual_observation_evidence = True
+
+    monkeypatch.setattr(
+        "npa.workflows.sim2real_rerun_regen.emit_sim2real_rerun",
+        lambda **_kwargs: FakeResult(),
+    )
+
+    with pytest.raises(Sim2RealRerunRegenError, match="no factual held-out camera"):
+        regen_sim2real_rrd(_config(), local_dir=local_dir, sync_inputs=False)
 
 
 def test_gold_report_path_tracks_latest_completed_outer_iteration(
