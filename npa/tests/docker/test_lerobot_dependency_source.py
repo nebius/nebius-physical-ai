@@ -115,7 +115,10 @@ def test_bootstrap_sshd_is_baked_before_apt_hardening_and_has_no_host_keys():
     assert "python3=3.10.4-0ubuntu2" not in system_packages
     assert "https://snapshot.ubuntu.com/ubuntu/20260820T000000Z" in system_packages
     assert "rm -f /etc/ssh/ssh_host_*" in system_packages
-    assert "test -z \"$(find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*'" in system_packages
+    assert (
+        "test -z \"$(find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*'"
+        in system_packages
+    )
     assert "rm -f /etc/ssh/ssh_host_*" in prereq
     assert (
         "test -z \"$(find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*' "
@@ -159,9 +162,7 @@ def test_build_dependency_closure_has_no_moving_repository_or_python_resolution(
     ):
         lock = (RECIPE / name).read_text()
         assert "file:///tmp" not in lock
-        version = local_wheel.removeprefix("lerobot-").removesuffix(
-            "-py3-none-any.whl"
-        )
+        version = local_wheel.removeprefix("lerobot-").removesuffix("-py3-none-any.whl")
         assert f"lerobot=={version}" in lock
         assert "wandb==0.30.0" in lock
         assert "datasets==5.0.1" in lock
