@@ -46,6 +46,9 @@ DEFAULT_ENV_COUNT = 10_000
 DEFAULT_TRAIN_FRACTION = 0.8
 DEFAULT_ENVGEN_SHARD_COUNT = 16
 DEFAULT_K8S_MAX_PARALLEL_GPUS = 16
+DEFAULT_K8S_ISAAC_CACHE_PVC = "npa-sim2real-isaac-cache"
+DEFAULT_K8S_GPU_RESOURCE = "nvidia.com/gpu"
+DEFAULT_K8S_GPU_PRODUCT = "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
 DEFAULT_ACTION_ENV_LIMIT = 256
 # This is the compact VLM-signal adapter/control step size. It is intentionally
 # not the Isaac RSL-RL PPO optimizer learning rate, which remains owned by the

@@ -48,10 +48,11 @@ or spawn sibling Jobs.
   model-agent accounting. Stage 9 must reject missing, duplicate, or extra
   evaluations or a mismatched configured model/family by comparing that single result with the authoritative Stage 7
   rollout set before PPO or checkpoint selection.
-- The `cosmos3_model` config key, `cosmos3.json` artifact, and evaluator schema/lane
-  names are retained for compatibility; the actual model and `reason_family`
-  identify MiniMax or an explicitly selected legacy Cosmos3 endpoint. Changing
-  the model or upgrading the evaluator contract requires a new run.
+- The canonical Stage 8/9 interface uses `token_factory_model`,
+  `token-factory.json`, and `npa.sim2real.token_factory_evaluator.v1`; it has no
+  canonical Cosmos3 reasoning selector. Only the archived legacy loop retains
+  its source-supported `vlm_cosmos3_model` and `vlm_eval_cosmos3` compatibility
+  interface. Changing the canonical model or evaluator contract requires a new run.
 - Train, validation, and gold digests are disjoint. After the full PPO pass,
   checkpoint ranking evaluates every saved 100-update checkpoint and the final
   checkpoint on the same validation split. Preserve actual checkpoint update

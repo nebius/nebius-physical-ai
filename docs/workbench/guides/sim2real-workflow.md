@@ -349,7 +349,7 @@ Expected for the Isaac pool: the RTX PRO 6000 rows report
 that pool with `--gpu-workload-profile rtx-rendering`.
 
 Transfer and EnvGen default to `RTXPRO6000:1` so one reserved RTX pool can run
-the entire graph. On a mixed cluster, pass `--var transfer_accelerator=B200:1`
+the entire graph. On a mixed cluster, pass `--var cosmos3_accelerator=B200:1`
 and `--var envgen_accelerator=B200:1` to use reserved B200 compute capacity.
 The Isaac resource remains `RTXPRO6000:1` because it requires RT cores and the
 graphics driver stack. The canonical `gpu_concurrency` default is deliberately

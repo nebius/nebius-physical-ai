@@ -2940,6 +2940,8 @@ def find_job_ids_by_name(
     )
     if result.returncode != 0:
         return []
+    if verified_structured_queue_rows(result) is None:
+        return []
     return parse_job_ids_by_name(result.stdout, job_name)
 
 
@@ -3220,7 +3222,7 @@ def _reconcile_managed_job_env(
             error=_redact_private_text(detail, redactions),
         )
     else:
-        parsed_rows = queue_rows_from_output(result.stdout)
+        parsed_rows = verified_structured_queue_rows(result)
         if parsed_rows is None:
             return ReconciliationEvidence(
                 ReconciliationState.AMBIGUOUS,
@@ -3502,7 +3504,7 @@ def _libero_launch_binding_candidates(
                 "binding could not be read; preserving indeterminate state and "
                 "refusing retry",
             )
-        rows = queue_rows_from_output(result.stdout)
+        rows = verified_structured_queue_rows(result)
     except Exception:  # noqa: BLE001 - missing confirmation must fail closed
         return (
             "",
@@ -5279,6 +5281,8 @@ def _verified_job_id(
             check=False,
         )
         if result.returncode != 0:
+            return parsed
+        if verified_structured_queue_rows(result) is None:
             return parsed
         ids = parse_job_ids_by_name(result.stdout, job_name)
     except Exception:  # noqa: BLE001 - never fail a successful submit over a lookup

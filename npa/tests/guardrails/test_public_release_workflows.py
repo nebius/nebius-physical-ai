@@ -210,6 +210,88 @@ def test_prepublication_gates_run_before_the_public_dev_push() -> None:
     assert "if matrix and head != sha" in text
 
 
+def test_cosmos3_ray_payload_logs_keep_member_metadata_in_json() -> None:
+    """Require redacted scanner output, cleanup, and failure-status preservation."""
+    scanner = "scan_image_cosmos3_ray_serve_payload.py"
+    workflow_paths = [
+        path for pattern in ("*.yml", "*.yaml") for path in WORKFLOWS.glob(pattern)
+    ]
+    scanner_steps = [
+        script
+        for path in workflow_paths
+        for job in _spec(path).get("jobs", {}).values()
+        for step in job.get("steps", [])
+        if scanner in (script := str(step.get("run") or ""))
+    ]
+    assert len(scanner_steps) == 2, (
+        "both pre- and post-push scans must stay redacted; review any new scanner call "
+        "site before updating this count"
+    )
+    for script in scanner_steps:
+        assert "--json" in script
+        assert "--full-stdout" not in script
+        assert re.search(
+            r"else\s+(?P<status>[A-Za-z_][A-Za-z0-9_]*)=\$\?.*?"
+            r'exit "\$(?P=status)"',
+            script,
+            re.DOTALL,
+        )
+    assert "npa/tests/docker/test_cosmos3_ray_payload_evidence.py" in _runs(PUBLISH)
+    workflow_text = PUBLISH.read_text(encoding="utf-8")
+    for archive, report in (
+        (
+            "$RUNNER_TEMP/${TOOL}.tar",
+            "$RUNNER_TEMP/${TOOL}-cosmos3-ray-serve-payload.json",
+        ),
+        (
+            "$RUNNER_TEMP/${TOOL}-pushed.tar",
+            "$RUNNER_TEMP/${TOOL}-pushed-cosmos3-ray-serve-payload.json",
+        ),
+    ):
+        assert f'payload_report="{report}"' in workflow_text
+        normalized_workflow = workflow_text.replace("\\\n", " ")
+        assert re.search(
+            rf'rm -f "{re.escape(archive)}"\s+"\$payload_report"',
+            normalized_workflow,
+        )
+        assert re.search(
+            rf'rm -f "{re.escape(archive)}"\s+"{re.escape(report)}"',
+            normalized_workflow,
+        )
+    steps = _spec(PUBLISH)["jobs"]["build-development"]["steps"]
+    for step_name in (
+        "Enforce runtime, revision, bootstrap, config, and history contracts",
+        "Verify pushed bytes, revision, payload, visibility, and anonymous pull",
+    ):
+        cleanup_step = next(step for step in steps if step.get("name") == step_name)
+        assert 'payload_report=""' in cleanup_step["run"]
+        assert "trap cleanup_libero_export EXIT" in cleanup_step["run"]
+        assert (
+            'if [ -n "$payload_report" ] && ! rm -f "$payload_report"; then'
+            in cleanup_step["run"]
+        )
+    for directory in (
+        ROOT / ".github" / "actions",
+        ROOT / "npa" / "docker",
+        ROOT / "npa" / "scripts",
+        ROOT / "npa" / "src",
+        ROOT / "scripts",
+    ):
+        if directory.exists():
+            for path in directory.rglob("*"):
+                if path.is_file() and path.suffix in {".py", ".sh", ".yaml", ".yml"}:
+                    assert not re.search(
+                        rf"(?:^|[;\n])\s*(?:[^\s]*/)?python(?:[0-9.]+)?\s+"
+                        rf"(?:[^\s]+/)?{re.escape(scanner)}\b",
+                        path.read_text(encoding="utf-8", errors="ignore"),
+                    ), f"unreviewed non-workflow scanner invocation in {path}"
+    for path in (ROOT / "Makefile", ROOT / "npa" / "Makefile"):
+        if path.is_file():
+            assert scanner not in path.read_text(encoding="utf-8", errors="ignore"), (
+                path
+            )
+
+
 def test_public_base_pull_authentication_precedes_local_build() -> None:
     spec = _spec(PUBLISH)
     steps = spec["jobs"]["build-development"]["steps"]

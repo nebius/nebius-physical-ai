@@ -49,6 +49,7 @@ def test_candidate_binding_recomputes_checked_local_identity(
     monkeypatch, tmp_path: Path
 ) -> None:
     analysis = tmp_path / "analysis"
+    analysis.mkdir(mode=0o700)
     gate = analysis / "check"
     gate.mkdir(mode=0o700, parents=True)
     (analysis / "build").mkdir(mode=0o700)

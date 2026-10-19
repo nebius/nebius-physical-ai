@@ -662,8 +662,8 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(
             return _completed(json.dumps({"terraform_version": "1.12.2"}))
         if args[:4] == ["nebius", "mk8s", "cluster", "list"]:
             return _completed('{"items":[]}')
-        if args[:4] == ["nebius", "quotas", "quota-allowance", "get-by-name"]:
-            return _completed(json.dumps({"spec": {"limit": str(2 * 1024**4)}}))
+        if args[:4] == ["nebius", "quotas", "quota-allowance", "list"]:
+            return _completed(_filesystem_catalog(2 * 1024**4))
         if args[:2] == ["terraform", "state"]:
             return _completed("", returncode=1)
         if args[:3] == ["terraform", "output", "-json"]:
@@ -1283,6 +1283,27 @@ def test_up_allows_duplicate_managed_by_terraform_state(
     assert _find_call(stream_calls, "terraform", "apply", "-auto-approve")
 
 
+def _filesystem_catalog(limit):
+    return json.dumps(
+        {
+            "items": [
+                {
+                    "metadata": {
+                        "name": "compute.filesystem.size.network-ssd",
+                        "parent_id": "tenant-a",
+                    },
+                    "spec": {"region": "region-a", "limit": str(limit)},
+                    "status": {
+                        "state": "STATE_ACTIVE",
+                        "unit": "byte",
+                        "usage_state": "USAGE_STATE_NOT_USED",
+                    },
+                }
+            ]
+        }
+    )
+
+
 def test_up_stops_when_filestore_quota_is_too_small(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -1313,8 +1334,8 @@ def test_up_stops_when_filestore_quota_is_too_small(
             return _completed('{"items":[]}')
         if args[:2] == ["terraform", "state"]:
             return _completed("", returncode=1)
-        if args[:4] == ["nebius", "quotas", "quota-allowance", "get-by-name"]:
-            return _completed(json.dumps({"spec": {"limit": "0"}}))
+        if args[:4] == ["nebius", "quotas", "quota-allowance", "list"]:
+            return _completed(_filesystem_catalog(0))
         raise AssertionError(args)
 
     monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)

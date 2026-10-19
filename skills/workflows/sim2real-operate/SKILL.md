@@ -81,8 +81,8 @@ with an actionable migration to this canonical spec.
 
 ## Submit and resume
 
-Compute-only Transfer and EnvGen stages may select `B200:1` through
-`transfer_accelerator` and `envgen_accelerator`. Isaac stages stay on
+Compute-only Cosmos3 and EnvGen stages may select `B200:1` through
+`cosmos3_accelerator` and `envgen_accelerator`. Isaac stages stay on
 `RTXPRO6000:1`. Use available reserved capacity first; an operator-authorized
 preemptible pool is a placement fallback. Set `gpu_concurrency` to the actual
 schedulable GPU count before planning.

@@ -372,6 +372,7 @@ def _docker_save(
         gname=structural_gname,
     )
     path.write_bytes(outer)
+    path.chmod(0o600)
     return config_digest, diff_ids
 
 
@@ -397,6 +398,7 @@ def _duplicate_outer_member(path: Path, name: str) -> None:
                 )
             output.addfile(duplicate, io.BytesIO(duplicate_body))
     path.write_bytes(rendered.getvalue())
+    path.chmod(0o600)
 
 
 def _append_outer_files(path: Path, files: dict[str, bytes]) -> None:
@@ -422,6 +424,7 @@ def _append_outer_files(path: Path, files: dict[str, bytes]) -> None:
                 info.size = len(body)
                 output.addfile(info, io.BytesIO(body))
     path.write_bytes(rendered.getvalue())
+    path.chmod(0o600)
 
 
 def _docker_save_with_oci_graph(
@@ -678,6 +681,7 @@ def _oci_layout(
             structural_directory_bodies=True,
         )
     )
+    path.chmod(0o600)
     return hashlib.sha256(config).hexdigest(), diff_ids, descriptors
 
 

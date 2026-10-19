@@ -21,9 +21,11 @@ iteration and three outer iterations, with early exit after the strict quality
 threshold passes. Reduced integration runs prove orchestration only; they do
 not qualify policy efficacy.
 
-Stage 8 uses one explicitly selected hosted model. The current default is
-MiniMax-M3 on Token Factory; its results retain that model identity. An
-authorized endpoint may select Cosmos3 explicitly. See the
+Stage 8 uses the canonical hosted evaluator, MiniMaxAI/MiniMax-M3 on Token
+Factory; its results retain that model identity. Stage 3 separately performs
+real Cosmos3-Nano generation. A Cosmos3 reasoning backend is not selectable in
+the canonical workflow: it requires separate implementation and evaluator-contract
+validation. See the
 [execution guide](../workbench/guides/sim2real-workflow.md) for model access,
 concurrency, full-frame evaluation, and verified per-rollout resume receipts.
 

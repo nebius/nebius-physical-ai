@@ -145,13 +145,22 @@ def test_envgen_removes_optional_forbidden_and_vulnerable_parent_tools() -> None
     assert "raise RuntimeError(" in compat
 
 
-def test_envgen_corrects_inherited_recipe_before_flattening() -> None:
-    text = (WORKBENCH / "sim2real-envgen/Dockerfile").read_text()
+def test_envgen_corrects_inert_dependency_recipe_before_flattening() -> None:
+    """Discard the original source and bytecode from every published layer."""
+
+    text = (WORKBENCH / "sim2real-envgen/Dockerfile").read_text(encoding="utf-8")
     assert "COPY docker/workbench/curobo/remove_scikit_image_recipe.py" in text
-    correction = text.index("python /usr/local/lib/npa/remove-scikit-image-recipe.py")
-    assert "--site-packages /opt/npa/venv/lib/python3.11/site-packages" in text
+    correction = text.index(
+        "&& python /usr/local/lib/npa/remove-scikit-image-recipe.py"
+    )
+    assert text.index("FROM ${BASE_IMAGE} AS sanitized") < correction
     assert correction < text.index("python -m pip check")
     assert correction < text.index("FROM scratch AS runtime")
+    assert text.index("COPY --from=sanitized / /") > correction
+    assert "--site-packages /opt/npa/venv/lib/python3.11/site-packages" in text
+    assert "--capability envgen" in text
+    assert "/usr/share/doc/npa-envgen/dependency-source-correction.json" in text
+    assert text.count("python /usr/local/lib/npa/remove-scikit-image-recipe.py") == 1
 
 
 def test_genesis_workflow_runtime_upgrades_fixed_kernel_headers() -> None:
@@ -165,12 +174,12 @@ def test_genesis_workflow_runtime_upgrades_fixed_kernel_headers() -> None:
     assert "ubuntu:22.04" in snapshot_config
     assert "ubuntu:24.04" in snapshot_config
     assert "configure-ubuntu-snapshot" in installer
-    assert 'linux_libc_dev_version="5.15.0-190.200"' in installer
+    assert 'linux_libc_dev_version="5.15.0-198.208"' in installer
     assert 'linux_libc_dev_version="6.8.0-139.139"' in installer
     assert '"linux-libc-dev=${linux_libc_dev_version}"' in installer
     for relative, snapshot in (
         ("sim2real-envgen/Dockerfile", "20261009T000000Z"),
-        ("sim2real-eval/Dockerfile", "20260820T000000Z"),
+        ("sim2real-eval/Dockerfile", "20261002T000000Z"),
     ):
         text = (WORKBENCH / relative).read_text(encoding="utf-8")
         assert f"ARG UBUNTU_SNAPSHOT={snapshot}" in text, relative
@@ -217,6 +226,29 @@ def test_genesis_workflow_images_replace_vulnerable_parent_gitpython() -> None:
         if relative == "sim2real-envgen/Dockerfile":
             assert install < text.index("FROM scratch AS runtime")
             assert f'm.version("GitPython") == "{pin.group(1)}"' in text
+
+
+def test_sim2real_cpu_images_upgrade_inherited_packages_from_fixed_snapshot() -> None:
+    """Exclude the vulnerable Perl, GLib and Mbed TLS snapshot closure."""
+
+    for relative in ("sim2real-control/Dockerfile", "rerun-viewer/Dockerfile"):
+        text = (WORKBENCH / relative).read_text(encoding="utf-8")
+        assert "ARG DEBIAN_SNAPSHOT=20261002T000000Z" in text, relative
+        assert "ARG MIN_PERL_BASE_VERSION=5.40.1-6+deb13u1" in text, relative
+        assert "apt-get upgrade -y --no-install-recommends" in text, relative
+        assert '"perl-base=${MIN_PERL_BASE_VERSION}"' in text, relative
+
+
+def test_transfer_uses_the_hash_verified_pyjwt_signature_fix() -> None:
+    """Keep the critical verification fix outside the upstream vulnerable lock."""
+
+    overrides = (WORKBENCH / "cosmos2-transfer/security-overrides.txt").read_text()
+    wheels = [line for line in overrides.splitlines() if "/pyjwt-" in line]
+    assert len(wheels) == 1
+    assert "pyjwt-2.15.1-py3-none-any.whl" in wheels[0]
+    assert wheels[0].endswith(
+        "#sha256=42d59d631f7768a1028a64c7ff581a9bf7519804daf91fc5b6c56e30eec5e193"
+    )
 
 
 def test_isaac_runtime_uses_system_ffmpeg_without_wheel_bundled_binary() -> None:

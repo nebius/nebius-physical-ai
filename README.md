@@ -249,7 +249,8 @@ Fresh stock-Franka training uses `NPA_BYO_ISAAC_BOOTSTRAP=auto` to initialize it
 learned actor from native Isaac demonstrations on the sealed training split,
 then runs the full PPO pass. Resumed checkpoints and custom robots retain their
 existing training path. Set `NPA_BYO_ISAAC_BOOTSTRAP=none` to disable the warm
-start, or use `franka-ik-distillation-v1` to require its supported task boundary.
+start, or use `franka-cartesian-gru-distillation-v2` to require its supported
+task boundary.
 See the [training and evaluation contract](docs/workbench/guides/sim2real-workflow.md).
 The canonical stock-Franka scenario task uses upstream task-space arm drives
 with robot gravity compensation and 200 Hz physics. Its policy still acts at

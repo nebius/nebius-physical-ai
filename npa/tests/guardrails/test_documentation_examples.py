@@ -118,6 +118,7 @@ def test_documentation_inventory_excludes_vendor_and_virtualenv(tmp_path: Path) 
         "deploy/cluster/vendor/tool/README.md",
         "npa/src/npa/new-tool/README.md",
         "docs/new-guide.md",
+        "docs/.cli-stage-temporary/adapter.md",
     ):
         path = tmp_path / relative
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -125,6 +126,7 @@ def test_documentation_inventory_excludes_vendor_and_virtualenv(tmp_path: Path) 
     paths = _documentation_paths(tmp_path)
     assert tmp_path / "npa/src/npa/new-tool/README.md" in paths
     assert tmp_path / "docs/new-guide.md" in paths
+    assert tmp_path / "docs/.cli-stage-temporary/adapter.md" not in paths
     assert not any(".venv" in path.parts or "vendor" in path.parts for path in paths)
 
 

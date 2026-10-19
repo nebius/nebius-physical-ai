@@ -1370,6 +1370,10 @@ def test_session_owned_status_skips_cross_bucket_artifact_discovery(
 
     module_name = "npa_rendered_session_status_backend"
     module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    # Artifact discovery tests use a healthy viewer without touching host services.
+    monkeypatch.setattr(module, "_rerun_service_active", lambda: True)
+    monkeypatch.setattr(module, "_rerun_web_viewer_healthy", lambda: True)
+    monkeypatch.setattr(module, "_restart_rerun_serve", lambda **_kwargs: True)
     run_id = "agent-run-local-status"
     recordings_dir = tmp_path / "recordings"
     recordings_dir.mkdir()
@@ -3781,6 +3785,10 @@ def test_source_qualified_rrd_loads_keep_independent_history(
     state: dict = {}
     monkeypatch.setattr(module, "_load_state", lambda: state)
     monkeypatch.setattr(module, "_save_state", lambda _state: None)
+    # Artifact discovery tests use a healthy viewer without touching host services.
+    monkeypatch.setattr(module, "_rerun_service_active", lambda: True)
+    monkeypatch.setattr(module, "_rerun_web_viewer_healthy", lambda: True)
+    monkeypatch.setattr(module, "_restart_rerun_serve", lambda **_kwargs: True)
     monkeypatch.setattr(
         module,
         "_agent_artifact_s3_client",

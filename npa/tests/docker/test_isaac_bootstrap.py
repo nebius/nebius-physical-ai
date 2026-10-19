@@ -27,6 +27,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from packaging.version import Version
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -805,6 +806,17 @@ def test_isaac3_image_pins_runtime_source_and_python_contract() -> None:
     )
     assert "sed -n 's/^ARG ISAAC_LAB_VERSION=//p'" in build_script
     assert "read_pin isaac-lab" not in build_script
+
+
+def test_isaac3_dependency_lock_excludes_vulnerable_pyjwt() -> None:
+    """Keep the signature-confusion fix in the immutable Isaac OSS closure."""
+
+    dependencies = ISAAC3_OSS_DEPS.read_text(encoding="utf-8").splitlines()
+    pyjwt_pins = [line for line in dependencies if line.startswith("pyjwt==")]
+    assert len(pyjwt_pins) == 1
+    assert Version(pyjwt_pins[0].split("==", maxsplit=1)[1]) >= Version("2.15.1")
+    assert "pyjwt==2.14.0" not in dependencies
+    assert "pyjwt==2.13.0" not in dependencies
 
 
 def test_base_installer_uses_the_selected_isaac_dependency_lock() -> None:

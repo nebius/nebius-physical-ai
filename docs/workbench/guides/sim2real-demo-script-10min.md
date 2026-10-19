@@ -34,10 +34,12 @@ identifiers out of shared slides, screenshots, and exported reports.
 | 8:00–9:00 | Stage 12 external seam and Stage 13 retrigger record | Physical-robot validation is external; retrigger requires verified new or corrected data |
 | 9:00–10:00 | Decoded RRD/MCAP timeline and final report | All 14 ComponentRecords and accessible artifacts connect execution to the result |
 
-The current default model is `MiniMaxAI/MiniMax-M3` on Token Factory. An
-explicitly authorized endpoint may select Cosmos3; use the model identity in
-this run's evidence when describing results. Stage 8 uses one model, all declared
-primary frames by default, and concurrent independent rollout requests.
+Stage 8 uses the canonical `MiniMaxAI/MiniMax-M3` hosted evaluator on Token
+Factory. Stage 3's Cosmos3-Nano generation is separate; a Cosmos3 reasoning
+backend requires separate implementation and evaluator-contract validation.
+Use the model identity in this run's evidence when describing results. Stage 8
+uses one model, all declared primary frames by default, and concurrent
+independent rollout requests.
 
 Show an evaluation's exact action-to-frame bindings and a verified receipt.
 Receipts bind source, endpoint identity, model, action metadata, and frame bytes.
