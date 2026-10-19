@@ -48,9 +48,12 @@ own complete ancestor-layer, vulnerability, license, bootstrap and workload
 gates. No image publication or upstream endorsement is implied.
 
 The Setuptools donor version remains visible in scanner output even though pip
-retains its `pkg_resources` subset. For the exact Python 3.10 Wan candidate,
-[the applicability review](../../../../../docs/security/wan-installer-applicability-20261016.json)
-records absence of the manifest-building modules affected by CVE-2026-59890,
-the actual wheel identity, and successful regression checks on the installed
-Setuptools 84. The raw finding remains recorded. This assessment does not carry
-to another image or waive its remaining security and workload gates.
+retains its `pkg_resources` subset. Separate applicability reviews bind the
+[initial Python 3.10 candidate](../../../../../docs/security/wan-installer-applicability-20261016.json)
+and the [Ubuntu candidate](../../../../../docs/security/wan-installer-applicability-20261018.json)
+to their exact image and wheel identities. They record absence of the
+manifest-building modules affected by CVE-2026-59890 and successful regression
+checks on installed Setuptools 84. The Ubuntu review tests both the system
+Python and baked runtime virtualenv. The raw finding remains recorded. These
+assessments do not carry to another image or waive its remaining security and
+workload gates.
