@@ -21,7 +21,7 @@ import sys
 import tarfile
 import tempfile
 
-SCANNER_REVISION = "ef7b307212c1335de2e1eb9bef4ba8d6a7c6d41c"
+SCANNER_REVISION = "075b66b76abd0188fb2cfffebfd3d318a729bd51"
 EXPORT_ROOT = Path(".local/share/npa/private-image-qualification/exports")
 RECEIPT_ROOT = Path(".local/share/npa/private-image-qualification/receipts")
 MANIFEST_SCHEMA = "npa.private-image-qualification.v1"
