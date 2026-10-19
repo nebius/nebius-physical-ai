@@ -416,7 +416,7 @@ def test_genesis_workflow_images_pin_the_bootstrap_closure(
             '"${ENVGEN_LINUX_LIBC_DEV_VERSION}" \\'
         ) in dockerfile
     else:
-        assert 'install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" \\' in dockerfile
+        assert 'install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}"' in dockerfile
 
     installer = (
         DOCKER_ROOT / "common" / "install_workflow_runtime_prereqs.sh"

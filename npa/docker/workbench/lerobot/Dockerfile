@@ -131,7 +131,6 @@ RUN python3.12 -m venv /opt/lerobot/venv \
          echo 'Unsupported LeRobot package version' >&2; exit 1; \
        fi \
     && /opt/lerobot/venv/bin/pip check \
-    && /opt/lerobot/venv/bin/pip uninstall -y wandb \
     && find /opt/lerobot/venv -type f \
          -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
     && test "$(/opt/lerobot/venv/bin/python -c \
