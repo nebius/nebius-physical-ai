@@ -1,0 +1,287 @@
+{
+  "schema": "npa.lyra-gpu-qualification.v1",
+  "date": "2026-10-16",
+  "image": {
+    "reference": "ghcr.io/nebius/nebius-physical-ai/npa-lyra2@sha256:c959e2338409195b8b2082e5f199a84c782ff81f2b2dac794e10c70f233a5bf6",
+    "observed_image_id": "ghcr.io/nebius/nebius-physical-ai/npa-lyra2@sha256:c959e2338409195b8b2082e5f199a84c782ff81f2b2dac794e10c70f233a5bf6",
+    "baked_npa_source_sha": "51be9e81450233d6742489c95b2cd250ed482acc"
+  },
+  "execution": {
+    "status": "succeeded",
+    "mechanism": "npa.workflow/v0.0.1 runtime through SkyPilot on Nebius Kubernetes",
+    "gpu_count": 1,
+    "capacity": "on-demand",
+    "normal_reconstruction_settings": true,
+    "workload_time_limit": null,
+    "source_frames_prepared": 827
+  },
+  "capture": {
+    "dataset": "OmniPhotos v2 / Ballintoy",
+    "camera": "Insta360 One X",
+    "dataset_url": "https://researchdata.bath.ac.uk/948/",
+    "license": "CC BY 4.0",
+    "source_sha256": "113def725d498d16c8faffc40e685ed5b47d6bae2aa327e59f431bf8a6494bd2",
+    "source_width": 5760,
+    "source_height": 2880,
+    "input_projection": "equirectangular",
+    "output_width": 640,
+    "output_height": 480,
+    "frames": 827,
+    "yaw_degrees": 90,
+    "pitch_degrees": 0,
+    "h_fov_degrees": 90,
+    "selection": "Entire provided 5.7K stitched video; fixed yaw90 chosen before inference to exclude the default view of the operator and selfie stick.",
+    "preprocessing": {
+      "h_fov_degrees": 90.0,
+      "input_projection": "equirectangular",
+      "interpolation": "v360 Lanczos; 2x supersampling; Lanczos reduction",
+      "libavfilter_version": [
+        11,
+        14,
+        101
+      ],
+      "output_projection": "perspective",
+      "pitch_degrees": 0.0,
+      "pyav_version": "17.1.0",
+      "source_height": 2880,
+      "source_width": 5760,
+      "v_fov_degrees": 73.73979529168804,
+      "yaw_degrees": 90.0
+    },
+    "preparation_source_revision": "f6f89a343987af6efefea6fb380af3acc9425026"
+  },
+  "artifacts": {
+    "status": "passed",
+    "verification": "Complete S3 readback SHA-256 equality, full video decoding and cadence checks, numeric NPZ finiteness and all native Gaussian float fields checked independently.",
+    "artifacts": {
+      ".done": {
+        "sha256": "d117fa006ba9208500b2930ce69cbde436c647afa917cb7396a9bc9111a46dd2",
+        "bytes": 5
+      },
+      "ATTRIBUTION.txt": {
+        "sha256": "a23adfdd1df9e8114758177e54c8a2943d60a80969b82e4d04985b7dd62f929c",
+        "bytes": 686
+      },
+      "cameras.npz": {
+        "sha256": "ae060176af5895dbb94fbb4eb380d4909e426677392618e9fc0a16c173140d90",
+        "bytes": 98336
+      },
+      "capture.json": {
+        "sha256": "1d80840dd257642582348f50d7241565377b5c2f81686beaa16cbab35d64c49e",
+        "bytes": 76830
+      },
+      "capture.mp4": {
+        "sha256": "43a5126a745da542d9e8b81dc1455dd1a93535b152a2fe3e3eef19667de3de07",
+        "bytes": 15701719
+      },
+      "geometry.npz": {
+        "sha256": "276a5794a14b0c81c020b29a39f2b7496cb788993baf3d9338cdfb68318cde48",
+        "bytes": 262741089
+      },
+      "gs_trajectory.mp4": {
+        "sha256": "64da553757a8ae6c468a9ed5f4fd515cfc57066e3bd2008eee02764488ff46fa",
+        "bytes": 4157204
+      },
+      "index.html": {
+        "sha256": "83242fd0ed191b460651f9319b31b9b848060c8489fcc29948c9be7c65df59dd",
+        "bytes": 33077947
+      },
+      "reconstructed_scene.ply": {
+        "sha256": "6f8adbb7bd3adcf586444db77d9a8837454689487ef43a3864a96c2b7e909c2d",
+        "bytes": 588808609
+      },
+      "reconstruction.json": {
+        "sha256": "5fb5124f7292d9ed687c23c88e9c28f7afcb0bd344bd96fe14f44d33c99eb9ac",
+        "bytes": 1138
+      }
+    },
+    "native": {
+      "schema": "npa.lyra-reconstruction.v1",
+      "source_revision": "9fffc9adc37004091ecf26ef03abfb3abdf4d59a",
+      "model_revision": "c178c3fcf12b63cf98f6749999e6ecb63901669f",
+      "model_file": "checkpoints/recon/model.pt",
+      "checkpoint_sha256": "d26380a2d2ecceb6c7ed8ccdb6c53d2664259132ddc946c6c189cf29151c8042",
+      "input_sha256": "43a5126a745da542d9e8b81dc1455dd1a93535b152a2fe3e3eef19667de3de07",
+      "checksums": {
+        "reconstructed_scene.ply": "6f8adbb7bd3adcf586444db77d9a8837454689487ef43a3864a96c2b7e909c2d",
+        "gs_trajectory.mp4": "64da553757a8ae6c468a9ed5f4fd515cfc57066e3bd2008eee02764488ff46fa",
+        "cameras.npz": "ae060176af5895dbb94fbb4eb380d4909e426677392618e9fc0a16c173140d90",
+        "geometry.npz": "276a5794a14b0c81c020b29a39f2b7496cb788993baf3d9338cdfb68318cde48"
+      },
+      "pose_estimator": "Lyra upstream --no_vipe: DA3 two-pass",
+      "geometry": "estimated depth; metric calibration required before manipulation",
+      "scope": "private internal research and development; non-production",
+      "gpu": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+      "torch": "2.11.0+cu128",
+      "cuda": "12.8",
+      "views": 128,
+      "resolution": 640
+    },
+    "videos": {
+      "capture.mp4": {
+        "width": 640,
+        "height": 480,
+        "nb_read_frames": "827",
+        "r_frame_rate": "30000/1001",
+        "codec": "h264",
+        "fully_decoded": true,
+        "timestamps_verified": true
+      },
+      "gs_trajectory.mp4": {
+        "width": 640,
+        "height": 480,
+        "nb_read_frames": "827",
+        "r_frame_rate": "30",
+        "codec": "h264",
+        "fully_decoded": true,
+        "timestamps_verified": true
+      }
+    },
+    "arrays": {
+      "geometry.npz": {
+        "depth": {
+          "shape": [
+            128,
+            476,
+            644
+          ],
+          "dtype": "float32",
+          "nonfinite_values": 0
+        },
+        "conf": {
+          "shape": [
+            128,
+            476,
+            644
+          ],
+          "dtype": "float32",
+          "nonfinite_values": 0
+        },
+        "extrinsics": {
+          "shape": [
+            128,
+            3,
+            4
+          ],
+          "dtype": "float32",
+          "nonfinite_values": 0
+        },
+        "intrinsics": {
+          "shape": [
+            128,
+            3,
+            3
+          ],
+          "dtype": "float32",
+          "nonfinite_values": 0
+        },
+        "processed_images": {
+          "shape": [
+            128,
+            476,
+            644,
+            3
+          ],
+          "dtype": "uint8"
+        }
+      },
+      "cameras.npz": {
+        "w2c_render": {
+          "shape": [
+            827,
+            4,
+            4
+          ],
+          "dtype": "float32",
+          "nonfinite_values": 0
+        },
+        "indices_da3": {
+          "shape": [
+            128
+          ],
+          "dtype": "int64",
+          "nonfinite_values": 0
+        },
+        "fps": {
+          "shape": [
+            1
+          ],
+          "dtype": "float32",
+          "nonfinite_values": 0
+        },
+        "no_vipe": {
+          "shape": [
+            1
+          ],
+          "dtype": "int32",
+          "nonfinite_values": 0
+        },
+        "w2c_da3_pred": {
+          "shape": [
+            128,
+            4,
+            4
+          ],
+          "dtype": "float32",
+          "nonfinite_values": 0
+        },
+        "intrinsics_da3_pred": {
+          "shape": [
+            128,
+            3,
+            3
+          ],
+          "dtype": "float32",
+          "nonfinite_values": 0
+        },
+        "intrinsics_render": {
+          "shape": [
+            827,
+            3,
+            3
+          ],
+          "dtype": "float32",
+          "nonfinite_values": 0
+        }
+      }
+    },
+    "gaussian_count": 8658944,
+    "gaussian_float_fields_finite": true
+  },
+  "html_export": {
+    "source_html_sha256": "83242fd0ed191b460651f9319b31b9b848060c8489fcc29948c9be7c65df59dd",
+    "export_html_sha256": "5f652e982b8eb91838e0fd575c44c591057c8642b6100d016ef57684ffc75228"
+  },
+  "scope": "Completed native GPU reconstruction of a public 5760x2880 stitched 360-degree capture after perspective preparation to 640x480, using normal 128-view Lyra settings. Original-view replay; not held-out quality, a haze-improvement measurement, raw-fisheye support, or Insta360 X5 qualification. Model/output use remains private internal non-production R&D.",
+  "replay": {
+    "paired_frames": 827,
+    "width": 640,
+    "height": 480,
+    "fps": 29.97002997002997,
+    "rendered_fps": 30.0,
+    "rgb_mse": 697.9523375492283,
+    "psnr_db": 19.692545947578196,
+    "scope": "Decoded RGB paired by frame index on the original camera trajectory, each at its recorded cadence; not held-out novel-view quality or a haze-improvement measurement."
+  },
+  "packaging": {
+    "source_revision": "ff1e3fecf828da988efc27adc99c4aaf7c3871c8",
+    "browser": "Chrome desktop1440x1100 and mobile390x844",
+    "external_requests": 0,
+    "workflow_download_matches_canonical": true,
+    "all_native_media_unchanged": true
+  },
+  "splatting_baseline": {
+    "status": "blocked-before-training",
+    "mechanism": "Native COLMAP through the standard NPA workflow runtime; full submitted-image coverage required before training.",
+    "submitted_images": 128,
+    "registered_images": 2,
+    "points3D": 1,
+    "gsplat_training_started": false,
+    "matched_quality_comparison_available": false,
+    "diagnostics_readback_verified": true,
+    "diagnostic_sha256": {
+      "component-info.json": "aa85d3152aa4c5a3e0f75b025f2160ca641dcfab10e7769918b7d7fb2cdbe09b",
+      "registration-source.tar.gz": "6fe3585e0ccb702c85c2c010a97cf037053d4bcc9096cd3d81e4c0a5967936b1"
+    }
+  }
+}

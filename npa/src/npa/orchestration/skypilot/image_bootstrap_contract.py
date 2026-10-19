@@ -528,6 +528,7 @@ def probe_image_capabilities(
                     "Kubernetes pod placement must contain JSON-compatible values"
                 ) from None
             override_spec["serviceAccountName"] = service_account_name
+            override_spec["automountServiceAccountToken"] = False
             if pull_secret_names:
                 override_spec["imagePullSecrets"] = [
                     {"name": secret_name} for secret_name in pull_secret_names

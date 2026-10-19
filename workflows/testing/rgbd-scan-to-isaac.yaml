@@ -13,7 +13,8 @@ config:
   source_overlay: true
   input_path: ''
   assembly_image: tool://sonic
-  isaac_image: tool://isaac-lab
+  required_immutable_images: [isaac_image]
+  isaac_image: ''
   run_uri: s3://{{config.bucket}}/{{config.prefix}}
   assembled_uri: '{{config.run_uri}}/assembled'
   reports_uri: '{{config.run_uri}}/reports'

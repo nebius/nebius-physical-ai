@@ -81,6 +81,64 @@ def test_real_confidentiality_empty_and_eof_coordinates_remain_supported(
     assert len(A.population(report, [record])) == 1
 
 
+@pytest.mark.parametrize(
+    ("payload", "code"),
+    [
+        (b'{"type":"record"}', "adjudication_ledger_unterminated"),
+        (b'{"type":"record","type":"finding"}\n', "duplicate_json_key"),
+    ],
+)
+def test_streaming_ledger_rejects_unterminated_and_ambiguous_json(
+    tmp_path, payload, code
+):
+    tmp_path.chmod(0o700)
+    ledger = tmp_path / "records.jsonl"
+    ledger.write_bytes(payload)
+    ledger.chmod(0o600)
+    spec = {"path": str(ledger), "sha256": W.sha(payload)}
+    with W.authorized_roots(tmp_path, ROOT), pytest.raises(W.ScanError, match=code):
+        list(A.iter_bound_jsonl(spec))
+
+
+def test_streaming_ledger_bounds_each_line_before_decode(tmp_path, monkeypatch):
+    payload = b'{"long":"value"}\n'
+    tmp_path.chmod(0o700)
+    ledger = tmp_path / "records.jsonl"
+    ledger.write_bytes(payload)
+    ledger.chmod(0o600)
+    monkeypatch.setattr(W, "LEDGER_LINE_LIMIT", 4)
+    spec = {"path": str(ledger), "sha256": W.sha(payload)}
+    with (
+        W.authorized_roots(tmp_path, ROOT),
+        pytest.raises(W.ScanError, match="ledger_line_limit"),
+    ):
+        list(A.iter_bound_jsonl(spec))
+
+
+def test_population_streams_large_clean_record_sequence():
+    count = 10_000
+    report = {
+        "schema_version": "npa.image-byte-scan.v1",
+        "complete": True,
+        "helper_joined": True,
+        "valid": True,
+        "records": count,
+        "scanned_bytes": 0,
+        "verified_zero_bytes": 0,
+        "regular_files": count,
+        "regular_bytes": 0,
+        "findings": 0,
+        "helper_summary": {
+            "type": "summary",
+            "files": count,
+            "bytes": 0,
+            "findings": 0,
+        },
+    }
+    rows = (T.record(ordinal, b"", []) for ordinal in range(1, count + 1))
+    assert A.population(report, rows) == {}
+
+
 def bound_population(codec="gzip", repeat=2):
     descriptor = {
         "digest": "sha256:" + "b" * 64,

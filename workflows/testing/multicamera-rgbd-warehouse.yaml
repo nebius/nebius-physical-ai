@@ -14,6 +14,9 @@ config:
   bucket: example-bucket
   prefix: "multicamera-rgbd-warehouse/{{run.id}}"
   source_overlay: true
+  required_immutable_images:
+    - isaac_image
+  isaac_image: ""
   capture_input_prefix: "s3://{{config.bucket}}/{{config.prefix}}/input"
   capture_input_uri: "{{config.capture_input_prefix}}/request.json"
   capture_uri: "s3://{{config.bucket}}/{{config.prefix}}/capture"
@@ -23,7 +26,7 @@ config:
 resources:
   rtx:
     cloud: kubernetes
-    image: ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:e321e8631c7e318b5012dad210d9cd1001b7dc833cbff0369e420c5c12657ab6
+    image: "{{config.isaac_image}}"
     accelerators: RTXPRO6000:1
     cpus: 16
     memory: 64Gi

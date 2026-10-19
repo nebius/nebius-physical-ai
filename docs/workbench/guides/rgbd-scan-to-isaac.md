@@ -9,9 +9,9 @@ OpenUSD packages them; Isaac Sim checks intersections using CPU PhysX queries
 inside the RTX PRO 6000 runtime. It does not require a separately authored
 collision mesh.
 
-The geometry stages run on CPU using the existing SONIC image's
+The geometry stages use a qualified CPU image with
 `/opt/npa/venv/bin/python`, without starting SONIC or downloading Isaac. The first
-uses its Open3D runtime. Assembly installs `usd-core==26.8` without dependencies
+uses Open3D. Assembly installs `usd-core==26.8` without dependencies
 into a fresh temporary directory, appends it after the selected source overlay,
 and removes it after the stage. The image's Python environment stays intact.
 The GPU stage uses the Isaac image. Pin the three image settings to independently
@@ -27,7 +27,10 @@ An indoor public capture does not establish industrial-scene or customer-data
 quality. A complete public capture has passed the three-stage managed workflow
 and native collision queries inside the RTX Isaac runtime. Learned navigation
 remains a separate qualification. See the
-[readiness record](../../../workflows/testing/rgbd-scan-to-isaac.readiness.json).
+[archived readiness record](../evidence/workflow-defaults-807/rgbd-scan-to-isaac.readiness.json)
+for that original workflow, and the
+[current readiness record](../../../workflows/testing/rgbd-scan-to-isaac.readiness.json)
+for pending replacement-image qualification.
 
 ## Run the complete public sample
 
@@ -41,7 +44,7 @@ below still accepts an explicitly prepared capture for other sensors.
 On September 25, 2026, the complete associated TUM RGB-D
 `fr3/long_office_household` capture completed reconstruction, assembly and native
 Isaac validation as one standard managed workflow. Both CPU stages used the
-pinned SONIC image below; assembly added OpenUSD 26.8 in an isolated target.
+historical SONIC digest in the archived record; assembly added OpenUSD 26.8 in an isolated target.
 The native stage used an RTX PRO 6000 Blackwell Server Edition with driver
 580.173.02. Actual image digests were independently verified on all three workers.
 
@@ -126,10 +129,13 @@ these modules. Replace all example values with private operator settings:
 
 ```bash
 npa workbench workflow validate-spec workflows/testing/rgbd-scan-to-isaac.yaml --json
-npa workbench workflow plan-spec workflows/testing/rgbd-scan-to-isaac.yaml --run-id preview --json
+: "${NPA_SCAN_CPU_IMAGE:?Set an independently qualified immutable CPU image}"
+: "${NPA_SCAN_ISAAC_IMAGE:?Set an independently qualified immutable Isaac image}"
+npa workbench workflow plan-spec workflows/testing/rgbd-scan-to-isaac.yaml \
+  --run-id preview --json --var "isaac_image=$NPA_SCAN_ISAAC_IMAGE" \
+  --var "reconstruction_image=$NPA_SCAN_CPU_IMAGE" \
+  --var "assembly_image=$NPA_SCAN_CPU_IMAGE"
 export NPA_SRC_S3_URI="s3://example-bucket/npa-src/npa/<verified-source-fingerprint>/"
-export NPA_SCAN_CPU_IMAGE="ghcr.io/nebius/nebius-physical-ai/npa-sonic@sha256:c9ba0996b28f54b013e36da689638b386a7ef9c0c8c4413fc4b3c72ff1a808bb"
-export NPA_SCAN_ISAAC_IMAGE="ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:e321e8631c7e318b5012dad210d9cd1001b7dc833cbff0369e420c5c12657ab6"
 npa workbench workflow submit workflows/testing/rgbd-scan-to-isaac.yaml \
   --runtime --no-stage-src --project example-project --infra example-rtx-runtime \
   --var bucket=example-bucket \
@@ -143,6 +149,13 @@ npa workbench workflow submit workflows/testing/rgbd-scan-to-isaac.yaml \
 Optional `reconstruction_image` and `assembly_image` overrides must retain the
 `/opt/npa/venv/bin/python` interpreter, Open3D and Python dependency contracts.
 Assembly also requires package-index access for the pinned OpenUSD wheel.
+`isaac_image` is mandatory during planning because the native probe consumes the
+exact reference as provenance. Use digest-only
+`registry/repository@sha256:<64-hex-digest>` syntax. The governed Isaac and SONIC
+public releases are quarantined; no recorded historical digest is a current
+replacement. Verify complete image bytes and the required workload using the
+[image qualification procedure](../container-image-catalog.md). The unchanged
+historical qualification above applies to its recorded source and image bytes.
 The workflow overlays the selected source URI;
 enabling the overlay alone does not select or verify a particular checkout.
 Retain its content fingerprint and verify the required module bytes before GPU

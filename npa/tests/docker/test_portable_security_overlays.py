@@ -57,6 +57,7 @@ def test_hardened_nltk_source_install_contract() -> None:
         "cosmos3-ray-serve": (
             ROOT / "cosmos3-ray-serve" / "security-upgrades-requirements.in"
         ),
+        "cosmos2-transfer": ROOT / "cosmos2-transfer" / "security-overrides.txt",
     }
     for image, manifest in affected.items():
         requirements = manifest.read_text()

@@ -31,6 +31,35 @@ node-local ephemeral storage, with durable reuse still unapproved.
 
 ## SkyPilot worker bootstrap contract
 
+The Sim2Real controller and Rerun viewer upgrade inherited Debian packages from
+the pinned `DEBIAN_SNAPSHOT=20261002T000000Z` closure. Their `MIN_*_VERSION`
+build arguments encode the observed fixed security floors: Perl for both roles,
+plus GLib and mbedcrypto for the viewer. An unreadable or below-floor installed
+version stops the build. The [package-index receipt](validation/sim2real-cpu-security-snapshot-20261002.json)
+binds the snapshot and exact package hashes; it is not replacement-image
+security, bootstrap or runtime acceptance. Do not lower these floors or
+substitute scanner exceptions for rebuilt, validated image bytes.
+
+The GPU-role security closure separately pins PyJWT 2.14.0 for Transfer and
+Isaac. EnvGen uses the October Ubuntu snapshot and the explicit
+`LINUX_LIBC_DEV_VERSION=5.15.0-198.208` argument to the existing installer;
+other installer callers retain their own release-specific defaults. The exact
+installed header version is checked before proceeding. The frozen APT transaction
+already selects that version, above the security floor `5.15.0-194.204`.
+The [signed-index binding](validation/sim2real-envgen-headers-20261002.json)
+preserves both identities; requesting the lower floor after that transaction
+caused a real downgrade refusal, not an access or transport failure. No downgrade
+override is used. These dependency pins
+do not qualify an image without its fresh complete artifact gates.
+
+EnvGen also removes one hash-bound, inert `grass()` sample-download example
+from inherited scikit-image source. The example contains a token-bearing URL
+flagged by the image scan; no assertion is made that it is a private credential.
+The sanitizer refuses changed source or package `RECORD`, preserves executable
+ASTs and primary API documentation, and updates the exact modified source hash
+in `RECORD`. It runs before filesystem flattening, not as a scanner suppression.
+Original failing image bytes and scan populations remain separate evidence.
+
 Every workflow image must satisfy version `skypilot-0.12.2-v1`: a usable
 effective user; root or verified passwordless sudo; `openssh-server`, `rsync`,
 and compatible service/init behavior; writable `/tmp` and home; and an
@@ -87,7 +116,63 @@ never a tag. Image-byte licensing scans remain mandatory before registry push.
 For a multi-tool spec, repeat `--image-override TOOL_REF=IMAGE` to select each
 tool's artifact independently; the preflight and renderer share that same map.
 
+## Cosmos3 Ray payload finding evidence
+
+`scan_image_cosmos3_ray_serve_payload.py` keeps credential findings blocking and
+reports byte identities for investigation. Its full JSON has
+`report_scope: full` and includes `archive_sha256` and `config_sha256`, plus
+`credential_members` with each blocked stored file's
+`path`, `kind`, `size`, `sha256`, `layer_index`, `layer_sha256`, and
+`member_index`. `detection_reason` identifies the existing path or
+member-content rule that produced the finding. These fields contain no
+credential content excerpts and do not establish that a value is usable, a key
+is parseable, or a match is harmless. A member hash and exact size are still a
+content commitment: someone with a guessed file can confirm it offline. The
+v1 report format permits these additive evidence fields; future consumers must
+ignore unknown fields.
+
+The scan covers every stored layer. Repeated paths retain separate member
+records, including overwritten or deleted ancestor files; the existing
+`credential_hits` list remains deduplicated. Member hashes cover the complete
+file even when credential detection stops at an early match. `layer_sha256` is
+the hash of the stored Docker-save layer entry, not a declared rootfs `diff_id`.
+`archive_sha256` identifies this scan's Docker-save input stream, not a stable
+image identity across independent saves. Compare a member hash with
+independently obtained exact source or package bytes before classifying a
+finding. Hash equality is evidence of byte identity and does not waive any
+publication gate or establish GPU capability acceptance.
+
+Stdout is redacted by default with `report_scope: redacted-summary`; `--json`
+writes the full metadata report only to its requested file. Use
+`--full-stdout` only for local operator attribution, never a public log. The
+ordinary publication workflow keeps member hashes and sizes out of Actions logs.
+The scanner exits 0 for a clean archive, 1 for a blocked finding or scan/archive
+error, and 2 when a requested private report cannot be written or command-line
+usage is invalid; it refuses a symlink report target. Treat every nonzero exit
+as blocking: a report-write failure returns 2 even when the completed scan
+verdict is itself blocking.
+For a report-write failure, stderr JSON identifies only the portable errno class
+(for example, `ELOOP`) so an operator can distinguish a refusal from runner
+capacity without exposing a path or report content.
+With an explicit local `--full-stdout` opt-in, that write failure still prints
+the completed full report so the archive need not be scanned again.
+Do not publish raw layers, extracted credential bytes, or a failed image archive
+as public Actions artifacts. The workflow writes the full report as a private
+temporary runner file and removes it with the scanned archive; rerun the scanner
+against an operator-controlled archive when later attribution is needed. An
+unresolved finding still exits nonzero and blocks push.
+
 ## Inventory
+
+Shared Isaac builds apply the upstream Setuptools Unicode manifest fix to exact
+81.0.0 source hashes when Torch's `<82` constraint prevents a version upgrade.
+Cosmos3 serving uses the same verifier for its constrained 80.10.2 runtime.
+Both reject unknown source bytes and update installed `RECORD` hashes.
+Isaac's Python 3.11 closure installs Pillow 12.3 and applies the upstream
+MoviePy Pillow compatibility bound to exact 2.2.1 metadata; the released
+MoviePy code and package versions stay intact. The compatibility patch rejects
+unknown metadata or an unpatched Pillow installation. A successful source or
+dependency check does not qualify an existing or replacement image digest.
 
 The Sim2Real controller and Rerun viewer builds use the October 2, 2026 Debian
 snapshot and explicitly install `perl-base=5.40.1-6+deb13u1` to remove the three
@@ -122,7 +207,7 @@ All first-class images live under `npa/docker/workbench/`:
 | `npa-groot` | `groot/Dockerfile` | job shell; `EXPOSE 8080` |
 | `npa-fiftyone` | `fiftyone/Dockerfile` | command-passthrough job entrypoint; `EXPOSE 5151` |
 | `npa-lancedb` | `lancedb/Dockerfile` | uvicorn `:8686`; non-root SkyPilot workflow host |
-| `npa-mjlab` (unpublished) | `mjlab/Dockerfile` | authenticated uvicorn `:8080`; native train/eval/export CLI |
+| `npa-mjlab` ([public development candidate](validation/mjlab-native-hd-gpu-20261010.json)) | `mjlab/Dockerfile` | authenticated uvicorn `:8080`; native train/eval/export CLI |
 | `npa-sonic` | `sonic/Dockerfile` | `/entrypoint.sh` modes |
 | `npa-detection-training` | `detection-training/Dockerfile` | uvicorn `:8790` |
 | `npa-antioch` | `antioch/Dockerfile` | CPU-only uvicorn `:8789`; proprietary CLI is verified runtime-fetch only |
@@ -622,7 +707,14 @@ must still be checked: source availability is not proof of publication.
 
 Main-branch pushes touching `npa/docker/workbench/` select development builds by
 changed recipe directories, individual packaging/catalog entries, and Dockerfile
-`COPY`/`ADD` inputs. The selector considers the entire push diff, so shared NPA
+local `COPY`/`ADD` inputs and `RUN --mount=type=bind` sources. HTTP(S) `ADD`
+downloads are external inputs; changing their Dockerfile still rebuilds the
+owning image. Bind mounts without a source consume the whole build context.
+Bind-mount option names are case-insensitive; duplicate fields or source aliases
+restore the full build set. Bind sources match literal paths, including filenames
+with wildcard characters; local `COPY`/`ADD` inputs retain wildcard matching.
+The robomimic recipe uses its own directory as that context, matching the
+publisher. The selector considers the entire push diff, so shared NPA
 source and staged workflow changes in the same push rebuild their consumers.
 Unchanged images retain their previously validated versions; no new development
 tag is fabricated for them. The existing weekly refresh still builds every
