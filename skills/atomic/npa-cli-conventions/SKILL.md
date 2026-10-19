@@ -33,14 +33,6 @@ Register workload command groups under `npa workbench` in
 platform utilities registered in `npa/src/npa/cli/main.py` predate the solution
 namespace model and are marked as legacy in that file.
 
-The operator desktop is explicitly registered under `npa tools desktop`, with
-shared implementation in `npa/src/npa/tools/desktop` and CLI wiring in
-`npa/src/npa/cli/tools`.
-Use that namespace for its setup, display, HTTPS access, status, and open
-commands. It is a development environment rather than a Workbench workload;
-its Python surface calls the platform module directly and has no container or
-workflow toolRef requirement.
-
 ## Options
 
 The cross-tool handoff flags are `--input-path` (reads an `s3://` URI) and
