@@ -89,6 +89,7 @@ for raw in metadata.requires("cosmos-predict2") or ():
     if normalized not in excluded and (requirement.marker is None or requirement.marker.evaluate()):
         print(raw)
 PY
+COPY --chmod=0444 docker/workbench/common/repair_accelerate_checkpoints.py /opt/cosmos/repair_accelerate_checkpoints.py
 RUN printf '%s\n' \
       "torch==${COSMOS_TORCH_VERSION}" \
       "torchvision==${COSMOS_TORCHVISION_VERSION}" \
@@ -136,6 +137,7 @@ RUN printf '%s\n' \
       "sentencepiece>=0.2.1" \
       "transformers>=5.3.0" \
     && /opt/cosmos/venv/bin/pip uninstall -y wandb \
+    && /opt/cosmos/venv/bin/python /opt/cosmos/repair_accelerate_checkpoints.py \
     && rm -f /tmp/flash_attn-*.whl /tmp/natten-*.whl /tmp/transformer_engine-*.whl \
       /tmp/cosmos-predict2-noncuda-requirements.txt /tmp/cosmos-cu128-constraints.txt
 

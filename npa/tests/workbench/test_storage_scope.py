@@ -90,6 +90,7 @@ def test_s3_scope_enforces_bucket_and_prefix(operation: str) -> None:
         "s3://allowed-bucket/team/runner/artifact.json",
         "s3://allowed-bucket/team/run/../secret.json",
         "s3://allowed-bucket/team/run/%2e%2e/secret.json",
+        "s3://allowed-bucket//team/run/artifact.json",
     ):
         with pytest.raises(StorageAuthorizationError):
             scope.authorize(candidate, operation=operation)
@@ -109,6 +110,22 @@ def test_s3_scope_accepts_one_trailing_prefix_delimiter(operation: str) -> None:
     ):
         with pytest.raises(StorageAuthorizationError):
             scope.authorize(candidate, operation=operation)
+
+
+def test_s3_scope_rejects_encoded_allowed_root() -> None:
+    with pytest.raises(StorageAuthorizationError, match="unescaped"):
+        StorageScope.from_config(s3_roots=["s3://allowed-bucket/team%2Frun"])
+    with pytest.raises(StorageAuthorizationError, match="unescaped"):
+        StorageScope.from_config(s3_roots=["s3://allowed-bucket//team/run"])
+
+
+def test_s3_scope_canonicalizes_safe_encoded_object_keys() -> None:
+    scope = StorageScope.from_config(s3_roots=["s3://allowed-bucket/team/run"])
+    target = scope.authorize(
+        "s3://allowed-bucket/team%2Frun/%61rtifact%20one.json",
+        operation="read",
+    )
+    assert target.key == "team/run/artifact one.json"
 
 
 @pytest.mark.parametrize(

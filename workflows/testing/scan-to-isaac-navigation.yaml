@@ -20,7 +20,8 @@ config:
   assembly_image: "tool://content-agents"
   # Override with an immutable registry/image@sha256 digest for execution.
   # The report records this operator declaration, not an introspected pod digest.
-  isaac_image: "tool://isaac-lab"
+  required_immutable_images: [isaac_image]
+  isaac_image: ""
   run_uri: "s3://{{config.bucket}}/{{config.prefix}}"
   assembled_uri: "{{config.run_uri}}/assembled"
   reports_uri: "{{config.run_uri}}/reports"

@@ -12,8 +12,10 @@ config:
   bucket: example-bucket
   prefix: rl-improvement/{{run.id}}
   source_overlay: true
-  navigation_image: ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:e321e8631c7e318b5012dad210d9cd1001b7dc833cbff0369e420c5c12657ab6
-  reconstruction_image: ghcr.io/nebius/nebius-physical-ai/npa-sonic@sha256:c9ba0996b28f54b013e36da689638b386a7ef9c0c8c4413fc4b3c72ff1a808bb
+  # Exact operator inputs also bind provenance and downstream native launches.
+  required_immutable_images: [navigation_image, reconstruction_image]
+  navigation_image: ''
+  reconstruction_image: ''
   baseline_iterations: 1500
   candidate_iterations: 1500
   baseline_anchor_coefficient: 10.0

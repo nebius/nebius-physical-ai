@@ -8,6 +8,7 @@ are rejected instead of falling back to executable pickle serialization.
 from __future__ import annotations
 
 import functools
+import math
 
 import msgpack
 import numpy as np
@@ -36,16 +37,45 @@ def _pack_array(value):
     return value
 
 
+def _wire_dtype(value):
+    description = value.get(b"dtype")
+    if not isinstance(description, str):
+        raise ValueError("array dtype must be a string")
+    try:
+        dtype = np.dtype(description)
+    except (TypeError, ValueError) as error:
+        raise ValueError("invalid array dtype") from error
+    if dtype.hasobject or dtype.kind in ("V", "O", "c") or dtype.itemsize == 0:
+        raise ValueError(f"unsupported array dtype: {dtype}")
+    return dtype
+
+
+def _wire_array(value, dtype):
+    data = value.get(b"data")
+    shape = value.get(b"shape")
+    if not isinstance(data, bytes):
+        raise ValueError("array data must be bytes")
+    if not isinstance(shape, (list, tuple)) or any(
+        type(dimension) is not int or dimension < 0 for dimension in shape
+    ):
+        raise ValueError("array shape must contain nonnegative integers")
+    if math.prod(shape) * dtype.itemsize != len(data):
+        raise ValueError("array shape does not match its byte length")
+    return np.frombuffer(data, dtype=dtype).reshape(shape)
+
+
 def _unpack_array(value):
-    if b"__ndarray__" in value:
-        return np.ndarray(
-            buffer=value[b"data"],
-            dtype=np.dtype(value[b"dtype"]),
-            shape=value[b"shape"],
-        )
-    if b"__npgeneric__" in value:
-        return np.dtype(value[b"dtype"]).type(value[b"data"])
-    return value
+    markers = {b"__ndarray__", b"__npgeneric__"}.intersection(value)
+    if not markers:
+        return value
+    if len(markers) != 1 or value[next(iter(markers))] is not True:
+        raise ValueError("invalid array marker")
+    dtype = _wire_dtype(value)
+    if b"__ndarray__" in markers:
+        return _wire_array(value, dtype)
+    if b"data" not in value:
+        raise ValueError("scalar data is missing")
+    return dtype.type(value[b"data"])
 
 
 Packer = functools.partial(msgpack.Packer, default=_pack_array)

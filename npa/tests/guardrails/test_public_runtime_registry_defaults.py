@@ -96,6 +96,7 @@ def _prepare_registry_workflow(spec_path):
     }
     public_prefix = f"{DEFAULT_PUBLIC_CONTAINER_REGISTRY}/npa-"
     image_overrides = {"*": f"{public_prefix}runtime@sha256:{'0' * 64}"}
+    config_overrides = {"source_sha": "0" * 40} if requires_baked_image else {}
     if spec_path.name == "byof-gymnasium-robotics.yaml":
         # This neutral BYOF candidate intentionally keeps no-new-privileges;
         # the ownership guard must not reclassify it as a trusted first-party
@@ -107,17 +108,33 @@ def _prepare_registry_workflow(spec_path):
         # This validation workflow documents a required per-tool override
         # until genuine exact-image acceptance permits default selection.
         image_overrides["workbench.nurec.convert_colmap"] = NCORE_VALIDATION_IMAGE
+        image_overrides["workbench.nurec.audit_colmap"] = NCORE_VALIDATION_IMAGE
     if spec_path.name == "habitat-sim-smoke.yaml":
         # Habitat requires an immutable reference even in a plan-only ownership
         # check; no image or runtime acceptance is asserted by this inert digest.
         image_overrides["workflow.habitat_sim.smoke"] = (
             f"{public_prefix}habitat-sim@sha256:{'0' * 64}"
         )
+    # Required exact inputs are inert ownership fixtures. The no-override guard
+    # separately verifies denial when the operator has not supplied these values.
+    config_overrides = {
+        key: f"{public_prefix}runtime@sha256:{'0' * 64}"
+        for key in spec.config.get("required_immutable_images", [])
+    }
+    if requires_baked_image:
+        config_overrides["source_sha"] = "0" * 40
+    if spec_path.name == "byof-embodiedgen.yaml":
+        # EmbodiedGen is an operator-private runtime-fetch image. This guardrail
+        # must keep its inert restricted placeholder rather than applying its
+        # generic public image override to a non-redistributable workload.
+        private = "registry.example.invalid/npa-embodiedgen@sha256:" + "0" * 64
+        image_overrides["workbench.byof.repo"] = private
+        config_overrides["base_image"] = private
     return prepare_npa_workflow_for_submit(
         spec_path,
         run_id=f"registry-guard-{spec_path.stem}",
         assume_decision="promote_checkpoint",
-        config_overrides=({"source_sha": "0" * 40} if requires_baked_image else None),
+        config_overrides=config_overrides,
         render_options=SkypilotRenderOptions(
             image_overrides=image_overrides,
             materialize_registry_secrets=False,

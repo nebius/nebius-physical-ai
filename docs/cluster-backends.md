@@ -78,6 +78,17 @@ exact unsupported field names. The fleet/project envelope owns tenant, project,
 region, and subnet selection; embedding conflicting identity inside
 `soperator:` is rejected before provider access.
 
+Standalone cluster commands read `terraform.tfvars`, `terraform.tfvars.json`,
+and `*.auto.tfvars` / `*.auto.tfvars.json` before planning. They use Terraform's
+load order: the main HCL file, the main JSON file, then automatic files sorted
+by filename. JSON files must contain an object; invalid files stop before
+provisioning. This keeps topology and quota checks aligned with JSON inputs.
+Keep `iam_token` out of every variable file: NPA supplies a fresh token.
+
+Backend subprocesses create state with private permissions even when apply
+fails. Retain that state and its operation receipt so an interrupted setup can
+be recovered or removed through the normal ownership checks.
+
 ## RTX PRO 6000 MIG
 
 The same pinned MIG policy is available in a fleet and standalone:

@@ -4,7 +4,8 @@ ARG BASE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-genesis@sha256:80cd1c4c7f7a
 FROM ${BASE_IMAGE} AS sanitized
 
 ARG NPA_SOURCE_SHA
-ARG UBUNTU_SNAPSHOT=20260820T000000Z
+ARG UBUNTU_SNAPSHOT=20261009T000000Z
+ARG ENVGEN_LINUX_LIBC_DEV_VERSION=5.15.0-198.208
 
 WORKDIR /opt/npa
 USER root
@@ -26,16 +27,20 @@ COPY --chmod=0755 docker/workbench/common/install_workflow_runtime_prereqs.sh \
     /usr/local/bin/install-workflow-runtime-prereqs
 COPY docker/workbench/common/sanitize_sim2real_envgen_parent.py \
     /usr/local/lib/npa/sanitize-sim2real-envgen-parent.py
+COPY docker/workbench/curobo/remove_scikit_image_recipe.py \
+    /usr/local/lib/npa/remove-scikit-image-recipe.py
 COPY --chmod=0644 docker/workbench/common/envgen_compat/tetgen.py \
     /opt/npa/compat/tetgen.py
 
-# The public Genesis parent includes three payloads that are outside this
+# The public Genesis parent includes payloads that are outside this
 # capability's public packaging/security contract:
 #
 # * imageio-ffmpeg's wheel-bundled static FFmpeg;
 # * the AGPL tetgen Python wrapper (used only for optional tetrahedralization);
 # * optional W&B and Nsight Compute tooling, including separately compiled Go
 #   binaries that are not part of canonical environment generation.
+# * an inert token-bearing scikit-image recipe, removed by the existing
+#   exact-source correction while preserving the image loader and license.
 #
 # Retain MoviePy while replacing imageio-ffmpeg with its hash-pinned
 # pure-Python sdist. Remove the optional packages and their parent metadata
@@ -45,7 +50,8 @@ COPY --chmod=0644 docker/workbench/common/envgen_compat/tetgen.py \
 # constructing this deliberately capability-reduced runtime distribution.
 # The shared Genesis requirements own the GitPython pin; keep its installed-version
 # check aligned with that file rather than installing a second version here.
-RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" \
+RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" "${ENVGEN_LINUX_LIBC_DEV_VERSION}" \
+    && test "$(dpkg-query --show --showformat='${Version}' linux-libc-dev)" = "${ENVGEN_LINUX_LIBC_DEV_VERSION}" \
     && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && find /opt/npa/src /opt/npa/workflows -type d -exec chmod a+rx {} + \
     && find /opt/npa/src /opt/npa/workflows -type f -exec chmod a+r {} + \
@@ -61,6 +67,11 @@ RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" \
     && python -m pip install --no-deps \
       -r /opt/npa/sim2real-control-requirements.txt \
       -r /opt/npa/sim2real-genesis-requirements.txt \
+    && mkdir -p /usr/share/doc/npa-envgen \
+    && python /usr/local/lib/npa/remove-scikit-image-recipe.py \
+      --site-packages "$(python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \
+      --capability envgen \
+      > /usr/share/doc/npa-envgen/dependency-source-correction.json \
     && find /opt/npa/venv -type f \
       -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
     && test -z "$(find /opt/npa/venv -type f \

@@ -1068,8 +1068,8 @@ def submit_cmd(
         "",
         "--preset",
         help=(
-            "Explicit shipped workflow seed/config preset. Preset-owned dataset, "
-            "task, and trigger keys cannot be replaced with --var."
+            "Explicit shipped workflow seed/config preset. Preset-owned settings "
+            "cannot be replaced with --var."
         ),
     ),
     assume_decision: str = typer.Option(
@@ -1552,7 +1552,14 @@ def submit_cmd(
     merged_npa_spec = None
     robotwin_submit_context = None
     if is_npa_spec:
+        from npa.orchestration.npa_workflow.image_inputs import (
+            validate_immutable_image_inputs,
+        )
+        from npa.orchestration.npa_workflow.interpreter import _make_context, build_plan
         from npa.orchestration.npa_workflow.presets import preset_overrides
+        from npa.orchestration.npa_workflow.skypilot_render import (
+            validate_immutable_image_override_bindings,
+        )
         from npa.orchestration.npa_workflow.spec import load_spec
         from npa.orchestration.npa_workflow.submit import load_spec_for_submit
 
@@ -1568,12 +1575,31 @@ def submit_cmd(
             merged_npa_spec = load_spec_for_submit(
                 yaml_path, config_overrides=substitutions
             )
+            validate_immutable_image_inputs(
+                _make_context(merged_npa_spec, run_id=run_id or "preflight").config
+            )
             validate_image_override_selectors(
                 merged_npa_spec,
                 SkypilotRenderOptions(
                     image_overrides=specific_image_overrides,
                     materialize_registry_secrets=False,
                 ),
+            )
+            early_options = SkypilotRenderOptions(
+                image_overrides=_submit_image_overrides(
+                    image, specific_image_overrides
+                ),
+                materialize_registry_secrets=False,
+            )
+            validate_immutable_image_override_bindings(
+                merged_npa_spec,
+                build_plan(
+                    merged_npa_spec,
+                    run_id=run_id or "preflight",
+                    assume_decision=assume_decision,
+                ).steps,
+                run_id=run_id or "preflight",
+                options=early_options,
             )
             if not plan_only and _is_dedicated_live_gate_spec(merged_npa_spec):
                 _refuse_dedicated_live_gate_execution(merged_npa_spec)
@@ -1796,18 +1822,9 @@ def submit_cmd(
                 config_overrides=substitutions,
                 options=SkypilotRenderOptions(
                     registry=_resolve_submit_registry(registry, project),
-                    image_overrides={
-                        **(
-                            {"*": image}
-                            if str(image or "").strip().lower()
-                            not in {"", "none", "default", "-"}
-                            else {"*": ""}
-                            if str(image or "").strip().lower()
-                            in {"none", "default", "-"}
-                            else {}
-                        ),
-                        **specific_image_overrides,
-                    },
+                    image_overrides=_submit_image_overrides(
+                        image, specific_image_overrides
+                    ),
                     gpu_target=gpu_target,
                     image_variant=image_variant,
                     materialize_registry_secrets=False,
@@ -1839,6 +1856,11 @@ def submit_cmd(
     try:
         required_secret_env = list(secret_env)
         if merged_npa_spec is not None and not plan_only:
+            from npa.orchestration.npa_workflow.marble_credentials import (
+                marble_secret_names,
+            )
+
+            required_secret_env.extend(marble_secret_names(merged_npa_spec))
             selected_access = _workflow_access_requirements(merged_npa_spec)
             if any(item.provider == "huggingface" for item in selected_access):
                 workflow_access_secret_names.add("HF_TOKEN")
@@ -2103,16 +2125,9 @@ def submit_cmd(
                 config_overrides=substitutions,
                 options=SkypilotRenderOptions(
                     registry=_resolve_submit_registry(registry, project),
-                    image_overrides={
-                        **(
-                            {"*": image}
-                            if image_pins_all_tasks
-                            else {"*": ""}
-                            if image_value_for_source in {"none", "default", "-"}
-                            else {}
-                        ),
-                        **specific_image_overrides,
-                    },
+                    image_overrides=_submit_image_overrides(
+                        image, specific_image_overrides
+                    ),
                     gpu_target=gpu_target,
                     image_variant=image_variant,
                     materialize_registry_secrets=False,
@@ -2274,7 +2289,6 @@ def submit_cmd(
                 from npa.clients.token_factory import validate_model_access
                 from npa.clients.kube import run_kubectl
                 from npa.orchestration.npa_workflow.sim2real_preflight import (
-                    kubernetes_prerequisites,
                     static_prerequisites,
                 )
 
@@ -2325,14 +2339,12 @@ def submit_cmd(
                     )
                 else:
                     missing.extend(
-                        kubernetes_prerequisites(
+                        _sim2real_kubernetes_prerequisites_for_submit(
                             spec_config,
                             runner=_run_sim2real_kubectl,
+                            context=infra_context,
+                            kubeconfig=kubeconfig,
                             isaac_placements=isaac_placements,
-                            namespace=(
-                                os.environ.get("NPA_SIM2REAL_K8S_NAMESPACE", "").strip()
-                                or "default"
-                            ),
                         )
                     )
             if missing:
@@ -2474,16 +2486,9 @@ def submit_cmd(
 
         # Image reachability and the complete cumulative infrastructure plan are
         # both read before source/input upload or any run/journal state exists.
-        image_overrides_for_preflight: dict[str, str] = {}
-        image_value_for_preflight = image.strip()
-        if image_value_for_preflight.lower() in {"none", "default", "-"}:
-            image_overrides_for_preflight["*"] = ""
-        elif image_value_for_preflight:
-            image_overrides_for_preflight["*"] = image_value_for_preflight
-        image_overrides_for_preflight.update(specific_image_overrides)
         image_preflight_options = SkypilotRenderOptions(
             registry=_resolve_submit_registry(registry, project),
-            image_overrides=image_overrides_for_preflight,
+            image_overrides=_submit_image_overrides(image, specific_image_overrides),
             gpu_target=gpu_target,
             image_variant=image_variant,
             materialize_registry_secrets=False,
@@ -2823,15 +2828,7 @@ def submit_cmd(
                 os.environ["NPA_SRC_S3_URI"] = staged_uri
             source_action = "reused" if staged_uri == existing_source_uri else "staged"
         _warn_placeholder_bucket(spec_config, quiet=output_format == OutputFormat.json)
-        image_overrides: dict[str, str] = {}
-        # ``none`` / ``default`` clears workbench image pins so tasks use the
-        # SkyPilot default image (needed when registry images fail k8s apt-ssh).
-        image_value = image.strip()
-        if image_value.lower() in {"none", "default", "-"}:
-            image_overrides["*"] = ""
-        elif image_value:
-            image_overrides["*"] = image_value
-        image_overrides.update(specific_image_overrides)
+        image_overrides = _submit_image_overrides(image, specific_image_overrides)
 
         render_endpoint = (
             s3_endpoint
@@ -4480,6 +4477,54 @@ def _image_preflight_steps(
     )
 
 
+def _sim2real_cache_namespace(context, kubeconfig):
+    """Resolve the explicit legacy cache override or the selected context.
+
+    Args:
+        context: Selected Kubernetes context.
+        kubeconfig: Selected authenticated kubeconfig.
+    Returns:
+        Validated cache namespace.
+    Raises:
+        ValueError: The namespace or selected context cannot be verified.
+    """
+    from npa.clients.kubernetes_namespace import context_namespace, validate_namespace
+
+    namespace = os.environ.get("NPA_SIM2REAL_K8S_NAMESPACE", "").strip()
+    if namespace:
+        return validate_namespace(namespace)
+    return context_namespace(context=context, kubeconfig=kubeconfig)
+
+
+def _sim2real_kubernetes_prerequisites_for_submit(
+    config, *, runner, context, kubeconfig, isaac_placements
+):
+    """Check the Isaac cache in the namespace selected for this submission.
+
+    Args:
+        config: Resolved Sim2Real configuration.
+        runner: Exact-context Kubernetes reader.
+        context: Selected Kubernetes context.
+        kubeconfig: Selected authenticated kubeconfig.
+        isaac_placements: Effective Isaac render placement constraints.
+    Returns:
+        Missing prerequisites, including unreadable namespace evidence.
+    Raises:
+        None.
+    """
+    from npa.orchestration.npa_workflow.sim2real_preflight import (
+        kubernetes_prerequisites,
+    )
+
+    try:
+        namespace = _sim2real_cache_namespace(context, kubeconfig)
+    except ValueError:
+        namespace = None
+    return kubernetes_prerequisites(
+        config, runner=runner, namespace=namespace, isaac_placements=isaac_placements
+    )
+
+
 def _plan_preflight_image_requirements(
     spec: NpaWorkflowSpec,
     *,
@@ -4952,6 +4997,7 @@ def _preflight_image_bootstrap_contracts(
         try:
             reference = parse_image_reference(image)
             image_tool = tool_for_image_name(reference.repository.rsplit("/", 1)[-1])
+            pull_digest = str(getattr(check_by_image.get(image), "digest", "") or "")
             if image_tool and image_tool not in SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS:
                 # The packaging contract deliberately scopes this attestation to
                 # a subset of NPA images. Anonymous manifest pullability is the
@@ -4959,6 +5005,10 @@ def _preflight_image_bootstrap_contracts(
                 pull_digest = str(
                     getattr(check_by_image.get(image), "digest", "") or ""
                 ).lower()
+                if not pull_digest:
+                    raise ImageBootstrapContractError(
+                        "pullability preflight did not return an immutable digest"
+                    )
                 evidence = ImageContractEvidence(
                     image=immutable_image_reference(image, pull_digest),
                     digest=pull_digest,
@@ -4967,7 +5017,10 @@ def _preflight_image_bootstrap_contracts(
                     source="registry_pull_preflight",
                     checks=("immutable_registry_pull",),
                 )
-                results.append(evidence.to_dict())
+                result = evidence.to_dict()
+                if bind_requested_images:
+                    result["_requested_image"] = image
+                results.append(result)
                 continue
             host = reference.registry
             username, password = resolve_registry_credentials(
@@ -4976,7 +5029,6 @@ def _preflight_image_bootstrap_contracts(
             digest, labels = fetch_image_config_metadata(
                 image, username=username, password=password
             )
-            pull_digest = str(getattr(check_by_image.get(image), "digest", "") or "")
             if pull_digest and pull_digest != digest:
                 raise ImageBootstrapContractError(
                     "mutable tag resolved to a different digest between pull and contract checks"
@@ -5497,13 +5549,19 @@ def _record_unentered_workflow_submit_failure(operation, exc: BaseException) -> 
     )
 
 
-def _parse_submit_vars(var: list[str]) -> dict[str, str]:
+def _parse_submit_vars(
+    var: list[str], *, error_type: type[Exception] | None = None
+) -> dict[str, str]:
     substitutions: dict[str, str] = {}
     for item in var:
         if "=" not in item:
+            if error_type is not None:
+                raise error_type("Invalid --var format. Use KEY=VALUE.")
             _fail("Invalid --var format. Use KEY=VALUE.")
         key, value = item.split("=", 1)
         if not key:
+            if error_type is not None:
+                raise error_type("Invalid --var format. Use KEY=VALUE.")
             _fail("Invalid --var format. Use KEY=VALUE.")
         substitutions[key] = value
     return substitutions
@@ -5556,6 +5614,27 @@ def _parse_image_overrides(items: list[str]) -> dict[str, str]:
         overrides[tool_ref] = (
             "" if image_ref.lower() in {"none", "default", "-"} else image_ref
         )
+    return overrides
+
+
+def _submit_image_overrides(
+    image: str,
+    specific_image_overrides: Mapping[str, str],
+) -> dict[str, str]:
+    """Build the one image-selection mapping used by every submit preflight.
+
+    ``none``, ``default``, and ``-`` intentionally clear the global image so
+    tasks select SkyPilot's default. Exact per-tool overrides take precedence
+    over the global fallback in :func:`resolve_task_image`.
+    """
+
+    image_value = str(image or "").strip()
+    overrides: dict[str, str] = {}
+    if image_value.lower() in {"none", "default", "-"}:
+        overrides["*"] = ""
+    elif image_value:
+        overrides["*"] = image_value
+    overrides.update(specific_image_overrides)
     return overrides
 
 
@@ -6088,7 +6167,10 @@ def _raw_execution_preflight(
         controller_backend=controller_backend,
         infra=kwargs.get("infra", ""),
     )
-    env = sky_environment(runtime.isolated_config_dir)
+    env = sky_environment(
+        runtime.isolated_config_dir,
+        recover_isolated_api=False,
+    )
     env.update(kwargs.pop("extra_env", None) or {})
     return preflight_skypilot_submission(
         documents,
@@ -6705,7 +6787,18 @@ def _durable_workflow_status(
             for item in job_observations.values()
             if str(item.get("status") or "").strip()
         ]
-        if any(item.startswith("FAILED") for item in observed_states):
+        active_wave_status = str(
+            job_observations.get(resolution.job_id, {}).get("status") or ""
+        ).upper()
+        if runtime_waves and active_wave_status in {
+            "RUNNING",
+            "STARTING",
+            "PENDING",
+            "RECOVERING",
+        }:
+            # A resumed wave can run while other stages retain failed history.
+            live_status = active_wave_status
+        elif any(item.startswith("FAILED") for item in observed_states):
             live_status = "FAILED"
         elif any(item == "CANCELLED" for item in observed_states):
             live_status = "CANCELLED"
@@ -9338,6 +9431,17 @@ def cancel_cmd(
                             "reported exact job/provider failures."
                         ),
                     }
+                    if getattr(cleanup, "outcome", "") == "controller_state_lost":
+                        result.update(
+                            outcome="controller_state_lost",
+                            controller_state_lost_job_ids=(
+                                cleanup.controller_state_lost_job_ids
+                            ),
+                            recovery=cleanup.recovery,
+                            owned_teardown_allowed=False,
+                            message="Controller state is lost; workload drain is unverified. "
+                            "Preserve recovery handles and follow the scoped recovery guidance.",
+                        )
     except (WorkflowStateError, OSError, RuntimeError, ValueError) as exc:
         result = {
             "run_id": resolved_run_id or str(run_id),
@@ -9379,7 +9483,19 @@ def cancel_cmd(
                 "kind": "managed_job_cancel" if result.get("cloud_calls") else "none",
                 "cancelled_job_ids": result.get("cancelled_job_ids", []),
             },
-            verification={"outcome": result.get("outcome", "")},
+            verification={
+                "outcome": result.get("outcome", ""),
+                **(
+                    {
+                        "controller_state_lost_job_ids": result[
+                            "controller_state_lost_job_ids"
+                        ],
+                        "recovery": result["recovery"],
+                    }
+                    if result.get("outcome") == "controller_state_lost"
+                    else {}
+                ),
+            },
             errors=[str(item) for item in result.get("errors", [])],
         )
     except (OSError, RuntimeError, ValueError) as exc:
@@ -9387,7 +9503,8 @@ def cancel_cmd(
             result.setdefault("errors", []).append(
                 f"durable teardown receipt could not be written: {exc}"
             )
-            result["outcome"] = "partial_cancellation"
+            if result.get("outcome") != "controller_state_lost":
+                result["outcome"] = "partial_cancellation"
         else:
             result.setdefault("diagnostics", []).append(
                 f"teardown receipt unavailable: {exc}"
@@ -9411,7 +9528,11 @@ def cancel_cmd(
             typer.echo(str(result["message"]))
         for error in result.get("errors", []):
             typer.echo(f"cleanup warning: {error}", err=True)
-    if result["outcome"] in {"verification_failed", "partial_cancellation"}:
+    if result["outcome"] in {
+        "verification_failed",
+        "partial_cancellation",
+        "controller_state_lost",
+    }:
         raise typer.Exit(code=2)
 
 
@@ -10186,6 +10307,18 @@ def preflight_images_cmd(
     spec = merge_config_overrides(
         _load_npa_workflow(yaml_path), _parse_submit_vars(var)
     )
+    if spec.name == "sim2real":
+        from npa.orchestration.npa_workflow.sim2real_preflight import (
+            image_prerequisites,
+        )
+
+        issues = image_prerequisites(spec.config)
+        if issues:
+            _fail(
+                "Sim2Real image preflight blocked: "
+                + "; ".join(f"{reason}; fix: {remedy}" for reason, remedy in issues)
+            )
+            return
     image_overrides: dict[str, str] = {}
     if image.strip():
         image_overrides["*"] = image.strip()

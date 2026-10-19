@@ -79,7 +79,13 @@ def _video_writer(stack, env, outputs):
     import imageio.v2 as imageio
 
     writer = imageio.get_writer(
-        str(outputs / "rollout.mp4"), fps=1.0 / env.unwrapped.step_dt, codec="libx264"
+        str(outputs / "rollout.mp4"),
+        fps=1.0 / env.unwrapped.step_dt,
+        codec="libx264",
+        quality=None,
+        macro_block_size=1,
+        pixelformat="yuv420p",
+        ffmpeg_params=["-crf", "18", "-preset", "medium", "-movflags", "+faststart"],
     )
     stack.callback(writer.close)
     return writer

@@ -78,7 +78,7 @@ Those boundaries motivate three complementary maintained scanners:
 |---|---|
 | Bandit 1.9.4 | All tracked Python, including scripts and tests; medium/high severity and confidence, including unsafe deserialization, injection, weak transport and unsafe APIs. |
 | zizmor 1.30.1 | GitHub workflows and local actions; regular-persona findings with at least medium severity/confidence, including template injection and excessive permissions. |
-| Trivy 0.74.0 | All advisory severities, including unfixed vulnerabilities, for exact Python requirement pins, bare and PEP 508 named hash-fragment-bound wheel URLs, explicitly mapped immutable source archives, project extra pins, npm lock dependencies including development dependencies, and the resolved NPA core/development dependency closure. |
+| Trivy 0.74.0 | All advisory severities, including unfixed vulnerabilities, for exact Python requirement pins, literal Python pins in Dockerfile RUN instructions, bare and PEP 508 named hash-fragment-bound wheel URLs, explicitly mapped immutable source archives, project extra pins, npm lock dependencies including development dependencies, and the resolved NPA core/development dependency closure. |
 
 The gate materializes regular files from the actual target commit and the
 proposed merge commit, scans both with the same policy and vulnerability database,
@@ -232,6 +232,12 @@ Trivy covers recorded exact versions and the Linux/Python 3.12 core/development
 resolution; unpinned external tool requirements, other optional extra closures,
 Git dependencies, runtime downloads and packages installed inside images need
 their own workload/image validation. npm lockfiles must be version 2 or 3.
+Dockerfile coverage includes literal exact Python pins in RUN instructions,
+across build stages and Dockerfile variants. Different versions of the same
+package receive separate scanner inputs so stage-specific pins cannot overwrite
+one another. It does not expand build arguments, interpret heredoc programs,
+resolve version ranges or reconstruct a built image. Dependency-bearing shell
+instructions that cannot be lexed fail instead of yielding an empty inventory.
 Dependency versions and advisory data can change between runs. Existing Trivy
 image/config scans remain responsible for their configured container and IaC
 coverage; no model or GPU execution is necessary for this security workload.

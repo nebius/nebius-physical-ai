@@ -22,6 +22,7 @@ import pytest
 from npa.orchestration.npa_workflow.blueprints import iter_npa_workflow_specs
 from npa.orchestration.npa_workflow.interpreter import build_plan
 from npa.orchestration.npa_workflow.spec import load_spec
+from npa.orchestration.npa_workflow.submit import merge_config_overrides
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -32,6 +33,15 @@ def _argv_values() -> list[tuple[str, str, str]]:
     out: list[tuple[str, str, str]] = []
     for path in iter_npa_workflow_specs():
         spec = load_spec(path)
+        # Inspect every state's paths with inert exact image fixtures. This
+        # guard does not assert publication/runtime acceptance or launch work.
+        spec = merge_config_overrides(
+            spec,
+            {
+                key: "registry.example.invalid/path-contract@sha256:" + "0" * 64
+                for key in spec.config.get("required_immutable_images", [])
+            },
+        )
         assume = (
             "promote_checkpoint"
             if any(state.transitions for state in spec.states.values())
