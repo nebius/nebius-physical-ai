@@ -770,8 +770,7 @@ def test_recording_download_reports_the_disabled_selected_publication_uri(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     selected = (
-        "s3://example-bucket/sim2real-b/archived-run/attempt-one/"
-        "reports/sim2real.rrd"
+        "s3://example-bucket/sim2real-b/archived-run/attempt-one/reports/sim2real.rrd"
     )
     publication = SimpleNamespace(journaled=True, resolve=lambda _uri: None)
     monkeypatch.setattr(
@@ -795,8 +794,7 @@ def test_recording_download_refuses_an_unjournaled_nested_publication(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     selected = (
-        "s3://example-bucket/sim2real-b/archived-run/attempt-one/"
-        "reports/sim2real.rrd"
+        "s3://example-bucket/sim2real-b/archived-run/attempt-one/reports/sim2real.rrd"
     )
     publication = SimpleNamespace(journaled=False, resolve=lambda _uri: selected)
     monkeypatch.setattr(

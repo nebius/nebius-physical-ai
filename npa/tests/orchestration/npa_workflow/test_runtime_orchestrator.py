@@ -4163,7 +4163,10 @@ def test_explicit_terminal_recovery_ignores_superseded_failed_attempt(
     store = MemoryStore()
     run_id = "rt-superseded-exact-terminal-recovery"
     initial = _executor(spec, run_id=run_id, store=store)
-    assert run_workflow_runtime(spec, run_id=run_id, executor=initial).status == "succeeded"
+    assert (
+        run_workflow_runtime(spec, run_id=run_id, executor=initial).status
+        == "succeeded"
+    )
 
     state = store.read_runtime_state()
     assert state is not None
