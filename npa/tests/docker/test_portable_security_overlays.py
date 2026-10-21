@@ -69,6 +69,7 @@ def test_hardened_nltk_source_install_contract() -> None:
         assert "/opt/npa/verify_hardened_nltk.py" in docker
 
     nano_requirements = affected["cosmos3-nano-video"].read_text()
+    assert re.search(r"^aiohttp==3\.14\.4$", nano_requirements, re.M)
     for dependency in ("click", "defusedxml", "joblib", "regex", "tqdm"):
         assert re.search(rf"^{dependency}==", nano_requirements, re.M)
 
