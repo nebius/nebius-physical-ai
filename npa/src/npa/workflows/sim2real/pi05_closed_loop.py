@@ -694,7 +694,7 @@ def _typed_camera_payload(camera: Any, frame: Any, receipt: dict) -> tuple[dict,
 
 
 def _typed_camera_times(receipt: dict) -> tuple[float, float, dict]:
-    """Normalize representation jitter without hiding raw camera timing."""
+    """Map raw control time onto the validated accumulated sensor clock."""
 
     import numpy as np
 
@@ -703,6 +703,10 @@ def _typed_camera_times(receipt: dict) -> tuple[float, float, dict]:
         "expected_sensor_time_s",
         "physics_update_count",
         "physics_period_s",
+        "physics_updates_per_control_step",
+        "control_step_count",
+        "control_period_s",
+        "expected_observation_time_s",
         "reset_epoch",
     }
     if not isinstance(clock, dict) or not clock_fields.issubset(clock):
@@ -713,20 +717,39 @@ def _typed_camera_times(receipt: dict) -> tuple[float, float, dict]:
         state = float(clock["expected_sensor_time_s"])
         physics_updates = int(clock["physics_update_count"])
         physics_period = float(clock["physics_period_s"])
+        updates_per_control = int(clock["physics_updates_per_control_step"])
+        control_steps = int(clock["control_step_count"])
+        control_period = float(clock["control_period_s"])
+        mapped_observation = float(clock["expected_observation_time_s"])
         reset_epoch = int(clock["reset_epoch"])
     except (KeyError, TypeError, ValueError) as error:
         raise RuntimeError(
             "camera receipt has malformed sensor clock evidence"
         ) from error
-    values = (capture, observation, state, physics_period)
-    if not all(math.isfinite(value) for value in values) or physics_period <= 0.0:
+    values = (capture, observation, state, physics_period, control_period)
+    if not all(math.isfinite(value) for value in values):
         raise RuntimeError("camera receipt timestamps must be finite")
-    if physics_updates < 0 or reset_epoch < 0:
+    if physics_period <= 0.0 or control_period <= 0.0:
+        raise RuntimeError("camera receipt clock periods must be positive")
+    if min(physics_updates, control_steps, reset_epoch) < 0:
         raise RuntimeError("camera receipt sensor clock counters must be nonnegative")
+    if updates_per_control <= 0:
+        raise RuntimeError("camera receipt sensor clock cadence must be positive")
+    if physics_updates != control_steps * updates_per_control:
+        raise RuntimeError("camera receipt sensor-clock counters are inconsistent")
+    expected_observation = float(control_steps) * control_period
+    if (
+        mapped_observation != expected_observation
+        or observation != expected_observation
+    ):
+        raise RuntimeError("camera receipt control-clock mapping is inconsistent")
+    accumulated_sensor_time = _accumulated_sensor_time(physics_updates, physics_period)
+    if state != accumulated_sensor_time:
+        raise RuntimeError("camera receipt sensor-clock accumulation is inconsistent")
     tolerance = max(1.0e-7, 4.0 * abs(float(np.spacing(np.float32(state)))))
     offset = state - observation
     causal_age = state - capture
-    if abs(offset) > tolerance or capture > state + tolerance:
+    if capture > state + tolerance:
         raise RuntimeError("camera receipt is not bound to the shared sensor clock")
     try:
         declared_offset = float(receipt["representation_offset_s"])
@@ -735,17 +758,7 @@ def _typed_camera_times(receipt: dict) -> tuple[float, float, dict]:
         raise RuntimeError(
             "camera receipt has malformed sensor clock evidence"
         ) from error
-    if not math.isclose(
-        declared_offset,
-        offset,
-        rel_tol=0.0,
-        abs_tol=tolerance,
-    ) or not math.isclose(
-        declared_age,
-        causal_age,
-        rel_tol=0.0,
-        abs_tol=tolerance,
-    ):
+    if declared_offset != offset or declared_age != causal_age:
         raise RuntimeError("camera receipt sensor-clock evidence is inconsistent")
     provenance = {
         "raw_capture_timestamp_s": capture,
@@ -755,9 +768,25 @@ def _typed_camera_times(receipt: dict) -> tuple[float, float, dict]:
         "sensor_causal_age_s": causal_age,
         "physics_update_count": physics_updates,
         "physics_period_s": physics_period,
+        "physics_updates_per_control_step": updates_per_control,
+        "control_step_count": control_steps,
+        "control_period_s": control_period,
+        "expected_observation_time_s": mapped_observation,
         "reset_epoch": reset_epoch,
     }
     return capture, state, provenance
+
+
+def _accumulated_sensor_time(updates: int, period_s: float) -> float:
+    """Reproduce the sensor's float32 addition for independent validation."""
+
+    import numpy as np
+
+    value = np.float32(0.0)
+    period = np.float32(period_s)
+    for _ in range(updates):
+        value = np.float32(value + period)
+    return float(value)
 
 
 def _retain_failed_camera(

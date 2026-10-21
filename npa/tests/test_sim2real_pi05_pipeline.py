@@ -964,19 +964,26 @@ def test_smolvla_uses_current_native_action_without_fake_noise_pairing() -> None
     assert selection["contributor_count"] == 1
 
 
-def _typed_clock_receipt(capture: float, observation: float, state: float) -> dict:
-    return {
-        "capture_time_s": capture,
-        "observation_time_s": observation,
-        "sensor_clock": {
-            "expected_sensor_time_s": state,
-            "physics_update_count": 8,
-            "physics_period_s": float(np.float32(1.0 / 60.0)),
-            "reset_epoch": 0,
-        },
-        "representation_offset_s": state - observation,
-        "sensor_causal_age_s": state - capture,
-    }
+def _clock_native(control_steps: int) -> types.SimpleNamespace:
+    return types.SimpleNamespace(
+        episode_length_buf=np.asarray([control_steps], dtype=np.int64),
+        cfg=types.SimpleNamespace(decimation=4),
+        physics_dt=1.0 / 60.0,
+        step_dt=1.0 / 15.0,
+    )
+
+
+def _typed_clock_receipt(
+    native: types.SimpleNamespace, *, capture_offset_s: float = 0.0
+) -> dict:
+    clock = pi05_isaac._sensor_clock_reference(native)
+    observation = pi05_isaac._sim_time(native)
+    capture = clock["expected_sensor_time_s"] + capture_offset_s
+    receipt = pi05_isaac._rgb_receipt(
+        np.zeros((2, 2, 3), dtype=np.uint8), capture, observation
+    )
+    pi05_isaac._bind_rgb_clock(receipt, clock)
+    return receipt
 
 
 def _typed_test_camera(maximum_skew: float = 0.1) -> CameraView:
@@ -996,29 +1003,65 @@ def _typed_test_camera(maximum_skew: float = 0.1) -> CameraView:
 
 
 def test_smolvla_wire_uses_validated_sensor_clock_and_preserves_raw_times() -> None:
-    capture = 0.13333334028720856
-    observation = 0.13333333333333333
-    receipt = _typed_clock_receipt(capture, observation, capture)
+    receipt = _typed_clock_receipt(_clock_native(2))
     camera = _typed_test_camera()
 
     payload, provenance = pi05_closed_loop._typed_camera_payload(
         camera, np.zeros((2, 2, 3), dtype=np.uint8), receipt
     )
 
-    assert payload["capture_timestamp_s"] == capture
-    assert payload["state_timestamp_s"] == capture
+    state = receipt["sensor_clock"]["expected_sensor_time_s"]
+    observation = receipt["observation_time_s"]
+    assert payload["capture_timestamp_s"] == state
+    assert payload["state_timestamp_s"] == state
     assert provenance["raw_observation_timestamp_s"] == observation
-    assert provenance["representation_offset_s"] == capture - observation
+    assert provenance["representation_offset_s"] == state - observation
     camera.validate_timestamps(
         capture_s=payload["capture_timestamp_s"],
         state_s=payload["state_timestamp_s"],
     )
 
 
+@pytest.mark.parametrize(
+    ("control_steps", "elapsed_s"), [(15, 1.0), (75, 5.0), (450, 30.0)]
+)
+def test_smolvla_wire_tracks_accumulated_clock_mapping_for_full_episode(
+    control_steps: int, elapsed_s: float
+) -> None:
+    receipt = _typed_clock_receipt(_clock_native(control_steps))
+    payload, provenance = pi05_closed_loop._typed_camera_payload(
+        _typed_test_camera(), np.zeros((2, 2, 3), dtype=np.uint8), receipt
+    )
+
+    assert receipt["observation_time_s"] == elapsed_s
+    assert payload["state_timestamp_s"] == receipt["capture_time_s"]
+    assert provenance["representation_offset_s"] == (
+        payload["state_timestamp_s"] - elapsed_s
+    )
+    if elapsed_s == 30.0:
+        assert abs(provenance["representation_offset_s"]) > 0.0002
+
+
+def test_smolvla_wire_tracks_sensor_clock_reset_epoch() -> None:
+    native = _clock_native(450)
+    before_reset = _typed_clock_receipt(native)
+    native.episode_length_buf[0] = 0
+    at_reset = _typed_clock_receipt(native)
+    native.episode_length_buf[0] = 75
+    after_reset = _typed_clock_receipt(native)
+
+    assert before_reset["sensor_clock"]["reset_epoch"] == 0
+    assert at_reset["sensor_clock"]["reset_epoch"] == 1
+    assert after_reset["sensor_clock"]["reset_epoch"] == 1
+    payload, provenance = pi05_closed_loop._typed_camera_payload(
+        _typed_test_camera(), np.zeros((2, 2, 3), dtype=np.uint8), after_reset
+    )
+    assert payload["state_timestamp_s"] == after_reset["capture_time_s"]
+    assert provenance["reset_epoch"] == 1
+
+
 def test_smolvla_wire_rejects_camera_beyond_sensor_clock_tolerance() -> None:
-    state = 0.13333334028720856
-    capture = state + 2.0e-7
-    receipt = _typed_clock_receipt(capture, state, state)
+    receipt = _typed_clock_receipt(_clock_native(2), capture_offset_s=2.0e-7)
 
     with pytest.raises(RuntimeError, match="not bound to the shared sensor clock"):
         pi05_closed_loop._typed_camera_payload(
@@ -1027,8 +1070,15 @@ def test_smolvla_wire_rejects_camera_beyond_sensor_clock_tolerance() -> None:
 
 
 def test_smolvla_wire_retains_typed_stale_camera_rejection() -> None:
-    state = 0.5
-    receipt = _typed_clock_receipt(0.3, state, state)
+    native = _clock_native(15)
+    clock = pi05_isaac._sensor_clock_reference(native)
+    with pytest.raises(RuntimeError, match="stale relative to the causal observation"):
+        pi05_isaac._validate_capture_ages(
+            (clock["expected_sensor_time_s"] - 0.2,) * 2,
+            clock,
+            native.step_dt,
+        )
+    receipt = _typed_clock_receipt(native, capture_offset_s=-0.2)
     camera = _typed_test_camera(maximum_skew=0.1)
     payload, _ = pi05_closed_loop._typed_camera_payload(
         camera, np.zeros((2, 2, 3), dtype=np.uint8), receipt
@@ -1053,14 +1103,32 @@ def test_smolvla_wire_retains_typed_stale_camera_rejection() -> None:
         ),
         (
             lambda receipt: receipt["sensor_clock"].update(physics_period_s=0.0),
-            "timestamps must be finite",
+            "clock periods must be positive",
+        ),
+        (
+            lambda receipt: receipt["sensor_clock"].update(physics_update_count=61),
+            "counters are inconsistent",
+        ),
+        (
+            lambda receipt: receipt["sensor_clock"].update(
+                expected_observation_time_s=2.0
+            ),
+            "control-clock mapping is inconsistent",
+        ),
+        (
+            lambda receipt: receipt["sensor_clock"].update(expected_sensor_time_s=2.0),
+            "sensor-clock accumulation is inconsistent",
+        ),
+        (
+            lambda receipt: receipt.update(representation_offset_s=0.0),
+            "sensor-clock evidence is inconsistent",
         ),
     ],
 )
 def test_smolvla_wire_rejects_missing_or_malformed_clock_evidence(
     mutation, message: str
 ) -> None:
-    receipt = _typed_clock_receipt(0.5, 0.5, 0.5)
+    receipt = _typed_clock_receipt(_clock_native(15))
     mutation(receipt)
 
     with pytest.raises(RuntimeError, match=message):

@@ -809,6 +809,7 @@ def test_capture_clock_reproduces_long_float32_accumulation_and_reset() -> None:
         episode_length_buf=_Tensor([600]),
         cfg=SimpleNamespace(decimation=4),
         physics_dt=1.0 / 60.0,
+        step_dt=1.0 / 15.0,
     )
     raw = np.float32(0.0)
     for _ in range(600 * 4):

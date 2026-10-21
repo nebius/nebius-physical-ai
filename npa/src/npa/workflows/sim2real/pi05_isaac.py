@@ -1892,8 +1892,10 @@ def _sensor_clock_reference(native: Any) -> dict[str, Any]:
     import numpy as np
 
     control_steps = int(_proxy_torch(native.episode_length_buf)[0].item())
-    updates = control_steps * int(native.cfg.decimation)
+    updates_per_control = int(native.cfg.decimation)
+    updates = control_steps * updates_per_control
     physics_dt = np.float32(native.physics_dt)
+    control_dt = float(native.step_dt)
     cache = getattr(native, "_npa_pi05_sensor_clock", None)
     if cache is None or updates < cache["updates"]:
         epoch = 0 if cache is None else cache["reset_epoch"] + 1
@@ -1906,6 +1908,10 @@ def _sensor_clock_reference(native: Any) -> dict[str, Any]:
         "expected_sensor_time_s": float(cache["value"]),
         "physics_update_count": updates,
         "physics_period_s": float(physics_dt),
+        "physics_updates_per_control_step": updates_per_control,
+        "control_step_count": control_steps,
+        "control_period_s": control_dt,
+        "expected_observation_time_s": float(control_steps) * control_dt,
         "reset_epoch": cache["reset_epoch"],
     }
 
