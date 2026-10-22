@@ -58,7 +58,12 @@ _WORKER_MESSAGE_LIMIT = 16 * 1024 * 1024
 _WORKER_TERMINATE_GRACE_SECONDS = 2.0
 _WORKER_KILL_REAP_GRACE_SECONDS = 10.0
 _WORKER_STOP_ACK_GRACE_SECONDS = (
-    _WORKER_TERMINATE_GRACE_SECONDS + _WORKER_KILL_REAP_GRACE_SECONDS + 4.0
+    # The dedicated supervisor may use the complete TERM+KILL drain budget.
+    # Keep one full reap interval for the acknowledged supervisor to schedule,
+    # publish its stop receipt, and exit after that drain.  The previous
+    # four-second margin made a successfully drained worker look unsafe under
+    # parallel host load, unnecessarily poisoning the execution gate.
+    _WORKER_TERMINATE_GRACE_SECONDS + (2 * _WORKER_KILL_REAP_GRACE_SECONDS) + 4.0
 )
 
 
