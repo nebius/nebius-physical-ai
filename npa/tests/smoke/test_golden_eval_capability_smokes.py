@@ -77,7 +77,7 @@ def test_lancedb_bdd100k_dhash_runtime_passes() -> None:
     result = check_bdd100k_dhash_runtime()
 
     assert result.ok, result.detail
-    assert "Pillow=12." in result.detail
+    assert "Pillow=13." in result.detail
     assert "dhash=0" in result.detail
 
 
