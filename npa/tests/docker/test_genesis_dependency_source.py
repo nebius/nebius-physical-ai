@@ -108,9 +108,7 @@ def test_genesis_recipes_enforce_the_fsspec_security_floor(dockerfile, _, __):
 
 
 @pytest.mark.parametrize("dockerfile,_,__", VARIANTS)
-def test_genesis_recipes_require_an_explicit_source_attested_parent(
-    dockerfile, _, __
-):
+def test_genesis_recipes_require_an_explicit_source_attested_parent(dockerfile, _, __):
     text = (GENESIS / dockerfile).read_text()
     assert re.search(r"^ARG BASE_IMAGE$", text, re.MULTILINE)
     assert "FROM ${BASE_IMAGE}" in text
@@ -159,10 +157,19 @@ def test_genesis_build_time_sanitizers_are_readable_by_the_runtime_user(
     dockerfile, _, __
 ):
     text = (GENESIS / dockerfile).read_text()
-    assert "COPY --chmod=0644 docker/workbench/curobo/remove_scikit_image_recipe.py" in text
+    assert (
+        "COPY --chmod=0644 docker/workbench/curobo/remove_scikit_image_recipe.py"
+        in text
+    )
     if dockerfile == "Dockerfile":
-        assert "COPY --chmod=0644 docker/workbench/genesis/prepare_public_runtime.py" in text
-        assert "COPY --chmod=0644 docker/workbench/genesis/prepare_public_policies.py" in text
+        assert (
+            "COPY --chmod=0644 docker/workbench/genesis/prepare_public_runtime.py"
+            in text
+        )
+        assert (
+            "COPY --chmod=0644 docker/workbench/genesis/prepare_public_policies.py"
+            in text
+        )
 
 
 @pytest.mark.parametrize("dockerfile,version,site_packages", VARIANTS)

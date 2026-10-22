@@ -197,7 +197,9 @@ def test_sim2real_build_fails_before_docker_without_a_genesis_parent() -> None:
     assert "npa-genesis:dev-" + source_sha in result.stderr
 
 
-def test_sim2real_build_rejects_a_stale_genesis_parent_before_any_build(tmp_path) -> None:
+def test_sim2real_build_rejects_a_stale_genesis_parent_before_any_build(
+    tmp_path,
+) -> None:
     """A supplied local tag is not evidence unless its source label matches."""
 
     script = Path(__file__).resolve().parents[2] / "docker/workbench/sim2real-build.sh"
@@ -221,7 +223,10 @@ def test_sim2real_build_rejects_a_stale_genesis_parent_before_any_build(tmp_path
         text=True,
     )
     assert result.returncode == 2
-    assert "SIM2REAL_GPU_BASE_IMAGE must carry org.opencontainers.image.revision=" in result.stderr
+    assert (
+        "SIM2REAL_GPU_BASE_IMAGE must carry org.opencontainers.image.revision="
+        in result.stderr
+    )
     assert "found e" in result.stderr
 
 
