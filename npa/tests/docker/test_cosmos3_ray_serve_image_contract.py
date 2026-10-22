@@ -152,6 +152,7 @@ def test_dockerfile_uses_uv_not_pip_in_run_directives() -> None:
     assert ".venv/bin/pip " not in non_comment, (
         "executable instructions must not invoke .venv/bin/pip; use uv pip install --python"
     )
+    assert "flash-attn flash-attn-3-nv gradio" in non_comment
 
 
 def test_security_upgrades_requirements_file_has_hash_pinned_cves() -> None:
@@ -162,6 +163,8 @@ def test_security_upgrades_requirements_file_has_hash_pinned_cves() -> None:
     assert "ray[serve]==2.58.0" in req_file.with_suffix(".in").read_text()
     assert not re.search(r"^nltk==", content, re.M)
     assert "ray-haproxy==2.8.25" in content
+    assert not re.search(r"^gradio==", content, re.M)
+    assert "unused Gradio UI remains" in (IMAGE / "verify_env.py").read_text()
     # Every dependency is exact and hash-bound, including the new serve extra.
     requirements = re.split(r"\n(?=[a-zA-Z])", content)
     for requirement in requirements[1:]:

@@ -203,7 +203,7 @@ def test_rerun_decoding_extra_is_dev_only_and_mirrored() -> None:
     }
 
 
-@pytest.mark.parametrize("version", ["3.10", "3.12", "3.14"])
+@pytest.mark.parametrize("version", ["3.11", "3.12", "3.14"])
 def test_ci_pins_select_one_cpu_runtime_per_interpreter(version: str) -> None:
     """Resolve marker-qualified pins without admitting a CUDA dependency.
 
@@ -258,7 +258,9 @@ def test_refresh_preserves_pins_unless_upgrade_requested(
     _copy_inputs(tmp_path)
     commands = []
     monkeypatch.setattr(
-        ci_requirements.subprocess, "check_output", lambda *a, **k: "uv 0.12.5"
+        ci_requirements.subprocess,
+        "check_output",
+        lambda *a, **k: f"uv {ci_requirements._UV_VERSION}",
     )
     monkeypatch.setattr(
         ci_requirements.subprocess, "run", lambda args, **kwargs: commands.append(args)

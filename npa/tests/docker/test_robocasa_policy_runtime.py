@@ -691,7 +691,7 @@ def test_robocasa_publication_uses_committed_tree_builder() -> None:
     )
 
 
-def test_robocasa_asset_boundary_is_in_actual_python310_ci_selection():
+def test_robocasa_asset_boundary_is_in_actual_minimum_python_ci_selection():
     import yaml
 
     workflow = yaml.safe_load((ROOT / ".github/workflows/test.yml").read_text())
@@ -699,7 +699,7 @@ def test_robocasa_asset_boundary_is_in_actual_python310_ci_selection():
         step
         for job in workflow["jobs"].values()
         for step in job.get("steps", [])
-        if step.get("name") == "Run Python 3.10 compatibility regressions"
+        if step.get("name") == "Run Python 3.11 compatibility regressions"
     ]
     assert len(compatibility_steps) == 1
     assert (

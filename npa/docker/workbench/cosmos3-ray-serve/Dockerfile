@@ -83,7 +83,7 @@ RUN export UV_CACHE_DIR=/tmp/uv-cache \
     && cd /opt/cosmos3/cosmos-framework \
     && uv sync --frozen --inexact \
        --extra guardrail --extra serve --group cu130-torch213 \
-    && uv pip uninstall --python .venv/bin/python flash-attn flash-attn-3-nv \
+    && uv pip uninstall --python .venv/bin/python flash-attn flash-attn-3-nv gradio \
     && uv pip install --python .venv/bin/python --no-deps --require-hashes \
        --requirement /tmp/cosmos3-ray-security-upgrades-requirements.txt \
     && /opt/npa/install_hardened_nltk.sh .venv/bin/python \

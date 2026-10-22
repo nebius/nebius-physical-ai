@@ -2,7 +2,7 @@
 # GPU/model dependencies are not part of this overlay.
 # Regenerate with `uv pip compile --python-version 3.12
 # --python-platform x86_64-manylinux_2_28 --exclude-newer
-# 2026-10-09T12:00:00Z --generate-hashes --no-header` from the repository root.
+# 2026-10-22T02:47:48Z --generate-hashes --no-header` from the repository root.
 ray[serve]==2.58.0
 # Keep the proxy extra present across resolver metadata changes.
 ray-haproxy==2.8.25
@@ -11,9 +11,9 @@ ray-haproxy==2.8.25
 defusedxml==0.7.1
 joblib==1.6.0
 regex==2026.9.3
-# The framework's serve extra includes Gradio. Its old Starlette upper bound
-# conflicts with patched Ray; upgrade both sides of that interface together.
-gradio==6.16.0
+# The NPA ingress uses Ray Serve directly. The upstream optional Gradio UI is
+# removed in the image because every current Gradio release caps Pillow below
+# the security-fixed release required by this closure.
 # The pinned framework Transformers requires the final 0.x Hub API.
 huggingface-hub==0.36.2
 # Preserve the framework's numerical and model-validation ABI constraints.
@@ -21,19 +21,19 @@ numpy==2.2.6
 pandas==2.2.3
 pydantic==2.12.5
 # Patch shared parser/network packages after the frozen framework sync.
-aiohttp==3.14.3
+aiohttp==3.14.4
 click==8.3.3
 cryptography==50.0.1
 hydra-core==1.3.7
 idna==3.19
 msgpack==1.2.1
 multidict==6.9.1
-pillow==12.3.0
+pillow==13.0.0
 pyasn1==0.6.4
 pygments==2.21.0
 pytest==9.0.3
 requests==2.34.2
 setuptools==84.0.0
 urllib3==2.8.0
-virtualenv==21.7.13
+virtualenv==21.14.9
 pip==26.2.1

@@ -33,7 +33,10 @@ def test_portable_overlay_hashes_and_application_order(image: str) -> None:
     overlay = docker.index("--no-deps --require-hashes", sync)
     check = docker.index('"pip","check"' if image == "openpi" else "pip check", overlay)
     assert sync < overlay < check
-    assert "pillow==12.3.0" in lock
+    expected_pillow = (
+        "pillow==13.0.0" if image == "cosmos3-ray-serve" else "pillow==12.3.0"
+    )
+    assert expected_pillow in lock
     assert "setuptools==84.0.0" in lock
 
 
