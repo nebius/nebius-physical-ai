@@ -314,6 +314,7 @@ def test_one_driver_parallel_jaw_gripper_is_supported() -> None:
         model_closed=1.0,
     )
     assert gripper.model_to_joint_positions(1.0) == pytest.approx((0.8,))
+    assert gripper.joint_positions_to_width((0.4,)) == pytest.approx(0.0425)
 
 
 def test_unsupported_gripper_is_rejected_during_profile_construction() -> None:
@@ -402,11 +403,38 @@ def test_validated_observation_is_typed_and_binds_exact_camera_bytes() -> None:
         policy_observation_from_wire(wire)
 
 
-def test_gripper_inverse_rejects_inconsistent_coupled_joint_measurements() -> None:
+def test_gripper_inverse_uses_independent_measured_finger_travel() -> None:
     gripper = _robot(6).gripper
     assert gripper.joint_positions_to_width((0.03, 0.03)) == pytest.approx(0.06)
-    with pytest.raises(InterchangeContractError, match="disagree"):
-        gripper.joint_positions_to_width((0.03, 0.0))
+    assert gripper.joint_positions_to_width((0.03, 0.0)) == pytest.approx(0.03)
+    assert gripper.joint_positions_to_width((0.029, 0.028)) == pytest.approx(0.057)
+
+
+def test_gripper_inverse_handles_changed_spans_and_directions() -> None:
+    gripper = GripperMapping(
+        joint_names=("left_driver", "right_driver"),
+        joint_units=("m", "rad"),
+        finger_links=("left_pad", "right_pad"),
+        open_joint_positions=(0.02, -0.04),
+        closed_joint_positions=(-0.01, 0.02),
+        maximum_width_m=0.09,
+        model_semantics="normalized_closed",
+        model_open=0.0,
+        model_closed=1.0,
+    )
+
+    assert gripper.joint_positions_to_width((0.005, -0.01)) == pytest.approx(0.045)
+    assert gripper.joint_positions_to_width((-0.0025, -0.025)) == pytest.approx(
+        0.045
+    )
+
+
+@pytest.mark.parametrize("positions", [(-0.001, 0.01), (0.01, 0.031)])
+def test_gripper_inverse_rejects_any_joint_outside_declared_endpoints(
+    positions: tuple[float, float],
+) -> None:
+    with pytest.raises(InterchangeContractError, match="outside declared endpoints"):
+        _robot(6).gripper.joint_positions_to_width(positions)
 
 
 def test_policy_output_binds_action_semantics_and_finite_chunk() -> None:

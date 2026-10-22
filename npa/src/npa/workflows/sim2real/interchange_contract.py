@@ -295,7 +295,14 @@ class GripperMapping:
         return abs(scalar - self.model_closed) < abs(scalar - self.model_open)
 
     def joint_positions_to_width(self, values: Sequence[float]) -> float:
-        """Recover physical aperture from all declared coupled joint positions."""
+        """Recover aperture from each measured parallel-jaw joint contribution.
+
+        Command targets follow the declared coupled endpoint trajectory, but
+        measured fingers can legitimately differ under dynamics and contact.
+        Each joint therefore contributes its own normalized physical travel to
+        the measured aperture.  Endpoint validation remains per joint so an
+        invalid measurement cannot be hidden by averaging it with another.
+        """
 
         positions = _finite(
             values, size=len(self.joint_names), name="measured gripper positions"
@@ -313,16 +320,11 @@ class GripperMapping:
                     "gripper joint endpoints do not define an aperture mapping"
                 )
             ratios.append((value - closed) / span)
-        if max(ratios) - min(ratios) > 1.0e-4:
-            raise InterchangeContractError(
-                "measured gripper joints disagree with the declared coupling"
-            )
-        ratio = sum(ratios) / len(ratios)
-        if not -1.0e-4 <= ratio <= 1.0001:
+        if any(not 0.0 <= ratio <= 1.0 for ratio in ratios):
             raise InterchangeContractError(
                 "measured gripper positions are outside declared endpoints"
             )
-        return min(max(ratio, 0.0), 1.0) * self.maximum_width_m
+        return (sum(ratios) / len(ratios)) * self.maximum_width_m
 
     def to_dict(self) -> dict[str, Any]:
         return {
