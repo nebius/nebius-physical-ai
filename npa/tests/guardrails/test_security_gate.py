@@ -1144,7 +1144,7 @@ def _retained_patch_context_pins(root: Path) -> list[str]:
         ("multidict", "6.9.1"),
         ("oauthlib", "4.0.0"),
         ("urllib3", "2.8.0"),
-        ("virtualenv", "21.14.7"),
+        ("virtualenv", "21.14.9"),
         ("werkzeug", "3.1.9"),
     ],
 )
