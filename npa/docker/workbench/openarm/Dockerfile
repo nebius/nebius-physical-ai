@@ -116,7 +116,7 @@ RUN /opt/npa/sim/venv/bin/python -m pip install --no-cache-dir --require-hashes 
     && rm -rf /root/.cache /home/ubuntu/.cache
 
 RUN /opt/npa/sim/venv/bin/python -c 'import mujoco, openarm_mujoco.v2 as o; m=mujoco.MjModel.from_xml_path(o.openarm_demo_xml()); assert m.nu == 17' \
-    && /opt/npa/sim/venv/bin/python -c 'import importlib.metadata as m; assert m.version("GitPython") == "3.1.62"' \
+    && /opt/npa/sim/venv/bin/python -c 'import importlib.metadata as m; assert m.version("GitPython") == "3.2.1"' \
     && /opt/npa/sim/venv/bin/python -c 'import importlib.metadata as m; assert m.version("fastapi") == "0.136.1"' \
     && /opt/npa/sim/venv/bin/python -c 'import importlib.metadata as m; assert m.version("starlette") == "1.6.0"' \
     && /opt/npa/sim/venv/bin/python -c 'import importlib.util; assert importlib.util.find_spec("isaacsim") is None; assert importlib.util.find_spec("isaaclab") is None' \

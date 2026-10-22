@@ -35,5 +35,5 @@ pytest==9.0.3
 requests==2.34.2
 setuptools==84.0.0
 urllib3==2.8.0
-virtualenv==21.7.13
+virtualenv==21.14.9
 pip==26.2.1
