@@ -498,6 +498,7 @@ def test_sim2real_control_plane_requirement_closure_is_exact() -> None:
     assert lines
     assert all(line.count("==") == 1 for line in lines)
     for expected in (
+        "certifi==2026.10.19",
         "kubernetes==33.1.0",
         "mcap==1.4.0",
         "durationpy==0.10",

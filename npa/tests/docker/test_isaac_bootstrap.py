@@ -696,6 +696,7 @@ def test_isaac3_oss_closure_merges_the_workflow_runtime_security_pins() -> None:
     lines = ISAAC3_OSS_DEPS.read_text(encoding="utf-8").splitlines()
     shared = (COMMON / "sim2real-control-requirements.txt").read_text(encoding="utf-8")
     for requirement in (
+        "certifi==2026.10.19",
         "cryptography==50.0.0",
         "oauthlib==4.0.0",
         "requests-oauthlib==2.0.0",

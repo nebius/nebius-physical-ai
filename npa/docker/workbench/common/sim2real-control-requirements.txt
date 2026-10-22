@@ -4,7 +4,7 @@
 anyio==4.14.2
 cryptography==50.0.0
 cffi==2.1.1
-certifi==2026.7.22
+certifi==2026.10.19
 charset-normalizer==3.4.9
 durationpy==0.10
 google-auth==2.56.3
