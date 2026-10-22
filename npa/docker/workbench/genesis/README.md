@@ -84,11 +84,11 @@ canonical base recipe first and pass its current-source local tag (or image ID):
 SOURCE_SHA="$(git rev-parse HEAD)"
 npa/docker/workbench/base/cuda13-blackwell/build.sh --tag "dev-${SOURCE_SHA}"
 BASE_IMAGE="npa-base:cuda13-blackwell-dev-${SOURCE_SHA}"
-docker build --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
-  --build-arg "NPA_SOURCE_SHA=${SOURCE_SHA}" \
-  -f npa/docker/workbench/genesis/Dockerfile -t "npa-genesis:dev-${SOURCE_SHA}" npa
+npa/docker/workbench/genesis/build.sh \
+  --base-image "${BASE_IMAGE}" --tag "dev-${SOURCE_SHA}"
 
 GENESIS_IMAGE="npa-genesis:dev-${SOURCE_SHA}"
+test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "${GENESIS_IMAGE}")" = "${SOURCE_SHA}"
 docker build --build-arg "BASE_IMAGE=${GENESIS_IMAGE}" \
   --build-arg "NPA_SOURCE_SHA=${SOURCE_SHA}" \
   -f npa/docker/workbench/sim2real-envgen/Dockerfile \

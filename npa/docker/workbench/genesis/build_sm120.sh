@@ -66,6 +66,16 @@ if [[ "$(git -C "${NPA_DIR}/.." rev-parse HEAD)" != "${NPA_SOURCE_SHA}" ]]; then
   exit 2
 fi
 
+DOCKER=(docker)
+if [[ -n "${DOCKER_CONTEXT:-}" ]]; then
+  DOCKER+=(--context "${DOCKER_CONTEXT}")
+fi
+parent_source_sha="$("${DOCKER[@]}" image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "${BASE_IMAGE}" 2>/dev/null || true)"
+if [[ "${parent_source_sha}" != "${NPA_SOURCE_SHA}" ]]; then
+  echo "BASE_IMAGE must carry org.opencontainers.image.revision=${NPA_SOURCE_SHA}; found ${parent_source_sha:-missing}" >&2
+  exit 2
+fi
+
 if [[ -z "${TAG}" ]]; then
   TAG="0.4.6-sm80-sm90-sm100-sm103-sm120-$(date -u +%Y%m%dT%H%M%SZ)"
 fi
@@ -83,14 +93,14 @@ if [[ -n "${REGISTRY}" ]]; then
   BUILD_ARGS+=(-t "${REGISTRY_IMAGE}")
 fi
 
-docker build "${BUILD_ARGS[@]}" "${NPA_DIR}"
+"${DOCKER[@]}" build "${BUILD_ARGS[@]}" "${NPA_DIR}"
 
 if [[ "${PUSH}" == "1" ]]; then
   if [[ -z "${REGISTRY}" ]]; then
     echo "--push requires --registry" >&2
     exit 2
   fi
-  docker push "${REGISTRY_IMAGE}"
+  "${DOCKER[@]}" push "${REGISTRY_IMAGE}"
   echo "${REGISTRY_IMAGE}"
 else
   echo "${LOCAL_IMAGE}"

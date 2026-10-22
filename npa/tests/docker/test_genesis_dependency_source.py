@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -113,6 +115,34 @@ def test_genesis_recipes_require_an_explicit_source_attested_parent(
     assert re.search(r"^ARG BASE_IMAGE$", text, re.MULTILINE)
     assert "FROM ${BASE_IMAGE}" in text
     assert "ghcr.io/nebius/nebius-physical-ai/npa-base@" not in text
+
+
+def test_canonical_genesis_builder_rejects_a_parent_from_another_source(
+    tmp_path,
+):
+    """Do not relabel a stale local parent as a current-source Genesis build."""
+
+    source_sha = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], text=True, cwd=ROOT
+    ).strip()
+    docker = tmp_path / "docker"
+    docker.write_text("#!/bin/sh\nprintf '%s\\n' 'f'$(printf 'f%.0s' $(seq 1 39))\n")
+    docker.chmod(0o755)
+    result = subprocess.run(
+        ["bash", str(GENESIS / "build.sh"), "--base-image", "local-base"],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "NPA_SOURCE_SHA": source_sha,
+            "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"],
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 2
+    assert "BASE_IMAGE must carry org.opencontainers.image.revision=" in result.stderr
+    assert "found f" in result.stderr
 
 
 @pytest.mark.parametrize("dockerfile,version,site_packages", VARIANTS)

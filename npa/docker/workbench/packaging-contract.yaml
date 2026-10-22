@@ -1078,6 +1078,12 @@ images:
     dockerfile: genesis/Dockerfile
     tier: interactive
     redistribution: public
+    source_attested_parent:
+      source_label: org.opencontainers.image.revision
+      build_scripts:
+        - genesis/build.sh
+        - genesis/build_sm120.sh
+      manual_preflight: genesis/README.md
     notes: >-
       The stock public runtime retains rigid Panda/Box teacher, export, camera
       demo conversion, native PyAV dataset reading and ACT dependencies. It
@@ -1227,6 +1233,11 @@ images:
   envgen:
     dockerfile: sim2real-envgen/Dockerfile
     tier: interactive
+    source_attested_parent:
+      source_label: org.opencontainers.image.revision
+      build_scripts:
+        - sim2real-build.sh
+      manual_preflight: genesis/README.md
     notes: >-
       The flattened public runtime removes the parent image's optional AGPL
       tetgen wrapper, W&B client, and Nsight Compute tree. Canonical Sim2Real

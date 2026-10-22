@@ -5,6 +5,7 @@ FROM nvidia/cuda:${CUDA_BASE_TAG}@sha256:6ff9753ccda37b8f8d711831310d661afd31025
 
 ARG CUDA_BASE_TAG=13.0.1-cudnn-devel-ubuntu22.04
 ARG BUILD_TS=unknown
+ARG NPA_SOURCE_SHA
 ARG TORCH_VERSION=2.13.0
 ARG TORCHVISION_VERSION=0.28.0
 # TorchAudio 2.11 is forward-compatible with later Torch releases.
@@ -36,6 +37,7 @@ LABEL npa.image="cuda13-blackwell" \
       npa.quack_kernels.version="${QUACK_KERNELS_VERSION}" \
       npa.cuda_arch_list="${TORCH_CUDA_ARCH_LIST}" \
       npa.build_ts="${BUILD_TS}" \
+      org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
       npa.build_info="cuda=${CUDA_BASE_TAG};torch=${TORCH_VERSION}+cu130;torchvision=${TORCHVISION_VERSION}+cu130;torchaudio=${TORCHAUDIO_VERSION};flash_attention_commit=${FLASH_ATTN_COMMIT};cutlass_dsl=${CUTLASS_DSL_VERSION};quack_kernels=${QUACK_KERNELS_VERSION};torch_cuda_arch_list=${TORCH_CUDA_ARCH_LIST}"
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -55,6 +57,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PATH=/opt/npa/venv/bin:/usr/local/cuda/bin:$PATH
 
 SHELL ["/bin/bash", "-lc"]
+
+RUN [[ "${NPA_SOURCE_SHA}" =~ ^[0-9a-f]{40}$ ]]
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates \

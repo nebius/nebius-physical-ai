@@ -197,6 +197,34 @@ def test_sim2real_build_fails_before_docker_without_a_genesis_parent() -> None:
     assert "npa-genesis:dev-" + source_sha in result.stderr
 
 
+def test_sim2real_build_rejects_a_stale_genesis_parent_before_any_build(tmp_path) -> None:
+    """A supplied local tag is not evidence unless its source label matches."""
+
+    script = Path(__file__).resolve().parents[2] / "docker/workbench/sim2real-build.sh"
+    source_sha = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], text=True, cwd=script.parents[3]
+    ).strip()
+    docker = tmp_path / "docker"
+    docker.write_text("#!/bin/sh\nprintf '%s\\n' 'e'$(printf 'e%.0s' $(seq 1 39))\n")
+    docker.chmod(0o755)
+    result = subprocess.run(
+        ["bash", str(script)],
+        cwd=script.parents[3],
+        env={
+            **os.environ,
+            "NPA_SOURCE_SHA": source_sha,
+            "SIM2REAL_GPU_BASE_IMAGE": "local-genesis",
+            "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"],
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 2
+    assert "SIM2REAL_GPU_BASE_IMAGE must carry org.opencontainers.image.revision=" in result.stderr
+    assert "found e" in result.stderr
+
+
 def test_sonic_keeps_an_explicit_amd64_build_platform() -> None:
     dockerfile = (
         Path(__file__).resolve().parents[2] / "docker/workbench/sonic/Dockerfile"

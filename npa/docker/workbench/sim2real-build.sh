@@ -89,6 +89,16 @@ EOF
   exit 2
 fi
 
+if [ "$(git -C "${NPA_ROOT}/.." rev-parse HEAD)" != "${NPA_SOURCE_SHA}" ]; then
+  echo "ERROR: NPA_SOURCE_SHA must match the build-context checkout HEAD" >&2
+  exit 2
+fi
+PARENT_SOURCE_SHA="$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$SIM2REAL_GPU_BASE_IMAGE" 2>/dev/null || true)"
+if [ "$PARENT_SOURCE_SHA" != "$NPA_SOURCE_SHA" ]; then
+  echo "ERROR: SIM2REAL_GPU_BASE_IMAGE must carry org.opencontainers.image.revision=${NPA_SOURCE_SHA}; found ${PARENT_SOURCE_SHA:-missing}" >&2
+  exit 2
+fi
+
 build_one() {
   local name="$1"
   local tag="$2"
