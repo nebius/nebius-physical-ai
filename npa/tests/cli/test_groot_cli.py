@@ -210,6 +210,8 @@ def test_groot_byovm_dry_run_discloses_vendor_and_control_runtimes(mocker) -> No
         return_value=SimpleNamespace(ok=True, error=""),
     )
     mocker.patch("npa.cli.groot.list_projects", return_value={})
+    mocker.patch("npa.cli.groot.alias_has_terraform_state", return_value=False)
+    mocker.patch("npa.cli.groot.workbench_is_byovm", return_value=False)
     ssh_cls = mocker.patch("npa.cli.groot.SSHClient")
 
     result = runner.invoke(
@@ -236,10 +238,12 @@ def test_groot_byovm_dry_run_discloses_vendor_and_control_runtimes(mocker) -> No
     )
 
     assert result.exit_code == 0
-    assert (
-        "Would install the Python 3.10 GR00T vendor runtime and Python 3.11 NPA "
-        "control runtime"
-    ) in result.output
+    # Rich wraps long dry-run output at the active terminal width, so assert
+    # the two runtime roles separately instead of coupling this behavior to a
+    # presentation width.
+    assert "Would install the Python 3.10 GR00T vendor runtime" in result.output
+    assert "Python 3.11 NPA" in result.output
+    assert "control runtime" in result.output
     ssh_cls.assert_called_once()
 
 
