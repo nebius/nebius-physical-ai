@@ -375,7 +375,8 @@ The supported, customer-facing workflow catalog is the declarative
 `npa.workflow` spec set under `workflows/`. Promoted principal pipelines live in
 `workflows/main/`; see the [main index](workflows/main/README.md) for their guides
 and qualification scope. Author new reference workflows in `workflows/testing/`
-and partner integrations in `workflows/partners/<partner>/`. Keep the
+and partner integrations in `workflows/partners/<partner>/`. Author first-party
+Cosmos Data Factory workflows in `workflows/cosmos-data-factory/`. Keep the
 [catalog](workflows/README.md) and adjacent workflow indexes in sync.
 Do not add raw SkyPilot task templates to
 the package as a workflow catalog; the old catalog path is guardrail-retired.

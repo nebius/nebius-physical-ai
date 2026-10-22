@@ -2,7 +2,7 @@
 # GPU/model dependencies are not part of this overlay.
 # Regenerate with `uv pip compile --python-version 3.12
 # --python-platform x86_64-manylinux_2_28 --exclude-newer
-# 2026-10-09T12:00:00Z --generate-hashes --no-header` from the repository root.
+# 2026-10-12T01:27:32Z --generate-hashes --no-header` from the repository root.
 ray[serve]==2.58.0
 # Keep the proxy extra present across resolver metadata changes.
 ray-haproxy==2.8.25
@@ -35,5 +35,5 @@ pytest==9.0.3
 requests==2.34.2
 setuptools==84.0.0
 urllib3==2.8.0
-virtualenv==21.7.13
+virtualenv==21.14.7
 pip==26.2.1
