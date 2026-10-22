@@ -645,7 +645,7 @@ terminal can interrupt it while cluster jobs continue.
 ```bash
 npa/.venv/bin/npa workbench workflow submit "$SPEC" \
   "${TARGET_ARGS[@]}" "${WORKFLOW_ARGS[@]}" "${SECRET_ARGS[@]}" \
-  --run-id "$RUN_ID" --runtime --resume --durable-s3 --max-wait-seconds 0
+  --run-id "$RUN_ID" --runtime --durable-s3 --max-wait-seconds 0
 ```
 
 Submit enforces storage writes, secret propagation, model access, cluster/cache
