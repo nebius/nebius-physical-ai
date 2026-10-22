@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -40,6 +41,155 @@ def test_cluster_terraform_wires_operator_filesystem_csi_repository() -> None:
         'variable "filesystem_csi_chart_repository"'
         in (cluster_dir / "variables.tf").read_text()
     )
+
+
+def test_provider_migration_detects_only_the_retired_address(monkeypatch, tmp_path):
+    state = {
+        "resources": [
+            {
+                "provider": (
+                    'provider["terraform-provider.storage.eu-north1.nebius.cloud/'
+                    'nebius/nebius"]'
+                )
+            },
+            {"provider": 'provider["registry.terraform.io/hashicorp/random"]'},
+        ]
+    }
+    monkeypatch.setattr(
+        tf_mod,
+        "_run_capture",
+        lambda *_args, **_kwargs: _completed(json.dumps(state)),
+    )
+
+    report = tf_mod._provider_migration_report("terraform", tmp_path, {})
+
+    assert report == {
+        "migration_required": True,
+        "state_present": True,
+        "legacy_provider_addresses": [
+            "terraform-provider.storage.eu-north1.nebius.cloud/nebius/nebius"
+        ],
+        "errors": [],
+    }
+
+
+def test_provider_migration_unavailable_state_is_sanitized_and_blocks(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(
+        tf_mod,
+        "_run_capture",
+        lambda *_args, **_kwargs: _completed("private-provider-endpoint", returncode=1),
+    )
+
+    report = tf_mod._provider_migration_report("terraform", tmp_path, {})
+
+    assert report["errors"] == ["terraform_state_unavailable"]
+    assert "private-provider-endpoint" not in str(report)
+    with pytest.raises(typer.BadParameter, match="no apply or destroy ran"):
+        tf_mod._require_no_provider_migration("terraform", tmp_path, {})
+
+
+def test_provider_migration_empty_fresh_state_does_not_block(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        tf_mod,
+        "_run_capture",
+        lambda *_args, **_kwargs: _completed(),
+    )
+
+    report = tf_mod._provider_migration_report("terraform", tmp_path, {})
+
+    assert report == {
+        "migration_required": False,
+        "state_present": False,
+        "legacy_provider_addresses": [],
+        "errors": [],
+    }
+    tf_mod._require_no_provider_migration("terraform", tmp_path, {})
+
+
+def test_provider_migration_plan_and_execute_are_explicit(monkeypatch, tmp_path):
+    tf_dir = tmp_path / "cluster"
+    tf_dir.mkdir()
+    legacy_state = {
+        "resources": [
+            {
+                "provider": (
+                    'provider["terraform-provider.storage.eu-north1.nebius.cloud/'
+                    'nebius/nebius"]'
+                )
+            }
+        ]
+    }
+    current_state = {
+        "resources": [{"provider": 'provider["registry.terraform.io/nebius/nebius"]'}]
+    }
+    calls = []
+
+    def capture(args, **_kwargs):
+        calls.append(args)
+        if args[-2:] == ["state", "pull"]:
+            payload = legacy_state if len(calls) == 1 else current_state
+            return _completed(json.dumps(payload))
+        assert args[1:3] == ["state", "replace-provider"]
+        return _completed()
+
+    @contextmanager
+    def isolated(_terraform_dir, _context):
+        scratch = tmp_path / "terraform-data"
+        scratch.mkdir(exist_ok=True)
+        yield scratch
+
+    monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
+    monkeypatch.setattr(tf_mod, "_preflight_provider_lock", lambda *_args: "linux")
+    monkeypatch.setattr(tf_mod, "_terraform_env", lambda *_args: {})
+    monkeypatch.setattr(tf_mod, "_terraform_init", lambda *_args: None)
+    monkeypatch.setattr(tf_mod, "_run_capture", capture)
+    monkeypatch.setattr(
+        "npa.cli.cluster.terraform_runtime.isolated_terraform_data_dir", isolated
+    )
+
+    planned = runner.invoke(
+        app,
+        ["provider-migration", "--terraform-dir", str(tf_dir), "--json"],
+    )
+    assert planned.exit_code == 0, planned.output
+    assert json.loads(planned.output)["status"] == "planned"
+    assert all("replace-provider" not in call for call in calls)
+
+    calls.clear()
+    executed = runner.invoke(
+        app,
+        [
+            "provider-migration",
+            "--terraform-dir",
+            str(tf_dir),
+            "--execute",
+            "--json",
+        ],
+    )
+    assert executed.exit_code == 0, executed.output
+    document = json.loads(executed.output)
+    assert document["status"] == "completed" and document["executed"] is True
+    replacement = next(call for call in calls if "replace-provider" in call)
+    assert "-auto-approve" in replacement
+    assert replacement[-2:] == [
+        "terraform-provider.storage.eu-north1.nebius.cloud/nebius/nebius",
+        "registry.terraform.io/nebius/nebius",
+    ]
+
+
+def test_normal_lifecycle_refuses_unreviewed_provider_state(monkeypatch, tmp_path):
+    report = {
+        "migration_required": True,
+        "state_present": True,
+        "legacy_provider_addresses": ["retired"],
+        "errors": [],
+    }
+    monkeypatch.setattr(tf_mod, "_provider_migration_report", lambda *_args: report)
+
+    with pytest.raises(typer.BadParameter, match="no apply or destroy ran"):
+        tf_mod._require_no_provider_migration("terraform", tmp_path, {})
 
 
 runner = CliRunner()
@@ -204,7 +354,7 @@ def test_terraform_collision_runner_retains_output_for_classification(
 
 
 @pytest.fixture(autouse=True)
-def _node_group_ssh_key(tmp_path_factory, monkeypatch) -> Path:
+def _node_group_ssh_key(tmp_path_factory, monkeypatch, request) -> Path:
     """The vendored module rejects a node-group key path that does not exist.
 
     The isolated test HOME has no ~/.ssh, so give every up/down run a real key.
@@ -229,6 +379,16 @@ def _node_group_ssh_key(tmp_path_factory, monkeypatch) -> Path:
     monkeypatch.setattr(
         tf_mod, "_preflight_whole_path_capacity", lambda *_args, **_kwargs: None
     )
+    # Existing lifecycle tests use narrowly scoped Terraform subprocess fakes.
+    # Provider-address detection is exercised by the dedicated tests above;
+    # keep these tests focused on their original apply/destroy boundary.
+    if request.node.name not in {
+        "test_normal_lifecycle_refuses_unreviewed_provider_state",
+        "test_provider_migration_unavailable_state_is_sanitized_and_blocks",
+    }:
+        monkeypatch.setattr(
+            tf_mod, "_require_no_provider_migration", lambda *_args, **_kwargs: None
+        )
     return key
 
 
@@ -740,7 +900,7 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(
                         "items": [
                             {
                                 "metadata": {
-                                    "name": "csi-mounted-fs-path-sc",
+                                    "name": "compute-csi-default-sc",
                                     "annotations": {
                                         "storageclass.kubernetes.io/is-default-class": "true"
                                     },

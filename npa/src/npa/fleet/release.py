@@ -38,8 +38,25 @@ _CONFIGURATION_CONTRACTS = {
             "npa.fleet.spec.filesystem_csi_chart_repository:v1"
         ),
     },
+    # New installations retain the recipe's compute/block StorageClass for
+    # ordinary PVCs.  The filesystem CSI class remains available explicitly.
+    # This is a release-level compatibility decision: v1/v2 installations keep
+    # their historical promoted filesystem default during later reconciliation.
+    "v3": {
+        "driver": "npa.cluster.gpu_driver:v1",
+        "renderer": "npa.cluster_backends.mk8s_render:v1",
+        "required_recipe_paths": [
+            "k8s-training/main.tf",
+            "k8s-training/variables.tf",
+            "modules",
+        ],
+        "fleet_storage_preflight": (
+            "npa.fleet.spec.filesystem_csi_chart_repository:v1"
+        ),
+        "filesystem_csi_make_default_storage_class": False,
+    },
 }
-_CURRENT_CONFIGURATION_CONTRACT_VERSION = "v2"
+_CURRENT_CONFIGURATION_CONTRACT_VERSION = "v3"
 
 
 class MK8sReleaseError(ValueError):
@@ -94,8 +111,16 @@ _MK8S_RELEASES = {
         provider_lock_sha256="f4d96577faf2f583803b1b1495681f24574730a0a00201db1440633238a40505",
         configuration_contract_sha256="aa64e455a872d677292c4917ba6129bf18bf92b3c8c865f9a3f758f8c084a331",
     ),
+    "mk8s-v2026-10-22": MK8sRecipeRelease(
+        release_id="mk8s-v2026-10-22",
+        upstream_tag="main-v2026-10-12",
+        upstream_commit="fba7148cecd8bd38bccf60ba194ab8f5fdb02194",
+        bundle_sha256="4620c72688a582747eb99a2984051cec45f9822d489412933cec210640dbf491",
+        provider_lock_sha256="f4d96577faf2f583803b1b1495681f24574730a0a00201db1440633238a40505",
+        configuration_contract_sha256="e32ff0bc1c36b1b377cc998d44df19f5ca6d673278c1f73e52681d3d48561628",
+    ),
 }
-DEFAULT_MK8S_RELEASE_ID = "mk8s-v2026-10-19"
+DEFAULT_MK8S_RELEASE_ID = "mk8s-v2026-10-22"
 
 
 def default_mk8s_release() -> MK8sRecipeRelease:
@@ -207,6 +232,27 @@ def _supported_configuration_contract_sha256s() -> set[str]:
     }
 
 
+def filesystem_csi_makes_default_storage_class(release: MK8sRecipeRelease) -> bool:
+    """Return the immutable StorageClass-default policy for *release*.
+
+    Releases published before this field existed intentionally retain their
+    promoted filesystem default.  A release's persisted contract digest, not a
+    mutable process default, is the compatibility boundary.
+    """
+
+    for contract in _CONFIGURATION_CONTRACTS.values():
+        if (
+            _configuration_contract_sha256(contract)
+            == release.configuration_contract_sha256
+        ):
+            return bool(contract.get("filesystem_csi_make_default_storage_class", True))
+    raise MK8sReleaseError(
+        f"MK8s component/configuration contract is not supported for "
+        f"{release.release_id}; create a reviewed replacement release instead "
+        "of changing an install"
+    )
+
+
 def provider_lock_path(recipe_root: Path) -> Path:
     """Find the reviewed Terraform provider lock that accompanies a recipe root.
 
@@ -286,10 +332,9 @@ def select_installation_release(
         MK8sReleaseError: If persisted bytes conflict with the catalog or request.
     """
 
-    requested = resolve_mk8s_release(requested_release_id or DEFAULT_MK8S_RELEASE_ID)
     sidecar = install_dir / ".npa-fleet-env.json"
     if not sidecar.exists():
-        return requested
+        return resolve_mk8s_release(requested_release_id or DEFAULT_MK8S_RELEASE_ID)
     try:
         saved = json.loads(sidecar.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as exc:
@@ -315,7 +360,7 @@ def select_installation_release(
         raise MK8sReleaseError(
             "persisted MK8s recipe-release provenance conflicts with the catalog"
         )
-    if selected.release_id != requested.release_id:
+    if requested_release_id is not None and selected.release_id != requested_release_id:
         raise MK8sReleaseError(
             "existing MK8s installation is pinned to a different release; "
             "use a reviewed migration or replacement rather than an in-place update"

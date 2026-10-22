@@ -18,6 +18,7 @@ from npa.fleet.storage_checks import (
     require_unchanged_nodes,
     storage_nodes,
     verify_bound_claim,
+    verify_default_bound_claim,
     verify_storage_driver,
 )
 from npa.fleet.storage_identity import (
@@ -28,10 +29,12 @@ from npa.fleet.storage_identity import (
 )
 from npa.fleet.storage_resources import (
     StorageResources,
+    STORAGE_CLASS,
     STORAGE_DRIVER,
     StorageVerificationError,
     _node_token,
     claim_manifest,
+    ordinary_claim_manifest,
 )
 from npa.lifecycle_intent import OperationIntent, intent_boundary
 
@@ -134,6 +137,8 @@ def _target_report(index: int, cluster) -> dict:
             "claims_removed": 0,
             "probe_paths_absent": False,
         },
+        "default_storage_class": "",
+        "filesystem_storage_class": "",
     }
 
 
@@ -177,24 +182,66 @@ def _failure_category(error) -> str:
 def _qualify_cluster(resources, cluster, report, private) -> None:
     nodes = storage_nodes(resources, cluster)
     private["nodes"] = resources.api.sanitize_for_serialization(nodes)
-    driver = verify_storage_driver(resources, nodes)
+    expected_default = (
+        STORAGE_CLASS
+        if getattr(cluster, "filesystem_csi_make_default_storage_class", False)
+        else "compute-csi-default-sc"
+    )
+    driver = verify_storage_driver(
+        resources, nodes, expected_default_storage_class=expected_default
+    )
+    report["default_storage_class"] = expected_default
+    report["filesystem_storage_class"] = STORAGE_CLASS
+    ordinary_claim = None
+    ordinary_volume = None
     claim = None
     try:
         host = resources.run_phase(
             nodes, cluster, {"action": "host", "root_path": "/host-storage"}
         )
         _require_host_evidence(host, nodes, cluster)
+        ordinary_claim = resources.create(
+            "persistent_volume_claim", ordinary_claim_manifest(resources.run_id)
+        )
+        ordinary = resources.run_phase(
+            [nodes[0]],
+            cluster,
+            {"action": "default", "root_path": "/data", "ordinary_pvc": True},
+            claim=ordinary_claim.metadata.name,
+        )
+        if (
+            len(ordinary) != 1
+            or ordinary[0].get("ordinary_pvc_io") is not True
+            or not re.fullmatch("[0-9a-f]{64}", ordinary[0].get("checksum", ""))
+        ):
+            raise StorageVerificationError("default_pvc_io_mismatch")
+        ordinary_volume = verify_default_bound_claim(
+            resources, ordinary_claim, expected_default
+        )
+        private["default_volume"] = resources.api.sanitize_for_serialization(
+            ordinary_volume
+        )
         claim = resources.create(
             "persistent_volume_claim", claim_manifest(resources.run_id)
         )
         shared = _shared_visibility(resources, nodes, cluster, claim, driver, private)
         report["nodes"] = _node_reports(nodes, cluster, host, shared)
     finally:
-        _cleanup_cluster(resources, nodes, cluster, claim, report, private)
+        _cleanup_cluster(
+            resources,
+            nodes,
+            cluster,
+            ordinary_claim,
+            claim,
+            report,
+            private,
+        )
         private["execution"] = resources.receipts
         private["resources"] = resources.owned
     require_unchanged_nodes(nodes, storage_nodes(resources, cluster))
-    verify_storage_driver(resources, nodes)
+    verify_storage_driver(
+        resources, nodes, expected_default_storage_class=expected_default
+    )
 
 
 def _shared_visibility(resources, nodes, cluster, claim, driver, private) -> list:
@@ -286,11 +333,26 @@ def _node_reports(nodes: list, cluster, host: list, shared: list) -> list:
     ]
 
 
-def _cleanup_cluster(resources, nodes, cluster, claim, report, private) -> None:
+def _cleanup_cluster(
+    resources, nodes, cluster, ordinary_claim, claim, report, private
+) -> None:
     failures = resources.cleanup(claims=False)
-    claim = claim or _recover_claim(resources, failures)
+    ordinary_claim = ordinary_claim or _recover_claim(resources, failures)
+    claim = claim or _recover_claim(
+        resources,
+        failures,
+        exclude_name=(ordinary_claim.metadata.name if ordinary_claim else None),
+    )
     try:
-        _cleanup_probe_paths(resources, nodes, cluster, claim, failures, private)
+        _cleanup_probe_paths(
+            resources,
+            nodes,
+            cluster,
+            ordinary_claim,
+            claim,
+            failures,
+            private,
+        )
     finally:
         failures.extend(resources.cleanup())
     _audit_volume_deletion(resources, private, failures)
@@ -310,7 +372,9 @@ def _cleanup_cluster(resources, nodes, cluster, claim, report, private) -> None:
         node["cleanup"] = "failed" if failures else "passed"
 
 
-def _cleanup_probe_paths(resources, nodes, cluster, claim, failures, private) -> None:
+def _cleanup_probe_paths(
+    resources, nodes, cluster, ordinary_claim, claim, failures, private
+) -> None:
     settings = {
         "action": "cleanup",
         "node_tokens": [_node_token(node) for node in nodes],
@@ -318,6 +382,15 @@ def _cleanup_probe_paths(resources, nodes, cluster, claim, failures, private) ->
     _cleanup_probe_root(
         resources, nodes, cluster, settings, "/host-storage", None, failures
     )
+    if ordinary_claim is not None:
+        _cleanup_ordinary_claim_probe(
+            resources,
+            nodes[0],
+            cluster,
+            ordinary_claim,
+            settings,
+            failures,
+        )
     if claim is not None:
         _cleanup_claim_probes(
             resources, nodes, cluster, claim, settings, failures, private
@@ -350,9 +423,14 @@ def _cleanup_probe_root(
     return observations
 
 
-def _recover_claim(resources, failures):
-    for record in resources.owned:
-        if record["kind"] != "persistent_volume_claim":
+def _recover_claim(resources, failures, *, exclude_name: str | None = None):
+    claims = [
+        record
+        for record in resources.owned
+        if record["kind"] == "persistent_volume_claim"
+    ]
+    for record in claims:
+        if record["name"] == exclude_name:
             continue
         try:
             current = resources._read(record)
@@ -362,6 +440,34 @@ def _recover_claim(resources, failures):
         except _FAILURES:
             failures.append("claim_identity_unverified")
     return None
+
+
+def _cleanup_ordinary_claim_probe(
+    resources, node, cluster, claim, settings, failures
+) -> None:
+    try:
+        current = resources.core.read_namespaced_persistent_volume_claim(
+            claim.metadata.name, resources.namespace
+        )
+        if current.metadata.uid != claim.metadata.uid:
+            raise StorageVerificationError("ownership_mismatch")
+        if current.status.phase == "Bound":
+            ordinary_settings = dict(
+                settings,
+                node_tokens=[_node_token(node)],
+                ordinary_pvc=True,
+            )
+            _cleanup_probe_root(
+                resources,
+                [node],
+                cluster,
+                ordinary_settings,
+                "/data",
+                claim.metadata.name,
+                failures,
+            )
+    except _FAILURES:
+        failures.append("default_claim_probe_cleanup_failed")
 
 
 def _cleanup_claim_probes(
@@ -427,14 +533,15 @@ def _audit_backing_deletion(resources, nodes, cluster, private, failures) -> Non
 
 
 def _audit_volume_deletion(resources, private, failures) -> None:
-    volume = private.get("volume")
-    if not volume:
-        return
-    try:
-        while _owned_volume_exists(resources, volume):
-            time.sleep(1)
-    except _FAILURES:
-        failures.append("volume_cleanup_failed")
+    for key in ("default_volume", "volume"):
+        volume = private.get(key)
+        if not volume:
+            continue
+        try:
+            while _owned_volume_exists(resources, volume):
+                time.sleep(1)
+        except _FAILURES:
+            failures.append("volume_cleanup_failed")
 
 
 def _owned_volume_exists(resources, volume) -> bool:

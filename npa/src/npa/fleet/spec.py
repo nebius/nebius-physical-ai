@@ -82,6 +82,7 @@ _MK8S_ENVELOPE_FIELDS = {
     "filestore_mount_path",
     "filestore_mount_tag",
     "filesystem_csi_chart_repository",
+    "filesystem_csi_make_default_storage_class",
     "gpu_driver_mode",
     "managed_driver_preset",
     "allow_unsafe_nvswitch_operator",
@@ -217,6 +218,11 @@ class ClusterSpec:
     # Runtime/operator-supplied chart source. Keep private registry endpoints
     # out of committed specs and never surface this value in plan JSON.
     filesystem_csi_chart_repository: str = ""
+    # A shared filesystem remains available through its named StorageClass.
+    # New clusters retain the block/compute class as default unless this is an
+    # explicit opt-in.  Immutable recipe releases resolve legacy installs to
+    # their historical setting before they reach the backend renderer.
+    filesystem_csi_make_default_storage_class: bool = False
     # Stable cross-path GPU driver contract. Auto selects Nebius's managed
     # driver-full node image for every requested GPU pool when the active recipe
     # supports it; operator is the explicit legacy/debug escape hatch.
@@ -464,6 +470,11 @@ class ClusterSpec:
                     f"cluster {self.name!r}: filesystem_csi_chart_repository must "
                     "not contain whitespace"
                 )
+        elif self.filesystem_csi_make_default_storage_class:
+            raise FleetSpecError(
+                f"cluster {self.name!r}: filesystem_csi_make_default_storage_class "
+                "requires enable_filestore or existing_filestore"
+            )
         if (
             gpu
             and gpu.count > 0
@@ -716,6 +727,9 @@ def _cluster_from(
         filesystem_csi_chart_repository=str(
             data.get("filesystem_csi_chart_repository", "") or ""
         ).strip(),
+        filesystem_csi_make_default_storage_class=_boolean_from(
+            data, "filesystem_csi_make_default_storage_class", default=False
+        ),
         gpu_driver_mode=str(data.get("gpu_driver_mode", "auto") or "auto"),
         managed_driver_preset=str(
             data.get("managed_driver_preset", DEFAULT_MANAGED_DRIVER_PRESET)

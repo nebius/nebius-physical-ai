@@ -43,7 +43,7 @@
   "k8s-training/tests/gb300.tftest.hcl": "2de1e5225562b5ec48d46461e92a9d30ff142f90392ac1b3331c7d1aae3f6634",
   "k8s-training/tests/k8s-training-kuberay.tftest.hcl": "b5dab13111f6c108326696864f257c25929814dedef09c9c88581624a1bc3c33",
   "k8s-training/tests/main.tftest.hcl": "b29295a528c34c3d928f4679cb474cd40c7aa79fa402f649be5843ac2cfa23b5",
-  "k8s-training/variables.tf": "984eb1b3b736422327a890ebf86561c6b0d80f3701adb0541cf569ccba264731",
+  "k8s-training/variables.tf": "68875ac50274084f70bb4839ff3a1bfabee2007441426d18dce1f31be881ea52",
   "modules/binpacking/files/bp-scheduler.yaml.tftpl": "fa1bfd6213ad39ae57bf021ce80016b634a401b6554145ebea97b37294ff8be0",
   "modules/binpacking/files/opa_gatekeeper_mutator.yaml.tftpl": "49495cd45a421309bdbae4e1a695e944810fc36ac40cf53fbf30e63891282402",
   "modules/binpacking/main.tf": "19ee31a976ecca60d9b9c14271eb0c3534302c0dee361ba8f91171005378d1f8",

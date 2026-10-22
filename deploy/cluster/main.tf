@@ -100,7 +100,7 @@ module "k8s_training" {
     chart_repository                    = var.filesystem_csi_chart_repository
     chart_version                       = var.filesystem_csi_chart_version
     namespace                           = "kube-system"
-    make_default_storage_class          = true
+    make_default_storage_class          = var.filesystem_csi_make_default_storage_class
     previous_default_storage_class_name = var.previous_default_storage_class_name
   }
 

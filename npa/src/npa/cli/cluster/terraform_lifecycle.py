@@ -612,6 +612,9 @@ def up_cmd(
             filesystem_csi_chart_repository=str(
                 _tfvar_value(tfvars, env, "filesystem_csi_chart_repository", "") or ""
             ),
+            filesystem_csi_make_default_storage_class=_tfvar_bool(
+                tfvars, env, "filesystem_csi_make_default_storage_class", False
+            ),
             subnet_id=str(_tfvar_value(tfvars, env, "subnet_id", "") or ""),
             filestore_disk_size_gibibytes=int(
                 _tfvar_value(tfvars, env, "filestore_disk_size_gibibytes", 1024) or 1024
@@ -822,6 +825,7 @@ def up_cmd(
                 )
             return
         _terraform_init(terraform_bin, tf_dir, env)
+        _require_no_provider_migration(terraform_bin, tf_dir, env)
         _guard_unmanaged_duplicate(nebius_bin, terraform_bin, tf_dir, tfvars, env)
         _preflight_filestore_quota(nebius_bin, tfvars, env)
         _preflight_gpu_capacity(nebius_bin, tfvars, env)
@@ -1789,6 +1793,7 @@ def down_cmd(
         if preview_state_issue is not None:
             preview_inventory = None
         _terraform_init(terraform_bin, tf_dir, env)
+        _require_no_provider_migration(terraform_bin, tf_dir, env)
         if saved_cluster is not None or exact_cluster_id:
             if not exact_cluster_id:
                 raise typer.BadParameter(
@@ -2428,6 +2433,200 @@ def _terraform_init(
             f"Terraform detail: {detail[-3000:]}"
         )
     raise typer.BadParameter(f"Terraform init failed: {detail[-3000:]}") from init_error
+
+
+_RETIRED_NEBIUS_PROVIDER_ADDRESS = (
+    "terraform-provider.storage.eu-north1.nebius.cloud/nebius/nebius"
+)
+_OFFICIAL_NEBIUS_PROVIDER_ADDRESS = "registry.terraform.io/nebius/nebius"
+
+
+def _provider_migration_report(
+    terraform_bin: str,
+    terraform_dir: Path,
+    env: dict[str, str],
+) -> dict[str, Any]:
+    """Inspect state for the retired Nebius provider address without changing it.
+
+    Terraform state may be local or remote.  The returned document deliberately
+    contains provider addresses and fixed failure categories only; it never
+    serializes state, resource names, IDs, or provider diagnostics.
+    """
+
+    completed = _run_capture(
+        [terraform_bin, "state", "pull"],
+        cwd=terraform_dir,
+        env=env,
+        timeout=120,
+        check=False,
+    )
+    if completed.returncode:
+        detail = "\n".join((completed.stdout, completed.stderr)).lower()
+        no_state = any(
+            phrase in detail
+            for phrase in (
+                "no state file was found",
+                "no state was found",
+                "state file not found",
+            )
+        )
+        return {
+            "migration_required": False,
+            "state_present": False,
+            "legacy_provider_addresses": [],
+            "errors": [] if no_state else ["terraform_state_unavailable"],
+        }
+    state_text = (completed.stdout or "").strip()
+    # A fresh local backend can successfully return an empty state pull. That
+    # is not an unreadable state and must not turn first-time provisioning into
+    # a false provider-migration block.
+    if not state_text:
+        return {
+            "migration_required": False,
+            "state_present": False,
+            "legacy_provider_addresses": [],
+            "errors": [],
+        }
+    try:
+        state = json.loads(state_text)
+    except (TypeError, ValueError):
+        return {
+            "migration_required": False,
+            "state_present": True,
+            "legacy_provider_addresses": [],
+            "errors": ["terraform_state_invalid"],
+        }
+    if not isinstance(state, dict):
+        return {
+            "migration_required": False,
+            "state_present": True,
+            "legacy_provider_addresses": [],
+            "errors": ["terraform_state_invalid"],
+        }
+    addresses = set()
+    for resource in state.get("resources", []):
+        if not isinstance(resource, dict):
+            continue
+        provider = resource.get("provider")
+        if not isinstance(provider, str):
+            continue
+        match = re.fullmatch(r'provider\["([^"\\]+)"\]', provider)
+        if match:
+            addresses.add(match.group(1))
+    legacy = sorted(
+        address for address in addresses if address == _RETIRED_NEBIUS_PROVIDER_ADDRESS
+    )
+    return {
+        "migration_required": bool(legacy),
+        "state_present": True,
+        "legacy_provider_addresses": legacy,
+        "errors": [],
+    }
+
+
+def _require_no_provider_migration(
+    terraform_bin: str, terraform_dir: Path, env: dict[str, str]
+) -> None:
+    """Stop normal lifecycle actions before an unreviewed state rewrite."""
+
+    report = _provider_migration_report(terraform_bin, terraform_dir, env)
+    if report["errors"]:
+        raise typer.BadParameter(
+            "Terraform provider migration preflight could not inspect the exact "
+            "state (" + ", ".join(report["errors"]) + "); no apply or destroy ran."
+        )
+    if report["migration_required"]:
+        raise typer.BadParameter(
+            "Terraform state still uses the retired Nebius provider address; "
+            "no apply or destroy ran. Review the machine-readable plan with "
+            "`npa cluster provider-migration --terraform-dir "
+            f"{terraform_dir} --json`, then rerun with --execute only for this "
+            "owned installation."
+        )
+
+
+@resolve_typer_defaults
+@json_stdout_contract(fail_closed_on_exception=True)
+@intent_boundary(OperationIntent.MUTATE)
+def provider_migration_cmd(
+    terraform_dir: Path | None = typer.Option(
+        None,
+        "--terraform-dir",
+        help="Exact owned Terraform cluster directory to inspect or migrate.",
+    ),
+    execute: bool = typer.Option(
+        False,
+        "--execute",
+        help="Replace the retired provider address after reviewing the emitted plan.",
+    ),
+    output_json: bool = typer.Option(
+        False, "--json", help="Emit one machine-readable migration document."
+    ),
+) -> None:
+    """Plan or intentionally execute one exact Terraform provider-address migration."""
+
+    from npa.cli.cluster.terraform_runtime import isolated_terraform_data_dir
+
+    tf_dir = _resolve_terraform_dir(terraform_dir)
+    terraform_bin = _require_bin(os.environ.get("NPA_TERRAFORM_BIN") or "terraform")
+    nebius_bin = _require_bin(os.environ.get("NPA_NEBIUS_BIN") or "nebius")
+    _preflight_provider_lock(tf_dir)
+    with isolated_terraform_data_dir(tf_dir, "provider-migration") as terraform_data:
+        env = _terraform_env(nebius_bin)
+        env["TF_DATA_DIR"] = str(terraform_data)
+        _terraform_init(terraform_bin, tf_dir, env)
+        report = _provider_migration_report(terraform_bin, tf_dir, env)
+        document = {
+            "source_provider": _RETIRED_NEBIUS_PROVIDER_ADDRESS,
+            "target_provider": _OFFICIAL_NEBIUS_PROVIDER_ADDRESS,
+            "execute_requested": execute,
+            **report,
+        }
+        if report["errors"]:
+            document["status"] = "blocked"
+            document["executed"] = False
+            typer.echo(json.dumps(document, indent=2, sort_keys=True))
+            raise typer.Exit(1)
+        if not report["migration_required"]:
+            document.update(status="completed", executed=False)
+            typer.echo(json.dumps(document, indent=2, sort_keys=True))
+            return
+        if not execute:
+            document.update(status="planned", executed=False)
+            typer.echo(json.dumps(document, indent=2, sort_keys=True))
+            return
+        replacement = _run_capture(
+            [
+                terraform_bin,
+                "state",
+                "replace-provider",
+                "-auto-approve",
+                _RETIRED_NEBIUS_PROVIDER_ADDRESS,
+                _OFFICIAL_NEBIUS_PROVIDER_ADDRESS,
+            ],
+            cwd=tf_dir,
+            env=env,
+            timeout=120,
+            check=False,
+        )
+        if replacement.returncode:
+            document.update(
+                status="blocked", executed=False, errors=["replace_provider_failed"]
+            )
+            typer.echo(json.dumps(document, indent=2, sort_keys=True))
+            raise typer.Exit(1)
+        verified = _provider_migration_report(terraform_bin, tf_dir, env)
+        document.update(verified)
+        if verified["errors"] or verified["migration_required"]:
+            document.update(
+                status="blocked",
+                executed=True,
+                errors=(verified["errors"] or ["replace_provider_unverified"]),
+            )
+            typer.echo(json.dumps(document, indent=2, sort_keys=True))
+            raise typer.Exit(1)
+        document.update(status="completed", executed=True)
+        typer.echo(json.dumps(document, indent=2, sort_keys=True))
 
 
 def _preflight_provider_lock(terraform_dir: Path) -> str:
@@ -4133,13 +4332,16 @@ def _validate_cluster_once(
         if annotations.get("storageclass.kubernetes.io/is-default-class") == "true":
             default_sc = item.get("metadata", {}).get("name", "")
             break
-    # The filesystem CSI is installed only when the shared filesystem is enabled.
-    # Respect environment overrides and existing-filesystem attachment semantics,
-    # then validate the exact expected default on both sides of that decision.
-    filestore_enabled = _shared_filesystem_requested(tfvars, resolved_env)
+    # The named filesystem CSI class can remain non-default. New installations
+    # retain the compute/block class for ordinary PVCs unless the explicit
+    # promotion switch is set; existing filesystem attachment semantics only
+    # determine whether the CSI component exists.
+    make_filesystem_default = _tfvar_bool(
+        tfvars, resolved_env, "filesystem_csi_make_default_storage_class", False
+    )
     expected_default_sc = (
         "csi-mounted-fs-path-sc"
-        if filestore_enabled
+        if make_filesystem_default
         else str(
             tfvars.get("previous_default_storage_class_name")
             or "compute-csi-default-sc"

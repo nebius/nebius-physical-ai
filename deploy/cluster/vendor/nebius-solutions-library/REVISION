@@ -52,10 +52,24 @@ declared_ref: main-v2026-10-12+local-cluster-patches
 # - GB300 Terraform-test fixture identifiers are neutral placeholders; they are
 #   mock-provider inputs, not a reference to live infrastructure.
 # - One trailing-whitespace normalization pass.
+# - 2026-10-22 compatibility backport from upstream commit
+#   90a081d6cf0246b966e27814aae2a84356b6c829: filesystem CSI no longer
+#   promotes itself to the default StorageClass unless the NPA caller explicitly
+#   requests it. The named RWX filesystem class remains available.
+# - Upstream 9f4b972d18016c95215f08719859d1ada1bc3d28 was reviewed but is not
+#   copied wholesale: Fleet already isolates every target's materialized source
+#   and provider identity, and NPA keeps optional Grafana/Loki disabled rather
+#   than introducing long-lived per-cluster access keys into this wrapper.
+# - Upstream reservation validation (51e27ad1) is represented by the existing
+#   strict capacity-block admission and rendered STRICT reservation policy;
+#   callers cannot combine it with preemptible GPU nodes.
+# - GB300 DRA changes remain deferred. This date candidate has no GB300
+#   hardware qualification and does not activate an unqualified path.
 #
-# This refresh also adopts upstream GB300, binpacking, filesystem validation,
-# GPU-soak, and unified-runner additions. To re-vendor: copy the new upstream
-# tree over this directory, then
+# The earlier local refresh retained upstream GB300-related fixtures,
+# binpacking, filesystem validation, GPU-soak, and unified-runner additions;
+# retained code is not an activation or a hardware-qualification claim. To
+# re-vendor: copy the new upstream tree over this directory, then
 # 1. re-apply every patch listed above (the new-module additions first),
 # 2. update `revision`, `revision_date`, `revision_subject`, and
 #    `declared_ref` above, plus the `k8s_training_ref` output in

@@ -82,6 +82,7 @@ from npa.fleet.spec import ClusterSpec, FleetSpec, ObjectStorageSpec, ProjectSpe
 from npa.fleet.release import (
     MK8sRecipeRelease,
     default_mk8s_release,
+    filesystem_csi_makes_default_storage_class,
     release_from_sidecar,
     select_installation_release,
     validate_release_source,
@@ -1752,6 +1753,26 @@ def deploy_fleet(
     return result
 
 
+def _cluster_for_mk8s_release(
+    cluster: ClusterSpec, release: MK8sRecipeRelease
+) -> ClusterSpec:
+    """Resolve the immutable StorageClass policy for one saved installation.
+
+    Old releases promoted the filesystem class only when that component was
+    actually installed.  Preserve that effective behavior without feeding an
+    impossible filesystem-default setting to a saved cluster that never had a
+    filesystem.
+    """
+
+    return replace(
+        cluster,
+        filesystem_csi_make_default_storage_class=(
+            filesystem_csi_makes_default_storage_class(release)
+            and bool(cluster.enable_filestore or cluster.existing_filestore.strip())
+        ),
+    )
+
+
 def _deploy_mk8s_fleet(
     spec: FleetSpec,
     *,
@@ -1832,6 +1853,8 @@ def _deploy_mk8s_fleet(
         and recipe_root.resolve() == vendored_root.resolve()
     )
     release_by_target: dict[tuple[str, str], MK8sRecipeRelease | None] = {}
+    recipe_root_by_target: dict[tuple[str, str], Path] = {}
+    cluster_by_target: dict[tuple[str, str], ClusterSpec] = {}
     for project in spec.projects:
         if not _project_in_scope(project, only_projects, prefix):
             continue
@@ -1841,26 +1864,44 @@ def _deploy_mk8s_fleet(
             install_dir = fleet_root / project.key() / cluster.name
             saved = _load_env_sidecar(install_dir) or {}
             release = None
+            selected_cluster = cluster
+            target_recipe_root = recipe_root
             if catalog_required or "mk8s_recipe_release" in saved:
                 release = select_installation_release(
                     install_dir,
                     requested_release_id=mk8s_release,
                 )
-                validate_release_source(release, recipe_root)
-            release_by_target[(project.key(), cluster.name)] = release
+                if "mk8s_recipe_release" in saved:
+                    # Reconciliation must use the installation's retained
+                    # materialized source.  Re-copying a new vendor tree would
+                    # silently change a date-pinned installation's defaults.
+                    target_recipe_root = install_dir
+                    if not _is_recipe_root(target_recipe_root):
+                        raise ValueError(
+                            "persisted MK8s installation is missing its materialized "
+                            "recipe; use a reviewed migration or replacement rather "
+                            "than re-vendoring a saved release"
+                        )
+                    selected_cluster = _cluster_for_mk8s_release(cluster, release)
+                else:
+                    validate_release_source(release, recipe_root)
+            target_key = (project.key(), cluster.name)
+            release_by_target[target_key] = release
+            recipe_root_by_target[target_key] = target_recipe_root
+            cluster_by_target[target_key] = selected_cluster
             validate_recipe_kuberay_compatibility(
-                cluster, recipe_root / _K8S_TRAINING_SUBDIR
+                selected_cluster, target_recipe_root / _K8S_TRAINING_SUBDIR
             )
             _mk8s_execution.validate_kuberay_installation(
-                cluster,
+                selected_cluster,
                 fleet_root / project.key() / cluster.name,
-                recipe_dir=recipe_root / _K8S_TRAINING_SUBDIR,
+                recipe_dir=target_recipe_root / _K8S_TRAINING_SUBDIR,
             )
             validate_recipe_mig_compatibility(
-                cluster, recipe_root / _K8S_TRAINING_SUBDIR
+                selected_cluster, target_recipe_root / _K8S_TRAINING_SUBDIR
             )
             validate_recipe_rtx_compatibility(
-                cluster, recipe_root / _K8S_TRAINING_SUBDIR
+                selected_cluster, target_recipe_root / _K8S_TRAINING_SUBDIR
             )
 
     cli_env = _nebius_cli_env()
@@ -2043,6 +2084,7 @@ def _deploy_mk8s_fleet(
             )
             continue
         for cluster in scoped_clusters:
+            cluster = cluster_by_target[(project.key(), cluster.name)]
             targets.append(
                 {
                     "project": project,
@@ -2052,11 +2094,12 @@ def _deploy_mk8s_fleet(
                     "region": region,
                     "subnet_id": cluster.subnet_id or shared_subnet_id,
                     "object_storage": object_storage,
+                    "recipe_root": recipe_root_by_target[(project.key(), cluster.name)],
                 }
             )
 
     parallel = concurrency > 1 and len(targets) > 1
-    if parallel:
+    if parallel and all(t["recipe_root"] == recipe_root for t in targets):
         prewarm_log = None
         if not stream_terraform:
             diagnostics_root = fleet_root / ".logs"
@@ -2096,7 +2139,7 @@ def _deploy_mk8s_fleet(
                 tenant_id=tenant_id,
                 ssh_public_key=ssh_public_key,
                 fleet_root=fleet_root,
-                recipe_root=recipe_root,
+                recipe_root=t["recipe_root"],
                 terraform_bin=terraform_bin,
                 nebius_bin=nebius_bin,
                 profile=nebius_profile,
@@ -2136,7 +2179,7 @@ def _deploy_mk8s_fleet(
                 tenant_id=tenant_id,
                 ssh_public_key=ssh_public_key,
                 fleet_root=fleet_root,
-                recipe_root=recipe_root,
+                recipe_root=t["recipe_root"],
                 terraform_bin=terraform_bin,
                 nebius_bin=nebius_bin,
                 profile=nebius_profile,

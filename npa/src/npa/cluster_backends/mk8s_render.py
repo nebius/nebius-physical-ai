@@ -332,7 +332,8 @@ def render_tfvars(
     )
     lines.append(
         f'filesystem_csi = {{ {filesystem_csi_repository}chart_version = "0.1.6", '
-        'namespace = "kube-system", make_default_storage_class = true, '
+        'namespace = "kube-system", make_default_storage_class = '
+        f"{'true' if cluster.filesystem_csi_make_default_storage_class else 'false'}, "
         'previous_default_storage_class_name = "compute-csi-default-sc" }'
     )
 

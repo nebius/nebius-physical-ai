@@ -65,12 +65,15 @@ def _worker_role(node, cluster) -> str:
     return matches[0]
 
 
-def verify_storage_driver(resources, nodes: list) -> str:
-    """Require the filesystem default StorageClass and per-worker CSI registration.
+def verify_storage_driver(
+    resources, nodes: list, *, expected_default_storage_class: str = STORAGE_CLASS
+) -> str:
+    """Require the named filesystem class, selected default, and CSI health.
 
     Args:
         resources: Cluster-bound Kubernetes access.
         nodes: Every exact selected worker.
+        expected_default_storage_class: StorageClass selected for classless PVCs.
     Returns:
         Validated CSI provisioner name.
     Raises:
@@ -84,17 +87,24 @@ def verify_storage_driver(resources, nodes: list) -> str:
     ]
     _retain_storage_evidence(resources, "StorageClassList", relevant)
     defaults = [item for item in classes if _default_class(item)]
-    if len(defaults) != 1 or defaults[0].metadata.name != STORAGE_CLASS:
-        raise StorageVerificationError("default_storage_class_mismatch")
-    storage_class = defaults[0]
     if (
-        storage_class.reclaim_policy != "Delete"
-        or storage_class.provisioner != STORAGE_DRIVER
+        len(defaults) != 1
+        or defaults[0].metadata.name != expected_default_storage_class
+    ):
+        raise StorageVerificationError("default_storage_class_mismatch")
+    filesystem_class = next(
+        (item for item in classes if item.metadata.name == STORAGE_CLASS), None
+    )
+    if filesystem_class is None:
+        raise StorageVerificationError("filesystem_storage_class_missing")
+    if (
+        filesystem_class.reclaim_policy != "Delete"
+        or filesystem_class.provisioner != STORAGE_DRIVER
     ):
         raise StorageVerificationError("storage_class_policy_mismatch")
-    driver = resources.storage.read_csi_driver(storage_class.provisioner)
+    driver = resources.storage.read_csi_driver(filesystem_class.provisioner)
     _retain_storage_evidence(resources, "CSIDriver", driver)
-    if driver.metadata.name != storage_class.provisioner:
+    if driver.metadata.name != filesystem_class.provisioner:
         raise StorageVerificationError("csi_driver_mismatch")
     for node in nodes:
         registered = resources.storage.read_csi_node(node.metadata.name)
@@ -102,12 +112,54 @@ def verify_storage_driver(resources, nodes: list) -> str:
         matches = [
             item
             for item in registered.spec.drivers
-            if item.name == storage_class.provisioner and item.node_id
+            if item.name == filesystem_class.provisioner and item.node_id
         ]
         if len(matches) != 1:
             raise StorageVerificationError("csi_worker_registration_missing")
-    _verify_driver_workloads(resources, storage_class.provisioner, nodes)
-    return storage_class.provisioner
+    _verify_driver_workloads(resources, filesystem_class.provisioner, nodes)
+    return filesystem_class.provisioner
+
+
+def verify_default_bound_claim(resources, claim, expected_storage_class: str):
+    """Require an owned classless PVC to bind through the selected default.
+
+    The corresponding volume must be dynamically bound to this exact claim
+    and reclaimed on delete.  Its provisioner is intentionally not prescribed:
+    the caller is proving the selected cluster default, which may be block
+    storage rather than the named shared-filesystem CSI class.
+    """
+
+    current = resources.core.read_namespaced_persistent_volume_claim(
+        claim.metadata.name,
+        resources.namespace,
+    )
+    if current.metadata is None or current.status is None or current.spec is None:
+        raise StorageVerificationError("default_pvc_binding_mismatch")
+    if current.metadata.uid != claim.metadata.uid or current.status.phase != "Bound":
+        raise StorageVerificationError("default_pvc_binding_mismatch")
+    if (current.metadata.labels or {}).get(OWNER_LABEL) != resources.run_id:
+        raise StorageVerificationError("ownership_mismatch")
+    if current.spec.storage_class_name != expected_storage_class:
+        raise StorageVerificationError("default_pvc_class_mismatch")
+    if not current.spec.volume_name:
+        raise StorageVerificationError("default_pvc_binding_mismatch")
+    volume = resources.core.read_persistent_volume(current.spec.volume_name)
+    if volume.metadata is None or volume.spec is None:
+        raise StorageVerificationError("default_volume_identity_mismatch")
+    reference = volume.spec.claim_ref
+    if (
+        not reference
+        or reference.uid != claim.metadata.uid
+        or reference.name != claim.metadata.name
+        or reference.namespace != resources.namespace
+    ):
+        raise StorageVerificationError("default_volume_identity_mismatch")
+    if (
+        volume.spec.storage_class_name != expected_storage_class
+        or volume.spec.persistent_volume_reclaim_policy != "Delete"
+    ):
+        raise StorageVerificationError("default_volume_policy_mismatch")
+    return volume
 
 
 def _retain_storage_evidence(resources, kind: str, value) -> None:

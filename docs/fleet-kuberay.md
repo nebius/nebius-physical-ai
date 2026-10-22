@@ -158,7 +158,7 @@ merely declaring Terraform variables is insufficient.
 
 ### Immutable MK8s release selection
 
-New default fleet installations select `mk8s-v2026-10-19`. The persisted record
+New default fleet installations select `mk8s-v2026-10-22`. The persisted record
 binds `main-v2026-10-12`, its full upstream commit, the patched source-bundle
 digest, the Terraform provider-lock digest, and NPA's component/configuration
 contract. Fleet writes the record before provider mutation and validates all of
@@ -166,6 +166,11 @@ its fields before a later reconcile. Status reports the same record and does
 not select a newer default. A release change is a reviewed migration or
 replacement; it is never an in-place Terraform update. A legacy installation
 without this record is retained for exact-state destroy/recovery rather than
-being silently assigned a new release. `mk8s-v2026-10-18` remains supported for
-installations that already persisted it; v19 additionally fails closed when a
-new or adopted shared filesystem omits its CSI chart repository.
+being silently assigned a new release. `mk8s-v2026-10-18` and
+`mk8s-v2026-10-19` remain supported for installations that already persisted
+them and retain their historical filesystem-default behavior. The new candidate
+keeps `compute-csi-default-sc` as the ordinary PVC default, exposes
+`csi-mounted-fs-path-sc` explicitly for RWX shared data, and allows deliberate
+filesystem-default promotion only through
+`filesystem_csi_make_default_storage_class: true` with an enabled/adopted
+filesystem and explicit CSI chart repository.

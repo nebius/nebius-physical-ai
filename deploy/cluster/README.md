@@ -152,21 +152,19 @@ removing it would discard the verification contract.
 
 This wrapper now uses the official `registry.terraform.io/nebius/nebius`
 provider address. A pre-refresh, operator-owned Terraform state can still record
-the retired regional provider address. Before planning or applying that exact
-existing installation, back up its state privately, inspect `terraform
-providers`, then migrate only that address from the installation's original
-Terraform directory:
+the retired regional provider address. Ordinary `npa cluster up` and `down`
+detect that state and stop before apply or destroy. First inspect the exact
+installation with NPA's machine-readable, no-rewrite plan:
 
 ```bash
-terraform state replace-provider \
-  'terraform-provider.storage.eu-north1.nebius.cloud/nebius/nebius' \
-  'registry.terraform.io/nebius/nebius'
+npa cluster provider-migration --terraform-dir deploy/cluster --json
+npa cluster provider-migration --terraform-dir deploy/cluster --execute --json
 ```
 
-This is a state-address migration; it must use the same backend and workspace
-as the owned installation and does not create, replace, or delete cloud
-resources. Do not run it against a shared or unverified state. Re-run
-`terraform providers` and review a no-apply plan before any reconciliation.
+`--execute` is an intentional state-address migration boundary. It uses the
+same backend/workspace as the owned installation and does not create, replace,
+or delete cloud resources. Do not run it against shared or unverified state.
+After a completed result, review a no-apply Terraform plan before reconciliation.
 
 ### Provider request deadlines
 
