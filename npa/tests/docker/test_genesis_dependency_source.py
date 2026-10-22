@@ -92,6 +92,20 @@ def test_genesis_recipes_require_python_311_and_a_source_attestation(
 
 
 @pytest.mark.parametrize("dockerfile,_,__", VARIANTS)
+def test_genesis_recipes_enforce_the_fsspec_security_floor(dockerfile, _, __):
+    """Every Genesis variant must reject a closure below the strict floor."""
+
+    text = (GENESIS / dockerfile).read_text()
+    installation = next(
+        body
+        for kind, body in _instructions(text)
+        if kind == "RUN" and '"genesis-world==' in body
+    )
+    assert '"fsspec==2026.6.0"' in installation
+    assert "python -m pip check" in installation
+
+
+@pytest.mark.parametrize("dockerfile,_,__", VARIANTS)
 def test_genesis_recipes_require_an_explicit_source_attested_parent(
     dockerfile, _, __
 ):
