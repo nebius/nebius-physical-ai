@@ -34,6 +34,20 @@ def test_unknown_moviepy_version_is_rejected(compat, monkeypatch):
         compat.main()
 
 
+def test_isaac3_moviepy_closure_includes_declared_runtime_dependencies():
+    common = Path(__file__).resolve().parents[2] / "docker/workbench/common"
+    requirements = (common / "isaac3-oss-deps.txt").read_text().splitlines()
+    for requirement in (
+        "imageio==2.37.2",
+        "imageio-ffmpeg==0.6.0",
+        "numpy==2.3.1",
+        "pillow==13.0.0",
+        "proglog==0.1.12",
+        "python-dotenv==1.2.2",
+    ):
+        assert requirement in requirements
+
+
 @pytest.mark.parametrize("pillow_version", ["11.3.0", "12.3.0", "14.0.0"])
 def test_unpatched_or_unreviewed_pillow_version_is_rejected(
     compat, monkeypatch, pillow_version
