@@ -190,7 +190,7 @@ else
   "python${ISAAC_PYTHON_MINOR}" -m venv "$ISAAC_VENV"
 fi
 "$ISAAC_VENV/bin/python" -m pip install --no-cache-dir --no-deps \
-  "pip==26.2.1" \
+  "pip==26.2.2" \
   "setuptools==84.0.0" \
   "wheel==0.47.0" \
   "packaging==26.3"
