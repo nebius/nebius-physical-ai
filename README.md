@@ -39,12 +39,14 @@ SkyPilot contexts with `npa workbench namespace`.
 
 ## What is Workbench?
 
-Workbench is NPA's agent control plane for simulation, robot policy training,
-synthetic data, and evaluation on Nebius AI Cloud. Codex, Claude Code, or another
-coding agent with terminal access to this checkout uses repository skills and
-`npa` to configure the project, check access, plan resources, run containerized
-tools and workflows, and inspect artifacts with you. You can use the same
-operations directly through the CLI; supported tools also expose Python interfaces.
+Workbench is NPA's agent control plane for Physical AI on Nebius AI Cloud,
+covering infrastructure setup and management, simulation, robot policy training,
+synthetic data, and evaluation. Codex, Claude Code, or another coding agent with
+terminal access to this checkout uses repository skills and `npa` to configure
+projects, check access, provision GPU clusters and object storage, run
+containerized tools and workflows, and inspect artifacts with you. You can use
+the same operations directly through the CLI; supported tools also expose
+Python interfaces.
 
 ### How Workbench runs a task
 
