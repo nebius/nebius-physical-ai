@@ -1139,7 +1139,7 @@ def _retained_patch_context_pins(root: Path) -> list[str]:
     "package,minimum",
     [
         ("fsspec", "2026.6.0"),
-        ("gitpython", "3.1.62"),
+        ("gitpython", "3.2.1"),
         ("hydra-core", "1.3.7"),
         ("multidict", "6.9.1"),
         ("oauthlib", "4.0.0"),

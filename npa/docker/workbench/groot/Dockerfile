@@ -240,7 +240,7 @@ RUN cd "${GROOT_REPO}" \
       jinja2==3.1.6 \
       "mcap>=1.3,<2" \
     && uv pip install --python "${GROOT_VENV}/bin/python" --no-deps --upgrade \
-      "GitPython>=3.1.50" \
+      "GitPython>=3.2.1" \
       "PyJWT>=2.13.0" \
       "aiohttp>=3.13.3" \
       "aiomysql>=0.3.0" \
@@ -287,7 +287,7 @@ RUN chmod +x /opt/npa/docker/workbench/common/*.sh \
 USER ubuntu
 
 RUN /opt/isaac-lab/venv/bin/python -m pip install --no-deps --upgrade \
-      "GitPython>=3.1.50" \
+      "GitPython>=3.2.1" \
       "PyJWT>=2.13.0" \
       "aiohttp>=3.13.3" \
       "aiomysql>=0.3.0" \

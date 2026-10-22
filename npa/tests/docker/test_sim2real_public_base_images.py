@@ -239,7 +239,7 @@ def test_canonical_sim2real_images_exclude_fixed_critical_dependencies():
 def test_genesis_workflow_images_replace_vulnerable_parent_gitpython() -> None:
     requirements = (WORKBENCH / "common/sim2real-genesis-requirements.txt").read_text()
     pin = re.search(r"^GitPython==(\S+)$", requirements, re.MULTILINE)
-    assert pin and Version(pin.group(1)) >= Version("3.1.62")
+    assert pin and Version(pin.group(1)) >= Version("3.2.1")
     for relative in (
         "sim2real-envgen/Dockerfile",
         "sim2real-eval/Dockerfile",
