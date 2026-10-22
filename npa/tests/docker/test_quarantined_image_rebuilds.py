@@ -93,6 +93,12 @@ def test_isaac_2_runtime_dependency_fixes_preserve_the_runtime_family(name, floo
     assert "ARG ISAAC_LAB_VERSION=2.3.2" in (WORKBENCH / "sonic/Dockerfile").read_text()
 
 
+def test_isaac_runtime_uses_fixed_certificate_and_image_decoder_releases():
+    requirements = (WORKBENCH / "common/isaac3-oss-deps.txt").read_text()
+    assert "certifi==2026.10.19" in requirements
+    assert "pillow==13.0.0" in requirements
+
+
 def test_sonic_uses_the_fixed_jammy_header_snapshot():
     text = (WORKBENCH / "sonic/Dockerfile").read_text()
     assert "NPA_UBUNTU_SNAPSHOT=20261002T000000Z" in text

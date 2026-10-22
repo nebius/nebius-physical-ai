@@ -1099,6 +1099,9 @@ images:
       removes imageio-ffmpeg's wheel-bundled static executable in the same layer
       that installs the Python environment, and removes the CUDA development
       base's unrelated Nsight Compute profiler tree from the final filesystem.
+      Its Python 3.12 closure pins the security-fixed Certifi 2026.10.19 and
+      Pillow 13 releases; MoviePy's reviewed upstream compatibility change is
+      applied only to exact 2.2.1 metadata with a regenerated RECORD hash.
       Isaac Sim/Lab and task assets remain cryptographically verified runtime
       fetches after EULA preflight.
     redistribution: public

@@ -1,8 +1,8 @@
 """Apply MoviePy's upstream Pillow compatibility bound to exact 2.2.1 metadata.
 
 Upstream 211e4b15f6ce4f34a6a9efbfff40590e43a68f77 removes the Pillow<12
-bound. Keep the released 2.2.1 code, require the actual patched Pillow>=12.3
-bytes, and bound compatibility below Pillow 13. Versions and licenses stay
+bound. Keep the released 2.2.1 code, require the security-fixed Pillow>=13
+bytes, and bound compatibility below Pillow 14. Versions and licenses stay
 unchanged; this is not a vulnerability-version override.
 """
 
@@ -17,7 +17,7 @@ from packaging.version import Version
 
 
 ORIGINAL_SHA256 = "ba08814030a33c196589cb232d87518b2be874b342e8e5f6dfefb464e52e5569"
-PATCHED_SHA256 = "9a8630797c4a2686ff5d4d0109d57a03c05d073a4d6258be9535841f6df5cd16"
+PATCHED_SHA256 = "f641dfe9064cb9118ec7ddd72916c32b9b2a061d485e47c41e11455f857767ad"
 
 
 def patched_metadata(source: bytes) -> bytes:
@@ -29,7 +29,7 @@ def patched_metadata(source: bytes) -> bytes:
         raise RuntimeError("MoviePy metadata differs from reviewed 2.2.1 bytes")
     result = source.replace(
         b"Requires-Dist: pillow<12.0,>=9.2.0",
-        b"Requires-Dist: pillow<13.0,>=12.3.0",
+        b"Requires-Dist: pillow<14.0,>=13.0.0",
     )
     if hashlib.sha256(result).hexdigest() != PATCHED_SHA256:
         raise RuntimeError("MoviePy compatibility patch checksum mismatch")
@@ -41,9 +41,9 @@ def main() -> None:
     distribution = metadata.distribution("moviepy")
     if distribution.version != "2.2.1":
         raise RuntimeError("Pillow compatibility patch requires MoviePy 2.2.1")
-    if not Version("12.3.0") <= Version(metadata.version("pillow")) < Version("13"):
+    if not Version("13.0.0") <= Version(metadata.version("pillow")) < Version("14"):
         raise RuntimeError(
-            "Pillow compatibility patch requires patched Pillow 12.3.x or later"
+            "Pillow compatibility patch requires security-fixed Pillow 13.x"
         )
     root = Path(distribution.locate_file(""))
     relative = "moviepy-2.2.1.dist-info/METADATA"
