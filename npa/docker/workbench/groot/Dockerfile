@@ -64,6 +64,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 SHELL ["/bin/bash", "-lc"]
 
+COPY --chmod=0755 docker/workbench/common/install_python312_jammy.sh /usr/local/bin/install-python312-jammy
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
       software-properties-common \
       build-essential \
@@ -87,17 +89,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libxrender1 \
       ninja-build \
       pkg-config \
-      python3.10 \
-      python3.10-dev \
-      python3.10-venv \
       python3-pip \
       unzip \
       wget \
-    && add-apt-repository -y ppa:deadsnakes/ppa \
-    && apt-get update && apt-get install -y --no-install-recommends \
-      python3.11 \
-      python3.11-dev \
-      python3.11-venv \
+    && install-python312-jammy \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd -m -s /bin/bash -u 1000 ubuntu \
@@ -131,7 +126,7 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
     && test "$(git -C "${GROOT_REPO}" rev-parse HEAD)" = "${GROOT_REPO_REF}" \
     && git -C "${GROOT_REPO}" submodule update --init --recursive
 
-RUN python3.10 - <<'PY'
+RUN python3.12 - <<'PY'
 from pathlib import Path
 import os
 
@@ -222,11 +217,13 @@ replace_once(
     f"        processor_kwargs.setdefault(\"model_name\", \"{cosmos_model}\")\n"
     f"        processor_kwargs.setdefault(\"model_revision\", \"{cosmos_revision}\")\n",
 )
+replace_once("pyproject.toml", 'requires-python = "==3.10.*"', 'requires-python = "==3.12.*"')
+(repo / ".python-version").write_text("3.12\n")
 print("GROOT_RUNTIME_PIN_PATCH_OK " + cosmos_revision)
 PY
 
 RUN cd "${GROOT_REPO}" \
-    && uv sync --python 3.10 \
+    && uv sync --python 3.12 \
     && uv pip install --python "${GROOT_VENV}/bin/python" \
       boto3==1.42.91 \
       fastapi==0.136.1 \
@@ -249,7 +246,7 @@ RUN cd "${GROOT_REPO}" \
       "jaraco.context>=6.1.0" \
       "msgpack>=1.2.1" \
       "onnx>=1.21.0" \
-      "pillow>=12.2.0" \
+      "pillow>=13.0.0,<14.0" \
       "python-multipart>=0.0.30" \
       "starlette>=1.3.1" \
       "tornado>=6.5.6" \
@@ -296,7 +293,7 @@ RUN /opt/isaac-lab/venv/bin/python -m pip install --no-deps --upgrade \
       "jaraco.context>=6.1.0" \
       "msgpack>=1.2.1" \
       "onnx>=1.21.0" \
-      "pillow>=12.2.0" \
+      "pillow>=13.0.0,<14.0" \
       "python-multipart>=0.0.30" \
       "starlette>=1.3.1" \
       "tornado>=6.5.6" \

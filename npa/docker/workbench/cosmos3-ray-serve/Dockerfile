@@ -93,6 +93,7 @@ RUN export UV_CACHE_DIR=/tmp/uv-cache \
     && rm -f /tmp/cosmos3-packaging-requirements.txt \
     && test "$(.venv/bin/python -c 'import ray; print(ray.__version__)')" = "${COSMOS3_RAY_VERSION}" \
     && .venv/bin/python /opt/npa/verify_hardened_nltk.py \
+    && uv pip install --python /opt/npa/.venv/bin/python --no-deps "pillow==13.0.0" "certifi==2026.10.19" \
     && uv pip install --python /opt/npa/.venv/bin/python --no-deps -e /opt/npa \
     && rm -rf /tmp/uv-cache /home/ubuntu/.cache/uv \
     && test ! -e /tmp/uv-cache && test ! -e /home/ubuntu/.cache/uv \

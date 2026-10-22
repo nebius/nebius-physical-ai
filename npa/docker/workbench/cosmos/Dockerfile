@@ -6,7 +6,7 @@ ARG COSMOS_VERSION=1.0.9
 ARG COSMOS_TORCH_VERSION=2.7.0
 ARG COSMOS_TORCHVISION_VERSION=0.22.0
 ARG COSMOS_TRITON_VERSION=3.3.0
-ARG COSMOS_FLASH_ATTN_VERSION=2.7.3
+ARG COSMOS_FLASH_ATTN_VERSION=2.6.3
 ARG COSMOS_NATTEN_VERSION=0.21.0
 ARG COSMOS_TRANSFORMER_ENGINE_VERSION=1.13.0
 
@@ -28,6 +28,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg \
     PYTHONUNBUFFERED=1
 
+COPY --chmod=0755 docker/workbench/common/install_python312_jammy.sh /usr/local/bin/install-python312-jammy
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential \
       ca-certificates \
@@ -45,6 +47,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       python3-dev \
       python3-pip \
       python3-venv \
+    && install-python312-jammy \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd -m -s /bin/bash -u 1000 ubuntu \
@@ -59,7 +62,7 @@ RUN useradd -m -s /bin/bash -u 1000 ubuntu \
 USER ubuntu
 WORKDIR /opt/cosmos
 
-RUN python3 -m venv /opt/cosmos/venv \
+RUN python3.12 -m venv /opt/cosmos/venv \
     && /opt/cosmos/venv/bin/python -m pip install --upgrade pip setuptools wheel \
     && /opt/cosmos/venv/bin/pip install \
       "torch==${COSMOS_TORCH_VERSION}" \
@@ -99,15 +102,18 @@ RUN printf '%s\n' \
     && /opt/cosmos/venv/bin/pip install --no-binary=imageio-ffmpeg \
       -r /tmp/cosmos-predict2-noncuda-requirements.txt \
       -c /tmp/cosmos-cu128-constraints.txt \
-    && curl -L -o "/tmp/flash_attn-${COSMOS_FLASH_ATTN_VERSION}-cp310-cp310-linux_x86_64.whl" \
-      "https://github.com/nvidia-cosmos/cosmos-dependencies/releases/download/v1.2.0/flash_attn-2.7.3%2Bcu128.torch27-cp310-cp310-linux_x86_64.whl" \
-    && /opt/cosmos/venv/bin/pip install --no-deps "/tmp/flash_attn-${COSMOS_FLASH_ATTN_VERSION}-cp310-cp310-linux_x86_64.whl" \
-    && curl -L -o "/tmp/natten-${COSMOS_NATTEN_VERSION}-cp310-cp310-linux_x86_64.whl" \
-      "https://github.com/nvidia-cosmos/cosmos-dependencies/releases/download/v1.2.0/natten-0.21.0%2Bcu128.torch27-cp310-cp310-linux_x86_64.whl" \
-    && /opt/cosmos/venv/bin/pip install --no-deps "/tmp/natten-${COSMOS_NATTEN_VERSION}-cp310-cp310-linux_x86_64.whl" \
-    && curl -L -o "/tmp/transformer_engine-${COSMOS_TRANSFORMER_ENGINE_VERSION}-cp310-cp310-linux_x86_64.whl" \
-      "https://github.com/nvidia-cosmos/cosmos-dependencies/releases/download/v1.2.0/transformer_engine-1.13.0%2Bcu128.torch27-cp310-cp310-linux_x86_64.whl" \
-    && /opt/cosmos/venv/bin/pip install --no-deps "/tmp/transformer_engine-${COSMOS_TRANSFORMER_ENGINE_VERSION}-cp310-cp310-linux_x86_64.whl" \
+    && curl --fail --location --retry 3 -o "/tmp/flash_attn-${COSMOS_FLASH_ATTN_VERSION}-cp312-cp312-linux_x86_64.whl" \
+      "https://github.com/nvidia-cosmos/cosmos-dependencies/releases/download/v1.2.0/flash_attn-2.6.3%2Bcu128.torch27-cp312-cp312-linux_x86_64.whl" \
+    && printf '%s  %s\n' 37fea16541545a26f11658a3b56f201983322a754f7557005d6ac1456073a475 "/tmp/flash_attn-${COSMOS_FLASH_ATTN_VERSION}-cp312-cp312-linux_x86_64.whl" | sha256sum --check --strict \
+    && /opt/cosmos/venv/bin/pip install --no-deps "/tmp/flash_attn-${COSMOS_FLASH_ATTN_VERSION}-cp312-cp312-linux_x86_64.whl" \
+    && curl --fail --location --retry 3 -o "/tmp/natten-${COSMOS_NATTEN_VERSION}-cp312-cp312-linux_x86_64.whl" \
+      "https://github.com/nvidia-cosmos/cosmos-dependencies/releases/download/v1.2.0/natten-0.21.0%2Bcu128.torch27-cp312-cp312-linux_x86_64.whl" \
+    && printf '%s  %s\n' 93b98b35435dc9719b66626914c546c3eff843f40cea2ac73373de1871ccff26 "/tmp/natten-${COSMOS_NATTEN_VERSION}-cp312-cp312-linux_x86_64.whl" | sha256sum --check --strict \
+    && /opt/cosmos/venv/bin/pip install --no-deps "/tmp/natten-${COSMOS_NATTEN_VERSION}-cp312-cp312-linux_x86_64.whl" \
+    && curl --fail --location --retry 3 -o "/tmp/transformer_engine-${COSMOS_TRANSFORMER_ENGINE_VERSION}-cp312-cp312-linux_x86_64.whl" \
+      "https://github.com/nvidia-cosmos/cosmos-dependencies/releases/download/v1.2.0/transformer_engine-1.13.0%2Bcu128.torch27-cp312-cp312-linux_x86_64.whl" \
+    && printf '%s  %s\n' c0ef5e2cd96fd016bd107eff8a3176c78b5f124e422df39918e9068d12bed306 "/tmp/transformer_engine-${COSMOS_TRANSFORMER_ENGINE_VERSION}-cp312-cp312-linux_x86_64.whl" | sha256sum --check --strict \
+    && /opt/cosmos/venv/bin/pip install --no-deps "/tmp/transformer_engine-${COSMOS_TRANSFORMER_ENGINE_VERSION}-cp312-cp312-linux_x86_64.whl" \
     && /opt/cosmos/venv/bin/pip install --no-binary=imageio-ffmpeg \
       -c /tmp/cosmos-cu128-constraints.txt \
       "diffusers==0.38.0" \
@@ -117,7 +123,7 @@ RUN printf '%s\n' \
       "fastapi==0.136.1" \
       "uvicorn[standard]==0.46.0" \
       "huggingface_hub==0.36.2" \
-      "pillow==12.3.0" \
+      "pillow==13.0.0" \
       "imageio[ffmpeg]==2.37.0" \
       "pydantic==2.13.4" \
       "python-multipart==0.0.31" \
@@ -132,7 +138,7 @@ RUN printf '%s\n' \
     && /opt/cosmos/venv/bin/pip install --no-cache-dir --no-deps --upgrade \
       "modelscope>=1.27.0" \
       "nltk>=3.9.4" \
-      "pillow>=12.2.0" \
+      "pillow>=13.0.0,<14.0" \
       "protobuf==5.29.6" \
       "python-multipart>=0.0.30" \
       "sentencepiece>=0.2.1" \

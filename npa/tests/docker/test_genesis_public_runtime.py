@@ -102,7 +102,7 @@ def test_apply_requires_excluded_distributions_to_be_uninstalled(
 
 def test_stock_recipe_enforces_reduced_closure_in_the_install_layer():
     text = (RECIPE / "Dockerfile").read_text()
-    installation = text.split("RUN python3 -m venv", 1)[1].split("\nENV ", 1)[0]
+    installation = text.split("RUN python3.12 -m venv", 1)[1].split("\nENV ", 1)[0]
     assert "NPA_GENESIS_SUPPORTED_STUDENT_POLICIES=act" in text
     assert "--check-only" in installation
     assert "pip uninstall -y tetgen diffusers wandb torchcodec" in installation

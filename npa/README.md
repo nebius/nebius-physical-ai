@@ -751,7 +751,7 @@ The CPU wheel exercises real checkpoint loading without a GPU. See
 gate; some optional checks also use Node, tmux, or Docker.
 
 Pull requests run the full Python 3.12 suite,
-dedicated Cypress job, focused Python 3.10/3.14 checks, and security gates.
+dedicated Cypress job, focused Python 3.11/3.14 checks, and security gates.
 Six duration-balanced coverage shards run with xdist and cached constrained
 installs, then enforce the merged coverage floor. Full suites include smoke
 and CLI install checks without a duplicate subsystem job. The queue verifies
@@ -775,7 +775,7 @@ The focused compatibility check runs before CPU tensor dependencies are
 installed, so async cancellation and isolated SkyPilot fixture regressions
 surface before merge. The existing browser compatibility job also checks
 portable checksums and exception notes, SQLite failure fixtures, and VLM path
-errors on Python 3.10 and 3.14. These focused regressions keep the full
+errors on Python 3.11 and 3.14. These focused regressions keep the full
 compatibility matrix in scheduled audits without adding queue shards.
 Run the stdlib compatibility guard locally with:
 
@@ -1031,7 +1031,7 @@ configuration, offline narration, artifact search and privacy boundaries.
 ### MJLab
 
 Install optional simulator packages with `pip install -e '.[mjlab]'` on Python
-3.10–3.13, or use the dedicated MJLab GPU container recipe. `npa workbench mjlab`
+3.11–3.13, or use the dedicated MJLab GPU container recipe. `npa workbench mjlab`
 provides `train`, `eval`, `export`, `list`, `status`, `system-info`, `deploy`, and
 `workflow`; use `--help` for their options. Training preserves upstream defaults
 unless overridden. Public handoffs are S3 URIs; `--dry-run` plans without metrics

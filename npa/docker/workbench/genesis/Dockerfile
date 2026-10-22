@@ -23,6 +23,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NPA_GENESIS_SUPPORTED_STUDENT_POLICIES=act \
     NPA_GENESIS_HOME=/opt/genesis
 
+COPY --chmod=0755 docker/workbench/common/install_python312_jammy.sh /usr/local/bin/install-python312-jammy
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential \
       ca-certificates \
@@ -46,6 +48,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       python3-pip \
       python3-venv \
       wget \
+    && install-python312-jammy \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd -m -s /bin/bash -u 1000 ubuntu \
@@ -79,9 +82,9 @@ COPY --chown=ubuntu:ubuntu docker/workbench/genesis/prepare_public_policies.py \
 COPY --chown=ubuntu:ubuntu docker/workbench/common/envgen_compat/tetgen.py \
     /opt/genesis/compat/tetgen.py
 
-# Jammy's Python 3.10 cannot install scikit-image 0.26. Correct the reviewed
-# 0.25.2 source before this installation becomes an ancestor image layer.
-RUN python3 -m venv /opt/genesis/venv \
+# Keep the reviewed scikit-image 0.25.2 source correction in this installation
+# layer so the embedded recipe never reaches an ancestor image layer.
+RUN python3.12 -m venv /opt/genesis/venv \
     && /opt/genesis/venv/bin/python -m pip install --upgrade pip setuptools wheel \
     && /opt/genesis/venv/bin/pip install \
       "torch==${TORCH_VERSION}" \
@@ -93,7 +96,7 @@ RUN python3 -m venv /opt/genesis/venv \
       "scikit-image==0.25.2" \
       "rsl-rl-lib==${RSL_RL_VERSION}" \
       "moviepy @ https://github.com/Zulko/moviepy/archive/97316f37f6a8d3843abfb53eba8f3bb0ea46a008.tar.gz#sha256=6bef8575b091f6a7342ed271ff5dba97dbb07255df0a5b81fec38f8248b143d9" \
-      "pillow>=12.3.0,<13.0" \
+      "pillow>=13.0.0,<14.0" \
       "tensorboard==2.20.0" \
       "lerobot==${LEROBOT_VERSION}" \
       "huggingface-hub==0.35.3" \
@@ -107,28 +110,28 @@ RUN python3 -m venv /opt/genesis/venv \
       "boto3==1.42.91" \
       "jinja2==3.1.6" \
       "pyarrow==24.0.0" \
-    && /opt/genesis/venv/bin/pip install --no-cache-dir --no-deps --upgrade "pillow>=12.3.0,<13.0" \
+    && /opt/genesis/venv/bin/pip install --no-cache-dir --no-deps --upgrade "pillow>=13.0.0,<14.0" \
     && /opt/genesis/venv/bin/pip install --no-cache-dir --no-deps --upgrade "fsspec==2026.6.0" \
     && /opt/genesis/venv/bin/python /opt/genesis/prepare-public-runtime.py \
-      --site-packages /opt/genesis/venv/lib/python3.10/site-packages --check-only \
+      --site-packages /opt/genesis/venv/lib/python3.12/site-packages --check-only \
     && /opt/genesis/venv/bin/python /opt/genesis/prepare-public-policies.py \
-      --site-packages /opt/genesis/venv/lib/python3.10/site-packages --check-only \
+      --site-packages /opt/genesis/venv/lib/python3.12/site-packages --check-only \
     && /opt/genesis/venv/bin/pip uninstall -y tetgen diffusers wandb torchcodec \
     && /opt/genesis/venv/bin/python /opt/genesis/prepare-public-runtime.py \
-      --site-packages /opt/genesis/venv/lib/python3.10/site-packages \
+      --site-packages /opt/genesis/venv/lib/python3.12/site-packages \
       > /opt/genesis/public-runtime-dependencies.json \
     && /opt/genesis/venv/bin/python /opt/genesis/prepare-public-policies.py \
-      --site-packages /opt/genesis/venv/lib/python3.10/site-packages \
+      --site-packages /opt/genesis/venv/lib/python3.12/site-packages \
       > /opt/genesis/public-policy-source.json \
     && printf '%s\n' /opt/genesis/compat \
-      > /opt/genesis/venv/lib/python3.10/site-packages/npa-genesis-compat.pth \
+      > /opt/genesis/venv/lib/python3.12/site-packages/npa-genesis-compat.pth \
     && /opt/genesis/venv/bin/pip check \
     && test -z "$(find /opt/genesis/venv -type f \
       -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)" \
     && /opt/genesis/venv/bin/python -c \
       'import imageio_ffmpeg; assert imageio_ffmpeg.get_ffmpeg_exe() == "/usr/bin/ffmpeg"' \
     && /opt/genesis/venv/bin/python /opt/genesis/remove-scikit-image-recipe.py \
-      --site-packages /opt/genesis/venv/lib/python3.10/site-packages \
+      --site-packages /opt/genesis/venv/lib/python3.12/site-packages \
       --capability genesis \
       > /opt/genesis/dependency-source-correction.json \
     && /opt/genesis/venv/bin/python -c \

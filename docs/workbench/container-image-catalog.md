@@ -183,6 +183,15 @@ Use the [runtime-fetch instructions](../../npa/docker/workbench/sam3/README.md).
 Gated checkpoint access and real GPU qualification remain pending; this does
 not replace the accepted SAM 2.1 release or add a supported release row.
 
+The NPA application now requires Python 3.11 or newer and Pillow 13. Source
+recipes that install NPA use compatible interpreters and refreshed dependency
+locks; the Jammy Cosmos, Genesis, and GR00T environments use Python 3.12.
+These source changes do not qualify rebuilt GPU artifacts or replace the
+accepted digests below. In particular, the Cosmos CP312 custom-kernel tuple
+requires fresh B200 kernel and checkpoint-backed inference evidence before
+release promotion. Standalone vendor workers that do not install NPA retain
+their separately pinned Python/CUDA compatibility contracts.
+
 ## 2026-09-17 flex-pi r2 publication
 
 `npa-flex-pi:0.1.0-cu128-r2` is bound to direct `linux/amd64` manifest

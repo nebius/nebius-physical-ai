@@ -7,7 +7,7 @@ description: Use before pushing an npa change to pick which gates apply and run 
 
 Every pull request has one automatic candidate workflow. PRs
 run the complete six-shard Python 3.12 coverage suite, Cypress, focused
-Python 3.10/3.14 compatibility checks, lint, docs drift, guardrails, security
+Python 3.11/3.14 compatibility checks, lint, docs drift, guardrails, security
 regressions, secret scanning, and confidentiality scanning. Cross-subsystem
 coverage must pass before queue admission. Full shards include smoke tests;
 the browser job runs the Python 3.12 CLI install check before compatibility
