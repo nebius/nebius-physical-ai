@@ -32,6 +32,9 @@ def test_generic_torch_images_require_patched_versions_and_complete_dependency_c
             "python -m pip install"
         ), relative
 
+    base = (WORKBENCH / "base/cuda13-blackwell/Dockerfile").read_text()
+    assert '"pillow>=13.0.0,<14.0"' in base
+
 
 def _default_base(relative: str) -> str:
     text = (WORKBENCH / relative).read_text(encoding="utf-8")
@@ -202,6 +205,8 @@ def test_canonical_sim2real_images_exclude_fixed_critical_dependencies():
     assert header_components >= (5, 15, 0, 198, 208)
     assert '"${UBUNTU_SNAPSHOT}" "${ENVGEN_LINUX_LIBC_DEV_VERSION}"' in envgen
     isaac = (WORKBENCH / "common/isaac3-oss-deps.txt").read_text()
+    pillow = re.search(r"^pillow==(\S+)$", isaac, re.MULTILINE)
+    assert pillow and Version(pillow[1]) >= Version("13.0.0")
     pin = re.search(r"^pyjwt==(\S+)$", isaac, re.MULTILINE)
     assert pin and Version(pin.group(1)) >= Version("2.15.1")
     transfer = (WORKBENCH / "cosmos2-transfer/security-overrides.txt").read_text()

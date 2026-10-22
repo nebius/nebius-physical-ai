@@ -112,7 +112,7 @@ RUN python -m pip install \
       numpy \
       opencv-python-headless \
       pandas \
-      pillow \
+      "pillow>=13.0.0,<14.0" \
       pyarrow \
       safetensors \
       scipy \
