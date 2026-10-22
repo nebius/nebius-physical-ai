@@ -11,7 +11,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[3]
 GENESIS = ROOT / "npa/docker/workbench/genesis"
 VARIANTS = (
-    ("Dockerfile", "0.25.2", "/opt/genesis/venv/lib/python3.10/site-packages"),
+    ("Dockerfile", "0.26.0", "/opt/npa/venv/lib/python3.11/site-packages"),
     ("Dockerfile.sm120", "0.26.0", "/opt/npa/venv/lib/python3.11/site-packages"),
 )
 CORRECTION = "/opt/genesis/remove-scikit-image-recipe.py"
@@ -71,6 +71,19 @@ def test_genesis_ffmpeg_contract_avoids_bundled_wheel_executables(
     assert '"imageio-ffmpeg==0.6.0"' in installation
     assert "imageio_ffmpeg/binaries/ffmpeg*' -print -quit" in installation
     assert 'imageio_ffmpeg.get_ffmpeg_exe() == "/usr/bin/ffmpeg"' in installation
+
+
+@pytest.mark.parametrize("dockerfile,version,site_packages", VARIANTS)
+def test_genesis_recipes_require_python_311_and_a_source_attestation(
+    dockerfile, version, site_packages
+):
+    text = (GENESIS / dockerfile).read_text()
+    assert "/opt/npa/venv/lib/python3.11/site-packages" in text
+    assert '"pillow>=13.0.0,<14.0"' in text
+    assert "ARG NPA_SOURCE_SHA" in text
+    assert 'org.opencontainers.image.revision="${NPA_SOURCE_SHA}"' in text
+    assert "NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA}" in text
+    assert 'test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40' in text
 
 
 @pytest.mark.parametrize("dockerfile,version,site_packages", VARIANTS)

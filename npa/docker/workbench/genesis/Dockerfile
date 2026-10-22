@@ -1,16 +1,20 @@
-# Digest pinned 2026-05-12. Tag: nvidia/cuda:12.4.1-devel-ubuntu22.04
-# To update: re-resolve via registry API and update digest below.
-FROM nvidia/cuda:12.4.1-devel-ubuntu22.04@sha256:da6791294b0b04d7e65d87b7451d6f2390b4d36225ab0701ee7dfec5769829f5
+# Python 3.11 CUDA 13 workbench base, pinned from sm120-images.json.
+# This replaces the former Ubuntu 22.04/Python 3.10 Genesis environment because
+# Pillow 13 is the supported scanner-recognized security line.
+ARG BASE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-base@sha256:6a493973bf8a92a9a33ad0c301a1b3c9ef1d4ba9e7e8364318d041e1b10285f1
+FROM ${BASE_IMAGE}
 
+ARG NPA_SOURCE_SHA
 ARG GENESIS_VERSION=0.4.6
 ARG LEROBOT_VERSION=0.4.4
 ARG RSL_RL_VERSION=5.5.1
-ARG TORCH_VERSION=2.6.0
-ARG TORCHVISION_VERSION=0.21.0
 ARG UBUNTU_SNAPSHOT=20261002T000000Z
 
 LABEL npa.tool="genesis" \
-      npa.version="${GENESIS_VERSION}"
+      npa.version="${GENESIS_VERSION}" \
+      npa.image.flavor="sm80-sm90-sm100-sm103-sm120" \
+      npa.base.profile="cuda13-workbench" \
+      org.opencontainers.image.revision="${NPA_SOURCE_SHA}"
 
 ENV DEBIAN_FRONTEND=noninteractive \
     GENESIS_VERSION=${GENESIS_VERSION} \
@@ -20,80 +24,59 @@ ENV DEBIAN_FRONTEND=noninteractive \
     IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
     NPA_GENESIS_SUPPORTED_STUDENT_POLICIES=act \
-    NPA_GENESIS_HOME=/opt/genesis
+    NPA_GENESIS_HOME=/opt/genesis \
+    NVIDIA_DRIVER_CAPABILITIES=compute,graphics,utility \
+    EGL_PLATFORM=device \
+    PATH=/opt/npa/venv/bin:$PATH \
+    PYTHONPATH=/opt/npa/src \
+    NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
+    NPA_SKIP_EAGER_IMPORTS=1
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      build-essential \
-      ca-certificates \
-      cmake \
-      curl \
-      ffmpeg \
-      git \
-      libegl1 \
-      libffi-dev \
-      libgl1 \
-      libglib2.0-0 \
-      libglvnd0 \
-      libsm6 \
-      libssl-dev \
-      libx11-6 \
-      libxext6 \
-      libxrender1 \
-      ninja-build \
-      pkg-config \
-      python3-dev \
-      python3-pip \
-      python3-venv \
-      wget \
-    && rm -rf /var/lib/apt/lists/*
+SHELL ["/bin/bash", "-lc"]
 
-RUN useradd -m -s /bin/bash -u 1000 ubuntu \
-    && install -d -m 0755 -o ubuntu -g ubuntu \
+USER root
+
+RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu; \
+    install -d -m 0755 -o ubuntu -g ubuntu \
       /opt/genesis \
       /opt/genesis/outputs \
       /opt/npa/src/npa \
-      /opt/npa/docker/workbench/genesis
-
-# Permissions fix for /dev/dri access on serverless runtimes.
-# /dev/dri/card0 is owned by root:video (GID 44), while the render node is
-# owned by a runtime-provided numeric render group (GID 992).
-RUN groupadd -g 44 video 2>/dev/null || true; \
+      /opt/npa/docker/workbench/genesis; \
+    groupadd -g 44 video 2>/dev/null || true; \
     groupadd -g 992 render 2>/dev/null || true; \
     usermod -aG video,render ubuntu
 
-USER ubuntu
-# Force NVIDIA EGL device extension for headless EGL rendering on GPU.
-# Required by Genesis demo generation; combined with the video/render group
-# additions above, enables the full /dev/dri + EGL stack.
-ENV NVIDIA_DRIVER_CAPABILITIES=compute,graphics,utility
-ENV EGL_PLATFORM=device
-WORKDIR /opt/genesis
+# npa-base force-purges linux-libc-dev in its final hardening layer. Restore
+# build headers only while native dependencies install; the final layer purges
+# them again. Its Python is the base's audited Python 3.11 virtual environment.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends --fix-broken
 
-COPY --chown=ubuntu:ubuntu docker/workbench/curobo/remove_scikit_image_recipe.py \
+COPY docker/workbench/curobo/remove_scikit_image_recipe.py \
     /opt/genesis/remove-scikit-image-recipe.py
-COPY --chown=ubuntu:ubuntu docker/workbench/genesis/prepare_public_runtime.py \
+COPY docker/workbench/genesis/prepare_public_runtime.py \
     /opt/genesis/prepare-public-runtime.py
-COPY --chown=ubuntu:ubuntu docker/workbench/genesis/prepare_public_policies.py \
+COPY docker/workbench/genesis/prepare_public_policies.py \
     /opt/genesis/prepare-public-policies.py
-COPY --chown=ubuntu:ubuntu docker/workbench/common/envgen_compat/tetgen.py \
+COPY docker/workbench/common/envgen_compat/tetgen.py \
     /opt/genesis/compat/tetgen.py
 
-# Jammy's Python 3.10 cannot install scikit-image 0.26. Correct the reviewed
-# 0.25.2 source before this installation becomes an ancestor image layer.
-RUN python3 -m venv /opt/genesis/venv \
-    && /opt/genesis/venv/bin/python -m pip install --upgrade pip setuptools wheel \
-    && /opt/genesis/venv/bin/pip install \
-      "torch==${TORCH_VERSION}" \
-      "torchvision==${TORCHVISION_VERSION}" \
-      --index-url https://download.pytorch.org/whl/cu124 \
-    && /opt/genesis/venv/bin/pip install --no-binary imageio-ffmpeg \
+USER ubuntu
+WORKDIR /opt/genesis
+
+# Keep the publicly redistributable Genesis capability intentionally narrow:
+# native rigid Panda/Box and ACT only. The exact metadata/source correction and
+# CPU round trip below fail closed if an upstream wheel changes.
+RUN python -m pip install --upgrade pip setuptools wheel \
+    && python -m pip install --no-binary imageio-ffmpeg \
       "genesis-world==${GENESIS_VERSION}" \
       "imageio-ffmpeg==0.6.0" \
-      "scikit-image==0.25.2" \
+      "scikit-image==0.26.0" \
       "rsl-rl-lib==${RSL_RL_VERSION}" \
       "moviepy @ https://github.com/Zulko/moviepy/archive/97316f37f6a8d3843abfb53eba8f3bb0ea46a008.tar.gz#sha256=6bef8575b091f6a7342ed271ff5dba97dbb07255df0a5b81fec38f8248b143d9" \
-      "pillow>=12.3.0,<13.0" \
+      "pillow>=13.0.0,<14.0" \
       "tensorboard==2.20.0" \
       "lerobot==${LEROBOT_VERSION}" \
       "huggingface-hub==0.35.3" \
@@ -107,34 +90,29 @@ RUN python3 -m venv /opt/genesis/venv \
       "boto3==1.42.91" \
       "jinja2==3.1.6" \
       "pyarrow==24.0.0" \
-    && /opt/genesis/venv/bin/pip install --no-cache-dir --no-deps --upgrade "pillow>=12.3.0,<13.0" \
-    && /opt/genesis/venv/bin/pip install --no-cache-dir --no-deps --upgrade "fsspec==2026.6.0" \
-    && /opt/genesis/venv/bin/python /opt/genesis/prepare-public-runtime.py \
-      --site-packages /opt/genesis/venv/lib/python3.10/site-packages --check-only \
-    && /opt/genesis/venv/bin/python /opt/genesis/prepare-public-policies.py \
-      --site-packages /opt/genesis/venv/lib/python3.10/site-packages --check-only \
-    && /opt/genesis/venv/bin/pip uninstall -y tetgen diffusers wandb torchcodec \
-    && /opt/genesis/venv/bin/python /opt/genesis/prepare-public-runtime.py \
-      --site-packages /opt/genesis/venv/lib/python3.10/site-packages \
+    && python -m pip install --no-cache-dir --no-deps --upgrade \
+      "pillow>=13.0.0,<14.0" "fsspec==2026.6.0" \
+    && python /opt/genesis/prepare-public-runtime.py \
+      --site-packages /opt/npa/venv/lib/python3.11/site-packages --check-only \
+    && python /opt/genesis/prepare-public-policies.py \
+      --site-packages /opt/npa/venv/lib/python3.11/site-packages --check-only \
+    && python -m pip uninstall -y tetgen diffusers wandb torchcodec transformers peft \
+    && python /opt/genesis/prepare-public-runtime.py \
+      --site-packages /opt/npa/venv/lib/python3.11/site-packages \
       > /opt/genesis/public-runtime-dependencies.json \
-    && /opt/genesis/venv/bin/python /opt/genesis/prepare-public-policies.py \
-      --site-packages /opt/genesis/venv/lib/python3.10/site-packages \
+    && python /opt/genesis/prepare-public-policies.py \
+      --site-packages /opt/npa/venv/lib/python3.11/site-packages \
       > /opt/genesis/public-policy-source.json \
     && printf '%s\n' /opt/genesis/compat \
-      > /opt/genesis/venv/lib/python3.10/site-packages/npa-genesis-compat.pth \
-    && /opt/genesis/venv/bin/pip check \
-    && test -z "$(find /opt/genesis/venv -type f \
+      > /opt/npa/venv/lib/python3.11/site-packages/npa-genesis-compat.pth \
+    && python -m pip check \
+    && test -z "$(find /opt/npa/venv -type f \
       -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)" \
-    && /opt/genesis/venv/bin/python -c \
-      'import imageio_ffmpeg; assert imageio_ffmpeg.get_ffmpeg_exe() == "/usr/bin/ffmpeg"' \
-    && /opt/genesis/venv/bin/python /opt/genesis/remove-scikit-image-recipe.py \
-      --site-packages /opt/genesis/venv/lib/python3.10/site-packages \
+    && python -c 'import imageio_ffmpeg; assert imageio_ffmpeg.get_ffmpeg_exe() == "/usr/bin/ffmpeg"' \
+    && python /opt/genesis/remove-scikit-image-recipe.py \
+      --site-packages /opt/npa/venv/lib/python3.11/site-packages \
       --capability genesis \
       > /opt/genesis/dependency-source-correction.json
-
-ENV PATH=/opt/genesis/venv/bin:$PATH \
-    PYTHONPATH=/opt/npa/src \
-    NPA_SKIP_EAGER_IMPORTS=1
 
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
@@ -147,17 +125,21 @@ COPY --chmod=0555 docker/workbench/common/configure_ubuntu_snapshot.sh \
 COPY --chmod=0555 docker/workbench/common/install_workflow_runtime_prereqs.sh \
     /usr/local/bin/install-workflow-runtime-prereqs
 
-RUN python -m pip install --no-deps -e /opt/npa \
+RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
+    && python -m pip install --no-deps -e /opt/npa \
     && python - <<'PY'
 import os
 from importlib import metadata
+
 import genesis
+import torch
 
 expected = os.environ["GENESIS_VERSION"]
 actual = getattr(genesis, "__version__", metadata.version("genesis-world"))
 if actual != expected:
     raise RuntimeError(f"expected genesis-world {expected}, found {actual}")
 print(f"GENESIS_BUILD_IMPORT_OK {actual}")
+print(f"TORCH_BUILD_CUDA {torch.__version__} cuda={torch.version.cuda}")
 PY
 
 RUN python /opt/npa/docker/workbench/genesis/smoke_public_cpu.py
@@ -183,6 +165,5 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 USER ubuntu
-
 WORKDIR /opt/genesis
 ENTRYPOINT ["/bin/bash"]

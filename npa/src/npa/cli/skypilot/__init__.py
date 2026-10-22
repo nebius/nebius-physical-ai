@@ -67,9 +67,9 @@ CONSTRAINTS_FILE = Path(__file__).with_name("constraints-0.12.2.txt")
 # typing/imports fail, so the venv is created but `import sky`/submits blow up.
 # Guard the interpreter up front and auto-select a supported one when the default
 # is out of range.
-SKYPILOT_MIN_PYTHON = (3, 9)
+SKYPILOT_MIN_PYTHON = (3, 11)
 SKYPILOT_MAX_PYTHON = (3, 12)
-_PREFERRED_PYTHON_BINS = ("python3.12", "python3.11", "python3.10", "python3.9")
+_PREFERRED_PYTHON_BINS = ("python3.12", "python3.11")
 
 
 def _supported_python_range_str() -> str:

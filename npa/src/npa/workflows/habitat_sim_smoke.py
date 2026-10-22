@@ -77,14 +77,8 @@ class SmokeFailure(RuntimeError):
 
 
 def _add_exception_note(error: BaseException, note: str) -> None:
-    """Retain cleanup diagnostics without replacing failures on Python 3.10."""
-    add_note = getattr(error, "add_note", None)
-    if callable(add_note):
-        add_note(note)
-    else:
-        notes = list(getattr(error, "__notes__", []))
-        notes.append(note)
-        error.__notes__ = notes
+    """Retain cleanup diagnostics without replacing the primary failure."""
+    error.add_note(note)
 
 
 @dataclass

@@ -203,7 +203,7 @@ def test_rerun_decoding_extra_is_dev_only_and_mirrored() -> None:
     }
 
 
-@pytest.mark.parametrize("version", ["3.10", "3.12", "3.14"])
+@pytest.mark.parametrize("version", ["3.11", "3.12", "3.14"])
 def test_ci_pins_select_one_cpu_runtime_per_interpreter(version: str) -> None:
     """Resolve marker-qualified pins without admitting a CUDA dependency.
 

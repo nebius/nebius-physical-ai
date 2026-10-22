@@ -7,13 +7,9 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
-import sys
 import tempfile
 
-if sys.version_info >= (3, 11):
-    import tomllib
-else:
-    import tomli as tomllib
+import tomllib
 
 
 _ROOT = Path(__file__).resolve().parents[2]
@@ -88,7 +84,7 @@ def _update(root: Path, upgrade: bool) -> None:
         "npa/ci/constraints.in",
         "--universal",
         "--python-version",
-        "3.10",
+        "3.11",
         "--torch-backend",
         "cpu",
         "--no-annotate",
@@ -108,7 +104,7 @@ def _update(root: Path, upgrade: bool) -> None:
 def _validate_linux_wheels(root: Path) -> None:
     # Universal resolution checks metadata; explicit targets also check wheel tags.
     with tempfile.TemporaryDirectory(prefix="npa-ci-pins-") as directory:
-        for version in ("3.10", "3.12", "3.14"):
+        for version in ("3.11", "3.12", "3.14"):
             subprocess.run(
                 [
                     "uv",

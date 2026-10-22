@@ -535,7 +535,7 @@ collection errors remain blocking, and failed guardrails stop the collector.
 This saves a sequential collection pass without starting another runner.
 
 PR admission still requires six duration-balanced Python 3.12 coverage shards,
-Cypress, focused Python 3.10/3.14 compatibility tests, security, documentation
+Cypress, focused Python 3.11/3.14 compatibility tests, security, documentation
 drift, and repository guardrails. Source and test changes receive the full suite,
 including other subsystems; merged coverage must meet the unchanged 60% floor.
 
@@ -583,7 +583,7 @@ it no longer extends the last coverage shard. Cypress runs once in its own job,
 never inside a pytest shard. Cached constrained installs, xdist workers, and
 independent job scheduling retain fast feedback without deferring
 coverage until queue admission. Scheduled and manual audits retain four shards
-on each of Python 3.10, 3.12, and 3.14.
+on each of Python 3.11, 3.12, and 3.14.
 
 A narrow prose-only exception skips the full Python and browser suites on PRs
 and merge candidates while retaining smoke, lint, documentation drift, guardrail,
@@ -650,7 +650,7 @@ setup steps before attributing a queue timeout to runner capacity.
 
 Python test jobs use uv 0.12.5 with a persistent package cache and
 `npa/ci/requirements.txt` constraints. These pins cover the core, development,
-adapter, and CPU SONIC/export dependencies across Python 3.10, 3.12, and 3.14.
+adapter, and CPU SONIC/export dependencies across Python 3.11, 3.12, and 3.14.
 The CPU Torch version remains in `npa/ci/constraints.in`. CI rejects stale inputs
 and direct edits to the generated pin body before installing dependencies.
 Dependabot updates the source manifests but does not edit

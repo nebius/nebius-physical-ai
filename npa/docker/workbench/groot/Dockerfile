@@ -45,6 +45,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NPA_ISAAC_CACHE_DIR=/opt/isaac-cache \
     NPA_ISAAC_BASE_PYTHON=/opt/isaac-lab/venv/bin/python \
     NPA_IMAGE_PYTHON=/opt/isaac-lab/venv/bin/python \
+    NPA_BAKED_PYTHON=/opt/isaac-lab/venv/bin/python \
     NPA_ISAAC_WHEELS_FILE=/opt/npa/docker/workbench/common/isaac-nvidia-wheels.txt \
     ISAAC_LAB_PYTHON=/isaac-sim/python.sh \
     GROOT_RUNTIME_VERSION=${GROOT_RUNTIME_VERSION} \
@@ -294,9 +295,10 @@ RUN /opt/isaac-lab/venv/bin/python -m pip install --no-deps --upgrade \
       "cryptography>=48.0.1" \
       "diffusers>=0.38.0" \
       "jaraco.context>=6.1.0" \
+      "mcap==1.5.0" \
       "msgpack>=1.2.1" \
       "onnx>=1.21.0" \
-      "pillow>=12.2.0" \
+      "pillow>=13.0.0,<14.0" \
       "python-multipart>=0.0.30" \
       "starlette>=1.3.1" \
       "tornado>=6.5.6" \
@@ -314,13 +316,18 @@ COPY --chown=ubuntu:ubuntu docker/workbench/groot/entrypoint.sh /opt/npa/docker/
 
 RUN chmod 0755 /opt/npa/docker/workbench/groot/entrypoint.sh
 
-RUN uv pip install --python "${GROOT_VENV}/bin/python" --no-deps -e /opt/npa \
-    && "${GROOT_VENV}/bin/python" -c 'from npa.cli.entry import main; main()' \
+# The vendor GR00T environment remains CPython 3.10 because its pinned
+# upstream runtime is constrained to that ABI.  NPA's control CLI is separate:
+# it runs from the already-isolated Python 3.11 Isaac control environment, so
+# the repository's Python/Pillow security floor never leaks into GR00T itself.
+RUN "${NPA_BAKED_PYTHON}" -c 'import sys; assert sys.version_info >= (3, 11), sys.version' \
+    && uv pip install --python "${NPA_BAKED_PYTHON}" --no-deps -e /opt/npa \
+    && env -u PYTHONPATH "${NPA_BAKED_PYTHON}" -c 'from npa.cli.entry import main; main()' \
       workbench groot finetune --help >/dev/null \
-    && "${GROOT_VENV}/bin/python" - <<'PY'
+    && env -u PYTHONPATH "${NPA_BAKED_PYTHON}" - <<'PY'
 import os
+import subprocess
 from io import BytesIO
-from importlib import metadata
 from pathlib import Path
 
 from mcap.reader import make_reader
@@ -328,7 +335,10 @@ from mcap.writer import Writer
 from npa.cli.groot import DEFAULT_EMBODIMENT_TAG, DEFAULT_MODEL, _build_server_py
 
 expected = os.environ["GROOT_RUNTIME_VERSION"]
-actual = metadata.version("gr00t")
+actual = subprocess.check_output(
+    [os.environ["GROOT_VENV"] + "/bin/python", "-c", "from importlib.metadata import version; print(version('gr00t'))"],
+    text=True,
+).strip()
 if actual != expected:
     raise RuntimeError(f"expected gr00t {expected}, found {actual}")
 buffer = BytesIO()

@@ -3,7 +3,7 @@
 [Docs](README.md)
 
 `npa` targets **macOS**, **Linux**, and **Windows via WSL2**, and works with
-**Python 3.10+**. It is not published to PyPI, so you always install it editable
+**Python 3.11+**. It is not published to PyPI, so you always install it editable
 from a clone of this repository.
 
 The [quickstart install](quickstart.md#3-install-npa) has the short,
@@ -22,7 +22,7 @@ little more.
 `npa` runs cloud workloads (S3, SkyPilot, Kubernetes) that assume a POSIX
 environment, so on Windows do all `npa` work from **WSL2 Ubuntu**.
 
-## 1. Get Python 3.10+
+## 1. Get Python 3.11+
 
 Check what you have:
 
@@ -30,7 +30,7 @@ Check what you have:
 python3 --version
 ```
 
-If it is older than 3.10 (or missing):
+If it is older than 3.11 (or missing):
 
 - **macOS:** `brew install python@3.12`, or download from
   [python.org](https://www.python.org/downloads/), or use

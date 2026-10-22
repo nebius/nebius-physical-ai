@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "npa"
 version = "0.1.0"
 description = "Nebius Physical AI platform CLI/SDK"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 # A plain `pip install -e npa` ships the full workbench capability set: the
 # offline CLI paths (`npa --version`, vlm-eval stub, workflow validate/plan)
 # plus the dataframe/plotting, LanceDB, Rerun, and FastAPI-server deps the
@@ -48,7 +48,8 @@ dependencies = [
     "oauthlib>=4.0.0",
     "numpy>=1.24",
     "pyarrow>=23.0.1",
-    "pillow>=12.3.0,<13.0",
+    # Pillow 13 is the scanner-recognized secure line and requires Python 3.11.
+    "pillow>=13.0.0,<14.0",
     # MCAP writer for the lichtblick viewer's frames->MCAP export (pure-Python).
     # Upper bound is deliberate: mcap 1.4.0 trips mypy module discovery (see the
     # [tool.mypy] override) and the writer/reader pin the 1.x record API.
@@ -58,7 +59,6 @@ dependencies = [
     # Wan MP4 verification must not depend on host ffmpeg/ffprobe packages.
     "av==17.1.0",
     "pydantic>=2.4.0",
-    "tomli>=2.0.0; python_version < '3.11'",
     # Formerly the `data` extra: dataframe/plotting helpers used by curation,
     # benchmarks, and reports.
     "pandas>=2.0",
@@ -355,7 +355,7 @@ path = "src/npa/workflow_build.py"
 "src/npa/assets/paidf_starter_video.json" = "npa/assets/paidf_starter_video.json"
 
 [tool.ruff]
-target-version = "py310"
+target-version = "py311"
 src = ["src", "tests"]
 
 [tool.ruff.lint]

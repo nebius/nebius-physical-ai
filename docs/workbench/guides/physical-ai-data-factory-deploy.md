@@ -404,7 +404,7 @@ digests, run identity, and restart safety — see
 
 ## 0. Prerequisites
 
-- **Python 3.10+** and `git` on an operator/dev machine (Linux or macOS). All
+- **Python 3.11+** and `git` on an operator/dev machine (Linux or macOS). All
   `npa`, `nebius`, and `docker` commands below run on this operator machine — the
   agent VM only receives staged env files.
 - A **Nebius** tenant/project with access to: Managed Kubernetes (GPU nodes),

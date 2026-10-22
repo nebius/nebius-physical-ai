@@ -1,7 +1,7 @@
 # Public Genesis runtime
 
-The stock CUDA 12.4 recipe retains Genesis 0.4.6, Python 3.10, Torch 2.6 and
-TorchVision 0.21. It packages rigid Panda/Box simulation, teacher training,
+The canonical recipe uses the pinned CUDA 13 Python 3.11 workbench base and
+retains Genesis 0.4.6. It packages rigid Panda/Box simulation, teacher training,
 checkpoint export, camera-demo conversion, native LeRobotDataset reading through
 PyAV, and ACT student dependencies. A rebuilt candidate must pass its normal
 publication gates and real GPU teacher/export/camera qualification before it
@@ -49,6 +49,6 @@ backend, constructs ACT, performs an action, and saves/reloads the checkpoint
 and normalization processors through the NPA student loader. It prevents
 network fetches and unexpected excluded-package imports. This smoke proves
 dependency behavior; it does not prove Genesis GPU physics, policy quality or
-camera rendering. The additive `Dockerfile.sm120` still requires a separately
-qualified parent and policy/decoder closure; the stock proof does not qualify
-that variant.
+camera rendering. `Dockerfile.sm120` accepts an explicitly selected, separately
+qualified Python 3.11 parent and records the exact NPA source SHA. Neither
+recipe's CPU proof qualifies GPU physics, policy quality, or hardware transfer.

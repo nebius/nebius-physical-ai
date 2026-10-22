@@ -207,7 +207,7 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
     && apt-get update \
     && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
-      ca-certificates ffmpeg netcat-openbsd openssh-server procps rsync sudo \
+      ca-certificates ffmpeg netcat-openbsd openssh-server procps python3 python3-venv rsync sudo \
     && rm -rf /var/lib/apt/lists/* \
     && rm -f /etc/ssh/ssh_host_* \
     && test -z "$(find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*' -print -quit)" \
@@ -241,15 +241,20 @@ COPY --chmod=755 src/npa/workbench/cosmos/fixture.py \
 COPY docker/workbench/cosmos2-transfer/REDISTRIBUTION.md \
     /usr/share/doc/npa-cosmos2-transfer/REDISTRIBUTION.md
 
-# This purpose-built component image runs the exact NPA source tree without
-# invoking a PEP 517 backend.  The source is already immutable via
-# NPA_SOURCE_SHA; avoiding a package build also removes any implicit Hatchling
-# download or mutable build-isolation environment. Keep package initialization
-# lazy so importing the attestation and Cosmos component modules does not
-# require CLI/viewer extras.
+# This purpose-built component image keeps the vendor's CPython 3.10 inference
+# environment intact, but runs the NPA control/source overlay under Ubuntu 24.04
+# Python 3.12.  Pillow 13 and the NPA package require Python >=3.11; installing
+# current NPA source into the CPython 3.10 vendor venv would make the image's
+# declared dependency contract false.  The two interpreters communicate only
+# through the explicit subprocess seam in npa.workbench.cosmos.transfer.
+#
+# The source is already immutable via NPA_SOURCE_SHA. Avoid a PEP 517 editable
+# install so no Hatchling build-isolation download can alter the image: the
+# control venv has a durable, explicit .pth record for the checked-in source.
 ENV NPA_SKIP_EAGER_IMPORTS=1 \
-    PYTHONPATH=/opt/npa/src \
-    NPA_BAKED_PYTHON=/opt/cosmos/cosmos-transfer2.5/.venv/bin/python \
+    NPA_CONTROL_PYTHON=/opt/npa/control-venv/bin/python \
+    NPA_BAKED_PYTHON=/opt/npa/control-venv/bin/python \
+    COSMOS_TRANSFER_PYTHON=/opt/cosmos/cosmos-transfer2.5/.venv/bin/python \
     IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg
 
 # Deliberately shadow the global python3: SkyPilot and orchestrator-supplied
@@ -263,8 +268,6 @@ RUN set -eux; \
     /opt/cosmos/cosmos-transfer2.5/.venv/bin/python -c \
       'import imageio_ffmpeg; assert imageio_ffmpeg.get_ffmpeg_exe() == "/usr/bin/ffmpeg"'; \
     id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu; \
-    ln -sfn /opt/npa/src/npa \
-      /opt/cosmos/cosmos-transfer2.5/.venv/lib/python3.10/site-packages/npa; \
     printf '%s\n' 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/ubuntu; \
     chmod 0440 /etc/sudoers.d/ubuntu; \
     printf '%s\n' '#!/bin/sh' \
@@ -297,24 +300,29 @@ RUN set -eux; \
     su ubuntu -s /bin/bash -c \
       'test -w /opt/cosmos/model-cache/huggingface && test -x /opt/cosmos/cosmos-transfer2.5/.venv/bin/python'
 
-# Install the capability CLI's exact, hash-verified dependency overlay without
-# resolving or upgrading the vendor lock. The lightweight console entry detects
-# `workbench cosmos2 transfer` before importing the full platform command tree,
-# then dispatches to the copied Cosmos2 source directly. The wrapper is authored
-# locally from fixed text; no build backend or package index is consulted.
+# Install the capability CLI's exact, hash-verified dependency overlay in the
+# Python >=3.11 control venv without resolving or upgrading the vendor lock.
+# The lightweight console entry detects `workbench cosmos2 transfer` before
+# importing the full platform command tree, then dispatches to the copied
+# Cosmos2 source directly. No build backend or package index is consulted.
 RUN set -eux; \
-    uv pip install --python /opt/cosmos/cosmos-transfer2.5/.venv/bin/python \
+    /usr/bin/python3 -c 'import sys; assert sys.version_info >= (3, 11)'; \
+    uv venv --python /usr/bin/python3 /opt/npa/control-venv; \
+    control_site="$(${NPA_CONTROL_PYTHON} -c 'import site; print(site.getsitepackages()[0])')"; \
+    printf '%s\n' /opt/npa/src > "${control_site}/npa-exact-source.pth"; \
+    uv pip install --python "${NPA_CONTROL_PYTHON}" \
       --no-deps --require-hashes \
       --requirement /tmp/npa-cli-requirements.txt; \
+    env -u PYTHONPATH "${NPA_CONTROL_PYTHON}" -c 'import npa.cli.entry; import npa.workflows.sim2real.runtime_attestation'; \
     printf '%s\n' '#!/bin/sh' \
-      'exec /opt/cosmos/cosmos-transfer2.5/.venv/bin/python -m npa.cli.entry "$@"' \
-      > /opt/cosmos/cosmos-transfer2.5/.venv/bin/npa; \
-    chmod 0755 /opt/cosmos/cosmos-transfer2.5/.venv/bin/npa; \
+      'exec /opt/npa/control-venv/bin/python -m npa.cli.entry "$@"' \
+      > /usr/local/bin/npa; \
+    chmod 0755 /usr/local/bin/npa; \
     env -u PYTHONPATH "${NPA_BAKED_PYTHON}" -c \
       'import npa.cli.entry; import npa.workflows.sim2real.runtime_attestation'; \
-    "${NPA_BAKED_PYTHON}" -c \
+    "${COSMOS_TRANSFER_PYTHON}" -c \
       'import importlib.metadata as m; assert m.version("PyJWT") == "2.15.1"'; \
-    /opt/cosmos/cosmos-transfer2.5/.venv/bin/npa \
+    /usr/local/bin/npa \
       workbench cosmos2 transfer --help > /tmp/npa-cosmos2-help.txt; \
     grep -q -- '--control-asset' /tmp/npa-cosmos2-help.txt; \
     grep -q -- '--segmentation-mode' /tmp/npa-cosmos2-help.txt; \

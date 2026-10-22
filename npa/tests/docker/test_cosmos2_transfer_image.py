@@ -166,15 +166,27 @@ def test_lfs_media_models_and_build_credentials_are_excluded() -> None:
     assert "pip install --no-deps /opt/npa" not in text
     assert "python -m npa.cli.entry" in text
     assert "python -m npa.cli.main" not in text
-    assert "PYTHONPATH=/opt/npa/src" in text
-    assert "NPA_BAKED_PYTHON=/opt/cosmos/cosmos-transfer2.5/.venv/bin/python" in text
+    assert "NPA_CONTROL_PYTHON=/opt/npa/control-venv/bin/python" in text
+    assert "NPA_BAKED_PYTHON=/opt/npa/control-venv/bin/python" in text
+    assert (
+        "COSMOS_TRANSFER_PYTHON=/opt/cosmos/cosmos-transfer2.5/.venv/bin/python" in text
+    )
+    assert "python3 python3-venv" in text
     assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in text
     assert "*/imageio_ffmpeg/binaries/ffmpeg*" in text
     assert "imageio_ffmpeg.get_ffmpeg_exe()" in text
     assert '== "/usr/bin/ffmpeg"' in text
-    assert "ln -sfn /opt/npa/src/npa" in text
+    assert "npa-exact-source.pth" in text
+    assert "uv venv --python /usr/bin/python3 /opt/npa/control-venv" in text
+    assert (
+        "/usr/bin/python3 -c 'import sys; assert sys.version_info >= (3, 11)'" in text
+    )
+    assert text.index("--requirement /tmp/npa-cli-requirements.txt") < text.index(
+        "import npa.cli.entry; import npa.workflows.sim2real.runtime_attestation"
+    )
+    assert "ln -sfn /opt/npa/src/npa" not in text
     assert 'env -u PYTHONPATH "${NPA_BAKED_PYTHON}" -c' in text
-    assert "no build backend or package index is consulted" in text
+    assert "No build backend or package index is consulted" in text
     assert "import npa.cli.entry" in text
     assert "import npa.cli.main" not in text
     assert "workbench cosmos2 transfer --help" in text
@@ -265,7 +277,7 @@ def test_final_runtime_is_non_root_relocated_and_cache_writable_by_design() -> N
     assert "--no-deps --require-hashes" in text
     assert "-m npa.cli.entry" in text
     assert "-m npa.cli.main" not in text
-    assert "/opt/cosmos/cosmos-transfer2.5/.venv/bin/npa" in text
+    assert "exec /opt/npa/control-venv/bin/python -m npa.cli.entry" in text
     assert "workbench cosmos2 transfer --help" in text
     assert "rm -rf /opt/cosmos/model-cache/xdg/uv" in text
 

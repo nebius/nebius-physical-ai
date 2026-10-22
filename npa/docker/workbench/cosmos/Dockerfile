@@ -141,9 +141,7 @@ RUN printf '%s\n' \
     && rm -f /tmp/flash_attn-*.whl /tmp/natten-*.whl /tmp/transformer_engine-*.whl \
       /tmp/cosmos-predict2-noncuda-requirements.txt /tmp/cosmos-cu128-constraints.txt
 
-ENV PATH=/opt/cosmos/venv/bin:$PATH \
-    PYTHONPATH=/opt/npa/src \
-    NPA_SKIP_EAGER_IMPORTS=1
+ENV PATH=/opt/cosmos/venv/bin:$PATH
 
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
@@ -152,8 +150,14 @@ COPY --chown=ubuntu:ubuntu docker/workbench/cosmos/build_server.py /opt/npa/dock
 COPY --chown=ubuntu:ubuntu docker/workbench/cosmos/smoke_env.py /opt/npa/docker/workbench/cosmos/smoke_env.py
 COPY --chown=ubuntu:ubuntu docker/workbench/cosmos/smoke_functional.py /opt/npa/docker/workbench/cosmos/smoke_functional.py
 
-RUN python -m pip install --no-deps -e /opt/npa \
-    && python /opt/npa/docker/workbench/cosmos/build_server.py
+# ``build_server.py`` extracts the generated server factory with ``ast``; it
+# neither imports nor runs NPA.  Cosmos 1.0's upstream CUDA wheel closure is
+# deliberately CPython 3.10, while NPA itself now requires Python 3.11, so an
+# editable install here would produce an unusable mixed runtime.  Generate the
+# server, then remove the staging source so this image has no NPA runtime.
+RUN python /opt/npa/docker/workbench/cosmos/build_server.py \
+    && test -s /opt/cosmos/server.py \
+    && rm -rf /opt/npa/src /opt/npa/pyproject.toml
 
 RUN python -m py_compile /opt/cosmos/server.py /opt/npa/docker/workbench/cosmos/build_server.py /opt/npa/docker/workbench/cosmos/smoke_env.py /opt/npa/docker/workbench/cosmos/smoke_functional.py
 

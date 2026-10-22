@@ -8,6 +8,7 @@ REGISTRY=""
 BASE_IMAGE=""
 TAG=""
 PUSH=0
+NPA_SOURCE_SHA="${NPA_SOURCE_SHA:-$(git -C "${NPA_DIR}/.." rev-parse HEAD)}"
 
 usage() {
   cat <<'EOF'
@@ -55,6 +56,16 @@ if [[ -z "${BASE_IMAGE}" ]]; then
   exit 2
 fi
 
+if [[ ! "${NPA_SOURCE_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "NPA_SOURCE_SHA must be the exact 40-character checkout SHA" >&2
+  exit 2
+fi
+
+if [[ "$(git -C "${NPA_DIR}/.." rev-parse HEAD)" != "${NPA_SOURCE_SHA}" ]]; then
+  echo "NPA_SOURCE_SHA must match the build-context checkout HEAD" >&2
+  exit 2
+fi
+
 if [[ -z "${TAG}" ]]; then
   TAG="0.4.6-sm80-sm90-sm100-sm103-sm120-$(date -u +%Y%m%dT%H%M%SZ)"
 fi
@@ -62,6 +73,7 @@ fi
 LOCAL_IMAGE="npa-genesis:${TAG}"
 BUILD_ARGS=(
   --build-arg "BASE_IMAGE=${BASE_IMAGE}"
+  --build-arg "NPA_SOURCE_SHA=${NPA_SOURCE_SHA}"
   -f "${SCRIPT_DIR}/Dockerfile.sm120"
   -t "${LOCAL_IMAGE}"
 )
