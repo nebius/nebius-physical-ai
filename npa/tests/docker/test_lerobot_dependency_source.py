@@ -255,12 +255,18 @@ def test_build_dependency_closure_has_no_moving_repository_or_python_resolution(
     [
         (
             "requirements-051.lock",
-            ("setuptools==83.0.0", "transformers==5.10.0"),
+            (
+                "certifi==2026.10.19",
+                "setuptools==83.0.0",
+                "transformers==5.10.0",
+            ),
         ),
         (
             "requirements-060.lock",
             (
+                "certifi==2026.10.19",
                 "diffusers==0.38.0",
+                "pillow==13.0.0",
                 "setuptools==83.0.0",
                 "torch==2.13.0",
                 "transformers==5.10.0",
