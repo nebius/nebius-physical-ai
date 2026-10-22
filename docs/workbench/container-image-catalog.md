@@ -186,7 +186,9 @@ not replace the accepted SAM 2.1 release or add a supported release row.
 The NPA application now requires Python 3.11 or newer and Pillow 13. Source
 recipes that install NPA use compatible interpreters and refreshed dependency
 locks; the Jammy Cosmos, Genesis, and GR00T environments use Python 3.12.
-These source changes do not qualify rebuilt GPU artifacts or replace the
+The security overlay also updates GitPython to 3.2.1, including hash-bound
+runtime-fetch inputs and their matching license records. These source changes
+do not qualify rebuilt GPU artifacts or replace the
 accepted digests below. In particular, the Cosmos CP312 custom-kernel tuple
 requires fresh B200 kernel and checkpoint-backed inference evidence before
 release promotion. Standalone vendor workers that do not install NPA retain

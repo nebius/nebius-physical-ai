@@ -33,7 +33,8 @@ def test_portable_overlay_hashes_and_application_order(image: str) -> None:
     overlay = docker.index("--no-deps --require-hashes", sync)
     check = docker.index('"pip","check"' if image == "openpi" else "pip check", overlay)
     assert sync < overlay < check
-    assert "pillow==12.3.0" in lock
+    expected_pillow = "13.0.0" if image == "openpi" else "12.3.0"
+    assert f"pillow=={expected_pillow}" in lock
     assert "setuptools==84.0.0" in lock
 
 
@@ -86,7 +87,7 @@ def test_transfer_overlay_retains_exact_verified_wheel_urls() -> None:
         for line in requirements
     )
     assert "pillow-12.3.0" in text
-    assert "gitpython-3.1.62" in text
+    assert "gitpython-3.2.1" in text
     assert "hydra_core-1.3.7" in text
     assert "urllib3-2.8.0" in text
     assert "msal-1.38.0" in text

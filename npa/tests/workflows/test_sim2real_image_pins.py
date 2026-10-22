@@ -540,7 +540,7 @@ def test_sim2real_control_plane_requirement_closure_is_exact() -> None:
     assert genesis_lines == [
         "huggingface-hub==0.35.3",
         "tomli==2.4.1",
-        "GitPython==3.1.62",
+        "GitPython==3.2.1",
         "pillow==13.0.0",
     ]
     for relative_path in (

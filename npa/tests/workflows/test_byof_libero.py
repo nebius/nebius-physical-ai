@@ -189,7 +189,7 @@ def test_runtime_manifest_closes_source_data_task_model_and_runtime_identity() -
     assert all(item["url"].startswith("https://") for item in artifacts)
     assert all(item["license_expression"].strip() for item in artifacts)
     assert all(item["size_bytes"] > 0 for item in artifacts)
-    assert sum(item["size_bytes"] for item in artifacts) == 3_277_660_358
+    assert sum(item["size_bytes"] for item in artifacts) == 3_277_669_153
 
 
 def test_libero_smoke_uses_real_upstream_conditioned_training_and_heldout() -> None:
@@ -383,7 +383,7 @@ def test_libero_image_manifest_remains_quarantined_and_unpublished() -> None:
         "pending_size_artifacts": 0,
         "pending_license_artifacts": 0,
         "report_sha256": (
-            "8caa49fc844d8a78ac44ee632ea2cbb393f009af424daa0392d13d7763abc9a8"
+            "7ff1a494acb8cb6c9a869e7fefe2bb7b040b26ae530b8e2132f11da8c31e6221"
         ),
     }
     assert manifest["qualification"]["status"] == "not_qualified"

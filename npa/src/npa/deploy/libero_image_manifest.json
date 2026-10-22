@@ -25,14 +25,14 @@
   },
   "runtime_payloads_baked": false,
   "customer_runtime_authorization_required": true,
-  "runtime_manifest_sha256": "73cc3db0419d8431deab96461c33df4237074269a11956f367e272033356c6aa",
-  "runtime_requirements_sha256": "e268334cb849d3ce8912b47361a04adada88b53fcdc72d9dac36727a473a6266",
+  "runtime_manifest_sha256": "98dd8b82f1e8fc259c627a5b94c6d5f5347452092ed6a53e8dae72d89c97ab57",
+  "runtime_requirements_sha256": "233d6802c8317a5be1c15bb4ae89daf71d51e9335f912f1685dff5fef79f98bc",
   "governing_terms_count": 7,
   "runtime_artifact_review": {
     "status": "complete",
     "pending_size_artifacts": 0,
     "pending_license_artifacts": 0,
-    "report_sha256": "8caa49fc844d8a78ac44ee632ea2cbb393f009af424daa0392d13d7763abc9a8"
+    "report_sha256": "7ff1a494acb8cb6c9a869e7fefe2bb7b040b26ae530b8e2132f11da8c31e6221"
   },
   "customer_acceptance": {
     "schema": "npa.libero.customer-acceptance-requirements.v1",
@@ -120,7 +120,7 @@
     "package_writer_repository": "",
     "customer_authorization_public_key_sha256": "",
     "output_storage_authorization_public_key_sha256": "",
-    "runtime_manifest_sha256": "73cc3db0419d8431deab96461c33df4237074269a11956f367e272033356c6aa"
+    "runtime_manifest_sha256": "98dd8b82f1e8fc259c627a5b94c6d5f5347452092ed6a53e8dae72d89c97ab57"
   },
   "catalog_release": false
 }
