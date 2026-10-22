@@ -34,6 +34,17 @@ def test_generic_torch_images_require_patched_versions_and_complete_dependency_c
 
     base = (WORKBENCH / "base/cuda13-blackwell/Dockerfile").read_text()
     assert '"pillow>=13.0.0,<14.0"' in base
+    # The base defaults to USER ubuntu.  These helpers are an advertised
+    # derived-image/runtime validation surface, so they must not inherit a
+    # restrictive developer-checkout mode such as root-only 0700.
+    assert (
+        "COPY --chmod=0555 scripts/check_torch_gpu_arch.py "
+        "/npa/check_torch_gpu_arch.py" in base
+    )
+    assert (
+        "COPY --chmod=0555 scripts/gpu_capability_smoke.py "
+        "/npa/gpu_capability_smoke.py" in base
+    )
 
 
 def _default_base(relative: str) -> str:

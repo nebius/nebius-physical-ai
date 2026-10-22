@@ -177,9 +177,11 @@ else:
 PY
 
 # Baked in so every derived image can validate itself on whatever GPU it lands
-# on, without the caller having to inject a script.
-COPY scripts/check_torch_gpu_arch.py /npa/check_torch_gpu_arch.py
-COPY scripts/gpu_capability_smoke.py /npa/gpu_capability_smoke.py
+# on, without the caller having to inject a script.  The image's runtime user
+# is ``ubuntu``: make these root-owned validation helpers executable and
+# readable there even if a developer's source checkout has restrictive modes.
+COPY --chmod=0555 scripts/check_torch_gpu_arch.py /npa/check_torch_gpu_arch.py
+COPY --chmod=0555 scripts/gpu_capability_smoke.py /npa/gpu_capability_smoke.py
 
 ARG REQUIRE_TORCH_ARCHS
 RUN python -m pip check \
