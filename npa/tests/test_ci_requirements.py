@@ -258,7 +258,7 @@ def test_refresh_preserves_pins_unless_upgrade_requested(
     _copy_inputs(tmp_path)
     commands = []
     monkeypatch.setattr(
-        ci_requirements.subprocess, "check_output", lambda *a, **k: "uv 0.12.5"
+        ci_requirements.subprocess, "check_output", lambda *a, **k: "uv 0.13.4"
     )
     monkeypatch.setattr(
         ci_requirements.subprocess, "run", lambda args, **kwargs: commands.append(args)

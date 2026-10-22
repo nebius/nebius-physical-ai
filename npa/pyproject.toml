@@ -27,6 +27,7 @@ dependencies = [
     # depends on click, so it must be declared here.
     "click>=8.3.3",
     "httpx>=0.27,<0.29",
+    "certifi>=2026.10.19",
     "paramiko>=5.0,<6.0",
     # Directly verifies customer/control-plane-signed LIBERO authorizations;
     # keep the operator verifier version aligned with CI.

@@ -288,7 +288,7 @@ def test_ci_installers_pin_versions_cache_packages_and_keep_cpu_runtime() -> Non
         setup = next(
             step for step in jobs[name]["steps"] if "setup-uv@" in step.get("uses", "")
         )
-        assert setup["with"]["version"] == "0.12.5"
+        assert setup["with"]["version"] == "0.13.4"
         assert setup["with"]["enable-cache"] == "true"
         assert "npa/ci/requirements.txt" in setup["with"]["cache-dependency-glob"]
         installs = [
@@ -650,7 +650,7 @@ def test_docs_drift_uses_the_same_dependency_pins_as_tests() -> None:
     """Keep docs setup cached and prevent unrelated floating dependency failures."""
     steps = _load_workflow("lint.yml")["jobs"]["docs-drift"]["steps"]
     setup = next(step for step in steps if "setup-uv@" in step.get("uses", ""))
-    assert setup["with"]["version"] == "0.12.5"
+    assert setup["with"]["version"] == "0.13.4"
     assert setup["with"]["enable-cache"] == "true"
     assert "npa/ci/requirements.txt" in setup["with"]["cache-dependency-glob"]
     install = _step("lint.yml", "docs-drift", "constrained docs environment")["run"]
