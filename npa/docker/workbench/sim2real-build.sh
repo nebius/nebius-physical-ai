@@ -7,7 +7,10 @@ NPA_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 REGISTRY=""
 PUSH=0
 BASE_IMAGE="${BASE_IMAGE:-ghcr.io/nebius/nebius-physical-ai/npa-cosmos3-reason@sha256:e708aa32b9247eaedf1a7a5b0d82adbe65b95a9af50721b9d09fddbfd508bbc9}"
-SIM2REAL_GPU_BASE_IMAGE="${SIM2REAL_GPU_BASE_IMAGE:-${GENESIS_IMAGE:-ghcr.io/nebius/nebius-physical-ai/npa-genesis@sha256:80cd1c4c7f7a5466533de29ee5cad1213202f348545346fea9ed6746fa03b1ca}}"
+# Genesis is now built from an explicit source-attested CUDA 13 parent. Do not
+# silently revive the historical catalog image here: the caller must name the
+# Genesis image that Envgen is actually allowed to inherit.
+SIM2REAL_GPU_BASE_IMAGE="${SIM2REAL_GPU_BASE_IMAGE:-${GENESIS_IMAGE:-}}"
 VLM_TAG="${VLM_TAG:-cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z}"
 ENVGEN_TAG="${ENVGEN_TAG:-cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z}"
 SIM2REAL_COMPONENT_BASE_IMAGE="${SIM2REAL_COMPONENT_BASE_IMAGE:-npa-envgen:${ENVGEN_TAG}}"
@@ -34,8 +37,10 @@ Builds the Sim2Real reference images one at a time:
   npa-rerun-viewer:${RERUN_VIEWER_TAG:-0.38.1} (skipped when SKIP_RERUN_VIEWER=1)
 
 Set BASE_IMAGE and SIM2REAL_GPU_BASE_IMAGE to compatible immutable CUDA 13 /
-sm80-sm90-sm100-sm103-sm120 parents before building. GENESIS_IMAGE remains a
-compatibility alias for SIM2REAL_GPU_BASE_IMAGE. The freshly built Envgen image
+sm80-sm90-sm100-sm103-sm120 parents before building. SIM2REAL_GPU_BASE_IMAGE
+is required; for a current-source local build use
+`npa-genesis:dev-${NPA_SOURCE_SHA}` from the Genesis build step. GENESIS_IMAGE
+remains a compatibility alias for SIM2REAL_GPU_BASE_IMAGE. The freshly built Envgen image
 is the default parent for the reference policy, VLM-RL trainer, and loop evaluator;
 set SIM2REAL_COMPONENT_BASE_IMAGE only to validate another immutable Envgen build.
 Set VLM_TAG and EVAL_TAG for additive component rebuilds.
@@ -70,6 +75,17 @@ done
 
 if [ "$PUSH" -eq 1 ] && [ -z "$REGISTRY" ]; then
   echo "ERROR: --push requires --registry" >&2
+  exit 2
+fi
+
+if [ -z "$SIM2REAL_GPU_BASE_IMAGE" ]; then
+  cat >&2 <<EOF
+ERROR: SIM2REAL_GPU_BASE_IMAGE is required for Envgen.
+Build the matching Genesis image first and set:
+  SIM2REAL_GPU_BASE_IMAGE=npa-genesis:dev-${NPA_SOURCE_SHA}
+An immutable intentionally selected Genesis parent is also accepted. GENESIS_IMAGE
+is retained only as a compatibility alias; no historical Genesis digest is used.
+EOF
   exit 2
 fi
 

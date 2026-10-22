@@ -60,8 +60,15 @@ BASE_IMAGE="npa-base:cuda13-blackwell-dev-${SOURCE_SHA}"
 docker build --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
   --build-arg "NPA_SOURCE_SHA=${SOURCE_SHA}" \
   -f npa/docker/workbench/genesis/Dockerfile -t "npa-genesis:dev-${SOURCE_SHA}" npa
+
+GENESIS_IMAGE="npa-genesis:dev-${SOURCE_SHA}"
+docker build --build-arg "BASE_IMAGE=${GENESIS_IMAGE}" \
+  --build-arg "NPA_SOURCE_SHA=${SOURCE_SHA}" \
+  -f npa/docker/workbench/sim2real-envgen/Dockerfile \
+  -t "npa-envgen:dev-${SOURCE_SHA}" npa
 ```
 
-The historical catalog digest is not a current-source parent or a fallback for
-this sequence. Neither recipe's CPU proof qualifies GPU physics, policy quality,
-or hardware transfer.
+Historical catalog digests are not current-source parents or fallbacks for this
+sequence. `sim2real-build.sh` requires `SIM2REAL_GPU_BASE_IMAGE` (or its
+`GENESIS_IMAGE` compatibility alias) for the same reason. Neither recipe's CPU
+proof qualifies GPU physics, policy quality, or hardware transfer.

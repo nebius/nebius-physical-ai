@@ -1,6 +1,9 @@
-# Envgen starts from the real Genesis parent, removes payload outside this
-# capability's contract, and flattens the sanitized filesystem below.
-ARG BASE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-genesis@sha256:80cd1c4c7f7a5466533de29ee5cad1213202f348545346fea9ed6746fa03b1ca
+# Envgen starts from an explicitly selected Genesis parent, removes payload
+# outside this capability's contract, and flattens the sanitized filesystem
+# below. A historical catalog digest must not silently stand in for the
+# current source-attested Genesis build: callers provide either the matching
+# local source-SHA tag or an intentionally selected immutable parent.
+ARG BASE_IMAGE
 FROM ${BASE_IMAGE} AS sanitized
 
 ARG NPA_SOURCE_SHA

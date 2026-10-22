@@ -9,8 +9,9 @@ these bare constants — this test closes that gap.
 
 from __future__ import annotations
 
-from pathlib import Path
+import os
 import subprocess
+from pathlib import Path
 
 import pytest
 import yaml
@@ -39,10 +40,6 @@ _STANDARD_WORKFLOW_PASSTHROUGH_DOCKERFILES = (
     "sim2real-eval/Dockerfile",
 )
 
-_GENESIS_PARENT = (
-    "ghcr.io/nebius/nebius-physical-ai/npa-genesis@"
-    "sha256:80cd1c4c7f7a5466533de29ee5cad1213202f348545346fea9ed6746fa03b1ca"
-)
 _ENVGEN_PARENT = (
     "ghcr.io/nebius/nebius-physical-ai/npa-envgen@"
     "sha256:55f1541c1a86e9d865963753cfa38fa1dbf88928c8d28d9ee30e2851a5604b88"
@@ -107,10 +104,11 @@ def test_canonical_sim2real_workflow_requires_operator_pinned_images() -> None:
     )
 
 
-def test_envgen_pins_the_real_genesis_parent() -> None:
+def test_envgen_requires_an_explicit_genesis_parent() -> None:
     root = Path(__file__).resolve().parents[2] / "docker" / "workbench"
     text = (root / "sim2real-envgen/Dockerfile").read_text(encoding="utf-8")
-    assert f"ARG BASE_IMAGE={_GENESIS_PARENT}" in text
+    assert "ARG BASE_IMAGE\nFROM ${BASE_IMAGE} AS sanitized" in text
+    assert "ARG BASE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-genesis@" not in text
     assert "npa-envgen@sha256:" not in text
 
 
@@ -133,17 +131,46 @@ def test_component_images_pin_the_rebuilt_envgen_parent(
     assert "env -u PYTHONPATH python -c" in text
 
 
-def test_sim2real_build_default_uses_the_same_real_genesis_parent() -> None:
+def test_sim2real_build_requires_an_explicit_genesis_parent() -> None:
     script = (
         Path(__file__).resolve().parents[2] / "docker/workbench/sim2real-build.sh"
     ).read_text(encoding="utf-8")
-    assert _GENESIS_PARENT in script
+    assert 'SIM2REAL_GPU_BASE_IMAGE="${SIM2REAL_GPU_BASE_IMAGE:-${GENESIS_IMAGE:-}}"' in script
+    assert "ERROR: SIM2REAL_GPU_BASE_IMAGE is required for Envgen." in script
+    assert "npa-genesis:dev-${NPA_SOURCE_SHA}" in script
+    assert "npa-genesis@sha256:80cd1c4c7f7a5466533de29ee5cad1213202f348545346fea9ed6746fa03b1ca" not in script
     assert "npa-loop-eval@sha256:" not in script
     assert (
         'SIM2REAL_COMPONENT_BASE_IMAGE="${SIM2REAL_COMPONENT_BASE_IMAGE:-npa-envgen:${ENVGEN_TAG}}"'
         in script
     )
     assert script.count('"BASE_IMAGE=${SIM2REAL_COMPONENT_BASE_IMAGE}"') == 2
+
+
+def test_sim2real_build_fails_before_docker_without_a_genesis_parent() -> None:
+    """Avoid a misleading current-source Envgen label over a stale parent."""
+
+    script = Path(__file__).resolve().parents[2] / "docker/workbench/sim2real-build.sh"
+    source_sha = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], text=True, cwd=script.parents[3]
+    ).strip()
+    env = {
+        **os.environ,
+        "GENESIS_IMAGE": "",
+        "NPA_SOURCE_SHA": source_sha,
+        "SIM2REAL_GPU_BASE_IMAGE": "",
+    }
+    result = subprocess.run(
+        ["bash", str(script)],
+        cwd=script.parents[3],
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 2
+    assert "SIM2REAL_GPU_BASE_IMAGE is required for Envgen" in result.stderr
+    assert "npa-genesis:dev-" + source_sha in result.stderr
 
 
 def test_sonic_keeps_an_explicit_amd64_build_platform() -> None:

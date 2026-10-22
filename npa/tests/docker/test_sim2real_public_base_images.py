@@ -54,14 +54,16 @@ def _default_base(relative: str) -> str:
     return match.group(1)
 
 
-def test_sim2real_gpu_overlays_use_immutable_public_bases() -> None:
-    for dockerfile in (
-        "sim2real-envgen/Dockerfile",
-        "cosmos3-reason/Dockerfile",
-    ):
-        base = _default_base(dockerfile)
-        assert base.startswith("ghcr.io/nebius/nebius-physical-ai/"), dockerfile
-        assert re.search(r"@sha256:[0-9a-f]{64}$", base), dockerfile
+def test_cosmos_reason_uses_an_immutable_public_base() -> None:
+    base = _default_base("cosmos3-reason/Dockerfile")
+    assert base.startswith("ghcr.io/nebius/nebius-physical-ai/")
+    assert re.search(r"@sha256:[0-9a-f]{64}$", base)
+
+
+def test_envgen_requires_an_explicit_genesis_parent() -> None:
+    text = (WORKBENCH / "sim2real-envgen/Dockerfile").read_text(encoding="utf-8")
+    assert re.search(r"^ARG BASE_IMAGE$", text, re.MULTILINE)
+    assert "ARG BASE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-genesis@" not in text
 
 
 def test_cosmos_reason_replaces_parent_npa_metadata_before_pip_check() -> None:
