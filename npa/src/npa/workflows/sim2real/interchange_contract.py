@@ -300,8 +300,9 @@ class GripperMapping:
         Command targets follow the declared coupled endpoint trajectory, but
         measured fingers can legitimately differ under dynamics and contact.
         Each joint therefore contributes its own normalized physical travel to
-        the measured aperture.  Endpoint validation remains per joint so an
-        invalid measurement cannot be hidden by averaging it with another.
+        the measured aperture.  These calibrated command endpoints are not
+        physical joint limits: coupled fingers may cross them individually
+        under dynamics while their aggregate aperture remains valid.
         """
 
         positions = _finite(
@@ -320,11 +321,12 @@ class GripperMapping:
                     "gripper joint endpoints do not define an aperture mapping"
                 )
             ratios.append((value - closed) / span)
-        if any(not 0.0 <= ratio <= 1.0 for ratio in ratios):
+        aperture_ratio = sum(ratios) / len(ratios)
+        if not 0.0 <= aperture_ratio <= 1.0:
             raise InterchangeContractError(
-                "measured gripper positions are outside declared endpoints"
+                "measured gripper aperture is outside the declared range"
             )
-        return (sum(ratios) / len(ratios)) * self.maximum_width_m
+        return aperture_ratio * self.maximum_width_m
 
     def to_dict(self) -> dict[str, Any]:
         return {
