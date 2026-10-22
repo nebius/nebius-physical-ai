@@ -86,6 +86,16 @@ def test_genesis_recipes_require_python_311_and_a_source_attestation(
     assert 'test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40' in text
 
 
+@pytest.mark.parametrize("dockerfile,_,__", VARIANTS)
+def test_genesis_recipes_require_an_explicit_source_attested_parent(
+    dockerfile, _, __
+):
+    text = (GENESIS / dockerfile).read_text()
+    assert re.search(r"^ARG BASE_IMAGE$", text, re.MULTILINE)
+    assert "FROM ${BASE_IMAGE}" in text
+    assert "ghcr.io/nebius/nebius-physical-ai/npa-base@" not in text
+
+
 @pytest.mark.parametrize("dockerfile,version,site_packages", VARIANTS)
 def test_genesis_corrects_reviewed_source_before_the_installation_layer_commits(
     dockerfile, version, site_packages

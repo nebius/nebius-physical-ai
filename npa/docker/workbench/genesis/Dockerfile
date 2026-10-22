@@ -1,7 +1,9 @@
-# Python 3.11 CUDA 13 workbench base, pinned from sm120-images.json.
-# This replaces the former Ubuntu 22.04/Python 3.10 Genesis environment because
-# Pillow 13 is the supported scanner-recognized security line.
-ARG BASE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-base@sha256:6a493973bf8a92a9a33ad0c301a1b3c9ef1d4ba9e7e8364318d041e1b10285f1
+# This Python 3.11 recipe requires an explicit, source-attested CUDA 13
+# workbench parent. The catalog's historical npa-base digest is evidence for
+# that historical image only; it is not a fallback for a current-source build.
+# Build the matching local npa-base recipe first, then pass its immutable local
+# image ID or source-SHA tag with --build-arg BASE_IMAGE=... .
+ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 
 ARG NPA_SOURCE_SHA

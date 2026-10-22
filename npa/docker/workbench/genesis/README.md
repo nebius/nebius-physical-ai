@@ -1,7 +1,7 @@
 # Public Genesis runtime
 
-The canonical recipe uses the pinned CUDA 13 Python 3.11 workbench base and
-retains Genesis 0.4.6. It packages rigid Panda/Box simulation, teacher training,
+The canonical recipe requires an explicitly selected, source-attested CUDA 13
+Python 3.11 workbench base and retains Genesis 0.4.6. It packages rigid Panda/Box simulation, teacher training,
 checkpoint export, camera-demo conversion, native LeRobotDataset reading through
 PyAV, and ACT student dependencies. A rebuilt candidate must pass its normal
 publication gates and real GPU teacher/export/camera qualification before it
@@ -49,6 +49,19 @@ backend, constructs ACT, performs an action, and saves/reloads the checkpoint
 and normalization processors through the NPA student loader. It prevents
 network fetches and unexpected excluded-package imports. This smoke proves
 dependency behavior; it does not prove Genesis GPU physics, policy quality or
-camera rendering. `Dockerfile.sm120` accepts an explicitly selected, separately
-qualified Python 3.11 parent and records the exact NPA source SHA. Neither
-recipe's CPU proof qualifies GPU physics, policy quality, or hardware transfer.
+camera rendering. Both `Dockerfile` and `Dockerfile.sm120` accept an explicitly
+selected Python 3.11 parent and record the exact NPA source SHA. Build the
+canonical base recipe first and pass its current-source local tag (or image ID):
+
+```bash
+SOURCE_SHA="$(git rev-parse HEAD)"
+npa/docker/workbench/base/cuda13-blackwell/build.sh --tag "dev-${SOURCE_SHA}"
+BASE_IMAGE="npa-base:cuda13-blackwell-dev-${SOURCE_SHA}"
+docker build --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
+  --build-arg "NPA_SOURCE_SHA=${SOURCE_SHA}" \
+  -f npa/docker/workbench/genesis/Dockerfile -t "npa-genesis:dev-${SOURCE_SHA}" npa
+```
+
+The historical catalog digest is not a current-source parent or a fallback for
+this sequence. Neither recipe's CPU proof qualifies GPU physics, policy quality,
+or hardware transfer.
