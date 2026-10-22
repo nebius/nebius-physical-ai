@@ -424,9 +424,7 @@ def test_gripper_inverse_handles_changed_spans_and_directions() -> None:
     )
 
     assert gripper.joint_positions_to_width((0.005, -0.01)) == pytest.approx(0.045)
-    assert gripper.joint_positions_to_width((-0.0025, -0.025)) == pytest.approx(
-        0.045
-    )
+    assert gripper.joint_positions_to_width((-0.0025, -0.025)) == pytest.approx(0.045)
 
 
 @pytest.mark.parametrize("positions", [(-0.001, 0.01), (0.01, 0.031)])
