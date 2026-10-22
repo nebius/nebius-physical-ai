@@ -282,6 +282,7 @@ def authorize(args, directory):
             "npa.docker-save.image-verification.v1",
             "npa.ncore.oci-verification.v1",
             "npa.image.oci-verification.v1",
+            "npa.image.registry-manifest-verification.v1",
             "npa.robotwin.image-verification.v1",
             "npa.seedvr2.direct-manifest-verification.v1",
         ),
