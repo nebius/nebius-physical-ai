@@ -198,6 +198,51 @@ def test_groot_deploy_dry_run_defaults_to_l40s(mocker) -> None:
     apply.assert_not_called()
 
 
+def test_groot_byovm_dry_run_discloses_vendor_and_control_runtimes(mocker) -> None:
+    """A VM dry run must distinguish the pinned vendor ABI from NPA's control ABI."""
+    mocker.patch("npa.cli.groot.resolve_environment", return_value=None)
+    mocker.patch(
+        "npa.cli.groot.resolve_credentials",
+        return_value=CredentialsConfig(tokens={"HF_TOKEN": "hf-test"}),
+    )
+    mocker.patch(
+        "npa.cli.groot.validate_hf_access",
+        return_value=SimpleNamespace(ok=True, error=""),
+    )
+    mocker.patch("npa.cli.groot.list_projects", return_value={})
+    ssh_cls = mocker.patch("npa.cli.groot.SSHClient")
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "groot",
+            "-p",
+            "proj",
+            "-n",
+            "groot",
+            "deploy",
+            "--runtime",
+            "byovm",
+            "--host",
+            "203.0.113.10",
+            "--ssh-key",
+            "~/.ssh/byovm",
+            "--tf-var",
+            "s3_bucket=bucket",
+            "--dry-run",
+            "--no-auto-serve",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert (
+        "Would install the Python 3.10 GR00T vendor runtime and Python 3.11 NPA "
+        "control runtime"
+    ) in result.output
+    ssh_cls.assert_called_once()
+
+
 def test_groot_deploy_checks_cosmos_reason_access_before_provisioning(mocker) -> None:
     mocker.patch("npa.cli.groot.resolve_environment", return_value=None)
     mocker.patch(
