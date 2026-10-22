@@ -135,16 +135,40 @@ def test_sim2real_build_requires_an_explicit_genesis_parent() -> None:
     script = (
         Path(__file__).resolve().parents[2] / "docker/workbench/sim2real-build.sh"
     ).read_text(encoding="utf-8")
-    assert 'SIM2REAL_GPU_BASE_IMAGE="${SIM2REAL_GPU_BASE_IMAGE:-${GENESIS_IMAGE:-}}"' in script
+    assert (
+        'SIM2REAL_GPU_BASE_IMAGE="${SIM2REAL_GPU_BASE_IMAGE:-${GENESIS_IMAGE:-}}"'
+        in script
+    )
     assert "ERROR: SIM2REAL_GPU_BASE_IMAGE is required for Envgen." in script
     assert "npa-genesis:dev-${NPA_SOURCE_SHA}" in script
-    assert "npa-genesis@sha256:80cd1c4c7f7a5466533de29ee5cad1213202f348545346fea9ed6746fa03b1ca" not in script
+    assert (
+        "npa-genesis@sha256:80cd1c4c7f7a5466533de29ee5cad1213202f348545346fea9ed6746fa03b1ca"
+        not in script
+    )
     assert "npa-loop-eval@sha256:" not in script
     assert (
         'SIM2REAL_COMPONENT_BASE_IMAGE="${SIM2REAL_COMPONENT_BASE_IMAGE:-npa-envgen:${ENVGEN_TAG}}"'
         in script
     )
     assert script.count('"BASE_IMAGE=${SIM2REAL_COMPONENT_BASE_IMAGE}"') == 2
+
+
+def test_sim2real_build_help_does_not_execute_its_parent_example() -> None:
+    script = Path(__file__).resolve().parents[2] / "docker/workbench/sim2real-build.sh"
+    source_sha = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], text=True, cwd=script.parents[3]
+    ).strip()
+    result = subprocess.run(
+        ["bash", str(script), "--help"],
+        cwd=script.parents[3],
+        env={**os.environ, "NPA_SOURCE_SHA": source_sha},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    assert result.stderr == ""
+    assert f"npa-genesis:dev-{source_sha}" in result.stdout
 
 
 def test_sim2real_build_fails_before_docker_without_a_genesis_parent() -> None:

@@ -39,7 +39,7 @@ Builds the Sim2Real reference images one at a time:
 Set BASE_IMAGE and SIM2REAL_GPU_BASE_IMAGE to compatible immutable CUDA 13 /
 sm80-sm90-sm100-sm103-sm120 parents before building. SIM2REAL_GPU_BASE_IMAGE
 is required; for a current-source local build use
-`npa-genesis:dev-${NPA_SOURCE_SHA}` from the Genesis build step. GENESIS_IMAGE
+npa-genesis:dev-${NPA_SOURCE_SHA} from the Genesis build step. GENESIS_IMAGE
 remains a compatibility alias for SIM2REAL_GPU_BASE_IMAGE. The freshly built Envgen image
 is the default parent for the reference policy, VLM-RL trainer, and loop evaluator;
 set SIM2REAL_COMPONENT_BASE_IMAGE only to validate another immutable Envgen build.
