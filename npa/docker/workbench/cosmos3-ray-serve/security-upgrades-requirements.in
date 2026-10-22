@@ -1,8 +1,15 @@
 # Replace the serving dependency closure above the immutable framework lock.
 # GPU/model dependencies are not part of this overlay.
-# Regenerate with `uv pip compile --python-version 3.12
-# --python-platform x86_64-manylinux_2_28 --exclude-newer
-# 2026-10-09T12:00:00Z --generate-hashes --no-header` from the repository root.
+# Regenerate this security-only closure from the repository root with its
+# current lock as a constraint, allowing only virtualenv and python-discovery
+# to move: `uv pip compile npa/docker/workbench/cosmos3-ray-serve/
+# security-upgrades-requirements.in --constraint
+# npa/docker/workbench/cosmos3-ray-serve/security-upgrades-requirements.txt
+# --upgrade-package virtualenv --upgrade-package python-discovery
+# --python-version 3.12 --python-platform x86_64-manylinux_2_28
+# --exclude-newer 2026-10-09T12:00:00Z --exclude-newer-package
+# virtualenv=false --generate-hashes --no-header`. The explicit virtualenv
+# exemption is required for its post-cutoff security fix.
 ray[serve]==2.58.0
 # Keep the proxy extra present across resolver metadata changes.
 ray-haproxy==2.8.25
@@ -35,5 +42,5 @@ pytest==9.0.3
 requests==2.34.2
 setuptools==84.0.0
 urllib3==2.8.0
-virtualenv==21.7.13
+virtualenv==21.14.9
 pip==26.2.1
