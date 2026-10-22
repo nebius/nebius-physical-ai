@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import ssl
 from typing import Any, Callable, Mapping, Sequence
 from urllib.parse import quote, urlencode
 
@@ -174,7 +175,7 @@ def _request_agent_json(
     url: str,
     *,
     auth: tuple[str, str],
-    verify: bool,
+    verify: bool | ssl.SSLContext,
     operation: str,
     timeout: float,
     payload: dict[str, Any] | None = None,
@@ -236,7 +237,7 @@ def _initial_agent_artifact_page(
     request: Callable[..., Any],
     base_url: str,
     auth: tuple[str, str],
-    verify: bool,
+    verify: bool | ssl.SSLContext,
     run_id: str,
 ) -> dict[str, Any]:
     run_selector = quote(run_id, safe="")
@@ -298,7 +299,7 @@ def _continued_agent_artifact_page(
     request: Callable[..., Any],
     base_url: str,
     auth: tuple[str, str],
-    verify: bool,
+    verify: bool | ssl.SSLContext,
     run_ref: str,
     project_id: str,
     resource_bucket: str,
@@ -330,7 +331,7 @@ def _agent_artifact_matches(
     request: Callable[..., Any],
     base_url: str,
     auth: tuple[str, str],
-    verify: bool,
+    verify: bool | ssl.SSLContext,
     run_id: str,
     artifact_uri: str,
     expected_key: str,
@@ -392,7 +393,7 @@ def _discover_agent_selection(
     request: Callable[..., Any],
     base_url: str,
     auth: tuple[str, str],
-    verify: bool,
+    verify: bool | ssl.SSLContext,
     run_id: str,
     artifact_uri: str,
 ) -> _AgentArtifactSelection:
@@ -437,7 +438,7 @@ def _retry_command(run_id: str, project: str, agent_name: str) -> str:
 class _ArtifactLoadRuntime:
     agent_record: Callable[..., dict[str, Any]]
     load_auth_secret: Callable[[str], tuple[str, str]]
-    record_tls_verify: Callable[[dict[str, Any]], bool]
+    record_tls_verify: Callable[[dict[str, Any]], bool | ssl.SSLContext]
     resolve_project_agents: Callable[[str], dict[str, Any]]
     update_submission_state: Callable[[str, str, dict[str, Any]], Any]
 
@@ -446,7 +447,7 @@ class _ArtifactLoadRuntime:
 class _AgentConnection:
     base_url: str
     auth: tuple[str, str]
-    verify: bool
+    verify: bool | ssl.SSLContext
     request: Callable[..., Any]
 
 

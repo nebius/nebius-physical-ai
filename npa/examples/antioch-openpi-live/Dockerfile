@@ -5,7 +5,7 @@ LABEL npa.antioch.live-transport="declared-port-double-wss-v1"
 # Protocol-only dependencies. OpenPI source, model code, and weights are not
 # copied into this image; the policy implementation remains on the GPU side.
 RUN uv pip install --system --no-cache \
-    "msgpack==1.1.1" \
+    "msgpack==1.2.3" \
     "websockets==16.1.1"
 
 # Antioch syncs and bakes queued project files at this canonical path. Isaac's

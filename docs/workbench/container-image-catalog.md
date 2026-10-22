@@ -122,6 +122,34 @@ restricted tools, and 25 quarantined tools. These counts come from
 the seven restricted PAIDF images have no mapped tool entry. These counts do not
 constitute acceptance of the quarantined images.
 
+The October 16 security repair candidate updates the shared Isaac Python
+closures, uses the verified upstream NLTK sandbox fix for Cosmos Transfer, and
+updates Wan's Accelerate and Transformers dependencies. Isaac's constrained
+Setuptools 81 receives the same hash-bound Unicode manifest backport used by
+Cosmos3 serving. MoviePy 2.2.1 retains its released code while its exact,
+hash-checked metadata adopts upstream Pillow 12 compatibility and requires the
+actual patched Pillow 12.3 installation. Wan's dependency union, real MoviePy
+resize/MP4 encode/decode, NLTK sandbox, and source-distribution regression checks
+pass. Isaac's vendor version constraints still need reconciliation and GPU
+qualification. These source repairs require fresh image builds and complete
+artifact scans; they do not repair existing release digests.
+
+The subsequent [checkpoint-loader source repair](../../npa/docker/workbench/common/README.md)
+rejects malicious shard paths and named pipes in the exact Accelerate 1.12–1.15
+sources used by Wan, Cosmos, Cosmos3 Reason/Serving and RoboCasa. Both real
+checkpoint APIs pass regular/nested tensor and cache-symlink checks on all four
+repaired versions with CPU Torch 2.13. The upstream 1.15 wheel still reproduced
+the traversal, so its version alone is not a fix. These recipe changes introduce
+no new published image and do not qualify any replacement GPU stack.
+
+The FiftyOne LeRobot importer and LeRobot policy-container source also freeze
+custom Hub transfers to operator-selected full commits and record provenance.
+Bundled examples have fixed reviewed commits. Model caches
+use a directory per commit to prevent stale files crossing revisions. Real Hub
+SDK 0.36.2 and 1.26 HTTP tests exercise a branch moving during download. This
+source behavior requires deployment of the updated code; the accepted image
+digests in this catalog retain their original bytes.
+
 Gymnasium-Robotics is selected by the immutable development-build matrix but
 remains separately tracked outside the mapped release inventory. It appears in the GPU
 compatibility matrix only as a development-candidate/no-accepted-image row. An
@@ -602,6 +630,22 @@ three thin Genesis derivatives override inherited base metadata explicitly.
 Replacements must pass exact-config disclosure checks, non-root validation,
 image scanning, and capability evaluation before re-entering this table.
 
+The [October 6 rebuild follow-up](validation/807-image-rebuild-follow-up-20261006.md)
+replaces stale Isaac and EnvGen parents in the derivative build recipes and fixes
+additional dependency and snapshot inputs. Its parent development builds passed
+their trusted publication jobs and independent anonymous source/config checks.
+Seven child jobs also passed trusted publication and independent digest/source
+and provenance/SBOM signature verification, as recorded in that follow-up.
+Genesis has a rebuilt candidate that passed its narrow CPU gate, but GPU teacher
+optimization, export, and rendered-physics qualification remain pending. Default
+LeRobot still requires a compatible policy closure and native execution. The
+[stock public Genesis contract](../../npa/docker/workbench/genesis/README.md)
+documents its retained rigid workload, ACT dependencies and excluded optional
+capabilities. None is added to the accepted-release table by these source changes. Current examples
+also stop automatically selecting withdrawn image digests through literal
+resource or provenance inputs. Historical validation records retain their
+original image identities.
+
 | Friendly name | Image (`ghcr.io/nebius/nebius-physical-ai/...`) | Published tag(s) | Built | What it does |
 | --- | --- | --- | --- | --- |
 | SONIC Retargeting 0.1.1 | `npa-retargeting` | `0.1.1` | 2026-06-16 | CPU-only motion retargeting and motion-library conversion feeding SONIC locomotion training. A slim `python:3.11` image for the inexpensive preprocessing stage before GPU work. |
@@ -854,12 +898,25 @@ verified SSH or Kubernetes port-forward access; see the
 [FiftyOne access guidance](../../skills/tools/fiftyone/SKILL.md).
 
 The source security candidates update the SONIC MuJoCo evaluator to the
-hash-locked Torch 2.13 closure
-on a patched Python base. The Cosmos3 native Ray candidate selects the pinned
+hash-locked Torch 2.13 closure on a patched Python base, and reject XML entity
+declarations in its scene and robot includes. The Cosmos3 native Ray candidate selects the pinned
 framework's supported Torch 2.13 CUDA 13 group, including its matching NATTEN
 extension, and removes inherited attention binaries from the older Torch ABI.
 The Cosmos3 serving bootstrap also uses a patched Python base and verified
-runtime installation tools. These source changes do not republish or qualify
+runtime installation tools. The Wan candidate uses an upgraded Ubuntu 26.04
+runtime and copies Python 3.10.22 from a separate, pinned official Python stage
+after repairing its global and ensurepip installers. The donor's Debian layers
+and shared libraries are excluded from the final image. The prepared filesystem
+copy also excludes the unused Pebble service manager and superseded package
+bytes from every shipped layer. This preserves the
+installer repair when runtime venvs are created. A composed runtime passed
+shared-library, strict TLS, complete video decoding, fresh-venv and CPU checkpoint
+checks; exact replacement-image scans and GPU qualification remain required.
+The Ubuntu parser, cryptographic self-test, Unicode name and optional hardware
+loader literals have a separate [exact-byte source review](../../npa/docker/workbench/wan2-2/ubuntu-literal-audits.json).
+Its signed-package identities do not waive vulnerabilities or the independent
+complete-byte audit.
+These source changes do not republish or qualify
 the existing supported image digests listed above.
 
 ## GPU coverage of the published set
@@ -925,6 +982,12 @@ historical evidence.
   caches, credentials, and outputs remain outside the image. The standard
   62-entry runtime is a separately authorized, exact-inventory read-only mount;
   access records do not grant redistribution rights.
+
+  The next source runtime lock updates urllib3 and fsspec and reconciles
+  Safetensors with Diffusers' declared minimum. Dependency scans now cover its
+  JSON package map and installer. The source candidate still contains a legacy
+  Torch/CUDA closure and needs a new independently bound inventory and functional
+  qualification; these changes do not update the development image above.
 
   A supplemental qualification of that same image with a separately declared
   runtime bundle completed 2,000 epochs and 200,000 CUDA optimizer updates on
@@ -998,19 +1061,17 @@ with a tiny encode/decode probe during the build.
 These are source repairs; replacement images still require their own complete
 publication checks and functional validation.
 
-Loop Eval and LeRobot VLM-RL now derive from the EnvGen development digest
-`sha256:c84582e60d9cd593b0c75538818d540a378319ce55bb785e60869734d1a0f6b3`,
-built from main commit `d3845605b8de7f61eb0642d4c5cd0f28faafc98f` in that run.
-That parent passed the publication gates, including the dependency source
-correction; its build evidence does not establish GPU qualification for either
-new derivative. Supported release tags and their recorded digests are unchanged.
+These source repairs preserve the newer EnvGen and Isaac Lab parent pins
+already merged into main. Parent build evidence does not establish GPU
+qualification for a new derivative. Supported release tags and their recorded
+digests are unchanged by these repairs.
 
 The same run also stopped cuRobo, SeedVR2, Cosmos3 Ray Serve and Alpamayo at
-payload verification. Those four refusals remain unresolved and need
-exact-artifact investigation. In particular, unavailable cuRobo/SeedVR2 reports
-and credential-pattern matches cannot be treated as clean evidence or cleared
-by a scanner exclusion. The failed run retained no Actions artifacts for those
-reports.
+payload verification. The failed run retained no Actions artifacts for those
+reports; unavailable reports and credential-pattern matches cannot be treated
+as clean evidence or cleared by a scanner exclusion. These historical refusals
+do not describe the state of newer images. Current accepted releases and their
+independently recorded validations elsewhere in this catalog remain authoritative.
 
 `npa-lyra2:2.0-rtfetch2` promotes the exact scanned development digest that
 completed native reconstruction on one preemptible RTX PRO 6000, with independent

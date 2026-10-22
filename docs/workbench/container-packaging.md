@@ -116,7 +116,63 @@ never a tag. Image-byte licensing scans remain mandatory before registry push.
 For a multi-tool spec, repeat `--image-override TOOL_REF=IMAGE` to select each
 tool's artifact independently; the preflight and renderer share that same map.
 
+## Cosmos3 Ray payload finding evidence
+
+`scan_image_cosmos3_ray_serve_payload.py` keeps credential findings blocking and
+reports byte identities for investigation. Its full JSON has
+`report_scope: full` and includes `archive_sha256` and `config_sha256`, plus
+`credential_members` with each blocked stored file's
+`path`, `kind`, `size`, `sha256`, `layer_index`, `layer_sha256`, and
+`member_index`. `detection_reason` identifies the existing path or
+member-content rule that produced the finding. These fields contain no
+credential content excerpts and do not establish that a value is usable, a key
+is parseable, or a match is harmless. A member hash and exact size are still a
+content commitment: someone with a guessed file can confirm it offline. The
+v1 report format permits these additive evidence fields; future consumers must
+ignore unknown fields.
+
+The scan covers every stored layer. Repeated paths retain separate member
+records, including overwritten or deleted ancestor files; the existing
+`credential_hits` list remains deduplicated. Member hashes cover the complete
+file even when credential detection stops at an early match. `layer_sha256` is
+the hash of the stored Docker-save layer entry, not a declared rootfs `diff_id`.
+`archive_sha256` identifies this scan's Docker-save input stream, not a stable
+image identity across independent saves. Compare a member hash with
+independently obtained exact source or package bytes before classifying a
+finding. Hash equality is evidence of byte identity and does not waive any
+publication gate or establish GPU capability acceptance.
+
+Stdout is redacted by default with `report_scope: redacted-summary`; `--json`
+writes the full metadata report only to its requested file. Use
+`--full-stdout` only for local operator attribution, never a public log. The
+ordinary publication workflow keeps member hashes and sizes out of Actions logs.
+The scanner exits 0 for a clean archive, 1 for a blocked finding or scan/archive
+error, and 2 when a requested private report cannot be written or command-line
+usage is invalid; it refuses a symlink report target. Treat every nonzero exit
+as blocking: a report-write failure returns 2 even when the completed scan
+verdict is itself blocking.
+For a report-write failure, stderr JSON identifies only the portable errno class
+(for example, `ELOOP`) so an operator can distinguish a refusal from runner
+capacity without exposing a path or report content.
+With an explicit local `--full-stdout` opt-in, that write failure still prints
+the completed full report so the archive need not be scanned again.
+Do not publish raw layers, extracted credential bytes, or a failed image archive
+as public Actions artifacts. The workflow writes the full report as a private
+temporary runner file and removes it with the scanned archive; rerun the scanner
+against an operator-controlled archive when later attribution is needed. An
+unresolved finding still exits nonzero and blocks push.
+
 ## Inventory
+
+Shared Isaac builds apply the upstream Setuptools Unicode manifest fix to exact
+81.0.0 source hashes when Torch's `<82` constraint prevents a version upgrade.
+Cosmos3 serving uses the same verifier for its constrained 80.10.2 runtime.
+Both reject unknown source bytes and update installed `RECORD` hashes.
+Isaac's Python 3.11 closure installs Pillow 12.3 and applies the upstream
+MoviePy Pillow compatibility bound to exact 2.2.1 metadata; the released
+MoviePy code and package versions stay intact. The compatibility patch rejects
+unknown metadata or an unpatched Pillow installation. A successful source or
+dependency check does not qualify an existing or replacement image digest.
 
 The Sim2Real controller and Rerun viewer builds use the October 2, 2026 Debian
 snapshot and explicitly install `perl-base=5.40.1-6+deb13u1` to remove the three
@@ -320,6 +376,37 @@ Required for all workbench images:
 5. **Capability drops at deploy** — K8s `securityContext` should drop `ALL`,
    set `allowPrivilegeEscalation: false`, and use `RuntimeDefault` seccomp
    (detection-training is the reference template).
+
+The shared Alpamayo2, Cosmos3 serving and Cosmos3 Ray payload detector checks
+every regular member in every stored layer. Named credential assignments need
+a complete value before a source reference such as
+`aws_secret_access_key=self.aws_secret_access_key` can be distinguished from a
+baked literal. It recognizes bounded Python references, known type annotations
+without literal defaults, and pure shell variable references. Literal values,
+literal fallback arguments, quoted source text, unknown syntax and values over
+512 bytes remain findings. Qualified identifiers carrying an encoded JSON
+token header remain findings, including nested, truncated and malformed token
+forms; a compact JWT must not become a Python attribute exemption. Label and
+separator whitespace may span arbitrarily many chunks.
+
+An annotated function parameter using `typer.Option` may have an empty, `None`,
+boolean, or independently supported reference default. The detector distinguishes
+that default from finite flag/help/envvar/boolean metadata only after checking
+the complete UTF-8 Python member (at most 1 MiB). It requires a preceding,
+unaliased top-level `import typer` and rejects observable rebinding, module
+escapes, mutations, unknown helpers/metadata, duplicate defaults, and nested
+credential assignments. Decoded string literals are independently checked for
+declared AWS, PEM and encoded-header shapes, including escaped literals. Pending
+declarations and source context have fixed bounds; exceeding either bound retains
+the finding. The stream window remains bounded, with up to 1 MiB of retained
+source and a bounded source parse for deferred declarations. This recognizes
+constrained source syntax; it does not establish imported-callable provenance or
+the absence of arbitrary credential values.
+
+This policy adds no
+path exemptions and does not replace the
+complete-byte, Gitleaks, vulnerability or provenance gates; a source regression
+test does not qualify an image.
 
 Do not serialize the build-time base reference into OCI config. In particular,
 the retired `npa.base_image` label exposed operator registry paths when

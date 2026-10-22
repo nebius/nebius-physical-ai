@@ -8,6 +8,7 @@ import ipaddress
 import json
 import os
 import re
+import ssl
 import subprocess
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -143,9 +144,23 @@ def record_public_https(record: Mapping[str, Any]) -> bool:
     return str(record.get("agent_url", "")).strip().startswith("https://")
 
 
-def record_tls_verify(record: Mapping[str, Any]) -> bool:
-    """Self-signed HTTPS on the VM public IP is expected; skip CA verification."""
-    return not record_public_https(record)
+def record_tls_verify(record: Mapping[str, Any]) -> bool | ssl.SSLContext:
+    """Authenticate public agent HTTPS through its verified SSH identity.
+
+    Args:
+        record: Saved agent deployment and SSH connection settings.
+    Returns:
+        The agent certificate trust context, or system trust for other endpoints.
+    Raises:
+        ValueError: The recorded agent identity or installed certificate is invalid.
+        SSHError: The SSH connection or host authentication fails.
+        NebiusError: Provider identity lookup fails.
+    """
+    if not record_public_https(record):
+        return True
+    from npa.cli.agent_tls import record_agent_tls_context
+
+    return record_agent_tls_context(record)
 
 
 def record_customer_url(record: Mapping[str, Any]) -> str:
@@ -538,7 +553,7 @@ def verify_persisted_remote_owner(
 
 
 def fetch_live_deployment(
-    base_url: str, *, user: str, password: str, verify: bool
+    base_url: str, *, user: str, password: str, verify: bool | ssl.SSLContext
 ) -> dict[str, Any]:
     response = httpx.get(
         f"{base_url.rstrip('/')}/api/deployment",

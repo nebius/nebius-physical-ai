@@ -1456,15 +1456,48 @@ def test_deploy_server_runs_expected_remote_steps(mocker, tmp_path) -> None:
     )
     remote_paths = [remote for _local, remote in uploads]
     assert "/tmp/private-fixture/npa.tgz" in remote_paths
-    assert any(
-        call.args[1] == "/etc/npa/server.yaml" for call in write_text.call_args_list
+    server_yaml = next(
+        call.args[2]
+        for call in write_text.call_args_list
+        if call.args[1] == "/etc/npa/server.yaml"
     )
+    assert yaml.safe_load(server_yaml)["storage"] == {
+        "checkpoint_dir": "/data/checkpoints",
+        "checkpoint_bucket": "s3://bucket/checkpoints/",
+        "endpoint_url": "https://storage",
+    }
     write_env.assert_called_once()
     assert write_env.call_args.args[1] == "/etc/npa-lerobot-server/env"
     assert any(
         "systemctl restart npa-lerobot-server" in call.args[0]
         for call in ssh.run_or_raise.call_args_list
     )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "https://storage.example\ncredentials:\n  hf_token_file: /outside/attacker",
+        "null",
+        "[unexpected, list]",
+        "*alias",
+        "value: # YAML syntax",
+    ],
+)
+def test_server_yaml_keeps_operator_values_as_data(value: str) -> None:
+    rendered = configurator._server_yaml(
+        {"checkpoint_bucket": value, "storage_endpoint": value, "log_dir": value}
+    )
+    config = yaml.safe_load(rendered)
+    assert set(config) == {"server", "storage", "jobs", "lerobot", "credentials"}
+    assert config["server"]["log_dir"] == value
+    assert config["server"]["port"] == 8080
+    assert config["storage"]["checkpoint_bucket"] == value
+    assert config["storage"]["endpoint_url"] == value
+    assert config["credentials"] == {
+        "hf_token_file": "/etc/npa/secrets/hf_token",
+        "s3_credentials_file": "/etc/npa/secrets/s3",
+    }
 
 
 def test_sftp_upload_uses_shared_private_implementation(mocker) -> None:

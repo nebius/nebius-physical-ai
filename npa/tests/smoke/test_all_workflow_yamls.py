@@ -12,6 +12,7 @@ from npa.cli.main import app
 from npa.orchestration.npa_workflow import API_VERSION, API_VERSION_BETA
 from npa.orchestration.npa_workflow import build_plan, load_spec, validate_spec
 from npa.orchestration.npa_workflow.blueprints import iter_npa_workflow_specs
+from npa.orchestration.npa_workflow.submit import merge_config_overrides
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 RUNNER = CliRunner()
@@ -30,6 +31,46 @@ def _npa_yaml_paths() -> list[Path]:
     return iter_npa_workflow_specs()
 
 
+def _operator_image_fixtures(spec):
+    # Schema/argv smoke coverage uses inert exact references, never runnable
+    # acceptance evidence. The separate default audit exercises missing inputs.
+    return {
+        key: "registry.example.invalid/workflow-smoke@sha256:" + "0" * 64
+        for key in spec.config.get("required_immutable_images", [])
+    }
+
+
+def _assumed_decision(path):
+    return (
+        "loop_back"
+        if path.name
+        in {
+            "sim2real.yaml",
+            "tokenfactory-cosmos-gate.yaml",
+            "rl-policy-training-sim-success.yaml",
+        }
+        else "promote_checkpoint"
+    )
+
+
+def _cli_plan(path, variables, assume, *, scheduler=False):
+    arguments = [
+        "workbench",
+        "workflow",
+        "run-spec" if scheduler else "plan-spec",
+        str(path),
+        "--run-id",
+        f"smoke-{path.stem}",
+        "--json",
+        *variables,
+    ]
+    if path.name in ASSUME_DECISION_SPECS:
+        arguments.extend(["--assume-decision", assume])
+    if scheduler:
+        arguments.extend(["--plan-only", "--scheduler-plan"])
+    return RUNNER.invoke(app, arguments)
+
+
 @pytest.mark.parametrize("path", _npa_yaml_paths(), ids=lambda p: p.name)
 def test_npa_workflow_yaml_validates(path: Path) -> None:
     spec = load_spec(path)
@@ -46,29 +87,16 @@ def test_npa_workflow_cli_validate_and_plan(path: Path) -> None:
     assert validate.exit_code == 0, validate.output
     payload = json.loads(validate.output)
     assert payload["status"] == "valid"
-
-    assume = (
-        "loop_back"
-        if path.name
-        in {
-            "sim2real.yaml",
-            "tokenfactory-cosmos-gate.yaml",
-            "rl-policy-training-sim-success.yaml",
-        }
-        else "promote_checkpoint"
-    )
-    plan_args = [
-        "workbench",
-        "workflow",
-        "plan-spec",
-        str(path),
-        "--run-id",
-        f"smoke-{path.stem}",
-        "--json",
+    spec = load_spec(path)
+    overrides = _operator_image_fixtures(spec)
+    variables = [
+        argument
+        for key, value in overrides.items()
+        for argument in ("--var", f"{key}={value}")
     ]
-    if path.name in ASSUME_DECISION_SPECS:
-        plan_args.extend(["--assume-decision", assume])
-    plan = RUNNER.invoke(app, plan_args)
+
+    assume = _assumed_decision(path)
+    plan = _cli_plan(path, variables, assume)
     assert plan.exit_code == 0, plan.output
     # Read stdout, not the mixed stream: plan-spec writes diagnostics (e.g. the
     # placeholder-bucket warning for specs that ship `bucket: example-bucket`)
@@ -76,29 +104,11 @@ def test_npa_workflow_cli_validate_and_plan(path: Path) -> None:
     plan_payload = json.loads(plan.stdout)
     assert plan_payload["steps"], path.name
 
-    spec = load_spec(path)
+    spec = merge_config_overrides(spec, overrides)
     built = build_plan(spec, run_id=f"smoke-{path.stem}", assume_decision=assume)
     assert built.steps
 
-    scheduler = RUNNER.invoke(
-        app,
-        [
-            "workbench",
-            "workflow",
-            "run-spec",
-            str(path),
-            "--run-id",
-            f"smoke-{path.stem}",
-            "--plan-only",
-            "--scheduler-plan",
-            "--json",
-            *(
-                ["--assume-decision", assume]
-                if path.name in ASSUME_DECISION_SPECS
-                else []
-            ),
-        ],
-    )
+    scheduler = _cli_plan(path, variables, assume, scheduler=True)
     assert scheduler.exit_code == 0, scheduler.output
     scheduler_payload = json.loads(scheduler.output)
     assert scheduler_payload.get("scheduler", {}).get("tasks"), path.name

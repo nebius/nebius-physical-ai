@@ -21,6 +21,11 @@ payload budget used by concurrent smaller records. The measurement is not
 treated as a permanent detector constant: `RLIMIT_AS` remains the hard,
 fail-closed backstop if implementation drift uses more memory.
 
+The helper fills a preallocated `strings.Builder` and hashes the bytes while
+reading the record. Its completed string shares that backing storage with the
+detector, removing the previous byte-buffer-to-string copy. Each detection still
+receives one complete record, including empty and binary records.
+
 The archive scanner routes a larger regular-file record through an isolated
 one-shot mode, with an independent 1 GiB complete-record ceiling. It prefers
 `O_TMPFILE`; filesystems without it use an `O_EXCL` mode-`0600` name that is
@@ -107,8 +112,10 @@ npa/.venv/bin/python -m pytest npa/tests/docker/test_image_byte_go_build.py -q
 
 ## What successful preparation produces
 
-The bootstrap pins [Go 1.27.1](https://go.dev/dl/) Linux amd64 to SHA-256
-`63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445`.
+The bootstrap pins [Go 1.27.2](https://go.dev/dl/) Linux amd64 to SHA-256
+`ecbadb99091a3f46e31f5f934b068b1864eafa7995211b39eaddf76996045fe5`.
+This includes the October standard-library security fixes; the native helper
+must be rebuilt from this pin rather than reusing a Go 1.27.1 executable.
 It uses isolated module, compilation and temporary caches, disables automatic
 Go toolchain switching and workspace discovery, verifies the locked module
 checksums, and builds a source snapshot without changing `go.mod` or `go.sum`.

@@ -22,11 +22,12 @@ def test_cosmos_and_genesis_never_commit_wheel_bundled_ffmpeg() -> None:
         installs = [
             line
             for line in instructions
-            if "pip install --no-binary=imageio-ffmpeg" in line
+            if re.search(r"pip install --no-binary(?:=| )imageio-ffmpeg\b", line)
         ]
         assert len(installs) == 1
         install = installs[0]
-        assert "imageio_ffmpeg/binaries/ffmpeg*' -delete" in install
+        assert 'test -z "$(find' in install
+        assert "imageio_ffmpeg/binaries/ffmpeg*" in install
         assert "imageio_ffmpeg.get_ffmpeg_exe()" in install
         assert "imageio_ffmpeg.write_frames(" in install
         assert "imageio_ffmpeg.read_frames(" in install
@@ -176,7 +177,7 @@ def test_envgen_corrects_inert_dependency_recipe_before_flattening() -> None:
     assert text.index("FROM ${BASE_IMAGE} AS sanitized") < correction
     assert correction < text.index("FROM scratch AS runtime")
     assert text.index("COPY --from=sanitized / /") > correction
-    assert "--site-packages /opt/npa/venv/lib/python3.11/site-packages" in text
+    assert 'import sysconfig; print(sysconfig.get_path("purelib"))' in text
     assert "--capability envgen" in text
     assert "/usr/share/doc/npa-envgen/dependency-source-correction.json" in text
     assert text.count("python /usr/local/lib/npa/remove-scikit-image-recipe.py") == 1
@@ -205,6 +206,7 @@ def test_genesis_workflow_runtime_upgrades_fixed_kernel_headers() -> None:
         if relative == "sim2real-envgen/Dockerfile":
             assert "ARG ENVGEN_LINUX_LIBC_DEV_VERSION=5.15.0-198.208" in text
             assert '"${UBUNTU_SNAPSHOT}" "${ENVGEN_LINUX_LIBC_DEV_VERSION}"' in text
+        assert 'install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}"' in text, relative
         assert "configure_ubuntu_snapshot.sh" in text, relative
 
 
