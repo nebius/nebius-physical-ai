@@ -7,6 +7,14 @@ PyAV, and ACT student dependencies. A rebuilt candidate must pass its normal
 publication gates and real GPU teacher/export/camera qualification before it
 can become a public default. The old release remains quarantined.
 
+The base's Python 3.11/Torch 2.13 CUDA 13 runtime stays intact. Genesis instead
+creates `/opt/genesis/venv` with Python 3.11: its retained LeRobot 0.4.4
+upstream contract requires `torch<2.11`, which cannot safely replace the
+source-attested base runtime. The image selects that dedicated environment with
+both `PATH` and `NPA_BAKED_PYTHON`; EnvGen preserves the same selection after
+its sanitizing scratch stage. This isolates an upstream-compatible dependency
+closure, but it is not GPU or hardware compatibility evidence.
+
 The public recipe excludes TetGen's AGPL distribution and rejects volume
 tetrahedralization through a repository-owned import shim. Rigid-body scenes
 do not use TetGen. This does not classify every soft-body operation as

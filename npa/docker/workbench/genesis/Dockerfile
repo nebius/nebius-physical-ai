@@ -29,9 +29,11 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     NPA_GENESIS_SUPPORTED_STUDENT_POLICIES=act \
     NPA_GENESIS_HOME=/opt/genesis \
+    GENESIS_VENV=/opt/genesis/venv \
+    NPA_BAKED_PYTHON=/opt/genesis/venv/bin/python \
     NVIDIA_DRIVER_CAPABILITIES=compute,graphics,utility \
     EGL_PLATFORM=device \
-    PATH=/opt/npa/venv/bin:$PATH \
+    PATH=/opt/genesis/venv/bin:/opt/npa/venv/bin:$PATH \
     PYTHONPATH=/opt/npa/src \
     NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
     NPA_SKIP_EAGER_IMPORTS=1
@@ -56,17 +58,24 @@ RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu; \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends --fix-broken
 
-COPY docker/workbench/curobo/remove_scikit_image_recipe.py \
+COPY --chmod=0644 docker/workbench/curobo/remove_scikit_image_recipe.py \
     /opt/genesis/remove-scikit-image-recipe.py
-COPY docker/workbench/genesis/prepare_public_runtime.py \
+COPY --chmod=0644 docker/workbench/genesis/prepare_public_runtime.py \
     /opt/genesis/prepare-public-runtime.py
-COPY docker/workbench/genesis/prepare_public_policies.py \
+COPY --chmod=0644 docker/workbench/genesis/prepare_public_policies.py \
     /opt/genesis/prepare-public-policies.py
-COPY docker/workbench/common/envgen_compat/tetgen.py \
+COPY --chmod=0644 docker/workbench/common/envgen_compat/tetgen.py \
     /opt/genesis/compat/tetgen.py
 
 USER ubuntu
 WORKDIR /opt/genesis
+
+# Keep the base's CUDA 13/Torch 2.13 environment intact.  Genesis 0.4.6's
+# supported LeRobot 0.4.4 closure declares torch <2.11, so it belongs in its
+# own Python 3.11 venv rather than silently downgrading the shared Blackwell
+# runtime.  The final runtime selects this venv explicitly through PATH and
+# NPA_BAKED_PYTHON.
+RUN python3.11 -m venv "${GENESIS_VENV}"
 
 # Keep the publicly redistributable Genesis capability intentionally narrow:
 # native rigid Panda/Box and ACT only. The exact metadata/source correction and
@@ -95,24 +104,24 @@ RUN python -m pip install --upgrade pip setuptools wheel \
     && python -m pip install --no-cache-dir --no-deps --upgrade \
       "pillow>=13.0.0,<14.0" "fsspec==2026.6.0" \
     && python /opt/genesis/prepare-public-runtime.py \
-      --site-packages /opt/npa/venv/lib/python3.11/site-packages --check-only \
+      --site-packages /opt/genesis/venv/lib/python3.11/site-packages --check-only \
     && python /opt/genesis/prepare-public-policies.py \
-      --site-packages /opt/npa/venv/lib/python3.11/site-packages --check-only \
+      --site-packages /opt/genesis/venv/lib/python3.11/site-packages --check-only \
     && python -m pip uninstall -y tetgen diffusers wandb torchcodec transformers peft \
     && python /opt/genesis/prepare-public-runtime.py \
-      --site-packages /opt/npa/venv/lib/python3.11/site-packages \
+      --site-packages /opt/genesis/venv/lib/python3.11/site-packages \
       > /opt/genesis/public-runtime-dependencies.json \
     && python /opt/genesis/prepare-public-policies.py \
-      --site-packages /opt/npa/venv/lib/python3.11/site-packages \
+      --site-packages /opt/genesis/venv/lib/python3.11/site-packages \
       > /opt/genesis/public-policy-source.json \
     && printf '%s\n' /opt/genesis/compat \
-      > /opt/npa/venv/lib/python3.11/site-packages/npa-genesis-compat.pth \
+      > /opt/genesis/venv/lib/python3.11/site-packages/npa-genesis-compat.pth \
     && python -m pip check \
-    && test -z "$(find /opt/npa/venv -type f \
+    && test -z "$(find /opt/genesis/venv -type f \
       -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)" \
     && python -c 'import imageio_ffmpeg; assert imageio_ffmpeg.get_ffmpeg_exe() == "/usr/bin/ffmpeg"' \
     && python /opt/genesis/remove-scikit-image-recipe.py \
-      --site-packages /opt/npa/venv/lib/python3.11/site-packages \
+      --site-packages /opt/genesis/venv/lib/python3.11/site-packages \
       --capability genesis \
       > /opt/genesis/dependency-source-correction.json
 

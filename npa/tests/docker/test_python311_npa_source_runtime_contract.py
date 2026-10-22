@@ -15,7 +15,9 @@ def test_genesis_and_cosmos2_install_npa_in_python_311_or_newer() -> None:
     genesis = (DOCKER / "genesis" / "Dockerfile").read_text(encoding="utf-8")
     cosmos2 = (DOCKER / "cosmos2-transfer" / "Dockerfile").read_text(encoding="utf-8")
 
-    assert "/opt/npa/venv/lib/python3.11/site-packages" in genesis
+    assert "/opt/genesis/venv/lib/python3.11/site-packages" in genesis
+    assert "NPA_BAKED_PYTHON=/opt/genesis/venv/bin/python" in genesis
+    assert 'RUN python3.11 -m venv "${GENESIS_VENV}"' in genesis
     assert '"pillow>=13.0.0,<14.0"' in genesis
     assert "NPA_CONTROL_PYTHON=/opt/npa/control-venv/bin/python" in cosmos2
     assert "NPA_BAKED_PYTHON=/opt/npa/control-venv/bin/python" in cosmos2

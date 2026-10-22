@@ -75,15 +75,15 @@ RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" "${ENVG
       --site-packages "$(python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \
       --capability envgen \
       > /usr/share/doc/npa-envgen/dependency-source-correction.json \
-    && find /opt/npa/venv -type f \
+    && find /opt/genesis/venv -type f \
       -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
-    && test -z "$(find /opt/npa/venv -type f \
+    && test -z "$(find /opt/genesis/venv -type f \
       -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)" \
     && IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg python -c \
       'import imageio_ffmpeg; assert imageio_ffmpeg.get_ffmpeg_exe() == "/usr/bin/ffmpeg"' \
     && python -m pip check \
     && python -c "import site; from pathlib import Path; Path(site.getsitepackages()[0], 'npa-exact-source.pth').write_text('/opt/npa/compat\\n/opt/npa/src\\n', encoding='utf-8')" \
-    && env -u PYTHONPATH /opt/npa/venv/bin/python -c \
+    && env -u PYTHONPATH /opt/genesis/venv/bin/python -c \
       'import boto3, genesis; from npa.workflows.sim2real.workflow_stage import main; assert callable(main)' \
     && python -c 'import importlib.metadata as m; assert not any(d.metadata["Name"].lower() == "transformers" for d in m.distributions())' \
     && python -c 'import importlib.metadata as m; names = {d.metadata["Name"].lower() for d in m.distributions()}; assert names.isdisjoint({"tetgen", "wandb"})' \
@@ -106,7 +106,7 @@ COPY --from=sanitized / /
 
 # A scratch stage does not inherit image configuration. Preserve the CUDA,
 # Genesis, cache, and workflow runtime contract explicitly.
-ENV PATH=/opt/npa/venv/bin:/usr/local/cuda/bin:/usr/local/nvidia/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+ENV PATH=/opt/genesis/venv/bin:/opt/npa/venv/bin:/usr/local/cuda/bin:/usr/local/nvidia/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/local/cuda/lib64 \
     LIBRARY_PATH=/usr/local/cuda/lib64/stubs \
     NVIDIA_VISIBLE_DEVICES=all \
@@ -132,7 +132,7 @@ ENV PATH=/opt/npa/venv/bin:/usr/local/cuda/bin:/usr/local/nvidia/bin:/usr/local/
     EGL_PLATFORM=device \
     NPA_GENESIS_HOME=/opt/genesis \
     NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
-    NPA_BAKED_PYTHON=/opt/npa/venv/bin/python \
+    NPA_BAKED_PYTHON=/opt/genesis/venv/bin/python \
     IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg \
     PYTHONPATH=/opt/npa/compat:/opt/npa/src
 

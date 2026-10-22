@@ -107,7 +107,11 @@ def test_stock_recipe_enforces_reduced_closure_in_the_install_layer():
     )[1].split("COPY --chown=ubuntu:ubuntu pyproject.toml", 1)[0]
     assert "NPA_GENESIS_SUPPORTED_STUDENT_POLICIES=act" in text
     assert '"pillow>=13.0.0,<14.0"' in installation
-    assert "/opt/npa/venv/lib/python3.11/site-packages" in installation
+    assert "/opt/genesis/venv/lib/python3.11/site-packages" in installation
+    assert "GENESIS_VENV=/opt/genesis/venv" in text
+    assert "NPA_BAKED_PYTHON=/opt/genesis/venv/bin/python" in text
+    assert "PATH=/opt/genesis/venv/bin:/opt/npa/venv/bin:$PATH" in text
+    assert 'RUN python3.11 -m venv "${GENESIS_VENV}"' in text
     assert "NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA}" in text
     assert "--check-only" in installation
     assert "pip uninstall -y tetgen diffusers wandb torchcodec" in installation

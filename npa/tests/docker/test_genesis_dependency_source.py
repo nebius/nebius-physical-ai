@@ -11,8 +11,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[3]
 GENESIS = ROOT / "npa/docker/workbench/genesis"
 VARIANTS = (
-    ("Dockerfile", "0.26.0", "/opt/npa/venv/lib/python3.11/site-packages"),
-    ("Dockerfile.sm120", "0.26.0", "/opt/npa/venv/lib/python3.11/site-packages"),
+    ("Dockerfile", "0.26.0", "/opt/genesis/venv/lib/python3.11/site-packages"),
+    ("Dockerfile.sm120", "0.26.0", "/opt/genesis/venv/lib/python3.11/site-packages"),
 )
 CORRECTION = "/opt/genesis/remove-scikit-image-recipe.py"
 
@@ -69,6 +69,7 @@ def test_genesis_ffmpeg_contract_avoids_bundled_wheel_executables(
     )
     assert "pip install --no-binary imageio-ffmpeg" in installation
     assert '"imageio-ffmpeg==0.6.0"' in installation
+    assert f"find {site_packages.rsplit('/lib/', 1)[0]}" in installation
     assert "imageio_ffmpeg/binaries/ffmpeg*' -print -quit" in installation
     assert 'imageio_ffmpeg.get_ffmpeg_exe() == "/usr/bin/ffmpeg"' in installation
 
@@ -78,7 +79,11 @@ def test_genesis_recipes_require_python_311_and_a_source_attestation(
     dockerfile, version, site_packages
 ):
     text = (GENESIS / dockerfile).read_text()
-    assert "/opt/npa/venv/lib/python3.11/site-packages" in text
+    assert site_packages in text
+    assert "GENESIS_VENV=/opt/genesis/venv" in text
+    assert "NPA_BAKED_PYTHON=/opt/genesis/venv/bin/python" in text
+    assert "PATH=/opt/genesis/venv/bin:/opt/npa/venv/bin:$PATH" in text
+    assert 'RUN python3.11 -m venv "${GENESIS_VENV}"' in text
     assert '"pillow>=13.0.0,<14.0"' in text
     assert "ARG NPA_SOURCE_SHA" in text
     assert 'org.opencontainers.image.revision="${NPA_SOURCE_SHA}"' in text
@@ -103,6 +108,17 @@ def test_genesis_corrects_reviewed_source_before_the_installation_layer_commits(
     _assert_installation_contract(
         (GENESIS / dockerfile).read_text(), version, site_packages
     )
+
+
+@pytest.mark.parametrize("dockerfile,_,__", VARIANTS)
+def test_genesis_build_time_sanitizers_are_readable_by_the_runtime_user(
+    dockerfile, _, __
+):
+    text = (GENESIS / dockerfile).read_text()
+    assert "COPY --chmod=0644 docker/workbench/curobo/remove_scikit_image_recipe.py" in text
+    if dockerfile == "Dockerfile":
+        assert "COPY --chmod=0644 docker/workbench/genesis/prepare_public_runtime.py" in text
+        assert "COPY --chmod=0644 docker/workbench/genesis/prepare_public_policies.py" in text
 
 
 @pytest.mark.parametrize("dockerfile,version,site_packages", VARIANTS)
