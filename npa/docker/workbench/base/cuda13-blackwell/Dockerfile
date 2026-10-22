@@ -206,4 +206,10 @@ USER root
 RUN dpkg --purge --force-depends linux-libc-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Derived workbench recipes deliberately install their capability closure as
+# the unprivileged runtime user.  Hand the completed shared Python 3.11 venv
+# to that user before the base switches permanently, or their first pip write
+# fails on root-owned inherited dist-info metadata.
+RUN chown -R ubuntu:ubuntu /opt/npa/venv
+
 USER ubuntu

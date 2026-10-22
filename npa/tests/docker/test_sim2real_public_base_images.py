@@ -45,6 +45,13 @@ def test_generic_torch_images_require_patched_versions_and_complete_dependency_c
         "COPY --chmod=0555 scripts/gpu_capability_smoke.py "
         "/npa/gpu_capability_smoke.py" in base
     )
+    # Genesis intentionally resolves its public capability closure as the
+    # unprivileged runtime user.  The shared virtualenv must therefore be
+    # handed over before the base's final USER switch, rather than failing on
+    # inherited root-owned dist-info metadata during the first derived build.
+    handoff = "RUN chown -R ubuntu:ubuntu /opt/npa/venv"
+    assert handoff in base
+    assert base.index(handoff) < base.rindex("USER ubuntu")
 
 
 def _default_base(relative: str) -> str:
