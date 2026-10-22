@@ -12,8 +12,27 @@ creates `/opt/genesis/venv` with Python 3.11: its retained LeRobot 0.4.4
 upstream contract requires `torch<2.11`, which cannot safely replace the
 source-attested base runtime. The image selects that dedicated environment with
 both `PATH` and `NPA_BAKED_PYTHON`; EnvGen preserves the same selection after
-its sanitizing scratch stage. This isolates an upstream-compatible dependency
-closure, but it is not GPU or hardware compatibility evidence.
+its sanitizing scratch stage. Isolation prevents the LeRobot resolver from
+downgrading the base runtime; it is neither GPU/hardware compatibility evidence
+nor a substitute for a complete secure dependency closure.
+
+## Current source build boundary
+
+The current source-attested recipe does **not** have a supported secure
+LeRobot/Datasets closure, so it must not be presented as a completed manual
+build path. Its `lerobot==0.4.4` dependency resolves `datasets==4.8.5`, whose
+declared `fsspec[http] <=2026.2.0` ceiling conflicts with the enforced
+`fsspec==2026.6.0` security floor. Lowering that floor, ignoring the conflict,
+or relabelling a historical image is not a repair.
+
+Newer released LeRobot lines require Python 3.12 but retain incompatible
+Datasets, Pillow, and Torch ceilings; the official upstream main branch has the
+same boundary. The existing RoboCasa-specific LeRobot derivative is qualified
+only for that image's ACT evaluation and is not Genesis evidence. Accordingly,
+the commands below are a source-attested build sequence to use only after a
+separately reviewed, licensed, source-bound closure has passed its own
+dependency, CPU-functional, image-security, and GPU qualification. They do not
+currently produce a qualified Genesis or Envgen image.
 
 The public recipe excludes TetGen's AGPL distribution and rejects volume
 tetrahedralization through a repository-owned import shim. Rigid-body scenes
