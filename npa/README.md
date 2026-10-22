@@ -804,7 +804,7 @@ Cypress 16's deprecated Electron browser cannot provide that context in CI.
 
 CI uses cached uv installs constrained by `npa/ci/requirements.txt`. After changing
 CI dependency inputs, run `npa/.venv/bin/python npa/scripts/ci_requirements.py
---update` with uv 0.12.5 and commit the refreshed pins. Add `--upgrade` only for an
+--update` with uv 0.13.4 and commit the refreshed pins. Add `--upgrade` only for an
 intentional version refresh. The [contributor CI guide](../CONTRIBUTING.md#ci-dependency-setup-and-timing-reports)
 also explains the automatic `ci-timing-report` job, whose summary and
 JSON artifact separate runner waiting, setup, and execution for completed runs.

@@ -655,7 +655,8 @@ The CPU Torch version remains in `npa/ci/constraints.in`. CI rejects stale input
 and direct edits to the generated pin body before installing dependencies.
 Dependabot updates the source manifests but does not edit
 `npa/ci/requirements.txt`; refresh that generated file with the repository
-command. With uv 0.12.5 installed, run:
+command. The lock generator and dependency scanner require uv 0.13.4 even though
+the constrained CI installer remains on 0.12.5. With uv 0.13.4 installed, run:
 
 ```bash
 npa/.venv/bin/python npa/scripts/ci_requirements.py --update
