@@ -63,7 +63,7 @@ def test_rerun_viewer_pins_kubernetes_aiohttp_closure() -> None:
     ).read_text(encoding="utf-8")
     expected = {
         "aiohappyeyeballs==2.7.1",
-        "aiohttp==3.14.3",
+        "aiohttp==3.14.4",
         "aiosignal==1.4.0",
         "cryptography==50.0.2",
         "frozenlist==1.8.0",
