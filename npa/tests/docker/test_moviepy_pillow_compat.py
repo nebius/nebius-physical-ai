@@ -46,10 +46,15 @@ def test_unpatched_or_unreviewed_pillow_version_is_rejected(
         compat.main()
 
 
-@pytest.mark.parametrize("closure", ["isaac", "leisaac", "unreviewed-moviepy"])
+@pytest.mark.parametrize(
+    "closure", ["isaac", "isaac3", "leisaac", "unreviewed-moviepy"]
+)
 def test_shared_installer_repairs_only_closures_that_include_moviepy(tmp_path, closure):
     common = Path(__file__).resolve().parents[2] / "docker/workbench/common"
-    requirements = (common / "isaac-oss-deps.txt").read_text()
+    requirements_name = (
+        "isaac3-oss-deps.txt" if closure == "isaac3" else "isaac-oss-deps.txt"
+    )
+    requirements = (common / requirements_name).read_text()
     if closure == "leisaac":
         requirements = "\n".join(
             line

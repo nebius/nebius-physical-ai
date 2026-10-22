@@ -97,6 +97,7 @@ def test_isaac_runtime_uses_fixed_certificate_and_image_decoder_releases():
     requirements = (WORKBENCH / "common/isaac3-oss-deps.txt").read_text()
     assert "certifi==2026.10.19" in requirements
     assert "pillow==13.0.0" in requirements
+    assert "moviepy==2.2.1" in requirements
 
 
 def test_sonic_uses_the_fixed_jammy_header_snapshot():
