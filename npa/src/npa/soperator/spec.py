@@ -23,15 +23,16 @@ import yaml
 from npa.literal_values import require_boolean, require_integer
 
 API_VERSION = "npa.soperator/v0.0.1"
-DEFAULT_SOLUTIONS_LIBRARY_REF = "7046fb3c68314a940cdb47ff5c4fd23c01a6711e"
-DEFAULT_SLURM_OPERATOR_VERSION = "4.1.6"
-DEFAULT_K8S_VERSION = "1.34"
-DEFAULT_NODE_GROUP_VERSION = "72"
+DEFAULT_SOLUTIONS_LIBRARY_REF = "107e14e59f3f74ad8af5d0e580e5995e214d24d7"
+DEFAULT_SOLUTIONS_LIBRARY_TAG = "soperator-v4.1.13-3"
+LEGACY_SOLUTIONS_LIBRARY_REF = "7046fb3c68314a940cdb47ff5c4fd23c01a6711e"
+DEFAULT_SLURM_OPERATOR_VERSION = "4.1.13"
+DEFAULT_K8S_VERSION = "1.35"
+DEFAULT_NODE_GROUP_VERSION = ""
 
-# Mirrors modules/sizing_tier/main.tf at DEFAULT_SOLUTIONS_LIBRARY_REF. Keeping
-# this small table in NPA lets an unsafe explicit override fail before cloning,
-# Terraform initialization, or any provider mutation. Omitted presets are still
-# resolved by the pinned upstream module, which remains the source of truth.
+# Preserve NPA's conservative sizing policy after the upstream 4.1.13 recipe
+# removed modules/sizing_tier. Resolve omitted presets before rendering: the new
+# recipe requires concrete resource presets instead of nullable tier inputs.
 _SIZING_BOUNDARIES = ((10, "XS"), (100, "S"), (500, "M"), (2000, "L"))
 _MIN_PRESET_BY_ROLE_AND_TIER = {
     "system": {
@@ -60,7 +61,7 @@ _CPU_D3_PRESET_RANK = {
     "128vcpu-512gb": 128,
 }
 _OPERATOR_VERSION_RE = re.compile(r"^[1-9][0-9]*\.[0-9]+\.[0-9]+$")
-_VERIFIED_OPERATOR_VERSIONS = frozenset({"4.1.6", "4.1.7"})
+_VERIFIED_OPERATOR_VERSIONS = frozenset({DEFAULT_SLURM_OPERATOR_VERSION})
 _VERIFIED_USERNS_OPERATOR_VERSIONS = frozenset({DEFAULT_SLURM_OPERATOR_VERSION})
 _SSH_KEY_TYPE_RE = re.compile(
     r"^(?:ssh-(?:ed25519|rsa)|ecdsa-sha2-nistp(?:256|384|521)|"
@@ -88,7 +89,7 @@ def _exact_boolean(
 
 
 def sizing_tier_for_worker_count(worker_count: int) -> str:
-    """Return the pinned upstream sizing tier for *worker_count*."""
+    """Return NPA's retained sizing tier for *worker_count*."""
 
     for upper_bound, tier in _SIZING_BOUNDARIES:
         if worker_count < upper_bound:
@@ -113,7 +114,7 @@ def _validate_role_preset(role: str, preset: str | None, tier: str) -> None:
         raise SoperatorSpecError(
             f"control_plane.{role}.preset {preset!r} is insufficient for {tier} "
             f"sizing ({role} requires at least {required}); omit the preset to "
-            "use the pinned upstream sizing tier"
+            "use NPA's retained sizing policy"
         )
 
 
@@ -262,8 +263,7 @@ class SoperatorSpec:
     # Existing positional field retained as a one-record compatibility alias.
     ssh_public_keys: list[str] = field(default_factory=list)
 
-    # Omitted system/controller/accounting presets are derived from the pinned
-    # upstream XS..XL sizing tier. Explicit values are checked against that tier.
+    # Omitted presets retain NPA's XS..XL policy across upstream recipe changes.
     system_min_size: int = 3  # recipe minimum is 3
     system_preset: str | None = None
     controller_preset: str | None = None
@@ -293,7 +293,7 @@ class SoperatorSpec:
     system_max_size: int | None = None
     accounting_preset: str | None = None
     # ``None`` preserves the historical default (follow accounting) while an
-    # explicit bool makes the public contract independent. The pinned 4.1.6
+    # explicit bool makes the public contract independent. The pinned 4.1.13
     # operator still cannot reconcile REST without accounting; NPA therefore
     # performs its own direct GPU creation check when accounting is disabled.
     slurm_rest_enabled: bool | None = None
@@ -319,6 +319,25 @@ class SoperatorSpec:
             return self.system_max_size
         return max(self.system_min_size, 24)
 
+    def effective_control_plane_preset(self, role: str) -> str:
+        """Resolve an omitted preset using NPA's retained sizing policy.
+
+        Args:
+            role: System, controller, accounting, or login role name.
+
+        Returns:
+            The explicit preset or the minimum preset for the worker count.
+
+        Raises:
+            KeyError: If the role is unknown.
+        """
+
+        explicit = getattr(self, f"{role}_preset", None)
+        if explicit is not None:
+            return explicit
+        tier = sizing_tier_for_worker_count(sum(pool.size for pool in self.workers))
+        return _MIN_PRESET_BY_ROLE_AND_TIER[role][tier]
+
     def validate(self) -> None:
         if not self.name or not self.name.replace("-", "").isalnum():
             raise SoperatorSpecError(
@@ -335,14 +354,17 @@ class SoperatorSpec:
             )
         if not self.workers:
             raise SoperatorSpecError("at least one worker pool is required")
-        if not self.k8s_version or not self.node_group_version:
+        if not self.k8s_version:
+            raise SoperatorSpecError("k8s_version must be non-empty")
+        if self.node_group_version:
             raise SoperatorSpecError(
-                "k8s_version and node_group_version must both be non-empty"
+                "node_group_version was removed by the pinned recipe; remove it "
+                "from the spec. Worker node groups now use k8s_version"
             )
         if not _OPERATOR_VERSION_RE.fullmatch(self.slurm_operator_version):
             raise SoperatorSpecError(
                 "slurm_operator_version must be an explicit semantic version "
-                "such as '4.1.6'"
+                "such as '4.1.13'"
             )
         if self.slurm_operator_version not in _VERIFIED_OPERATOR_VERSIONS:
             supported = ", ".join(sorted(_VERIFIED_OPERATOR_VERSIONS))
@@ -350,15 +372,12 @@ class SoperatorSpec:
                 raise SoperatorSpecError(
                     "slurm_operator_version 4.1.0 is no longer verified; replace it "
                     f"with {DEFAULT_SLURM_OPERATOR_VERSION} for the default unconfined "
-                    "Enroot/Pyxis setup. Version 4.1.7 is accepted only with "
-                    "use_default_apparmor_profile=true after separately validating that "
-                    "profile on the nodes; 4.1.0 is not safe to re-enable"
+                    "Enroot/Pyxis setup; 4.1.0 is not safe to re-enable"
                 )
             raise SoperatorSpecError(
                 "slurm_operator_version is outside the pinned runtime contract; "
                 f"use {DEFAULT_SLURM_OPERATOR_VERSION} for the default unconfined "
-                f"Enroot/Pyxis setup; verified overrides are: {supported} (4.1.7 "
-                "requires use_default_apparmor_profile=true)"
+                f"Enroot/Pyxis setup; supported versions are: {supported}"
             )
         if (
             not self.use_default_apparmor_profile

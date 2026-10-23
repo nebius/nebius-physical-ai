@@ -79,9 +79,10 @@ def deploy_cmd(
         "If omitted, the library is cloned under ~/.npa/soperator.",
     ),
     solutions_library_ref: str = typer.Option(
-        DEFAULT_SOLUTIONS_LIBRARY_REF,
+        "",
         "--ref",
-        help="Immutable 40-character nebius-solutions-library commit SHA.",
+        help="Immutable 40-character nebius-solutions-library commit SHA. New installs "
+        f"default to {DEFAULT_SOLUTIONS_LIBRARY_REF[:12]}; existing installs retain their saved commit.",
     ),
     root_login_ssh_public_key_file: Path | None = typer.Option(
         None,
@@ -138,7 +139,7 @@ def deploy_cmd(
             spec,
             SoperatorApplyRequest(
                 terraform_dir=terraform_dir,
-                solutions_library_ref=solutions_library_ref,
+                solutions_library_ref=solutions_library_ref or None,
                 root_login_ssh_public_key_file=root_login_ssh_public_key_file,
                 project=project or None,
                 timeout_minutes=timeout,
@@ -221,9 +222,10 @@ def destroy_cmd(
         help="solutions-library 'soperator' recipe dir (if not the default).",
     ),
     solutions_library_ref: str = typer.Option(
-        DEFAULT_SOLUTIONS_LIBRARY_REF,
+        "",
         "--ref",
-        help="Immutable 40-character nebius-solutions-library commit SHA.",
+        help="Immutable 40-character nebius-solutions-library commit SHA. Omit to use "
+        "the exact commit persisted by the installation.",
     ),
     project: str = typer.Option(
         "",
@@ -259,7 +261,7 @@ def destroy_cmd(
             SoperatorSpec(name=name),
             SoperatorDestroyRequest(
                 terraform_dir=terraform_dir,
-                solutions_library_ref=solutions_library_ref,
+                solutions_library_ref=solutions_library_ref or None,
                 project=project or None,
                 timeout_minutes=timeout,
                 source_preflight_only=source_preflight_only,
@@ -275,6 +277,17 @@ def destroy_cmd(
             "no provider mutation was performed."
         )
         return
+    if result is None or result.get("status") != "destroyed":
+        # A direct cluster fallback can remove the control plane after Terraform
+        # fails while leaving exact auxiliary-resource ownership state intact.
+        # Never print a successful teardown in that recoverable-but-nonterminal
+        # state: the caller must retain the installation and retry its cleanup.
+        typer.echo(
+            f"Soperator cluster '{name}' teardown is incomplete; exact local "
+            "recovery state was retained.",
+            err=True,
+        )
+        raise typer.Exit(1)
     typer.echo(f"Destroyed soperator cluster '{name}'.")
 
 

@@ -352,8 +352,29 @@ def _probe_volumes(cluster, claim) -> tuple[list, list]:
     return volumes, mounts
 
 
+def ordinary_claim_manifest(run_id: str) -> dict:
+    """Build a classless ordinary PVC to prove the selected cluster default.
+
+    This claim deliberately omits ``storageClassName``. It is distinct from the
+    explicit filesystem RWX claim used for the cross-worker data check.
+    """
+
+    return {
+        "apiVersion": "v1",
+        "kind": "PersistentVolumeClaim",
+        "metadata": {
+            "name": "npa-storage-default-" + uuid.uuid4().hex,
+            "labels": {OWNER_LABEL: run_id},
+        },
+        "spec": {
+            "accessModes": ["ReadWriteOnce"],
+            "resources": {"requests": {"storage": "1Gi"}},
+        },
+    }
+
+
 def claim_manifest(run_id: str) -> dict:
-    """Build an exclusively owned RWX claim that exercises default class selection.
+    """Build an exclusively owned explicit filesystem RWX claim.
 
     Args:
         run_id: Unique invocation ownership token.
@@ -368,6 +389,7 @@ def claim_manifest(run_id: str) -> dict:
             "labels": {OWNER_LABEL: run_id},
         },
         "spec": {
+            "storageClassName": STORAGE_CLASS,
             "accessModes": ["ReadWriteMany"],
             "resources": {"requests": {"storage": "1Gi"}},
         },

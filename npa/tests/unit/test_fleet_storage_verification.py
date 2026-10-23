@@ -11,7 +11,11 @@ import pytest
 
 from npa.fleet import spec_from_mapping
 from npa.fleet import storage_verification as verification
-from npa.fleet.storage_resources import StorageVerificationError, _node_token
+from npa.fleet.storage_resources import (
+    OWNER_LABEL,
+    StorageVerificationError,
+    _node_token,
+)
 
 
 @pytest.fixture
@@ -31,6 +35,7 @@ def fleet_spec():
                 },
                 "enable_filestore": True,
                 "filestore_disk_size_gibibytes": 1024,
+                "filesystem_csi_chart_repository": "oci://charts.example.invalid/nebius",
             },
             "projects": [
                 {"name": "unit-project", "clusters": [{"name": "unit-cluster"}]}
@@ -83,22 +88,36 @@ class FakeStorageResources:
         self.cleanup_failures = []
         self.resources_absent = True
         self.empty_cleanup_evidence = False
+        self.require_ordinary_audit_mode = False
         self.cross_node_mismatch = False
         self.backing_mismatch = False
         self.backing_absent = True
         self.claim = None
+        self.claims = {}
         self.core = SimpleNamespace(
-            read_namespaced_persistent_volume_claim=lambda *args: self.claim,
+            read_namespaced_persistent_volume_claim=lambda name, *args: self.claims[
+                name
+            ],
             read_persistent_volume=Mock(side_effect=ApiException(status=404)),
         )
 
     def create(self, kind, body):
         name = body["metadata"]["name"]
         self.claim = SimpleNamespace(
-            metadata=SimpleNamespace(name=name, uid="claim-unit"),
+            metadata=SimpleNamespace(
+                name=name,
+                uid=name + "-uid",
+                labels={OWNER_LABEL: self.run_id},
+            ),
             status=SimpleNamespace(phase="Bound"),
+            spec=SimpleNamespace(
+                storage_class_name=body.get("spec", {}).get(
+                    "storageClassName", "compute-csi-default-sc"
+                )
+            ),
         )
-        self.owned.append({"kind": kind, "name": name, "uid": "claim-unit"})
+        self.claims[name] = self.claim
+        self.owned.append({"kind": kind, "name": name, "uid": self.claim.metadata.uid})
         return self.claim
 
     def run_phase(self, nodes, cluster, configuration, *, claim=None):
@@ -114,8 +133,26 @@ class FakeStorageResources:
             )
         if action == self.fail_action:
             raise StorageVerificationError("workload_failed")
+        claim_record = self.claims.get(claim, claim)
+        if (
+            self.require_ordinary_audit_mode
+            and action == "audit"
+            and configuration["root_path"] == "/data"
+            and claim_record is not None
+            and claim_record.spec.storage_class_name == "compute-csi-default-sc"
+            and configuration.get("ordinary_pvc") is not True
+        ):
+            raise StorageVerificationError("wrong_filesystem_type")
         if action == "host":
             return [_host_evidence(cluster) for _ in nodes]
+        if action == "default":
+            return [
+                {
+                    "ordinary_pvc_io": True,
+                    "checksum": hashlib.sha256(node.metadata.uid.encode()).hexdigest(),
+                }
+                for node in nodes
+            ]
         backing = "csi-mounted-fs-path-data/unit-volume-handle"
         if self.backing_mismatch:
             backing = "csi-mounted-fs-path-data/unrelated-volume"
@@ -171,7 +208,7 @@ def qualification(monkeypatch, fleet_spec):
     resources = FakeStorageResources(nodes, cluster)
     monkeypatch.setattr(verification, "storage_nodes", lambda *args: nodes)
     monkeypatch.setattr(
-        verification, "verify_storage_driver", lambda *args: "unit-driver"
+        verification, "verify_storage_driver", lambda *args, **kwargs: "unit-driver"
     )
     monkeypatch.setattr(
         verification,
@@ -181,6 +218,16 @@ def qualification(monkeypatch, fleet_spec):
             "spec": {"csi": {"volumeHandle": "unit-volume-handle"}},
         },
     )
+
+    def verify_default(resources, claim, expected_storage_class):
+        assert expected_storage_class == "compute-csi-default-sc"
+        assert any(action[0] == "default" for action in resources.actions)
+        return {
+            "metadata": {"name": "default-volume", "uid": "default-volume-uid"},
+            "spec": {"claimRef": {"uid": claim.metadata.uid}},
+        }
+
+    monkeypatch.setattr(verification, "verify_default_bound_claim", verify_default)
     resources.api.sanitize_for_serialization = lambda value: (
         value if isinstance(value, dict) else []
     )
@@ -201,9 +248,15 @@ def test_host_and_shared_visibility_cover_both_worker_types(qualification):
     assert all(node["shared_visibility"] == "passed" for node in report["nodes"])
     assert all(node["cleanup"] == "passed" for node in report["nodes"])
     assert report["cleanup"]["probe_paths_absent"] is True
-    assert report["cleanup"]["claims_removed"] == 1
-    assert resources.actions[:3] == [
+    assert report["cleanup"]["claims_removed"] == 2
+    ordinary = next(
+        claim
+        for claim in resources.claims.values()
+        if claim.spec.storage_class_name == "compute-csi-default-sc"
+    )
+    assert resources.actions[:4] == [
         ("host", "/host-storage", 2, None),
+        ("default", "/data", 1, ordinary.metadata.name),
         ("write", "/data", 2, resources.claim.metadata.name),
         ("read", "/data", 2, resources.claim.metadata.name),
     ]
@@ -211,7 +264,16 @@ def test_host_and_shared_visibility_cover_both_worker_types(qualification):
     assert ("audit", "/data", 2, resources.claim.metadata.name) in resources.actions
 
 
-@pytest.mark.parametrize("action", ["host", "write", "read"])
+def test_ordinary_claim_audit_retains_ordinary_volume_mode(qualification):
+    resources, _, _ = qualification
+    resources.require_ordinary_audit_mode = True
+
+    report = _qualify(qualification)
+
+    assert report["cleanup"]["probe_paths_absent"] is True
+
+
+@pytest.mark.parametrize("action", ["host", "default", "write", "read"])
 def test_probe_failure_still_cleans_every_created_resource(qualification, action):
     resources, cluster, _ = qualification
     resources.fail_action = action
@@ -221,7 +283,15 @@ def test_probe_failure_still_cleans_every_created_resource(qualification, action
     assert resources.actions[-1][0] == "resource_cleanup"
     assert ("audit", "/host-storage", 2, None) in resources.actions
     assert report["cleanup"]["probe_paths_absent"] is True
-    assert report["cleanup"]["claims_removed"] == int(action != "host")
+    assert (
+        report["cleanup"]["claims_removed"]
+        == {
+            "host": 0,
+            "default": 1,
+            "write": 2,
+            "read": 2,
+        }[action]
+    )
 
 
 def test_cross_node_mismatch_fails_and_cleans_owned_claim(qualification):
@@ -231,7 +301,7 @@ def test_cross_node_mismatch_fails_and_cleans_owned_claim(qualification):
     with pytest.raises(StorageVerificationError, match="cross_node_evidence_mismatch"):
         verification._qualify_cluster(resources, cluster, report, {})
     assert report["nodes"] == []
-    assert report["cleanup"]["claims_removed"] == 1
+    assert report["cleanup"]["claims_removed"] == 2
     assert report["cleanup"]["probe_paths_absent"] is True
 
 
@@ -257,9 +327,9 @@ def test_cleanup_continues_after_host_probe_cleanup_failure(qualification):
     resources, _, _ = qualification
     resources.fail_action = "cleanup"
     report = _qualify(qualification)
-    assert report["failures"].count("probe_cleanup_failed") == 4
+    assert report["failures"].count("probe_cleanup_failed") == 5
     assert resources.actions[-1][0] == "resource_cleanup"
-    assert sum(action[0] == "audit" for action in resources.actions) == 2
+    assert sum(action[0] == "audit" for action in resources.actions) == 3
 
 
 def test_empty_cleanup_evidence_cannot_prove_absence(qualification):

@@ -450,7 +450,7 @@ for that workflow; the [operator runbook](guides/sim2real-workflow.md#5-buildpus
 explains explicit Cosmos 3 selection and the baked evaluator compatibility check.
 
 Current EnvGen build sources replace the pinned Genesis parent's GitPython
-3.1.57 with 3.1.62 before flattening the published filesystem. This addresses
+3.1.57 with 3.2.1 before flattening the published filesystem. This addresses
 the GitPython security findings that blocked a subsequent development build;
 see the [upstream security releases](https://gitpython.readthedocs.io/en/latest/changes.html).
 The shared Genesis requirements own this installation pin. Regression checks

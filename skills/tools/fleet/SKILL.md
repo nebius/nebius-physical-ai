@@ -480,10 +480,16 @@ resolve those values from the provider inventory before deployment.
    Exact controller cleanup compares `--cluster-name` with the saved
    `provider_name`, while still verifying the immutable project/cluster IDs
    and the saved kubeconfig against the live provider.
-7. **Consume the latest recipe**: `--k8s-training-ref main` clones
-   `nebius-solutions-library` and uses its `k8s-training` (or `--k8s-training-dir`
-   for a local checkout). Omit both to use the repo-vendored, tested copy. NPA
-   applies its compatibility preparation after materializing every source,
+7. **Select the qualified MK8s release**: omit source overrides to create a new
+   installation with the date-versioned `mk8s-v2026-10-19` release. It binds
+   upstream `main-v2026-10-12`, the exact upstream commit, the complete patched
+   bundle digest, the Terraform provider-lock digest, and the component/config
+   contract. NPA writes that record before Terraform applies. Reconcile, status,
+   and destroy retain the saved record; a different `--mk8s-release` requires a
+   reviewed migration or replacement, never an in-place update. `--k8s-training-ref`
+   and `--k8s-training-dir` are reviewed source overrides, not an alias for a
+   moving upstream branch. NPA applies its compatibility preparation after
+   materializing every accepted source,
    including the package-only pinned-ref fallback; currently this removes
    `kubectl debug --quiet` from the filesystem verifier because kubectl 1.36
    otherwise hides both required success evidence and the debugger-pod name.

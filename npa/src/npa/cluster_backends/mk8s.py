@@ -44,6 +44,7 @@ class MK8sApplyRequest:
     on_status: Callable[[str], None] | None = None
     log_path: Path | None = None
     provider_env: dict[str, str] | None = None
+    recipe_release: dict[str, str] | None = None
     provider_preflight: bool = False
     repair_stopped_placeholder: bool = False
     # Legacy-state compatibility only. New standalone targets use the native
@@ -143,6 +144,9 @@ def desired_state(cluster: MK8sDesired) -> dict[str, Any]:
         "filestore_mount_path": cluster.filestore_mount_path,
         "filestore_mount_tag": cluster.filestore_mount_tag,
         "filesystem_csi_enabled": bool(cluster.filesystem_csi_chart_repository),
+        "filesystem_csi_make_default_storage_class": (
+            cluster.filesystem_csi_make_default_storage_class
+        ),
         "k8s_version": cluster.resolved_k8s_version() or "backend-default",
         "mig": (
             {"strategy": cluster.mig.strategy, "config": cluster.mig.config}
@@ -357,6 +361,7 @@ class MK8sBackend:
             basic_validation_timeout_minutes=request.basic_validation_timeout_minutes,
             kubectl_bin=request.kubectl_bin,
             repair_stopped_placeholder=request.repair_stopped_placeholder,
+            recipe_release=request.recipe_release,
         )
         if request.standalone_context and result.get("status") == "deployed":
             result = self._adopt_standalone_result(desired, request, result)
@@ -442,6 +447,9 @@ class MK8sBackend:
                 "backend_tenant_id": request.tenant_id,
                 "backend_region": request.region,
                 "backend_profile": request.profile,
+                "filesystem_csi_make_default_storage_class": (
+                    desired.filesystem_csi_make_default_storage_class
+                ),
             },
         )
         if source_context and source_context != context:

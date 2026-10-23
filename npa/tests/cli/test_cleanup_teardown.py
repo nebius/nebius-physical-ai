@@ -1553,6 +1553,10 @@ def test_down_reads_project_settings_from_npa_config(
     def fake_capture(args, **kwargs):
         if args[:2] == ["terraform", "version"]:
             return _completed(json.dumps({"terraform_version": "1.12.2"}))
+        if args[:3] == ["terraform", "state", "pull"]:
+            # The lifecycle preflight inspects an empty fresh state before destroy;
+            # this test's fake direct installation has no retired provider record.
+            return _completed("")
         if args[:3] == ["nebius", "iam", "get-access-token"]:
             return _completed("token-a\n")
         raise AssertionError(args)
@@ -1677,6 +1681,8 @@ def test_down_does_not_override_explicit_tfvars(monkeypatch, tmp_path: Path) -> 
     def fake_capture(args, **kwargs):
         if args[:2] == ["terraform", "version"]:
             return _completed(json.dumps({"terraform_version": "1.12.2"}))
+        if args[:3] == ["terraform", "state", "pull"]:
+            return _completed("")
         if args[:3] == ["nebius", "iam", "get-access-token"]:
             return _completed("token-a\n")
         raise AssertionError(args)

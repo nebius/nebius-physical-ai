@@ -63,7 +63,8 @@ resource "nebius_mk8s_v1_node_group" "cpu-only" {
   labels = {
     "library-solution" : "k8s-training",
   }
-  version = var.k8s_version
+  version  = var.k8s_version
+  strategy = var.node_group_strategy
   template = {
     boot_disk = {
       size_gibibytes = var.cpu_disk_size
@@ -82,10 +83,6 @@ resource "nebius_mk8s_v1_node_group" "cpu-only" {
       platform = local.cpu_nodes_platform
       preset   = local.cpu_nodes_preset
     }
-    preemptible = var.cpu_nodes_preemptible ? {
-      on_preemption = "STOP"
-      priority      = 1
-    } : null
     filesystems = var.enable_filestore ? [
       {
         attach_mode = "READ_WRITE"
@@ -100,14 +97,16 @@ resource "nebius_mk8s_v1_node_group" "cpu-only" {
     underlay_required = false
     preemptible = var.cpu_nodes_preemptible ? {
       on_preemption = "STOP"
-      priority      = 3
+      priority      = 1
     } : null
     cloud_init_user_data = templatefile("${path.module}/../modules/cloud-init/k8s-cloud-init.tftpl", {
-      enable_filestore     = var.enable_filestore ? "true" : "false",
-      filestore_mount_path = local.filestore.mount_path,
-      filestore_mount_tag  = local.filestore.mount_tag,
-      ssh_user_name        = var.ssh_user_name,
-      ssh_public_key       = local.ssh_public_key
+      enable_filestore         = var.enable_filestore ? "true" : "false",
+      filestore_mount_tag      = local.filestore.mount_tag,
+      filestore_mount_path     = local.filestore.mount_path,
+      ssh_user_name            = var.ssh_user_name,
+      ssh_public_key           = local.ssh_public_key,
+      kubelet_numa_config      = null,
+      kubelet_numa_config_yaml = ""
     })
   }
 }
@@ -115,7 +114,14 @@ resource "nebius_mk8s_v1_node_group" "cpu-only" {
 # GPU NODE GROUPS
 #################
 resource "nebius_mk8s_v1_node_group" "gpu" {
-  count = var.gpu_node_groups
+  count = local.gb300_enabled ? 0 : var.gpu_node_groups
+
+  lifecycle {
+    precondition {
+      condition     = !local.enable_gpu_cluster || startswith(local.gpu_nodes_preset, "8gpu-")
+      error_message = "GPU clustering requires an 8-GPU preset. Leave 'infiniband_fabric' empty for single-GPU presets such as '${local.gpu_nodes_preset}'."
+    }
+  }
 
   autoscaling = var.gpu_nodes_autoscaling.enabled ? {
     min_node_count = var.gpu_nodes_autoscaling.min_size == null ? var.gpu_nodes_autoscaling.max_size : var.gpu_nodes_autoscaling.min_size
@@ -129,7 +135,8 @@ resource "nebius_mk8s_v1_node_group" "gpu" {
   labels = {
     "library-solution" : "k8s-training",
   }
-  version = var.k8s_version
+  version  = var.k8s_version
+  strategy = var.node_group_strategy
   template = {
     metadata = {
       labels = var.mig_parted_config != null ? {
@@ -154,12 +161,6 @@ resource "nebius_mk8s_v1_node_group" "gpu" {
       platform = local.gpu_nodes_platform
       preset   = local.gpu_nodes_preset
     }
-    preemptible = var.gpu_nodes_preemptible ? {
-      on_preemption = "STOP"
-      priority      = 1
-    } : null
-    # Preemptible nodes also require a pricing model under the spot API.
-    follows_spot_price = var.gpu_nodes_preemptible ? {} : null
     filesystems = var.enable_filestore ? [
       {
         attach_mode = "READ_WRITE"
@@ -169,7 +170,7 @@ resource "nebius_mk8s_v1_node_group" "gpu" {
         }
       }
     ] : null
-    gpu_cluster  = var.enable_gpu_cluster ? nebius_compute_v1_gpu_cluster.fabric_2[0] : null
+    gpu_cluster  = local.enable_gpu_cluster ? nebius_compute_v1_gpu_cluster.fabric_2[0] : null
     gpu_settings = var.gpu_nodes_driverfull_image ? { drivers_preset = local.device_preset } : null
     reservation_policy = var.gpu_nodes_reservation_policy == null ? null : {
       policy          = var.gpu_nodes_reservation_policy.policy
@@ -177,16 +178,29 @@ resource "nebius_mk8s_v1_node_group" "gpu" {
     }
     preemptible = var.gpu_nodes_preemptible ? {
       on_preemption = "STOP"
-      priority      = 3
+      priority      = 1
+    } : null
+
+    follows_spot_price = var.gpu_nodes_preemptible ? {} : null
+
+    local_disks = var.gpu_enable_local_disks ? {
+      config = {
+        kubelet_ephemeral = true
+      }
+      passthrough_group = {
+        requested = true
+      }
     } : null
 
     underlay_required = false
     cloud_init_user_data = templatefile("${path.module}/../modules/cloud-init/k8s-cloud-init.tftpl", {
-      enable_filestore     = var.enable_filestore ? "true" : "false",
-      filestore_mount_path = local.filestore.mount_path,
-      filestore_mount_tag  = local.filestore.mount_tag,
-      ssh_user_name        = var.ssh_user_name,
-      ssh_public_key       = local.ssh_public_key
+      enable_filestore         = var.enable_filestore ? "true" : "false",
+      filestore_mount_tag      = local.filestore.mount_tag,
+      filestore_mount_path     = local.filestore.mount_path,
+      ssh_user_name            = var.ssh_user_name,
+      ssh_public_key           = local.ssh_public_key,
+      kubelet_numa_config      = local.effective_gpu_kubelet_numa_config,
+      kubelet_numa_config_yaml = local.gpu_kubelet_numa_config_yaml
     })
   }
 }
