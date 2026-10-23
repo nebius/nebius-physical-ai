@@ -1,4 +1,4 @@
-# Resolver-closed Python 3.11 runtime for the exact-source EnvGen role.
+# Resolver-closed Python 3.12 runtime for the exact-source EnvGen role.
 #
 # This is the complete `pip freeze` closure produced from the current NPA
 # project metadata plus the mandatory fsspec security floor.  The EnvGen stage

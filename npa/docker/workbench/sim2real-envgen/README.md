@@ -6,7 +6,7 @@ execute Genesis physics, train a policy, or evaluate a rollout.  Those are
 separate Isaac workflow stages and must carry their own image evidence.
 
 The image deliberately does not inherit the Genesis/LeRobot environment.  Its
-Python 3.11 venv is rebuilt from
+Python 3.12 venv is rebuilt from
 `../common/sim2real-envgen-requirements.txt`, which pins the current NPA
 closure, Pillow 13, and fsspec 2026.6.0 without Genesis, LeRobot, datasets, or
 Torch.  This keeps the unresolved Genesis upstream closure visible rather than

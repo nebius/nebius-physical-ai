@@ -13,6 +13,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 DOCKERFILE = ROOT / "docker/workbench/sim2real-envgen/Dockerfile"
 REQUIREMENTS = ROOT / "docker/workbench/common/sim2real-envgen-requirements.txt"
+README = ROOT / "docker/workbench/sim2real-envgen/README.md"
+CONTAINER_CATALOG = ROOT.parent / "docs/workbench/container-image-catalog.md"
 PYPROJECT = ROOT / "pyproject.toml"
 INHERITED_FILES = (
     "src/npa/orchestration/skypilot/capacity.py",
@@ -155,3 +157,19 @@ def test_envgen_runtime_uses_its_own_python312_venv_and_exact_source_pth():
     assert "installed.isdisjoint(absent)" in text
     assert "NPA_GENESIS_HOME" not in text
     assert "/opt/genesis/venv" not in text
+
+
+def test_envgen_documented_python_version_matches_its_runtime_contract():
+    assert "Resolver-closed Python 3.12 runtime" in REQUIREMENTS.read_text(
+        encoding="utf-8"
+    )
+    assert "Python 3.12 venv" in README.read_text(encoding="utf-8")
+    envgen_catalog_row = next(
+        line
+        for line in CONTAINER_CATALOG.read_text(encoding="utf-8").splitlines()
+        if line.startswith("| Sim2Real EnvGen 0.1.2 |")
+    )
+    assert (
+        "source-attested Python 3.12 NPA-only scenario-record runtime"
+        in envgen_catalog_row
+    )
