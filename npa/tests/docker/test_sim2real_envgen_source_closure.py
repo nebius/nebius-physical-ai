@@ -16,6 +16,7 @@ REQUIREMENTS = ROOT / "docker/workbench/common/sim2real-envgen-requirements.txt"
 README = ROOT / "docker/workbench/sim2real-envgen/README.md"
 CONTAINER_CATALOG = ROOT.parent / "docs/workbench/container-image-catalog.md"
 GOLDEN_EVALS = ROOT / "src/npa/smoke/golden_evals.yaml"
+PACKAGING_CONTRACT = ROOT / "docker/workbench/packaging-contract.yaml"
 PYPROJECT = ROOT / "pyproject.toml"
 INHERITED_FILES = (
     "src/npa/orchestration/skypilot/capacity.py",
@@ -176,4 +177,12 @@ def test_envgen_documented_python_version_matches_its_runtime_contract():
     )
     assert "A dedicated Python 3.12 EnvGen venv" in GOLDEN_EVALS.read_text(
         encoding="utf-8"
+    )
+    packaging_contract = PACKAGING_CONTRACT.read_text(encoding="utf-8")
+    assert "creates a dedicated Python 3.12 EnvGen venv" in packaging_contract
+    assert "role does not use that closure and must be independently qualified" in (
+        packaging_contract
+    )
+    assert "source Genesis or Envgen image is qualified or publishable" not in (
+        packaging_contract
     )

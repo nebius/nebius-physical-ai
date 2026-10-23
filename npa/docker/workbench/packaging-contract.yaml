@@ -1106,9 +1106,11 @@ images:
       NPA_GENESIS_SUPPORTED_STUDENT_POLICIES=act rejects Diffusion/SmolVLA before
       framework imports. Additional policies require a separately qualified
       operator image. CPU checks do not qualify real GPU physics or rendering.
-      Current source is blocked before that CPU gate: its upstream LeRobot/Datasets
-      closure conflicts with the mandatory fsspec security floor, so no current
-      source Genesis or Envgen image is qualified or publishable.
+      Current source Genesis is blocked before that CPU gate: its upstream
+      LeRobot/Datasets closure conflicts with the mandatory fsspec security
+      floor, so Genesis is not qualified or publishable. The separate EnvGen
+      role does not use that closure and must be independently qualified from
+      its source-attested role image.
   isaac-lab:
     dockerfile: isaac-lab/Dockerfile
     isaac_runtime_fetch: true
@@ -1252,7 +1254,7 @@ images:
       manual_preflight: sim2real-envgen/README.md
     notes: >-
       The flattened public runtime removes the complete inherited NPA tree and
-      creates a dedicated Python 3.11 EnvGen venv from the reviewed exact
+      creates a dedicated Python 3.12 EnvGen venv from the reviewed exact
       closure. It contains scenario/task-contract code, Pillow 13 and fsspec
       2026.6.0, but no Genesis, LeRobot, datasets, Torch, model weights,
       source assets, credentials, or runtime caches. Genesis is a separate
