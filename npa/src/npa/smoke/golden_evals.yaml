@@ -1580,6 +1580,9 @@ containers:
       kind: container-smoke
       module: npa.smoke.test_sim2real_policy_functional
       command: python -m npa.smoke.test_sim2real_policy_functional
+      # CPU-only serverless jobs still select the shared-project's explicit
+      # smallest offered platform; this does not claim a GPU policy evaluation.
+      serverless_gpu: h200
       gpu: none
       timeout_seconds: 120
       status: needs-image-update
