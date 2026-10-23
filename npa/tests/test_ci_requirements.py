@@ -178,7 +178,7 @@ def test_websockets_transport_pins_match_project_dependency() -> None:
     """Keep standalone transport environments aligned with the core pin.
 
     Raises:
-        AssertionError: A desktop or Antioch transport drifts from the project.
+        AssertionError: An Antioch transport drifts from the project.
     """
     project = ci_requirements.tomllib.loads(
         (ci_requirements._ROOT / "npa/pyproject.toml").read_text()
@@ -193,7 +193,6 @@ def test_websockets_transport_pins_match_project_dependency() -> None:
     for relative in (
         "npa/docker/workbench/antioch/requirements.txt",
         "npa/examples/antioch-openpi-live/Dockerfile",
-        "npa/src/npa/tools/desktop/chat_setup.py",
     ):
         assert pinned in (ci_requirements._ROOT / relative).read_text(), relative
 

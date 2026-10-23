@@ -18,7 +18,6 @@
 **[Workbench docs](docs/workbench/README.md)** ·
 **[Shared access](docs/workbench/shared-workbench-quickstart.md)** ·
 **[Benchmarks](benchmark/README.md)** ·
-**[Operator tools](docs/tools/README.md)** ·
 **[CLI reference](docs/cli/README.md)** ·
 **[Python & API](docs/workbench/cli-sdk-yaml-walkthrough.md)** ·
 **[Cookbooks](docs/workbench/cookbooks/README.md)** ·
