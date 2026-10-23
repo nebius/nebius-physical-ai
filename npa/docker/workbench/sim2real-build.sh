@@ -49,7 +49,7 @@ parent for the freshly built Cosmos3-reason image. Unless
 SIM2REAL_ENVGEN_BASE_IMAGE is set, that freshly built current-source image is
 then the EnvGen parent. An explicit SIM2REAL_ENVGEN_BASE_IMAGE must carry the
 same source-revision label. EnvGen does not inherit Genesis: its dedicated
-Python 3.11 closure excludes the unavailable Genesis/LeRobot dataset stack.
+Python 3.12 closure excludes the unrelated Genesis/LeRobot dataset stack.
 The freshly built Envgen image is the default parent for the reference policy
 and VLM-RL signal adapter; set SIM2REAL_COMPONENT_BASE_IMAGE only to validate
 another immutable Envgen build. The legacy loop-eval image is not part of the

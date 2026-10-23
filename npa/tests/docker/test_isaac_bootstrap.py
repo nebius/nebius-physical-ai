@@ -812,9 +812,8 @@ def test_isaac3_dependency_lock_excludes_vulnerable_pyjwt() -> None:
     """Keep the signature-confusion fix in the immutable Isaac OSS closure."""
 
     dependencies = ISAAC3_OSS_DEPS.read_text(encoding="utf-8").splitlines()
-    pyjwt_pins = [line for line in dependencies if line.startswith("pyjwt==")]
-    assert len(pyjwt_pins) == 1
-    assert Version(pyjwt_pins[0].split("==", maxsplit=1)[1]) >= Version("2.15.1")
+    assert "pyjwt==2.15.1" in dependencies
+    assert "pyjwt==2.15.0" not in dependencies
     assert "pyjwt==2.14.0" not in dependencies
     assert "pyjwt==2.13.0" not in dependencies
 
@@ -840,14 +839,14 @@ def test_base_installer_upgrades_linux_headers_from_the_fixed_snapshot() -> None
     """
 
     installer = BASE_INSTALLER.read_text(encoding="utf-8")
-    assert 'UBUNTU_SNAPSHOT="${NPA_UBUNTU_SNAPSHOT:-20260820T000000Z}"' in installer
+    assert 'UBUNTU_SNAPSHOT="${NPA_UBUNTU_SNAPSHOT:-20261018T000000Z}"' in installer
     assert (
-        'LINUX_LIBC_DEV_VERSION="${NPA_LINUX_LIBC_DEV_VERSION:-5.15.0-187.197}"'
+        'LINUX_LIBC_DEV_VERSION="${NPA_LINUX_LIBC_DEV_VERSION:-5.15.0-198.208}"'
         in installer
     )
     assert '"linux-libc-dev=${LINUX_LIBC_DEV_VERSION}"' in installer
-    assert "linux-libc-dev=5.15.0-186.196" in installer
-    assert "linux-libc-dev=6.8.0-138.138" in installer
+    assert "linux-libc-dev=5.15.0-198.208" in installer
+    assert "linux-libc-dev=6.8.0-147.147" in installer
     assert "NPA_UBUNTU_SUITE:-jammy" in installer
     assert "NPA_ISAAC_PYTHON_MINOR:-3.11" in installer
     assert '"$ISAAC_PYTHON_MINOR" = 3.12' in installer
@@ -861,9 +860,9 @@ def test_isaac3_image_uses_fixed_noble_snapshot_and_removes_optional_nsight() ->
     )
     installer = BASE_INSTALLER.read_text(encoding="utf-8")
 
-    assert "NPA_UBUNTU_SNAPSHOT=20261013T000000Z" in dockerfile
+    assert "NPA_UBUNTU_SNAPSHOT=20261018T000000Z" in dockerfile
     assert "NPA_LINUX_LIBC_DEV_VERSION=6.8.0-147.147" in dockerfile
-    assert "linux-libc-dev=6.8.0-138.138" in installer
+    assert "linux-libc-dev=6.8.0-147.147" in installer
     assert "NCOMPUTE_PKGS=$(dpkg-query" in installer
     assert "nsight-compute-*' 'cuda-nsight-compute-*'" in installer
     assert "apt-get purge -y $NCOMPUTE_PKGS" in installer
@@ -1102,7 +1101,7 @@ def test_base_installer_proves_the_refusal_at_build_time() -> None:
 def test_base_installer_uses_immutable_system_and_bootstrap_inputs() -> None:
     """The GPU image build must not resolve Python or packaging from moving indexes."""
     text = BASE_INSTALLER.read_text(encoding="utf-8")
-    assert "NPA_UBUNTU_SNAPSHOT:-20260820T000000Z" in text
+    assert "NPA_UBUNTU_SNAPSHOT:-20261018T000000Z" in text
     assert "https://snapshot.ubuntu.com/ubuntu/${UBUNTU_SNAPSHOT}/" in text
     assert "add-apt-repository" not in text
     assert "sha256sum --check --strict" in text

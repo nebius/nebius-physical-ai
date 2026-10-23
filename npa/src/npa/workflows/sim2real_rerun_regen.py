@@ -1568,7 +1568,7 @@ def download_rrd_from_s3(
 def _download_verified_rrd(
     storage, uri, publication, canonical_uri, absolute_dest, containment_root
 ):
-    """Keep a serving path untouched until a separate staged file is authenticated."""
+    """Stage a selected recording and verify it when publication metadata exists."""
     absolute_dest.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(
         prefix=".verified-rrd-", dir=absolute_dest.parent
@@ -2997,7 +2997,8 @@ def _update_stage14_component(
         "Wrote the complete Rerun recording from every persisted pass: "
         f"{result.rollout_count} real policy rollout(s), "
         f"{result.frame_count} synchronized policy camera frame(s), and "
-        f"{result.heldout_frame_count} held-out frame(s)."
+        f"{result.heldout_frame_count} held-out frame(s), and "
+        f"{result.heldout_env_count} held-out environment score(s)."
     )
     component.setdefault("artifacts", {}).update(
         {

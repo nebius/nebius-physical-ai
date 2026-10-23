@@ -286,7 +286,7 @@ def _probe_remote_lerobot_version(ssh: Any, cfg: Any) -> str:
         return resolve_lerobot_version(None)
     version = (stdout or "").strip().splitlines()[-1].strip() if stdout else ""
     # Images built from the secure 0.5.1 closure report a valid PEP 440
-    # local version (for example ``0.5.1+npa.secure1``). Compatibility is
+    # local version (for example ``0.5.1+npa.secure2``). Compatibility is
     # selected from the upstream release line, not the integration label.
     upstream_version = version.split("+", 1)[0]
     try:

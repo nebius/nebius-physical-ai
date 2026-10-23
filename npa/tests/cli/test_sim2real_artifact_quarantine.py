@@ -85,6 +85,37 @@ def test_regen_reaches_artifacts_while_execution_images_are_quarantined(
         build_config_from_env(run_id="execution-run")
 
 
+def test_regen_text_discloses_heldout_environment_evidence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def regenerate(config: Sim2RealArtifactConfig, **_kwargs: object) -> RegenResult:
+        return RegenResult(
+            config.run_id,
+            str(tmp_path),
+            "review.rrd",
+            "",
+            0,
+            0,
+            0,
+            heldout_env_count=3,
+        )
+
+    monkeypatch.setattr("npa.cli.workbench.sim2real.regen_sim2real_rrd", regenerate)
+    result = _invoke_rerun(
+        "regen",
+        "--s3-bucket",
+        "example-bucket",
+        "--local-dir",
+        str(tmp_path),
+        "--no-sync",
+        "--no-upload",
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "heldout_frame_count: 0" in result.output
+    assert "heldout_env_count: 3" in result.output
+
+
 def test_regen_project_resolves_storage_without_execution_images(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

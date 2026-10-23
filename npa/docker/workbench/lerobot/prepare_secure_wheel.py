@@ -17,7 +17,7 @@ import zipfile
 
 
 UPSTREAM_COMMIT = "1396b9fab7aecddd10006c33c47a487ffdcb54b4"
-VERSION = "0.5.1+npa.secure1"
+VERSION = "0.5.1+npa.secure2"
 WHEEL_URL = (
     "https://files.pythonhosted.org/packages/60/8e/"
     "8e3763ad36ba0efb9ba0381ae06d328b54081587b45b0c1d049b26ed8d8c/"
@@ -25,15 +25,21 @@ WHEEL_URL = (
 )
 WHEEL_SHA256 = "bbd11021023fde0947b6d1ff1c52fe91c86a28ab09a96359892f3ef7e8866862"
 ARCHIVE_URL = (
-    f"https://codeload.github.com/huggingface/lerobot/tar.gz/{UPSTREAM_COMMIT}"
+    "https://files.pythonhosted.org/packages/3b/46/"
+    "21c9531f77fc2c1a1fe3a4ea3e5b1633d9503738b85cc391f28ee4369f2a/"
+    "lerobot-0.5.1.tar.gz"
 )
-ARCHIVE_SHA256 = "fe0b3079a517f0c60bdf325afc7832d81ae384bd1d022f4e802e7da8f73606dd"
+ARCHIVE_SHA256 = "4a05a9d10f013bf8fc408c7bd9c32a261209250cb66987b796416911c96a6fd3"
+SOURCE_ARCHIVE_ROOT = "lerobot-0.5.1"
 METADATA_SHA256 = "88a5ac51b516cfdd66d12818b74325bb18f515679a522591faf205a1205275ed"
 DEPENDENCIES = {
     "torch<2.11.0,>=2.7": "torch<2.14.0,>=2.13.0",
     "torchvision<0.26.0,>=0.22.0": "torchvision<0.29.0,>=0.28.0",
     "torchcodec<0.11.0,>=0.3.0": "torchcodec<0.17.0,>=0.16.0",
     "diffusers<0.36.0,>=0.27.2": "diffusers<0.39.0,>=0.38.0",
+    "setuptools<81.0.0,>=71.0.0": "setuptools<84.0.0,>=83.0.0",
+    "datasets<5.0.0,>=4.0.0": "datasets<5.1.0,>=5.0.1",
+    "transformers==5.3.0": "transformers<5.11.0,>=5.10.0",
     "wandb<0.25.0,>=0.24.0": "wandb<0.31.0,>=0.30.0",
 }
 ORIGINAL_DIST_INFO = "lerobot-0.5.1.dist-info/"
@@ -42,6 +48,26 @@ LOGGER_PATH = "lerobot/rl/wandb_utils.py"
 LOGGER_SHA256 = "9328a2254e840e1447cb2464fa0498102fe640ec8d68edfefae4592ada22591b"
 LOGGER_MODIFICATION_NOTICE = (
     b"# Modified by Nebius: uses the supported W&B Run.url property.\n"
+)
+GROOT_INIT_PATH = "lerobot/policies/groot/__init__.py"
+GROOT_INIT_SHA256 = "40411dc2b519d34f96cd68bed78817d98f10905778eea58a18a0d539ce2cd79d"
+GROOT_EAGER_IMPORTS = (
+    b"from .configuration_groot import GrootConfig\n"
+    b"from .modeling_groot import GrootPolicy\n"
+    b"from .processor_groot import make_groot_pre_post_processors\n"
+)
+GROOT_LAZY_IMPORTS = (
+    b"# Modified by Nebius: defer optional GR00T runtime imports so they cannot "
+    b"block core policy initialization.\n"
+    b"from .configuration_groot import GrootConfig\n\n\n"
+    b"def __getattr__(name: str):\n"
+    b'    if name == "GrootPolicy":\n'
+    b"        from .modeling_groot import GrootPolicy\n\n"
+    b"        return GrootPolicy\n"
+    b'    if name == "make_groot_pre_post_processors":\n'
+    b"        from .processor_groot import make_groot_pre_post_processors\n\n"
+    b"        return make_groot_pre_post_processors\n"
+    b'    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")\n'
 )
 
 
@@ -64,15 +90,18 @@ def _download(url: str, expected_hash: str) -> bytes:
 
 def _source_files(archive: bytes) -> dict[str, bytes]:
     files = {}
+    source_prefix = f"{SOURCE_ARCHIVE_ROOT}/src/"
     with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as source:
         for member in source.getmembers():
-            if not member.isfile() or "/src/lerobot/" not in member.name:
+            if not member.isfile() or not member.name.startswith(source_prefix):
                 continue
-            path = member.name.split("/src/", 1)[1]
+            path = member.name.removeprefix(source_prefix)
+            if not path.startswith("lerobot/"):
+                continue
             if path in files:
                 raise RuntimeError("duplicate upstream source member")
             files[path] = source.extractfile(member).read()
-        license_member = source.getmember(f"lerobot-{UPSTREAM_COMMIT}/LICENSE")
+        license_member = source.getmember(f"{SOURCE_ARCHIVE_ROOT}/LICENSE")
         if not license_member.isfile():
             raise RuntimeError("upstream license is not a regular file")
         files["LICENSE"] = source.extractfile(license_member).read()
@@ -90,12 +119,13 @@ def _verify_wheel(content: bytes, source: dict[str, bytes]) -> dict[str, bytes]:
     }
     if not modules or any(source.get(name) != value for name, value in modules.items()):
         raise RuntimeError("wheel package differs from the pinned upstream commit")
-    if files[ORIGINAL_DIST_INFO + "licenses/LICENSE"] != source["LICENSE"]:
+    license_file = files.get(ORIGINAL_DIST_INFO + "licenses/LICENSE")
+    metadata = files.get(ORIGINAL_DIST_INFO + "METADATA")
+    if license_file is None or metadata is None:
+        raise RuntimeError("unreviewed upstream wheel layout")
+    if license_file != source["LICENSE"]:
         raise RuntimeError("upstream license differs between source and wheel")
-    if (
-        hashlib.sha256(files[ORIGINAL_DIST_INFO + "METADATA"]).hexdigest()
-        != METADATA_SHA256
-    ):
+    if hashlib.sha256(metadata).hexdigest() != METADATA_SHA256:
         raise RuntimeError("unreviewed upstream dependency metadata")
     return files
 
@@ -144,6 +174,40 @@ def _logger_source(original: bytes) -> bytes:
     )
 
 
+def _groot_init_source(original: bytes) -> bytes:
+    """Defer optional GR00T imports without changing the model implementation."""
+
+    if hashlib.sha256(original).hexdigest() != GROOT_INIT_SHA256:
+        raise RuntimeError("unreviewed upstream GR00T package initializer")
+    if original.count(GROOT_EAGER_IMPORTS) != 1:
+        raise RuntimeError("reviewed upstream GR00T import surface changed")
+    patched = original.replace(GROOT_EAGER_IMPORTS, GROOT_LAZY_IMPORTS)
+    _validate_groot_import_surface(patched)
+    return patched
+
+
+def _validate_groot_import_surface(source: bytes) -> None:
+    """Reject top-level optional model imports in the exact patched initializer."""
+
+    eager_imports = (
+        b"from .modeling_groot import GrootPolicy",
+        b"from .processor_groot import make_groot_pre_post_processors",
+    )
+    if any(line in eager_imports for line in source.splitlines()):
+        raise RuntimeError("eager optional GR00T model import remains")
+    if GROOT_LAZY_IMPORTS not in source:
+        raise RuntimeError("reviewed GR00T lazy import surface changed")
+
+
+def _native_model_source_unchanged(source_patches: dict[str, dict]) -> bool:
+    """Derive the model-implementation claim from the exact patched paths."""
+
+    return not any(
+        path.startswith("lerobot/policies/") and path != GROOT_INIT_PATH
+        for path in source_patches
+    )
+
+
 def _integration(files: dict[str, bytes]) -> tuple[dict[str, bytes], dict]:
     result = {
         name.replace(ORIGINAL_DIST_INFO, DIST_INFO, 1): value
@@ -152,23 +216,34 @@ def _integration(files: dict[str, bytes]) -> tuple[dict[str, bytes], dict]:
     }
     result[DIST_INFO + "METADATA"] = _metadata(files[ORIGINAL_DIST_INFO + "METADATA"])
     result[LOGGER_PATH] = _logger_source(files[LOGGER_PATH])
+    result[GROOT_INIT_PATH] = _groot_init_source(files[GROOT_INIT_PATH])
+    source_patches = {
+        LOGGER_PATH: {
+            "original_sha256": LOGGER_SHA256,
+            "patched_sha256": hashlib.sha256(result[LOGGER_PATH]).hexdigest(),
+            "change": "added modification notice and replaced W&B Run.get_url() with supported Run.url property",
+        },
+        GROOT_INIT_PATH: {
+            "original_sha256": GROOT_INIT_SHA256,
+            "patched_sha256": hashlib.sha256(result[GROOT_INIT_PATH]).hexdigest(),
+            "change": "deferred optional GR00T runtime imports so core policy imports do not execute the optional model path",
+        },
+    }
     receipt = {
         "integration_version": VERSION,
-        "upstream_commit": UPSTREAM_COMMIT,
+        "declared_upstream_commit": UPSTREAM_COMMIT,
+        "upstream_source_distribution": "lerobot-0.5.1.tar.gz",
         "upstream_wheel_sha256": WHEEL_SHA256,
         "upstream_source_sha256": ARCHIVE_SHA256,
         "package_source_unchanged": False,
-        "native_model_source_unchanged": True,
-        "source_patches": {
-            LOGGER_PATH: {
-                "original_sha256": LOGGER_SHA256,
-                "patched_sha256": hashlib.sha256(result[LOGGER_PATH]).hexdigest(),
-                "change": "added modification notice and replaced W&B Run.get_url() with supported Run.url property",
-            }
-        },
+        "native_model_source_unchanged": _native_model_source_unchanged(source_patches),
+        "source_patches": source_patches,
         "license_retained": "Apache-2.0",
         "dependency_changes": DEPENDENCIES,
         "capability_qualification": "pending native ACT, Diffusion, default decoder, server and offline logger gates",
+        "deferred_optional_policy_qualification": {
+            "groot": "unqualified under the security-pinned transformers runtime; a request to instantiate GrootPolicy requires a separate runtime qualification"
+        },
     }
     result[DIST_INFO + "npa-source-integration.json"] = json.dumps(
         receipt, indent=2

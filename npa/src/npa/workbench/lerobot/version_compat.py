@@ -132,6 +132,7 @@ def torch_install_pins(version: str | None = None) -> list[str]:
         "torchvision_pin",
         "torchcodec_pin",
         "diffusers_pin",
+        "datasets_pin",
         "wandb_pin",
     ):
         value = entry.get(key)

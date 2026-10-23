@@ -308,6 +308,14 @@ def test_kwargs_absorbs_unknown_parameters(monkeypatch, wheel):
     assert _status(report, "callable-parameters") == "PASS"
 
 
+def test_missing_required_positional_callable_is_caught(monkeypatch, wheel):
+    (wheel / "lerobot/envs/libero.py").write_text(
+        "class LiberoEnv:\n    pass\n", encoding="utf-8"
+    )
+    report = _run(monkeypatch, wheel)
+    assert _status(report, "callable-existence") == "FAIL"
+
+
 def test_missing_entry_point_is_caught(monkeypatch, wheel):
     dist = wheel / "lerobot-9.9.9.dist-info" / "entry_points.txt"
     dist.write_text("[console_scripts]\nlerobot-train = x:main\n", encoding="utf-8")
@@ -353,6 +361,18 @@ def test_forced_torch_pin_inside_declared_bounds_passes(monkeypatch, wheel):
     assert _status(report, "manifest torch pins") == "PASS"
 
 
+def test_forced_wandb_pin_outside_declared_bounds_is_caught(monkeypatch, wheel):
+    metadata = wheel / "lerobot-9.9.9.dist-info" / "METADATA"
+    metadata.write_text(
+        metadata.read_text(encoding="utf-8") + "Requires-Dist: wandb<0.31.0,>=0.29.0\n",
+        encoding="utf-8",
+    )
+
+    report = _run(monkeypatch, wheel, manifest={"wandb_pin": "wandb==0.31.0"})
+
+    assert _status(report, "manifest torch pins") == "FAIL"
+
+
 def test_secure_integration_pins_are_checked_against_reviewed_constraints(
     monkeypatch, wheel
 ):
@@ -362,6 +382,7 @@ def test_secure_integration_pins_are_checked_against_reviewed_constraints(
         "torchvision_pin": "torchvision==0.28.0",
         "torchcodec_pin": "torchcodec==0.16.0",
         "diffusers_pin": "diffusers==0.38.0",
+        "datasets_pin": "datasets==5.0.1",
         "wandb_pin": "wandb==0.30.0",
     }
     report = _run(monkeypatch, wheel, manifest=manifest)
@@ -370,6 +391,47 @@ def test_secure_integration_pins_are_checked_against_reviewed_constraints(
     manifest["torchcodec_pin"] = "torchcodec==0.15.0"
     report = _run(monkeypatch, wheel, manifest=manifest)
     assert _status(report, "manifest torch pins") == "FAIL"
+
+
+def test_secure_integration_datasets_pin_must_match_reviewed_constraints(
+    monkeypatch, wheel
+):
+    manifest = {
+        "package_source": "npa-secure-integration",
+        "datasets_pin": "datasets==5.0.0",
+    }
+
+    report = _run(monkeypatch, wheel, manifest=manifest)
+
+    assert _status(report, "manifest torch pins") == "FAIL"
+
+
+def test_invalid_secure_constraint_reports_a_structured_failure(
+    monkeypatch, wheel, tmp_path
+):
+    constraint_path = (
+        tmp_path / "npa/docker/workbench/lerobot/default-runtime-requirements.txt"
+    )
+    constraint_path.parent.mkdir(parents=True)
+    constraint_path.write_text("wandb=>0.30.0\n", encoding="utf-8")
+    monkeypatch.setattr(audit_mod, "REPO_ROOT", tmp_path)
+
+    report = _run(
+        monkeypatch,
+        wheel,
+        manifest={
+            "package_source": "npa-secure-integration",
+            "wandb_pin": "wandb==0.30.0",
+        },
+    )
+
+    assert _status(report, "manifest torch pins") == "FAIL"
+    detail = next(
+        check["detail"]
+        for check in report.checks
+        if check["check"] == "manifest torch pins"
+    )
+    assert "secure constraint" in detail
 
 
 def test_bare_requires_dist_does_not_disable_pin_check(monkeypatch, wheel):
@@ -591,6 +653,7 @@ def test_import_surface_covers_every_static_lerobot_import():
             f"{module}:{symbol} provenance must be a tuple of repository-relative paths"
         )
         covered.setdefault((module, symbol), set()).update(provenance)
+    assert len(covered) == len(audit_mod.IMPORT_SURFACE)
     imports: dict[tuple[str, str | None], set[str]] = {}
 
     for root in (REPO_ROOT / "npa/src", REPO_ROOT / "npa/demo", REPO_ROOT / "research"):
@@ -621,6 +684,82 @@ def test_import_surface_covers_every_static_lerobot_import():
     }
     assert missing_bindings == {}
     assert missing_provenance == {}
+
+
+def _private_callable_uses(path: Path) -> set[str]:
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    aliases = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign) or not isinstance(
+            node.value, ast.Attribute
+        ):
+            continue
+        if node.value.attr.startswith("__") or not node.value.attr.startswith("_"):
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                aliases[target.id] = node.value.attr
+    calls = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Attribute):
+            if node.func.attr.startswith("_") and not node.func.attr.startswith("__"):
+                calls.add(node.func.attr)
+        elif isinstance(node.func, ast.Name) and node.func.id in aliases:
+            calls.add(aliases[node.func.id])
+    return calls
+
+
+_NON_LEROBOT_PRIVATE_CALLS = {
+    "npa/src/npa/workbench/robocasa/capabilities.py": {"_EndRecData"},
+    "npa/src/npa/workflows/behavior_challenge/comet_training_data.py": {
+        "_episode_starts",
+        "_load_tables",
+        "_low_dimensional_sample",
+        "_rgb_sample",
+        "_validate_options",
+    },
+    "npa/src/npa/workflows/lerobot_transfer_eval.py": {"_observation"},
+}
+
+
+def _has_static_lerobot_import(tree: ast.AST) -> bool:
+    return any(
+        (
+            isinstance(node, ast.ImportFrom)
+            and node.module is not None
+            and (node.module == "lerobot" or node.module.startswith("lerobot."))
+        )
+        or (
+            isinstance(node, ast.Import)
+            and any(
+                alias.name == "lerobot" or alias.name.startswith("lerobot.")
+                for alias in node.names
+            )
+        )
+        for node in ast.walk(tree)
+    )
+
+
+def test_required_callables_cover_private_callable_uses() -> None:
+    expected = {path: set(calls) for path, calls in _NON_LEROBOT_PRIVATE_CALLS.items()}
+    for _relpath, dotted, provenance in audit_mod.REQUIRED_CALLABLES:
+        callable_name = dotted.rsplit(".", 1)[1]
+        for relative in provenance:
+            expected.setdefault(relative, set()).add(callable_name)
+
+    observed = {}
+    for root in (REPO_ROOT / "npa/src", REPO_ROOT / "npa/demo", REPO_ROOT / "research"):
+        for path in root.rglob("*.py"):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            if not _has_static_lerobot_import(tree):
+                continue
+            calls = _private_callable_uses(path)
+            if calls:
+                observed[path.relative_to(REPO_ROOT).as_posix()] = calls
+
+    assert observed == expected
 
 
 def test_b300_image_pins_match_the_dockerfile():

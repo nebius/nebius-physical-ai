@@ -145,8 +145,16 @@ def test_lerobot_uses_system_ffmpeg_without_bundled_payload() -> None:
     dockerfile = (
         REPO_ROOT / "npa" / "docker" / "workbench" / "lerobot" / "Dockerfile"
     ).read_text(encoding="utf-8")
+    installer = (
+        REPO_ROOT
+        / "npa"
+        / "docker"
+        / "workbench"
+        / "lerobot"
+        / "install_immutable_system_packages.sh"
+    ).read_text(encoding="utf-8")
 
-    assert "      ffmpeg \\\n" in dockerfile
+    assert "ffmpeg=7:4.4.2-0ubuntu0.22.04.1" in installer
     assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in dockerfile
     assert "*/imageio_ffmpeg/binaries/ffmpeg*" in dockerfile
     assert "-delete" in dockerfile

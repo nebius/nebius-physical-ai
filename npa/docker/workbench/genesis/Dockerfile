@@ -1,21 +1,18 @@
-# This Python 3.11 recipe requires an explicit, source-attested CUDA 13
-# workbench parent. The catalog's historical npa-base digest is evidence for
-# that historical image only; it is not a fallback for a current-source build.
-# Build the matching local npa-base recipe first, then pass its immutable local
-# image ID or source-SHA tag with --build-arg BASE_IMAGE=... .
-ARG BASE_IMAGE
-FROM ${BASE_IMAGE}
+# Digest pinned 2026-05-12. Tag: nvidia/cuda:12.4.1-devel-ubuntu22.04
+# To update: re-resolve via registry API and update digest below.
+FROM nvidia/cuda:12.4.1-devel-ubuntu22.04@sha256:da6791294b0b04d7e65d87b7451d6f2390b4d36225ab0701ee7dfec5769829f5
 
 ARG NPA_SOURCE_SHA
 ARG GENESIS_VERSION=0.4.6
 ARG LEROBOT_VERSION=0.4.4
 ARG RSL_RL_VERSION=5.5.1
+ARG TORCH_VERSION=2.6.0
+ARG TORCHVISION_VERSION=0.21.0
 ARG UBUNTU_SNAPSHOT=20261002T000000Z
 
 LABEL npa.tool="genesis" \
       npa.version="${GENESIS_VERSION}" \
       npa.image.flavor="sm80-sm90-sm100-sm103-sm120" \
-      npa.base.profile="cuda13-workbench" \
       org.opencontainers.image.revision="${NPA_SOURCE_SHA}"
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -38,7 +35,33 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
     NPA_SKIP_EAGER_IMPORTS=1
 
-SHELL ["/bin/bash", "-lc"]
+COPY --chmod=0755 docker/workbench/common/install_python312_jammy.sh /usr/local/bin/install-python312-jammy
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential \
+      ca-certificates \
+      cmake \
+      curl \
+      ffmpeg \
+      git \
+      libegl1 \
+      libffi-dev \
+      libgl1 \
+      libglib2.0-0 \
+      libglvnd0 \
+      libsm6 \
+      libssl-dev \
+      libx11-6 \
+      libxext6 \
+      libxrender1 \
+      ninja-build \
+      pkg-config \
+      python3-dev \
+      python3-pip \
+      python3-venv \
+      wget \
+    && install-python312-jammy \
+    && rm -rf /var/lib/apt/lists/*
 
 USER root
 
@@ -52,12 +75,6 @@ RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu; \
     groupadd -g 992 render 2>/dev/null || true; \
     usermod -aG video,render ubuntu
 
-# npa-base force-purges linux-libc-dev in its final hardening layer. Restore
-# build headers only while native dependencies install; the final layer purges
-# them again. Its Python is the base's audited Python 3.11 virtual environment.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends --fix-broken
-
 COPY --chmod=0644 docker/workbench/curobo/remove_scikit_image_recipe.py \
     /opt/genesis/remove-scikit-image-recipe.py
 COPY --chmod=0644 docker/workbench/genesis/prepare_public_runtime.py \
@@ -70,21 +87,18 @@ COPY --chmod=0644 docker/workbench/common/envgen_compat/tetgen.py \
 USER ubuntu
 WORKDIR /opt/genesis
 
-# Keep the base's CUDA 13/Torch 2.13 environment intact.  Genesis 0.4.6's
-# supported LeRobot 0.4.4 closure declares torch <2.11, so it belongs in its
-# own Python 3.11 venv rather than silently downgrading the shared Blackwell
-# runtime.  The final runtime selects this venv explicitly through PATH and
-# NPA_BAKED_PYTHON.
-RUN python3.11 -m venv "${GENESIS_VENV}"
-
-# Keep the publicly redistributable Genesis capability intentionally narrow:
-# native rigid Panda/Box and ACT only. The exact metadata/source correction and
-# CPU round trip below fail closed if an upstream wheel changes.
-RUN python -m pip install --upgrade pip setuptools wheel \
-    && python -m pip install --no-binary imageio-ffmpeg \
+# Keep the reviewed scikit-image 0.25.2 source correction in this installation
+# layer so the embedded recipe never reaches an ancestor image layer.
+RUN python3.12 -m venv /opt/genesis/venv \
+    && /opt/genesis/venv/bin/python -m pip install --upgrade pip setuptools wheel \
+    && /opt/genesis/venv/bin/pip install \
+      "torch==${TORCH_VERSION}" \
+      "torchvision==${TORCHVISION_VERSION}" \
+      --index-url https://download.pytorch.org/whl/cu124 \
+    && /opt/genesis/venv/bin/pip install --no-binary imageio-ffmpeg \
       "genesis-world==${GENESIS_VERSION}" \
       "imageio-ffmpeg==0.6.0" \
-      "scikit-image==0.26.0" \
+      "scikit-image==0.25.2" \
       "rsl-rl-lib==${RSL_RL_VERSION}" \
       "moviepy @ https://github.com/Zulko/moviepy/archive/97316f37f6a8d3843abfb53eba8f3bb0ea46a008.tar.gz#sha256=6bef8575b091f6a7342ed271ff5dba97dbb07255df0a5b81fec38f8248b143d9" \
       "pillow>=13.0.0,<14.0" \
@@ -101,29 +115,32 @@ RUN python -m pip install --upgrade pip setuptools wheel \
       "boto3==1.42.91" \
       "jinja2==3.1.6" \
       "pyarrow==24.0.0" \
-    && python -m pip install --no-cache-dir --no-deps --upgrade \
-      "pillow>=13.0.0,<14.0" "fsspec==2026.6.0" \
-    && python /opt/genesis/prepare-public-runtime.py \
-      --site-packages /opt/genesis/venv/lib/python3.11/site-packages --check-only \
-    && python /opt/genesis/prepare-public-policies.py \
-      --site-packages /opt/genesis/venv/lib/python3.11/site-packages --check-only \
-    && python -m pip uninstall -y tetgen diffusers wandb torchcodec transformers peft \
-    && python /opt/genesis/prepare-public-runtime.py \
-      --site-packages /opt/genesis/venv/lib/python3.11/site-packages \
+    && /opt/genesis/venv/bin/pip install --no-cache-dir --no-deps --upgrade "pillow>=13.0.0,<14.0" \
+    && /opt/genesis/venv/bin/pip install --no-cache-dir --no-deps --upgrade "fsspec==2026.6.0" \
+    && /opt/genesis/venv/bin/python /opt/genesis/prepare-public-runtime.py \
+      --site-packages /opt/genesis/venv/lib/python3.12/site-packages --check-only \
+    && /opt/genesis/venv/bin/python /opt/genesis/prepare-public-policies.py \
+      --site-packages /opt/genesis/venv/lib/python3.12/site-packages --check-only \
+    && /opt/genesis/venv/bin/pip uninstall -y tetgen diffusers wandb torchcodec \
+    && /opt/genesis/venv/bin/python /opt/genesis/prepare-public-runtime.py \
+      --site-packages /opt/genesis/venv/lib/python3.12/site-packages \
       > /opt/genesis/public-runtime-dependencies.json \
-    && python /opt/genesis/prepare-public-policies.py \
-      --site-packages /opt/genesis/venv/lib/python3.11/site-packages \
+    && /opt/genesis/venv/bin/python /opt/genesis/prepare-public-policies.py \
+      --site-packages /opt/genesis/venv/lib/python3.12/site-packages \
       > /opt/genesis/public-policy-source.json \
     && printf '%s\n' /opt/genesis/compat \
-      > /opt/genesis/venv/lib/python3.11/site-packages/npa-genesis-compat.pth \
-    && python -m pip check \
+      > /opt/genesis/venv/lib/python3.12/site-packages/npa-genesis-compat.pth \
+    && /opt/genesis/venv/bin/pip check \
     && test -z "$(find /opt/genesis/venv -type f \
       -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)" \
-    && python -c 'import imageio_ffmpeg; assert imageio_ffmpeg.get_ffmpeg_exe() == "/usr/bin/ffmpeg"' \
-    && python /opt/genesis/remove-scikit-image-recipe.py \
-      --site-packages /opt/genesis/venv/lib/python3.11/site-packages \
+    && /opt/genesis/venv/bin/python -c \
+      'import imageio_ffmpeg; assert imageio_ffmpeg.get_ffmpeg_exe() == "/usr/bin/ffmpeg"' \
+    && /opt/genesis/venv/bin/python /opt/genesis/remove-scikit-image-recipe.py \
+      --site-packages /opt/genesis/venv/lib/python3.12/site-packages \
       --capability genesis \
-      > /opt/genesis/dependency-source-correction.json
+      > /opt/genesis/dependency-source-correction.json \
+    && /opt/genesis/venv/bin/python -c \
+      'import imageio_ffmpeg, os; p="/tmp/genesis-ffmpeg-probe.mp4"; w=imageio_ffmpeg.write_frames(p,(2,2),fps=1,macro_block_size=1); w.send(None); w.send(bytes([0,0,0]*4)); w.close(); r=imageio_ffmpeg.read_frames(p,pix_fmt="rgb24"); m=next(r); f=next(r); r.close(); assert m["size"] == (2,2) and len(f) == 12; os.unlink(p)'
 
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
@@ -131,13 +148,14 @@ COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
 COPY --chown=ubuntu:ubuntu docker/workbench/genesis/smoke_env.py /opt/npa/docker/workbench/genesis/smoke_env.py
 COPY --chown=ubuntu:ubuntu docker/workbench/genesis/smoke_functional.py /opt/npa/docker/workbench/genesis/smoke_functional.py
 COPY --chown=ubuntu:ubuntu docker/workbench/genesis/smoke_public_cpu.py /opt/npa/docker/workbench/genesis/smoke_public_cpu.py
+COPY --chown=ubuntu:ubuntu docker/workbench/common/install_npa_source_launcher.py /opt/npa/install_npa_source_launcher.py
 COPY --chmod=0555 docker/workbench/common/configure_ubuntu_snapshot.sh \
     /usr/local/bin/configure-ubuntu-snapshot
 COPY --chmod=0555 docker/workbench/common/install_workflow_runtime_prereqs.sh \
     /usr/local/bin/install-workflow-runtime-prereqs
 
 RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
-    && python -m pip install --no-deps -e /opt/npa \
+    && python /opt/npa/install_npa_source_launcher.py /opt/npa/src \
     && python - <<'PY'
 import os
 from importlib import metadata

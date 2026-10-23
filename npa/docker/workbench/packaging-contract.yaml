@@ -424,11 +424,11 @@ images:
     dockerfile: lerobot/Dockerfile
     tier: service
     ports: [8080]
-    passwordless_root_exemption: "SkyPilot Kubernetes bootstrap only; non-root runtime user, no default sshd service, and no baked credentials."
+    passwordless_root_exemption: "SkyPilot Kubernetes bootstrap only; non-root runtime user, SSH server binaries present but unstarted by default, and no baked credentials."
     redistribution: public
     notes: >-
       The generic 0.5.1 path builds the explicitly versioned NPA integration
-      0.5.1+npa.secure1 from hash-verified upstream commit
+      0.5.1+npa.secure2 from hash-verified upstream commit
       1396b9fab7aecddd10006c33c47a487ffdcb54b4. Native model source and the
       Apache-2.0 license are retained; reviewed dependency declarations select
       the patched Torch/Diffusers/W&B stack and matching TorchCodec decoder.
@@ -436,7 +436,8 @@ images:
       the receipt identifies that changed source file separately from native model code.
       Real offline default-camera, ACT, Diffusion, server and native logger gates precede
       publication. GPU/default acceptance remains a separate qualification.
-      Optional 0.6.0 and the additive B300 recipe retain distinct source scopes.
+      Optional 0.6.0 retains W&B and must pass its own image-security gate; it
+      and the additive B300 recipe retain distinct source scopes.
   lerobot-policy:
     dockerfile: lerobot-policy/Dockerfile
     tier: service

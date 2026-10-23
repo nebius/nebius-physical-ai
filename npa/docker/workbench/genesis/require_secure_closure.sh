@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
-# Shared fail-closed gate for the current Genesis/Envgen source lineage.
+# Fail-closed gate for the separately maintained SM120 Genesis variant.
 #
 # Do not turn this into a resolver override: the current recipe requires
 # Pillow 13 and fsspec 2026.6.0, while every supported LeRobot release that
 # supplies the native dataset/ACT path has incompatible declared ceilings.
-# A reviewed new upstream closure or separately licensed derivative must
-# replace this gate together with its real source-attested qualification.
+# A reviewed replacement must include real source-attested qualification.
 
 require_current_secure_genesis_closure() {
   cat >&2 <<'EOF'
-ERROR: current Genesis/Envgen image build is unavailable before any Docker build starts.
-The source-attested Genesis path requires Pillow>=13.0.0,<14.0 and
+ERROR: the additive SM120 Genesis image build is unavailable before any Docker build starts.
+The additive SM120 Genesis path requires Pillow>=13.0.0,<14.0 and
 fsspec==2026.6.0, but its native LeRobot dataset/ACT dependency has no
 supported secure closure: LeRobot 0.4.4 resolves datasets<5 (which caps
 fsspec below the required floor), while newer released LeRobot lines retain

@@ -13,7 +13,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[3]
 GENESIS = ROOT / "npa/docker/workbench/genesis"
 VARIANTS = (
-    ("Dockerfile", "0.26.0", "/opt/genesis/venv/lib/python3.11/site-packages"),
+    ("Dockerfile", "0.25.2", "/opt/genesis/venv/lib/python3.12/site-packages"),
     ("Dockerfile.sm120", "0.26.0", "/opt/genesis/venv/lib/python3.11/site-packages"),
 )
 CORRECTION = "/opt/genesis/remove-scikit-image-recipe.py"
@@ -77,7 +77,7 @@ def test_genesis_ffmpeg_contract_avoids_bundled_wheel_executables(
 
 
 @pytest.mark.parametrize("dockerfile,version,site_packages", VARIANTS)
-def test_genesis_recipes_require_python_311_and_a_source_attestation(
+def test_genesis_recipes_select_their_supported_python_and_bind_source(
     dockerfile, version, site_packages
 ):
     text = (GENESIS / dockerfile).read_text()
@@ -85,7 +85,12 @@ def test_genesis_recipes_require_python_311_and_a_source_attestation(
     assert "GENESIS_VENV=/opt/genesis/venv" in text
     assert "NPA_BAKED_PYTHON=/opt/genesis/venv/bin/python" in text
     assert "PATH=/opt/genesis/venv/bin:/opt/npa/venv/bin:$PATH" in text
-    assert 'RUN python3.11 -m venv "${GENESIS_VENV}"' in text
+    expected_venv = (
+        "RUN python3.12 -m venv /opt/genesis/venv"
+        if dockerfile == "Dockerfile"
+        else 'RUN python3.11 -m venv "${GENESIS_VENV}"'
+    )
+    assert expected_venv in text
     assert '"pillow>=13.0.0,<14.0"' in text
     assert "ARG NPA_SOURCE_SHA" in text
     assert 'org.opencontainers.image.revision="${NPA_SOURCE_SHA}"' in text
@@ -104,30 +109,38 @@ def test_genesis_recipes_enforce_the_fsspec_security_floor(dockerfile, _, __):
         if kind == "RUN" and '"genesis-world==' in body
     )
     assert '"fsspec==2026.6.0"' in installation
-    assert "python -m pip check" in installation
+    assert "pip check" in installation
 
 
-@pytest.mark.parametrize("dockerfile,_,__", VARIANTS)
-def test_genesis_recipes_require_an_explicit_source_attested_parent(dockerfile, _, __):
-    text = (GENESIS / dockerfile).read_text()
+def test_canonical_genesis_recipe_uses_a_pinned_cuda_base_and_output_attestation():
+    text = (GENESIS / "Dockerfile").read_text()
+    assert "FROM nvidia/cuda:12.4.1-devel-ubuntu22.04@sha256:" in text
+    assert "FROM ${BASE_IMAGE}" not in text
+    assert 'org.opencontainers.image.revision="${NPA_SOURCE_SHA}"' in text
+
+
+def test_sm120_genesis_recipe_keeps_its_source_attested_parent_contract():
+    text = (GENESIS / "Dockerfile.sm120").read_text()
     assert re.search(r"^ARG BASE_IMAGE$", text, re.MULTILINE)
     assert "FROM ${BASE_IMAGE}" in text
-    assert "ghcr.io/nebius/nebius-physical-ai/npa-base@" not in text
 
 
-def test_canonical_genesis_builder_rejects_a_parent_from_another_source(
-    tmp_path,
-):
-    """Do not relabel a stale local parent as a current-source Genesis build."""
+def test_canonical_genesis_builder_binds_the_checkout_source_to_the_image(tmp_path):
+    """The canonical build passes and verifies only the checked-out source SHA."""
 
     source_sha = subprocess.check_output(
         ["git", "rev-parse", "HEAD"], text=True, cwd=ROOT
     ).strip()
     docker = tmp_path / "docker"
-    docker.write_text("#!/bin/sh\nprintf '%s\\n' 'f'$(printf 'f%.0s' $(seq 1 39))\n")
+    docker.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$1\" = image ]; then printf '%s\\n' '" + source_sha + "'; exit 0; fi\n"
+        "if [ \"$1\" = build ]; then exit 0; fi\n"
+        "exit 99\n"
+    )
     docker.chmod(0o755)
     result = subprocess.run(
-        ["bash", str(GENESIS / "build.sh"), "--base-image", "local-base"],
+        ["bash", str(GENESIS / "build.sh"), "--tag", "dev-" + source_sha],
         cwd=ROOT,
         env={
             **os.environ,
@@ -138,16 +151,14 @@ def test_canonical_genesis_builder_rejects_a_parent_from_another_source(
         capture_output=True,
         text=True,
     )
-    assert result.returncode == 2
-    assert "BASE_IMAGE must carry org.opencontainers.image.revision=" in result.stderr
-    assert "found f" in result.stderr
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "npa-genesis:dev-" + source_sha
 
 
-@pytest.mark.parametrize("builder", ("build.sh", "build_sm120.sh"))
-def test_genesis_builders_refuse_the_unresolved_secure_closure_before_docker(
-    tmp_path: Path, builder: str
+def test_sm120_builder_refuses_the_unqualified_secure_closure_before_docker(
+    tmp_path: Path,
 ) -> None:
-    """A valid-looking parent must not trigger a known-impossible resolver."""
+    """The unrepaired additive SM120 path remains closed before Docker starts."""
 
     source_sha = subprocess.check_output(
         ["git", "rev-parse", "HEAD"], text=True, cwd=ROOT
@@ -161,7 +172,7 @@ def test_genesis_builders_refuse_the_unresolved_secure_closure_before_docker(
     )
     docker.chmod(0o755)
     result = subprocess.run(
-        ["bash", str(GENESIS / builder), "--base-image", "local-base"],
+        ["bash", str(GENESIS / "build_sm120.sh"), "--base-image", "local-base"],
         cwd=ROOT,
         env={
             **os.environ,
@@ -174,7 +185,7 @@ def test_genesis_builders_refuse_the_unresolved_secure_closure_before_docker(
     )
     assert result.returncode == 3
     assert (
-        "current Genesis/Envgen image build is unavailable before any Docker build starts"
+        "additive SM120 Genesis image build is unavailable before any Docker build starts"
         in result.stderr
     )
     assert "Pillow>=13.0.0,<14.0" in result.stderr
@@ -182,9 +193,12 @@ def test_genesis_builders_refuse_the_unresolved_secure_closure_before_docker(
     assert not invoked.exists()
 
 
-@pytest.mark.parametrize("builder", ("build.sh", "build_sm120.sh"))
+@pytest.mark.parametrize(
+    ("builder", "extra_args"),
+    (("build.sh", ()), ("build_sm120.sh", ("--base-image", "local-base"))),
+)
 def test_genesis_builders_reject_push_without_registry_before_docker(
-    tmp_path: Path, builder: str
+    tmp_path: Path, builder: str, extra_args: tuple[str, ...]
 ) -> None:
     """CLI misuse must not be obscured by parent inspection or closure refusal."""
 
@@ -199,8 +213,7 @@ def test_genesis_builders_reject_push_without_registry_before_docker(
         [
             "bash",
             str(GENESIS / builder),
-            "--base-image",
-            "local-base",
+            *extra_args,
             "--push",
         ],
         cwd=ROOT,
@@ -270,10 +283,7 @@ def test_genesis_recipes_apply_the_same_public_act_runtime_boundary(
     assert f"--site-packages {site_packages} --check-only" in installation
     assert "prepare-public-runtime.py" in installation
     assert "prepare-public-policies.py" in installation
-    assert (
-        "pip uninstall -y tetgen diffusers wandb torchcodec transformers peft"
-        in installation
-    )
+    assert "pip uninstall -y tetgen diffusers wandb torchcodec" in installation
     assert "public-runtime-dependencies.json" in installation
     assert "public-policy-source.json" in installation
     assert "npa-genesis-compat.pth" in installation

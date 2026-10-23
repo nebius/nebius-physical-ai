@@ -36,7 +36,9 @@ def _build_text(tool: str) -> str:
     assert dockerfile.is_file(), dockerfile
     text = dockerfile.read_text(encoding="utf-8")
     parts = [text]
-    for script in sorted((DOCKER_ROOT / "common").glob("*.sh")):
+    scripts = [*sorted((DOCKER_ROOT / "common").glob("*.sh"))]
+    scripts.extend(sorted(dockerfile.parent.glob("*.sh")))
+    for script in scripts:
         # Only scripts this Dockerfile actually invokes count towards the guard.
         if script.name in text:
             parts.append(script.read_text(encoding="utf-8"))
@@ -212,7 +214,15 @@ def test_openssh_install_layers_do_not_bake_reusable_host_keys() -> None:
             )
             assert instruction.index("openssh-server") < instruction.index(cleanup)
 
-    for installer in sorted((DOCKER_ROOT / "common").glob("*.sh")):
+    installers = [*sorted((DOCKER_ROOT / "common").glob("*.sh"))]
+    installers.extend(sorted((DOCKER_ROOT / "lerobot").glob("*.sh")))
+    for installer in installers:
+        if installer.parent != DOCKER_ROOT / "common":
+            dockerfile = installer.parent / "Dockerfile"
+            if not dockerfile.is_file() or installer.name not in dockerfile.read_text(
+                encoding="utf-8"
+            ):
+                continue
         text = installer.read_text(encoding="utf-8")
         if "apt-get install" not in text or "openssh-server" not in text:
             continue
@@ -431,7 +441,7 @@ def test_genesis_workflow_images_pin_the_bootstrap_closure(
     assert "ubuntu:24.04" in snapshot_config
     assert "ubuntu:22.04" in installer
     assert 'linux_libc_dev_version="5.15.0-198.208"' in installer
-    assert 'linux_libc_dev_version="6.8.0-139.139"' in installer
+    assert 'linux_libc_dev_version="6.8.0-147.147"' in installer
     assert "apt-get --fix-broken install -y --no-install-recommends" in installer
     assert '"linux-libc-dev=${linux_libc_dev_version}"' in installer
     assert "sudo" in installer and "rsync" in installer

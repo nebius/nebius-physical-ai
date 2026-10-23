@@ -1,46 +1,28 @@
 # Public Genesis runtime
 
-The canonical recipe requires an explicitly selected, source-attested CUDA 13
-Python 3.11 workbench base and retains Genesis 0.4.6. It packages rigid Panda/Box simulation, teacher training,
+The canonical recipe uses a digest-pinned CUDA 12.4 base, Python 3.12, and
+records the exact NPA source SHA in its OCI revision label. It retains Genesis 0.4.6 and packages rigid Panda/Box simulation, teacher training,
 checkpoint export, camera-demo conversion, native LeRobotDataset reading through
 PyAV, and ACT student dependencies. A rebuilt candidate must pass its normal
 publication gates and real GPU teacher/export/camera qualification before it
 can become a public default. The old release remains quarantined.
 
-The base's Python 3.11/Torch 2.13 CUDA 13 runtime stays intact. Genesis instead
-creates `/opt/genesis/venv` with Python 3.11: its retained LeRobot 0.4.4
-upstream contract requires `torch<2.11`, which cannot safely replace the
-source-attested base runtime. The image selects that dedicated environment with
-both `PATH` and `NPA_BAKED_PYTHON`. Isolation prevents the LeRobot resolver
-from downgrading the base runtime; it is neither GPU/hardware compatibility
-evidence nor a substitute for a complete secure dependency closure. EnvGen is
-now a separate NPA-only role; it does not inherit this unresolved
-policy/dataset environment.
+Genesis creates `/opt/genesis/venv` with Python 3.12 and selects it with both
+`PATH` and `NPA_BAKED_PYTHON`. Its native LeRobot/ACT closure is contained
+within the Genesis role; the dedicated EnvGen role has its own NPA-only runtime
+and does not inherit Genesis or LeRobot dependencies.
 
 ## Current source build boundary
 
-The current source-attested recipe does **not** have a supported secure
-LeRobot/Datasets closure, so it must not be presented as a completed manual
-build path. Its `lerobot==0.4.4` dependency resolves `datasets==4.8.5`, whose
-declared `fsspec[http] <=2026.2.0` ceiling conflicts with the enforced
-`fsspec==2026.6.0` security floor. Lowering that floor, ignoring the conflict,
-or relabelling a historical image is not a repair.
-
-Newer released LeRobot lines require Python 3.12 but retain incompatible
-Datasets, Pillow, and Torch ceilings; the official upstream main branch has the
-same boundary. The existing RoboCasa-specific LeRobot derivative is qualified
-only for that image's ACT evaluation and is not Genesis evidence. Accordingly,
-the commands below are a source-attested build sequence to use only after a
-separately reviewed, licensed, source-bound closure has passed its own
-dependency, CPU-functional, image-security, and GPU qualification. They do not
-currently produce a qualified Genesis image.
-
-The canonical Genesis and SM120 Genesis build wrappers refuse at this boundary
-before invoking any Docker build. The refusal is deliberate operator feedback,
-not a fallback to a historical image: it prevents an opaque resolver failure
-and preserves the source-attested parent requirement. The independent EnvGen
-role is documented in `../sim2real-envgen/README.md`; it cannot be used as
-Genesis evidence.
+The canonical wrapper builds the source-attested Python 3.12 recipe directly
+from its digest-pinned CUDA base. It rejects a missing or mismatched source SHA
+before build and verifies the resulting OCI revision label before it can push.
+This fixes the old Python 3.11 ancestor path; it does not itself qualify GPU
+physics, policy quality, camera rendering, hardware transfer, or release
+promotion. The additive SM120 recipe remains a separate Python 3.11/CUDA 13
+variant and retains its explicit source-attested-parent and secure-closure gate.
+The independent EnvGen role is documented in `../sim2real-envgen/README.md`;
+EnvGen evidence is not Genesis evidence.
 
 The public recipe excludes TetGen's AGPL distribution and rejects volume
 tetrahedralization through a repository-owned import shim. Rigid-body scenes
@@ -84,25 +66,18 @@ backend, constructs ACT, performs an action, and saves/reloads the checkpoint
 and normalization processors through the NPA student loader. It prevents
 network fetches and unexpected excluded-package imports. This smoke proves
 dependency behavior; it does not prove Genesis GPU physics, policy quality or
-camera rendering. Both `Dockerfile` and `Dockerfile.sm120` accept an explicitly
-selected Python 3.11 parent and record the exact NPA source SHA. Build the
-canonical base recipe first and pass its current-source local tag (or image ID):
+camera rendering. The canonical `Dockerfile` uses Python 3.12 and records the
+exact NPA source SHA. Build it directly from the checked-out source:
 
 ```bash
 SOURCE_SHA="$(git rev-parse HEAD)"
-npa/docker/workbench/base/cuda13-blackwell/build.sh --tag "dev-${SOURCE_SHA}"
-BASE_IMAGE="npa-base:cuda13-blackwell-dev-${SOURCE_SHA}"
-BASE_SHA="$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "${BASE_IMAGE}")"
-test "${BASE_SHA}" = "${SOURCE_SHA}"
-npa/docker/workbench/genesis/build.sh \
-  --base-image "${BASE_IMAGE}" --tag "dev-${SOURCE_SHA}"
+NPA_SOURCE_SHA="${SOURCE_SHA}" npa/docker/workbench/genesis/build.sh \
+  --tag "dev-${SOURCE_SHA}"
 
 ```
 
-For a remote base substitute, use an immutable digest and make the same label
-comparison before invoking the wrapper. Historical catalog digests are not
-current-source parents or fallbacks for this sequence. `sim2real-build.sh` no
-longer routes EnvGen through this unresolved
-image: it builds a source-attested EnvGen role from the freshly built Cosmos3
-reason parent. Neither Genesis's CPU proof nor EnvGen's role smoke qualifies
-Genesis GPU physics, policy quality, or hardware transfer.
+The wrapper's local-label check is build provenance only. `sim2real-build.sh`
+does not route EnvGen through Genesis: it builds a source-attested EnvGen role
+from the freshly built Cosmos3 reason parent. Neither Genesis's CPU proof nor
+EnvGen's role smoke qualifies Genesis GPU physics, policy quality, or hardware
+transfer.

@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import importlib.util
 from pathlib import Path
+from types import CodeType, FunctionType
 
 from packaging.requirements import Requirement
 from packaging.version import Version
@@ -13,9 +14,12 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
 RECIPE = ROOT / "npa/docker/workbench/lerobot"
+RUNTIME_CONSTRAINT_NAMES = frozenset(
+    {"torch", "torchvision", "torchcodec", "diffusers", "datasets", "wandb"}
+)
 
 
-def _integration_bounds() -> dict[str, str]:
+def _secure_wheel_bounds() -> dict[str, str]:
     path = RECIPE / "prepare_secure_wheel.py"
     spec = importlib.util.spec_from_file_location("secure_lerobot", path)
     assert spec is not None and spec.loader is not None
@@ -27,10 +31,14 @@ def _integration_bounds() -> dict[str, str]:
     }
 
 
-# The wheel's rewritten bounds are the source of truth; stock upstream bounds
-# differ. Reading them here prevents the test fixture from drifting from the
-# wheel metadata it is meant to validate.
-INTEGRATION = _integration_bounds()
+# The post-install constraints deliberately govern only the native runtime ABI.
+# Security-only metadata rewrites remain inside the hash-locked secure wheel so
+# they cannot alter the separately accepted runtime image manifest.
+INTEGRATION = {
+    name: requirement
+    for name, requirement in _secure_wheel_bounds().items()
+    if name in RUNTIME_CONSTRAINT_NAMES
+}
 
 
 def _check_constraints(text):
@@ -57,37 +65,39 @@ def _check_constraints(text):
 def test_default_dependencies_identify_secure_integration_and_decoder_abi():
     _check_constraints((RECIPE / "default-runtime-requirements.txt").read_text())
     recipe = (RECIPE / "Dockerfile").read_text()
-    assert "--constraint /opt/lerobot/default-constraints.txt" in recipe
+    lock = (RECIPE / "requirements-051.lock").read_text()
+    assert "--require-hashes --no-deps -r /opt/lerobot/requirements-051.lock" in recipe
+    assert "lerobot==0.5.1+npa.secure2" in lock
+    assert "torch==2.13.0" in lock
+    assert "torchcodec==0.16.0" in lock
     optional_branch, default_branch = recipe.split(
         'elif [ "${LEROBOT_VERSION}" = "0.5.1" ]; then', 1
     )
-    default_branch = default_branch.split("else", 1)[0]
-    assert "pip uninstall -y wandb" in optional_branch
+    assert "pip uninstall -y wandb" not in optional_branch
     assert "pip uninstall -y wandb" not in default_branch
-    check = "/opt/lerobot/venv/bin/pip check"
-    assert check not in optional_branch
-    assert check in default_branch
     assert '"torch==2.12.1"' not in recipe
     assert '"diffusers>=0.38.0"' not in recipe
+    check = "/opt/lerobot/venv/bin/pip check"
     assert recipe.count(check) == 1
-    assert default_branch.index(check) > default_branch.index(
-        "dependency-source-correction.json"
-    )
+    assert recipe.index(check) > recipe.index("Unsupported LeRobot package version")
     assert "COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa" not in recipe
-    for copied_path in ("__init__.py", "server", "smoke"):
-        assert (
-            f"COPY --chown=ubuntu:ubuntu src/npa/{copied_path} /opt/npa/src/npa/"
-            in recipe
-        )
+    expected_copies = (
+        ("src/npa/__init__.py", "/opt/npa/src/npa/__init__.py"),
+        ("src/npa/clients/__init__.py", "/opt/npa/src/npa/clients/__init__.py"),
+        ("src/npa/clients/storage.py", "/opt/npa/src/npa/clients/storage.py"),
+        ("src/npa/server", "/opt/npa/src/npa/server"),
+        ("src/npa/smoke", "/opt/npa/src/npa/smoke"),
+    )
+    for source_path, target_path in expected_copies:
+        assert f"COPY --chown=ubuntu:ubuntu {source_path} {target_path}" in recipe
     assert (
-        "COPY --chown=ubuntu:ubuntu "
-        "src/npa/clients/__init__.py src/npa/clients/storage.py "
-        "/opt/npa/src/npa/clients/"
-    ) in recipe
+        "COPY --chown=ubuntu:ubuntu src/npa/clients /opt/npa/src/npa/clients"
+        not in recipe
+    )
     assert "stage's own NPA install" in recipe
     assert "shipping it here would make the repair's import" in recipe
     assert "prepare-secure-wheel.py" in recipe
-    assert "lerobot-0.5.1+npa.secure1-py3-none-any.whl" in recipe
+    assert "lerobot==0.5.1+npa.secure2" in lock
     assert (
         'ENTRYPOINT ["/opt/lerobot/venv/bin/python", "-m", "npa.server.app"]' in recipe
     )
@@ -95,6 +105,12 @@ def test_default_dependencies_identify_secure_integration_and_decoder_abi():
     assert recipe.index("ENV PATH=/usr/bin:$PATH") < recipe.index(
         'RUN if [ "${LEROBOT_VERSION}" = "0.5.1" ]; then'
     )
+
+
+def test_security_only_metadata_edges_do_not_become_runtime_manifest_pins():
+    bounds = _secure_wheel_bounds()
+    assert {"setuptools", "transformers"} <= set(bounds)
+    assert {"setuptools", "transformers"}.isdisjoint(INTEGRATION)
 
 
 @pytest.mark.parametrize(
@@ -125,6 +141,33 @@ def test_build_gate_uses_native_default_decoder():
         "video_backend" not in {arg.arg for arg in call.keywords}
         for call in dataset_calls
     )
+    functions = {
+        node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)
+    }
+    decoder_contract = functions["_assert_native_decoder_contract"]
+    assertions = [
+        ast.unparse(node.test)
+        for node in decoder_contract.body
+        if isinstance(node, ast.Assert)
+    ]
+    assert "codec == 'torchcodec'" in assertions
+    assert "version == '0.16.0'" in assertions
+    native_dataset = functions["_native_dataset"]
+    contract_call = next(
+        node
+        for node in ast.walk(native_dataset)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_assert_native_decoder_contract"
+    )
+    dataset_create = next(
+        node
+        for node in ast.walk(native_dataset)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "create"
+    )
+    assert contract_call.lineno < dataset_create.lineno
     assert "loss.backward()" in source and "optimizer.step()" in source
     assert "changed > 0" in source
     assert "ACTPolicy.from_pretrained(checkpoint)" in source
@@ -143,6 +186,42 @@ def test_build_gate_uses_native_default_decoder():
         and call.func.id == "_http_request"
     }
     assert {("GET", "/health"), ("POST", "/serve"), ("POST", "/infer")} <= http_calls
+
+
+@pytest.mark.parametrize(
+    "codec,version",
+    [("pyav", "0.16.0"), ("torchcodec", "0.15.0")],
+)
+def test_native_decoder_contract_rejects_fallback_or_wrong_version(codec, version):
+    """The offline contract must reject PyAV fallback and an ABI-drifted codec."""
+
+    source = (RECIPE / "smoke_native_cpu.py").read_text()
+    tree = ast.parse(source)
+    decoder_contract = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "_assert_native_decoder_contract"
+    )
+    # Load only the contract body to avoid importing the vendor ML stack.
+    module_code = compile(
+        ast.Module(body=[decoder_contract], type_ignores=[]), "<contract>", "exec"
+    )
+    function_code = next(
+        constant
+        for constant in module_code.co_consts
+        if isinstance(constant, CodeType) and constant.co_name == decoder_contract.name
+    )
+    contract = FunctionType(function_code, {})
+    with pytest.raises(AssertionError):
+        contract(codec, version)
+
+
+def test_run_smoke_uses_explicit_lerobot_venv_interpreter():
+    smoke = (RECIPE / "run_smoke.sh").read_text()
+    assert smoke.count("/opt/lerobot/venv/bin/python -m npa.smoke.") == 2
+    assert "\npython -m npa.smoke.test_lerobot_env" not in smoke
+    assert "\npython -m npa.smoke.test_lerobot_functional" not in smoke
 
 
 def test_native_server_startup_has_a_bounded_wait():

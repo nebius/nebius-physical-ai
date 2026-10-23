@@ -471,6 +471,7 @@ def test_regen_preserves_strict_heldout_policy_evidence(
     class FakeResult:
         output_rrd_path = str(local_dir / "reports" / "sim2real.rrd")
         heldout_frame_count = 4
+        heldout_env_count = 0
         rollout_count = 0
         frame_count = 0
         heldout_env_count = 0
@@ -2215,6 +2216,7 @@ def test_stage14_component_digest_is_refreshed_after_regen_mutation(
     class Result:
         output_rrd_path = str(output_rrd)
         heldout_frame_count = 4
+        heldout_env_count = 0
         rollout_count = 1
         frame_count = 4
 

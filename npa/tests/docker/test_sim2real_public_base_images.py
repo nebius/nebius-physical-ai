@@ -12,6 +12,27 @@ ROOT = Path(__file__).resolve().parents[3]
 WORKBENCH = ROOT / "npa" / "docker" / "workbench"
 
 
+def test_cosmos_and_genesis_never_commit_wheel_bundled_ffmpeg() -> None:
+    """The dependency layer itself must retain only the system FFmpeg route."""
+    for tool in ("cosmos", "genesis"):
+        text = (WORKBENCH / tool / "Dockerfile").read_text()
+        assert "PIP_NO_CACHE_DIR=1" in text
+        assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in text
+        instructions = re.split(r"(?m)^(?=[A-Z]+ )", text)
+        installs = [
+            line
+            for line in instructions
+            if re.search(r"pip install --no-binary(?:=| )imageio-ffmpeg\b", line)
+        ]
+        assert len(installs) == 1
+        install = installs[0]
+        assert 'test -z "$(find' in install
+        assert "imageio_ffmpeg/binaries/ffmpeg*" in install
+        assert "imageio_ffmpeg.get_ffmpeg_exe()" in install
+        assert "imageio_ffmpeg.write_frames(" in install
+        assert "imageio_ffmpeg.read_frames(" in install
+
+
 def test_generic_torch_images_require_patched_versions_and_complete_dependency_checks():
     for relative, floors in (
         (
@@ -123,7 +144,7 @@ def test_envgen_flattens_a_dedicated_exact_source_runtime() -> None:
         encoding="utf-8"
     )
     assert "sim2real-envgen-requirements.txt" in text
-    assert 'python3.11 -m venv "${ENVGEN_VENV}"' in text
+    assert 'python3.12 -m venv "${ENVGEN_VENV}"' in text
     assert '"${ENVGEN_VENV}/bin/python" -m pip check' in text
     assert "npa-exact-source.pth" in text
     assert "fsspec==2026.6.0" in (
@@ -167,7 +188,7 @@ def test_genesis_workflow_runtime_upgrades_fixed_kernel_headers() -> None:
     assert "ubuntu:24.04" in snapshot_config
     assert "configure-ubuntu-snapshot" in installer
     assert 'linux_libc_dev_version="5.15.0-198.208"' in installer
-    assert 'linux_libc_dev_version="6.8.0-139.139"' in installer
+    assert 'linux_libc_dev_version="6.8.0-147.147"' in installer
     assert '"linux-libc-dev=${linux_libc_dev_version}"' in installer
     for relative, snapshot in (
         ("sim2real-envgen/Dockerfile", "20261009T000000Z"),

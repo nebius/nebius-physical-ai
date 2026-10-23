@@ -1,6 +1,7 @@
 .coverage
 .pytest_cache/
 .venv/
+.venv-local/
 __pycache__/
 *.py[cod]
 **/__pycache__/

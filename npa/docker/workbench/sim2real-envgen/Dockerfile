@@ -3,7 +3,7 @@
 # would make an unrelated upstream incompatibility block this role.  The
 # source-attested parent supplies only the CUDA/Kubernetes operating-system
 # contract; this Dockerfile removes inherited NPA bytes and builds the exact
-# secure Python 3.11 EnvGen closure below.
+# secure Python 3.12 EnvGen closure below.
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE} AS sanitized
 
@@ -41,8 +41,8 @@ COPY --chmod=0755 docker/workbench/common/install_workflow_runtime_prereqs.sh \
 RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" "${ENVGEN_LINUX_LIBC_DEV_VERSION}" \
     && test "$(dpkg-query --show --showformat='${Version}' linux-libc-dev)" = "${ENVGEN_LINUX_LIBC_DEV_VERSION}" \
     && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
-    && python3.11 -c 'import sys; assert sys.version_info[:2] == (3, 11), sys.version' \
-    && python3.11 -m venv "${ENVGEN_VENV}" \
+    && python3.12 -c 'import sys; assert sys.version_info[:2] == (3, 12), sys.version' \
+    && python3.12 -m venv "${ENVGEN_VENV}" \
     && "${ENVGEN_VENV}/bin/python" -m pip install --no-cache-dir --upgrade 'pip==26.2.0' 'setuptools==83.0.0' \
     && "${ENVGEN_VENV}/bin/python" -m pip install --no-cache-dir --no-deps \
       -r /opt/npa/sim2real-envgen-requirements.txt \
