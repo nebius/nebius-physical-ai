@@ -553,13 +553,36 @@ def download_verified(
 
 
 def safe_extract_zip(archive: Path, destination: Path) -> None:
+    """Extract a ZIP archive without allowing ambiguous or escaping members.
+
+    Args:
+        archive: Downloaded archive whose contents have already been verified.
+        destination: Directory into which validated members are written.
+    Returns:
+        None.
+    Raises:
+        RuntimeError: An archive member escapes or duplicates a destination path.
+    """
     root = destination.resolve()
     with zipfile.ZipFile(archive) as bundle:
+        members: list[tuple[zipfile.ZipInfo, Path]] = []
+        seen: set[Path] = set()
         for member in bundle.infolist():
             target = (destination / member.filename).resolve()
             if root not in target.parents and target != root:
                 raise RuntimeError(f"unsafe asset archive member: {member.filename}")
-        bundle.extractall(destination)
+            if target in seen:
+                raise RuntimeError(f"duplicate asset archive member: {member.filename}")
+            seen.add(target)
+            members.append((member, target))
+
+        for member, target in members:
+            if member.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with bundle.open(member) as source, target.open("xb") as output:
+                shutil.copyfileobj(source, output)
 
 
 def safe_extract_client(archive: Path, destination: Path) -> None:

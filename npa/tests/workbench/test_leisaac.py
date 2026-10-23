@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tarfile
 import threading
+import zipfile
 from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -68,6 +69,21 @@ def _client_archive(path: Path, client_js: bytes) -> None:
             member = tarfile.TarInfo(name)
             member.size = len(content)
             bundle.addfile(member, io.BytesIO(content))
+
+
+def test_safe_extract_zip_rejects_duplicate_members(tmp_path: Path) -> None:
+    server = _session_server_module()
+    archive = tmp_path / "assets.zip"
+    destination = tmp_path / "assets"
+    with pytest.warns(UserWarning, match="Duplicate name"):
+        with zipfile.ZipFile(archive, mode="w") as bundle:
+            bundle.writestr("scene/scene.usd", b"first")
+            bundle.writestr("scene/scene.usd", b"replacement")
+
+    with pytest.raises(RuntimeError, match="duplicate asset archive member"):
+        server.safe_extract_zip(archive, destination)
+
+    assert not destination.exists()
 
 
 def test_runtime_datachannel_offer_is_private_authenticated_and_run_bound(
