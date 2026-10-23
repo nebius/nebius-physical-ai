@@ -115,9 +115,10 @@ The client requires Python 3.11+ to use
 The certifi floor is 2026.10.19, and CI also requires GitPython 3.2.1 and
 OpenTelemetry API 1.45.1. Scanner and CI uv pins require 0.13.4 to remove the
 [compromised emSign trust root](https://github.com/astral-sh/uv/security/advisories/GHSA-hq85-5cpj-mr62).
-The existing vendor Python 3.10 image adapters run from source through an
-explicit launcher; this does not install the full client distribution or relax
-its interpreter and dependency requirements. Image qualification remains separate
+The Genesis, Cosmos, and GR00T source recipes use Python 3.12 vendor
+environments with an explicit launcher for their NPA adapters. This launcher
+does not install the full client distribution or relax its interpreter and
+dependency requirements. Image qualification remains separate
 from the source dependency gate.
 `.github/dependabot.yml` checks application declarations, scanner, browser, and
 Actions dependencies daily and proposes version updates in one cross-ecosystem

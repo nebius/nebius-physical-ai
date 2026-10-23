@@ -12,6 +12,21 @@ and follow [installation](../docs/install.md) and
 The [command reference](../docs/cli/workbench.md) lists the installed tools;
 `npa workbench <tool> --help` exposes each tool's actual commands.
 
+Sim2Real's `rerun regen` and `rerun serve --local-record` operate on existing
+artifacts without resolving execution image defaults. Regeneration therefore
+remains available after an old runtime is quarantined. Executing new workloads,
+including `rerun heldout-only`, still requires qualified component images.
+For `rerun regen` and `rerun heldout-only`, explicit `--s3-bucket` and
+`--s3-endpoint` override their corresponding project coordinates. With
+`--project`, a complete isolated project record supplies the remaining bucket,
+endpoint, and client credentials; an unknown or incomplete record refuses rather
+than falling back to host credentials or environment settings. Without
+`--project`, the existing Sim2Real environment settings apply. For `workbench
+health sim2real`, `--project` applies when the selected checks include `s3`: it
+supplies the reachability-probe target and isolated credentials unless the
+corresponding S3 flag is explicit. It has no effect on selections without `s3`.
+See the [Sim2Real guide](../docs/workbench/guides/sim2real-workflow.md).
+
 Existing-project setup supports project-admin credentials. Agent setup,
 `provision-if-absent`, and direct `cluster up` share the same quota scope rules:
 only a tenant-level IAM denial permits fallback to the exact project's complete
@@ -821,7 +836,8 @@ Full-suite PRs retain smoke coverage in their shards; the early precheck runs
 guardrails once before those shards, and unsuccessful or cancelled shards no longer queue a coverage job.
 
 Application and CI dependency scans reject known vulnerabilities even when the
-same pin is already on `main`. Keep the AnyIO security floor at 4.14.2 or newer;
+same pin is already on `main`. Keep the AnyIO security floor at 4.14.2 and the
+certifi trust-store floor at 2026.10.19 or newer;
 update `npa/requirements-lock.txt` and regenerate CI pins when changing package
 requirements. `.github/dependabot.yml` checks Python, browser-test npm, and
 GitHub Actions dependencies daily and groups version updates into one

@@ -457,16 +457,20 @@ def test_project_bucket_is_normalized_for_image_dependent_config(
 
 
 @pytest.mark.parametrize(
-    "failure",
+    ("failure", "expected_detail"),
     [
-        ConfigError("unknown project alias"),
-        ProjectCredentialStoreError("malformed project credential record"),
+        (ConfigError("unknown project alias"), "unknown project alias"),
+        (
+            ProjectCredentialStoreError("malformed project credential record"),
+            "malformed project credential record",
+        ),
     ],
 )
 def test_selected_project_storage_failure_is_structured_health_result(
     diagnostic_spies: SimpleNamespace,
     monkeypatch: pytest.MonkeyPatch,
     failure: Exception,
+    expected_detail: str,
 ) -> None:
     select_project = Mock(side_effect=failure)
     monkeypatch.setattr(health, "_project_credentials", select_project)
@@ -495,7 +499,7 @@ def test_selected_project_storage_failure_is_structured_health_result(
     assert payload["selected_checks"] == ["s3"]
     assert payload["checks"] == [
         {
-            "details": [],
+            "details": [expected_detail],
             "name": "s3",
             "remedy": (
                 "Save a complete isolated storage record for --project, then rerun "
@@ -505,11 +509,53 @@ def test_selected_project_storage_failure_is_structured_health_result(
             "summary": "Configured project storage could not be resolved.",
         }
     ]
-    assert "unknown project alias" not in result.output
-    assert "malformed project credential record" not in result.output
+    assert expected_detail in result.output
     select_project.assert_called_once_with(
         "selected-project", diagnostic_spies.loaded.return_value
     )
+    diagnostic_spies.storage_factory.assert_not_called()
+    diagnostic_spies.execution.assert_not_called()
+    diagnostic_spies.image_inspector.assert_not_called()
+    diagnostic_spies.writes.assert_not_called()
+
+
+def test_selected_project_storage_failure_redacts_secret_from_structured_details(
+    diagnostic_spies: SimpleNamespace,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secret = "not-for-output"
+    monkeypatch.setattr(
+        health,
+        "_project_credentials",
+        Mock(
+            side_effect=ProjectCredentialStoreError(
+                f"invalid storage secret_key={secret}"
+            )
+        ),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "health",
+            "sim2real",
+            "--checks",
+            "s3",
+            "--project",
+            "selected-project",
+            "--s3-bucket",
+            "example-bucket",
+            "--s3-endpoint",
+            "https://explicit.example.invalid",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 1, result.output
+    payload = json.loads(result.output)
+    assert payload["checks"][0]["details"] == ["invalid storage secret_key=<redacted>"]
+    assert secret not in result.output
     diagnostic_spies.storage_factory.assert_not_called()
     diagnostic_spies.execution.assert_not_called()
     diagnostic_spies.image_inspector.assert_not_called()

@@ -74,6 +74,9 @@ _ROBOCASA_ACT_TRAINING_SOURCES = {
 _ROBOCASA_ACT_TRAINING_METADATA_SHA256 = (
     "7b016caee01368c6c25ff6c24dd7138605c9205ae5788f9752f12f84d8850162"
 )
+# The secured 0.5.1 wheel is a build provenance label for the upstream 0.5.1
+# command contract. It is deliberately not a new compatibility-manifest entry.
+_SECURED_LEROBOT_051_TRAINING_VERSION = "0.5.1+npa.secure1"
 
 # Request-supplied output directories are confined under this root so an
 # unauthenticated /feedback/train-step caller cannot write adapter checkpoints to
@@ -1020,6 +1023,8 @@ def build_lerobot_train_command(
 
 def _training_eval_argument(value: int, version: str | None, policy_type: str) -> str:
     if version != _ROBOCASA_ACT_TRAINING_VERSION:
+        if version == _SECURED_LEROBOT_051_TRAINING_VERSION:
+            version = "0.5.1"
         return train_env_eval_arg(value, version=version)
     if policy_type != "act":
         raise PolicyContainerError("The RoboCasa LeRobot derivative supports ACT only")
@@ -1096,7 +1101,10 @@ def _installed_training_version(policy_type: str) -> str:
             "LeRobot training package version is missing or invalid"
         )
     selected = os.environ.get(LEROBOT_VERSION_ENV, "").strip()
-    if selected and selected != installed:
+    selected_installed = (
+        "0.5.1" if installed == _SECURED_LEROBOT_051_TRAINING_VERSION else installed
+    )
+    if selected and selected != selected_installed:
         raise PolicyContainerError(
             f"Selected LeRobot version {selected!r} differs from installed {installed!r}"
         )
@@ -1104,7 +1112,7 @@ def _installed_training_version(policy_type: str) -> str:
         _verify_robocasa_training_runtime(distribution, policy_type)
     else:
         try:
-            resolve_lerobot_version(installed)
+            resolve_lerobot_version(selected_installed)
         except LeRobotVersionError as exc:
             raise PolicyContainerError(str(exc)) from exc
     return installed

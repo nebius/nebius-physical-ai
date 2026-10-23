@@ -63,60 +63,14 @@ PYPI_JSON = "https://pypi.org/pypi/lerobot/{version}/json"
 # (module, symbol, call-site provenance). symbol=None checks the module only.
 IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
     (
-        "lerobot.configs",
-        "FeatureType",
-        ("npa/src/npa/workbench/lerobot/policy_container.py",),
-    ),
-    (
-        "lerobot.policies.smolvla.configuration_smolvla",
-        "SmolVLAConfig",
-        ("npa/src/npa/workbench/lerobot/policy_container.py",),
-    ),
-    (
-        "lerobot.utils.constants",
-        "POLICY_POSTPROCESSOR_DEFAULT_NAME",
-        ("npa/src/npa/workbench/lerobot/policy_container.py",),
-    ),
-    (
-        "lerobot.utils.constants",
-        "POLICY_PREPROCESSOR_DEFAULT_NAME",
-        ("npa/src/npa/workbench/lerobot/policy_container.py",),
-    ),
-    (
-        "lerobot.utils.feature_utils",
-        "dataset_to_policy_features",
-        ("npa/src/npa/workbench/lerobot/policy_container.py",),
-    ),
-    (
-        "lerobot.datasets.lerobot_dataset",
-        "LeRobotDataset",
-        ("npa/src/npa/workflows/policy_training/turnkey_holdout.py",),
-    ),
-    (
         "lerobot.policies.factory",
-        "make_pre_post_processors",
-        (
-            "npa/src/npa/workflows/policy_training/turnkey_holdout.py",
-            "npa/src/npa/workflows/policy_training/turnkey_server.py",
-            "npa/src/npa/workbench/lerobot/policy_container.py",
-        ),
-    ),
-    (
-        "lerobot.policies.smolvla.modeling_smolvla",
-        "SmolVLAPolicy",
-        (
-            "npa/src/npa/workflows/policy_training/turnkey_holdout.py",
-            "npa/src/npa/workflows/policy_training/turnkey_server.py",
-            "npa/src/npa/workbench/lerobot/policy_container.py",
-        ),
+        "get_policy_class",
+        ("npa/src/npa/server/app.py",),
     ),
     (
         "lerobot.datasets.dataset_metadata",
         "LeRobotDatasetMetadata",
-        (
-            "npa/src/npa/workflows/policy_training/turnkey_holdout.py",
-            "npa/src/npa/workbench/lerobot/policy_container.py",
-        ),
+        ("npa/src/npa/workflows/policy_training/turnkey_holdout.py",),
     ),
     (
         "lerobot.datasets.factory",
@@ -180,6 +134,7 @@ IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
             "npa/demo/generate_observation.py",
             "npa/src/npa/workflows/behavior_challenge/comet_training_data.py",
             "npa/src/npa/workflows/lerobot_dataset.py",
+            "npa/src/npa/workflows/policy_training/turnkey_holdout.py",
             "npa/src/npa/workflows/policy_training/public_vla_verify.py",
         ),
     ),
@@ -259,6 +214,8 @@ IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
             "npa/src/npa/genesis/eval_student.py",
             "npa/src/npa/server/app.py",
             "npa/src/npa/workbench/robocasa/capabilities.py",
+            "npa/src/npa/workflows/policy_training/turnkey_holdout.py",
+            "npa/src/npa/workflows/policy_training/turnkey_server.py",
             "npa/src/npa/workflows/policy_training/public_vla_verify.py",
             "research/lerobot-deploy/training/profile_train.py",
         ),
@@ -300,6 +257,8 @@ IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
         "SmolVLAPolicy",
         (
             "npa/src/npa/genesis/eval_student.py",
+            "npa/src/npa/workflows/policy_training/turnkey_holdout.py",
+            "npa/src/npa/workflows/policy_training/turnkey_server.py",
             "npa/src/npa/workflows/policy_training/public_vla_verify.py",
         ),
     ),
@@ -324,18 +283,6 @@ IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
 # it may not remove one of these without breaking a call site.
 CALLABLE_PARAMS: tuple[tuple[str, str, tuple[str, ...], str], ...] = (
     (
-        "lerobot/policies/smolvla/modeling_smolvla.py",
-        "SmolVLAPolicy._get_action_chunk",
-        ("batch",),
-        "npa/workflows/policy_training/turnkey_server.py",
-    ),
-    (
-        "lerobot/envs/libero.py",
-        "LiberoEnv._format_raw_obs",
-        ("raw_obs",),
-        "npa/workflows/policy_training/turnkey_client.py",
-    ),
-    (
         "lerobot/policies/factory.py",
         "make_policy",
         ("cfg", "env_cfg", "ds_meta"),
@@ -346,6 +293,12 @@ CALLABLE_PARAMS: tuple[tuple[str, str, tuple[str, ...], str], ...] = (
         "make_pre_post_processors",
         ("policy_cfg", "pretrained_path"),
         "npa/server/app.py",
+    ),
+    (
+        "lerobot/policies/pretrained.py",
+        "PreTrainedPolicy.from_pretrained",
+        ("config",),
+        "npa/server/app.py (get_policy_class(...).from_pretrained)",
     ),
     (
         "lerobot/policies/utils.py",
@@ -364,6 +317,21 @@ CALLABLE_PARAMS: tuple[tuple[str, str, tuple[str, ...], str], ...] = (
         "make_optimizer_and_scheduler",
         ("cfg", "policy"),
         "profile_train.py",
+    ),
+)
+
+# These private methods are invoked positionally or wrapped with ``*args``.
+# Their parameter names are not an NPA contract, but their continued existence is.
+REQUIRED_CALLABLES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    (
+        "lerobot/policies/smolvla/modeling_smolvla.py",
+        "SmolVLAPolicy._get_action_chunk",
+        ("npa/src/npa/workflows/policy_training/turnkey_server.py",),
+    ),
+    (
+        "lerobot/envs/libero.py",
+        "LiberoEnv._format_raw_obs",
+        ("npa/src/npa/workflows/policy_training/turnkey_client.py",),
     ),
 )
 
@@ -404,7 +372,10 @@ B300_IMAGE_PINS: dict[str, str] = {
 MANIFEST_PIN_KEYS = {
     "torch_pin": "torch",
     "torchvision_pin": "torchvision",
+    "torchcodec_pin": "torchcodec",
     "diffusers_pin": "diffusers",
+    "datasets_pin": "datasets",
+    "wandb_pin": "wandb",
 }
 
 
@@ -664,7 +635,14 @@ def _declared_bounds(root: Path, extras: Iterable[str]) -> dict[str, str]:
     ]
     for req in applicable:
         package = canonicalize_name(req.name)
-        if package not in {"torch", "torchvision", "diffusers", "torchcodec"}:
+        if package not in {
+            "torch",
+            "torchvision",
+            "diffusers",
+            "torchcodec",
+            "datasets",
+            "wandb",
+        }:
             continue
         collected.setdefault(package, []).append(str(req.specifier))
     return {
@@ -845,6 +823,23 @@ def check_signatures(root: Path, report: Report) -> None:
     )
 
 
+def check_required_callables(root: Path, report: Report) -> None:
+    """Report private callables that NPA invokes positionally but no longer exist."""
+
+    missing = [
+        f"{dotted} not found in {relpath} <- {', '.join(provenance)}"
+        for relpath, dotted, provenance in REQUIRED_CALLABLES
+        if _function_params(root, relpath, dotted) is None
+    ]
+    report.add(
+        "callable-existence",
+        not missing,
+        "all positional/private callables still exist"
+        if not missing
+        else "; ".join(missing),
+    )
+
+
 def check_entry_points(root: Path, report: Report) -> None:
     available = _entry_points(root)
     missing = [ep for ep in REQUIRED_ENTRY_POINTS if ep not in available]
@@ -957,6 +952,17 @@ def check_cli_flags(
         if "pretrained_path" in policy_fields
         else "PreTrainedConfig.pretrained_path missing",
     )
+    report.add(
+        "policy-peft-flag",
+        "use_peft" in policy_fields,
+        "PreTrainedConfig.use_peft present"
+        if "use_peft" in policy_fields
+        else "PreTrainedConfig.use_peft missing",
+        # PolicyState treats this as optional metadata and takes the native
+        # saved-shape loader when it is absent. Keep the release audit useful
+        # without contradicting that supported fallback.
+        warn="use_peft" not in policy_fields,
+    )
 
     parser = root / "lerobot" / "configs" / "parser.py"
     has_path_key = parser.exists() and 'PATH_KEY = "path"' in parser.read_text(
@@ -1050,6 +1056,47 @@ def check_dependency_bounds(
         )
         return
 
+    if manifest_entry.get("package_source") == "npa-secure-integration":
+        constraint_path = (
+            REPO_ROOT
+            / "npa"
+            / "docker"
+            / "workbench"
+            / "lerobot"
+            / "default-runtime-requirements.txt"
+        )
+        expected: dict[str, str] = {}
+        invalid_constraints: list[str] = []
+        if constraint_path.exists():
+            for line in constraint_path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    try:
+                        requirement = Requirement(line)
+                        expected[canonicalize_name(requirement.name)] = _pin_floor(line)
+                    except (InvalidRequirement, InvalidVersion, ValueError) as exc:
+                        invalid_constraints.append(
+                            f"secure constraint {line!r} is not a supported pin ({exc})"
+                        )
+        if invalid_constraints:
+            report.add("manifest torch pins", False, "; ".join(invalid_constraints))
+            return
+        problems = [
+            f"{package}=={pinned} does not match secure constraint "
+            f"{expected.get(package, 'missing')}"
+            for package, pinned in sorted(pins.items())
+            if expected.get(package) != pinned
+        ]
+        report.add(
+            "manifest torch pins",
+            not problems,
+            "NPA secure integration pins match its reviewed runtime constraints; "
+            "stock PyPI bounds are intentionally not applied"
+            if not problems
+            else "; ".join(problems),
+        )
+        return
+
     problems = _conflicts(pins, bounds)
     report.add(
         "manifest torch pins",
@@ -1087,6 +1134,7 @@ def audit(version: str, cache_dir: Path, *, offline: bool) -> Report:
         return report
     check_imports(root, report)
     check_signatures(root, report)
+    check_required_callables(root, report)
     check_entry_points(root, report)
     check_dataset_format(root, report)
     check_policy_extras(root, report, manifest_entry)

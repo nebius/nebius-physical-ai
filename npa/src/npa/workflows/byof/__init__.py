@@ -1,9 +1,6 @@
-"""BYOF helpers with live infrastructure dependencies loaded on first use."""
-
-from __future__ import annotations
+"""Expose BYOF control-plane helpers without loading them in workload workers."""
 
 from importlib import import_module
-from typing import Any
 
 __all__ = [
     "ByofKubernetesTarget",
@@ -16,17 +13,18 @@ __all__ = [
 ]
 
 
-def __getattr__(name: str) -> Any:
-    """Load the legacy live-helper exports without burdening worker modules."""
+def __getattr__(name: str):
+    """Resolve a public control-plane helper only when explicitly requested.
 
+    Args:
+        name: Public helper name.
+    Returns:
+        The helper exported by the live infrastructure module.
+    Raises:
+        AttributeError: The requested name is not a public helper.
+    """
     if name not in __all__:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     value = getattr(import_module("npa.workflows.byof.live"), name)
     globals()[name] = value
     return value
-
-
-def __dir__() -> list[str]:
-    """Include lazy public helpers in interactive module discovery."""
-
-    return sorted({*globals(), *__all__})

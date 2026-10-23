@@ -75,6 +75,7 @@ RUN apt-get update \
 RUN useradd -m -s /bin/bash -u 1000 ubuntu \
     && printf 'ubuntu ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/99-npa-runtime-user \
     && chmod 0440 /etc/sudoers.d/99-npa-runtime-user \
+    && install -d -m 0755 -o root -g root /usr/share/doc/npa-fiftyone \
     && install -d -m 0755 -o ubuntu -g ubuntu \
       /opt/fiftyone \
       /opt/fiftyone/db \
@@ -83,6 +84,7 @@ RUN useradd -m -s /bin/bash -u 1000 ubuntu \
       /opt/fiftyone/smoke \
       /opt/fiftyone/venv \
       /opt/npa/docker/workbench/fiftyone \
+      /usr/share/doc/npa-fiftyone \
     && printf '%s\n' \
       'export FIFTYONE_VENV=/opt/fiftyone/venv' \
       'export PATH=/opt/fiftyone/venv/bin:$PATH' \
@@ -96,8 +98,6 @@ COPY --chown=ubuntu:ubuntu docker/workbench/fiftyone/mongodb-source-version.json
 COPY --chown=ubuntu:ubuntu docker/workbench/fiftyone/SOURCE.md /opt/fiftyone/mongodb-notices/SOURCE.md
 COPY --chown=ubuntu:ubuntu docker/workbench/fiftyone/verify_source.py /opt/npa/docker/workbench/fiftyone/verify_source.py
 
-# FiftyOne 1.22 uses Strawberry 0.316, whose ExecutionContext import requires
-# GraphQL Core 3.2. Keep the compatible wheel pinned by its upstream SHA-256.
 # Replace any wheel-provided database binary before this installation layer is
 # committed, so an older executable cannot survive in an ancestor layer.
 RUN python -m venv "${FIFTYONE_VENV}" \
@@ -113,12 +113,21 @@ RUN python -m venv "${FIFTYONE_VENV}" \
       "pillow==${PILLOW_VERSION}" \
       "paramiko==5.0.0" \
       "scikit-image==0.26.0" \
-    && mkdir -p /usr/share/doc/npa-fiftyone \
-    && python /opt/npa-remove-scikit-image-recipe.py \
+    && "${FIFTYONE_VENV}/bin/python" /opt/npa-remove-scikit-image-recipe.py \
       --site-packages "$(python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \
       --capability fiftyone \
-      > /usr/share/doc/npa-fiftyone/dependency-source-correction.json \
-    && curl --fail --location --silent --show-error \
+      > /opt/fiftyone/dependency-source-correction.json
+
+USER root
+
+RUN install -o root -g root -m 0644 \
+      /opt/fiftyone/dependency-source-correction.json \
+      /usr/share/doc/npa-fiftyone/dependency-source-correction.json \
+    && rm -f /opt/fiftyone/dependency-source-correction.json
+
+USER ubuntu
+
+RUN curl --fail --location --silent --show-error \
       -o /tmp/mongodb.tgz "https://fastdl.mongodb.org/linux/mongodb-linux-x86_64-ubuntu2204-${MONGODB_VERSION}.tgz" \
     && echo "${MONGODB_SHA256}  /tmp/mongodb.tgz" | sha256sum -c - \
     && tar xzf /tmp/mongodb.tgz -C /tmp \

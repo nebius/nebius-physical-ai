@@ -11,7 +11,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[3]
 GENESIS = ROOT / "npa/docker/workbench/genesis"
 VARIANTS = (
-    ("Dockerfile", "0.25.2", "/opt/genesis/venv/lib/python3.10/site-packages"),
+    ("Dockerfile", "0.25.2", "/opt/genesis/venv/lib/python3.12/site-packages"),
     ("Dockerfile.sm120", "0.26.0", "/opt/npa/venv/lib/python3.11/site-packages"),
 )
 CORRECTION = "/opt/genesis/remove-scikit-image-recipe.py"

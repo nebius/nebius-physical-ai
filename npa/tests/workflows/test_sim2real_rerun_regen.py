@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 from botocore.exceptions import ClientError
 
-from npa.workflows.sim2real.models import Sim2RealLoopConfig
 from npa.workflows.sim2real.artifact_config import Sim2RealArtifactConfig
+from npa.workflows.sim2real.models import Sim2RealLoopConfig
 from npa.workflows.sim2real.reporting import build_progress_metrics
 from npa.workflows.sim2real.utils import _artifact_root_uri
 from npa.workflows.sim2real_rerun_regen import (
@@ -471,8 +471,10 @@ def test_regen_preserves_strict_heldout_policy_evidence(
     class FakeResult:
         output_rrd_path = str(local_dir / "reports" / "sim2real.rrd")
         heldout_frame_count = 4
+        heldout_env_count = 0
         rollout_count = 0
         frame_count = 0
+        heldout_env_count = 0
         has_factual_observation_evidence = True
 
     def fake_emit(**kwargs):
@@ -2187,7 +2189,7 @@ def test_gold_render_sync_rejects_missing_or_validation_lineage(tmp_path: Path) 
 
 def test_gold_score_only_sync_does_not_guess_camera_lineage(tmp_path: Path) -> None:
     class UnusedStorage:
-        def download_directory(self, *_args, **_kwargs):
+        def download_directory(self, *_args, **_kwargs) -> None:
             raise AssertionError("score-only evidence must not fetch guessed renders")
 
     assert not sync_heldout_renders(
@@ -2214,6 +2216,7 @@ def test_stage14_component_digest_is_refreshed_after_regen_mutation(
     class Result:
         output_rrd_path = str(output_rrd)
         heldout_frame_count = 4
+        heldout_env_count = 0
         rollout_count = 1
         frame_count = 4
 
