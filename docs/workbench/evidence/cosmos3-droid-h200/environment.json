@@ -1,0 +1,16 @@
+{
+  "framework_revision": "cf5d68c00d97ccd2480a2320ed652b92dec63102",
+  "uv_lock_sha256": "9e62f878f5a8d14651ef5c7e044e7e8e25c6e2b4abbeb94035e042559fc7fd4b",
+  "versions": {
+    "torch": "2.10.0+cu130",
+    "cuda": "13.0",
+    "torchcodec": "0.10.0+cu130",
+    "av": "18.1.0",
+    "lerobot": "0.4.4",
+    "pyarrow": "21.0.0",
+    "boto3": "1.40.61"
+  },
+  "gpu_type": "NVIDIA H200",
+  "ranks": 8,
+  "scope": "Runtime versions from node preparation receipt; eight ranks from completed training receipts."
+}
