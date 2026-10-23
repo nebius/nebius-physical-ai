@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from importlib.metadata import version
 from importlib.util import find_spec
 import subprocess
 from unittest.mock import patch
@@ -77,7 +78,7 @@ def test_lancedb_bdd100k_dhash_runtime_passes() -> None:
     result = check_bdd100k_dhash_runtime()
 
     assert result.ok, result.detail
-    assert "Pillow=13.0.0" in result.detail
+    assert f"Pillow={version('pillow')}" in result.detail
     assert "dhash=0" in result.detail
 
 

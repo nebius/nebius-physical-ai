@@ -30,7 +30,7 @@ Check what you have:
 python3 --version
 ```
 
-If it is older than 3.10 (or missing):
+If it is older than 3.11 (or missing):
 
 - **macOS:** `brew install python@3.12`, or download from
   [python.org](https://www.python.org/downloads/), or use
@@ -39,6 +39,10 @@ If it is older than 3.10 (or missing):
   module (shipped separately): `sudo apt-get install -y python3 python3-venv`.
 - **Windows:** use the Debian/Ubuntu commands inside WSL2 Ubuntu. A native
   Windows Python installation is not used by this setup.
+
+Ubuntu 22.04's default Python 3.10 does not meet the client requirement. Install
+a supported interpreter with `uv` or `pyenv` before creating the environment;
+for example, `uv venv --python 3.12 .venv` selects Python 3.12.
 
 ## 2. Clone the repository and create a virtual environment
 

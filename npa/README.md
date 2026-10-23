@@ -1030,7 +1030,7 @@ configuration, offline narration, artifact search and privacy boundaries.
 ### MJLab
 
 Install optional simulator packages with `pip install -e '.[mjlab]'` on Python
-3.10–3.13, or use the dedicated MJLab GPU container recipe. `npa workbench mjlab`
+3.11–3.13, or use the dedicated MJLab GPU container recipe. `npa workbench mjlab`
 provides `train`, `eval`, `export`, `list`, `status`, `system-info`, `deploy`, and
 `workflow`; use `--help` for their options. Training preserves upstream defaults
 unless overridden. Public handoffs are S3 URIs; `--dry-run` plans without metrics

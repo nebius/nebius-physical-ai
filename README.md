@@ -130,7 +130,7 @@ install the shared service or its LoadBalancer.
 
 ### 1. Install
 
-Use Python **3.10+** on macOS, Linux, or WSL2 Ubuntu. Clone the repository,
+Use Python **3.11+** on macOS, Linux, or WSL2 Ubuntu. Clone the repository,
 then run the remaining commands from its root:
 
 ```bash

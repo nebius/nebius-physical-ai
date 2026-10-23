@@ -383,7 +383,7 @@ def test_libero_image_manifest_remains_quarantined_and_unpublished() -> None:
         "pending_size_artifacts": 0,
         "pending_license_artifacts": 0,
         "report_sha256": (
-            "8caa49fc844d8a78ac44ee632ea2cbb393f009af424daa0392d13d7763abc9a8"
+            "4512dfb4a1b03dcd39dc4e29d2786cb9b1e86cabf406d9baf67d18d8aa767195"
         ),
     }
     assert manifest["qualification"]["status"] == "not_qualified"

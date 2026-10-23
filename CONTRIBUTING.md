@@ -648,15 +648,14 @@ to report the required gate. A subsequent #807 PR refresh also exhausted the old
 five-minute precheck timeout after checkout alone took 3m17s. Inspect individual
 setup steps before attributing a queue timeout to runner capacity.
 
-Python test jobs use uv 0.12.5 with a persistent package cache and
+Python test jobs use uv 0.13.4 with a persistent package cache and
 `npa/ci/requirements.txt` constraints. These pins cover the core, development,
 adapter, and CPU SONIC/export dependencies across Python 3.11, 3.12, and 3.14.
 The CPU Torch version remains in `npa/ci/constraints.in`. CI rejects stale inputs
 and direct edits to the generated pin body before installing dependencies.
 Dependabot updates the source manifests but does not edit
 `npa/ci/requirements.txt`; refresh that generated file with the repository
-command. The lock generator and dependency scanner require uv 0.13.4 even though
-the constrained CI installer remains on 0.12.5. With uv 0.13.4 installed, run:
+command. With uv 0.13.4 installed, run:
 
 ```bash
 npa/.venv/bin/python npa/scripts/ci_requirements.py --update
