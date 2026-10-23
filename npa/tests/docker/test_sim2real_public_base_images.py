@@ -122,7 +122,7 @@ def test_envgen_clears_inherited_source_before_copying_exact_revision() -> None:
 
 def test_cpu_images_update_system_and_viewer_bootstrap_dependencies() -> None:
     lock = (WORKBENCH / "common/sim2real-cpu-build-requirements.txt").read_text()
-    assert "pip==26.2.1" in lock
+    assert "pip==26.2.2" in lock
     assert "setuptools==84.0.0" in lock
     assert "wheel==0.48.0" in lock
     assert "msgpack==1.2.1" in lock
@@ -144,7 +144,9 @@ def test_envgen_flattens_a_dedicated_exact_source_runtime() -> None:
         encoding="utf-8"
     )
     assert "sim2real-envgen-requirements.txt" in text
-    assert 'python3.12 -m venv "${ENVGEN_VENV}"' in text
+    assert "ARG ENVGEN_PYTHON_VERSION=3.12.14" in text
+    assert 'uv venv --python "${ENVGEN_PYTHON_VERSION}" "${ENVGEN_VENV}"' in text
+    assert "sys.version_info[:3] == (3, 12, 14)" in text
     assert '"${ENVGEN_VENV}/bin/python" -m pip check' in text
     assert "npa-exact-source.pth" in text
     assert "fsspec==2026.6.0" in (

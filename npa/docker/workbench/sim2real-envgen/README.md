@@ -5,8 +5,11 @@ It generates deterministic task/scenario records and split inputs; it does not
 execute Genesis physics, train a policy, or evaluate a rollout.  Those are
 separate Isaac workflow stages and must carry their own image evidence.
 
-The image deliberately does not inherit the Genesis/LeRobot environment.  Its
-Python 3.12 venv is rebuilt from
+The image deliberately does not inherit the Genesis/LeRobot environment. Its
+Python 3.12 venv uses the pinned, build-only `uv` distribution to install
+CPython 3.12.14 on the Jammy CUDA parent, then removes the `uv` executable
+before flattening the runtime. CPython is PSF-2.0; `uv` is Apache-2.0 OR MIT.
+The retained interpreter and venv are rebuilt from
 `../common/sim2real-envgen-requirements.txt`, which pins the current NPA
 closure, Pillow 13, and fsspec 2026.6.0 without Genesis, LeRobot, datasets, or
 Torch.  This keeps the unresolved Genesis upstream closure visible rather than

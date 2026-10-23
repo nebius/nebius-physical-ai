@@ -1255,10 +1255,13 @@ images:
     notes: >-
       The flattened public runtime removes the complete inherited NPA tree and
       creates a dedicated Python 3.12 EnvGen venv from the reviewed exact
-      closure. It contains scenario/task-contract code, Pillow 13 and fsspec
-      2026.6.0, but no Genesis, LeRobot, datasets, Torch, model weights,
-      source assets, credentials, or runtime caches. Genesis is a separate
-      fail-closed tool and must not be relabelled as EnvGen qualification.
+      closure using uv-managed CPython 3.12.14. The digest-pinned uv builder
+      is Apache-2.0 OR MIT and is removed before the flattened public runtime;
+      the retained CPython interpreter is PSF-2.0. It contains scenario/task-
+      contract code, Pillow 13 and fsspec 2026.6.0, but no Genesis, LeRobot,
+      datasets, Torch, model weights, source assets, credentials, or runtime
+      caches. Genesis is a separate fail-closed tool and must not be relabelled
+      as EnvGen qualification.
     redistribution: public
     skypilot_bootstrap_contract: skypilot-0.12.2-v1
   rerun-viewer:

@@ -54,10 +54,12 @@ do not qualify an image without its fresh complete artifact gates.
 
 The dedicated current-source EnvGen runtime does not inherit or sanitize a
 Genesis scikit-image installation. It removes the complete inherited
-`/opt/npa` tree before creating its own Python 3.11 NPA-only environment, whose
-lock excludes Genesis, LeRobot, datasets, Torch, and scikit-image. Historical
-scikit-image findings and original image bytes remain separate evidence; no
-scanner suppression or inherited-package repair is used for the new role.
+`/opt/npa` tree before creating its own uv-managed CPython 3.12.14 NPA-only
+environment. The digest-pinned, Apache-2.0 OR MIT `uv` builder is removed after
+creating the PSF-2.0 interpreter-backed venv; its lock excludes Genesis,
+LeRobot, datasets, Torch, and scikit-image. Historical scikit-image findings
+and original image bytes remain separate evidence; no scanner suppression or
+inherited-package repair is used for the new role.
 
 Every workflow image must satisfy version `skypilot-0.12.2-v1`: a usable
 effective user; root or verified passwordless sudo; `openssh-server`, `rsync`,

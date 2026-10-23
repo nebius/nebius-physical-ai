@@ -151,7 +151,19 @@ def test_envgen_lock_satisfies_every_direct_npa_runtime_requirement():
 def test_envgen_runtime_uses_its_own_python312_venv_and_exact_source_pth():
     text = DOCKERFILE.read_text(encoding="utf-8")
     assert "ENVGEN_VENV=/opt/npa/envgen-venv" in text
-    assert 'python3.12 -m venv "${ENVGEN_VENV}"' in text
+    assert "ARG ENVGEN_PYTHON_VERSION=3.12.14" in text
+    assert (
+        "ghcr.io/astral-sh/uv:0.12.5@sha256:"
+        "e85be844203885286c60ffad8a858d48afb6c5a5c237ca0e67f12e74b8f174b1" in text
+    )
+    assert 'uv python install "${ENVGEN_PYTHON_VERSION}"' in text
+    assert 'uv venv --python "${ENVGEN_PYTHON_VERSION}" "${ENVGEN_VENV}"' in text
+    assert "sys.version_info[:3] == (3, 12, 14)" in text
+    assert "UV_PYTHON_INSTALL_DIR=/opt/npa/python" in text
+    assert "UV_NO_MODIFY_PATH=1" in text
+    assert "rm -f /usr/local/bin/uv /usr/local/bin/uvx" in text
+    assert "test ! -e /usr/local/bin/uv && test ! -e /usr/local/bin/uvx" in text
+    assert "test ! -e /root/.local/bin/python3.12" in text
     assert "sim2real-envgen-requirements.txt" in text
     assert "npa-exact-source.pth" in text
     assert 'env -u PYTHONPATH "${ENVGEN_VENV}/bin/python" -c' in text

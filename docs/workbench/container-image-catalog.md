@@ -470,11 +470,13 @@ explains explicit Cosmos 3 selection and the baked evaluator compatibility check
 
 The current EnvGen candidate deliberately no longer derives from the Genesis
 runtime, so GitPython and the Genesis/scikit-image correction are not part of
-its closure. It removes the inherited NPA tree, creates a dedicated Python 3.11
-NPA-only scenario-record environment with Pillow 13 and fsspec 2026.6.0, and
-rejects Genesis, LeRobot, datasets, and Torch. Its new source-attested digest
-still requires complete byte/security scans and a current role evaluation; the
-preceding Genesis-based release does not supply that evidence.
+its closure. It removes the inherited NPA tree, creates a dedicated
+uv-managed CPython 3.12.14 NPA-only scenario-record environment with Pillow 13
+and fsspec 2026.6.0, and rejects Genesis, LeRobot, datasets, and Torch. The
+Apache-2.0 OR MIT `uv` build helper is removed before flattening; the retained
+interpreter is PSF-2.0. Its new source-attested digest still requires complete
+byte/security scans and a current role evaluation; the preceding Genesis-based
+release does not supply that evidence.
 
 The canonical EnvGen recipe now selects the October 9 Ubuntu snapshot and
 `linux-libc-dev=5.15.0-198.208`, replacing the inherited headers that failed
