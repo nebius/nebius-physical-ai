@@ -69,6 +69,10 @@ if [[ "$(git -C "${NPA_DIR}/.." rev-parse HEAD)" != "${NPA_SOURCE_SHA}" ]]; then
   echo "NPA_SOURCE_SHA must match the build-context checkout HEAD" >&2
   exit 2
 fi
+if [[ "${PUSH}" == "1" && -z "${REGISTRY}" ]]; then
+  echo "--push requires --registry" >&2
+  exit 2
+fi
 
 DOCKER=(docker)
 if [[ -n "${DOCKER_CONTEXT:-}" ]]; then
