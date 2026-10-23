@@ -46,6 +46,11 @@ npa workbench workflow validate-spec "$SPEC"
 npa workbench workflow plan-spec "$SPEC" \
   --run-id "$RUN_ID" \
   --var robot_spec_uri="$ROBOT_SPEC_URI" \
+  --var controller_image="$CONTROLLER_IMAGE" \
+  --var cosmos3_image="$COSMOS3_IMAGE" \
+  --var envgen_image="$ENVGEN_IMAGE" \
+  --var isaac_image="$ISAAC_IMAGE" \
+  --var viewer_image="$VIEWER_IMAGE" \
   --assume-decision loop_back
 npa workbench workflow submit "$SPEC" --runtime \
   --run-id "$RUN_ID" \
