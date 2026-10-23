@@ -537,7 +537,7 @@ collection errors remain blocking, and failed guardrails stop the collector.
 This saves a sequential collection pass without starting another runner.
 
 PR admission still requires six duration-balanced Python 3.12 coverage shards,
-Cypress, focused Python 3.10/3.14 compatibility tests, security, documentation
+Cypress, focused Python 3.11/3.14 compatibility tests, security, documentation
 drift, and repository guardrails. Source and test changes receive the full suite,
 including other subsystems; merged coverage must meet the unchanged 60% floor.
 
@@ -585,7 +585,7 @@ it no longer extends the last coverage shard. Cypress runs once in its own job,
 never inside a pytest shard. Cached constrained installs, xdist workers, and
 independent job scheduling retain fast feedback without deferring
 coverage until queue admission. Scheduled and manual audits retain four shards
-on each of Python 3.10, 3.12, and 3.14.
+on each of Python 3.11, 3.12, and 3.14.
 
 A narrow prose-only exception skips the full Python and browser suites on PRs
 and merge candidates while retaining smoke, lint, documentation drift, guardrail,
@@ -650,14 +650,14 @@ to report the required gate. A subsequent #807 PR refresh also exhausted the old
 five-minute precheck timeout after checkout alone took 3m17s. Inspect individual
 setup steps before attributing a queue timeout to runner capacity.
 
-Python test jobs use uv 0.12.5 with a persistent package cache and
+Python test jobs use uv 0.13.4 with a persistent package cache and
 `npa/ci/requirements.txt` constraints. These pins cover the core, development,
-adapter, and CPU SONIC/export dependencies across Python 3.10, 3.12, and 3.14.
+adapter, and CPU SONIC/export dependencies across Python 3.11, 3.12, and 3.14.
 The CPU Torch version remains in `npa/ci/constraints.in`. CI rejects stale inputs
 and direct edits to the generated pin body before installing dependencies.
 Dependabot updates the source manifests but does not edit
 `npa/ci/requirements.txt`; refresh that generated file with the repository
-command. With uv 0.12.5 installed, run:
+command. With uv 0.13.4 installed, run:
 
 ```bash
 npa/.venv/bin/python npa/scripts/ci_requirements.py --update

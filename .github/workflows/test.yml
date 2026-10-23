@@ -33,7 +33,7 @@ jobs:
       - name: Set up cached uv
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
-          version: "0.12.5"
+          version: "0.13.4"
           enable-cache: true
           cache-suffix: browser
           cache-dependency-glob: |
@@ -67,19 +67,19 @@ jobs:
       - name: Run mocked agent Cypress coverage
         run: npm run --prefix npa/tests/browser cy:mock
 
-      - name: Set up Python 3.10 compatibility
+      - name: Set up Python 3.11 compatibility
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.10"
+          python-version: "3.11"
 
-      - name: Install Python 3.10 compatibility environment
+      - name: Install Python 3.11 compatibility environment
         run: |
-          python -m venv npa/.venv-3.10
-          uv pip install --python npa/.venv-3.10/bin/python -c npa/ci/requirements.txt -e "npa[dev,adapter,encord]"
+          python -m venv npa/.venv-3.11
+          uv pip install --python npa/.venv-3.11/bin/python -c npa/ci/requirements.txt -e "npa[dev,adapter,encord]"
 
-      - name: Run Python 3.10 compatibility regressions
+      - name: Run Python 3.11 compatibility regressions
         run: |
-          npa/.venv-3.10/bin/python -m pytest \
+          npa/.venv-3.11/bin/python -m pytest \
             npa/tests/test_python_compatibility.py \
             npa/tests/scripts/test_vlm_audit_live_recheck.py::test_actual_evidence_symlink_loop_is_sanitized \
             npa/tests/scripts/test_vlm_paired_audit_live_recheck.py::test_actual_entrypoint_symlink_loop_target_is_sanitized \
@@ -140,7 +140,7 @@ jobs:
       - name: Set up cached uv
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
-          version: "0.12.5"
+          version: "0.13.4"
           enable-cache: true
           cache-suffix: python-3.12
           cache-dependency-glob: |
@@ -192,7 +192,7 @@ jobs:
       matrix:
         # Candidates needing the full suite use the primary interpreter.
         # Scheduled/manual audits keep all supported versions.
-        python-version: ${{ fromJSON(contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && '["3.12"]' || '["3.10", "3.12", "3.14"]') }}
+        python-version: ${{ fromJSON(contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && '["3.12"]' || '["3.11", "3.12", "3.14"]') }}
         # Six candidate shards retain duration balancing while leaving runner
         # capacity for the required image-security matrix. The periodic
         # three-version audit retains four per interpreter.
@@ -222,7 +222,7 @@ jobs:
       - name: Set up cached uv
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
-          version: "0.12.5"
+          version: "0.13.4"
           enable-cache: true
           cache-suffix: python-${{ matrix.python-version }}
           cache-dependency-glob: |

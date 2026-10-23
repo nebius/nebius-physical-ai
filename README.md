@@ -2,12 +2,12 @@
 
 # Nebius Physical AI
 
-**The control plane your coding agent uses to run physical-AI workloads on Nebius.**
+**The agent control plane for Physical AI on Nebius.**
 
 <img src="docs/assets/workbench-architecture.png" alt="Workbench architecture: selected NVIDIA and open-ecosystem integrations are packaged into public GHCR images. npa uses workflow YAML, its workflow engine, and SkyPilot to run workloads on Nebius Kubernetes. Kubernetes pulls images; Object Storage holds artifacts and run state. Token Factory provides hosted inference. Models and vendor runtimes are fetched at runtime where required." width="960" />
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![Platforms: macOS · Linux · WSL2](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20WSL2-lightgrey.svg)](docs/install.md)
 [![Test](https://github.com/nebius/nebius-physical-ai/actions/workflows/test.yml/badge.svg)](https://github.com/nebius/nebius-physical-ai/actions/workflows/test.yml)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
@@ -39,12 +39,14 @@ SkyPilot contexts with `npa workbench namespace`.
 
 ## What is Workbench?
 
-Workbench is the agent-facing control plane for physical AI on Nebius. You
-describe the outcome; Codex, Claude Code, or another coding agent with terminal
-access to this checkout uses `npa` to configure the project, check access, plan
-resources, run containerized tools and workflows, and inspect the result with
-you. You can drive the same operations directly through the CLI, and supported
-tools also expose Python interfaces.
+Workbench is NPA's agent control plane for Physical AI on Nebius AI Cloud,
+covering infrastructure setup and management, simulation, robot policy training,
+synthetic data, and evaluation. Codex, Claude Code, or another coding agent with
+terminal access to this checkout uses repository skills and `npa` to configure
+projects, check access, provision GPU clusters and object storage, run
+containerized tools and workflows, and inspect artifacts with you. You can use
+the same operations directly through the CLI; supported tools also expose
+Python interfaces.
 
 ### How Workbench runs a task
 
@@ -130,7 +132,7 @@ install the shared service or its LoadBalancer.
 
 ### 1. Install
 
-Use Python **3.10+** on macOS, Linux, or WSL2 Ubuntu. Clone the repository,
+Use Python **3.11+** on macOS, Linux, or WSL2 Ubuntu. Clone the repository,
 then run the remaining commands from its root:
 
 ```bash

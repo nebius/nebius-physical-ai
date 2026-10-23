@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "npa"
 version = "0.1.0"
 description = "Nebius Physical AI platform CLI/SDK"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 # A plain `pip install -e npa` ships the full workbench capability set: the
 # offline CLI paths (`npa --version`, vlm-eval stub, workflow validate/plan)
 # plus the dataframe/plotting, LanceDB, Rerun, and FastAPI-server deps the
@@ -20,6 +20,8 @@ requires-python = ">=3.10"
 # APIs move between minor releases and the workbench tools are written against
 # the pinned ones.
 dependencies = [
+    # Remove the compromised emSign root from existing client installations.
+    "certifi>=2026.10.19",
     # Require the upstream TLS hostname and process-worker fixes in every install.
     "anyio>=4.14.2",
     "typer>=0.24",
@@ -48,7 +50,7 @@ dependencies = [
     "oauthlib>=4.0.0",
     "numpy>=1.24",
     "pyarrow>=23.0.1",
-    "pillow>=12.3.0,<13.0",
+    "pillow>=13.0.0,<14.0",
     # MCAP writer for the lichtblick viewer's frames->MCAP export (pure-Python).
     # Upper bound is deliberate: mcap 1.4.0 trips mypy module discovery (see the
     # [tool.mypy] override) and the writer/reader pin the 1.x record API.

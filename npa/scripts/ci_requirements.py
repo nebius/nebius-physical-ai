@@ -17,7 +17,7 @@ else:
 
 
 _ROOT = Path(__file__).resolve().parents[2]
-_UV_VERSION = "0.12.5"
+_UV_VERSION = "0.13.4"
 _FINGERPRINT_PREFIX = "# CI dependency inputs SHA256: "
 _PINSET_PREFIX = "# CI generated pins SHA256: "
 
@@ -88,7 +88,7 @@ def _update(root: Path, upgrade: bool) -> None:
         "npa/ci/constraints.in",
         "--universal",
         "--python-version",
-        "3.10",
+        "3.11",
         "--torch-backend",
         "cpu",
         "--no-annotate",
@@ -108,7 +108,7 @@ def _update(root: Path, upgrade: bool) -> None:
 def _validate_linux_wheels(root: Path) -> None:
     # Universal resolution checks metadata; explicit targets also check wheel tags.
     with tempfile.TemporaryDirectory(prefix="npa-ci-pins-") as directory:
-        for version in ("3.10", "3.12", "3.14"):
+        for version in ("3.11", "3.12", "3.14"):
             subprocess.run(
                 [
                     "uv",

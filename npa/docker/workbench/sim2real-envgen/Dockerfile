@@ -85,7 +85,7 @@ RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" "${ENVG
       'import boto3, genesis; from npa.workflows.sim2real.workflow_stage import main; assert callable(main)' \
     && python -c 'import importlib.metadata as m; assert not any(d.metadata["Name"].lower() == "transformers" for d in m.distributions())' \
     && python -c 'import importlib.metadata as m; names = {d.metadata["Name"].lower() for d in m.distributions()}; assert names.isdisjoint({"tetgen", "wandb"})' \
-    && python -c 'import importlib.metadata as m; assert m.version("GitPython") == "3.1.62"' \
+    && python -c 'import importlib.metadata as m; assert m.version("GitPython") == "3.2.1"' \
     && test ! -e /opt/nvidia/nsight-compute \
     && python -m py_compile /opt/npa/src/npa/workflows/sim2real_envgen.py
 

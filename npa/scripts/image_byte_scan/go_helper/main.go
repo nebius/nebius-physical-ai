@@ -20,6 +20,7 @@ import (
 	"runtime/debug"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"unsafe"
@@ -639,8 +640,8 @@ func failure(stderr io.Writer, code string) int {
 }
 
 // inFlightByteBudget bounds the payload bytes admitted to the detection pool at
-// one time. It is not a heap or resident-memory limit: the string conversion,
-// lowercased prefilter, regexp working set, and findings allocate additional
+// one time. It is not a heap or resident-memory limit: the lowercased prefilter,
+// regexp working set, and findings allocate additional
 // memory, and reclamation can lag completed detections. The README records
 // measured overhead rather than assuming a constant multiplier. A record larger
 // than the entire budget is admitted alone rather than refused: coverage never
@@ -752,7 +753,7 @@ func (b *byteBudget) release(amount int64) {
 type scanJob struct {
 	ordinal  uint64
 	length   uint64
-	payload  []byte
+	payload  string
 	reserved int64
 	digest   string
 	findings []finding
@@ -839,6 +840,7 @@ func scanRaw(raw string, ordinal uint64, detector *detect.Detector) ([]finding, 
 	sortFindings(findings)
 	return findings, ""
 }
+
 // detectRecord hashes and scans one complete record, then releases its budget.
 // A panic is contained and reported on the job so the collector can fail closed
 // rather than losing the whole process.
@@ -861,12 +863,10 @@ func detectRecord(job *scanJob, detector *detect.Detector, budget *byteBudget) {
 		}
 	}()
 	defer budget.release(job.reserved)
-	digest := sha256.Sum256(job.payload)
-	job.digest = hex.EncodeToString(digest[:])
 	// One call, one complete file. No MIME decision, source chunker, overlap,
 	// archive traversal, baseline, ignore file, or AddFinding accumulation.
-	findings, code := scanRaw(string(job.payload), job.ordinal, detector)
-	job.payload = nil
+	findings, code := scanRaw(job.payload, job.ordinal, detector)
+	job.payload = ""
 	job.failure = code
 	job.findings = findings
 }
@@ -965,8 +965,12 @@ func admitOne(input io.Reader, detector *detect.Detector, budget *byteBudget,
 	if !granted {
 		return nil, ""
 	}
-	payload := make([]byte, int(length))
-	if _, err := io.ReadFull(input, payload); err != nil {
+	// Builder.String shares the completed backing storage, avoiding another
+	// whole-record allocation when the detector requires a string.
+	var payload strings.Builder
+	payload.Grow(int(length))
+	digest := sha256.New()
+	if _, err := io.CopyN(io.MultiWriter(&payload, digest), input, length); err != nil {
 		budget.release(reserved)
 		return nil, "truncated_payload"
 	}
@@ -977,8 +981,9 @@ func admitOne(input io.Reader, detector *detect.Detector, budget *byteBudget,
 	return &scanJob{
 		ordinal:  ordinal,
 		length:   uint64(length),
-		payload:  payload,
+		payload:  payload.String(),
 		reserved: reserved,
+		digest:   hex.EncodeToString(digest.Sum(nil)),
 		done:     make(chan struct{}),
 	}, ""
 }
@@ -1039,6 +1044,7 @@ func admitRecords(input io.Reader, detector *detect.Detector, budget *byteBudget
 	dispatch chan<- *scanJob, ordered chan<- *scanJob, abort <-chan struct{}) string {
 	return admitRecordsFrom(input, detector, budget, dispatch, ordered, abort, 0)
 }
+
 // emitRecords writes one result per record in ordinal order.
 //
 // Args:
