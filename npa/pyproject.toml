@@ -20,6 +20,8 @@ requires-python = ">=3.11"
 # APIs move between minor releases and the workbench tools are written against
 # the pinned ones.
 dependencies = [
+    # Remove the compromised emSign root from existing client installations.
+    "certifi>=2026.10.19",
     # Require the upstream TLS hostname and process-worker fixes in every install.
     "anyio>=4.14.2",
     "typer>=0.24",

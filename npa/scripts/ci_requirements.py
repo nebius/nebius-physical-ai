@@ -13,7 +13,7 @@ import tomllib
 
 
 _ROOT = Path(__file__).resolve().parents[2]
-_UV_VERSION = "0.12.5"
+_UV_VERSION = "0.13.4"
 _FINGERPRINT_PREFIX = "# CI dependency inputs SHA256: "
 _PINSET_PREFIX = "# CI generated pins SHA256: "
 

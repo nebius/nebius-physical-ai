@@ -28,6 +28,13 @@ matching source inputs and 36 independently verified provenance/SBOM signatures.
 Supported release defaults still select their previously qualified digests;
 the GPU chart describes those release digests. MJLab is outside this refresh.
 
+The client now requires Python 3.11+ and Pillow 13. Source dependency repairs
+update GitPython, certifi, virtualenv, and their affected locks; they do not
+establish a rebuilt or qualified image. Genesis, Cosmos, and GR00T's legacy
+Python 3.10 vendor environments use a source launcher for their NPA adapters,
+with their own runtime dependencies. These source changes require independent
+image rebuild, byte scanning, and capability validation before release promotion.
+
 [Marble workflows](marble.md) reuse the existing EnvGen CUDA/compiler image
 for gsplat and Warp consumers, with pinned dependencies installed at runtime.
 The manufacturing pallet experiment additionally reuses the existing

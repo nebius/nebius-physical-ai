@@ -109,6 +109,16 @@ remains explicitly differential.
 The AnyIO floor is 4.14.2 for ordinary installs and the application lock, covering
 [TLS hostname verification](https://github.com/advisories/GHSA-82r6-8w77-94w6)
 and [process-worker stderr hangs](https://github.com/advisories/GHSA-5p39-cfhj-2xmp).
+
+The client requires Python 3.11+ to use
+[Pillow 13's security fixes](https://pillow.readthedocs.io/en/stable/releasenotes/13.0.0.html).
+The certifi floor is 2026.10.19, and CI also requires GitPython 3.2.1 and
+OpenTelemetry API 1.45.1. Scanner and CI uv pins require 0.13.4 to remove the
+[compromised emSign trust root](https://github.com/astral-sh/uv/security/advisories/GHSA-hq85-5cpj-mr62).
+The existing vendor Python 3.10 image adapters run from source through an
+explicit launcher; this does not install the full client distribution or relax
+its interpreter and dependency requirements. Image qualification remains separate
+from the source dependency gate.
 `.github/dependabot.yml` checks application declarations, scanner, browser, and
 Actions dependencies daily and proposes version updates in one cross-ecosystem
 `dependencies` PR. The generated `npa/ci/requirements.txt` body is sealed against

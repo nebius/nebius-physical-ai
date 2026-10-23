@@ -5,6 +5,7 @@ import shutil
 import sys
 
 from packaging.requirements import Requirement
+from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
 from packaging.version import Version
 import pytest
@@ -57,6 +58,62 @@ def test_oauthlib_security_floor_is_locked() -> None:
     oauthlib_pin = next(item for item in pins if item.name == "oauthlib")
     assert str(oauthlib_pin.specifier).startswith("==")
     assert Version(str(oauthlib_pin.specifier).removeprefix("==")) >= Version("4.0.0")
+
+
+@pytest.mark.parametrize(
+    "name,vulnerable,patched",
+    [
+        ("certifi", "2026.7.22", "2026.10.19"),
+        ("gitpython", "3.2.0", "3.2.1"),
+        ("opentelemetry-api", "1.45.0", "1.45.1"),
+    ],
+)
+def test_ci_rejects_known_vulnerable_dependency_versions(
+    name: str, vulnerable: str, patched: str
+) -> None:
+    """Keep repaired dependency versions required during future lock refreshes.
+
+    Args:
+        name: Dependency requiring a security floor.
+        vulnerable: Previously vulnerable release.
+        patched: First repaired release.
+    Returns:
+        None.
+    Raises:
+        AssertionError: The constraint permits a vulnerable release.
+    """
+    lines = (ci_requirements._ROOT / "npa/ci/constraints.in").read_text().splitlines()
+    requirements = [
+        Requirement(line) for line in lines if line and not line.startswith("#")
+    ]
+    floor = next(item for item in requirements if canonicalize_name(item.name) == name)
+    assert Version(vulnerable) not in floor.specifier
+    assert Version(patched) in floor.specifier
+
+
+def test_pillow_security_floor_and_client_python_requirement_agree() -> None:
+    """Reject vulnerable Pillow without advertising an incompatible interpreter.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Pillow or the client interpreter floor regresses.
+    """
+    project = ci_requirements.tomllib.loads(
+        (ci_requirements._ROOT / "npa/pyproject.toml").read_text()
+    )["project"]
+    pillow = next(
+        Requirement(line)
+        for line in project["dependencies"]
+        if canonicalize_name(Requirement(line).name) == "pillow"
+    )
+    assert Version("12.3.0") not in pillow.specifier
+    assert Version("13.0.0") in pillow.specifier
+    supported = SpecifierSet(project["requires-python"])
+    assert Version("3.10") not in supported
+    assert Version("3.11") in supported
 
 
 @pytest.mark.parametrize("name", ["pyproject.toml", "ci/constraints.in"])
@@ -258,7 +315,7 @@ def test_refresh_preserves_pins_unless_upgrade_requested(
     _copy_inputs(tmp_path)
     commands = []
     monkeypatch.setattr(
-        ci_requirements.subprocess, "check_output", lambda *a, **k: "uv 0.12.5"
+        ci_requirements.subprocess, "check_output", lambda *a, **k: "uv 0.13.4"
     )
     monkeypatch.setattr(
         ci_requirements.subprocess, "run", lambda args, **kwargs: commands.append(args)

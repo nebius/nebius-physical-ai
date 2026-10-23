@@ -8,6 +8,8 @@ oauthlib>=4.0.0
 werkzeug>=3.1.9
 # Exclude aiohttp resource-exhaustion releases through 3.14.3 in CI.
 aiohttp>=3.14.4
+# Reject Certifi releases affected by the current CA-bundle advisories.
+certifi>=2026.10.19
 # Exclude GitPython versions affected by CVE-2026-114145 in CI.
 gitpython>=3.2.1
 # Exclude the affected OpenTelemetry API release in CI.
