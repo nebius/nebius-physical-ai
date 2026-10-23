@@ -35,6 +35,17 @@ OPERATOR_INPUT_SPECS = (
     "franka-rl-transfer.yaml",
 )
 GPU_OPERATOR_INPUT_SPECS = ("franka-rl-transfer.yaml",)
+SIM2REAL_IMAGE_KEYS = (
+    "controller_image",
+    "cosmos3_image",
+    "envgen_image",
+    "isaac_image",
+    "viewer_image",
+)
+SIM2REAL_IMAGES = {
+    key: f"registry.example.invalid/sim2real-{key}@sha256:{digest * 64}"
+    for key, digest in zip(SIM2REAL_IMAGE_KEYS, "abcde", strict=True)
+}
 
 
 def _workflow_path(name):
@@ -228,6 +239,18 @@ def _supplied_spec(name):
     )
 
 
+def _supplied_sim2real_spec():
+    spec = load_spec(ROOT / "workflows" / "main" / "sim2real.yaml")
+    return merge_config_overrides(
+        spec,
+        {
+            **SIM2REAL_IMAGES,
+            "outer_iterations": "1",
+            "inner_iterations": "1",
+        },
+    )
+
+
 @pytest.mark.parametrize(
     ("overrides", "expected"),
     [
@@ -279,6 +302,23 @@ def test_required_image_binding_rejects_a_digest_pin_replacement():
             (step,),
             run_id="protected-image-pin",
             options=SkypilotRenderOptions(image_digest_pins={declared: ISAAC}),
+        )
+
+
+def test_sim2real_role_images_reject_a_global_override_before_rendering():
+    """A declared role digest must remain the image executed by every stage."""
+
+    spec = _supplied_sim2real_spec()
+    plan = interpreter.build_plan(spec, run_id="protected-sim2real-role-images")
+
+    with pytest.raises(NpaWorkflowError, match="config.cosmos3_image"):
+        validate_immutable_image_override_bindings(
+            spec,
+            plan.steps,
+            run_id="protected-sim2real-role-images",
+            options=SkypilotRenderOptions(
+                image_overrides={"*": SIM2REAL_IMAGES["controller_image"]}
+            ),
         )
 
 

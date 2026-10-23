@@ -43,6 +43,15 @@ from npa.workflows.sim2real.workflow_stage import (
 ROOT = Path(__file__).resolve().parents[3]
 SPEC = ROOT / "workflows" / "main" / "sim2real.yaml"
 _TOKEN_FACTORY_ENDPOINT = "https://api.tokenfactory.nebius.com/v1/"
+_SIM2REAL_TEST_IMAGE = "cr.example/npa/sim2real-test@sha256:" + "b" * 64
+
+
+def _sim2real_spec_with_role_images():
+    spec = load_spec(SPEC)
+    spec.config.update(
+        {key: _SIM2REAL_TEST_IMAGE for key in spec.config["required_immutable_images"]}
+    )
+    return spec
 
 
 @pytest.fixture(autouse=True)
@@ -230,7 +239,7 @@ def test_stage8_scores_every_rollout_once_with_hosted_token_factory(
 
 
 def test_reduced_plan_preserves_all_real_solution_boundaries() -> None:
-    spec = load_spec(SPEC)
+    spec = _sim2real_spec_with_role_images()
     spec.config.update(
         {
             "outer_iterations": "1",
@@ -271,7 +280,7 @@ def test_reduced_plan_preserves_all_real_solution_boundaries() -> None:
 def test_finalization_uses_the_decision_gate_configuration(
     threshold: str, early_exit: str
 ) -> None:
-    spec = load_spec(SPEC)
+    spec = _sim2real_spec_with_role_images()
     spec.config.update(
         threshold=threshold,
         allow_early_exit=early_exit,
@@ -486,7 +495,9 @@ def test_default_envgen_concurrency_requires_run_bound_capacity_override() -> No
     payload = yaml.safe_load(SPEC.read_text())
     assert payload["config"]["gpu_concurrency"] == "1"
 
-    waves = build_wave_plan(load_spec(SPEC), run_id="capacity-safe-default")
+    waves = build_wave_plan(
+        _sim2real_spec_with_role_images(), run_id="capacity-safe-default"
+    )
     envgen_wave = next(wave for wave in waves.waves if wave.group == "stage-04-wave")
     assert envgen_wave.max_concurrency == 1
     assert [len(batch) for batch in envgen_wave.batches()] == [1] * 8

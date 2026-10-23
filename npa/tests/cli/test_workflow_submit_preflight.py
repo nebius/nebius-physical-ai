@@ -67,6 +67,21 @@ SONIC_SPEC = (
 ROBOTWIN_SPEC = (
     Path(__file__).resolve().parents[3] / "workflows" / "testing" / "byof-robotwin.yaml"
 )
+_SIM2REAL_TEST_IMAGE = "ghcr.io/example/sim2real-test@sha256:" + "a" * 64
+
+
+def _sim2real_role_image_args() -> list[str]:
+    return [
+        argument
+        for key in (
+            "controller_image",
+            "cosmos3_image",
+            "envgen_image",
+            "isaac_image",
+            "viewer_image",
+        )
+        for argument in ("--var", f"{key}={_SIM2REAL_TEST_IMAGE}")
+    ]
 
 
 def test_nvidia_vda_conditioning_policy_is_versioned_by_the_committed_spec() -> None:
@@ -1084,12 +1099,12 @@ def test_sim2real_submit_collects_pipeline_prerequisites_before_image_or_launch(
             "--no-deploy-if-absent",
             "--var",
             "bucket=real-bucket",
+            *_sim2real_role_image_args(),
         ],
     )
 
     assert result.exit_code == 1
     assert "missing prerequisites" in result.output
-    assert "controller_image" in result.output
     assert "AWS_ACCESS_KEY_ID" in result.output
     assert "no Ready" not in result.output  # node listing itself failed
     assert "Kubernetes nodes cannot be listed" in result.output
@@ -1538,6 +1553,7 @@ def test_sim2real_submit_propagates_explicit_kubernetes_target(
             "bucket=real-bucket",
             "--var",
             "isaac_cache_pvc=npa-isaac-cache",
+            *_sim2real_role_image_args(),
         ],
     )
 
@@ -3774,6 +3790,7 @@ def test_sim2real_submit_reports_invalid_placement_config_before_cloud_work(
             "--no-deploy-if-absent",
             "--var",
             "bucket=real-bucket",
+            *_sim2real_role_image_args(),
         ],
     )
     assert result.exit_code == 1, result.output

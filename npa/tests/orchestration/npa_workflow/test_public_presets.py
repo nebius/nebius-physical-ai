@@ -49,6 +49,20 @@ def test_public_preset_validate_and_plan_resolve_the_same_contract() -> None:
             "--assume-decision",
             "promote_checkpoint",
             "--json",
+            *[
+                argument
+                for key in (
+                    "controller_image",
+                    "cosmos3_image",
+                    "envgen_image",
+                    "isaac_image",
+                    "viewer_image",
+                )
+                for argument in (
+                    "--var",
+                    f"{key}=registry.example.invalid/sim2real-preset@sha256:{'a' * 64}",
+                )
+            ],
         ],
     )
     assert plan.exit_code == 0, plan.output

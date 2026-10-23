@@ -93,6 +93,15 @@ config:
   envgen_image: ""
   isaac_image: ""
   viewer_image: ""
+  # These five role images are a single immutable execution contract.  The
+  # generic renderer rejects global or tool-specific overrides that would
+  # start a stage in bytes other than the corresponding attested role image.
+  required_immutable_images:
+    - controller_image
+    - cosmos3_image
+    - envgen_image
+    - isaac_image
+    - viewer_image
   isaac_cache_pvc: ""
   # Isaac EULA acceptance is injected by the renderer (default on, explicit CLI opt-out).
 

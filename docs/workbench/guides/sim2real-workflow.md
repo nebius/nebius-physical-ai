@@ -80,6 +80,12 @@ promote the quarantined release defaults.
 | `SOURCE_SHA` | Common full 40-hex commit baked into all five images as `NPA_IMAGE_SOURCE_SHA` |
 
 Every image must be a complete `repository@sha256:<64-hex-digest>` reference.
+The canonical workflow binds all five role values as immutable execution inputs:
+after setting them with `--var`, do not use a global `--image` or a
+`--image-override` that selects different bytes for a Sim2Real stage. Planning
+and image preflight reject that mismatch before a pull or launch. To replace a
+role image, change its corresponding `--var` and rerun the complete five-role
+preflight with the same argument set.
 The receipt must name the tested CLI/workflow checkout, record any later
 operator cleanup fixes, and establish
 compatibility with its hosted evaluator contract. Use that checkout when
