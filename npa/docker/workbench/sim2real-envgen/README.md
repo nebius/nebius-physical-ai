@@ -34,6 +34,12 @@ use its current-source tag only within the same build invocation.  `--push`
 still requires the normal secure-image-build, access, license, byte-scan, and
 immutable-digest gates.
 
+The trusted public-development publisher uses `--envgen-only`: it builds only
+the current-source Cosmos3 parent and EnvGen locally, then submits the final
+`npa-envgen:dev-<full-sha>` bytes to the normal inspection and publication
+gates. It does not create a separate image family or treat the local parent
+tag as registry evidence.
+
 Before selecting an explicit parent, inspect its OCI label locally and require
 the exact checkout SHA. This does not authenticate a registry or replace the
 builder's check; it makes the source-attestation prerequisite actionable:

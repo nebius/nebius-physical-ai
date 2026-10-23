@@ -6,6 +6,7 @@ NPA_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 REGISTRY=""
 PUSH=0
+ENVGEN_ONLY=0
 BASE_IMAGE="${BASE_IMAGE:-ghcr.io/nebius/nebius-physical-ai/npa-cosmos3-reason@sha256:e708aa32b9247eaedf1a7a5b0d82adbe65b95a9af50721b9d09fddbfd508bbc9}"
 # EnvGen's canonical Stage 4 code does not import Genesis or LeRobot.  Unless
 # an operator deliberately supplies another current-source parent, use the
@@ -26,7 +27,7 @@ fi
 
 usage() {
   cat <<EOF
-Usage: sim2real-build.sh [--registry REGISTRY] [--push]
+Usage: sim2real-build.sh [--registry REGISTRY] [--push] [--envgen-only]
 
 Builds the Sim2Real reference images one at a time:
   npa-sim2real-control:${CONTROL_TAG}
@@ -36,6 +37,12 @@ Builds the Sim2Real reference images one at a time:
   npa-lerobot-vlm-rl:${VLM_RL_TAG}
   npa-loop-eval:${EVAL_TAG}
   npa-rerun-viewer:${RERUN_VIEWER_TAG:-0.38.1} (skipped when SKIP_RERUN_VIEWER=1)
+
+--envgen-only builds only the current-source npa-cosmos3-reason parent and
+npa-envgen.  It is the trusted-development route for EnvGen because its
+Dockerfile requires that newly built source-attested parent; it deliberately
+does not build controller, policy, signal-adapter, legacy Genesis evaluation,
+or viewer roles.
 
 Set BASE_IMAGE to a compatible immutable CUDA 13 / sm80-sm90-sm100-sm103-sm120
 parent for the freshly built Cosmos3-reason image. Unless
@@ -63,6 +70,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --push)
       PUSH=1
+      shift
+      ;;
+    --envgen-only)
+      ENVGEN_ONLY=1
       shift
       ;;
     --help|-h)
@@ -117,7 +128,9 @@ build_one() {
   fi
 }
 
-build_one "npa-sim2real-control" "${CONTROL_TAG}" "${SCRIPT_DIR}/sim2real-control/Dockerfile" "SIM2REAL_CONTROL_VERSION=${CONTROL_TAG}"
+if [ "$ENVGEN_ONLY" -eq 0 ]; then
+  build_one "npa-sim2real-control" "${CONTROL_TAG}" "${SCRIPT_DIR}/sim2real-control/Dockerfile" "SIM2REAL_CONTROL_VERSION=${CONTROL_TAG}"
+fi
 if [ -n "${SKIP_COSMOS3_REASON:-}" ]; then
   echo "Skipping npa-cosmos3-reason (SKIP_COSMOS3_REASON=${SKIP_COSMOS3_REASON})"
 else
@@ -132,6 +145,9 @@ if [ "$PARENT_SOURCE_SHA" != "$NPA_SOURCE_SHA" ]; then
   exit 2
 fi
 build_one "npa-envgen" "${ENVGEN_TAG}" "${SCRIPT_DIR}/sim2real-envgen/Dockerfile" "BASE_IMAGE=${SIM2REAL_ENVGEN_BASE_IMAGE}"
+if [ "$ENVGEN_ONLY" -eq 1 ]; then
+  exit 0
+fi
 build_one "npa-reference-policy" "${ENVGEN_TAG}" "${SCRIPT_DIR}/sim2real-reference-policy/Dockerfile" "BASE_IMAGE=npa-envgen:${ENVGEN_TAG}"
 build_one "npa-lerobot-vlm-rl" "${VLM_RL_TAG}" "${SCRIPT_DIR}/lerobot-vlm-rl/Dockerfile" "BASE_IMAGE=${SIM2REAL_COMPONENT_BASE_IMAGE}"
 if [ "${BUILD_LEGACY_GENESIS_EVAL:-0}" = "1" ]; then

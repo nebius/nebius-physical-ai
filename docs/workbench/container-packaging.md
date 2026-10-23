@@ -52,13 +52,12 @@ caused a real downgrade refusal, not an access or transport failure. No downgrad
 override is used. These dependency pins
 do not qualify an image without its fresh complete artifact gates.
 
-EnvGen also removes one hash-bound, inert `grass()` sample-download example
-from inherited scikit-image source. The example contains a token-bearing URL
-flagged by the image scan; no assertion is made that it is a private credential.
-The sanitizer refuses changed source or package `RECORD`, preserves executable
-ASTs and primary API documentation, and updates the exact modified source hash
-in `RECORD`. It runs before filesystem flattening, not as a scanner suppression.
-Original failing image bytes and scan populations remain separate evidence.
+The dedicated current-source EnvGen runtime does not inherit or sanitize a
+Genesis scikit-image installation. It removes the complete inherited
+`/opt/npa` tree before creating its own Python 3.11 NPA-only environment, whose
+lock excludes Genesis, LeRobot, datasets, Torch, and scikit-image. Historical
+scikit-image findings and original image bytes remain separate evidence; no
+scanner suppression or inherited-package repair is used for the new role.
 
 Every workflow image must satisfy version `skypilot-0.12.2-v1`: a usable
 effective user; root or verified passwordless sudo; `openssh-server`, `rsync`,
@@ -176,9 +175,10 @@ dependency check does not qualify an existing or replacement image digest.
 
 The Sim2Real controller and Rerun viewer builds use the October 2, 2026 Debian
 snapshot and explicitly install `perl-base=5.40.1-6+deb13u1` to remove the three
-fixable critical findings in the prior CPU builds. EnvGen clears inherited NPA
-source and workflow directories before copying the selected source revision;
-Docker directory copies otherwise preserve files removed from that revision.
+fixable critical findings in the prior CPU builds. EnvGen clears the complete
+inherited `/opt/npa` tree before copying the selected source revision and its
+dedicated role environment; Docker directory copies otherwise preserve files
+removed from that revision or an unrelated inherited dependency closure.
 These build changes require new immutable images and fresh validation before
 release promotion.
 

@@ -155,6 +155,7 @@ def test_sim2real_build_selects_a_source_attested_envgen_parent() -> None:
     )
     assert script.count('"BASE_IMAGE=${SIM2REAL_COMPONENT_BASE_IMAGE}"') == 2
     assert "BUILD_LEGACY_GENESIS_EVAL:-0" in script
+    assert "--envgen-only" in script
 
 
 def test_sim2real_build_help_does_not_execute_its_parent_example() -> None:
@@ -272,6 +273,119 @@ def test_sim2real_build_does_not_apply_the_genesis_closure_to_envgen(
     )
     assert result.returncode == 99
     assert invoked.exists()
+
+
+def test_sim2real_build_envgen_only_builds_its_current_source_parent_and_no_siblings(
+    tmp_path: Path,
+) -> None:
+    """The trusted EnvGen route needs the producer, but no unrelated roles."""
+
+    script = Path(__file__).resolve().parents[2] / "docker/workbench/sim2real-build.sh"
+    source_sha = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], text=True, cwd=script.parents[3]
+    ).strip()
+    docker_log = tmp_path / "docker-argv"
+    docker = tmp_path / "docker"
+    docker.write_text(
+        "#!/bin/sh\n"
+        f"if [ \"$1\" = image ]; then printf '%s\\n' '{source_sha}'; exit 0; fi\n"
+        f"printf '%s\\n' \"$@\" >> '{docker_log}'\n"
+    )
+    docker.chmod(0o755)
+    tag = f"dev-{source_sha}"
+    result = subprocess.run(
+        ["bash", str(script), "--registry", "registry.example", "--envgen-only"],
+        cwd=script.parents[3],
+        env={
+            **os.environ,
+            "NPA_SOURCE_SHA": source_sha,
+            "VLM_TAG": tag,
+            "ENVGEN_TAG": tag,
+            "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"],
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    argv = docker_log.read_text(encoding="utf-8")
+    assert argv.count("build\n") == 2
+    assert "cosmos3-reason/Dockerfile" in argv
+    assert "sim2real-envgen/Dockerfile" in argv
+    assert f"registry.example/npa-envgen:{tag}" in argv
+    assert "npa-sim2real-control" not in argv
+    assert "npa-reference-policy" not in argv
+    assert "npa-lerobot-vlm-rl" not in argv
+    assert "npa-loop-eval" not in argv
+    assert "npa-rerun-viewer" not in argv
+
+
+def test_trusted_public_envgen_build_uses_the_source_attested_parent_route() -> None:
+    """The publisher must not call EnvGen's mandatory-parent Dockerfile alone."""
+
+    workflow = (
+        Path(__file__).resolve().parents[3]
+        / ".github/workflows/publish-public-images.yml"
+    ).read_text(encoding="utf-8")
+    route = 'if [[ "$TOOL" == envgen ]]; then'
+    assert route in workflow
+    assert "npa/docker/workbench/sim2real-build.sh" in workflow
+    assert '--registry "$NPA_PUBLIC_REGISTRY" --envgen-only' in workflow
+    assert 'VLM_TAG="dev-${DEVELOPMENT_SHA}"' in workflow
+    assert 'ENVGEN_TAG="dev-${DEVELOPMENT_SHA}"' in workflow
+    assert workflow.index(route) < workflow.index("docker buildx build")
+
+
+def test_trusted_public_envgen_build_step_executes_the_parent_route(
+    tmp_path: Path,
+) -> None:
+    """The publisher's EnvGen branch creates both local source-attested roles."""
+
+    root = Path(__file__).resolve().parents[3]
+    source_sha = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], text=True, cwd=root
+    ).strip()
+    workflow = yaml.safe_load(
+        (root / ".github/workflows/publish-public-images.yml").read_text(
+            encoding="utf-8"
+        )
+    )
+    build_step = next(
+        step
+        for step in workflow["jobs"]["build-development"]["steps"]
+        if step.get("name") == "Build immutable development image locally"
+    )
+    docker_log = tmp_path / "docker-argv"
+    docker = tmp_path / "docker"
+    docker.write_text(
+        "#!/bin/sh\n"
+        f"if [ \"$1\" = image ]; then printf '%s\\n' '{source_sha}'; exit 0; fi\n"
+        f"printf '%s\\n' \"$@\" >> '{docker_log}'\n"
+    )
+    docker.chmod(0o755)
+    image = f"registry.example/npa-envgen:dev-{source_sha}"
+    result = subprocess.run(
+        ["bash", "-c", build_step["run"]],
+        cwd=root,
+        env={
+            **os.environ,
+            "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"],
+            "TOOL": "envgen",
+            "DEVELOPMENT_SHA": source_sha,
+            "NPA_PUBLIC_REGISTRY": "registry.example",
+            "IMAGE": image,
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    argv = docker_log.read_text(encoding="utf-8")
+    assert argv.count("build\n") == 2
+    assert "cosmos3-reason/Dockerfile" in argv
+    assert "sim2real-envgen/Dockerfile" in argv
+    assert "buildx" not in argv
+    assert image in argv
 
 
 def test_sonic_keeps_an_explicit_amd64_build_platform() -> None:
