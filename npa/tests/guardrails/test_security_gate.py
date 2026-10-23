@@ -202,31 +202,32 @@ def test_unchanged_application_vulnerabilities_block(security_modules, manifest)
 @pytest.mark.parametrize(
     "package",
     [
-        "fsspec",
-        "gitpython",
-        "hydra-core",
-        "multidict",
-        "oauthlib",
+        "aiohttp",
+        "certifi",
+        "opentelemetry-api",
+        "pillow",
+        "setuptools",
         "urllib3",
-        "virtualenv",
-        "werkzeug",
+        "unrelated-future-package",
     ],
 )
 @pytest.mark.parametrize(
     "path",
     [
         "npa/docker/workbench/tool/requirements.txt",
+        "npa/src/npa/workbench/tool/runtime-requirements.txt",
         "npa/workflows/workbench/tool/requirements.txt",
+        "workbench/tool/requirements.txt",
     ],
 )
 def test_workbench_dependencies_block_unchanged_vulnerabilities(
     security_modules, package, path
 ):
-    """Reject newly disclosed advisories in deployed workbench inventories.
+    """Reject newly disclosed advisories in every maintained Workbench inventory.
 
     Args:
         security_modules: Checked-out scanner policy.
-        package: Remediated dependency family under absolute enforcement.
+        package: Current or future dependency family under absolute enforcement.
         path: Deployed image or workflow dependency input.
     Returns:
         None.
@@ -245,36 +246,35 @@ def test_workbench_dependencies_block_unchanged_vulnerabilities(
 
 
 @pytest.mark.parametrize(
-    "manifest,identity",
+    "identity",
     [
-        (
-            "npa/docker/workbench/cosmos3-serving/requirements.lock",
-            "vllm==0.28.0:synthetic-advisory",
-        ),
-        (
-            "npa/docker/workbench/robomimic/baked-requirements.lock",
-            "urllib3==2.7.0:synthetic-advisory",
-        ),
+        "pillow==12.3.0:synthetic-advisory",
+        "urllib3==2.7.0:synthetic-advisory",
     ],
 )
-def test_bounded_workbench_findings_remain_differential(
-    security_modules, manifest, identity
+def test_exact_historical_evidence_boundary_remains_differential(
+    security_modules, identity
 ):
-    """Keep other packages and unshipped historical evidence differential.
+    """Keep only unshipped historical evidence differential.
 
     Args:
         security_modules: Checked-out scanner policy.
-        manifest: Narrowly reviewed exception path.
-        identity: Non-absolute package identity or evidence-only dependency.
+        identity: Evidence-only dependency identity.
     Returns:
         None.
     Raises:
         AssertionError: A documented exception becomes absolute or unrestricted.
     """
     gate, _ = security_modules
+    manifest = "npa/docker/workbench/robomimic/baked-requirements.lock"
     finding = dict(_finding(manifest), scanner="trivy", identity=identity)
     assert gate.blocking_findings([finding], [finding]) == []
     assert gate.blocking_findings([], [finding]) == [finding]
+    runtime = dict(
+        finding,
+        path="npa/docker/workbench/robomimic/runtime-requirements.lock",
+    )
+    assert gate.blocking_findings([runtime], [runtime]) == [runtime]
 
 
 @pytest.mark.parametrize("patched", [False, True])
@@ -1003,6 +1003,12 @@ def test_direct_dependency_urls_fail_closed(security_modules, declaration):
         "baked-constraints.txt",
         "security-overrides.txt",
         "isaac-nvidia-wheels.txt",
+        "build-tools.in",
+        "build-tools.lock",
+        "setuptools-seed.lock",
+        "pip-bootstrap.lock",
+        "constraints.in",
+        "constraints-0.12.2.txt",
     ],
 )
 def test_nonstandard_python_dependency_manifests_are_inventoried(
@@ -1030,6 +1036,28 @@ def test_nonstandard_python_dependency_manifests_are_inventoried(
     assert dependencies._expected_packages(output / "inputs" / target) == {
         ("requests", "2.19.1")
     }
+
+
+@pytest.mark.parametrize("suffix", [".in", ".lock", ".txt"])
+def test_unsupported_dependency_bearing_inputs_fail_closed(
+    security_modules, tmp_path, suffix
+):
+    """Reject exact dependency inputs whose naming contract is unknown.
+
+    Args:
+        security_modules: Checked-out gate and dependency modules.
+        tmp_path: Isolated dependency inventory directories.
+        suffix: Supported input encoding with an unsupported manifest name.
+    Returns:
+        None.
+    Raises:
+        AssertionError: A dependency-bearing input silently evades inventory.
+    """
+    _, dependencies = security_modules
+    source = tmp_path / f"runtime-packages{suffix}"
+    source.write_text("requests==2.19.1\n")
+    with pytest.raises(ValueError, match="Unsupported Python dependency manifest"):
+        dependencies._inventory(tmp_path, tmp_path / "report", tmp_path / "cache")
 
 
 def test_json_runtime_lock_inventories_packages_and_installer(

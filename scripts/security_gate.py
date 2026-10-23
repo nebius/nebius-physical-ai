@@ -12,12 +12,11 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from packaging.utils import canonicalize_name
 from security_dependencies import scan_dependencies
 from security_source import scan_source
 
-# Application and CI inputs, plus remediated workbench dependency families,
-# must stay clean when an advisory is newly published for a version on main.
+# Application, CI, and maintained Workbench inputs must stay clean when an
+# advisory is newly published for a version already present on main.
 _STRICT_DEPENDENCY_PATHS = {
     "npa/requirements-lock.txt",
     "npa/ci/requirements.txt",
@@ -26,21 +25,14 @@ _STRICT_DEPENDENCY_PATHS = {
     "npa/tests/browser/package-lock.json",
     "scripts/security-requirements.txt",
 }
-_STRICT_WORKBENCH_PACKAGES = {
-    "fsspec",
-    "gitpython",
-    "hydra-core",
-    "multidict",
-    "oauthlib",
-    "urllib3",
-    "virtualenv",
-    "werkzeug",
-}
 _STRICT_WORKBENCH_PATH_PREFIXES = (
     "npa/docker/workbench/",
+    "npa/src/npa/workbench/",
     "npa/workflows/workbench/",
+    "workbench/",
 )
-# This immutable source evidence is not copied into the candidate image.
+# This exact immutable lock is retained as source evidence and is not copied
+# into the candidate image. Its maintained runtime replacement remains strict.
 _DIFFERENTIAL_DEPENDENCY_PATHS = {
     "npa/docker/workbench/robomimic/baked-requirements.lock",
 }
@@ -51,10 +43,8 @@ def _strict_dependency_finding(finding: dict) -> bool:
     path = finding["path"]
     if path in _DIFFERENTIAL_DEPENDENCY_PATHS:
         return False
-    package = canonicalize_name(finding["identity"].partition("==")[0])
-    return path in _STRICT_DEPENDENCY_PATHS or (
-        path.startswith(_STRICT_WORKBENCH_PATH_PREFIXES)
-        and package in _STRICT_WORKBENCH_PACKAGES
+    return path in _STRICT_DEPENDENCY_PATHS or path.startswith(
+        _STRICT_WORKBENCH_PATH_PREFIXES
     )
 
 

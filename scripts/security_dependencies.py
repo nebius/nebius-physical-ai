@@ -29,6 +29,16 @@ _MOVIEPY_SOURCE_URL = (
 )
 # The exact archive's pyproject declares 2.2.1; both its commit and bytes are pinned.
 _DIRECT_SOURCE_PINS = {("moviepy", _MOVIEPY_SOURCE_URL): "2.2.1"}
+_PYTHON_MANIFEST_SUFFIXES = {".txt", ".lock", ".in"}
+_PYTHON_MANIFEST_STEM_SUFFIXES = (
+    "-bootstrap",
+    "-constraints",
+    "-deps",
+    "-overrides",
+    "-seed",
+    "-tools",
+    "-wheels",
+)
 
 
 def _run(arguments: list[str], directory: Path) -> None:
@@ -236,15 +246,49 @@ def _runtime_package_name(name: str, version: str) -> str:
 
 def _is_python_dependency_manifest(source: Path) -> bool:
     """Recognize maintained Python requirement, constraint, and dependency pins."""
-    if source.suffix not in {".txt", ".lock", ".in"}:
+    if source.suffix not in _PYTHON_MANIFEST_SUFFIXES:
         return False
+    stem = source.stem
     return (
         "requirements" in source.name
-        or source.name.endswith("-deps.txt")
-        or source.name.endswith("constraints.txt")
-        or source.name.endswith("-overrides.txt")
-        or source.name.endswith("-wheels.txt")
+        or stem == "constraints"
+        or stem.startswith("constraints-")
+        or stem.endswith(_PYTHON_MANIFEST_STEM_SUFFIXES)
     )
+
+
+def _has_python_dependency_declaration(text: str) -> bool:
+    """Detect dependency syntax in an input whose filename is not supported."""
+    for line in text.replace("\\\n", "").splitlines():
+        declaration = re.split(r"\s+#", line, maxsplit=1)[0].strip()
+        declaration = re.split(
+            r"\s+--(?:hash|config-settings)(?:=|\s)", declaration, maxsplit=1
+        )[0]
+        if not declaration or declaration.startswith(("#", "-")):
+            continue
+        try:
+            requirement = Requirement(declaration)
+        except InvalidRequirement:
+            parsed = urlsplit(declaration)
+            if parsed.scheme in {"http", "https"} and parsed.path.endswith(".whl"):
+                return True
+            continue
+        if requirement.url or requirement.specifier:
+            return True
+    return False
+
+
+def _inventory_python_manifest(
+    source: Path, relative: str, output: Path
+) -> Path | None:
+    """Normalize a supported Python manifest or reject unknown dependency input."""
+    if not _is_python_dependency_manifest(source):
+        if _has_python_dependency_declaration(source.read_text()):
+            raise ValueError(f"Unsupported Python dependency manifest: {relative}")
+        return None
+    destination = output / "inputs" / relative / "requirements.txt"
+    _write_pins(destination, _python_manifest_pins(source))
+    return destination
 
 
 def _validate_npm_manifests(root: Path) -> None:
@@ -342,9 +386,10 @@ def _inventory(root: Path, output: Path, cache: Path) -> dict[str, str]:
         elif source.name == "Dockerfile" or source.name.startswith("Dockerfile."):
             inventory.update(_dockerfile_inventory(source, relative, output))
             continue
-        elif _is_python_dependency_manifest(source):
-            destination = output / "inputs" / relative / "requirements.txt"
-            _write_pins(destination, _python_manifest_pins(source))
+        elif source.suffix in _PYTHON_MANIFEST_SUFFIXES:
+            destination = _inventory_python_manifest(source, relative, output)
+            if destination is None:
+                continue
         elif source.name == "pyproject.toml":
             project = tomllib.loads(source.read_text()).get("project", {})
             declarations = list(project.get("dependencies", []))
