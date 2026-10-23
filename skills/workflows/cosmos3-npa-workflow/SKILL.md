@@ -14,10 +14,11 @@ it. For the raw SkyPilot template, or for guardrail/prompt semantics, use
 
 ## npa.workflow YAML Is The Supported Surface
 
-The supported Cosmos 3 generation workflow is
-`workflows/testing/cosmos3-generate.yaml`. The raw SkyPilot
-template was retired after the spec twin reached a terminal live success in the
-submit matrix, so do not recreate a SkyPilot task template for this path.
+The supported declarative Cosmos 3 workflow surface is
+`workflows/testing/cosmos3-generate.yaml`. Its stock default remains
+quarantined; the raw SkyPilot template was retired after the spec twin reached
+a terminal live success in the submit matrix, so do not recreate a SkyPilot
+task template for this path.
 
 The npa.workflow spec resolves the container image, carries run-scoped S3 output
 URIs, and records declared outputs.

@@ -2,7 +2,7 @@
 
 The [video variant sweep](guides/video-variant-sweep.md) combines timed VLM source descriptions and user hints into structured LLM-enhanced prompts, then pairs each shared prompt with every configured parameter combination. Cosmos3 full-source edge transfer (or the compatible Transfer 2.5 reference), paired visual review and Postgres/MLflow lineage complete the dataset path. Its operator kit previews the prompt-augmentation flow, prompt reuse, every parameter combination and worker assignment before submission. Direct prompts explicitly bypass augmentation. Completed candidates have verified recovery receipts; native runs export actual controls, a matrix of recorded outcomes, an offline HTML comparison viewer and an MP4 walkthrough.
 
-[Docs](../docs/README.md) · [Authoring guide](../docs/workbench/npa-workflow-guide.md) · [Manual operations](../docs/workbench/guides/manual-workflow-operations.md)
+[Docs](../docs/README.md) · [Authoring guide](../docs/workbench/npa-workflow-guide.md)
 
 These `npa.workflow/v0.0.1` YAML files compose Workbench operations into a state
 graph. NPA validates the graph, renders SkyPilot tasks, and manages run-scoped
@@ -29,7 +29,6 @@ profile; see the [resource preflight guide](../docs/workbench/npa-workflow-guide
 | Generate a rigid object from one image | [EmbodiedGen V2](../docs/workbench/embodiedgen.md) — qualified operator-private TRELLIS → URDF → PyBullet; each selected target still needs its own preflight |
 | Compare Cosmos3-Super serving topologies | [Benchmark results and workflows](../benchmark/cosmos3-super/README.md) |
 | Improve a navigation policy from field failures | [Field failure workflow](testing/field-failure-policy-improvement.yaml) · [native and operator adapter runbook](../docs/workbench/cookbooks/field-failure-policy-improvement.md) — sealed data/runtime required; GPU acceptance pending |
-| Train navigation from a public RGB-D capture | [Scan-to-policy](main/rgbd-scan-to-policy-demo.yaml) · [runbook](../docs/workbench/guides/rgbd-scan-to-policy-demo.md) — automatic sample setup through held-out evaluation |
 | Reconstruct a captured scene | [NuRec](../docs/workbench/guides/neural-reconstruction.md) |
 | Render a digital-twin reference scene on CUDA | [Digital twin](../docs/workbench/guides/digital-twin.md) — dedicated GPU infrastructure, native Cycles, OpenUSD/glTF and offline HTML |
 | Inspect an industrial campus on RTX | [Campus rendering](../docs/workbench/guides/digital-twin.md#render-the-industrial-campus-on-rtx) — 18-hectare authored scene, native OptiX, four camera routes and 1440p output |
@@ -73,7 +72,9 @@ public-release quarantine. The public demo aliases accept the same repeatable
 For execution, follow the [manual run sequence](../docs/workbench/guides/manual-workflow-operations.md).
 For multiple episodes, use [dataset batches and capacity planning](../docs/workbench/guides/paidf-dataset-batches.md).
 
-1. Configure the project and prepare its input, run-scoped storage, credentials, and compute.
+For execution, follow the selected runbook in order:
+
+1. Configure the project and prepare its input, storage, credentials, and compute.
 2. Validate and plan with the configuration overrides you will submit.
 3. Use `prepare-run` to persist a run ID, then check image pullability.
 4. Submit through `submit --runtime` using the same project, context, and values.
@@ -175,19 +176,7 @@ workflow YAMLs remain unchanged from `main`.
 
 ### Main workflows
 
-See the [main workflow and guide table](main/README.md) beside the principal YAML specs.
-
-The scan-to-policy and GR00T workflows connect real input preparation,
-learning, independent evaluation, and inspectable outputs. Scan-to-policy
-trains navigation in a measured scene; GR00T validates distributed fine-tuning,
-checkpoint identity, held-out action prediction, and artifact/viewer handoff.
-LeRobot transfer remains in testing.
-
-Catalog promotion does not establish physical-robot transfer. The recorded
-scan-to-policy qualification covers held-out goals in one reconstructed scene.
-GR00T's default four-step optimizer smoke establishes operational behavior;
-it does not establish statistically meaningful learning or closed-loop control.
-Their guides retain the qualification scope and current operator prerequisites.
+See the [main workflow and guide table](main/README.md) beside the three principal YAML specs.
 
 ### Partner workflows
 

@@ -461,6 +461,10 @@ class RuntimeOptions:
     #: durable output validates. This is an operator recovery for controller
     #: loss, never a default inference from job disappearance.
     adopt_absent_in_flight_outputs: bool = False
+    #: Explicit terminal managed-job ID to recover for one failed wave of an
+    #: explicitly resumed run. The ID is never discovered by name: the runtime
+    #: validates the exact provider row, original immutable inputs, and outputs.
+    recover_managed_job_id: str = ""
     project: str = "default"
     sky_bin: str = ""
     credential_resolver: Callable[[], Mapping[str, str]] | None = field(
@@ -560,6 +564,9 @@ class WaveAttempt:
     recovery_reservation: dict[str, Any] = field(default_factory=dict)
     #: Driver recovery reused this record/intent; this does not imply payload replay.
     recovery_resumed: bool = False
+    #: Prior immutable provider identities retained when an explicitly selected
+    #: terminal same-name managed job replaces a stale terminal projection.
+    recovery_history: list[dict[str, Any]] = field(default_factory=list)
     #: Exact rendered PVC names for this wave, captured before provider launch.
     persistent_volume_claims: list[str] = field(default_factory=list)
     resource_profiles: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -621,6 +628,7 @@ class WaveAttempt:
             "partial_launch": dict(self.partial_launch),
             "recovery_reservation": dict(self.recovery_reservation),
             "recovery_resumed": self.recovery_resumed,
+            "recovery_history": [dict(item) for item in self.recovery_history],
             "persistent_volume_claims": list(self.persistent_volume_claims),
             "resource_profiles": {
                 name: dict(profile)
@@ -877,6 +885,7 @@ class SkyPilotWaveExecutor:
         self._log = logger or (lambda message: None)
         self._sequence = 0
         self.attempts: list[WaveAttempt] = []
+        self._explicit_terminal_recovery_consumed = False
 
     # ------------------------------------------------------------------ public
 
@@ -967,6 +976,31 @@ class SkyPilotWaveExecutor:
 
         self._sequence += 1
         key = wave_key(steps, group=group, sequence_number=self._sequence)
+        if (
+            self.options.resume
+            and self.options.recover_managed_job_id
+            and not self._explicit_terminal_recovery_consumed
+        ):
+            prior = self.ledger.latest_wave(key)
+            if self._has_recorded_explicit_terminal_recovery(key):
+                self._explicit_terminal_recovery_consumed = True
+            elif self._has_recorded_explicit_terminal_recovery_anywhere():
+                self._explicit_terminal_recovery_consumed = True
+            elif prior is not None and str(prior.get("status") or "") == "failed":
+                attempt = self._recover_explicit_terminal_job(
+                    key, steps, kind=kind, group=group
+                )
+                self._explicit_terminal_recovery_consumed = True
+                self.attempts.append(attempt)
+                self._log(
+                    f"wave {key}: recovered exact terminal managed job {attempt.job_id}; "
+                    "no replacement job submitted"
+                )
+                return attempt
+            elif not self._has_failed_current_wave():
+                raise NpaWorkflowError(
+                    f"wave {key}: --recover-managed-job-id requires one failed prior wave"
+                )
         reserved = None
         if self.options.resume:
             reserved = _resume_launch_recovery(self, steps, key, kind, group)
@@ -1183,6 +1217,17 @@ class SkyPilotWaveExecutor:
                         f"wave {key}: explicit retry requested after terminal attempt "
                         f"{prior_attempt}; preserving prior evidence"
                     )
+
+        if (
+            self.options.resume
+            and self.options.recover_managed_job_id
+            and not self._explicit_terminal_recovery_consumed
+        ):
+            raise NpaWorkflowError(
+                f"wave {key}: --recover-managed-job-id "
+                f"{self.options.recover_managed_job_id!r} was not consumed by the "
+                "resumed plan; refusing replacement job submission"
+            )
 
         last_error = ""
         attempt_start = prior_attempt + 1 if retrying_prior_terminal else 1
@@ -1543,6 +1588,195 @@ class SkyPilotWaveExecutor:
             "checked_at": utc_now(),
         }
 
+    def _explicit_terminal_recovery_attempt(
+        self,
+        key: str,
+        steps: Sequence[PlanStep],
+        *,
+        kind: str,
+        group: str,
+    ) -> WaveAttempt:
+        """Load one failed wave only when its original identity is still exact."""
+        record = self.ledger.latest_wave(key)
+        if record is None or str(record.get("status") or "") != "failed":
+            raise NpaWorkflowError(
+                f"wave {key}: --recover-managed-job-id requires one failed prior wave"
+            )
+        if record.get("partial_launch") or record.get("recovery_reservation"):
+            raise NpaWorkflowError(
+                f"wave {key}: explicit terminal recovery refuses unresolved "
+                "launch-recovery evidence"
+            )
+        if not all(
+            record.get(field) for field in ("job_id", "job_name", "logical_launch_id")
+        ):
+            raise NpaWorkflowError(
+                f"wave {key}: prior wave lacks an immutable managed-job identity"
+            )
+        if not is_terminal(str(record.get("sky_status") or "")):
+            raise NpaWorkflowError(
+                f"wave {key}: prior managed job is not terminal; refusing recovery"
+            )
+        mismatches = self._completed_replay_identity_mismatches(record, steps)
+        if mismatches:
+            raise NpaWorkflowError(
+                f"wave {key}: explicit terminal recovery blocked: "
+                f"IMMUTABLE_IDENTITY_MISMATCH ({', '.join(mismatches)})"
+            )
+        attempt = self._attempt_from_record(record, steps=steps, kind=kind, group=group)
+        expected_name = self._job_name(steps, group=group, attempt=attempt)
+        expected_outputs = [dict(item) for step in steps for item in step.outputs]
+        if attempt.job_name != expected_name or attempt.outputs != expected_outputs:
+            raise NpaWorkflowError(
+                f"wave {key}: prior wave name or declared outputs differ from this "
+                "immutable runtime plan"
+            )
+        return attempt
+
+    def _has_recorded_explicit_terminal_recovery(self, key: str) -> bool:
+        """Whether this explicit recovery was already durably applied."""
+        record = self.ledger.latest_wave(key)
+        if record is None or str(record.get("status") or "") != "succeeded":
+            return False
+        for item in record.get("recovery_history") or []:
+            if not isinstance(item, Mapping):
+                continue
+            if (
+                item.get("schema") == "npa.workflow.exact-terminal-recovery.v1"
+                and str(item.get("recovered_job_id") or "")
+                == self.options.recover_managed_job_id
+            ):
+                return True
+        return False
+
+    def _has_recorded_explicit_terminal_recovery_anywhere(self) -> bool:
+        """Whether this run already recorded the requested exact recovery."""
+        requested_id = self.options.recover_managed_job_id
+        for record in self.ledger.state.waves:
+            for item in record.get("recovery_history") or []:
+                if not isinstance(item, Mapping):
+                    continue
+                if (
+                    item.get("schema") == "npa.workflow.exact-terminal-recovery.v1"
+                    and str(item.get("recovered_job_id") or "") == requested_id
+                ):
+                    return True
+        return False
+
+    def _has_failed_current_wave(self) -> bool:
+        """Whether a current wave record remains eligible for exact recovery."""
+        latest_by_key: dict[str, Mapping[str, Any]] = {}
+        for record in self.ledger.state.waves:
+            key = str(record.get("key") or "")
+            if key:
+                latest_by_key[key] = record
+        return any(
+            str(record.get("status") or "") == "failed"
+            for record in latest_by_key.values()
+        )
+
+    def _validate_explicit_terminal_recovery(
+        self, attempt: WaveAttempt, *, key: str, requested_id: str
+    ) -> str:
+        """Verify one explicit provider identity is observable terminal success."""
+        if requested_id == attempt.job_id:
+            raise NpaWorkflowError(
+                f"wave {key}: recovery ID must differ from the stale recorded job ID"
+            )
+        prior_evidence = self._reconcile_exact(attempt.job_name, attempt.job_id)
+        prior_status = str(getattr(prior_evidence, "status", "") or "").upper()
+        if not (
+            getattr(prior_evidence, "outcome", "") == "found"
+            and str(getattr(prior_evidence, "job_id", "") or "") == attempt.job_id
+            and str(getattr(prior_evidence, "job_name", "") or "") == attempt.job_name
+            and bool(getattr(prior_evidence, "workload_observable", False))
+            and is_terminal(prior_status)
+        ):
+            raise NpaWorkflowError(
+                f"wave {key}: stale recorded managed job is not observable terminal"
+            )
+        evidence = self._reconcile_exact(attempt.job_name, requested_id)
+        status = str(getattr(evidence, "status", "") or "").upper()
+        if not (
+            getattr(evidence, "outcome", "") == "found"
+            and str(getattr(evidence, "job_id", "") or "") == requested_id
+            and str(getattr(evidence, "job_name", "") or "") == attempt.job_name
+            and bool(getattr(evidence, "workload_observable", False))
+            and is_terminal_ok(status)
+        ):
+            raise NpaWorkflowError(
+                f"wave {key}: exact recovered managed job is not observable terminal success"
+            )
+        self._require_outputs(attempt.outputs, key=key)
+        return status
+
+    def _finish_explicit_terminal_recovery(
+        self, attempt: WaveAttempt, *, requested_id: str, status: str
+    ) -> None:
+        """Persist an exact terminal recovery without replacing prior evidence."""
+        attempt.recovery_history.append(
+            {
+                "schema": "npa.workflow.exact-terminal-recovery.v1",
+                "prior_job_id": attempt.job_id,
+                "prior_job_name": attempt.job_name,
+                "prior_status": attempt.status,
+                "prior_sky_status": attempt.sky_status,
+                "prior_error": attempt.error,
+                "prior_error_category": attempt.error_category,
+                "prior_recovery_decision": attempt.recovery_decision,
+                "prior_ended_at": attempt.ended_at,
+                "prior_launch_sequence": attempt.launch_sequence,
+                "recovered_job_id": requested_id,
+                "recovered_provider_status": status,
+                "recovered_at": utc_now(),
+            }
+        )
+        attempt.job_id = requested_id
+        attempt.status = "succeeded"
+        attempt.sky_status = status
+        attempt.ended_at = utc_now()
+        attempt.error = ""
+        attempt.error_category = ""
+        attempt.primary_error = ""
+        attempt.reconciliation_error = ""
+        attempt.adopted = True
+        attempt.replayed = True
+        attempt.recovery_resumed = True
+        attempt.recovery_decision = "operator_authorized_exact_terminal_job_recovery"
+        attempt.operator_remedy = ""
+
+    def _recover_explicit_terminal_job(
+        self,
+        key: str,
+        steps: Sequence[PlanStep],
+        *,
+        kind: str,
+        group: str,
+    ) -> WaveAttempt:
+        """Adopt one operator-selected terminal job without submitting another."""
+        requested_id = self.options.recover_managed_job_id
+        attempt = self._explicit_terminal_recovery_attempt(
+            key, steps, kind=kind, group=group
+        )
+        status = self._validate_explicit_terminal_recovery(
+            attempt, key=key, requested_id=requested_id
+        )
+        self._finish_explicit_terminal_recovery(
+            attempt, requested_id=requested_id, status=status
+        )
+        attempt.reconciliation.append(
+            {
+                "outcome": "found",
+                "source": "explicit_exact_terminal_managed_job",
+                "job_id": requested_id,
+                "status": status,
+                "declared_outputs_valid": True,
+                "checked_at": utc_now(),
+            }
+        )
+        self.ledger.record(attempt)
+        return attempt
+
     @staticmethod
     def _attempt_from_record(
         record: Mapping[str, Any],
@@ -1624,6 +1858,11 @@ class SkyPilotWaveExecutor:
             partial_launch=dict(record.get("partial_launch") or {}),
             recovery_reservation=dict(record.get("recovery_reservation") or {}),
             recovery_resumed=bool(record.get("recovery_resumed", False)),
+            recovery_history=[
+                dict(item)
+                for item in record.get("recovery_history") or []
+                if isinstance(item, Mapping)
+            ],
             persistent_volume_claims=[
                 item
                 for item in record.get("persistent_volume_claims") or []
