@@ -245,6 +245,8 @@ def test_gold_controller_states_share_exact_protocol_inputs() -> None:
         assert _value(base, flag) == _value(adapted, flag)
     assert _value(base, "--checkpoint-role") == "base"
     assert _value(adapted, "--checkpoint-role") == "adapted"
+    assert _value(base, "--recording-id") == "pi05-gold-contract"
+    assert _value(adapted, "--recording-id") == "pi05-gold-contract"
     assert "--gold-collection-uri" in base
     assert _value(base, "--wrist-ablation-modes") == (
         "fresh,frozen,pixel_channel_shuffle"

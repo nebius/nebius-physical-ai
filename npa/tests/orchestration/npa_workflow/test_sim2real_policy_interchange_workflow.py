@@ -100,6 +100,8 @@ def test_gold_arms_share_physics_protocol_but_not_fake_noise_contract() -> None:
     ):
         assert _value(base, flag) == _value(adapted, flag)
     assert _value(base, "--policy-backend") == "lerobot_smolvla"
+    assert _value(base, "--recording-id") == "same-gold"
+    assert _value(adapted, "--recording-id") == "same-gold"
     assert all("noise" not in item for item in base)
 
 

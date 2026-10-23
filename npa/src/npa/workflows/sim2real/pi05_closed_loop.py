@@ -8,6 +8,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -1234,13 +1235,15 @@ def _write_video(work: Path, episodes: list[dict[str, Any]]) -> tuple[Path, int]
 
 
 def _write_rrd(
-    work: Path, episodes: list[dict[str, Any]], role: str
+    work: Path, episodes: list[dict[str, Any]], role: str, recording_id: str
 ) -> tuple[Path, int]:
     import rerun as rr
 
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", recording_id) is None:
+        raise RuntimeError("closed-loop Rerun recording id is invalid")
     rrd = work / "rollouts.rrd"
     step = 0
-    with rr.RecordingStream(f"pi05-{role}") as recording:
+    with rr.RecordingStream(f"pi05-{role}", recording_id=recording_id) as recording:
         recording.save(rrd)
         for episode_index, episode in enumerate(episodes):
             step += _log_rrd_physics(recording, rr, episode, episode_index)
@@ -1391,11 +1394,14 @@ def _decode_artifacts(mp4: Path, rrd: Path) -> tuple[dict[str, Any], str]:
 
 
 def _write_review_artifacts(
-    work: Path, episodes: list[dict[str, Any]], checkpoint_role: str
+    work: Path,
+    episodes: list[dict[str, Any]],
+    checkpoint_role: str,
+    recording_id: str,
 ) -> dict[str, Any]:
     failed_cameras = _write_failed_camera_evidence(work, episodes)
     mp4, frames = _write_video(work, episodes)
-    rrd, steps = _write_rrd(work, episodes, checkpoint_role)
+    rrd, steps = _write_rrd(work, episodes, checkpoint_role, recording_id)
     probe, _ = _decode_artifacts(mp4, rrd)
     for episode in episodes:
         episode.pop("_exterior_frames", None)
@@ -2577,7 +2583,9 @@ def _run_evaluation(
             policy_profile=policy_profile,
         )
         try:
-            artifacts = _write_review_artifacts(work, episodes, args.checkpoint_role)
+            artifacts = _write_review_artifacts(
+                work, episodes, args.checkpoint_role, args.recording_id
+            )
             result = _result(args, episodes, artifacts, protocol, receipt)
         except Exception:
             _persist_partial_episodes(work, episodes)
@@ -2603,6 +2611,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--artifact-root-uri", required=True)
     parser.add_argument("--component-root-uri", required=True)
     parser.add_argument("--checkpoint-role", choices=("base", "adapted"), required=True)
+    parser.add_argument("--recording-id", required=True)
     parser.add_argument("--split", choices=("validation", "gold"), required=True)
     parser.add_argument("--episodes", type=int, required=True)
     parser.add_argument("--decisions", type=int, required=True)

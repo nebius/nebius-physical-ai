@@ -2939,9 +2939,14 @@ def _rrd_episode() -> dict:
 def test_closed_loop_rrd_is_finalized_and_causally_timed(tmp_path: Path) -> None:
     episodes = [_rrd_episode()]
 
-    rrd, steps = pi05_closed_loop._write_rrd(tmp_path, episodes, "base")
+    rrd, steps = pi05_closed_loop._write_rrd(
+        tmp_path, episodes, "base", "sealed-workflow-run"
+    )
 
     assert steps == 2
+    from npa.viz.recordings import load_recording
+
+    assert load_recording(rrd).recording_id() == "sealed-workflow-run"
     subprocess.run(
         [sys.executable, "-m", "rerun", "rrd", "verify", str(rrd)],
         check=True,
@@ -2975,7 +2980,12 @@ def test_closed_loop_rrd_rejects_unbound_physics_rows(
     else:
         episode["physics_trace"][0]["simulator_time_s"] = 0.3
     with pytest.raises(RuntimeError, match="Rerun"):
-        pi05_closed_loop._write_rrd(tmp_path, [episode], "base")
+        pi05_closed_loop._write_rrd(tmp_path, [episode], "base", "sealed-workflow-run")
+
+
+def test_closed_loop_rrd_rejects_invalid_workflow_identity(tmp_path: Path) -> None:
+    with pytest.raises(RuntimeError, match="recording id"):
+        pi05_closed_loop._write_rrd(tmp_path, [_rrd_episode()], "base", "../run")
 
 
 def test_closed_loop_entry_rejects_green_kit_exit_without_success_report(
