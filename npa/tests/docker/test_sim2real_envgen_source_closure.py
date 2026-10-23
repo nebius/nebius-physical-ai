@@ -15,6 +15,7 @@ DOCKERFILE = ROOT / "docker/workbench/sim2real-envgen/Dockerfile"
 REQUIREMENTS = ROOT / "docker/workbench/common/sim2real-envgen-requirements.txt"
 README = ROOT / "docker/workbench/sim2real-envgen/README.md"
 CONTAINER_CATALOG = ROOT.parent / "docs/workbench/container-image-catalog.md"
+GOLDEN_EVALS = ROOT / "src/npa/smoke/golden_evals.yaml"
 PYPROJECT = ROOT / "pyproject.toml"
 INHERITED_FILES = (
     "src/npa/orchestration/skypilot/capacity.py",
@@ -172,4 +173,7 @@ def test_envgen_documented_python_version_matches_its_runtime_contract():
     assert (
         "source-attested Python 3.12 NPA-only scenario-record runtime"
         in envgen_catalog_row
+    )
+    assert "A dedicated Python 3.12 EnvGen venv" in GOLDEN_EVALS.read_text(
+        encoding="utf-8"
     )

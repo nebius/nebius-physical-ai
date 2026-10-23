@@ -1544,7 +1544,7 @@ containers:
       network: none
       external_fetch: [pypi]
       notes: >-
-        A dedicated Python 3.11 EnvGen venv pins the NPA closure, Pillow 13,
+        A dedicated Python 3.12 EnvGen venv pins the NPA closure, Pillow 13,
         and fsspec 2026.6.0 while excluding Genesis, LeRobot, datasets, and
         Torch. The golden eval removes PYTHONPATH and proves exact source
         readability plus raw-scenario generation as the non-root runtime user.
