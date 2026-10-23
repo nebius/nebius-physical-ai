@@ -177,7 +177,9 @@ def test_graph_sends_compact_view_and_records_bytes_without_altering_history(tmp
 
 
 @pytest.mark.parametrize("payload", ["", "tiny", '\n"\\' * 5, "α" * 5, "🙂" * 3])
-def test_small_superseded_reads_keep_original_receipts_when_metadata_would_grow(payload):
+def test_small_superseded_reads_keep_original_receipts_when_metadata_would_grow(
+    payload,
+):
     messages = []
     _read(messages, payload)
     _read(messages, "latest", digest="new")
@@ -189,8 +191,14 @@ def test_small_superseded_reads_keep_original_receipts_when_metadata_would_grow(
 def test_short_repeated_successful_logs_do_not_expand_the_request():
     messages = []
     for text in ("old pass", "latest pass"):
-        _observation(messages, "run_operation", operation="status", returncode=0,
-                     stdout=text, stderr="")
+        _observation(
+            messages,
+            "run_operation",
+            operation="status",
+            returncode=0,
+            stdout=text,
+            stderr="",
+        )
     assert model_messages(messages, observation_operations={"status"}) == messages
 
 
@@ -199,8 +207,15 @@ def test_utf8_request_cannot_grow_even_when_ascii_size_proxy_would_shrink():
 
     messages = []
     for text, digest in (("x" * 450, "old"), ("latest", "new")):
-        _observation(messages, "read_file", path="α" * 100, sha256=digest,
-                     start_line=1, end_line=1, content=text)
+        _observation(
+            messages,
+            "read_file",
+            path="α" * 100,
+            sha256=digest,
+            start_line=1,
+            end_line=1,
+            content=text,
+        )
     result = json.loads(messages[1]["content"])
     messages[1]["content"] = json.dumps(result, ensure_ascii=False)
     proposal = {**messages[1], "content": json.dumps(_omitted(result, ("content",)))}
@@ -215,7 +230,9 @@ def test_utf8_request_cannot_grow_even_when_ascii_size_proxy_would_shrink():
     request = {"messages": messages}
     compact_request = {"messages": rendered}
     before = httpx.Request("POST", "https://example.invalid", json=request).content
-    after = httpx.Request("POST", "https://example.invalid", json=compact_request).content
+    after = httpx.Request(
+        "POST", "https://example.invalid", json=compact_request
+    ).content
     assert len(after) <= len(before)
 
 
@@ -225,9 +242,15 @@ def test_large_observation_still_shrinks_actual_httpx_request_without_changing_p
     _read(messages, "latest", digest="new")
     original = copy.deepcopy(messages)
     rendered = model_messages(messages)
-    before = httpx.Request("POST", "https://example.invalid", json={"messages": messages}).content
-    after = httpx.Request("POST", "https://example.invalid", json={"messages": rendered}).content
+    before = httpx.Request(
+        "POST", "https://example.invalid", json={"messages": messages}
+    ).content
+    after = httpx.Request(
+        "POST", "https://example.invalid", json={"messages": rendered}
+    ).content
     assert len(after) < len(before)
     assert rendered[-1] == messages[-1]
     assert messages == original
-    assert [message.get("tool_call_id") for message in rendered] == [message.get("tool_call_id") for message in messages]
+    assert [message.get("tool_call_id") for message in rendered] == [
+        message.get("tool_call_id") for message in messages
+    ]
