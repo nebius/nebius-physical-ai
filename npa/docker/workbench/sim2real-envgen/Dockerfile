@@ -43,7 +43,7 @@ RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" "${ENVG
     && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && python3.11 -c 'import sys; assert sys.version_info[:2] == (3, 11), sys.version' \
     && python3.11 -m venv "${ENVGEN_VENV}" \
-    && "${ENVGEN_VENV}/bin/python" -m pip install --no-cache-dir --upgrade 'pip==25.3' 'setuptools==79.0.1' \
+    && "${ENVGEN_VENV}/bin/python" -m pip install --no-cache-dir --upgrade 'pip==26.2.0' 'setuptools==83.0.0' \
     && "${ENVGEN_VENV}/bin/python" -m pip install --no-cache-dir --no-deps \
       -r /opt/npa/sim2real-envgen-requirements.txt \
     && find /opt/npa/src /opt/npa/workflows -type d -exec chmod a+rx {} + \

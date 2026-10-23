@@ -1553,6 +1553,7 @@ containers:
       kind: container-smoke
       module: npa.smoke.test_sim2real_envgen_functional
       command: python -m npa.smoke.test_sim2real_envgen_functional
+      serverless_gpu: h200
       gpu: none
       timeout_seconds: 120
       status: needs-image-update
