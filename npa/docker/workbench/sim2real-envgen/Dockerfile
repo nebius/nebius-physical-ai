@@ -1,8 +1,9 @@
-# Envgen starts from an explicitly selected Genesis parent, removes payload
-# outside this capability's contract, and flattens the sanitized filesystem
-# below. A historical catalog digest must not silently stand in for the
-# current source-attested Genesis build: callers provide either the matching
-# local source-SHA tag or an intentionally selected immutable parent.
+# EnvGen generates the canonical Stage 4 scenario records.  Its source never
+# imports Genesis or LeRobot, so inheriting the Genesis policy/dataset venv
+# would make an unrelated upstream incompatibility block this role.  The
+# source-attested parent supplies only the CUDA/Kubernetes operating-system
+# contract; this Dockerfile removes inherited NPA bytes and builds the exact
+# secure Python 3.11 EnvGen closure below.
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE} AS sanitized
 
@@ -10,91 +11,54 @@ ARG NPA_SOURCE_SHA
 ARG UBUNTU_SNAPSHOT=20261009T000000Z
 ARG ENVGEN_LINUX_LIBC_DEV_VERSION=5.15.0-198.208
 
+ENV ENVGEN_VENV=/opt/npa/envgen-venv
+
 WORKDIR /opt/npa
 USER root
-# COPY merges trees, so removed source files must not survive from the parent.
+
+# The source-attested parent may itself be an NPA image.  Remove its complete
+# NPA tree rather than only selected subdirectories: copying source over an
+# inherited venv would retain an unreviewed dependency closure.
 RUN test -d /opt/npa && test ! -L /opt/npa \
-    && rm -rf /opt/npa/src /opt/npa/workflows
+    && rm -rf /opt/npa
+
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
-COPY docker/workbench/common/sim2real-control-requirements.txt \
-    /opt/npa/sim2real-control-requirements.txt
-COPY docker/workbench/common/sim2real-genesis-requirements.txt \
-    /opt/npa/sim2real-genesis-requirements.txt
+COPY docker/workbench/common/sim2real-envgen-requirements.txt \
+    /opt/npa/sim2real-envgen-requirements.txt
 COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh \
     /usr/local/bin/npa-workflow-entrypoint
 COPY --chmod=0755 docker/workbench/common/configure_ubuntu_snapshot.sh \
     /usr/local/bin/configure-ubuntu-snapshot
 COPY --chmod=0755 docker/workbench/common/install_workflow_runtime_prereqs.sh \
     /usr/local/bin/install-workflow-runtime-prereqs
-COPY docker/workbench/common/sanitize_sim2real_envgen_parent.py \
-    /usr/local/lib/npa/sanitize-sim2real-envgen-parent.py
-COPY docker/workbench/curobo/remove_scikit_image_recipe.py \
-    /usr/local/lib/npa/remove-scikit-image-recipe.py
-COPY --chmod=0644 docker/workbench/common/envgen_compat/tetgen.py \
-    /opt/npa/compat/tetgen.py
 
-# The public Genesis parent includes payloads that are outside this
-# capability's public packaging/security contract:
-#
-# * imageio-ffmpeg's wheel-bundled static FFmpeg;
-# * the AGPL tetgen Python wrapper (used only for optional tetrahedralization);
-# * optional W&B and Nsight Compute tooling, including separately compiled Go
-#   binaries that are not part of canonical environment generation.
-# * an inert token-bearing scikit-image recipe, removed by the existing
-#   exact-source correction while preserving the image loader and license.
-#
-# Retain MoviePy while replacing imageio-ffmpeg with its hash-pinned
-# pure-Python sdist. Remove the optional packages and their parent metadata
-# before flattening the filesystem so their bytes cannot remain in a lower
-# layer. Genesis 0.4.6 declares tetgen and LeRobot 0.4.4 declares W&B
-# unconditionally, so remove those two Requires-Dist entries as part of
-# constructing this deliberately capability-reduced runtime distribution.
-# The shared Genesis requirements own the GitPython pin; keep its installed-version
-# check aligned with that file rather than installing a second version here.
+# Keep the same snapshot-pinned Kubernetes bootstrap contract as the prior
+# role image, but make its Python runtime independently resolver-closed.  A
+# source .pth avoids an unpinned build-backend download while still proving the
+# exact checked-out NPA sources import with PYTHONPATH removed.
 RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" "${ENVGEN_LINUX_LIBC_DEV_VERSION}" \
     && test "$(dpkg-query --show --showformat='${Version}' linux-libc-dev)" = "${ENVGEN_LINUX_LIBC_DEV_VERSION}" \
     && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
+    && python3.11 -c 'import sys; assert sys.version_info[:2] == (3, 11), sys.version' \
+    && python3.11 -m venv "${ENVGEN_VENV}" \
+    && "${ENVGEN_VENV}/bin/python" -m pip install --no-cache-dir --upgrade 'pip==25.3' 'setuptools==79.0.1' \
+    && "${ENVGEN_VENV}/bin/python" -m pip install --no-cache-dir --no-deps \
+      -r /opt/npa/sim2real-envgen-requirements.txt \
     && find /opt/npa/src /opt/npa/workflows -type d -exec chmod a+rx {} + \
     && find /opt/npa/src /opt/npa/workflows -type f -exec chmod a+r {} + \
-    && chmod a+r /opt/npa/pyproject.toml \
-    && chmod 0755 /opt/npa/compat \
-    && chmod 0644 /opt/npa/compat/tetgen.py \
-    && python -m pip uninstall -y npa \
-    && python -m pip uninstall -y transformers imageio-ffmpeg wandb tetgen \
-    && python /usr/local/lib/npa/sanitize-sim2real-envgen-parent.py \
-    && rm -rf /opt/nvidia/nsight-compute \
-    && python -m pip install --no-deps \
-      'imageio-ffmpeg @ https://files.pythonhosted.org/packages/44/bd/c3343c721f2a1b0c9fc71c1aebf1966a3b7f08c2eea8ed5437a2865611d6/imageio_ffmpeg-0.6.0.tar.gz#sha256=e2556bed8e005564a9f925bb7afa4002d82770d6b08825078b7697ab88ba1755' \
-    && python -m pip install --no-deps \
-      -r /opt/npa/sim2real-control-requirements.txt \
-      -r /opt/npa/sim2real-genesis-requirements.txt \
-    && mkdir -p /usr/share/doc/npa-envgen \
-    && python /usr/local/lib/npa/remove-scikit-image-recipe.py \
-      --site-packages "$(python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \
-      --capability envgen \
-      > /usr/share/doc/npa-envgen/dependency-source-correction.json \
-    && find /opt/genesis/venv -type f \
-      -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
-    && test -z "$(find /opt/genesis/venv -type f \
-      -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)" \
-    && IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg python -c \
-      'import imageio_ffmpeg; assert imageio_ffmpeg.get_ffmpeg_exe() == "/usr/bin/ffmpeg"' \
-    && python -m pip check \
-    && python -c "import site; from pathlib import Path; Path(site.getsitepackages()[0], 'npa-exact-source.pth').write_text('/opt/npa/compat\\n/opt/npa/src\\n', encoding='utf-8')" \
-    && env -u PYTHONPATH /opt/genesis/venv/bin/python -c \
-      'import boto3, genesis; from npa.workflows.sim2real.workflow_stage import main; assert callable(main)' \
-    && python -c 'import importlib.metadata as m; assert not any(d.metadata["Name"].lower() == "transformers" for d in m.distributions())' \
-    && python -c 'import importlib.metadata as m; names = {d.metadata["Name"].lower() for d in m.distributions()}; assert names.isdisjoint({"tetgen", "wandb"})' \
-    && python -c 'import importlib.metadata as m; assert m.version("GitPython") == "3.2.1"' \
-    && test ! -e /opt/nvidia/nsight-compute \
-    && python -m py_compile /opt/npa/src/npa/workflows/sim2real_envgen.py
+    && chmod a+r /opt/npa/pyproject.toml /opt/npa/sim2real-envgen-requirements.txt \
+    && "${ENVGEN_VENV}/bin/python" -m pip check \
+    && "${ENVGEN_VENV}/bin/python" -c "import site; from pathlib import Path; Path(site.getsitepackages()[0], 'npa-exact-source.pth').write_text('/opt/npa/src\\n', encoding='utf-8')" \
+    && env -u PYTHONPATH "${ENVGEN_VENV}/bin/python" -c \
+      'from importlib import metadata; from npa.workflows import sim2real_envgen; from npa.workflows.sim2real.workflow_stage import main; assert callable(sim2real_envgen.main) and callable(main); absent = {"datasets", "lerobot", "genesis-world", "torch"}; installed = {distribution.metadata["Name"].lower() for distribution in metadata.distributions()}; assert installed.isdisjoint(absent), installed & absent' \
+    && "${ENVGEN_VENV}/bin/python" -m py_compile /opt/npa/src/npa/workflows/sim2real_envgen.py \
+    && chown -R ubuntu:ubuntu /opt/npa
 
-# Flatten the sanitized filesystem so the published image does not reference
-# the Genesis parent layer that contained the removed static FFmpeg payload.
-# COPY --from copies the merged filesystem, including whiteouts, while the
-# scratch stage deliberately drops every parent blob from the final manifest.
+# Flatten the sanitized filesystem.  The final manifest has no dependency on
+# an inherited Genesis or LeRobot layer, and its runtime interpreter is
+# declared explicitly for standard SkyPilot setup.
 FROM scratch AS runtime
 
 ARG NPA_SOURCE_SHA
@@ -104,37 +68,23 @@ LABEL npa.tool="envgen" \
 
 COPY --from=sanitized / /
 
-# A scratch stage does not inherit image configuration. Preserve the CUDA,
-# Genesis, cache, and workflow runtime contract explicitly.
-ENV PATH=/opt/genesis/venv/bin:/opt/npa/venv/bin:/usr/local/cuda/bin:/usr/local/nvidia/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+ENV PATH=/opt/npa/envgen-venv/bin:/usr/local/cuda/bin:/usr/local/nvidia/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/local/cuda/lib64 \
     LIBRARY_PATH=/usr/local/cuda/lib64/stubs \
     NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=compute,graphics,utility \
     CUDA_HOME=/usr/local/cuda \
     CUDA_VERSION=13.0.1 \
-    TORCH_CUDA_ARCH_LIST="8.0 9.0 10.0 10.3 12.0" \
     DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    HF_HOME=/opt/npa/hf_cache \
-    HF_HUB_CACHE=/opt/npa/hf_cache/hub \
-    TRANSFORMERS_CACHE=/opt/npa/hf_cache/transformers \
     NPA_INPUT_PATH=/input \
     NPA_OUTPUT_PATH=/output \
     INPUT_PATH=/input \
     OUTPUT_PATH=/output \
-    GENESIS_VERSION=0.4.6 \
-    LEROBOT_VERSION=0.4.4 \
-    MUJOCO_GL=egl \
-    PYOPENGL_PLATFORM=egl \
-    EGL_PLATFORM=device \
-    NPA_GENESIS_HOME=/opt/genesis \
     NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
-    NPA_BAKED_PYTHON=/opt/genesis/venv/bin/python \
-    IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg \
-    PYTHONPATH=/opt/npa/compat:/opt/npa/src
+    NPA_BAKED_PYTHON=/opt/npa/envgen-venv/bin/python
 
 WORKDIR /opt/npa
 USER ubuntu

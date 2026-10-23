@@ -7,10 +7,11 @@ NPA_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 REGISTRY=""
 PUSH=0
 BASE_IMAGE="${BASE_IMAGE:-ghcr.io/nebius/nebius-physical-ai/npa-cosmos3-reason@sha256:e708aa32b9247eaedf1a7a5b0d82adbe65b95a9af50721b9d09fddbfd508bbc9}"
-# Genesis is now built from an explicit source-attested CUDA 13 parent. Do not
-# silently revive the historical catalog image here: the caller must name the
-# Genesis image that Envgen is actually allowed to inherit.
-SIM2REAL_GPU_BASE_IMAGE="${SIM2REAL_GPU_BASE_IMAGE:-${GENESIS_IMAGE:-}}"
+# EnvGen's canonical Stage 4 code does not import Genesis or LeRobot.  Unless
+# an operator deliberately supplies another current-source parent, use the
+# freshly built Cosmos3-reason role as the source-attested CUDA/Kubernetes base
+# and construct an isolated EnvGen Python closure on top of it.
+SIM2REAL_ENVGEN_BASE_IMAGE="${SIM2REAL_ENVGEN_BASE_IMAGE:-}"
 VLM_TAG="${VLM_TAG:-cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z}"
 ENVGEN_TAG="${ENVGEN_TAG:-cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z}"
 SIM2REAL_COMPONENT_BASE_IMAGE="${SIM2REAL_COMPONENT_BASE_IMAGE:-npa-envgen:${ENVGEN_TAG}}"
@@ -18,7 +19,6 @@ EVAL_TAG="${EVAL_TAG:-cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034
 VLM_RL_TAG="${VLM_RL_TAG:-cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z}"
 CONTROL_TAG="${CONTROL_TAG:-0.1.2}"
 NPA_SOURCE_SHA="${NPA_SOURCE_SHA:-$(git -C "${NPA_ROOT}/.." rev-parse HEAD)}"
-source "${SCRIPT_DIR}/genesis/require_secure_closure.sh"
 if [[ ! "${NPA_SOURCE_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
   echo "ERROR: NPA_SOURCE_SHA must be the exact 40-character checkout SHA" >&2
   exit 2
@@ -37,14 +37,17 @@ Builds the Sim2Real reference images one at a time:
   npa-loop-eval:${EVAL_TAG}
   npa-rerun-viewer:${RERUN_VIEWER_TAG:-0.38.1} (skipped when SKIP_RERUN_VIEWER=1)
 
-Set BASE_IMAGE and SIM2REAL_GPU_BASE_IMAGE to compatible immutable CUDA 13 /
-sm80-sm90-sm100-sm103-sm120 parents before building. SIM2REAL_GPU_BASE_IMAGE
-is required; for a current-source local build use
-npa-genesis:dev-${NPA_SOURCE_SHA} from the Genesis build step. GENESIS_IMAGE
-remains a compatibility alias for SIM2REAL_GPU_BASE_IMAGE. The freshly built Envgen image
-is the default parent for the reference policy, VLM-RL trainer, and loop evaluator;
-set SIM2REAL_COMPONENT_BASE_IMAGE only to validate another immutable Envgen build.
-Set VLM_TAG and EVAL_TAG for additive component rebuilds.
+Set BASE_IMAGE to a compatible immutable CUDA 13 / sm80-sm90-sm100-sm103-sm120
+parent for the freshly built Cosmos3-reason image. Unless
+SIM2REAL_ENVGEN_BASE_IMAGE is set, that freshly built current-source image is
+then the EnvGen parent. An explicit SIM2REAL_ENVGEN_BASE_IMAGE must carry the
+same source-revision label. EnvGen does not inherit Genesis: its dedicated
+Python 3.11 closure excludes the unavailable Genesis/LeRobot dataset stack.
+The freshly built Envgen image is the default parent for the reference policy
+and VLM-RL signal adapter; set SIM2REAL_COMPONENT_BASE_IMAGE only to validate
+another immutable Envgen build. The legacy loop-eval image is not part of the
+canonical Isaac workflow and stays skipped unless BUILD_LEGACY_GENESIS_EVAL=1
+with a separately qualified Genesis runtime.
 EOF
 }
 
@@ -79,13 +82,10 @@ if [ "$PUSH" -eq 1 ] && [ -z "$REGISTRY" ]; then
   exit 2
 fi
 
-if [ -z "$SIM2REAL_GPU_BASE_IMAGE" ]; then
+if [ -n "${SKIP_COSMOS3_REASON:-}" ] && [ -z "$SIM2REAL_ENVGEN_BASE_IMAGE" ]; then
   cat >&2 <<EOF
-ERROR: SIM2REAL_GPU_BASE_IMAGE is required for Envgen.
-Build the matching Genesis image first and set:
-  SIM2REAL_GPU_BASE_IMAGE=npa-genesis:dev-${NPA_SOURCE_SHA}
-An immutable intentionally selected Genesis parent is also accepted. GENESIS_IMAGE
-is retained only as a compatibility alias; no historical Genesis digest is used.
+ERROR: SKIP_COSMOS3_REASON requires an explicit SIM2REAL_ENVGEN_BASE_IMAGE.
+The EnvGen parent must carry org.opencontainers.image.revision=${NPA_SOURCE_SHA}.
 EOF
   exit 2
 fi
@@ -94,17 +94,6 @@ if [ "$(git -C "${NPA_ROOT}/.." rev-parse HEAD)" != "${NPA_SOURCE_SHA}" ]; then
   echo "ERROR: NPA_SOURCE_SHA must match the build-context checkout HEAD" >&2
   exit 2
 fi
-
-PARENT_SOURCE_SHA="$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$SIM2REAL_GPU_BASE_IMAGE" 2>/dev/null || true)"
-if [ "$PARENT_SOURCE_SHA" != "$NPA_SOURCE_SHA" ]; then
-  echo "ERROR: SIM2REAL_GPU_BASE_IMAGE must carry org.opencontainers.image.revision=${NPA_SOURCE_SHA}; found ${PARENT_SOURCE_SHA:-missing}" >&2
-  exit 2
-fi
-
-# Envgen inherits the only allowed current-source Genesis parent. Validate that
-# custody first, then refuse before any Docker build while its closure remains
-# unsupported.
-require_current_secure_genesis_closure
 
 build_one() {
   local name="$1"
@@ -134,10 +123,22 @@ if [ -n "${SKIP_COSMOS3_REASON:-}" ]; then
 else
   build_one "npa-cosmos3-reason" "${VLM_TAG}" "${SCRIPT_DIR}/cosmos3-reason/Dockerfile" "BASE_IMAGE=${BASE_IMAGE}"
 fi
-build_one "npa-envgen" "${ENVGEN_TAG}" "${SCRIPT_DIR}/sim2real-envgen/Dockerfile" "BASE_IMAGE=${SIM2REAL_GPU_BASE_IMAGE}"
+if [ -z "$SIM2REAL_ENVGEN_BASE_IMAGE" ]; then
+  SIM2REAL_ENVGEN_BASE_IMAGE="npa-cosmos3-reason:${VLM_TAG}"
+fi
+PARENT_SOURCE_SHA="$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$SIM2REAL_ENVGEN_BASE_IMAGE" 2>/dev/null || true)"
+if [ "$PARENT_SOURCE_SHA" != "$NPA_SOURCE_SHA" ]; then
+  echo "ERROR: SIM2REAL_ENVGEN_BASE_IMAGE must carry org.opencontainers.image.revision=${NPA_SOURCE_SHA}; found ${PARENT_SOURCE_SHA:-missing}" >&2
+  exit 2
+fi
+build_one "npa-envgen" "${ENVGEN_TAG}" "${SCRIPT_DIR}/sim2real-envgen/Dockerfile" "BASE_IMAGE=${SIM2REAL_ENVGEN_BASE_IMAGE}"
 build_one "npa-reference-policy" "${ENVGEN_TAG}" "${SCRIPT_DIR}/sim2real-reference-policy/Dockerfile" "BASE_IMAGE=npa-envgen:${ENVGEN_TAG}"
 build_one "npa-lerobot-vlm-rl" "${VLM_RL_TAG}" "${SCRIPT_DIR}/lerobot-vlm-rl/Dockerfile" "BASE_IMAGE=${SIM2REAL_COMPONENT_BASE_IMAGE}"
-build_one "npa-loop-eval" "${EVAL_TAG}" "${SCRIPT_DIR}/sim2real-eval/Dockerfile" "BASE_IMAGE=${SIM2REAL_COMPONENT_BASE_IMAGE}"
+if [ "${BUILD_LEGACY_GENESIS_EVAL:-0}" = "1" ]; then
+  build_one "npa-loop-eval" "${EVAL_TAG}" "${SCRIPT_DIR}/sim2real-eval/Dockerfile" "BASE_IMAGE=${SIM2REAL_COMPONENT_BASE_IMAGE}"
+else
+  echo "Skipping npa-loop-eval (BUILD_LEGACY_GENESIS_EVAL=0; not a canonical workflow role)"
+fi
 if [ -n "${SKIP_RERUN_VIEWER:-}" ]; then
   echo "Skipping npa-rerun-viewer (SKIP_RERUN_VIEWER=${SKIP_RERUN_VIEWER})"
 else

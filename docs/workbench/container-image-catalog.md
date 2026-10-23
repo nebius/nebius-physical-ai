@@ -449,18 +449,13 @@ Sim2Real workflow with its MiniMax-M3 default. Select a newer coherent image set
 for that workflow; the [operator runbook](guides/sim2real-workflow.md#5-buildpush-once-and-prove-the-exact-image-pulls)
 explains explicit Cosmos 3 selection and the baked evaluator compatibility check.
 
-Current EnvGen build sources replace the pinned Genesis parent's GitPython
-3.1.57 with 3.1.62 before flattening the published filesystem. This addresses
-the GitPython security findings that blocked a subsequent development build;
-see the [upstream security releases](https://gitpython.readthedocs.io/en/latest/changes.html).
-EnvGen also applies the existing exact-source scikit-image 0.26.0 correction
-before flattening its filesystem. It removes one inert token-bearing recipe,
-preserves the executable loader and primary documentation, updates package
-metadata and bytecode, and refuses unrecognized source bytes. The all-severity
-secret scan remains mandatory.
-
-The shared Genesis requirements own this installation pin. Regression checks
-require EnvGen's installed-version assertion to match that shared pin.
+The current EnvGen candidate deliberately no longer derives from the Genesis
+runtime, so GitPython and the Genesis/scikit-image correction are not part of
+its closure. It removes the inherited NPA tree, creates a dedicated Python 3.11
+NPA-only scenario-record environment with Pillow 13 and fsspec 2026.6.0, and
+rejects Genesis, LeRobot, datasets, and Torch. Its new source-attested digest
+still requires complete byte/security scans and a current role evaluation; the
+preceding Genesis-based release does not supply that evidence.
 
 The canonical EnvGen recipe now selects the October 9 Ubuntu snapshot and
 `linux-libc-dev=5.15.0-198.208`, replacing the inherited headers that failed
@@ -690,7 +685,7 @@ original image identities.
 | Cosmos Transfer 2.5 | `npa-cosmos2-transfer` | `2.5.1-sim2real-coherent-20260904` | 2026-09-04 | Cosmos Transfer 2.5 Sim2Real video augmentation, built from source at an immutable commit with hash-locked dependencies. Gated weights and the pinned guardrail tokenizer data are fetched at runtime with `HF_TOKEN`; the NLTK-safe cache materialization keeps guardrails enabled, and baked-byte scans remain a release gate. |
 | Rerun 0.31.4 | `npa-rerun-viewer` | `0.31.4-sim2real-coherent-20260904` | 2026-09-04 | Published non-root `ubuntu` SkyPilot worker and Rerun viewer/server on ports 9876/9090 for `.rrd` robotics traces. It includes the attested bootstrap contract and exact-source Sim2Real Stage 14 runtime, and bakes no models, datasets, credentials, or runtime caches. The coherent release converted an actual three-sample robot joint trace, reopened its RRD entity through the CLI, and served/read the artifact over HTTP. |
 | Sim2Real Controller 0.1.2 | `npa-sim2real-control` | `0.1.2-sim2real-coherent-20260904` | 2026-09-04 | Non-root CPU controller containing the canonical 14-stage orchestration capability. The coherent release expanded and validated both the checkpoint-promotion and loop-back decision branches; it contains no model weights, datasets, credentials, or runtime caches. |
-| Sim2Real EnvGen 0.1.2 | `npa-envgen` | `0.1.2-sim2real-coherent-20260904` | 2026-09-04 | Generates randomized Sim2Real environments and scenes on the Genesis base. The coherent exact-source release bakes the snapshot-pinned non-root SkyPilot Kubernetes bootstrap closure (`sudo`, SSH, and rsync) and was validated through real environment generation plus a Genesis CUDA physics step. On 2026-09-28, the accepted digest `sha256:08eb75118f5a04194d33a60308212db7706dd9c339d74afc5471a58608bf0422` resolved anonymously and passed a fresh UID 1000 readability probe: `/opt/npa/compat` was `0755`, `tetgen.py` and `npa-exact-source.pth` were `0644`, and both the compatibility shim and exact NPA source imported with `PYTHONPATH` removed. Current source pins those modes explicitly rather than depending on checkout permissions. It is built from `sim2real-envgen/Dockerfile`. |
+| Sim2Real EnvGen 0.1.2 | `npa-envgen` | `0.1.2-sim2real-coherent-20260904` | 2026-09-04 | **Historical predecessor only.** That Genesis-based release baked the snapshot-pinned non-root SkyPilot Kubernetes bootstrap closure and was validated through environment generation plus a Genesis CUDA step. Its accepted digest and UID-1000 readability probe remain historical evidence, not evidence for current source. The current `sim2real-envgen/Dockerfile` instead creates a source-attested Python 3.11 NPA-only scenario-record runtime with Pillow 13/fsspec 2026.6.0 and no Genesis/LeRobot stack; it requires new immutable-image and workflow qualification before any current runtime claim. |
 | BDD100K Detection Training | `npa-detection-training` | `runtime-v1-20260905` | 2026-09-05 | Authenticated object-detector train/eval service on port 8790 with token-free readiness, explicit label maps, and persistent run/artifact discovery. |
 | Enactic OpenArm | `npa-openarm` | `2.2.0-isaac0.1.0-rtfetch` | 2026-09-15 | OpenArm v2 bimanual MuJoCo simulation plus upstream OpenArm Isaac Lab reach rollout and RSL-RL training. Apache-2.0 OpenArm source and simulator assets are baked; Isaac Sim/Lab are exact runtime fetches after the operator's EULA decision. The exact release digest passed byte/supply-chain gates and a complete RTX PRO 6000 dual-simulator workflow with independently checked traces, rendered video, checkpoint, and qualification report. See [OpenArm](openarm.md). |
 | FiftyOne 1.21.0 (Voxel51) | `npa-fiftyone` | `1.21.0-skypilot-v1-20260915` | 2026-09-15 | CPU dataset curation and loopback visualization on port 5151, including real Brain uniqueness, similarity, and embedding visualization. The non-root SkyPilot worker includes MongoDB 7.0.40 with matching source and notices, and supports the current NPA dependency environment. |

@@ -11,10 +11,11 @@ The base's Python 3.11/Torch 2.13 CUDA 13 runtime stays intact. Genesis instead
 creates `/opt/genesis/venv` with Python 3.11: its retained LeRobot 0.4.4
 upstream contract requires `torch<2.11`, which cannot safely replace the
 source-attested base runtime. The image selects that dedicated environment with
-both `PATH` and `NPA_BAKED_PYTHON`; EnvGen preserves the same selection after
-its sanitizing scratch stage. Isolation prevents the LeRobot resolver from
-downgrading the base runtime; it is neither GPU/hardware compatibility evidence
-nor a substitute for a complete secure dependency closure.
+both `PATH` and `NPA_BAKED_PYTHON`. Isolation prevents the LeRobot resolver
+from downgrading the base runtime; it is neither GPU/hardware compatibility
+evidence nor a substitute for a complete secure dependency closure. EnvGen is
+now a separate NPA-only role; it does not inherit this unresolved
+policy/dataset environment.
 
 ## Current source build boundary
 
@@ -32,12 +33,14 @@ only for that image's ACT evaluation and is not Genesis evidence. Accordingly,
 the commands below are a source-attested build sequence to use only after a
 separately reviewed, licensed, source-bound closure has passed its own
 dependency, CPU-functional, image-security, and GPU qualification. They do not
-currently produce a qualified Genesis or Envgen image.
+currently produce a qualified Genesis image.
 
-The canonical Genesis, SM120 Genesis, and Sim2Real Envgen build wrappers now
-refuse at this boundary before invoking any Docker build. The refusal is deliberate
-operator feedback, not a fallback to a historical image: it prevents an
-opaque resolver failure and preserves the source-attested parent requirement.
+The canonical Genesis and SM120 Genesis build wrappers refuse at this boundary
+before invoking any Docker build. The refusal is deliberate operator feedback,
+not a fallback to a historical image: it prevents an opaque resolver failure
+and preserves the source-attested parent requirement. The independent EnvGen
+role is documented in `../sim2real-envgen/README.md`; it cannot be used as
+Genesis evidence.
 
 The public recipe excludes TetGen's AGPL distribution and rejects volume
 tetrahedralization through a repository-owned import shim. Rigid-body scenes
@@ -89,18 +92,17 @@ canonical base recipe first and pass its current-source local tag (or image ID):
 SOURCE_SHA="$(git rev-parse HEAD)"
 npa/docker/workbench/base/cuda13-blackwell/build.sh --tag "dev-${SOURCE_SHA}"
 BASE_IMAGE="npa-base:cuda13-blackwell-dev-${SOURCE_SHA}"
+BASE_SHA="$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "${BASE_IMAGE}")"
+test "${BASE_SHA}" = "${SOURCE_SHA}"
 npa/docker/workbench/genesis/build.sh \
   --base-image "${BASE_IMAGE}" --tag "dev-${SOURCE_SHA}"
 
-GENESIS_IMAGE="npa-genesis:dev-${SOURCE_SHA}"
-test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "${GENESIS_IMAGE}")" = "${SOURCE_SHA}"
-docker build --build-arg "BASE_IMAGE=${GENESIS_IMAGE}" \
-  --build-arg "NPA_SOURCE_SHA=${SOURCE_SHA}" \
-  -f npa/docker/workbench/sim2real-envgen/Dockerfile \
-  -t "npa-envgen:dev-${SOURCE_SHA}" npa
 ```
 
-Historical catalog digests are not current-source parents or fallbacks for this
-sequence. `sim2real-build.sh` requires `SIM2REAL_GPU_BASE_IMAGE` (or its
-`GENESIS_IMAGE` compatibility alias) for the same reason. Neither recipe's CPU
-proof qualifies GPU physics, policy quality, or hardware transfer.
+For a remote base substitute, use an immutable digest and make the same label
+comparison before invoking the wrapper. Historical catalog digests are not
+current-source parents or fallbacks for this sequence. `sim2real-build.sh` no
+longer routes EnvGen through this unresolved
+image: it builds a source-attested EnvGen role from the freshly built Cosmos3
+reason parent. Neither Genesis's CPU proof nor EnvGen's role smoke qualifies
+Genesis GPU physics, policy quality, or hardware transfer.

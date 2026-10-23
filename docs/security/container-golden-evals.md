@@ -154,8 +154,8 @@ flowchart TB
 | `lancedb` | `0.30.3` | server-smoke | server start; create table; vector query; list | optional | ready |
 | `detection-training` | `bdd100k-golden-eval-smoke-*` | server-smoke | server start; `/health`; `/system-info` | optional | ready |
 | `sim2real-control` | `0.1.2-sim2real-coherent-20260904` | container-smoke | load canonical graph; expand promote and loop-back plans across all 14 stages; exact-source guard | none | ready |
-| `envgen` | `0.1.2-sim2real-coherent-20260904` | container-smoke | raw envgen JSONL; Genesis CUDA physics step | optional | gpu-gated |
-| `reference-policy` | `0.1.2` | container-smoke | policy contract (envgen functional delegate) | optional | gpu-gated |
+| `envgen` | `0.1.2-sim2real-coherent-20260904` *(historical predecessor)* | container-smoke | historical raw EnvGen JSONL plus Genesis CUDA physics; current source is a separate scenario-record role and needs a new immutable-image eval | none | needs-image-update |
+| `reference-policy` | `0.1.2` *(historical predecessor)* | container-smoke | variant plus EnvGen scenario-record contract only; not policy train/eval evidence | none | needs-image-update |
 | `loop-eval` | `cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | container-smoke | CUDA; FrankaPickPlace rollout step | optional | gpu-gated |
 | `rerun-viewer` | `0.31.4-sim2real-coherent-20260904` | container-smoke | robotics trace → RRD; CLI verify/read; HTTP viewer serve/read | none | ready |
 | `foxglove-embed` | `0.58.0` | server-smoke | health + pinned SDK version; real `@foxglove/embed` (FoxgloveViewer + embed handshake); NPA glue module; host page; `/data` 206 byte range; Range CORS preflight | none | ready |
@@ -332,8 +332,8 @@ pipeline. Key safety notes are condensed below.
 | `lancedb` | vector store for AV/perception data | `server-smoke` | optional | ready |
 | `detection-training` | object-detection train/eval service | `server-smoke` | optional | ready |
 | `sim2real-control` | canonical compositional Sim2Real stage adapter | `container-smoke` | none | ready |
-| `envgen` | randomized Genesis env generation | `workflow-smoke` | optional | gpu-gated |
-| `reference-policy` | reference policy contract | `workflow-smoke` | optional | gpu-gated |
+| `envgen` | source-attested scenario-record generation (historical Genesis evidence is separate) | `container-smoke` | none | needs-image-update |
+| `reference-policy` | contract metadata only; not a policy-train/eval claim | `container-smoke` | none | needs-image-update |
 | `loop-eval` | sim-to-real full-loop evaluation | `workflow-smoke` | optional | gpu-gated |
 | `foxglove-embed` | Foxglove embedded-viewer host: SDK assets + MCAP/bag serving | `server-smoke` | none | ready |
 

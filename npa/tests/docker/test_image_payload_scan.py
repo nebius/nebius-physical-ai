@@ -166,14 +166,37 @@ def test_blackwell_envgen_chain_uses_system_ffmpeg_without_bundled_payload() -> 
         REPO_ROOT / "npa" / "docker" / "workbench" / "genesis" / "Dockerfile.sm120",
         REPO_ROOT / "npa" / "docker" / "workbench" / "sim2real-envgen" / "Dockerfile",
     )
-    for path in paths:
+    for path in paths[:-1]:
         dockerfile = path.read_text(encoding="utf-8")
         assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in dockerfile
         assert "*/imageio_ffmpeg/binaries/ffmpeg*" in dockerfile
         assert "get_ffmpeg_exe()" in dockerfile
         assert '== "/usr/bin/ffmpeg"' in dockerfile
     envgen = paths[-1].read_text(encoding="utf-8")
-    assert "python -m pip uninstall -y npa" in envgen
+    runtime_prereqs = (
+        REPO_ROOT
+        / "npa"
+        / "docker"
+        / "workbench"
+        / "common"
+        / "install_workflow_runtime_prereqs.sh"
+    ).read_text(encoding="utf-8")
+    envgen_lock = (
+        REPO_ROOT
+        / "npa"
+        / "docker"
+        / "workbench"
+        / "common"
+        / "sim2real-envgen-requirements.txt"
+    ).read_text(encoding="utf-8")
+    # The current role no longer inherits Genesis's Python environment.  Its
+    # fresh venv has no imageio-ffmpeg distribution at all, while the shared
+    # non-root bootstrap still supplies the system ffmpeg binary.
+    assert "rm -rf /opt/npa" in envgen
+    assert 'python3.11 -m venv "${ENVGEN_VENV}"' in envgen
+    assert "--system-site-packages" not in envgen
+    assert "  ffmpeg \\" in runtime_prereqs
+    assert "imageio-ffmpeg" not in envgen_lock
     assert "pip install --no-deps -e /opt/npa" not in envgen
 
 

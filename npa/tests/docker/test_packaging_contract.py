@@ -760,6 +760,21 @@ def test_public_recipes_use_immutable_external_build_sources() -> None:
     )
 
 
+def test_genesis_and_envgen_source_attestation_manuals_stay_role_specific() -> None:
+    contract = _load_contract()["images"]
+    assert contract["genesis"]["source_attested_parent"]["manual_preflight"] == (
+        "genesis/README.md"
+    )
+    assert contract["envgen"]["source_attested_parent"]["manual_preflight"] == (
+        "sim2real-envgen/README.md"
+    )
+    envgen_manual = (WORKBENCH_DOCKER / "sim2real-envgen/README.md").read_text(
+        encoding="utf-8"
+    )
+    assert 'index .Config.Labels "org.opencontainers.image.revision"' in envgen_manual
+    assert "remote parent\nmust be addressed by immutable digest" in envgen_manual
+
+
 def test_robocasa_build_binds_the_exact_npa_source_revision() -> None:
     dockerfile = (WORKBENCH_DOCKER / "robocasa/Dockerfile").read_text(encoding="utf-8")
     build_script = (WORKBENCH_DOCKER / "robocasa/build.sh").read_text(encoding="utf-8")

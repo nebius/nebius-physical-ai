@@ -105,7 +105,7 @@ def test_canonical_sim2real_workflow_requires_operator_pinned_images() -> None:
     )
 
 
-def test_envgen_requires_an_explicit_genesis_parent() -> None:
+def test_envgen_requires_an_explicit_source_attested_parent() -> None:
     root = Path(__file__).resolve().parents[2] / "docker" / "workbench"
     text = (root / "sim2real-envgen/Dockerfile").read_text(encoding="utf-8")
     assert "ARG BASE_IMAGE\nFROM ${BASE_IMAGE} AS sanitized" in text
@@ -132,26 +132,29 @@ def test_component_images_pin_the_rebuilt_envgen_parent(
     assert "env -u PYTHONPATH python -c" in text
 
 
-def test_sim2real_build_requires_an_explicit_genesis_parent() -> None:
+def test_sim2real_build_selects_a_source_attested_envgen_parent() -> None:
     script = (
         Path(__file__).resolve().parents[2] / "docker/workbench/sim2real-build.sh"
     ).read_text(encoding="utf-8")
+    assert 'SIM2REAL_ENVGEN_BASE_IMAGE="${SIM2REAL_ENVGEN_BASE_IMAGE:-}"' in script
     assert (
-        'SIM2REAL_GPU_BASE_IMAGE="${SIM2REAL_GPU_BASE_IMAGE:-${GENESIS_IMAGE:-}}"'
+        "SKIP_COSMOS3_REASON requires an explicit SIM2REAL_ENVGEN_BASE_IMAGE" in script
+    )
+    assert 'SIM2REAL_ENVGEN_BASE_IMAGE="npa-cosmos3-reason:${VLM_TAG}"' in script
+    assert (
+        "SIM2REAL_ENVGEN_BASE_IMAGE must carry org.opencontainers.image.revision="
         in script
     )
-    assert "ERROR: SIM2REAL_GPU_BASE_IMAGE is required for Envgen." in script
-    assert "npa-genesis:dev-${NPA_SOURCE_SHA}" in script
-    assert (
-        "npa-genesis@sha256:80cd1c4c7f7a5466533de29ee5cad1213202f348545346fea9ed6746fa03b1ca"
-        not in script
-    )
+    assert "require_current_secure_genesis_closure" not in script
+    assert "SIM2REAL_GPU_BASE_IMAGE" not in script
+    assert "GENESIS_IMAGE" not in script
     assert "npa-loop-eval@sha256:" not in script
     assert (
         'SIM2REAL_COMPONENT_BASE_IMAGE="${SIM2REAL_COMPONENT_BASE_IMAGE:-npa-envgen:${ENVGEN_TAG}}"'
         in script
     )
     assert script.count('"BASE_IMAGE=${SIM2REAL_COMPONENT_BASE_IMAGE}"') == 2
+    assert "BUILD_LEGACY_GENESIS_EVAL:-0" in script
 
 
 def test_sim2real_build_help_does_not_execute_its_parent_example() -> None:
@@ -169,11 +172,12 @@ def test_sim2real_build_help_does_not_execute_its_parent_example() -> None:
     )
     assert result.returncode == 0
     assert result.stderr == ""
-    assert f"npa-genesis:dev-{source_sha}" in result.stdout
+    assert "npa-cosmos3-reason" in result.stdout
+    assert "Genesis" in result.stdout
 
 
-def test_sim2real_build_fails_before_docker_without_a_genesis_parent() -> None:
-    """Avoid a misleading current-source Envgen label over a stale parent."""
+def test_sim2real_build_requires_an_explicit_parent_when_cosmos_is_skipped() -> None:
+    """Skipping the producer must not silently select a stale EnvGen parent."""
 
     script = Path(__file__).resolve().parents[2] / "docker/workbench/sim2real-build.sh"
     source_sha = subprocess.check_output(
@@ -181,9 +185,9 @@ def test_sim2real_build_fails_before_docker_without_a_genesis_parent() -> None:
     ).strip()
     env = {
         **os.environ,
-        "GENESIS_IMAGE": "",
         "NPA_SOURCE_SHA": source_sha,
-        "SIM2REAL_GPU_BASE_IMAGE": "",
+        "SIM2REAL_ENVGEN_BASE_IMAGE": "",
+        "SKIP_COSMOS3_REASON": "test",
     }
     result = subprocess.run(
         ["bash", str(script)],
@@ -194,11 +198,14 @@ def test_sim2real_build_fails_before_docker_without_a_genesis_parent() -> None:
         text=True,
     )
     assert result.returncode == 2
-    assert "SIM2REAL_GPU_BASE_IMAGE is required for Envgen" in result.stderr
-    assert "npa-genesis:dev-" + source_sha in result.stderr
+    assert (
+        "SKIP_COSMOS3_REASON requires an explicit SIM2REAL_ENVGEN_BASE_IMAGE"
+        in result.stderr
+    )
+    assert source_sha in result.stderr
 
 
-def test_sim2real_build_rejects_a_stale_genesis_parent_before_any_build(
+def test_sim2real_build_rejects_a_stale_explicit_envgen_parent_before_any_build(
     tmp_path,
 ) -> None:
     """A supplied local tag is not evidence unless its source label matches."""
@@ -216,7 +223,8 @@ def test_sim2real_build_rejects_a_stale_genesis_parent_before_any_build(
         env={
             **os.environ,
             "NPA_SOURCE_SHA": source_sha,
-            "SIM2REAL_GPU_BASE_IMAGE": "local-genesis",
+            "SIM2REAL_ENVGEN_BASE_IMAGE": "local-envgen-parent",
+            "SKIP_COSMOS3_REASON": "test",
             "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"],
         },
         check=False,
@@ -225,16 +233,16 @@ def test_sim2real_build_rejects_a_stale_genesis_parent_before_any_build(
     )
     assert result.returncode == 2
     assert (
-        "SIM2REAL_GPU_BASE_IMAGE must carry org.opencontainers.image.revision="
+        "SIM2REAL_ENVGEN_BASE_IMAGE must carry org.opencontainers.image.revision="
         in result.stderr
     )
     assert "found e" in result.stderr
 
 
-def test_sim2real_build_refuses_the_unresolved_secure_genesis_closure_before_docker(
+def test_sim2real_build_does_not_apply_the_genesis_closure_to_envgen(
     tmp_path: Path,
 ) -> None:
-    """Envgen cannot obscure the known Genesis resolver boundary."""
+    """A source-attested EnvGen parent may reach the normal build path."""
 
     script = Path(__file__).resolve().parents[2] / "docker/workbench/sim2real-build.sh"
     source_sha = subprocess.check_output(
@@ -254,19 +262,16 @@ def test_sim2real_build_refuses_the_unresolved_secure_genesis_closure_before_doc
         env={
             **os.environ,
             "NPA_SOURCE_SHA": source_sha,
-            "SIM2REAL_GPU_BASE_IMAGE": "local-genesis",
+            "SIM2REAL_ENVGEN_BASE_IMAGE": "local-envgen-parent",
+            "SKIP_COSMOS3_REASON": "test",
             "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"],
         },
         check=False,
         capture_output=True,
         text=True,
     )
-    assert result.returncode == 3
-    assert (
-        "current Genesis/Envgen image build is unavailable before any Docker build starts"
-        in result.stderr
-    )
-    assert not invoked.exists()
+    assert result.returncode == 99
+    assert invoked.exists()
 
 
 def test_sonic_keeps_an_explicit_amd64_build_platform() -> None:
@@ -507,7 +512,6 @@ def test_rerun_viewer_exact_source_image_selects_one_light_cli() -> None:
     "relative_path",
     (
         "cosmos3-reason/Dockerfile",
-        "lerobot-vlm-rl/Dockerfile",
         "sim2real-envgen/Dockerfile",
         "sim2real-eval/Dockerfile",
         "isaac-lab/Dockerfile",
@@ -591,9 +595,9 @@ def test_envgen_baked_runtime_survives_skypilot_pythonpath_scrubbing() -> None:
         / "sim2real-envgen"
         / "Dockerfile"
     ).read_text(encoding="utf-8")
-    assert "NPA_BAKED_PYTHON=/opt/genesis/venv/bin/python" in dockerfile
+    assert "NPA_BAKED_PYTHON=/opt/npa/envgen-venv/bin/python" in dockerfile
     assert "npa-exact-source.pth" in dockerfile
-    assert "env -u PYTHONPATH /opt/genesis/venv/bin/python -c" in dockerfile
+    assert 'env -u PYTHONPATH "${ENVGEN_VENV}/bin/python" -c' in dockerfile
     assert "from npa.workflows.sim2real.workflow_stage import main" in dockerfile
 
 
@@ -639,12 +643,13 @@ def test_sim2real_control_plane_requirement_closure_is_exact() -> None:
         assert expected in lines
 
     root = Path(__file__).resolve().parents[2] / "docker" / "workbench"
-    for relative_path in ("lerobot-vlm-rl/Dockerfile", "isaac-lab/Dockerfile"):
-        dockerfile = (root / relative_path).read_text(encoding="utf-8")
-        assert "sim2real-control-requirements.txt" in dockerfile
-        assert "--no-deps" in dockerfile
+    lerobot_vlm = (root / "lerobot-vlm-rl/Dockerfile").read_text(encoding="utf-8")
+    assert "sim2real-genesis-requirements.txt" not in lerobot_vlm
+    assert 'datasets", "lerobot", "genesis-world", "torch' in lerobot_vlm
+    isaac_dockerfile = (root / "isaac-lab/Dockerfile").read_text(encoding="utf-8")
+    assert "sim2real-control-requirements.txt" in isaac_dockerfile
+    assert "--no-deps" in isaac_dockerfile
 
-    isaac_dockerfile = (root / "isaac-lab" / "Dockerfile").read_text(encoding="utf-8")
     assert (
         "find /opt/npa/src /opt/npa/workflows -type d -exec chmod a+rx {} +"
         in isaac_dockerfile
@@ -670,14 +675,16 @@ def test_sim2real_control_plane_requirement_closure_is_exact() -> None:
         "tomli==2.4.1",
         "GitPython==3.2.1",
     ]
-    for relative_path in (
-        "sim2real-envgen/Dockerfile",
-        "sim2real-eval/Dockerfile",
-        "lerobot-vlm-rl/Dockerfile",
-    ):
+    for relative_path in ("sim2real-eval/Dockerfile",):
         dockerfile = (root / relative_path).read_text(encoding="utf-8")
         assert "sim2real-control-requirements.txt" in dockerfile
         assert "sim2real-genesis-requirements.txt" in dockerfile
         assert "python -m pip uninstall -y transformers" in dockerfile
         assert 'd.metadata["Name"].lower() == "transformers"' in dockerfile
         assert "pip check" in dockerfile
+
+    envgen_dockerfile = (root / "sim2real-envgen/Dockerfile").read_text(
+        encoding="utf-8"
+    )
+    assert "sim2real-envgen-requirements.txt" in envgen_dockerfile
+    assert "sim2real-genesis-requirements.txt" not in envgen_dockerfile

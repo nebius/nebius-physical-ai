@@ -281,7 +281,6 @@ def test_correction_runs_before_installation_layer_commits():
 def test_correction_consumers_declare_their_capabilities() -> None:
     consumers = {
         "curobo/Dockerfile": "--capability curobo",
-        "sim2real-envgen/Dockerfile": "--capability envgen",
         "fiftyone/Dockerfile": "--capability fiftyone",
         "genesis/Dockerfile": "--capability genesis",
         "genesis/Dockerfile.sm120": "--capability genesis",

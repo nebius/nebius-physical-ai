@@ -1237,18 +1237,14 @@ images:
       source_label: org.opencontainers.image.revision
       build_scripts:
         - sim2real-build.sh
-      manual_preflight: genesis/README.md
+      manual_preflight: sim2real-envgen/README.md
     notes: >-
-      The flattened public runtime removes the parent image's optional AGPL
-      tetgen wrapper, W&B client, and Nsight Compute tree. Canonical Sim2Real
-      environment generation does not use tetrahedralization, experiment
-      tracking, or profiler tooling. The runtime correspondingly removes the
-      Genesis/LeRobot metadata edges for those absent optional dependencies;
-      a repository-owned fail-closed import shim rejects tetrahedralization,
-      while build-time imports and pip consistency checks protect the reduced
-      contract. The same build layer applies the exact-hash, AST-preserving
-      scikit-image dependency-source correction and emits its receipt before
-      the flattened public runtime is produced.
+      The flattened public runtime removes the complete inherited NPA tree and
+      creates a dedicated Python 3.11 EnvGen venv from the reviewed exact
+      closure. It contains scenario/task-contract code, Pillow 13 and fsspec
+      2026.6.0, but no Genesis, LeRobot, datasets, Torch, model weights,
+      source assets, credentials, or runtime caches. Genesis is a separate
+      fail-closed tool and must not be relabelled as EnvGen qualification.
     redistribution: public
     skypilot_bootstrap_contract: skypilot-0.12.2-v1
   rerun-viewer:

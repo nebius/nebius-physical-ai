@@ -110,16 +110,17 @@ build_cosmos2_transfer() {
 }
 
 build_sim2real_stack() {
-  local genesis_tag envgen_tag eval_tag vlm_rl_tag
-  genesis_tag="$(tool_version genesis)"
+  local envgen_tag eval_tag vlm_rl_tag
   envgen_tag="$(tool_version envgen)"
   eval_tag="$(tool_version loop-eval)"
   vlm_rl_tag="$(tool_version lerobot-vlm-rl)"
-  export GENESIS_IMAGE="${REGISTRY}/npa-genesis:${genesis_tag}"
   export ENVGEN_TAG="${envgen_tag}"
   export EVAL_TAG="${eval_tag}"
   export VLM_RL_TAG="${vlm_rl_tag}"
-  export SKIP_COSMOS3_REASON=1
+  # EnvGen has its own secure NPA-only Python closure.  Let the canonical
+  # builder first produce the source-attested Cosmos3-reason parent instead of
+  # routing through the separately unqualified Genesis runtime.
+  unset GENESIS_IMAGE SIM2REAL_GPU_BASE_IMAGE SKIP_COSMOS3_REASON
   bash "${NPA_ROOT}/npa/docker/workbench/sim2real-build.sh" \
     --registry "${REGISTRY}" \
     $([[ "${PUSH}" == "1" ]] && echo --push)
