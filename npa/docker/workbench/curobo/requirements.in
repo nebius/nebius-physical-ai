@@ -20,5 +20,7 @@ tabulate
 uvicorn
 # Retain fixed streamed-response and HTTPS-proxy handling in requests/botocore.
 urllib3==2.8.0
+# Keep the cuRobo service closure on the fixed aiohttp release.
+aiohttp==3.14.4
 # Offline source installs use these locked build backends.
 hatchling

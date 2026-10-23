@@ -2,6 +2,8 @@
 torch==2.13.0+cu130
 torchvision==0.28.0+cu130
 numpy==1.26.4
+certifi==2026.10.19
+pillow==13.0.0
 setuptools==84.0.0
 wheel==0.48.0
 timm==1.0.25

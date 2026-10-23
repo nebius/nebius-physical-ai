@@ -17,11 +17,11 @@ EXPECTED_MUJOCO = "3.12.0"
 EXPECTED_ASSET_LOCK = "e22eb62fc690a5e1d1ea931bab950392ca480caf3d51c7f16fd8cb4133d65568"
 SHA256_CHUNK_BYTES = 1024 * 1024
 EXPECTED_NEUTRAL_FILE_SHA256: dict[str, str | None] = {
-    "source-lock.json": "3318043e3d3fec10b233b212b8e7bd97391f48f20b629dbdb3319981010b6ca9",
+    "source-lock.json": "45926ab66b85fef27ef3786a493a7bfeb25247d7db82e2b26742408b0cbc4682",
     "apt-runtime.lock.json": "edcfbf171c6d13b2bfddabc596c0adc29bda8bebd696ec497be6265d863c28b2",
     "corresponding-source.lock.json": "3c238567f6acebd2a393037a05803b2dee6be350808f81bfdcaca47c1cad957f",
-    "runtime-fetch-manifest.json": "72597bda8363f54ef1d243d6f8b2a7660aebdaf54875fd161b11b0097444f957",
-    "requirements.lock": "30d48e4b2bfcf0c590b47ed569393104dd759476d720a608aa9f441cd9976e4a",
+    "runtime-fetch-manifest.json": "2c55637e8d8bd2bd170306173e46f2770a92543ee5b90beec213c8c815111dd9",
+    "requirements.lock": "c5bfee4e19992c74a14ee3ee099904acae059bff99528d649b5c82a9390b1546",
     "runtime-bootstrap.py": "dcefd3ea34c3ffb6be392a8f07329ab47608f7f6cf5bef083e250c377b4fd484",
     "capability_smoke.py": "f91683fa5955882e29e2ac8e6ba9f4d92f2a25eb71621275fa3c45b26828d6d6",
 }
@@ -89,10 +89,10 @@ EXPECTED_LOCK_FILENAMES = frozenset(
 )
 EXPECTED_FIXED_FILE_SHA256 = {
     "opt/npa/gymnasium-robotics/build.sh": (
-        "9d161ffbe37b8c06a187262a1161472368fd38a26bd329e73c6c771b4b1953ae"
+        "6784f95a9a1beea30c8c019d89a570473c7ebb90162ad3da98d6c5d595661565"
     ),
     "usr/local/bin/npa-gymnasium-entrypoint": (
-        "9d161ffbe37b8c06a187262a1161472368fd38a26bd329e73c6c771b4b1953ae"
+        "6784f95a9a1beea30c8c019d89a570473c7ebb90162ad3da98d6c5d595661565"
     ),
     "usr/share/doc/npa-gymnasium-robotics/THIRD_PARTY_NOTICES.md": (
         "ceadc24b4d3dc6d1e3a8b3e0e69135b95aea5d57b0e51b6998682ec1e9d64acf"

@@ -1,6 +1,7 @@
 # Build-only closure. Never copy this environment into a workbench image.
 vendoring==1.4.0
 flit-core==3.12.0
-setuptools==80.9.0
+setuptools==84.0.0
+certifi==2026.10.19
 pip==26.2.1
 typing-extensions==4.16.0

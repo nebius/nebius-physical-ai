@@ -26,18 +26,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import scan_image_wan_payload as walker  # noqa: E402
 
 BASE_MANIFEST = (
-    "sha256:999137905e8718de681744822ccd965e1950e1baba089035060418e05e1d7496"
+    "sha256:b1add8a6f2aca6bcfcf0b9c9b522352f7ce0d62a3d556a2f2f32511aa0cca250"
 )
 BASE_ROOTFS_MATERIAL = (
     "sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867"
 )
 BOOTSTRAP_CONTRACT = "skypilot-0.12.2-v1"
 BASE_PROVENANCE_SHA256 = (
-    "0d66ce85e6ecad0d044a1d4bae712afe24ff2eb0a5d89eb224944df3895f226b"
+    "5fb57bfa75cdc65c679392ce037d61779f85af089b3ada02d2b00122f3977b18"
 )
 BASE_SOURCE_REVISION = "688a0b86bb44289df16a363e9f41d90514c1a5f9"
 RUNTIME_MANIFEST_SHA256 = (
-    "98dd8b82f1e8fc259c627a5b94c6d5f5347452092ed6a53e8dae72d89c97ab57"
+    "fe6fb8b3b867581c8b8fbd35bdb97e70773880ce414495c3026c169c3a12203d"
 )
 RUNTIME_MANIFEST = (
     Path(__file__).resolve().parents[1]
@@ -192,7 +192,7 @@ FORBIDDEN_PAYLOAD_CONTENT: tuple[re.Pattern[bytes], ...] = (
 )
 NEUTRAL_PAYLOAD_CONTENT_ALLOWLIST = {
     "opt/npa/libero/libero_smoke.py": (
-        "ce614fe70cb1bb883121a571b71cb5ab03869fa215e2ed7b05858f1a0e27c594"
+        "70d5340b81c26305d250b4f513b83bcb55aaca583ce28470c0d3ef0645d38c73"
     )
 }
 NEVER_MATCH_ELF = re.compile(rb"(?!)")

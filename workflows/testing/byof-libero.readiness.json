@@ -19,11 +19,11 @@
         "npa/tests/docker/test_libero_runtime_bootstrap.py",
         "sha256:51a4e49d66faee81cabbe0b5ae49398150926f8fa1743be994896d751562026a workflows/testing/byof-libero.yaml",
         "sha256:ab02acb123bb991e0d016f094659aff45156a78f1de2b28b93da252e56adc1fd npa/src/npa/workflows/byof/profiles/byof-solution-smoke-libero-b200-gpu.yaml",
-        "sha256:98dd8b82f1e8fc259c627a5b94c6d5f5347452092ed6a53e8dae72d89c97ab57 npa/docker/workbench/libero/runtime-manifest.json",
-        "sha256:233d6802c8317a5be1c15bb4ae89daf71d51e9335f912f1685dff5fef79f98bc npa/docker/workbench/libero/runtime-requirements.txt",
-        "sha256:de28215d6624d3f05b20100dc48dc5e26f945145ebaffd8a294aad7248e98f5f npa/docker/workbench/libero/runtime-bootstrap.py",
-        "sha256:ce614fe70cb1bb883121a571b71cb5ab03869fa215e2ed7b05858f1a0e27c594 npa/docker/workbench/libero/libero_smoke.py",
-        "sha256:5fd92dfa181c4822e3c8e867f7503334a4a2f8367313f750d62b89381e3e3aee npa/src/npa/deploy/libero_image_manifest.json"
+        "sha256:fe6fb8b3b867581c8b8fbd35bdb97e70773880ce414495c3026c169c3a12203d npa/docker/workbench/libero/runtime-manifest.json",
+        "sha256:a4fe225c8f182ad66d7a36f9b62eefd281e2519b43e94f402e319baec1c25733 npa/docker/workbench/libero/runtime-requirements.txt",
+        "sha256:3ff144c76dc5e19507e33163c8db0abeafdc13b7a755d35da73ca65942caa703 npa/docker/workbench/libero/runtime-bootstrap.py",
+        "sha256:70d5340b81c26305d250b4f513b83bcb55aaca583ce28470c0d3ef0645d38c73 npa/docker/workbench/libero/libero_smoke.py",
+        "sha256:809b1cb9d17baa2e0fbed9a5bedb7bbe2cbc66c4a6314cf5dfeed771befefd61 npa/src/npa/deploy/libero_image_manifest.json"
       ]
     }
   },
@@ -35,7 +35,7 @@
     },
     "worker_input": {
       "status": "blocked",
-      "reason": "The image contains only immutable metadata. All 135 artifact sizes and license classifications are reviewed, but runtime materialization remains disabled until the customer personally acknowledges the exact terms and directly signs exact customer/run evidence with a customer-controlled key; NPA only authenticates, transports, and validates that evidence, and this dependency review fetched public package metadata and the patched GitPython wheel/license without fetching workload source, data, task, model, or gated runtime payloads.",
+      "reason": "The image contains only immutable metadata. All 136 artifact sizes and license classifications are reviewed, but runtime materialization remains disabled until the customer personally acknowledges the exact terms and directly signs exact customer/run evidence with a customer-controlled key; NPA only authenticates, transports, and validates that evidence, and this dependency review fetched public package metadata and the patched GitPython wheel/license without fetching workload source, data, task, model, or gated runtime payloads.",
       "evidence": [
         "npa/docker/workbench/libero/runtime-manifest.json",
         "npa/docker/workbench/libero/REDISTRIBUTION.md"

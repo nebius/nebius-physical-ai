@@ -10,29 +10,29 @@
   "oci_digest": "",
   "gpu_validation": null,
   "anonymous_pull_verified": false,
-  "base_linux_amd64_manifest": "sha256:999137905e8718de681744822ccd965e1950e1baba089035060418e05e1d7496",
+  "base_linux_amd64_manifest": "sha256:b1add8a6f2aca6bcfcf0b9c9b522352f7ce0d62a3d556a2f2f32511aa0cca250",
   "base_rootfs_material": "sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867",
   "base_provenance": {
     "repository": "index.docker.io/library/python",
-    "blob_sha256": "0d66ce85e6ecad0d044a1d4bae712afe24ff2eb0a5d89eb224944df3895f226b",
+    "blob_sha256": "5fb57bfa75cdc65c679392ce037d61779f85af089b3ada02d2b00122f3977b18",
     "predicate_type": "https://slsa.dev/provenance/v0.2",
     "builder_id": "https://github.com/docker-library",
     "source_revision": "688a0b86bb44289df16a363e9f41d90514c1a5f9"
   },
   "base_sbom": {
     "format": "https://spdx.dev/Document",
-    "blob_sha256": "b290dbd3087fc5d2cf4af106f1d253c417a26080b70bdcf440ff96314a12c2bb"
+    "blob_sha256": "342709b614037975c03cf8ac4701eb3ac81a69065a85ff6c70d9758bf9e02f51"
   },
   "runtime_payloads_baked": false,
   "customer_runtime_authorization_required": true,
-  "runtime_manifest_sha256": "98dd8b82f1e8fc259c627a5b94c6d5f5347452092ed6a53e8dae72d89c97ab57",
-  "runtime_requirements_sha256": "233d6802c8317a5be1c15bb4ae89daf71d51e9335f912f1685dff5fef79f98bc",
+  "runtime_manifest_sha256": "fe6fb8b3b867581c8b8fbd35bdb97e70773880ce414495c3026c169c3a12203d",
+  "runtime_requirements_sha256": "a4fe225c8f182ad66d7a36f9b62eefd281e2519b43e94f402e319baec1c25733",
   "governing_terms_count": 7,
   "runtime_artifact_review": {
     "status": "complete",
     "pending_size_artifacts": 0,
     "pending_license_artifacts": 0,
-    "report_sha256": "4512dfb4a1b03dcd39dc4e29d2786cb9b1e86cabf406d9baf67d18d8aa767195"
+    "report_sha256": "0e7caeb9d6410fcf75eca048791412a78db1d15aef1024766fa66163ac4ec2a5"
   },
   "customer_acceptance": {
     "schema": "npa.libero.customer-acceptance-requirements.v1",
@@ -120,7 +120,7 @@
     "package_writer_repository": "",
     "customer_authorization_public_key_sha256": "",
     "output_storage_authorization_public_key_sha256": "",
-    "runtime_manifest_sha256": "98dd8b82f1e8fc259c627a5b94c6d5f5347452092ed6a53e8dae72d89c97ab57"
+    "runtime_manifest_sha256": "fe6fb8b3b867581c8b8fbd35bdb97e70773880ce414495c3026c169c3a12203d"
   },
   "catalog_release": false
 }
