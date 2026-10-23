@@ -43,11 +43,17 @@ def test_pull_spec_defaults_to_no_label_initialization() -> None:
 
 def test_roundtrip_consumes_artifacts_only_in_terminal_verifier() -> None:
     spec, plan = _plan("encord-roundtrip-smoke.yaml")
-    assert [step.state for step in plan.steps] == ["push", "pull", "verify"]
-    push, pull, verify = plan.steps
+    assert [step.state for step in plan.steps] == ["push", "curate", "pull", "verify"]
+    push, curate, pull, verify = plan.steps
+    assert _value(curate.argv, "--receipt-uri") == push.outputs[0]["uri"]
+    assert _value(curate.argv, "--output-path") == curate.outputs[0]["uri"]
+    assert _value(pull.argv, "--source") == "collection"
+    assert _value(pull.argv, "--source-id") == _value(curate.argv, "--collection")
+    assert _value(verify.argv, "--curate-receipt-uri") == curate.outputs[0]["uri"]
     assert not spec.states["pull"].inputs
-    assert spec.states["pull"].needs == ["push"]
+    assert spec.states["pull"].needs == ["curate"]
     assert not spec.states["push"].terminal
+    assert not spec.states["curate"].terminal
     assert not spec.states["pull"].terminal
     assert spec.states["verify"].terminal
     assert _value(verify.argv, "--receipt-uri") == push.outputs[0]["uri"]
@@ -55,6 +61,7 @@ def test_roundtrip_consumes_artifacts_only_in_terminal_verifier() -> None:
     assert _value(verify.argv, "--output-path") == verify.outputs[0]["uri"]
     assert {item.schema for item in spec.states["verify"].inputs} == {
         "npa.encord.push_receipt.v1",
+        "npa.encord.curate_receipt.v1",
         "npa.encord.pull_manifest.v2",
     }
 
