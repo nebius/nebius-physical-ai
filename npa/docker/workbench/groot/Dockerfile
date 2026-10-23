@@ -313,10 +313,9 @@ COPY --chown=ubuntu:ubuntu docker/workbench/groot/entrypoint.sh /opt/npa/docker/
 
 RUN chmod 0755 /opt/npa/docker/workbench/groot/entrypoint.sh
 
-# The vendor GR00T environment remains CPython 3.10 because its pinned
-# upstream runtime is constrained to that ABI.  NPA's control CLI is separate:
-# it runs from the already-isolated Python 3.11 Isaac control environment, so
-# the repository's Python/Pillow security floor never leaks into GR00T itself.
+# The vendor GR00T environment is CPython 3.12, matching the patched upstream
+# runtime. NPA's control CLI remains separate in the Python 3.11 Isaac control
+# environment, so the build validates each interpreter through its own path.
 RUN "${NPA_BAKED_PYTHON}" -c 'import sys; assert sys.version_info >= (3, 11), sys.version' \
     && uv pip install --python "${NPA_BAKED_PYTHON}" --no-deps -e /opt/npa \
     && env -u PYTHONPATH "${NPA_BAKED_PYTHON}" -c 'from npa.cli.entry import main; main()' \

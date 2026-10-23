@@ -201,7 +201,7 @@ def test_blackwell_envgen_chain_uses_system_ffmpeg_without_bundled_payload() -> 
     # fresh venv has no imageio-ffmpeg distribution at all, while the shared
     # non-root bootstrap still supplies the system ffmpeg binary.
     assert "rm -rf /opt/npa" in envgen
-    assert 'python3.11 -m venv "${ENVGEN_VENV}"' in envgen
+    assert 'python3.12 -m venv "${ENVGEN_VENV}"' in envgen
     assert "--system-site-packages" not in envgen
     assert "  ffmpeg \\" in runtime_prereqs
     assert "imageio-ffmpeg" not in envgen_lock

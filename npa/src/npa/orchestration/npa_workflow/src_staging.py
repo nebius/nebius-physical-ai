@@ -21,7 +21,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
-import tomllib
 import json
 import os
 from pathlib import Path
@@ -278,6 +277,8 @@ def _staged_catalog_files(root: Path, catalog: Path) -> dict[Path, Path]:
 
 def _include_required_build_files(root: Path, files: dict[Path, Path]) -> None:
     """Keep Hatch's required inputs present without broadly bypassing gitignore."""
+    import tomllib
+
     project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
     targets = (
         project.get("tool", {}).get("hatch", {}).get("build", {}).get("targets", {})

@@ -1,4 +1,4 @@
-"""Keep the Python 3.11 package floor compatible with image runtime boundaries."""
+"""Keep the Python >=3.11 package floor compatible with image runtime boundaries."""
 
 from __future__ import annotations
 
@@ -9,15 +9,15 @@ ROOT = Path(__file__).resolve().parents[3]
 DOCKER = ROOT / "npa" / "docker" / "workbench"
 
 
-def test_genesis_and_cosmos2_install_npa_in_python_311_or_newer() -> None:
-    """The Sim2Real lineage must not install the package into a Python 3.10 venv."""
+def test_genesis_uses_python312_and_cosmos2_npa_control_is_python311_or_newer() -> None:
+    """The Sim2Real lineage must keep NPA out of a Python 3.10 environment."""
 
     genesis = (DOCKER / "genesis" / "Dockerfile").read_text(encoding="utf-8")
     cosmos2 = (DOCKER / "cosmos2-transfer" / "Dockerfile").read_text(encoding="utf-8")
 
-    assert "/opt/genesis/venv/lib/python3.11/site-packages" in genesis
+    assert "/opt/genesis/venv/lib/python3.12/site-packages" in genesis
     assert "NPA_BAKED_PYTHON=/opt/genesis/venv/bin/python" in genesis
-    assert 'RUN python3.11 -m venv "${GENESIS_VENV}"' in genesis
+    assert "RUN python3.12 -m venv /opt/genesis/venv" in genesis
     assert '"pillow>=13.0.0,<14.0"' in genesis
     assert "NPA_CONTROL_PYTHON=/opt/npa/control-venv/bin/python" in cosmos2
     assert "NPA_BAKED_PYTHON=/opt/npa/control-venv/bin/python" in cosmos2
@@ -25,12 +25,12 @@ def test_genesis_and_cosmos2_install_npa_in_python_311_or_newer() -> None:
     assert "assert sys.version_info >= (3, 11)" in cosmos2
 
 
-def test_groot_keeps_vendor_python_310_separate_from_python_311_npa_control() -> None:
-    """Do not force Pillow 13 into GR00T's constrained upstream ABI."""
+def test_groot_uses_vendor_python312_separate_from_python311_npa_control() -> None:
+    """Keep the GR00T vendor runtime separate from NPA's Isaac control runtime."""
 
     text = (DOCKER / "groot" / "Dockerfile").read_text(encoding="utf-8")
 
-    assert "uv sync --python 3.10" in text
+    assert "uv sync --python 3.12" in text
     assert "NPA_BAKED_PYTHON=/opt/isaac-lab/venv/bin/python" in text
     assert '"pillow>=13.0.0,<14.0"' in text
     assert 'uv pip install --python "${NPA_BAKED_PYTHON}" --no-deps -e /opt/npa' in text

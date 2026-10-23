@@ -144,10 +144,10 @@ def test_envgen_lock_satisfies_every_direct_npa_runtime_requirement():
     assert not incompatible
 
 
-def test_envgen_runtime_uses_its_own_python311_venv_and_exact_source_pth():
+def test_envgen_runtime_uses_its_own_python312_venv_and_exact_source_pth():
     text = DOCKERFILE.read_text(encoding="utf-8")
     assert "ENVGEN_VENV=/opt/npa/envgen-venv" in text
-    assert 'python3.11 -m venv "${ENVGEN_VENV}"' in text
+    assert 'python3.12 -m venv "${ENVGEN_VENV}"' in text
     assert "sim2real-envgen-requirements.txt" in text
     assert "npa-exact-source.pth" in text
     assert 'env -u PYTHONPATH "${ENVGEN_VENV}/bin/python" -c' in text
