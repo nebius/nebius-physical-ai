@@ -80,6 +80,7 @@ from npa.cluster_backends.quotas import shortfall_message
 from npa.fleet.capacity_preflight import group_project_demands, preflight_fleet_region
 from npa.fleet.spec import ClusterSpec, FleetSpec, ObjectStorageSpec, ProjectSpec
 from npa.fleet.release import (
+    MK8sReleaseError,
     MK8sRecipeRelease,
     default_mk8s_release,
     filesystem_csi_makes_default_storage_class,
@@ -1855,6 +1856,7 @@ def _deploy_mk8s_fleet(
     release_by_target: dict[tuple[str, str], MK8sRecipeRelease | None] = {}
     recipe_root_by_target: dict[tuple[str, str], Path] = {}
     cluster_by_target: dict[tuple[str, str], ClusterSpec] = {}
+    release_errors: dict[tuple[str, str], dict[str, Any]] = {}
     for project in spec.projects:
         if not _project_in_scope(project, only_projects, prefix):
             continue
@@ -1866,26 +1868,43 @@ def _deploy_mk8s_fleet(
             release = None
             selected_cluster = cluster
             target_recipe_root = recipe_root
-            if catalog_required or "mk8s_recipe_release" in saved:
-                release = select_installation_release(
-                    install_dir,
-                    requested_release_id=mk8s_release,
-                )
-                if "mk8s_recipe_release" in saved:
-                    # Reconciliation must use the installation's retained
-                    # materialized source.  Re-copying a new vendor tree would
-                    # silently change a date-pinned installation's defaults.
-                    target_recipe_root = install_dir
-                    if not _is_recipe_root(target_recipe_root):
-                        raise ValueError(
-                            "persisted MK8s installation is missing its materialized "
-                            "recipe; use a reviewed migration or replacement rather "
-                            "than re-vendoring a saved release"
-                        )
-                    selected_cluster = _cluster_for_mk8s_release(cluster, release)
-                else:
-                    validate_release_source(release, recipe_root)
             target_key = (project.key(), cluster.name)
+            try:
+                if catalog_required or "mk8s_recipe_release" in saved:
+                    release = select_installation_release(
+                        install_dir,
+                        requested_release_id=mk8s_release,
+                    )
+                    if "mk8s_recipe_release" in saved:
+                        # Reconciliation must use the installation's retained
+                        # materialized source.  Re-copying a new vendor tree would
+                        # silently change a date-pinned installation's defaults.
+                        target_recipe_root = install_dir
+                        if not _is_recipe_root(target_recipe_root):
+                            raise MK8sReleaseError(
+                                "persisted MK8s installation is missing its materialized "
+                                "recipe; use a reviewed migration or replacement rather "
+                                "than re-vendoring a saved release"
+                            )
+                        selected_cluster = _cluster_for_mk8s_release(cluster, release)
+                    else:
+                        validate_release_source(release, recipe_root)
+            except MK8sReleaseError as exc:
+                if not continue_on_error:
+                    raise
+                release_errors[target_key] = {
+                    "backend": "mk8s",
+                    "project_key": project.key(),
+                    "cluster_name": cluster.name,
+                    "region": project.region or fleet_region,
+                    "status": "error",
+                    "error": str(exc),
+                }
+                _log(
+                    on_status,
+                    f"MK8s release selection failed for {project.key()}/{cluster.name}: {exc}",
+                )
+                continue
             release_by_target[target_key] = release
             recipe_root_by_target[target_key] = target_recipe_root
             cluster_by_target[target_key] = selected_cluster
@@ -1905,7 +1924,7 @@ def _deploy_mk8s_fleet(
             )
 
     cli_env = _nebius_cli_env()
-    results: list[dict[str, Any]] = []
+    results: list[dict[str, Any]] = list(release_errors.values())
 
     base_meta = {
         "name": spec.name,
@@ -1939,6 +1958,8 @@ def _deploy_mk8s_fleet(
             project_has_scoped_cluster = False
             for cluster in project.clusters:
                 if only_clusters and cluster.name not in only_clusters:
+                    continue
+                if (project.key(), cluster.name) in release_errors:
                     continue
                 project_has_scoped_cluster = True
                 if _is_verified_unchanged_target(
@@ -2031,6 +2052,7 @@ def _deploy_mk8s_fleet(
             cluster
             for cluster in project.clusters
             if not (only_clusters and cluster.name not in only_clusters)
+            and (project.key(), cluster.name) not in release_errors
         ]
         if not scoped_clusters:
             continue

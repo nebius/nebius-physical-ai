@@ -1569,6 +1569,90 @@ def test_deploy_rejects_incompatible_mig_recipe_before_project_mutation(
     assert resolved == []
 
 
+def test_deploy_continues_past_legacy_release_recovery_target(
+    tmp_path, monkeypatch
+) -> None:
+    """A legacy release record must fail only its own deploy target."""
+
+    from npa.fleet import lifecycle as L
+
+    root = _fake_recipe(tmp_path, 'provider "nebius" {}\n')
+    work_root = tmp_path / "work"
+    legacy_install = work_root / "mixed" / "a" / "legacy"
+    legacy_install.mkdir(parents=True)
+    (legacy_install / L._ENV_SIDECAR).write_text("{}\n", encoding="utf-8")
+    applied: list[str] = []
+
+    monkeypatch.setattr(L, "_require_bin", lambda binary: binary)
+    monkeypatch.setattr(L, "_assert_terraform_version", lambda _binary: "1.12.0")
+    monkeypatch.setattr(L, "_resolve_tenant_id", lambda *_args: "tenant-test")
+    monkeypatch.setattr(L, "_resolve_ssh_public_key", lambda _key: "ssh-test")
+    monkeypatch.setattr(L, "_resolve_recipe_root", lambda *_args, **_kwargs: root)
+    monkeypatch.setattr(L, "_find_vendored_recipe_root", lambda: root)
+    monkeypatch.setattr(L, "_nebius_cli_env", lambda: {})
+    monkeypatch.setattr(
+        L, "resolve_project_id", lambda *_args, **_kwargs: ("project-test", False)
+    )
+    monkeypatch.setattr(
+        L, "ensure_subnet", lambda *_args, **_kwargs: ("subnet-test", "")
+    )
+    monkeypatch.setattr(L, "validate_release_source", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        L, "validate_recipe_kuberay_compatibility", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(
+        L, "validate_recipe_mig_compatibility", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(
+        L, "validate_recipe_rtx_compatibility", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(
+        L._mk8s_execution,
+        "validate_kuberay_installation",
+        lambda *_args, **_kwargs: None,
+    )
+
+    def deploy_one(*, project, cluster, **_kwargs):
+        applied.append(cluster.name)
+        return {
+            "backend": "mk8s",
+            "project_key": project.key(),
+            "cluster_name": cluster.name,
+            "status": "deployed",
+        }
+
+    monkeypatch.setattr(L, "_deploy_one_cluster", deploy_one)
+    spec = FleetSpec(
+        name="mixed",
+        region="us-central1",
+        projects=[
+            ProjectSpec(
+                name="a",
+                clusters=[
+                    ClusterSpec(name="legacy", cpu_nodes=NodePoolSpec(count=1)),
+                    ClusterSpec(name="current", cpu_nodes=NodePoolSpec(count=1)),
+                ],
+            )
+        ],
+    )
+
+    result = L.deploy_fleet(spec, work_root=work_root, preflight=False)
+
+    assert applied == ["current"]
+    assert result["deployed"] == 1
+    assert result["failed"] == 1
+    legacy = next(
+        item for item in result["clusters"] if item["cluster_name"] == "legacy"
+    )
+    assert legacy["status"] == "error"
+    assert "predates recipe-release provenance" in legacy["error"]
+    state = json.loads((work_root / "mixed" / L._FLEET_STATE).read_text())
+    assert {(item["cluster_name"], item["status"]) for item in state["clusters"]} == {
+        ("legacy", "error"),
+        ("current", "deployed"),
+    }
+
+
 def test_prepare_install_dir_patches_eu_domain(tmp_path) -> None:
     from npa.fleet import lifecycle as L
 
