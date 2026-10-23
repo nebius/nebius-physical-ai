@@ -440,13 +440,13 @@
     },
     {
       "name": "gitpython",
-      "version": "3.1.62",
-      "filename": "gitpython-3.1.62-py3-none-any.whl",
-      "url": "https://files.pythonhosted.org/packages/d6/0b/29d7965215f8ef830a7ca1f42997fe13e5693d85e9edb18f938d063ef5f2/gitpython-3.1.62-py3-none-any.whl",
-      "sha256": "7002251225e10e29d2e1f49e6532613fe5d5d9f0b6f1f02997a52b38fe56899e",
-      "size_bytes": 222753,
+      "version": "3.2.1",
+      "filename": "gitpython-3.2.1-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/6b/50/2a923c4dc02522ff9567f07c67ed1deca6d5fa9474f4708168b8088dfa37/gitpython-3.2.1-py3-none-any.whl",
+      "sha256": "d66b0832aa8755c1a84892937282df0befb16c97e5a64aeebd68be9c5e323f53",
+      "size_bytes": 231548,
       "license_expression": "BSD-3-Clause",
-      "metadata_source": "https://pypi.org/pypi/gitpython/3.1.62/json"
+      "metadata_source": "https://pypi.org/pypi/gitpython/3.2.1/json"
     },
     {
       "name": "glfw",

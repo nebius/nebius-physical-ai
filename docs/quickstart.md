@@ -19,7 +19,7 @@ text generation, and reasoning for tools that use those capabilities.
 
 ## 2. Prerequisites
 
-- macOS, Linux, or Windows with WSL2 Ubuntu; Python 3.10+ and Git.
+- macOS, Linux, or Windows with WSL2 Ubuntu; Python 3.11+ and Git.
 - A Nebius account and access to a project in your workload's region.
 - The [Nebius CLI](install.md#4-nebius-cli-required) on `PATH`.
 - For managed infrastructure: Terraform; for Kubernetes: `kubectl` and the
