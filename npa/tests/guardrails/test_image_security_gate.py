@@ -76,7 +76,7 @@ def test_required_gate_calls_image_security_for_every_candidate() -> None:
     assert "needs.gitleaks.outputs.mode == 'full'" in image_job["if"]
     assert "needs.pr-precheck" not in image_job["if"]
     assert {key: image_job[key] for key in ("uses", "permissions")} == {
-        "uses": "./.github/workflows/image-security-scan.yml",
+        "uses": "$/.github/workflows/image-security-scan.yml",
         "permissions": {
             "contents": "read",
             "packages": "read",

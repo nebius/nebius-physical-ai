@@ -45,14 +45,27 @@ def test_automatic_pr_workflows_cancel_superseded_commits() -> None:
         }, name
 
 
+def test_workflow_checkouts_do_not_persist_github_tokens() -> None:
+    """Prevent workflow code from recovering checkout credentials after setup."""
+
+    for workflow_path in WORKFLOW_DIR.glob("*.y*ml"):
+        workflow = _load_workflow(workflow_path.name)
+        for job_name, job in workflow["jobs"].items():
+            for step in job.get("steps", []):
+                if "actions/checkout@" in step.get("uses", ""):
+                    assert step.get("with", {}).get("persist-credentials") == "false", (
+                        f"{workflow_path.name}:{job_name} persists checkout credentials"
+                    )
+
+
 def test_one_pr_workflow_owns_every_merge_gate() -> None:
     """Keep PR updates atomic instead of spawning six independent workflows."""
 
     workflow = _load_workflow("security-regression.yml")
     assert set(workflow["on"]) == {"pull_request", "merge_group", "push"}
     jobs = workflow["jobs"]
-    assert jobs["test-gate"]["uses"] == "./.github/workflows/test.yml"
-    assert jobs["lint-gate"]["uses"] == "./.github/workflows/lint.yml"
+    assert jobs["test-gate"]["uses"] == "$/.github/workflows/test.yml"
+    assert jobs["lint-gate"]["uses"] == "$/.github/workflows/lint.yml"
     assert "guardrails-gate" not in jobs
     precheck = "\n".join(step.get("run", "") for step in jobs["pr-precheck"]["steps"])
     assert "bash npa/scripts/ci_precheck.sh" in precheck
@@ -95,7 +108,7 @@ def test_candidate_checks_do_not_repeat_after_merge(name: str) -> None:
     assert set(_load_workflow(name)["on"]) == {"workflow_call", "workflow_dispatch"}
     jobs = _load_workflow("security-regression.yml")["jobs"]
     gate = "lint-gate" if name == "lint.yml" else "queue-guardrails"
-    assert jobs[gate]["uses"] == f"./.github/workflows/{name}"
+    assert jobs[gate]["uses"] == f"$/.github/workflows/{name}"
     assert gate in jobs["security-regression"]["needs"]
     assert "'full'" in jobs[gate]["if"] or '"full"' in jobs[gate]["if"]
     assert '"retest"' in jobs[gate]["if"]
@@ -548,6 +561,17 @@ def test_dependabot_preserves_manually_qualified_runtimes() -> None:
             if set(item) == {"dependency-name"}
         }
         assert {"torch", "mujoco"} <= ignored
+
+
+def test_dependabot_stabilizes_version_updates_without_delaying_security_updates() -> None:
+    """Keep a review window for version updates while alert remediation stays immediate."""
+
+    configuration = yaml.safe_load((REPO_ROOT / ".github/dependabot.yml").read_text())
+    group = configuration["multi-ecosystem-groups"]["dependencies"]
+    assert group["schedule"]["interval"] == "daily"
+    for update in configuration["updates"]:
+        assert update["multi-ecosystem-group"] == "dependencies"
+        assert update["cooldown"]["default-days"] >= 7
 
 
 def test_compatibility_checks_cannot_be_deferred_until_the_queue() -> None:

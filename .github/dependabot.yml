@@ -19,11 +19,20 @@ updates:
       - dependency-name: mujoco
     patterns: ["*"]
     multi-ecosystem-group: dependencies
+    # Security alerts bypass this stabilization delay.
+    cooldown:
+      default-days: 7
   - package-ecosystem: npm
     directory: /npa/tests/browser
     patterns: ["*"]
     multi-ecosystem-group: dependencies
+    # Security alerts bypass this stabilization delay.
+    cooldown:
+      default-days: 7
   - package-ecosystem: github-actions
     directory: /
     patterns: ["*"]
     multi-ecosystem-group: dependencies
+    # Security alerts bypass this stabilization delay.
+    cooldown:
+      default-days: 7

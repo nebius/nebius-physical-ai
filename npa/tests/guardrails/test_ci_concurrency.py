@@ -94,8 +94,8 @@ def test_workflow_groups_isolate_candidates_and_reusable_children(name: str) -> 
     for job in workflow["jobs"].values():
         if "uses" not in job:
             continue
-        assert job["uses"].startswith("./.github/workflows/")
-        child = job["uses"].removeprefix("./.github/workflows/")
+        assert job["uses"].startswith("$/.github/workflows/")
+        child = job["uses"].removeprefix("$/.github/workflows/")
         assert child in WORKFLOW_GROUPS
         assert WORKFLOW_GROUPS[child] != group
 
