@@ -112,6 +112,16 @@ def test_genesis_recipes_enforce_the_fsspec_security_floor(dockerfile, _, __):
     assert "pip check" in installation
 
 
+def test_canonical_genesis_recipe_pins_the_scanner_approved_bootstrap_tools():
+    """The repaired Python 3.12 image must not reintroduce floating tooling."""
+
+    text = (GENESIS / "Dockerfile").read_text()
+    assert "'pip==26.2.0'" in text
+    assert "'setuptools==83.0.0'" in text
+    assert "'wheel==0.48.0'" in text
+    assert "pip install --upgrade pip setuptools wheel" not in text
+
+
 def test_canonical_genesis_recipe_uses_a_pinned_cuda_base_and_output_attestation():
     text = (GENESIS / "Dockerfile").read_text()
     assert "FROM nvidia/cuda:12.4.1-devel-ubuntu22.04@sha256:" in text

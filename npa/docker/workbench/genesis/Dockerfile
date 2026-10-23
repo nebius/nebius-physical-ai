@@ -90,7 +90,10 @@ WORKDIR /opt/genesis
 # Keep the reviewed scikit-image 0.25.2 source correction in this installation
 # layer so the embedded recipe never reaches an ancestor image layer.
 RUN python3.12 -m venv /opt/genesis/venv \
-    && /opt/genesis/venv/bin/python -m pip install --upgrade pip setuptools wheel \
+    && /opt/genesis/venv/bin/python -m pip install --no-cache-dir --upgrade \
+      'pip==26.2.0' \
+      'setuptools==83.0.0' \
+      'wheel==0.48.0' \
     && /opt/genesis/venv/bin/pip install \
       "torch==${TORCH_VERSION}" \
       "torchvision==${TORCHVISION_VERSION}" \
