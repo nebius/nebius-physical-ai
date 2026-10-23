@@ -182,14 +182,14 @@ def test_runtime_manifest_closes_source_data_task_model_and_runtime_identity() -
     assert {item["filename"]: item["sha256"] for item in model["files"]}[
         "pytorch_model.bin"
     ] == LANGUAGE_MODEL_MODEL_SHA256
-    assert manifest["runtime_artifact_count"] == 135
-    assert len(artifacts) == 135
-    assert len({item["filename"] for item in artifacts}) == 135
+    assert manifest["runtime_artifact_count"] == 136
+    assert len(artifacts) == 136
+    assert len({item["filename"] for item in artifacts}) == 136
     assert all(len(item["sha256"]) == 64 for item in artifacts)
     assert all(item["url"].startswith("https://") for item in artifacts)
     assert all(item["license_expression"].strip() for item in artifacts)
     assert all(item["size_bytes"] > 0 for item in artifacts)
-    assert sum(item["size_bytes"] for item in artifacts) == 3_277_669_153
+    assert sum(item["size_bytes"] for item in artifacts) == 3_275_272_667
 
 
 def test_libero_smoke_uses_real_upstream_conditioned_training_and_heldout() -> None:
@@ -383,7 +383,7 @@ def test_libero_image_manifest_remains_quarantined_and_unpublished() -> None:
         "pending_size_artifacts": 0,
         "pending_license_artifacts": 0,
         "report_sha256": (
-            "4512dfb4a1b03dcd39dc4e29d2786cb9b1e86cabf406d9baf67d18d8aa767195"
+            "0e7caeb9d6410fcf75eca048791412a78db1d15aef1024766fa66163ac4ec2a5"
         ),
     }
     assert manifest["qualification"]["status"] == "not_qualified"
@@ -403,7 +403,7 @@ def test_libero_image_manifest_remains_quarantined_and_unpublished() -> None:
     assert manifest["base_provenance"] == {
         "repository": "index.docker.io/library/python",
         "blob_sha256": (
-            "0d66ce85e6ecad0d044a1d4bae712afe24ff2eb0a5d89eb224944df3895f226b"
+            "5fb57bfa75cdc65c679392ce037d61779f85af089b3ada02d2b00122f3977b18"
         ),
         "predicate_type": "https://slsa.dev/provenance/v0.2",
         "builder_id": "https://github.com/docker-library",
@@ -412,7 +412,7 @@ def test_libero_image_manifest_remains_quarantined_and_unpublished() -> None:
     assert manifest["base_sbom"] == {
         "format": "https://spdx.dev/Document",
         "blob_sha256": (
-            "b290dbd3087fc5d2cf4af106f1d253c417a26080b70bdcf440ff96314a12c2bb"
+            "342709b614037975c03cf8ac4701eb3ac81a69065a85ff6c70d9758bf9e02f51"
         ),
     }
 

@@ -58,7 +58,7 @@ BUILD_COMMAND_SHA256 = (
 DEPENDENCY_LOCK_SHA256 = (
     "65efcf0065ad4662b348e54e3f2d86996d934a518fcad0e89ecf012399ce1504"
 )
-RUNTIME_LOCK_SHA256 = "3dd2e336a1fbb57a115866b9a9eae36bcd3ee00a2a0f994497dcf6ae7d098a02"
+RUNTIME_LOCK_SHA256 = "01f41b6c6d05730608cacdd4a961cb690b0570fa2271ee94cc8e11969f7b38cb"
 
 
 def _customer_binding(project: str) -> str:
@@ -2465,7 +2465,7 @@ def test_robomimic_smoke_is_immutable_and_fails_closed() -> None:
     assert hashlib.sha256(lock_bytes).hexdigest() == DEPENDENCY_LOCK_SHA256
     runtime_lock_bytes = RUNTIME_LOCK.read_bytes()
     runtime_lock = json.loads(runtime_lock_bytes)
-    assert len(runtime_lock["packages"]) == 62
+    assert len(runtime_lock["packages"]) == 67
     assert hashlib.sha256(runtime_lock_bytes).hexdigest() == RUNTIME_LOCK_SHA256
     smoke = _smoke_python()
 

@@ -5,13 +5,13 @@
 # installed with --no-deps, so every installed distribution is explicit here.
 --index-url https://pypi.org/simple
 torch==2.13.0 \
-    --hash=sha256:c78b7b4d04461855a764cf01bae9a462bb88bc93defcfa11235cbc8fdf3e12c4
+    --hash=sha256:60fcdcb2f3876e21146cb4524ef06397d727ca9ad5f020818547e25075fe3cb7
 torchvision==0.28.0 \
-    --hash=sha256:6dfb0f45e2b4ceb4e76f158c3fbb5f44387099f3c466e3423a09ab665a194aba
+    --hash=sha256:7e80f543b22503d9415e126db5f0ff3917036925e38560ee6b9ae38c571a4002
 cuda-toolkit==13.0.3.0 \
     --hash=sha256:d693caaa261214ddd7dbb60d68e71cbed884e68c2be7509778f3051da0b91c3f
 cuda-bindings==13.3.1 \
-    --hash=sha256:9851b0caa8bfd3bc6fa054eaf57bea7c8e9c3a62db2d2621224677f49f3c53d0
+    --hash=sha256:04436a9364059c84b8f9636f359eccda1cf814341f5b670c71d80d2f79dbc708
 cuda-pathfinder==1.6.0 \
     --hash=sha256:1503af579d8379c24bdd65528379bc57039b0455be9f5f9686cf8e473a1fce51
 nvidia-cublas==13.1.1.3 \
@@ -45,7 +45,7 @@ nvidia-nvshmem-cu13==3.4.5 \
 nvidia-nvtx==13.0.85 \
     --hash=sha256:4936d1d6780fbe68db454f5e72a42ff64d1fd6397df9f363ae786930fd5c1cd4
 triton==3.7.1 \
-    --hash=sha256:ee89fbf782ec2ad50391dd1cf26cbea4f4467154c37f4773026da8fc31c0f58e
+    --hash=sha256:6744957e9fd610a29680ec2346057d0c86948ed3812468670719f391e94b44a5
 filelock==3.32.3 \
     --hash=sha256:7f0ca4bcc0e181c60dbbd8aa9ab5b120ebb99e4e064e83636340056f833a1f09
 fsspec==2026.7.0 \
@@ -53,15 +53,15 @@ fsspec==2026.7.0 \
 Jinja2==3.1.6 \
     --hash=sha256:85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67
 MarkupSafe==3.0.3 \
-    --hash=sha256:f42d0984e947b8adf7dd6dde396e720934d12c506ce84eea8476409563607591
+    --hash=sha256:0bf2a864d67e76e5c9a34dc26ec616a66b9888e25e7b9460e1c76d3293bd9dbf
 mpmath==1.3.0 \
     --hash=sha256:a0b2b9fe80bbcd81a6647ff13108738cfb482d481d826cc0e02f5b35e5c88d2c
 networkx==3.4.2 \
     --hash=sha256:df5d4365b724cf81b8c6a7312509d0c22386097011ad1abe274afd5e9d3bbc5f
 numpy==1.26.4 \
-    --hash=sha256:ffa75af20b44f8dba823498024771d5ac50620e6915abac414251bd971b4529f
-pillow==12.3.0 \
-    --hash=sha256:f0606c8bf2cdefea14a43530f7657cbbb7ecf1c4222512492ef4a4434a9501ec
+    --hash=sha256:666dbfb6ec68962c033a450943ded891bed2d54e6755e35e5835d63f4f6931d5
+pillow==13.0.0 \
+    --hash=sha256:a625df9a2a5597fa5e5266e01aefc82604bb85d291e3547981e863560d75da6c
 setuptools==84.0.0 \
     --hash=sha256:51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670
 sympy==1.14.0 \

@@ -24,7 +24,7 @@ REQUIREMENTS = IMAGE_ROOT / "runtime-requirements.txt"
 PUBLICATION_WORKFLOW = ROOT / ".github" / "workflows" / "publish-public-images.yml"
 
 BASE_MANIFEST = (
-    "sha256:999137905e8718de681744822ccd965e1950e1baba089035060418e05e1d7496"
+    "sha256:b1add8a6f2aca6bcfcf0b9c9b522352f7ce0d62a3d556a2f2f32511aa0cca250"
 )
 BASE_ROOTFS = "sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867"
 DEBIAN_ROOTFS_MANIFEST = (
@@ -35,7 +35,7 @@ DEBIAN_ROOTFS_MANIFEST = (
 def test_dockerfile_is_digest_pinned_nonroot_neutral_bootstrap() -> None:
     text = DOCKERFILE.read_text(encoding="utf-8")
 
-    assert text.startswith(f"FROM python:3.10-slim-bookworm@{BASE_MANIFEST}\n")
+    assert text.startswith(f"FROM python:3.11.16-slim-bookworm@{BASE_MANIFEST}\n")
     assert f'org.nebius.npa.base-manifest="{BASE_MANIFEST}"' in text
     assert f'org.nebius.npa.base-rootfs-material="{BASE_ROOTFS}"' in text
     assert 'org.nebius.npa.redistribution="public-neutral-bootstrap"' in text
@@ -408,13 +408,17 @@ def test_runtime_manifest_is_metadata_only_and_never_an_acceptance_proxy() -> No
     manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
     serialized = json.dumps(manifest, sort_keys=True)
 
-    assert manifest["runtime_artifact_count"] == 135
-    assert len(manifest["runtime_artifacts"]) == 135
+    assert manifest["runtime_artifact_count"] == 136
+    assert len(manifest["runtime_artifacts"]) == 136
     versions = {item["name"]: item["version"] for item in manifest["runtime_artifacts"]}
     security_refreshed_versions = {
+        "certifi": "2026.10.19",
+        "contourpy": "1.3.3",
         "future": "0.18.3",
         "hydra-core": "1.3.7",
+        "matplotlib": "3.10.8",
         "opencv-python": "4.8.1.78",
+        "pillow": "13.0.0",
         "protobuf": "5.29.6",
         "torch": "2.13.0",
         "torchvision": "0.28.0",
@@ -503,7 +507,7 @@ def test_runtime_manifest_is_metadata_only_and_never_an_acceptance_proxy() -> No
         for item in manifest["runtime_artifacts"]
     )
     assert sum(item["size_bytes"] for item in manifest["runtime_artifacts"]) == (
-        3_277_669_153
+        3_275_272_667
     )
     lines = [
         line

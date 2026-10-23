@@ -67,10 +67,10 @@ def test_security_fixed_runtime_and_baked_image_are_fully_pinned() -> None:
     dockerfile = WAN_DOCKERFILE.read_text(encoding="utf-8")
 
     assert "torch==2.13.0" in runtime
-    assert "pillow==12.3.0" in runtime
+    assert "pillow==13.0.0" in runtime
     assert "nvidia-nccl-cu13==2.29.7" in runtime
     assert "torchaudio" not in runtime
-    assert "pillow==12.3.0" in baked
+    assert "pillow==13.0.0" in baked
     assert "diffusers==0.38.0" in baked
     assert "peft==0.20.0" in baked
     assert "transformers==5.14.1" in baked
@@ -182,7 +182,7 @@ def _offline_runtime_env(
     requirements.write_text("example==1 --hash=sha256:" + "0" * 64 + "\n")
     fake_base = tmp_path / "fake-base-python"
     fake_base.write_text(
-        "#!/usr/bin/env bash\nprintf '%s\\n' '3.10-linux_x86_64'\n",
+        "#!/usr/bin/env bash\nprintf '%s\\n' '3.11-linux_x86_64'\n",
         encoding="utf-8",
     )
     fake_base.chmod(0o755)
@@ -222,7 +222,7 @@ def test_offline_runtime_reuses_only_the_exact_current_stamp(tmp_path: Path) -> 
     requirements_payload = "example==1 --hash=sha256:" + "0" * 64 + "\n"
     requirements_sha = hashlib.sha256(requirements_payload.encode()).hexdigest()
     stamp = hashlib.sha256(
-        f"{requirements_sha}|3.10-linux_x86_64".encode()
+        f"{requirements_sha}|3.11-linux_x86_64".encode()
     ).hexdigest()[:16]
     env, _requirements = _offline_runtime_env(tmp_path, current_stamp=stamp)
     completed = subprocess.run(
@@ -241,7 +241,7 @@ def _real_runtime_verification_env(
     requirements_payload = "example==1 --hash=sha256:" + "0" * 64 + "\n"
     requirements_sha = hashlib.sha256(requirements_payload.encode()).hexdigest()
     stamp = hashlib.sha256(
-        f"{requirements_sha}|3.10-linux_x86_64".encode()
+        f"{requirements_sha}|3.11-linux_x86_64".encode()
     ).hexdigest()[:16]
     env, _requirements = _offline_runtime_env(tmp_path, current_stamp=stamp)
     tree = (tmp_path / "cache" / "current").resolve()
@@ -355,7 +355,7 @@ if [[ \"${1:-}\" == \"-c\" ]]; then
   if [[ \"${2:-}\" == *'get_paths()[\"purelib\"]'* ]]; then
     printf '%s\\n' \"${FAKE_BASE_SITE}\"
   else
-    printf '%s\\n' '3.10-linux_x86_64'
+    printf '%s\\n' '3.11-linux_x86_64'
   fi
   exit 0
 fi
