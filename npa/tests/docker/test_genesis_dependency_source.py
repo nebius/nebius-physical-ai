@@ -135,7 +135,7 @@ def test_canonical_genesis_builder_binds_the_checkout_source_to_the_image(tmp_pa
     docker.write_text(
         "#!/bin/sh\n"
         "if [ \"$1\" = image ]; then printf '%s\\n' '" + source_sha + "'; exit 0; fi\n"
-        "if [ \"$1\" = build ]; then exit 0; fi\n"
+        'if [ "$1" = build ]; then exit 0; fi\n'
         "exit 99\n"
     )
     docker.chmod(0o755)
