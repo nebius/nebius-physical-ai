@@ -50,6 +50,8 @@ SUPPORT_SURFACE_SIZE_M = (1.0, 0.8, 0.05)
 SUPPORT_SURFACE_CENTER_M = (0.5, 0.0, -0.025)
 EXTERIOR_CAMERA_POSITION_M = (0.65, 0.65, 0.85)
 EXTERIOR_CAMERA_TARGET_M = (0.50, 0.0, 0.03)
+WITNESS_CAMERA_POSITION_M = (0.15, -0.75, 0.55)
+WITNESS_CAMERA_TARGET_M = (0.50, 0.09, 0.04)
 DOWNWARD_HAND_QUATERNION_XYZW = (1.0, 0.0, 0.0, 0.0)
 RESET_SETTLE_CONTROL_STEPS = 2
 EXPECTED_SEMANTIC_LABELS = frozenset(
@@ -322,8 +324,8 @@ def _camera_common() -> dict[str, Any]:
     }
 
 
-def _camera_config(env_cfg: Any) -> None:
-    """Install exterior and live-hand-driven RTX camera sensors."""
+def _camera_config(env_cfg: Any, *, include_witness: bool = False) -> None:
+    """Install policy cameras and an optional independent witness view."""
 
     from isaaclab.sensors import TiledCameraCfg
 
@@ -354,6 +356,17 @@ def _camera_config(env_cfg: Any) -> None:
         ),
         **_camera_common(),
     )
+    if include_witness:
+        witness_position = WITNESS_CAMERA_POSITION_M
+        env_cfg.scene.pi05_witness = TiledCameraCfg(
+            prim_path="{ENV_REGEX_NS}/Pi05WitnessCamera",
+            offset=TiledCameraCfg.OffsetCfg(
+                pos=witness_position,
+                rot=_ros_look_at_xyzw(witness_position, WITNESS_CAMERA_TARGET_M),
+                convention="ros",
+            ),
+            **_camera_common(),
+        )
 
 
 def _contact_config(env_cfg: Any) -> None:
@@ -578,7 +591,7 @@ def _camera_pose_sample(native: Any) -> dict[str, list[float]]:
         tensor = _proxy_torch(tensor)
         return tensor.detach().cpu().numpy().astype(float).tolist()
 
-    return {
+    sample = {
         "hand_position_m": values(_proxy_torch(robot.data.body_pos_w)[0, hand_index]),
         "hand_quaternion_xyzw": values(
             _proxy_torch(robot.data.body_quat_w)[0, hand_index]
@@ -596,6 +609,18 @@ def _camera_pose_sample(native: Any) -> dict[str, list[float]]:
             native.scene["pi05_exterior"].data.quat_w_world
         )[0],
     }
+    if "pi05_witness" in native.scene:
+        sample.update(
+            {
+                "witness_camera_position_m": values(
+                    native.scene["pi05_witness"].data.pos_w
+                )[0],
+                "witness_camera_quaternion_xyzw": values(
+                    native.scene["pi05_witness"].data.quat_w_world
+                )[0],
+            }
+        )
+    return sample
 
 
 def _xyzw_to_wxyz(quaternion: Any) -> Any:
@@ -1087,6 +1112,19 @@ def _phase_visibility(traces: list[dict[str, Any]]) -> dict[str, dict[str, Any]]
             ),
             "both_fingers_rendered_samples": sum(
                 all(count >= 4 for count in row["wrist_finger_pixels"].values())
+                for row in rows
+            ),
+            "witness_visible_samples": sum(
+                row.get("witness_target_pixels", 0) >= 16 for row in rows
+            ),
+            "destination_witness_visible_samples": sum(
+                row.get("witness_destination_pixels", 0) >= 16 for row in rows
+            ),
+            "both_fingers_witness_samples": sum(
+                all(
+                    count >= 4
+                    for count in row.get("witness_finger_pixels", {}).values()
+                )
                 for row in rows
             ),
             "occlusion_permitted": phase == "retreat",

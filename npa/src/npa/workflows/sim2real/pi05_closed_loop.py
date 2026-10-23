@@ -93,6 +93,8 @@ PROMPT = (
     "Pick up the object and release it inside the cyan circular target on the table."
 )
 WRIST_ABLATION_MODES = ("fresh", "frozen", "pixel_channel_shuffle")
+PIXEL_VALUE_SHUFFLE_LABEL = "spatial_and_channel_pixel_value_shuffle"
+TERMINAL_WITNESS_DWELL_STEPS = 15
 LEGACY_DEFAULT_OBJECT_ASSET = "Isaac/Props/Blocks/DexCube/dex_cube_instanceable.usd"
 OBJECT_SOURCE_FIELDS = (
     "profile_identity",
@@ -363,6 +365,65 @@ def _supported_release(row: dict[str, Any]) -> tuple[bool, bool]:
     return released, supported
 
 
+def _clean_supported_release(row: dict[str, Any]) -> bool:
+    _, supported = _supported_release(row)
+    return (
+        supported
+        and row["left_finger_object_force_n"] <= 1.0e-3
+        and row["right_finger_object_force_n"] <= 1.0e-3
+    )
+
+
+def _terminal_dwell_receipt(record: dict[str, Any], witness: dict) -> dict[str, Any]:
+    trace = record["physics_trace"]
+    start = max(0, len(trace) - TERMINAL_WITNESS_DWELL_STEPS)
+    rows = trace[start:]
+    clean = len(rows) == TERMINAL_WITNESS_DWELL_STEPS and all(
+        _clean_supported_release(row) for row in rows
+    )
+    return {
+        "schema": "npa.sim2real.terminal_witness_dwell.v1",
+        "policy_input": False,
+        "replay": False,
+        "physics_trace_indices": list(range(start, len(trace))),
+        "required_steps": TERMINAL_WITNESS_DWELL_STEPS,
+        "clean_supported_steps": sum(_clean_supported_release(row) for row in rows),
+        "verified_terminal_release_and_stability": clean,
+        "final_physics_row": rows[-1] if rows else None,
+        "post_control_witness": witness,
+    }
+
+
+def _capture_terminal_witness(native: Any, record: dict[str, Any]) -> None:
+    trace = record["physics_trace"]
+    if not trace:
+        raise RuntimeError("terminal witness requires a recorded post-control state")
+    frame = _rgb(native, "pi05_witness")
+    capture_time = _camera_time(native, "pi05_witness")
+    observation_time = _sim_time(native)
+    final_state_time = float(trace[-1]["simulator_time_s"])
+    if observation_time != final_state_time:
+        raise RuntimeError("terminal witness is not bound to the final physics state")
+    clock = _sensor_clock_reference(native)
+    _validate_capture_ages((capture_time,), clock, native.step_dt)
+    receipt = _rgb_receipt(frame, capture_time, observation_time)
+    _bind_rgb_clock(receipt, clock)
+    receipt.update(
+        {
+            "capture_semantics": "post_final_control_no_additional_action_or_physics",
+            "additional_action_steps": 0,
+            "additional_physics_steps": 0,
+            "physics_trace_index": len(trace) - 1,
+            "final_state_time_s": final_state_time,
+            "target_pixels": _target_pixel_count(native, "pi05_witness"),
+            "destination_pixels": _destination_pixel_count(native, "pi05_witness"),
+            "finger_pixels": _finger_pixel_counts(native, "pi05_witness"),
+        }
+    )
+    record["_terminal_witness_frame"] = frame
+    record["terminal_witness_dwell"] = _terminal_dwell_receipt(record, receipt)
+
+
 def _success_result(
     trace: list[dict[str, Any]], events: dict[str, int], stable_steps: int
 ) -> dict[str, Any]:
@@ -433,23 +494,31 @@ def _new_episode_record() -> dict[str, Any]:
         "wrist_mount_receipts": [],
         "_exterior_frames": [],
         "_wrist_frames": [],
+        "_witness_frames": [],
     }
 
 
-def _camera_query_receipts(native: Any, exterior: Any, wrist: Any) -> tuple[dict, dict]:
+def _camera_query_receipts(
+    native: Any, exterior: Any, wrist: Any, witness: Any
+) -> tuple[dict, dict]:
     observation_time = _sim_time(native)
     exterior_time = _camera_time(native, "pi05_exterior")
     wrist_time = _camera_time(native, "pi05_wrist")
+    witness_time = _camera_time(native, "pi05_witness")
     clock = _sensor_clock_reference(native)
-    _validate_capture_ages((exterior_time, wrist_time), clock, native.step_dt)
+    _validate_capture_ages(
+        (exterior_time, wrist_time, witness_time), clock, native.step_dt
+    )
     timing = {
         "observation_time_s": observation_time,
         "exterior_capture_time_s": exterior_time,
         "wrist_capture_time_s": wrist_time,
+        "witness_capture_time_s": witness_time,
     }
     receipts = {
         "exterior": _rgb_receipt(exterior, exterior_time, observation_time),
         "wrist": _rgb_receipt(wrist, wrist_time, observation_time),
+        "witness": _rgb_receipt(witness, witness_time, observation_time),
     }
     for receipt in receipts.values():
         _bind_rgb_clock(receipt, clock)
@@ -483,9 +552,14 @@ def _record_query_camera(native: Any, record: dict, receipts: dict, wire: dict) 
             "exterior_destination_pixels": destination_pixels,
             "wrist_finger_in_frustum": _finger_in_frustum(native),
             "wrist_finger_pixels": _finger_pixel_counts(native, "pi05_wrist"),
+            "witness_target_pixels": _target_pixel_count(native, "pi05_witness"),
+            "witness_destination_pixels": _destination_pixel_count(
+                native, "pi05_witness"
+            ),
+            "witness_finger_pixels": _finger_pixel_counts(native, "pi05_witness"),
             "semantic_encoding": {
                 name: _semantic_encoding_receipt(native, name)
-                for name in ("pi05_exterior", "pi05_wrist")
+                for name in ("pi05_exterior", "pi05_wrist", "pi05_witness")
             },
             "phase": phase,
         }
@@ -495,6 +569,7 @@ def _record_query_camera(native: Any, record: dict, receipts: dict, wire: dict) 
             "camera_pose": camera,
             "exterior_rgb": receipts["exterior"],
             "wrist_rgb": receipts["wrist"],
+            "witness_rgb": receipts["witness"],
             "wire_input": wire,
             **camera,
         }
@@ -521,6 +596,9 @@ def _wrist_variant(
         raise RuntimeError(f"unsupported wrist ablation mode: {mode}")
     return value, {
         "mode": mode,
+        "intervention_label": (
+            PIXEL_VALUE_SHUFFLE_LABEL if mode == "pixel_channel_shuffle" else mode
+        ),
         "decision": decision,
         "source_sha256": _rgb_receipt(wrist, 0.0, 0.0)["sha256"],
         "policy_sha256": _rgb_receipt(value, 0.0, 0.0)["sha256"],
@@ -547,19 +625,22 @@ def _query_policy(
 ) -> tuple[Any, dict[str, Any], dict[str, Any]]:
     native, record = context["native"], context["record"]
     exterior, wrist, joint, gripper = _policy_observation(native)
-    timing, receipts = _camera_query_receipts(native, exterior, wrist)
+    witness = _rgb(native, "pi05_witness")
+    timing, receipts = _camera_query_receipts(native, exterior, wrist, witness)
     timing["exterior_rgb_sha256"] = receipts["exterior"]["sha256"]
     timing["wrist_rgb_sha256"] = receipts["wrist"]["sha256"]
+    timing["witness_rgb_sha256"] = receipts["witness"]["sha256"]
     try:
         actions, inference = _infer_query(
             context, decision, (exterior, wrist, joint, gripper), receipts
         )
         _record_query_camera(native, record, receipts, inference["wire_input"])
     except Exception as error:
-        _retain_failed_camera(record, exterior, wrist, timing, error)
+        _retain_failed_camera(record, exterior, wrist, witness, timing, error)
         raise
     record["_exterior_frames"].append(exterior)
     record["_wrist_frames"].append(wrist)
+    record["_witness_frames"].append(witness)
     return actions, inference, timing
 
 
@@ -806,13 +887,19 @@ def _accumulated_sensor_time(updates: int, period_s: float) -> float:
 
 
 def _retain_failed_camera(
-    record: dict, exterior: Any, wrist: Any, timing: dict, error: Exception
+    record: dict,
+    exterior: Any,
+    wrist: Any,
+    witness: Any,
+    timing: dict,
+    error: Exception,
 ) -> None:
     record.setdefault("failed_camera_observations", []).append(
         {**timing, "failure": _execution_error(error), "policy_query_recorded": False}
     )
     record.setdefault("_failed_exterior_frames", []).append(exterior)
     record.setdefault("_failed_wrist_frames", []).append(wrist)
+    record.setdefault("_failed_witness_frames", []).append(witness)
 
 
 def _write_failed_camera_evidence(work: Path, episodes: list[dict]) -> list[dict]:
@@ -820,7 +907,7 @@ def _write_failed_camera_evidence(work: Path, episodes: list[dict]) -> list[dict
 
     artifacts = []
     for index, episode in enumerate(episodes):
-        for camera in ("exterior", "wrist"):
+        for camera in ("exterior", "wrist", "witness"):
             frames = episode.pop(f"_failed_{camera}_frames", [])
             if not frames:
                 continue
@@ -1086,6 +1173,7 @@ def _episode(
     for decision in range(decisions):
         if _decision_step(context, decision):
             break
+    _capture_terminal_witness(native, record)
     return _finish_episode(record)
 
 
@@ -1234,6 +1322,55 @@ def _write_video(work: Path, episodes: list[dict[str, Any]]) -> tuple[Path, int]
     return mp4, len(preview)
 
 
+def _witness_panel(frame: Any, label: str) -> Any:
+    import numpy as np
+    from PIL import Image, ImageDraw
+
+    canvas = Image.new("RGB", (224, 256), "black")
+    canvas.paste(Image.fromarray(np.asarray(frame)), (0, 32))
+    ImageDraw.Draw(canvas).text((4, 8), label, fill="white")
+    return np.asarray(canvas)
+
+
+def _write_witness_video(
+    work: Path, episodes: list[dict[str, Any]]
+) -> tuple[Path, int]:
+    import numpy as np
+
+    from npa.adapter.sim_to_lerobot import encode_video
+
+    panels = []
+    for episode_index, episode in enumerate(episodes):
+        frames = episode.get("_witness_frames") or []
+        queries = episode.get("queries") or []
+        terminal = episode.get("_terminal_witness_frame")
+        if len(frames) != len(queries) or terminal is None:
+            raise RuntimeError("witness frames do not cover the complete policy trial")
+        for query_index, (frame, query) in enumerate(zip(frames, queries, strict=True)):
+            mapped_state = (
+                "reset-settle-state"
+                if query_index == 0
+                else f"post-control-row={query_index - 1}"
+            )
+            label = (
+                f"ep={episode_index} q={query_index} pre-command "
+                f"{mapped_state} policy_input=false"
+            )
+            panels.append(_witness_panel(frame, label))
+        panels.append(
+            _witness_panel(
+                terminal,
+                f"ep={episode_index} terminal post-control; no extra action/physics",
+            )
+        )
+    preview = np.stack(panels)
+    path = work / "witness-rollouts.mp4"
+    encode_video(preview, path, max(1, round(CONTROL_HZ / EXECUTION_PREFIX)))
+    if not path.is_file() or path.stat().st_size == 0:
+        raise RuntimeError("witness MP4 readback is empty")
+    return path, len(preview)
+
+
 def _write_rrd(
     work: Path, episodes: list[dict[str, Any]], role: str, recording_id: str
 ) -> tuple[Path, int]:
@@ -1248,6 +1385,7 @@ def _write_rrd(
         for episode_index, episode in enumerate(episodes):
             step += _log_rrd_physics(recording, rr, episode, episode_index)
             _log_rrd_queries(recording, rr, episode, episode_index)
+            _log_rrd_terminal_witness(recording, rr, episode, episode_index)
     if not rrd.is_file() or rrd.stat().st_size == 0 or step < 1:
         raise RuntimeError("closed-loop Rerun readback is empty")
     return rrd, step
@@ -1328,7 +1466,8 @@ def _log_rrd_queries(
     queries = list(episode.get("queries", []))
     exterior = episode.get("_exterior_frames", [])
     wrist = episode.get("_wrist_frames", [])
-    if len(exterior) != len(queries) or len(wrist) != len(queries):
+    witness = episode.get("_witness_frames", [])
+    if any(len(frames) != len(queries) for frames in (exterior, wrist, witness)):
         raise RuntimeError("Rerun camera frames do not match policy queries")
     for query_index, query in enumerate(queries):
         root = f"episodes/{episode_index}/queries/{query_index}"
@@ -1353,12 +1492,39 @@ def _log_rrd_queries(
             episode_index,
             "query",
             query_index,
+            float(query["witness_capture_time_s"]),
+        )
+        recording.log(root + "/witness", rr.Image(witness[query_index]))
+        _rrd_time(
+            recording,
+            episode_index,
+            "query",
+            query_index,
             float(query["observation_time_s"]),
         )
         recording.log(
             root + "/capture_age_s",
             rr.Scalars([query["inference"]["wire_input"]["capture_age_s"]]),
         )
+
+
+def _log_rrd_terminal_witness(
+    recording: Any, rr: Any, episode: dict, episode_index: int
+) -> None:
+    dwell = episode.get("terminal_witness_dwell") or {}
+    witness = dwell.get("post_control_witness") or {}
+    frame = episode.get("_terminal_witness_frame")
+    if frame is None or not witness:
+        raise RuntimeError("Rerun terminal witness is absent")
+    query_index = len(episode.get("queries") or [])
+    _rrd_time(
+        recording,
+        episode_index,
+        "query",
+        query_index,
+        float(witness["capture_time_s"]),
+    )
+    recording.log(f"episodes/{episode_index}/terminal/witness", rr.Image(frame))
 
 
 def _decode_artifacts(mp4: Path, rrd: Path) -> tuple[dict[str, Any], str]:
@@ -1393,6 +1559,27 @@ def _decode_artifacts(mp4: Path, rrd: Path) -> tuple[dict[str, Any], str]:
     return probe, decoded
 
 
+def _probe_video(path: Path) -> dict[str, Any]:
+    import subprocess
+
+    command = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-show_entries",
+        "stream=codec_name,nb_frames,r_frame_rate",
+        "-of",
+        "json",
+        str(path),
+    ]
+    probe = json.loads(
+        subprocess.run(command, check=True, capture_output=True, text=True).stdout
+    )
+    if not probe.get("streams"):
+        raise RuntimeError("witness video independent decode lacks a stream")
+    return probe
+
+
 def _write_review_artifacts(
     work: Path,
     episodes: list[dict[str, Any]],
@@ -1401,11 +1588,15 @@ def _write_review_artifacts(
 ) -> dict[str, Any]:
     failed_cameras = _write_failed_camera_evidence(work, episodes)
     mp4, frames = _write_video(work, episodes)
+    witness_mp4, witness_frames = _write_witness_video(work, episodes)
     rrd, steps = _write_rrd(work, episodes, checkpoint_role, recording_id)
     probe, _ = _decode_artifacts(mp4, rrd)
+    witness_probe = _probe_video(witness_mp4)
     for episode in episodes:
         episode.pop("_exterior_frames", None)
         episode.pop("_wrist_frames", None)
+        episode.pop("_witness_frames", None)
+        episode.pop("_terminal_witness_frame", None)
     return {
         "failed_camera_observations": failed_cameras,
         "mp4": {
@@ -1413,6 +1604,14 @@ def _write_review_artifacts(
             "bytes": mp4.stat().st_size,
             "frames": frames,
             "ffprobe": probe["streams"],
+        },
+        "witness_mp4": {
+            "path": witness_mp4.name,
+            "bytes": witness_mp4.stat().st_size,
+            "frames": witness_frames,
+            "ffprobe": witness_probe["streams"],
+            "policy_input": False,
+            "replay": False,
         },
         "rrd": {
             "path": rrd.name,
@@ -1430,7 +1629,13 @@ def _persist_partial_episodes(work: Path, episodes: list[dict[str, Any]]) -> Non
         {
             key: value
             for key, value in episode.items()
-            if key not in {"_exterior_frames", "_wrist_frames"}
+            if key
+            not in {
+                "_exterior_frames",
+                "_wrist_frames",
+                "_witness_frames",
+                "_terminal_witness_frame",
+            }
         }
         for episode in episodes
     ]
@@ -1700,7 +1905,7 @@ def _configure_eval(
     configure_support_surface(cfg)
     configure_surface_goal(cfg, target)
     configure_destination_marker(cfg, target)
-    _camera_config(cfg)
+    _camera_config(cfg, include_witness=True)
     _contact_config(cfg)
     _physics_randomization(cfg)
 
@@ -2016,8 +2221,12 @@ def _validate_wrist_interventions(episodes: list[dict[str, Any]]) -> None:
             ) or {}
             source = intervention.get("source_sha256")
             policy = intervention.get("policy_sha256")
+            expected_label = (
+                PIXEL_VALUE_SHUFFLE_LABEL if mode == "pixel_channel_shuffle" else mode
+            )
             if (
                 intervention.get("mode") != mode
+                or intervention.get("intervention_label") != expected_label
                 or intervention.get("decision") != query.get("decision")
                 or not _valid_receipt_hash(source)
                 or not _valid_receipt_hash(policy)
@@ -2049,6 +2258,7 @@ def _validate_query_lineage(episode: dict[str, Any], query: dict[str, Any]) -> N
     )
     if (
         not all(_valid_receipt_hash(value) for value in hashes)
+        or not _valid_receipt_hash(query.get("witness_rgb_sha256"))
         or query.get("wrist_rgb_sha256") != intervention.get("source_sha256")
         or query.get("exterior_rgb_sha256") != wire.get("exterior_rgb_sha256")
         or wire.get("wrist_rgb_sha256") != intervention.get("policy_sha256")
@@ -2058,6 +2268,7 @@ def _validate_query_lineage(episode: dict[str, Any], query: dict[str, Any]) -> N
         or transform.get("left_wrist_mask") is not True
         or transform.get("right_wrist_mask") is not False
         or inference.get("sampling_sequence") != expected_sequence
+        or "witness" in wire
     ):
         raise RuntimeError("policy query wrist lineage is invalid")
     _validate_query_numeric_receipts(query, inference, wire)
@@ -2195,6 +2406,9 @@ def _validate_camera_evidence(episode: dict[str, Any]) -> None:
             phase.get("exterior_visible_samples"),
             phase.get("destination_exterior_visible_samples"),
             phase.get("both_fingers_rendered_samples"),
+            phase.get("witness_visible_samples"),
+            phase.get("destination_witness_visible_samples"),
+            phase.get("both_fingers_witness_samples"),
         )
         if not isinstance(count, int) or count < 1:
             raise RuntimeError("camera phase evidence is invalid")
@@ -2206,6 +2420,11 @@ def _validate_camera_evidence(episode: dict[str, Any]) -> None:
             "occlusion_permitted", False
         ):
             raise RuntimeError("destination marker was absent at a policy query")
+        if (
+            phase.get("witness_visible_samples") != count
+            or phase.get("destination_witness_visible_samples") != count
+        ):
+            raise RuntimeError("independent witness did not retain object and goal")
         samples += count
     if not visibility or samples != len(episode.get("queries") or []):
         raise RuntimeError("camera evidence does not bind every policy query")
@@ -2215,6 +2434,53 @@ def _validate_camera_evidence(episode: dict[str, Any]) -> None:
         and success["released_supported_surface_placement"]
     ):
         _require_expert_phase_visibility(visibility)
+    _validate_terminal_witness(episode)
+
+
+def _validate_terminal_witness(episode: dict[str, Any]) -> None:
+    trace = episode.get("physics_trace") or []
+    dwell = episode.get("terminal_witness_dwell") or {}
+    witness = dwell.get("post_control_witness") or {}
+    start = max(0, len(trace) - TERMINAL_WITNESS_DWELL_STEPS)
+    rows = trace[start:]
+    clean = len(rows) == TERMINAL_WITNESS_DWELL_STEPS and all(
+        _clean_supported_release(row) for row in rows
+    )
+    fingers = witness.get("finger_pixels") or {}
+    valid_pixels = witness.get("target_pixels", 0) >= 16
+    valid_pixels = valid_pixels and witness.get("destination_pixels", 0) >= 16
+    valid_pixels = valid_pixels and all(
+        fingers.get(side, 0) >= 4 for side in ("left", "right")
+    )
+    expected_indices = list(range(start, len(trace)))
+    final_state_time = float(trace[-1]["simulator_time_s"]) if trace else None
+    try:
+        _capture_time, _sensor_time, clock = _typed_camera_times(witness)
+    except RuntimeError as error:
+        raise RuntimeError("terminal witness dwell evidence is invalid") from error
+    if (
+        dwell.get("schema") != "npa.sim2real.terminal_witness_dwell.v1"
+        or dwell.get("policy_input") is not False
+        or dwell.get("replay") is not False
+        or dwell.get("physics_trace_indices") != expected_indices
+        or dwell.get("clean_supported_steps")
+        != sum(_clean_supported_release(row) for row in rows)
+        or dwell.get("verified_terminal_release_and_stability") is not clean
+        or dwell.get("final_physics_row") != (rows[-1] if rows else None)
+        or witness.get("physics_trace_index") != len(trace) - 1
+        or witness.get("capture_semantics")
+        != "post_final_control_no_additional_action_or_physics"
+        or witness.get("additional_action_steps") != 0
+        or witness.get("additional_physics_steps") != 0
+        or witness.get("final_state_time_s") != final_state_time
+        or witness.get("observation_time_s") != final_state_time
+        or clock.get("raw_observation_timestamp_s") != final_state_time
+        or not _valid_receipt_hash(witness.get("sha256"))
+        or not valid_pixels
+    ):
+        raise RuntimeError("terminal witness dwell evidence is invalid")
+    if _episode_passed(episode) and not clean:
+        raise RuntimeError("latched success lacks a clean terminal witness dwell")
 
 
 def _validate_effectiveness_cohort(episodes: list[dict[str, Any]]) -> None:
@@ -2245,13 +2511,20 @@ def _validate_effectiveness_cohort(episodes: list[dict[str, Any]]) -> None:
 def _validate_effectiveness_artifacts(
     artifacts: dict[str, Any], episodes: list[dict[str, Any]]
 ) -> None:
-    mp4, rrd = artifacts.get("mp4") or {}, artifacts.get("rrd") or {}
+    mp4 = artifacts.get("mp4") or {}
+    witness_mp4 = artifacts.get("witness_mp4") or {}
+    rrd = artifacts.get("rrd") or {}
     query_count = sum(len(episode.get("queries") or []) for episode in episodes)
     physics_count = sum(len(episode.get("physics_trace") or []) for episode in episodes)
     if (
         int(mp4.get("bytes", 0)) < 1
         or int(mp4.get("frames", 0)) != query_count
         or not mp4.get("ffprobe")
+        or int(witness_mp4.get("bytes", 0)) < 1
+        or int(witness_mp4.get("frames", 0)) != query_count + len(episodes)
+        or not witness_mp4.get("ffprobe")
+        or witness_mp4.get("policy_input") is not False
+        or witness_mp4.get("replay") is not False
         or int(rrd.get("bytes", 0)) < 1
         or int(rrd.get("timeline_rows", 0)) != physics_count
         or rrd.get("rerun_verify") is not True
@@ -2658,7 +2931,7 @@ def validate_success_report(report: dict[str, Any], args: argparse.Namespace) ->
         or len(report.get("episodes") or []) != expected
     ):
         raise RuntimeError("closed-loop report is absent, failed, or incomplete")
-    for name in ("mp4", "rrd"):
+    for name in ("mp4", "witness_mp4", "rrd"):
         if int((artifacts.get(name) or {}).get("bytes", 0)) < 1:
             raise RuntimeError(f"closed-loop report lacks decoded {name} evidence")
 

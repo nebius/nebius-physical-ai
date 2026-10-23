@@ -313,7 +313,7 @@ states:
     next: evaluate-adapted-gold
 
   evaluate-adapted-gold:
-    description: Repeat identical gold scenarios with fresh, frozen and color-channel-permuted wrist interventions.
+    description: Repeat identical gold scenarios with fresh, frozen and spatial-and-channel pixel-value-shuffled wrist interventions.
     needs: [start-adapted-service]
     toolRef: workbench.sim2real.smolvla_adapted_gold
     resources: isaac

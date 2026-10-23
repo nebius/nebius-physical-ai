@@ -190,7 +190,10 @@ wrist-effectiveness claim.
 Each closed-loop checkpoint evaluation can run matched `fresh`, `frozen`, and
 deterministic `pixel_channel_shuffle` wrist arms from the same held-out scenario
 seeds, initial object poses, checkpoint, exterior/state contract, and
-instruction. This pipeline's private service uses an NPA-owned wrapper around
+instruction. The legacy mode identifier flattens the complete HWC tensor and
+permutes scalar pixel values across spatial and channel positions; it is a
+pixel-value shuffle, not an RGB-channel-only or temporal-frame permutation.
+This pipeline's private service uses an NPA-owned wrapper around
 the pinned real `Policy.infer(observation, noise=noise)` API. It validates the
 padded model noise shape from the selected config and returns only its hash,
 shape, and sequence identity. Reports reject a matched-effectiveness claim if
@@ -198,10 +201,19 @@ those identities do not pair at every decision. Generic upstream serving stays
 unchanged. The scoped wrapper requires a bearer token from an operator-managed
 Kubernetes Secret; the same Secret is mounted into the Isaac evaluator, and no
 token is written to the service receipt, request receipt, or image.
-Pixel/channel shuffle is explicitly an out-of-distribution
+Pixel-value shuffle is explicitly an out-of-distribution
 corruption, not an unrelated real wrist frame. The separate local held-out
 diagnostic also pairs explicit noise and proves only action sensitivity and
 transform/mask wiring, not helpful task use.
+
+Closed-loop review artifacts also contain an independent static witness camera.
+It is never a policy input. Its uncut video and Rerun entities bind every
+pre-command observation plus a post-final-control frame to the same simulator
+clock and physics trace. A latched placement claim additionally records a
+15-control terminal dwell with open fingers, zero finger force, table support,
+the unchanged 5 cm goal criterion, low speed, and hand retreat. This witness is
+evaluation instrumentation; replayed footage must be labelled replay and cannot
+replace a new policy trial.
 
 ## Required operator inputs
 

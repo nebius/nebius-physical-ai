@@ -245,6 +245,37 @@ def test_gen3_camera_config_requests_live_pose_and_integer_semantics(
     assert cfg.scene.pi05_wrist.prim_path == "{ENV_REGEX_NS}/Pi05WristCamera"
     assert cfg.scene.pi05_exterior.offset.convention == "ros"
     assert cfg.scene.pi05_wrist.spawn.focal_length == 18.0
+    assert not hasattr(cfg.scene, "pi05_witness")
+
+
+def test_closed_loop_camera_config_adds_independent_static_witness(monkeypatch) -> None:
+    sensors = types.ModuleType("isaaclab.sensors")
+    sensors.TiledCameraCfg = _CameraCfg
+    sim = types.ModuleType("isaaclab.sim")
+    sim.PinholeCameraCfg = _CameraCfg
+    isaaclab = types.ModuleType("isaaclab")
+    renderers = types.ModuleType("isaaclab_physx.renderers")
+    renderers.IsaacRtxRendererCfg = _CameraCfg
+    isaaclab.sensors = sensors
+    isaaclab.sim = sim
+    monkeypatch.setitem(sys.modules, "isaaclab", isaaclab)
+    monkeypatch.setitem(sys.modules, "isaaclab.sensors", sensors)
+    monkeypatch.setitem(sys.modules, "isaaclab.sim", sim)
+    monkeypatch.setitem(sys.modules, "isaaclab_physx.renderers", renderers)
+    cfg = SimpleNamespace(scene=SimpleNamespace())
+
+    _camera_config(cfg, include_witness=True)
+
+    witness = cfg.scene.pi05_witness
+    assert witness.prim_path == "{ENV_REGEX_NS}/Pi05WitnessCamera"
+    assert witness.offset.pos == pi05_isaac.WITNESS_CAMERA_POSITION_M
+    assert witness.offset.convention == "ros"
+    optical_axis = _rotate_vector(_xyzw_to_wxyz(witness.offset.rot), [0.0, 0.0, 1.0])
+    expected = np.asarray(pi05_isaac.WITNESS_CAMERA_TARGET_M) - np.asarray(
+        pi05_isaac.WITNESS_CAMERA_POSITION_M
+    )
+    expected /= np.linalg.norm(expected)
+    assert np.allclose(optical_axis, expected, atol=1.0e-6)
 
 
 def test_ros_camera_axes_aim_at_declared_geometry() -> None:
