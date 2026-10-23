@@ -4076,6 +4076,48 @@ def test_explicit_terminal_recovery_refuses_before_submission_without_failed_wav
     assert store.read_runtime_state() is None
 
 
+def test_explicit_terminal_recovery_refuses_unconsumed_recovery_before_submission(
+    tmp_path: Path,
+) -> None:
+    """A recovery ID may not degrade into a replacement when its wave is absent."""
+
+    spec, store, run_id, step = _seed_explicit_terminal_recovery_case(tmp_path)
+    state = store.read_runtime_state()
+    assert state is not None
+    failed = dict(state.waves[0])
+    state.waves[0]["status"] = "succeeded"
+    state.waves[0]["sky_status"] = "SUCCEEDED"
+    state.waves[0].pop("error", None)
+    failed["key"] = "001|serial|:removed-from-resumed-plan:-"
+    state.record_wave(failed)
+    store.write_runtime_state(state)
+
+    submitter = FakeSubmitter()
+    executor = _executor(
+        spec,
+        run_id=run_id,
+        store=store,
+        submitter=submitter,
+        options=RuntimeOptions(resume=True, recover_managed_job_id="2"),
+        output_checker=lambda _uri: False,
+        reconcile_fn=lambda *_args, **_kwargs: pytest.fail(
+            "unmatched explicit recovery must not reconcile or submit"
+        ),
+    )
+
+    with pytest.raises(
+        NpaWorkflowError,
+        match="was not consumed by the resumed plan; refusing replacement job submission",
+    ):
+        executor.execute(step)
+
+    assert submitter.calls == []
+    assert [wave["key"] for wave in store.read_runtime_state().waves] == [
+        "001|serial|:export:-",
+        "001|serial|:removed-from-resumed-plan:-",
+    ]
+
+
 def test_explicit_terminal_recovery_skips_completed_waves_before_failed_wave(
     tmp_path: Path,
 ) -> None:

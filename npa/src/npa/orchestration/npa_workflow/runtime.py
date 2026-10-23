@@ -1218,6 +1218,17 @@ class SkyPilotWaveExecutor:
                         f"{prior_attempt}; preserving prior evidence"
                     )
 
+        if (
+            self.options.resume
+            and self.options.recover_managed_job_id
+            and not self._explicit_terminal_recovery_consumed
+        ):
+            raise NpaWorkflowError(
+                f"wave {key}: --recover-managed-job-id "
+                f"{self.options.recover_managed_job_id!r} was not consumed by the "
+                "resumed plan; refusing replacement job submission"
+            )
+
         last_error = ""
         attempt_start = prior_attempt + 1 if retrying_prior_terminal else 1
         attempt_count = (
