@@ -89,6 +89,7 @@ def test_fiftyone_retains_a_root_owned_dependency_correction_receipt() -> None:
         "USER ubuntu\n\nRUN curl --fail --location --silent --show-error" in dockerfile
     )
     assert receipt in dockerfile
+    assert "--capability fiftyone" in dockerfile
     assert "dependency-source-correction" in validation
     assert "Correction receipt is mutable" in validation
     assert 'find_spec("skimage.data._fetchers")' in validation

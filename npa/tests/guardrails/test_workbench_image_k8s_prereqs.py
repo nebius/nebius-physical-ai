@@ -440,7 +440,7 @@ def test_genesis_workflow_images_pin_the_bootstrap_closure(
     assert "ubuntu:24.04" in snapshot_config
     assert "ubuntu:22.04" in installer
     assert 'linux_libc_dev_version="5.15.0-198.208"' in installer
-    assert 'linux_libc_dev_version="6.8.0-139.139"' in installer
+    assert 'linux_libc_dev_version="6.8.0-147.147"' in installer
     assert "apt-get --fix-broken install -y --no-install-recommends" in installer
     assert '"linux-libc-dev=${linux_libc_dev_version}"' in installer
     assert "sudo" in installer and "rsync" in installer

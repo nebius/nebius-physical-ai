@@ -30,9 +30,9 @@ the GPU chart describes those release digests. MJLab is outside this refresh.
 
 The client now requires Python 3.11+ and Pillow 13. Source dependency repairs
 update GitPython, certifi, virtualenv, and their affected locks; they do not
-establish a rebuilt or qualified image. Genesis, Cosmos, and GR00T's legacy
-Python 3.10 vendor environments use a source launcher for their NPA adapters,
-with their own runtime dependencies. These source changes require independent
+establish a rebuilt or qualified image. Genesis, Cosmos, and GR00T use isolated vendor environments with a source
+launcher for their NPA adapters. Their current source recipes use Python 3.12
+and Pillow 13 alongside the separately pinned runtime dependencies. These source changes require independent
 image rebuild, byte scanning, and capability validation before release promotion.
 
 [Marble workflows](marble.md) reuse the existing EnvGen CUDA/compiler image
@@ -197,6 +197,17 @@ the independently pulled digest, both verified attestations and clean layer scan
 Use the [runtime-fetch instructions](../../npa/docker/workbench/sam3/README.md).
 Gated checkpoint access and real GPU qualification remain pending; this does
 not replace the accepted SAM 2.1 release or add a supported release row.
+
+The NPA application now requires Python 3.11 or newer and Pillow 13. Source
+recipes that install NPA use compatible interpreters and refreshed dependency
+locks; the Jammy Cosmos, Genesis, and GR00T environments use Python 3.12.
+The security overlay also updates GitPython to 3.2.1, including hash-bound
+runtime-fetch inputs and their matching license records. These source changes
+do not qualify rebuilt GPU artifacts or replace the
+accepted digests below. In particular, the Cosmos CP312 custom-kernel tuple
+requires fresh B200 kernel and checkpoint-backed inference evidence before
+release promotion. Standalone vendor workers that do not install NPA retain
+their separately pinned Python/CUDA compatibility contracts.
 
 ## 2026-09-17 flex-pi r2 publication
 
@@ -1063,6 +1074,29 @@ table. The independently rebuilt `sonic-mujoco:0.2.0-runtime` and zero-payload
 `cosmos3-serving:0.2.0-oss` each have their own accepted public-plan row.
 
 ## Verification scope
+
+The [2026-10-18 post-merge development build](https://github.com/nebius/nebius-physical-ai/actions/runs/39153996361)
+failed 19 of 31 image jobs after the source checks passed. Current build sources
+repair FiftyOne's non-root receipt directory, the MJLab/Lyra client dependency
+closure, unnecessary OpenPI/GR00T startup imports, the SONIC snapshot mismatch,
+and the reported header, PyJWT and optional Nsight vulnerability findings.
+Cosmos and Genesis install imageio-ffmpeg from source, omit its wheel-bundled
+executable before committing the dependency layer, and verify system FFmpeg
+with a tiny encode/decode probe during the build.
+These are source repairs; replacement images still require their own complete
+publication checks and functional validation.
+
+These source repairs preserve the newer EnvGen and Isaac Lab parent pins
+already merged into main. Parent build evidence does not establish GPU
+qualification for a new derivative. Supported release tags and their recorded
+digests are unchanged by these repairs.
+
+The same run also stopped cuRobo, SeedVR2, Cosmos3 Ray Serve and Alpamayo at
+payload verification. The failed run retained no Actions artifacts for those
+reports; unavailable reports and credential-pattern matches cannot be treated
+as clean evidence or cleared by a scanner exclusion. These historical refusals
+do not describe the state of newer images. Current accepted releases and their
+independently recorded validations elsewhere in this catalog remain authoritative.
 
 `npa-lyra2:2.0-rtfetch2` promotes the exact scanned development digest that
 completed native reconstruction on one preemptible RTX PRO 6000, with independent

@@ -836,7 +836,8 @@ Full-suite PRs retain smoke coverage in their shards; the early precheck runs
 guardrails once before those shards, and unsuccessful or cancelled shards no longer queue a coverage job.
 
 Application and CI dependency scans reject known vulnerabilities even when the
-same pin is already on `main`. Keep the AnyIO security floor at 4.14.2 or newer;
+same pin is already on `main`. Keep the AnyIO security floor at 4.14.2 and the
+certifi trust-store floor at 2026.10.19 or newer;
 update `npa/requirements-lock.txt` and regenerate CI pins when changing package
 requirements. `.github/dependabot.yml` checks Python, browser-test npm, and
 GitHub Actions dependencies daily and groups version updates into one

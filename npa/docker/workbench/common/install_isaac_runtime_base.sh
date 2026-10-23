@@ -35,10 +35,10 @@ set -euo pipefail
 TORCH_VERSION="${TORCH_VERSION:-2.9.0}"
 TORCHVISION_VERSION="${TORCHVISION_VERSION:-0.24.0}"
 TORCHAUDIO_VERSION="${TORCHAUDIO_VERSION:-2.9.0}"
-UBUNTU_SNAPSHOT="${NPA_UBUNTU_SNAPSHOT:-20260820T000000Z}"
+UBUNTU_SNAPSHOT="${NPA_UBUNTU_SNAPSHOT:-20261018T000000Z}"
 UBUNTU_SUITE="${NPA_UBUNTU_SUITE:-jammy}"
 ISAAC_PYTHON_MINOR="${NPA_ISAAC_PYTHON_MINOR:-3.11}"
-LINUX_LIBC_DEV_VERSION="${NPA_LINUX_LIBC_DEV_VERSION:-5.15.0-187.197}"
+LINUX_LIBC_DEV_VERSION="${NPA_LINUX_LIBC_DEV_VERSION:-5.15.0-198.208}"
 PYTHON_VERSION="${NPA_ISAAC_PYTHON_VERSION:-3.11.17-1+jammy1}"
 DEADSNAKES_POOL="${NPA_DEADSNAKES_POOL:-https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu/pool/main/p/python3.11}"
 # cu128 wheels carry sm_120 kernels, which RTX PRO 6000 Blackwell (compute capability
@@ -98,12 +98,12 @@ system_packages=(
 if [ -n "$LINUX_LIBC_DEV_VERSION" ]; then
   system_packages+=("linux-libc-dev=${LINUX_LIBC_DEV_VERSION}")
 elif [ "$UBUNTU_SUITE" = jammy ]; then
-  system_packages+=(linux-libc-dev=5.15.0-186.196)
+  system_packages+=(linux-libc-dev=5.15.0-198.208)
 elif [ "$UBUNTU_SUITE" = noble ]; then
-  # Fixed for CVE-2026-53215 in the repository's immutable Noble snapshot.
+  # Fixed for the current critical CVEs in the immutable Noble snapshot.
   # Keep the exact build here so a future base/snapshot change cannot silently
   # reintroduce the vulnerable userspace headers.
-  system_packages+=(linux-libc-dev=6.8.0-138.138)
+  system_packages+=(linux-libc-dev=6.8.0-147.147)
 else
   system_packages+=(linux-libc-dev)
 fi

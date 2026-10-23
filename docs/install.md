@@ -35,8 +35,9 @@ If it is older than 3.11 (or missing):
 - **macOS:** `brew install python@3.12`, or download from
   [python.org](https://www.python.org/downloads/), or use
   [pyenv](https://github.com/pyenv/pyenv).
-- **Debian/Ubuntu:** the interpreter is usually current; also install the venv
-  module (shipped separately): `sudo apt-get install -y python3 python3-venv`.
+- **Debian/Ubuntu:** use Python 3.11 or newer (Ubuntu 24.04 provides 3.12).
+  Also install the matching venv module; on Ubuntu 24.04 run
+  `sudo apt-get install -y python3 python3-venv`.
 - **Windows:** use the Debian/Ubuntu commands inside WSL2 Ubuntu. A native
   Windows Python installation is not used by this setup.
 

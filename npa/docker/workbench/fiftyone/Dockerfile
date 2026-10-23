@@ -84,6 +84,7 @@ RUN useradd -m -s /bin/bash -u 1000 ubuntu \
       /opt/fiftyone/smoke \
       /opt/fiftyone/venv \
       /opt/npa/docker/workbench/fiftyone \
+      /usr/share/doc/npa-fiftyone \
     && printf '%s\n' \
       'export FIFTYONE_VENV=/opt/fiftyone/venv' \
       'export PATH=/opt/fiftyone/venv/bin:$PATH' \
