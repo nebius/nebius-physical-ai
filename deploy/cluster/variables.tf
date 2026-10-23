@@ -136,6 +136,16 @@ variable "mig_parted_config" {
   default     = "all-balanced"
 }
 
+variable "gpu_operator_rtx_driver_profile" {
+  description = "Optional exact RTX rendering selector and toolkit configuration for the GPU Operator."
+  type = object({
+    platform             = string
+    preset               = string
+    package_repositories = optional(map(string), {})
+  })
+  default = null
+}
+
 variable "gpu_operator_version" {
   type    = string
   default = "v26.3.3"
