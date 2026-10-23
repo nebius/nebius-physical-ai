@@ -916,6 +916,22 @@ def test_terminal_witness_rejects_unbound_evidence(mutation: str) -> None:
         pi05_closed_loop._validate_terminal_witness(episode)
 
 
+def test_terminal_completion_is_separate_from_historical_latch() -> None:
+    episode = _comparison_episode("fresh", 101, True)
+    assert pi05_closed_loop._episode_passed(episode) is True
+    assert pi05_closed_loop._episode_terminal_passed(episode) is True
+    episode["physics_trace"][-1]["left_finger_object_force_n"] = 0.2
+    witness = episode["terminal_witness_dwell"]["post_control_witness"]
+    episode["terminal_witness_dwell"] = pi05_closed_loop._terminal_dwell_receipt(
+        episode, witness
+    )
+
+    pi05_closed_loop._validate_terminal_witness(episode)
+
+    assert pi05_closed_loop._episode_passed(episode) is True
+    assert pi05_closed_loop._episode_terminal_passed(episode) is False
+
+
 def _comparison_geometry() -> dict:
     return {
         "source_untransformed_extent_m": [0.06, 0.06, 0.06],

@@ -200,8 +200,8 @@ def _comparison(baseline: dict, adapted: dict) -> dict[str, object]:
     comparable = bool(
         baseline_fresh and adapted_fresh and _protocols_match(baseline, adapted)
     )
-    before = baseline_fresh["success_rate"] if baseline_fresh else None
-    after = adapted_fresh["success_rate"] if adapted_fresh else None
+    before = baseline_fresh["terminal_success_rate"] if baseline_fresh else None
+    after = adapted_fresh["terminal_success_rate"] if adapted_fresh else None
     improvement = after - before if comparable else None
     return {
         "comparison_protocol_identical": comparable,
@@ -210,7 +210,7 @@ def _comparison(baseline: dict, adapted: dict) -> dict[str, object]:
             "baseline": baseline_error,
             "adapted": adapted_error,
         },
-        "comparison_metric": "fresh_wrist_released_surface_placement_success_rate",
+        "comparison_metric": "fresh_wrist_terminal_released_surface_placement_success_rate",
         "policy_configuration_names": {
             role: (report.get("checkpoint_provenance") or {}).get("config_name")
             for role, report in (("baseline", baseline), ("adapted", adapted))

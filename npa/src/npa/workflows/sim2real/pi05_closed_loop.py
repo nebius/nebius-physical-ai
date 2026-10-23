@@ -2063,7 +2063,8 @@ def _result(
     protocol: dict[str, Any],
     receipt: dict[str, Any],
 ) -> dict[str, Any]:
-    passes = sum(_episode_passed(row) for row in episodes)
+    latched_passes = sum(_episode_passed(row) for row in episodes)
+    terminal_passes = sum(_episode_terminal_passed(row) for row in episodes)
     grouped = _ablation_groups(episodes, args.wrist_ablation_modes)
     policy_backend = getattr(args, "policy_backend", "openpi_pi05")
     if policy_backend == "lerobot_smolvla":
@@ -2098,8 +2099,12 @@ def _result(
         "checkpoint_provenance": _checkpoint_provenance(receipt),
         "protocol": public_protocol,
         "episode_count": len(episodes),
-        "released_surface_placements": passes,
-        "success_rate": passes / len(episodes),
+        "released_surface_placements": latched_passes,
+        "success_rate": latched_passes / len(episodes),
+        "success_metric": "historical_latched_three_supported_steps",
+        "terminal_released_surface_placements": terminal_passes,
+        "terminal_success_rate": terminal_passes / len(episodes),
+        "terminal_success_metric": "latched_placement_plus_clean_final_15_control_window",
         "wrist_ablation": {
             "modes": args.wrist_ablation_modes,
             "same_checkpoint_protocol_scenarios_and_reset_seeds": True,
@@ -2123,17 +2128,27 @@ def _ablation_groups(
         rows = [row for row in episodes if row["wrist_ablation_mode"] == mode]
         if not rows:
             continue
-        passes = sum(_episode_passed(row) for row in rows)
+        latched_passes = sum(_episode_passed(row) for row in rows)
+        terminal_passes = sum(_episode_terminal_passed(row) for row in rows)
         result[mode] = {
             "episodes": len(rows),
-            "released_surface_placements": passes,
-            "success_rate": passes / len(rows),
+            "released_surface_placements": latched_passes,
+            "success_rate": latched_passes / len(rows),
+            "terminal_released_surface_placements": terminal_passes,
+            "terminal_success_rate": terminal_passes / len(rows),
         }
     return result
 
 
 def _episode_passed(row: dict[str, Any]) -> bool:
     return bool(row["success"].get("released_supported_surface_placement"))
+
+
+def _episode_terminal_passed(row: dict[str, Any]) -> bool:
+    dwell = row.get("terminal_witness_dwell") or {}
+    return _episode_passed(row) and bool(
+        dwell.get("verified_terminal_release_and_stability")
+    )
 
 
 def _noise_identities(
@@ -2479,8 +2494,6 @@ def _validate_terminal_witness(episode: dict[str, Any]) -> None:
         or not valid_pixels
     ):
         raise RuntimeError("terminal witness dwell evidence is invalid")
-    if _episode_passed(episode) and not clean:
-        raise RuntimeError("latched success lacks a clean terminal witness dwell")
 
 
 def _validate_effectiveness_cohort(episodes: list[dict[str, Any]]) -> None:
@@ -2540,11 +2553,17 @@ def _validate_effectiveness_summaries(
         if episode.get("success") != _success(episode.get("physics_trace") or []):
             raise RuntimeError("wrist evaluation success differs from physics trace")
     grouped = _ablation_groups(episodes, list(WRIST_ABLATION_MODES))
-    passes = sum(_episode_passed(episode) for episode in episodes)
+    latched_passes = sum(_episode_passed(episode) for episode in episodes)
+    terminal_passes = sum(_episode_terminal_passed(episode) for episode in episodes)
     if (
         ablation.get("per_mode") != grouped
-        or report.get("released_surface_placements") != passes
-        or report.get("success_rate") != passes / len(episodes)
+        or report.get("released_surface_placements") != latched_passes
+        or report.get("success_rate") != latched_passes / len(episodes)
+        or report.get("success_metric") != "historical_latched_three_supported_steps"
+        or report.get("terminal_released_surface_placements") != terminal_passes
+        or report.get("terminal_success_rate") != terminal_passes / len(episodes)
+        or report.get("terminal_success_metric")
+        != "latched_placement_plus_clean_final_15_control_window"
     ):
         raise RuntimeError("wrist evaluation summaries differ from episodes")
     pairing = _sampler_noise_pairing(episodes, list(WRIST_ABLATION_MODES))

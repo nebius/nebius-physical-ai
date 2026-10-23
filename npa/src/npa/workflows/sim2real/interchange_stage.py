@@ -641,7 +641,12 @@ def _fresh_rate(report: Mapping[str, Any]) -> float:
     modes = ablation.get("per_mode")
     if not isinstance(modes, Mapping) or not isinstance(modes.get("fresh"), Mapping):
         raise InterchangeContractError("closed-loop report lacks fresh wrist trials")
-    return float(modes["fresh"].get("success_rate"))
+    terminal_rate = modes["fresh"].get("terminal_success_rate")
+    if not isinstance(terminal_rate, (int, float)):
+        raise InterchangeContractError(
+            "closed-loop report lacks terminal-qualified fresh wrist trials"
+        )
+    return float(terminal_rate)
 
 
 def _final_inputs(
@@ -748,6 +753,7 @@ def _finalize(args: argparse.Namespace) -> dict[str, Any]:
             "backend": "lerobot_smolvla",
             "task": "released_supported_surface_placement_v1",
             "comparison_protocol_identical": True,
+            "comparison_metric": "fresh_wrist_terminal_released_surface_placement_success_rate",
             "baseline_fresh_success_rate": before_rate,
             "adapted_fresh_success_rate": after_rate,
             "measured_improvement": after_rate - before_rate,
