@@ -11,8 +11,8 @@ from typing import Optional
 
 import typer
 
-from npa.clients.config import ConfigError, list_projects, resolve_project_storage
 from npa.agent_backend.publication_reader import PublicationConflict
+from npa.clients.config import ConfigError, list_projects, resolve_project_storage
 from npa.clients.credentials import load_credentials
 from npa.clients.project_credential_store import ProjectCredentialStoreError
 from npa.clients.storage import StorageClient

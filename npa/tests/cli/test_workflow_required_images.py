@@ -14,20 +14,25 @@ ROOT = Path(__file__).resolve().parents[3]
 ISAAC = "registry.example.invalid/npa-isaac-lab@sha256:" + "a" * 64
 CPU = "registry.example.invalid/npa-sonic@sha256:" + "b" * 64
 OVERRIDE = "registry.example.invalid/npa-override@sha256:" + "c" * 64
+WORKFLOW_PATHS = {
+    "rgbd-scan-to-policy-demo": ROOT / "workflows/main/rgbd-scan-to-policy-demo.yaml",
+}
 
 
 @pytest.mark.parametrize(
     "name",
     [
+        "digital-twin-campus-render",
+        "digital-twin-cuda-render",
         "field-failure-reference-demo",
+        "multicamera-rgbd-warehouse",
         "rgbd-scan-to-policy-demo",
         "rgbd-scan-to-isaac",
         "scan-to-isaac-navigation",
     ],
 )
 def test_plan_cli_reports_missing_exact_images_as_clean_error(name):
-    directory = "main" if name == "rgbd-scan-to-policy-demo" else "testing"
-    path = ROOT / f"workflows/{directory}/{name}.yaml"
+    path = WORKFLOW_PATHS.get(name, ROOT / f"workflows/testing/{name}.yaml")
     result = CliRunner().invoke(app, ["plan-spec", str(path), "--check-render"])
     assert result.exit_code == 1
     assert "Error:" in result.output and "requires an explicit" in result.output

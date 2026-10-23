@@ -32,19 +32,36 @@ def _installation(text):
         and CORRECTION in value
         for kind, value in instructions[:index]
     )
-    branches, correction = body.split(f"python {CORRECTION}", 1)
-    assert branches.rfind("fi") > branches.rfind("pip install")
-    assert branches.count('"scikit-image==0.26.0"') == 2
-    assert (
-        "--site-packages /opt/lerobot/venv/lib/python3.12/site-packages" in correction
+    optional_branch, default_branch = body.split(
+        'elif [ "${LEROBOT_VERSION}" = "0.5.1" ]; then', 1
     )
-    assert "--capability lerobot" in correction
-    assert "dependency-source-correction.json" in correction
+    default_branch = default_branch.split("else", 1)[0]
+    assert optional_branch.count('"scikit-image==0.26.0"') == 1
+    assert default_branch.count('"scikit-image==0.26.0"') == 1
+    assert "pip uninstall -y wandb" in optional_branch
+    assert "pip uninstall -y wandb" not in default_branch
+    assert f"python {CORRECTION}" in optional_branch
+    assert f"python {CORRECTION}" in default_branch
+    assert (
+        "--site-packages /opt/lerobot/venv/lib/python3.12/site-packages"
+        in default_branch
+    )
+    assert (
+        "--site-packages /opt/lerobot/venv/lib/python3.12/site-packages"
+        in optional_branch
+    )
+    assert "--capability lerobot" in optional_branch
+    assert "--capability lerobot" in default_branch
+    assert "dependency-source-correction.json" in optional_branch
+    assert "dependency-source-correction.json" in default_branch
     return body
 
 
 def test_both_versions_correct_the_reviewed_source_in_the_original_install_layer():
-    _installation(DOCKERFILE.read_text())
+    text = DOCKERFILE.read_text()
+    _installation(text)
+    assert "NPA_LEROBOT_INTEGRATION_PROFILE" not in text
+    assert "/opt/lerobot/source-integration.json" in text
 
 
 @pytest.mark.parametrize(

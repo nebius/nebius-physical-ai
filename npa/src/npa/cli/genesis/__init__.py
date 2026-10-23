@@ -395,12 +395,15 @@ def _genesis_serverless_train_teacher(
     merged_env = dict(env)
     merged_env.update(extra_env)
     env, extra_env = split_serverless_env(merged_env)
-    client = ServerlessClient()
-    selected_image = image or container_image_for_tool("genesis")
+    try:
+        selected_image = image or container_image_for_tool("genesis")
+    except ValueError as exc:
+        _fail(str(exc))
     try:
         selected_image = _pin_serverless_image(selected_image)
     except Exception as exc:  # noqa: BLE001 - immutable image is a launch gate
         _fail(f"Serverless image digest preflight failed: {exc}")
+    client = ServerlessClient()
     command = _genesis_serverless_train_teacher_command(
         n_envs=n_envs,
         max_iterations=max_iterations,

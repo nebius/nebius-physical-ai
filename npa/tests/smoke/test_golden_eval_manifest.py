@@ -282,6 +282,7 @@ _IN_IMAGE_SMOKE_KINDS = {"container-smoke", "server-smoke"}
 _IN_IMAGE_SMOKE_PREFIXES = (
     "python -m npa.",
     "python3 -m npa.",
+    "/opt/lerobot/venv/bin/python -m npa.",
     "python /",
     "/isaac-sim/python.sh /",
     "sh /",
@@ -401,7 +402,13 @@ def test_dockerfile_provides_golden_eval_entrypoint(name: str) -> None:
     if name != "leisaac":
         command = _guarded_in_image_smoke_tail(command)
 
-    if command.startswith(("python -m npa.", "python3 -m npa.")):
+    if command.startswith(
+        (
+            "python -m npa.",
+            "python3 -m npa.",
+            "/opt/lerobot/venv/bin/python -m npa.",
+        )
+    ):
         module = command.split(" -m ", 1)[1].split()[0]
         module_file = "src/" + module.replace(".", "/") + ".py"
         provides = any(

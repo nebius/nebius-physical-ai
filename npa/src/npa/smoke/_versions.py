@@ -1,15 +1,23 @@
 """Version helpers shared by standalone smoke checks.
 
-The supported NPA runtime is Python 3.11 or newer, so metadata parsing uses its
-stdlib ``tomllib`` implementation. Image release tags live in
+These run inside container images whose Python may predate 3.11 and may not have
+``tomli`` installed (e.g. the genesis py3.10 venv). To stay dependency-free,
+the package-version lookup is parsed with the stdlib only; ``tomllib`` is used
+when available purely as a fast path. Image release tags live in
 ``[tool.npa.supported-tools]`` while installed versions may be declared in
 ``[tool.npa.package-versions]``.
 """
 
 from __future__ import annotations
 
+import json
+import re
 from pathlib import Path
-import tomllib
+
+try:  # Fast path on Python >= 3.11; never required.
+    import tomllib as _tomllib
+except ModuleNotFoundError:  # pragma: no cover - exercised on py<3.11 images.
+    _tomllib = None
 
 
 def _find_pyproject(start_file: str) -> Path:
@@ -21,24 +29,59 @@ def _find_pyproject(start_file: str) -> Path:
     raise FileNotFoundError(f"Could not find pyproject.toml above {start}")
 
 
+def _parse_table(text: str, table: str) -> dict[str, str]:
+    """Parse a simple ``[tool.npa.*]`` string table without a TOML library."""
+
+    versions: dict[str, str] = {}
+    in_section = False
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("["):
+            in_section = line == f"[tool.npa.{table}]"
+            continue
+        if not in_section:
+            continue
+        match = re.match(r'^([A-Za-z0-9._-]+)\s*=\s*"([^"]*)"', line)
+        if match:
+            versions[match.group(1)] = match.group(2)
+    return versions
+
+
+def _parse_supported_tools(text: str) -> dict[str, str]:
+    return _parse_table(text, "supported-tools")
+
+
 def _supported_tools(pyproject: Path) -> dict[str, str]:
-    data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-    table = data.get("tool", {}).get("npa", {}).get("supported-tools", {})
-    return (
-        {str(key): str(value) for key, value in table.items()}
-        if isinstance(table, dict)
-        else {}
-    )
+    text = pyproject.read_text(encoding="utf-8")
+    if _tomllib is not None:
+        data = _tomllib.loads(text)
+        table = data.get("tool", {}).get("npa", {}).get("supported-tools", {})
+        if isinstance(table, dict):
+            return {str(key): str(value) for key, value in table.items()}
+    return _parse_supported_tools(text)
 
 
 def _package_versions(pyproject: Path) -> dict[str, str]:
-    data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-    table = data.get("tool", {}).get("npa", {}).get("package-versions", {})
-    return (
-        {str(key): str(value) for key, value in table.items()}
-        if isinstance(table, dict)
-        else {}
-    )
+    text = pyproject.read_text(encoding="utf-8")
+    if _tomllib is not None:
+        data = _tomllib.loads(text)
+        table = data.get("tool", {}).get("npa", {}).get("package-versions", {})
+        if isinstance(table, dict):
+            return {str(key): str(value) for key, value in table.items()}
+    return _parse_table(text, "package-versions")
+
+
+def _has_secure_lerobot_integration() -> bool:
+    """Whether this image contains the receipt for the 0.5.1 integration."""
+
+    receipt_path = Path("/opt/lerobot/source-integration.json")
+    try:
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return receipt.get("integration_version") == "0.5.1+npa.secure1"
 
 
 def supported_tool_version(tool: str, start_file: str) -> str:
@@ -67,6 +110,8 @@ def expected_lerobot_version(start_file: str) -> str:
 
     override = os.environ.get("NPA_LEROBOT_VERSION", "").strip()
     if override:
+        if override == "0.5.1" and _has_secure_lerobot_integration():
+            return "0.5.1+npa.secure1"
         return override
     return supported_tool_version("lerobot", start_file)
 

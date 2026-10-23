@@ -417,7 +417,7 @@ Run these inside the corresponding built image (or via
 `npa workbench golden-eval run <name> --execute` on a host with the runtime):
 
 - `groot` — `python -m npa.smoke.test_groot_functional` (env: `test_groot_env`)
-- `lerobot` — `python -m npa.smoke.test_lerobot_functional` (env: `test_lerobot_env`)
+- `lerobot` — `/opt/lerobot/venv/bin/python -m npa.smoke.test_lerobot_functional` (env: `test_lerobot_env`)
 - `lerobot-policy` — `python -m npa.workbench.lerobot.policy_container check-import`
 - `lerobot-vlm-rl` — `python -m npa.workbench.lerobot.policy_container vlm-signal-step --help`
 - `genesis` — `python -m npa.smoke.test_genesis_functional` (env: `test_genesis_env`)

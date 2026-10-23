@@ -336,7 +336,7 @@ containers:
       kind: container-smoke
       module: npa.smoke.test_lerobot_functional
       env_module: npa.smoke.test_lerobot_env
-      command: python -m npa.smoke.test_lerobot_functional
+      command: /opt/lerobot/venv/bin/python -m npa.smoke.test_lerobot_functional
       serverless_gpu: h200
       gpu: required
       timeout_seconds: 1800
