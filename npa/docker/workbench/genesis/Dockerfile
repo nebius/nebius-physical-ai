@@ -147,12 +147,13 @@ COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
 COPY --chown=ubuntu:ubuntu docker/workbench/genesis/smoke_env.py /opt/npa/docker/workbench/genesis/smoke_env.py
 COPY --chown=ubuntu:ubuntu docker/workbench/genesis/smoke_functional.py /opt/npa/docker/workbench/genesis/smoke_functional.py
 COPY --chown=ubuntu:ubuntu docker/workbench/genesis/smoke_public_cpu.py /opt/npa/docker/workbench/genesis/smoke_public_cpu.py
+COPY --chown=ubuntu:ubuntu docker/workbench/common/install_npa_source_launcher.py /opt/npa/install_npa_source_launcher.py
 COPY --chmod=0555 docker/workbench/common/configure_ubuntu_snapshot.sh \
     /usr/local/bin/configure-ubuntu-snapshot
 COPY --chmod=0555 docker/workbench/common/install_workflow_runtime_prereqs.sh \
     /usr/local/bin/install-workflow-runtime-prereqs
 
-RUN python -m pip install --no-deps -e /opt/npa \
+RUN python /opt/npa/install_npa_source_launcher.py /opt/npa/src \
     && python - <<'PY'
 import os
 from importlib import metadata

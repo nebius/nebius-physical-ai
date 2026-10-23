@@ -308,10 +308,11 @@ COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
 COPY --chown=ubuntu:ubuntu docker/workbench/groot/smoke_env.py /opt/npa/docker/workbench/groot/smoke_env.py
 COPY --chown=ubuntu:ubuntu docker/workbench/groot/smoke_functional.py /opt/npa/docker/workbench/groot/smoke_functional.py
 COPY --chown=ubuntu:ubuntu docker/workbench/groot/entrypoint.sh /opt/npa/docker/workbench/groot/entrypoint.sh
+COPY --chown=ubuntu:ubuntu docker/workbench/common/install_npa_source_launcher.py /opt/npa/install_npa_source_launcher.py
 
 RUN chmod 0755 /opt/npa/docker/workbench/groot/entrypoint.sh
 
-RUN uv pip install --python "${GROOT_VENV}/bin/python" --no-deps -e /opt/npa \
+RUN "${GROOT_VENV}/bin/python" /opt/npa/install_npa_source_launcher.py /opt/npa/src \
     && "${GROOT_VENV}/bin/python" -c 'from npa.cli.entry import main; main()' \
       workbench groot finetune --help >/dev/null \
     && "${GROOT_VENV}/bin/python" - <<'PY'

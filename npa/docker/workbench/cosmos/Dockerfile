@@ -164,8 +164,9 @@ COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
 COPY --chown=ubuntu:ubuntu docker/workbench/cosmos/build_server.py /opt/npa/docker/workbench/cosmos/build_server.py
 COPY --chown=ubuntu:ubuntu docker/workbench/cosmos/smoke_env.py /opt/npa/docker/workbench/cosmos/smoke_env.py
 COPY --chown=ubuntu:ubuntu docker/workbench/cosmos/smoke_functional.py /opt/npa/docker/workbench/cosmos/smoke_functional.py
+COPY --chown=ubuntu:ubuntu docker/workbench/common/install_npa_source_launcher.py /opt/npa/install_npa_source_launcher.py
 
-RUN python -m pip install --no-deps -e /opt/npa \
+RUN python /opt/npa/install_npa_source_launcher.py /opt/npa/src \
     && python /opt/npa/docker/workbench/cosmos/build_server.py
 
 RUN python -m py_compile /opt/cosmos/server.py /opt/npa/docker/workbench/cosmos/build_server.py /opt/npa/docker/workbench/cosmos/smoke_env.py /opt/npa/docker/workbench/cosmos/smoke_functional.py
