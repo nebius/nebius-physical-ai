@@ -29,6 +29,19 @@ from npa.cli.agent_viewer_runtime import _sha256_file
 from npa.cli.agent_workflow import generate_workflow_yaml
 
 
+_SIM2REAL_TEST_IMAGE = "registry.example.invalid/npa/sim2real@sha256:" + "a" * 64
+_SIM2REAL_ROLE_IMAGES = {
+    key: _SIM2REAL_TEST_IMAGE
+    for key in (
+        "controller_image",
+        "cosmos3_image",
+        "envgen_image",
+        "isaac_image",
+        "viewer_image",
+    )
+}
+
+
 def test_sha256_file_streams_recording_without_read_bytes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2446,6 +2459,7 @@ def test_rendered_chat_blocks_draft_when_accelerator_discovery_is_unavailable(
                             "status": "unavailable",
                             "error": {"kind": "permission_denied"},
                         },
+                        **_SIM2REAL_ROLE_IMAGES,
                     },
                 }
             ],
@@ -5154,7 +5168,11 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
                 {
                     "cluster_name": "configured-cluster",
                     "context": "configured-context",
-                    "raw": {"gpu_accelerator": "RTXPRO6000", "namespace": "workflows"},
+                    "raw": {
+                        "gpu_accelerator": "RTXPRO6000",
+                        "namespace": "workflows",
+                        **_SIM2REAL_ROLE_IMAGES,
+                    },
                 }
             ],
             "local_clusters": [],

@@ -2961,7 +2961,15 @@ def test_canonical_three_iteration_budget_promotes_and_finalizes_outer_one() -> 
     spec = _canonical_sim2real_1x1()
     spec.config.update({"outer_iterations": "3", "allow_early_exit": "1"})
     submitter = FakeSubmitter()
-    executor = _executor(spec, run_id="canonical-early-one", submitter=submitter)
+    executor = _executor(
+        spec,
+        run_id="canonical-early-one",
+        submitter=submitter,
+        # Canonical role pins are task authority; this successful mocked path
+        # must not install the generic wildcard override used by unrelated
+        # renderer tests.
+        render_options=SkypilotRenderOptions(),
+    )
 
     report = run_workflow_runtime(
         spec,
@@ -2999,6 +3007,7 @@ def test_canonical_resume_replays_single_stage8_then_restarts_at_stage9() -> Non
         submitter=first_submitter,
         status_fn=FakeStatus(["SUCCEEDED"] * 8 + ["FAILED"]),
         store=store,
+        render_options=SkypilotRenderOptions(),
     )
     first_report = run_workflow_runtime(
         spec,
@@ -3026,6 +3035,7 @@ def test_canonical_resume_replays_single_stage8_then_restarts_at_stage9() -> Non
         submitter=resumed_submitter,
         options=options,
         store=store,
+        render_options=SkypilotRenderOptions(),
     )
     report = run_workflow_runtime(
         spec,
@@ -3058,6 +3068,7 @@ def test_canonical_finalization_resume_submits_only_stage14() -> None:
         run_id="canonical-finalize-resume",
         status_fn=FakeStatus(["SUCCEEDED"] * 13 + ["FAILED"]),
         store=store,
+        render_options=SkypilotRenderOptions(),
     )
     first_report = run_workflow_runtime(
         spec,
@@ -3084,6 +3095,7 @@ def test_canonical_finalization_resume_submits_only_stage14() -> None:
         submitter=submitter,
         options=options,
         store=store,
+        render_options=SkypilotRenderOptions(),
     )
     report = run_workflow_runtime(
         spec,

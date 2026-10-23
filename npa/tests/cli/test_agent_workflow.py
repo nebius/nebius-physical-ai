@@ -55,6 +55,34 @@ _GOLDEN_YAMLS = [
 
 runner = CliRunner()
 
+_SIM2REAL_ROLE_IMAGE_KEYS = (
+    "controller_image",
+    "cosmos3_image",
+    "envgen_image",
+    "isaac_image",
+    "viewer_image",
+)
+_SIM2REAL_TEST_IMAGE = "registry.example.invalid/npa/sim2real@sha256:" + "a" * 64
+
+
+def _sim2real_test_infrastructure(
+    raw: dict[str, object] | None = None,
+) -> dict[str, object]:
+    """Mocked backend with a complete immutable role selection, never a runtime."""
+    role_images = {key: _SIM2REAL_TEST_IMAGE for key in _SIM2REAL_ROLE_IMAGE_KEYS}
+    return {
+        "has_infra": True,
+        "configured": [
+            {
+                "raw": {
+                    "gpu_accelerator": "RTXPRO6000",
+                    **role_images,
+                    **(raw or {}),
+                }
+            }
+        ],
+    }
+
 
 def test_generate_sim2real_two_step_yaml_validates() -> None:
     yaml_text = generate_sim2real_two_step_yaml()
@@ -442,7 +470,9 @@ def test_sim2real_staged_chat_parameters_validate_and_plan() -> None:
         "sim_backend": "genesis",
         "robot_preset": "ur5e",
     }
-    workflow = generate_sim2real_staged_yaml(user_text=prompt)
+    workflow = generate_sim2real_staged_yaml(
+        user_text=prompt, infrastructure=_sim2real_test_infrastructure()
+    )
     spec = yaml.safe_load(workflow)
     assert spec["apiVersion"] == "npa.workflow/v0.0.1"
     assert spec["config"]["env_count"] == "12000"
@@ -541,6 +571,7 @@ def test_each_extracted_sim2real_value_is_one_exact_argv_token(
         user_text=f"create sim2real workflow with {phrase}",
         intent="create_vlm_rl_workflow",
         bucket="bucket",
+        infrastructure=_sim2real_test_infrastructure(),
     )
     argv = [token for step in draft["plan"]["steps"] for token in step["argv"]]
     assert argv[argv.index(flag) + 1] == expected
@@ -726,7 +757,10 @@ def test_workflow_draft_uses_configured_infrastructure_without_inventing() -> No
                 "cluster_name": "customer-cluster",
                 "context": "customer-context",
                 "gpu_profile": "rtxpro",
-                "raw": {"gpu_accelerator": "RTXPRO6000"},
+                "raw": {
+                    "gpu_accelerator": "RTXPRO6000",
+                    **{key: _SIM2REAL_TEST_IMAGE for key in _SIM2REAL_ROLE_IMAGE_KEYS},
+                },
             }
         ],
     }
@@ -741,8 +775,30 @@ def test_workflow_draft_uses_configured_infrastructure_without_inventing() -> No
     spec = yaml.safe_load(draft["yaml"])
     assert spec["config"]["bucket"] == "customer-bucket"
     assert spec["config"]["env_count"] == "5000"
+    assert {key: spec["config"][key] for key in _SIM2REAL_ROLE_IMAGE_KEYS} == {
+        key: _SIM2REAL_TEST_IMAGE for key in _SIM2REAL_ROLE_IMAGE_KEYS
+    }
     assert "customer-cluster" not in draft["yaml"]
     assert spec["resources"]["isaac-gpu"]["accelerators"] == "RTXPRO6000:1"
+
+
+def test_incomplete_sim2real_profile_never_mixes_role_authority() -> None:
+    draft = generate_workflow_draft(
+        user_text="create a sim2real workflow",
+        intent="create_vlm_rl_workflow",
+        bucket="unit-bucket",
+        infrastructure=_sim2real_test_infrastructure({"viewer_image": ""}),
+    )
+
+    spec = yaml.safe_load(draft["yaml"])
+    assert draft["runnable"] is False
+    assert draft["plan"]["ok"] is False
+    assert any(
+        "one immutable image for each execution role" in error
+        and "viewer_image" in error
+        for error in draft["context_errors"]
+    )
+    assert all(not spec["config"][key] for key in _SIM2REAL_ROLE_IMAGE_KEYS)
 
 
 def test_infrastructure_selection_is_deterministic_and_wires_sibling_placement() -> (
@@ -766,7 +822,7 @@ def test_infrastructure_selection_is_deterministic_and_wires_sibling_placement()
                     "service_account": "workflow-sa",
                     "image_pull_secrets": "managed-pull",
                     "env_secret_names": "runtime-env",
-                    "envgen_image": "registry/envgen:test",
+                    **{key: _SIM2REAL_TEST_IMAGE for key in _SIM2REAL_ROLE_IMAGE_KEYS},
                 },
             },
         ],
@@ -782,7 +838,7 @@ def test_infrastructure_selection_is_deterministic_and_wires_sibling_placement()
     spec = yaml.safe_load(draft["yaml"])
     assert spec["config"]["rollout_count"] == "7"
     assert "a-cluster" not in draft["yaml"]
-    assert "registry/envgen:test" not in draft["yaml"]
+    assert _SIM2REAL_TEST_IMAGE in draft["yaml"]
     argv = [token for step in draft["plan"]["steps"] for token in step["argv"]]
     assert argv[argv.index("--rollout-count") + 1] == "7"
 
@@ -880,6 +936,7 @@ def test_cloud_inventory_prefers_project_cluster_and_rejects_unavailable_acceler
                 "raw": {
                     "gpu_accelerator": "RTXPRO6000",
                     "available_accelerators": ["RTXPRO6000"],
+                    **{key: _SIM2REAL_TEST_IMAGE for key in _SIM2REAL_ROLE_IMAGE_KEYS},
                 },
             },
         ],
@@ -1189,7 +1246,9 @@ def test_generate_vlm_rl_loop_yaml_validates() -> None:
 
 
 def test_generate_vlm_rl_loop_yaml_plan_has_multiple_steps() -> None:
-    yaml_text = generate_vlm_rl_loop_yaml()
+    yaml_text = generate_vlm_rl_loop_yaml(
+        infrastructure=_sim2real_test_infrastructure()
+    )
     plan = plan_workflow_yaml_text(
         yaml_text, run_id="vlm-rl-test", assume_decision="promote_checkpoint"
     )
@@ -1362,7 +1421,7 @@ def test_vlm_rl_draft_keeps_canonical_resource_profiles_without_live_infra() -> 
             "create a VLM/RL outer loop with an RTX PRO 6000 accelerator and 1 GPU"
         ),
         bucket="run-bucket",
-        infrastructure={"has_infra": False},
+        infrastructure=_sim2real_test_infrastructure(),
     )
 
     assert draft["runnable"] is True
@@ -1555,20 +1614,21 @@ def test_golden_yaml_plan_spec_cli(yaml_name: str) -> None:
     """Golden YAMLs should plan successfully with the CLI."""
     yaml_path = resolve_npa_workflow_spec(yaml_name)
     assert yaml_path is not None, f"golden YAML not found: {yaml_name}"
-    result = runner.invoke(
-        app,
-        [
-            "workbench",
-            "workflow",
-            "plan-spec",
-            str(yaml_path),
-            "--run-id",
-            "golden-test",
-            "--assume-decision",
-            "promote_checkpoint",
-            "--json",
-        ],
-    )
+    argv = [
+        "workbench",
+        "workflow",
+        "plan-spec",
+        str(yaml_path),
+        "--run-id",
+        "golden-test",
+        "--assume-decision",
+        "promote_checkpoint",
+    ]
+    if yaml_name == "sim2real.yaml":
+        for key in _SIM2REAL_ROLE_IMAGE_KEYS:
+            argv.extend(["--var", f"{key}={_SIM2REAL_TEST_IMAGE}"])
+    argv.append("--json")
+    result = runner.invoke(app, argv)
     assert result.exit_code == 0, f"{yaml_name} plan-spec CLI failed:\n{result.output}"
     assert "golden-test" in result.output or "steps" in result.output
 

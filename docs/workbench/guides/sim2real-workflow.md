@@ -86,6 +86,15 @@ after setting them with `--var`, do not use a global `--image` or a
 and image preflight reject that mismatch before a pull or launch. To replace a
 role image, change its corresponding `--var` and rerun the complete five-role
 preflight with the same argument set.
+
+When an agent backend generates a canonical Sim2Real draft, its selected
+profile must provide all five raw role fields: `controller_image`,
+`cosmos3_image`, `envgen_image`, `isaac_image`, and `viewer_image`. A missing
+or partial set remains non-runnable. NPA does not infer those roles from legacy
+`policy_image` or `vlm_image` fields, and it never combines selections from
+different profiles. This selection check is separate from qualification: each
+chosen immutable image still has to pass the complete five-role preflight.
+
 The receipt must name the tested CLI/workflow checkout, record any later
 operator cleanup fixes, and establish
 compatibility with its hosted evaluator contract. Use that checkout when
