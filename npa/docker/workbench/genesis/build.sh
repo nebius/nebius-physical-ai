@@ -10,6 +10,10 @@ TAG=""
 PUSH=0
 NPA_SOURCE_SHA="${NPA_SOURCE_SHA:-$(git -C "${NPA_DIR}/.." rev-parse HEAD)}"
 
+# Keep the known-unresolvable dependency graph from consuming a local Docker
+# build after users have already supplied a valid source-attested parent.
+source "${SCRIPT_DIR}/require_secure_closure.sh"
+
 usage() {
   cat <<'EOF'
 Usage: build.sh --base-image IMAGE [--registry REGISTRY] [--tag TAG] [--push]
@@ -54,6 +58,8 @@ if [[ "${parent_source_sha}" != "${NPA_SOURCE_SHA}" ]]; then
   echo "ERROR: BASE_IMAGE must carry org.opencontainers.image.revision=${NPA_SOURCE_SHA}; found ${parent_source_sha:-missing}" >&2
   exit 2
 fi
+
+require_current_secure_genesis_closure
 
 if [[ -z "${TAG}" ]]; then
   TAG="dev-${NPA_SOURCE_SHA}"

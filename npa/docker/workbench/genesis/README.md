@@ -34,6 +34,11 @@ separately reviewed, licensed, source-bound closure has passed its own
 dependency, CPU-functional, image-security, and GPU qualification. They do not
 currently produce a qualified Genesis or Envgen image.
 
+The canonical Genesis, SM120 Genesis, and Sim2Real Envgen build wrappers now
+refuse at this boundary before invoking any Docker build. The refusal is deliberate
+operator feedback, not a fallback to a historical image: it prevents an
+opaque resolver failure and preserves the source-attested parent requirement.
+
 The public recipe excludes TetGen's AGPL distribution and rejects volume
 tetrahedralization through a repository-owned import shim. Rigid-body scenes
 do not use TetGen. This does not classify every soft-body operation as

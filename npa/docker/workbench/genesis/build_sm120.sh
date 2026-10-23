@@ -10,6 +10,10 @@ TAG=""
 PUSH=0
 NPA_SOURCE_SHA="${NPA_SOURCE_SHA:-$(git -C "${NPA_DIR}/.." rev-parse HEAD)}"
 
+# The widened CUDA variant uses the same unsupported native LeRobot closure;
+# after parent attestation, fail before any Docker build.
+source "${SCRIPT_DIR}/require_secure_closure.sh"
+
 usage() {
   cat <<'EOF'
 Usage: build_sm120.sh --base-image IMAGE [--registry REGISTRY] [--tag TAG] [--push]
@@ -75,6 +79,8 @@ if [[ "${parent_source_sha}" != "${NPA_SOURCE_SHA}" ]]; then
   echo "BASE_IMAGE must carry org.opencontainers.image.revision=${NPA_SOURCE_SHA}; found ${parent_source_sha:-missing}" >&2
   exit 2
 fi
+
+require_current_secure_genesis_closure
 
 if [[ -z "${TAG}" ]]; then
   TAG="0.4.6-sm80-sm90-sm100-sm103-sm120-$(date -u +%Y%m%dT%H%M%SZ)"

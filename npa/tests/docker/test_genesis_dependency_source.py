@@ -143,6 +143,45 @@ def test_canonical_genesis_builder_rejects_a_parent_from_another_source(
     assert "found f" in result.stderr
 
 
+@pytest.mark.parametrize("builder", ("build.sh", "build_sm120.sh"))
+def test_genesis_builders_refuse_the_unresolved_secure_closure_before_docker(
+    tmp_path: Path, builder: str
+) -> None:
+    """A valid-looking parent must not trigger a known-impossible resolver."""
+
+    source_sha = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], text=True, cwd=ROOT
+    ).strip()
+    invoked = tmp_path / "docker-invoked"
+    docker = tmp_path / "docker"
+    docker.write_text(
+        "#!/bin/sh\n"
+        f"if [ \"$1\" = image ]; then printf '%s\\n' '{source_sha}'; exit 0; fi\n"
+        f"touch {invoked}\nexit 99\n"
+    )
+    docker.chmod(0o755)
+    result = subprocess.run(
+        ["bash", str(GENESIS / builder), "--base-image", "local-base"],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "NPA_SOURCE_SHA": source_sha,
+            "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"],
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 3
+    assert (
+        "current Genesis/Envgen image build is unavailable before any Docker build starts"
+        in result.stderr
+    )
+    assert "Pillow>=13.0.0,<14.0" in result.stderr
+    assert "fsspec==2026.6.0" in result.stderr
+    assert not invoked.exists()
+
+
 @pytest.mark.parametrize("dockerfile,version,site_packages", VARIANTS)
 def test_genesis_corrects_reviewed_source_before_the_installation_layer_commits(
     dockerfile, version, site_packages

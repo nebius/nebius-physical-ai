@@ -18,6 +18,7 @@ EVAL_TAG="${EVAL_TAG:-cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034
 VLM_RL_TAG="${VLM_RL_TAG:-cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z}"
 CONTROL_TAG="${CONTROL_TAG:-0.1.2}"
 NPA_SOURCE_SHA="${NPA_SOURCE_SHA:-$(git -C "${NPA_ROOT}/.." rev-parse HEAD)}"
+source "${SCRIPT_DIR}/genesis/require_secure_closure.sh"
 if [[ ! "${NPA_SOURCE_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
   echo "ERROR: NPA_SOURCE_SHA must be the exact 40-character checkout SHA" >&2
   exit 2
@@ -93,11 +94,17 @@ if [ "$(git -C "${NPA_ROOT}/.." rev-parse HEAD)" != "${NPA_SOURCE_SHA}" ]; then
   echo "ERROR: NPA_SOURCE_SHA must match the build-context checkout HEAD" >&2
   exit 2
 fi
+
 PARENT_SOURCE_SHA="$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$SIM2REAL_GPU_BASE_IMAGE" 2>/dev/null || true)"
 if [ "$PARENT_SOURCE_SHA" != "$NPA_SOURCE_SHA" ]; then
   echo "ERROR: SIM2REAL_GPU_BASE_IMAGE must carry org.opencontainers.image.revision=${NPA_SOURCE_SHA}; found ${PARENT_SOURCE_SHA:-missing}" >&2
   exit 2
 fi
+
+# Envgen inherits the only allowed current-source Genesis parent. Validate that
+# custody first, then refuse before any Docker build while its closure remains
+# unsupported.
+require_current_secure_genesis_closure
 
 build_one() {
   local name="$1"

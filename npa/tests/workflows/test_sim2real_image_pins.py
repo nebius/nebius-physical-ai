@@ -230,6 +230,44 @@ def test_sim2real_build_rejects_a_stale_genesis_parent_before_any_build(
     assert "found e" in result.stderr
 
 
+def test_sim2real_build_refuses_the_unresolved_secure_genesis_closure_before_docker(
+    tmp_path: Path,
+) -> None:
+    """Envgen cannot obscure the known Genesis resolver boundary."""
+
+    script = Path(__file__).resolve().parents[2] / "docker/workbench/sim2real-build.sh"
+    source_sha = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], text=True, cwd=script.parents[3]
+    ).strip()
+    invoked = tmp_path / "docker-invoked"
+    docker = tmp_path / "docker"
+    docker.write_text(
+        "#!/bin/sh\n"
+        f"if [ \"$1\" = image ]; then printf '%s\\n' '{source_sha}'; exit 0; fi\n"
+        f"touch {invoked}\nexit 99\n"
+    )
+    docker.chmod(0o755)
+    result = subprocess.run(
+        ["bash", str(script)],
+        cwd=script.parents[3],
+        env={
+            **os.environ,
+            "NPA_SOURCE_SHA": source_sha,
+            "SIM2REAL_GPU_BASE_IMAGE": "local-genesis",
+            "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"],
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 3
+    assert (
+        "current Genesis/Envgen image build is unavailable before any Docker build starts"
+        in result.stderr
+    )
+    assert not invoked.exists()
+
+
 def test_sonic_keeps_an_explicit_amd64_build_platform() -> None:
     dockerfile = (
         Path(__file__).resolve().parents[2] / "docker/workbench/sonic/Dockerfile"
