@@ -2495,7 +2495,7 @@ def test_robomimic_smoke_is_immutable_and_fails_closed() -> None:
         'config.train.hdf5_validation_filter_key = "valid"',
         'source_identity["revision"] != SOURCE_REVISION',
         f'RUNTIME_LOCK_SHA256 = "{RUNTIME_LOCK_SHA256}"',
-        "RUNTIME_DISTRIBUTION_COUNT = 62",
+        "RUNTIME_DISTRIBUTION_COUNT = 67",
         "models/model_epoch_1.pth",
         "policy_from_checkpoint(",
         "optimizer_steps != TRAIN_STEPS",
