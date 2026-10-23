@@ -115,10 +115,34 @@ equivalent environment setting; an explicit CLI flag takes precedence.
 | New shared filesystem | Set `enable_filestore = true` and its size; requires Shared Filesystem SSD quota and the approved CSI chart repository |
 | Existing shared filesystem | Set `existing_filestore`; it implies filesystem enablement and does not create a second filesystem |
 
-Shared filesystem enablement promotes its CSI StorageClass to the cluster
-default. Otherwise, platform block storage remains the default. See
-[filesystem verification](../../docs/fleet-storage-verification.md) before
-using a shared volume for multi-node work.
+Shared filesystem enablement keeps its CSI StorageClass explicit; platform
+block storage remains the default for ordinary PVCs. Set
+`filesystem_csi_make_default_storage_class = true` only when a workload
+deliberately requires filesystem-backed ordinary claims. See [filesystem
+verification](../../docs/fleet-storage-verification.md) before using a shared
+volume for multi-node work.
+
+### Existing direct-installation storage defaults
+
+Direct Terraform installations created before this switch made the filesystem
+StorageClass the default. When that installation has an unambiguous local state
+whose cluster name and project match the requested configuration, `npa cluster
+up` preserves the filesystem default in both its Terraform apply and readiness
+check. For a new direct apply, NPA writes an identity-bound resolved-policy
+receipt beside the Terraform state before apply, so a resumed flag-omitting
+reconcile retains its original compute/block choice rather than treating its
+new state as legacy. The read-only policy command never writes that receipt.
+An explicit `filesystem_csi_make_default_storage_class` setting always wins.
+
+If local state or a resolved-policy receipt is malformed, ambiguous, or belongs
+to another cluster, NPA does not guess or apply a default change. The same is
+true when NPA knows an adopted cluster but has no recorded StorageClass policy.
+Inspect the read-only recovery result, then repair or migrate the exact owned
+installation before retrying:
+
+```bash
+npa cluster storage-default-policy --terraform-dir deploy/cluster --json
+```
 
 ## GPU health and driver changes
 

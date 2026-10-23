@@ -14,6 +14,7 @@ from npa.cli.cluster.terraform_lifecycle import (
     down_cmd,
     kubeconfig_cmd,
     provider_migration_cmd,
+    storage_default_policy_cmd,
     up_cmd,
 )
 
@@ -29,6 +30,7 @@ app.command("destroy")(destroy_cmd)
 app.command("up")(up_cmd)
 app.command("down")(down_cmd)
 app.command("provider-migration")(provider_migration_cmd)
+app.command("storage-default-policy")(storage_default_policy_cmd)
 app.command("reconcile-absent")(reconcile_absent_cmd)
 app.command("status")(status_cmd)
 app.command("list")(list_cmd)

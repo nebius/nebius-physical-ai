@@ -447,6 +447,9 @@ class MK8sBackend:
                 "backend_tenant_id": request.tenant_id,
                 "backend_region": request.region,
                 "backend_profile": request.profile,
+                "filesystem_csi_make_default_storage_class": (
+                    desired.filesystem_csi_make_default_storage_class
+                ),
             },
         )
         if source_context and source_context != context:
