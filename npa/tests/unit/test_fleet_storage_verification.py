@@ -88,6 +88,7 @@ class FakeStorageResources:
         self.cleanup_failures = []
         self.resources_absent = True
         self.empty_cleanup_evidence = False
+        self.require_ordinary_audit_mode = False
         self.cross_node_mismatch = False
         self.backing_mismatch = False
         self.backing_absent = True
@@ -132,6 +133,16 @@ class FakeStorageResources:
             )
         if action == self.fail_action:
             raise StorageVerificationError("workload_failed")
+        claim_record = self.claims.get(claim, claim)
+        if (
+            self.require_ordinary_audit_mode
+            and action == "audit"
+            and configuration["root_path"] == "/data"
+            and claim_record is not None
+            and claim_record.spec.storage_class_name == "compute-csi-default-sc"
+            and configuration.get("ordinary_pvc") is not True
+        ):
+            raise StorageVerificationError("wrong_filesystem_type")
         if action == "host":
             return [_host_evidence(cluster) for _ in nodes]
         if action == "default":
@@ -251,6 +262,15 @@ def test_host_and_shared_visibility_cover_both_worker_types(qualification):
     ]
     assert ("audit", "/host-storage", 2, None) in resources.actions
     assert ("audit", "/data", 2, resources.claim.metadata.name) in resources.actions
+
+
+def test_ordinary_claim_audit_retains_ordinary_volume_mode(qualification):
+    resources, _, _ = qualification
+    resources.require_ordinary_audit_mode = True
+
+    report = _qualify(qualification)
+
+    assert report["cleanup"]["probe_paths_absent"] is True
 
 
 @pytest.mark.parametrize("action", ["host", "default", "write", "read"])

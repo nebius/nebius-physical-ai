@@ -412,7 +412,10 @@ def _cleanup_probe_root(
             failures.append("probe_cleanup_failed")
     try:
         results = resources.run_phase(
-            nodes, cluster, {"action": "audit", "root_path": root}, claim=claim
+            nodes,
+            cluster,
+            dict(settings, action="audit", root_path=root),
+            claim=claim,
         )
         if len(results) != len(nodes) or not all(
             result.get("run_directory_absent") is True for result in results
