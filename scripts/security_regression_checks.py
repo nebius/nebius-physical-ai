@@ -62,6 +62,7 @@ def _dependency_fixture(root: Path) -> None:
     _write_fixture(root, "named-wheel-requirements.txt", named_wheel)
     _write_fixture(root, "isaac-oss-deps.txt", "requests==2.19.1\n")
     _write_fixture(root, "baked-constraints.txt", "requests==2.19.1\n")
+    _write_fixture(root, "build-tools.in", "requests==2.19.1\n")
     _write_fixture(
         root,
         "runtime-requirements.lock",
@@ -147,6 +148,7 @@ def _check_dependencies(root: Path, output: Path) -> dict:
         ("named-wheel-requirements.txt", "requests"),
         ("isaac-oss-deps.txt", "requests"),
         ("baked-constraints.txt", "requests"),
+        ("build-tools.in", "requests"),
         ("runtime-requirements.lock", "requests"),
     )
     for manifest, package in declarations:
@@ -166,6 +168,7 @@ def _check_dependencies(root: Path, output: Path) -> dict:
         "python_rejected": True,
         "npm_rejected": True,
         "existing_tolerated": True,
+        "nonstandard_build_input_rejected": True,
     }
 
 
@@ -182,15 +185,15 @@ def _check_current_dependencies(root: Path, output: Path) -> dict:
     if blocking_findings(vulnerable, patched):
         raise AssertionError("Patched application dependency fixture must pass")
     workbench = "npa/docker/workbench/tool/requirements.txt"
-    _write_fixture(root, workbench, "urllib3==1.25.2\n")
+    _write_fixture(root, workbench, "requests==2.19.1\n")
     runtime = scan_dependencies(root, output / "current-workbench", output / "cache")
     runtime_findings = [item for item in runtime if item["path"] == workbench]
     if not runtime_findings or blocking_findings(runtime, runtime) != runtime_findings:
-        raise AssertionError("Unchanged remediated workbench families must fail")
+        raise AssertionError("Unchanged vulnerable workbench pins must fail")
     return {
         "unchanged_application_rejected": True,
         "patched_application_accepted": True,
-        "unchanged_workbench_family_rejected": True,
+        "unchanged_workbench_dependency_rejected": True,
     }
 
 
