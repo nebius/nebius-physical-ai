@@ -196,19 +196,51 @@ def test_genesis_build_time_sanitizers_are_readable_by_the_runtime_user(
     dockerfile, _, __
 ):
     text = (GENESIS / dockerfile).read_text()
-    assert (
-        "COPY --chmod=0644 docker/workbench/curobo/remove_scikit_image_recipe.py"
-        in text
+    for source, destination in (
+        (
+            "docker/workbench/curobo/remove_scikit_image_recipe.py",
+            "/opt/genesis/remove-scikit-image-recipe.py",
+        ),
+        (
+            "docker/workbench/genesis/prepare_public_runtime.py",
+            "/opt/genesis/prepare-public-runtime.py",
+        ),
+        (
+            "docker/workbench/genesis/prepare_public_policies.py",
+            "/opt/genesis/prepare-public-policies.py",
+        ),
+        (
+            "docker/workbench/common/envgen_compat/tetgen.py",
+            "/opt/genesis/compat/tetgen.py",
+        ),
+    ):
+        assert f"COPY --chmod=0644 {source}" in text
+        assert destination in text
+
+
+@pytest.mark.parametrize("dockerfile,_,site_packages", VARIANTS)
+def test_genesis_recipes_apply_the_same_public_act_runtime_boundary(
+    dockerfile, _, site_packages
+):
+    """Architecture variants must not bypass reviewed public-runtime restrictions."""
+
+    text = (GENESIS / dockerfile).read_text()
+    installation = next(
+        body
+        for kind, body in _instructions(text)
+        if kind == "RUN" and '"genesis-world==' in body
     )
-    if dockerfile == "Dockerfile":
-        assert (
-            "COPY --chmod=0644 docker/workbench/genesis/prepare_public_runtime.py"
-            in text
-        )
-        assert (
-            "COPY --chmod=0644 docker/workbench/genesis/prepare_public_policies.py"
-            in text
-        )
+    assert "NPA_GENESIS_SUPPORTED_STUDENT_POLICIES=act" in text
+    assert f"--site-packages {site_packages} --check-only" in installation
+    assert "prepare-public-runtime.py" in installation
+    assert "prepare-public-policies.py" in installation
+    assert (
+        "pip uninstall -y tetgen diffusers wandb torchcodec transformers peft"
+        in installation
+    )
+    assert "public-runtime-dependencies.json" in installation
+    assert "public-policy-source.json" in installation
+    assert "npa-genesis-compat.pth" in installation
 
 
 @pytest.mark.parametrize("dockerfile,version,site_packages", VARIANTS)

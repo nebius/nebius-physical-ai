@@ -24,6 +24,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    NPA_GENESIS_SUPPORTED_STUDENT_POLICIES=act \
     NPA_GENESIS_HOME=/opt/genesis \
     GENESIS_VENV=/opt/genesis/venv \
     NPA_BAKED_PYTHON=/opt/genesis/venv/bin/python \
@@ -56,6 +57,12 @@ RUN apt-get update \
 
 COPY --chmod=0644 docker/workbench/curobo/remove_scikit_image_recipe.py \
     /opt/genesis/remove-scikit-image-recipe.py
+COPY --chmod=0644 docker/workbench/genesis/prepare_public_runtime.py \
+    /opt/genesis/prepare-public-runtime.py
+COPY --chmod=0644 docker/workbench/genesis/prepare_public_policies.py \
+    /opt/genesis/prepare-public-policies.py
+COPY --chmod=0644 docker/workbench/common/envgen_compat/tetgen.py \
+    /opt/genesis/compat/tetgen.py
 
 USER ubuntu
 WORKDIR /opt/genesis
@@ -86,6 +93,19 @@ RUN python -m pip install --upgrade pip setuptools wheel \
       "pyarrow==23.0.1" \
     && python -m pip install --no-cache-dir --no-deps --upgrade \
       "fsspec==2026.6.0" \
+    && python /opt/genesis/prepare-public-runtime.py \
+      --site-packages /opt/genesis/venv/lib/python3.11/site-packages --check-only \
+    && python /opt/genesis/prepare-public-policies.py \
+      --site-packages /opt/genesis/venv/lib/python3.11/site-packages --check-only \
+    && python -m pip uninstall -y tetgen diffusers wandb torchcodec transformers peft \
+    && python /opt/genesis/prepare-public-runtime.py \
+      --site-packages /opt/genesis/venv/lib/python3.11/site-packages \
+      > /opt/genesis/public-runtime-dependencies.json \
+    && python /opt/genesis/prepare-public-policies.py \
+      --site-packages /opt/genesis/venv/lib/python3.11/site-packages \
+      > /opt/genesis/public-policy-source.json \
+    && printf '%s\n' /opt/genesis/compat \
+      > /opt/genesis/venv/lib/python3.11/site-packages/npa-genesis-compat.pth \
     && python -m pip check \
     && test -z "$(find /opt/genesis/venv -type f \
       -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)" \
