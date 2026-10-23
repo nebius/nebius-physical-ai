@@ -109,7 +109,7 @@ def _team(configuration, responses):
     return SpecialistTeam(configuration, clients={"simulation": _Client(responses)})
 
 
-def test_example_sim2real_plan_has_inert_digest_for_each_execution_role():
+def test_example_sim2real_plan_has_inert_digest_for_each_execution_role(monkeypatch):
     """The fixed specialist operation must still render the attested role inputs."""
 
     example = json.loads(
@@ -122,6 +122,10 @@ def test_example_sim2real_plan_has_inert_digest_for_each_execution_role():
         expected = key + "=registry.example.invalid/npa/sim2real@sha256:"
         assert any(variable.startswith(expected) for variable in variables)
 
+    # The specialist explicitly owns a checked-out repository workspace, so
+    # its relative workflow path must be exercised from that workspace rather
+    # than from whichever subdirectory invoked pytest (CI runs from ``npa``).
+    monkeypatch.chdir(_ROOT)
     result = CliRunner().invoke(app, argv[3:])
     assert result.exit_code == 0, result.output
     assert json.loads(result.output)["steps"]
