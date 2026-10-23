@@ -116,7 +116,7 @@ def _base_provenance(module) -> tuple[bytes, dict[str, object]]:
         "_type": "https://in-toto.io/Statement/v0.1",
         "subject": [
             {
-                "name": "pkg:docker/python@3.10-slim-bookworm?platform=linux%2Famd64",
+                "name": "pkg:docker/python@3.11.16-slim-bookworm?platform=linux%2Famd64",
                 "digest": {"sha256": module.BASE_MANIFEST.removeprefix("sha256:")},
             }
         ],

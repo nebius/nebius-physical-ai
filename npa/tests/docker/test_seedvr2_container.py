@@ -387,7 +387,7 @@ def test_seedvr2_dependency_lock_uses_remediated_runtime_versions() -> None:
     for requirement in (
         "av==16.0.1",
         "diffusers==0.38.0",
-        "pillow==12.3.0",
+        "pillow==13.0.0",
         "safetensors==0.8.0",
         "setuptools==83.0.0",
         "torch==2.13.0",

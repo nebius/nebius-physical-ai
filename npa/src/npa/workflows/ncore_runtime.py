@@ -29,7 +29,7 @@ from npa.workbench.ncore_staging import PrivateStagingError, private_directory
 
 
 RUNTIME_LOCK = Path("/usr/share/doc/npa-ncore/runtime-lock.json")
-RUNTIME_LOCK_SHA256 = "5e2875acb5c6b732f301603628e80018d086142fcbbd70ad05f5f22dea5255ea"
+RUNTIME_LOCK_SHA256 = "ffabf7ad241423c69909a8d2ef16388119e993db0e0b14d8a0be8f99ebffbb2c"
 READY_MARKER = ".npa-ncore-ready.json"
 SOURCE_ROOTS = (
     "/opt/npa/src",

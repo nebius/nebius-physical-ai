@@ -14,7 +14,7 @@ mujoco==3.12.0
 numpy==2.5.3
 packaging==26.3
 pettingzoo==1.27.0
-pillow==12.3.0
+pillow==13.0.0
 PyOpenGL==3.1.10
 setuptools==84.0.0
 typing-extensions==4.16.0

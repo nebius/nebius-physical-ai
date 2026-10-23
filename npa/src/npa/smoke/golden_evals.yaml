@@ -100,7 +100,7 @@ containers:
         LIBERO-Spatial demonstration with genuine held-out evaluation.
     safety:
       runs_as: ubuntu
-      base_image: python:3.10-slim-bookworm@sha256:999137905e8718de681744822ccd965e1950e1baba089035060418e05e1d7496
+      base_image: python:3.11.16-slim-bookworm@sha256:b1add8a6f2aca6bcfcf0b9c9b522352f7ce0d62a3d556a2f2f32511aa0cca250
       network: >-
         Customer-authorized immutable runtime fetch from pinned GitHub, PyPI,
         PyTorch, and Hugging Face endpoints plus operator S3 output

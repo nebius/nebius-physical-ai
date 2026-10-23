@@ -1,8 +1,8 @@
-# Pinned Python 3.10.21 CPU evaluation environment; no LIBERO training dependencies.
+# Pinned Python 3.11.16 CPU evaluation environment; no LIBERO training dependencies.
 absl-py==2.5.0
 attrs==26.1.0
 bddl==1.0.1
-certifi==2026.7.22
+certifi==2026.10.19
 charset-normalizer==3.5.1
 cloudpickle==2.1.0
 cycler==0.12.1
@@ -37,10 +37,10 @@ mujoco==2.3.7
 nbformat==5.11.1
 networkx==3.4.2
 numba==0.67.0
-numpy==1.22.4
+numpy==1.26.4
 opencv-python==4.11.0.86
 packaging==26.3
-pillow==12.3.0
+pillow==13.0.0
 platformdirs==4.11.15
 pluggy==1.6.0
 pygments==2.21.0
