@@ -1,10 +1,11 @@
 """Prove training-only bootstrap scope, native action learning, and audit rejection."""
 
-from types import SimpleNamespace
 import ast
 import copy
+from contextlib import contextmanager
 import json
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -35,6 +36,18 @@ def _native_inference_reset_handler(script):
     assert ast.unparse(calls[0].args[0]) == "runner.alg.actor"
     assert isinstance(calls[0].args[1], ast.Name) and calls[0].args[1].id == "dones"
     return reset_stock_franka_actor
+
+
+@contextmanager
+def _single_torch_thread(torch):
+    """Keep the CPU-only native-fit proofs bounded under xdist."""
+
+    previous = torch.get_num_threads()
+    torch.set_num_threads(1)
+    try:
+        yield
+    finally:
+        torch.set_num_threads(previous)
 
 
 class TestNativeBootstrapCheckpoint:
@@ -199,19 +212,20 @@ class TestNativeBootstrapCheckpoint:
         actor = runner.alg.actor
         optimizer = self.torch.optim.Adam(actor.parameters(), lr=0.0003)
         replay = RecurrentDemonstrationReplay(environment.num_envs)
-        bootstrap._bootstrap_round(
-            environment, actor, optimizer, index=0, replay=replay
-        )
-        fractions = []
+        with _single_torch_thread(self.torch):
+            bootstrap._bootstrap_round(
+                environment, actor, optimizer, index=0, replay=replay
+            )
+            fractions = []
 
-        monkeypatch.setattr(
-            bootstrap,
-            "_training_round",
-            self._weak_mixture_collector(observations, fractions),
-        )
-        audit = bootstrap._bootstrap_round(
-            environment, actor, optimizer, index=1, replay=replay
-        )
+            monkeypatch.setattr(
+                bootstrap,
+                "_training_round",
+                self._weak_mixture_collector(observations, fractions),
+            )
+            audit = bootstrap._bootstrap_round(
+                environment, actor, optimizer, index=1, replay=replay
+            )
         assert fractions == [0.5, 0.0, 0.5]
         recovery = audit["warmup_recovery"][0]
         assert recovery["failed_mixed_collection"]["strict_training_placements"] == 0
@@ -1039,7 +1053,8 @@ def test_native_rsl_actor_learns_demonstrations_with_fresh_normalization(monkeyp
     noise = actor.distribution.std_param.detach().clone()
     optimizer = torch.optim.Adam(actor.parameters(), lr=0.01)
     replay = RecurrentDemonstrationReplay(4)
-    audit = replay.fit(actor, observations, labels, optimizer, epochs=80)
+    with _single_torch_thread(torch):
+        audit = replay.fit(actor, observations, labels, optimizer, epochs=80)
     after = _native_sequence_outputs(actor, observations, num_envs=4)
     torch.testing.assert_close(
         actor.obs_normalizer.mean, observations["policy"].mean(dim=0)
