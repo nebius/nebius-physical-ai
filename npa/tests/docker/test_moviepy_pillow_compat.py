@@ -34,21 +34,7 @@ def test_unknown_moviepy_version_is_rejected(compat, monkeypatch):
         compat.main()
 
 
-def test_isaac3_moviepy_closure_includes_declared_runtime_dependencies():
-    common = Path(__file__).resolve().parents[2] / "docker/workbench/common"
-    requirements = (common / "isaac3-oss-deps.txt").read_text().splitlines()
-    for requirement in (
-        "imageio==2.37.2",
-        "imageio-ffmpeg==0.6.0",
-        "numpy==2.3.1",
-        "pillow==13.0.0",
-        "proglog==0.1.12",
-        "python-dotenv==1.2.2",
-    ):
-        assert requirement in requirements
-
-
-@pytest.mark.parametrize("pillow_version", ["11.3.0", "12.3.0", "14.0.0"])
+@pytest.mark.parametrize("pillow_version", ["11.3.0", "12.2.0", "13.0.0"])
 def test_unpatched_or_unreviewed_pillow_version_is_rejected(
     compat, monkeypatch, pillow_version
 ):
@@ -56,19 +42,14 @@ def test_unpatched_or_unreviewed_pillow_version_is_rejected(
         compat.metadata, "distribution", lambda _: SimpleNamespace(version="2.2.1")
     )
     monkeypatch.setattr(compat.metadata, "version", lambda _: pillow_version)
-    with pytest.raises(RuntimeError, match="requires security-fixed Pillow"):
+    with pytest.raises(RuntimeError, match="requires patched Pillow"):
         compat.main()
 
 
-@pytest.mark.parametrize(
-    "closure", ["isaac", "isaac3", "leisaac", "unreviewed-moviepy"]
-)
+@pytest.mark.parametrize("closure", ["isaac", "leisaac", "unreviewed-moviepy"])
 def test_shared_installer_repairs_only_closures_that_include_moviepy(tmp_path, closure):
     common = Path(__file__).resolve().parents[2] / "docker/workbench/common"
-    requirements_name = (
-        "isaac3-oss-deps.txt" if closure == "isaac3" else "isaac-oss-deps.txt"
-    )
-    requirements = (common / requirements_name).read_text()
+    requirements = (common / "isaac-oss-deps.txt").read_text()
     if closure == "leisaac":
         requirements = "\n".join(
             line
@@ -82,9 +63,7 @@ def test_shared_installer_repairs_only_closures_that_include_moviepy(tmp_path, c
     interpreter = tmp_path / "venv/bin/python"
     interpreter.parent.mkdir(parents=True)
     interpreter.write_text(
-        '#!/bin/sh\nprintf "%s\\n" "$@" >> "$REPAIR_CALL"\n'
-        'case "$*" in *moviepy_pillow_compat.py) exit "$REPAIR_EXIT";; esac\n'
-        "exit 0\n"
+        '#!/bin/sh\nprintf "%s\\n" "$@" > "$REPAIR_CALL"\nexit "$REPAIR_EXIT"\n'
     )
     interpreter.chmod(0o700)
     calls = tmp_path / "repair-call.txt"
@@ -97,7 +76,7 @@ def test_shared_installer_repairs_only_closures_that_include_moviepy(tmp_path, c
         ["bash", "-eu", "-c", hooks],
         env={
             **os.environ,
-            "ISAAC_PYTHON_MINOR": "3.12",
+            "ISAAC_PYTHON_MINOR": "3.11",
             "ISAAC_VENV": str(interpreter.parent.parent),
             "OSS_DEPS_FILE": str(selected),
             "COMMON_DIR": str(common),
@@ -109,14 +88,7 @@ def test_shared_installer_repairs_only_closures_that_include_moviepy(tmp_path, c
         check=False,
     )
     assert result.returncode == (23 if closure == "unreviewed-moviepy" else 0)
-    invoked = calls.read_text().splitlines()
-    moviepy_repair = str(common / "moviepy_pillow_compat.py")
-    setuptools_repair = str(common / "backport_setuptools_manifest.py")
-    if closure == "unreviewed-moviepy":
-        assert invoked == [moviepy_repair]
-        return
-    assert setuptools_repair in invoked
     if closure == "leisaac":
-        assert moviepy_repair not in invoked
+        assert not calls.exists()
     else:
-        assert moviepy_repair in invoked
+        assert calls.read_text().strip() == str(common / "moviepy_pillow_compat.py")
