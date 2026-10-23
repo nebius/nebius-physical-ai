@@ -44,6 +44,25 @@ submit, cancel, infer, repair infrastructure or publish objects. Run it from the
 same reviewed checkout staged to the workload. Fixture tests and an audit of an
 older source without these receipts do not establish native recovery acceptance.
 
+## SkyPilot GPU bridge labels
+
+Use an owner-only JSON configuration containing `context`, `kubeconfig`,
+`accelerator`, `cpus`, `memory`, and `evidence_path`. The evidence destination's
+parent directory must also be owner-only. Select the exact authorized cluster
+and keep its identifiers and evidence outside Git.
+
+```bash
+NPA_INTEGRATION_E2E=1 \
+NPA_SKYPILOT_GPU_LABEL_LIVE_CONFIG="$PRIVATE_GPU_LABEL_CONFIG" \
+  npa/.venv/bin/python -m pytest npa/tests/e2e/test_skypilot_gpu_label_live.py -q
+```
+
+The tests read actual node and pod metadata. They verify reviewed bridge labels
+against the effective accelerator request and independently check actual free
+GPU gang capacity. The latter skips when a running workload occupies the GPU;
+a successful label check does not prove free placement or native inference.
+No node labels, cloud resources, pods, or workloads are changed.
+
 Run the Insights storage tests against an explicitly selected project's own
 configured credentials:
 
