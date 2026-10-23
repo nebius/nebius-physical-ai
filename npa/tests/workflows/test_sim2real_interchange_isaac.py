@@ -6,6 +6,7 @@ import json
 import math
 from pathlib import Path
 import struct
+from types import SimpleNamespace
 import zlib
 
 import numpy as np
@@ -24,6 +25,8 @@ from npa.workflows.sim2real.interchange_isaac import (
     IsaacActionLayout,
     assert_live_robot_matches_profile,
     camera_world_pose,
+    gripper_position_tolerances,
+    measured_policy_state,
     render_absolute_joint_action,
     surface_teacher_waypoints,
 )
@@ -93,6 +96,43 @@ def _camera(key: str, role: str, mount: str) -> CameraView:
         state_timestamp_key="state_timestamp_s",
         maximum_state_skew_s=0.02,
     )
+
+
+def test_gripper_tolerance_uses_actual_velocity_limit_and_physics_period() -> None:
+    profile = _profile()
+    tolerances = gripper_position_tolerances(
+        velocity_limits=(0.2,), physics_dt=1.0 / 120.0, profile=profile
+    )
+    representation = abs(float(np.spacing(np.float32(0.8))))
+    assert tolerances == pytest.approx((0.2 / 120.0 + representation,))
+    with pytest.raises(InterchangeContractError, match="velocity limits"):
+        gripper_position_tolerances(
+            velocity_limits=(-0.2,), physics_dt=1.0 / 120.0, profile=profile
+        )
+    with pytest.raises(InterchangeContractError, match="physics period"):
+        gripper_position_tolerances(
+            velocity_limits=(0.2,), physics_dt=0.0, profile=profile
+        )
+
+
+def test_measured_policy_state_bounds_one_physics_step_of_joint_overshoot() -> None:
+    torch = pytest.importorskip("torch")
+    profile = _profile()
+    names = [*profile.arm_joint_names, *profile.gripper.joint_names]
+    native = SimpleNamespace(
+        physics_dt=1.0 / 120.0,
+        scene={
+            "robot": SimpleNamespace(
+                joint_names=names,
+                data=SimpleNamespace(
+                    joint_pos=torch.tensor([[0.0] * 6 + [-0.001]]),
+                    joint_vel_limits=torch.tensor([[2.0] * 6 + [0.2]]),
+                ),
+            )
+        },
+    )
+    state = measured_policy_state(native, profile)
+    assert state["gripper"] == pytest.approx(profile.gripper.model_open)
 
 
 def test_teacher_runtime_turns_premature_zero_exit_into_failure(

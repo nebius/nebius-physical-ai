@@ -436,6 +436,30 @@ def test_gripper_inverse_rejects_aggregate_aperture_outside_declared_range(
         _robot(6).gripper.joint_positions_to_width(positions)
 
 
+def test_gripper_inverse_saturates_only_with_declared_measurement_tolerance() -> None:
+    gripper = _robot(6).gripper
+    assert gripper.joint_positions_to_width(
+        (0.03002, 0.03001), position_tolerances=(0.001, 0.001)
+    ) == pytest.approx(0.06)
+    isaac_gripper = replace(
+        gripper,
+        open_joint_positions=(0.04, 0.04),
+        maximum_width_m=0.08,
+    )
+    assert isaac_gripper.joint_positions_to_width(
+        (0.0400162, 0.0400162),
+        position_tolerances=(0.2 / 120.0, 0.2 / 120.0),
+    ) == pytest.approx(0.08)
+    with pytest.raises(InterchangeContractError, match="aperture is outside"):
+        gripper.joint_positions_to_width(
+            (0.032, 0.032), position_tolerances=(0.001, 0.001)
+        )
+    with pytest.raises(InterchangeContractError, match="must be nonnegative"):
+        gripper.joint_positions_to_width(
+            (0.03, 0.03), position_tolerances=(-0.001, 0.001)
+        )
+
+
 def test_policy_output_binds_action_semantics_and_finite_chunk() -> None:
     policy = _policy(_robot(6))
     output = PolicyOutput(

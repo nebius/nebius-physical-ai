@@ -80,6 +80,7 @@ from npa.workflows.sim2real.interchange_contract import (
     robot_sensor_profile_from_dict,
     validate_observation,
 )
+from npa.workflows.sim2real.interchange_isaac import gripper_position_tolerances
 from npa.workflows.sim2real.interchange_object_asset import (
     assert_collection_object_binding,
     materialize_prepared_object,
@@ -622,7 +623,21 @@ def _infer_smolvla_query(
         .cpu()
         .numpy()
     )
-    width = robot_profile.gripper.joint_positions_to_width(gripper_positions)
+    gripper_indices = [names.index(name) for name in robot_profile.gripper.joint_names]
+    velocity_limits = (
+        _proxy_torch(robot.data.joint_vel_limits)[0, gripper_indices]
+        .detach()
+        .cpu()
+        .numpy()
+    )
+    tolerances = gripper_position_tolerances(
+        velocity_limits=velocity_limits,
+        physics_dt=float(native.physics_dt),
+        profile=robot_profile,
+    )
+    width = robot_profile.gripper.joint_positions_to_width(
+        gripper_positions, position_tolerances=tolerances
+    )
     state = np.r_[arm_state, robot_profile.gripper.width_to_model(width)]
     state_map = {
         name: float(value)

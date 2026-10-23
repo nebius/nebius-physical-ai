@@ -521,7 +521,18 @@ def measured_policy_state(native: Any, profile: RobotSensorProfile) -> dict[str,
     ]
     arm = positions[0, arm_indices].detach().cpu().tolist()
     fingers = positions[0, gripper_indices].detach().cpu().tolist()
-    width = profile.gripper.joint_positions_to_width(fingers)
+    velocity_limits = robot.data.joint_vel_limits
+    if hasattr(velocity_limits, "torch"):
+        velocity_limits = velocity_limits.torch
+    finger_velocity_limits = velocity_limits[0, gripper_indices].detach().cpu().tolist()
+    tolerances = gripper_position_tolerances(
+        velocity_limits=finger_velocity_limits,
+        physics_dt=float(native.physics_dt),
+        profile=profile,
+    )
+    width = profile.gripper.joint_positions_to_width(
+        fingers, position_tolerances=tolerances
+    )
     values = [*arm, profile.gripper.width_to_model(width)]
     if len(values) != len(profile.measured_state_names):
         raise InterchangeContractError(
@@ -531,6 +542,41 @@ def measured_policy_state(native: Any, profile: RobotSensorProfile) -> dict[str,
         name: float(value)
         for name, value in zip(profile.measured_state_names, values, strict=True)
     }
+
+
+def gripper_position_tolerances(
+    *,
+    velocity_limits: Sequence[float],
+    physics_dt: float,
+    profile: RobotSensorProfile,
+) -> tuple[float, ...]:
+    """Bound one-sample measured-joint overshoot from live actuator semantics."""
+
+    import numpy as np
+
+    limits = tuple(float(value) for value in velocity_limits)
+    if len(limits) != len(profile.gripper.joint_names) or any(
+        not math.isfinite(value) or value < 0.0 for value in limits
+    ):
+        raise InterchangeContractError(
+            "Isaac gripper velocity limits must be finite and nonnegative"
+        )
+    period = float(physics_dt)
+    if not math.isfinite(period) or period <= 0.0:
+        raise InterchangeContractError(
+            "Isaac physics period must be finite and positive"
+        )
+    tolerances = []
+    for velocity, opened, closed in zip(
+        limits,
+        profile.gripper.open_joint_positions,
+        profile.gripper.closed_joint_positions,
+        strict=True,
+    ):
+        endpoint = np.float32(max(abs(opened), abs(closed)))
+        representation_interval = abs(float(np.spacing(endpoint)))
+        tolerances.append(velocity * period + representation_interval)
+    return tuple(tolerances)
 
 
 def live_camera_world_pose(

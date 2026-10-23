@@ -294,7 +294,12 @@ class GripperMapping:
             raise InterchangeContractError("model gripper state is out of range")
         return abs(scalar - self.model_closed) < abs(scalar - self.model_open)
 
-    def joint_positions_to_width(self, values: Sequence[float]) -> float:
+    def joint_positions_to_width(
+        self,
+        values: Sequence[float],
+        *,
+        position_tolerances: Sequence[float] | None = None,
+    ) -> float:
         """Recover aperture from each measured parallel-jaw joint contribution.
 
         Command targets follow the declared coupled endpoint trajectory, but
@@ -302,13 +307,31 @@ class GripperMapping:
         Each joint therefore contributes its own normalized physical travel to
         the measured aperture.  These calibrated command endpoints are not
         physical joint limits: coupled fingers may cross them individually
-        under dynamics while their aggregate aperture remains valid.
+        under dynamics while their aggregate aperture remains valid.  A runtime
+        may declare bounded per-joint measurement tolerances derived from its
+        actual actuator velocity limits and sample period.  Raw measurements
+        remain evidence at the runtime boundary; only the model-facing aperture
+        is saturated after the declared bound passes.
         """
 
         positions = _finite(
             values, size=len(self.joint_names), name="measured gripper positions"
         )
+        tolerances = (
+            (0.0,) * len(self.joint_names)
+            if position_tolerances is None
+            else _finite(
+                position_tolerances,
+                size=len(self.joint_names),
+                name="gripper position tolerances",
+            )
+        )
+        if any(value < 0.0 for value in tolerances):
+            raise InterchangeContractError(
+                "gripper position tolerances must be nonnegative"
+            )
         ratios: list[float] = []
+        ratio_tolerances: list[float] = []
         for value, opened, closed in zip(
             positions,
             self.open_joint_positions,
@@ -321,12 +344,21 @@ class GripperMapping:
                     "gripper joint endpoints do not define an aperture mapping"
                 )
             ratios.append((value - closed) / span)
+        for tolerance, opened, closed in zip(
+            tolerances,
+            self.open_joint_positions,
+            self.closed_joint_positions,
+            strict=True,
+        ):
+            ratio_tolerances.append(tolerance / abs(opened - closed))
         aperture_ratio = sum(ratios) / len(ratios)
-        if not 0.0 <= aperture_ratio <= 1.0:
+        aperture_tolerance = sum(ratio_tolerances) / len(ratio_tolerances)
+        if not -aperture_tolerance <= aperture_ratio <= 1.0 + aperture_tolerance:
             raise InterchangeContractError(
                 "measured gripper aperture is outside the declared range"
             )
-        return aperture_ratio * self.maximum_width_m
+        bounded_ratio = min(1.0, max(0.0, aperture_ratio))
+        return bounded_ratio * self.maximum_width_m
 
     def to_dict(self) -> dict[str, Any]:
         return {
