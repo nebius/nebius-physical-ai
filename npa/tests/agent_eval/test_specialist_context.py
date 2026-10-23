@@ -205,10 +205,18 @@ def test_utf8_request_cannot_grow_even_when_ascii_size_proxy_would_shrink():
     messages[1]["content"] = json.dumps(result, ensure_ascii=False)
     proposal = {**messages[1], "content": json.dumps(_omitted(result, ("content",)))}
     assert len(json.dumps(proposal)) < len(json.dumps(messages[1]))
-    before = httpx.Request("POST", "https://example.invalid", json=messages[1]).content
-    after = httpx.Request("POST", "https://example.invalid", json=proposal).content
+    # HTTPX 0.28 switched to compact UTF-8; the counterexample must also hold
+    # when the installed, supported HTTPX version still uses ASCII JSON.
+    before = json.dumps(messages[1], ensure_ascii=False, separators=(",", ":")).encode()
+    after = json.dumps(proposal, ensure_ascii=False, separators=(",", ":")).encode()
     assert len(after) > len(before)
-    assert model_messages(messages) == messages
+    rendered = model_messages(messages)
+    assert rendered == messages
+    request = {"messages": messages}
+    compact_request = {"messages": rendered}
+    before = httpx.Request("POST", "https://example.invalid", json=request).content
+    after = httpx.Request("POST", "https://example.invalid", json=compact_request).content
+    assert len(after) <= len(before)
 
 
 def test_large_observation_still_shrinks_actual_httpx_request_without_changing_pairs():
