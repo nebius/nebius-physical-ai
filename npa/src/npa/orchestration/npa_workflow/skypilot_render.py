@@ -1135,6 +1135,110 @@ def validate_immutable_image_override_bindings(
         )
 
 
+WORKFLOW_VALIDATION_CANDIDATE_RELEASE_STATUS = "workflow_validation_candidate"
+WORKFLOW_VALIDATION_CANDIDATE_SELECTION_SCOPE_PLANNED_STEPS = "planned_steps"
+WORKFLOW_VALIDATION_CANDIDATE_SELECTION_SCOPE_REACHABLE_BRANCHES = "reachable_branches"
+
+
+@dataclass(frozen=True)
+class WorkflowValidationCandidateSelection:
+    """One planned toolRef that resolves to a non-accepted image candidate."""
+
+    tool_ref: str
+    image: str
+    selection_scope: str
+
+    def to_dict(self) -> dict[str, str]:
+        """Return the stable control-plane representation for CLI output.
+
+        Args:
+            None.
+
+        Returns:
+            Candidate provenance with its image-selection scope.
+
+        Raises:
+            None.
+        """
+
+        return {
+            "tool_ref": self.tool_ref,
+            "image": self.image,
+            "release_status": WORKFLOW_VALIDATION_CANDIDATE_RELEASE_STATUS,
+            "selection_scope": self.selection_scope,
+        }
+
+
+def workflow_validation_candidate_selections(
+    spec: NpaWorkflowSpec,
+    steps: Sequence[PlanStep],
+    *,
+    run_id: str,
+    options: SkypilotRenderOptions,
+    selection_scope: str = WORKFLOW_VALIDATION_CANDIDATE_SELECTION_SCOPE_PLANNED_STEPS,
+) -> tuple[WorkflowValidationCandidateSelection, ...]:
+    """Report candidate defaults selected after all image-override precedence.
+
+    The image reference is digest-pinned, but that does not mean it is in the
+    accepted-release inventory. Keep this provenance signal at the same rendering
+    boundary that applies exact, family, wildcard, resource, registry, and
+    digest-pin precedence.
+
+    Args:
+        spec: Parsed workflow specification being rendered.
+        steps: Planned workflow steps whose selected images are evaluated.
+        run_id: Stable identifier used to render task configuration.
+        options: Image registry, override, and digest-pin choices.
+        selection_scope: Machine-readable meaning of the supplied step set.
+
+    Returns:
+        Candidate selections whose resolved image remains the candidate default.
+
+    Raises:
+        RuntimeError: If the public workflow candidate manifest is invalid.
+    """
+
+    from npa.deploy.images import public_workflow_image_default
+    from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+
+    selections: list[WorkflowValidationCandidateSelection] = []
+    seen: set[tuple[str, str]] = set()
+    for step in steps:
+        task = build_scheduler_task(spec, step, run_id=run_id)
+        tool_ref = str(task.get("tool_ref") or "")
+        tool = tool_image_key(tool_ref)
+        if not tool:
+            continue
+        candidate = public_workflow_image_default(
+            tool, tool_ref=tool_ref, registry=options.registry or None
+        )
+        if not candidate:
+            continue
+        try:
+            image = resolve_task_image(
+                tool_ref, task.get("resources") or {}, options=options
+            )
+        except NpaWorkflowError:
+            # Candidate disclosure is observational. Leave a branch whose image
+            # cannot currently resolve to the workflow's normal validation and
+            # runtime error path instead of making disclosure a new gate.
+            continue
+        selected_image = str(
+            options.image_digest_pins.get(candidate, candidate)
+        ).strip()
+        selection = (tool_ref, selected_image)
+        if image == selected_image and selection not in seen:
+            seen.add(selection)
+            selections.append(
+                WorkflowValidationCandidateSelection(
+                    tool_ref=tool_ref,
+                    image=selected_image,
+                    selection_scope=selection_scope,
+                )
+            )
+    return tuple(selections)
+
+
 #: How long to wait for a self-hosted model server to answer /health, and how often to ask.
 #: The server has to download a multi-GB checkpoint and load it onto the GPU first. The
 #: retired ``vlm-eval.yaml`` allowed 120 x 5 s = 600 s; a *cold* HF download of a 7B

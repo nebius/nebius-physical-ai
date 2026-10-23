@@ -69,6 +69,7 @@ def test_hardened_nltk_source_install_contract() -> None:
         assert "/opt/npa/verify_hardened_nltk.py" in docker
 
     nano_requirements = affected["cosmos3-nano-video"].read_text()
+    assert re.search(r"^aiohttp==3\.14\.4$", nano_requirements, re.M)
     for dependency in ("click", "defusedxml", "joblib", "regex", "tqdm"):
         assert re.search(rf"^{dependency}==", nano_requirements, re.M)
 
@@ -86,7 +87,7 @@ def test_transfer_overlay_retains_exact_verified_wheel_urls() -> None:
         for line in requirements
     )
     assert "pillow-12.3.0" in text
-    assert "gitpython-3.1.62" in text
+    assert "gitpython-3.2.1" in text
     assert "hydra_core-1.3.7" in text
     assert "urllib3-2.8.0" in text
     assert "msal-1.38.0" in text

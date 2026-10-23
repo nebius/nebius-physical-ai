@@ -66,6 +66,9 @@ logger = logging.getLogger(__name__)
 _PLACEHOLDER_RE = re.compile(r"\$\{([^}]+)\}")
 DEFAULT_LOG_OUTPUT_CHARS = 32_768
 MAX_LOG_OUTPUT_CHARS = 262_144
+WORKFLOW_VALIDATION_CANDIDATES_STATUS_AVAILABLE = "available"
+WORKFLOW_VALIDATION_CANDIDATES_STATUS_NOT_APPLICABLE = "not_applicable"
+WORKFLOW_VALIDATION_CANDIDATES_STATUS_UNAVAILABLE = "unavailable"
 _SUBMIT_PRIVATE_REDACTIONS: ContextVar[tuple[str, ...]] = ContextVar(
     "npa_submit_private_redactions", default=()
 )
@@ -885,6 +888,7 @@ _WORKFLOW_RECOVERY_VALUE_OPTIONS = (
     ("poll_seconds", "--poll-seconds"),
     ("max_wait_seconds", "--max-wait-seconds"),
     ("retries", "--retries"),
+    ("recover_managed_job_id", "--recover-managed-job-id"),
     ("max_infrastructure_recoveries", "--max-infrastructure-recoveries"),
     ("max_concurrency", "--max-concurrency"),
     ("image_bootstrap_timeout_seconds", "--image-bootstrap-timeout-seconds"),
@@ -1159,6 +1163,16 @@ def submit_cmd(
             "With --runtime and explicit resume: recover a controller-lost exact "
             "attempt without resubmission only when its durable ledger reached "
             "RUNNING and every declared output validates. Disabled by default."
+        ),
+    ),
+    recover_managed_job_id: str = typer.Option(
+        "",
+        "--recover-managed-job-id",
+        help=(
+            "With --runtime and explicit --resume-run: recover only this exact "
+            "terminal managed-job ID from a retained same-run launch receipt. "
+            "NPA verifies its exact name, immutable inputs, observable terminal "
+            "success, and declared outputs without submitting another job."
         ),
     ),
     poll_seconds: int = typer.Option(
@@ -1499,6 +1513,7 @@ def submit_cmd(
     from npa.orchestration.npa_workflow.errors import NpaWorkflowError
     from npa.orchestration.npa_workflow.skypilot_render import (
         SkypilotRenderOptions,
+        WORKFLOW_VALIDATION_CANDIDATE_SELECTION_SCOPE_REACHABLE_BRANCHES,
         validate_image_override_selectors,
     )
     from npa.orchestration.npa_workflow.submit import prepare_npa_workflow_for_submit
@@ -1699,6 +1714,12 @@ def submit_cmd(
                 )
                 return
     runtime = bool(runtime)
+    if recover_managed_job_id and not runtime:
+        _fail("--recover-managed-job-id requires --runtime")
+        return
+    if recover_managed_job_id and plan_only:
+        _fail("--recover-managed-job-id cannot be combined with --plan-only")
+        return
     if image_override and not is_npa_spec:
         _fail(
             "--image-override/--tool-image is supported only for "
@@ -1764,6 +1785,12 @@ def submit_cmd(
         return
     if adopt_absent_in_flight_outputs and not (resume_run or (resume and run_id)):
         _fail("--adopt-absent-in-flight-outputs requires an explicit --resume-run ID")
+        return
+    if recover_managed_job_id and not resume_run:
+        _fail("--recover-managed-job-id requires an explicit --resume-run ID")
+        return
+    if recover_managed_job_id and not recover_managed_job_id.isdecimal():
+        _fail("--recover-managed-job-id must be one decimal managed-job ID")
         return
     if not project:
         from npa.clients.config import default_project_name
@@ -2030,6 +2057,12 @@ def submit_cmd(
         return
 
     prepared_npa = None
+    workflow_validation_candidates: list[dict[str, str]] = []
+    workflow_validation_candidates_status = (
+        WORKFLOW_VALIDATION_CANDIDATES_STATUS_AVAILABLE
+        if is_npa_spec
+        else WORKFLOW_VALIDATION_CANDIDATES_STATUS_NOT_APPLICABLE
+    )
     execution_target = None
     execution_preflight_report: dict[str, Any] = {}
     deploy_targets = []
@@ -2902,6 +2935,39 @@ def submit_cmd(
                 return
 
         if runtime and not plan_only:
+            try:
+                runtime_candidate_steps = _image_preflight_steps(
+                    merged_npa_spec,
+                    run_id=resolved_run_id,
+                    assume_decision=assume_decision,
+                )
+                workflow_validation_candidates = _workflow_validation_candidate_payload(
+                    merged_npa_spec,
+                    runtime_candidate_steps,
+                    run_id=resolved_run_id,
+                    options=npa_render_options,
+                    selection_scope=(
+                        WORKFLOW_VALIDATION_CANDIDATE_SELECTION_SCOPE_REACHABLE_BRANCHES
+                    ),
+                )
+            except (NpaWorkflowError, ValueError) as exc:
+                # Candidate disclosure is observational. The runtime retains its
+                # established per-wave planner and error behavior when the
+                # conservative reachability view is not currently available.
+                _log_workflow_validation_candidate_disclosure_failure(exc)
+                workflow_validation_candidates = []
+                workflow_validation_candidates_status = (
+                    WORKFLOW_VALIDATION_CANDIDATES_STATUS_UNAVAILABLE
+                )
+                typer.echo(
+                    "warning: workflow validation candidate disclosure is unavailable; "
+                    "runtime image selection will proceed per wave",
+                    err=True,
+                )
+            if output_format != OutputFormat.json:
+                _emit_workflow_validation_candidate_notices(
+                    workflow_validation_candidates
+                )
             runtime_preflight_evidence = {
                 "exact_image_pull": "pass" if preflight_images else "unknown",
                 "credentials_access": "pass",
@@ -2992,9 +3058,14 @@ def submit_cmd(
                 allow_terminal_plan_migration=allow_terminal_plan_migration,
                 plan_migration_reason=plan_migration_reason,
                 adopt_absent_in_flight_outputs=adopt_absent_in_flight_outputs,
+                recover_managed_job_id=recover_managed_job_id,
                 preflight_evidence=runtime_preflight_evidence,
                 pre_submit_hook=refresh_runtime_preflight,
                 output_format=output_format,
+                workflow_validation_candidates=workflow_validation_candidates,
+                workflow_validation_candidates_status=(
+                    workflow_validation_candidates_status
+                ),
                 project=project,
                 auto_load=auto_load,
                 agent_name=agent_name,
@@ -3024,6 +3095,27 @@ def submit_cmd(
         except NpaWorkflowError as exc:
             _fail(str(exc), secrets=submission_redaction_secrets)
             return
+
+        try:
+            workflow_validation_candidates = _workflow_validation_candidate_payload(
+                prepared_npa.spec,
+                prepared_npa.plan.steps,
+                run_id=resolved_run_id,
+                options=npa_render_options,
+            )
+        except (NpaWorkflowError, ValueError) as exc:
+            _log_workflow_validation_candidate_disclosure_failure(exc)
+            workflow_validation_candidates = []
+            workflow_validation_candidates_status = (
+                WORKFLOW_VALIDATION_CANDIDATES_STATUS_UNAVAILABLE
+            )
+            typer.echo(
+                "warning: workflow validation candidate disclosure is unavailable; "
+                "image selection will proceed through normal rendering",
+                err=True,
+            )
+        if output_format != OutputFormat.json:
+            _emit_workflow_validation_candidate_notices(workflow_validation_candidates)
 
         if plan_only:
             rendered = prepared_npa.skypilot_yaml_path.read_text(encoding="utf-8")
@@ -3102,6 +3194,10 @@ def submit_cmd(
                 "infrastructure": infrastructure,
                 "plan": prepared_npa.plan.to_dict(),
                 "skypilot_yaml": rendered,
+                "workflow_validation_candidates": workflow_validation_candidates,
+                "workflow_validation_candidates_status": (
+                    workflow_validation_candidates_status
+                ),
             }
             if runtime:
                 planned_payload["run_prefix_uri"] = (
@@ -3628,7 +3724,12 @@ def submit_cmd(
             prepared_npa.temp_dir.cleanup()
 
     if output_format == OutputFormat.json:
-        payload = {**result.__dict__, "run_id": resolved_run_id}
+        payload = {
+            **result.__dict__,
+            "run_id": resolved_run_id,
+            "workflow_validation_candidates": workflow_validation_candidates,
+            "workflow_validation_candidates_status": workflow_validation_candidates_status,
+        }
         if submission_warnings:
             payload["submission_warnings"] = submission_warnings
         typer.echo(
@@ -3909,9 +4010,12 @@ def _run_npa_workflow_runtime(
     allow_terminal_plan_migration: bool,
     plan_migration_reason: str,
     adopt_absent_in_flight_outputs: bool,
+    recover_managed_job_id: str,
     preflight_evidence: Mapping[str, str],
     pre_submit_hook: Callable[[Path], None] | None,
     output_format: "OutputFormat",
+    workflow_validation_candidates: Sequence[Mapping[str, str]],
+    workflow_validation_candidates_status: str,
     project: str = "",
     auto_load: bool = True,
     agent_name: str = "",
@@ -3992,6 +4096,7 @@ def _run_npa_workflow_runtime(
         allow_terminal_plan_migration=allow_terminal_plan_migration,
         plan_migration_reason=plan_migration_reason,
         adopt_absent_in_flight_outputs=adopt_absent_in_flight_outputs,
+        recover_managed_job_id=recover_managed_job_id,
         project=project or "default",
         sky_bin=effective_sky_bin,
         # The preflight and every wave use the same selected principal. A new
@@ -4051,6 +4156,10 @@ def _run_npa_workflow_runtime(
             agent_name=agent_name,
         )
     payload = report.to_dict()
+    payload["workflow_validation_candidates"] = list(workflow_validation_candidates)
+    payload["workflow_validation_candidates_status"] = (
+        workflow_validation_candidates_status
+    )
     if artifact_load is not None:
         payload["artifact_load"] = artifact_load
     if output_format == OutputFormat.json:
@@ -4102,6 +4211,13 @@ def _sanitized_failure_reason(exc: BaseException, *, secrets: Sequence[str]) -> 
     from npa.verification import sanitize_failure_reason
 
     return sanitize_failure_reason(exc, secrets=secrets)
+
+
+def _log_workflow_validation_candidate_disclosure_failure(exc: BaseException) -> None:
+    """Record a sanitized cause when optional candidate disclosure is unavailable."""
+
+    reason = _sanitized_failure_reason(exc, secrets=_SUBMIT_PRIVATE_REDACTIONS.get())
+    logger.warning("workflow validation candidate disclosure failed: %s", reason)
 
 
 def _accepted_submission_identity(*, state: object, job_id: object) -> bool:
@@ -4532,6 +4648,7 @@ def _plan_preflight_image_requirements(
     options: SkypilotRenderOptions,
     assume_decision: str,
     infra: str = "",
+    steps: Sequence[PlanStep] | None = None,
 ) -> tuple[list[str], dict[str, ImagePullRequirements]]:
     """Preserve each reachable branch's image and exact pull authority."""
     from npa.orchestration.npa_workflow.skypilot_render import (
@@ -4539,14 +4656,64 @@ def _plan_preflight_image_requirements(
         plan_images,
     )
 
-    steps = _image_preflight_steps(spec, run_id=run_id, assume_decision=assume_decision)
-    execution_steps = _image_preflight_execution_steps(spec, steps, infra=infra)
+    planned_steps = (
+        list(steps)
+        if steps is not None
+        else _image_preflight_steps(
+            spec, run_id=run_id, assume_decision=assume_decision
+        )
+    )
+    execution_steps = _image_preflight_execution_steps(spec, planned_steps, infra=infra)
     return (
-        plan_images(spec, steps, run_id=run_id, options=options),
+        plan_images(spec, planned_steps, run_id=run_id, options=options),
         plan_image_pull_requirements(
             spec, execution_steps, run_id=run_id, options=options
         ),
     )
+
+
+def _workflow_validation_candidate_payload(
+    spec: "NpaWorkflowSpec",
+    steps: Sequence["PlanStep"],
+    *,
+    run_id: str,
+    options: "SkypilotRenderOptions",
+    selection_scope: str | None = None,
+) -> list[dict[str, str]]:
+    """Return non-release image selections for agent and operator control planes."""
+
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        WORKFLOW_VALIDATION_CANDIDATE_SELECTION_SCOPE_PLANNED_STEPS,
+        workflow_validation_candidate_selections,
+    )
+
+    return [
+        selection.to_dict()
+        for selection in workflow_validation_candidate_selections(
+            spec,
+            steps,
+            run_id=run_id,
+            options=options,
+            selection_scope=(
+                selection_scope
+                or WORKFLOW_VALIDATION_CANDIDATE_SELECTION_SCOPE_PLANNED_STEPS
+            ),
+        )
+    ]
+
+
+def _emit_workflow_validation_candidate_notices(
+    candidates: Sequence[Mapping[str, str]],
+) -> None:
+    """Tell human CLI callers that a governed candidate is not an accepted release."""
+
+    for candidate in candidates:
+        typer.echo(
+            "warning: "
+            f"{candidate['tool_ref']} selected {candidate['image']} as a "
+            "workflow validation candidate, not an accepted release",
+            err=True,
+        )
 
 
 def _image_preflight_execution_steps(
@@ -9910,11 +10077,11 @@ def _check_static_plan_render(
     plan: ExecutionPlan,
     *,
     run_id: str,
+    options: SkypilotRenderOptions,
 ) -> dict[str, object]:
     """Render a static plan locally and return a secret-free proof."""
 
     from npa.orchestration.npa_workflow.skypilot_render import (
-        SkypilotRenderOptions,
         assert_no_unresolved_placeholders,
         render_skypilot_yaml,
     )
@@ -9923,7 +10090,7 @@ def _check_static_plan_render(
         spec,
         plan,
         run_id=run_id,
-        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+        options=options,
     )
     assert_no_unresolved_placeholders(rendered)
     task_count = sum(
@@ -9990,6 +10157,7 @@ def plan_spec_cmd(
     """Expand an NPA workflow spec into an execution plan (dry-run)."""
 
     from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+    from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
     from npa.orchestration.npa_workflow.submit import merge_config_overrides
 
     spec = _load_npa_workflow(yaml_path)
@@ -10011,16 +10179,46 @@ def plan_spec_cmd(
     resolved_run_id = run_id or f"{spec.name}-plan"
     from npa.orchestration.npa_workflow import build_plan
 
+    workflow_validation_candidates: list[dict[str, str]] = []
+    workflow_validation_candidates_status = (
+        WORKFLOW_VALIDATION_CANDIDATES_STATUS_AVAILABLE
+    )
     try:
         plan = build_plan(spec, run_id=resolved_run_id, assume_decision=assume_decision)
+        render_options = SkypilotRenderOptions(materialize_registry_secrets=False)
         render_check = (
-            _check_static_plan_render(spec, plan, run_id=resolved_run_id)
+            _check_static_plan_render(
+                spec,
+                plan,
+                run_id=resolved_run_id,
+                options=render_options,
+            )
             if check_render is True
             else None
         )
     except NpaWorkflowError as exc:
         _fail(str(exc))
         return
+
+    if render_check is not None:
+        try:
+            workflow_validation_candidates = _workflow_validation_candidate_payload(
+                spec,
+                plan.steps,
+                run_id=resolved_run_id,
+                options=render_options,
+            )
+        except (NpaWorkflowError, ValueError) as exc:
+            _log_workflow_validation_candidate_disclosure_failure(exc)
+            workflow_validation_candidates_status = (
+                WORKFLOW_VALIDATION_CANDIDATES_STATUS_UNAVAILABLE
+            )
+            if not json_output:
+                typer.echo(
+                    "warning: workflow validation candidate disclosure is unavailable; "
+                    "normal rendering remains authoritative",
+                    err=True,
+                )
 
     if waves:
         from npa.orchestration.npa_workflow.waves import wave_plan_from_plan
@@ -10031,12 +10229,19 @@ def plan_spec_cmd(
             payload["access_requirements"] = _workflow_access_requirement_payload(spec)
             if render_check is not None:
                 payload["render_check"] = render_check
+                payload["workflow_validation_candidates"] = (
+                    workflow_validation_candidates
+                )
+                payload["workflow_validation_candidates_status"] = (
+                    workflow_validation_candidates_status
+                )
             typer.echo(json.dumps(payload, indent=2, sort_keys=True))
             return
         typer.echo(f"workflow: {wave_plan.workflow}")
         typer.echo(f"waves: {len(wave_plan.waves)}")
         if render_check is not None:
             _emit_render_check(render_check)
+            _emit_workflow_validation_candidate_notices(workflow_validation_candidates)
         for wave in wave_plan.waves:
             states = ", ".join(step.state for step in wave.steps)
             suffix = (
@@ -10054,6 +10259,10 @@ def plan_spec_cmd(
         payload["access_requirements"] = _workflow_access_requirement_payload(spec)
         if render_check is not None:
             payload["render_check"] = render_check
+            payload["workflow_validation_candidates"] = workflow_validation_candidates
+            payload["workflow_validation_candidates_status"] = (
+                workflow_validation_candidates_status
+            )
         # The human warning is suppressed under --json to keep the document clean,
         # which made a placeholder plan look valid. Say it in the document instead.
         if _is_placeholder_bucket(str(spec.config.get("bucket", "") or "")):
@@ -10063,6 +10272,7 @@ def plan_spec_cmd(
     typer.echo(f"workflow: {plan.workflow}")
     if render_check is not None:
         _emit_render_check(render_check)
+        _emit_workflow_validation_candidate_notices(workflow_validation_candidates)
     access = _workflow_access_requirement_payload(spec)
     if access["hf"] or access["ngc"]:
         typer.echo(
@@ -10295,7 +10505,10 @@ def preflight_images_cmd(
 
     from npa.orchestration.npa_workflow.errors import NpaWorkflowError
     from npa.orchestration.npa_workflow.submit import merge_config_overrides
-    from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        SkypilotRenderOptions,
+        WORKFLOW_VALIDATION_CANDIDATE_SELECTION_SCOPE_REACHABLE_BRANCHES,
+    )
     from npa.orchestration.skypilot._bin import resolve_global_config_path
     from npa.orchestration.skypilot.registry_preflight import (
         RegistryPreflightError,
@@ -10339,16 +10552,57 @@ def preflight_images_cmd(
         typer.echo(f"registry: {resolved_registry}", err=True)
     run_id = f"{spec.name}-preflight"
     try:
+        steps = _image_preflight_steps(
+            spec, run_id=run_id, assume_decision=assume_decision
+        )
         images, pull_requirements = _plan_preflight_image_requirements(
             spec,
             run_id=run_id,
             options=options,
             assume_decision=assume_decision,
             infra=infra,
+            steps=steps,
         )
     except (NpaWorkflowError, ValueError) as exc:
         _fail(f"image preflight planning failed: {exc}")
         return
+    workflow_validation_candidates_status = (
+        WORKFLOW_VALIDATION_CANDIDATES_STATUS_AVAILABLE
+    )
+    try:
+        workflow_validation_candidates = [
+            candidate
+            for candidate in _workflow_validation_candidate_payload(
+                spec,
+                steps,
+                run_id=run_id,
+                options=options,
+                selection_scope=(
+                    WORKFLOW_VALIDATION_CANDIDATE_SELECTION_SCOPE_REACHABLE_BRANCHES
+                ),
+            )
+            if candidate["image"] in images
+        ]
+    except (NpaWorkflowError, ValueError) as exc:
+        _log_workflow_validation_candidate_disclosure_failure(exc)
+        workflow_validation_candidates = []
+        workflow_validation_candidates_status = (
+            WORKFLOW_VALIDATION_CANDIDATES_STATUS_UNAVAILABLE
+        )
+        typer.echo(
+            "warning: workflow validation candidate disclosure is unavailable; "
+            "normal rendering remains authoritative",
+            err=True,
+        )
+    if not json_output:
+        _emit_workflow_validation_candidate_notices(workflow_validation_candidates)
+    candidate_metadata = {
+        candidate["image"]: {
+            "release_status": candidate["release_status"],
+            "selection_scope": candidate["selection_scope"],
+        }
+        for candidate in workflow_validation_candidates
+    }
     explicit_pull_secrets: tuple[str, ...] = ()
     if image_pull_secret:
         explicit_pull_secrets = tuple(
@@ -10480,6 +10734,14 @@ def preflight_images_cmd(
                         "target_status": check.target_status,
                         "authority": check.authority,
                         "digest": check.digest,
+                        "workflow_validation_candidates_status": (
+                            workflow_validation_candidates_status
+                        ),
+                        **(
+                            candidate_metadata[check.image]
+                            if check.image in candidate_metadata
+                            else {}
+                        ),
                         "bootstrap_contract": next(
                             (
                                 item
@@ -10561,8 +10823,10 @@ def gpus_cmd(
     inventory, catalog, sky_error = _inspect_workflow_gpus(
         project, cluster, resolved_context, sky_bin, isolated_config_dir
     )
-    resolutions = _gpu_spec_resolutions(spec, catalog)
-    _report_gpu_discovery(inventory, catalog, sky_error, resolutions, json_output)
+    resolutions, spec_error = _gpu_spec_resolutions(spec, catalog)
+    _report_gpu_discovery(
+        inventory, catalog, sky_error, resolutions, spec_error, json_output
+    )
 
 
 def _owned_gpu_target(project, cluster, context, sky_bin, isolated_config_dir):
@@ -10635,13 +10899,17 @@ def _gpu_spec_resolutions(spec, catalog):
     resolutions: list[dict[str, object]] = []
     if spec is not None:
         from npa.orchestration.npa_workflow import build_plan
+        from npa.orchestration.npa_workflow.errors import NpaWorkflowError
         from npa.orchestration.npa_workflow.submit import load_spec_for_submit
 
-        resolved_spec = load_spec_for_submit(spec)
-        plan = build_plan(
-            resolved_spec,
-            run_id=f"{resolved_spec.name}-gpu-discovery",
-        )
+        try:
+            resolved_spec = load_spec_for_submit(spec)
+            plan = build_plan(
+                resolved_spec,
+                run_id=f"{resolved_spec.name}-gpu-discovery",
+            )
+        except NpaWorkflowError as exc:
+            return [], str(exc)
         planned_resources = {
             f"step-{index}": step.resources_profile
             for index, step in enumerate(plan.steps)
@@ -10662,12 +10930,14 @@ def _gpu_spec_resolutions(spec, catalog):
                 }
             )
 
-    return resolutions
+    return resolutions, ""
 
 
-def _report_gpu_discovery(inventory, catalog, sky_error, resolutions, json_output):
+def _report_gpu_discovery(
+    inventory, catalog, sky_error, resolutions, spec_error, json_output
+):
     if json_output:
-        _emit_gpu_discovery_json(inventory, catalog, sky_error, resolutions)
+        _emit_gpu_discovery_json(inventory, catalog, sky_error, resolutions, spec_error)
         return
     if sky_error:
         typer.echo(f"skypilot_error: {sky_error}", err=True)
@@ -10686,21 +10956,26 @@ def _report_gpu_discovery(inventory, catalog, sky_error, resolutions, json_outpu
         )
     if catalog.is_empty:
         typer.echo("accelerators: none advertised")
-        return
-    typer.echo(f"context: {catalog.context or 'all'}")
-    for name in sorted(catalog.quantities_by_accelerator, key=str.casefold):
-        quantities = sorted(catalog.quantities_by_accelerator[name])
-        offered = ", ".join(str(value) for value in quantities)
-        typer.echo(f"  {name}: requestable per node {offered}")
-        typer.echo(f"    export NPA_WORKFLOW_GPU_ACCELERATOR={name}:{quantities[0]}")
+    else:
+        typer.echo(f"context: {catalog.context or 'all'}")
+        for name in sorted(catalog.quantities_by_accelerator, key=str.casefold):
+            quantities = sorted(catalog.quantities_by_accelerator[name])
+            offered = ", ".join(str(value) for value in quantities)
+            typer.echo(f"  {name}: requestable per node {offered}")
+            typer.echo(
+                f"    export NPA_WORKFLOW_GPU_ACCELERATOR={name}:{quantities[0]}"
+            )
     for item in resolutions:
         if item.get("error"):
             typer.echo(f"  {item['requested']}: {item['error']}")
         else:
             typer.echo(f"  {item['requested']} -> {item['resolved']}")
+    if spec_error:
+        typer.echo(f"spec_error: {spec_error}", err=True)
+        raise typer.Exit(code=2)
 
 
-def _emit_gpu_discovery_json(inventory, catalog, sky_error, resolutions):
+def _emit_gpu_discovery_json(inventory, catalog, sky_error, resolutions, spec_error):
     typer.echo(
         json.dumps(
             {
@@ -10712,12 +10987,13 @@ def _emit_gpu_discovery_json(inventory, catalog, sky_error, resolutions):
                     for name, quantities in catalog.quantities_by_accelerator.items()
                 },
                 "spec_resolutions": resolutions,
+                "spec_error": spec_error,
             },
             indent=2,
             sort_keys=True,
         )
     )
-    if sky_error:
+    if sky_error or spec_error:
         raise typer.Exit(code=2)
     return
 

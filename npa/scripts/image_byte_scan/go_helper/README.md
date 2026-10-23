@@ -21,6 +21,11 @@ payload budget used by concurrent smaller records. The measurement is not
 treated as a permanent detector constant: `RLIMIT_AS` remains the hard,
 fail-closed backstop if implementation drift uses more memory.
 
+The helper fills a preallocated `strings.Builder` and hashes the bytes while
+reading the record. Its completed string shares that backing storage with the
+detector, removing the previous byte-buffer-to-string copy. Each detection still
+receives one complete record, including empty and binary records.
+
 The archive scanner routes a larger regular-file record through an isolated
 one-shot mode, with an independent 1 GiB complete-record ceiling. It prefers
 `O_TMPFILE`; filesystems without it use an `O_EXCL` mode-`0600` name that is

@@ -77,10 +77,18 @@ WORKDIR /opt/lerobot
 
 COPY --chown=ubuntu:ubuntu docker/workbench/curobo/remove_scikit_image_recipe.py \
     /opt/lerobot/remove-scikit-image-recipe.py
+COPY --chown=ubuntu:ubuntu docker/workbench/lerobot/default-runtime-requirements.txt \
+    /opt/lerobot/default-constraints.txt
+COPY --chown=ubuntu:ubuntu docker/workbench/lerobot/smoke_native_cpu.py \
+    /opt/lerobot/smoke-native-cpu.py
+COPY --chown=ubuntu:ubuntu docker/workbench/lerobot/prepare_secure_wheel.py \
+    /opt/lerobot/prepare-secure-wheel.py
 
 ENV PIP_NO_CACHE_DIR=1
 
-# 0.5.1 keeps the historic [pusht,libero] extra bundle + pinned torch upgrades.
+# 0.5.1 is an explicitly versioned, source-verified NPA integration: the upstream
+# model code and license are retained, and dependency changes face native gates.
+# 0.5.1 retains its historic [pusht,libero] extra bundle through that secured source.
 # 0.6.0 uses lean feature extras and must NOT force torch>=2.12 (upstream ceiling).
 # 0.6.0 also moved diffusers/transformers behind extras and enforces them in each
 # policy's __init__, so diffusion and smolvla must be requested explicitly or
@@ -95,26 +103,35 @@ RUN python3.12 -m venv /opt/lerobot/venv \
            fastapi~=0.136.1 \
            num2words \
            tensorboard \
-           "uvicorn[standard]"; \
-       else \
-         /opt/lerobot/venv/bin/pip install \
-           "lerobot[pusht,libero]==${LEROBOT_VERSION}" \
+           "uvicorn[standard]" \
+         && /opt/lerobot/venv/bin/python /opt/lerobot/remove-scikit-image-recipe.py \
+           --site-packages /opt/lerobot/venv/lib/python3.12/site-packages \
+           --capability lerobot \
+           > /opt/lerobot/dependency-source-correction.json \
+         && /opt/lerobot/venv/bin/pip uninstall -y wandb; \
+       elif [ "${LEROBOT_VERSION}" = "0.5.1" ]; then \
+         /opt/lerobot/venv/bin/python /opt/lerobot/prepare-secure-wheel.py \
+           --output-dir /opt/lerobot/secure-wheel \
+         && /opt/lerobot/venv/bin/pip install \
+           --constraint /opt/lerobot/default-constraints.txt \
+           'lerobot[pusht,libero] @ file:///opt/lerobot/secure-wheel/lerobot-0.5.1+npa.secure1-py3-none-any.whl' \
            "scikit-image==0.26.0" \
            boto3 \
            fastapi~=0.136.1 \
            num2words \
            tensorboard \
            "uvicorn[standard]" \
-         && /opt/lerobot/venv/bin/pip install --no-cache-dir --upgrade \
-           "torch==2.12.1" \
-           "torchvision==0.27.1" \
-           "diffusers>=0.38.0"; \
+         && cp /opt/lerobot/secure-wheel/source-integration.json \
+           /opt/lerobot/source-integration.json \
+         && rm -rf /opt/lerobot/secure-wheel \
+         && /opt/lerobot/venv/bin/python /opt/lerobot/remove-scikit-image-recipe.py \
+           --site-packages /opt/lerobot/venv/lib/python3.12/site-packages \
+           --capability lerobot \
+           > /opt/lerobot/dependency-source-correction.json \
+         && /opt/lerobot/venv/bin/pip check; \
+       else \
+         echo 'Unsupported LeRobot package version' >&2; exit 1; \
        fi \
-    && /opt/lerobot/venv/bin/python /opt/lerobot/remove-scikit-image-recipe.py \
-      --site-packages /opt/lerobot/venv/lib/python3.12/site-packages \
-      --capability lerobot \
-      > /opt/lerobot/dependency-source-correction.json \
-    && /opt/lerobot/venv/bin/pip uninstall -y wandb \
     && find /opt/lerobot/venv -type f \
          -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
     && test "$(/opt/lerobot/venv/bin/python -c \
@@ -128,7 +145,11 @@ ENV PATH=/opt/lerobot/venv/bin:$PATH \
     NPA_SKIP_EAGER_IMPORTS=1
 
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
+# Keep this image-local SDK intentionally partial. The stage's own NPA install
+# must supply npa.workbench; shipping it here would make the repair's import
+# probe pass against the baked tree.
 COPY --chown=ubuntu:ubuntu src/npa/__init__.py /opt/npa/src/npa/__init__.py
+COPY --chown=ubuntu:ubuntu src/npa/clients/__init__.py src/npa/clients/storage.py /opt/npa/src/npa/clients/
 COPY --chown=ubuntu:ubuntu src/npa/server /opt/npa/src/npa/server
 COPY --chown=ubuntu:ubuntu src/npa/smoke /opt/npa/src/npa/smoke
 
@@ -183,9 +204,15 @@ RUN apt-get update \
 
 USER ubuntu
 
+# Exercise the final hardened 0.5.1 integration and declared server interpreter.
+# The separately qualified 0.6.0 recipe retains its existing acceptance path.
+RUN if [ "${LEROBOT_VERSION}" = "0.5.1" ]; then \
+      /opt/lerobot/venv/bin/python /opt/lerobot/smoke-native-cpu.py; \
+    fi
+
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)" || exit 1
+  CMD /opt/lerobot/venv/bin/python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)" || exit 1
 
-ENTRYPOINT ["python", "-m", "npa.server.app"]
+ENTRYPOINT ["/opt/lerobot/venv/bin/python", "-m", "npa.server.app"]

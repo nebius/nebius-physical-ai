@@ -88,10 +88,10 @@ EXPECTED_BOUNDARIES = {
     "rendering": False,
 }
 EXPECTED_RUNTIME_MANIFEST_SHA256 = (
-    "73cc3db0419d8431deab96461c33df4237074269a11956f367e272033356c6aa"
+    "98dd8b82f1e8fc259c627a5b94c6d5f5347452092ed6a53e8dae72d89c97ab57"
 )
 EXPECTED_RUNTIME_REQUIREMENTS_SHA256 = (
-    "e268334cb849d3ce8912b47361a04adada88b53fcdc72d9dac36727a473a6266"
+    "233d6802c8317a5be1c15bb4ae89daf71d51e9335f912f1685dff5fef79f98bc"
 )
 DEFAULT_MANIFEST = Path("/opt/npa/libero/runtime-manifest.json")
 DEFAULT_REQUIREMENTS = Path("/opt/npa/libero/runtime-requirements.txt")

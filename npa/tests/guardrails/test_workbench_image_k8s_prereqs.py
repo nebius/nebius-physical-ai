@@ -409,7 +409,14 @@ def test_genesis_workflow_images_pin_the_bootstrap_closure(
         assert "ARG ENVGEN_LINUX_LIBC_DEV_VERSION=5.15.0-198.208" in dockerfile
         assert '"${UBUNTU_SNAPSHOT}" "${ENVGEN_LINUX_LIBC_DEV_VERSION}"' in dockerfile
     assert "install_workflow_runtime_prereqs.sh" in dockerfile
-    assert 'install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}"' in dockerfile
+    if tool == "sim2real-envgen":
+        assert "ARG ENVGEN_LINUX_LIBC_DEV_VERSION=5.15.0-198.208" in dockerfile
+        assert (
+            'install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" '
+            '"${ENVGEN_LINUX_LIBC_DEV_VERSION}" \\'
+        ) in dockerfile
+    else:
+        assert 'install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}"' in dockerfile
 
     installer = (
         DOCKER_ROOT / "common" / "install_workflow_runtime_prereqs.sh"

@@ -19,7 +19,7 @@ text generation, and reasoning for tools that use those capabilities.
 
 ## 2. Prerequisites
 
-- macOS, Linux, or Windows with WSL2 Ubuntu; Python 3.10+ and Git.
+- macOS, Linux, or Windows with WSL2 Ubuntu; Python 3.11+ and Git.
 - A Nebius account and access to a project in your workload's region.
 - The [Nebius CLI](install.md#4-nebius-cli-required) on `PATH`.
 - For managed infrastructure: Terraform; for Kubernetes: `kubectl` and the
@@ -131,13 +131,16 @@ For a first workload, continue below.
 
 The [Cosmos 3 guide](workbench/cosmos3-generate.md) uses
 `workflows/testing/cosmos3-generate.yaml`. Its default requests one H100,
-16 CPU, and 80 GiB host memory for public Cosmos3-Nano text-to-image generation.
-The requested guardrails additionally need access to gated Hugging Face weights.
-Check the guide's model/image/GPU compatibility and guardrail limitations.
+16 CPU, and 80 GiB host memory for public Cosmos3-Nano text-to-image generation,
+but the default image is deliberately quarantined. The spec is therefore a
+planning and quarantine-refusal reference, not a first-submit path. The requested
+guardrails additionally need access to gated Hugging Face weights. Check the
+guide's model/image/GPU compatibility and guardrail limitations.
 
-Complete [Workbench setup](workbench/getting-started.md), then follow the
-[submission example](workbench/cosmos3-generate.md#workflow). Inspect the media
-and manifest after success; job completion alone does not establish usable output.
+Complete [Workbench setup](workbench/getting-started.md), then choose a
+release-ready workload from the [workload guides](workbench/guides/README.md).
+Do not submit the stock Cosmos3 spec unless an operator has separately supplied
+an independently qualified immutable image and authorized that run.
 
 ## 8. Do more with npa
 
