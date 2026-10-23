@@ -178,6 +178,48 @@ def test_image_independent_checks_do_not_construct_execution_images(
     )
 
 
+def test_default_preimage_checks_do_not_construct_execution_images(
+    diagnostic_spies: SimpleNamespace, tmp_path: Path
+) -> None:
+    """Bare health invokes the canonical image-independent preimage checks."""
+
+    kubeconfig = str(tmp_path / "kubeconfig.yaml")
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "health",
+            "sim2real",
+            "--s3-bucket",
+            "example-bucket",
+            "--s3-endpoint",
+            "https://s3.example.invalid",
+            "--k8s-context",
+            "diagnostic-context",
+            "--k8s-kubeconfig",
+            kubeconfig,
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["selected_checks"] == ["coherence", "s3", "tokens", "cluster"]
+    assert [row["name"] for row in payload["checks"]] == [
+        "compositional-workflow-coherence",
+        "s3",
+        "tokens",
+        "cluster",
+    ]
+    assert payload["image_policy_evaluated"] is False
+    diagnostic_spies.defaults.assert_not_called()
+    diagnostic_spies.execution.assert_not_called()
+    diagnostic_spies.image_inspector.assert_not_called()
+    diagnostic_spies.kube_factory.assert_called_once_with(
+        "diagnostic-context", kubeconfig
+    )
+
+
 def test_tokens_and_s3_use_explicit_storage_without_image_resolution(
     diagnostic_spies: SimpleNamespace,
     monkeypatch: pytest.MonkeyPatch,

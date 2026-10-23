@@ -315,13 +315,18 @@ context ...; refusing controller adoption." `npa skypilot bind-controller`
 records which project/context owns the shared SkyPilot jobs controller;
 without it, submit refuses with "No shared controller owner is bound."
 
-`npa workbench health sim2real` checks pod creation and Job patch permissions
-using the selected kubeconfig identity. It does not impersonate the retired
-Sim2Real sibling-Job controller's `agent-sa`. Keep the same project, kubeconfig,
-and context for health checks and canonical `workflow submit --runtime`.
-When selecting only image-independent health checks, omit image, threshold, and
-S3-prefix overrides: the CLI rejects inputs those checks cannot use. Select the
-`config` or `registry` check when validating execution settings.
+`npa workbench health sim2real --project "$NPA_PROJECT"` defaults to the
+image-independent coherence, project-scoped S3, token, and cluster checks. It
+checks pod creation and Job patch permissions using the selected kubeconfig
+identity; it does not impersonate the retired Sim2Real sibling-Job controller's
+`agent-sa`. The default deliberately does not resolve retired loop images or
+certify canonical role images: run the complete five-role `workflow
+preflight-images` command below for source-attested pullability. Keep the same
+project, kubeconfig, and context for health checks and canonical `workflow
+submit --runtime`. Use `--checks config,registry` or `--checks all` only when
+diagnosing the retained legacy loop configuration. When selecting only
+image-independent health checks, omit image, threshold, and S3-prefix
+overrides: the CLI rejects inputs those checks cannot use.
 
 ## 3. Add a schedulable CPU pool before GPU work
 

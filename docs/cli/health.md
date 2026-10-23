@@ -12,7 +12,7 @@ Options
 Commands
 preflight  Validate service credentials and optional Nebius CLI authentication.
 access  Check HF + NGC access to every gated model the workbench capabilities need.
-sim2real  Validate a sim2real config and check the recurring blockers up front.
+sim2real  Check canonical Sim2Real preimage prerequisites before a workflow run.
 ```
 
 ## Options
@@ -27,7 +27,7 @@ sim2real  Validate a sim2real config and check the recurring blockers up front.
 | --- | --- |
 | `preflight` | Validate service credentials and optional Nebius CLI authentication. |
 | `access` | Check HF + NGC access to every gated model the workbench capabilities need. |
-| `sim2real` | Validate a sim2real config and check the recurring blockers up front. |
+| `sim2real` | Check canonical Sim2Real preimage prerequisites before a workflow run. |
 
 ## Examples
 

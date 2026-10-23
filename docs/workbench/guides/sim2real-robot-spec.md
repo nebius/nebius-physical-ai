@@ -68,8 +68,13 @@ npa workbench workflow submit "$SPEC" --runtime \
   --secret-env HF_TOKEN
 ```
 
-Run `npa workbench health preflight` and `npa workbench health sim2real`
-before submit. Image values must be registry-qualified immutable digests.
+Run `npa workbench health preflight` and `npa workbench health sim2real
+--project <configured-project-alias>` before submit. The latter's default
+preimage checks validate coherence, project-scoped storage, service tokens, and
+the selected Kubernetes context without resolving retired loop images. Run the
+canonical workflow's complete five-role `workflow preflight-images` command
+with registry-qualified immutable digests before submit; health preimage does
+not certify role-image pullability or source attestation.
 
 ## Integrity and observability
 
