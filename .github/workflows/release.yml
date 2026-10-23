@@ -54,7 +54,6 @@ jobs:
           /tmp/wheel-venv/bin/npa --version
 
       - name: Create GitHub Release with artifacts
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
-        with:
-          files: npa/dist/*
-          generate_release_notes: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" npa/dist/* --generate-notes

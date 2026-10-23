@@ -58,6 +58,16 @@ def test_workflow_checkouts_do_not_persist_github_tokens() -> None:
                     )
 
 
+def test_release_uses_the_runner_cli_with_an_explicit_token() -> None:
+    """Avoid granting repository-write credentials to an unnecessary action."""
+
+    steps = _load_workflow("release.yml")["jobs"]["build"]["steps"]
+    release = next(step for step in steps if step["name"] == "Create GitHub Release with artifacts")
+    assert release["env"] == {"GH_TOKEN": "${{ github.token }}"}
+    assert release["run"] == 'gh release create "$GITHUB_REF_NAME" npa/dist/* --generate-notes'
+    assert "uses" not in release
+
+
 def test_one_pr_workflow_owns_every_merge_gate() -> None:
     """Keep PR updates atomic instead of spawning six independent workflows."""
 
