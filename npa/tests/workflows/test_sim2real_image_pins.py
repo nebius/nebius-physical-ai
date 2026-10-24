@@ -440,6 +440,7 @@ def test_isaac_exact_source_image_imports_the_runtime_stage() -> None:
     assert "env -u PYTHONPATH /opt/npa/sim/venv/bin/python -c" in dockerfile
     assert (
         "import boto3, kubernetes, mcap, "
+        "npa.workflows.sim2real.cache_warm, "
         "npa.workflows.sim2real.runtime_attestation, "
         "npa.workflows.sim2real.workflow_stage" in (dockerfile)
     )
@@ -525,13 +526,11 @@ def test_cpu_controller_is_small_pinned_and_resolver_closed() -> None:
         assert dependency in control_lines
 
 
-def test_isaac_cache_warmer_is_nonroot_and_uses_fs_group() -> None:
-    root = Path(__file__).resolve().parents[2] / "docker" / "workbench"
-    documents = list(
-        yaml.safe_load_all((root / "common" / "warm-isaac-cache.yaml").read_text())
-    )
-    job = next(item for item in documents if item and item.get("kind") == "Job")
-    pod = job["spec"]["template"]["spec"]
+def test_isaac_cache_warmer_is_a_nonroot_canonical_workflow_state() -> None:
+    root = Path(__file__).resolve().parents[3]
+    runbook = yaml.safe_load((root / "workflows/main/sim2real.yaml").read_text())
+    resource = runbook["resources"]["isaac-cache-warm"]
+    pod = resource["kubernetes"]["pod_config"]["spec"]
     security = pod["securityContext"]
     assert security["runAsNonRoot"] is True
     assert (
@@ -541,6 +540,9 @@ def test_isaac_cache_warmer_is_nonroot_and_uses_fs_group() -> None:
     container = pod["containers"][0]
     assert container["securityContext"]["allowPrivilegeEscalation"] is False
     assert container["securityContext"]["capabilities"]["drop"] == ["ALL"]
+    assert runbook["states"]["stage-00-isaac-cache-warm"]["resources"] == (
+        "isaac-cache-warm"
+    )
 
 
 def test_standard_workflow_entrypoint_execs_orchestrator_argv() -> None:
@@ -788,6 +790,7 @@ def test_sim2real_control_plane_requirement_closure_is_exact() -> None:
     )
     assert "chmod -R" not in isaac_dockerfile
     assert "PYTHONPATH=/opt/npa/src" in isaac_dockerfile
+    assert "npa.workflows.sim2real.cache_warm" in isaac_dockerfile
     assert "npa.workflows.sim2real.workflow_stage" in isaac_dockerfile
 
     genesis_requirements = (

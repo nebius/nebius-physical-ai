@@ -254,6 +254,7 @@ def test_reduced_plan_preserves_all_real_solution_boundaries() -> None:
     plan = build_plan(spec, run_id="compose-1x1", assume_decision="loop_back")
     states = [step.state for step in plan.steps]
     expected = {
+        "stage-00-isaac-cache-warm",
         "stage-01-trigger",
         "stage-02-assets",
         "stage-03-transfer",
@@ -272,6 +273,51 @@ def test_reduced_plan_preserves_all_real_solution_boundaries() -> None:
     assert set(states) == expected
     assert states.count("stage-07-rollouts") == 1
     assert states.count("stage-09-ppo") == 1
+
+
+def test_canonical_cache_warm_state_precedes_gpu_cache_consumers() -> None:
+    payload = yaml.safe_load(SPEC.read_text())
+
+    assert payload["initial"] == "stage-00-isaac-cache-warm"
+    stage = payload["states"]["stage-00-isaac-cache-warm"]
+    assert stage["resources"] == "isaac-cache-warm"
+    assert stage["next"] == "stage-01-trigger"
+    assert stage["outputs"] == [
+        {
+            "uri": "{{config.root_uri}}/cache/isaac-warm.json",
+            "schema": "npa.sim2real.isaac_cache_warm.v1",
+        }
+    ]
+    assert stage["run"]["argv"][:3] == [
+        "/opt/npa/sim/venv/bin/python",
+        "-m",
+        "npa.workflows.sim2real.cache_warm",
+    ]
+
+    resource = payload["resources"]["isaac-cache-warm"]
+    assert "accelerators" not in resource
+    container = resource["kubernetes"]["pod_config"]["spec"]["containers"][0]
+    assert container["securityContext"] == {
+        "allowPrivilegeEscalation": False,
+        "capabilities": {"drop": ["ALL"]},
+    }
+    assert {item["name"]: item["value"] for item in container["env"]} == {
+        "NPA_SIM2REAL_ISAAC_CACHE_PVC": "{{config.isaac_cache_pvc}}",
+        "NPA_ISAAC_CACHE_DIR": "/opt/isaac-cache",
+        "NPA_ISAAC_CACHE_READONLY": "0",
+        "NPA_ISAAC_BOOTSTRAP_OFFLINE": "0",
+        "PIP_COMPILE": "0",
+    }
+    assert container["volumeMounts"][0] == {
+        "name": "npa-isaac-runtime-cache",
+        "mountPath": "/opt/isaac-cache",
+    }
+    assert (
+        payload["resources"]["isaac-gpu"]["kubernetes"]["pod_config"]["spec"][
+            "containers"
+        ][0]["volumeMounts"][0]["readOnly"]
+        is True
+    )
 
 
 @pytest.mark.parametrize(
@@ -2080,7 +2126,16 @@ def test_exact_source_and_per_state_immutable_images_reach_rendered_tasks() -> N
     rendered_isaac_tasks = [task for task in tasks if "ACCEPT_EULA" in task["envs"]]
     for task in rendered_isaac_tasks:
         assert task["envs"]["ACCEPT_EULA"] == "Y"
-    assert len(rendered_isaac_tasks) == 3
+    assert len(rendered_isaac_tasks) == 4
+    cache_warm_task = next(
+        task
+        for task in rendered_isaac_tasks
+        if task["envs"]["NPA_WORKFLOW_STATE"] == "stage-00-isaac-cache-warm"
+    )
+    assert "npa.workflows.sim2real.cache_warm" in cache_warm_task["run"]
+    assert cache_warm_task["resources"]["image_id"] == (
+        "docker:cr.example/npa/runtime@sha256:" + "b" * 64
+    )
 
 
 def test_canonical_isaac_eula_acceptance_is_operator_supplied_and_fail_closed() -> None:

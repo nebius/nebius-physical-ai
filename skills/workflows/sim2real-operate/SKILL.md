@@ -36,12 +36,15 @@ with an actionable migration to this canonical spec.
    make an occluded primary image useful for task-specific visual credit.
    Rebuild and regenerate rollouts when this visibility check fails; never
    relabel an existing view or rewrite its pose metadata in place.
-   Run the selected Isaac image's `isaac-bootstrap status` against the cache
-   PVC and require `ready=yes` for its reported `expected_tree` before using
-   read-only/offline mode. The cache stamp includes the bootstrap script, so
+   Provision the selected RWX cache claim explicitly with `npa workbench
+   sim2real cache provision --name <claim> --context <context> --namespace
+   <namespace>`. The canonical workflow's CPU-only
+   `stage-00-isaac-cache-warm` then runs the selected immutable Isaac image's
+   real bootstrap, requires `ready=yes`, and publishes a source-bound
+   `cache/isaac-warm.json` receipt before any GPU state consumes the claim
+   read-only/offline. The cache stamp includes the bootstrap script, so
    unchanged wheel pins alone do not prove that a rebuilt image can reuse it.
-   If absent, run `npa/docker/workbench/common/warm-isaac-cache.yaml` with that
-   exact image digest to create its versioned tree; preserve older cache trees.
+   Do not apply an out-of-band warm Job; preserve older versioned cache trees.
    Inspect first and last frames from all three cameras for the robot and task;
    successful PNG decoding alone does not prove useful rendered content. Serialized
    camera poses remain WXYZ, while Isaac Lab 3 sensor offsets require XYZW. Use

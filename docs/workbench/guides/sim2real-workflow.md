@@ -459,40 +459,40 @@ configuration exports (`KUBECONFIG`, `SKYPILOT_GLOBAL_CONFIG`,
 shell used for submit, status, logs, resume, or cleanup. NPA cluster identity
 must still match the selected project/context. See [SkyPilot setup](../../orchestration/skypilot-setup.md).
 
-## 5. Warm the selected Isaac image
+## 5. Provision the cache claim; let the canonical workflow warm it
 
-Use the [shipped warming template](../../../npa/docker/workbench/common/warm-isaac-cache.yaml)
-with the exact Isaac digest. It creates the RWX PVC and runs bootstrap as an
-unprivileged user. Substitute only the image input:
+The only operator-managed object is the durable RWX claim. Create or verify it
+through the shared CLI against the exact context and namespace that submission
+will use. This command never creates a Job and never replaces an existing
+operator-owned claim.
 
 ```bash
-CACHE_SETUP_DIR="$HOME/.npa/sim2real-setup/$NPA_CLUSTER"
-mkdir -p "$CACHE_SETUP_DIR"
-chmod 700 "$CACHE_SETUP_DIR"
-sed "s|image: ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:<64-hex-digest>|image: $ISAAC_IMAGE|" \
-  npa/docker/workbench/common/warm-isaac-cache.yaml \
-  > "$CACHE_SETUP_DIR/warm-isaac-cache.yaml"
-kubectl --namespace "$NPA_NAMESPACE" apply -f "$CACHE_SETUP_DIR/warm-isaac-cache.yaml"
-kubectl --namespace "$NPA_NAMESPACE" wait --for=condition=complete job/npa-warm-isaac-cache --timeout=-1s
-kubectl --namespace "$NPA_NAMESPACE" logs job/npa-warm-isaac-cache
-kubectl --namespace "$NPA_NAMESPACE" get pvc npa-isaac-cache
+ISAAC_CACHE_PVC="npa-isaac-cache"
+npa/.venv/bin/npa workbench sim2real cache provision \
+  --name "$ISAAC_CACHE_PVC" \
+  --kubeconfig "$KUBECONFIG" \
+  --context "$NPA_CLUSTER" \
+  --namespace "$NPA_NAMESPACE" \
+  --storage-class csi-mounted-fs-path-sc \
+  --storage 64Gi \
+  --json
 ```
 
-Private-registry users must include the prepared pull secret in the generated
-Job's `spec.template.spec.imagePullSecrets` before applying it.
-Expected: the Job logs show `ready=yes` for the selected image's `expected_tree`,
-the Job succeeds, and the PVC is `Bound` with `ReadWriteMany`. Cold installation downloads several
-gigabytes and can stay quiet while extracting wheels into the shared filesystem.
-While waiting, inspect the Job and
-pod events from another terminal; a failed Job never reaches `complete`.
-Keep the rendered manifest outside Git because it can contain private registry
-locations. The checked-in template remains unchanged.
+Expected: the receipt reports `status: ready`, `phase: Bound`, and
+`ReadWriteMany`. The command waits without a synthetic job-duration deadline;
+if storage provisioning is pending, inspect that exact claim and its events,
+then rerun the same command. It refuses to alter a foreign or incompatible
+claim, so use a new claim name instead of replacing somebody else's volume.
 
-After changing images, verify the old warming Job is terminal, delete only that
-Job (`kubectl --namespace "$NPA_NAMESPACE" delete job npa-warm-isaac-cache`), and apply the newly rendered
-template. Keep the PVC and older versioned trees. The selected image's
-`isaac-bootstrap status` must report `ready=yes` for its own `expected_tree`;
-matching wheel pins alone do not prove compatibility. See
+Do not apply a raw warming Job. The canonical `sim2real.yaml` begins with its
+CPU-only `stage-00-isaac-cache-warm` state. That state runs the selected
+immutable Isaac image's real `isaac-bootstrap warm`, validates `ready=yes`, and
+publishes `cache/isaac-warm.json` with the image source attestation and
+content-addressed cache-manifest hash. Only later Isaac GPU states receive the
+same claim as read-only and offline. A new Isaac image/bootstrap produces a new
+versioned cache tree; begin a new source-qualified workflow run so stage 00
+records it without changing an existing run's authority. Keep prior trees and
+the claim for existing runs. See
 [runtime-fetch packaging](../container-packaging.md#runtime-fetched-isaac-sim-why-the-isaac-images-are-publishable).
 
 ### Verify native camera evidence
@@ -561,7 +561,7 @@ CONFIG_ARGS=(
   --var envgen_image="$ENVGEN_IMAGE"
   --var isaac_image="$ISAAC_IMAGE"
   --var viewer_image="$VIEWER_IMAGE"
-  --var isaac_cache_pvc=npa-isaac-cache
+  --var isaac_cache_pvc="$ISAAC_CACHE_PVC"
   --var gpu_concurrency="$NPA_GPU_CONCURRENCY"
   --var token_factory_model=MiniMaxAI/MiniMax-M3
 )

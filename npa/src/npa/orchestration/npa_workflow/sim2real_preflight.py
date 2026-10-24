@@ -176,9 +176,10 @@ def static_prerequisites(
         issues.append(
             (
                 "config.isaac_cache_pvc is empty",
-                "create and warm the shared Isaac cache from "
-                "npa/docker/workbench/common/warm-isaac-cache.yaml, then pass "
-                "--var isaac_cache_pvc=<bound-rwx-pvc>",
+                "run `npa workbench sim2real cache provision --name <rwx-pvc> "
+                "--context <context> --namespace <namespace>`, then pass "
+                "--var isaac_cache_pvc=<bound-rwx-pvc>; the canonical workflow "
+                "warms and attests that claim in its first SkyPilot state",
             )
         )
 
@@ -499,9 +500,10 @@ def _isaac_cache_issues(config, runner, namespace) -> list[Issue]:
                 (
                     f"Isaac cache PVC {pvc_name!r} is missing or is not Bound ReadWriteMany "
                     f"in namespace {namespace!r}",
-                    "apply npa/docker/workbench/common/warm-isaac-cache.yaml with the "
-                    "selected immutable Isaac image, wait for the warm Job to complete, "
-                    "and pass that PVC name",
+                    "provision or inspect this exact claim with `npa workbench sim2real "
+                    "cache provision --name <pvc> --context <context> --namespace "
+                    f"{namespace}`; once Bound, the canonical workflow warms and attests "
+                    "it before any read-only/offline Isaac GPU state",
                 )
             )
 
