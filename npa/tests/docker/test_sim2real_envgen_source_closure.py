@@ -157,7 +157,7 @@ def test_envgen_runtime_uses_its_own_python312_venv_and_exact_source_pth():
         "e85be844203885286c60ffad8a858d48afb6c5a5c237ca0e67f12e74b8f174b1" in text
     )
     assert 'uv python install "${ENVGEN_PYTHON_VERSION}"' in text
-    assert 'uv venv --python "${ENVGEN_PYTHON_VERSION}" "${ENVGEN_VENV}"' in text
+    assert 'uv venv --seed --python "${ENVGEN_PYTHON_VERSION}" "${ENVGEN_VENV}"' in text
     assert "sys.version_info[:3] == (3, 12, 14)" in text
     assert "UV_PYTHON_INSTALL_DIR=/opt/npa/python" in text
     assert "UV_NO_MODIFY_PATH=1" in text

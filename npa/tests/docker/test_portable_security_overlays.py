@@ -162,6 +162,11 @@ def test_python_ray_runtime_excludes_unused_java_worker_bundle() -> None:
 @pytest.mark.parametrize("image", ["cosmos3", "cosmos3-ray-serve"])
 def test_cosmos_images_patch_every_bootstrap_interpreter(image: str) -> None:
     docker = (ROOT / image / "Dockerfile").read_text()
+    # This lock is applied to every uv-managed interpreter that survives into
+    # these images. Keep its pip vendor closure above the certifi advisory fix.
+    shared_lock = (ROOT / "sonic" / "packaging-requirements.txt").read_text()
+    assert "pip==26.2.2" in shared_lock
+    assert "pip==26.2.1" not in shared_lock
     assert "docker/workbench/sonic/packaging-requirements.txt" in docker
     assert 'Path("/opt/uv/python").glob("*/bin/python3")' in docker
     assert '"--no-deps","--require-hashes"' in docker

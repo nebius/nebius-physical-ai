@@ -145,7 +145,7 @@ def test_envgen_flattens_a_dedicated_exact_source_runtime() -> None:
     )
     assert "sim2real-envgen-requirements.txt" in text
     assert "ARG ENVGEN_PYTHON_VERSION=3.12.14" in text
-    assert 'uv venv --python "${ENVGEN_PYTHON_VERSION}" "${ENVGEN_VENV}"' in text
+    assert 'uv venv --seed --python "${ENVGEN_PYTHON_VERSION}" "${ENVGEN_VENV}"' in text
     assert "sys.version_info[:3] == (3, 12, 14)" in text
     assert '"${ENVGEN_VENV}/bin/python" -m pip check' in text
     assert "npa-exact-source.pth" in text
