@@ -399,6 +399,32 @@ final recording/report verification. The guide retains the measured quality
 diagnostics, curation fallback, and limits; execution success does not certify
 training-data suitability.
 
+A fresh October 24, 2026 starter run with the startup repairs completed all 15
+stages on one RTX PRO 6000 Blackwell GPU. Both default variants passed on the
+first generation attempt with an aggregate evaluator score of `0.570243`, using
+the unchanged `0.2` quality and `0.25` attribute thresholds. Both received
+captions and remained in the curated output. The independent starter audit
+passed, including fresh pinned input bytes, full decoded alignment, native
+controls and guardrails, artifact hashes, real component reports, and Rerun
+identity and media checks. The run and its owned controller/API were closed
+with verified cleanup receipts. This establishes an exploratory starter smoke;
+it does not qualify manipulation-task fidelity.
+
+The count-only twelve-variant override generated all twelve videos in both the
+initial and shipped refinement passes, with zero generation failures. The
+first evaluator accepted ten clips; the final evaluator accepted eleven with
+an aggregate score of `0.393762`. The remaining clip missed all four requested
+appearance attributes, so it failed the unchanged `0.25` attribute threshold
+despite clearing the `0.2` aggregate threshold. Increasing the variant count
+therefore proved generation coverage, without establishing an accepted
+twelve-variant dataset.
+The workflow completed the evidence stages and stopped at `reject-quality`.
+An independent read-only rejection audit verified all twelve decoded videos,
+native controls and guardrails, fresh source provenance, and the Rerun video's
+hashes, timelines and rejected dispositions. Accepted-only captioning, curation
+and finalization artifacts were absent. The accepted twelve-variant audit above
+was not passed by this rejected run.
+
 The publication regression can separately reuse retained real GPU output.
 Run `npa/tests/e2e/test_paidf_cosmos3_publication_live.py` with
 `NPA_INTEGRATION_E2E=1`, `NPA_PAIDF_RAW_EVIDENCE_DIR` pointing to downloaded

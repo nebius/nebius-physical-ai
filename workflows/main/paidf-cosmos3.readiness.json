@@ -53,9 +53,10 @@
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "The manipulation recipes executed on RTX PRO 6000 Blackwell and B200, but their reviewed candidates were rejected. Every future target must independently prove project access, Kubernetes readiness, supported GPU discovery, image pullability and sufficient per-node resources; runtime execution alone does not qualify generated data.",
+      "reason": "A fresh October 24, 2026 starter run completed all 15 stages on one RTX PRO 6000 Blackwell GPU, and its independent default-starter media, guardrail, provenance and Rerun audit passed. The count-only twelve-variant override generated all twelve videos in both default refinement passes; the final evaluator accepted eleven, while the remaining clip failed the required appearance checks. No accepted twelve-variant dataset is claimed. The manipulation recipes also executed on RTX PRO 6000 Blackwell and B200, but their reviewed candidates were rejected. Every future target must independently prove project access, Kubernetes readiness, supported GPU discovery, image pullability and sufficient per-node resources; runtime execution alone does not qualify generated data.",
       "evidence": [
-        "workflows/guides/paidf-cosmos3.md#validation"
+        "workflows/guides/paidf-cosmos3.md#validation",
+        "docs/workbench/guides/paidf-cosmos3.md#live-validation-scope"
       ]
     }
   }
