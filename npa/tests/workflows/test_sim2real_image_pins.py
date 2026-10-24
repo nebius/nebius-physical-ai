@@ -10,6 +10,7 @@ these bare constants — this test closes that gap.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -128,7 +129,7 @@ def test_envgen_bootstrap_tools_use_the_current_secure_floors() -> None:
 
 
 def test_cosmos3_reason_repairs_inherited_scanner_critical_python_packages() -> None:
-    """The canonical Stage 3 role must not retain a vulnerable parent closure."""
+    """The Stage 3 final image must exclude vulnerable parent-image history."""
 
     root = Path(__file__).resolve().parents[2] / "docker" / "workbench"
     text = (root / "cosmos3-reason/Dockerfile").read_text(encoding="utf-8")
@@ -136,6 +137,18 @@ def test_cosmos3_reason_repairs_inherited_scanner_critical_python_packages() -> 
     assert '"certifi==2026.10.19"' in text
     assert '"Pillow==13.0.0"' in text
     assert '"Pillow==12.2.0"' not in text
+    assert "FROM ${BASE_IMAGE} AS sanitized" in text
+    final_stage = text.split("FROM scratch AS runtime", maxsplit=1)[1]
+    assert "COPY --from=sanitized / /" in final_stage
+    for contract in (
+        "NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA}",
+        "NPA_BAKED_PYTHON=/opt/npa/venv/bin/python",
+        "NVIDIA_VISIBLE_DEVICES=all",
+        "NVIDIA_DRIVER_CAPABILITIES=compute,utility",
+        'NVIDIA_REQUIRE_CUDA="cuda>=13.0',
+        'ENTRYPOINT ["/usr/local/bin/npa-workflow-entrypoint"]',
+    ):
+        assert contract in final_stage
 
 
 def test_sim2real_manual_uses_canonical_cosmos_and_cache_warm_roles() -> None:
@@ -692,7 +705,8 @@ def test_exact_source_runtime_installs_are_resolver_closed(relative_path: str) -
     )
     assert "chmod -R" not in dockerfile
     assert "pip install tomli " not in dockerfile
-    assert ">=" not in dockerfile
+    runtime_installs = re.sub(r'NVIDIA_REQUIRE_CUDA="[^"]+"', "", dockerfile)
+    assert ">=" not in runtime_installs
 
 
 def test_cosmos3_system_packages_use_an_immutable_snapshot() -> None:
