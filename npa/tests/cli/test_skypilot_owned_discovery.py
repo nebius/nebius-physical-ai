@@ -66,6 +66,7 @@ def owned_check(tmp_path, monkeypatch):
         lambda _: SimpleNamespace(
             installed=True,
             kubernetes_compatible=True,
+            fastapi_compatible=True,
             sky_bin=sky,
             path=sky.parent.parent,
         ),
