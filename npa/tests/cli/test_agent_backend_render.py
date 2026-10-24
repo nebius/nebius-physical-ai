@@ -29,6 +29,19 @@ from npa.cli.agent_viewer_runtime import _sha256_file
 from npa.cli.agent_workflow import generate_workflow_yaml
 
 
+_SIM2REAL_TEST_IMAGE = "registry.example.invalid/npa/sim2real@sha256:" + "a" * 64
+_SIM2REAL_ROLE_IMAGES = {
+    key: _SIM2REAL_TEST_IMAGE
+    for key in (
+        "controller_image",
+        "cosmos3_image",
+        "envgen_image",
+        "isaac_image",
+        "viewer_image",
+    )
+}
+
+
 def test_sha256_file_streams_recording_without_read_bytes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1370,6 +1383,10 @@ def test_session_owned_status_skips_cross_bucket_artifact_discovery(
 
     module_name = "npa_rendered_session_status_backend"
     module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    # Artifact discovery tests use a healthy viewer without touching host services.
+    monkeypatch.setattr(module, "_rerun_service_active", lambda: True)
+    monkeypatch.setattr(module, "_rerun_web_viewer_healthy", lambda: True)
+    monkeypatch.setattr(module, "_restart_rerun_serve", lambda **_kwargs: True)
     run_id = "agent-run-local-status"
     recordings_dir = tmp_path / "recordings"
     recordings_dir.mkdir()
@@ -2442,6 +2459,7 @@ def test_rendered_chat_blocks_draft_when_accelerator_discovery_is_unavailable(
                             "status": "unavailable",
                             "error": {"kind": "permission_denied"},
                         },
+                        **_SIM2REAL_ROLE_IMAGES,
                     },
                 }
             ],
@@ -3781,6 +3799,10 @@ def test_source_qualified_rrd_loads_keep_independent_history(
     state: dict = {}
     monkeypatch.setattr(module, "_load_state", lambda: state)
     monkeypatch.setattr(module, "_save_state", lambda _state: None)
+    # Artifact discovery tests use a healthy viewer without touching host services.
+    monkeypatch.setattr(module, "_rerun_service_active", lambda: True)
+    monkeypatch.setattr(module, "_rerun_web_viewer_healthy", lambda: True)
+    monkeypatch.setattr(module, "_restart_rerun_serve", lambda **_kwargs: True)
     monkeypatch.setattr(
         module,
         "_agent_artifact_s3_client",
@@ -5146,7 +5168,11 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
                 {
                     "cluster_name": "configured-cluster",
                     "context": "configured-context",
-                    "raw": {"gpu_accelerator": "RTXPRO6000", "namespace": "workflows"},
+                    "raw": {
+                        "gpu_accelerator": "RTXPRO6000",
+                        "namespace": "workflows",
+                        **_SIM2REAL_ROLE_IMAGES,
+                    },
                 }
             ],
             "local_clusters": [],

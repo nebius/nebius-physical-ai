@@ -188,7 +188,7 @@ def coherence_failures(repo_root: Path) -> list[str]:
         "root_uri",
         "trigger_uri",
         "controller_image",
-        "transfer_image",
+        "cosmos3_image",
         "envgen_image",
         "isaac_image",
         "viewer_image",

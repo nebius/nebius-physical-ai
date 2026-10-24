@@ -954,6 +954,7 @@ def configured_gpu_runtime(mocker, monkeypatch, satisfied_preflight):
     expected = {
         "AWS_ACCESS_KEY_ID": "project-access",
         "AWS_SECRET_ACCESS_KEY": "project-secret",
+        "NPA_SKYPILOT_PROJECT": "selected-project",
         "NPA_S3_BUCKET": "rt-bucket",
         "NPA_S3_PREFIX": "runs/identity-test",
         **dict.fromkeys(STORAGE_ENDPOINT_ENV_NAMES, "https://storage.example.invalid"),
@@ -962,6 +963,7 @@ def configured_gpu_runtime(mocker, monkeypatch, satisfied_preflight):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.delenv("NPA_WORKFLOW_GPU_ACCELERATOR", raising=False)
     monkeypatch.setenv("AWS_ENDPOINT_URL", "https://ambient.example.invalid")
+    monkeypatch.setenv("NPA_SKYPILOT_PROJECT", "ambient-project")
     original_environment = {key: os.environ.get(key) for key in expected}
     mocker.patch(
         "npa.orchestration.npa_workflow.submit_credentials.resolve_project_storage",
@@ -1030,6 +1032,8 @@ def test_runtime_discovery_preserves_resolved_identity_and_restores_environment(
             str(gpu_then_cpu_spec),
             "--run-id",
             "identity-test",
+            "--project",
+            "selected-project",
             "--runtime",
             "--infra",
             "k8s/unit-context",
@@ -2384,6 +2388,96 @@ def _write_local_receipt(monkeypatch, tmp_path: Path, run_id: str, raw: str) -> 
     path = submission_state_path("unit", run_id)
     path.parent.mkdir(parents=True)
     path.write_text(raw, encoding="utf-8")
+
+
+def test_cli_resume_recovers_the_plan_from_failed_prelaunch_preflight(
+    fake_runtime, monkeypatch, tmp_path: Path
+) -> None:
+    from npa.clients import config
+    from npa.orchestration.npa_workflow import submission_state
+
+    monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "config.yaml")
+    run_id = "prelaunch-recovery"
+    submission_state.record_submission_plan(
+        "unit",
+        run_id,
+        workflow={
+            "name": "token-factory-parallel-fanout",
+            "kind": "npa.workflow/v0.0.1",
+        },
+        planning={"state": "durable", "source_action": "not-required"},
+    )
+    original = submission_state.load_submission_state("unit", run_id)
+    assert "run_prefix_uri" not in original["workflow"]
+    assert "launch" not in original
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--runtime",
+            "--resume",
+            "--run-id",
+            run_id,
+            "--project",
+            "unit",
+            "--var",
+            "bucket=rt-bucket",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert fake_runtime["run_id"] == run_id
+    assert fake_runtime["state_store"] is None
+    recovered = submission_state.load_submission_state("unit", run_id)
+    assert recovered["workflow"]["run_prefix_uri"].startswith("s3://rt-bucket/")
+    assert "launch" in recovered
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"launch": {}},
+        {"launch": {"status": "failed"}},
+        {"launch": {"status": "launching", "job_id": ""}},
+        {"schema_version": "npa.workflow.submission.v0"},
+        {"project": "other"},
+        {"run_id": "other"},
+        {"workflow": None},
+    ],
+)
+def test_resume_without_prefix_rejects_launch_evidence_or_uncertain_identity(
+    monkeypatch, override
+) -> None:
+    from types import SimpleNamespace
+
+    from npa.cli.workbench.workflow import _recorded_runtime_store
+    from npa.orchestration.npa_workflow import submission_state
+
+    payload = {
+        "schema_version": submission_state.SCHEMA_VERSION,
+        "project": "unit",
+        "run_id": "prelaunch-recovery",
+        "launch_state": "planned",
+        "workflow": {"name": "test"},
+        **override,
+    }
+    monkeypatch.setattr(
+        submission_state,
+        "inspect_submission_state",
+        lambda *_: SimpleNamespace(outcome="found", payload=payload),
+    )
+
+    with pytest.raises(ValueError, match="resume receipt"):
+        _recorded_runtime_store(
+            "unit",
+            "prelaunch-recovery",
+            resume=True,
+            credentials=_selected_storage_credentials(),
+        )
 
 
 def test_cli_resume_preserves_recorded_legacy_store(

@@ -1,5 +1,5 @@
 ARG BASE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-cosmos3-reason@sha256:e708aa32b9247eaedf1a7a5b0d82adbe65b95a9af50721b9d09fddbfd508bbc9
-FROM ${BASE_IMAGE}
+FROM ${BASE_IMAGE} AS sanitized
 
 ARG COSMOS3_REASON_VERSION=cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z
 ARG NPA_SOURCE_SHA
@@ -51,6 +51,8 @@ RUN mkdir -p /tmp/hf_home/cosmos-reason2 /tmp/hf_home/cosmos-reason2-2b \
     && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && python -m pip uninstall -y npa \
     && python -m pip install --no-deps \
+      "certifi==2026.10.19" \
+      "Pillow==13.0.0" \
       "tomli==2.4.1" \
       "accelerate==1.14.0" \
       "huggingface_hub==0.36.0" \
@@ -114,6 +116,59 @@ RUN apt-get update \
 # "npa is not importable after setup" (live job 307). SkyPilot needs a system python3 to EXIST,
 # not to be first.
 
+USER ubuntu
+
+# The parent is a trusted build input, but its historical layers are also
+# scanner-visible.  Emit only the sanitized final filesystem so package upgrades
+# above replace the inherited bytes instead of depending on scanner exceptions.
+FROM scratch AS runtime
+
+ARG COSMOS3_REASON_VERSION=cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z
+ARG NPA_SOURCE_SHA
+
+LABEL npa.tool="cosmos3-reason" \
+      npa.version="${COSMOS3_REASON_VERSION}" \
+      org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
+      org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"
+
+COPY --from=sanitized / /
+
+ENV PATH=/opt/npa/venv/bin:/usr/local/cuda/bin:/usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    NVARCH=x86_64 \
+    NVIDIA_REQUIRE_CUDA="cuda>=13.0 brand=unknown,driver>=535,driver<536 brand=grid,driver>=535,driver<536 brand=tesla,driver>=535,driver<536 brand=nvidia,driver>=535,driver<536 brand=quadro,driver>=535,driver<536 brand=quadrortx,driver>=535,driver<536 brand=nvidiartx,driver>=535,driver<536 brand=vapps,driver>=535,driver<536 brand=vpc,driver>=535,driver<536 brand=vcs,driver>=535,driver<536 brand=vws,driver>=535,driver<536 brand=cloudgaming,driver>=535,driver<536 brand=unknown,driver>=550,driver<551 brand=grid,driver>=550,driver<551 brand=tesla,driver>=550,driver<551 brand=nvidia,driver>=550,driver<551 brand=quadro,driver>=550,driver<551 brand=quadrortx,driver>=550,driver<551 brand=nvidiartx,driver>=550,driver<551 brand=vapps,driver>=550,driver<551 brand=vpc,driver>=550,driver<551 brand=vcs,driver>=550,driver<551 brand=vws,driver>=550,driver<551 brand=cloudgaming,driver>=550,driver<551 brand=unknown,driver>=565,driver<566 brand=grid,driver>=565,driver<566 brand=tesla,driver>=565,driver<566 brand=nvidia,driver>=565,driver<566 brand=quadro,driver>=565,driver<566 brand=quadrortx,driver>=565,driver<566 brand=nvidiartx,driver>=565,driver<566 brand=vapps,driver>=565,driver<566 brand=vpc,driver>=565,driver<566 brand=vcs,driver>=565,driver<566 brand=vws,driver>=565,driver<566 brand=cloudgaming,driver>=565,driver<566 brand=unknown,driver>=570,driver<571 brand=grid,driver>=570,driver<571 brand=tesla,driver>=570,driver<571 brand=nvidia,driver>=570,driver<571 brand=quadro,driver>=570,driver<571 brand=quadrortx,driver>=570,driver<571 brand=nvidiartx,driver>=570,driver<571 brand=vapps,driver>=570,driver<571 brand=vpc,driver>=570,driver<571 brand=vcs,driver>=570,driver<571 brand=vws,driver>=570,driver<571 brand=cloudgaming,driver>=570,driver<571 brand=unknown,driver>=575,driver<576 brand=grid,driver>=575,driver<576 brand=tesla,driver>=575,driver<576 brand=nvidia,driver>=575,driver<576 brand=quadro,driver>=575,driver<576 brand=quadrortx,driver>=575,driver<576 brand=nvidiartx,driver>=575,driver<576 brand=vapps,driver>=575,driver<576 brand=vpc,driver>=575,driver<576 brand=vcs,driver>=575,driver<576 brand=vws,driver>=575,driver<576 brand=cloudgaming,driver>=575,driver<576" \
+    CUDA_VERSION=13.0.1 \
+    LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64:/usr/local/cuda/lib64 \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility \
+    LIBRARY_PATH=/usr/local/cuda/lib64/stubs \
+    DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    TORCH_CUDA_ARCH_LIST="8.0 9.0 10.0 10.3 12.0" \
+    CUDA_HOME=/usr/local/cuda \
+    NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
+    NPA_COSMOS3_REASON_MODEL=nvidia/Cosmos-Predict2.5-2B \
+    NPA_COSMOS3_TRANSFER_MODEL=nvidia/Cosmos-Transfer2.5-2B \
+    NPA_COSMOS_GUARDRAIL_MODEL=nvidia/Cosmos-Guardrail1 \
+    NPA_COSMOS_REASON2_MODEL_ID=nvidia/Cosmos-Reason2-8B \
+    NPA_COSMOS_REASON3_MODEL_ID=nvidia/Cosmos-Reason2-2B \
+    NPA_COSMOS_REASON_MODEL_ID=nvidia/Cosmos-Reason2-8B \
+    NPA_COSMOS_REASON2_CACHE=/tmp/hf_home/cosmos-reason2 \
+    NPA_COSMOS_REASON3_CACHE=/tmp/hf_home/cosmos-reason2-2b \
+    NPA_COSMOS_REASON_CACHE=/tmp/hf_home/cosmos-reason2 \
+    NPA_SKIP_EAGER_IMPORTS=1 \
+    NPA_BAKED_PYTHON=/opt/npa/venv/bin/python \
+    HF_HOME=/tmp/hf_home \
+    HF_HUB_CACHE=/opt/npa/hf_cache/hub \
+    TRANSFORMERS_CACHE=/opt/npa/hf_cache/transformers \
+    NPA_INPUT_PATH=/input \
+    NPA_OUTPUT_PATH=/output \
+    INPUT_PATH=/input \
+    OUTPUT_PATH=/output \
+    PYTHONPATH=/opt/npa/src
+
+WORKDIR /workspace
 USER ubuntu
 
 ENTRYPOINT ["/usr/local/bin/npa-workflow-entrypoint"]

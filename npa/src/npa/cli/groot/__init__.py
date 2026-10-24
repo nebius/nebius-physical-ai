@@ -3034,7 +3034,7 @@ def deploy_cmd(
             )
             if dry_run:
                 console.print(
-                    "    [dry-run] Would install Python 3.10, uv, NGC CLI, Isaac-GR00T, and Isaac Lab"
+                    "    [dry-run] Would install the Python 3.10 GR00T vendor runtime and Python 3.11 NPA control runtime, uv, NGC CLI, Isaac-GR00T, and Isaac Lab"
                 )
                 console.print("    [dry-run] Service env:")
                 console.print(render_redacted_env_file(full_service_env).rstrip())

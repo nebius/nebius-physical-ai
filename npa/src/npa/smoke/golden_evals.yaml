@@ -1536,25 +1536,27 @@ containers:
     physical_ai:
       useful: true
       role: >-
-        Generates randomized Genesis sim environments for the sim-to-real data
-        pipeline.
+        Generates source-attested randomized scenario records consumed by the
+        Sim2Real data pipeline. Physics execution remains an Isaac role.
     safety:
       runs_as: ubuntu
-      base_image: npa-genesis
+      base_image: source-attested NPA CUDA/Kubernetes role parent
       network: none
       external_fetch: [pypi]
       notes: >-
-        Build py_compiles sim2real_envgen; the golden eval removes PYTHONPATH and
-        proves the exact source plus compatibility shim remain readable to the
-        non-root runtime user. No open ports.
+        A dedicated Python 3.12 EnvGen venv pins the NPA closure, Pillow 13,
+        and fsspec 2026.6.0 while excluding Genesis, LeRobot, datasets, and
+        Torch. The golden eval removes PYTHONPATH and proves exact source
+        readability plus raw-scenario generation as the non-root runtime user.
+        No open ports or runtime fetches are required.
     golden_eval:
       kind: container-smoke
       module: npa.smoke.test_sim2real_envgen_functional
       command: python -m npa.smoke.test_sim2real_envgen_functional
       serverless_gpu: h200
-      gpu: optional
-      timeout_seconds: 600
-      status: gpu-gated
+      gpu: none
+      timeout_seconds: 120
+      status: needs-image-update
 
   reference-policy:
     image: npa-reference-policy
@@ -1562,21 +1564,27 @@ containers:
     physical_ai:
       useful: true
       role: >-
-        Reference policy contract for the sim-to-real loop (policy-contract
-        subcommand) atop the envgen image.
+        Reference policy-contract metadata for the sim-to-real loop atop the
+        EnvGen image. It is not a policy trainer, rollout evaluator, or
+        qualification claim.
     safety:
       runs_as: ubuntu
       base_image: npa-envgen
       network: none
       external_fetch: [pypi]
-      notes: Thin label layer over envgen; inherits its posture.
+      notes: >-
+        Thin label layer over EnvGen; its smoke proves only the variant and
+        scenario-record contract. Canonical policy training and evaluation use
+        their dedicated workflow stages and require separate evidence.
     golden_eval:
       kind: container-smoke
       module: npa.smoke.test_sim2real_policy_functional
       command: python -m npa.smoke.test_sim2real_policy_functional
+      # CPU-only serverless jobs still select the shared-project's explicit
+      # smallest offered platform; this does not claim a GPU policy evaluation.
       serverless_gpu: h200
-      gpu: optional
-      timeout_seconds: 300
+      gpu: none
+      timeout_seconds: 120
       status: needs-image-update
 
   loop-eval:

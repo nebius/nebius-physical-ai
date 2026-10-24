@@ -5,6 +5,7 @@ ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 
 ARG BASE_IMAGE
+ARG NPA_SOURCE_SHA
 ARG GENESIS_VERSION=0.4.6
 ARG LEROBOT_VERSION=0.4.4
 ARG RSL_RL_VERSION=5.5.1
@@ -12,7 +13,8 @@ ARG RSL_RL_VERSION=5.5.1
 LABEL npa.tool="genesis" \
       npa.version="${GENESIS_VERSION}" \
       npa.image.flavor="sm80-sm90-sm100-sm103-sm120" \
-      npa.base.profile="cuda13-workbench"
+      npa.base.profile="cuda13-workbench" \
+      org.opencontainers.image.revision="${NPA_SOURCE_SHA}"
 
 ENV DEBIAN_FRONTEND=noninteractive \
     GENESIS_VERSION=${GENESIS_VERSION} \
@@ -22,12 +24,16 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    NPA_GENESIS_SUPPORTED_STUDENT_POLICIES=act \
     NPA_GENESIS_HOME=/opt/genesis \
+    GENESIS_VENV=/opt/genesis/venv \
+    NPA_BAKED_PYTHON=/opt/genesis/venv/bin/python \
     NVIDIA_DRIVER_CAPABILITIES=compute,graphics,utility \
     EGL_PLATFORM=device \
     IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg \
-    PATH=/opt/npa/venv/bin:$PATH \
-    PYTHONPATH=/opt/npa/src
+    PATH=/opt/genesis/venv/bin:/opt/npa/venv/bin:$PATH \
+    PYTHONPATH=/opt/npa/src \
+    NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA}
 
 SHELL ["/bin/bash", "-lc"]
 
@@ -49,11 +55,24 @@ RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu; \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends --fix-broken
 
-COPY docker/workbench/curobo/remove_scikit_image_recipe.py \
+COPY --chmod=0644 docker/workbench/curobo/remove_scikit_image_recipe.py \
     /opt/genesis/remove-scikit-image-recipe.py
+COPY --chmod=0644 docker/workbench/genesis/prepare_public_runtime.py \
+    /opt/genesis/prepare-public-runtime.py
+COPY --chmod=0644 docker/workbench/genesis/prepare_public_policies.py \
+    /opt/genesis/prepare-public-policies.py
+COPY --chmod=0644 docker/workbench/common/envgen_compat/tetgen.py \
+    /opt/genesis/compat/tetgen.py
 
-# This additive recipe keeps its CUDA 13 parent's Python 3.11 environment.
-# Correct the reviewed dependency before the installation layer commits.
+USER ubuntu
+WORKDIR /opt/genesis
+
+# LeRobot 0.4.4 constrains torch below 2.11. Keep that supported closure in a
+# dedicated Python 3.11 venv so it cannot replace the CUDA 13 parent's Torch
+# 2.13 runtime. Correct the reviewed dependency before the installation layer
+# commits.
+RUN python3.11 -m venv "${GENESIS_VENV}"
+
 RUN python -m pip install --upgrade pip setuptools wheel \
     && python -m pip install --no-binary imageio-ffmpeg \
       "genesis-world==${GENESIS_VERSION}" \
@@ -72,11 +91,27 @@ RUN python -m pip install --upgrade pip setuptools wheel \
       "boto3==1.42.91" \
       "jinja2==3.1.6" \
       "pyarrow==23.0.1" \
-    && test -z "$(find /opt/npa/venv -type f \
+    && python -m pip install --no-cache-dir --no-deps --upgrade \
+      "fsspec==2026.6.0" \
+    && python /opt/genesis/prepare-public-runtime.py \
+      --site-packages /opt/genesis/venv/lib/python3.11/site-packages --check-only \
+    && python /opt/genesis/prepare-public-policies.py \
+      --site-packages /opt/genesis/venv/lib/python3.11/site-packages --check-only \
+    && python -m pip uninstall -y tetgen diffusers wandb torchcodec transformers peft \
+    && python /opt/genesis/prepare-public-runtime.py \
+      --site-packages /opt/genesis/venv/lib/python3.11/site-packages \
+      > /opt/genesis/public-runtime-dependencies.json \
+    && python /opt/genesis/prepare-public-policies.py \
+      --site-packages /opt/genesis/venv/lib/python3.11/site-packages \
+      > /opt/genesis/public-policy-source.json \
+    && printf '%s\n' /opt/genesis/compat \
+      > /opt/genesis/venv/lib/python3.11/site-packages/npa-genesis-compat.pth \
+    && python -m pip check \
+    && test -z "$(find /opt/genesis/venv -type f \
       -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)" \
     && python -c 'import imageio_ffmpeg; assert imageio_ffmpeg.get_ffmpeg_exe() == "/usr/bin/ffmpeg"' \
     && python /opt/genesis/remove-scikit-image-recipe.py \
-      --site-packages /opt/npa/venv/lib/python3.11/site-packages \
+      --site-packages /opt/genesis/venv/lib/python3.11/site-packages \
       --capability genesis \
       > /opt/genesis/dependency-source-correction.json
 
@@ -86,7 +121,8 @@ COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
 COPY --chown=ubuntu:ubuntu docker/workbench/genesis/smoke_env.py /opt/npa/docker/workbench/genesis/smoke_env.py
 COPY --chown=ubuntu:ubuntu docker/workbench/genesis/smoke_functional.py /opt/npa/docker/workbench/genesis/smoke_functional.py
 
-RUN python -m pip install --no-deps -e /opt/npa \
+RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
+    && python -m pip install --no-deps -e /opt/npa \
     && python - <<'PY'
 import os
 from importlib import metadata
@@ -105,6 +141,5 @@ PY
 RUN dpkg --purge --force-depends linux-libc-dev \
     && rm -rf /var/lib/apt/lists/*
 
-USER ubuntu
 WORKDIR /opt/genesis
 ENTRYPOINT ["/bin/bash"]

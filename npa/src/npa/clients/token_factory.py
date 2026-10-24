@@ -316,18 +316,29 @@ def resolve_config(
     )
 
 
-def validate_model_access(api_key: str, model: str) -> TokenFactoryAccessResult:
-    """Verify key scope, model availability, and ability to execute inference."""
+def validate_model_access(
+    api_key: str, model: str, *, base_url: str = ""
+) -> TokenFactoryAccessResult:
+    """Verify key scope, model availability, and ability to execute inference.
+
+    An explicit endpoint is essential for workflow preflight: a configured
+    endpoint must be probed instead of inheriting a VDI-local override.
+    """
 
     try:
-        # Probe the same endpoint runtime inference uses, including a dedicated
-        # deployment of a retired public model. Keep the supplied key exclusive
-        # so a missing preflight key cannot fall back to another account's key.
+        # Keep the supplied key exclusive so a missing preflight key cannot fall
+        # back to another account's key. Preserve only endpoint override state
+        # when no explicit endpoint was supplied; an explicit base URL wins,
+        # matching the Stage 8 container contract.
         endpoint_env = {
             key: os.environ[key] for key in BASE_URL_ENV_KEYS if key in os.environ
         }
         client = TokenFactoryClient(
-            resolve_config(api_key=api_key, environ=endpoint_env)
+            resolve_config(
+                api_key=api_key,
+                base_url=base_url,
+                environ=endpoint_env,
+            )
         )
         if model not in client.list_models():
             return TokenFactoryAccessResult(

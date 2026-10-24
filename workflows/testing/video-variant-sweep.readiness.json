@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "47d2e7762fff07f324d14febaa6b448d15bf7767501db7957d137503fd4e39fa",
+  "workflow_sha256": "b0ee1ffb0fbb2df070afe9ed8c8fdd6908b6cbd62af245b0833ea4a4662ce66f",
   "planning": {
     "validation": {
       "status": "verified",
@@ -11,7 +11,7 @@
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "Source snapshots, merged prompts, partitioned real Transfer calls, paired review, tracking and accepted-only publication are wired and covered by focused tests. Hosted live tests explicitly use a different model than the reference default.",
+      "reason": "Source snapshots, merged prompts, partitioned real Transfer calls, paired review, tracking and accepted-only publication are wired and covered by focused tests. Hosted tests exercise the current MiniMaxAI/MiniMax-M3 default; a dedicated/self-hosted Cosmos3 Reasoner remains a separate backend.",
       "evidence": [
         "npa/tests/workflows/test_video_sweep.py",
         "npa/tests/e2e/test_video_sweep_live.py"
@@ -34,8 +34,8 @@
       ]
     },
     "credentials": {
-      "status": "blocked",
-      "reason": "Transfer payload access and hosted inference were verified, but the reference Cosmos3 model is absent from the tested account. MiniMax-M3 was explicitly used for hosted component tests.",
+      "status": "verified",
+      "reason": "Transfer payload access and hosted MiniMaxAI/MiniMax-M3 inference were verified. The retired public Cosmos3 route remains unavailable and is not an implied substitute; a dedicated/self-hosted Cosmos3 Reasoner requires separate access and evaluator-contract validation.",
       "evidence": [
         "health access --capability cosmos2",
         "test_hosted_description_merge_and_paired_judge"
@@ -50,7 +50,7 @@
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "A single canonical submission completed preparation, two parallel RTX PRO 6000 generation workers, paired review, and in-pod Postgres/MLflow tracking. Both fresh variants scored 0.30 against threshold 0.80; publication correctly failed without a dataset or next-run inventory. A verified rejection HTML/MP4 export passed. Earlier component execution published one accepted clip at 0.85 and held one at 0.30. A successful single-submit accepted-publication path remains unverified; hosted validation explicitly used MiniMax-M3 instead of the unavailable default Cosmos3 model.",
+      "reason": "A historical single canonical submission completed preparation, two parallel RTX PRO 6000 generation workers, paired review, and in-pod Postgres/MLflow tracking. Both fresh variants scored 0.30 against threshold 0.80; publication correctly failed without a dataset or next-run inventory. A verified rejection HTML/MP4 export passed. Earlier component execution published one accepted clip at 0.85 and held one at 0.30. That historical execution explicitly selected MiniMax-M3; it is not new qualification of these revised workflow bytes. A successful single-submit accepted-publication path remains unverified.",
       "evidence": [
         "Canonical runtime: prepare, worker-0, worker-1, review and lineage succeeded; publish failed on all-rejected review.",
         "Two committed Postgres rows, two finished MLflow runs, and per-variant score/acceptance metrics were independently verified.",

@@ -16,13 +16,13 @@ from npa.orchestration.skypilot.controller import (
     DEFAULT_K8S_CONTROLLER_CPUS,
     DEFAULT_K8S_CONTROLLER_MEMORY_GB,
 )
-from npa.workflows.sim2real.constants import DEFAULT_COSMOS3_MODEL
+from npa.workflows.sim2real.constants import DEFAULT_TOKEN_FACTORY_MODEL
 
 
 Issue = tuple[str, str]
 _IMAGE_KEYS = (
     "controller_image",
-    "transfer_image",
+    "cosmos3_image",
     "envgen_image",
     "isaac_image",
     "viewer_image",
@@ -52,6 +52,44 @@ def _config_is_enabled(value: Any) -> bool:
 def _is_source_sha(value: str) -> bool:
     """Return whether a value is an exact lowercase 40-character hexadecimal SHA."""
     return len(value) == 40 and all(char in "0123456789abcdef" for char in value)
+
+
+def _evaluation_issues(config: Mapping[str, Any]) -> list[Issue]:
+    try:
+        concurrency = int(str(config.get("evaluation_concurrency", "8")))
+        max_frames = int(str(config.get("evaluation_max_frames", "0")))
+        if concurrency > 0 and max_frames >= 0:
+            return []
+    except (TypeError, ValueError):
+        pass
+    return [
+        (
+            "Sim2Real hosted evaluation settings are invalid",
+            "set evaluation_concurrency to a positive integer and evaluation_max_frames "
+            "to a nonnegative integer; zero sends every declared primary frame",
+        )
+    ]
+
+
+def _token_factory_endpoint_issues(config: Mapping[str, Any]) -> list[Issue]:
+    """Reject an unsafe or stale configured hosted-inference endpoint."""
+
+    from npa.clients.token_factory import DEFAULT_BASE_URL
+    from npa.workflows.sim2real.hosted_evaluation import validate_token_factory_endpoint
+
+    try:
+        validate_token_factory_endpoint(
+            str(config.get("token_factory_base_url") or DEFAULT_BASE_URL)
+        )
+    except (TypeError, ValueError) as exc:
+        return [
+            (
+                f"Sim2Real Token Factory endpoint is invalid: {exc}",
+                "set token_factory_base_url to the credential-free HTTPS endpoint "
+                "that Stage 8 and Stage 9 will bind exactly",
+            )
+        ]
+    return []
 
 
 def _source_sha_issues(config: Mapping[str, Any]) -> list[Issue]:
@@ -130,15 +168,18 @@ def static_prerequisites(
     """Validate immutable inputs, consent, secret forwarding, and gated access."""
 
     issues = image_prerequisites(config)
+    issues.extend(_evaluation_issues(config))
+    issues.extend(_token_factory_endpoint_issues(config))
 
     pvc = str(config.get("isaac_cache_pvc") or "").strip()
     if not pvc:
         issues.append(
             (
                 "config.isaac_cache_pvc is empty",
-                "create and warm the shared Isaac cache from "
-                "npa/docker/workbench/common/warm-isaac-cache.yaml, then pass "
-                "--var isaac_cache_pvc=<bound-rwx-pvc>",
+                "run `npa workbench sim2real cache provision --name <rwx-pvc> "
+                "--context <context> --namespace <namespace>`, then pass "
+                "--var isaac_cache_pvc=<bound-rwx-pvc>; the canonical workflow "
+                "warms and attests that claim in its first SkyPilot state",
             )
         )
 
@@ -210,16 +251,20 @@ def static_prerequisites(
     hf_token = str(secret_values.get("HF_TOKEN") or "").strip()
     if hf_token:
         # Derive the gated repos from the sim2real capability's single source of
-        # truth so this pre-launch gate matches `health access --capability
-        # sim2real`. Cosmos Transfer (Stage 3) also fetches the pinned
-        # Predict2.5 tokenizer and the Cosmos Guardrail weights at runtime;
-        # probing only Cosmos-Transfer2.5-2B here let a run pass preflight and
-        # then fail inside Stage 3 on an unaccepted dependency.
-        from npa.workbench.model_access import gated_hf_repos
+        # truth so this pre-launch gate matches the canonical Cosmos3 Stage 3.
+        # Nano and Guardrail1 fetch at runtime; an old Transfer2.5 approval is
+        # neither substituted nor treated as acceptance of the current model.
+        from npa.workbench.model_access import HF, assets_for
 
-        repos = list(dict.fromkeys(gated_hf_repos(("sim2real",))))
+        repos = list(
+            dict.fromkeys(
+                asset.repo
+                for asset in assets_for(("sim2real",))
+                if asset.provider == HF
+            )
+        )
         if not repos:
-            repos = ["nvidia/Cosmos-Transfer2.5-2B"]
+            repos = ["nvidia/Cosmos3-Nano", "nvidia/Cosmos-Guardrail1"]
         denied: list[str] = []
         for repo in (item for item in repos if item):
             result = hf_validator(hf_token, repo)
@@ -243,19 +288,29 @@ def static_prerequisites(
             hosted_rollout_model_family,
         )
 
-        model = str(config.get("cosmos3_model") or DEFAULT_COSMOS3_MODEL).strip()
+        model = str(
+            config.get("token_factory_model") or DEFAULT_TOKEN_FACTORY_MODEL
+        ).strip()
         try:
             hosted_rollout_model_family(model)
         except CosmosReasonError as exc:
             issues.append(
                 (
                     str(exc),
-                    "select a supported hosted rollout evaluator with cosmos3_model "
+                    "select a supported hosted rollout evaluator with token_factory_model "
                     "before provisioning",
                 )
             )
             return issues
-        result = token_factory_validator(token_factory_key, model)
+        from npa.clients.token_factory import DEFAULT_BASE_URL
+        from npa.workflows.sim2real.hosted_evaluation import (
+            validate_token_factory_endpoint,
+        )
+
+        endpoint = validate_token_factory_endpoint(
+            str(config.get("token_factory_base_url") or DEFAULT_BASE_URL)
+        )
+        result = token_factory_validator(token_factory_key, model, base_url=endpoint)
         if not getattr(result, "ok", False):
             detail = str(getattr(result, "error", "") or "access not verified")
             issues.append(
@@ -320,7 +375,7 @@ def _managed_driver_isaac_nodes(nodes_json: str, *, placements=None) -> list[str
     Isaac Sim's camera-bearing rollouts are validated on Kubernetes only against the
     GPU-Operator mounted RTX driver stack that `--gpu-workload-profile rtx-rendering`
     provisions. The Nebius managed-driver image still satisfies pure-compute CUDA, so
-    Cosmos Transfer and EnvGen succeed on it and the mismatch stays invisible until
+    Cosmos3 structural transfer and EnvGen succeed on it and the mismatch stays invisible until
     Stage 7 renders, where it surfaces as an opaque Warp illegal-memory-access after
     the earlier GPU stages have already been paid for.
     """
@@ -445,9 +500,10 @@ def _isaac_cache_issues(config, runner, namespace) -> list[Issue]:
                 (
                     f"Isaac cache PVC {pvc_name!r} is missing or is not Bound ReadWriteMany "
                     f"in namespace {namespace!r}",
-                    "apply npa/docker/workbench/common/warm-isaac-cache.yaml with the "
-                    "selected immutable Isaac image, wait for the warm Job to complete, "
-                    "and pass that PVC name",
+                    "provision or inspect this exact claim with `npa workbench sim2real "
+                    "cache provision --name <pvc> --context <context> --namespace "
+                    f"{namespace}`; once Bound, the canonical workflow warms and attests "
+                    "it before any read-only/offline Isaac GPU state",
                 )
             )
 

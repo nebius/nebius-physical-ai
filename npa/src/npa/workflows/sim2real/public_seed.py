@@ -35,6 +35,7 @@ from npa.workflows.sim2real.task_contract import (
 
 HF_BASE = "https://huggingface.co"
 DECLARED_LICENSE = "apache-2.0"
+_MIN_COSMOS3_SOURCE_FRAMES = 6
 SOURCE_PATHS = {
     "metadata": "final_dataset/meta/info.json",
     "tasks": "final_dataset/meta/tasks.jsonl",
@@ -121,15 +122,15 @@ def _write(path: Path, payload: bytes) -> None:
 
 
 def _decode_frames(
-    video_path: Path, *, frame_count: int, output_dir: Path
+    video_path: Path, *, minimum_frames: int, output_dir: Path
 ) -> list[Path]:
+    """Decode the complete primary video rather than a representative subset."""
+
     decoded: list[Path] = []
     try:
         with av.open(str(video_path)) as container:
             stream = container.streams.video[0]
             for index, frame in enumerate(container.decode(stream)):
-                if index >= frame_count:
-                    break
                 # Stage 3 deliberately consumes the canonical Isaac frame naming
                 # contract (camera-<integer>.png).  Keep source-camera identity in
                 # the manifest rather than encoding it into the filename, because
@@ -143,10 +144,10 @@ def _decode_frames(
         raise
     except Exception as exc:  # noqa: BLE001 - normalize decoder failures
         raise PublicSeedError(f"could not decode {video_path.name}: {exc}") from exc
-    if len(decoded) != frame_count:
+    if len(decoded) < minimum_frames:
         raise PublicSeedError(
             f"{video_path.name} yielded {len(decoded)} frames; "
-            f"expected at least {frame_count}"
+            f"expected at least {minimum_frames} for complete Cosmos3 transfer"
         )
     return decoded
 
@@ -277,15 +278,17 @@ def stage_public_franka_lift(
         frames_dir = work / "frames"
         frames_dir.mkdir()
         main_frames = _decode_frames(
-            source_files["main_video"], frame_count=4, output_dir=frames_dir
+            source_files["main_video"],
+            minimum_frames=_MIN_COSMOS3_SOURCE_FRAMES,
+            output_dir=frames_dir,
         )
         frame_sources = [
             ("image", index, frame) for index, frame in enumerate(main_frames)
         ]
         frames = [frame for _camera, _index, frame in frame_sources]
-        if len(frames) < 4:
+        if len(frames) < _MIN_COSMOS3_SOURCE_FRAMES:
             raise PublicSeedError(
-                "public seed decode produced fewer than four camera frames"
+                "public seed decode produced too few frames for Cosmos3 structural transfer"
             )
 
         staged: list[dict[str, Any]] = []
@@ -358,6 +361,15 @@ def stage_public_franka_lift(
                 and repository_metadata.get("gated") in {False, None},
                 "source_paths": [SOURCE_PATHS[key] for key in SOURCE_PATHS],
                 "objects": staged,
+                "primary_camera_sequence": {
+                    "source_path": SOURCE_PATHS["main_video"],
+                    "source_camera": "image",
+                    "selection": "complete_episode_in_decode_order",
+                    "complete": True,
+                    "source_video_decoded_frames": len(frames),
+                    "staged_frame_count": len(frames),
+                    "minimum_frames_for_cosmos3": _MIN_COSMOS3_SOURCE_FRAMES,
+                },
             },
             "source_contract": {
                 "task_id": PUBLIC_FRANKA_LIFT_SOURCE_TASK_ID,

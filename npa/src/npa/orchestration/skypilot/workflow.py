@@ -85,6 +85,11 @@ LIBERO_OWNER_BINDING_SCHEMA = "npa.libero.owner-binding.v1"
 LIBERO_PENDING_SUBMISSION_TIME = (
     "LIBERO exact managed job is PENDING; awaiting provider submission timestamp"
 )
+_STORAGE_CREDENTIAL_ENV_NAMES = (
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+)
 
 
 @dataclass(frozen=True)
@@ -1124,6 +1129,7 @@ def _preflight_prepared_submission(
         "libero_customer_authorization_validated"
     ) == "validated"
     env.update(injected)
+    _remove_inline_storage_credentials(docs)
     if (_report.get("checks") or {}).get("libero_customer_run"):
         from npa.execution_preflight import LIBERO_SKYPILOT_SECRET_ENV_NAMES
         from npa.workflows.byof.libero_customer import SECRET_NAMES
@@ -1140,6 +1146,17 @@ def _preflight_prepared_submission(
     ):
         raise SkyPilotSubmitError("LIBERO executable profile changed after preflight")
     return env, libero_submission
+
+
+def _remove_inline_storage_credentials(documents: Sequence[Mapping[str, Any]]) -> None:
+    """Keep storage credentials in SkyPilot's secret channel, never task YAML."""
+
+    for document in documents:
+        environment = document.get("envs")
+        if not isinstance(environment, dict):
+            continue
+        for name in _STORAGE_CREDENTIAL_ENV_NAMES:
+            environment.pop(name, None)
 
 
 def _prepare_workflow_submission(
@@ -1932,6 +1949,7 @@ def submit_workflow(
                     raise SkyPilotSubmitError(str(exc)) from exc
                 raise
             env.update(injected)
+            _remove_inline_storage_credentials(docs)
             if _target is not None:
                 env["NPA_SKYPILOT_PROJECT"] = _target.project
             if robotwin_authorization is not None:
@@ -2013,6 +2031,10 @@ def submit_workflow(
         if infra and robotwin_authorization is None:
             cmd[-1:-1] = ["--infra", infra]
         selected_secret_envs = list(secret_envs or ())
+        if robotwin_authorization is None:
+            selected_secret_envs.extend(
+                name for name in _STORAGE_CREDENTIAL_ENV_NAMES if env.get(name)
+            )
         from npa.workflows.byof.libero_customer import (
             selected as customer_selected,
             SECRET_NAMES,

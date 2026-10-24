@@ -67,6 +67,21 @@ SONIC_SPEC = (
 ROBOTWIN_SPEC = (
     Path(__file__).resolve().parents[3] / "workflows" / "testing" / "byof-robotwin.yaml"
 )
+_SIM2REAL_TEST_IMAGE = "ghcr.io/example/sim2real-test@sha256:" + "a" * 64
+
+
+def _sim2real_role_image_args() -> list[str]:
+    return [
+        argument
+        for key in (
+            "controller_image",
+            "cosmos3_image",
+            "envgen_image",
+            "isaac_image",
+            "viewer_image",
+        )
+        for argument in ("--var", f"{key}={_SIM2REAL_TEST_IMAGE}")
+    ]
 
 
 def test_nvidia_vda_conditioning_policy_is_versioned_by_the_committed_spec() -> None:
@@ -1084,12 +1099,12 @@ def test_sim2real_submit_collects_pipeline_prerequisites_before_image_or_launch(
             "--no-deploy-if-absent",
             "--var",
             "bucket=real-bucket",
+            *_sim2real_role_image_args(),
         ],
     )
 
     assert result.exit_code == 1
     assert "missing prerequisites" in result.output
-    assert "controller_image" in result.output
     assert "AWS_ACCESS_KEY_ID" in result.output
     assert "no Ready" not in result.output  # node listing itself failed
     assert "Kubernetes nodes cannot be listed" in result.output
@@ -1464,7 +1479,7 @@ def test_sim2real_submit_rejects_oversized_sealed_split_before_images_or_launch(
             key: "ghcr.io/example/test@sha256:" + "a" * 64
             for key in (
                 "controller_image",
-                "transfer_image",
+                "cosmos3_image",
                 "envgen_image",
                 "isaac_image",
                 "viewer_image",
@@ -1538,6 +1553,7 @@ def test_sim2real_submit_propagates_explicit_kubernetes_target(
             "bucket=real-bucket",
             "--var",
             "isaac_cache_pvc=npa-isaac-cache",
+            *_sim2real_role_image_args(),
         ],
     )
 
@@ -2104,7 +2120,7 @@ def test_config_pinned_resource_images_satisfy_the_npa_source_requirement() -> N
         name: digest_image
         for name in (
             "controller_image",
-            "transfer_image",
+            "cosmos3_image",
             "envgen_image",
             "isaac_image",
             "viewer_image",
@@ -2239,7 +2255,7 @@ def test_preflight_images_accepts_the_same_config_vars_as_submit(mocker) -> None
     args.extend(["--var", "source_sha=" + "a" * 40])
     for name in (
         "controller_image",
-        "transfer_image",
+        "cosmos3_image",
         "envgen_image",
         "isaac_image",
         "viewer_image",
@@ -2756,7 +2772,7 @@ def test_preflight_images_scopes_explicit_pull_secret_to_bootstrap(
     args.extend(["--var", "source_sha=" + "a" * 40])
     for name in (
         "controller_image",
-        "transfer_image",
+        "cosmos3_image",
         "envgen_image",
         "reason_image",
         "isaac_image",
@@ -2955,7 +2971,7 @@ def test_preflight_images_reports_valid_empty_plan(mocker) -> None:
 
 @pytest.mark.parametrize(
     "configured_roles",
-    [(), ("controller_image", "transfer_image", "envgen_image", "isaac_image")],
+    [(), ("controller_image", "cosmos3_image", "envgen_image", "isaac_image")],
 )
 def test_sim2real_image_preflight_rejects_incomplete_bundle_before_probes(
     mocker, configured_roles
@@ -3934,6 +3950,7 @@ def test_sim2real_submit_reports_invalid_placement_config_before_cloud_work(
             "--no-deploy-if-absent",
             "--var",
             "bucket=real-bucket",
+            *_sim2real_role_image_args(),
         ],
     )
     assert result.exit_code == 1, result.output

@@ -47,6 +47,7 @@ if TYPE_CHECKING:
         RunStorageLocation,
     )
     from npa.orchestration.npa_workflow.spec import NpaWorkflowSpec
+    from npa.orchestration.npa_workflow.submission_state import SubmissionStateRead
     from npa.orchestration.npa_workflow.submit_credentials import (
         SubmitCredentialContext,
     )
@@ -2877,6 +2878,7 @@ def submit_cmd(
             _runtime_submit_environment(
                 merged_npa_spec,
                 run_id=resolved_run_id,
+                project=project,
                 secret_env_values=extra_env,
                 endpoint=render_endpoint,
                 isolated_config_dir=isolated_config_dir,
@@ -3852,25 +3854,15 @@ def _workflow_submission_receipt(
     return receipt
 
 
-def _recorded_runtime_store(
-    project: str,
-    run_id: str,
-    *,
-    resume: bool,
-    credentials: SubmitCredentialContext,
-) -> RunStateStore | None:
-    """Return the receipt's exact store so legacy resumes do not move ledgers."""
+def _recorded_resume_prefix(
+    recorded: SubmissionStateRead, *, project: str, run_id: str
+) -> str | None:
+    """Resolve a recorded prefix or prove that this exact run never launched."""
 
-    if not resume:
-        return None
-    from npa.orchestration.npa_workflow.run_state import (
-        store_for_recorded_run_prefix,
-    )
     from npa.orchestration.npa_workflow.submission_state import (
-        inspect_submission_state,
+        submission_proves_never_launched,
     )
 
-    recorded = inspect_submission_state(project or "default", run_id)
     if recorded.outcome == "absent":
         return None
     if recorded.outcome == "unavailable":
@@ -3883,7 +3875,36 @@ def _recorded_runtime_store(
         raise ValueError("resume receipt has no valid workflow record")
     run_prefix_uri = str(workflow.get("run_prefix_uri") or "").strip()
     if not run_prefix_uri:
+        if submission_proves_never_launched(
+            recorded.payload, project=project, run_id=run_id
+        ):
+            return None
         raise ValueError("resume receipt workflow has no recorded run_prefix_uri")
+    return run_prefix_uri
+
+
+def _recorded_runtime_store(
+    project: str,
+    run_id: str,
+    *,
+    resume: bool,
+    credentials: SubmitCredentialContext,
+) -> RunStateStore | None:
+    """Keep the exact resume store; prelaunch plans use current verified storage."""
+
+    if not resume:
+        return None
+    from npa.orchestration.npa_workflow.run_state import (
+        store_for_recorded_run_prefix,
+    )
+    from npa.orchestration.npa_workflow.submission_state import (
+        inspect_submission_state,
+    )
+
+    recorded = inspect_submission_state(project or "default", run_id)
+    run_prefix_uri = _recorded_resume_prefix(recorded, project=project, run_id=run_id)
+    if run_prefix_uri is None:
+        return None
     return store_for_recorded_run_prefix(
         run_prefix_uri,
         endpoint_url=credentials.endpoint_url,
@@ -3944,6 +3965,7 @@ def _runtime_submit_environment(
     spec,
     *,
     run_id: str,
+    project: str,
     secret_env_values: Mapping[str, str],
     endpoint: str,
     isolated_config_dir: Path | None = None,
@@ -3956,6 +3978,9 @@ def _runtime_submit_environment(
     )
 
     environment = dict(secret_env_values)
+    # The first discovery starts the owned API. Its project must already match
+    # the target that stage submission and durable observations will select.
+    environment["NPA_SKYPILOT_PROJECT"] = project or "default"
     resolved_config = _make_context(spec, run_id=run_id).config
     for key in ("bucket", "prefix"):
         if key in resolved_config:
@@ -4113,6 +4138,7 @@ def _run_npa_workflow_runtime(
     runtime_env = _runtime_submit_environment(
         spec,
         run_id=run_id,
+        project=project,
         secret_env_values=secret_env_values,
         endpoint=str(getattr(render_options, "aws_endpoint_url", "") or "").strip(),
         isolated_config_dir=isolated_config_dir,

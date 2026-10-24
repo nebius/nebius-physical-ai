@@ -3,6 +3,7 @@ set -euo pipefail
 
 # Both canonical and legacy entrypoints use this build context.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+NPA_DIR="$(cd "${SCRIPT_DIR}/../../../.." && pwd -P)"
 
 REGISTRY=""
 TAG="${TS:-$(date -u +%Y%m%dT%H%M%SZ)}"
@@ -11,6 +12,7 @@ ATTENTION_BACKEND=fa4
 FA2_CUDA_ARCHS="${FA2_CUDA_ARCHS:-120}"
 FA2_NVCC_THREADS="${FA2_NVCC_THREADS:-4}"
 DOCKER_CONTEXT="${DOCKER_CONTEXT:-}"
+NPA_SOURCE_SHA="${NPA_SOURCE_SHA:-$(git -C "${NPA_DIR}/.." rev-parse HEAD)}"
 CUDA_BASE_TAG="${CUDA_BASE_TAG:-13.0.1-cudnn-devel-ubuntu22.04}"
 FLASH_ATTN_COMMIT="${FLASH_ATTN_COMMIT:-eed1971f5132630dc296fe37601e834d4b57a248}"
 # Quack pins the DSL exactly; keep these aligned with the Dockerfile.
@@ -119,6 +121,15 @@ if [ "$PUSH" -eq 1 ] && [ -z "$REGISTRY" ]; then
   exit 2
 fi
 
+if [[ ! "${NPA_SOURCE_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "ERROR: NPA_SOURCE_SHA must be the exact 40-character checkout SHA" >&2
+  exit 2
+fi
+if [ "$(git -C "${NPA_DIR}/.." rev-parse HEAD)" != "${NPA_SOURCE_SHA}" ]; then
+  echo "ERROR: NPA_SOURCE_SHA must match the build-context checkout HEAD" >&2
+  exit 2
+fi
+
 LOCAL_IMAGE="npa-base:cuda13-blackwell-${BACKEND_PREFIX}${TAG}"
 LEGACY_IMAGE=""
 if [ "$ATTENTION_BACKEND" = fa4 ]; then
@@ -127,6 +138,7 @@ fi
 BUILD_ARGS=(
   build
   --build-arg "BUILD_TS=${TAG}"
+  --build-arg "NPA_SOURCE_SHA=${NPA_SOURCE_SHA}"
   --build-arg "CUDA_BASE_TAG=${CUDA_BASE_TAG}"
   --build-arg "FLASH_ATTN_COMMIT=${FLASH_ATTN_COMMIT}"
   --build-arg "ATTENTION_BACKEND=${ATTENTION_BACKEND}"
