@@ -10,3 +10,6 @@ aiohttp>=3.14.4
 certifi>=2026.10.19
 gitpython>=3.2.1
 opentelemetry-api>=1.45.1
+# Reject the releases fixed by the October 24 dependency advisory refresh.
+filelock>=4.2.1
+setuptools>=84.1.0

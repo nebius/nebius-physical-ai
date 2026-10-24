@@ -64,8 +64,10 @@ def test_oauthlib_security_floor_is_locked() -> None:
     "name,vulnerable,patched",
     [
         ("certifi", "2026.7.22", "2026.10.19"),
+        ("filelock", "4.0.10", "4.2.1"),
         ("gitpython", "3.2.0", "3.2.1"),
         ("opentelemetry-api", "1.45.0", "1.45.1"),
+        ("setuptools", "84.0.0", "84.1.0"),
     ],
 )
 def test_ci_rejects_known_vulnerable_dependency_versions(
@@ -114,6 +116,27 @@ def test_pillow_security_floor_and_client_python_requirement_agree() -> None:
     supported = SpecifierSet(project["requires-python"])
     assert Version("3.10") not in supported
     assert Version("3.11") in supported
+
+
+def test_langgraph_sqlite_security_fix_is_pinned_for_every_extra() -> None:
+    """Require every declared SQLite checkpoint runtime to use the patched pin."""
+    project = ci_requirements.tomllib.loads(
+        (ci_requirements._ROOT / "npa/pyproject.toml").read_text()
+    )["project"]
+    requirement_groups = [
+        project["dependencies"],
+        *project["optional-dependencies"].values(),
+    ]
+    sqlite_requirements = [
+        Requirement(line)
+        for group in requirement_groups
+        for line in group
+        if canonicalize_name(Requirement(line).name) == "langgraph-checkpoint-sqlite"
+    ]
+    assert sqlite_requirements
+    assert all(
+        item.specifier == SpecifierSet("==3.1.2") for item in sqlite_requirements
+    )
 
 
 @pytest.mark.parametrize("name", ["pyproject.toml", "ci/constraints.in"])
