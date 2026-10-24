@@ -33,6 +33,7 @@ USER root
 
 COPY docker/workbench/openpi/gcs-requirements.txt /tmp/gcs-requirements.txt
 COPY docker/workbench/openpi/security-upgrades-requirements.txt /tmp/openpi-security-upgrades.txt
+COPY docker/workbench/common/sim2real-control-requirements.txt /tmp/openpi-control-requirements.txt
 COPY docker/workbench/openpi/backport_protobuf_json.py /opt/npa-openpi-backport-protobuf.py
 COPY docker/workbench/openpi/verify_protobuf_json.py /opt/npa-openpi-verify-protobuf.py
 COPY src/npa/workflows/byof/openpi_gcs.py /opt/npa-openpi-gcs.py
@@ -109,9 +110,15 @@ RUN python3 -m venv /opt/uv \
       'deepdiff==8.6.2' 'numpy==1.26.4' \
     && /opt/uv/bin/uv pip install --python /opt/venv/bin/python --no-cache \
       --no-deps --require-hashes -r /tmp/openpi-security-upgrades.txt \
+    && /opt/uv/bin/uv pip install --python /opt/venv/bin/python --no-cache \
+      --no-deps -r /tmp/openpi-control-requirements.txt \
+    && /opt/uv/bin/uv pip install --python /opt/venv/bin/python --no-cache \
+      --no-deps 'cryptography==50.0.2' 'kubernetes==36.0.3' \
     && rm -f /opt/venv/lib/python3.11/site-packages/wandb/bin/wandb-core \
     && /opt/venv/bin/python -c \
       'import boto3, importlib.metadata as m, numpy, os, tensorflow, torch, transformers, wandb; from transformers import GemmaForCausalLM; expected={"boto3":"1.42.91","botocore":"1.42.91","jmespath":"1.1.0","python-dateutil":"2.9.0.post0","s3transfer":"0.16.0","six":"1.17.0","urllib3":"2.8.0"}; assert all(m.version(k)==v for k,v in expected.items()), {k:m.version(k) for k in expected}; assert boto3.session.Session() is not None and m.version("deepdiff") == "8.6.2" and m.version("numpy") == "1.26.4" and m.version("tensorflow") == "2.15.0" and m.version("transformers") == "4.53.2"; assert os.environ["WANDB_MODE"] == "disabled" and GemmaForCausalLM and numpy is not None and tensorflow is not None and torch is not None and wandb is not None' \
+    && /opt/venv/bin/python -c \
+      'import importlib.metadata as m; from cryptography.exceptions import InvalidSignature; from kubernetes import client, config; assert m.version("cryptography") == "50.0.2" and m.version("kubernetes") == "36.0.3" and InvalidSignature and client and config' \
     && /opt/venv/bin/python -c \
       'import subprocess; expected={"The package `tensorflow-cpu` requires `ml-dtypes~=0.2.0`, but `0.5.1` is installed","The package `torch` requires `nvidia-cudnn-cu12==9.5.1.17 ; platform_machine == x86_64 and sys_platform == linux`, but `9.10.2.21` is installed","The package `torch` requires `nvidia-nccl-cu12==2.26.2 ; platform_machine == x86_64 and sys_platform == linux`, but `2.27.5` is installed","The package `tensorflow` requires `ml-dtypes~=0.2.0`, but `0.5.1` is installed","The package `openpi` requires `jax[cuda12]==0.5.3`, but `0.6.2` is installed"}; result=subprocess.run(["/opt/uv/bin/uv","pip","check","--python","/opt/venv/bin/python"],capture_output=True,text=True); actual={line.replace(chr(39),"") for line in (result.stdout+result.stderr).splitlines() if line.startswith("The package `")}; assert result.returncode == 1 and actual == expected, {"returncode":result.returncode,"unexpected":sorted(actual-expected),"missing":sorted(expected-actual)}' \
     && /opt/uv/bin/uv venv --python 3.11 /opt/rerun-venv \
@@ -134,12 +141,12 @@ RUN python3 -m venv /opt/uv \
     && build_hash="$(sha256sum /opt/byof/uv.lock | cut -d' ' -f1)" \
     && printf '{"schema":"npa.byof.build.v1","build_command_executed":true,"build_command_sha256":"%s"}\n' \
       "$build_hash" > /opt/byof/npa_build_metadata.json \
-    && rm -rf /tmp/uv-cache /tmp/gcs-requirements.txt /tmp/openpi-security-upgrades.txt
+    && rm -rf /tmp/uv-cache /tmp/gcs-requirements.txt /tmp/openpi-security-upgrades.txt /tmp/openpi-control-requirements.txt
 
 RUN printf '%s\n' \
       '#include <cuda_runtime.h>' \
       '#include <cstdio>' \
-      'int main(){int n=0;if(cudaGetDeviceCount(&n)!=cudaSuccess)return 2;if(n!=1)return 3;cudaDeviceProp p{};if(cudaGetDeviceProperties(&p,0)!=cudaSuccess||p.major!=12||p.minor!=0)return 4;std::printf("devices=%d cc=12.0\\n",n);return 0;}' \
+      'int main(){int n=0;if(cudaGetDeviceCount(&n)!=cudaSuccess)return 2;if(n!=1)return 3;cudaDeviceProp p{};if(cudaGetDeviceProperties(&p,0)!=cudaSuccess||p.major!=12||p.minor!=0)return 4;std::printf("devices=%d cc=12.0\n",n);return 0;}' \
       > /tmp/npa-openpi-sm120.cu \
     && nvcc -O2 -arch=sm_120 /tmp/npa-openpi-sm120.cu -o /usr/local/bin/npa-openpi-sm120-probe \
     && rm -f /tmp/npa-openpi-sm120.cu \
@@ -150,7 +157,13 @@ COPY pyproject.toml README.md /opt/npa-src/
 COPY src/npa /opt/npa-src/src/npa
 RUN /opt/uv/bin/uv pip install --python /opt/venv/bin/python --no-cache --no-deps /opt/npa-src \
     && /opt/uv/bin/uv pip install --python /opt/rerun-venv/bin/python --no-cache --no-deps /opt/npa-src \
+    && /opt/venv/bin/python -m npa.workflows.byof.openpi_pipeline --help >/dev/null \
+    && /opt/venv/bin/python -m npa.workflows.byof.openpi_service --help >/dev/null \
+    && /opt/venv/bin/python -c \
+      'from kubernetes import client, config; from npa.workflows.byof.openpi_service import _service_execution_context; assert client and config and callable(_service_execution_context)' \
     && /opt/venv/bin/python -m npa.workflows.byof.openpi_full_droid --help >/dev/null \
+    && /opt/rerun-venv/bin/python -c \
+      'import importlib.util; assert importlib.util.find_spec("cryptography") is None' \
     && /opt/rerun-venv/bin/python -m npa.workflows.byof.openpi_full_droid rrd-worker --help >/dev/null \
     && test -z "$(find /opt/venv -type f \
       -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)" \
@@ -168,6 +181,9 @@ RUN install -d -m 0755 -o ubuntu -g ubuntu \
     && chown -R ubuntu:ubuntu /home/ubuntu /workspace /opt/byof \
     && test -r /opt/byof/LICENSE \
     && test -r /usr/share/doc/npa-openpi/REDISTRIBUTION.md
+
+ENV NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
+    NPA_BAKED_PYTHON=/opt/venv/bin/python
 
 VOLUME ["/workspace/.cache/openpi"]
 WORKDIR /opt/byof

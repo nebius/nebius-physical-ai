@@ -103,7 +103,6 @@ def _prepare_derived(root, input_identity):
         "LOCAL_WORLD_SIZE",
         "MASTER_ADDR",
         "MASTER_PORT",
-        "NPA_OPENPI_ACCEPT_GEMMA_TERMS",
     ):
         env.pop(name, None)
     if receipt.is_file():

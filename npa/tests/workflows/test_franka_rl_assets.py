@@ -70,6 +70,7 @@ def test_replacing_geometry_preserves_task_solver_without_cube_scale(
         UsdFileCfg=SimpleNamespace,
         RigidBodyPropertiesCfg=SimpleNamespace,
         MassPropertiesCfg=SimpleNamespace,
+        RigidBodyMaterialCfg=SimpleNamespace,
     )
     monkeypatch.setitem(sys.modules, "isaaclab", SimpleNamespace(sim=sim))
     monkeypatch.setitem(sys.modules, "isaaclab.sim", sim)

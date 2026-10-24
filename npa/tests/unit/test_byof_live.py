@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
@@ -13,6 +15,20 @@ from npa.workflows.byof.live import (
     resolve_byof_project,
     resolve_byof_resource_yaml,
 )
+
+
+def test_byof_package_defers_live_dependency_imports() -> None:
+    script = """
+import sys
+import npa.workflows.byof as byof
+assert "npa.workflows.byof.live" not in sys.modules
+assert byof.resolve_byof_project
+assert "npa.workflows.byof.live" in sys.modules
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_byof_validation_repo_defaults_to_leisaac(

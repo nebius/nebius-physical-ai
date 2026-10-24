@@ -19,6 +19,7 @@ from npa.workflows.sim2real.robot_contract import (
     materialize_robot_contract,
     _mesh_dependencies,
     stock_robot_contract,
+    validate_robot_source_bundle,
 )
 from npa.workflows.sim2real import (
     isaac_robot_asset,
@@ -133,6 +134,16 @@ def _materialize(tmp_path: Path, storage: FakeStorage) -> dict:
     )
 
 
+def _materialize_surface(tmp_path: Path, storage: FakeStorage) -> dict:
+    return materialize_robot_contract(
+        robot_spec_uri="s3://inputs/spec.json",
+        root_uri="s3://private-run/root",
+        work_dir=tmp_path,
+        client=storage,
+        task_contract="surface_placement_asset_only",
+    )
+
+
 @pytest.mark.parametrize(
     "declaration",
     [
@@ -174,6 +185,78 @@ def test_stage2_materializes_content_addressed_urdf_contract(tmp_path: Path) -> 
     assert contract["content_addressed_uri"] in storage.uploads
     parsed = urlparse(contract["content_addressed_uri"])
     assert contract["contract_digest"] in parsed.path
+
+
+def test_task_neutral_source_boundary_accepts_one_driver_two_finger_bundle(
+    tmp_path: Path,
+) -> None:
+    bundle = tmp_path / "bundle"
+    (bundle / "meshes").mkdir(parents=True)
+    source = bundle / "robot.urdf"
+    source.write_text(URDF, encoding="utf-8")
+    (bundle / "meshes" / "arm.stl").write_bytes(b"solid arm\n")
+    document = _doc(
+        joint_names=["joint1", "joint2", "joint3", "left_joint"],
+        gripper_joint_names=["left_joint"],
+        n_gripper_joints=1,
+        kp=[100, 100, 100, 20],
+        kv=[10, 10, 10, 2],
+        force_lower=[-10, -10, -10, -2],
+        force_upper=[10, 10, 10, 2],
+        home_qpos=[0, -0.5, 0.5, 0.0],
+    )
+    spec = robot_assets.parse_robot_spec(document)
+    evidence = validate_robot_source_bundle(
+        spec=spec, bundle_root=bundle, source_path=source
+    )
+    assert evidence["urdf_dependencies"] == ["meshes/arm.stl"]
+    assert evidence["urdf"]["controlled_joint_count"] == 4
+    assert len(evidence["source_files"]) == 2
+
+
+def test_surface_materializer_accepts_one_driver_without_claiming_task_compatibility(
+    tmp_path: Path,
+) -> None:
+    document = _doc(
+        joint_names=["joint1", "joint2", "joint3", "left_joint"],
+        gripper_joint_names=["left_joint"],
+        n_gripper_joints=1,
+        kp=[100, 100, 100, 20],
+        kv=[10, 10, 10, 2],
+        force_lower=[-10, -10, -10, -2],
+        force_upper=[10, 10, 10, 2],
+        home_qpos=[0, -0.5, 0.5, 0.0],
+    )
+    contract = _materialize_surface(tmp_path, FakeStorage(document))
+    assert assert_robot_contract(contract) == contract["embodiment_digest"]
+    assert contract["embodiment"]["gripper_joint_names"] == ["left_joint"]
+    assert contract["embodiment"]["compatibility"] == {
+        "task_robot_compatible": False,
+        "asset_materialized": True,
+        "scope": "asset_materialization_only",
+        "requires": [
+            "explicit joint limits and controller representation",
+            "parallel-jaw aperture mapping",
+            "calibrated exterior and wrist cameras",
+            "surface-placement geometry and policy compatibility",
+        ],
+    }
+    assert contract["robot_spec"]["expected_observation_dim"] is None
+
+
+def test_canonical_lift_still_rejects_one_driver_gripper(tmp_path: Path) -> None:
+    document = _doc(
+        joint_names=["joint1", "joint2", "joint3", "left_joint"],
+        gripper_joint_names=["left_joint"],
+        n_gripper_joints=1,
+        kp=[100, 100, 100, 20],
+        kv=[10, 10, 10, 2],
+        force_lower=[-10, -10, -10, -2],
+        force_upper=[10, 10, 10, 2],
+        home_qpos=[0, -0.5, 0.5, 0.0],
+    )
+    with pytest.raises(RobotContractError, match="gripper contract"):
+        _materialize(tmp_path, FakeStorage(document))
 
 
 def test_committed_panda_example_is_a_complete_parseable_robot_spec() -> None:
@@ -669,6 +752,462 @@ def test_isaac_prepare_converts_urdf_and_publishes_digest_manifest(
     )
     published_manifest = json.loads(uploads[spec["resolved_manifest_uri"]])
     assert published_manifest["embodiment_digest"] == spec["embodiment_digest"]
+
+
+class _FakeUsdReferences:
+    def __init__(self, calls: dict[str, object]) -> None:
+        self.calls = calls
+
+    def AddReference(self, value: str) -> bool:
+        self.calls["reference"] = value
+        return True
+
+
+class _FakeUsdEntrypoint:
+    def __init__(self, resolved: Path, calls: dict[str, object]) -> None:
+        self.resolved = resolved
+        self.calls = calls
+
+    def DefinePrim(self, path: str, type_name: str) -> object:
+        self.calls["prim"] = (path, type_name)
+        references = _FakeUsdReferences(self.calls)
+        return SimpleNamespace(GetReferences=lambda: references)
+
+    def SetDefaultPrim(self, prim: object) -> None:
+        self.calls["default_prim"] = prim
+
+    def SetMetadata(self, name: str, value: object) -> None:
+        self.calls.setdefault("metadata", {})[name] = value
+
+    def GetRootLayer(self) -> object:
+        def save() -> bool:
+            self.resolved.write_text("entrypoint")
+            return True
+
+        return SimpleNamespace(Save=save)
+
+
+def _fake_usd_module(
+    produced: Path, resolved: Path, calls: dict[str, object]
+) -> object:
+    default_prim = SimpleNamespace(
+        IsValid=lambda: True,
+        GetName=lambda: "panda",
+        GetTypeName=lambda: "Xform",
+    )
+    source_stage = SimpleNamespace(
+        GetDefaultPrim=lambda: default_prim,
+        GetMetadata=lambda name: {"upAxis": "Z", "metersPerUnit": 1.0}.get(name),
+    )
+    load_none = object()
+    stage_api = SimpleNamespace(
+        LoadNone=load_none,
+        Open=lambda path, load: (
+            source_stage if path == str(produced) and load is load_none else None
+        ),
+        CreateNew=lambda path: (
+            _FakeUsdEntrypoint(resolved, calls) if path == str(resolved) else None
+        ),
+    )
+    return SimpleNamespace(Usd=SimpleNamespace(Stage=stage_api))
+
+
+def test_isaac_entrypoint_references_nested_converter_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    resolved = tmp_path / "resolved" / "robot.usd"
+    produced = tmp_path / "resolved" / "panda" / "panda.usda"
+    produced.parent.mkdir(parents=True)
+    produced.write_text('#usda 1.0\ndef Xform "panda" {}\n')
+    calls: dict[str, object] = {}
+    monkeypatch.setitem(sys.modules, "pxr", _fake_usd_module(produced, resolved, calls))
+
+    isaac_robot_asset._install_usd_entrypoint(produced, resolved)
+
+    assert calls["prim"] == ("/panda", "Xform")
+    assert calls["reference"] == "panda/panda.usda"
+    assert calls["metadata"] == {"upAxis": "Z", "metersPerUnit": 1.0}
+    assert resolved.read_text() == "entrypoint"
+
+
+def test_isaac_entrypoint_rejects_converter_output_outside_asset_tree(
+    tmp_path: Path,
+) -> None:
+    produced = tmp_path / "outside" / "robot.usd"
+    resolved = tmp_path / "resolved" / "robot.usd"
+    with pytest.raises(
+        isaac_robot_asset.IsaacRobotAssetError,
+        match="outside the resolved asset tree",
+    ):
+        isaac_robot_asset._install_usd_entrypoint(produced, resolved)
+
+
+def test_isaac_entrypoint_preserves_nested_relative_composition(
+    tmp_path: Path,
+) -> None:
+    from pxr import Usd
+
+    resolved = tmp_path / "resolved" / "robot.usd"
+    produced = tmp_path / "resolved" / "panda" / "panda.usda"
+    payload = produced.parent / "payloads" / "base.usda"
+    payload.parent.mkdir(parents=True)
+    payload.write_text(
+        '#usda 1.0\n(defaultPrim = "panda")\n'
+        'def Xform "panda"\n{\n'
+        '    def Xform "panda_link0"\n    {\n    }\n'
+        "}\n"
+    )
+    produced.write_text(
+        '#usda 1.0\n(defaultPrim = "panda")\n'
+        'def Xform "panda" (prepend references = @./payloads/base.usda@) {}\n'
+    )
+
+    isaac_robot_asset._install_usd_entrypoint(produced, resolved)
+
+    stage = Usd.Stage.Open(str(resolved))
+    assert stage is not None
+    assert stage.GetPrimAtPath("/panda/panda_link0").IsValid()
+
+
+class _FakeTargetPrim:
+    def __init__(self, path: object, valid: bool) -> None:
+        self._path = str(path)
+        self._valid = valid
+
+    def IsValid(self) -> bool:
+        return self._valid
+
+    def GetName(self) -> str:
+        return self._path.rsplit("/", 1)[-1]
+
+
+class _FakeBodyPrim:
+    def __init__(
+        self,
+        path: str,
+        *,
+        rigid: bool,
+        rigid_body_api: object,
+        parent: _FakeBodyPrim | None = None,
+    ) -> None:
+        self.path = path
+        self.rigid = rigid
+        self.rigid_body_api = rigid_body_api
+        self.parent = parent
+
+    def IsValid(self) -> bool:
+        return True
+
+    def GetName(self) -> str:
+        return self.path.rsplit("/", 1)[-1]
+
+    def GetPath(self) -> str:
+        return self.path
+
+    def GetParent(self) -> _FakeBodyPrim | None:
+        return self.parent
+
+    def HasAPI(self, schema: object) -> bool:
+        return schema is self.rigid_body_api and self.rigid
+
+
+class _FakeRelationship:
+    def __init__(self, target: str) -> None:
+        self._target = target
+
+    def GetTargets(self) -> list[str]:
+        return [self._target]
+
+
+class _FakeJointPrim:
+    def __init__(self, name: str, body0: str, body1: str) -> None:
+        self.name = name
+        self.body0 = body0
+        self.body1 = body1
+
+    def GetName(self) -> str:
+        return self.name
+
+    def GetPath(self) -> str:
+        return f"/panda/Physics/{self.name}"
+
+    def IsA(self, _schema: object) -> bool:
+        return True
+
+
+class _FakeRelativePath:
+    def __init__(self, value: str, absolute: str, prim_path: str) -> None:
+        self.value = value
+        self.absolute = absolute
+        self.prim_path = prim_path
+        self.anchor: str | None = None
+
+    def IsAbsolutePath(self) -> bool:
+        return False
+
+    def MakeAbsolutePath(self, anchor: str) -> str:
+        self.anchor = anchor
+        return self
+
+    def GetPrimPath(self) -> str:
+        return self.prim_path
+
+    def __str__(self) -> str:
+        return self.value
+
+
+class _FakeRelationshipTargetPath:
+    def __init__(self, nested: _FakeRelativePath) -> None:
+        self.nested = nested
+
+    def ContainsTargetPath(self) -> bool:
+        return True
+
+    def GetTargetPath(self) -> _FakeRelativePath:
+        return self.nested
+
+
+class _FakeUsdJoint:
+    def __init__(self, prim: _FakeJointPrim) -> None:
+        self._prim = prim
+
+    def GetBody0Rel(self) -> _FakeRelationship:
+        return _FakeRelationship(self._prim.body0)
+
+    def GetBody1Rel(self) -> _FakeRelationship:
+        return _FakeRelationship(self._prim.body1)
+
+
+def _joint_target_stage(valid_paths: set[str]) -> tuple[object, object]:
+    joints = [
+        _FakeJointPrim("arm_joint", "/panda/Physics/base", "/panda/Physics/hand"),
+        _FakeJointPrim(
+            "finger_joint",
+            "/panda/Physics/left_finger",
+            "/panda/Physics/right_finger",
+        ),
+    ]
+    instance_proxy_predicate = object()
+    stage = SimpleNamespace(
+        Traverse=lambda predicate: (
+            joints if predicate is instance_proxy_predicate else []
+        ),
+        GetPrimAtPath=lambda path: _FakeTargetPrim(path, str(path) in valid_paths),
+    )
+    return stage, instance_proxy_predicate
+
+
+def test_isaac_usd_validation_accepts_valid_joint_body_targets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body_paths = {
+        "/panda/Physics/base",
+        "/panda/Physics/hand",
+        "/panda/Physics/left_finger",
+        "/panda/Physics/right_finger",
+    }
+    stage, instance_proxy_predicate = _joint_target_stage(body_paths)
+    pxr = SimpleNamespace(
+        Usd=SimpleNamespace(
+            Stage=SimpleNamespace(Open=lambda _path: stage),
+            TraverseInstanceProxies=lambda: instance_proxy_predicate,
+        ),
+        UsdPhysics=SimpleNamespace(Joint=_FakeUsdJoint),
+    )
+    monkeypatch.setitem(sys.modules, "pxr", pxr)
+
+    isaac_robot_asset._validate_usd(Path("robot.usd"), _doc())
+
+
+def test_isaac_usd_validation_resolves_relative_joint_body_targets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    targets = {
+        name: _FakeRelativePath(
+            f"../../{name}.physics:body",
+            f"/panda/Physics/{name}.physics:body",
+            f"/panda/Physics/{name}",
+        )
+        for name in ("base", "hand", "left_finger", "right_finger")
+    }
+    joints = [
+        _FakeJointPrim("arm_joint", targets["base"], targets["hand"]),
+        _FakeJointPrim("finger_joint", targets["left_finger"], targets["right_finger"]),
+    ]
+    instance_proxy_predicate = object()
+    valid_paths = {target.prim_path for target in targets.values()}
+    stage = SimpleNamespace(
+        Traverse=lambda predicate: (
+            joints if predicate is instance_proxy_predicate else []
+        ),
+        GetPrimAtPath=lambda path: _FakeTargetPrim(path, str(path) in valid_paths),
+    )
+    pxr = SimpleNamespace(
+        Usd=SimpleNamespace(
+            Stage=SimpleNamespace(Open=lambda _path: stage),
+            TraverseInstanceProxies=lambda: instance_proxy_predicate,
+        ),
+        UsdPhysics=SimpleNamespace(Joint=_FakeUsdJoint),
+    )
+    monkeypatch.setitem(sys.modules, "pxr", pxr)
+
+    isaac_robot_asset._validate_usd(Path("robot.usd"), _doc())
+
+    assert targets["base"].anchor == "/panda/Physics/arm_joint"
+    assert targets["left_finger"].anchor == "/panda/Physics/finger_joint"
+
+
+def test_isaac_usd_validation_unwraps_relationship_target_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    targets = {
+        name: _FakeRelativePath(
+            f"../../{name}.physics:body",
+            f"/panda/Physics/{name}.physics:body",
+            f"/panda/Physics/{name}",
+        )
+        for name in ("base", "hand", "left_finger", "right_finger")
+    }
+    wrapped = {
+        name: _FakeRelationshipTargetPath(target) for name, target in targets.items()
+    }
+    joints = [
+        _FakeJointPrim("arm_joint", wrapped["base"], wrapped["hand"]),
+        _FakeJointPrim("finger_joint", wrapped["left_finger"], wrapped["right_finger"]),
+    ]
+    instance_proxy_predicate = object()
+    valid_paths = {target.prim_path for target in targets.values()}
+    stage = SimpleNamespace(
+        Traverse=lambda predicate: (
+            joints if predicate is instance_proxy_predicate else []
+        ),
+        GetPrimAtPath=lambda path: _FakeTargetPrim(path, str(path) in valid_paths),
+    )
+    pxr = SimpleNamespace(
+        Usd=SimpleNamespace(
+            Stage=SimpleNamespace(Open=lambda _path: stage),
+            TraverseInstanceProxies=lambda: instance_proxy_predicate,
+        ),
+        UsdPhysics=SimpleNamespace(Joint=_FakeUsdJoint),
+    )
+    monkeypatch.setitem(sys.modules, "pxr", pxr)
+
+    isaac_robot_asset._validate_usd(Path("robot.usd"), _doc())
+
+    assert targets["base"].anchor == "/panda/Physics/arm_joint"
+    assert targets["right_finger"].anchor == "/panda/Physics/finger_joint"
+
+
+def test_isaac_usd_validation_resolves_child_targets_to_rigid_body_ancestors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rigid_body_api = object()
+    body_names = ("base", "hand", "left_finger", "right_finger")
+    bodies = {
+        name: _FakeBodyPrim(f"/panda/{name}", rigid=True, rigid_body_api=rigid_body_api)
+        for name in body_names
+    }
+    children = {
+        name: _FakeBodyPrim(
+            f"/panda/{name}/collisions/collider",
+            rigid=False,
+            rigid_body_api=rigid_body_api,
+            parent=bodies[name],
+        )
+        for name in body_names
+    }
+    children_by_path = {child.GetPath(): child for child in children.values()}
+    targets = {name: child.GetPath() for name, child in children.items()}
+    joints = [
+        _FakeJointPrim("arm_joint", targets["base"], targets["hand"]),
+        _FakeJointPrim("finger_joint", targets["left_finger"], targets["right_finger"]),
+    ]
+    instance_proxy_predicate = object()
+    stage = SimpleNamespace(
+        Traverse=lambda predicate: (
+            joints if predicate is instance_proxy_predicate else []
+        ),
+        GetPrimAtPath=lambda path: children_by_path.get(
+            str(path), _FakeTargetPrim(path, False)
+        ),
+    )
+    pxr = SimpleNamespace(
+        Usd=SimpleNamespace(
+            Stage=SimpleNamespace(Open=lambda _path: stage),
+            TraverseInstanceProxies=lambda: instance_proxy_predicate,
+        ),
+        UsdPhysics=SimpleNamespace(Joint=_FakeUsdJoint, RigidBodyAPI=rigid_body_api),
+    )
+    monkeypatch.setitem(sys.modules, "pxr", pxr)
+
+    assert isaac_robot_asset._physics_body_names(stage, joints, pxr.UsdPhysics) == set(
+        body_names
+    )
+    isaac_robot_asset._validate_usd(Path("robot.usd"), _doc())
+
+
+def test_isaac_cli_returns_nonzero_without_closing_kit_on_conversion_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail(_argv: list[str] | None = None) -> int:
+        raise isaac_robot_asset.IsaacRobotAssetError("native conversion failed")
+
+    monkeypatch.setattr(isaac_robot_asset, "main", fail)
+
+    assert isaac_robot_asset._run_cli() == 1
+
+
+def test_isaac_usd_validation_rejects_dangling_joint_body_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stage, instance_proxy_predicate = _joint_target_stage(
+        {"/panda/Physics/base", "/panda/Physics/hand"}
+    )
+    pxr = SimpleNamespace(
+        Usd=SimpleNamespace(
+            Stage=SimpleNamespace(Open=lambda _path: stage),
+            TraverseInstanceProxies=lambda: instance_proxy_predicate,
+        ),
+        UsdPhysics=SimpleNamespace(Joint=_FakeUsdJoint),
+    )
+    monkeypatch.setitem(sys.modules, "pxr", pxr)
+
+    with pytest.raises(
+        isaac_robot_asset.IsaacRobotAssetError,
+        match="left_finger, right_finger",
+    ):
+        isaac_robot_asset._validate_usd(Path("robot.usd"), _doc())
+
+
+def test_isaac_prepare_does_not_let_kit_close_hide_conversion_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    closed = False
+
+    class FakeApp:
+        def close(self) -> None:
+            nonlocal closed
+            closed = True
+
+    class FakeLauncher:
+        def __init__(self, **_: object) -> None:
+            self.app = FakeApp()
+
+    app_module = types.ModuleType("isaaclab.app")
+    app_module.AppLauncher = FakeLauncher
+    monkeypatch.setitem(sys.modules, "isaaclab.app", app_module)
+
+    def fail() -> dict:
+        raise isaac_robot_asset.IsaacRobotAssetError("conversion failed before publish")
+
+    monkeypatch.setattr(isaac_robot_asset, "prepare_with_running_app", fail)
+
+    with pytest.raises(
+        isaac_robot_asset.IsaacRobotAssetError,
+        match="conversion failed before publish",
+    ):
+        isaac_robot_asset.prepare()
+    assert closed is False
 
 
 def test_isaac_download_tree_rejects_traversal_keys(

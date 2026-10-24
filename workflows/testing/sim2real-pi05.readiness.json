@@ -1,0 +1,61 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "b3288691e1a5ac9c2543993546c46e6b9a4e757b84642c3b9b9a6fb25ac0f9d3",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "The separate 14-state npa.workflow validates, plans, and renders with explicit immutable-image and source placeholders; module argv, live-matrix, schema-chain, declared-output, independent training/service GPU-allocation checks, and distinct run-scoped base/adapted controller identities cover the new toolRefs. Both closed-loop evaluators read the exact declared gold collection.json object while the exporter retains collection directory prefixes. Preparation rejects accounts that do not match the existing exact-name RBAC helper for each suffixed service run. Evaluation now preserves the prior 192-control horizon as 192 decisions with one fresh camera/state observation before each applied target.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/sim2real-pi05.yaml",
+        "npa workbench workflow plan-spec workflows/testing/sim2real-pi05.yaml --json --check-render",
+        "npa/tests/orchestration/npa_workflow/test_sim2real_pi05_workflow.py"
+      ]
+    },
+    "task_fidelity": {
+      "status": "unverified",
+      "reason": "Offline contracts and tests prove the absolute-joint/DROID-gripper bridge, dense camera/action alignment, strict packed-semantic rules, measured object geometry, one-body support, split isolation, and released-support metric. Historical exact-source live execution admitted eight of eight expert episodes in each 48/60/72 mm cohort with unchanged physics and camera gates. Its first native export exposed a legitimate float32 sensor-clock versus float64 episode-clock offset; this revision binds causal age to the reproduced sensor clock while retaining raw timestamps and representation offset. It also records the full finger-link hand-axis interval, requires the live transformed complete-link proximal bound to retain 8 mm clearance at contact/grasp, and requires that aligned evidence again during export. This is not a pad or palm collision-geometry claim. The measured-width adapter retains raw finite evidence and saturates only at the unchanged model-facing range. A later matched old-checkpoint diagnostic measured zero placements in fresh, frozen, and spatial-and-channel pixel-value-shuffled wrist modes; the pixel-value permutation reached more grasps and lifts than fresh, so wrist effectiveness was rejected. This revision removes the eight-control open-loop interval by refreshing both cameras and state before every applied target while preserving the same total control horizon. Final-source export, images, policy rollout and matched ablation remain unverified.",
+      "evidence": [
+        "npa/tests/test_sim2real_pi05_contract.py",
+        "npa/tests/test_sim2real_pi05_pipeline.py"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "verified",
+      "reason": "The selected operator environment passed Nebius and object-storage credential preflight; each execution must still replace the checked-in example bucket with its owned prefix.",
+      "evidence": [
+        "Sanitized private health-preflight conclusion; no resource identifiers or credentials committed."
+      ]
+    },
+    "worker_input": {
+      "status": "verified",
+      "reason": "All 27 authoritative public Polaris checkpoint objects and the separate public tokenizer were downloaded anonymously and integrity-verified at exact generations. A prospective c9 collector produced eight admitted demonstrations in each 48/60/72 mm train/validation/gold cohort with the final clock and clearance contract, and the baked CPU image exported and independently read back all 691 train and 695 validation chunks with no gold arrays. These historical input bytes remain immutable evidence; they do not qualify the final source images, training, or policy outcomes.",
+      "evidence": [
+        "Private public-artifact receipts record 27 complete checkpoint objects and the separate tokenizer payload with exact generation, byte count, authoritative MD5, and computed SHA256 without credentials.",
+        "Private live receipts retain real checkpoint load/inference and failed expert/camera attempts without publishing infrastructure identifiers."
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "Nebius and storage credentials passed, and public Polaris uses anonymous authoritative-GCS access with no NPA consent variable or HF token. An owned private service and calibrated Isaac client completed four authenticated fixed-noise WebSocket requests through the operator-managed auth_token Secret without putting token bytes in payload receipts. Each new service run must still bind its own scoped Secret. An explicitly selected gated HF alternative would require the downloader's own token and exact-revision payload probe.",
+      "evidence": [
+        "Sanitized private health-preflight conclusion; public Polaris artifact preflight remains an execution check rather than a credential gate."
+      ]
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "Historical exact-source Isaac, OpenPI, and shared CPU/Rerun Viewer prototypes built and passed their scoped byte or packaging gates, and the workflow retains three immutable image roles. Historical Isaac images exposed missing msgpack and CUDA/scalar action-parameter boundaries before policy execution; the current recipe and source close those dependencies and build-smoke the actual msgpack/WebSocket plus MP4/Rerun paths. Replay of real expert targets then proved that a former adapter invented a raw [-1,1] action range absent from the pinned SDK. The immediate predecessor source and all three DEV images passed their exact-source packaging, security, provenance, SBOM, and anonymous-byte gates. This successor uses the same native unclipped affine domain and physical joint limits but changes controller feedback cadence and the bounded raw measurement envelope; its image bytes remain unbuilt and unqualified, and all checked-in image values remain non-runnable placeholders. OpenPI training/serving defaults still route to B200/SM100, so this is not a qualified RTX-only deployment.",
+      "evidence": [
+        "workflows/testing/sim2real-pi05.yaml"
+      ]
+    },
+    "target_runtime": {
+      "status": "blocked",
+      "reason": "The selected native route previously passed CUDA, graphics, and stability checks on its declared single-GPU workers. Historical execution admitted expert episodes in each 48/60/72 mm cohort, exported every train/validation chunk, completed native LoRA updates, saved and reloaded the resulting checkpoint, and independently verified real checkpoint loading and authenticated fixed-noise inference. These runs used earlier separately identified source/image combinations and do not qualify final-source execution. The latest old-checkpoint diagnostic verified repaired service startup and cleanup but measured zero placements in all three wrist conditions, two incomplete frozen episodes from bounded finite gripper readings, and no helpful wrist-camera effect. This successor records every model response, requires complete per-control execution for effectiveness, refreshes the moving wrist view before every target, assigns distinct exact-owner service controllers, and uses batch size one to cover held-out samples without padding or dropping a tail. It has no final-source closed-loop result or image qualification. No eight-GPU or multi-host training claim is made. The interpreter has no finally/on_failure transition, so an owned failure monitor or real failure transition remains required before service operation. Final-source image builds, selected-checkpoint reload, matched closed-loop outcomes, MP4 and Rerun outputs remain unverified.",
+      "evidence": [
+        "Sanitized private helper preflight, image-launch, and reset-failure receipts are retained outside Git; no live resource identifiers are committed."
+      ]
+    }
+  }
+}

@@ -694,6 +694,14 @@ jobs:
           labels = config.get("Labels") or {}
           if labels.get("org.opencontainers.image.revision") != sha:
               raise SystemExit("OCI revision does not match the exact source commit")
+          if tool in {"isaac-lab", "lerobot", "openpi", "rerun-viewer"}:
+              runtime_source = [
+                  item.partition("=")[2]
+                  for item in config.get("Env") or []
+                  if item.partition("=")[0] == "NPA_IMAGE_SOURCE_SHA"
+              ]
+              if runtime_source != [sha]:
+                  raise SystemExit("baked NPA source attestation does not match the exact source commit")
           if tool in SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS and labels.get(ATTESTATION_LABEL) != CONTRACT_VERSION:
               raise SystemExit("required SkyPilot bootstrap attestation is absent or stale")
           serialized = json.dumps(config, sort_keys=True)

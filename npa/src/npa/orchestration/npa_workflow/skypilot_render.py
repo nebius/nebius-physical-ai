@@ -129,8 +129,6 @@ IMAGE_TOOLS_REQUIRING_STAGED_NPA_SOURCE = frozenset({"sonic"})
 HABITAT_SIM_TOOL_REF = "workflow.habitat_sim.smoke"
 HABITAT_SIM_ACCELERATOR = "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
 
-OPENPI_TERMS_ENV = "NPA_OPENPI_ACCEPT_GEMMA_TERMS"
-
 SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     "workbench.marble.pallet_preflight": ("WLT_API_KEY",),
     "workflow.policy_public": ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
@@ -154,7 +152,6 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     "workflow.paidf.run_visual_qa": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "workflow.paidf.run_attribute_search": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "workflow.paidf.dig_prepare_pretrained": ("HF_TOKEN",),
-    "workbench.openpi": (OPENPI_TERMS_ENV,),
     # The released flex-pi checkpoint is public, but its multi-shard runtime
     # fetch can exceed the anonymous Hub rate limit. Forward an operator token
     # only through the workflow secret channel when one is available.
@@ -316,6 +313,9 @@ TOOL_REF_PIP_REQUIREMENTS: dict[str, tuple[tuple[str, str], ...]] = {
     "workbench.lerobot.policy_train": (
         ("python:huggingface_hub", "huggingface_hub>=0.23,<1.0"),
     ),
+    "workbench.lerobot.smolvla_interchange_train": (
+        ("python:huggingface_hub", "huggingface_hub>=0.23,<1.0"),
+    ),
     "workbench.lerobot.policy_rollout": (
         ("python:huggingface_hub", "huggingface_hub>=0.23,<1.0"),
     ),
@@ -362,6 +362,7 @@ TOOL_REF_VENDOR_INTERPRETERS: dict[str, tuple[str, ...]] = {
     "workbench.groot.baseline_eval": ("/opt/groot/Isaac-GR00T/.venv/bin/python",),
     "workbench.groot.posttrain_eval": ("/opt/groot/Isaac-GR00T/.venv/bin/python",),
     "workbench.lerobot": ("/opt/lerobot/venv/bin/python",),
+    "workbench.sim2real.smolvla_artifact_preflight": ("/opt/lerobot/venv/bin/python",),
     # Isaac Lab's simulator packages live in the Omniverse kit environment, not in the image's
     # system python. Live job 267 installed npa into /usr/bin/python3 and the stage died with
     # `isaaclab is required in the Isaac Lab image: No module named 'isaaclab'`. python.sh is
@@ -2485,13 +2486,6 @@ def secret_env_hints_for_plan(steps: Sequence[PlanStep]) -> tuple[str, ...]:
                 if name not in seen:
                     seen.add(name)
                     hints.append(name)
-        if tool_ref == "workbench.byof.repo" and any(
-            value == "openpi" or "pi05_droid_jointpos_polaris" in value
-            for value in step.argv
-        ):
-            if OPENPI_TERMS_ENV not in seen:
-                seen.add(OPENPI_TERMS_ENV)
-                hints.append(OPENPI_TERMS_ENV)
         matches = [
             (prefix, names)
             for prefix, names in SECRET_ENV_HINTS.items()

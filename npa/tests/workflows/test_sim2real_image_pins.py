@@ -483,12 +483,12 @@ def test_cosmos3_reason_has_complete_skypilot_bootstrap_runtime() -> None:
 
 
 def test_sim2real_control_plane_requirement_closure_is_exact() -> None:
-    requirements = (
-        Path(__file__).resolve().parents[2]
-        / "docker"
-        / "workbench"
-        / "common"
-        / "sim2real-control-requirements.txt"
+    common = Path(__file__).resolve().parents[2] / "docker" / "workbench" / "common"
+    requirements = (common / "sim2real-control-requirements.txt").read_text(
+        encoding="utf-8"
+    )
+    controller_requirements = (
+        common / "sim2real-controller-requirements.txt"
     ).read_text(encoding="utf-8")
     lines = [
         line.strip()
@@ -498,6 +498,7 @@ def test_sim2real_control_plane_requirement_closure_is_exact() -> None:
     assert lines
     assert all(line.count("==") == 1 for line in lines)
     for expected in (
+        "certifi==2026.10.19",
         "kubernetes==33.1.0",
         "mcap==1.4.0",
         "durationpy==0.10",
@@ -509,6 +510,7 @@ def test_sim2real_control_plane_requirement_closure_is_exact() -> None:
         "zstandard==0.25.0",
     ):
         assert expected in lines
+    assert "certifi==2026.10.19" in controller_requirements.splitlines()
 
     root = Path(__file__).resolve().parents[2] / "docker" / "workbench"
     for relative_path in ("lerobot-vlm-rl/Dockerfile", "isaac-lab/Dockerfile"):

@@ -19,6 +19,17 @@ from npa.workflows.sim2real.publication import (
     upload_immutable_file,
 )
 
+CANONICAL_COMPONENT_SCHEMA = "npa.sim2real.component_record.v1"
+PI05_COMPONENT_SCHEMA = "npa.sim2real.pi05.component_record.v1"
+POLICY_INTERCHANGE_COMPONENT_SCHEMA = (
+    "npa.sim2real.policy_interchange.component_record.v1"
+)
+_COMPONENT_GPU_STAGES = {
+    CANONICAL_COMPONENT_SCHEMA: frozenset({3, 4, 7, 9, 10}),
+    PI05_COMPONENT_SCHEMA: frozenset({2, 6, 8, 9, 11}),
+    POLICY_INTERCHANGE_COMPONENT_SCHEMA: frozenset({2, 6, 8, 9, 11}),
+}
+
 
 def storage() -> StorageClient:
     return StorageClient.from_environment()
@@ -223,7 +234,10 @@ def _component_provenance(
     tier: str,
     require_gpu: bool,
     execution_provenance: dict[str, Any] | None,
+    component_schema: str,
 ) -> dict[str, Any]:
+    if component_schema not in _COMPONENT_GPU_STAGES:
+        raise ValueError("Unknown ComponentRecord workflow schema")
     if stage == 12:
         if tier != "SEAM":
             raise ValueError("Stage 12 must remain an explicit SEAM")
@@ -233,7 +247,9 @@ def _component_provenance(
     provenance = dict(execution_provenance or image_provenance(require_gpu=require_gpu))
     if require_gpu and not provenance.get("gpu_products"):
         raise ValueError(f"Stage {stage} execution provenance lacks GPU products")
-    if not _record_provenance_is_valid(provenance, stage=stage):
+    if not _record_provenance_is_valid(
+        provenance, stage=stage, component_schema=component_schema
+    ):
         raise ValueError(f"Stage {stage} execution provenance is invalid")
     return provenance
 
@@ -247,10 +263,13 @@ def _component_record_payload(
     require_gpu: bool = False,
     next_action: str = "CONTINUE",
     execution_provenance: dict[str, Any] | None = None,
+    component_schema: str = CANONICAL_COMPONENT_SCHEMA,
 ) -> dict[str, Any]:
-    provenance = _component_provenance(stage, tier, require_gpu, execution_provenance)
+    provenance = _component_provenance(
+        stage, tier, require_gpu, execution_provenance, component_schema
+    )
     payload = {
-        "schema": "npa.sim2real.component_record.v1",
+        "schema": component_schema,
         "stage": stage,
         "name": name,
         "tier": tier,
@@ -273,24 +292,24 @@ def build_component_record(
     require_gpu: bool = False,
     next_action: str = "CONTINUE",
     execution_provenance: dict[str, Any] | None = None,
+    component_schema: str = CANONICAL_COMPONENT_SCHEMA,
 ) -> dict[str, Any]:
     """Build one content-addressed ComponentRecord without publishing it.
     Args:
-        stage: Canonical one-based workflow stage number.
-        name: Canonical stage component name.
+        stage: One-based stage number in the selected workflow.
+        name: Stage component name.
         tier: ``WORKS`` except for the explicit Stage 12 ``SEAM``.
         evidence: Human-readable factual completion evidence.
         artifacts: Stage outputs and lineage fields.
         require_gpu: Whether execution provenance must name GPU products.
         next_action: Durable orchestration action after this stage.
         execution_provenance: Optional already-verified task provenance.
-    Returns:
-        A complete ComponentRecord including its content SHA-256.
+        component_schema: Workflow schema selecting its fixed GPU stage requirements.
+    Returns: A complete ComponentRecord including its content SHA-256.
     Raises:
         ValueError: If tier or execution provenance is invalid.
         RuntimeError: If ambient image/source provenance is unavailable.
     """
-
     return _component_record_payload(
         stage,
         name,
@@ -300,6 +319,7 @@ def build_component_record(
         require_gpu,
         next_action,
         execution_provenance,
+        component_schema,
     )
 
 
@@ -310,6 +330,7 @@ def _record_shape_is_valid(
     expected_name: str,
     expected_tier: str,
     required_artifacts: tuple[str, ...],
+    expected_schema: str,
 ) -> bool:
     artifacts = record.get("artifacts")
     material = {key: value for key, value in record.items() if key != "content_sha256"}
@@ -317,7 +338,8 @@ def _record_shape_is_valid(
         json.dumps(material, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     return bool(
-        record.get("schema") == "npa.sim2real.component_record.v1"
+        expected_schema in _COMPONENT_GPU_STAGES
+        and record.get("schema") == expected_schema
         and type(record.get("stage")) is int
         and record["stage"] == expected_stage
         and record.get("name") == expected_name
@@ -340,27 +362,10 @@ def _record_shape_is_valid(
     )
 
 
-def _record_provenance_is_valid(
-    artifacts: dict[str, Any],
-    *,
-    stage: int,
-) -> bool:
-    source = artifacts.get("source_sha")
-    source_valid = (
-        isinstance(source, str)
-        and len(source) == 40
-        and all(char in "0123456789abcdef" for char in source)
-    )
-    if not source_valid:
-        return False
-    if stage == 12:
-        return not any(
-            key in artifacts
-            for key in ("image", "image_digest", "execution_mode", "workflow_job")
-        )
+def _record_image_is_valid(artifacts: dict[str, Any]) -> bool:
     image = artifacts.get("image")
     image_digest = artifacts.get("image_digest")
-    image_valid = bool(
+    return bool(
         isinstance(image, str)
         and "@sha256:" in image
         and isinstance(image_digest, str)
@@ -369,20 +374,48 @@ def _record_provenance_is_valid(
         and all(char in "0123456789abcdef" for char in image_digest[7:])
         and image_digest == image.split("@", 1)[1]
     )
-    if not image_valid:
+
+
+def _parallel_record_is_valid(
+    artifacts: dict[str, Any], stage: int, component_schema: str
+) -> bool:
+    jobs = artifacts.get("workflow_jobs")
+    return bool(
+        component_schema == CANONICAL_COMPONENT_SCHEMA
+        and stage == 4
+        and isinstance(jobs, list)
+        and jobs
+        and all(isinstance(job, str) and job.strip() for job in jobs)
+        and len(set(jobs)) == len(jobs)
+        and artifacts.get("lane_count") == len(jobs)
+        and isinstance(artifacts.get("gpu_products"), list)
+        and artifacts["gpu_products"]
+    )
+
+
+def _record_provenance_is_valid(
+    artifacts: dict[str, Any],
+    *,
+    stage: int,
+    component_schema: str = CANONICAL_COMPONENT_SCHEMA,
+) -> bool:
+    source = artifacts.get("source_sha")
+    if (
+        component_schema not in _COMPONENT_GPU_STAGES
+        or not isinstance(source, str)
+        or len(source) != 40
+        or any(char not in "0123456789abcdef" for char in source)
+    ):
+        return False
+    if stage == 12:
+        return not any(
+            key in artifacts
+            for key in ("image", "image_digest", "execution_mode", "workflow_job")
+        )
+    if not _record_image_is_valid(artifacts):
         return False
     if artifacts.get("execution_mode") == "standard_npa_workflow_parallel_join":
-        jobs = artifacts.get("workflow_jobs")
-        return bool(
-            stage == 4
-            and isinstance(jobs, list)
-            and jobs
-            and all(isinstance(job, str) and job.strip() for job in jobs)
-            and len(set(jobs)) == len(jobs)
-            and artifacts.get("lane_count") == len(jobs)
-            and isinstance(artifacts.get("gpu_products"), list)
-            and artifacts["gpu_products"]
-        )
+        return _parallel_record_is_valid(artifacts, stage, component_schema)
     gpu_valid = _gpu_device_evidence_is_valid(
         artifacts.get("gpu_products"),
         artifacts.get("gpu_rows"),
@@ -393,7 +426,7 @@ def _record_provenance_is_valid(
         and isinstance(artifacts.get("workflow_job"), str)
         and artifacts["workflow_job"].strip()
         and (not gpu_evidence_present or gpu_valid)
-        and (stage not in {3, 4, 7, 9, 10} or gpu_valid)
+        and (stage not in _COMPONENT_GPU_STAGES[component_schema] or gpu_valid)
     )
 
 
@@ -404,6 +437,7 @@ def _validate_component_record(
     expected_tier: str,
     required_artifacts: tuple[str, ...],
     expected_source_sha: str | None,
+    expected_schema: str,
 ) -> None:
     if not isinstance(record, dict):
         raise ValueError(f"Stage {expected_stage} ComponentRecord must be an object")
@@ -413,9 +447,12 @@ def _validate_component_record(
         expected_name=expected_name,
         expected_tier=expected_tier,
         required_artifacts=required_artifacts,
+        expected_schema=expected_schema,
     ):
         raise ValueError(f"Stage {expected_stage} ComponentRecord is invalid")
-    if not _record_provenance_is_valid(record["artifacts"], stage=expected_stage):
+    if not _record_provenance_is_valid(
+        record["artifacts"], stage=expected_stage, component_schema=expected_schema
+    ):
         raise ValueError(f"Stage {expected_stage} execution provenance is invalid")
     if (
         expected_source_sha is not None
@@ -432,8 +469,9 @@ def validate_component_record(
     expected_tier: str,
     required_artifacts: tuple[str, ...],
     expected_source_sha: str | None = None,
+    expected_schema: str = CANONICAL_COMPONENT_SCHEMA,
 ) -> None:
-    """Reject incomplete or tampered canonical ComponentRecords.
+    """Reject incomplete or tampered records for the consumer's workflow.
 
     Args:
         record: Decoded ComponentRecord read from durable storage.
@@ -442,6 +480,7 @@ def validate_component_record(
         expected_tier: Required ``WORKS`` or ``SEAM`` tier.
         required_artifacts: Artifact keys required from the stage producer.
         expected_source_sha: Optional exact workflow source revision.
+        expected_schema: Workflow selected by the consumer, never by the record.
     Returns:
         None.
     Raises:
@@ -454,6 +493,7 @@ def validate_component_record(
         expected_tier,
         required_artifacts,
         expected_source_sha,
+        expected_schema,
     )
 
 
@@ -484,6 +524,7 @@ def _build_and_publish_record(
     require_gpu: bool,
     next_action: str,
     execution_provenance: dict[str, Any] | None,
+    component_schema: str,
 ) -> dict[str, Any]:
     payload = build_component_record(
         stage=stage,
@@ -494,6 +535,7 @@ def _build_and_publish_record(
         require_gpu=require_gpu,
         next_action=next_action,
         execution_provenance=execution_provenance,
+        component_schema=component_schema,
     )
     _publish_record(root_uri, payload, stage)
     return payload
@@ -510,22 +552,21 @@ def publish_component_record(
     require_gpu: bool = False,
     next_action: str = "CONTINUE",
     execution_provenance: dict[str, Any] | None = None,
+    component_schema: str = CANONICAL_COMPONENT_SCHEMA,
 ) -> dict[str, Any]:
     """Publish one immutable ComponentRecord history object and live pointer.
-    Args:
-        root_uri: Run-owned artifact root.
-        stage: Canonical one-based workflow stage number.
-        name: Canonical stage component name.
+    Args: root_uri: Run-owned artifact root.
+        stage: One-based stage number in the selected workflow.
+        name: Stage component name.
         tier: ``WORKS`` except for Stage 12 ``SEAM``.
         evidence: Human-readable factual completion evidence.
         artifacts: Stage outputs and lineage fields.
         require_gpu: Whether provenance must name GPU products.
         next_action: Durable orchestration action after this stage.
         execution_provenance: Optional already-verified task provenance.
-    Returns:
-        The published content-addressed ComponentRecord.
-    Raises:
-        ValueError or RuntimeError: If validation or provenance fails.
+        component_schema: Workflow schema selecting its fixed GPU stage requirements.
+    Returns: The published content-addressed ComponentRecord.
+    Raises: ValueError or RuntimeError if validation or provenance fails.
     """
     return _build_and_publish_record(
         root_uri,
@@ -537,6 +578,7 @@ def publish_component_record(
         require_gpu,
         next_action,
         execution_provenance,
+        component_schema,
     )
 
 

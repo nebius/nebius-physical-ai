@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import shutil
+import traceback
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
 
@@ -204,7 +205,14 @@ def _validate_spec(spec: dict) -> None:
         "resolved_usd_uri",
         "resolved_manifest_uri",
     )
-    missing = [name for name in required if not spec.get(name)]
+    missing = []
+    for name in required:
+        value = spec.get(name)
+        nullable = name == "expected_observation_dim"
+        if name not in spec or (value is None and not nullable):
+            missing.append(name)
+        elif isinstance(value, str) and not value:
+            missing.append(name)
     if missing:
         raise IsaacRobotAssetError(
             "resolved RobotSpec is missing immutable asset fields: "
@@ -212,13 +220,80 @@ def _validate_spec(spec: dict) -> None:
         )
 
 
+def _constrained_rigid_body(target_prim: object, usd_physics: object) -> object | None:
+    """Find the rigid body that contains a joint's target Xformable."""
+
+    current = target_prim
+    visited: set[str] = set()
+    while current and current.IsValid():
+        get_path = getattr(current, "GetPath", None)
+        identity = str(get_path()) if callable(get_path) else str(current)
+        if identity in visited:
+            return None
+        visited.add(identity)
+        has_api = getattr(current, "HasAPI", None)
+        rigid_body_api = getattr(usd_physics, "RigidBodyAPI", None)
+        if callable(has_api) and rigid_body_api is not None:
+            if has_api(rigid_body_api):
+                return current
+        elif current is target_prim:
+            # Lightweight test doubles predating RigidBodyAPI model the
+            # relationship target itself as the constrained body.
+            return current
+        get_parent = getattr(current, "GetParent", None)
+        if not callable(get_parent):
+            return None
+        current = get_parent()
+    return None
+
+
+def _physics_body_names(
+    stage: object, prims: list[object], usd_physics: object
+) -> set[str]:
+
+    names: set[str] = set()
+    for prim in prims:
+        if not prim.IsA(usd_physics.Joint):
+            continue
+        joint = usd_physics.Joint(prim)
+        relationships = (joint.GetBody0Rel(), joint.GetBody1Rel())
+        for relationship in relationships:
+            for target in relationship.GetTargets():
+                resolved = target
+                visited: set[str] = set()
+                contains_target_path = getattr(resolved, "ContainsTargetPath", None)
+                while callable(contains_target_path) and contains_target_path():
+                    identity = str(resolved)
+                    if identity in visited:
+                        break
+                    visited.add(identity)
+                    nested = resolved.GetTargetPath()
+                    if not nested or nested == resolved:
+                        break
+                    resolved = nested
+                    contains_target_path = getattr(resolved, "ContainsTargetPath", None)
+                is_absolute = getattr(resolved, "IsAbsolutePath", None)
+                if callable(is_absolute) and not is_absolute():
+                    resolved = resolved.MakeAbsolutePath(prim.GetPath())
+                get_prim_path = getattr(resolved, "GetPrimPath", None)
+                prim_path = get_prim_path() if callable(get_prim_path) else resolved
+                target_prim = stage.GetPrimAtPath(prim_path)
+                if target_prim and target_prim.IsValid():
+                    body_prim = _constrained_rigid_body(target_prim, usd_physics)
+                    if body_prim is not None:
+                        names.add(str(body_prim.GetName()))
+    return names
+
+
 def _validate_usd(path: Path, spec: dict) -> None:
-    from pxr import Usd
+    from pxr import Usd, UsdPhysics
 
     stage = Usd.Stage.Open(str(path))
     if stage is None:
         raise IsaacRobotAssetError(f"Isaac produced an unreadable USD: {path}")
-    names = {prim.GetName() for prim in stage.Traverse()}
+    prims = list(stage.Traverse(Usd.TraverseInstanceProxies()))
+    names = {prim.GetName() for prim in prims}
+    names.update(_physics_body_names(stage, prims, UsdPhysics))
     required_links = {
         str(spec.get("base_link") or ""),
         str(spec.get("ee_link") or ""),
@@ -230,6 +305,54 @@ def _validate_usd(path: Path, spec: dict) -> None:
     if missing_links:
         raise IsaacRobotAssetError(
             "converted USD is missing RobotSpec links: " + ", ".join(missing_links)
+        )
+
+
+def _install_usd_entrypoint(produced: Path, resolved: Path) -> None:
+    """Create the stable entrypoint without relocating relative composition arcs."""
+
+    if produced.resolve() == resolved.resolve():
+        return
+    try:
+        relative = produced.resolve().relative_to(resolved.parent.resolve())
+    except ValueError as exc:
+        raise IsaacRobotAssetError(
+            "Isaac UrdfConverter produced USD outside the resolved asset tree"
+        ) from exc
+
+    from pxr import Usd
+
+    source_stage = Usd.Stage.Open(str(produced), Usd.Stage.LoadNone)
+    if source_stage is None:
+        raise IsaacRobotAssetError(
+            f"Isaac UrdfConverter produced an unreadable USD: {produced}"
+        )
+    source_prim = source_stage.GetDefaultPrim()
+    if not source_prim or not source_prim.IsValid():
+        raise IsaacRobotAssetError(
+            "Isaac UrdfConverter produced USD without a default prim"
+        )
+
+    entrypoint = Usd.Stage.CreateNew(str(resolved))
+    if entrypoint is None:
+        raise IsaacRobotAssetError(
+            f"could not create resolved USD entrypoint: {resolved}"
+        )
+    prim_path = f"/{source_prim.GetName()}"
+    prim = entrypoint.DefinePrim(prim_path, source_prim.GetTypeName() or "Xform")
+    reference_path = relative.as_posix()
+    if not prim.GetReferences().AddReference(reference_path):
+        raise IsaacRobotAssetError(
+            f"could not reference converted USD from entrypoint: {reference_path}"
+        )
+    entrypoint.SetDefaultPrim(prim)
+    for metadata in ("upAxis", "metersPerUnit", "kilogramsPerUnit"):
+        value = source_stage.GetMetadata(metadata)
+        if value is not None:
+            entrypoint.SetMetadata(metadata, value)
+    if not entrypoint.GetRootLayer().Save():
+        raise IsaacRobotAssetError(
+            f"could not save resolved USD entrypoint: {resolved}"
         )
 
 
@@ -281,8 +404,7 @@ def prepare_with_running_app() -> dict:
                 raise IsaacRobotAssetError(
                     f"Isaac UrdfConverter produced no USD for {source.name}"
                 )
-            if produced.resolve() != resolved.resolve():
-                shutil.copy2(produced, resolved)
+            _install_usd_entrypoint(produced, resolved)
         elif spec["source_format"] == "usd":
             shutil.copy2(source, resolved)
         else:
@@ -308,7 +430,11 @@ def prepare_with_running_app() -> dict:
             "asset_files": asset_files,
             "asset_tree_sha256": asset_tree_sha256,
             "expected_action_dim": int(spec["expected_action_dim"]),
-            "expected_observation_dim": int(spec["expected_observation_dim"]),
+            "expected_observation_dim": (
+                int(spec["expected_observation_dim"])
+                if spec["expected_observation_dim"] is not None
+                else None
+            ),
             "converter": (
                 "isaaclab.sim.converters.UrdfConverter"
                 if spec["source_format"] == "urdf"
@@ -349,10 +475,13 @@ def prepare() -> dict:
             "NPA_ISAAC_KIT_ARGS", "--portable-root /tmp/npa-isaac-kit"
         ),
     ).app
-    try:
-        return prepare_with_running_app()
-    finally:
-        app.close()
+    # Isaac Kit may terminate the process with exit code 0 from ``close()``.
+    # Do not cross that boundary while an exception is active. The module entry
+    # point hard-exits non-zero after reporting the exception, and process teardown
+    # releases Kit without letting its launcher rewrite the failed exit status.
+    manifest = prepare_with_running_app()
+    app.close()
+    return manifest
 
 
 def fetch() -> dict:
@@ -424,5 +553,18 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _run_cli() -> int:
+    """Return a stable non-zero code for conversion failures before Kit teardown."""
+
+    try:
+        return main()
+    except Exception:  # noqa: BLE001 - the CLI must preserve every failed conversion
+        traceback.print_exc()
+        return 1
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    _exit_code = _run_cli()
+    if _exit_code:
+        os._exit(_exit_code)
+    raise SystemExit(_exit_code)

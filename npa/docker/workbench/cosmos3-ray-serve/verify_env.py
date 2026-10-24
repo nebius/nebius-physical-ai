@@ -54,7 +54,13 @@ def main() -> None:
     # Upgrading the core wheel alone can leave a stale or incomplete serve
     # extra behind the parent lock. Check every active direct requirement.
     environment = {**default_environment(), "extra": "serve"}
-    for package in ("ray", "gradio"):
+    try:
+        importlib.metadata.version("gradio")
+    except importlib.metadata.PackageNotFoundError:
+        pass
+    else:
+        raise RuntimeError("unused Gradio UI remains in the Ray Serve image")
+    for package in ("ray",):
         for raw in importlib.metadata.requires(package) or ():
             requirement = Requirement(raw)
             if requirement.marker and not requirement.marker.evaluate(environment):

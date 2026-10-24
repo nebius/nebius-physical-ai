@@ -80,6 +80,12 @@ PUBLIC_REUSABLE_TOOLREFS: dict[str, str] = {
 }
 
 
+# The public Isaac image intentionally keeps Isaac Sim/Lab out of its layers.
+# This shim binds the operator-owned, integrity-pinned runtime cache before it
+# invokes Python.  The baked controller venv alone cannot import ``isaaclab``.
+_ISAAC_RUNTIME_PYTHON = "/isaac-sim/python.sh"
+
+
 _BYOF_REPO_ARGV = [
     "npa",
     "workbench",
@@ -160,6 +166,219 @@ _GEMINI_ROBOTICS_PIPELINE = [
     "npa.workflows.byof.gemini_robotics_pipeline",
 ]
 _ROS2_PIPELINE = ["python3", "-m", "npa.workflows.byof.ros2_pipeline"]
+_OPENPI_SERVICE_LIFECYCLE = [
+    "python3",
+    "-m",
+    "npa.workflows.byof.openpi_service_lifecycle",
+]
+
+
+def _pi05_service_argv(command: str, role: str) -> list[str]:
+    prefix = f"{role}_service"
+    checkpoint = "base_checkpoint_uri" if role == "base" else "trained_checkpoint_uri"
+    return [
+        *_OPENPI_SERVICE_LIFECYCLE,
+        command,
+        "--run-id",
+        f"{{{{run.id}}}}-{role}",
+        "--output-uri",
+        f"{{{{config.{prefix}_{command}_uri}}}}",
+        "--component-root-uri",
+        "{{config.component_root_uri}}",
+        "--runtime-image",
+        "{{config.runtime_image}}",
+        "--namespace",
+        "{{config.service_namespace}}",
+        "--auth-secret",
+        "{{config.service_auth_secret}}",
+        "--checkpoint-uri",
+        f"{{{{config.{checkpoint}}}}}",
+        "--checkpoint-role",
+        role,
+        *_pi05_selected_policy_argv(command, role),
+        *_pi05_service_runtime_argv(),
+        *_pi05_service_timeout_argv(),
+    ]
+
+
+def _pi05_selected_policy_argv(command: str, role: str) -> list[str]:
+    if command != "start" or role != "adapted":
+        return []
+    return [
+        "--dataset-uri",
+        "{{config.dataset_uri}}",
+        "--dataset-manifest-uri",
+        "{{config.dataset_manifest_uri}}",
+        "--training-uri",
+        "{{config.training_uri}}",
+        "--evaluation-uri",
+        "{{config.evaluation_uri}}",
+    ]
+
+
+def _pi05_service_runtime_argv() -> list[str]:
+    return [
+        "--config-name",
+        "{{config.base_config_name}}",
+        "--gpu-count",
+        "{{config.service_gpu_count}}",
+        "--expected-gpu-type",
+        "{{config.service_expected_gpu_type}}",
+        "--expected-compute-capability",
+        "{{config.service_expected_compute_capability}}",
+        "--server-cpu",
+        "{{config.service_server_cpus}}",
+        "--server-memory",
+        "{{config.service_server_memory}}",
+        "--gpu-node-selector-key",
+        "{{config.service_gpu_node_selector_key}}",
+        "--gpu-node-selector-value",
+        "{{config.service_gpu_node_selector_value}}",
+        "--service-cache-size",
+        "{{config.service_cache_size}}",
+    ]
+
+
+def _pi05_service_timeout_argv() -> list[str]:
+    return [
+        "--server-ready-timeout-seconds",
+        "{{config.service_server_ready_timeout_seconds}}",
+        "--cleanup-timeout-seconds",
+        "{{config.service_cleanup_timeout_seconds}}",
+        "--poll-interval-seconds",
+        "{{config.service_poll_interval_seconds}}",
+        "--api-timeout-seconds",
+        "{{config.service_api_timeout_seconds}}",
+        "--http-timeout-seconds",
+        "{{config.service_http_timeout_seconds}}",
+    ]
+
+
+def _smolvla_service_argv(command: str, role: str) -> list[str]:
+    prefix = "base" if role == "base" else "adapted"
+    checkpoint_key = (
+        "base_service_checkpoint_uri" if role == "base" else "adapted_checkpoint_uri"
+    )
+    return [
+        "python3",
+        "-m",
+        "npa.workflows.sim2real.smolvla_service_lifecycle",
+        command,
+        "--run-id",
+        "{{run.id}}",
+        "--checkpoint-role",
+        role,
+        "--checkpoint-uri",
+        f"{{{{config.{checkpoint_key}}}}}",
+        "--bind-adapter-uri",
+        f"{{{{config.{prefix}_policy_adapter_uri}}}}",
+        "--runtime-image",
+        "{{config.runtime_image}}",
+        "--source-commit",
+        "{{config.source_sha}}",
+        "--namespace",
+        "{{config.service_namespace}}",
+        "--service-account",
+        f"{{{{config.{prefix}_service_account}}}}",
+        "--auth-secret",
+        "{{config.service_auth_secret}}",
+        "--hf-token-secret",
+        "{{config.hf_token_secret}}",
+        "--gpu-count",
+        "{{config.service_gpu_count}}",
+        "--server-cpu",
+        "{{config.service_server_cpus}}",
+        "--server-memory",
+        "{{config.service_server_memory}}",
+        "--policy-cache-pvc",
+        "{{config.policy_cache_pvc}}",
+        "--gpu-node-selector-key",
+        "{{config.service_gpu_node_selector_key}}",
+        "--gpu-node-selector-value",
+        "{{config.service_gpu_node_selector_value}}",
+        "--hardware-topology",
+        "{{config.service_hardware_topology}}",
+        "--ready-timeout-seconds",
+        "{{config.service_server_ready_timeout_seconds}}",
+        "--output-uri",
+        f"{{{{config.{prefix}_service_{command}_uri}}}}",
+        "--component-root-uri",
+        "{{config.component_root_uri}}",
+    ]
+
+
+def _pi05_closed_loop_argv(role: str) -> list[str]:
+    return [
+        _ISAAC_RUNTIME_PYTHON,
+        "-m",
+        "npa.workflows.sim2real.pi05_closed_loop_entry",
+        "--service-receipt-uri",
+        f"{{{{config.{role}_service_start_uri}}}}",
+        "--gold-collection-uri",
+        "{{config.gold_collection_uri}}",
+        "--output-uri",
+        f"{{{{config.{role}_gold_uri}}}}",
+        "--artifact-root-uri",
+        f"{{{{config.{role}_artifact_root_uri}}}}",
+        "--component-root-uri",
+        "{{config.component_root_uri}}",
+        "--checkpoint-role",
+        role,
+        "--recording-id",
+        "{{run.id}}",
+        "--split",
+        "gold",
+        "--episodes",
+        "{{config.gold_episodes}}",
+        "--decisions",
+        "{{config.eval_decisions}}",
+        "--seed",
+        "{{config.gold_seed}}",
+        "--wrist-ablation-modes",
+        "{{config.wrist_ablation_modes}}",
+        "--ablation-seed",
+        "{{config.wrist_ablation_seed}}",
+    ]
+
+
+def _smolvla_closed_loop_argv(role: str) -> list[str]:
+    return [
+        _ISAAC_RUNTIME_PYTHON,
+        "-m",
+        "npa.workflows.sim2real.pi05_closed_loop_entry",
+        "--policy-backend",
+        "lerobot_smolvla",
+        "--preparation-uri",
+        "{{config.preparation_uri}}",
+        "--service-receipt-uri",
+        f"{{{{config.{role}_service_start_uri}}}}",
+        "--gold-collection-uri",
+        "{{config.gold_collection_uri}}",
+        "--output-uri",
+        f"{{{{config.{role}_gold_uri}}}}",
+        "--artifact-root-uri",
+        f"{{{{config.{role}_artifact_root_uri}}}}",
+        "--component-root-uri",
+        "{{config.component_root_uri}}",
+        "--checkpoint-role",
+        role,
+        "--recording-id",
+        "{{run.id}}",
+        "--split",
+        "gold",
+        "--episodes",
+        "{{config.gold_episodes}}",
+        "--decisions",
+        "{{config.eval_decisions}}",
+        "--seed",
+        "{{config.gold_seed}}",
+        "--wrist-ablation-modes",
+        "{{config.wrist_ablation_modes}}",
+        "--ablation-seed",
+        "{{config.wrist_ablation_seed}}",
+    ]
+
+
 _MOLMOACT_PIPELINE = ["python3", "-m", "npa.workflows.byof.molmoact_pipeline"]
 _OPENVLA_PIPELINE = ["python3", "-m", "npa.workflows.byof.openvla_pipeline"]
 _NEWTON_PIPELINE = ["python3", "-m", "npa.workflows.byof.newton_pipeline"]
@@ -2834,6 +3053,428 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             ),
         ],
     ),
+    "workbench.sim2real.pi05_collect_all": ToolEntry(
+        name="workbench.sim2real.pi05_collect_all",
+        description=(
+            "Collect physics-verified train/validation/gold demonstrations with "
+            "disjoint object morphologies and scene configurations."
+        ),
+        argv_template=[
+            _ISAAC_RUNTIME_PYTHON,
+            "-m",
+            "npa.workflows.sim2real.pi05_collect_all",
+            "--output-root-uri",
+            "{{config.collection_root_uri}}",
+            "--episodes-per-split",
+            "{{config.expert_episodes_per_split}}",
+            "--seed",
+            "{{config.expert_seed}}",
+            "--object-usd",
+            "{{config.object_usd}}",
+            "--component-root-uri",
+            "{{config.component_root_uri}}",
+        ],
+        omit_flags_when_empty=("--object-usd",),
+    ),
+    "workbench.sim2real.pi05_prepare": ToolEntry(
+        name="workbench.sim2real.pi05_prepare",
+        description="Publish the final-byte-bound surface task and prerequisite contract.",
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workflows.sim2real.pi05_stage",
+            "prepare",
+            "--run-id",
+            "{{run.id}}",
+            "--output-uri",
+            "{{config.preparation_uri}}",
+            "--component-root-uri",
+            "{{config.component_root_uri}}",
+            "--service-namespace",
+            "{{config.service_namespace}}",
+            "--base-service-account",
+            "{{config.base_service_account}}",
+            "--adapted-service-account",
+            "{{config.adapted_service_account}}",
+        ],
+    ),
+    "workbench.sim2real.policy_interchange_franka_collect": ToolEntry(
+        name="workbench.sim2real.policy_interchange_franka_collect",
+        description=(
+            "Collect the currently qualified Franka surface-placement expert while "
+            "publishing the model-neutral ComponentRecord schema."
+        ),
+        argv_template=[
+            _ISAAC_RUNTIME_PYTHON,
+            "-m",
+            "npa.workflows.sim2real.pi05_collect_all",
+            "--output-root-uri",
+            "{{config.collection_root_uri}}",
+            "--episodes-per-split",
+            "{{config.expert_episodes_per_split}}",
+            "--seed",
+            "{{config.expert_seed}}",
+            "--object-usd",
+            "{{config.object_usd}}",
+            "--preparation-uri",
+            "{{config.preparation_uri}}",
+            "--component-root-uri",
+            "{{config.component_root_uri}}",
+            "--component-schema",
+            "npa.sim2real.policy_interchange.component_record.v1",
+        ],
+        omit_flags_when_empty=("--object-usd", "--preparation-uri"),
+    ),
+    "workbench.sim2real.policy_interchange_non_franka_execute": ToolEntry(
+        name="workbench.sim2real.policy_interchange_non_franka_execute",
+        description=(
+            "Run a geometry-aware native teacher and typed SmolVLA service on a "
+            "sealed non-Franka articulation, calibrated moving wrist camera, and "
+            "rigid prop under the unchanged released-surface event contract."
+        ),
+        argv_template=[
+            _ISAAC_RUNTIME_PYTHON,
+            "-m",
+            "npa.workflows.sim2real.interchange_isaac_entry",
+            "--prepared-robot-uri",
+            "{{config.non_franka_prepared_robot_uri}}",
+            "--preparation-uri",
+            "{{config.preparation_uri}}",
+            "--service-receipt-uri",
+            "{{config.adapted_service_start_uri}}",
+            "--output-uri",
+            "{{config.non_franka_execution_uri}}",
+            "--component-root-uri",
+            "{{config.component_root_uri}}",
+            "--component-stage",
+            "11",
+            "--policy-role",
+            "adapted",
+            "--decisions",
+            "{{config.non_franka_decisions}}",
+            "--seed",
+            "{{config.non_franka_seed}}",
+        ],
+    ),
+    "workbench.sim2real.policy_interchange_non_franka_base_execute": ToolEntry(
+        name="workbench.sim2real.policy_interchange_non_franka_base_execute",
+        description=(
+            "Run the geometry-aware native teacher and prepared base SmolVLA "
+            "policy on the sealed non-Franka task."
+        ),
+        argv_template=[
+            _ISAAC_RUNTIME_PYTHON,
+            "-m",
+            "npa.workflows.sim2real.interchange_isaac_entry",
+            "--prepared-robot-uri",
+            "{{config.non_franka_prepared_robot_uri}}",
+            "--preparation-uri",
+            "{{config.preparation_uri}}",
+            "--service-receipt-uri",
+            "{{config.base_service_start_uri}}",
+            "--output-uri",
+            "{{config.non_franka_base_execution_uri}}",
+            "--component-root-uri",
+            "{{config.component_root_uri}}",
+            "--component-stage",
+            "6",
+            "--policy-role",
+            "base",
+            "--decisions",
+            "{{config.non_franka_decisions}}",
+            "--seed",
+            "{{config.non_franka_seed}}",
+        ],
+    ),
+    "workbench.sim2real.policy_interchange_non_franka_collect": ToolEntry(
+        name="workbench.sim2real.policy_interchange_non_franka_collect",
+        description=(
+            "Collect successful geometry-aware teacher episodes from a sealed "
+            "non-Franka articulation and offset-origin rigid prop."
+        ),
+        argv_template=[
+            _ISAAC_RUNTIME_PYTHON,
+            "-m",
+            "npa.workflows.sim2real.interchange_teacher_collect",
+            "--prepared-robot-uri",
+            "{{config.non_franka_prepared_robot_uri}}",
+            "--preparation-uri",
+            "{{config.preparation_uri}}",
+            "--output-uri",
+            "{{config.collection_root_uri}}",
+            "--component-root-uri",
+            "{{config.component_root_uri}}",
+            "--train-episodes",
+            "{{config.train_episodes}}",
+            "--validation-episodes",
+            "{{config.validation_episodes}}",
+            "--gold-episodes",
+            "{{config.gold_episodes}}",
+            "--seed",
+            "{{config.expert_seed}}",
+        ],
+    ),
+    "workbench.sim2real.policy_interchange_non_franka_export": ToolEntry(
+        name="workbench.sim2real.policy_interchange_non_franka_export",
+        description=(
+            "Export dynamic-dimension native teacher data to LeRobot with "
+            "training-only normalization and sealed held-out lineage."
+        ),
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workflows.sim2real.interchange_teacher_export",
+            "--collection-uri",
+            "{{config.collection_root_uri}}",
+            "--policy-adapter-uri",
+            "{{config.policy_adapter_uri}}",
+            "--output-uri",
+            "{{config.dataset_root_uri}}",
+            "--component-root-uri",
+            "{{config.component_root_uri}}",
+            "--fps",
+            "{{config.dataset_fps}}",
+        ],
+    ),
+    "workbench.sim2real.policy_interchange_non_franka_finalize": ToolEntry(
+        name="workbench.sim2real.policy_interchange_non_franka_finalize",
+        description=(
+            "Bind identical-protocol non-Franka base/adapted executions and "
+            "native checkpoint reload without claiming statistical improvement."
+        ),
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workflows.sim2real.interchange_stage",
+            "non-franka-finalize",
+            "--run-id",
+            "{{run.id}}",
+            "--baseline-uri",
+            "{{config.non_franka_base_execution_uri}}report.json",
+            "--adapted-uri",
+            "{{config.non_franka_execution_uri}}report.json",
+            "--training-uri",
+            "{{config.training_uri}}",
+            "--reload-uri",
+            "{{config.reload_uri}}",
+            "--checkpoint-uri",
+            "{{config.adapted_checkpoint_uri}}",
+            "--external-seam-uri",
+            "{{config.external_seam_uri}}",
+            "--output-uri",
+            "{{config.final_report_uri}}",
+            "--component-root-uri",
+            "{{config.component_root_uri}}",
+        ],
+    ),
+    "workbench.sim2real.policy_interchange_prepare": ToolEntry(
+        name="workbench.sim2real.policy_interchange_prepare",
+        description=(
+            "Validate one sealed robot, camera, rigid-object, task, and native "
+            "policy profile before any GPU stage."
+        ),
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workflows.sim2real.interchange_stage",
+            "prepare",
+            "--run-id",
+            "{{run.id}}",
+            "--profile-uri",
+            "{{config.profile_uri}}",
+            "--output-uri",
+            "{{config.preparation_uri}}",
+            "--component-root-uri",
+            "{{config.component_root_uri}}",
+            "--adapter-output-uri",
+            "{{config.policy_adapter_uri}}",
+            "--execution-profile",
+            "{{config.execution_profile}}",
+        ],
+        omit_flags_when_empty=("--adapter-output-uri", "--execution-profile"),
+        config_defaults={"policy_adapter_uri": "", "execution_profile": ""},
+    ),
+    "workbench.sim2real.pi05_external_seam": ToolEntry(
+        name="workbench.sim2real.pi05_external_seam",
+        description="Record the honest operator-owned physical robot validation seam.",
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workflows.sim2real.pi05_stage",
+            "external-seam",
+            "--run-id",
+            "{{run.id}}",
+            "--output-uri",
+            "{{config.external_seam_uri}}",
+            "--component-root-uri",
+            "{{config.component_root_uri}}",
+        ],
+    ),
+    "workbench.sim2real.policy_interchange_external_seam": ToolEntry(
+        name="workbench.sim2real.policy_interchange_external_seam",
+        description="Record the model-neutral operator-owned physical robot seam.",
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workflows.sim2real.interchange_stage",
+            "external-seam",
+            "--run-id",
+            "{{run.id}}",
+            "--output-uri",
+            "{{config.external_seam_uri}}",
+            "--component-root-uri",
+            "{{config.component_root_uri}}",
+        ],
+    ),
+    "workbench.sim2real.smolvla_artifact_preflight": ToolEntry(
+        name="workbench.sim2real.smolvla_artifact_preflight",
+        description=(
+            "Download and hash the exact-revision SmolVLA weights and native "
+            "processor payload before service or training GPU work."
+        ),
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workflows.sim2real.interchange_stage",
+            "artifact-preflight",
+            "--checkpoint-uri",
+            "{{config.base_checkpoint_uri}}",
+            "--dataset-uri",
+            "{{config.lerobot_uri}}",
+            "--dataset-repo-id",
+            "{{config.lerobot_dataset_repo_id}}",
+            "--adapter-uri",
+            "{{config.dataset_policy_adapter_uri}}",
+            "--prepared-checkpoint-uri",
+            "{{config.prepared_base_checkpoint_uri}}",
+            "--output-uri",
+            "{{config.artifact_preflight_uri}}",
+            "--component-root-uri",
+            "{{config.component_root_uri}}",
+        ],
+    ),
+    "workbench.sim2real.pi05_finalize": ToolEntry(
+        name="workbench.sim2real.pi05_finalize",
+        description=(
+            "Compare same-protocol baseline/adapted gold metrics and publish "
+            "canonical factual MP4, Rerun, checkpoint, and external-seam lineage."
+        ),
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workflows.sim2real.pi05_stage",
+            "finalize",
+            "--run-id",
+            "{{run.id}}",
+            "--baseline-uri",
+            "{{config.base_gold_uri}}",
+            "--adapted-uri",
+            "{{config.adapted_gold_uri}}",
+            "--training-uri",
+            "{{config.training_uri}}",
+            "--reload-uri",
+            "{{config.reload_uri}}",
+            "--checkpoint-manifest-uri",
+            "{{config.trained_checkpoint_manifest_uri}}",
+            "--external-seam-uri",
+            "{{config.external_seam_uri}}",
+            "--adapted-artifact-root-uri",
+            "{{config.adapted_artifact_root_uri}}",
+            "--final-mp4-uri",
+            "{{config.final_mp4_uri}}",
+            "--final-rrd-uri",
+            "{{config.final_rrd_uri}}",
+            "--output-uri",
+            "{{config.final_report_uri}}",
+            "--component-root-uri",
+            "{{config.component_root_uri}}",
+        ],
+    ),
+    "workbench.sim2real.policy_interchange_finalize": ToolEntry(
+        name="workbench.sim2real.policy_interchange_finalize",
+        description=(
+            "Validate same-task SmolVLA trials, native selected-checkpoint lineage "
+            "and factual media without cross-model loss claims."
+        ),
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workflows.sim2real.interchange_stage",
+            "finalize",
+            "--run-id",
+            "{{run.id}}",
+            "--baseline-uri",
+            "{{config.base_gold_uri}}",
+            "--adapted-uri",
+            "{{config.adapted_gold_uri}}",
+            "--training-uri",
+            "{{config.training_uri}}",
+            "--reload-uri",
+            "{{config.reload_uri}}",
+            "--checkpoint-uri",
+            "{{config.adapted_checkpoint_uri}}",
+            "--external-seam-uri",
+            "{{config.external_seam_uri}}",
+            "--adapted-artifact-root-uri",
+            "{{config.adapted_artifact_root_uri}}",
+            "--final-mp4-uri",
+            "{{config.final_mp4_uri}}",
+            "--final-rrd-uri",
+            "{{config.final_rrd_uri}}",
+            "--output-uri",
+            "{{config.final_report_uri}}",
+            "--component-root-uri",
+            "{{config.component_root_uri}}",
+        ],
+    ),
+    "workbench.sim2real.pi05_export": ToolEntry(
+        name="workbench.sim2real.pi05_export",
+        description=(
+            "Validate physics demonstrations and export dense OpenPI NPZ plus "
+            "native LeRobot v3 data with train-only normalization."
+        ),
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workflows.sim2real.pi05_data",
+            "--train-uri",
+            "{{config.train_collection_uri}}",
+            "--validation-uri",
+            "{{config.validation_collection_uri}}",
+            "--gold-uri",
+            "{{config.gold_collection_uri}}",
+            "--output-uri",
+            "{{config.dataset_root_uri}}",
+            "--component-root-uri",
+            "{{config.component_root_uri}}",
+        ],
+    ),
+    "workbench.sim2real.policy_interchange_export": ToolEntry(
+        name="workbench.sim2real.policy_interchange_export",
+        description=(
+            "Export the physics-verified surface dataset and carry the validated "
+            "native policy adapter into the LeRobot dataset tree."
+        ),
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workflows.sim2real.pi05_data",
+            "--train-uri",
+            "{{config.train_collection_uri}}",
+            "--validation-uri",
+            "{{config.validation_collection_uri}}",
+            "--gold-uri",
+            "{{config.gold_collection_uri}}",
+            "--output-uri",
+            "{{config.dataset_root_uri}}",
+            "--component-root-uri",
+            "{{config.component_root_uri}}",
+            "--policy-adapter-uri",
+            "{{config.policy_adapter_uri}}",
+            "--component-schema",
+            "npa.sim2real.policy_interchange.component_record.v1",
+        ],
+    ),
     "workbench.byof.repo": ToolEntry(
         name="workbench.byof.repo",
         description=(
@@ -2869,22 +3510,26 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.dataset_seed}}",
         ],
     ),
-    "workbench.openpi.negative_terms_gate": ToolEntry(
-        name="workbench.openpi.negative_terms_gate",
+    "workbench.openpi.artifact_preflight": ToolEntry(
+        name="workbench.openpi.artifact_preflight",
         description=(
-            "Live-probe OpenPI's fail-closed terms gate in a child environment with "
-            "acceptance removed, before any accepted checkpoint fetch."
+            "Prove anonymous byte access plus generation/checksum provenance for "
+            "the authoritative public Polaris checkpoint."
         ),
         argv_template=[
             *_OPENPI_VENDOR_PIPELINE,
-            "negative-gate",
+            "artifact-preflight",
             "--output-uri",
-            "{{config.negative_gate_uri}}",
-            "--terms-diagnostic-root-uri",
-            "{{config.terms_diagnostic_root_uri}}",
+            "{{config.artifact_preflight_uri}}",
             "--runtime-image",
             "{{config.runtime_image}}",
+            "--checkpoint-uri",
+            "{{config.base_checkpoint_uri}}",
+            "--component-root-uri",
+            "{{config.component_root_uri}}",
         ],
+        omit_flags_when_empty=("--component-root-uri",),
+        config_defaults={"component_root_uri": ""},
     ),
     "workbench.openpi.direct": ToolEntry(
         name="workbench.openpi.direct",
@@ -2894,8 +3539,6 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "direct",
             "--output-uri",
             "{{config.direct_uri}}",
-            "--terms-diagnostic-root-uri",
-            "{{config.terms_diagnostic_root_uri}}",
             "--runtime-image",
             "{{config.runtime_image}}",
             "--checkpoint-uri",
@@ -2926,8 +3569,6 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.serve_uri}}",
             "--cleanup-output-uri",
             "{{config.serve_cleanup_uri}}",
-            "--terms-diagnostic-root-uri",
-            "{{config.terms_diagnostic_root_uri}}",
             "--runtime-image",
             "{{config.runtime_image}}",
             "--namespace",
@@ -2974,6 +3615,51 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.service_http_timeout_seconds}}",
         ],
     ),
+    "workbench.openpi.pi05_base_service_start": ToolEntry(
+        name="workbench.openpi.pi05_base_service_start",
+        description="Start the private base-checkpoint service for declared Isaac gold evaluation.",
+        argv_template=_pi05_service_argv("start", "base"),
+    ),
+    "workbench.openpi.pi05_base_service_cleanup": ToolEntry(
+        name="workbench.openpi.pi05_base_service_cleanup",
+        description="Clean up the exact base-checkpoint private service.",
+        argv_template=_pi05_service_argv("cleanup", "base"),
+    ),
+    "workbench.openpi.pi05_adapted_service_start": ToolEntry(
+        name="workbench.openpi.pi05_adapted_service_start",
+        description="Start the private selected-checkpoint service for declared Isaac gold evaluation.",
+        argv_template=_pi05_service_argv("start", "adapted"),
+    ),
+    "workbench.openpi.pi05_adapted_service_cleanup": ToolEntry(
+        name="workbench.openpi.pi05_adapted_service_cleanup",
+        description="Clean up the exact adapted-checkpoint private service.",
+        argv_template=_pi05_service_argv("cleanup", "adapted"),
+    ),
+    "workbench.sim2real.pi05_base_gold": ToolEntry(
+        name="workbench.sim2real.pi05_base_gold",
+        description="Evaluate base pi0.5 closed-loop on the untouched surface-placement gold split.",
+        argv_template=_pi05_closed_loop_argv("base"),
+    ),
+    "workbench.sim2real.pi05_adapted_gold": ToolEntry(
+        name="workbench.sim2real.pi05_adapted_gold",
+        description="Evaluate selected adapted pi0.5 closed-loop on the identical untouched gold split.",
+        argv_template=_pi05_closed_loop_argv("adapted"),
+    ),
+    "workbench.sim2real.smolvla_base_gold": ToolEntry(
+        name="workbench.sim2real.smolvla_base_gold",
+        description=(
+            "Evaluate native SmolVLA current-action control on the sealed "
+            "surface-placement gold cohort with matched wrist interventions."
+        ),
+        argv_template=_smolvla_closed_loop_argv("base"),
+    ),
+    "workbench.sim2real.smolvla_adapted_gold": ToolEntry(
+        name="workbench.sim2real.smolvla_adapted_gold",
+        description=(
+            "Evaluate the reloaded adapted SmolVLA on the identical sealed gold cohort."
+        ),
+        argv_template=_smolvla_closed_loop_argv("adapted"),
+    ),
     "workbench.openpi.train": ToolEntry(
         name="workbench.openpi.train",
         description=(
@@ -2985,8 +3671,6 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "train",
             "--output-uri",
             "{{config.training_uri}}",
-            "--terms-diagnostic-root-uri",
-            "{{config.terms_diagnostic_root_uri}}",
             "--runtime-image",
             "{{config.runtime_image}}",
             "--dataset-uri",
@@ -3011,7 +3695,11 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.gpu_count}}",
             "--expected-compute-capability",
             "{{config.expected_compute_capability}}",
+            "--component-root-uri",
+            "{{config.component_root_uri}}",
         ],
+        omit_flags_when_empty=("--component-root-uri",),
+        config_defaults={"component_root_uri": ""},
     ),
     "workbench.openpi.full_droid_prepare": ToolEntry(
         name="workbench.openpi.full_droid_prepare",
@@ -3121,8 +3809,6 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "evaluate",
             "--output-uri",
             "{{config.evaluation_uri}}",
-            "--terms-diagnostic-root-uri",
-            "{{config.terms_diagnostic_root_uri}}",
             "--runtime-image",
             "{{config.runtime_image}}",
             "--dataset-uri",
@@ -3147,7 +3833,93 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.gpu_count}}",
             "--expected-compute-capability",
             "{{config.expected_compute_capability}}",
+            "--component-root-uri",
+            "{{config.component_root_uri}}",
         ],
+        omit_flags_when_empty=("--component-root-uri",),
+        config_defaults={"component_root_uri": ""},
+    ),
+    "workbench.openpi.pi05_surface_train": ToolEntry(
+        name="workbench.openpi.pi05_surface_train",
+        description=(
+            "Train the surface-placement pi0.5 adapter with an allocation "
+            "independent from its one-GPU policy service."
+        ),
+        argv_template=[
+            *_OPENPI_VENDOR_PIPELINE,
+            "train",
+            "--output-uri",
+            "{{config.training_uri}}",
+            "--runtime-image",
+            "{{config.runtime_image}}",
+            "--dataset-uri",
+            "{{config.dataset_uri}}",
+            "--dataset-manifest-uri",
+            "{{config.dataset_manifest_uri}}",
+            "--checkpoint-uri",
+            "{{config.trained_checkpoint_uri}}",
+            "--base-checkpoint-uri",
+            "{{config.base_checkpoint_uri}}",
+            "--train-steps",
+            "{{config.train_steps}}",
+            "--batch-size",
+            "{{config.train_batch_size}}",
+            "--fsdp-devices",
+            "{{config.train_fsdp_devices}}",
+            "--seed",
+            "{{config.train_seed}}",
+            "--expected-gpu-type",
+            "{{config.training_expected_gpu_type}}",
+            "--expected-gpu-count",
+            "{{config.training_gpu_count}}",
+            "--expected-compute-capability",
+            "{{config.training_expected_compute_capability}}",
+            "--component-root-uri",
+            "{{config.component_root_uri}}",
+        ],
+        omit_flags_when_empty=("--component-root-uri",),
+        config_defaults={"component_root_uri": ""},
+    ),
+    "workbench.openpi.pi05_surface_evaluate": ToolEntry(
+        name="workbench.openpi.pi05_surface_evaluate",
+        description=(
+            "Evaluate the selected surface-placement checkpoint on the same "
+            "single-host allocation used for adaptation."
+        ),
+        argv_template=[
+            *_OPENPI_VENDOR_PIPELINE,
+            "evaluate",
+            "--output-uri",
+            "{{config.evaluation_uri}}",
+            "--runtime-image",
+            "{{config.runtime_image}}",
+            "--dataset-uri",
+            "{{config.dataset_uri}}",
+            "--dataset-manifest-uri",
+            "{{config.dataset_manifest_uri}}",
+            "--checkpoint-uri",
+            "{{config.trained_checkpoint_uri}}",
+            "--training-artifact-uri",
+            "{{config.training_uri}}",
+            "--base-checkpoint-uri",
+            "{{config.base_checkpoint_uri}}",
+            "--seed",
+            "{{config.evaluation_seed}}",
+            "--batch-size",
+            "{{config.evaluation_batch_size}}",
+            "--fsdp-devices",
+            "{{config.train_fsdp_devices}}",
+            "--expected-gpu-type",
+            "{{config.training_expected_gpu_type}}",
+            "--expected-gpu-count",
+            "{{config.training_gpu_count}}",
+            "--expected-compute-capability",
+            "{{config.training_expected_compute_capability}}",
+            "--component-root-uri",
+            "{{config.component_root_uri}}",
+        ],
+        omit_flags_when_empty=("--component-root-uri",),
+        config_defaults={"component_root_uri": ""},
     ),
     "workbench.gemini_robotics.plan": ToolEntry(
         name="workbench.gemini_robotics.plan",
@@ -4331,6 +5103,105 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         ],
         omit_flags_when_empty=("--training-env-ids",),
         config_defaults={"train_env_ids": ""},
+    ),
+    "workbench.lerobot.smolvla_interchange_train": ToolEntry(
+        name="workbench.lerobot.smolvla_interchange_train",
+        description=(
+            "Fine-tune pinned SmolVLA and bind its real weights plus native "
+            "processor normalization to an explicit robot/task adapter before upload."
+        ),
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workbench.lerobot.policy_container",
+            "train",
+            "--dataset-repo-id",
+            "{{config.lerobot_dataset_repo_id}}",
+            "--dataset-source",
+            "{{config.lerobot_uri}}",
+            "--output-dir",
+            "{{config.lerobot_output_dir}}",
+            "--steps",
+            "{{config.train_steps}}",
+            "--policy-type",
+            "smolvla",
+            "--batch-size",
+            "{{config.train_batch_size}}",
+            "--device",
+            "{{config.policy_device}}",
+            "--training-env-ids",
+            "{{config.train_env_ids}}",
+            "--pretrained-policy-source",
+            "{{config.base_checkpoint_uri}}",
+            "--interchange-adapter-relative-path",
+            "{{config.policy_adapter_relative_path}}",
+            "--artifacts-s3-uri",
+            "{{config.artifacts_uri}}",
+            "--selected-checkpoint-s3-uri",
+            "{{config.adapted_checkpoint_uri}}",
+            "--result-uri",
+            "{{config.training_uri}}",
+            "--component-root-uri",
+            "{{config.component_root_uri}}",
+        ],
+        omit_flags_when_empty=("--training-env-ids",),
+        config_defaults={"train_env_ids": ""},
+    ),
+    "workbench.lerobot.smolvla_interchange_reload": ToolEntry(
+        name="workbench.lerobot.smolvla_interchange_reload",
+        description=(
+            "Reload exact native SmolVLA weights and checkpoint-local processors, "
+            "then bind the live objects to the prepared robot/task contract."
+        ),
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workflows.sim2real.smolvla_reload_stage",
+            "--checkpoint-uri",
+            "{{config.adapted_checkpoint_uri}}",
+            "--preparation-uri",
+            "{{config.preparation_uri}}",
+            "--hardware-topology",
+            "{{config.service_hardware_topology}}",
+            "--output-uri",
+            "{{config.reload_uri}}",
+            "--component-root-uri",
+            "{{config.component_root_uri}}",
+        ],
+    ),
+    "workbench.lerobot.smolvla_base_service_start": ToolEntry(
+        name="workbench.lerobot.smolvla_base_service_start",
+        description="Start an owned private typed SmolVLA base-checkpoint service.",
+        argv_template=_smolvla_service_argv("start", "base"),
+        omit_flags_when_empty=("--bind-adapter-uri", "--hf-token-secret"),
+        config_defaults={"base_policy_adapter_uri": "", "hf_token_secret": ""},
+    ),
+    "workbench.lerobot.smolvla_base_service_cleanup": ToolEntry(
+        name="workbench.lerobot.smolvla_base_service_cleanup",
+        description="Clean only the exactly owned SmolVLA base service.",
+        argv_template=_smolvla_service_argv("cleanup", "base"),
+        omit_flags_when_empty=("--bind-adapter-uri", "--hf-token-secret"),
+        config_defaults={"base_policy_adapter_uri": "", "hf_token_secret": ""},
+    ),
+    "workbench.lerobot.smolvla_adapted_service_start": ToolEntry(
+        name="workbench.lerobot.smolvla_adapted_service_start",
+        description="Start an owned private typed SmolVLA adapted-checkpoint service.",
+        argv_template=_smolvla_service_argv("start", "adapted"),
+        omit_flags_when_empty=("--bind-adapter-uri", "--hf-token-secret"),
+        config_defaults={
+            "adapted_policy_adapter_uri": "",
+            "hf_token_secret": "",
+        },
+    ),
+    "workbench.lerobot.smolvla_adapted_service_cleanup": ToolEntry(
+        name="workbench.lerobot.smolvla_adapted_service_cleanup",
+        description="Clean only the exactly owned SmolVLA adapted service.",
+        argv_template=_smolvla_service_argv("cleanup", "adapted"),
+        omit_flags_when_empty=("--bind-adapter-uri", "--hf-token-secret"),
+        config_defaults={
+            "adapted_policy_adapter_uri": "",
+            "hf_token_secret": "",
+        },
     ),
     "workbench.token_factory.triage": ToolEntry(
         name="workbench.token_factory.triage",

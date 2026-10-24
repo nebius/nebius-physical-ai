@@ -243,6 +243,14 @@ def test_openpi_uses_system_ffmpeg_without_bundled_payload() -> None:
     assert "from transformers import GemmaForCausalLM" in dockerfile
     assert "NPA_OPENPI_RERUN_PYTHON=/opt/rerun-venv/bin/python" in dockerfile
     assert "/opt/rerun-venv/bin/rerun rrd --help" in dockerfile
+    assert "npa.workflows.byof.openpi_pipeline --help" in dockerfile
+    assert "npa.workflows.byof.openpi_service --help" in dockerfile
+    assert "sim2real-control-requirements.txt" in dockerfile
+    assert "from kubernetes import client, config" in dockerfile
+    assert 'm.version("cryptography") == "50.0.2"' in dockerfile
+    assert 'm.version("kubernetes") == "36.0.3"' in dockerfile
+    assert 'find_spec("cryptography") is None' in dockerfile
+    assert "openpi_full_droid rrd-worker --help" in dockerfile
     assert '"pip","check","--python","/opt/venv/bin/python"' in dockerfile
     assert "actual == expected" in dockerfile
     assert "unexpected" in dockerfile and "missing" in dockerfile
