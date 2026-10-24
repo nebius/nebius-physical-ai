@@ -45,14 +45,16 @@ COPY --from=ghcr.io/astral-sh/uv:0.12.5@sha256:e85be844203885286c60ffad8a858d48a
 # Keep the same snapshot-pinned Kubernetes bootstrap contract as the prior
 # role image, but make its Python runtime independently resolver-closed.  A
 # source .pth avoids an unpinned build-backend download while still proving the
-# exact checked-out NPA sources import with PYTHONPATH removed.
+# exact checked-out NPA sources import with PYTHONPATH removed. uv creates a
+# minimal venv by default, so seed pip before the security-pinned bootstrap;
+# otherwise a clean builder cannot execute that mandatory upgrade.
 RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" "${ENVGEN_LINUX_LIBC_DEV_VERSION}" \
     && test "$(dpkg-query --show --showformat='${Version}' linux-libc-dev)" = "${ENVGEN_LINUX_LIBC_DEV_VERSION}" \
     && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && UV_PYTHON_INSTALL_DIR=/opt/npa/python UV_CACHE_DIR=/tmp/uv-cache UV_NO_CACHE=1 UV_NO_MODIFY_PATH=1 \
       uv python install "${ENVGEN_PYTHON_VERSION}" \
     && UV_PYTHON_INSTALL_DIR=/opt/npa/python UV_CACHE_DIR=/tmp/uv-cache UV_NO_CACHE=1 UV_NO_MODIFY_PATH=1 \
-      uv venv --python "${ENVGEN_PYTHON_VERSION}" "${ENVGEN_VENV}" \
+      uv venv --seed --python "${ENVGEN_PYTHON_VERSION}" "${ENVGEN_VENV}" \
     && "${ENVGEN_VENV}/bin/python" -c \
       'import sys; assert sys.version_info[:3] == (3, 12, 14), sys.version' \
     && "${ENVGEN_VENV}/bin/python" -m pip install --no-cache-dir --upgrade 'pip==26.2.0' 'setuptools==83.0.0' \

@@ -121,6 +121,9 @@ def test_envgen_bootstrap_tools_use_the_current_secure_floors() -> None:
     assert "'pip==26.2.0' 'setuptools==83.0.0'" in text
     assert "pip==25.3" not in text
     assert "setuptools==79.0.1" not in text
+    # uv venvs have no pip by default.  The secure bootstrap above cannot run
+    # in a clean image unless the venv is explicitly seeded first.
+    assert 'uv venv --seed --python "${ENVGEN_PYTHON_VERSION}"' in text
 
 
 @pytest.mark.parametrize(
