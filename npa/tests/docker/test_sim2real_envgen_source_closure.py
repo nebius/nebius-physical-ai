@@ -163,6 +163,10 @@ def test_envgen_runtime_uses_its_own_python312_venv_and_exact_source_pth():
     assert "UV_NO_MODIFY_PATH=1" in text
     assert "rm -f /usr/local/bin/uv /usr/local/bin/uvx" in text
     assert "test ! -e /usr/local/bin/uv && test ! -e /usr/local/bin/uvx" in text
+    shim_cleanup = "rm -f /root/.local/bin/python3.12"
+    shim_absence_guard = "test ! -e /root/.local/bin/python3.12"
+    assert shim_cleanup in text
+    assert text.index(shim_cleanup) < text.index(shim_absence_guard)
     assert "test ! -e /root/.local/bin/python3.12" in text
     assert "sim2real-envgen-requirements.txt" in text
     assert "npa-exact-source.pth" in text

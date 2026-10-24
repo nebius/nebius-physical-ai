@@ -47,7 +47,9 @@ COPY --from=ghcr.io/astral-sh/uv:0.12.5@sha256:e85be844203885286c60ffad8a858d48a
 # source .pth avoids an unpinned build-backend download while still proving the
 # exact checked-out NPA sources import with PYTHONPATH removed. uv creates a
 # minimal venv by default, so seed pip before the security-pinned bootstrap;
-# otherwise a clean builder cannot execute that mandatory upgrade.
+# otherwise a clean builder cannot execute that mandatory upgrade. uv also
+# writes a root-local versioned shim despite UV_NO_MODIFY_PATH=1; remove it
+# before the final absence guard so the flattened runtime only exposes ENVGEN_VENV.
 RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" "${ENVGEN_LINUX_LIBC_DEV_VERSION}" \
     && test "$(dpkg-query --show --showformat='${Version}' linux-libc-dev)" = "${ENVGEN_LINUX_LIBC_DEV_VERSION}" \
     && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
@@ -70,6 +72,7 @@ RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" "${ENVG
     && "${ENVGEN_VENV}/bin/python" -m py_compile /opt/npa/src/npa/workflows/sim2real_envgen.py \
     && rm -rf /tmp/uv-cache \
     && rm -f /usr/local/bin/uv /usr/local/bin/uvx \
+    && rm -f /root/.local/bin/python3.12 \
     && test ! -e /usr/local/bin/uv && test ! -e /usr/local/bin/uvx \
     && test ! -e /root/.local/bin/python3.12 \
     && chown -R ubuntu:ubuntu /opt/npa
