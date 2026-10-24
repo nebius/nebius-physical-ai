@@ -206,12 +206,13 @@ def test_caption_images_appends_availability_directive(
     )
 
     expected_request = f"{expected_instruction}\n\n{CAPTION_AVAILABILITY_DIRECTIVE}"
-    prompt = captured["body"]["messages"][0]["content"][0]["text"]
+    content = captured["body"]["messages"][0]["content"]
+    assert [part["type"] for part in content] == ["image_url", "text"]
+    prompt = content[1]["text"]
     assert result.instruction == expected_instruction
     assert result.availability_directive == CAPTION_AVAILABILITY_DIRECTIVE
     assert result.request_instruction == expected_request
     assert prompt == expected_request
-    content = captured["body"]["messages"][0]["content"]
     image_parts = [part for part in content if part["type"] == "image_url"]
     assert len(image_parts) == 1
     url = image_parts[0]["image_url"]["url"]

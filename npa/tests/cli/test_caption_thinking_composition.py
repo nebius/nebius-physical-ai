@@ -134,10 +134,9 @@ def _assert_records(payload, requests, replies, model, thinking):
     for body, item, reply in zip(requests, payload["captions"], replies):
         assert body.get("chat_template_kwargs") == expected.get("chat_template_kwargs")
         assert body["model"] == model
-        assert (
-            tool.CAPTION_AVAILABILITY_DIRECTIVE
-            in body["messages"][0]["content"][0]["text"]
-        )
+        content = body["messages"][0]["content"]
+        assert [part["type"] for part in content] == ["image_url", "text"]
+        assert tool.CAPTION_AVAILABILITY_DIRECTIVE in content[1]["text"]
         assert item["caption"] == reply
         unavailable = reply in {"NO IMAGE RECEIVED.", "**“'no image received.'”**"}
         assert item["status"] == ("image_unavailable" if unavailable else "completed")

@@ -202,6 +202,15 @@ The independent `paidf-cosmos3.yaml` variant is documented at
 Cosmos 3 `video2video` generation and does not replace or silently change this
 skill's Cosmos Transfer 2.5 blueprint.
 
+For twelve Cosmos3 candidates with shipped settings, use only the
+`variant_count=12` override and follow
+`docs/workbench/guides/paidf-cosmos3.md#twelve-variants-with-the-current-defaults`.
+Keep the two-variant default and one-GPU sequential generation unchanged.
+The separate twelve-profile appearance recipe changes sampling and quality
+settings. Preserve actual evaluator decisions: refinement or rejection is a
+valid outcome; twelve generated candidates do not imply twelve accepted clips.
+Use the guide's read-only live audit after successful finalization.
+
 For realistic manipulation augmentation, use
 `docs/workbench/guides/paidf-realistic-augmentation.md`.
 For pinned cup, coffee and cube-lift source selections and matched experiments,
