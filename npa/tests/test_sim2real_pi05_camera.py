@@ -1035,6 +1035,65 @@ def test_camera_pose_uses_proxy_arrays_and_preserves_xyzw_order() -> None:
     ).tolist() == [1.0, 0.0, 0.0, 0.0]
 
 
+class _InteractiveSceneProbe:
+    """Match InteractiveScene lookup without pretending it is a Mapping."""
+
+    def __init__(self, entities: dict[str, object]) -> None:
+        self.entities = entities
+        self.requested: list[object] = []
+
+    def __getitem__(self, key: object) -> object:
+        self.requested.append(key)
+        if not isinstance(key, str):
+            raise AssertionError(f"scene entity lookup must be named, got {key!r}")
+        if key not in self.entities:
+            raise KeyError(key)
+        return self.entities[key]
+
+
+@pytest.mark.parametrize("include_witness", (False, True))
+def test_camera_pose_uses_named_scene_lookup_for_optional_witness(
+    include_witness: bool,
+) -> None:
+    robot = SimpleNamespace(
+        body_names=["panda_hand"],
+        data=SimpleNamespace(
+            body_pos_w=_Tensor([[[0.1, 0.2, 0.3]]]),
+            body_quat_w=_Proxy([[[0.0, 0.0, 0.0, 1.0]]]),
+        ),
+    )
+    wrist = SimpleNamespace(
+        data=SimpleNamespace(
+            pos_w=_Proxy([[0.2, 0.3, 0.4]]),
+            quat_w_ros=_Proxy([[0.1, 0.2, 0.3, 0.9]]),
+        ),
+        _npa_renderer_usd_pose=lambda: ([0.2, 0.3, 0.4], [0.1, 0.2, 0.3, 0.9]),
+    )
+    exterior = SimpleNamespace(
+        data=SimpleNamespace(
+            pos_w=_Proxy([[1.0, 2.0, 3.0]]),
+            quat_w_world=_Proxy([[0.0, 0.0, 0.0, 1.0]]),
+        )
+    )
+    entities = {"robot": robot, "pi05_wrist": wrist, "pi05_exterior": exterior}
+    if include_witness:
+        entities["pi05_witness"] = SimpleNamespace(
+            data=SimpleNamespace(
+                pos_w=_Proxy([[2.0, 1.0, 1.5]]),
+                quat_w_world=_Proxy([[0.0, 0.0, 0.0, 1.0]]),
+            )
+        )
+    scene = _InteractiveSceneProbe(entities)
+
+    pose = _camera_pose_sample(SimpleNamespace(scene=scene))
+
+    assert all(isinstance(key, str) for key in scene.requested)
+    assert scene.requested.count("pi05_witness") == 1
+    assert ("witness_camera_position_m" in pose) is include_witness
+    if include_witness:
+        assert pose["witness_camera_position_m"] == [2.0, 1.0, 1.5]
+
+
 def _mount_native(
     *,
     camera_position: object,

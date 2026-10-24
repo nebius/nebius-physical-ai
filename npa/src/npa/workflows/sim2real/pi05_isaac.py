@@ -609,15 +609,15 @@ def _camera_pose_sample(native: Any) -> dict[str, list[float]]:
             native.scene["pi05_exterior"].data.quat_w_world
         )[0],
     }
-    if "pi05_witness" in native.scene:
+    try:
+        witness = native.scene["pi05_witness"]
+    except KeyError:
+        witness = None
+    if witness is not None:
         sample.update(
             {
-                "witness_camera_position_m": values(
-                    native.scene["pi05_witness"].data.pos_w
-                )[0],
-                "witness_camera_quaternion_xyzw": values(
-                    native.scene["pi05_witness"].data.quat_w_world
-                )[0],
+                "witness_camera_position_m": values(witness.data.pos_w)[0],
+                "witness_camera_quaternion_xyzw": values(witness.data.quat_w_world)[0],
             }
         )
     return sample
