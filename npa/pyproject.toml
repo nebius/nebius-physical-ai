@@ -105,7 +105,7 @@ full = []
 agent-eval = []
 agent-specialists = [
     "langgraph==1.2.12",
-    "langgraph-checkpoint-sqlite==3.1.1",
+    "langgraph-checkpoint-sqlite==3.1.2",
     "uvicorn>=0.52.4",
 ]
 # Blueprint Phase I: self-hostable OSS tracing adapters behind an injected
@@ -169,7 +169,7 @@ dev = [
     # RRD semantic tests exercise ChunkStore.reader's real DataFusion path.
     "rerun-sdk[catalog]==0.38.1",
     "langgraph==1.2.12",
-    "langgraph-checkpoint-sqlite==3.1.1",
+    "langgraph-checkpoint-sqlite==3.1.2",
     # Parse real raw USD layers/variants in sensor-rig scene preflight tests.
     "usd-core==26.8",
     # Actual loopback HTTP regression coverage for deployed service boundaries.
@@ -206,7 +206,7 @@ dev = [
 dev = [
     "rerun-sdk[catalog]==0.38.1",
     "langgraph==1.2.12",
-    "langgraph-checkpoint-sqlite==3.1.1",
+    "langgraph-checkpoint-sqlite==3.1.2",
     "usd-core==26.8",
     "uvicorn>=0.52.4",
     "websockets>=10,<18",

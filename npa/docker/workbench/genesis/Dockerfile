@@ -92,7 +92,7 @@ WORKDIR /opt/genesis
 RUN python3.12 -m venv /opt/genesis/venv \
     && /opt/genesis/venv/bin/python -m pip install --no-cache-dir --upgrade \
       'pip==26.2.0' \
-      'setuptools==83.0.0' \
+      'setuptools==84.1.0' \
       'wheel==0.48.0' \
     && /opt/genesis/venv/bin/pip install \
       "torch==${TORCH_VERSION}" \

@@ -117,7 +117,7 @@ def test_canonical_genesis_recipe_pins_the_scanner_approved_bootstrap_tools():
 
     text = (GENESIS / "Dockerfile").read_text()
     assert "'pip==26.2.0'" in text
-    assert "'setuptools==83.0.0'" in text
+    assert "'setuptools==84.1.0'" in text
     assert "'wheel==0.48.0'" in text
     assert "pip install --upgrade pip setuptools wheel" not in text
 

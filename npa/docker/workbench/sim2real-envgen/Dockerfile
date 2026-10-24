@@ -57,7 +57,7 @@ RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" "${ENVG
       uv venv --seed --python "${ENVGEN_PYTHON_VERSION}" "${ENVGEN_VENV}" \
     && "${ENVGEN_VENV}/bin/python" -c \
       'import sys; assert sys.version_info[:3] == (3, 12, 14), sys.version' \
-    && "${ENVGEN_VENV}/bin/python" -m pip install --no-cache-dir --upgrade 'pip==26.2.0' 'setuptools==83.0.0' \
+    && "${ENVGEN_VENV}/bin/python" -m pip install --no-cache-dir --upgrade 'pip==26.2.0' 'setuptools==84.1.0' \
     && "${ENVGEN_VENV}/bin/python" -m pip install --no-cache-dir --no-deps \
       -r /opt/npa/sim2real-envgen-requirements.txt \
     && find /opt/npa/src /opt/npa/workflows -type d -exec chmod a+rx {} + \
