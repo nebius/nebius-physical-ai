@@ -93,6 +93,13 @@ By default this installs `skypilot[nebius,kubernetes]==0.12.2` into
 `~/.npa/skypilot-venv`. Use `--path` or `NPA_SKYPILOT_VENV_PATH` when an
 operator-managed location is required.
 
+Bootstrap uses a source-controlled dependency contract for this isolated
+environment. In particular, SkyPilot 0.12.2's local API needs
+`fastapi==0.141.1`: newer FastAPI releases reject the legacy `prefix` argument
+before the API can become ready. `npa skypilot bootstrap` detects that mismatch
+and atomically rebuilds only the isolated SkyPilot environment; it does not
+change NPA's own Python environment or a cluster workload.
+
 ## Point NPA At It
 
 Set `NPA_SKYPILOT_BIN` to the venv's `sky` executable:
@@ -290,8 +297,8 @@ update all of them together and re-run the SkyPilot guardrail tests:
 1. `npa/src/npa/orchestration/skypilot/_bin.py` — `REQUIRED_SKYPILOT_VERSION`
    (canonical pin; `npa skypilot bootstrap` and `_bin` fail closed on mismatch).
    `npa/src/npa/cli/skypilot/__init__.py` aliases it as `SKYPILOT_VERSION`.
-2. `npa/src/npa/cli/skypilot/constraints-0.12.2.txt` — rename to the new
-   version and re-resolve the pinned dependency set.
+2. `npa/src/npa/cli/skypilot/skypilot-constraints.txt` — re-resolve the
+   SkyPilot-compatible dependency set, including its exact local API server pin.
 3. `npa/src/npa/orchestration/skypilot/local_api.py` — health-check version
    assertion against the isolated API daemon (`health.get("version")`).
 4. `npa/src/npa/orchestration/skypilot/native_preflight.py` —
