@@ -246,6 +246,7 @@ def test_gen3_camera_config_requests_live_pose_and_integer_semantics(
     assert cfg.scene.pi05_exterior.offset.convention == "ros"
     assert cfg.scene.pi05_wrist.spawn.focal_length == 18.0
     assert not hasattr(cfg.scene, "pi05_witness")
+    assert not hasattr(cfg.scene, "pi05_release_witness")
 
 
 def test_closed_loop_camera_config_adds_independent_static_witness(monkeypatch) -> None:
@@ -267,6 +268,7 @@ def test_closed_loop_camera_config_adds_independent_static_witness(monkeypatch) 
     _camera_config(cfg, include_witness=True)
 
     witness = cfg.scene.pi05_witness
+    release_witness = cfg.scene.pi05_release_witness
     assert witness.prim_path == "{ENV_REGEX_NS}/Pi05WitnessCamera"
     assert witness.offset.pos == pi05_isaac.WITNESS_CAMERA_POSITION_M
     assert witness.offset.convention == "ros"
@@ -276,6 +278,16 @@ def test_closed_loop_camera_config_adds_independent_static_witness(monkeypatch) 
     )
     expected /= np.linalg.norm(expected)
     assert np.allclose(optical_axis, expected, atol=1.0e-6)
+    assert release_witness.prim_path == "{ENV_REGEX_NS}/Pi05ReleaseWitnessCamera"
+    assert release_witness.offset.pos == pi05_isaac.RELEASE_WITNESS_CAMERA_POSITION_M
+    release_axis = _rotate_vector(
+        _xyzw_to_wxyz(release_witness.offset.rot), [0.0, 0.0, 1.0]
+    )
+    release_expected = np.asarray(
+        pi05_isaac.RELEASE_WITNESS_CAMERA_TARGET_M
+    ) - np.asarray(pi05_isaac.RELEASE_WITNESS_CAMERA_POSITION_M)
+    release_expected /= np.linalg.norm(release_expected)
+    assert np.allclose(release_axis, release_expected, atol=1.0e-6)
 
     # The witness is evidence-only, but it must retain a direct view of the
     # destination around a terminally placed maximum-size cube.  Bound the
@@ -1095,6 +1107,12 @@ def test_camera_pose_uses_named_scene_lookup_for_optional_witness(
                 quat_w_world=_Proxy([[0.0, 0.0, 0.0, 1.0]]),
             )
         )
+        entities["pi05_release_witness"] = SimpleNamespace(
+            data=SimpleNamespace(
+                pos_w=_Proxy([[0.5, -0.8, 0.6]]),
+                quat_w_world=_Proxy([[0.0, 0.0, 0.0, 1.0]]),
+            )
+        )
     scene = _InteractiveSceneProbe(entities)
 
     pose = _camera_pose_sample(SimpleNamespace(scene=scene))
@@ -1102,8 +1120,10 @@ def test_camera_pose_uses_named_scene_lookup_for_optional_witness(
     assert all(isinstance(key, str) for key in scene.requested)
     assert scene.requested.count("pi05_witness") == 1
     assert ("witness_camera_position_m" in pose) is include_witness
+    assert ("release_witness_camera_position_m" in pose) is include_witness
     if include_witness:
         assert pose["witness_camera_position_m"] == [2.0, 1.0, 1.5]
+        assert pose["release_witness_camera_position_m"] == [0.5, -0.8, 0.6]
 
 
 def _mount_native(

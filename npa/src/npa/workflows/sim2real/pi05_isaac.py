@@ -50,15 +50,15 @@ SUPPORT_SURFACE_SIZE_M = (1.0, 0.8, 0.05)
 SUPPORT_SURFACE_CENTER_M = (0.5, 0.0, -0.025)
 EXTERIOR_CAMERA_POSITION_M = (0.65, 0.65, 0.85)
 EXTERIOR_CAMERA_TARGET_M = (0.50, 0.0, 0.03)
-# This evidence-only view looks across the retreat axis instead of down it.
-# The prior steep view collapsed a physically separated hand and placed cube
-# onto the same image region.  The elevated side-oblique baseline keeps the
-# support, goal, object, and retreated fingers in frame with useful parallax
-# while bounding the maximum-cube ground-plane occlusion inside the physical
-# destination marker.  It is never a policy observation and does not alter
-# task physics.
+# The elevated evidence-only view resolves the horizontal destination marker
+# around a placed maximum-size cube.  A separate low side view resolves the
+# vertical release/retreat gap.  Requiring both native views avoids treating a
+# single camera's unavoidable goal-vs-hand occlusion tradeoff as task proof.
+# Neither camera is a policy observation or changes task physics.
 WITNESS_CAMERA_POSITION_M = (1.25, -0.05, 1.30)
 WITNESS_CAMERA_TARGET_M = (0.48, 0.08, 0.08)
+RELEASE_WITNESS_CAMERA_POSITION_M = (0.15, -0.75, 0.55)
+RELEASE_WITNESS_CAMERA_TARGET_M = (0.50, 0.09, 0.04)
 DOWNWARD_HAND_QUATERNION_XYZW = (1.0, 0.0, 0.0, 0.0)
 RESET_SETTLE_CONTROL_STEPS = 2
 EXPECTED_SEMANTIC_LABELS = frozenset(
@@ -374,6 +374,18 @@ def _camera_config(env_cfg: Any, *, include_witness: bool = False) -> None:
             ),
             **_camera_common(),
         )
+        release_position = RELEASE_WITNESS_CAMERA_POSITION_M
+        env_cfg.scene.pi05_release_witness = TiledCameraCfg(
+            prim_path="{ENV_REGEX_NS}/Pi05ReleaseWitnessCamera",
+            offset=TiledCameraCfg.OffsetCfg(
+                pos=release_position,
+                rot=_ros_look_at_xyzw(
+                    release_position, RELEASE_WITNESS_CAMERA_TARGET_M
+                ),
+                convention="ros",
+            ),
+            **_camera_common(),
+        )
 
 
 def _contact_config(env_cfg: Any) -> None:
@@ -646,6 +658,17 @@ def _camera_pose_sample(native: Any) -> dict[str, list[float]]:
             {
                 "witness_camera_position_m": values(witness.data.pos_w)[0],
                 "witness_camera_quaternion_xyzw": values(witness.data.quat_w_world)[0],
+            }
+        )
+        release_witness = native.scene["pi05_release_witness"]
+        sample.update(
+            {
+                "release_witness_camera_position_m": values(release_witness.data.pos_w)[
+                    0
+                ],
+                "release_witness_camera_quaternion_xyzw": values(
+                    release_witness.data.quat_w_world
+                )[0],
             }
         )
     return sample
@@ -1152,6 +1175,16 @@ def _phase_visibility(traces: list[dict[str, Any]]) -> dict[str, dict[str, Any]]
                 all(
                     count >= 4
                     for count in row.get("witness_finger_pixels", {}).values()
+                )
+                for row in rows
+            ),
+            "release_witness_visible_samples": sum(
+                row.get("release_witness_target_pixels", 0) >= 4 for row in rows
+            ),
+            "both_fingers_release_witness_samples": sum(
+                all(
+                    count >= 4
+                    for count in row.get("release_witness_finger_pixels", {}).values()
                 )
                 for row in rows
             ),

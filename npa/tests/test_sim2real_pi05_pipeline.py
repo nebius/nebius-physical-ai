@@ -456,6 +456,10 @@ def test_terminal_witness_binds_final_state_without_extra_control(monkeypatch) -
     pi05_closed_loop._capture_terminal_witness(native, record)
 
     witness = record["terminal_witness_dwell"]["post_control_witness"]
+    release_witness = record["terminal_witness_dwell"]["post_control_release_witness"]
+    assert witness["evidence_role"] == "goal_and_object"
+    assert release_witness["evidence_role"] == "open_fingers_and_retreat"
+    assert record["terminal_witness_dwell"]["schema"].endswith(".v2")
     assert witness["physics_trace_index"] == len(rows) - 1
     assert witness["observation_time_s"] == final_time
     assert witness["additional_action_steps"] == 0
@@ -478,6 +482,17 @@ def test_terminal_witness_rejects_state_time_mismatch(monkeypatch) -> None:
         pi05_closed_loop._capture_terminal_witness(
             Namespace(step_dt=1.0 / 60.0), record
         )
+
+
+def test_dual_witness_panel_preserves_both_native_frames() -> None:
+    goal = np.full((224, 224, 3), 17, dtype=np.uint8)
+    release = np.full((224, 224, 3), 53, dtype=np.uint8)
+
+    panel = pi05_closed_loop._witness_panel(goal, release, "terminal")
+
+    assert panel.shape == (256, 448, 3)
+    assert np.array_equal(panel[32:, :224], goal)
+    assert np.array_equal(panel[32:, 224:], release)
 
 
 def _partial_execution_context(record: dict) -> dict:
@@ -783,6 +798,7 @@ def _comparison_query(mode: str, seed: int, decision: int) -> dict:
         "wrist_rgb_sha256": source,
         "exterior_rgb_sha256": "e" * 64,
         "witness_rgb_sha256": "f" * 64,
+        "release_witness_rgb_sha256": "a" * 64,
         "execution_status": "completed",
         "attempted_prefix": pi05_closed_loop.EXECUTION_PREFIX,
         "executed_prefix": pi05_closed_loop.EXECUTION_PREFIX,
@@ -837,6 +853,8 @@ def _comparison_episode(mode: str, seed: int, success: bool) -> dict:
             "witness_visible_samples": 8,
             "destination_witness_visible_samples": 8,
             "both_fingers_witness_samples": 8,
+            "release_witness_visible_samples": 8,
+            "both_fingers_release_witness_samples": 8,
         }
         for phase in ("approach", "grasp", "lift", "transport", "lower", "release")
     }
@@ -913,9 +931,12 @@ def _comparison_episode(mode: str, seed: int, success: bool) -> dict:
             "minimum_target_finger_gap_px": 42.0,
             "separation_semantics": "non_overlapping_semantic_mask_bounding_boxes",
         },
+        "evidence_role": "goal_and_object",
     }
+    release_witness = json.loads(json.dumps(witness))
+    release_witness["evidence_role"] = "open_fingers_and_retreat"
     episode["terminal_witness_dwell"] = pi05_closed_loop._terminal_dwell_receipt(
-        episode, witness
+        episode, witness, release_witness
     )
     return episode
 
@@ -965,7 +986,12 @@ def test_terminal_witness_rejects_occluded_required_geometry(
     field: str, value: object
 ) -> None:
     episode = _comparison_episode("fresh", 101, True)
-    witness = episode["terminal_witness_dwell"]["post_control_witness"]
+    key = (
+        "post_control_release_witness"
+        if field == "finger_pixels"
+        else "post_control_witness"
+    )
+    witness = episode["terminal_witness_dwell"][key]
     witness[field] = value
 
     with pytest.raises(RuntimeError, match="terminal witness dwell evidence"):
@@ -974,7 +1000,7 @@ def test_terminal_witness_rejects_occluded_required_geometry(
 
 def test_terminal_witness_rejects_projected_finger_overlap() -> None:
     episode = _comparison_episode("fresh", 101, True)
-    geometry = episode["terminal_witness_dwell"]["post_control_witness"][
+    geometry = episode["terminal_witness_dwell"]["post_control_release_witness"][
         "semantic_geometry"
     ]
     geometry["components"]["left_finger"]["bbox_xyxy"] = [104, 100, 110, 110]
@@ -1014,8 +1040,9 @@ def test_terminal_completion_is_separate_from_historical_latch() -> None:
     assert pi05_closed_loop._episode_terminal_passed(episode) is True
     episode["physics_trace"][-1]["left_finger_object_force_n"] = 0.2
     witness = episode["terminal_witness_dwell"]["post_control_witness"]
+    release_witness = episode["terminal_witness_dwell"]["post_control_release_witness"]
     episode["terminal_witness_dwell"] = pi05_closed_loop._terminal_dwell_receipt(
-        episode, witness
+        episode, witness, release_witness
     )
 
     pi05_closed_loop._validate_terminal_witness(episode)
@@ -2960,16 +2987,22 @@ def test_failed_camera_admission_retains_pixels_without_a_fictitious_query(
     exterior = np.full((224, 224, 3), 17, dtype=np.uint8)
     wrist = np.full((224, 224, 3), 29, dtype=np.uint8)
     witness = np.full((224, 224, 3), 41, dtype=np.uint8)
+    release_witness = np.full((224, 224, 3), 53, dtype=np.uint8)
     record = pi05_closed_loop._new_episode_record()
     monkeypatch.setattr(
         pi05_closed_loop, "_policy_observation", lambda _: (exterior, wrist, [], [])
     )
-    monkeypatch.setattr(pi05_closed_loop, "_rgb", lambda *_: witness)
+    monkeypatch.setattr(
+        pi05_closed_loop,
+        "_rgb",
+        lambda _, name: release_witness if name == "pi05_release_witness" else witness,
+    )
     timing = {"observation_time_s": 0.5, "wrist_capture_time_s": 0.5}
     receipts = {
         "exterior": {"sha256": "a" * 64},
         "wrist": {"sha256": "b" * 64},
         "witness": {"sha256": "c" * 64},
+        "release_witness": {"sha256": "d" * 64},
     }
     monkeypatch.setattr(
         pi05_closed_loop, "_camera_query_receipts", lambda *_: (timing, receipts)
@@ -2987,9 +3020,12 @@ def test_failed_camera_admission_retains_pixels_without_a_fictitious_query(
     assert not record["queries"] and not record["_wrist_frames"]
     assert record["failed_camera_observations"][0]["policy_query_recorded"] is False
     artifacts = pi05_closed_loop._write_failed_camera_evidence(tmp_path, [record])
-    assert len(artifacts) == 3
+    assert len(artifacts) == 4
     assert np.array_equal(np.load(tmp_path / artifacts[1]["path"]), wrist[None])
     assert np.array_equal(np.load(tmp_path / artifacts[2]["path"]), witness[None])
+    assert np.array_equal(
+        np.load(tmp_path / artifacts[3]["path"]), release_witness[None]
+    )
     assert not any(key.startswith("_failed") for key in record)
 
 
@@ -3011,7 +3047,7 @@ def test_destination_occlusion_is_allowed_only_during_retreat(monkeypatch) -> No
     )
     monkeypatch.setattr(pi05_closed_loop, "_policy_phase", lambda _record: phase)
     record = {"physics_trace": [], "camera_trace": []}
-    receipts = {"exterior": {}, "wrist": {}, "witness": {}}
+    receipts = {"exterior": {}, "wrist": {}, "witness": {}, "release_witness": {}}
     with pytest.raises(RuntimeError, match="destination marker"):
         pi05_closed_loop._record_query_camera(None, record, receipts, {})
 
@@ -3034,6 +3070,7 @@ def test_admitted_camera_frames_match_completed_query_count(monkeypatch) -> None
         "exterior": {"sha256": "a" * 64},
         "wrist": {"sha256": "b" * 64},
         "witness": {"sha256": "c" * 64},
+        "release_witness": {"sha256": "d" * 64},
     }
     monkeypatch.setattr(
         pi05_closed_loop, "_camera_query_receipts", lambda *_: ({}, receipts)
@@ -3050,6 +3087,7 @@ def test_admitted_camera_frames_match_completed_query_count(monkeypatch) -> None
         len(record["_exterior_frames"])
         == len(record["_wrist_frames"])
         == len(record["_witness_frames"])
+        == len(record["_release_witness_frames"])
         == 1
     )
     assert "failed_camera_observations" not in record
@@ -3183,6 +3221,7 @@ def _rrd_episode() -> dict:
                 "exterior_capture_time_s": observation - 2.0e-6,
                 "wrist_capture_time_s": observation - 1.0e-6,
                 "witness_capture_time_s": observation - 1.5e-6,
+                "release_witness_capture_time_s": observation - 1.25e-6,
                 "inference": {"wire_input": {"capture_age_s": 1.0e-6}},
                 "controller_proofs": [
                     {
@@ -3201,11 +3240,16 @@ def _rrd_episode() -> dict:
         "_exterior_frames": frames,
         "_wrist_frames": frames,
         "_witness_frames": frames,
+        "_release_witness_frames": frames,
         "_terminal_witness_frame": frames[-1],
+        "_terminal_release_witness_frame": frames[-1],
         "terminal_witness_dwell": {
             "post_control_witness": {
                 "capture_time_s": trace[-1]["simulator_time_s"],
-            }
+            },
+            "post_control_release_witness": {
+                "capture_time_s": trace[-1]["simulator_time_s"],
+            },
         },
     }
 
@@ -3232,8 +3276,9 @@ def test_closed_loop_rrd_is_finalized_and_causally_timed(tmp_path: Path) -> None
         text=True,
     ).stdout
     assert decoded.count("* entity_path: /episodes/0/physics/") == 6
-    assert decoded.count("* entity_path: /episodes/0/queries/") == 8
+    assert decoded.count("* entity_path: /episodes/0/queries/") == 10
     assert decoded.count("* entity_path: /episodes/0/terminal/witness") == 1
+    assert decoded.count("* entity_path: /episodes/0/terminal/release_witness") == 1
     assert all(
         value in decoded
         for value in ("PT0.2S", "PT0.733333S", "PT0.133331S", "PT0.666666S")
