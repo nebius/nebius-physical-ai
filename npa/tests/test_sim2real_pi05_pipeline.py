@@ -1010,6 +1010,31 @@ def test_terminal_witness_rejects_projected_finger_overlap() -> None:
         pi05_closed_loop._validate_terminal_witness(episode)
 
 
+def test_terminal_witness_retains_failed_contact_without_success_gap() -> None:
+    episode = _comparison_episode("fresh", 101, False)
+    geometry = episode["terminal_witness_dwell"]["post_control_release_witness"][
+        "semantic_geometry"
+    ]
+    geometry["components"]["left_finger"]["bbox_xyxy"] = [104, 100, 110, 110]
+    geometry["minimum_target_finger_gap_px"] = 0.0
+
+    pi05_closed_loop._validate_terminal_witness(episode)
+
+    assert pi05_closed_loop._episode_passed(episode) is False
+    assert pi05_closed_loop._episode_terminal_passed(episode) is False
+
+
+def test_terminal_witness_failed_trial_still_requires_finger_geometry() -> None:
+    episode = _comparison_episode("fresh", 101, False)
+    geometry = episode["terminal_witness_dwell"]["post_control_release_witness"][
+        "semantic_geometry"
+    ]
+    geometry["components"]["right_finger"]["bbox_xyxy"] = None
+
+    with pytest.raises(RuntimeError, match="terminal witness dwell evidence"):
+        pi05_closed_loop._validate_terminal_witness(episode)
+
+
 def test_semantic_component_geometry_uses_exact_mask_extent(monkeypatch) -> None:
     segmentation = np.zeros((224, 224, 1), dtype=np.int32)
     segmentation[70:74, 30:35, 0] = 11

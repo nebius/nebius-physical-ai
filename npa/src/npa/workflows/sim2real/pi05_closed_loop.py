@@ -2625,6 +2625,10 @@ def _validate_terminal_witness(episode: dict[str, Any]) -> None:
     clean = len(rows) == TERMINAL_WITNESS_DWELL_STEPS and all(
         _clean_supported_release(row) for row in rows
     )
+    terminal_success = (
+        bool((episode.get("success") or {}).get("released_supported_surface_placement"))
+        and clean
+    )
     goal_pixels = (
         witness.get("target_pixels", 0) >= TERMINAL_WITNESS_MIN_COMPONENT_PIXELS
     )
@@ -2643,7 +2647,10 @@ def _validate_terminal_witness(episode: dict[str, Any]) -> None:
         for side in ("left", "right")
     )
     release_pixels = release_pixels and _valid_terminal_witness_geometry(
-        release_witness, require_destination=False, require_release_gap=True
+        release_witness,
+        require_destination=False,
+        require_fingers=True,
+        require_release_gap=terminal_success,
     )
     expected_indices = list(range(start, len(trace)))
     final_state_time = float(trace[-1]["simulator_time_s"]) if trace else None
@@ -2690,7 +2697,11 @@ def _validate_terminal_witness(episode: dict[str, Any]) -> None:
 
 
 def _valid_terminal_witness_geometry(
-    witness: dict[str, Any], *, require_destination: bool, require_release_gap: bool
+    witness: dict[str, Any],
+    *,
+    require_destination: bool,
+    require_release_gap: bool,
+    require_fingers: bool = False,
 ) -> bool:
     """Fail closed unless one native view resolves its declared evidence role."""
 
@@ -2713,14 +2724,19 @@ def _valid_terminal_witness_geometry(
         required = {"target"}
         if require_destination:
             required.add("destination")
-        if require_release_gap:
+        if require_fingers or require_release_gap:
             required.update(("left_finger", "right_finger"))
         for name in required:
             component = components[name]
             centroid = component.get("centroid_xy")
+            box = component.get("bbox_xyxy")
             if (
                 component.get("pixels") != expected_pixels[name]
                 or component.get("pixels", 0) < TERMINAL_WITNESS_MIN_COMPONENT_PIXELS
+                or not isinstance(box, list)
+                or len(box) != 4
+                or any(type(value) is not int for value in box)
+                or not (0 <= box[0] <= box[2] < 224 and 0 <= box[1] <= box[3] < 224)
                 or not isinstance(centroid, list)
                 or len(centroid) != 2
                 or not all(math.isfinite(float(value)) for value in centroid)
