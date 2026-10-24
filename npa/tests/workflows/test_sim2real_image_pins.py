@@ -134,6 +134,11 @@ def test_cosmos3_reason_repairs_inherited_scanner_critical_python_packages() -> 
     root = Path(__file__).resolve().parents[2] / "docker" / "workbench"
     text = (root / "cosmos3-reason/Dockerfile").read_text(encoding="utf-8")
 
+    # pip 26.2 inherited a scanner-visible vendored certifi 2026.06.17 even
+    # though the application package below was current.  Pinning only the
+    # application package leaves that complete-byte vulnerability in the
+    # published image, so the bootstrap itself must be upgraded too.
+    assert '"pip==26.2.2"' in text
     assert '"certifi==2026.10.19"' in text
     assert '"Pillow==13.0.0"' in text
     assert '"Pillow==12.2.0"' not in text

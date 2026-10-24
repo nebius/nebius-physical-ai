@@ -50,7 +50,8 @@ RUN mkdir -p /tmp/hf_home/cosmos-reason2 /tmp/hf_home/cosmos-reason2-2b \
     && chmod a+r /opt/npa/pyproject.toml \
     && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && python -m pip uninstall -y npa \
-    && python -m pip install --no-deps \
+    && python -m pip install --no-deps --upgrade \
+      "pip==26.2.2" \
       "certifi==2026.10.19" \
       "Pillow==13.0.0" \
       "tomli==2.4.1" \
