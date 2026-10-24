@@ -40,9 +40,12 @@ def test_portable_overlay_hashes_and_application_order(image: str) -> None:
             "opentelemetry-api==1.45.1",
         ):
             assert requirement in lock
-    expected_pillow = "13.0.0" if image == "openpi" else "12.3.0"
+    expected_pillow = "13.0.0" if image in {"openpi", "cosmos3"} else "12.3.0"
     assert f"pillow=={expected_pillow}" in lock
     assert "setuptools==84.0.0" in lock
+    if image == "cosmos3":
+        assert "certifi==2026.10.23" in lock
+        assert "uv==0.13.4" in lock
 
 
 def test_hardened_nltk_source_install_contract() -> None:
