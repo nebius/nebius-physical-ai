@@ -3033,7 +3033,7 @@ def test_canonical_resume_replays_single_stage8_then_restarts_at_stage9() -> Non
         spec,
         run_id="canonical-stage8-resume",
         submitter=first_submitter,
-        status_fn=FakeStatus(["SUCCEEDED"] * 8 + ["FAILED"]),
+        status_fn=FakeStatus(["SUCCEEDED"] * 9 + ["FAILED"]),
         store=store,
         render_options=SkypilotRenderOptions(),
     )
@@ -3094,7 +3094,7 @@ def test_canonical_finalization_resume_submits_only_stage14() -> None:
     first = _executor(
         spec,
         run_id="canonical-finalize-resume",
-        status_fn=FakeStatus(["SUCCEEDED"] * 13 + ["FAILED"]),
+        status_fn=FakeStatus(["SUCCEEDED"] * 14 + ["FAILED"]),
         store=store,
         render_options=SkypilotRenderOptions(),
     )

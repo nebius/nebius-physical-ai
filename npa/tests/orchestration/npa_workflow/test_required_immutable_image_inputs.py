@@ -311,7 +311,7 @@ def test_sim2real_role_images_reject_a_global_override_before_rendering():
     spec = _supplied_sim2real_spec()
     plan = interpreter.build_plan(spec, run_id="protected-sim2real-role-images")
 
-    with pytest.raises(NpaWorkflowError, match="config.cosmos3_image"):
+    with pytest.raises(NpaWorkflowError, match="config.isaac_image"):
         validate_immutable_image_override_bindings(
             spec,
             plan.steps,

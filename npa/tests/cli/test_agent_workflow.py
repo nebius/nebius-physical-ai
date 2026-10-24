@@ -478,7 +478,8 @@ def test_sim2real_staged_chat_parameters_validate_and_plan() -> None:
     assert spec["config"]["env_count"] == "12000"
     assert spec["config"]["threshold"] == "0.82"
     assert spec["config"]["task_id"] == "Isaac-Lift-Cube-Franka-v0"
-    assert len(spec["states"]) == 24
+    assert len(spec["states"]) == 25
+    assert spec["initial"] == "stage-00-isaac-cache-warm"
     assert "stage-08-token-factory" in spec["states"]
     assert "stage-08-wave" not in spec["states"]
     assert "stage-08-reason2" not in spec["states"]

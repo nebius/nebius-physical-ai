@@ -538,8 +538,10 @@ def test_isaac_cache_warmer_is_a_nonroot_canonical_workflow_state() -> None:
     )
     assert security["seccompProfile"] == {"type": "RuntimeDefault"}
     container = pod["containers"][0]
-    assert container["securityContext"]["allowPrivilegeEscalation"] is False
-    assert container["securityContext"]["capabilities"]["drop"] == ["ALL"]
+    # The standard SkyPilot first-party-image bootstrap uses passwordless sudo
+    # before it executes this non-root state. A container-level no-new-privs
+    # override would block that documented bootstrap contract.
+    assert "securityContext" not in container
     assert runbook["states"]["stage-00-isaac-cache-warm"]["resources"] == (
         "isaac-cache-warm"
     )

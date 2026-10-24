@@ -132,10 +132,6 @@ resources:
               type: RuntimeDefault
           containers:
             - name: ray-node
-              securityContext:
-                allowPrivilegeEscalation: false
-                capabilities:
-                  drop: [ALL]
               env:
                 - name: NPA_SIM2REAL_ISAAC_CACHE_PVC
                   value: "{{config.isaac_cache_pvc}}"

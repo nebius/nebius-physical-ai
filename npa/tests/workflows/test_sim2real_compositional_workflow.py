@@ -297,9 +297,19 @@ def test_canonical_cache_warm_state_precedes_gpu_cache_consumers() -> None:
     resource = payload["resources"]["isaac-cache-warm"]
     assert "accelerators" not in resource
     container = resource["kubernetes"]["pod_config"]["spec"]["containers"][0]
-    assert container["securityContext"] == {
-        "allowPrivilegeEscalation": False,
-        "capabilities": {"drop": ["ALL"]},
+    # SkyPilot needs its normal passwordless-sudo bootstrap before it runs the
+    # non-root first-party image, so the canonical task cannot set the
+    # main-container no-new-privileges override. The pod remains non-root and
+    # RuntimeDefault-seccomp; post-bootstrap GPU consumers remain read-only and
+    # offline.
+    assert "securityContext" not in container
+    assert resource["kubernetes"]["pod_config"]["spec"]["securityContext"] == {
+        "runAsNonRoot": True,
+        "runAsUser": 1000,
+        "runAsGroup": 1000,
+        "fsGroup": 1000,
+        "fsGroupChangePolicy": "OnRootMismatch",
+        "seccompProfile": {"type": "RuntimeDefault"},
     }
     assert {item["name"]: item["value"] for item in container["env"]} == {
         "NPA_SIM2REAL_ISAAC_CACHE_PVC": "{{config.isaac_cache_pvc}}",
