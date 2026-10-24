@@ -162,9 +162,11 @@ def test_envgen_runtime_uses_its_own_python312_venv_and_exact_source_pth():
         in text
     )
     assert (
-        "\"${ENVGEN_UV_PYTHON}\" -m pip install --no-cache-dir --upgrade 'pip==26.2.2'"
+        "UV_CACHE_DIR=/tmp/uv-cache UV_NO_CACHE=1 uv pip install --break-system-packages"
         in text
     )
+    assert '--python "${ENVGEN_UV_PYTHON}" --no-deps --upgrade \'pip==26.2.2\'' in text
+    assert '"${ENVGEN_UV_PYTHON}" -m pip install' not in text
     assert 'uv venv --seed --python "${ENVGEN_PYTHON_VERSION}" "${ENVGEN_VENV}"' in text
     assert "sys.version_info[:3] == (3, 12, 14)" in text
     assert "UV_PYTHON_INSTALL_DIR=/opt/npa/python" in text
