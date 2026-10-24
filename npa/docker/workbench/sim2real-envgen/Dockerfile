@@ -55,11 +55,14 @@ RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" "${ENVG
     && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && UV_PYTHON_INSTALL_DIR=/opt/npa/python UV_CACHE_DIR=/tmp/uv-cache UV_NO_CACHE=1 UV_NO_MODIFY_PATH=1 \
       uv python install "${ENVGEN_PYTHON_VERSION}" \
+    && ENVGEN_UV_PYTHON="/opt/npa/python/cpython-${ENVGEN_PYTHON_VERSION}-linux-x86_64-gnu/bin/python3.12" \
+    && test -x "${ENVGEN_UV_PYTHON}" \
+    && "${ENVGEN_UV_PYTHON}" -m pip install --no-cache-dir --upgrade 'pip==26.2.2' \
     && UV_PYTHON_INSTALL_DIR=/opt/npa/python UV_CACHE_DIR=/tmp/uv-cache UV_NO_CACHE=1 UV_NO_MODIFY_PATH=1 \
       uv venv --seed --python "${ENVGEN_PYTHON_VERSION}" "${ENVGEN_VENV}" \
     && "${ENVGEN_VENV}/bin/python" -c \
       'import sys; assert sys.version_info[:3] == (3, 12, 14), sys.version' \
-    && "${ENVGEN_VENV}/bin/python" -m pip install --no-cache-dir --upgrade 'pip==26.2.0' 'setuptools==84.1.0' \
+    && "${ENVGEN_VENV}/bin/python" -m pip install --no-cache-dir --upgrade 'pip==26.2.2' 'setuptools==84.1.0' \
     && "${ENVGEN_VENV}/bin/python" -m pip install --no-cache-dir --no-deps \
       -r /opt/npa/sim2real-envgen-requirements.txt \
     && find /opt/npa/src /opt/npa/workflows -type d -exec chmod a+rx {} + \

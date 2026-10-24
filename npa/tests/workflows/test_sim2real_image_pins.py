@@ -118,7 +118,7 @@ def test_envgen_bootstrap_tools_use_the_current_secure_floors() -> None:
 
     root = Path(__file__).resolve().parents[2] / "docker" / "workbench"
     text = (root / "sim2real-envgen/Dockerfile").read_text(encoding="utf-8")
-    assert "'pip==26.2.0' 'setuptools==84.1.0'" in text
+    assert "'pip==26.2.2' 'setuptools==84.1.0'" in text
     assert "pip==25.3" not in text
     assert "setuptools==79.0.1" not in text
     assert "setuptools==83.0.0" not in text
