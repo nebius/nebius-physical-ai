@@ -277,6 +277,18 @@ def test_closed_loop_camera_config_adds_independent_static_witness(monkeypatch) 
     expected /= np.linalg.norm(expected)
     assert np.allclose(optical_axis, expected, atol=1.0e-6)
 
+    # The witness is evidence-only, but it must retain a direct view of the
+    # destination around a terminally placed maximum-size cube.  Bound the
+    # height-induced ground-plane occlusion by the physical marker radius.
+    delta = np.asarray(pi05_isaac.WITNESS_CAMERA_TARGET_M) - np.asarray(
+        pi05_isaac.WITNESS_CAMERA_POSITION_M
+    )
+    horizontal_distance = np.linalg.norm(delta[:2])
+    vertical_distance = abs(delta[2])
+    maximum_cube_height_m = 0.072
+    planar_occlusion_m = maximum_cube_height_m * horizontal_distance / vertical_distance
+    assert planar_occlusion_m < pi05_isaac.DESTINATION_RADIUS_M
+
 
 def test_ros_camera_axes_aim_at_declared_geometry() -> None:
     position = np.asarray(pi05_isaac.EXTERIOR_CAMERA_POSITION_M)

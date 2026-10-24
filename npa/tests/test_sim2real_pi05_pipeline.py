@@ -916,6 +916,25 @@ def test_terminal_witness_rejects_unbound_evidence(mutation: str) -> None:
         pi05_closed_loop._validate_terminal_witness(episode)
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("target_pixels", 0),
+        ("destination_pixels", 0),
+        ("finger_pixels", {"left": 16, "right": 0}),
+    ],
+)
+def test_terminal_witness_rejects_occluded_required_geometry(
+    field: str, value: object
+) -> None:
+    episode = _comparison_episode("fresh", 101, True)
+    witness = episode["terminal_witness_dwell"]["post_control_witness"]
+    witness[field] = value
+
+    with pytest.raises(RuntimeError, match="terminal witness dwell evidence"):
+        pi05_closed_loop._validate_terminal_witness(episode)
+
+
 def test_terminal_completion_is_separate_from_historical_latch() -> None:
     episode = _comparison_episode("fresh", 101, True)
     assert pi05_closed_loop._episode_passed(episode) is True

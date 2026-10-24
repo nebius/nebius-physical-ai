@@ -50,8 +50,11 @@ SUPPORT_SURFACE_SIZE_M = (1.0, 0.8, 0.05)
 SUPPORT_SURFACE_CENTER_M = (0.5, 0.0, -0.025)
 EXTERIOR_CAMERA_POSITION_M = (0.65, 0.65, 0.85)
 EXTERIOR_CAMERA_TARGET_M = (0.50, 0.0, 0.03)
-WITNESS_CAMERA_POSITION_M = (0.15, -0.75, 0.55)
-WITNESS_CAMERA_TARGET_M = (0.50, 0.09, 0.04)
+# Keep this evidence-only view steep enough that a placed 72 mm cube cannot
+# hide the complete 100 mm destination disc behind its vertical silhouette.
+# This camera is never a policy observation and does not alter task physics.
+WITNESS_CAMERA_POSITION_M = (0.30, -0.26, 1.00)
+WITNESS_CAMERA_TARGET_M = (0.50, 0.12, 0.03)
 DOWNWARD_HAND_QUATERNION_XYZW = (1.0, 0.0, 0.0, 0.0)
 RESET_SETTLE_CONTROL_STEPS = 2
 EXPECTED_SEMANTIC_LABELS = frozenset(
