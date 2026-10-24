@@ -73,7 +73,7 @@ promote the quarantined release defaults.
 | Setting | Image and required capability |
 | --- | --- |
 | `CONTROLLER_IMAGE` | `npa-sim2real-control`, including current hosted Stage 8/9 support |
-| `COSMOS3_IMAGE` | `npa-cosmos3`, with real guarded Cosmos3-Nano edge-controlled `video2video` transfer |
+| `COSMOS3_IMAGE` | `npa-cosmos3-reason`, with real guarded Cosmos3-Nano edge-controlled `video2video` transfer |
 | `ENVGEN_IMAGE` | `npa-envgen`, with real scenario generation |
 | `ISAAC_IMAGE` | `npa-isaac-lab`, with rollout, PPO, held-out evaluation, and RTX rendering |
 | `VIEWER_IMAGE` | `npa-rerun-viewer`, with RRD and MCAP finalization |
@@ -127,9 +127,10 @@ For private images, prepare exact-host registry authorization and an existing
 Kubernetes Docker config pull secret using the [registry setup](../troubleshooting/known-footguns.md#private-registry-credentials-expire).
 NPA's manifest checks and Kubernetes node pulls need separate authorization.
 Reference the secret in `kubernetes.pod_config.spec.imagePullSecrets` in your
-private SkyPilot config. The cache-warming Job below is created directly by
-`kubectl`, so its template also needs that secret; SkyPilot config does not
-apply to it. Anonymous public GHCR images need neither credential.
+private SkyPilot config. The canonical Stage 00 cache-warm state uses the
+selected Isaac image through the standard SkyPilot runtime, so it receives that
+configuration and its pull secrets. Do not add a direct `kubectl` cache-warming
+Job. Anonymous public GHCR images need neither credential.
 
 ## 3. Configure the project, storage, and model access
 

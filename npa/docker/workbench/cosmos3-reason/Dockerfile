@@ -51,6 +51,8 @@ RUN mkdir -p /tmp/hf_home/cosmos-reason2 /tmp/hf_home/cosmos-reason2-2b \
     && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && python -m pip uninstall -y npa \
     && python -m pip install --no-deps \
+      "certifi==2026.10.19" \
+      "Pillow==13.0.0" \
       "tomli==2.4.1" \
       "accelerate==1.14.0" \
       "huggingface_hub==0.36.0" \

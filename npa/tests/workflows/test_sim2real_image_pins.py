@@ -127,6 +127,31 @@ def test_envgen_bootstrap_tools_use_the_current_secure_floors() -> None:
     assert 'uv venv --seed --python "${ENVGEN_PYTHON_VERSION}"' in text
 
 
+def test_cosmos3_reason_repairs_inherited_scanner_critical_python_packages() -> None:
+    """The canonical Stage 3 role must not retain a vulnerable parent closure."""
+
+    root = Path(__file__).resolve().parents[2] / "docker" / "workbench"
+    text = (root / "cosmos3-reason/Dockerfile").read_text(encoding="utf-8")
+
+    assert '"certifi==2026.10.19"' in text
+    assert '"Pillow==13.0.0"' in text
+    assert '"Pillow==12.2.0"' not in text
+
+
+def test_sim2real_manual_uses_canonical_cosmos_and_cache_warm_roles() -> None:
+    """A fresh operator must not be directed to a mismatched image or raw Job."""
+
+    guide = (
+        Path(__file__).resolve().parents[3]
+        / "docs/workbench/guides/sim2real-workflow.md"
+    ).read_text(encoding="utf-8")
+
+    assert "| `COSMOS3_IMAGE` | `npa-cosmos3-reason`" in guide
+    assert "The cache-warming Job below is created directly by" not in guide
+    assert "Do not add a direct `kubectl` cache-warming\nJob." in guide
+    assert "`stage-00-isaac-cache-warm`" in guide
+
+
 @pytest.mark.parametrize(
     ("relative_path", "child_image"),
     (
