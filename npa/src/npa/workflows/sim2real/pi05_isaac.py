@@ -52,10 +52,12 @@ EXTERIOR_CAMERA_POSITION_M = (0.65, 0.65, 0.85)
 EXTERIOR_CAMERA_TARGET_M = (0.50, 0.0, 0.03)
 # This evidence-only view looks across the retreat axis instead of down it.
 # The prior steep view collapsed a physically separated hand and placed cube
-# onto the same image region.  The side-oblique baseline keeps the support,
-# goal, object, and retreated fingers in frame with useful parallax.  It is
-# never a policy observation and does not alter task physics.
-WITNESS_CAMERA_POSITION_M = (1.25, -0.05, 0.75)
+# onto the same image region.  The elevated side-oblique baseline keeps the
+# support, goal, object, and retreated fingers in frame with useful parallax
+# while bounding the maximum-cube ground-plane occlusion inside the physical
+# destination marker.  It is never a policy observation and does not alter
+# task physics.
+WITNESS_CAMERA_POSITION_M = (1.25, -0.05, 1.30)
 WITNESS_CAMERA_TARGET_M = (0.48, 0.08, 0.08)
 DOWNWARD_HAND_QUATERNION_XYZW = (1.0, 0.0, 0.0, 0.0)
 RESET_SETTLE_CONTROL_STEPS = 2
@@ -494,7 +496,7 @@ def _semantic_component_geometry(
         raise RuntimeError(f"{sensor_name} requested an unverified semantic label")
     target_ids = [code for code, value in labels.items() if value == label]
     if not target_ids:
-        return 0
+        return {"pixels": 0, "bbox_xyxy": None, "centroid_xy": None}
     if len(target_ids) != 1:
         raise RuntimeError(
             f"{sensor_name} semantic output has ambiguous {label} labels"
