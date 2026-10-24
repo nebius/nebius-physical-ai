@@ -442,6 +442,16 @@ def test_terminal_witness_binds_final_state_without_extra_control(monkeypatch) -
         "_finger_pixel_counts",
         lambda *_: {"left": 16, "right": 16},
     )
+    monkeypatch.setattr(
+        pi05_closed_loop,
+        "_terminal_witness_geometry",
+        lambda *_: {
+            "schema": "npa.sim2real.terminal_witness_image_geometry.v1",
+            "components": {},
+            "minimum_target_finger_gap_px": 8.0,
+            "separation_semantics": "non_overlapping_semantic_mask_bounding_boxes",
+        },
+    )
 
     pi05_closed_loop._capture_terminal_witness(native, record)
 
@@ -876,6 +886,33 @@ def _comparison_episode(mode: str, seed: int, success: bool) -> dict:
         "target_pixels": 64,
         "destination_pixels": 64,
         "finger_pixels": {"left": 16, "right": 16},
+        "semantic_geometry": {
+            "schema": "npa.sim2real.terminal_witness_image_geometry.v1",
+            "components": {
+                "target": {
+                    "pixels": 64,
+                    "bbox_xyxy": [100, 100, 107, 107],
+                    "centroid_xy": [103.5, 103.5],
+                },
+                "destination": {
+                    "pixels": 64,
+                    "bbox_xyxy": [90, 90, 120, 120],
+                    "centroid_xy": [105.0, 105.0],
+                },
+                "left_finger": {
+                    "pixels": 16,
+                    "bbox_xyxy": [50, 100, 55, 110],
+                    "centroid_xy": [52.5, 105.0],
+                },
+                "right_finger": {
+                    "pixels": 16,
+                    "bbox_xyxy": [150, 100, 155, 110],
+                    "centroid_xy": [152.5, 105.0],
+                },
+            },
+            "minimum_target_finger_gap_px": 42.0,
+            "separation_semantics": "non_overlapping_semantic_mask_bounding_boxes",
+        },
     }
     episode["terminal_witness_dwell"] = pi05_closed_loop._terminal_dwell_receipt(
         episode, witness
@@ -933,6 +970,42 @@ def test_terminal_witness_rejects_occluded_required_geometry(
 
     with pytest.raises(RuntimeError, match="terminal witness dwell evidence"):
         pi05_closed_loop._validate_terminal_witness(episode)
+
+
+def test_terminal_witness_rejects_projected_finger_overlap() -> None:
+    episode = _comparison_episode("fresh", 101, True)
+    geometry = episode["terminal_witness_dwell"]["post_control_witness"][
+        "semantic_geometry"
+    ]
+    geometry["components"]["left_finger"]["bbox_xyxy"] = [104, 100, 110, 110]
+    geometry["minimum_target_finger_gap_px"] = 0.0
+
+    with pytest.raises(RuntimeError, match="terminal witness dwell evidence"):
+        pi05_closed_loop._validate_terminal_witness(episode)
+
+
+def test_semantic_component_geometry_uses_exact_mask_extent(monkeypatch) -> None:
+    segmentation = np.zeros((224, 224, 1), dtype=np.int32)
+    segmentation[70:74, 30:35, 0] = 11
+    native = Namespace(
+        scene={"pi05_witness": Namespace()},
+        _npa_pi05_verified_semantic_paths={"pi05_left_finger": "/finger"},
+    )
+    monkeypatch.setattr(
+        pi05_isaac,
+        "_semantic_encoding",
+        lambda *_: (segmentation, {0: "background", 11: "pi05_left_finger"}),
+    )
+
+    geometry = pi05_isaac._semantic_component_geometry(
+        native, "pi05_witness", "pi05_left_finger"
+    )
+
+    assert geometry == {
+        "pixels": 20,
+        "bbox_xyxy": [30, 70, 34, 73],
+        "centroid_xy": [32.0, 71.5],
+    }
 
 
 def test_terminal_completion_is_separate_from_historical_latch() -> None:

@@ -50,11 +50,13 @@ SUPPORT_SURFACE_SIZE_M = (1.0, 0.8, 0.05)
 SUPPORT_SURFACE_CENTER_M = (0.5, 0.0, -0.025)
 EXTERIOR_CAMERA_POSITION_M = (0.65, 0.65, 0.85)
 EXTERIOR_CAMERA_TARGET_M = (0.50, 0.0, 0.03)
-# Keep this evidence-only view steep enough that a placed 72 mm cube cannot
-# hide the complete 100 mm destination disc behind its vertical silhouette.
-# This camera is never a policy observation and does not alter task physics.
-WITNESS_CAMERA_POSITION_M = (0.30, -0.26, 1.00)
-WITNESS_CAMERA_TARGET_M = (0.50, 0.12, 0.03)
+# This evidence-only view looks across the retreat axis instead of down it.
+# The prior steep view collapsed a physically separated hand and placed cube
+# onto the same image region.  The side-oblique baseline keeps the support,
+# goal, object, and retreated fingers in frame with useful parallax.  It is
+# never a policy observation and does not alter task physics.
+WITNESS_CAMERA_POSITION_M = (1.25, -0.05, 0.75)
+WITNESS_CAMERA_TARGET_M = (0.48, 0.08, 0.08)
 DOWNWARD_HAND_QUATERNION_XYZW = (1.0, 0.0, 0.0, 0.0)
 RESET_SETTLE_CONTROL_STEPS = 2
 EXPECTED_SEMANTIC_LABELS = frozenset(
@@ -475,6 +477,14 @@ def _bind_rgb_clock(receipt: dict, clock: dict[str, Any]) -> None:
 
 
 def _semantic_pixel_count(native: Any, sensor_name: str, label: str) -> int:
+    return int(_semantic_component_geometry(native, sensor_name, label)["pixels"])
+
+
+def _semantic_component_geometry(
+    native: Any, sensor_name: str, label: str
+) -> dict[str, Any]:
+    """Return exact mask extent evidence for one verified semantic component."""
+
     import numpy as np
 
     sensor = native.scene[sensor_name]
@@ -489,7 +499,20 @@ def _semantic_pixel_count(native: Any, sensor_name: str, label: str) -> int:
         raise RuntimeError(
             f"{sensor_name} semantic output has ambiguous {label} labels"
         )
-    return int(np.isin(segmentation.reshape(224, 224), target_ids).sum())
+    mask = np.isin(segmentation.reshape(224, 224), target_ids)
+    rows, columns = np.nonzero(mask)
+    if not len(rows):
+        return {"pixels": 0, "bbox_xyxy": None, "centroid_xy": None}
+    return {
+        "pixels": int(len(rows)),
+        "bbox_xyxy": [
+            int(columns.min()),
+            int(rows.min()),
+            int(columns.max()),
+            int(rows.max()),
+        ],
+        "centroid_xy": [float(columns.mean()), float(rows.mean())],
+    }
 
 
 def _packed_rgba_code(value: Any, sensor_name: str) -> int:

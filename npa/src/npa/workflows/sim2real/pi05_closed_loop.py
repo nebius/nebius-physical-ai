@@ -56,6 +56,7 @@ from npa.workflows.sim2real.pi05_isaac import (
     _reset_settle_sample,
     _require_expert_phase_visibility,
     _semantic_encoding_receipt,
+    _semantic_component_geometry,
     _sim_time,
     _sensor_clock_reference,
     _synchronize_wrist_before_capture,
@@ -95,6 +96,8 @@ PROMPT = (
 WRIST_ABLATION_MODES = ("fresh", "frozen", "pixel_channel_shuffle")
 PIXEL_VALUE_SHUFFLE_LABEL = "spatial_and_channel_pixel_value_shuffle"
 TERMINAL_WITNESS_DWELL_STEPS = 15
+TERMINAL_WITNESS_MIN_COMPONENT_PIXELS = 16
+TERMINAL_WITNESS_MIN_TARGET_FINGER_GAP_PX = 4.0
 LEGACY_DEFAULT_OBJECT_ASSET = "Isaac/Props/Blocks/DexCube/dex_cube_instanceable.usd"
 OBJECT_SOURCE_FIELDS = (
     "profile_identity",
@@ -418,10 +421,59 @@ def _capture_terminal_witness(native: Any, record: dict[str, Any]) -> None:
             "target_pixels": _target_pixel_count(native, "pi05_witness"),
             "destination_pixels": _destination_pixel_count(native, "pi05_witness"),
             "finger_pixels": _finger_pixel_counts(native, "pi05_witness"),
+            "semantic_geometry": _terminal_witness_geometry(native),
         }
     )
     record["_terminal_witness_frame"] = frame
     record["terminal_witness_dwell"] = _terminal_dwell_receipt(record, receipt)
+
+
+def _bbox_gap_pixels(first: list[int], second: list[int]) -> float:
+    """Return the Euclidean edge gap between two inclusive image boxes."""
+
+    if any(
+        not isinstance(box, list)
+        or len(box) != 4
+        or any(type(value) is not int for value in box)
+        or not (0 <= box[0] <= box[2] < 224 and 0 <= box[1] <= box[3] < 224)
+        for box in (first, second)
+    ):
+        raise RuntimeError("terminal witness semantic bounding box is invalid")
+    horizontal = max(first[0] - second[2] - 1, second[0] - first[2] - 1, 0)
+    vertical = max(first[1] - second[3] - 1, second[1] - first[3] - 1, 0)
+    return math.hypot(horizontal, vertical)
+
+
+def _terminal_witness_geometry(native: Any) -> dict[str, Any]:
+    """Record image-space separation without using the witness as policy input."""
+
+    components = {
+        "target": _semantic_component_geometry(
+            native, "pi05_witness", "pi05_target_object"
+        ),
+        "destination": _semantic_component_geometry(
+            native, "pi05_witness", "pi05_destination_marker"
+        ),
+        "left_finger": _semantic_component_geometry(
+            native, "pi05_witness", "pi05_left_finger"
+        ),
+        "right_finger": _semantic_component_geometry(
+            native, "pi05_witness", "pi05_right_finger"
+        ),
+    }
+    target = components["target"]["bbox_xyxy"]
+    finger_boxes = [
+        components[name]["bbox_xyxy"] for name in ("left_finger", "right_finger")
+    ]
+    gap = None
+    if target is not None and all(box is not None for box in finger_boxes):
+        gap = min(_bbox_gap_pixels(target, box) for box in finger_boxes)
+    return {
+        "schema": "npa.sim2real.terminal_witness_image_geometry.v1",
+        "components": components,
+        "minimum_target_finger_gap_px": gap,
+        "separation_semantics": "non_overlapping_semantic_mask_bounding_boxes",
+    }
 
 
 def _success_result(
@@ -2462,11 +2514,17 @@ def _validate_terminal_witness(episode: dict[str, Any]) -> None:
         _clean_supported_release(row) for row in rows
     )
     fingers = witness.get("finger_pixels") or {}
-    valid_pixels = witness.get("target_pixels", 0) >= 16
-    valid_pixels = valid_pixels and witness.get("destination_pixels", 0) >= 16
-    valid_pixels = valid_pixels and all(
-        fingers.get(side, 0) >= 4 for side in ("left", "right")
+    valid_pixels = (
+        witness.get("target_pixels", 0) >= TERMINAL_WITNESS_MIN_COMPONENT_PIXELS
     )
+    valid_pixels = valid_pixels and (
+        witness.get("destination_pixels", 0) >= TERMINAL_WITNESS_MIN_COMPONENT_PIXELS
+    )
+    valid_pixels = valid_pixels and all(
+        fingers.get(side, 0) >= TERMINAL_WITNESS_MIN_COMPONENT_PIXELS
+        for side in ("left", "right")
+    )
+    valid_pixels = valid_pixels and _valid_terminal_witness_geometry(witness)
     expected_indices = list(range(start, len(trace)))
     final_state_time = float(trace[-1]["simulator_time_s"]) if trace else None
     try:
@@ -2494,6 +2552,52 @@ def _validate_terminal_witness(episode: dict[str, Any]) -> None:
         or not valid_pixels
     ):
         raise RuntimeError("terminal witness dwell evidence is invalid")
+
+
+def _valid_terminal_witness_geometry(witness: dict[str, Any]) -> bool:
+    """Fail closed unless the final view resolves fingers away from the object."""
+
+    geometry = witness.get("semantic_geometry") or {}
+    components = geometry.get("components") or {}
+    if (
+        geometry.get("schema") != "npa.sim2real.terminal_witness_image_geometry.v1"
+        or geometry.get("separation_semantics")
+        != "non_overlapping_semantic_mask_bounding_boxes"
+        or set(components) != {"target", "destination", "left_finger", "right_finger"}
+    ):
+        return False
+    expected_pixels = {
+        "target": witness.get("target_pixels"),
+        "destination": witness.get("destination_pixels"),
+        "left_finger": (witness.get("finger_pixels") or {}).get("left"),
+        "right_finger": (witness.get("finger_pixels") or {}).get("right"),
+    }
+    try:
+        for name, component in components.items():
+            centroid = component.get("centroid_xy")
+            if (
+                component.get("pixels") != expected_pixels[name]
+                or component.get("pixels", 0) < TERMINAL_WITNESS_MIN_COMPONENT_PIXELS
+                or not isinstance(centroid, list)
+                or len(centroid) != 2
+                or not all(math.isfinite(float(value)) for value in centroid)
+                or not all(0.0 <= float(value) < 224.0 for value in centroid)
+            ):
+                return False
+        target = components["target"]["bbox_xyxy"]
+        gaps = [
+            _bbox_gap_pixels(target, components[name]["bbox_xyxy"])
+            for name in ("left_finger", "right_finger")
+        ]
+        expected_gap = min(gaps)
+        recorded_gap = float(geometry["minimum_target_finger_gap_px"])
+    except (KeyError, TypeError, ValueError, RuntimeError):
+        return False
+    return bool(
+        math.isfinite(recorded_gap)
+        and recorded_gap == expected_gap
+        and recorded_gap >= TERMINAL_WITNESS_MIN_TARGET_FINGER_GAP_PX
+    )
 
 
 def _validate_effectiveness_cohort(episodes: list[dict[str, Any]]) -> None:
