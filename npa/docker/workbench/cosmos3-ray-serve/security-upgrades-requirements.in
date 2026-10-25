@@ -35,7 +35,7 @@ pyasn1==0.6.4
 pygments==2.21.0
 pytest==9.0.3
 requests==2.34.2
-setuptools==84.0.0
+setuptools==84.1.0
 urllib3==2.8.0
-virtualenv==21.14.9
+virtualenv==21.14.13
 pip==26.2.1
