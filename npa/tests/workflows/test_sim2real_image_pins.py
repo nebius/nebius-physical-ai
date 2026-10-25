@@ -505,6 +505,7 @@ def test_cpu_controller_is_small_pinned_and_resolver_closed() -> None:
         "from npa.workbench.cosmos.reason import run_token_factory_rollout_vlm"
         in dockerfile
     )
+    assert "from npa.workflows.sim2real import robot_contract" in dockerfile
     assert "from npa.workflows.sim2real.stage8_cosmos3 import run" in dockerfile
     assert "NPA_SOURCE_SHA" in dockerfile
     assert "NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA}" in dockerfile
@@ -546,6 +547,7 @@ def test_cpu_controller_is_small_pinned_and_resolver_closed() -> None:
     assert all(line.count("==") == 1 for line in lines)
     assert "httpx==0.28.1" in lines
     assert "PyYAML==6.0.3" in lines
+    assert "defusedxml==0.7.1" in lines
     assert "from npa.clients.token_factory import TokenFactoryClient" in dockerfile
     assert "NEBIUS_TOKEN_FACTORY_KEY" in dockerfile
     assert "build-smoke" in dockerfile
