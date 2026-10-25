@@ -156,20 +156,24 @@ USER ubuntu
 
 ENV PATH=/opt/lerobot/venv/bin:$PATH \
     PYTHONPATH=/opt/npa/src \
+    NPA_BAKED_PYTHON=/opt/lerobot/venv/bin/python \
     NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
     NPA_SKIP_EAGER_IMPORTS=1
 
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
-# Keep this image-local SDK intentionally partial. The stage's own NPA install
-# must supply npa.workbench; shipping it here would make the repair's import
-# probe pass against the baked tree.
-COPY --chown=ubuntu:ubuntu src/npa/__init__.py /opt/npa/src/npa/__init__.py
-COPY --chown=ubuntu:ubuntu src/npa/clients/__init__.py /opt/npa/src/npa/clients/__init__.py
-COPY --chown=ubuntu:ubuntu src/npa/clients/storage.py /opt/npa/src/npa/clients/storage.py
-COPY --chown=ubuntu:ubuntu src/npa/server /opt/npa/src/npa/server
-COPY --chown=ubuntu:ubuntu src/npa/smoke /opt/npa/src/npa/smoke
+COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
+COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
 
-RUN python -m npa.smoke.test_lerobot_env
+# Register the complete baked source without resolving dependencies again. The
+# service deployment starts directly from this image and cannot depend on a
+# workflow-stage source overlay to supply its lifecycle or policy modules.
+RUN "$NPA_BAKED_PYTHON" -m pip install --no-deps -e /opt/npa \
+    && test "$(command -v npa)" = /opt/lerobot/venv/bin/npa \
+    && "$NPA_BAKED_PYTHON" -c \
+      "import importlib.metadata as metadata; assert metadata.version('npa')" \
+    && "$NPA_BAKED_PYTHON" -c \
+      "from lerobot.datasets.lerobot_dataset import LeRobotDataset; import av; import pyarrow.parquet; import npa.workbench.lerobot.policy_container; import npa.workflows.lerobot_dataset; import npa.workflows.sim2real.smolvla_service_lifecycle; assert LeRobotDataset and hasattr(av, 'option')" \
+    && "$NPA_BAKED_PYTHON" -m npa.smoke.test_lerobot_env
 
 USER root
 
@@ -214,6 +218,12 @@ RUN packages='dirmngr gnupg gnupg-utils gnupg2 gpg gpg-agent nodejs software-pro
 
 
 USER ubuntu
+
+# Recheck the actual baked lifecycle and policy entry points after final PATH
+# and security hardening, not only in the earlier cached source layer.
+RUN test "$(command -v npa)" = /opt/lerobot/venv/bin/npa \
+    && "$NPA_BAKED_PYTHON" -c \
+      "from kubernetes import client, config; import npa.workbench.lerobot.policy_container; import npa.workflows.sim2real.smolvla_service_lifecycle; assert client and config"
 
 # Exercise the final hardened 0.5.1 integration and declared server interpreter.
 # The separately qualified 0.6.0 recipe retains its existing acceptance path.

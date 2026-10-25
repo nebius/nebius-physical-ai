@@ -160,7 +160,7 @@ def test_root_owned_dependency_audit_precedes_later_source_copies():
         for index, (kind, body) in enumerate(
             instructions[root_user_index + 1 :], root_user_index + 1
         )
-        if kind == "COPY" and "src/npa/server" in body
+        if kind == "COPY" and "src/npa /opt/npa/src/npa" in body
     )
     assert dependency_index < root_user_index < root_user_index + 1 < first_runtime_copy
 

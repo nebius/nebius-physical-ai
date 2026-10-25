@@ -80,13 +80,10 @@ def test_default_dependencies_identify_secure_integration_and_decoder_abi():
     check = "/opt/lerobot/venv/bin/pip check"
     assert recipe.count(check) == 1
     assert recipe.index(check) > recipe.index("Unsupported LeRobot package version")
-    assert "COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa" not in recipe
+    assert "COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa" in recipe
     expected_copies = (
-        ("src/npa/__init__.py", "/opt/npa/src/npa/__init__.py"),
-        ("src/npa/clients/__init__.py", "/opt/npa/src/npa/clients/__init__.py"),
-        ("src/npa/clients/storage.py", "/opt/npa/src/npa/clients/storage.py"),
-        ("src/npa/server", "/opt/npa/src/npa/server"),
-        ("src/npa/smoke", "/opt/npa/src/npa/smoke"),
+        ("src/npa", "/opt/npa/src/npa"),
+        ("workflows", "/opt/npa/workflows"),
     )
     for source_path, target_path in expected_copies:
         assert f"COPY --chown=ubuntu:ubuntu {source_path} {target_path}" in recipe
@@ -94,8 +91,10 @@ def test_default_dependencies_identify_secure_integration_and_decoder_abi():
         "COPY --chown=ubuntu:ubuntu src/npa/clients /opt/npa/src/npa/clients"
         not in recipe
     )
-    assert "stage's own NPA install" in recipe
-    assert "shipping it here would make the repair's import" in recipe
+    assert "NPA_BAKED_PYTHON=/opt/lerobot/venv/bin/python" in recipe
+    assert '"$NPA_BAKED_PYTHON" -m pip install --no-deps -e /opt/npa' in recipe
+    assert "npa.workflows.sim2real.smolvla_service_lifecycle" in recipe
+    assert "npa.workbench.lerobot.policy_container" in recipe
     assert "prepare-secure-wheel.py" in recipe
     assert "lerobot==0.5.1+npa.secure2" in lock
     assert (
