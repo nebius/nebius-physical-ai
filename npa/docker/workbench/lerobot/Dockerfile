@@ -172,7 +172,7 @@ RUN "$NPA_BAKED_PYTHON" -m pip install --no-deps -e /opt/npa \
     && "$NPA_BAKED_PYTHON" -c \
       "import importlib.metadata as metadata; assert metadata.version('npa')" \
     && "$NPA_BAKED_PYTHON" -c \
-      "from lerobot.datasets.lerobot_dataset import LeRobotDataset; import av; import pyarrow.parquet; import npa.workbench.lerobot.policy_container; import npa.workflows.lerobot_dataset; import npa.workflows.sim2real.smolvla_service_lifecycle; assert LeRobotDataset and hasattr(av, 'option')" \
+      "from lerobot.datasets.lerobot_dataset import LeRobotDataset; import av; import pyarrow.parquet; import defusedxml; import npa.workbench.lerobot.policy_container; import npa.workflows.lerobot_dataset; import npa.workflows.sim2real.interchange_stage; import npa.workflows.sim2real.smolvla_service_lifecycle; assert LeRobotDataset and hasattr(av, 'option')" \
     && "$NPA_BAKED_PYTHON" -m npa.smoke.test_lerobot_env
 
 USER root
@@ -223,7 +223,7 @@ USER ubuntu
 # and security hardening, not only in the earlier cached source layer.
 RUN test "$(command -v npa)" = /opt/lerobot/venv/bin/npa \
     && "$NPA_BAKED_PYTHON" -c \
-      "from kubernetes import client, config; import npa.workbench.lerobot.policy_container; import npa.workflows.sim2real.smolvla_service_lifecycle; assert client and config"
+      "from kubernetes import client, config; import defusedxml; import npa.workbench.lerobot.policy_container; import npa.workflows.sim2real.interchange_stage; import npa.workflows.sim2real.smolvla_service_lifecycle; assert client and config"
 
 # Exercise the final hardened 0.5.1 integration and declared server interpreter.
 # The separately qualified 0.6.0 recipe retains its existing acceptance path.

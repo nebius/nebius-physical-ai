@@ -669,6 +669,10 @@ deepdiff==8.6.2 \
 diffusers==0.38.0 \
     --hash=sha256:18e53f9e539096320470f62c6360a6fd5727ff28cffda566265316e13fcdb612 \
     --hash=sha256:1e094ec5c16f18c42fb89d37f07a94cf9aab3ebbe527ab059c609597b8857626
+defusedxml==0.7.1 \
+    --hash=sha256:1bb3032db185915b62d7c6209c5a8792be6a32ab2fedacc84e01b52c51aa3e69 \
+    --hash=sha256:a352e7e428770286cc899e2542b6cdaedb2b4953ff269a210103ec58f6198a61
+    # via npa (npa/pyproject.toml)
 dill==0.4.1 \
     --hash=sha256:1e1ce33e978ae97fcfcff5638477032b801c46c7c65cf717f95fbc2248f79a9d \
     --hash=sha256:423092df4182177d4d8ba8290c8a5b640c66ab35ec7da59ccfa00f6fa3eea5fa

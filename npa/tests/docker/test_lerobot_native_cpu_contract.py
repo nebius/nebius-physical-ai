@@ -94,6 +94,7 @@ def test_default_dependencies_identify_secure_integration_and_decoder_abi():
     assert "NPA_BAKED_PYTHON=/opt/lerobot/venv/bin/python" in recipe
     assert '"$NPA_BAKED_PYTHON" -m pip install --no-deps -e /opt/npa' in recipe
     assert "npa.workflows.sim2real.smolvla_service_lifecycle" in recipe
+    assert "import npa.workflows.sim2real.interchange_stage" in recipe
     assert "npa.workbench.lerobot.policy_container" in recipe
     assert "prepare-secure-wheel.py" in recipe
     assert "lerobot==0.5.1+npa.secure2" in lock

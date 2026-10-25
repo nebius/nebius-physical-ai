@@ -159,6 +159,7 @@ def test_lerobot_images_hash_lock_service_lifecycle_dependencies() -> None:
         encoding="utf-8"
     )
     required = (
+        "defusedxml==0.7.1",
         "durationpy==0.11",
         "kubernetes==36.0.3",
         "oauthlib==4.0.0",
@@ -177,6 +178,7 @@ def test_lerobot_images_hash_lock_service_lifecycle_dependencies() -> None:
         lifecycle_import
     )
     assert "import npa.workflows.sim2real.smolvla_service_lifecycle" in dockerfile
+    assert dockerfile.count("import npa.workflows.sim2real.interchange_stage") == 2
 
 
 def test_unsupported_version_raises(monkeypatch: pytest.MonkeyPatch) -> None:
