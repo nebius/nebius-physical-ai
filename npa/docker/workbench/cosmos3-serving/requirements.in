@@ -1,7 +1,7 @@
-# Serving closure matched to vLLM-Omni 0.30.0 at
-# a8576ccb725c4e21cd13c3eb5f9a546b21149d2b; source is installed separately.
+# Serving closure matched to vLLM 0.31.0 and vLLM-Omni 0.31.0rc1 at
+# 6dd0d1f9310f7598b773c796b434c8000c2816ec; source is installed separately.
 # PyTorch 2.13 fixes the torch.jit.script memory corruption advisory.
-vllm==0.30.0
+vllm==0.31.0
 transformers >= 5.13.0, < 5.15
 av>=14.0.0
 omegaconf>=2.3.0
@@ -42,7 +42,7 @@ filelock==4.2.4
 mcp==2.3.0
 httpx2==2.16.0
 pyjwt==2.15.1
-# vLLM 0.30.0 declares setuptools<81 on Python 3.12. Its current compatible
+# vLLM 0.31.0 declares setuptools<81 on Python 3.12. Its current compatible
 # upstream release therefore prevents the fixed setuptools 83 series; retain the
 # explicit bound until an upstream release supports it rather than forcing an
 # unsatisfied wheel into the runtime closure.
