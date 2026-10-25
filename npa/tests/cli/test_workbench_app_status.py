@@ -247,4 +247,8 @@ def test_cosmos_destroy_removes_install_failed_workbench(
     assert result.exit_code == 0
     destroy.assert_called_once()
     data = yaml.safe_load(isolated_config.read_text())
-    assert "proj" not in data.get("projects", {})
+    project = data["projects"]["proj"]
+    assert project["project_id"] == "project"
+    assert project["tenant_id"] == "tenant"
+    assert project["region"] == "eu-north1"
+    assert "workbenches" not in project
