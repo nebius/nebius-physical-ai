@@ -857,7 +857,9 @@ def test_runtime_refresh_reuses_explicit_identity_environment(
 
     def run(spec, **kwargs):  # noqa: ANN001
         kwargs["options"].pre_submit_hook(wave)
-        return RuntimeReport(workflow=spec.name, run_id=kwargs["run_id"], status="succeeded")
+        return RuntimeReport(
+            workflow=spec.name, run_id=kwargs["run_id"], status="succeeded"
+        )
 
     mocker.patch(
         "npa.orchestration.npa_workflow.runtime.run_workflow_runtime", side_effect=run
