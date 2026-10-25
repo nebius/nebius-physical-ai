@@ -250,8 +250,8 @@ def test_preparation_binds_six_dof_non_franka_and_offset_spool(tmp_path: Path) -
     assert prepared["robot_asset"]["isaac_asset"]["conversion"].endswith(
         "UrdfConverter"
     )
-    assert prepared["capabilities"]["deterministic_noise_coupling"] is False
-    assert prepared["capabilities"]["repeated_paired_trials"] is True
+    assert prepared["capabilities"]["deterministic_noise_coupling"] is True
+    assert prepared["capabilities"]["repeated_paired_trials"] is False
     adapter = training_adapter(prepared)
     assert adapter["normalization_identity"] == ""
     assert adapter["measured_state_names"] == prepared["policy"]["measured_state_names"]

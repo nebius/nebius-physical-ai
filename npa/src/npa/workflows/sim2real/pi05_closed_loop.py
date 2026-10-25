@@ -861,8 +861,18 @@ def _infer_smolvla_query(
         ),
         task_identity=policy_profile.task_identity,
     )
+    sampling_sequence = f"scene-{context['scenario_seed']}-decision-{decision}"
+    sampling_seed = int.from_bytes(
+        hashlib.sha256(
+            f"{context['ablation_seed']}:{decision}".encode("ascii")
+        ).digest()[:8],
+        "big",
+    ) & (2**63 - 1)
     output, inference = context["client"].infer_typed(
-        observation=observation, policy=policy_profile
+        observation=observation,
+        policy=policy_profile,
+        sampling_seed=sampling_seed,
+        sampling_sequence=sampling_sequence,
     )
     actions = np.asarray(output.action_chunk, dtype=np.float64)
     inference["wire_input"] = {
@@ -1086,7 +1096,7 @@ def _execute_prefix(context: dict[str, Any], actions: Any, query: dict) -> bool:
 def _current_action_target(
     actions: Any, query: dict[str, Any]
 ) -> tuple[Any, dict[str, Any]]:
-    """Apply the current native SmolVLA action; its queue lives in the runtime."""
+    """Apply the first action generated from the current fresh observation."""
 
     import numpy as np
 
@@ -1096,9 +1106,9 @@ def _current_action_target(
     target = value[0].copy()
     return target, {
         "schema": "npa.sim2real.current_native_action.v1",
-        "method": "native_policy_queue_current_action",
+        "method": "native_fresh_chunk_first_action",
         "fresh_observation_per_control": True,
-        "causality": "current_observation_and_native_policy_history",
+        "causality": "current_observation_and_explicit_paired_sampler_noise",
         "decision": int(query["decision"]),
         "contributor_count": 1,
         "contributors": [
@@ -1316,9 +1326,9 @@ def _episode_context(
         record["model_horizon"] = policy_profile.action.horizon
         record["action_selection_protocol"] = {
             "schema": "npa.sim2real.current_native_action.v1",
-            "method": "native_policy_queue_current_action",
+            "method": "native_fresh_chunk_first_action",
             "fresh_observation_per_control": True,
-            "causality": "current_observation_and_native_policy_history",
+            "causality": "current_observation_and_explicit_paired_sampler_noise",
         }
     return {
         "env": env,
@@ -2227,17 +2237,19 @@ def _result(
     grouped = _ablation_groups(episodes, args.wrist_ablation_modes)
     policy_backend = getattr(args, "policy_backend", "openpi_pi05")
     if policy_backend == "lerobot_smolvla":
-        noise_pairing = {
-            "sampler_noise_identity_verified": False,
-            "sampler_noise_protocol": "unavailable_for_native_smolvla",
-            "paired_trial_protocol": "independently_seeded_repeated_matched_scenarios",
-            "paired_trial_seeds": sorted(
-                {int(row["scenario_seed"]) for row in episodes}
-            ),
-        }
-        qualification = "matched_repeated_trials_without_noise_coupling"
+        noise_pairing = _sampler_noise_pairing(episodes, args.wrist_ablation_modes)
+        noise_pairing["sampler_noise_protocol"] = (
+            "npa.lerobot.smolvla-explicit-flow-noise.v1"
+        )
+        qualification = (
+            "matched_effectiveness_eligible"
+            if noise_pairing["sampler_noise_identity_verified"]
+            else "effectiveness_claim_rejected_without_sampler_noise_identity"
+        )
         schema = "npa.sim2real.policy_interchange.closed_loop_eval.v1"
-        comparison = "same surface task and physical controller semantics only"
+        comparison = (
+            "same surface task, physical controller semantics, and paired sampler noise"
+        )
     else:
         noise_pairing = _sampler_noise_pairing(episodes, args.wrist_ablation_modes)
         qualification = (

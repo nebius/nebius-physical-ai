@@ -402,6 +402,50 @@ def test_native_runtime_reset_clears_policy_and_processor_queues() -> None:
     assert calls == ["policy", "preprocessor", "postprocessor"]
 
 
+def test_native_runtime_consumes_every_fresh_observation_with_paired_noise(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    torch = pytest.importorskip("torch")
+    import npa.workbench.lerobot.policy_container as policy_container
+    from npa.workbench.lerobot.policy_container import LeRobotPolicyRuntime
+
+    calls: list[tuple[object, object]] = []
+
+    class Policy:
+        config = SimpleNamespace(chunk_size=50, max_action_dim=32)
+
+        def predict_action_chunk(self, batch, *, noise):
+            calls.append((batch, noise.clone()))
+            result = torch.zeros((1, 50, 7), dtype=torch.float32)
+            result[:, 0, :] = float(len(calls))
+            return result
+
+        def select_action(self, *_args, **_kwargs):
+            raise AssertionError(
+                "queued select_action must not serve fresh observations"
+            )
+
+    runtime = object.__new__(LeRobotPolicyRuntime)
+    runtime.device = "cpu"
+    runtime.manifest = _manifest("a" * 64)
+    runtime.policy = Policy()
+    runtime.preprocessor = lambda batch: batch
+    runtime.postprocessor = lambda action: action
+    monkeypatch.setattr(policy_container, "_smolvla_batch", lambda *_args: {"x": 1})
+
+    first, first_sampling = runtime.infer_with_sampling({}, sampling_seed=19)
+    second, second_sampling = runtime.infer_with_sampling({}, sampling_seed=19)
+
+    assert first == [1.0] * 7
+    assert second == [2.0] * 7
+    assert len(calls) == 2
+    assert torch.equal(calls[0][1], calls[1][1])
+    assert (
+        first_sampling["sampler_noise_sha256"]
+        == second_sampling["sampler_noise_sha256"]
+    )
+
+
 def test_real_image_decode_and_stale_camera_rejection() -> None:
     pytest.importorskip("torch")
     manifest = _manifest("a" * 64)
@@ -543,7 +587,7 @@ def test_health_exposes_loaded_interchange_identities_and_byte_hash(
     response = fastapi_testclient.TestClient(policy_container.create_app()).get(
         "/health"
     )
-    assert response.status_code == 200
+    assert response.status_code == 200, response.text
     interchange = response.json()["interchange"]
     assert interchange["robot_identity"] == "six-axis-arm"
     assert interchange["checkpoint_sha256"] == "a" * 64
@@ -552,6 +596,71 @@ def test_health_exposes_loaded_interchange_identities_and_byte_hash(
         interchange["manifest_sha256"]
         == hashlib.sha256(manifest_path.read_bytes()).hexdigest()
     )
+
+
+def test_typed_endpoint_binds_fresh_observation_and_exact_sampler_noise(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fastapi_testclient = pytest.importorskip("fastapi.testclient")
+    calls: list[int | None] = []
+    manifest = _manifest("a" * 64, "b" * 64)
+    response_payload = {
+        "schema": "npa.sim2real.policy_output.v1",
+        "observation_input_identity": "sealed-input",
+        "policy_identity": manifest["policy_identity"],
+        "checkpoint_sha256": manifest["checkpoint_sha256"],
+        "action": manifest["action"],
+        "action_chunk": [[0.0] * 7],
+        "generated_timestamp_s": 2.0,
+    }
+
+    class Runtime:
+        def __init__(self) -> None:
+            self.manifest = manifest
+
+        def infer_typed_with_sampling(
+            self, _observation, _profile, *, sampling_seed=None
+        ):
+            calls.append(sampling_seed)
+            return SimpleNamespace(to_dict=lambda: response_payload), {
+                "sampler_noise_sha256": "c" * 64,
+                "sampler_noise_shape": [1, 50, 32],
+            }
+
+    monkeypatch.setenv("NPA_POLICY_CHECKPOINT", "/sealed/checkpoint")
+    monkeypatch.setenv("NPA_POLICY_AUTH_TOKEN", "private-token")
+    monkeypatch.setattr(policy_container, "LeRobotPolicyRuntime", lambda _: Runtime())
+    client = fastapi_testclient.TestClient(policy_container.create_app())
+    payload = _observation(manifest)
+    payload["input_identity"] = "sealed-input"
+    rgb8 = bytes([31]) * (224 * 224 * 3)
+    for index, view in enumerate(payload["views"]):
+        view.update(
+            {
+                "role": "exterior" if index == 0 else "wrist",
+                "calibration_sha256": str(index + 1) * 64,
+                "image_size_wh": [224, 224],
+                "image_rgb8_base64": base64.b64encode(rgb8).decode("ascii"),
+                "image_sha256": hashlib.sha256(rgb8).hexdigest(),
+            }
+        )
+        view.pop("image_base64")
+    response = client.post(
+        "/infer-typed",
+        json=payload,
+        headers={
+            "Authorization": "Bearer private-token",
+            "X-NPA-Sampling-Seed": "29",
+            "X-NPA-Sampling-Sequence": "scene-3-decision-7",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert calls == [29]
+    assert response.headers["x-npa-fresh-observation-consumed"] == "true"
+    assert response.headers["x-npa-sampler-noise-sha256"] == "c" * 64
+    assert response.headers["x-npa-sampler-noise-shape"] == "1,50,32"
+    assert response.headers["x-npa-sampling-sequence"] == "scene-3-decision-7"
 
 
 def test_interchange_training_forbids_early_checkpoint_only_upload(

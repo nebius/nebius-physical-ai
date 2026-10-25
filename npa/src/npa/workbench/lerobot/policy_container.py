@@ -379,14 +379,46 @@ class LeRobotPolicyRuntime:
         _validate_native_policy_features(self.policy, self.manifest)
 
     def infer(self, observation: dict[str, Any]) -> list[float]:
+        """Infer from one fresh observation without a paired-noise receipt."""
+
+        values, _ = self.infer_with_sampling(observation)
+        return values
+
+    def infer_with_sampling(
+        self, observation: dict[str, Any], *, sampling_seed: int | None = None
+    ) -> tuple[list[float], dict[str, Any]]:
+        """Infer one fresh action and report the exact optional sampler noise."""
+
         batch = _smolvla_batch(observation, self.manifest, self.device)
         try:
             import torch
 
-            with torch.inference_mode():
-                action = self.postprocessor(
-                    self.policy.select_action(self.preprocessor(batch))
+            noise = None
+            noise_sha256 = None
+            if sampling_seed is not None:
+                if not 0 <= sampling_seed < 2**63:
+                    raise PolicyContainerError(
+                        "SmolVLA sampling seed must be in [0, 2**63)"
+                    )
+                shape = (
+                    1,
+                    int(self.policy.config.chunk_size),
+                    int(self.policy.config.max_action_dim),
                 )
+                generator = torch.Generator(device="cpu")
+                generator.manual_seed(sampling_seed)
+                cpu_noise = torch.randn(
+                    shape, generator=generator, dtype=torch.float32, device="cpu"
+                )
+                noise_sha256 = hashlib.sha256(
+                    cpu_noise.contiguous().numpy().tobytes()
+                ).hexdigest()
+                noise = cpu_noise.to(self.device)
+            with torch.inference_mode():
+                action_chunk = self.policy.predict_action_chunk(
+                    self.preprocessor(batch), noise=noise
+                )
+                action = self.postprocessor(action_chunk[:, 0, :])
             values = action.detach().cpu().numpy().reshape(-1)
         except PolicyContainerError:
             raise
@@ -401,7 +433,12 @@ class LeRobotPolicyRuntime:
             raise PolicyContainerError(
                 "native SmolVLA output does not match the declared finite action vector"
             )
-        return [float(value) for value in values]
+        return [float(value) for value in values], {
+            "fresh_observation_consumed": True,
+            "sampler_noise_sha256": noise_sha256,
+            "sampler_noise_shape": list(noise.shape) if noise is not None else None,
+            "sampling_seed": sampling_seed,
+        }
 
     def rollout(self, observations: list[dict[str, Any]]) -> list[list[float]]:
         if not observations:
@@ -420,6 +457,18 @@ class LeRobotPolicyRuntime:
     def infer_typed(self, observation: Any, policy_profile: Any) -> Any:
         """Consume and return the model-neutral typed policy interchange."""
 
+        output, _ = self.infer_typed_with_sampling(observation, policy_profile)
+        return output
+
+    def infer_typed_with_sampling(
+        self,
+        observation: Any,
+        policy_profile: Any,
+        *,
+        sampling_seed: int | None = None,
+    ) -> tuple[Any, dict[str, Any]]:
+        """Consume one typed observation and retain backend sampling evidence."""
+
         from npa.workflows.sim2real.interchange_contract import PolicyOutput
 
         if (
@@ -430,7 +479,9 @@ class LeRobotPolicyRuntime:
             raise PolicyContainerError(
                 "typed SmolVLA profile does not match loaded checkpoint"
             )
-        values = self.infer(observation.to_wire_dict())
+        values, sampling = self.infer_with_sampling(
+            observation.to_wire_dict(), sampling_seed=sampling_seed
+        )
         return PolicyOutput(
             observation_input_identity=observation.input_identity,
             policy_identity=policy_profile.identity,
@@ -438,7 +489,7 @@ class LeRobotPolicyRuntime:
             action=policy_profile.action,
             action_chunk=(tuple(values),),
             generated_timestamp_s=time.time(),
-        )
+        ), sampling
 
 
 def _load_interchange_manifest(checkpoint: Path) -> dict[str, Any]:
@@ -1808,6 +1859,7 @@ def create_app() -> Any:
 
     try:
         from fastapi import FastAPI, Header, HTTPException
+        from fastapi.responses import JSONResponse
     except ImportError as exc:
         raise PolicyContainerError(
             "fastapi is required to serve the policy container"
@@ -1869,8 +1921,11 @@ def create_app() -> Any:
 
     @app.post("/infer-typed")
     async def infer_typed(
-        payload: dict[str, Any], authorization: str | None = Header(default=None)
-    ) -> dict[str, Any]:
+        payload: dict[str, Any],
+        authorization: str | None = Header(default=None),
+        x_npa_sampling_seed: str | None = Header(default=None),
+        x_npa_sampling_sequence: str | None = Header(default=None),
+    ) -> Any:
         """Validate the neutral wire contract and run the real native policy."""
 
         authorize(authorization)
@@ -1898,7 +1953,43 @@ def create_app() -> Any:
                     os.environ.get("NPA_POLICY_HARDWARE_TOPOLOGY", "single-gpu"),
                 ),
             )
-            return policy.infer_typed(observation, profile).to_dict()
+            sampling_seed = None
+            if x_npa_sampling_seed is not None:
+                if x_npa_sampling_sequence is None or not re.fullmatch(
+                    r"[A-Za-z0-9._:-]{1,128}", x_npa_sampling_sequence
+                ):
+                    raise PolicyContainerError(
+                        "paired SmolVLA sampling requires a valid sequence identity"
+                    )
+                try:
+                    sampling_seed = int(x_npa_sampling_seed)
+                except ValueError as exc:
+                    raise PolicyContainerError(
+                        "SmolVLA sampling seed must be an integer"
+                    ) from exc
+            elif x_npa_sampling_sequence is not None:
+                raise PolicyContainerError(
+                    "SmolVLA sampling sequence requires a sampling seed"
+                )
+            output, sampling = policy.infer_typed_with_sampling(
+                observation, profile, sampling_seed=sampling_seed
+            )
+            headers = {
+                "X-NPA-Fresh-Observation-Consumed": "true",
+            }
+            if sampling_seed is not None:
+                headers.update(
+                    {
+                        "X-NPA-Sampler-Noise-SHA256": str(
+                            sampling["sampler_noise_sha256"]
+                        ),
+                        "X-NPA-Sampling-Sequence": str(x_npa_sampling_sequence),
+                        "X-NPA-Sampler-Noise-Shape": ",".join(
+                            str(value) for value in sampling["sampler_noise_shape"]
+                        ),
+                    }
+                )
+            return JSONResponse(content=output.to_dict(), headers=headers)
         except PolicyContainerError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except (TypeError, ValueError) as exc:

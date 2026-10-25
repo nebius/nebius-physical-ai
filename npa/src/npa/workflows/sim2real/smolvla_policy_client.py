@@ -42,8 +42,10 @@ class SmolVLAPolicyClient:
         self._timeout_s = timeout_s
         self.metadata = {
             "backend": "lerobot_smolvla",
-            "deterministic_noise_protocol": None,
-            "repeated_paired_trials_required": True,
+            "deterministic_noise_protocol": (
+                "npa.lerobot.smolvla-explicit-flow-noise.v1"
+            ),
+            "repeated_paired_trials_required": False,
         }
 
     def reset(self, *, policy: Any) -> dict[str, Any]:
@@ -86,7 +88,12 @@ class SmolVLAPolicyClient:
         }
 
     def infer_typed(
-        self, *, observation: Any, policy: Any
+        self,
+        *,
+        observation: Any,
+        policy: Any,
+        sampling_seed: int | None = None,
+        sampling_sequence: str | None = None,
     ) -> tuple[Any, dict[str, Any]]:
         """Infer one typed action and return transport provenance."""
 
@@ -98,35 +105,67 @@ class SmolVLAPolicyClient:
         body = json.dumps(
             request_payload, sort_keys=True, separators=(",", ":")
         ).encode("utf-8")
-        request = self._inference_request(body)
+        if (sampling_seed is None) != (sampling_sequence is None):
+            raise SmolVLAPolicyClientError(
+                "paired SmolVLA sampling requires both seed and sequence"
+            )
+        request = self._inference_request(
+            body,
+            sampling_seed=sampling_seed,
+            sampling_sequence=sampling_sequence,
+        )
         started = time.perf_counter()
-        response_body = self._send_inference(request)
+        response_body, response_headers = self._send_inference(request)
         output = self._typed_output(response_body, observation, policy)
         latency_ms = round((time.perf_counter() - started) * 1000.0, 3)
         return output, self._inference_receipt(
-            body, response_body, latency_ms, observation
+            body,
+            response_body,
+            response_headers,
+            latency_ms,
+            observation,
+            sampling_seed=sampling_seed,
+            sampling_sequence=sampling_sequence,
         )
 
-    def _inference_request(self, body: bytes) -> urllib.request.Request:
+    def _inference_request(
+        self,
+        body: bytes,
+        *,
+        sampling_seed: int | None,
+        sampling_sequence: str | None,
+    ) -> urllib.request.Request:
         """Build one authenticated request without ambient proxy routing."""
 
+        headers = {
+            "Authorization": f"Bearer {self._token}",
+            "Content-Type": "application/json",
+        }
+        if sampling_seed is not None and sampling_sequence is not None:
+            headers.update(
+                {
+                    "X-NPA-Sampling-Seed": str(sampling_seed),
+                    "X-NPA-Sampling-Sequence": sampling_sequence,
+                }
+            )
         return urllib.request.Request(
             self._url,
             data=body,
             method="POST",
-            headers={
-                "Authorization": f"Bearer {self._token}",
-                "Content-Type": "application/json",
-            },
+            headers=headers,
         )
 
-    def _send_inference(self, request: urllib.request.Request) -> bytes:
+    def _send_inference(
+        self, request: urllib.request.Request
+    ) -> tuple[bytes, dict[str, str]]:
         """Send one request and normalize transport failures."""
 
         try:
             opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
             with opener.open(request, timeout=self._timeout_s) as response:
-                return response.read()
+                return response.read(), {
+                    key.lower(): value for key, value in response.headers.items()
+                }
         except (OSError, urllib.error.HTTPError) as exc:
             raise SmolVLAPolicyClientError(
                 f"SmolVLA inference request failed: {exc}"
@@ -159,17 +198,58 @@ class SmolVLAPolicyClient:
 
     @staticmethod
     def _inference_receipt(
-        body: bytes, response: bytes, latency_ms: float, observation: Any
+        body: bytes,
+        response: bytes,
+        response_headers: dict[str, str],
+        latency_ms: float,
+        observation: Any,
+        *,
+        sampling_seed: int | None,
+        sampling_sequence: str | None,
     ) -> dict[str, Any]:
         """Build transport and camera-byte provenance for one response."""
 
+        noise_sha256 = response_headers.get("x-npa-sampler-noise-sha256")
+        noise_shape_raw = response_headers.get("x-npa-sampler-noise-shape")
+        returned_sequence = response_headers.get("x-npa-sampling-sequence")
+        fresh_consumed = response_headers.get("x-npa-fresh-observation-consumed")
+        paired = sampling_seed is not None
+        try:
+            noise_shape = (
+                [int(value) for value in noise_shape_raw.split(",")]
+                if noise_shape_raw is not None
+                else None
+            )
+        except ValueError as exc:
+            raise SmolVLAPolicyClientError(
+                "SmolVLA response has an invalid sampler-noise shape"
+            ) from exc
+        if paired and (
+            noise_sha256 is None
+            or len(noise_sha256) != 64
+            or any(character not in "0123456789abcdef" for character in noise_sha256)
+            or returned_sequence != sampling_sequence
+            or fresh_consumed != "true"
+            or noise_shape is None
+            or len(noise_shape) != 3
+            or noise_shape[0] != 1
+            or any(value < 1 for value in noise_shape)
+        ):
+            raise SmolVLAPolicyClientError(
+                "SmolVLA response lacks bound fresh-observation sampling evidence"
+            )
         return {
             "backend": "lerobot_smolvla",
             "request_sha256": hashlib.sha256(body).hexdigest(),
             "response_sha256": hashlib.sha256(response).hexdigest(),
             "latency_ms": latency_ms,
             "round_trip_ms": latency_ms,
-            "deterministic_noise_coupled": False,
-            "repeated_paired_trials_required": True,
+            "deterministic_noise_coupled": paired,
+            "repeated_paired_trials_required": not paired,
+            "fresh_observation_consumed": fresh_consumed == "true",
+            "sampler_noise_sha256": noise_sha256,
+            "sampler_noise_shape": noise_shape[1:] if noise_shape else None,
+            "sampling_seed": sampling_seed,
+            "sampling_sequence": returned_sequence,
             "camera_sha256": {view.key: view.rgb_sha256 for view in observation.views},
         }

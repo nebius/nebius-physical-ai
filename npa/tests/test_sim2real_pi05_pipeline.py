@@ -1252,14 +1252,14 @@ def _effectiveness_report(role: str, successes: dict[str, set[int]]) -> dict:
     return pi05_closed_loop._result(args, episodes, artifacts, protocol, receipt)
 
 
-def test_smolvla_uses_current_native_action_without_fake_noise_pairing() -> None:
+def test_smolvla_uses_first_action_from_current_fresh_chunk() -> None:
     actions = np.arange(8, dtype=np.float64).reshape(1, 8)
     action_receipt = pi05_closed_loop._action_receipt(actions)
     target, selection = pi05_closed_loop._current_action_target(
         actions, {"decision": 4, "action_receipt": action_receipt}
     )
     assert target.tolist() == list(range(8))
-    assert selection["method"] == "native_policy_queue_current_action"
+    assert selection["method"] == "native_fresh_chunk_first_action"
     assert selection["contributor_count"] == 1
 
 
@@ -1436,7 +1436,7 @@ def test_smolvla_wire_rejects_missing_or_malformed_clock_evidence(
         )
 
 
-def test_smolvla_report_discloses_repeated_trials_not_noise_coupling() -> None:
+def test_smolvla_report_requires_verified_native_noise_coupling() -> None:
     modes = list(pi05_closed_loop.WRIST_ABLATION_MODES)
     episodes = [
         _comparison_episode(mode, seed, False)
@@ -1470,11 +1470,11 @@ def test_smolvla_report_discloses_repeated_trials_not_noise_coupling() -> None:
     )
     assert result["schema"] == ("npa.sim2real.policy_interchange.closed_loop_eval.v1")
     ablation = result["wrist_ablation"]
-    assert ablation["sampler_noise_identity_verified"] is False
-    assert ablation["paired_trial_protocol"].startswith("independently_seeded")
-    assert ablation["qualification"] == (
-        "matched_repeated_trials_without_noise_coupling"
+    assert ablation["sampler_noise_identity_verified"] is True
+    assert ablation["sampler_noise_protocol"] == (
+        "npa.lerobot.smolvla-explicit-flow-noise.v1"
     )
+    assert ablation["qualification"] == "matched_effectiveness_eligible"
 
 
 def test_final_comparison_uses_validated_fresh_wrist_metric() -> None:

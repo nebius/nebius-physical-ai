@@ -98,8 +98,10 @@ def test_backend_catalog_is_closed_and_has_distinct_native_protocols() -> None:
     assert openpi.transport != smolvla.transport
     assert openpi.training_adapter != smolvla.training_adapter
     assert openpi.deterministic_noise_protocol is not None
-    assert smolvla.deterministic_noise_protocol is None
-    assert smolvla.repeated_paired_trials_required is True
+    assert smolvla.deterministic_noise_protocol == (
+        "npa.lerobot.smolvla-explicit-flow-noise.v1"
+    )
+    assert smolvla.repeated_paired_trials_required is False
     with pytest.raises(InterchangeContractError, match="unsupported"):
         backend_contract("random_actor")
 
@@ -164,5 +166,5 @@ def test_smolvla_manifest_preserves_six_dof_names_and_repeated_trials() -> None:
     )
     assert len(profile.action.names) == 7
     assert profile.measured_state_names == robot.measured_state_names
-    assert profile.capabilities.deterministic_noise_coupling is False
-    assert profile.capabilities.repeated_paired_trials is True
+    assert profile.capabilities.deterministic_noise_coupling is True
+    assert profile.capabilities.repeated_paired_trials is False

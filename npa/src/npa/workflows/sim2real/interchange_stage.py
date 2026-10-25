@@ -758,7 +758,7 @@ def _finalize(args: argparse.Namespace) -> dict[str, Any]:
             "adapted_fresh_success_rate": after_rate,
             "measured_improvement": after_rate - before_rate,
             "improvement_claimed": after_rate > before_rate,
-            "sampler_noise_coupling": "unavailable_for_native_smolvla",
+            "sampler_noise_coupling": ("npa.lerobot.smolvla-explicit-flow-noise.v1"),
             "cross_model_loss_ranking": False,
             "checkpoint": {
                 "selected_uri": args.checkpoint_uri,

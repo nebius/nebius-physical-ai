@@ -82,8 +82,8 @@ BACKENDS: dict[BackendName, BackendAdapterContract] = {
         training_adapter="native_lerobot_train_smolvla",
         reload_adapter="smolvla_from_pretrained_and_checkpoint_local_processors",
         serving_adapter="private_lerobot_fastapi",
-        deterministic_noise_protocol=None,
-        repeated_paired_trials_required=True,
+        deterministic_noise_protocol="npa.lerobot.smolvla-explicit-flow-noise.v1",
+        repeated_paired_trials_required=False,
         language_conditioned=True,
     ),
 }
@@ -124,8 +124,8 @@ def _smolvla_capabilities(hardware_topologies: tuple[str, ...]) -> PolicyCapabil
         checkpoint_reload=True,
         model_loss=True,
         action_metrics=True,
-        deterministic_noise_coupling=False,
-        repeated_paired_trials=True,
+        deterministic_noise_coupling=True,
+        repeated_paired_trials=False,
         hardware_topologies=hardware_topologies,
     )
 

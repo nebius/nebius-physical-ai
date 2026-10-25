@@ -28,16 +28,20 @@ ACTION = PolicyAction(
 
 
 @contextmanager
-def _server(payload: dict):
+def _server(payload: dict, *, response_headers: dict[str, str] | None = None):
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):  # noqa: N802
             length = int(self.headers["Content-Length"])
             self.server.request_body = self.rfile.read(length)  # type: ignore[attr-defined]
             self.server.authorization = self.headers.get("Authorization")  # type: ignore[attr-defined]
+            self.server.sampling_seed = self.headers.get("X-NPA-Sampling-Seed")  # type: ignore[attr-defined]
+            self.server.sampling_sequence = self.headers.get("X-NPA-Sampling-Sequence")  # type: ignore[attr-defined]
             body = json.dumps(payload).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
+            for key, value in (response_headers or {}).items():
+                self.send_header(key, value)
             self.end_headers()
             self.wfile.write(body)
 
@@ -118,6 +122,46 @@ def test_client_rejects_server_action_contract_change() -> None:
         )
         with pytest.raises(SmolVLAPolicyClientError, match="changed"):
             client.infer_typed(observation=observation, policy=policy)
+
+
+def test_client_binds_explicit_paired_noise_and_fresh_observation() -> None:
+    observation = SimpleNamespace(
+        input_identity="input-1",
+        views=(),
+        to_wire_dict=lambda: {
+            "schema": "npa.sim2real.policy_observation.v1",
+            "input_identity": "input-1",
+        },
+    )
+    policy = SimpleNamespace(
+        backend="lerobot_smolvla",
+        identity="smolvla-ur10",
+        checkpoint_sha256="a" * 64,
+        action=ACTION,
+    )
+    sequence = "scene-9-decision-3"
+    headers = {
+        "X-NPA-Fresh-Observation-Consumed": "true",
+        "X-NPA-Sampler-Noise-SHA256": "b" * 64,
+        "X-NPA-Sampler-Noise-Shape": "1,50,32",
+        "X-NPA-Sampling-Sequence": sequence,
+    }
+    with _server(_response(), response_headers=headers) as server:
+        client = SmolVLAPolicyClient(
+            "127.0.0.1", server.server_port, auth_token="task-token"
+        )
+        _, evidence = client.infer_typed(
+            observation=observation,
+            policy=policy,
+            sampling_seed=17,
+            sampling_sequence=sequence,
+        )
+    assert evidence["fresh_observation_consumed"] is True
+    assert evidence["deterministic_noise_coupled"] is True
+    assert evidence["sampler_noise_sha256"] == "b" * 64
+    assert evidence["sampler_noise_shape"] == [50, 32]
+    assert server.sampling_seed == "17"  # type: ignore[attr-defined]
+    assert server.sampling_sequence == sequence  # type: ignore[attr-defined]
 
 
 def test_client_verifies_native_episode_reset_receipt() -> None:
