@@ -54,6 +54,9 @@ RUN mkdir -p /tmp/hf_home/cosmos-reason2 /tmp/hf_home/cosmos-reason2-2b \
       "pip==26.2.2" \
       "certifi==2026.10.19" \
       "Pillow==13.0.0" \
+      "cryptography==50.0.2" \
+      "cffi==2.1.1" \
+      "pycparser==3.0" \
       "tomli==2.4.1" \
       "accelerate==1.14.0" \
       "huggingface_hub==0.36.0" \
@@ -66,6 +69,8 @@ RUN mkdir -p /tmp/hf_home/cosmos-reason2 /tmp/hf_home/cosmos-reason2-2b \
     && python -c 'import npa.workflows.sim2real.runtime_attestation' \
     && env -u PYTHONPATH /opt/npa/venv/bin/python -c \
       'import boto3; from npa.workflows.sim2real.workflow_stage import main; assert callable(main)' \
+    && env -u PYTHONPATH /opt/npa/venv/bin/python -c \
+      'from cryptography.exceptions import InvalidSignature; from npa.workflows.sim2real.cosmos3_augment import run_cosmos3_structural_augmentation; assert InvalidSignature and callable(run_cosmos3_structural_augmentation)' \
     && python -m py_compile /opt/npa/src/npa/workflows/sim2real_loop.py \
     && chown -R ubuntu:ubuntu \
       /workspace /tmp/hf_home /opt/npa/src /opt/npa/pyproject.toml

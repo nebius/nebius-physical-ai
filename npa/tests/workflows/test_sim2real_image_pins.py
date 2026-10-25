@@ -141,6 +141,9 @@ def test_cosmos3_reason_repairs_inherited_scanner_critical_python_packages() -> 
     assert '"pip==26.2.2"' in text
     assert '"certifi==2026.10.19"' in text
     assert '"Pillow==13.0.0"' in text
+    assert '"cryptography==50.0.2"' in text
+    assert '"cffi==2.1.1"' in text
+    assert '"pycparser==3.0"' in text
     assert '"Pillow==12.2.0"' not in text
     assert "FROM ${BASE_IMAGE} AS sanitized" in text
     final_stage = text.split("FROM scratch AS runtime", maxsplit=1)[1]
@@ -761,6 +764,11 @@ def test_cosmos3_baked_runtime_survives_skypilot_pythonpath_scrubbing() -> None:
     assert "npa-exact-source.pth" in dockerfile
     assert "env -u PYTHONPATH /opt/npa/venv/bin/python -c" in dockerfile
     assert "from npa.workflows.sim2real.workflow_stage import main" in dockerfile
+    assert "cryptography.exceptions import InvalidSignature" in dockerfile
+    assert (
+        "npa.workflows.sim2real.cosmos3_augment import run_cosmos3_structural_augmentation"
+        in dockerfile
+    )
 
 
 def test_envgen_baked_runtime_survives_skypilot_pythonpath_scrubbing() -> None:
