@@ -240,8 +240,8 @@ EXPECTED_NEUTRAL_FILE_SHA256: dict[str, str | None] = {
     "requirements.lock": "834e1d6f95eeaeb4f7e201a01033a928d5eee1387b31950223ead31b3172bf80",
     "runtime-bootstrap.py": "dcefd3ea34c3ffb6be392a8f07329ab47608f7f6cf5bef083e250c377b4fd484",
     "capability_smoke.py": "f91683fa5955882e29e2ac8e6ba9f4d92f2a25eb71621275fa3c45b26828d6d6",
-    "verify_image.py": "dfcd2ed7a46333c0df8d9398bdd9956f604b9af8bf6fe48379d42742e5241df4",  # gitleaks:allow; public file-content SHA-256
-    "runtime-fetch-manifest.json": "2c55637e8d8bd2bd170306173e46f2770a92543ee5b90beec213c8c815111dd9",
+    "verify_image.py": "b03416f3f738145df2d8107a71f24553dfe8537eee1515502fc9257fad6dca51",  # gitleaks:allow; public file-content SHA-256
+    "runtime-fetch-manifest.json": "6ed6067c3fd359ad065b33eb116c557bf7040545499fc1bda9bb6d66df344f8d",
 }
 EXPECTED_SOURCE_FIELDS = {
     "farama_gymnasium_robotics": {
@@ -285,7 +285,7 @@ EXPECTED_PYTHON_DISTRIBUTIONS = {
     "pettingzoo": "1.27.0",
     "pillow": "13.0.0",
     "pyopengl": "3.1.10",
-    "setuptools": "84.0.0",
+    "setuptools": "84.2.1",
     "typing-extensions": "4.16.0",
     "zipp": "4.1.0",
 }
