@@ -1,48 +1,45 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "7e526efdc4c1f0b02232e2295998bfe7303b79044a26ff64cd6bd71d4fe8a95f",
+  "workflow_sha256": "da300498ec4cfa6f1adeb7f1b78dcce1afa6b13b102ecb61caced77478edb8ef",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "Local CLI schema validation succeeded and planning resolved both stages including the declared image argument. Empty input, example bucket, and unresolved tool:// Isaac image remain execution prerequisites.",
+      "reason": "Schema loads. Missing required operator images fail before planning where declared; supplied exact image fixtures reach the production renderer. Governed public Isaac defaults remain quarantined. Offline checks do not qualify image bytes or workloads.",
       "evidence": [
-        "npa workbench workflow validate-spec workflows/testing/scan-to-isaac-navigation.yaml --json: status valid",
-        "npa workbench workflow plan-spec workflows/testing/scan-to-isaac-navigation.yaml --run-id preview --json: 2 stages",
-        "npa/tests/orchestration/npa_workflow/test_scan_to_isaac_navigation.py: 3 passed"
+        "npa/tests/orchestration/npa_workflow/test_required_immutable_image_inputs.py",
+        "npa/tests/cli/test_workflow_required_images.py"
       ]
     },
     "task_fidelity": {
-      "status": "verified",
-      "reason": "Offline graph/render checks confirm OpenUSD assembly feeds its exact run-scoped scene and provenance to the native Isaac PhysX module with distinct CPU/RTX images and staged source. Operator input contents remain unverified.",
-      "evidence": [
-        "npa/tests/orchestration/npa_workflow/test_scan_to_isaac_navigation.py: 3 passed"
-      ]
+      "status": "unverified",
+      "reason": "The original workflow and readiness record are preserved under docs/workbench/evidence/workflow-defaults-807/. Image-default changes require fresh workload qualification; historical live evidence does not accept the current specification.",
+      "evidence": []
     }
   },
   "prerequisites": {
     "output_storage": {
       "status": "unverified",
-      "reason": "Operator must select and verify a writable run-scoped storage prefix.",
+      "reason": "The selected project and run-scoped storage must pass current submission preflight.",
       "evidence": []
     },
     "worker_input": {
       "status": "unverified",
-      "reason": "Operator must supply visual USD, collision mesh, measured transforms, capture lineage and ray probes.",
+      "reason": "Inputs and applicable access/terms must be checked for the current run; historical sample evidence remains bound to its original workflow.",
       "evidence": []
     },
     "credentials": {
       "status": "unverified",
-      "reason": "Storage credentials and run-scoped Isaac runtime access were not checked.",
+      "reason": "Current storage and runtime credentials must pass preflight.",
       "evidence": []
     },
     "source_image": {
       "status": "unverified",
-      "reason": "Physics execution requires an operator-selected immutable isaac_image digest; it is recorded as a declaration, not independently verified running-image identity. No image pullability check was performed.",
+      "reason": "Select independently qualified operator images or wait for governed public acceptance; immutable identity alone does not qualify exact bytes.",
       "evidence": []
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "This separate supplied visual/collision workflow remains unqualified end to end. The shared native probe passed all 501 measured-depth queries on the full public RGB-D reconstruction in Isaac Sim 6.0.1 / PhysX 110.1.13 on RTX PRO 6000; see the RGB-D readiness record for that narrower evidence.",
+      "reason": "The current exact image set must complete the advertised native workload on the selected GPU target.",
       "evidence": []
     }
   }

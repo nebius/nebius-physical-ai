@@ -15,8 +15,8 @@ import subprocess
 import tempfile
 import time
 from typing import Any
-import xml.etree.ElementTree as ET
 
+from defusedxml import ElementTree as ET
 import mujoco
 import numpy as np
 import torch

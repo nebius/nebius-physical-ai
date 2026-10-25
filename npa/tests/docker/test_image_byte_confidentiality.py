@@ -4,6 +4,8 @@ from dataclasses import FrozenInstanceError, asdict, replace
 import hashlib
 import importlib.util
 import json
+import mmap
+import os
 from pathlib import Path
 import random
 import re
@@ -237,6 +239,100 @@ def test_whole_file_match_crosses_large_binary_record_without_cap():
     assert result.record_sha256 == hashlib.sha256(raw).hexdigest()
 
 
+def test_offset_conversion_uses_bounded_text_and_encoding_temporaries():
+    slices = []
+
+    class TrackedText(str):
+        def __getitem__(self, key):
+            result = super().__getitem__(key)
+            if isinstance(key, slice):
+                slices.append(len(result))
+            return result
+
+    text = TrackedText("é" * 200_000 + "\udcffLATE\r\n")
+    positions = {len(text) - 6, len(text) - 2}
+    offsets = policy_module._byte_positions(text, positions)
+    lines = policy_module._byte_line_positions(b"", text, set(offsets.values()))
+
+    assert offsets[min(positions)] > 200_000
+    assert set(lines.values()) == {1}
+    assert slices
+    assert max(slices) <= policy_module._ENCODE_CHARACTER_CHUNK
+
+
+def test_first_giant_line_with_trailing_separator_is_not_sliced_for_search():
+    slices = []
+
+    class TrackedText(str):
+        def __getitem__(self, key):
+            result = super().__getitem__(key)
+            if isinstance(key, slice):
+                slices.append(len(result))
+            return result
+
+    text = TrackedText("A" * 200_000 + "\udcffEND\r\n")
+    end = len(text) - 2
+    expression = re.compile(r"(?<!B)^A+\udcff(END)\1?$")
+
+    assert policy_module._line_match_span(expression, text, 0, end) == (0, end)
+    assert slices == []
+
+
+def test_late_regex_and_literal_offsets_preserve_surrogates_and_lines():
+    raw = "é".encode() * 100_000 + b"\xffBEGIN-middle-END\n" + b"x" * 100_000
+    regex = compile_policy(r"(?s:\udcffBEGIN.*END)")
+    regex_result = regex.scan_record(raw)
+    expected_start = len("é".encode()) * 100_000
+
+    assert regex_result.findings[0].start_byte == expected_start
+    assert regex_result.findings[0].end_byte == expected_start + len(
+        b"\xffBEGIN-middle-END"
+    )
+    literal_start = len(raw) - 17
+    literal_match = LiteralMatch(1, literal_start, len(raw))
+    literal_policy = compile_policy("absent", literal_policy=binding())
+    literal_result_value = literal_policy.scan_record(
+        raw,
+        literal_scan=literal_result(raw, matches=(literal_match,)),
+    )
+    literal = literal_result_value.findings[0]
+    assert (literal.start_byte, literal.end_byte) == (literal_start, len(raw))
+    assert literal.start_line == literal.end_line == 2
+
+
+@pytest.mark.parametrize(
+    ("raw", "customer", "infra"),
+    [
+        (
+            b"BEGIN" + b"\xff\0" * 101 + b"\nEND\nanchored\n",
+            r"(?s:BEGIN.*END)|(?m:^anchored$)",
+            r"begin.*end",
+        ),
+        (b"A\r\nFIXTURE" + "\u2028".encode() + b"B", r"^FIXTURE$", None),
+        (b"prefix\xffA\0B\xfesuffix", r"\udcffA\x00B\udcfe", None),
+        (b"owner=ABC-ABC\nABC-ABC", r"(?<=owner=)([A-Z]+)-\1", None),
+    ],
+)
+def test_readonly_mmap_is_byte_identical_to_complete_bytes(
+    tmp_path, raw, customer, infra
+):
+    path = tmp_path / "record"
+    path.write_bytes(raw)
+    path.chmod(0o400)
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        with mmap.mmap(fd, len(raw), access=mmap.ACCESS_READ) as mapped:
+            policy = compile_policy(customer, infra)
+            assert policy.scan_mapped_record(mapped) == policy.scan_record(raw)
+    finally:
+        os.close(fd)
+
+
+def test_mapped_scan_requires_an_exact_mmap_instance():
+    with pytest.raises(Error, match="^record_mapping_invalid$"):
+        compile_policy("fixture").scan_mapped_record(b"fixture")
+
+
 def test_all_findings_are_retained():
     result = compile_policy("x").scan_record(b"x " * 12001)
     assert len(result.findings) == 12001
@@ -331,6 +427,42 @@ def test_external_literals_compose_without_a_matcher_import_or_validation_claim(
     assert spans(result)["literal-1", 3, len(raw)] == ("external_literal",)
     assert result.findings[-1].start_line == 2
     assert policy.receipt()["exact_literals"]["verification"] == "caller_supplied"
+
+
+def test_record_finding_limit_precedes_unbounded_span_population():
+    with pytest.raises(Error, match="^record_finding_limit$"):
+        compile_policy(".").scan_record(b"abcd", finding_limit=1)
+
+
+def test_line_coordinate_memory_depends_on_findings_not_line_count(monkeypatch):
+    observed = []
+    original = policy_module._line_positions
+
+    def inspect(text, positions):
+        observed.append(set(positions))
+        return original(text, positions)
+
+    monkeypatch.setattr(policy_module, "_line_positions", inspect)
+    result = compile_policy("absent-private-marker").scan_record(b"\n" * 10_000)
+
+    assert result.line_count == 10_000
+    assert result.findings == ()
+    assert observed == [set()]
+
+
+def test_external_literal_composition_shares_record_finding_limit():
+    raw = b"abcd"
+    matches = (
+        LiteralMatch(0, 0, 1),
+        LiteralMatch(1, 1, 2),
+    )
+
+    with pytest.raises(Error, match="^record_finding_limit$"):
+        compile_policy("absent", literal_policy=binding()).scan_record(
+            raw,
+            literal_scan=literal_result(raw, matches=matches),
+            finding_limit=1,
+        )
 
 
 def test_external_literal_bytes_may_be_inside_utf8_encoding():

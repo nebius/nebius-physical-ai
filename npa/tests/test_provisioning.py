@@ -409,6 +409,47 @@ def test_provision_if_absent_dry_run_reports_actions(
     assert result.storage_bucket == "s3://bucket/checkpoints/"
 
 
+def test_provision_dry_run_accepts_default_project_quotas_after_tenant_denial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A real-shaped default catalog permits a reserved five-GPU plan."""
+    _write_runtime(tmp_path, monkeypatch)
+    from npa import provisioning_preflight
+    from npa.clients import nebius
+
+    def tenant_denied(*_args):
+        raise nebius.NebiusError("PermissionDenied")
+
+    names = _reserved_capacity_plan().topology.quota_requirements()
+    payload = {
+        "items": [
+            {
+                "metadata": {"parent_id": "project-1", "name": name},
+                "spec": {"region": "eu-north1"},
+                "status": {"usage_state": "USAGE_STATE_NOT_USED"},
+            }
+            for name in names
+        ]
+    }
+    monkeypatch.setattr(provisioning_preflight, "read_provider_quotas", tenant_denied)
+    monkeypatch.setattr(nebius, "list_quota_allowances", lambda _parent: payload)
+
+    result = provisioning.provision_if_absent(
+        project="proj",
+        kubeconfig=tmp_path / "missing-kubeconfig",
+        dry_run=True,
+        skip_s3=True,
+        gpu_nodes=5,
+        gpu_platform="gpu-rtx6000",
+        gpu_preset="1gpu-24vcpu-218gb",
+        capacity_block_group="capacityblockgroup-example",
+    )
+
+    assert result.status == "ready"
+    required = [item for item in result.preflight["quotas"] if item["required"] > 0]
+    assert required and all(item["status"] == "unbounded" for item in required)
+
+
 def test_provision_dry_run_keeps_absent_project_quota_unknown_after_tenant_rbac_denial(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

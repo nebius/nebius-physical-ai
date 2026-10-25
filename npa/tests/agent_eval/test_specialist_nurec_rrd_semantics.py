@@ -85,7 +85,7 @@ def _encoded(path, wrong=False):
     return buffer.getvalue()
 
 
-def _log_images(recording, sources, cap, pattern, defect):
+def _log_images(recording, sources, cap, pattern, defect, schema):
     rr = pytest.importorskip("rerun")
     groups = defaultdict(list)
     for entity, frame in sources:
@@ -105,7 +105,13 @@ def _log_images(recording, sources, cap, pattern, defect):
         )
         for ordinal, frame in enumerate(chosen):
             reset = defect == "reset_ids" and entity.startswith("/reconstruction/")
-            recording.set_time("frame", sequence=ordinal if reset else frame)
+            recording.reset_time()
+            timeline = (
+                "nurec_image:" + target.lstrip("/") if schema == "v2" else "frame"
+            )
+            recording.set_time(timeline, sequence=ordinal if reset else frame)
+            if defect == "mixed_timeline":
+                recording.set_time("wrong_entity", sequence=frame)
             contents = _encoded(
                 sources[entity, frame],
                 defect == "wrong_reconstruction_image"
@@ -120,7 +126,18 @@ def _log_images(recording, sources, cap, pattern, defect):
                 )
 
 
-def _recording(root, sources, cap, *, pattern="early", defect="", legacy=False):
+def _recording(
+    root,
+    sources,
+    cap,
+    *,
+    pattern="early",
+    defect="",
+    legacy=False,
+    schema="v1",
+    timeline_schema=None,
+    policy="independent-entity-filename-indices",
+):
     rr = pytest.importorskip("rerun")
     pytest.importorskip("rerun.chunk")
     path = root / "reports/sim2real.rrd"
@@ -128,11 +145,13 @@ def _recording(root, sources, cap, *, pattern="early", defect="", legacy=False):
     recording = rr.RecordingStream("neural-reconstruction", recording_id="rrd-contract")
     recording.save(str(path))
     settings = {
-        "schema": "npa.nurec.rrd-review.v1",
+        "schema": "npa.nurec.rrd-review." + schema,
         "max_frames_per_entity": cap,
         "max_frame_dim": 0,
         "jpeg_quality": 75,
     }
+    if schema == "v2":
+        settings["timeline_policy"] = policy
     metrics = yaml.safe_load((root / "reconstruction/metrics.yaml").read_text())
     for entity, document in (
         ("provenance/rrd_review", settings),
@@ -145,10 +164,34 @@ def _recording(root, sources, cap, *, pattern="early", defect="", legacy=False):
             rr.TextDocument(f"```json\n{json.dumps(document)}\n```"),
             static=True,
         )
-    _log_images(recording, sources, cap, pattern, defect)
+    _log_images(recording, sources, cap, pattern, defect, timeline_schema or schema)
     recording.flush()
     recording.disconnect()
     return settings
+
+
+def test_v2_verifies_original_indices_on_separate_entity_timelines(verifier, tmp_path):
+    sources = _source_images(tmp_path)
+    _recording(tmp_path, sources, 0, schema="v2")
+    result = verifier._rrd(tmp_path, _terminal())
+    assert result["verified_image_rows"] == len(sources)
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"schema": "v3"},
+        {"schema": "v2", "timeline_schema": "v1"},
+        {"schema": "v1", "timeline_schema": "v2"},
+        {"schema": "v2", "policy": "synchronized-frames"},
+        {"schema": "v2", "defect": "mixed_timeline"},
+    ],
+)
+def test_version_and_timeline_mismatches_fail_closed(verifier, tmp_path, options):
+    sources = _source_images(tmp_path)
+    _recording(tmp_path, sources, 0, **options)
+    with pytest.raises(ValueError):
+        verifier._rrd(tmp_path, _terminal())
 
 
 def _legacy_evidence(root, settings):

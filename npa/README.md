@@ -12,6 +12,139 @@ and follow [installation](../docs/install.md) and
 The [command reference](../docs/cli/workbench.md) lists the installed tools;
 `npa workbench <tool> --help` exposes each tool's actual commands.
 
+Sim2Real's `rerun regen` and `rerun serve --local-record` operate on existing
+artifacts without resolving execution image defaults. Regeneration therefore
+remains available after an old runtime is quarantined. Executing new workloads,
+including `rerun heldout-only`, still requires qualified component images.
+For `rerun regen` and `rerun heldout-only`, explicit `--s3-bucket` and
+`--s3-endpoint` override their corresponding project coordinates. With
+`--project`, a complete isolated project record supplies the remaining bucket,
+endpoint, and client credentials; an unknown or incomplete record refuses rather
+than falling back to host credentials or environment settings. Without
+`--project`, the existing Sim2Real environment settings apply. For `workbench
+health sim2real`, `--project` applies when the selected checks include `s3`: it
+supplies the reachability-probe target and isolated credentials unless the
+corresponding S3 flag is explicit. It has no effect on selections without `s3`.
+See the [Sim2Real guide](../docs/workbench/guides/sim2real-workflow.md).
+
+Existing-project setup supports project-admin credentials. Agent setup,
+`provision-if-absent`, and direct `cluster up` share the same quota scope rules:
+only a tenant-level IAM denial permits fallback to the exact project's complete
+quota catalog. Existing project rows with an omitted optional limit impose no
+additional project cap; explicit limits and incomplete evidence still block.
+Strict GPU reservations can likewise use an active allowance for the exact
+reservation under that project. NPA reports the unavailable tenant view;
+Nebius still enforces tenant limits, reservation compatibility and free capacity
+at apply time. No tenant-wide grant is added during setup.
+
+Fleet applies the same fallback to verified existing projects, combining every
+selected cluster and pending bucket in each project before checking its cap.
+Creating projects still requires tenant evidence. Reserved Soperator workers
+can use project allowances with explicit immutable reservation IDs; resolving
+reservation names requires tenant inventory. Legacy shared-filesystem creation
+uses the same scoped quota parser. A readable tenant constraint remains enforced
+even if a different tenant inventory API is denied.
+Creating a legacy shared filesystem requires a resolved tenant and region;
+missing identity now stops provisioning before apply.
+
+Sim2Real's `rerun regen` and `rerun serve --local-record` operate on existing
+artifacts without resolving execution image defaults. Regeneration therefore
+remains available after an old runtime is quarantined. Executing new workloads,
+including `rerun heldout-only`, still requires qualified component images.
+For `rerun regen` and `rerun heldout-only`, explicit `--s3-bucket` and
+`--s3-endpoint` override their corresponding project coordinates. With
+`--project`, a complete isolated project record supplies the remaining bucket,
+endpoint, and client credentials; an unknown or incomplete record refuses rather
+than falling back to host credentials or environment settings. Without
+`--project`, the existing Sim2Real environment settings apply. For `workbench
+health sim2real`, `--project` applies when the selected checks include `s3`: it
+supplies the reachability-probe target and isolated credentials unless the
+corresponding S3 flag is explicit. A selection without `s3` refuses `--project`
+with an explicit error.
+`--s3-prefix` is an execution-config seam. An S3 reachability check accepts it
+but probes only the bucket and endpoint; image-independent selections that
+include none of `s3`, `config`, or `registry` refuse it.
+See the [Sim2Real guide](../docs/workbench/guides/sim2real-workflow.md).
+
+Optional [Workbench access](../docs/workbench/team-access.md) adds CLI/API/SDK shared
+execution through `npa workbench submit`, `runs`, `run`, and `whoami`, and the
+existing `npa.sdk.workbench.team` SDK. Administrators use `npa workbench access`.
+The same commands serve individual and shared installations; `npa workbench team`
+remains a compatibility alias with the same saved accounts and run receipts.
+Use the [setup and usage guide](../docs/workbench/shared-workbench-quickstart.md)
+for the operator installation order, both login methods, coding-agent access,
+and existing clusters. `submit` starts an execution, `runs` lists executions,
+and `run RUN_ID` inspects or manages that one execution.
+Administrators create local users and groups, then assign explicit personal
+namespaces, GPU allocations, and scoped artifact storage. Users receive
+revocable personal key files for submit, status, logs, and artifacts; they do
+not receive scheduler or cluster credentials. Set `account_namespace` once to
+enable persistent local accounts through `npa workbench access account`.
+External JWT identities can be explicitly linked later without changing local
+ownership or allocations. Workbench access has no standalone portal or browser-login
+flow. `npa workbench whoami` and `TeamClient.whoami()` report the same
+personal permissions; see the [local account and key guide](../docs/workbench/team-identity.md).
+Sign in once with `npa login --endpoint <workbench-HTTPS-endpoint> --token-file <key-file>`
+or `npa login --endpoint <workbench-HTTPS-endpoint> --nebius`. The latter uses official
+Nebius browser sign-in and automatic CLI token refresh for a linked local
+account; no manual IAM-token files are needed. Both remember the connection and
+unambiguous workspace/cluster placement, so the next command can be
+`npa workbench submit --spec workflow.yaml`. Repeating it recovers the same
+run; add `--new-run` to deliberately repeat an acknowledged submission.
+`--profile` selects named connections, `--ca-file` trusts an administrator's
+private CA, and `npa logout` forgets the local connection. Private saved state
+uses `$NPA_CONFIG_DIR/team` or `~/.npa/team`. Agents can use the same saved login
+through `npa.sdk.workbench.team.connect()`. Native Nebius verification remains
+mutually exclusive with generic JWT identity mode and never imports cloud roles
+as Workbench grants.
+
+The server can stay on Nebius while workloads use other enrolled Kubernetes
+clusters. `npa workbench access export-connections --config <runtime-policy.yaml>
+--output-dir <new-private-directory>` prepares gateway and scheduler connections
+with server paths (default `/etc/npa-team`; override with `--server-directory`).
+`npa workbench access check-clusters --config <server-policy.yaml>` verifies access
+and allocation boundaries from the server environment. Both functions are also
+available in `npa.sdk.workbench.team`. The server includes the AWS CLI for EKS
+authentication; provider credentials are supplied privately at runtime. See the
+[external Kubernetes guide](../docs/workbench/external-kubernetes.md) for EKS,
+credential refresh and network requirements. Direct cloud VMs remain unsupported
+by this shared execution boundary.
+
+`npa workbench access setup --input-path <private-setup.yaml> --output-path
+<private-installation.json>` deploys the shared HTTPS gateway, creates its
+Nebius LoadBalancer, and retains the address. It uses operator cloud/Kubernetes
+credentials and existing server/TLS/state resources; no personal key or VDI
+client is required. See [shared server setup](../docs/workbench/team-access.md#deploy-and-qualify-the-service)
+for ownership checks, retries, and qualification.
+
+The [Marble quadruped workflow](../docs/workbench/guides/marble-warehouse-quadruped.md)
+reuses a generated warehouse and captures a simulated Go1 on one Nebius GPU.
+Its `motion_profile=turnaround` and `speed_mps=1.2` workflow defaults add fast
+aisle traversals and physical U-turns. Direct CLI/SDK callers retain
+`motion_profile=straight` and `speed_mps=0.35`; select `--motion-profile
+turnaround --speed-mps 1.2` to enable the patrol. The standalone HTML embeds
+the resulting videos and measured motion for offline playback.
+
+Sim2Real's `rerun regen` and `rerun serve --local-record` operate on existing
+artifacts without resolving execution image defaults. Regeneration therefore
+remains available after an old runtime is quarantined. Executing new workloads,
+including `rerun heldout-only`, still requires qualified component images.
+For `rerun regen` and `rerun heldout-only`, explicit `--s3-bucket` and
+`--s3-endpoint` override their corresponding project coordinates. With
+`--project`, a complete isolated project record supplies the remaining bucket,
+endpoint, and client credentials for `regen` and its CLI-side artifact work in
+`heldout-only`; the submitted held-out evaluation stage keeps its configured
+workload storage authority and does not receive those project client credentials.
+An unknown or incomplete record refuses rather than falling back to host
+credentials or environment settings. Without `--project`, the existing Sim2Real
+environment settings apply. `rerun serve --project` retains its legacy
+saved/default-project and environment fallback behavior. For `workbench
+health sim2real`, `--project` applies when the selected checks include `s3`: it
+supplies the reachability-probe target and isolated credentials unless the
+corresponding S3 flag is explicit. A selection without `s3` refuses `--project`
+with an explicit error.
+See the [Sim2Real guide](../docs/workbench/guides/sim2real-workflow.md).
+
 `npa workbench vlm-eval review-visual` and its SDK write a separate private rich
 visual audit. Choose an exact hosted model, neutral task, and fresh output path;
 optional `--baseline-path` compares both sources in both A/B orders. See the
@@ -310,6 +443,25 @@ UR10e's new sealed physics profile preserves its USD mimic-joint mechanics.
 
 ## Workbench Runtimes
 
+Agent status, live verification and final-artifact handoff verify HTTPS using
+the installed certificate read over authenticated SSH. The saved provider
+instance, public address and SSH key must still identify that agent. Unknown
+SSH keys, a substituted TLS certificate, expiry or a wrong hostname fail before
+HTTP credentials are sent. See [agent access](../docs/agent.md) for recovery.
+When trust setup fails, `agent status --json` returns an unhealthy status with
+an `error_category` and withheld endpoints, and exits with code 1.
+
+LeIsaac relay setup reads the agent's TLS certificate fingerprint through
+host-key-verified SSH before sending HTTPS or WSS credentials. To check an
+existing agent's certificate without changing it, set
+`NPA_LEISAAC_CERTIFICATE_LIVE_PROJECT` to its saved project alias and
+`NPA_LEISAAC_CERTIFICATE_LIVE_AGENT` to its saved agent name, then run
+`NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest
+npa/tests/e2e/test_leisaac_certificate_live.py -q` from the repository root.
+Both variables are required for this opt-in check; there is no default target.
+See [LeIsaac transport security](../docs/workbench/leisaac-teleoperation.md)
+for certificate rotation and SSH trust requirements.
+
 Choose a runtime supported by the selected tool:
 
 | Mode | Runs on |
@@ -338,6 +490,13 @@ and the original private callback copy/paste helper.
 Managed workbench teardown reuses the saved Terraform backend. See
 [Terraform state](../docs/configuration.md#terraform-state-for-managed-workbenches)
 for its storage path and permissions.
+
+Genesis, Isaac Lab, and LeRobot container deployment resolves the selected image
+before bootstrapping an environment, provisioning a VM, or writing service
+credentials. A quarantined default fails with an actionable CLI error even in
+`--dry-run`; supply `--image` with an independently qualified operator image.
+Isaac Lab and LeRobot infrastructure-only deployment, and all teardown paths,
+do not need a runnable app image.
 
 ## SDK examples
 
@@ -380,6 +539,16 @@ output or raise CLI exits and do not guarantee typed response objects.
 The [walkthrough](../docs/workbench/cli-sdk-yaml-walkthrough.md) explains these
 differences with a detection-training service example.
 
+For public-data GPU training and deployment, use the single
+[`robot-policy-train-and-serve.yaml`](../workflows/testing/robot-policy-train-and-serve.yaml).
+The [operator cookbook](../docs/workbench/cookbooks/robot-policy-train-and-serve.md)
+covers prerequisites and standard `npa workbench workflow` validation, submission,
+monitoring, resume and cancellation. Catalog stages run pinned public LeRobot data
+through FiftyOne curation, native SmolVLA continued training, both measured
+promotion gates, export, independent GPU HTTP serving and native simulation.
+The same run produces standalone HTML/MP4 proof. This qualified recipe uses
+managed Kubernetes plus torchrun and needs no private trainer scripts.
+
 For artifact conversion and sharing, see the
 [CLI / SDK walkthrough](../docs/workbench/cli-sdk-yaml-walkthrough.md),
 [Foxglove export](../docs/workbench/foxglove-export.md), and
@@ -400,6 +569,10 @@ SDK; previously published container pins retain their recorded build versions.
 - `npa.server`: FastAPI checkpoint-serving and inference server
 - `npa.adapter`: sim demo -> LeRobotDataset v3 conversion
 - `npa.genesis`: teacher training, demo generation, student evaluation
+  The [public Genesis image contract](docker/workbench/genesis/README.md) explains
+  its rigid workload, ACT dependencies and `NPA_GENESIS_SUPPORTED_STUDENT_POLICIES`
+  capability declaration; additional student policies require a qualified
+  operator image.
 
   Genesis teacher training uses RSL-RL 5.5.1 actor/critic models. The loader
   retains legacy ActorCritic checkpoint support and validates saved dimensions
@@ -420,6 +593,13 @@ SDK; previously published container pins retain their recorded build versions.
 - `npa.workflows`: workflow implementations and artifact discovery
 
 ## Developing and testing npa
+
+The `npa agent verify-live` command delegates endpoint and pytest gates to
+`npa/src/npa/cli/agent_verification.py`; UI wiring checks live in
+`npa/src/npa/cli/agent_verification_ui.py`. Keep new verification checks in these
+modules so the deployment CLI remains reviewable. Run
+`npa/.venv/bin/python -m pytest npa/tests/cli/test_agent_verification.py npa/tests/cli/test_agent.py -q`
+from the repository root to check verification failures and command integration.
 
 The [served-model VLM sampling lane](../docs/workbench/cookbooks/vlm-eval-loop-runbook.md#served-model-sampling-live-lane)
 extends `npa/scripts/vlm_provenance_live_recheck.py` against an operator-owned GPU
@@ -586,7 +766,7 @@ The CPU wheel exercises real checkpoint loading without a GPU. See
 gate; some optional checks also use Node, tmux, or Docker.
 
 Pull requests run the full Python 3.12 suite,
-dedicated Cypress job, focused Python 3.10/3.14 checks, and security gates.
+dedicated Cypress job, focused Python 3.11/3.14 checks, and security gates.
 Six duration-balanced coverage shards run with xdist and cached constrained
 installs, then enforce the merged coverage floor. Full suites include smoke
 and CLI install checks without a duplicate subsystem job. The queue verifies
@@ -610,7 +790,7 @@ The focused compatibility check runs before CPU tensor dependencies are
 installed, so async cancellation and isolated SkyPilot fixture regressions
 surface before merge. The existing browser compatibility job also checks
 portable checksums and exception notes, SQLite failure fixtures, and VLM path
-errors on Python 3.10 and 3.14. These focused regressions keep the full
+errors on Python 3.11 and 3.14. These focused regressions keep the full
 compatibility matrix in scheduled audits without adding queue shards.
 Run the stdlib compatibility guard locally with:
 
@@ -639,7 +819,7 @@ Cypress 16's deprecated Electron browser cannot provide that context in CI.
 
 CI uses cached uv installs constrained by `npa/ci/requirements.txt`. After changing
 CI dependency inputs, run `npa/.venv/bin/python npa/scripts/ci_requirements.py
---update` with uv 0.12.5 and commit the refreshed pins. Add `--upgrade` only for an
+--update` with uv 0.13.4 and commit the refreshed pins. Add `--upgrade` only for an
 intentional version refresh. The [contributor CI guide](../CONTRIBUTING.md#ci-dependency-setup-and-timing-reports)
 also explains the automatic `ci-timing-report` job, whose summary and
 JSON artifact separate runner waiting, setup, and execution for completed runs.
@@ -656,13 +836,24 @@ Full-suite PRs retain smoke coverage in their shards; the early precheck runs
 guardrails once before those shards, and unsuccessful or cancelled shards no longer queue a coverage job.
 
 Application and CI dependency scans reject known vulnerabilities even when the
-same pin is already on `main`. Keep the AnyIO security floor at 4.14.2 or newer;
+same pin is already on `main`. Keep the AnyIO security floor at 4.14.2 and the
+certifi trust-store floor at 2026.10.19 or newer;
 update `npa/requirements-lock.txt` and regenerate CI pins when changing package
 requirements. `.github/dependabot.yml` checks Python, browser-test npm, and
 GitHub Actions dependencies daily and groups version updates into one
 `dependencies` PR. Review package declarations and generated locks together,
 regenerate CI pins after Python input changes, and validate the combined batch. Reproduce the scan
 with the [security gate instructions](../docs/security/merge-security-gate.md#reproduce-locally).
+
+FiftyOne's LeRobot importer and the policy container's Hub checkpoint downloader
+require custom Hub sources as `owner/repository@<full lowercase commit SHA>`.
+Bundled `lerobot/pusht` and `lerobot/diffusion_pusht` examples have fixed reviewed
+commits. Each download verifies the requested commit against Hub metadata and
+records its repository, type and commit in `.npa-hf-source.json`.
+Model checkpoints use a directory per commit so files removed from a later
+revision cannot survive from an older download. Invalid resolved commits stop
+before downloading or replacing the existing dataset cache. This freezes each
+transfer and repeat selection; it does not establish trust in an operator-selected repository.
 
 Dependabot excludes `ci/**` relative to `/npa`: omitting `/npa/ci` from the
 directory list does not exclude its nested manifests. Generated CI pins must
@@ -696,6 +887,19 @@ cache, and isolated builder. Owned build state is removed before the archive
 scan; archives and temporary scan data are cleaned after each entry. The required
 inventory aggregate fails when any applicable entry fails or does not finish.
 This baseline check does not replace complete image scans before publication.
+
+The Cosmos3 Ray payload scanner records archive/config and blocked-member
+hashes, sizes, layer locations, and rule kinds in its JSON report while
+preserving blocking verdicts. Stdout is redacted by default, and `--json` writes
+the full report to the requested file, so a publication log cannot expose member
+commitments; `--full-stdout` is only for local operator attribution. See the
+[payload finding evidence](../docs/workbench/container-packaging.md#cosmos3-ray-payload-finding-evidence)
+contract. It exits 0 for clean, 1 for blocked findings or scan/archive errors,
+or 2 when the private report cannot be written (including a symlink target) or
+command-line usage is invalid. On a report-write failure, stderr has a safe
+errno-class diagnostic; any nonzero is blocking, including 2 after a blocked
+scan.
+A metadata report does not accept the image or its GPU capability.
 
 Use an **absolute** interpreter path: the recipes change into `npa/` before
 running. Without an override, Make prefers the contributor environment
@@ -842,7 +1046,7 @@ configuration, offline narration, artifact search and privacy boundaries.
 ### MJLab
 
 Install optional simulator packages with `pip install -e '.[mjlab]'` on Python
-3.10–3.13, or use the dedicated MJLab GPU container recipe. `npa workbench mjlab`
+3.11–3.13, or use the dedicated MJLab GPU container recipe. `npa workbench mjlab`
 provides `train`, `eval`, `export`, `list`, `status`, `system-info`, `deploy`, and
 `workflow`; use `--help` for their options. Training preserves upstream defaults
 unless overridden. Public handoffs are S3 URIs; `--dry-run` plans without metrics
@@ -851,8 +1055,15 @@ uses existing storage credentials. See the [MJLab guide](../docs/workbench/mjlab
 for request schemas, deployment Secrets, environment variables, validation and
 image publication status.
 `eval --video` also publishes `rollout.mp4` and a self-contained `rollout.html`
-page alongside the measured evaluation manifest. The SDK and service expose the
-same behavior with `video=True`.
+page alongside the measured evaluation manifest, using native 1920 × 1080
+capture at the simulator step rate (50 fps for G1). `--video-width` and
+`--video-height` select other even dimensions; SDK/API fields are `video_width`
+and `video_height`. The page reports decoded video properties and the active
+OpenGL renderer, preserves aspect ratio and starts muted with controls.
+The SDK and service expose the same behavior with `video=True`.
+The supplied `mjlab-train-eval.yaml` and `mjlab-render.yaml` workflows select
+RTX PRO 6000 and pin the qualified public development image. Training produces
+the video and HTML before ONNX export and an independent-seed evaluation.
 
 ### Live MK8s attachment matching
 

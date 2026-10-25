@@ -303,6 +303,8 @@ def test_isaac_lab_deploy_existing_alias_with_replace_prompts_confirmation(
             "--gpu-preset",
             "1gpu-40vcpu-160gb",
             "--replace",
+            "--image",
+            "registry.example.invalid/operator/npa-isaac-lab:rebuilt",
         ],
     )
 
@@ -807,6 +809,46 @@ def _invoke_isaac_serverless_train(mocker, *, task: str, gpu_type: str):
         ],
     )
     return result, client
+
+
+def test_isaac_lab_serverless_quarantined_default_is_a_clean_refusal(mocker) -> None:
+    _mock_isaac_serverless_env(mocker)
+    client = mocker.Mock()
+    client.get_job.side_effect = EndpointNotFoundError("missing")
+    mocker.patch("npa.cli.isaac_lab.ServerlessClient", return_value=client)
+    mocker.patch(
+        "npa.cli.isaac_lab.container_image_for_tool",
+        side_effect=ValueError("Isaac Lab image is quarantined"),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "isaac-lab",
+            "-p",
+            "proj",
+            "-n",
+            "isaac",
+            "train",
+            "--runtime",
+            "serverless",
+            "--task",
+            "Isaac-Reach-Franka-v0",
+            "--output-path",
+            "s3://bucket/isaac/",
+            "--submit-only",
+            "--gpu-type",
+            "l40s",
+            "--job-name",
+            "isaac-job",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Isaac Lab image is quarantined" in result.output
+    assert "Traceback" not in result.output
+    client.create_job.assert_not_called()
 
 
 @pytest.mark.parametrize(

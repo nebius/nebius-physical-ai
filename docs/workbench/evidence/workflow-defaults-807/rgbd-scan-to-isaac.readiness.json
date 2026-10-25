@@ -1,0 +1,68 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "424d5500719cc38d1f69b8b4f29d6fc24edc8d1ec1e3870803b56055c356204c",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Local schema validation and planning resolve real Open3D reconstruction, OpenUSD assembly, and native Isaac PhysX with run-scoped source and artifact handoffs.",
+      "evidence": [
+        "validate-spec: valid",
+        "plan-spec --run-id preview: 3 stages"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Local schema validation and planning resolve real Open3D reconstruction, OpenUSD assembly, and native Isaac PhysX with run-scoped source and artifact handoffs.",
+      "evidence": [
+        "validate-spec: valid",
+        "plan-spec --run-id preview: 3 stages"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "verified",
+      "reason": "The full three-stage managed reference published reconstruction, assembly and native physics with conditional claims/seals. Independent readback verified every seal and artifact hash; the public navigation handoff and companion preparation also passed live S3 publication. New operators must verify their own storage.",
+      "evidence": [
+        "All three managed-stage seals and exact source/scene/report lineage verified on 2026-09-25.",
+        "Live navigation input publication and companion preparation preserved 4000 measured train cases, 4000 held-out cases and the exact reconstructed scene."
+      ]
+    },
+    "worker_input": {
+      "status": "verified",
+      "reason": "The full associated public TUM fr3/long_office_household capture completed managed reconstruction and assembly: 1984 integration frames, 501 held-out frames, and 100 source exclusions with recorded reasons.",
+      "evidence": [
+        "513598 vertices; 921561 triangles; 80703 measured held-out rays; 56.973 seconds CPU reconstruction.",
+        "Capture manifest SHA-256: 8193b1590437c75cdb64cf5e25005076e044c7cc2b447f19dabddd5f571a1fdc",
+        "Surface SHA-256: 55243fbdabb4af7b8d45290948605d73f745c48f0b44cad240a09766767b8075"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "All three managed stages fetched their actual inputs and published independently verified outputs under the selected operator identity. The subsequent live navigation handoff passed conditional publication and readback. New operators must verify their own credentials.",
+      "evidence": [
+        "Complete standard managed workflow and live handoff succeeded on 2026-09-25; no credentials are retained here."
+      ]
+    },
+    "source_image": {
+      "status": "verified",
+      "reason": "All three managed worker image digests matched the selected immutable images. Both CPU stages used the SONIC original interpreter; assembly added usd-core 26.8 into a fresh target after the source overlay. The public CPU bootstrap was also exercised in that exact image against the complete managed reconstruction. No image build was required.",
+      "evidence": [
+        "CPU SONIC image SHA-256: c9ba0996b28f54b013e36da689638b386a7ef9c0c8c4413fc4b3c72ff1a808bb",
+        "Native Isaac image SHA-256: e321e8631c7e318b5012dad210d9cd1001b7dc833cbff0369e420c5c12657ab6",
+        "Selected payload fingerprint: 8199cd1b8e7f31c7b90e6e9e87d0ec301a0f0a5d9d9500b1662f84d205a563f2",
+        "CPU dependencies: Python 3.11.15, Open3D 0.19.0, NumPy 1.26.4, Pillow 11.3.0, OpenUSD 26.8."
+      ]
+    },
+    "target_runtime": {
+      "status": "verified",
+      "reason": "The complete three-stage standard workflow succeeded. All 501 measured-depth probes hit the actual managed reconstructed scene in Isaac Sim 6.0.1 / PhysX 110.1.13 on RTX PRO 6000 Blackwell Server Edition, driver 580.173.02. These are CPU PhysX scene queries inside the RTX runtime, without rendering or learned navigation.",
+      "evidence": [
+        "Standard GPU health qualified both CUDA and graphics before submission.",
+        "Scene SHA-256: cdd2744ce8cc4c2ca6fa7b5a0ec457344f76793fca91a8d1d155ac0bdd36011b",
+        "Physics report SHA-256: 22f8cc9a0d53d193be34f3041ab330b714ea4f0f3e60f8a511465256be0ca81f",
+        "Live handoff recipe SHA-256: 197f4e05fe273cf9d9348896d27fc5738b46c52107fd5694a36b3f33f40c73e4; native navigation and learning remain unverified by this input-preparation check."
+      ]
+    }
+  }
+}

@@ -23,9 +23,15 @@ class Pose(StrictModel):
     @field_validator("quaternion_wxyz")
     @classmethod
     def unit_quaternion(cls, value):
-        if not math.isclose(sum(x * x for x in value), 1.0, abs_tol=1e-4):
+        squared_norm = sum(x * x for x in value)
+        if not math.isclose(squared_norm, 1.0, abs_tol=1e-4):
             raise ValueError("quaternion must have unit norm in wxyz order")
-        return value
+        # Canonicalize accepted input before either planning or durable hashing.
+        # Keep roundoff-sized differences stable across repeated model validation.
+        if math.isclose(squared_norm, 1.0, rel_tol=0.0, abs_tol=1e-12):
+            return value
+        norm = math.sqrt(squared_norm)
+        return tuple(component / norm for component in value)
 
 
 class Cuboid(StrictModel):
@@ -36,7 +42,8 @@ class Cuboid(StrictModel):
     def geometry(self):
         if any(x <= 0 for x in self.dims):
             raise ValueError("cuboid dimensions must be positive")
-        Pose(position_xyz=self.pose[:3], quaternion_wxyz=self.pose[3:])
+        pose = Pose(position_xyz=self.pose[:3], quaternion_wxyz=self.pose[3:])
+        self.pose = (*pose.position_xyz, *pose.quaternion_wxyz)
         return self
 
 

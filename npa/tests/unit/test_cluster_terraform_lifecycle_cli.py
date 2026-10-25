@@ -784,8 +784,8 @@ def test_up_runs_terraform_writes_kubeconfig_and_validates(
             return _completed(json.dumps({"terraform_version": "1.12.2"}))
         if args[:4] == ["nebius", "mk8s", "cluster", "list"]:
             return _completed('{"items":[]}')
-        if args[:4] == ["nebius", "quotas", "quota-allowance", "get-by-name"]:
-            return _completed(json.dumps({"spec": {"limit": str(2 * 1024**4)}}))
+        if args[:4] == ["nebius", "quotas", "quota-allowance", "list"]:
+            return _completed(_filesystem_catalog(2 * 1024**4))
         if args[:2] == ["terraform", "state"]:
             return _completed("", returncode=1)
         if args[:3] == ["terraform", "output", "-json"]:
@@ -1405,6 +1405,27 @@ def test_up_allows_duplicate_managed_by_terraform_state(
     assert _find_call(stream_calls, "terraform", "apply", "-auto-approve")
 
 
+def _filesystem_catalog(limit):
+    return json.dumps(
+        {
+            "items": [
+                {
+                    "metadata": {
+                        "name": "compute.filesystem.size.network-ssd",
+                        "parent_id": "tenant-a",
+                    },
+                    "spec": {"region": "region-a", "limit": str(limit)},
+                    "status": {
+                        "state": "STATE_ACTIVE",
+                        "unit": "byte",
+                        "usage_state": "USAGE_STATE_NOT_USED",
+                    },
+                }
+            ]
+        }
+    )
+
+
 def test_up_stops_when_filestore_quota_is_too_small(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -1435,8 +1456,8 @@ def test_up_stops_when_filestore_quota_is_too_small(
             return _completed('{"items":[]}')
         if args[:2] == ["terraform", "state"]:
             return _completed("", returncode=1)
-        if args[:4] == ["nebius", "quotas", "quota-allowance", "get-by-name"]:
-            return _completed(json.dumps({"spec": {"limit": "0"}}))
+        if args[:4] == ["nebius", "quotas", "quota-allowance", "list"]:
+            return _completed(_filesystem_catalog(0))
         raise AssertionError(args)
 
     monkeypatch.setattr(tf_mod, "_require_bin", lambda binary: binary)
@@ -3271,6 +3292,47 @@ region = "eu-north1"
     assert 'owner = "operator"' in values["ssh_public_key"]
     assert values["ssh_public_key"].rstrip().endswith("}")
     assert values["region"] == "eu-north1"
+
+
+def test_json_tfvars_select_gpu_topology_and_preserve_structured_values(tmp_path):
+    settings = {
+        "gpu_nodes_count": 4,
+        "gpu_nodes_platform": "gpu-h200-sxm",
+        "gpu_nodes_preset": "1gpu-16vcpu-200gb",
+        "gpu_disk_size": 512,
+        "enable_filestore": False,
+        "ssh_public_key": {"path": "~/.ssh/custom.pub"},
+    }
+    (tmp_path / "terraform.tfvars.json").write_text(json.dumps(settings))
+    assert tf_mod._read_tfvars(tmp_path) == settings
+
+
+def test_tfvars_load_order_matches_terraform_across_hcl_and_json(tmp_path):
+    (tmp_path / "terraform.tfvars").write_text('gpu_nodes_count = 1\nregion = "base"')
+    (tmp_path / "terraform.tfvars.json").write_text('{"gpu_nodes_count": 2}')
+    (tmp_path / "a.auto.tfvars.json").write_text('{"gpu_nodes_count": 3}')
+    (tmp_path / "b.auto.tfvars").write_text("gpu_nodes_count = 4")
+    values = tf_mod._read_tfvars(tmp_path)
+    assert values == {"gpu_nodes_count": 4, "region": "base"}
+
+
+@pytest.mark.parametrize("contents", ['{"iam_token": secret}', "[]", '"secret"'])
+def test_invalid_json_tfvars_fail_without_exposing_contents(tmp_path, contents):
+    (tmp_path / "terraform.tfvars.json").write_text(contents)
+    with pytest.raises(typer.BadParameter) as error:
+        tf_mod._read_tfvars(tmp_path)
+    assert "terraform.tfvars.json" in str(error.value)
+    assert "secret" not in str(error.value)
+
+
+@pytest.mark.parametrize("filename", ["terraform.tfvars.json", "z.auto.tfvars.json"])
+def test_json_tfvars_cannot_shadow_fresh_iam_token(tmp_path, filename):
+    (tmp_path / filename).write_text('{"iam_token": "private-credential"}')
+    values = tf_mod._read_tfvars(tmp_path)
+    with pytest.raises(typer.BadParameter) as error:
+        tf_mod._guard_tfvars_iam_token(tmp_path, values)
+    assert filename in str(error.value)
+    assert "private-credential" not in str(error.value)
 
 
 def test_up_explains_a_missing_ssh_public_key(monkeypatch, tmp_path: Path) -> None:

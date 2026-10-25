@@ -712,26 +712,27 @@ def recheck(directory, expected, archive, verification):
     artifact.assert_unchanged(archive, verification)
 
 
-def verify(args, directory, archive, digest, verification, scanner_exit):
-    """Accept only the exact provenance-proven NCore CPython attribution hits.
+def _retained_replay(directory, bindings):
+    for name, field in (
+        ("report.json", "report_sha256"),
+        ("records.jsonl", "records_sha256"),
+    ):
+        _raw, observed, _stat = _read_private(directory / "attribution-replay" / name)
+        W.require(observed == bindings[field], "ncore_attribution_replay_population")
 
-    Args:
-        args: Validated NCore CLI arguments and reviewed source identity.
-        directory: Private gate evidence directory containing raw scan outputs.
-        archive: Original OCI archive scanned by the raw scanner.
-        digest: Exact expected OCI publication index identity.
-        verification: Native verification of the original OCI graph.
-        scanner_exit: Raw scanner process exit status.
-    Returns:
-        A separate receipt; the raw report remains invalid and unchanged.
-    Raises:
-        ValueError, OSError: Any provenance, population, policy, source, or image binding fails.
-    """
-    W.require(scanner_exit == 1, "ncore_attribution_requires_finding_exit")
-    api = _notice_api()
-    _contract(api)
-    context_sha = committed_source(args.source_sha)
-    notice, object_id = _repository_notice(args.source_sha, api)
+
+def _retained_upstream(api, notice, directory):
+    proof_directory = directory / "attribution-upstream"
+    # Acceptance is readback: missing provenance must not trigger fresh acquisition.
+    for archive in api._ARCHIVES:
+        W.require(
+            (proof_directory / archive.cache_name).is_file(),
+            "ncore_attribution_upstream_missing",
+        )
+    return api.verify_public_notice(notice, proof_directory)
+
+
+def _verified_population(directory, archive, digest, verification, notice, api):
     authorization, report, rows, bindings = _scan_inputs(directory)
     policy = _policy(authorization, report)
     snapshots = _authorization_binding(
@@ -748,8 +749,23 @@ def verify(args, directory, archive, digest, verification, scanner_exit):
         "ncore_attribution_decoded_population",
     )
     occurrences = _accepted_occurrences(records, issues, image, api)
-    _replay_population(args, directory, bindings)
-    proof = _upstream_proof(api, notice, directory)
+    return bindings, policy, snapshots, occurrences
+
+
+def _derive_receipt(args, directory, archive, digest, verification, retained):
+    api = _notice_api()
+    _contract(api)
+    context_sha = committed_source(args.source_sha)
+    notice, object_id = _repository_notice(args.source_sha, api)
+    bindings, policy, snapshots, occurrences = _verified_population(
+        directory, archive, digest, verification, notice, api
+    )
+    if retained:
+        _retained_replay(directory, bindings)
+        proof = _retained_upstream(api, notice, directory)
+    else:
+        _replay_population(args, directory, bindings)
+        proof = _upstream_proof(api, notice, directory)
     receipt = _receipt(
         args,
         digest,
@@ -762,8 +778,41 @@ def verify(args, directory, archive, digest, verification, scanner_exit):
         occurrences,
         api,
     )
+    return receipt, bindings, snapshots
+
+
+def _retain_receipt(directory, receipt, retained):
+    if retained:
+        raw, _digest, _stat = _read_private(directory / "attribution.json")
+        W.require(W.json_object(raw) == receipt, "ncore_attribution_receipt_changed")
+    else:
+        write_json(directory / "attribution.json", receipt)
+
+
+def verify(
+    args, directory, archive, digest, verification, scanner_exit, *, retained=False
+):
+    """Accept only the exact provenance-proven NCore CPython attribution hits.
+
+    Args:
+        args: Validated CLI roots and reviewed source identity.
+        directory: Private gate directory containing raw scan outputs.
+        archive: Original OCI archive scanned by the raw scanner.
+        digest: Exact expected OCI publication index identity.
+        verification: Native verification of the original OCI graph.
+        scanner_exit: Raw scanner process exit status.
+        retained: Recompute and compare an existing receipt without rewriting it.
+    Returns:
+        A separate receipt; the raw report remains invalid and unchanged.
+    Raises:
+        ValueError, OSError: Any provenance, population, policy or image binding fails.
+    """
+    W.require(scanner_exit == 1, "ncore_attribution_requires_finding_exit")
+    receipt, bindings, snapshots = _derive_receipt(
+        args, directory, archive, digest, verification, retained
+    )
     _recheck(directory, bindings, snapshots, archive, verification)
-    write_json(directory / "attribution.json", receipt)
+    _retain_receipt(directory, receipt, retained)
     _recheck(directory, bindings, snapshots, archive, verification)
     return receipt
 

@@ -18,8 +18,10 @@ from npa.orchestration.npa_workflow.blueprints import (
 from npa.orchestration.npa_workflow.spec import load_spec
 from npa.orchestration.npa_workflow.submit_matrix import (
     SUBMIT_LIVE_MATRIX,
+    execution_config_vars,
     gpu_submit_cases,
     one_shot_submit_cases,
+    plan_only_config_vars,
     runtime_submit_cases,
     selected_submit_cases,
 )
@@ -359,6 +361,41 @@ def test_plan_only_cases_have_machine_checked_justifications() -> None:
             assert not case.plan_only_justification, (
                 f"{case.spec} executes live and must not carry a plan-only exemption"
             )
+
+
+def test_governed_matrix_cases_are_render_only_with_exact_plan_pins() -> None:
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.submit import merge_config_overrides
+
+    governed = {
+        case.spec
+        for case in SUBMIT_LIVE_MATRIX
+        if (path := resolve_npa_workflow_spec(case.spec)) is not None
+        and load_spec(path).config.get("required_immutable_images")
+    }
+    assert governed
+    registry = "registry.example.invalid/matrix"
+    digest = "sha256:" + "0" * 64
+    for case in (case for case in SUBMIT_LIVE_MATRIX if case.spec in governed):
+        assert case.plan_only and case.rotation_skip, case.spec
+        path = resolve_npa_workflow_spec(case.spec)
+        assert path is not None, case.spec
+        supplied = dict(plan_only_config_vars(case, registry))
+        for key in load_spec(path).config["required_immutable_images"]:
+            assert supplied[key] == f"{registry}/plan-only/{path.stem}-{key}@{digest}"
+        assert build_plan(
+            merge_config_overrides(load_spec(path), supplied),
+            run_id="governed-render-only",
+        ).steps
+
+
+def test_execution_matrix_config_never_reuses_render_only_fixtures() -> None:
+    case = next(case for case in SUBMIT_LIVE_MATRIX if case.spec == "sim2real.yaml")
+    assert execution_config_vars(case) == case.config_vars
+    assert "controller_image" not in dict(execution_config_vars(case))
+    assert "controller_image" in dict(
+        plan_only_config_vars(case, "registry.example.invalid/matrix")
+    )
 
 
 def test_coverage_backfill_cases_are_honestly_plan_only() -> None:
@@ -761,6 +798,19 @@ def test_lerobot_subtask_proof_seeds_real_parquet_rows(monkeypatch) -> None:
     ]
 
 
+def _secret_hint_spec(path):
+    from npa.orchestration.npa_workflow.submit import merge_config_overrides
+
+    spec = load_spec(path)
+    # Secret-name inspection uses an inert static plan; live execution still
+    # requires qualified operator images and normal submission preflight.
+    images = {
+        key: "registry.example.invalid/secret-hints@sha256:" + "0" * 64
+        for key in spec.config.get("required_immutable_images", [])
+    }
+    return merge_config_overrides(spec, images)
+
+
 def test_matrix_cases_declare_every_secret_the_renderer_hints_at() -> None:
     """A missing secret_env makes the CLI print an advisory line before its JSON.
 
@@ -777,7 +827,7 @@ def test_matrix_cases_declare_every_secret_the_renderer_hints_at() -> None:
     for case in SUBMIT_LIVE_MATRIX:
         path = resolve_npa_workflow_spec(case.spec)
         assert path is not None, case.spec
-        spec = load_spec(path)
+        spec = _secret_hint_spec(path)
         plan = build_plan(
             spec,
             run_id="matrix-check",
@@ -970,6 +1020,8 @@ def test_robocasa_data_policy_submit_case_forwards_its_service_token() -> None:
     assert {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "ROBOCASA_TOKEN"} <= set(
         case.secret_envs
     )
+    assert case.plan_only is True
+    assert "exact source SHA and manifest digest" in case.plan_only_justification
 
 
 # --------------------------------------------------------------- runtime cases
@@ -1047,6 +1099,67 @@ def test_expected_parallel_tasks_matches_the_spec_fan_out() -> None:
         assert (
             max(len(state.parallel) for state in groups) == case.expected_parallel_tasks
         )
+
+
+def _recorded_parallel_wave(group, start, count=5, offset=0):
+    states = [f"{group}-{index + offset}" for index in range(count)]
+    return {
+        "kind": "parallel",
+        "group": group,
+        "states": states,
+        "tasks": [
+            {"task_name": state, "start_at": start, "end_at": start + 10}
+            for state in states
+        ],
+    }
+
+
+def test_live_parallel_evidence_accepts_three_groups_ending_in_reports():
+    waves = [
+        _recorded_parallel_wave(group, index * 20 + 1)
+        for index, group in enumerate(("acquire", "collect", "report"))
+    ]
+    _load_live_helpers().assert_parallel_run(waves, 5)
+
+
+def test_live_parallel_evidence_counts_batches_within_one_group():
+    waves = [
+        _recorded_parallel_wave("collect", 1, 2),
+        _recorded_parallel_wave("collect", 21, 2, offset=2),
+    ]
+    _load_live_helpers().assert_parallel_run(waves, 4)
+
+
+@pytest.mark.parametrize("broken_boundary", [0, 1])
+def test_live_parallel_evidence_rejects_each_early_downstream_group(broken_boundary):
+    waves = [
+        _recorded_parallel_wave(group, index * 20 + 1)
+        for index, group in enumerate(("acquire", "collect", "report"))
+    ]
+    waves[broken_boundary + 1]["tasks"][0]["start_at"] = 1
+    with pytest.raises(AssertionError, match="before preceding wave finished"):
+        _load_live_helpers().assert_parallel_run(waves, 5)
+
+
+def test_live_parallel_evidence_rejects_serialized_report_group():
+    waves = [
+        _recorded_parallel_wave(group, index * 20 + 1)
+        for index, group in enumerate(("acquire", "collect", "report"))
+    ]
+    for index, task in enumerate(waves[-1]["tasks"]):
+        task.update(start_at=41 + index * 20, end_at=51 + index * 20)
+    with pytest.raises(AssertionError, match="report never ran concurrently"):
+        _load_live_helpers().assert_parallel_run(waves, 5)
+
+
+def test_live_parallel_evidence_rejects_missing_barrier_timings():
+    waves = [
+        _recorded_parallel_wave("acquire", 1),
+        _recorded_parallel_wave("collect", 21),
+    ]
+    waves[0]["tasks"][0].pop("end_at")
+    with pytest.raises(AssertionError, match="missing parallel end timings"):
+        _load_live_helpers().assert_parallel_run(waves, 5)
 
 
 def test_specs_with_a_parallel_group_are_registered_as_runtime_cases() -> None:
@@ -1169,6 +1282,33 @@ def test_gpu_sweep_live_case_caps_concurrency_for_cost() -> None:
     # 4 members with maxConcurrency 2 means the runtime submits two JobGroups, which
     # is also the only live coverage of the multi-batch path.
     assert sweep.expected_parallel_tasks == 4
+
+
+def test_nurec_downstream_matrix_preserves_preconverted_input_and_real_gpu_route():
+    case = next(
+        item
+        for item in SUBMIT_LIVE_MATRIX
+        if item.spec == "nurec-reconstruct-render.yaml"
+    )
+    assert case.tier == "gpu" and not case.plan_only
+    assert (
+        case.rotation_skip
+        and "independently audited NCore sequence" in case.skip_reason
+    )
+    assert set(case.secret_envs) == {
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "NGC_API_KEY",
+    }
+    assert dict(case.image_overrides) == {"workbench.nurec.visualize": "rerun-viewer"}
+    path = resolve_npa_workflow_spec(case.spec)
+    assert path is not None
+    spec = load_spec(path)
+    assert spec.initial == "reconstruct"
+    assert spec.states["reconstruct"].tool_ref == "workbench.nurec.reconstruct"
+    assert spec.states["render"].tool_ref == "workbench.nurec.render"
+    assert all("convert" not in state.tool_ref for state in spec.states.values())
+    assert "ncore_sequence_uri" in spec.config
 
 
 def test_navigation_live_spec_uses_explicit_operator_inputs(tmp_path, monkeypatch):

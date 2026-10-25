@@ -18,6 +18,9 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from npa.orchestration.npa_workflow.blueprints import resolve_npa_workflow_spec
+from npa.orchestration.npa_workflow.spec import load_spec
+
 
 @dataclass(frozen=True)
 class SubmitLiveCase:
@@ -70,7 +73,122 @@ class SubmitLiveCase:
     max_wait_seconds: int = 0
 
 
+_PLAN_ONLY_IMAGE_DIGEST = "sha256:" + "0" * 64
+
+
+def plan_only_config_vars(
+    case: SubmitLiveCase, registry: str
+) -> tuple[tuple[str, str], ...]:
+    """Return safe image pins for a render-only matrix preflight.
+
+    Args:
+        case: The matrix case being rendered without a live submission.
+        registry: Registry prefix used solely for inert immutable plan fixtures.
+    Returns:
+        The case overrides plus one inert digest pin per declared required image.
+    Raises:
+        ValueError: If the matrix case no longer resolves to a shipped workflow.
+    """
+    values = dict(case.config_vars)
+    if case.plan_only:
+        path = resolve_npa_workflow_spec(case.spec)
+        if path is None:
+            raise ValueError(f"plan-only matrix spec not found: {case.spec}")
+        for key in load_spec(path).config.get("required_immutable_images", []):
+            values.setdefault(
+                key,
+                f"{registry}/plan-only/{path.stem}-{key}@{_PLAN_ONLY_IMAGE_DIGEST}",
+            )
+
+    # Sim2Real's render-only contract predates required_immutable_images and
+    # retains explicit fixtures for all of its role-specific image inputs.
+    if case.spec == "sim2real.yaml":
+        for role in ("controller", "transfer", "envgen", "isaac", "viewer"):
+            values.setdefault(
+                f"{role}_image",
+                f"{registry}/plan-only/sim2real-{role}@{_PLAN_ONLY_IMAGE_DIGEST}",
+            )
+        values.setdefault("source_sha", "0" * 40)
+        values.setdefault("isaac_cache_pvc", "plan-only-isaac-cache")
+    return tuple(values.items())
+
+
+def execution_config_vars(case: SubmitLiveCase) -> tuple[tuple[str, str], ...]:
+    """Return only operator-declared overrides for a live matrix submission.
+
+    Render-preflight fixtures are intentionally excluded: an inert digest is a
+    valid planner input, never an execution image declaration.
+    """
+    return case.config_vars
+
+
 SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
+    SubmitLiveCase(
+        "marble-go1-inspection.yaml",
+        "gpu",
+        secret_envs=("WLT_API_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        preset="warehouse",
+        notes="One selected situation: real hosted generation, one Go1 CUDA collector and continuous standalone HTML. All five preset commands have recorded GPU evidence.",
+    ),
+    SubmitLiveCase(
+        "marble-warehouse-quadruped.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        rotation_skip=True,
+        skip_reason="Requires an operator-owned generated Marble warehouse bundle.",
+        notes="Pretrained Go1 CPU control and articulated physics; gsplat/Warp CUDA sensors and Cycles CUDA robot rendering on one RTX PRO 6000.",
+    ),
+    SubmitLiveCase(
+        "marble-navigation-rl.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        rotation_skip=True,
+        skip_reason="Requires an operator-owned generated Marble world and a qualified immutable Isaac runtime image.",
+        notes="Actual collider preparation, native ANYmal GPU physics and PPO, and held-out checkpoint evaluation; acceptance is recorded separately.",
+    ),
+    SubmitLiveCase(
+        "marble-manufacturing-pallet-detection.yaml",
+        "gpu",
+        secret_envs=("WLT_API_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        rotation_skip=True,
+        skip_reason="Requires an operator-provided, group-disjoint real pallet dataset and training-only RGBA cutouts.",
+        notes="Real World API generation, gsplat CUDA rendering, and matched-budget Faster R-CNN real-test comparison. No sample-world override.",
+    ),
+    SubmitLiveCase(
+        "marble-warehouse-rover.yaml",
+        "gpu",
+        secret_envs=("WLT_API_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        notes=(
+            "Real World API warehouse generation, PyBullet wheel dynamics, "
+            "gsplat CUDA RGB and Warp CUDA depth, with a standalone HTML replay."
+        ),
+    ),
+    SubmitLiveCase(
+        "marble-world-capture.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        config_vars=(("world_source", "sample-hobbit"),),
+        notes="Real imported Marble example rendered by gsplat CUDA; generation mode separately requires WLT_API_KEY.",
+    ),
+    SubmitLiveCase(
+        "marble-spatial-scan.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        config_vars=(("world_source", "sample-hobbit"),),
+        notes="Real imported Marble collider raycast by NVIDIA Warp CUDA with depth and interactive HTML artifacts.",
+    ),
+    SubmitLiveCase(
+        "robot-policy-train-and-serve.yaml",
+        "multi",
+        runtime=True,
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        notes="Public SmolVLA/FiftyOne training, both measured retry gates, two GPU serving workers and standalone HTML proof.",
+    ),
     SubmitLiveCase(
         "physical-prompt-comparison.yaml",
         "multi",
@@ -89,6 +207,16 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         runtime=True,
+        plan_only=True,
+        plan_only_justification=(
+            "The required operator runtime image has not completed current native "
+            "renderer qualification, so this case may render but not submit."
+        ),
+        rotation_skip=True,
+        skip_reason=(
+            "Requires a qualified immutable operator runtime image and current RTX "
+            "OptiX rendering acceptance."
+        ),
         notes="RTX OptiX campus rendering, native geometry counts, four camera routes and private offline HTML.",
     ),
     SubmitLiveCase(
@@ -96,6 +224,16 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         runtime=True,
+        plan_only=True,
+        plan_only_justification=(
+            "The required operator runtime image has not completed current native "
+            "CUDA rendering qualification, so this case may render but not submit."
+        ),
+        rotation_skip=True,
+        skip_reason=(
+            "Requires a qualified immutable operator runtime image and compatible "
+            "CUDA rendering acceptance."
+        ),
         notes="Native Blender Cycles CUDA reference scene, OpenUSD/glTF export, and offline HTML with bound rendering evidence.",
     ),
     SubmitLiveCase(
@@ -141,6 +279,16 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         runtime=True,
+        plan_only=True,
+        plan_only_justification=(
+            "The required assembly, reconstruction, and Isaac images lack a common "
+            "current workload qualification, so this case may render but not submit."
+        ),
+        rotation_skip=True,
+        skip_reason=(
+            "Requires qualified immutable assembly, reconstruction, and Isaac "
+            "operator images for the current workflow."
+        ),
         notes="Full public RGB-D sample download, measured scene, 4,000-case native training/evaluation, and HTML evidence.",
     ),
     SubmitLiveCase(
@@ -148,6 +296,16 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         runtime=True,
+        plan_only=True,
+        plan_only_justification=(
+            "The required navigation and reconstruction images lack current native "
+            "workload qualification, so this case may render but not submit."
+        ),
+        rotation_skip=True,
+        skip_reason=(
+            "Requires qualified immutable navigation and reconstruction operator "
+            "images for the current workflow."
+        ),
         notes="Public baseline training and office/warehouse replay; disjoint development/final evaluation and measured HTML evidence.",
     ),
     SubmitLiveCase(
@@ -176,6 +334,16 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         runtime=True,
+        plan_only=True,
+        plan_only_justification=(
+            "The required Isaac operator image has not completed current native "
+            "warehouse capture qualification, so this case may render but not submit."
+        ),
+        rotation_skip=True,
+        skip_reason=(
+            "Requires a qualified immutable Isaac operator image and current native "
+            "warehouse capture acceptance."
+        ),
         notes="Public runtime-fetched warehouse with full USD/MDL dependencies; four 1280x720 RGB-D streams and independently verified fused clouds.",
     ),
     SubmitLiveCase(
@@ -238,12 +406,34 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Pinned upstream Lyra reconstruction, real Gaussian render and retained depth/camera predictions.",
     ),
     SubmitLiveCase(
+        "gaussian-splatting-reference.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        plan_only=True,
+        plan_only_justification=(
+            "Reference workflow has an explicit placeholder runtime image; an "
+            "operator must supply a qualified immutable COLMAP/gsplat environment."
+        ),
+        rotation_skip=True,
+        skip_reason="Requires calibrated private images, intrinsics and a qualified operator CUDA runtime.",
+        notes="Real native COLMAP and gsplat commands; no GPU execution or quality claim.",
+    ),
+    SubmitLiveCase(
         "lyra-scene-actions.yaml",
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         runtime=True,
+        plan_only=True,
+        plan_only_justification=(
+            "The required Isaac operator image lacks a current qualified immutable "
+            "candidate, so this workflow may render but cannot submit."
+        ),
         rotation_skip=True,
-        skip_reason="Requires matching Lyra reconstruction, metric geometry and an operator-calibrated robot mounting bundle.",
+        skip_reason=(
+            "Requires a qualified immutable Isaac operator image, matching Lyra "
+            "reconstruction, metric geometry, and a calibrated robot mounting bundle."
+        ),
         notes="Native RTX manipulation in the imported collision scene with a scene-matched offline HTML review.",
     ),
     SubmitLiveCase(
@@ -251,6 +441,16 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         runtime=True,
+        plan_only=True,
+        plan_only_justification=(
+            "The required Isaac operator image has not completed current native "
+            "physical augmentation qualification, so this case may render but not submit."
+        ),
+        rotation_skip=True,
+        skip_reason=(
+            "Requires a qualified immutable Isaac operator image and current native "
+            "physical augmentation acceptance."
+        ),
         notes="Native RTX Franka physical variants, regenerated IK actions, verified transitions, and LeRobot/Rerun demonstrations.",
     ),
     SubmitLiveCase(
@@ -263,6 +463,16 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
         runtime=True,
         requires_token_factory=True,
+        plan_only=True,
+        plan_only_justification=(
+            "The quarantined Isaac default requires an independently qualified immutable "
+            "operator image and current native RTX acceptance before live submission."
+        ),
+        rotation_skip=True,
+        skip_reason=(
+            "The Isaac Lab default is quarantined; requires an independently qualified "
+            "operator image and native RTX acceptance."
+        ),
         notes="Real Franka PPO with USD parts, paired physics tests, blinded Token Factory audit, and LeRobot/RRD capture.",
     ),
     SubmitLiveCase(
@@ -315,6 +525,27 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         plan_only=True,
         plan_only_justification="requires operator-authorized runtime model downloads and capability-specific input preparation",
         notes="Uses a qualified public GHCR image; exact-digest GPU evidence is recorded in the OSS solution catalog.",
+    ),
+    SubmitLiveCase(
+        "byof-embodiedgen.yaml",
+        "gpu",
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "NEBIUS_TOKEN_FACTORY_KEY",
+        ),
+        requires_token_factory=True,
+        plan_only=True,
+        plan_only_justification=(
+            "The automated matrix intentionally does not replay the qualified private "
+            "GPU run; each operator submission requires its own private image, "
+            "credential, input/output, and fresh target preflight."
+        ),
+        notes=(
+            "One exact private image completed TRELLIS generation, EmbodiedGen "
+            "URDF/MJCF export, and PyBullet settling on RTX PRO 6000; no public "
+            "image or target-wide readiness is implied."
+        ),
     ),
     SubmitLiveCase(
         "cosmos3-policy-model-factory.yaml",
@@ -370,6 +601,16 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         image_tool="curobo",
         notes="Complete MotionBenchMaker and MPiNets cases, kinematic and 3 kg dynamics modes, verified journal and RRD.",
+    ),
+    SubmitLiveCase(
+        "seedvr2-video-restoration.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        image_tool="seedvr2",
+        notes=(
+            "Pinned official SeedVR2-3B restoration on one H100, followed by "
+            "independent S3 readback verification and matched review media."
+        ),
     ),
     SubmitLiveCase(
         "open3d-registration.yaml",
@@ -1103,6 +1344,7 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "NGC_API_KEY"),
         image_overrides=(
             ("workbench.nurec.convert_colmap", "ncore"),
+            ("workbench.nurec.audit_colmap", "ncore"),
             ("workbench.nurec.visualize", "rerun-viewer"),
         ),
         notes=(
@@ -1111,6 +1353,23 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "existing separately licensed NRE full-default recipe on RTX PRO "
             "6000, render, Rerun and finalize stages. Select the development "
             "NCore digest with NPA_E2E_IMAGE_OVERRIDE_NCORE. Not yet live validated."
+        ),
+    ),
+    SubmitLiveCase(
+        "nurec-reconstruct-render.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "NGC_API_KEY"),
+        image_overrides=(("workbench.nurec.visualize", "rerun-viewer"),),
+        rotation_skip=True,
+        skip_reason=(
+            "Requires an independently audited NCore sequence from the separate "
+            "local immutable-image conversion before this downstream submit."
+        ),
+        notes=(
+            "Qualification downstream route: native NRE reconstruction and novel "
+            "views on RTX PRO 6000, followed by factual Rerun and finalize stages. "
+            "Uses the supplied audited ncore_sequence_uri; it does not pull or "
+            "execute the candidate NCore converter. No live acceptance implied."
         ),
     ),
     SubmitLiveCase(
@@ -1161,10 +1420,16 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         runtime=True,
+        plan_only=True,
+        plan_only_justification=(
+            "The required Isaac operator image lacks a current qualified immutable "
+            "candidate, so this workflow may render but cannot submit."
+        ),
         rotation_skip=True,
         skip_reason=(
-            "Requires a complete hash-bound calibrated metric RGB-D capture with "
-            "measured poses and held-out depth frames; use the scan reference runbook."
+            "Requires a qualified immutable Isaac operator image plus a complete "
+            "hash-bound calibrated metric RGB-D capture with measured poses and "
+            "held-out depth frames; use the scan reference runbook."
         ),
         notes=(
             "Real Open3D TSDF reconstruction and held-out geometry qualification on "
@@ -1177,11 +1442,17 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         runtime=True,
+        plan_only=True,
+        plan_only_justification=(
+            "The required Isaac operator image lacks a current qualified immutable "
+            "candidate, so this workflow may render but cannot submit."
+        ),
         rotation_skip=True,
         skip_reason=(
-            "Requires operator-supplied reconstructed visual USD, static collision "
-            "mesh, measured coordinate transforms, capture lineage, and ray probes. "
-            "Use the dedicated opt-in scene handoff live test with these inputs."
+            "Requires a qualified immutable Isaac operator image plus an "
+            "operator-supplied reconstructed visual USD, static collision mesh, "
+            "measured coordinate transforms, capture lineage, and ray probes. Use "
+            "the dedicated opt-in scene handoff live test with these inputs."
         ),
         notes=(
             "Real USD scene assembly and portable packaging on CPU, then native "
@@ -1615,6 +1886,8 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "robocasa-data-policy.yaml",
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "ROBOCASA_TOKEN"),
+        plan_only=True,
+        plan_only_justification="the workflow requires a separately deployed RoboCasa service plus its accepted exact source SHA and manifest digest; the generic rotation cannot safely synthesize either identity",
         notes="Production PandaOmron RoboCasa data->policy pipeline: multi-task trajectory export, LeRobotDataset materialization, real ACT training, disjoint RoboCasa exact-checkpoint evaluation, insights lineage.",
     ),
     SubmitLiveCase(

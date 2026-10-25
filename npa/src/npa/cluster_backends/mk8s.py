@@ -196,6 +196,12 @@ class MK8sBackend:
             "provider_mutation": False,
         }
         if request.provider_preflight:
+            if (
+                request.project
+                and request.project_id
+                and request.project.project_id != request.project_id
+            ):
+                raise ValueError("mk8s preflight project identities disagree")
             if not (
                 request.nebius_bin
                 and request.tenant_id
@@ -235,6 +241,8 @@ class MK8sBackend:
                 tenant_id=request.tenant_id,
                 region=request.region,
                 clusters=[desired],
+                project_id=request.project_id
+                or (request.project.project_id if request.project else ""),
                 env=request.provider_env,
                 profile=request.profile,
                 run_capture=run_capture,

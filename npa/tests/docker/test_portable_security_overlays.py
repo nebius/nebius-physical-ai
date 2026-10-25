@@ -33,7 +33,15 @@ def test_portable_overlay_hashes_and_application_order(image: str) -> None:
     overlay = docker.index("--no-deps --require-hashes", sync)
     check = docker.index('"pip","check"' if image == "openpi" else "pip check", overlay)
     assert sync < overlay < check
-    assert "pillow==12.3.0" in lock
+    if image == "cosmos3-ray-serve":
+        for requirement in (
+            "aiohttp==3.14.4",
+            "certifi==2026.10.19",
+            "opentelemetry-api==1.45.1",
+        ):
+            assert requirement in lock
+    expected_pillow = "13.0.0" if image == "openpi" else "12.3.0"
+    assert f"pillow=={expected_pillow}" in lock
     assert "setuptools==84.0.0" in lock
 
 
@@ -57,6 +65,7 @@ def test_hardened_nltk_source_install_contract() -> None:
         "cosmos3-ray-serve": (
             ROOT / "cosmos3-ray-serve" / "security-upgrades-requirements.in"
         ),
+        "cosmos2-transfer": ROOT / "cosmos2-transfer" / "security-overrides.txt",
     }
     for image, manifest in affected.items():
         requirements = manifest.read_text()
@@ -68,6 +77,7 @@ def test_hardened_nltk_source_install_contract() -> None:
         assert "/opt/npa/verify_hardened_nltk.py" in docker
 
     nano_requirements = affected["cosmos3-nano-video"].read_text()
+    assert re.search(r"^aiohttp==3\.14\.4$", nano_requirements, re.M)
     for dependency in ("click", "defusedxml", "joblib", "regex", "tqdm"):
         assert re.search(rf"^{dependency}==", nano_requirements, re.M)
 
@@ -85,7 +95,7 @@ def test_transfer_overlay_retains_exact_verified_wheel_urls() -> None:
         for line in requirements
     )
     assert "pillow-12.3.0" in text
-    assert "gitpython-3.1.62" in text
+    assert "gitpython-3.2.1" in text
     assert "hydra_core-1.3.7" in text
     assert "urllib3-2.8.0" in text
     assert "msal-1.38.0" in text
