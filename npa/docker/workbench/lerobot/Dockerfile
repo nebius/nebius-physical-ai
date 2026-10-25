@@ -120,6 +120,8 @@ RUN python3.12 -m venv /opt/lerobot/venv \
     && test ! -e /opt/lerobot/venv/lib/python3.12/site-packages/cmake/data/share/cmake-4.1/Templates/Windows/Windows_TemporaryKey.pfx \
     && test ! -L /opt/lerobot/venv/lib/python3.12/site-packages/cmake/data/share/cmake-4.1/Templates/Windows/Windows_TemporaryKey.pfx \
     && test -z "$(find /opt/lerobot/venv \( -iname '*.p12' -o -iname '*.pfx' \) -print -quit)" \
+    && /opt/lerobot/venv/bin/python -c \
+         "from kubernetes import client, config; assert client and config" \
     && /opt/lerobot/venv/bin/pip check \
     && find /opt/lerobot/venv -type f \
          -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
@@ -216,7 +218,9 @@ USER ubuntu
 # Exercise the final hardened 0.5.1 integration and declared server interpreter.
 # The separately qualified 0.6.0 recipe retains its existing acceptance path.
 RUN if [ "${LEROBOT_VERSION}" = "0.5.1" ]; then \
-      /opt/lerobot/venv/bin/python /opt/lerobot/smoke-native-cpu.py; \
+      /opt/lerobot/venv/bin/python -c \
+        "from kubernetes import client, config; assert client and config" \
+      && /opt/lerobot/venv/bin/python /opt/lerobot/smoke-native-cpu.py; \
     fi
 
 EXPOSE 8080

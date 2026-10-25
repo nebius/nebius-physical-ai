@@ -153,6 +153,27 @@ def test_060_image_build_and_smoke_cover_real_diffusion_construction() -> None:
     assert "lerobot[training,evaluation,pusht,libero,diffusion,smolvla]" in cloud_init
 
 
+def test_lerobot_images_hash_lock_service_lifecycle_dependencies() -> None:
+    root = Path(__file__).resolve().parents[2]
+    dockerfile = (root / "npa/docker/workbench/lerobot/Dockerfile").read_text(
+        encoding="utf-8"
+    )
+    required = (
+        "durationpy==0.11",
+        "kubernetes==36.0.3",
+        "oauthlib==4.0.0",
+        "requests-oauthlib==2.0.0",
+        "websocket-client==1.9.2",
+    )
+    for name in ("requirements-051.lock", "requirements-060.lock"):
+        lock = (root / "npa/docker/workbench/lerobot" / name).read_text(
+            encoding="utf-8"
+        )
+        for dependency in required:
+            assert dependency in lock
+    assert dockerfile.count("from kubernetes import client, config") == 2
+
+
 def test_unsupported_version_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("NPA_LEROBOT_VERSION", raising=False)
     with pytest.raises(LeRobotVersionError, match="Unsupported"):
