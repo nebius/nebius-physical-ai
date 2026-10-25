@@ -42,7 +42,7 @@ def test_portable_overlay_hashes_and_application_order(image: str) -> None:
             assert requirement in lock
     expected_pillow = "12.3.0" if image == "cosmos3-ray-serve" else "13.0.0"
     assert f"pillow=={expected_pillow}" in lock
-    assert "setuptools==84.0.0" in lock
+    assert "setuptools==84.2.1" in lock
 
 
 def test_hardened_nltk_source_install_contract() -> None:

@@ -19,7 +19,7 @@ from lerobot.policies.act.modeling_act import ACTPolicy
 EXPECTED_REQUIRES = {
     "gymnasium": "==0.29.1",
     "opencv-python": "<4.14.0,>=4.9.0",
-    "setuptools": "<84.0.0,>=83.0.0",
+    "setuptools": "<85.0.0,>=84.1.0",
     "torch": "<2.14.0,>=2.13.0",
     "torchvision": "<0.29.0,>=0.28.0",
 }
@@ -61,7 +61,7 @@ def _batch(*, state_width: int = 16) -> dict[str, torch.Tensor]:
 
 def _validate_metadata() -> None:
     """Require the derivative's declared runtime closure."""
-    assert version("lerobot") == "0.6.1+npa2"
+    assert version("lerobot") == "0.6.1+npa3"
     requirements = [
         Requirement(raw) for raw in (metadata("lerobot").get_all("Requires-Dist") or [])
     ]

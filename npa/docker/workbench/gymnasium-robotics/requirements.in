@@ -16,6 +16,6 @@ packaging==26.3
 pettingzoo==1.27.0
 pillow==13.0.0
 PyOpenGL==3.1.10
-setuptools==84.0.0
+setuptools==84.2.1
 typing-extensions==4.16.0
 zipp==4.1.0

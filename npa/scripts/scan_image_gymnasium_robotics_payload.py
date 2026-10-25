@@ -234,10 +234,10 @@ EXPECTED_ORDERED_LAYER_DIFF_IDS = (
 # above are scanner inputs, not an accepted image digest or current-head proof;
 # a local status edit cannot turn the scanner green.
 EXPECTED_NEUTRAL_FILE_SHA256: dict[str, str | None] = {
-    "source-lock.json": "45926ab66b85fef27ef3786a493a7bfeb25247d7db82e2b26742408b0cbc4682",
+    "source-lock.json": "a3ac1ac7cb5b420144a65166656cb5dc75aaf8668cad2f76edd95bdccee1a7e0",
     "apt-runtime.lock.json": "edcfbf171c6d13b2bfddabc596c0adc29bda8bebd696ec497be6265d863c28b2",
     "corresponding-source.lock.json": "3c238567f6acebd2a393037a05803b2dee6be350808f81bfdcaca47c1cad957f",
-    "requirements.lock": "c5bfee4e19992c74a14ee3ee099904acae059bff99528d649b5c82a9390b1546",
+    "requirements.lock": "834e1d6f95eeaeb4f7e201a01033a928d5eee1387b31950223ead31b3172bf80",
     "runtime-bootstrap.py": "dcefd3ea34c3ffb6be392a8f07329ab47608f7f6cf5bef083e250c377b4fd484",
     "capability_smoke.py": "f91683fa5955882e29e2ac8e6ba9f4d92f2a25eb71621275fa3c45b26828d6d6",
     "verify_image.py": "dfcd2ed7a46333c0df8d9398bdd9956f604b9af8bf6fe48379d42742e5241df4",  # gitleaks:allow; public file-content SHA-256
