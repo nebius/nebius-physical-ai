@@ -1252,15 +1252,42 @@ def _effectiveness_report(role: str, successes: dict[str, set[int]]) -> dict:
     return pi05_closed_loop._result(args, episodes, artifacts, protocol, receipt)
 
 
-def test_smolvla_uses_first_action_from_current_fresh_chunk() -> None:
-    actions = np.arange(8, dtype=np.float64).reshape(1, 8)
-    action_receipt = pi05_closed_loop._action_receipt(actions)
-    target, selection = pi05_closed_loop._current_action_target(
-        actions, {"decision": 4, "action_receipt": action_receipt}
+def test_smolvla_temporal_ensemble_retains_future_chunk_actions() -> None:
+    horizon = 4
+    context = {
+        "policy_backend": "lerobot_smolvla",
+        "record": {"model_horizon": horizon},
+    }
+    first = np.arange(horizon * 8, dtype=np.float64).reshape(horizon, 8)
+    first_receipt = pi05_closed_loop._action_receipt(first)
+    target, selection = pi05_closed_loop._temporally_ensembled_target(
+        context, first, {"decision": 0, "action_receipt": first_receipt}
     )
     assert target.tolist() == list(range(8))
-    assert selection["method"] == "native_fresh_chunk_first_action"
+    assert selection["schema"] == "npa.sim2real.smolvla.temporal_action_ensemble.v1"
     assert selection["contributor_count"] == 1
+
+    second = np.full((horizon, 8), 40.0, dtype=np.float64)
+    second_receipt = pi05_closed_loop._action_receipt(second)
+    target, selection = pi05_closed_loop._temporally_ensembled_target(
+        context, second, {"decision": 1, "action_receipt": second_receipt}
+    )
+    assert target.tolist() == ((first[1] + second[0]) / 2.0).tolist()
+    assert selection["method"] == "uniform_mean"
+    assert selection["model_horizon"] == horizon
+    assert selection["contributor_count"] == 2
+    assert selection["contributors"] == [
+        {
+            "origin_decision": 0,
+            "action_index": 1,
+            "chunk_sha256": first_receipt["sha256"],
+        },
+        {
+            "origin_decision": 1,
+            "action_index": 0,
+            "chunk_sha256": second_receipt["sha256"],
+        },
+    ]
 
 
 def _clock_native(control_steps: int) -> types.SimpleNamespace:

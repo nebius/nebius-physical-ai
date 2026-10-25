@@ -158,6 +158,20 @@ def _action_selection_protocol() -> dict[str, Any]:
     }
 
 
+def _smolvla_action_selection_protocol(horizon: int) -> dict[str, Any]:
+    """Declare causal temporal ensembling for fresh native SmolVLA chunks."""
+
+    return {
+        "schema": "npa.sim2real.smolvla.temporal_action_ensemble.v1",
+        "method": "uniform_mean",
+        "model_horizon": horizon,
+        "fresh_observation_per_control": True,
+        "causality": (
+            "current_and_past_predictions_with_explicit_paired_sampler_noise"
+        ),
+    }
+
+
 def _vector(value: Any, size: int, label: str) -> list[float]:
     import numpy as np
 
@@ -1054,10 +1068,7 @@ def _write_failed_camera_evidence(work: Path, episodes: list[dict]) -> list[dict
 
 def _execute_prefix(context: dict[str, Any], actions: Any, query: dict) -> bool:
     bridge = context["bridge"]
-    if context.get("policy_backend") == "lerobot_smolvla":
-        target, selection = _current_action_target(actions, query)
-    else:
-        target, selection = _temporally_ensembled_target(context, actions, query)
+    target, selection = _temporally_ensembled_target(context, actions, query)
     query["action_selection"] = selection
     for index, target in enumerate([target]):
         query["attempted_prefix"] = index + 1
@@ -1093,41 +1104,6 @@ def _execute_prefix(context: dict[str, Any], actions: Any, query: dict) -> bool:
     return False
 
 
-def _current_action_target(
-    actions: Any, query: dict[str, Any]
-) -> tuple[Any, dict[str, Any]]:
-    """Apply the first action generated from the current fresh observation."""
-
-    import numpy as np
-
-    value = np.ascontiguousarray(actions, dtype=np.float64)
-    if value.shape != (1, 8) or not np.isfinite(value).all():
-        raise RuntimeError("SmolVLA must return one finite current 8D action")
-    target = value[0].copy()
-    return target, {
-        "schema": "npa.sim2real.current_native_action.v1",
-        "method": "native_fresh_chunk_first_action",
-        "fresh_observation_per_control": True,
-        "causality": "current_observation_and_explicit_paired_sampler_noise",
-        "decision": int(query["decision"]),
-        "contributor_count": 1,
-        "contributors": [
-            {
-                "origin_decision": int(query["decision"]),
-                "action_index": 0,
-                "chunk_sha256": query["action_receipt"]["sha256"],
-            }
-        ],
-        "weight_per_contributor": 1.0,
-        "applied_action_sha256": hashlib.sha256(target.tobytes()).hexdigest(),
-        "applied_action_dtype": str(target.dtype),
-        "applied_action_shape": list(target.shape),
-        "applied_action": target.tolist(),
-        "applied_gripper_score": float(target[7]),
-        "applied_gripper_command": int(float(target[7]) > 0.5),
-    }
-
-
 def _temporally_ensembled_target(
     context: dict[str, Any], actions: Any, query: dict[str, Any]
 ) -> tuple[Any, dict[str, Any]]:
@@ -1136,9 +1112,10 @@ def _temporally_ensembled_target(
     import numpy as np
 
     decision = int(query["decision"])
+    horizon = int(context.get("record", {}).get("model_horizon", ACTION_HORIZON))
     value = np.ascontiguousarray(actions)
-    if value.shape != (ACTION_HORIZON, 8) or not np.isfinite(value).all():
-        raise RuntimeError("policy action chunk is not finite 15x8 data")
+    if value.shape != (horizon, 8) or not np.isfinite(value).all():
+        raise RuntimeError("policy action chunk does not match its finite horizon")
     history = context.setdefault("action_chunks", [])
     if decision == 0:
         history.clear()
@@ -1152,9 +1129,7 @@ def _temporally_ensembled_target(
         }
     )
     history[:] = [
-        row
-        for row in history
-        if 0 <= decision - int(row["origin_decision"]) < ACTION_HORIZON
+        row for row in history if 0 <= decision - int(row["origin_decision"]) < horizon
     ]
     contributors, candidates = [], []
     for row in history:
@@ -1173,8 +1148,13 @@ def _temporally_ensembled_target(
     target = np.ascontiguousarray(np.mean(np.stack(candidates), axis=0))
     if target.shape != (8,) or not np.isfinite(target).all():
         raise RuntimeError("temporal action ensemble produced an invalid target")
+    protocol = (
+        _smolvla_action_selection_protocol(horizon)
+        if context.get("policy_backend") == "lerobot_smolvla"
+        else _action_selection_protocol()
+    )
     receipt = {
-        **_action_selection_protocol(),
+        **protocol,
         "decision": decision,
         "contributor_count": len(contributors),
         "contributors": contributors,
@@ -1324,12 +1304,9 @@ def _episode_context(
     backend = getattr(client, "metadata", {}).get("backend", "openpi_pi05")
     if backend == "lerobot_smolvla":
         record["model_horizon"] = policy_profile.action.horizon
-        record["action_selection_protocol"] = {
-            "schema": "npa.sim2real.current_native_action.v1",
-            "method": "native_fresh_chunk_first_action",
-            "fresh_observation_per_control": True,
-            "causality": "current_observation_and_explicit_paired_sampler_noise",
-        }
+        record["action_selection_protocol"] = _smolvla_action_selection_protocol(
+            policy_profile.action.horizon
+        )
     return {
         "env": env,
         "native": native,
