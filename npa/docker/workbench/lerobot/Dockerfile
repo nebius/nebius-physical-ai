@@ -3,6 +3,7 @@
 FROM nvidia/cuda:12.4.1-devel-ubuntu22.04@sha256:da6791294b0b04d7e65d87b7451d6f2390b4d36225ab0701ee7dfec5769829f5
 
 ARG LEROBOT_VERSION=0.5.1
+ARG NPA_SOURCE_SHA
 
 LABEL npa.tool="lerobot" \
       npa.version="${LEROBOT_VERSION}"
@@ -150,6 +151,7 @@ USER ubuntu
 
 ENV PATH=/opt/lerobot/venv/bin:$PATH \
     PYTHONPATH=/opt/npa/src \
+    NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
     NPA_SKIP_EAGER_IMPORTS=1
 
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml

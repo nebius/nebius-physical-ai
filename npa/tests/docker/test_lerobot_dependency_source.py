@@ -116,6 +116,25 @@ def test_both_versions_correct_the_reviewed_source_in_the_original_install_layer
     assert "install -o root -g root -m 0644" in text
 
 
+def test_runtime_binds_the_exact_npa_source_revision():
+    """The official build argument must become the baked runtime attestation."""
+
+    instructions = _instructions(DOCKERFILE.read_text())
+    source_arguments = [
+        index
+        for index, (kind, body) in enumerate(instructions)
+        if kind == "ARG" and body == "NPA_SOURCE_SHA"
+    ]
+    attestations = [
+        index
+        for index, (kind, body) in enumerate(instructions)
+        if kind == "ENV" and "NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA}" in body
+    ]
+    assert len(source_arguments) == 1
+    assert len(attestations) == 1
+    assert source_arguments[0] < attestations[0]
+
+
 def test_root_owned_dependency_audit_precedes_later_source_copies():
     """Catch backend output outside the ubuntu-owned virtualenv before later COPYs."""
 
