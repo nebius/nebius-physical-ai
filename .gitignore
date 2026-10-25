@@ -64,6 +64,7 @@ venv/
 # depth.
 /.venv
 /npa/.venv
+/npa/.venv-local/
 .coverage
 .coverage.*
 htmlcov/

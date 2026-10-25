@@ -256,7 +256,8 @@ Build scripts should follow the `--registry` and `--push` shape used by:
 - `npa/docker/workbench/groot/build.sh`
 - `npa/docker/workbench/base/cuda13-blackwell/build.sh`
 
-Keep image entrypoints explicit. LeRobot runs `python -m npa.server.app`;
+Keep image entrypoints explicit. LeRobot runs
+`/opt/lerobot/venv/bin/python -m npa.server.app`;
 FiftyOne intentionally uses `/bin/bash` because the CLI launches the app command
 from `npa/src/npa/cli/fiftyone/__init__.py`.
 ## Runtime Modes
@@ -374,7 +375,8 @@ The supported, customer-facing workflow catalog is the declarative
 `npa.workflow` spec set under `workflows/`. Promoted principal pipelines live in
 `workflows/main/`; see the [main index](workflows/main/README.md) for their guides
 and qualification scope. Author new reference workflows in `workflows/testing/`
-and partner integrations in `workflows/partners/<partner>/`. Keep the
+and partner integrations in `workflows/partners/<partner>/`. Author first-party
+Cosmos Data Factory workflows in `workflows/cosmos-data-factory/`. Keep the
 [catalog](workflows/README.md) and adjacent workflow indexes in sync.
 Do not add raw SkyPilot task templates to
 the package as a workflow catalog; the old catalog path is guardrail-retired.

@@ -26,6 +26,7 @@ from npa.clients.project_credential_store import ProjectCredentialStoreError
 from npa.clients.storage import StorageClient
 from npa.guardrails.skypilot import inspect_image_exists
 from npa.lifecycle_intent import OperationIntent, intent_boundary, json_stdout_contract
+from npa.verification import sanitize_reason
 from npa.workflows.credential_preflight import (
     DEFAULT_CREDENTIAL_CHECKS,
     SUPPORTED_CREDENTIAL_CHECKS,
@@ -93,6 +94,13 @@ def _image_inspector(image: str) -> bool | None:
         return None
     except Exception:  # noqa: BLE001 - any inspection error means "not verified pullable"
         return False
+
+
+def _project_storage_failure_details(error: Exception) -> tuple[str, ...]:
+    """Return a concise, redacted cause for a selected-project storage failure."""
+
+    detail = sanitize_reason(error, limit=240)
+    return (detail,) if detail else ()
 
 
 def _kube_runner_factory(context: str, kubeconfig: str):
@@ -658,11 +666,12 @@ def sim2real_command(
                 overrides["s3_bucket"] = credentials.s3_bucket.removeprefix("s3://")
             if not s3_endpoint.strip():
                 overrides["s3_endpoint"] = credentials.s3_endpoint
-        except (ConfigError, ProjectCredentialStoreError):
+        except (ConfigError, ProjectCredentialStoreError) as exc:
             project_storage_failure = CheckResult(
                 name="s3",
                 status=FAIL,
                 summary="Configured project storage could not be resolved.",
+                details=_project_storage_failure_details(exc),
                 remedy=(
                     "Save a complete isolated storage record for --project, then "
                     "rerun the S3 health check."

@@ -71,6 +71,7 @@ RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" "${ENVG
     && python /usr/local/lib/npa/remove-scikit-image-recipe.py \
       --site-packages "$(python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \
       --capability envgen \
+      --allow-corrected \
       > /usr/share/doc/npa-envgen/dependency-source-correction.json \
     && find /opt/npa/venv -type f \
       -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \

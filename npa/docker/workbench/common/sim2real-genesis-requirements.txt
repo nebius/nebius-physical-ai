@@ -8,3 +8,4 @@ tomli==2.4.1
 # Replace the parent's GitPython 3.1.57, including CVE-2026-114145,
 # before EnvGen's sanitized filesystem becomes the published image.
 GitPython==3.2.1
+pillow==13.0.0

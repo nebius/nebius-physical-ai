@@ -942,7 +942,6 @@ def _write_fingerprint_probe(tmp_path: Path) -> None:
     interpreter.write_text(
         "#!/bin/bash\nset -eu\n"
         '[[ "$*" == "npa/scripts/ci_requirements.py --check" ]]\n'
-        'if [[ "$PYTHON_VERSION" == 3.10 ]]; then test -e tomli-installed; fi\n'
         'echo fingerprint >> "$BOOTSTRAP_LOG"\nexit "$FINGERPRINT_EXIT"\n'
     )
     interpreter.chmod(0o700)
@@ -1000,7 +999,7 @@ def test_fresh_ci_environment_checks_fingerprint_before_full_install(
         AssertionError: Setup omits the parser or installs with stale pins.
     """
     result, commands = _run_fresh_install_step(tmp_path, version, fingerprint_exit)
-    expected = ["bootstrap", "fingerprint"] if version == "3.10" else ["fingerprint"]
+    expected = ["fingerprint"]
     if fingerprint_exit == 0:
         expected.append("full-install")
     assert result.returncode == fingerprint_exit, result.stderr

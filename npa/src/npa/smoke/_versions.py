@@ -10,6 +10,7 @@ when available purely as a fast path. Image release tags live in
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -72,6 +73,37 @@ def _package_versions(pyproject: Path) -> dict[str, str]:
     return _parse_table(text, "package-versions")
 
 
+def _secure_lerobot_integration_version() -> str | None:
+    """Return the reviewed local integration version, if this image has one."""
+
+    receipt_path = Path("/usr/share/doc/npa-lerobot/source-integration.json")
+    try:
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    version = receipt.get("integration_version")
+    if version in {"0.5.1+npa.secure2", "0.6.0+npa.secure2"}:
+        return str(version)
+    return None
+
+
+def _has_secure_lerobot_integration() -> bool:
+    """Whether this image contains the reviewed 0.5.1 integration."""
+
+    return _secure_lerobot_integration_version() == "0.5.1+npa.secure2"
+
+
+def _integrated_lerobot_version(version: str) -> str | None:
+    """Return a matching reviewed integration without crossing version lanes."""
+
+    if version == "0.5.1" and _has_secure_lerobot_integration():
+        return "0.5.1+npa.secure2"
+    secure_version = _secure_lerobot_integration_version()
+    if secure_version and secure_version.split("+", 1)[0] == version:
+        return secure_version
+    return None
+
+
 def supported_tool_version(tool: str, start_file: str) -> str:
     pyproject = _find_pyproject(start_file)
     package_versions = _package_versions(pyproject)
@@ -98,8 +130,9 @@ def expected_lerobot_version(start_file: str) -> str:
 
     override = os.environ.get("NPA_LEROBOT_VERSION", "").strip()
     if override:
-        return override
-    return supported_tool_version("lerobot", start_file)
+        return _integrated_lerobot_version(override) or override
+    version = supported_tool_version("lerobot", start_file)
+    return _integrated_lerobot_version(version) or version
 
 
 def train_env_eval_arg_for_version(version: str, value: int = 1_000_000) -> str:

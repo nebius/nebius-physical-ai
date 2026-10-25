@@ -11,8 +11,8 @@ from typing import Optional
 
 import typer
 
-from npa.clients.config import ConfigError, list_projects, resolve_project_storage
 from npa.agent_backend.publication_reader import PublicationConflict
+from npa.clients.config import ConfigError, list_projects, resolve_project_storage
 from npa.clients.credentials import load_credentials
 from npa.clients.project_credential_store import ProjectCredentialStoreError
 from npa.clients.storage import StorageClient
@@ -1054,6 +1054,7 @@ def rerun_regen_command(
         return
     typer.echo(f"local_rrd_path: {payload['local_rrd_path']}")
     typer.echo(f"heldout_frame_count: {payload['heldout_frame_count']}")
+    typer.echo(f"heldout_env_count: {payload['heldout_env_count']}")
     if payload.get("upload_uri"):
         typer.echo(f"upload_uri: {payload['upload_uri']}")
     if payload.get("local_mcap_path"):

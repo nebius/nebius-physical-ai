@@ -84,6 +84,15 @@ jobs:
             npa/tests/guardrails/test_workbench_image_k8s_prereqs.py \
             -q
 
+      - name: Prove Python 3.12 and Pillow 13 on Jammy
+        if: steps.scope.outputs.deep == 'true'
+        run: |
+          set -euo pipefail
+          image_id="$(mktemp "$RUNNER_TEMP/python-runtime-probe.XXXXXXXX")"
+          docker build --iidfile "$image_id" \
+            --file npa/tests/docker/fixtures/python-runtime.Dockerfile npa
+          docker run --rm "$(cat "$image_id")"
+
       - name: Verify governed workflow defaults against anonymous registry bytes
         if: steps.scope.outputs.deep == 'true'
         env:
