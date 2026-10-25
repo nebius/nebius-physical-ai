@@ -24,6 +24,7 @@ def _module():
 def test_metadata_rewrite_is_the_reviewed_secure_dependency_closure():
     module = _module()
     expected = {
+        "Pillow<13.0.0,>=10.0.0": "Pillow<14.0.0,>=13.0.0",
         "torch<2.12.0,>=2.7": "torch<2.14.0,>=2.13.0",
         "torchvision<0.27.0,>=0.22.0": "torchvision<0.29.0,>=0.28.0",
         "torchcodec<0.12.0,>=0.3.0": "torchcodec<0.17.0,>=0.16.0",
@@ -37,6 +38,7 @@ def test_metadata_rewrite_is_the_reviewed_secure_dependency_closure():
     }
     assert module.DEPENDENCIES == expected
     markers = {
+        "Pillow<13.0.0,>=10.0.0": "",
         "torch<2.12.0,>=2.7": "",
         "torchvision<0.27.0,>=0.22.0": "",
         "torchcodec<0.12.0,>=0.3.0": '; ((sys_platform == "linux" and (platform_machine == "x86_64" or platform_machine == "AMD64")) or (sys_platform == "darwin" and platform_machine == "arm64")) and extra == "dataset"',
@@ -53,7 +55,7 @@ def test_metadata_rewrite_is_the_reviewed_secure_dependency_closure():
         for dependency in expected
     )
     rewritten = module._metadata(upstream)
-    assert b"Version: 0.6.0+npa.secure2\n" in rewritten
+    assert b"Version: 0.6.0+npa.secure3\n" in rewritten
     for dependency, replacement in expected.items():
         assert (
             f"Requires-Dist: {replacement}{markers[dependency]}\n".encode() in rewritten

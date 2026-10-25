@@ -233,8 +233,8 @@ def test_build_dependency_closure_has_no_moving_repository_or_python_resolution(
         ),
         (
             "requirements-060.lock",
-            "lerobot-0.6.0+npa.secure2-py3-none-any.whl",
-            "ac87bf7b9b114defbd906163a41c67d77799686101123bb26e22d14d5807e5f9",
+            "lerobot-0.6.0+npa.secure3-py3-none-any.whl",
+            "a9914c99ea2353e27e5ba4514b44d884fdd6ccfed5fdc9ecbf3f2fda46b2d30a",
         ),
     ):
         lock = (RECIPE / name).read_text()

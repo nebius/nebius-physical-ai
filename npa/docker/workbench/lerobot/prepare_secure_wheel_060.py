@@ -16,7 +16,7 @@ from urllib.parse import urlsplit
 import zipfile
 
 
-VERSION = "0.6.0+npa.secure2"
+VERSION = "0.6.0+npa.secure3"
 WHEEL_URL = (
     "https://files.pythonhosted.org/packages/5d/20/"
     "9a96311c19e9d256e65584ca83c49c5782d0f204836e84ceeb420d4d493e/"
@@ -34,6 +34,7 @@ METADATA_SHA256 = "fc40aa431b6af49645091369697ab14db3dbfe91d1801bcc8aca055053194
 ORIGINAL_DIST_INFO = "lerobot-0.6.0.dist-info/"
 DIST_INFO = f"lerobot-{VERSION}.dist-info/"
 DEPENDENCIES = {
+    "Pillow<13.0.0,>=10.0.0": "Pillow<14.0.0,>=13.0.0",
     "torch<2.12.0,>=2.7": "torch<2.14.0,>=2.13.0",
     "torchvision<0.27.0,>=0.22.0": "torchvision<0.29.0,>=0.28.0",
     "torchcodec<0.12.0,>=0.3.0": "torchcodec<0.17.0,>=0.16.0",

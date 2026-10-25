@@ -82,7 +82,11 @@ def _secure_lerobot_integration_version() -> str | None:
     except (OSError, json.JSONDecodeError):
         return None
     version = receipt.get("integration_version")
-    if version in {"0.5.1+npa.secure2", "0.6.0+npa.secure2"}:
+    if version in {
+        "0.5.1+npa.secure2",
+        "0.6.0+npa.secure2",
+        "0.6.0+npa.secure3",
+    }:
         return str(version)
     return None
 

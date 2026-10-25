@@ -191,6 +191,20 @@ def test_smoke_identifies_matching_060_secure_integration(
     monkeypatch.setattr(
         _versions,
         "_secure_lerobot_integration_version",
+        lambda: "0.6.0+npa.secure3",
+    )
+    assert _versions.expected_lerobot_version(__file__) == "0.6.0+npa.secure3"
+
+
+def test_smoke_retains_prior_060_secure_integration_compatibility(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.smoke import _versions
+
+    monkeypatch.setenv("NPA_LEROBOT_VERSION", "0.6.0")
+    monkeypatch.setattr(
+        _versions,
+        "_secure_lerobot_integration_version",
         lambda: "0.6.0+npa.secure2",
     )
     assert _versions.expected_lerobot_version(__file__) == "0.6.0+npa.secure2"
