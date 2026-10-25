@@ -1,13 +1,17 @@
 # Keep the checkpoint runtime identical to the required security gate.
 torch==2.14.0
-# Reject Certifi releases affected by the current CA-bundle advisories.
-certifi>=2026.10.19
+# Reject filelock releases affected by CVE-2026-112907, CVE-2026-112913,
+# and CVE-2026-112940.
+filelock>=4.2.1
+# Reject setuptools releases affected by GHSA-xmj3-9gf7-h52w.
 # Reject the OAuthLib releases affected by CVE-2026-49264 and CVE-2026-49265.
 oauthlib>=4.0.0
 # Keep Flask's Windows safe_join dependency above CVE-2026-102598.
 werkzeug>=3.1.9
 # Exclude aiohttp resource-exhaustion releases through 3.14.3 in CI.
 aiohttp>=3.14.4
+# Reject Certifi releases affected by the current CA-bundle advisories.
+certifi>=2026.10.19
 # Exclude GitPython versions affected by CVE-2026-114145 in CI.
 gitpython>=3.2.1
 # Exclude FileLock versions affected by the current CI dependency advisories.

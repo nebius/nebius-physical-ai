@@ -59,7 +59,7 @@
   "modules/kuberay/kuberay-tests/ray-infiniband/Dockerfile": "f523fd86247322960712f8670830b63b577f748e099f13908637aeb589fa7339",
   "modules/kuberay/kuberay-tests/ray_all_reduce.py": "e279f74478856a3845a2851fd8427fe167fce6911c1b1abddda2d109774bb491",
   "modules/kuberay/kuberay-tests/ray_scale.py": "7520bc08e530325f868853590e75221e35e850f5b779cf264a398d922eefdb2c",
-  "modules/kuberay/kuberay-tests/ray_train.py": "62715ca9793b30c33391796718c896ff862f38d98c813d6a90f35553f7cc6d9b",
+  "modules/kuberay/kuberay-tests/ray_train.py": "9681b1e25efdd57b6e1641857f14a5337ad95d091703a367a57bcb01f8fe438e",
   "modules/kuberay/main.tf": "6a10fa31a15cba4cc4d6d0b8645039d2f621ca31d1fb9ee382fe59b42144e0ea",
   "modules/kuberay/variables.tf": "04ba59c0b5663f8509d4d30143ef0c3a2489f0d3cba1e05cff21196a12ed78e5",
   "modules/kuberay/versions.tf": "85f474c8ea4adb3e4531c1d5f4517c2f40e4ca11d2d7795689d70755e1eb9c84",
