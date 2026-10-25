@@ -26,6 +26,7 @@ import struct
 import subprocess
 import sys
 import tarfile
+import tempfile
 import threading
 import time
 import urllib.request
@@ -581,8 +582,22 @@ def safe_extract_zip(archive: Path, destination: Path) -> None:
                 target.mkdir(parents=True, exist_ok=True)
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)
-            with bundle.open(member) as source, target.open("xb") as output:
-                shutil.copyfileobj(source, output)
+            descriptor, temporary_name = tempfile.mkstemp(
+                dir=target.parent,
+                prefix=f".{target.name}.",
+                suffix=".part",
+            )
+            temporary = Path(temporary_name)
+            try:
+                with (
+                    os.fdopen(descriptor, "wb") as output,
+                    bundle.open(member) as source,
+                ):
+                    shutil.copyfileobj(source, output)
+                temporary.chmod(0o644)
+                temporary.replace(target)
+            finally:
+                temporary.unlink(missing_ok=True)
 
 
 def safe_extract_client(archive: Path, destination: Path) -> None:

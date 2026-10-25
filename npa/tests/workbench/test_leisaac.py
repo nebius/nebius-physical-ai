@@ -98,6 +98,47 @@ def test_safe_extract_zip_extracts_nested_files(tmp_path: Path) -> None:
     assert (destination / "scene/scene.usd").read_bytes() == b"verified scene"
 
 
+def test_safe_extract_zip_resumes_partial_extraction_without_removing_siblings(
+    tmp_path: Path,
+) -> None:
+    server = _session_server_module()
+    archive = tmp_path / "assets.zip"
+    destination = tmp_path / "assets"
+    partial = destination / "kitchen" / "mesh.bin"
+    sibling = destination / "table" / "scene.usd"
+    partial.parent.mkdir(parents=True)
+    sibling.parent.mkdir(parents=True)
+    partial.write_bytes(b"interrupted bytes")
+    sibling.write_bytes(b"preserve sibling asset")
+    with zipfile.ZipFile(archive, mode="w") as bundle:
+        bundle.writestr("kitchen/mesh.bin", b"complete mesh")
+        bundle.writestr("kitchen/scene.usd", b"complete scene")
+
+    server.safe_extract_zip(archive, destination)
+
+    assert partial.read_bytes() == b"complete mesh"
+    assert (destination / "kitchen/scene.usd").read_bytes() == b"complete scene"
+    assert sibling.read_bytes() == b"preserve sibling asset"
+    assert not list(destination.rglob("*.part"))
+
+
+def test_safe_extract_zip_rejects_existing_escaping_symlink(tmp_path: Path) -> None:
+    server = _session_server_module()
+    archive = tmp_path / "assets.zip"
+    destination = tmp_path / "assets"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    destination.mkdir()
+    (destination / "scene").symlink_to(outside, target_is_directory=True)
+    with zipfile.ZipFile(archive, mode="w") as bundle:
+        bundle.writestr("scene/scene.usd", b"must not escape")
+
+    with pytest.raises(RuntimeError, match="unsafe asset archive member"):
+        server.safe_extract_zip(archive, destination)
+
+    assert not (outside / "scene.usd").exists()
+
+
 def test_safe_extract_zip_rejects_escaping_members_before_writes(
     tmp_path: Path,
 ) -> None:
