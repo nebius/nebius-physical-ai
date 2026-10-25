@@ -10,6 +10,14 @@ and credentials in the existing NPA stores; no second credential file is needed.
 Direct [Token Factory](token-factory.md) inference uses the hosted API. Its local
 CLI/SDK calls do not require the Kubernetes setup below.
 
+For a shared Workbench installation, the operator runs
+[`npa workbench access setup`](team-access.md#deploy-and-qualify-the-service) as part
+of server setup. It creates the persistent Nebius HTTPS LoadBalancer and retains
+its address using operator infrastructure credentials. Desktop clients and
+personal Workbench keys are not provisioning dependencies. Users and agents access the
+shared API through their own Workbench identity. The local operator workflow
+below remains available independently.
+
 > **Realistic total for a first workload: 1–3 hours.** The long poles are
 > cluster provisioning, the SkyPilot venv build, and GPU image pulls —
 > all one-time costs. Repeat runs skip most of this page.
@@ -76,9 +84,12 @@ reconcile the bucket and endpoint in NPA configuration and environment overrides
 
 > **Time:** ~2 min — runs locally, no cloud wait.
 
-The following example prepares Cosmos 3 text-to-image generation. Replace the
-placeholder values with your existing project alias and bucket. Keep private
-values outside committed YAML.
+The following example inspects the Cosmos 3 text-to-image workflow graph.
+Replace the placeholder values with your existing project alias and bucket. Keep
+private values outside committed YAML. Its default image is intentionally
+quarantined, so this is not a first-submit path: validation and planning can
+inspect the contract, while image preflight and submission must refuse until an
+operator supplies an independently qualified image.
 
 ```bash
 workflow_spec=workflows/testing/cosmos3-generate.yaml
@@ -91,8 +102,10 @@ npa workbench workflow plan-spec "$workflow_spec" --var "bucket=$bucket_name"
 ```
 
 Gate: validation succeeds and the plan contains the intended tool, resources,
-and output prefix. Pass the same `--var` values to image preflight and submit.
-These commands do not launch the model or verify live capacity.
+and output prefix. These commands do not launch the model or verify live
+capacity. Before the image-preflight and submit sections below, select a
+release-ready workload from the [workload guides](guides/README.md) and replace
+`workflow_spec` with that workflow's documented path.
 
 ## Verify Kubernetes Access
 
@@ -167,7 +180,9 @@ npa workbench workflow preflight-images "$workflow_spec" \
 ```
 
 Gate: every selected image passes. This check may create and delete a temporary
-probe pod in the selected cluster. Supported NPA images pull anonymously from
+probe pod in the selected cluster. The stock Cosmos3 example above is expected
+to refuse before any probe; do not use its refusal as image acceptance. Supported
+NPA images pull anonymously from
 `ghcr.io/nebius/nebius-physical-ai`. `NPA_REGISTRY` and saved registry settings
 do not repoint those defaults. Use a complete image reference or explicit
 workflow `--registry` only for intentional custom images, with exact-host
@@ -179,8 +194,9 @@ credentials if that registry is private.
 
 Continue with the chosen workload's submission instructions:
 
-- [Cosmos 3 generation](cosmos3-generate.md#workflow): generated media and
-  `generate.json`.
+- [Cosmos 3 generation](cosmos3-generate.md#workflow): the stock workflow is
+  quarantined by default; use it only with an operator-authorized, independently
+  qualified immutable image.
 - [Compositional Sim2Real](guides/sim2real-workflow.md): the full 14-stage
   composition, including runtime cache, CPU capacity, immutable images, and resume.
 - [Isaac Lab BYOF](cookbooks/byof-isaac-lab/README.md): training checkpoint and

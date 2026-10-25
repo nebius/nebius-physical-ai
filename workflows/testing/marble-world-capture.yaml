@@ -1,0 +1,63 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: marble-world-capture
+  description: >-
+    Acquire a real Marble world, render its Gaussian splats into a camera dataset
+    on a Nebius CUDA GPU, and publish an interactive HTML evidence bundle.
+config:
+  source_overlay: true
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/marble-capture"
+  world_source: generate
+  world_model: marble-1.1
+  world_prompt: A sunlit robotics workshop with wooden workbenches, plants, open walkways and large windows.
+  frames: 120
+  width: 960
+  height: 540
+
+  world_uri: "s3://{{config.bucket}}/{{config.prefix}}/world/"
+  results_uri: "s3://{{config.bucket}}/{{config.prefix}}/results/"
+  reports_uri: "s3://{{config.bucket}}/{{config.prefix}}/report/"
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 8Gi
+  gpu:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+    cpus: 8
+    memory: 32Gi
+initial: acquire
+states:
+  acquire:
+    description: Download and hash the actual world assets with explicit provenance.
+    toolRef: workbench.marble.acquire
+    resources: cpu
+    outputs:
+      - uri: "{{config.world_uri}}world.json"
+        schema: npa.marble.world.v1
+    next: capture
+  capture:
+    description: Execute gsplat CUDA rasterization and persist RGB frames and camera matrices.
+    toolRef: workbench.marble.capture
+    resources: gpu
+    inputs:
+      - uri: "{{config.world_uri}}world.json"
+    outputs:
+      - uri: "{{config.results_uri}}result.json"
+        schema: npa.marble.result.v1
+    next: report
+  report:
+    description: Verify all output hashes and build a portable Spark HTML viewer and dataset player.
+    toolRef: workbench.marble.report
+    resources: cpu
+    inputs:
+      - uri: "{{config.results_uri}}result.json"
+    outputs:
+      - uri: "{{config.reports_uri}}index.html"
+        schema: text/html
+      - uri: "{{config.reports_uri}}result.json"
+        schema: npa.marble.result.v1
+    terminal: true

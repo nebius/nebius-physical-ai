@@ -12,6 +12,7 @@ import ast
 import builtins
 import copy
 import hashlib
+import io
 import json
 import re
 import secrets
@@ -1486,7 +1487,17 @@ def test_load_artifact_rejects_raw_uri_and_requires_exact_source_tuple(
             "source_selected",
         ]
 
-        s3 = object()
+        import io
+
+        content = b"\x00\x00\x00\x18ftypisom" + bytes(12)
+
+        class ExactSourceStore:
+            def get_object(self, *, Bucket, Key, IfMatch):
+                assert Bucket == "bucket-b" and Key == key
+                assert IfMatch == "fixture-video-etag"
+                return {"Body": io.BytesIO(content)}
+
+        s3 = ExactSourceStore()
         lease = {"begin": 0, "end": 0}
         monkeypatch.setattr(
             module,
@@ -1503,7 +1514,14 @@ def test_load_artifact_rejects_raw_uri_and_requires_exact_source_tuple(
         )
         monkeypatch.setattr(module, "_authorize_exact_run_ref_source", _authorize)
         artifact = module.Artifact(
-            "run-1", key, uri, 24, "2031-01-01T00:00:00Z", "video", False
+            "run-1",
+            key,
+            uri,
+            24,
+            "2031-01-01T00:00:00Z",
+            "video",
+            False,
+            source_etag="fixture-video-etag",
         )
         monkeypatch.setattr(
             module,
@@ -1526,7 +1544,7 @@ def test_load_artifact_rejects_raw_uri_and_requires_exact_source_tuple(
             "download_s3_uri",
             lambda _uri, path, **_kwargs: (
                 path.parent.mkdir(parents=True, exist_ok=True),
-                path.write_bytes(b"\x00\x00\x00\x18ftypisom"),
+                path.write_bytes(content),
                 path,
             )[-1],
         )
@@ -2147,6 +2165,259 @@ def _import_rendered_backend(monkeypatch, tmp_path, *, module_name: str):
     return module
 
 
+class _NoPublicationJournalS3:
+    """Minimal S3 double for legacy runs without a publication journal."""
+
+    def get_object(self, *, Bucket: str, Key: str) -> dict[str, object]:
+        raise KeyError((Bucket, Key))
+
+
+def test_rendered_readers_use_only_the_committed_publication_generation(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    module_name = "npa_rendered_committed_publication_backend"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    bucket = "bucket-test"
+    source_prefix = "sim2real"
+    run_id = "run-a"
+    root_key = f"{source_prefix}/{run_id}"
+    root_uri = f"s3://{bucket}/{root_key}"
+    generation = "generation-a"
+    report = b'{"visualization":{"source":"committed"}}\n'
+    rrd = b"committed-rrd"
+    stage14 = b'{"stage":14}\n'
+    aliases = {
+        "report": f"{root_key}/reports/sim2real-report.json",
+        "rrd": f"{root_key}/reports/sim2real.rrd",
+        "stage14": f"{root_key}/components/stage_14.json",
+    }
+    immutable = {
+        "report": (f"{root_key}/reports/generations/{generation}/sim2real-report.json"),
+        "rrd": f"{root_key}/reports/generations/{generation}/sim2real.rrd",
+        "stage14": (
+            f"{root_key}/components/history/stage_14/"
+            f"{hashlib.sha256(stage14).hexdigest()}.json"
+        ),
+    }
+    stale_rrd = f"{root_key}/reports/generations/stale/sim2real.rrd"
+
+    def present(name: str, payload: bytes) -> dict[str, object]:
+        return {
+            "uri": f"s3://{bucket}/{aliases[name]}",
+            "state": "present",
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "size_bytes": len(payload),
+            "immutable_uri": f"s3://{bucket}/{immutable[name]}",
+        }
+
+    journal = (
+        json.dumps(
+            {
+                "schema": "npa.sim2real.mutable_publication.v1",
+                "transaction_id": generation,
+                "attempt_id": "a" * 32,
+                "state": "committed",
+                "objects": [
+                    present("report", report),
+                    present("rrd", rrd),
+                    {
+                        "uri": f"{root_uri}/reports/sim2real.mcap",
+                        "state": "absent",
+                    },
+                    present("stage14", stage14),
+                ],
+            },
+            sort_keys=True,
+        )
+        + "\n"
+    ).encode()
+    journal_key = f"{root_key}/reports/.sim2real-publication.json"
+    objects = {
+        journal_key: journal,
+        aliases["report"]: b'{"visualization":{"source":"stale"}}\n',
+        aliases["rrd"]: b"stale-alias",
+        aliases["stage14"]: b'{"stage":"stale"}\n',
+        immutable["report"]: report,
+        immutable["rrd"]: rrd,
+        immutable["stage14"]: stage14,
+        stale_rrd: b"stale-generation",
+    }
+
+    class _Body:
+        def __init__(self, payload: bytes) -> None:
+            self.payload = payload
+            self.offset = 0
+
+        def read(self, size: int = -1) -> bytes:
+            if size < 0:
+                chunk = self.payload[self.offset :]
+                self.offset = len(self.payload)
+                return chunk
+            chunk = self.payload[self.offset : self.offset + size]
+            self.offset += len(chunk)
+            return chunk
+
+        def close(self) -> None:
+            return None
+
+    class _S3:
+        def get_object(
+            self, *, Bucket: str, Key: str, **conditions
+        ) -> dict[str, object]:
+            assert Bucket == bucket
+            if Key not in objects:
+                raise KeyError(Key)
+            assert conditions == (
+                {}
+                if Key == journal_key
+                else {"IfMatch": hashlib.sha256(objects[Key]).hexdigest()}
+            )
+            return {"Body": _Body(objects[Key])}
+
+        def head_object(self, *, Bucket: str, Key: str) -> dict[str, object]:
+            assert Bucket == bucket
+            payload = objects[Key]
+            return {
+                "ContentLength": len(payload),
+                "LastModified": "2026-10-02T00:00:00Z",
+                "ETag": hashlib.sha256(payload).hexdigest(),
+            }
+
+    s3 = _S3()
+
+    def artifact(key: str) -> object:
+        payload = objects[key]
+        render = module.render_hint_for_object(key=key)
+        return module.Artifact(
+            run_id=run_id,
+            key=key,
+            s3_uri=f"s3://{bucket}/{key}",
+            size=len(payload),
+            last_modified="2026-10-02T00:00:00Z",
+            render=render,
+            inline=module.is_inline_render(render),
+            relative_key=key.removeprefix(f"{root_key}/"),
+        )
+
+    artifacts = [artifact(key) for key in objects]
+    try:
+        _resolved_run, _resolved_bucket, selected = (
+            module._resolved_artifact_for_content(
+                s3,
+                {"bucket": bucket, "prefix": source_prefix},
+                run_id=run_id,
+                key=aliases["rrd"],
+                requested_bucket=bucket,
+                exact_membership=True,
+                source_authorized=True,
+                resolved_prefix=source_prefix,
+            )
+        )
+        assert selected.key == immutable["rrd"]
+        with pytest.raises(module.HTTPException) as stale:
+            module._resolved_artifact_for_content(
+                s3,
+                {"bucket": bucket, "prefix": source_prefix},
+                run_id=run_id,
+                key=stale_rrd,
+                requested_bucket=bucket,
+                exact_membership=True,
+                source_authorized=True,
+                resolved_prefix=source_prefix,
+            )
+        assert stale.value.status_code == 409
+
+        monkeypatch.setattr(
+            module,
+            "_agent_artifact_s3_client",
+            lambda: (s3, {"bucket": bucket, "prefix": source_prefix}),
+        )
+        monkeypatch.setattr(module, "_agent_s3_buckets", lambda *_args: [bucket])
+        monkeypatch.setattr(
+            module,
+            "resolve_run_artifacts",
+            lambda *_args, **_kwargs: module.RunResolution(
+                run_id,
+                bucket,
+                source_prefix,
+                artifacts,
+            ),
+        )
+        monkeypatch.setattr(module, "_begin_agent_artifact_access", lambda: None)
+        monkeypatch.setattr(module, "_end_agent_artifact_access", lambda: None)
+        monkeypatch.setattr(module, "_agent_access_report", lambda: {})
+        monkeypatch.setattr(
+            module,
+            "_artifact_source_metadata",
+            lambda *_args, **_kwargs: (bucket, "project-test", source_prefix),
+        )
+        foxglove = module._foxglove_resolve_artifact(
+            {"run_id": run_id, "key": aliases["rrd"]}
+        )
+        assert foxglove["key"] == immutable["rrd"]
+
+        monkeypatch.setattr(
+            module,
+            "_load_selected_run_artifacts",
+            lambda **_kwargs: (
+                bucket,
+                "project-test",
+                source_prefix,
+                artifacts,
+            ),
+        )
+        monkeypatch.setattr(module, "artifact_bucket_projects", lambda _report: {})
+        stage = module.artifacts_stage(
+            run_id,
+            resource_bucket=bucket,
+            project_id="project-test",
+            resolved_prefix=source_prefix,
+            source_selected=True,
+        )
+        stage_keys = {item["key"] for item in stage["artifacts"]}
+        assert immutable["rrd"] in stage_keys
+        assert aliases["rrd"] not in stage_keys
+        assert stale_rrd not in stage_keys
+
+        observed: dict[str, list[str]] = {}
+
+        def capture_keys(name: str, keys: list[str]) -> dict[str, object]:
+            observed[name] = list(keys)
+            return {}
+
+        monkeypatch.setattr(
+            module,
+            "build_fiftyone_dataset",
+            lambda keys, **_kwargs: capture_keys("fiftyone", keys),
+        )
+        monkeypatch.setattr(
+            module,
+            "build_run_provenance",
+            lambda keys, **_kwargs: capture_keys("provenance", keys),
+        )
+        module.fiftyone_dataset(
+            run_id,
+            resource_bucket=bucket,
+            project_id="project-test",
+            resolved_prefix=source_prefix,
+            source_selected=True,
+        )
+        module.artifacts_run_provenance(
+            run_id,
+            resource_bucket=bucket,
+            project_id="project-test",
+            resolved_prefix=source_prefix,
+            source_selected=True,
+        )
+        for keys in observed.values():
+            assert immutable["rrd"] in keys
+            assert aliases["rrd"] not in keys
+            assert stale_rrd not in keys
+    finally:
+        sys.modules.pop(module_name, None)
+
+
 def test_rendered_chat_blocks_draft_when_accelerator_discovery_is_unavailable(
     monkeypatch, tmp_path
 ):
@@ -2258,7 +2529,7 @@ def test_artifact_only_load_run_preserves_ui_contract_and_active_state(
     monkeypatch.setattr(
         module,
         "_agent_artifact_s3_client",
-        lambda: (object(), {"bucket": "bucket", "prefix": ""}),
+        lambda: (_NoPublicationJournalS3(), {"bucket": "bucket", "prefix": ""}),
     )
     monkeypatch.setattr(
         module,
@@ -3291,6 +3562,9 @@ def test_rendered_foxglove_exact_source_avoids_tenant_wide_access_scan(
     module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
 
     class S3:
+        def get_object(self, *, Bucket, Key):  # noqa: N803
+            raise KeyError((Bucket, Key))
+
         def head_object(self, *, Bucket, Key):  # noqa: N803
             assert Bucket == "selected-bucket"
             assert Key == "nested/source/run-one/reports/sim2real.mcap"
@@ -3488,6 +3762,7 @@ def test_source_qualified_rrd_loads_keep_independent_history(
 ) -> None:
     """Each exact run selection loads its own bytes and retains its own snapshot."""
     import hashlib
+    import io
     import shutil
     import sys
 
@@ -3510,7 +3785,7 @@ def test_source_qualified_rrd_loads_keep_independent_history(
         module,
         "_agent_artifact_s3_client",
         lambda: (
-            object(),
+            s3,
             {"bucket": "artifact-bucket", "prefix": "nested/root"},
         ),
     )
@@ -3536,6 +3811,19 @@ def test_source_qualified_rrd_loads_keep_independent_history(
         ),
     }
 
+    class HistoryStore:
+        def get_object(self, *, Bucket, Key, IfMatch):
+            assert Bucket == "artifact-bucket"
+            body = next(
+                body
+                for run_id, prefix, body in selections.values()
+                if Key == f"{prefix}/{run_id}/reports/run.rrd"
+            )
+            assert IfMatch == hashlib.sha256(body).hexdigest()
+            return {"Body": io.BytesIO(body)}
+
+    s3 = HistoryStore()
+
     def _authorize(**kwargs):
         selection = selections[str(kwargs["run_ref"])]
         run_id, source_prefix, _body = selection
@@ -3556,10 +3844,23 @@ def test_source_qualified_rrd_loads_keep_independent_history(
             run_id,
             key,
             f"s3://artifact-bucket/{key}",
-            32,
+            len(
+                next(
+                    body
+                    for run, prefix, body in selections.values()
+                    if run == run_id and prefix == source_prefix
+                )
+            ),
             "2026-08-01T00:00:00+00:00",
             "rerun",
             True,
+            source_etag=hashlib.sha256(
+                next(
+                    body
+                    for run, prefix, body in selections.values()
+                    if run == run_id and prefix == source_prefix
+                )
+            ).hexdigest(),
         )
         return run_id, "artifact-bucket", artifact
 
@@ -3831,7 +4132,10 @@ def test_same_run_without_preferred_rrd_preserves_canonical_mcap(
         monkeypatch.setattr(
             module,
             "_agent_artifact_s3_client",
-            lambda: (object(), {"bucket": "artifact-bucket", "prefix": ""}),
+            lambda: (
+                _NoPublicationJournalS3(),
+                {"bucket": "artifact-bucket", "prefix": ""},
+            ),
         )
         monkeypatch.setattr(
             module,
@@ -4126,7 +4430,10 @@ def test_rendered_exact_query_refreshes_durable_source_without_claiming_partial_
         monkeypatch.setattr(
             module,
             "_agent_artifact_s3_client",
-            lambda: (object(), {"bucket": "primary-bucket", "prefix": ""}),
+            lambda: (
+                _NoPublicationJournalS3(),
+                {"bucket": "primary-bucket", "prefix": ""},
+            ),
         )
         monkeypatch.setattr(
             module,
@@ -4439,7 +4746,7 @@ def test_default_artifact_credentials_keep_nonempty_prefix_as_layout_hint(
             module,
             "_agent_artifact_s3_client",
             lambda: (
-                object(),
+                _NoPublicationJournalS3(),
                 {"bucket": "deployment-bucket", "prefix": "deployment/runs"},
             ),
         )
@@ -4526,7 +4833,10 @@ def test_configured_bucket_root_is_not_reparsed_as_a_generic_category(
         monkeypatch.setattr(
             module,
             "_agent_artifact_s3_client",
-            lambda: (object(), {"bucket": "shared-bucket", "prefix": ""}),
+            lambda: (
+                _NoPublicationJournalS3(),
+                {"bucket": "shared-bucket", "prefix": ""},
+            ),
         )
         monkeypatch.setattr(
             module,
@@ -4617,7 +4927,10 @@ def test_rendered_cold_search_forces_source_refresh_before_filtering(
         monkeypatch.setattr(
             module,
             "_agent_artifact_s3_client",
-            lambda: (object(), {"bucket": "bucket-test", "prefix": ""}),
+            lambda: (
+                _NoPublicationJournalS3(),
+                {"bucket": "bucket-test", "prefix": ""},
+            ),
         )
         refresh_values: list[bool] = []
 
@@ -4672,6 +4985,7 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
         "download",
         False,
         relative_key="report.bin",
+        source_etag='"report-v1"',
     )
 
     class FakeS3:
@@ -4680,6 +4994,7 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
 
         def get_object(self, **kwargs):
             assert kwargs["Range"] == "bytes=0-3"
+            assert kwargs["IfMatch"] == '"report-v1"'
             return {
                 "Body": io.BytesIO(b"abcd"),
                 "ContentLength": 4,
@@ -4956,7 +5271,10 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
     monkeypatch.setattr(
         module,
         "_agent_artifact_s3_client",
-        lambda: (object(), {"bucket": "bucket-test", "prefix": ""}),
+        lambda: (
+            _NoPublicationJournalS3(),
+            {"bucket": "bucket-test", "prefix": ""},
+        ),
     )
     monkeypatch.setattr(
         module, "_agent_access_report_for_artifact_discovery", lambda: None
@@ -5140,10 +5458,11 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
         run_id="foreign-run-1",
         key="foreign/foreign-run-1/reports/sim2real.rrd",
         s3_uri="s3://bucket-test/foreign/foreign-run-1/reports/sim2real.rrd",
-        size=128,
+        size=len(b"selected-recording"),
         last_modified="2026-08-07T00:00:00Z",
         render="rerun",
         inline=True,
+        source_etag="fixture-recording-etag",
     )
     duplicate_source = module.RunSummary(
         "foreign-run-1",
@@ -5155,6 +5474,24 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
         resolved_prefix="other",
     )
     with monkeypatch.context() as load_patch:
+
+        class RecordingStore(_NoPublicationJournalS3):
+            def get_object(self, *, Bucket, Key, **conditions):
+                if Key != recording.key:
+                    return super().get_object(Bucket=Bucket, Key=Key, **conditions)
+                assert Bucket == "bucket-test"
+                assert conditions.get("IfMatch") == recording.source_etag
+                return {
+                    "Body": io.BytesIO(b"selected-recording"),
+                    "ContentLength": recording.size,
+                    "ETag": recording.source_etag,
+                }
+
+        load_patch.setattr(
+            module,
+            "_agent_artifact_s3_client",
+            lambda: (RecordingStore(), {"bucket": "bucket-test", "prefix": ""}),
+        )
         state: dict[str, object] = {}
         published = tmp_path / "selected-sim2real.rrd"
         load_patch.setattr(module, "RECORDINGS_DIR", tmp_path / "recordings")
@@ -5326,7 +5663,10 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
     monkeypatch.setattr(
         module,
         "_agent_artifact_s3_client",
-        lambda: (object(), {"bucket": "bucket-test", "prefix": ""}),
+        lambda: (
+            _NoPublicationJournalS3(),
+            {"bucket": "bucket-test", "prefix": ""},
+        ),
     )
     monkeypatch.setattr(
         module,
@@ -5386,7 +5726,10 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
             self.closed = True
 
     class _S3:
-        def get_object(self, **_kwargs):
+        def get_object(self, **kwargs):
+            key = str(kwargs.get("Key") or "")
+            if key.endswith("/reports/.sim2real-publication.json"):
+                raise KeyError(key)
             return {"Body": _Body()}
 
     monkeypatch.setattr(
@@ -5486,7 +5829,10 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
     )
 
     class _ManifestS3:
-        def get_object(self, **_kwargs):
+        def get_object(self, *, Bucket, Key):  # noqa: N803
+            if Key.endswith("/reports/.sim2real-publication.json"):
+                raise KeyError((Bucket, Key))
+
             class _ManifestBody:
                 def read(self, size):
                     return manifest_payload[:size]
@@ -5903,10 +6249,15 @@ def test_scoped_mp4_content_and_download_stream_real_bytes_for_get_head_and_rang
     class FakeS3:
         def head_object(self, *, Bucket, Key):
             assert (Bucket, Key) == (bucket, key)
-            return {"ContentLength": len(media), "LastModified": "2026-08-19T00:00:00Z"}
+            return {
+                "ContentLength": len(media),
+                "LastModified": "2026-08-19T00:00:00Z",
+                "ETag": '"video-v1"',
+            }
 
         def get_object(self, **kwargs):
             assert (kwargs["Bucket"], kwargs["Key"]) == (bucket, key)
+            assert kwargs["IfMatch"] == '"video-v1"'
             range_value = str(kwargs.get("Range") or "")
             if range_value:
                 match = re.fullmatch(r"bytes=(\d+)-(\d+)", range_value)
@@ -7211,3 +7562,295 @@ def test_rendered_snapshot_continuation_rejects_corrupt_coverage(
     assert restored.json()["pagination_complete"] is True
     assert restored.json()["runs"][0]["run_id"] == "snapshot-run-1"
     discovery.assert_called_once()
+
+
+def _nineteenth_review_publication(
+    *,
+    bucket: str,
+    root_key: str,
+    generation: str,
+    payloads: dict[str, bytes],
+) -> tuple[bytes, dict[str, str]]:
+    aliases = {
+        "report": f"{root_key}/reports/sim2real-report.json",
+        "rrd": f"{root_key}/reports/sim2real.rrd",
+        "mcap": f"{root_key}/reports/sim2real.mcap",
+        "stage14": f"{root_key}/components/stage_14.json",
+    }
+    immutable = {
+        "report": (f"{root_key}/reports/generations/{generation}/sim2real-report.json"),
+        "rrd": f"{root_key}/reports/generations/{generation}/sim2real.rrd",
+        "mcap": f"{root_key}/reports/generations/{generation}/sim2real.mcap",
+        "stage14": (
+            f"{root_key}/components/history/stage_14/"
+            f"{hashlib.sha256(payloads['stage14']).hexdigest()}.json"
+        ),
+    }
+
+    def present(name: str) -> dict[str, object]:
+        payload = payloads[name]
+        return {
+            "uri": f"s3://{bucket}/{aliases[name]}",
+            "state": "present",
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "size_bytes": len(payload),
+            "immutable_uri": f"s3://{bucket}/{immutable[name]}",
+        }
+
+    journal = (
+        json.dumps(
+            {
+                "schema": "npa.sim2real.mutable_publication.v1",
+                "transaction_id": generation,
+                "attempt_id": "a" * 32,
+                "state": "committed",
+                "objects": [
+                    present("report"),
+                    present("rrd"),
+                    present("mcap"),
+                    present("stage14"),
+                ],
+            },
+            sort_keys=True,
+        )
+        + "\n"
+    ).encode()
+    return journal, {
+        **aliases,
+        **{f"immutable_{name}": key for name, key in immutable.items()},
+    }
+
+
+def test_rendered_paginated_publication_and_foxglove_bind_committed_generation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module_name = "npa_rendered_nineteenth_review_backend"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    bucket = "bucket-test"
+    project = "project-test"
+    source_prefix = "sim2real"
+    run_id = "run-a"
+    root_key = f"{source_prefix}/{run_id}"
+    payloads = {
+        "report": b'{"visualization":{"source":"committed"}}\n',
+        "rrd": b"committed-rrd",
+        "mcap": b"committed-mcap",
+        "stage14": b'{"stage":14}\n',
+    }
+    journal, keys = _nineteenth_review_publication(
+        bucket=bucket,
+        root_key=root_key,
+        generation="generation-a",
+        payloads=payloads,
+    )
+    journal_key = f"{root_key}/reports/.sim2real-publication.json"
+    filler_key = f"{root_key}/input/frame-0001.png"
+    objects = {
+        journal_key: journal,
+        keys["rrd"]: b"stale-rrd-alias",
+        keys["mcap"]: b"stale-mcap-alias",
+        keys["immutable_report"]: payloads["report"],
+        keys["immutable_rrd"]: payloads["rrd"],
+        keys["immutable_mcap"]: payloads["mcap"],
+        keys["immutable_stage14"]: payloads["stage14"],
+        filler_key: b"frame",
+    }
+
+    class S3:
+        def get_object(
+            self, *, Bucket: str, Key: str, **conditions
+        ) -> dict[str, object]:
+            assert Bucket == bucket
+            if Key not in objects:
+                raise KeyError(Key)
+            assert conditions == (
+                {}
+                if Key == journal_key
+                else {"IfMatch": hashlib.sha256(objects[Key]).hexdigest()}
+            )
+            return {
+                "Body": io.BytesIO(objects[Key]),
+                "ETag": hashlib.sha256(objects[Key]).hexdigest(),
+            }
+
+        def head_object(self, *, Bucket: str, Key: str) -> dict[str, object]:
+            assert Bucket == bucket
+            if Key not in objects:
+                raise KeyError(Key)
+            return {
+                "ContentLength": len(objects[Key]),
+                "LastModified": "2026-10-02T00:00:00Z",
+                "ETag": hashlib.sha256(objects[Key]).hexdigest(),
+            }
+
+    s3 = S3()
+
+    def artifact(key: str) -> object:
+        render = module.render_hint_for_object(key=key)
+        return module.Artifact(
+            run_id=run_id,
+            key=key,
+            s3_uri=f"s3://{bucket}/{key}",
+            size=len(objects[key]),
+            last_modified="2026-10-02T00:00:00Z",
+            render=render,
+            inline=module.is_inline_render(render),
+            relative_key=key.removeprefix(f"{root_key}/"),
+            namespace=source_prefix,
+        )
+
+    # The immutable publication objects sort onto a later native S3 page.
+    page_artifacts = [artifact(keys["mcap"]), artifact(filler_key)]
+    visible, _report, preferred, _logical = module._committed_publication_artifacts(
+        s3,
+        bucket,
+        run_id,
+        page_artifacts,
+        require_complete=False,
+    )
+    assert preferred is not None
+    assert preferred.key in {keys["immutable_rrd"], keys["immutable_mcap"]}
+    assert keys["mcap"] not in {item.key for item in visible}
+
+    run_ref = module.encode_run_ref(bucket, source_prefix, run_id)
+    module._clear_foxglove_exact_artifact_inventory()
+    module._remember_foxglove_exact_artifact_inventory(
+        run_id=run_id,
+        run_ref=run_ref,
+        resource_bucket=bucket,
+        project_id=project,
+        resolved_prefix=source_prefix,
+        artifacts=visible,
+    )
+    monkeypatch.setattr(
+        module,
+        "_agent_artifact_s3_client",
+        lambda: (s3, {"bucket": bucket, "prefix": source_prefix}),
+    )
+    monkeypatch.setattr(module, "_begin_agent_artifact_access", lambda: None)
+    monkeypatch.setattr(module, "_end_agent_artifact_access", lambda: None)
+    monkeypatch.setattr(
+        module,
+        "_authorize_exact_run_ref_source",
+        lambda **_kwargs: (bucket, project, source_prefix),
+    )
+    selected = module._foxglove_resolve_artifact(
+        {
+            "run_id": run_id,
+            "run_ref": run_ref,
+            "key": keys["mcap"],
+            "s3_uri": f"s3://{bucket}/{keys['mcap']}",
+            "resource_bucket": bucket,
+            "project_id": project,
+            "resolved_prefix": source_prefix,
+        }
+    )
+    assert selected["key"] == keys["immutable_mcap"]
+    assert selected["s3_uri"] == f"s3://{bucket}/{keys['immutable_mcap']}"
+
+
+def test_rendered_publication_conflicts_are_http_409(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module_name = "npa_rendered_nineteenth_conflict_backend"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    bucket = "bucket-test"
+    project = "project-test"
+    prefix = "sim2real"
+    run_id = "run-a"
+    artifact = module.Artifact(
+        run_id=run_id,
+        key=f"{prefix}/{run_id}/input/frame.png",
+        s3_uri=f"s3://{bucket}/{prefix}/{run_id}/input/frame.png",
+        size=5,
+        last_modified="2026-10-02T00:00:00Z",
+        render="image",
+        inline=True,
+        namespace=prefix,
+        relative_key="input/frame.png",
+    )
+    s3 = object()
+    run_ref = module.encode_run_ref(bucket, prefix, run_id)
+    selected = module.RunSummary(
+        run_id=run_id,
+        last_modified="2026-10-02T00:00:00Z",
+        artifact_count=1,
+        has_viewable=True,
+        bucket=bucket,
+        project_id=project,
+        resolved_prefix=prefix,
+    )
+
+    def conflict(*_args, **_kwargs):
+        raise module.PublicationConflict("publishing")
+
+    monkeypatch.setattr(
+        module,
+        "_agent_artifact_s3_client",
+        lambda: (s3, {"bucket": bucket, "prefix": prefix}),
+    )
+    monkeypatch.setattr(module, "_agent_access_report", lambda: {})
+    monkeypatch.setattr(module, "_begin_agent_artifact_access", lambda: None)
+    monkeypatch.setattr(module, "_end_agent_artifact_access", lambda: None)
+    monkeypatch.setattr(module, "_load_session_run_if_known", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        module,
+        "_load_selected_run_artifacts",
+        lambda **_kwargs: (bucket, project, prefix, [artifact]),
+    )
+    monkeypatch.setattr(module, "_committed_publication_artifacts", conflict)
+
+    with pytest.raises(module.HTTPException) as load_conflict:
+        module.sim_viz_load_run(
+            {
+                "run_id": run_id,
+                "resource_bucket": bucket,
+                "project_id": project,
+                "resolved_prefix": prefix,
+                "source_selected": True,
+            }
+        )
+    assert load_conflict.value.status_code == 409
+
+    with pytest.raises(module.HTTPException) as detail_conflict:
+        module._artifact_backed_run_details(
+            {},
+            run_id,
+            resource_bucket=bucket,
+            project_id=project,
+            resolved_prefix=prefix,
+            source_selected=True,
+        )
+    assert detail_conflict.value.status_code == 409
+
+    monkeypatch.setattr(
+        module,
+        "_authorize_exact_run_ref_source",
+        lambda **_kwargs: (bucket, project, prefix),
+    )
+    monkeypatch.setattr(
+        module,
+        "find_run_sources_across_buckets",
+        lambda *_args, **_kwargs: ([selected], (), True),
+    )
+    monkeypatch.setattr(
+        module,
+        "list_artifacts_page",
+        lambda *_args, **_kwargs: module.ArtifactListPage(
+            artifacts=[artifact],
+            truncated=False,
+            next_cursor="",
+            page_size=1000,
+        ),
+    )
+    with pytest.raises(module.HTTPException) as list_conflict:
+        module.artifacts_for_run(
+            run_ref,
+            resource_bucket=bucket,
+            project_id=project,
+            resolved_prefix=prefix,
+            source_selected=True,
+        )
+    assert list_conflict.value.status_code == 409

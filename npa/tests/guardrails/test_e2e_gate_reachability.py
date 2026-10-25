@@ -25,6 +25,31 @@ def metadata_live_contract() -> dict[str, object]:
 # These specialized suites intentionally remain operator-invoked. The reason is
 # machine-reviewed here instead of letting an environment gate silently rot.
 MANUAL_GATES = {
+    "NPA_LEISAAC_CERTIFICATE_LIVE_PROJECT": (
+        "read-only TLS identity verification requires an operator-selected existing agent project "
+        "and verified SSH host key; run with npa/README.md"
+    ),
+    "NPA_LEISAAC_CERTIFICATE_LIVE_AGENT": (
+        "read-only TLS identity verification requires an operator-selected existing agent name "
+        "and verified SSH host key; run with npa/README.md"
+    ),
+    "NPA_PROJECT_SETUP_LIVE_CONFIG": (
+        "requires a real project-only principal denied tenant quota reads, a private "
+        "isolated project configuration, and optional owned CPU cluster creation/cleanup; "
+        "run the command in docs/testing/e2e.md"
+    ),
+    "NPA_PROJECT_QUOTA_LIVE_CONFIG": (
+        "read-only default quota verification requires an operator-selected project "
+        "without explicit caps; run the command in docs/testing/e2e.md"
+    ),
+    "NPA_TEAM_SETUP_FRESH_LIVE": (
+        "requires private server/TLS prerequisites in an operator-selected isolated CPU test namespace; "
+        "creates and removes owned server resources and a retained allocation as documented in docs/workbench/team-access.md"
+    ),
+    "NPA_TEAM_SETUP_LIVE": (
+        "requires operator credentials and a private input selecting an existing HTTPS installation; "
+        "qualifies real LB adoption and retries without a personal client as documented in docs/workbench/team-access.md"
+    ),
     "NPA_POLICY_PUBLIC_RESULTS": (
         "verifies same-run training, both gates, independent GPU serving and standalone HTML; "
         "collect the standard runtime artifacts with the public policy workflow cookbook"
@@ -44,6 +69,14 @@ MANUAL_GATES = {
     "NPA_LINEAGE_POSTGRES_DSN": "requires operator-selected private Postgres and MLflow tracking services",
     "NPA_VIDEO_SWEEP_FULL_GPU": "requires real Transfer runtime, licensed model access, inputs and tracking services",
     "NPA_VIDEO_SWEEP_REASONER_MODEL": "requires an explicit available model for live paid hosted inference",
+    "NPA_STAGE14_PUBLICATION_LIVE": (
+        "real conditional S3 publication controls mutate only unique fixture prefixes in an "
+        "operator-selected project; run with npa/tests/e2e/README.md"
+    ),
+    "NPA_ROS2_PREFLIGHT_LIVE": (
+        "requires an explicitly selected, sourced ROS 2 Jazzy runtime; "
+        "run with skills/tools/ros2/SKILL.md; no robot or cloud mutation"
+    ),
     "NPA_SPECIALISTS_LIVE": (
         "uses paid Token Factory inference with independent GLM and DeepSeek workers; "
         "run the restart and workflow-repair proof in docs/workbench/specialists.md"
@@ -62,6 +95,10 @@ MANUAL_GATES = {
     "NPA_LIVE_MANAGED_JOB_POD_DIAGNOSTICS": (
         "read-only pod identity checks require an operator-selected existing controller, "
         "job, task, context, kubeconfig, and SkyPilot binary"
+    ),
+    "NPA_TEAM_LIVE_E2E": (
+        "requires two operator-selected enrolled team allocations and private storage credentials; "
+        "runs admission dry-runs and writes temporary isolation probe objects as documented in docs/workbench/team-access.md"
     ),
     "NPA_NAMESPACE_LIVE_E2E": (
         "requires an explicitly selected disposable cluster with administrator access; "

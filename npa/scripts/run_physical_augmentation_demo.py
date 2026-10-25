@@ -21,6 +21,11 @@ def _parser():
     parser.add_argument("--project", required=True)
     parser.add_argument("--cluster", default="physical-augmentation")
     parser.add_argument("--output-path", type=Path, required=True)
+    parser.add_argument(
+        "--isaac-image",
+        default="",
+        help="Exact registry/repository@sha256 image for submission; not needed with --fetch-run.",
+    )
     parser.add_argument("--run-id", default="")
     parser.add_argument(
         "--fetch-run",
@@ -77,6 +82,12 @@ def _ready(args):
 def _submit(args, run_id):
     from npa.cli.workbench.workflow import submit_cmd
 
+    if args.no_accept_eula:
+        raise ValueError(
+            "Isaac execution was opted out; omit --no-accept-eula to enable its documented runtime-fetch policy."
+        )
+    if not args.isaac_image:
+        raise ValueError("--isaac-image is required when submitting a new run")
     _ready(args)
     spec = (
         Path(__file__).resolve().parents[2]
@@ -94,7 +105,7 @@ def _submit(args, run_id):
         run_id=run_id,
         runtime=True,
         stage_src=True,
-        var=[f"bucket={bucket}"],
+        var=[f"bucket={bucket}", f"isaac_image={args.isaac_image}"],
         secret_env=["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"],
         isolated_config_dir=args.isolated_config_dir,
         sky_bin=args.sky_bin,

@@ -70,6 +70,26 @@ def test_agent_capacity_uses_project_quotas_when_tenant_list_is_forbidden(
     assert all(item.status in {"ready", "unbounded"} for item in plan.quotas)
 
 
+def test_agent_capacity_accepts_provider_default_project_allowances(
+    monkeypatch,
+) -> None:
+    payload = _allowances()
+    for row in payload["items"]:
+        row["metadata"]["parent_id"] = "project-test"
+        row["spec"].pop("limit")
+        row["status"] = {"usage_state": "USAGE_STATE_NOT_USED"}
+    calls = _project_scoped_quota_setup(monkeypatch, payload)
+
+    result = _agent_whole_path_capacity_result(
+        "project-test", "tenant-test", REGION, include_paidf=False
+    )
+
+    assert calls == ["tenant-test", "project-test"]
+    assert result.status == "WARN"
+    assert "Project-scoped whole-path capacity is ready" in result.summary
+    assert "No tenant-wide read grant is required" in result.remedy
+
+
 @pytest.mark.parametrize(
     "project_payload",
     [
@@ -167,7 +187,7 @@ def test_malformed_project_quota_catalog_remains_fail_closed(monkeypatch) -> Non
     )
 
     assert result.status == "FAIL"
-    assert "could not verify the requested capacity" in result.summary
+    assert "project-scoped quota query failed (ValueError)" in result.summary
 
 
 def test_non_rbac_tenant_quota_failure_does_not_use_project_fallback(

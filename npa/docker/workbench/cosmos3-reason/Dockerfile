@@ -35,6 +35,7 @@ COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
 COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh \
     /usr/local/bin/npa-workflow-entrypoint
+COPY --chmod=0444 docker/workbench/common/repair_accelerate_checkpoints.py /opt/npa/repair_accelerate_checkpoints.py
 
 USER root
 
@@ -56,6 +57,7 @@ RUN mkdir -p /tmp/hf_home/cosmos-reason2 /tmp/hf_home/cosmos-reason2-2b \
       "qwen-vl-utils==0.0.14" \
       "safetensors==0.8.0" \
       "transformers==4.57.6" \
+    && python /opt/npa/repair_accelerate_checkpoints.py \
     && python -m pip check \
     && python -c "import site; from pathlib import Path; Path(site.getsitepackages()[0], 'npa-exact-source.pth').write_text('/opt/npa/src\\n', encoding='utf-8')" \
     && python -c 'import npa.workflows.sim2real.runtime_attestation' \
@@ -92,6 +94,8 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
          python3 python3-venv python3-pip rsync curl openssh-client openssh-server \
          procps sudo netcat-openbsd \
+    && rm -rf /opt/nvidia/nsight-compute \
+    && test ! -e /opt/nvidia/nsight-compute \
     && rm -rf /var/lib/apt/lists/* \
     && rm -f /etc/ssh/ssh_host_* \
     && test -z "$(find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*' -print -quit)" \

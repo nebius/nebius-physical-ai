@@ -26,6 +26,9 @@ _OUTPUT = Path("/evidence")
 _PYTHON = "/opt/fiftyone/venv/bin/python"
 _SMOKES = Path("/opt/npa/docker/workbench/fiftyone")
 _NOTICES = Path("/opt/fiftyone/mongodb-notices")
+_DEPENDENCY_CORRECTION_RECEIPT = Path(
+    "/usr/share/doc/npa-fiftyone/dependency-source-correction.json"
+)
 
 
 def _require(condition: bool, message: str) -> None:
@@ -150,6 +153,71 @@ def _packages(phase: str) -> dict:
         "versions": versions,
         "dependency_requirements": dependencies,
         "uid": os.geteuid(),
+    }
+
+
+def _dependency_source_correction() -> dict:
+    """Verify the immutable receipt for the reviewed dependency correction.
+
+    Args:
+        None.
+    Returns:
+        Receipt identity and correction state for the private validation report.
+    Raises:
+        RuntimeError: The correction receipt is missing, mutable, or malformed.
+    """
+    path = _DEPENDENCY_CORRECTION_RECEIPT
+    _require(path.is_file() and not path.is_symlink(), "Missing correction receipt")
+    mode = stat.S_IMODE(path.stat().st_mode)
+    _require(path.stat().st_uid == 0 and mode == 0o644, "Correction receipt is mutable")
+    receipt = json.loads(path.read_text(encoding="utf-8"))
+    _require(
+        receipt.get("schema_version") == "npa.dependency-source-correction.v2",
+        "Unsupported correction receipt schema",
+    )
+    _require(
+        receipt.get("capability") == "fiftyone"
+        and receipt.get("distribution") == "scikit-image"
+        and receipt.get("module") == "skimage/data/_fetchers.py",
+        "Correction receipt is not bound to the FiftyOne dependency",
+    )
+    _require(
+        receipt.get("correction_status") == "corrected"
+        and all(
+            isinstance(receipt.get(field), str) and len(receipt[field]) == 64
+            for field in (
+                "source_sha256",
+                "sanitized_sha256",
+                "record_sha256_before",
+                "record_sha256_after",
+                "bytecode_sha256",
+            )
+        ),
+        "Correction receipt is incomplete",
+    )
+    _require(
+        receipt["source_sha256"] != receipt["sanitized_sha256"],
+        "FiftyOne correction did not replace the reviewed source",
+    )
+    module_spec = importlib.util.find_spec("skimage.data._fetchers")
+    _require(
+        module_spec is not None and module_spec.origin is not None,
+        "Installed scikit-image fetchers module is missing",
+    )
+    module_path = Path(module_spec.origin)
+    _require(
+        module_path.is_file() and not module_path.is_symlink(),
+        "Installed scikit-image fetchers module is not a regular file",
+    )
+    module_sha256 = _sha(module_path)
+    _require(
+        module_sha256 == receipt["sanitized_sha256"],
+        "Installed scikit-image fetchers module differs from correction receipt",
+    )
+    return {
+        "receipt_sha256": _sha(path),
+        "correction_status": receipt["correction_status"],
+        "module_sha256": module_sha256,
     }
 
 
@@ -544,7 +612,7 @@ def _smoke(name: str, filename: str) -> dict:
     summaries = re.findall(
         r"^SUMMARY: (\d+)/(\d+) checks passed$", output, re.MULTILINE
     )
-    expected = 3 if filename == "smoke_env.py" else 5
+    expected = 4 if filename == "smoke_env.py" else 5
     _require(
         summaries == [(str(expected), str(expected))],
         "Real smoke did not report its complete checks",
@@ -601,6 +669,7 @@ def _functional_checks(phase: str) -> list[tuple]:
             lambda: _command(f"{prefix}-pip-check", [_PYTHON, "-m", "pip", "check"]),
         ),
         (f"{prefix}-packages", lambda: _packages(prefix)),
+        (f"{prefix}-dependency-source-correction", _dependency_source_correction),
         (
             f"{prefix}-environment",
             lambda: _smoke(f"{prefix}-environment", "smoke_env.py"),

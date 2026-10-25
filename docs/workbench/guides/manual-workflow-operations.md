@@ -5,10 +5,14 @@
 Run an existing workflow from saved private configuration, inspect its outputs,
 and resume the same run after an interruption. The example uses PAIDF Cosmos 3;
 other workflows have their own input, image and model-access requirements.
+For the complete robot learning loop, use the [manual Sim2Real runbook](sim2real-workflow.md),
+which starts with installation and the qualified-image gate before provisioning.
 
 Before a cloud run, complete [Workbench setup](../getting-started.md), select a
 compatible GPU cluster, and read the [PAIDF setup guide](../../../workflows/guides/paidf-cosmos3.md).
-Run the examples from the checkout root in the same Bash shell. Replace quoted
+Execute isolated workflows on an always-on Linux host with `/proc` mounted;
+macOS supports validation and planning. Run the examples from the checkout root
+in the same Bash shell. Replace quoted
 placeholders with your private values. For release-specific options, use
 `npa workbench workflow <command> --help`.
 

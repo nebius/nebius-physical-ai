@@ -17,8 +17,8 @@ def test_policy_refuses_same_inode_receipt_payload_changed_before_success(
     W, _P, argv, _out, *_ = prepared
     original = W.write_private_json
 
-    def altered(directory, name, value):
-        result = original(directory, name, value)
+    def altered(directory, name, value, **kwargs):
+        result = original(directory, name, value, **kwargs)
         if name == "public-policy-acceptance.json":
             path = directory / name
             before = path.stat().st_ino
@@ -35,7 +35,7 @@ def test_policy_refuses_same_inode_receipt_payload_changed_before_success(
 def test_policy_refuses_output_directory_replaced_after_report_check(
     prepared, monkeypatch
 ):
-    W, P, argv, _out, *_ = prepared
+    W, P, argv, output, *_ = prepared
     original = P.FreshPolicyReview.accept_fresh_scan
 
     def replaced(self, report, directory):
@@ -52,6 +52,10 @@ def test_policy_refuses_output_directory_replaced_after_report_check(
 
     monkeypatch.setattr(P.FreshPolicyReview, "accept_fresh_scan", replaced)
     assert W.main(argv) == 1
+    assert not (output / "public-policy-acceptance.json").exists()
+    assert not (
+        output.with_name(output.name + "-original") / "public-policy-acceptance.json"
+    ).exists()
 
 
 @pytest.mark.parametrize("error_kind", ["ordinary", "oserror", "cancellation"])
@@ -88,8 +92,8 @@ def test_receipt_metadata_mutation_cannot_return_success(
     original = core.write_private_json
     reached = []
 
-    def mutate(directory, name, result):
-        original_fingerprint = original(directory, name, result)
+    def mutate(directory, name, result, **kwargs):
+        original_fingerprint = original(directory, name, result, **kwargs)
         if name == "public-policy-acceptance.json":
             path = directory / name
             if mutation == "different-inode":
@@ -115,8 +119,8 @@ def test_raw_report_mutation_is_still_fatal(prepared, monkeypatch):
     core, _policy, argv, _out, *_ = prepared
     original = core.write_private_json
 
-    def mutate(directory, name, result):
-        fingerprint = original(directory, name, result)
+    def mutate(directory, name, result, **kwargs):
+        fingerprint = original(directory, name, result, **kwargs)
         if name == "report.json":
             path = directory / name
             raw = json.loads(path.read_bytes())
