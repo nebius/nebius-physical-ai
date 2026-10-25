@@ -22,7 +22,8 @@ EXPECTED_DEPENDENCIES = {
     "torchvision<0.26.0,>=0.22.0": "torchvision<0.29.0,>=0.28.0",
     "torchcodec<0.11.0,>=0.3.0": "torchcodec<0.17.0,>=0.16.0",
     "diffusers<0.36.0,>=0.27.2": "diffusers<0.39.0,>=0.38.0",
-    "setuptools<81.0.0,>=71.0.0": "setuptools<84.0.0,>=83.0.0",
+    "Pillow<13.0.0,>=10.0.0": "Pillow<14.0.0,>=13.0.0",
+    "setuptools<81.0.0,>=71.0.0": "setuptools<85.0.0,>=84.1.0",
     "datasets<5.0.0,>=4.0.0": "datasets<5.1.0,>=5.0.1",
     "transformers==5.3.0": "transformers<5.11.0,>=5.10.0",
     "wandb<0.25.0,>=0.24.0": "wandb<0.31.0,>=0.30.0",
@@ -147,7 +148,8 @@ def test_versioned_integration_preserves_native_source_notices_and_record(
         metadata = contents.read(integration.DIST_INFO + "METADATA").decode()
         assert f"Version: {integration.VERSION}" in metadata
         assert "Requires-Dist: wandb<0.31.0,>=0.30.0" in metadata
-        assert "Requires-Dist: setuptools<84.0.0,>=83.0.0" in metadata
+        assert "Requires-Dist: Pillow<14.0.0,>=13.0.0" in metadata
+        assert "Requires-Dist: setuptools<85.0.0,>=84.1.0" in metadata
         assert "Requires-Dist: transformers<5.11.0,>=5.10.0" in metadata
         assert "Requires-Dist: setuptools<81.0.0,>=71.0.0" not in metadata
         assert "Requires-Dist: transformers==5.3.0" not in metadata
