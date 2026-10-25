@@ -15,6 +15,39 @@ pytestmark = pytest.mark.e2e
 
 
 @pytest.mark.gpu
+def test_native_default_video_from_trained_checkpoint(tmp_path: Path):
+    """Render native 1080p on NVIDIA EGL and verify complete published bytes."""
+    prefix = os.environ.get("NPA_MJLAB_E2E_OUTPUT_PATH", "")
+    checkpoint = os.environ.get("NPA_MJLAB_E2E_CHECKPOINT_PATH", "")
+    if not prefix or not checkpoint:
+        pytest.skip("Set the authorized output prefix and trained checkpoint URI")
+    request = EvalRequest(
+        checkpoint=checkpoint,
+        output_path=prefix.rstrip("/") + "/" + uuid.uuid4().hex,
+        episodes=8,
+        seed=43,
+        video=True,
+    )
+    report = evaluate(request)
+    assert report["runtime"]["device"] == "cuda:0"
+    assert report["rendering"]["vendor"] == "NVIDIA Corporation"
+    assert "NVIDIA" in report["rendering"]["renderer"]
+    assert (report["video"]["width"], report["video"]["height"]) == (1920, 1080)
+    client = StorageClient.from_environment()
+    for name, artifact in report["artifacts"].items():
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        client.download_file(artifact["uri"], str(path))
+        assert path.stat().st_size == artifact["bytes"]
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == artifact["sha256"]
+    from npa.workbench.mjlab.worker import _inspect_video
+
+    assert _inspect_video(tmp_path / "rollout.mp4") == report["video"]
+    html = (tmp_path / "rollout.html").read_text()
+    assert "Native 1920 × 1080" in html and "s3://" not in html
+
+
+@pytest.mark.gpu
 def test_native_train_eval_export_roundtrip(tmp_path: Path):
     prefix = os.environ.get("NPA_MJLAB_E2E_OUTPUT_PATH", "")
     if not prefix:

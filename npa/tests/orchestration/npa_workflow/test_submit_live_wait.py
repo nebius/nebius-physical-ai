@@ -79,7 +79,14 @@ def harness(live_submit, case, monkeypatch, tmp_path):
     monkeypatch.setattr(
         mod, "time", SimpleNamespace(monotonic=lambda: clock.now, sleep=sleep)
     )
-    cancel = Mock()
+    cancel = Mock(
+        return_value={
+            "cancel_returncode": 0,
+            "terminal_confirmed": True,
+            "down_attempted": True,
+            "down_returncode": 0,
+        }
+    )
     monkeypatch.setattr(
         "npa.orchestration.skypilot.workflow_state.cancel_workflow_job", cancel
     )

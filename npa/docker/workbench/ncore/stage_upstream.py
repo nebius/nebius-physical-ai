@@ -196,6 +196,65 @@ def patch_downsample_masks(path: Path) -> None:
     path.write_text(source.replace(original, replacement))
 
 
+def patch_frame_world_poses(path: Path) -> None:
+    """Retain real frame world poses for NRE's independent-camera override.
+
+    Args:
+        path: Source-verified upstream COLMAP converter.
+    Returns:
+        None.
+    Raises:
+        ValueError: The pinned upstream insertion point differs.
+    """
+    original = "                generic_data: dict[str, np.ndarray] = {}\n"
+    replacement = (
+        "                # NPA: preserve each independent camera's actual world pose.\n"
+        "                frame_pose = colmap_camera.T_camera_refs[continuous_frame_index]\n"
+        "                if colmap_camera.reference_frame != 'world':\n"
+        "                    parent = self.cameras[colmap_camera.reference_frame]\n"
+        "                    frame_pose = parent.T_camera_refs[continuous_frame_index] @ frame_pose\n"
+        "                generic_data: dict[str, np.ndarray] = {\n"
+        "                    'T_sensor_worlds': np.repeat(frame_pose[None], 2, axis=0)\n"
+        "                }\n"
+    )
+    source = path.read_text()
+    if source.count(original) != 1:
+        raise ValueError("NCore camera frame source changed")
+    path.write_text(source.replace(original, replacement))
+
+
+def patch_virtual_camera_times(path: Path) -> None:
+    """Give independent photographs disjoint virtual intervals, not capture times.
+
+    Args:
+        path: Source-verified upstream COLMAP converter.
+    Returns:
+        None.
+    Raises:
+        ValueError: Any exact upstream insertion point differs.
+    """
+    anchors = {
+        '    reference_frame: str = "world"\n': '    reference_frame: str = "world"\n    virtual_start_index: int = 0\n',
+        "start_time_sec + np.linspace(0.0, self.n_images - 1, self.n_images)": "start_time_sec + self.virtual_start_index + np.arange(self.n_images)",
+        "        # Use this to calculate the time span\n        max_poses = np.max([camera.n_images for camera in self.cameras.values()])": """        # NPA: independent still cameras are not a synchronized physical rig.
+        max_poses = 0
+        for name in sorted(self.cameras):
+            camera = self.cameras[name]
+            if camera.reference_frame == "world":
+                camera.virtual_start_index = max_poses
+                max_poses += camera.n_images
+        for camera in self.cameras.values():
+            if camera.reference_frame != "world":
+                camera.virtual_start_index = self.cameras[camera.reference_frame].virtual_start_index""",
+    }
+    source = path.read_text()
+    if any(source.count(anchor) != 1 for anchor in anchors):
+        raise ValueError("NCore virtual timeline source changed")
+    for original, replacement in anchors.items():
+        source = source.replace(original, replacement)
+    path.write_text(source)
+
+
 def stage(lock: dict, output: Path, archives: Path | None = None) -> None:
     for component in ("ncore", "pycolmap"):
         pin = lock[component]
@@ -243,6 +302,10 @@ def stage(lock: dict, output: Path, archives: Path | None = None) -> None:
     patch_colmap_text_readers(output / "pycolmap" / "pycolmap" / "scene_manager.py")
     patch_downsample_camera(output / "ncore/tools/data_converter/colmap/converter.py")
     patch_downsample_masks(output / "ncore/tools/data_converter/colmap/converter.py")
+    patch_frame_world_poses(output / "ncore/tools/data_converter/colmap/converter.py")
+    patch_virtual_camera_times(
+        output / "ncore/tools/data_converter/colmap/converter.py"
+    )
     # Preserve the exact patched source identity; no .git database or test data.
     inventory = {
         str(path.relative_to(output)): hashlib.sha256(path.read_bytes()).hexdigest()

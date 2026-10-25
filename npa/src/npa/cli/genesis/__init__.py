@@ -395,12 +395,15 @@ def _genesis_serverless_train_teacher(
     merged_env = dict(env)
     merged_env.update(extra_env)
     env, extra_env = split_serverless_env(merged_env)
-    client = ServerlessClient()
-    selected_image = image or container_image_for_tool("genesis")
+    try:
+        selected_image = image or container_image_for_tool("genesis")
+    except ValueError as exc:
+        _fail(str(exc))
     try:
         selected_image = _pin_serverless_image(selected_image)
     except Exception as exc:  # noqa: BLE001 - immutable image is a launch gate
         _fail(f"Serverless image digest preflight failed: {exc}")
+    client = ServerlessClient()
     command = _genesis_serverless_train_teacher_command(
         n_envs=n_envs,
         max_iterations=max_iterations,
@@ -2282,6 +2285,12 @@ def deploy_cmd(
         _fail(
             "Genesis deploy does not use --runtime serverless; use `npa workbench genesis train-teacher --runtime serverless`."
         )
+    container_image = ""
+    if not destroy and runtime_uses_container(runtime):
+        try:
+            container_image = image.strip() or container_image_for_tool("genesis")
+        except ValueError as exc:
+            _fail(str(exc))
     use_remote_state = not tf_dir and not byovm
     if byovm:
         skip_infra = True
@@ -2734,7 +2743,6 @@ def deploy_cmd(
                 write_manifest,
                 write_remote_docker_env_file,
             )
-            from npa.deploy.images import container_image_for_tool
 
             credentials = resolve_credentials()
             ssh_cfg = SSHConfig(
@@ -2774,7 +2782,7 @@ def deploy_cmd(
                     service_env,
                     owner=ssh_user,
                 )
-                image_ref = image.strip() or container_image_for_tool("genesis")
+                image_ref = container_image
                 deploy_workbench_container(
                     ssh,
                     image_ref=image_ref,

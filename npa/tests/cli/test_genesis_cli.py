@@ -328,6 +328,43 @@ def test_genesis_serverless_uses_shared_env_builder(mocker) -> None:
     resolver.assert_called_once_with(project_id="project-1", explicit_subnet_id="")
 
 
+def test_genesis_serverless_quarantined_default_is_a_clean_refusal(mocker) -> None:
+    _mock_genesis_serverless_env(mocker)
+    client = mocker.Mock()
+    mocker.patch("npa.cli.genesis.ServerlessClient", return_value=client)
+    mocker.patch(
+        "npa.cli.genesis.container_image_for_tool",
+        side_effect=ValueError("Genesis image is quarantined"),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "genesis",
+            "train-teacher",
+            "--runtime",
+            "serverless",
+            "--n-envs",
+            "1",
+            "--max-iterations",
+            "1",
+            "--output-path",
+            "s3://bucket/genesis/",
+            "--submit-only",
+            "--gpu-type",
+            "h200",
+            "--job-name",
+            "genesis-job",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Genesis image is quarantined" in result.output
+    assert "Traceback" not in result.output
+    client.create_job.assert_not_called()
+
+
 def test_genesis_worker_environment_uses_the_effective_credential_pair(
     mocker, monkeypatch
 ):

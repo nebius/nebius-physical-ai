@@ -181,15 +181,21 @@ remain separate run artifacts.
 
 Prepare the dedicated RTX infrastructure and project storage above, then select
 the [campus workflow](../../../workflows/testing/digital-twin-campus-render.yaml):
+it deliberately has no shipped runtime-image default. Supply an operator-controlled,
+registry-qualified, untagged digest for a compatible image that the target cluster
+can pull. The earlier automatic SONIC digest is quarantined and must not be used as
+a default or substituted for this input.
 
 ```bash
 npa workbench health preflight --project twin --checks nebius,s3 --json
 npa workbench workflow validate-spec workflows/testing/digital-twin-campus-render.yaml
 npa workbench workflow prepare-run 'workflows/testing/digital-twin-campus-render.yaml' --project twin
 npa workbench workflow preflight-images workflows/testing/digital-twin-campus-render.yaml \
-  --project twin --infra 'k8s/<rtx-context>'
+  --project twin --infra 'k8s/<rtx-context>' \
+  --var runtime_image='<operator-controlled registry-qualified image@sha256:...>'
 npa workbench workflow submit workflows/testing/digital-twin-campus-render.yaml \
   --run-id '<prepared-run-id>' --project twin --infra 'k8s/<rtx-context>' \
+  --var runtime_image='<operator-controlled registry-qualified image@sha256:...>' \
   --var bucket='<your-bucket>' --var prefix='digital-twin/<prepared-run-id>' \
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 ```
@@ -256,9 +262,12 @@ partially provisioned RTX pool into B200 or select GPU Operator on an NVSwitch
 system. Reconcile the owned failed allocation before choosing another profile.
 
 The [CUDA workflow](../../../workflows/testing/digital-twin-cuda-render.yaml)
-uses an existing immutable workbench image and the submitting checkout's source
-overlay. It downloads the official Blender 4.5.3 Linux archive at runtime and
-checks its pinned SHA-256 before extraction. Blender is GPL-licensed; see
+requires an operator-qualified, registry-qualified immutable runtime image and
+the submitting checkout's source overlay; it deliberately has no automatic
+SONIC or Isaac image default. The former withdrawn SONIC digest is not repaired
+or selected by the historical B200 evidence. It downloads the official Blender
+4.5.3 Linux archive at runtime and checks its pinned SHA-256 before extraction.
+Blender is GPL-licensed; see
 [Blender's license information](https://www.blender.org/about/license/).
 No Blender distribution or third-party scene assets are added to an image or
 this repository. The workflow uses no Isaac, NGC, model weights or gated assets.
@@ -268,12 +277,15 @@ npa workbench health preflight --project twin --checks nebius,s3 --json
 npa skypilot bootstrap
 export NPA_SKYPILOT_BIN="$(npa skypilot status --bin-path)"
 npa workbench workflow validate-spec workflows/testing/digital-twin-cuda-render.yaml
-npa workbench workflow plan-spec workflows/testing/digital-twin-cuda-render.yaml --run-id twin-render
+npa workbench workflow plan-spec workflows/testing/digital-twin-cuda-render.yaml --run-id twin-render \
+  --var runtime_image='<operator-controlled registry-qualified image@sha256:...>'
 npa workbench workflow prepare-run 'workflows/testing/digital-twin-cuda-render.yaml' --project twin
 npa workbench workflow preflight-images workflows/testing/digital-twin-cuda-render.yaml \
-  --project twin --infra 'k8s/<b200-context>'
+  --project twin --infra 'k8s/<b200-context>' \
+  --var runtime_image='<operator-controlled registry-qualified image@sha256:...>'
 npa workbench workflow submit workflows/testing/digital-twin-cuda-render.yaml \
   --run-id '<prepared-run-id>' --project twin --infra 'k8s/<b200-context>' \
+  --var runtime_image='<operator-controlled registry-qualified image@sha256:...>' \
   --var bucket='<your-bucket>' --var prefix='digital-twin/<prepared-run-id>' \
   --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
 ```

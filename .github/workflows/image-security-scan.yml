@@ -20,7 +20,6 @@ on:
 permissions:
   contents: read
   packages: read
-  security-events: write
 
 concurrency:
   # The caller owns candidate/main cancellation. Direct scheduled and manual
@@ -31,6 +30,10 @@ concurrency:
 jobs:
   image-policy:
     name: Image policy and complete-byte security
+    permissions:
+      contents: read
+      packages: read
+      security-events: write
     runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_TEST_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
     steps:
       - name: Check out full history
@@ -80,6 +83,15 @@ jobs:
             npa/tests/docker/test_isaac_bootstrap.py \
             npa/tests/guardrails/test_workbench_image_k8s_prereqs.py \
             -q
+
+      - name: Prove Python 3.12 and Pillow 13 on Jammy
+        if: steps.scope.outputs.deep == 'true'
+        run: |
+          set -euo pipefail
+          image_id="$(mktemp "$RUNNER_TEMP/python-runtime-probe.XXXXXXXX")"
+          docker build --iidfile "$image_id" \
+            --file npa/tests/docker/fixtures/python-runtime.Dockerfile npa
+          docker run --rm "$(cat "$image_id")"
 
       - name: Verify governed workflow defaults against anonymous registry bytes
         if: steps.scope.outputs.deep == 'true'
@@ -195,6 +207,10 @@ jobs:
 
   base-image-entry:
     name: Base image CVE / ${{ matrix.entry }}
+    permissions:
+      contents: read
+      packages: read
+      security-events: write
     needs: base-image-plan
     if: needs.base-image-plan.outputs.deep == 'true'
     runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_TEST_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}

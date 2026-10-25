@@ -1,19 +1,25 @@
-"""Four separate files claim whether an image has been built. They must agree.
+"""Four records claim whether a publishable image has been accepted.
 
-"This image has not been built yet" is recorded in four places, each of which a
-different guard reads:
+No accepted public image is recorded in four places, each of which a different
+guard reads:
 
 * ``images.UNVALIDATED_PUBLICATION_TOOLS`` — what ``publish_public`` refuses;
 * the supported or quarantined-candidate version inventory — normally a tag
   ending ``-unbuilt``; neutral bootstrap display sentinels stay outside the
   accepted ``SUPPORTED_TOOL_VERSIONS`` inventory;
-* ``blackwell-dc-images.json`` — ``validation: pending-build``;
+* ``blackwell-dc-images.json`` — ``validation: pending-build`` when no accepted
+  current candidate or complete current byte-scan proof exists;
 * ``golden_evals.yaml`` — a golden eval that is not ``ready``.
 
-Build day removes one of them. The other three then go stale silently, and every
-one of them is a claim about what has been *proven* — the exact class of claim
-this repository is careful about everywhere else. So the equivalence is asserted
-rather than left to whoever does the build remembering all four.
+A quarantined local candidate may advance from ``pending-build`` through
+``pending-gpu`` to ``pending-hardware`` while its supported public tag correctly
+remains ``-unbuilt``. Publication acceptance removes the quarantine and unbuilt
+tag. These are claims about what has been *proven*, so their allowed
+relationships are asserted rather than left implicit.
+
+Retained quarantined bytes are not current candidates. Build or qualification
+cannot silently make the other records current, so the guard asserts their
+allowed relationships rather than leaving them to manual release bookkeeping.
 """
 
 from __future__ import annotations
@@ -28,6 +34,7 @@ import yaml
 
 from npa.deploy.images import (
     CONTAINER_IMAGE_NAMES,
+    GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS,
     LAYER_STALE_PUBLICATION_TOOLS,
     METADATA_STALE_PUBLICATION_TOOLS,
     NEUTRAL_UNBUILT_CANDIDATE_TOOLS,
@@ -38,6 +45,8 @@ from npa.deploy.images import (
     UNBUILT_CANDIDATE_TOOL_VERSIONS,
     UNVALIDATED_PUBLICATION_TOOLS,
     VALIDATION_CANDIDATE_TOOLS,
+    public_release_tag_for_tool,
+    publicly_publishable_tools,
     supported_tool_version,
 )
 
@@ -50,7 +59,9 @@ PENDING_BUILD = "pending-build"
 #: Built, bytes checked, but never run on a GPU. Still unvalidated for
 #: publication - the byte evidence is only half of what publication claims.
 PENDING_GPU = "pending-gpu"
-UNPROVEN_STATES = frozenset({PENDING_BUILD, PENDING_GPU})
+PENDING_HARDWARE = "pending-hardware"
+PUBLICATION_UNPROVEN_STATES = frozenset({PENDING_BUILD, PENDING_GPU, PENDING_HARDWARE})
+NO_CONFIDENT_VERDICT_STATES = frozenset({PENDING_BUILD, PENDING_GPU})
 
 
 def _declared_versions() -> dict[str, str]:
@@ -74,7 +85,7 @@ def _image_name(tool: str) -> str:
     return str(CONTAINER_IMAGE_NAMES.get(tool, f"npa-{tool}"))
 
 
-def test_every_unbuilt_tool_says_so_in_all_four_records() -> None:
+def test_every_publication_unvalidated_tool_says_so_in_all_four_records() -> None:
     blackwell = _blackwell_images()
     containers = _golden_eval_containers()
     versions = _declared_versions()
@@ -94,7 +105,7 @@ def test_every_unbuilt_tool_says_so_in_all_four_records() -> None:
             assert entry.get("validation") == "not-required", tool
             assert containers[tool]["golden_eval"]["gpu"] == "none", tool
         elif entry is not None:
-            assert entry.get("validation") in UNPROVEN_STATES, (
+            assert entry.get("validation") in PUBLICATION_UNPROVEN_STATES, (
                 f"{tool} is unvalidated for publication but "
                 f"blackwell-dc-images.json records "
                 f"validation={entry.get('validation')!r}; publication needs both "
@@ -196,6 +207,96 @@ def test_stale_publications_are_built_releases_awaiting_requalification() -> Non
         assert not SUPPORTED_TOOL_VERSIONS[tool].endswith(UNBUILT_TAG_SUFFIX), tool
 
 
+def test_ray_serve_catalog_does_not_overstate_layer_stale_bytes() -> None:
+    """A quarantined Ray Serve digest cannot advertise current acceptance."""
+
+    tool = "cosmos3-ray-serve"
+    assert tool in LAYER_STALE_PUBLICATION_TOOLS
+    entry = _blackwell_images()[_image_name(tool)]
+
+    assert entry["verdict"] == "quarantined"
+    assert entry["validation"] == PENDING_BUILD
+    assert str(entry["quarantine_reason"]).strip()
+    assert (
+        entry["historical_validation"]["invalidated_by_current_byte_security"] is True
+    )
+    assert re.fullmatch(
+        r"sha256:[0-9a-f]{64}", str(entry["historical_validation"]["digest"])
+    )
+    historical_publication = entry["historical_publication"]
+    # These resolver records identify the retained historical bytes; neither
+    # assertion restores current release or publication eligibility.
+    assert historical_publication["tag"] == SUPPORTED_TOOL_VERSIONS[tool]
+    assert historical_publication["digest"] == GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS[tool]
+    assert "H200" in str(entry["notes"])
+    assert "validated_digest" not in entry
+    assert "published_digest" not in entry
+
+
+def test_agent_indexes_describe_quarantined_ray_serve_as_unavailable() -> None:
+    """Agent routing must not direct deployment of quarantined historical bytes."""
+
+    expected = "quarantined and must not be deployed or started"
+    for index in (REPO_ROOT / "AGENTS.md", REPO_ROOT / "CLAUDE.md"):
+        text = re.sub(r"\s+", " ", index.read_text(encoding="utf-8"))
+        assert "cosmos3-ray-serve" in text
+        assert expected in text
+
+    routing = yaml.safe_load(
+        (REPO_ROOT / "skills/index.yaml").read_text(encoding="utf-8")
+    )
+    ray_serve = next(
+        skill for skill in routing["skills"] if skill["name"] == "cosmos3-ray-serve"
+    )
+    assert "quarantined" in ray_serve["when_to_use"]
+    assert "must not be deployed or operated" in ray_serve["when_to_use"]
+
+    skill_text = (REPO_ROOT / "skills/tools/cosmos3-ray-serve/SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    assert "must not be deployed or operated" in skill_text
+
+    agent_interface = yaml.safe_load(
+        (REPO_ROOT / "skills/tools/cosmos3-ray-serve/agents/openai.yaml").read_text(
+            encoding="utf-8"
+        )
+    )["interface"]
+    assert "quarantined" in agent_interface["short_description"]
+    assert "do not deploy or operate" in agent_interface["default_prompt"]
+
+    matrix = (REPO_ROOT / "docs/workbench/image-gpu-compatibility-matrix.md").read_text(
+        encoding="utf-8"
+    )
+    assert (
+        "2026-08-26 retained records show `ray1-cu130` historically resolved" in matrix
+    )
+    assert "the published `ray1-cu130` tag resolves" not in matrix
+
+
+def test_catalog_quarantines_are_excluded_from_public_selection() -> None:
+    """Every declared catalog quarantine must be excluded by release selection."""
+
+    image_to_tool = {image: tool for tool, image in CONTAINER_IMAGE_NAMES.items()}
+    publishable = set(publicly_publishable_tools())
+    quarantined = {
+        image_name
+        for image_name, entry in _blackwell_images().items()
+        if entry.get("verdict") == "quarantined"
+    }
+    assert quarantined
+
+    for image_name in quarantined:
+        tool = image_to_tool.get(image_name)
+        assert tool is not None, image_name
+        assert tool in PUBLICATION_QUARANTINE_TOOLS, tool
+        assert tool not in publishable, tool
+        try:
+            public_release_tag_for_tool(tool)
+        except ValueError:
+            continue
+        raise AssertionError(f"{tool} must not have a public release tag")
+
+
 def test_stale_publication_quarantine_propagates_to_derived_images() -> None:
     """A child cannot be accepted while retaining every layer of a stale parent."""
 
@@ -250,14 +351,33 @@ def test_pending_build_never_carries_a_confident_verdict() -> None:
     offenders = sorted(
         str(image["name"])
         for image in payload["images"]
-        if image.get("validation") in UNPROVEN_STATES
+        if image.get("validation") in NO_CONFIDENT_VERDICT_STATES
         and str(image.get("verdict")) in confident
     )
 
     assert offenders == [], (
-        f"{offenders} record validation={PENDING_BUILD!r} beside a confident "
-        "verdict. Nothing has been built, so the verdict can only have come from "
-        "reading the Dockerfile."
+        f"{offenders} record an artifact-less validation state beside a confident "
+        "verdict. Without measured architecture evidence, that verdict can only "
+        "have come from reading the Dockerfile."
+    )
+
+
+def test_pending_hardware_confident_verdict_has_measured_arches() -> None:
+    payload = json.loads(BLACKWELL.read_text(encoding="utf-8"))
+    offenders = sorted(
+        str(image["name"])
+        for image in payload["images"]
+        if image.get("validation") == PENDING_HARDWARE
+        and str(image.get("verdict")) in {"ready", "port"}
+        and (
+            not isinstance(image.get("measured_arch_list"), list)
+            or not image["measured_arch_list"]
+        )
+    )
+
+    assert offenders == [], (
+        f"{offenders} claim a confident pending-hardware verdict without a "
+        "non-empty measured_arch_list"
     )
 
 

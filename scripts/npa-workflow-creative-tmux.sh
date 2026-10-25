@@ -35,7 +35,7 @@ while true; do
   fi
 
   echo "--- [2/8] validate all golden npa.workflow YAMLs ---"
-  for spec in "${SPECS}/main"/*.yaml "${SPECS}/testing"/*.yaml "${SPECS}/partners"/*/*.yaml; do
+  for spec in "${SPECS}/main"/*.yaml "${SPECS}/testing"/*.yaml "${SPECS}/cosmos-data-factory"/*.yaml "${SPECS}/partners"/*/*.yaml; do
     [[ -f "$spec" ]] || continue
     base=$(basename "$spec")
     echo "validate: ${base}"

@@ -845,16 +845,23 @@ def _agent_relay_context(
     return instance_id, public_ip, ssh, auth_user, auth_password
 
 
-def _agent_certificate_sha256(public_ip: str) -> str:
-    context = ssl.create_default_context()
-    context.check_hostname = False
-    context.verify_mode = ssl.CERT_NONE
-    with socket.create_connection((public_ip, 443), timeout=10) as raw:
-        with context.wrap_socket(raw, server_hostname=public_ip) as connection:
-            certificate = connection.getpeercert(binary_form=True)
-    if not certificate:
-        raise RuntimeError("public agent HTTPS endpoint returned no certificate")
-    return hashlib.sha256(certificate).hexdigest()
+def _agent_certificate_sha256(ssh: SSHClient) -> str:
+    """Read the installed TLS identity through the agent's verified SSH host key."""
+    # Learning a pin from public TLS would let an interceptor choose the identity
+    # to which both run selection and the backhaul send agent credentials.
+    code, output, _stderr = ssh.run(
+        "openssl x509 -in /etc/nginx/ssl/npa-agent.crt -noout -fingerprint -sha256"
+    )
+    if code != 0:
+        raise RuntimeError("Could not read the agent TLS certificate over trusted SSH")
+    fingerprint = re.fullmatch(
+        r"sha256 Fingerprint=([0-9a-f]{2}(?::[0-9a-f]{2}){31})",
+        output.strip(),
+        flags=re.IGNORECASE,
+    )
+    if fingerprint is None:
+        raise LeIsaacConfigError("agent SSH certificate fingerprint is invalid")
+    return fingerprint.group(1).replace(":", "").lower()
 
 
 def _select_agent_leisaac_run(
@@ -1785,7 +1792,7 @@ def launch_cmd(
             expires_at=expires_at,
             manifest_uri=exact_manifest_uri,
         )
-        certificate_sha256 = _agent_certificate_sha256(media_host)
+        certificate_sha256 = _agent_certificate_sha256(ssh)
         relay_secret = relay_client_secret_manifest(
             run_id=run_id,
             namespace=namespace,
@@ -2047,7 +2054,7 @@ def reconnect_agent_cmd(
         instance_id, public_ip, ssh, auth_user, auth_password = _agent_relay_context(
             agent_project, agent_name
         )
-        certificate_sha256 = _agent_certificate_sha256(public_ip)
+        certificate_sha256 = _agent_certificate_sha256(ssh)
         nonce = secrets.token_hex(32)
         for source in source_ranges:
             for protocol in ("UDP", "TCP"):

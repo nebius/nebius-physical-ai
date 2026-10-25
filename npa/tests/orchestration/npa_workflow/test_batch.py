@@ -139,8 +139,23 @@ def update(delta):
         handle.seek(0)
         json.dump(state, handle)
         handle.truncate()
-update(1)
-time.sleep(0.3)
+        return len(state['calls'])
+started = update(1)
+cohort_size = int(os.getenv('BATCH_TEST_START_COHORT', '0'))
+if cohort_size:
+    cohort_end = ((started - 1) // cohort_size + 1) * cohort_size
+    deadline = time.monotonic() + 30
+    while True:
+        with path.open() as handle:
+            fcntl.flock(handle, fcntl.LOCK_SH)
+            admitted = len(json.load(handle)['calls'])
+        if admitted >= cohort_end:
+            break
+        if time.monotonic() >= deadline:
+            raise RuntimeError('batch did not admit the complete child cohort')
+        time.sleep(0.01)
+else:
+    time.sleep(0.3)
 update(-1)
 if os.getenv('BATCH_TEST_FAILURE') == run_id and not resume:
     print('lost response')
@@ -156,8 +171,11 @@ print(json.dumps({'status': 'succeeded', 'run_id': run_id}))
 
 
 def test_real_children_obey_limit_and_completed_resume_reverifies(
-    manifest, children, tmp_path
+    manifest, children, tmp_path, monkeypatch
 ):
+    # A short sleep does not prove overlap when process startup is descheduled.
+    # Hold each three-child cohort until all three admissions are recorded.
+    monkeypatch.setenv("BATCH_TEST_START_COHORT", "3")
     result = batch.run_batch(
         manifest[0], state_dir=tmp_path / "state", max_concurrent_runs=3
     )
