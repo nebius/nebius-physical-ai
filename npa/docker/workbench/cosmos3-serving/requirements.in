@@ -36,6 +36,7 @@ aiohttp==3.14.4
 certifi==2026.10.19
 opentelemetry-api==1.45.1
 pillow==13.0.0
+filelock==4.2.4
 # vLLM 0.30 allows the current MCP 2.x line. Pin the maintained releases so
 # the closure does not retain older vulnerable transitive versions.
 mcp==2.3.0
