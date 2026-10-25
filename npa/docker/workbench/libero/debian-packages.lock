@@ -1,7 +1,7 @@
 # npa.libero.debian-package-lock.v1
 # Snapshot: 20260824T000000Z; architecture: amd64
 # Debian rootfs manifest sha256: b06a30ffb450d8ea59edbe54a1e89ecb9f00571d0440684f6449a09f3b0475ec
-# Python base SPDX in-toto blob sha256: b290dbd3087fc5d2cf4af106f1d253c417a26080b70bdcf440ff96314a12c2bb
+# Python base SPDX in-toto blob sha256: 342709b614037975c03cf8ac4701eb3ac81a69065a85ff6c70d9758bf9e02f51
 # kind<TAB>binary<TAB>version<TAB>source<TAB>source-version<TAB>deb-sha256<TAB>deb-url
 base	adduser	3.134	adduser	3.134	c24fe4eb8e60d8632d72ed104cce7c92cff200847c897dc8ba764b6c47b519e0	https://snapshot.debian.org/archive/debian/20260824T000000Z/pool/main/a/adduser/adduser_3.134_all.deb
 base	apt	2.6.1	apt	2.6.1	6ea03cbbc7a7bfcee601c9fb08d4e026fd522ede5350561f06867ad9c0a0fa6b	https://snapshot.debian.org/archive/debian/20260824T000000Z/pool/main/a/apt/apt_2.6.1_amd64.deb

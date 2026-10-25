@@ -167,7 +167,7 @@ def test_docker_build_applies_hash_guard_before_normal_pinned_backend(helper):
         in dockerfile
     )
     lock = (IMAGE_DIR / "requirements.lock").read_text()
-    assert "setuptools==84.0.0" in lock
+    assert "setuptools==84.2.1" in lock
     assert "trove-classifiers==2026.6.1.19" in lock
     assert (
         helper.UPSTREAM_METADATA_SHA256

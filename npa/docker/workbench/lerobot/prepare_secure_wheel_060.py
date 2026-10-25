@@ -16,7 +16,7 @@ from urllib.parse import urlsplit
 import zipfile
 
 
-VERSION = "0.6.0+npa.secure3"
+VERSION = "0.6.0+npa.secure4"
 WHEEL_URL = (
     "https://files.pythonhosted.org/packages/5d/20/"
     "9a96311c19e9d256e65584ca83c49c5782d0f204836e84ceeb420d4d493e/"
@@ -34,14 +34,14 @@ METADATA_SHA256 = "fc40aa431b6af49645091369697ab14db3dbfe91d1801bcc8aca055053194
 ORIGINAL_DIST_INFO = "lerobot-0.6.0.dist-info/"
 DIST_INFO = f"lerobot-{VERSION}.dist-info/"
 DEPENDENCIES = {
-    "Pillow<13.0.0,>=10.0.0": "Pillow<14.0.0,>=13.0.0",
     "torch<2.12.0,>=2.7": "torch<2.14.0,>=2.13.0",
     "torchvision<0.27.0,>=0.22.0": "torchvision<0.29.0,>=0.28.0",
     "torchcodec<0.12.0,>=0.3.0": "torchcodec<0.17.0,>=0.16.0",
     "torchcodec<0.12.0,>=0.7.0": "torchcodec<0.17.0,>=0.16.0",
     "torchcodec<0.12.0,>=0.11.0": "torchcodec<0.17.0,>=0.16.0",
     "diffusers<0.36.0,>=0.27.2": "diffusers<0.39.0,>=0.38.0",
-    "setuptools<81.0.0,>=71.0.0": "setuptools<84.0.0,>=83.0.0",
+    "Pillow<13.0.0,>=10.0.0": "Pillow<14.0.0,>=13.0.0",
+    "setuptools<81.0.0,>=71.0.0": "setuptools<85.0.0,>=84.1.0",
     "transformers<5.6.0,>=5.4.0": "transformers<5.11.0,>=5.10.0",
     "wandb<0.28.0,>=0.24.0": "wandb<0.31.0,>=0.30.0",
     "datasets<5.0.0,>=4.7.0": "datasets<5.1.0,>=5.0.1",

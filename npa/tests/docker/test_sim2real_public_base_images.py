@@ -98,7 +98,7 @@ def test_envgen_clears_inherited_source_before_copying_exact_revision() -> None:
 def test_cpu_images_update_system_and_viewer_bootstrap_dependencies() -> None:
     lock = (WORKBENCH / "common/sim2real-cpu-build-requirements.txt").read_text()
     assert "pip==26.2.1" in lock
-    assert "setuptools==84.0.0" in lock
+    assert "setuptools==84.2.1" in lock
     assert "wheel==0.48.0" in lock
     assert "msgpack==1.2.1" in lock
     assert "urllib3==2.8.0" in lock

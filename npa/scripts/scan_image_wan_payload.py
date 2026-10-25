@@ -172,51 +172,51 @@ class _NestedArchiveBudget:
 # fail the publication scan.  A dependency/base refresh fails closed until the
 # replacement bytes have been independently audited.
 AUDITED_SECRET_LITERAL_FILE_SHA256: dict[str, str] = {
-    "opt/wan-base/lib/python3.10/site-packages/PIL/ImageFont.py": (
-        "24fa5feeb91b4bf63eaad0ebba08a8161e9c889d9fd056a37c928134097b9649"
+    "opt/wan-base/lib/python3.11/site-packages/PIL/ImageFont.py": (
+        "9182befa0e4047e8df244ca9e8534fdb52312bcf10219629c608c91efe8a6821"
     ),
-    "opt/wan-base/lib/python3.10/site-packages/accelerate/commands/config/sagemaker.py": (
+    "opt/wan-base/lib/python3.11/site-packages/accelerate/commands/config/sagemaker.py": (
         "4912eea7d5eb57f67edb703777c8196e4a9ba270dcb1c3030e66e99b2b42cdb6"
     ),
-    "opt/wan-base/lib/python3.10/site-packages/boto3/examples/cloudfront.rst": (
+    "opt/wan-base/lib/python3.11/site-packages/boto3/examples/cloudfront.rst": (
         "2beb01599c682e30010991eba8066ce7b71879fc0f9838abd37a66e8f13f9a1e"
     ),
-    "opt/wan-base/lib/python3.10/site-packages/boto3/session.py": (
+    "opt/wan-base/lib/python3.11/site-packages/boto3/session.py": (
         "98493dcacb64905e94418b46250f4427938bf0f35badb02b5436049c5d5b5fcc"
     ),
-    "opt/wan-base/lib/python3.10/site-packages/boto3-1.39.11.dist-info/METADATA": (
+    "opt/wan-base/lib/python3.11/site-packages/boto3-1.39.11.dist-info/METADATA": (
         "5524ef6a8ea9110d3b1c2b0b4d034393a5408e6c9b80c9168379ce37fd4ea374"
     ),
-    "opt/wan-base/lib/python3.10/site-packages/botocore/credentials.py": (
+    "opt/wan-base/lib/python3.11/site-packages/botocore/credentials.py": (
         "9b14c632b0a025c02655170cc6b42654e8cbb258e78e3c84f17025129fd7dee3"
     ),
-    "opt/wan-base/lib/python3.10/site-packages/botocore/data/iam/2010-05-08/examples-1.json": (
+    "opt/wan-base/lib/python3.11/site-packages/botocore/data/iam/2010-05-08/examples-1.json": (
         "4f912aac51590625652fd76c37e4f90e78a05355273125df555c012b4d005ab5"
     ),
-    "opt/wan-base/lib/python3.10/site-packages/botocore/data/sts/2011-06-15/examples-1.json": (
+    "opt/wan-base/lib/python3.11/site-packages/botocore/data/sts/2011-06-15/examples-1.json": (
         "c83fc27073767fdb7d3e5190e4dcce25a09871c7b118fa289db056d93e0e31c9"
     ),
-    "opt/wan-base/lib/python3.10/site-packages/botocore/data/rds/2014-10-31/service-2.json.gz!/<decompressed>": (
+    "opt/wan-base/lib/python3.11/site-packages/botocore/data/rds/2014-10-31/service-2.json.gz!/<decompressed>": (
         "c5c1c925c3e977c10a0d77464e243eafc77a7a04364912a45965912421bad817"
     ),
-    "opt/wan-base/lib/python3.10/site-packages/botocore/data/sts/2011-06-15/service-2.json.gz!/<decompressed>": (
+    "opt/wan-base/lib/python3.11/site-packages/botocore/data/sts/2011-06-15/service-2.json.gz!/<decompressed>": (
         "5bec182c6a1f8a96993c78b95ba10087b2eaf5c617484ba755f38b03e2104901"
     ),
-    "opt/wan-base/lib/python3.10/site-packages/botocore-1.39.17.dist-info/METADATA": (
+    "opt/wan-base/lib/python3.11/site-packages/botocore-1.39.17.dist-info/METADATA": (
         "d1ce694b50d009bb3dab11331a281323d70c46ff4724e692dab3c2481ed62074"
     ),
-    "opt/wan-base/lib/python3.10/site-packages/cryptography/hazmat/primitives/serialization/ssh.py": (
+    "opt/wan-base/lib/python3.11/site-packages/cryptography/hazmat/primitives/serialization/ssh.py": (
         "162b177bf9d429d3c67ea10d5612a99a86b399a23ca87f067be5466dcd1dca4c"
     ),
-    "opt/wan-base/lib/python3.10/site-packages/diffusers/loaders/textual_inversion.py": (
+    "opt/wan-base/lib/python3.11/site-packages/diffusers/loaders/textual_inversion.py": (
         "9cc89fb4b0ac9762e4434723f8447d8833d26b03844804ee11493ce4b5f7512a"
     ),
     # Hugging Face Hub 1.26 token-variable references, bound to the independently
     # checked upstream wheel in wan2-2/oss-literal-audits.json.
-    "opt/wan-base/lib/python3.10/site-packages/huggingface_hub/_sandbox.py": (
+    "opt/wan-base/lib/python3.11/site-packages/huggingface_hub/_sandbox.py": (
         "5c45d98b94b7ad8cb0fe8ded777ac1d313957668690259f2532901b00c3d28ff"
     ),
-    "opt/wan-base/lib/python3.10/site-packages/huggingface_hub/cli/sandbox.py": (
+    "opt/wan-base/lib/python3.11/site-packages/huggingface_hub/cli/sandbox.py": (
         "ad30997fa5a1a036bb522361b1353fe0b879b8aa8a60eb3bdf15c6000a8919d0"
     ),
     "usr/bin/ssh": "04f2ff5f506a3f332e7adeb1478a4c551ae74acdd328e6fb5c2495664d4064e6",

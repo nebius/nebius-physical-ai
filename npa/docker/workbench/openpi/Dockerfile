@@ -68,7 +68,7 @@ RUN git clone --filter=blob:none --no-checkout "${OPENPI_SOURCE_URL}" /opt/byof 
 # on the first cross-node collective; the replacement wheels were qualified on
 # eight one-GPU RTX PRO 6000 nodes. Keep the public GCS reader isolated from this environment.
 RUN python3 -m venv /opt/uv \
-    && /opt/uv/bin/pip install --no-cache-dir 'uv==0.11.15' \
+    && /opt/uv/bin/pip install --no-cache-dir 'uv==0.13.4' \
     && /opt/uv/bin/uv python install 3.11 \
     && /opt/uv/bin/uv venv --python 3.11 /opt/venv \
     && cd /opt/byof \

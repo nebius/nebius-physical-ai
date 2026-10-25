@@ -41,7 +41,12 @@ def upstream(manifest):
 def test_complete_upstream_population_has_only_three_version_changes(manifest):
     requirements = builder.vendor_requirements(upstream(manifest), manifest)
     assert len(requirements.splitlines()) == len(manifest["vendors"]) == 18
-    assert set(manifest["replacements"]) == {"urllib3", "msgpack", "setuptools"}
+    assert set(manifest["replacements"]) == {
+        "certifi",
+        "urllib3",
+        "msgpack",
+        "setuptools",
+    }
     for row in manifest["vendors"]:
         assert (
             f"{row['name']}=={row['version']} --hash=sha256:{row['sha256']}"
@@ -158,7 +163,7 @@ def test_build_lock_preserves_marker_dependency():
     assert "typing-extensions==4.16.0" in lock
     assert "vendoring==1.4.0" in lock
     assert "flit-core==3.12.0" in lock
-    assert "setuptools==80.9.0" in lock
+    assert "setuptools==84.2.1" in lock
 
 
 @pytest.mark.parametrize("outer_mask", [0o022, 0o077])

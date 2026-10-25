@@ -170,7 +170,7 @@ accepted whole-image byte/security review and supported-image release.
   changes Ubuntu-owned wheel files without pretending their original dpkg
   package versions changed; preserve original package notices and both source
   identities. The complete setuptools seed is separately locked to the same
-  MIT-licensed 84.0.0 wheel as the service runtime. Its fixed Unicode-normalized
+  MIT-licensed 84.2.1 wheel as the service runtime. Its fixed Unicode-normalized
   manifest exclusions prevent the demonstrated NFC/NFD filename bypass present
   in the former full 80.9.0 seed. This does not change the installer's separately
   reviewed, limited `pkg_resources` donor or claim that all 80.9.0 code was

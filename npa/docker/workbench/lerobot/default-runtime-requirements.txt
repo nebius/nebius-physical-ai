@@ -1,4 +1,4 @@
-# Maintained NPA 0.5.1+npa.secure2 integration; native gates must qualify this.
+# Maintained NPA 0.5.1+npa.secure4 integration; native gates must qualify this.
 # TorchCodec 0.16 supports PyTorch >=2.11; every image gate remains mandatory.
 torch==2.13.0
 torchvision==0.28.0
