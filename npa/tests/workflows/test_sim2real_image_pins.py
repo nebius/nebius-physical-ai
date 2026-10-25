@@ -164,7 +164,7 @@ def test_sim2real_manual_uses_canonical_cosmos_and_cache_warm_roles() -> None:
         / "docs/workbench/guides/sim2real-workflow.md"
     ).read_text(encoding="utf-8")
 
-    assert "| `COSMOS3_IMAGE` | `npa-cosmos3-reason`" in guide
+    assert "| `COSMOS3_IMAGE` | `npa-cosmos3`" in guide
     assert "The cache-warming Job below is created directly by" not in guide
     assert "Do not add a direct `kubectl` cache-warming\nJob." in guide
     assert "`stage-00-isaac-cache-warm`" in guide
