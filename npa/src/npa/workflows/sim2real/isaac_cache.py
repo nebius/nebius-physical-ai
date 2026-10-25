@@ -2,9 +2,12 @@
 
 The public Isaac image intentionally contains no restricted Isaac runtime bytes.
 The canonical workflow warms those bytes in its own first SkyPilot state, but a
-shared RWX claim must exist before that state can be scheduled.  This module
-creates or verifies only that claim; it never creates a Kubernetes Job and it
-never changes a claim owned by another tool or operator.
+shared RWX claim must exist before that state can be scheduled.  A Pending
+claim is otherwise rejected; submission admits it only after independently
+proving that its exact StorageClass uses WaitForFirstConsumer and that the
+canonical cache writer is the initial state.  This module creates or verifies
+only that claim; it never creates a Kubernetes Job and it never changes a
+claim owned by another tool or operator.
 """
 
 from __future__ import annotations

@@ -345,6 +345,83 @@ def test_kubernetes_preflight_parses_nodes_and_pvc():
     ]
 
 
+def test_kubernetes_preflight_admits_only_canonical_delayed_cache_binding():
+    calls = []
+
+    def run(args):
+        calls.append(args)
+        if args[:2] == ["get", "nodes"]:
+            return SimpleNamespace(returncode=0, stdout=_nodes(), stderr="")
+        if args[:2] == ["get", "pvc"]:
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "spec": {
+                            "accessModes": ["ReadWriteMany"],
+                            "storageClassName": "delayed-rwx",
+                        },
+                        "status": {"phase": "Pending"},
+                    }
+                ),
+                stderr="",
+            )
+        if args[:2] == ["get", "storageclass"]:
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps({"volumeBindingMode": "WaitForFirstConsumer"}),
+                stderr="",
+            )
+        return SimpleNamespace(returncode=1, stdout="", stderr="unexpected")
+
+    assert (
+        kubernetes_prerequisites(
+            _config(),
+            runner=run,
+            allow_wait_for_first_consumer=True,
+        )
+        == []
+    )
+    assert [call[:2] for call in calls] == [
+        ["get", "nodes"],
+        ["get", "pvc"],
+        ["get", "storageclass"],
+    ]
+
+    issues = kubernetes_prerequisites(_config(), runner=run)
+    assert any("not Bound ReadWriteMany" in issue for issue, _ in issues)
+
+
+def test_kubernetes_preflight_rejects_pending_immediate_cache_binding():
+    def run(args):
+        if args[:2] == ["get", "nodes"]:
+            return SimpleNamespace(returncode=0, stdout=_nodes(), stderr="")
+        if args[:2] == ["get", "pvc"]:
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "spec": {
+                            "accessModes": ["ReadWriteMany"],
+                            "storageClassName": "immediate-rwx",
+                        },
+                        "status": {"phase": "Pending"},
+                    }
+                ),
+                stderr="",
+            )
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps({"volumeBindingMode": "Immediate"}),
+            stderr="",
+        )
+
+    issues = kubernetes_prerequisites(
+        _config(), runner=run, allow_wait_for_first_consumer=True
+    )
+    assert any("not Bound ReadWriteMany" in issue for issue, _ in issues)
+
+
 def test_kubernetes_preflight_reports_every_missing_cluster_object_together():
     def run(args):
         if args[:2] == ["get", "nodes"]:

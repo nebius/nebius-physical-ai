@@ -476,14 +476,19 @@ npa/.venv/bin/npa workbench sim2real cache provision \
   --namespace "$NPA_NAMESPACE" \
   --storage-class csi-mounted-fs-path-sc \
   --storage 64Gi \
+  --no-wait \
   --json
 ```
 
-Expected: the receipt reports `status: ready`, `phase: Bound`, and
-`ReadWriteMany`. The command waits without a synthetic job-duration deadline;
-if storage provisioning is pending, inspect that exact claim and its events,
-then rerun the same command. It refuses to alter a foreign or incompatible
-claim, so use a new claim name instead of replacing somebody else's volume.
+Expected: the receipt reports `ReadWriteMany`. A `Bound` claim is ready. A
+`Pending` claim may proceed only when its exact StorageClass reports
+`WaitForFirstConsumer`: the canonical submission preflight independently checks
+that condition and admits it only because `stage-00-isaac-cache-warm` is the
+first consumer. That CPU-only state binds and warms the claim before any
+read-only/offline Isaac GPU state. Any other Pending state remains a blocker;
+inspect the exact claim and events instead of creating a raw Job or replacing a
+foreign claim. Omit `--no-wait` only when the selected storage class binds
+independently and waiting for `Bound` is meaningful.
 
 Do not apply a raw warming Job. The canonical `sim2real.yaml` begins with its
 CPU-only `stage-00-isaac-cache-warm` state. That state runs the selected

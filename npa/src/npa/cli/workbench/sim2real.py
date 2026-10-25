@@ -193,7 +193,11 @@ def provision_isaac_cache_claim(
         "next": (
             "submit the canonical workflow with --var isaac_cache_pvc=" + receipt.name
             if receipt.phase == "Bound"
-            else "wait for this exact claim to become Bound before submitting the workflow"
+            else (
+                "for a Pending claim, submit only through the canonical workflow "
+                "after its guarded preflight verifies this exact RWX StorageClass "
+                "uses WaitForFirstConsumer"
+            )
         ),
     }
     if output_json:

@@ -36,6 +36,7 @@ _REQUIRED_SECRET_ENVS = (
 _DIGEST_IMAGE = re.compile(r"^[^/\s]+/.+@sha256:[0-9a-fA-F]{64}$")
 _SIM2REAL_CPU_MILLICORES = (8 + DEFAULT_K8S_CONTROLLER_CPUS) * 1000
 _SIM2REAL_MEMORY_BYTES = (32 + DEFAULT_K8S_CONTROLLER_MEMORY_GB) * 1024**3
+_WAIT_FOR_FIRST_CONSUMER = "WaitForFirstConsumer"
 
 
 def cpu_placement_requirement() -> str:
@@ -178,8 +179,10 @@ def static_prerequisites(
                 "config.isaac_cache_pvc is empty",
                 "run `npa workbench sim2real cache provision --name <rwx-pvc> "
                 "--context <context> --namespace <namespace>`, then pass "
-                "--var isaac_cache_pvc=<bound-rwx-pvc>; the canonical workflow "
-                "warms and attests that claim in its first SkyPilot state",
+                "--var isaac_cache_pvc=<rwx-pvc>; canonical submission verifies "
+                "that it is Bound or, for WaitForFirstConsumer, that the guarded "
+                "cache writer is initial, then warms and attests it in the first "
+                "SkyPilot state",
             )
         )
 
@@ -473,7 +476,30 @@ def _driver_placement_issues(nodes, placements) -> list[Issue]:
     ]
 
 
-def _isaac_cache_issues(config, runner, namespace) -> list[Issue]:
+def _is_delayed_binding_isaac_cache(pvc: Mapping[str, Any], runner) -> bool:
+    """Return whether an RWX claim can bind at the canonical cache-warm stage."""
+
+    spec = pvc.get("spec") if isinstance(pvc.get("spec"), Mapping) else {}
+    storage_class = str(spec.get("storageClassName") or "").strip()
+    if not storage_class:
+        return False
+    result = runner(["get", "storageclass", storage_class, "-o", "json"])
+    if getattr(result, "returncode", 1) != 0:
+        return False
+    try:
+        payload = json.loads(str(getattr(result, "stdout", ""))) or {}
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(payload, Mapping):
+        return False
+    return (
+        str(payload.get("volumeBindingMode") or "").strip() == _WAIT_FOR_FIRST_CONSUMER
+    )
+
+
+def _isaac_cache_issues(
+    config, runner, namespace, *, allow_wait_for_first_consumer: bool = False
+) -> list[Issue]:
     if namespace is None:
         return [
             (
@@ -493,17 +519,24 @@ def _isaac_cache_issues(config, runner, namespace) -> list[Issue]:
             except json.JSONDecodeError:
                 pvc = {}
         modes = set((pvc.get("spec") or {}).get("accessModes") or [])
-        if (pvc.get("status") or {}).get(
-            "phase"
-        ) != "Bound" or "ReadWriteMany" not in modes:
+        phase = str((pvc.get("status") or {}).get("phase") or "").strip()
+        bound_rwx = phase == "Bound" and "ReadWriteMany" in modes
+        delayed_binding = (
+            allow_wait_for_first_consumer
+            and phase == "Pending"
+            and "ReadWriteMany" in modes
+            and _is_delayed_binding_isaac_cache(pvc, runner)
+        )
+        if not bound_rwx and not delayed_binding:
             issues.append(
                 (
                     f"Isaac cache PVC {pvc_name!r} is missing or is not Bound ReadWriteMany "
                     f"in namespace {namespace!r}",
                     "provision or inspect this exact claim with `npa workbench sim2real "
                     "cache provision --name <pvc> --context <context> --namespace "
-                    f"{namespace}`; once Bound, the canonical workflow warms and attests "
-                    "it before any read-only/offline Isaac GPU state",
+                    f"{namespace}`; a Pending RWX claim is admissible only when its exact "
+                    "StorageClass uses WaitForFirstConsumer and the canonical stage-00 "
+                    "cache-warm state is the initial consumer; otherwise wait for Bound",
                 )
             )
 
@@ -516,6 +549,7 @@ def kubernetes_prerequisites(
     runner: Callable[[list[str]], Any],
     namespace: str | None = "default",
     isaac_placements=None,
+    allow_wait_for_first_consumer: bool = False,
 ) -> list[Issue]:
     """Validate cluster objects the real Sim2Real/SkyPilot path consumes.
 
@@ -524,6 +558,8 @@ def kubernetes_prerequisites(
         runner: Exact-context Kubernetes reader.
         namespace: Selected workflow namespace; None refuses cache lookup.
         isaac_placements: Effective render stage placement constraints.
+        allow_wait_for_first_consumer: Permit an RWX delayed-binding claim only
+            for the canonical initial cache-warm consumer.
     Returns:
         Missing prerequisites and their remediation guidance.
     Raises:
@@ -533,5 +569,10 @@ def kubernetes_prerequisites(
     return (
         _cpu_placement_issues(nodes)
         + _driver_placement_issues(nodes, isaac_placements)
-        + _isaac_cache_issues(config, runner, namespace)
+        + _isaac_cache_issues(
+            config,
+            runner,
+            namespace,
+            allow_wait_for_first_consumer=allow_wait_for_first_consumer,
+        )
     )

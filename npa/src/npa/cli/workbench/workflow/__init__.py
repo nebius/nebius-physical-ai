@@ -2383,6 +2383,11 @@ def submit_cmd(
                             context=infra_context,
                             kubeconfig=kubeconfig,
                             isaac_placements=isaac_placements,
+                            allow_wait_for_first_consumer=(
+                                _has_canonical_isaac_cache_warm_initial_state(
+                                    merged_npa_spec
+                                )
+                            ),
                         )
                     )
             if missing:
@@ -4642,8 +4647,98 @@ def _sim2real_cache_namespace(context, kubeconfig):
     return context_namespace(context=context, kubeconfig=kubeconfig)
 
 
+def _has_canonical_isaac_cache_warm_initial_state(spec: NpaWorkflowSpec) -> bool:
+    """Return whether the workflow begins with the exact canonical cache writer.
+
+    A delayed-binding PVC can be admitted only when this initial state actually
+    mounts the supplied claim read-write, runs the cache bootstrap, and publishes
+    the cache receipt before the rest of the workflow starts.  Checking the
+    command alone would let a copied spec skip the PVC mount and deadlock again.
+    """
+
+    state = spec.states.get("stage-00-isaac-cache-warm")
+    expected_argv = [
+        "/opt/npa/sim/venv/bin/python",
+        "-m",
+        "npa.workflows.sim2real.cache_warm",
+        "--root-uri",
+        "{{config.root_uri}}",
+        "--run-id",
+        "{{run.id}}",
+    ]
+    if state is None:
+        return False
+    resource = spec.resources.get("isaac-cache-warm")
+    if not isinstance(resource, dict):
+        return False
+    try:
+        pod_spec = resource["kubernetes"]["pod_config"]["spec"]
+        containers = pod_spec["containers"]
+        volumes = pod_spec["volumes"]
+    except (KeyError, TypeError):
+        return False
+    if not isinstance(containers, list) or not isinstance(volumes, list):
+        return False
+    cache_container = next(
+        (
+            container
+            for container in containers
+            if isinstance(container, dict) and container.get("name") == "ray-node"
+        ),
+        None,
+    )
+    if not isinstance(cache_container, dict):
+        return False
+    env = {
+        entry.get("name"): entry.get("value")
+        for entry in cache_container.get("env", [])
+        if isinstance(entry, dict)
+    }
+    writable_cache_mount = any(
+        isinstance(mount, dict)
+        and mount.get("name") == "npa-isaac-runtime-cache"
+        and mount.get("mountPath") == "/opt/isaac-cache"
+        for mount in cache_container.get("volumeMounts", [])
+    )
+    claim_volume = any(
+        isinstance(volume, dict)
+        and volume.get("name") == "npa-isaac-runtime-cache"
+        and isinstance(volume.get("persistentVolumeClaim"), dict)
+        and volume["persistentVolumeClaim"].get("claimName")
+        == "{{config.isaac_cache_pvc}}"
+        for volume in volumes
+    )
+    emits_cache_receipt = len(state.outputs) == 1 and (
+        state.outputs[0].uri == "{{config.root_uri}}/cache/isaac-warm.json"
+        and state.outputs[0].schema == "npa.sim2real.isaac_cache_warm.v1"
+    )
+    return bool(
+        spec.name == "sim2real"
+        and spec.initial == "stage-00-isaac-cache-warm"
+        and state.resources == "isaac-cache-warm"
+        and state.run is not None
+        and state.run.argv == expected_argv
+        and state.next == "stage-01-trigger"
+        and resource.get("cloud") == "kubernetes"
+        and resource.get("image") == "{{config.isaac_image}}"
+        and env.get("NPA_SIM2REAL_ISAAC_CACHE_PVC") == "{{config.isaac_cache_pvc}}"
+        and env.get("NPA_ISAAC_CACHE_DIR") == "/opt/isaac-cache"
+        and env.get("NPA_ISAAC_CACHE_READONLY") == "0"
+        and env.get("NPA_ISAAC_BOOTSTRAP_OFFLINE") == "0"
+        and writable_cache_mount
+        and claim_volume
+        and emits_cache_receipt
+    )
+
+
 def _sim2real_kubernetes_prerequisites_for_submit(
-    config, *, runner, context, kubeconfig, isaac_placements
+    config,
+    *,
+    runner,
+    context,
+    kubeconfig,
+    isaac_placements,
+    allow_wait_for_first_consumer: bool = False,
 ):
     """Check the Isaac cache in the namespace selected for this submission.
 
@@ -4653,6 +4748,8 @@ def _sim2real_kubernetes_prerequisites_for_submit(
         context: Selected Kubernetes context.
         kubeconfig: Selected authenticated kubeconfig.
         isaac_placements: Effective Isaac render placement constraints.
+        allow_wait_for_first_consumer: Admit a verified delayed-binding claim only
+            when this submission begins at the canonical cache-warm writer.
     Returns:
         Missing prerequisites, including unreadable namespace evidence.
     Raises:
@@ -4667,7 +4764,11 @@ def _sim2real_kubernetes_prerequisites_for_submit(
     except ValueError:
         namespace = None
     return kubernetes_prerequisites(
-        config, runner=runner, namespace=namespace, isaac_placements=isaac_placements
+        config,
+        runner=runner,
+        namespace=namespace,
+        isaac_placements=isaac_placements,
+        allow_wait_for_first_consumer=allow_wait_for_first_consumer,
     )
 
 

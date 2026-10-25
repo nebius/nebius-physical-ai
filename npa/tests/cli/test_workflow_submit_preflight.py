@@ -3043,6 +3043,24 @@ def test_sim2real_cache_preflight_uses_selected_context_namespace(
     assert options == {}
 
 
+def test_sim2real_delayed_cache_binding_requires_the_exact_stage_zero_writer():
+    from npa.orchestration.npa_workflow.spec import load_spec
+
+    spec = load_spec(SIM2REAL_SPEC)
+    assert workflow_cli._has_canonical_isaac_cache_warm_initial_state(spec)
+
+    assert spec.states["stage-00-isaac-cache-warm"].run is not None
+    spec.states["stage-00-isaac-cache-warm"].run.argv[-1] = "unexpected-run-id"
+
+    assert not workflow_cli._has_canonical_isaac_cache_warm_initial_state(spec)
+
+    spec = load_spec(SIM2REAL_SPEC)
+    cache_resource = spec.resources["isaac-cache-warm"]
+    cache_resource["kubernetes"]["pod_config"]["spec"]["volumes"] = []
+
+    assert not workflow_cli._has_canonical_isaac_cache_warm_initial_state(spec)
+
+
 def test_sim2real_cache_preflight_refuses_unreadable_context(
     monkeypatch, tmp_path
 ) -> None:

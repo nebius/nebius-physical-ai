@@ -238,3 +238,47 @@ def test_cli_provision_uses_an_explicit_context_and_emits_a_claim_receipt(
     assert seen["context"] == "customer-context"
     assert seen["prefer_kubeconfig"] is True
     assert core.create_calls == []
+
+
+def test_cli_pending_claim_directs_the_operator_to_guarded_submission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.workflows.sim2real.k8s_client import KubernetesJobClient
+
+    core = _Core(
+        [
+            _claim(
+                phase="Pending",
+                labels={
+                    isaac_cache.MANAGED_BY_LABEL: isaac_cache.MANAGED_BY_VALUE,
+                    isaac_cache.CACHE_ROLE_LABEL: isaac_cache.CACHE_ROLE_VALUE,
+                },
+            )
+        ]
+    )
+
+    def fake_from_environment(cls, **_kwargs):
+        return KubernetesJobClient(
+            batch_api=object(), core_api=core, namespace="default"
+        )
+
+    monkeypatch.setattr(
+        KubernetesJobClient, "from_environment", classmethod(fake_from_environment)
+    )
+    result = CliRunner().invoke(
+        app,
+        [
+            "cache",
+            "provision",
+            "--name",
+            "npa-isaac-cache",
+            "--context",
+            "customer-context",
+            "--no-wait",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert '"status": "pending"' in result.output
+    assert "WaitForFirstConsumer" in result.output
