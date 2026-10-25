@@ -95,8 +95,8 @@ COPY docker/workbench/libero/entrypoint.sh /usr/local/bin/npa-libero-entrypoint
 COPY docker/workbench/libero/smoke.sh /opt/npa/libero/smoke.sh
 
 RUN set -eux; \
-    echo 'fe6fb8b3b867581c8b8fbd35bdb97e70773880ce414495c3026c169c3a12203d  /opt/npa/libero/runtime-manifest.json' | sha256sum -c -; \
-    echo 'a4fe225c8f182ad66d7a36f9b62eefd281e2519b43e94f402e319baec1c25733  /opt/npa/libero/runtime-requirements.txt' | sha256sum -c -; \
+    echo '03b68662093313a8f971519c4f677038242f6266261eff67b6f84385282ebffd  /opt/npa/libero/runtime-manifest.json' | sha256sum -c -; \
+    echo '62703583c24f612e6655fe3dd114b8e79ef5d1063b7632c890aaa3beaad90e04  /opt/npa/libero/runtime-requirements.txt' | sha256sum -c -; \
     python3 -c 'import sys; assert sys.version_info[:2] == (3, 11)'; \
     chmod 0755 /opt/npa/libero/runtime-bootstrap.py /opt/npa/libero/smoke.sh /usr/local/sbin/npa-skypilot-bootstrap-guard /usr/local/bin/npa-libero-entrypoint; \
     ln -s npa-skypilot-bootstrap-guard /usr/local/sbin/apt-get; \

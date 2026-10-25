@@ -14,7 +14,7 @@ pillow==13.0.0
 pygments==2.21.0
 pytest==9.0.3
 requests==2.34.2
-setuptools==84.0.0
+setuptools==84.2.1
 urllib3==2.8.0
 # NLTK is installed by common/install_hardened_nltk.sh from the pinned fix commit.
 defusedxml==0.7.1

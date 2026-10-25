@@ -193,9 +193,9 @@ def test_seedvr2_system_seed_wheels_are_repaired_before_export() -> None:
     )
     donor = next(row for row in manifest["vendors"] if row["name"] == "setuptools")
     seed_lock = (DOCKER_DIR / "setuptools-seed.lock").read_text()
-    seed_hash = "51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670"
-    seed_filename = "setuptools-84.0.0-py3-none-any.whl"
-    assert "setuptools==84.0.0" in seed_lock
+    seed_hash = "ca140b45d5325a9478f880e351484f62fef15f336462e449ca0c03c873d589c2"
+    seed_filename = "setuptools-84.2.1-py3-none-any.whl"
+    assert "setuptools==84.2.1" in seed_lock
     assert "--hash=sha256:" + seed_hash in seed_lock
     assert donor["filename"] != seed_filename
     assert "FROM seedvr2-build AS seedvr2-bootstrap" in build_stage
@@ -389,7 +389,7 @@ def test_seedvr2_dependency_lock_uses_remediated_runtime_versions() -> None:
         "diffusers==0.38.0",
         "pillow==13.0.0",
         "safetensors==0.8.0",
-        "setuptools==83.0.0",
+        "setuptools==84.2.1",
         "torch==2.13.0",
         "torchvision==0.28.0",
     ):
