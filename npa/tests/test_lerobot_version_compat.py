@@ -146,7 +146,7 @@ def test_060_image_build_and_smoke_cover_real_diffusion_construction() -> None:
     )
     for dependency in ("diffusers==", "transformers==", "accelerate==", "num2words=="):
         assert dependency in lock
-    assert "python -m npa.smoke.test_lerobot_env" in dockerfile
+    assert '"$NPA_BAKED_PYTHON" -m npa.smoke.test_lerobot_env' in dockerfile
     assert "DiffusionPolicy(config)" in smoke
     assert "NPA_LEROBOT_SMOKE_REQUIRE_CUDA" in smoke
     assert 'policy.to("cuda")' in smoke
@@ -171,7 +171,12 @@ def test_lerobot_images_hash_lock_service_lifecycle_dependencies() -> None:
         )
         for dependency in required:
             assert dependency in lock
-    assert dockerfile.count("from kubernetes import client, config") == 2
+    lifecycle_import = "from kubernetes import client, config"
+    assert dockerfile.count(lifecycle_import) == 3
+    assert dockerfile.index("ENV PATH=/usr/bin:$PATH") < dockerfile.rindex(
+        lifecycle_import
+    )
+    assert "import npa.workflows.sim2real.smolvla_service_lifecycle" in dockerfile
 
 
 def test_unsupported_version_raises(monkeypatch: pytest.MonkeyPatch) -> None:
