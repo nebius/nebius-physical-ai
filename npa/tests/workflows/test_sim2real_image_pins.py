@@ -483,8 +483,8 @@ def test_isaac_exact_source_image_imports_the_runtime_stage() -> None:
     assert "NPA_SKIP_EAGER_IMPORTS=1" in dockerfile
     assert "NPA_BAKED_PYTHON=/opt/npa/sim/venv/bin/python" in dockerfile
     assert "npa-exact-source.pth" in dockerfile
-    assert "sim2real-controller-requirements.txt" in dockerfile
     assert "sim2real-control-requirements.txt" in dockerfile
+    assert "sim2real-controller-requirements.txt" not in dockerfile
     assert "env -u PYTHONPATH /opt/npa/sim/venv/bin/python -c" in dockerfile
     assert (
         "import boto3, kubernetes, mcap, "
@@ -828,6 +828,7 @@ def test_sim2real_control_plane_requirement_closure_is_exact() -> None:
         "pycparser==3.0",
         "lz4==4.4.5",
         "zstandard==0.25.0",
+        "defusedxml==0.7.1",
     ):
         assert expected in lines
 

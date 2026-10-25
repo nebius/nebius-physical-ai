@@ -137,7 +137,6 @@ RUN find /opt/npa/src /opt/npa/workflows -type d -exec chmod a+rx {} + \
     && find /opt/npa/src /opt/npa/workflows -type f -exec chmod a+r {} + \
     && chmod a+r /opt/npa/pyproject.toml \
     && /opt/npa/sim/venv/bin/python -m pip install --no-cache-dir --no-deps \
-      -r /opt/npa/docker/workbench/common/sim2real-controller-requirements.txt \
       -r /opt/npa/docker/workbench/common/sim2real-control-requirements.txt \
     && /opt/npa/sim/venv/bin/python -m pip check \
     && /opt/npa/sim/venv/bin/python -c \
