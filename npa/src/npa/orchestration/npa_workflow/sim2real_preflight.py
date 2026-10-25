@@ -127,6 +127,30 @@ def _source_sha_issues(config: Mapping[str, Any]) -> list[Issue]:
     return issues
 
 
+def _cosmos3_role_issues(config: Mapping[str, Any]) -> list[Issue]:
+    """Reject the known VLM-only image from the Stage 03 generation role.
+
+    Args:
+        config: Resolved Sim2Real workflow configuration.
+    Returns:
+        A preflight issue when the Cosmos-Reason image is assigned to Stage 03.
+    Raises:
+        None.
+    """
+    cosmos3_image = str(config.get("cosmos3_image") or "").strip().lower()
+    if "/npa-cosmos3-reason@" not in cosmos3_image:
+        return []
+    return [
+        (
+            "config.cosmos3_image selects npa-cosmos3-reason, which is a VLM "
+            "judge image and does not contain the Cosmos 3 generation framework",
+            "set cosmos3_image to an independently qualified npa-cosmos3 framework "
+            "image or compatible framework-bearing derivative; do not use "
+            "npa-cosmos3-reason for Stage 03",
+        )
+    ]
+
+
 def image_prerequisites(config: Mapping[str, Any]) -> list[Issue]:
     """Validate the complete immutable Sim2Real image bundle before pull probes.
 
@@ -155,6 +179,7 @@ def image_prerequisites(config: Mapping[str, Any]) -> list[Issue]:
         )
 
     issues.extend(_source_sha_issues(config))
+    issues.extend(_cosmos3_role_issues(config))
     return issues
 
 

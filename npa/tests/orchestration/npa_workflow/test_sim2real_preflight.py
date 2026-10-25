@@ -8,6 +8,7 @@ import pytest
 from npa.orchestration.npa_workflow.sim2real_preflight import (
     _managed_driver_isaac_nodes,
     _ready_schedulable_cpu_nodes,
+    image_prerequisites,
     kubernetes_prerequisites,
     static_prerequisites,
 )
@@ -155,6 +156,16 @@ def test_static_preflight_rejects_mutable_images_without_manual_eula_inputs():
     rendered = "\n".join(item for item, _ in issues)
     assert "controller_image" in rendered
     assert "accept_eula" not in rendered.lower()
+
+
+def test_image_prerequisites_rejects_cosmos_reason_as_stage03_runtime():
+    issues = image_prerequisites(
+        _config(cosmos3_image="registry.example/npa-cosmos3-reason@sha256:" + "b" * 64)
+    )
+
+    rendered = "\n".join(message for message, _ in issues)
+    assert "npa-cosmos3-reason" in rendered
+    assert "generation framework" in rendered
 
 
 def test_static_preflight_rejects_unresolved_token_factory_key():

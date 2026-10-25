@@ -89,6 +89,9 @@ config:
   # repository portable; runtime preflight and every stage reject
   # mutable/missing task images.
   controller_image: ""
+  # Stage 03 needs the Cosmos 3 generation framework.  Do not supply the
+  # VLM-only npa-cosmos3-reason image here; use npa-cosmos3 or a qualified
+  # framework-bearing derivative instead.
   cosmos3_image: ""
   envgen_image: ""
   isaac_image: ""

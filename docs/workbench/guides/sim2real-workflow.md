@@ -79,6 +79,13 @@ promote the quarantined release defaults.
 | `VIEWER_IMAGE` | `npa-rerun-viewer`, with RRD and MCAP finalization |
 | `SOURCE_SHA` | Common full 40-hex commit baked into all five images as `NPA_IMAGE_SOURCE_SHA` |
 
+`COSMOS3_IMAGE` is the Stage 03 generation role, not a hosted evaluator or VLM
+judge role. It must be an independently qualified `npa-cosmos3` image (or a
+compatible derivative that contains the pinned Cosmos 3 framework and its
+generation environment). `npa-cosmos3-reason` is a separate VLM-judging image
+and cannot run the guarded structural-transfer stage; canonical image preflight
+rejects that known incompatible assignment before a pull or launch.
+
 Every image must be a complete `repository@sha256:<64-hex-digest>` reference.
 The canonical workflow binds all five role values as immutable execution inputs:
 after setting them with `--var`, do not use a global `--image` or a
