@@ -322,7 +322,7 @@
   "expected_python_distribution_count": 19,
   "mujoco_version": "3.12.0",
   "reason": "Exact runtime-fetch bytes are locked for the separately reviewed private internal run; this manifest grants no rights.",
-  "requirements_lock_sha256": "c5bfee4e19992c74a14ee3ee099904acae059bff99528d649b5c82a9390b1546",
+  "requirements_lock_sha256": "834e1d6f95eeaeb4f7e201a01033a928d5eee1387b31950223ead31b3172bf80",
   "resolved_python_artifact_count": 19,
   "rights_boundary": "Runtime fetch changes delivery only; it does not grant or resolve use, derivative-work, output, or hosted-service rights.",
   "schema": "npa.gymnasium-robotics.runtime-fetch-lock.v2",

@@ -44,7 +44,7 @@
     "cuda-toolkit": "13.0.3.0",
     "cycler": "0.12.1",
     "diffusers": "0.38.0",
-    "filelock": "3.32.5",
+    "filelock": "4.2.4",
     "fonttools": "4.64.0",
     "fsspec": "2026.7.0",
     "h11": "0.16.0",

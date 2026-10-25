@@ -507,7 +507,7 @@ def test_runtime_manifest_is_metadata_only_and_never_an_acceptance_proxy() -> No
         for item in manifest["runtime_artifacts"]
     )
     assert sum(item["size_bytes"] for item in manifest["runtime_artifacts"]) == (
-        3_275_272_667
+        3_275_394_288
     )
     lines = [
         line

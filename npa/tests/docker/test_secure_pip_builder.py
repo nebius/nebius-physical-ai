@@ -163,7 +163,7 @@ def test_build_lock_preserves_marker_dependency():
     assert "typing-extensions==4.16.0" in lock
     assert "vendoring==1.4.0" in lock
     assert "flit-core==3.12.0" in lock
-    assert "setuptools==84.0.0" in lock
+    assert "setuptools==84.2.1" in lock
 
 
 @pytest.mark.parametrize("outer_mask", [0o022, 0o077])

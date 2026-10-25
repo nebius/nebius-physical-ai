@@ -41,14 +41,14 @@ ARG LEROBOT_SOURCE_COMMIT=7e241bd630a3719a56157a497ce5d08f244784f1
 LABEL npa.tool="robocasa" \
       npa.version="${ROBOCASA_VERSION}" \
       npa.robocasa.revision="8f3c96ec8d1bfcd8126cad2bca887da98d30e997" \
-      npa.robocasa.derivative="1.0.0+npa5" \
-      npa.robocasa.patch.sha256="43a00fbf2f59ba5aa77e9b2182ce148277b0d39a0d787cc5c7dd4578dce14812" \
+      npa.robocasa.derivative="1.0.0+npa6" \
+      npa.robocasa.patch.sha256="99b3bc804ea7c3456b908662bb6ab7ef60c45890a032094853797ba57b1b52c5" \
       npa.robocasa.license.sha256="5da18670b3f00c59847b1ded9c28dee59940d963b1e03b528b0108d9c5a09885" \
       npa.robosuite.revision="85abee228d1c43ab1939bce33028099945d453b4" \
       npa.lerobot.revision="${LEROBOT_SOURCE_COMMIT}" \
-      npa.lerobot.derivative="0.6.1+npa2" \
+      npa.lerobot.derivative="0.6.1+npa3" \
       npa.lerobot.archive.sha256="869026b70a9488f11ae25c92573f68a03e04e45b4ffda7d63586582ac8d506ee" \
-      npa.lerobot.patch.sha256="38d310f1b74b67a4584861c3fca5894b7693399ed6a1a82dc86cd754ef23de41" \
+      npa.lerobot.patch.sha256="225bbd70b43abe7afeff3eb0477696dccbc909de498a08893609053ace7a66f5" \
       npa.runtime_user="ubuntu" \
       org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
       org.opencontainers.image.source="https://github.com/nebius/nebius-physical-ai" \
@@ -240,7 +240,7 @@ RUN PIP_CONFIG_FILE=/dev/null python -m pip install \
     && base64 --decode /opt/robocasa/derivative/lerobot-npa-act.patch.b64 \
         > /tmp/lerobot-npa-act.patch \
     && echo \
-        "38d310f1b74b67a4584861c3fca5894b7693399ed6a1a82dc86cd754ef23de41  /tmp/lerobot-npa-act.patch" \
+        "225bbd70b43abe7afeff3eb0477696dccbc909de498a08893609053ace7a66f5  /tmp/lerobot-npa-act.patch" \
         | sha256sum --check --strict - \
     && git -C /opt/robocasa/lerobot-source apply --check \
         /tmp/lerobot-npa-act.patch \
@@ -252,11 +252,11 @@ RUN PIP_CONFIG_FILE=/dev/null python -m pip install \
         --disable-pip-version-check --no-cache-dir --no-build-isolation --no-deps \
         --wheel-dir /opt/robocasa/lerobot-wheel \
         /opt/robocasa/lerobot-source \
-    && test "$(find /opt/robocasa/lerobot-wheel -maxdepth 1 -type f -name 'lerobot-0.6.1+npa2-*.whl' | wc -l)" = 1 \
+    && test "$(find /opt/robocasa/lerobot-wheel -maxdepth 1 -type f -name 'lerobot-0.6.1+npa3-*.whl' | wc -l)" = 1 \
     && PIP_CONFIG_FILE=/dev/null python -m pip install \
         --disable-pip-version-check --no-cache-dir \
         --index-url https://pypi.org/simple \
-        /opt/robocasa/lerobot-wheel/lerobot-0.6.1+npa2-*.whl \
+        /opt/robocasa/lerobot-wheel/lerobot-0.6.1+npa3-*.whl \
     && python -m pip check \
     && python /opt/robocasa/derivative/verify_lerobot_act_derivative.py \
     && install -D -m 0644 /opt/robocasa/derivative/lerobot-npa-act.NOTICE \
@@ -316,7 +316,7 @@ RUN git init /opt/robocasa/source \
     && base64 --decode /opt/robocasa/derivative/robocasa-npa-act.patch.b64 \
       > /tmp/robocasa-npa-act.patch \
     && echo \
-      "43a00fbf2f59ba5aa77e9b2182ce148277b0d39a0d787cc5c7dd4578dce14812  /tmp/robocasa-npa-act.patch" \
+        "99b3bc804ea7c3456b908662bb6ab7ef60c45890a032094853797ba57b1b52c5  /tmp/robocasa-npa-act.patch" \
       | sha256sum --check --strict - \
     && git -C /opt/robocasa/source apply --check /tmp/robocasa-npa-act.patch \
     && git -C /opt/robocasa/source apply /tmp/robocasa-npa-act.patch \
@@ -325,7 +325,7 @@ RUN git init /opt/robocasa/source \
       --disable-pip-version-check --no-cache-dir \
       --index-url https://pypi.org/simple \
       --no-build-isolation -e /opt/robocasa/source \
-    && python -c "from importlib.metadata import version; assert version('robocasa') == '1.0.0+npa5'" \
+    && python -c "from importlib.metadata import version; assert version('robocasa') == '1.0.0+npa6'" \
     && python /opt/robocasa/repair_accelerate_checkpoints.py \
     && echo \
       "5da18670b3f00c59847b1ded9c28dee59940d963b1e03b528b0108d9c5a09885  /opt/robocasa/source/LICENSE" \
@@ -346,7 +346,7 @@ RUN apt-get purge -y --auto-remove linux-libc-dev \
 
 # Fail the image build if the exact held-out evaluator import path is incomplete.
 RUN printf '%s\n' "${NPA_SOURCE_SHA}" | grep -Eq '^[0-9a-f]{40}$' \
-    && python -c "from importlib.metadata import version; assert version('lerobot') == '0.6.1+npa2'" \
+    && python -c "from importlib.metadata import version; assert version('lerobot') == '0.6.1+npa3'" \
     && python /opt/robocasa/derivative/verify_dataset_metadata.py \
     && python /opt/robocasa/derivative/verify_recorded_action_reader.py \
     && python /opt/robocasa/derivative/verify_reset_region_order.py \
@@ -419,14 +419,14 @@ ARG LEROBOT_SOURCE_COMMIT=7e241bd630a3719a56157a497ce5d08f244784f1
 LABEL npa.tool="robocasa" \
       npa.version="${ROBOCASA_VERSION}" \
       npa.robocasa.revision="8f3c96ec8d1bfcd8126cad2bca887da98d30e997" \
-      npa.robocasa.derivative="1.0.0+npa5" \
-      npa.robocasa.patch.sha256="43a00fbf2f59ba5aa77e9b2182ce148277b0d39a0d787cc5c7dd4578dce14812" \
+      npa.robocasa.derivative="1.0.0+npa6" \
+      npa.robocasa.patch.sha256="99b3bc804ea7c3456b908662bb6ab7ef60c45890a032094853797ba57b1b52c5" \
       npa.robocasa.license.sha256="5da18670b3f00c59847b1ded9c28dee59940d963b1e03b528b0108d9c5a09885" \
       npa.robosuite.revision="85abee228d1c43ab1939bce33028099945d453b4" \
       npa.lerobot.revision="${LEROBOT_SOURCE_COMMIT}" \
-      npa.lerobot.derivative="0.6.1+npa2" \
+      npa.lerobot.derivative="0.6.1+npa3" \
       npa.lerobot.archive.sha256="869026b70a9488f11ae25c92573f68a03e04e45b4ffda7d63586582ac8d506ee" \
-      npa.lerobot.patch.sha256="38d310f1b74b67a4584861c3fca5894b7693399ed6a1a82dc86cd754ef23de41" \
+      npa.lerobot.patch.sha256="225bbd70b43abe7afeff3eb0477696dccbc909de498a08893609053ace7a66f5" \
       npa.runtime_user="ubuntu" \
       org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
       org.opencontainers.image.source="https://github.com/nebius/nebius-physical-ai" \

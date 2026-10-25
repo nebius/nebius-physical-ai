@@ -126,7 +126,7 @@ def test_scanner_covers_config_all_layers_whiteouts_and_rootfs_entries() -> None
         "_nested_archive_members(",
         "nested_budget=nested_budget",
         "allowed_system_wheel_path=",
-        '"requirements.lock": "c5bfee4e19992c74a14ee3ee099904acae059bff99528d649b5c82a9390b1546"',
+        '"requirements.lock": "834e1d6f95eeaeb4f7e201a01033a928d5eee1387b31950223ead31b3172bf80"',
         "KNOWN_FORBIDDEN_CONTENT_SHA256",
         "forbidden upstream/runtime byte",
         "six-boundary runtime delivery classification changed",

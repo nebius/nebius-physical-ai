@@ -59,7 +59,7 @@ einops==0.8.2
 etils==1.13.0
 farama-notifications==0.0.6
 fastapi==0.136.1
-filelock==3.25.2
+filelock==4.2.4
 flaky==3.8.1
 flatdict==4.0.0
 fonttools==4.61.1
@@ -190,7 +190,7 @@ s3transfer==0.14.0
 safetensors==0.8.0
 scipy==1.17.0
 sentry-sdk==2.42.1
-setuptools==84.0.0
+setuptools==84.2.1
 shellingham==1.5.4
 six==1.17.0
 smmap==5.0.3
