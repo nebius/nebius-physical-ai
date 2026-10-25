@@ -1,5 +1,10 @@
 # Keep the checkpoint runtime identical to the required security gate.
 torch==2.14.0
+# Reject filelock releases affected by CVE-2026-112907, CVE-2026-112913,
+# and CVE-2026-112940.
+filelock==4.2.1
+# Reject setuptools releases affected by GHSA-xmj3-9gf7-h52w.
+setuptools==84.1.0
 # Reject the OAuthLib releases affected by CVE-2026-49264 and CVE-2026-49265.
 oauthlib>=4.0.0
 # Keep Flask's Windows safe_join dependency above CVE-2026-102598.
