@@ -10,6 +10,7 @@ It is import-safe (no GPU/framework deps) and is used by both
 
 from __future__ import annotations
 
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,12 @@ import yaml
 from npa.clients.credentials import load_credentials
 from npa.clients.serverless import ServerlessClient, ServerlessClientError
 from npa.deploy.images import container_image_for_tool, execution_container_registry
+from npa.orchestration.skypilot.image_bootstrap_contract import (
+    immutable_image_reference,
+)
+from npa.orchestration.skypilot.registry_preflight import (
+    check_image_pulls_with_credentials,
+)
 from npa.serverless_common.env import ISAAC_EULA_VARS, isaac_eula_env  # noqa: F401 (re-exported)
 from npa.serverless_common import (
     build_serverless_job_env,
@@ -36,6 +43,17 @@ from npa.smoke.manifest import UNLIMITED_SERVERLESS_ERROR, container
 # should still pin a different offered accelerator when their runtime needs one.
 DEFAULT_SERVERLESS_GPU = "h200"
 _TERMINAL_OK = {"completed", "succeeded", "success"}
+_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+
+
+def _pin_digest(image: str, digest: str) -> str:
+    if not _DIGEST.fullmatch(digest):
+        raise ValueError("image digest must be exact sha256:<64 lowercase hex>")
+    repository = image.split("@", 1)[0]
+    final = repository.rsplit("/", 1)[-1]
+    if ":" in final:
+        repository = repository.rsplit(":", 1)[0]
+    return f"{repository}@{digest}"
 
 
 def resolve_golden_image(
@@ -44,22 +62,27 @@ def resolve_golden_image(
     """Resolve tool, variant, and internal runtime images without misclassifying them."""
 
     spec = container(tool)
+    digest = tag if tag and _DIGEST.fullmatch(tag) else None
+    selected_tag = None if digest else tag
     if spec.internal:
         resolved_registry = (registry or execution_container_registry()).rstrip("/")
-        resolved_tag = tag or spec.default_tag
+        resolved_tag = selected_tag or spec.default_tag
         if not resolved_tag:
             raise RuntimeError(
                 f"internal golden-eval image {tool!r} has no default tag"
             )
-        return f"{resolved_registry}/{spec.image}:{resolved_tag}"
+        image = f"{resolved_registry}/{spec.image}:{resolved_tag}"
+        return _pin_digest(image, digest) if digest else image
     if spec.variant_of:
-        return container_image_for_tool(
+        image = container_image_for_tool(
             spec.variant_of,
             registry=registry,
-            tag=tag,
+            tag=selected_tag,
             image_variant=spec.image_variant,
         )
-    return container_image_for_tool(tool, registry=registry, tag=tag)
+        return _pin_digest(image, digest) if digest else image
+    image = container_image_for_tool(tool, registry=registry, tag=selected_tag)
+    return _pin_digest(image, digest) if digest else image
 
 
 def _project_id(explicit: str | None) -> str:
@@ -94,6 +117,14 @@ def _project_id(explicit: str | None) -> str:
     )
 
 
+def _digest_bound_seedvr2_image(image: str) -> str:
+    checks = check_image_pulls_with_credentials([image], mint=True)
+    if len(checks) != 1 or not checks[0].ok or not checks[0].digest:
+        detail = checks[0].render() if checks else "registry returned no result"
+        raise RuntimeError(f"SeedVR2 golden image is not pullable by digest: {detail}")
+    return immutable_image_reference(image, checks[0].digest)
+
+
 def submit_golden_eval(
     tool: str,
     *,
@@ -101,6 +132,7 @@ def submit_golden_eval(
     project_id: str | None = None,
     registry: str | None = None,
     tag: str | None = None,
+    expected_image_digest: str | None = None,
     timeout: str = "40m",
     poll_ceiling_s: float = 2700.0,
     wait: bool = True,
@@ -117,9 +149,26 @@ def submit_golden_eval(
     command = spec.golden_eval.command
     gpu = gpu_type or spec.golden_eval.serverless_gpu or DEFAULT_SERVERLESS_GPU
 
-    resolved_project = _project_id(project_id)
     image = resolve_golden_image(tool, registry=registry, tag=tag)
+    if tool == "curobo":
+        if not re.fullmatch(r".+@sha256:[0-9a-f]{64}", image):
+            raise RuntimeError(
+                "cuRobo golden acceptance requires --tag sha256:<exact digest>"
+            )
+        actual_digest = image.rsplit("@", 1)[1]
+        if not expected_image_digest or not _DIGEST.fullmatch(expected_image_digest):
+            raise RuntimeError(
+                "cuRobo golden acceptance requires an independently frozen "
+                "--expected-image-digest"
+            )
+        if actual_digest != expected_image_digest:
+            raise RuntimeError(
+                "cuRobo selected image differs from the independently frozen digest"
+            )
+    resolved_project = _project_id(project_id)
     cfg = load_credentials(export_to_environment=True)
+    if tool == "seedvr2":
+        image = _digest_bound_seedvr2_image(image)
     bucket = (cfg.s3_bucket or "").rstrip("/")
     if not bucket:
         raise RuntimeError("No S3 bucket configured (credentials.storage.bucket)")
@@ -143,6 +192,17 @@ def submit_golden_eval(
         # pyarrow/lancedb/fiftyone deps missing from slim tool images.
         "NPA_SKIP_EAGER_IMPORTS": "1",
     }
+    if tool == "curobo":
+        extra_env.update(
+            {
+                "NPA_IMAGE_DIGEST": image.rsplit("@", 1)[1],
+                "NPA_EXPECTED_IMAGE_DIGEST": expected_image_digest,
+                "NPA_SMOKE_OUTPUT_DIR": "/workspace/npa-golden",
+                "NPA_SMOKE_RUN_ID": run_id,
+            }
+        )
+    if tool == "seedvr2":
+        extra_env["NPA_TASK_IMAGE"] = image
     # cosmos3-ray-serve requires a bearer token for its authenticated API.
     # Generate an ephemeral token; the smoke_functional.sh start/stop cycle
     # is self-contained so the token never leaves the job.

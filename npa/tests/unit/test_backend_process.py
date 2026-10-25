@@ -19,6 +19,29 @@ from npa.cluster_backends.process import (
 )
 
 
+@pytest.mark.parametrize("cancellable", [False, True])
+@pytest.mark.parametrize("returncode", [0, 7])
+def test_stream_keeps_partial_state_private_and_readable_for_recovery(
+    tmp_path, cancellable, returncode
+):
+    from npa.cluster_backends.standalone_recovery import _read_private_json
+
+    command = [
+        "/bin/sh",
+        "-c",
+        "printf '{\"resources\": []}' > terraform.tfstate; exit " + str(returncode),
+    ]
+    options = {"cwd": tmp_path, "cancel": (lambda: None) if cancellable else None}
+    if returncode:
+        with pytest.raises(BackendCommandError):
+            run_stream(command, **options)
+    else:
+        run_stream(command, **options)
+    state = tmp_path / "terraform.tfstate"
+    assert state.stat().st_mode & 0o777 == 0o600
+    assert _read_private_json(state) == {"resources": []}
+
+
 def test_require_bin_rejects_missing_and_non_executable(tmp_path: Path) -> None:
     missing = tmp_path / "missing"
     with pytest.raises(BackendCommandError, match="Required executable not found"):

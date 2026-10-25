@@ -20,6 +20,7 @@ from npa.workbench.nurec.nurec import (
     read_rig_sidecar,
     verify_ncore_input,
 )
+from npa.workbench.nurec.ncore_frame_poses import plan_frame_poses
 
 _INITIALIZATION = "model.layers.background.initialization"
 _INITIALIZATION_GROUP = f"model/gaussians/initialization@{_INITIALIZATION}"
@@ -38,6 +39,7 @@ def plan_initialization(
     Raises:
         NurecError: The selected input or point inventory is invalid.
     """
+    config = plan_frame_poses(config, ncore_json)
     cameras, lidars = ncore_sensor_ids(ncore_json)
     config = replace(
         config,

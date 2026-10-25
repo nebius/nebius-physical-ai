@@ -1,6 +1,8 @@
 # Dependency-minimal NPA/Typer command surface used by the Arena worker.
 # Install with --no-deps --require-hashes: Isaac's resolver-closed OSS runtime
 # already provides the remaining evaluation and S3 dependencies.
+PyJWT==2.15.1 \
+    --hash=sha256:42d59d631f7768a1028a64c7ff581a9bf7519804daf91fc5b6c56e30eec5e193
 click==8.3.3 \
     --hash=sha256:398329ad4837b2ff7cbe1dd166a4c0f8900c3ca3a218de04466f38f6497f18a2 \
     --hash=sha256:a2bf429bb3033c89fa4936ffb35d5cb471e3719e1f3c8a7c3fff0b8314305613

@@ -4,8 +4,8 @@
 ARG NPA_CUDA_BASE=ghcr.io/nebius/nebius-physical-ai/npa-detection-training@sha256:a432dd2a9e6bafed4b78466ac806f584c7fcf549cf3be0edaf75f2fecdadfdd9
 FROM ${NPA_CUDA_BASE}
 
-ARG UBUNTU_SNAPSHOT=20260910T000000Z
-ARG LINUX_LIBC_DEV_VERSION=6.8.0-139.139
+ARG UBUNTU_SNAPSHOT=20261018T000000Z
+ARG LINUX_LIBC_DEV_VERSION=6.8.0-147.147
 
 # The base drops to a non-root user; build steps need root, and the image drops
 # back to the ubuntu user before runtime (below).

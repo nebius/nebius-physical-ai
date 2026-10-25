@@ -1109,8 +1109,14 @@ def _patch_launch(monkeypatch):
         "npa.cli.workbench.leisaac._install_agent_relay",
         lambda *args, **kwargs: install_calls.append((args, kwargs)),
     )
+
+    def certificate_pin(selected_ssh):
+        assert selected_ssh is ssh
+        return "f" * 64
+
     monkeypatch.setattr(
-        "npa.cli.workbench.leisaac._agent_certificate_sha256", lambda _ip: "f" * 64
+        "npa.cli.workbench.leisaac._agent_certificate_sha256",
+        certificate_pin,
     )
     monkeypatch.setattr(
         "npa.cli.workbench.leisaac._wait_ready",
@@ -1653,8 +1659,14 @@ def test_reconnect_agent_rotates_only_existing_relay_contract(monkeypatch) -> No
         "npa.cli.workbench.leisaac._agent_relay_context",
         lambda *_args: ("replacement-vm", "8.8.4.4", ssh, "npa", "password"),
     )
+
+    def certificate_pin(selected_ssh):
+        assert selected_ssh is ssh
+        return "f" * 64
+
     monkeypatch.setattr(
-        "npa.cli.workbench.leisaac._agent_certificate_sha256", lambda _ip: "f" * 64
+        "npa.cli.workbench.leisaac._agent_certificate_sha256",
+        certificate_pin,
     )
     monkeypatch.setattr(
         "npa.cli.workbench.leisaac.secrets.token_hex", lambda _size: "a" * 64

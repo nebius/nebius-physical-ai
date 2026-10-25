@@ -1,60 +1,51 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "dcb1abf9aa2b84b0cd829a49517f1b4d7d8dc968afa4534f01e8e10ddadba5ef",
+  "workflow_sha256": "6fa38b2a79f24bdad9feaa08d4ce2b9a32245b2810e66c361d2b8f5e2c9d9a16",
   "planning": {
     "validation": {
-      "status": "verified",
-      "reason": "Validated native RTX OptiX campus rendering with four camera routes and immutable scene/media publication.",
-      "evidence": [
-        "npa workbench workflow validate-spec workflows/testing/digital-twin-campus-render.yaml --json",
-        "npa workbench workflow plan-spec workflows/testing/digital-twin-campus-render.yaml --run-id campus-reference --json"
-      ]
+      "status": "unverified",
+      "reason": "The changed workflow deliberately refuses before planning until an operator supplies a compatible registry-qualified immutable runtime_image; no current exact-image planning result is recorded.",
+      "evidence": []
     },
     "task_fidelity": {
-      "status": "verified",
-      "reason": "Validated native RTX OptiX campus rendering with four camera routes and immutable scene/media publication.",
-      "evidence": [
-        "npa workbench workflow validate-spec workflows/testing/digital-twin-campus-render.yaml --json",
-        "npa workbench workflow plan-spec workflows/testing/digital-twin-campus-render.yaml --run-id campus-reference --json"
-      ]
+      "status": "unverified",
+      "reason": "No current operator-selected runtime image has established task fidelity for these changed workflow bytes; prior rendering evidence remains historical only.",
+      "evidence": []
     }
   },
   "prerequisites": {
     "output_storage": {
-      "status": "verified",
-      "reason": "The completed RTX campus bundle passed immutable publication and independent object-storage readback, including every scene and media checksum.",
+      "status": "unverified",
+      "reason": "The cited immutable publication and object-storage readback are historical evidence; this changed workflow has no current exact-image run or readback binding.",
       "evidence": [
         "docs/workbench/guides/digital-twin.md#verified-rtx-campus-execution",
         "npa/tests/e2e/test_digital_twin_render_live.py"
       ]
     },
     "worker_input": {
-      "status": "verified",
-      "reason": "The worker executed both authored scene modules. The live acceptance test matched their recorded SHA-256 values to the checkout and verified all four routes.",
+      "status": "unverified",
+      "reason": "The cited worker-source and route checks are historical evidence, not proof for this changed workflow with an operator-selected runtime image.",
       "evidence": [
         "docs/workbench/guides/digital-twin.md#verified-rtx-campus-execution",
         "npa/tests/e2e/test_digital_twin_render_live.py"
       ]
     },
     "credentials": {
-      "status": "verified",
-      "reason": "Project-scoped cloud and storage preflight, worker publication and independent authenticated readback succeeded. Exact credentials and receipts remain private.",
+      "status": "unverified",
+      "reason": "The cited project and storage evidence is historical; current credentials, selected image access, and a new run remain unverified.",
       "evidence": [
         "docs/workbench/guides/digital-twin.md#verified-rtx-campus-execution",
         "npa/tests/e2e/test_digital_twin_render_live.py"
       ]
     },
     "source_image": {
-      "status": "verified",
-      "reason": "The pinned source image passed image and bootstrap preflight and executed native Blender 4.5.3 OptiX from its hash-verified official runtime archive.",
-      "evidence": [
-        "docs/workbench/guides/digital-twin.md#verified-rtx-campus-execution",
-        "npa/tests/e2e/test_digital_twin_render_live.py"
-      ]
+      "status": "unverified",
+      "reason": "No default source image is selected. The workflow requires an operator-supplied compatible immutable runtime_image, whose image, bootstrap, access, and entitlement checks remain unverified.",
+      "evidence": []
     },
     "target_runtime": {
-      "status": "verified",
-      "reason": "A preemptible NVIDIA RTX PRO 6000 rendered all 32 distinct 2560x1440 campus views with native OptiX and CPU rendering disabled. GPU observations, artifact acceptance, desktop playback and mobile layout passed.",
+      "status": "unverified",
+      "reason": "The cited RTX PRO 6000 render is historical and does not transfer to an operator-selected current runtime image. Compatible GPU evidence, artifact acceptance, and playback remain unverified.",
       "evidence": [
         "docs/workbench/guides/digital-twin.md#verified-rtx-campus-execution",
         "npa/tests/e2e/test_digital_twin_render_live.py"

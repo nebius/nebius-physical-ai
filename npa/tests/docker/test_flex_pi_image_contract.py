@@ -250,7 +250,7 @@ def test_dockerfile_pins_source_base_and_nonroot() -> None:
         Path(__file__).resolve().parents[2]
         / "docker/workbench/flex-pi/pins/security-dependencies.patch"
     ).read_text()
-    assert '"gitpython==3.1.62"' in dependency_patch
+    assert '"gitpython==3.2.1"' in dependency_patch
     assert '-  "hydra-core==1.3.2",' in dependency_patch
     assert '+  "hydra-core==1.3.7",' in dependency_patch
     assert '"wandb==0.30.0"' in dependency_patch

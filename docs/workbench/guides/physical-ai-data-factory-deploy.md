@@ -404,7 +404,7 @@ digests, run identity, and restart safety — see
 
 ## 0. Prerequisites
 
-- **Python 3.10+** and `git` on an operator/dev machine (Linux or macOS). All
+- **Python 3.11+** and `git` on an operator/dev machine (Linux or macOS). All
   `npa`, `nebius`, and `docker` commands below run on this operator machine — the
   agent VM only receives staged env files.
 - A **Nebius** tenant/project with access to: Managed Kubernetes (GPU nodes),
@@ -522,9 +522,11 @@ npa provision-if-absent --project "<alias>" \
 Keep `--sky-smoke` on the Linux operator host for a fresh cluster. It proves an
 actual GPU dispatch and initializes SkyPilot's normal ServiceAccount and RBAC.
 The subsequent image preflight verifies the exact ServiceAccount's pull
-authority; `npa skypilot verify` alone checks connectivity and does not create
-that account. If preflight reports `service_account_unverified`, complete the
-standard provisioning smoke against this same owned cluster before retrying.
+authority. In a fresh namespace, image preflight prepares a missing native
+`skypilot-service-account` before its probe, without granting RBAC or changing
+an existing account. Custom accounts must already exist. If preflight reports
+`service_account_unverified`, check account read/create permissions in that
+exact namespace. `npa skypilot verify` alone checks connectivity.
 
 The default cluster it provisions is the small FTUE shape — **1× GPU node
 (`gpu-rtx6000`, `1gpu-24vcpu-218gb`) + 1× CPU node (`cpu-d3`, `8vcpu-32gb`),

@@ -29,6 +29,8 @@ checks the declaration; each guide states what its live validation actually prov
 | Train or evaluate Unitree G1 locomotion | [G1 / SONIC](g1-humanoid-walk-sonic.md); compatible motion/checkpoint inputs | RTX PRO 6000 training; B200 MuJoCo evaluation is a separate capability. |
 | Train an ANYmal quadruped | [Quadruped / Isaac Lab](quadruped-isaac-lab.md); built-in simulator task | L40S or RTX PRO 6000; Isaac requires RT cores. |
 | Reconstruct a scene capture | [NuRec / NRE](neural-reconstruction.md); compatible NCore capture | RTX PRO 6000 or L40S; inspect USDZ, renders, and Rerun outputs. |
+| Prepare panoramic captures for Lyra 2 | [360° capture preparation](lyra-360-capture.md); stitched mono 2:1 video or images | Local native projection checks passed; real-capture Lyra quality remains unverified. |
+| Document and run a splatting baseline | [COLMAP → gsplat reference](gaussian-splatting-reference.md); calibrated perspective images | Manual upstream CUDA training reference; capture-to-splat GPU qualification remains outstanding. |
 | Reconstruct several living-lab zones | [Living-lab fan-out](living-lab-nurec-fanout.md); capture inputs per zone | Advanced parameterized workflow; default is 16 RTX PRO 6000 GPUs. |
 
 For the candidate COLMAP ingestion path, see [NCore conversion](nurec-colmap-reconstruct.md);
@@ -67,7 +69,7 @@ when adapting it:
 
 | Task | Guide |
 | --- | --- |
-| Configure, preflight, submit, and recover | [Sim2Real operator runbook](sim2real-workflow.md); first confirm the declared data/robot contract, run-scoped S3 storage, a validated plan, image preflight, and the exact execution context |
+| Install, configure, submit, and recover without an agent | [Manual Sim2Real runbook](sim2real-workflow.md); establish the qualified five-image set before provisioning, then prepare access, RTX rendering, shared cache, seed data, and the exact execution context |
 | Prepare formats, schemas, and S3 layout | [Data contracts](sim2real-data-contracts.md) |
 | Supply customer data and robot assets | [Customer assets](sim2real-customer-assets.md) · [RobotSpec](sim2real-robot-spec.md) |
 | Understand stages, loops, and parallel execution | [Architecture](sim2real-architecture.md) |

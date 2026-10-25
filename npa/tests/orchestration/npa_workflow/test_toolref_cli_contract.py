@@ -17,6 +17,43 @@ import typer
 from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
 
 
+@pytest.mark.parametrize(
+    "image", [None, "nvcr.io/nvidia/nre/nre-ga@sha256:" + "a" * 64]
+)
+def test_render_only_external_spec_keeps_optional_image_default(tmp_path, image):
+    import yaml
+    from npa.orchestration.npa_workflow.spec import load_spec
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+
+    config = {
+        "reconstruction_uri": "s3://synthetic/reconstruction/",
+        "out_dir": str(tmp_path / "nurec"),
+        "render_dir": str(tmp_path / "nurec" / "render"),
+        "render_image_scale": "0.5",
+        "renderer": "default",
+        "rig_translation_offset": "0,0.25,0",
+        "rig_rotation_offset": "0,0,0",
+        "novel_views_uri": "s3://synthetic/render/",
+    }
+    if image is not None:
+        config["nurec_image"] = image
+    spec = {
+        "apiVersion": "npa.workflow/v0.0.1",
+        "kind": "Workflow",
+        "metadata": {"name": "external-render"},
+        "config": config,
+        "initial": "render",
+        "states": {"render": {"toolRef": "workbench.nurec.render", "terminal": True}},
+    }
+    path = tmp_path / "external-render.yaml"
+    path.write_text(yaml.safe_dump(spec))
+    argv = build_plan(load_spec(path), run_id="external-render").steps[0].argv
+    if image is None:
+        assert "--image" not in argv
+    else:
+        assert argv[argv.index("--image") + 1] == image
+
+
 def _cli_option_names(module_path: str, command_name: str) -> set[str]:
     module = importlib.import_module(module_path)
     click_cmd = typer.main.get_command(module.app)

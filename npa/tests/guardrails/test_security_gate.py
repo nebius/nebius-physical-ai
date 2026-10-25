@@ -1032,6 +1032,77 @@ def test_nonstandard_python_dependency_manifests_are_inventoried(
     }
 
 
+def test_json_runtime_lock_inventories_packages_and_installer(
+    security_modules, tmp_path
+):
+    _, dependencies = security_modules
+    root = tmp_path / "source"
+    root.mkdir()
+    source = root / "runtime-requirements.lock"
+    source.write_text(
+        json.dumps(
+            {
+                "schema": "npa.robomimic.runtime-lock.v1",
+                "packages": {"torch": "2.7.1+cu128", "urllib3": "2.7.0"},
+                "runtime_fetch": {"installer": {"name": "pip", "version": "26.2.1"}},
+            }
+        )
+    )
+    output = tmp_path / "report"
+    inventory = dependencies._inventory(root, output, tmp_path / "cache")
+    assert set(inventory.values()) == {"runtime-requirements.lock"}
+    target = next(iter(inventory))
+    assert dependencies._expected_packages(output / "inputs" / target) == {
+        ("torch", "2.7.1+cu128"),
+        ("urllib3", "2.7.0"),
+        ("pip", "26.2.1"),
+    }
+    with pytest.raises(ValueError, match="omitted declared packages"):
+        dependencies._validate_coverage({"Results": []}, inventory, output)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"schema": "unknown"},
+        {"packages": {}},
+        {"packages": []},
+        {"packages": {"requests": ">=2"}},
+        {"packages": {"requests": 2}},
+        {"packages": {"requests;python_version": "2.19.1"}},
+        {"packages": {"Requests": "2.19.1", "requests": "2.34.2"}},
+        {"runtime_fetch": []},
+        {"runtime_fetch": {"installer": {"name": "pip"}}},
+    ],
+)
+def test_invalid_json_runtime_locks_cannot_disappear(
+    security_modules, tmp_path, changes
+):
+    _, dependencies = security_modules
+    lock = {
+        "schema": "npa.robomimic.runtime-lock.v1",
+        "packages": {"requests": "2.19.1"},
+    }
+    lock.update(changes)
+    source = tmp_path / "runtime-requirements.lock"
+    source.write_text(json.dumps(lock))
+    with pytest.raises((ValueError, TypeError)):
+        dependencies._python_manifest_pins(source)
+
+
+@pytest.mark.parametrize("text", ["[]", "null", '{"schema":', "", "not-json"])
+def test_malformed_known_json_runtime_lock_is_rejected(
+    security_modules, tmp_path, text
+):
+    _, dependencies = security_modules
+    directory = tmp_path / "robomimic"
+    directory.mkdir()
+    source = directory / "runtime-requirements.lock"
+    source.write_text(text)
+    with pytest.raises((ValueError, TypeError)):
+        dependencies._python_manifest_pins(source)
+
+
 def _installation_source_pins(root: Path) -> list[str]:
     pattern = re.compile(
         r"(?<![A-Za-z0-9_.-])([A-Za-z0-9_.-]+)==([0-9][A-Za-z0-9.!+_-]*)"
@@ -1073,7 +1144,7 @@ def _retained_patch_context_pins(root: Path) -> list[str]:
         ("multidict", "6.9.1"),
         ("oauthlib", "4.0.0"),
         ("urllib3", "2.8.0"),
-        ("virtualenv", "21.7.13"),
+        ("virtualenv", "21.14.9"),
         ("werkzeug", "3.1.9"),
     ],
 )

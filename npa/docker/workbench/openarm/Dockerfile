@@ -9,8 +9,9 @@ ARG ISAAC_SIM_VERSION=5.1.0.0
 ARG NPA_SOURCE_SHA
 ARG NPA_RUNTIME_USER=ubuntu
 ARG OPENARM_GNUPG_VERSION=2.2.27-3ubuntu2.5
-ARG OPENARM_OPENSSL_VERSION=3.0.2-0ubuntu1.26
-ARG OPENARM_LINUX_LIBC_DEV_VERSION=5.15.0-190.200
+ARG OPENARM_OPENSSL_VERSION=3.0.2-0ubuntu1.30
+ARG OPENARM_LINUX_LIBC_DEV_VERSION=5.15.0-198.208
+ARG OPENARM_UBUNTU_SNAPSHOT=20261009T000000Z
 
 LABEL npa.tool="openarm" \
       npa.version="2.2.0-isaac0.1.0-rtfetch" \
@@ -71,6 +72,7 @@ RUN find /opt/npa/docker/workbench/common -type d -exec chmod 0755 {} + \
     && NPA_RUNTIME_USER="${NPA_RUNTIME_USER}" \
        NPA_ISAAC_VENV=/opt/npa/sim/venv \
        NPA_LINUX_LIBC_DEV_VERSION="${OPENARM_LINUX_LIBC_DEV_VERSION}" \
+       NPA_UBUNTU_SNAPSHOT="${OPENARM_UBUNTU_SNAPSHOT}" \
        /opt/npa/docker/workbench/common/install_isaac_runtime_base.sh \
     && apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -114,7 +116,7 @@ RUN /opt/npa/sim/venv/bin/python -m pip install --no-cache-dir --require-hashes 
     && rm -rf /root/.cache /home/ubuntu/.cache
 
 RUN /opt/npa/sim/venv/bin/python -c 'import mujoco, openarm_mujoco.v2 as o; m=mujoco.MjModel.from_xml_path(o.openarm_demo_xml()); assert m.nu == 17' \
-    && /opt/npa/sim/venv/bin/python -c 'import importlib.metadata as m; assert m.version("GitPython") == "3.1.62"' \
+    && /opt/npa/sim/venv/bin/python -c 'import importlib.metadata as m; assert m.version("GitPython") == "3.2.1"' \
     && /opt/npa/sim/venv/bin/python -c 'import importlib.metadata as m; assert m.version("fastapi") == "0.136.1"' \
     && /opt/npa/sim/venv/bin/python -c 'import importlib.metadata as m; assert m.version("starlette") == "1.6.0"' \
     && /opt/npa/sim/venv/bin/python -c 'import importlib.util; assert importlib.util.find_spec("isaacsim") is None; assert importlib.util.find_spec("isaaclab") is None' \

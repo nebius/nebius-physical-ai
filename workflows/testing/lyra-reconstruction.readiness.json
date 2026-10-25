@@ -1,0 +1,51 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "e238199b71035614735c01311404698b0ea1d8b5225d78cbf508dfd92c84621b",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Schema validation and the production renderer completed locally with provider actions and registry-secret materialization disabled.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/lyra-reconstruction.yaml --json",
+        "npa workbench workflow plan-spec workflows/testing/lyra-reconstruction.yaml --run-id share-preview --check-render --json"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "The resolved command invokes the existing pinned Lyra stage on a prepared perspective bundle and declares native Gaussian, video, geometry and HTML outputs. Local panorama preparation precedes this YAML.",
+      "evidence": [
+        "workflows/testing/lyra-reconstruction.yaml",
+        "docs/workbench/guides/lyra-360-capture.md"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "The bucket is a placeholder; no storage was created or probed.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "No private capture or calibrated input bundle was provided, staged or inspected for this authoring task.",
+      "evidence": []
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "Storage credentials and applicable model or evaluation-weight access/rights were not exercised.",
+      "evidence": []
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "The workflow retains its existing public digest and historical RTX qualification; current registry bytes and compatibility were not re-probed.",
+      "evidence": [
+        "docs/workbench/validation/lyra2-rtx-20261009.json"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "No GPU workflow was submitted. Target placement, runtime compatibility and real-capture quality remain unverified.",
+      "evidence": []
+    }
+  }
+}

@@ -18,16 +18,12 @@ if __package__ in {None, ""}:
 else:
     from . import core as W, prepare as P, synthetic as F
 
+from image_byte_scan import registry_manifest_checks
 
-def cancellation_check(authorization, directory):
-    """Interrupt a synthetic scan using the actual helper and selected matcher."""
-    auth = directory / "cancellation-authorization.json"
-    F.write(auth, F.js(authorization))
-    marker = directory / "cancellation-helper.json"
-    wrapper = directory / "cancellation-wrapper.py"
-    output = directory / "cancellation-output"
-    analysis, trusted = W._ROOTS.get()
-    script = f"""import json,os,signal,sys
+
+def cancellation_wrapper(trusted, marker):
+    """Render a spawn-safe scanner wrapper for the cancellation check."""
+    return f"""import json,os,signal,sys
 from pathlib import Path
 sys.path.insert(0,{str(trusted / "npa/scripts")!r})
 from image_byte_scan import core as W
@@ -39,8 +35,20 @@ class PauseAfterNativeImport(original):
   Path({str(marker)!r}).write_text(json.dumps({{'pid':pid,'session':os.getsid(pid),'start':Path(f'/proc/{{pid}}/stat').read_text().split()[21]}}))
   signal.pause()
 W.Ledger=PauseAfterNativeImport
-raise SystemExit(W.main())
+if __name__ == "__main__":
+ raise SystemExit(W.main())
 """
+
+
+def cancellation_check(authorization, directory):
+    """Interrupt a synthetic scan using the actual helper and selected matcher."""
+    auth = directory / "cancellation-authorization.json"
+    F.write(auth, F.js(authorization))
+    marker = directory / "cancellation-helper.json"
+    wrapper = directory / "cancellation-wrapper.py"
+    output = directory / "cancellation-output"
+    analysis, trusted = W._ROOTS.get()
+    script = cancellation_wrapper(trusted, marker)
     F.write(wrapper, script.encode())
     sibling = worker = None
     identity = None
@@ -137,7 +145,7 @@ raise SystemExit(W.main())
 # on any host, including a single-CPU one.
 DUPLEX_HELPER_WORKERS = 1
 DUPLEX_CALLER_DEPTH = 64
-DUPLEX_LOUD_SECRETS = 12000
+DUPLEX_LOUD_SECRETS = W.RECORD_FINDING_LIMIT - 1
 
 
 def duplex_fixture(helper, config, directory, case):
@@ -300,11 +308,12 @@ def duplex_receipt(report):
 def duplex_check(helper, config, directory):
     """Scan while both pipe directions are saturated and the queues are unequal.
 
-    The first record carries twelve thousand synthetic secrets, so its result is
-    far larger than a pipe buffer and the helper is still writing output while the
-    scan is still writing records. The helper runs fewer workers than the caller's
-    queue depth, so the helper stops reading first. A caller that only drains
-    output before each write stops here with both pipes full and never finishes.
+    The first record carries one less than the per-record finding limit, so its
+    result is far larger than a pipe buffer without intentionally tripping the
+    bound under test elsewhere. The helper is still writing output while the scan
+    is still writing records. The helper runs fewer workers than the caller's queue
+    depth, so the helper stops reading first. A caller that only drains output
+    before each write stops here with both pipes full and never finishes.
 
     Args:
         helper: The verified helper binding.
@@ -370,11 +379,13 @@ def checks(args, directory):
                 for offset in range(0, len(data), 7):
                     chunk = data[offset : offset + 7]
                     W.require(
-                        reference.feed(chunk) == optimized.feed(chunk),
+                        reference.feed(chunk, finding_limit=10_000)
+                        == optimized.feed(chunk, finding_limit=10_000),
                         "native_literal_differential",
                     )
                 W.require(
-                    reference.feed(b"", final=True) == optimized.feed(b"", final=True),
+                    reference.feed(b"", final=True, finding_limit=10_000)
+                    == optimized.feed(b"", final=True, finding_limit=10_000),
                     "native_literal_differential_final",
                 )
                 differential_cases += 1
@@ -482,6 +493,9 @@ def checks(args, directory):
     )
     F.write(directory / "tools.json", args.tools_receipt.read_bytes())
     duplex = duplex_check(helper, config, directory)
+    registry_checks = registry_manifest_checks.checks(
+        directory / "registry-manifests", args.tools_receipt, engine_binding
+    )
     W.recheck_snapshots(snapshots)
     result = {
         "schema_version": "npa.image-byte-native-checks.v1",
@@ -491,6 +505,7 @@ def checks(args, directory):
         "native": native_receipt,
         "archive_checks": image_results,
         "duplex_check": duplex,
+        "registry_manifest_checks": registry_checks,
         "helper_sha256": helper["sha256"],
         "source_bindings": W.source_bindings(),
     }

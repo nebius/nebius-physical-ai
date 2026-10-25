@@ -1,8 +1,10 @@
-# Native Ray Serve derivative of the accepted npa-cosmos3 framework runtime.
+# Native Ray Serve derivative of the repaired npa-cosmos3 framework runtime.
 # The digest-pinned parent contains OpenMDW-1.1 cosmos-framework at commit
 # 5e67049cd94acb667786f1e6dd0dab821cb90c97 and its frozen CUDA 13 inference
 # environment. No model or guardrail weights are present in either image.
-ARG BASE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-cosmos3@sha256:0eb459769eba9942b5b9004c4df68721f2c3e5490a6614e85ced67e8a6f9cd5d
+# Built from main source 6462f27f98e1ded31d17b00944f943db3381ac35 after the
+# package-generated SSH identities and inference TLS dependency were repaired.
+ARG BASE_IMAGE=ghcr.io/nebius/nebius-physical-ai/npa-cosmos3@sha256:1aa6c473d95863709766f02d3e199cf8cf860adbe585b409a23a82bae4a2c37e
 FROM ${BASE_IMAGE}
 
 ARG NPA_SOURCE_SHA
@@ -91,6 +93,7 @@ RUN export UV_CACHE_DIR=/tmp/uv-cache \
     && rm -f /tmp/cosmos3-packaging-requirements.txt \
     && test "$(.venv/bin/python -c 'import ray; print(ray.__version__)')" = "${COSMOS3_RAY_VERSION}" \
     && .venv/bin/python /opt/npa/verify_hardened_nltk.py \
+    && uv pip install --python /opt/npa/.venv/bin/python --no-deps "pillow==13.0.0" "certifi==2026.10.19" \
     && uv pip install --python /opt/npa/.venv/bin/python --no-deps -e /opt/npa \
     && rm -rf /tmp/uv-cache /home/ubuntu/.cache/uv \
     && test ! -e /tmp/uv-cache && test ! -e /home/ubuntu/.cache/uv \

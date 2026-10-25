@@ -23,6 +23,34 @@ recorded revision it publishes Image Attribute Augmentation and Event Video
 Generation DAGs. It is not the implementation repository for the upstream VDA
 skill and it is not embedded or executed by NPA.
 
+The IAA/EVG native specs now live under workflows/cosmos-data-factory/.
+Their separate setup, IAA, and EVG agent skills are adapted under
+skills/cosmos-data-factory/ from these exact upstream files at the orchestration
+revision above:
+
+  skills/paidf-orchestration-setup/SKILL.md
+  skills/physical-ai-image-attribute-augmentation/SKILL.md
+  skills/physical-ai-event-video-generation/SKILL.md
+  docs/getting-started.md
+  docs/image-attribute-augmentation/getting-started.md
+  docs/event-video-generation/getting-started.md
+
+Upstream skill metadata declares CC-BY-4.0 AND Apache-2.0; the repository source
+license is Apache-2.0. Attribution: NVIDIA CORPORATION & AFFILIATES, 2026.
+Source URLs resolve under:
+  https://github.com/NVIDIA/paidf-orchestration/blob/f7ecd8c5d7aeec28b2d476b9e71b53a48ba8c0f9/
+License texts:
+  https://creativecommons.org/licenses/by/4.0/legalcode
+  https://www.apache.org/licenses/LICENSE-2.0
+
+NPA rewrites Airflow setup, payload, trigger, monitoring, and retrieval guidance
+for its native CLI/SkyPilot runtime, retains exact source/model provenance and
+output verification, and documents the current individual-image preparation,
+private service images, enabled guardrails, and hosted VQA sampling differences.
+The canonical workflow relocation does not change the generation or labeling
+stage graphs. Neither upstream skill signatures nor Airflow helper scripts are
+copied or represented as signatures over these adaptations.
+
 NPA keeps `npa.workflow/v0.0.1` as the authoring surface and SkyPilot as its sole
 execution engine. It does not vendor OSMO, Airflow, either repository, PAIDF NGC
 service images, model weights, or input datasets. The shipped workflow set is:

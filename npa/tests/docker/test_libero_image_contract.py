@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import base64
 import hashlib
 import json
@@ -502,7 +503,7 @@ def test_runtime_manifest_is_metadata_only_and_never_an_acceptance_proxy() -> No
         for item in manifest["runtime_artifacts"]
     )
     assert sum(item["size_bytes"] for item in manifest["runtime_artifacts"]) == (
-        3_277_660_358
+        3_277_669_153
     )
     lines = [
         line
@@ -538,6 +539,33 @@ def test_image_manifest_binds_runtime_manifest_requirements_and_terms() -> None:
         }
         for term in json.loads(MANIFEST.read_text(encoding="utf-8"))["governing_terms"]
     ]
+
+
+def test_runtime_consumers_bind_checked_in_dependency_inputs() -> None:
+    manifest_sha = hashlib.sha256(MANIFEST.read_bytes()).hexdigest()
+    requirements_sha = hashlib.sha256(REQUIREMENTS.read_bytes()).hexdigest()
+    consumers = {
+        "runtime-bootstrap.py": {
+            "EXPECTED_RUNTIME_MANIFEST_SHA256": manifest_sha,
+            "EXPECTED_RUNTIME_REQUIREMENTS_SHA256": requirements_sha,
+        },
+        "libero_smoke.py": {"RUNTIME_MANIFEST_SHA256": manifest_sha},
+    }
+    for name, expected in consumers.items():
+        statements = ast.parse((IMAGE_ROOT / name).read_text()).body
+        constants = {
+            node.targets[0].id: ast.literal_eval(node.value)
+            for node in statements
+            if isinstance(node, ast.Assign)
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id in expected
+        }
+        assert constants == expected
+    dockerfile = DOCKERFILE.read_text()
+    assert f"'{manifest_sha}  /opt/npa/libero/runtime-manifest.json'" in dockerfile
+    assert (
+        f"'{requirements_sha}  /opt/npa/libero/runtime-requirements.txt'" in dockerfile
+    )
 
 
 def test_build_script_requires_exact_sha_tag_and_buildx_attestations() -> None:
@@ -616,3 +644,33 @@ def test_publication_keeps_pre_and_post_byte_gates_separate_from_runtime() -> No
     assert "libero-base-sbom.intoto.json" in text
     assert "--provenance=mode=max" in text
     assert "--sbom=true" in text
+
+
+def test_every_runtime_consumer_pins_the_committed_manifest_and_lock() -> None:
+    manifest_hash = hashlib.sha256(MANIFEST.read_bytes()).hexdigest()
+    requirements_hash = hashlib.sha256(REQUIREMENTS.read_bytes()).hexdigest()
+    consumers = {
+        ROOT / "npa/scripts/scan_image_libero_payload.py": {
+            "RUNTIME_MANIFEST_SHA256": manifest_hash,
+        },
+        IMAGE_ROOT / "libero_smoke.py": {
+            "RUNTIME_MANIFEST_SHA256": manifest_hash,
+        },
+        IMAGE_ROOT / "runtime-bootstrap.py": {
+            "EXPECTED_RUNTIME_MANIFEST_SHA256": manifest_hash,
+            "EXPECTED_RUNTIME_REQUIREMENTS_SHA256": requirements_hash,
+        },
+    }
+    for path, expected in consumers.items():
+        actual = {}
+        for node in ast.parse(path.read_text()).body:
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id in expected:
+                        actual[target.id] = ast.literal_eval(node.value)
+        assert actual == expected, path
+    dockerfile = DOCKERFILE.read_text()
+    assert f"{manifest_hash}  /opt/npa/libero/runtime-manifest.json" in dockerfile
+    assert (
+        f"{requirements_hash}  /opt/npa/libero/runtime-requirements.txt" in dockerfile
+    )

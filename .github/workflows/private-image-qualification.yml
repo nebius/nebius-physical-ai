@@ -27,8 +27,8 @@ jobs:
       - name: Check out reviewed immutable scanner
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Generic OCI verification is reviewed here and is not yet on main.
-          ref: 551b5da4d9c62297236c103a30040c78e3b50dd6
+          # Pin the integrated scanner with current security hardening.
+          ref: 99953df6f74c3c7f5ed61b0f9f27acc280b70e12
           path: scanner
           persist-credentials: false
 

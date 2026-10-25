@@ -13,6 +13,9 @@ import sys
 import tempfile
 import traceback
 
+from npa.orchestration.npa_workflow.image_inputs import (
+    IMMUTABLE_IMAGE_REFERENCE_PATTERN,
+)
 from npa.workbench.nurec.navigation_assets import (
     contained_file,
     materialize,
@@ -67,10 +70,7 @@ def _load_bundle(root: Path):
 
 
 def _declared_image(reference: str) -> dict:
-    repository = r"[a-z0-9]+(?:[._-][a-z0-9]+)*"
-    registry = r"[a-z0-9]+(?:[.-][a-z0-9]+)*(?::[0-9]+)?"
-    pattern = rf"{registry}/(?:{repository}/)*{repository}@sha256:[0-9a-f]{{64}}"
-    if not re.fullmatch(pattern, reference):
+    if not re.fullmatch(IMMUTABLE_IMAGE_REFERENCE_PATTERN, reference):
         raise ValueError(
             "--runtime-image requires an immutable registry/repository@sha256 digest; "
             "set --var isaac_image=<registry>/<image>@sha256:<64-hex-digest>"

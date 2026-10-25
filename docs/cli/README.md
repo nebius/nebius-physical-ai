@@ -2,6 +2,8 @@
 
 Generated from `npa --help`. Run `bash scripts/build_docs.sh` after CLI changes.
 
+- [npa workbench access](access.md)
+- [npa workbench access account](account.md)
 - [npa adapter](adapter.md)
 - [npa agent](agent.md)
 - [npa workbench alpamayo2-super](alpamayo2-super.md)
@@ -34,6 +36,7 @@ Generated from `npa --help`. Run `bash scripts/build_docs.sh` after CLI changes.
 - [npa workbench flex-pi](flex-pi.md)
 - [npa workbench foxglove](foxglove.md)
 - [npa workbench gc-artifacts](gc-artifacts.md)
+- [npa workbench gemini-robotics](gemini-robotics.md)
 - [npa workbench genesis](genesis.md)
 - [npa workbench golden-eval](golden-eval.md)
 - [npa workbench groot](groot.md)
@@ -46,7 +49,10 @@ Generated from `npa --help`. Run `bash scripts/build_docs.sh` after CLI changes.
 - [npa workbench leisaac](leisaac.md)
 - [npa workbench lerobot](lerobot.md)
 - [npa workbench lichtblick](lichtblick.md)
+- [npa login](login.md)
+- [npa logout](logout.md)
 - [npa workbench ltx2](ltx2.md)
+- [npa workbench marble](marble.md)
 - [npa workbench mjlab](mjlab.md)
 - [npa workbench molmoact](molmoact.md)
 - [npa workbench namespace](namespace.md)
@@ -63,7 +69,9 @@ Generated from `npa --help`. Run `bash scripts/build_docs.sh` after CLI changes.
 - [npa rerun](rerun.md)
 - [npa workbench sonic retargeting](retargeting.md)
 - [npa workbench robocasa](robocasa.md)
+- [npa workbench ros2](ros2.md)
 - [npa workbench scenario-gen](scenario-gen.md)
+- [npa workbench seedvr2](seedvr2.md)
 - [npa workbench specialists serve](serve.md)
 - [npa storage service-account](service-account.md)
 - [npa skypilot](skypilot.md)

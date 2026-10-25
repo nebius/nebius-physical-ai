@@ -1,0 +1,26 @@
+{
+  "schema": "npa.wan.oss-literal-audits.v1",
+  "artifacts": [
+    {
+      "distribution": "huggingface-hub",
+      "version": "1.26.0",
+      "filename": "huggingface_hub-1.26.0-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/97/bb/63a644c75b545f3ff394b822e9bd1c4a9586489c618b77a4d8a44a33a23b/huggingface_hub-1.26.0-py3-none-any.whl",
+      "sha256": "e8cca670caa5d8dfa7e45bf45e86b466698198cd8150c021bcdb4a86b9252364",
+      "review": "Installed files matched the hash-verified upstream wheel byte for byte. The matched hf_token expressions are runtime variable references, token retrieval calls, and a type annotation. They contain no credential value.",
+      "files": [
+        {
+          "member": "huggingface_hub/_sandbox.py",
+          "image_path": "opt/wan-base/lib/python3.10/site-packages/huggingface_hub/_sandbox.py",
+          "sha256": "5c45d98b94b7ad8cb0fe8ded777ac1d313957668690259f2532901b00c3d28ff"
+        },
+        {
+          "member": "huggingface_hub/cli/sandbox.py",
+          "image_path": "opt/wan-base/lib/python3.10/site-packages/huggingface_hub/cli/sandbox.py",
+          "sha256": "ad30997fa5a1a036bb522361b1353fe0b879b8aa8a60eb3bdf15c6000a8919d0"
+        }
+      ],
+      "coverage": "These hashes approve only the two uncompressed source records at their exact paths. They do not approve the wheel archive, other paths, modified bytes, or complete-image publication."
+    }
+  ]
+}
