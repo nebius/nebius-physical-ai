@@ -249,6 +249,18 @@ def _bound_rwx_pvc() -> str:
     )
 
 
+def _pending_wffc_rwx_pvc() -> str:
+    return json.dumps(
+        {
+            "spec": {
+                "accessModes": ["ReadWriteMany"],
+                "storageClassName": "delayed-rwx",
+            },
+            "status": {"phase": "Pending"},
+        }
+    )
+
+
 def test_cluster_skips_without_runner() -> None:
     assert check_cluster(_config(), probes=DoctorProbes()).status == health.SKIP
 
@@ -546,6 +558,31 @@ def test_cluster_fails_unready_isaac_cache_pvc(
     result = check_cluster(_config(), probes=DoctorProbes(kube_runner=runner))
     assert result.status == health.FAIL
     assert expected in result.summary
+
+
+def test_cluster_accepts_pending_wait_for_first_consumer_cache() -> None:
+    def runner(args: list[str]) -> KubeResult:
+        if args[:2] == ["config", "current-context"]:
+            return KubeResult(0, "prod-cluster")
+        if args[:2] == ["auth", "can-i"]:
+            return KubeResult(0, "yes")
+        if args[:2] == ["get", "pvc"]:
+            return KubeResult(0, _pending_wffc_rwx_pvc())
+        if args[:2] == ["get", "storageclass"]:
+            return KubeResult(
+                0, json.dumps({"volumeBindingMode": "WaitForFirstConsumer"})
+            )
+        if args[:2] == ["get", "nodes"]:
+            return KubeResult(0, _kube_nodes(1, nodes=1, product="TEST-GPU-A"))
+        return KubeResult(1, "", "unexpected")
+
+    result = check_cluster(
+        _config(k8s_gpu_product="TEST-GPU-A"),
+        probes=DoctorProbes(kube_runner=runner),
+    )
+
+    assert result.status == health.PASS
+    assert "Pending RWX with WaitForFirstConsumer" in result.summary
 
 
 def test_cluster_fails_when_isaac_cache_pvc_is_missing() -> None:

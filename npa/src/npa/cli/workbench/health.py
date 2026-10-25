@@ -581,6 +581,9 @@ def sim2real_command(
     k8s_kubeconfig: str = typer.Option(
         "", "--k8s-kubeconfig", help="Explicit kubeconfig path."
     ),
+    k8s_isaac_cache_pvc: str = typer.Option(
+        "", "--k8s-isaac-cache-pvc", help="Exact canonical Isaac cache claim."
+    ),
     checks: str = typer.Option(
         ",".join(_SIM2REAL_PREIMAGE_CHECKS),
         "--checks",
@@ -624,6 +627,7 @@ def sim2real_command(
         "k8s_namespace": k8s_namespace,
         "k8s_context": k8s_context,
         "k8s_kubeconfig": k8s_kubeconfig,
+        "k8s_isaac_cache_pvc": k8s_isaac_cache_pvc,
     }
     if s3_prefix is not None:
         overrides["s3_prefix"] = s3_prefix
@@ -794,6 +798,7 @@ def _sim2real_preflight_config(
         "k8s_namespace",
         "k8s_context",
         "k8s_kubeconfig",
+        "k8s_isaac_cache_pvc",
     }
     if "s3" in selected:
         diagnostic_keys.add("s3_prefix")
@@ -816,4 +821,5 @@ def _sim2real_preflight_config(
         k8s_namespace=str(overrides["k8s_namespace"]),
         k8s_context=str(overrides["k8s_context"]),
         k8s_kubeconfig=str(overrides["k8s_kubeconfig"]),
+        k8s_isaac_cache_pvc=str(overrides["k8s_isaac_cache_pvc"]),
     )

@@ -220,6 +220,36 @@ def test_default_preimage_checks_do_not_construct_execution_images(
     )
 
 
+def test_cluster_check_uses_explicit_isaac_cache_claim(
+    diagnostic_spies: SimpleNamespace, tmp_path: Path
+) -> None:
+    """The documented preflight can target the run-scoped WFFC cache claim."""
+
+    kubeconfig = str(tmp_path / "kubeconfig.yaml")
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "health",
+            "sim2real",
+            "--checks",
+            "cluster",
+            "--k8s-context",
+            "diagnostic-context",
+            "--k8s-kubeconfig",
+            kubeconfig,
+            "--k8s-isaac-cache-pvc",
+            "run-scoped-isaac-cache",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert ["get", "pvc", "run-scoped-isaac-cache"] in [
+        call.args[0][:3] for call in diagnostic_spies.kube.call_args_list
+    ]
+
+
 def test_tokens_and_s3_use_explicit_storage_without_image_resolution(
     diagnostic_spies: SimpleNamespace,
     monkeypatch: pytest.MonkeyPatch,

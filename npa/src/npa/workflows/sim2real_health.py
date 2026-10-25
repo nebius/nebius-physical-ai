@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, fields
+import json
 from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
@@ -464,6 +465,28 @@ def check_tokens(config: _HealthConfig, *, probes: DoctorProbes) -> CheckResult:
 # Cluster / GPU -------------------------------------------------------------
 
 
+def _is_stage_zero_delayed_binding_cache(pvc: dict[str, Any], runner) -> bool:
+    """Return whether a Pending RWX claim can be bound by canonical Stage 00."""
+
+    spec = pvc.get("spec") or {}
+    status = pvc.get("status") or {}
+    if status.get("phase") != "Pending" or "ReadWriteMany" not in set(
+        spec.get("accessModes") or []
+    ):
+        return False
+    storage_class = str(spec.get("storageClassName") or "").strip()
+    if not storage_class:
+        return False
+    result = runner(["get", "storageclass", storage_class, "-o", "json"])
+    if result.returncode != 0:
+        return False
+    try:
+        payload = json.loads(result.stdout) or {}
+    except (TypeError, ValueError):
+        return False
+    return payload.get("volumeBindingMode") == "WaitForFirstConsumer"
+
+
 def check_cluster(config: _HealthConfig, *, probes: DoctorProbes) -> CheckResult:
     """Confirm the active cluster is reachable and has schedulable GPUs.
 
@@ -562,28 +585,30 @@ def check_cluster(config: _HealthConfig, *, probes: DoctorProbes) -> CheckResult
             details=(_short(pvc_result.stderr or pvc_result.stdout),),
         )
     try:
-        import json
-
         pvc = json.loads(pvc_result.stdout)
     except (TypeError, ValueError):
         pvc = {}
     spec = pvc.get("spec") or {}
     status = pvc.get("status") or {}
     access_modes = {str(item) for item in spec.get("accessModes") or []}
-    if (
-        status.get("phase") != "Bound"
-        or not str(spec.get("volumeName") or "").strip()
-        or "ReadWriteMany" not in access_modes
-    ):
+    bound_rwx = (
+        status.get("phase") == "Bound"
+        and bool(str(spec.get("volumeName") or "").strip())
+        and "ReadWriteMany" in access_modes
+    )
+    delayed_binding = _is_stage_zero_delayed_binding_cache(pvc, runner)
+    if not bound_rwx and not delayed_binding:
         return CheckResult(
             name="cluster",
             status=FAIL,
             summary=(
-                f"Isaac runtime-cache PVC {cache_pvc!r} is not a Bound RWX claim."
+                f"Isaac runtime-cache PVC {cache_pvc!r} is neither a Bound RWX claim "
+                "nor a Pending RWX WaitForFirstConsumer claim."
             ),
             remedy=(
-                "Use a Bound ReadWriteMany volume so one CPU warm Job can publish "
-                "the content-addressed closure for read-only GPU consumers."
+                "Use a Bound ReadWriteMany volume, or a Pending ReadWriteMany claim "
+                "whose StorageClass uses WaitForFirstConsumer so canonical Stage 00 "
+                "can bind and warm it before GPU consumers run."
             ),
             details=(
                 f"phase={status.get('phase')!r}",
@@ -591,6 +616,14 @@ def check_cluster(config: _HealthConfig, *, probes: DoctorProbes) -> CheckResult
                 f"accessModes={sorted(access_modes)!r}",
             ),
         )
+    cache_summary = (
+        "is Bound RWX."
+        if bound_rwx
+        else (
+            "is Pending RWX with WaitForFirstConsumer; canonical Stage 00 must "
+            "bind and warm it before GPU consumers run."
+        )
+    )
 
     gpu_resource = config.k8s_gpu_resource or "nvidia.com/gpu"
     nodes = runner(["get", "nodes", "-o", "json"])
@@ -668,7 +701,7 @@ def check_cluster(config: _HealthConfig, *, probes: DoctorProbes) -> CheckResult
         status=PASS,
         summary=(
             f"Context {context!r}: {gpu_total} schedulable {gpu_resource} across "
-            f"{node_count} node(s); Isaac cache PVC {cache_pvc!r} is Bound RWX."
+            f"{node_count} node(s); Isaac cache PVC {cache_pvc!r} {cache_summary}"
         ),
     )
 
