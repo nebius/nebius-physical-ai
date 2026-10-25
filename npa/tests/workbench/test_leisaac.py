@@ -86,6 +86,35 @@ def test_safe_extract_zip_rejects_duplicate_members(tmp_path: Path) -> None:
     assert not destination.exists()
 
 
+def test_safe_extract_zip_extracts_nested_files(tmp_path: Path) -> None:
+    server = _session_server_module()
+    archive = tmp_path / "assets.zip"
+    destination = tmp_path / "assets"
+    with zipfile.ZipFile(archive, mode="w") as bundle:
+        bundle.writestr("scene/scene.usd", b"verified scene")
+
+    server.safe_extract_zip(archive, destination)
+
+    assert (destination / "scene/scene.usd").read_bytes() == b"verified scene"
+
+
+def test_safe_extract_zip_rejects_escaping_members_before_writes(
+    tmp_path: Path,
+) -> None:
+    server = _session_server_module()
+    archive = tmp_path / "assets.zip"
+    destination = tmp_path / "assets"
+    with zipfile.ZipFile(archive, mode="w") as bundle:
+        bundle.writestr("scene/scene.usd", b"safe member")
+        bundle.writestr("../escape.usd", b"escaping member")
+
+    with pytest.raises(RuntimeError, match="unsafe asset archive member"):
+        server.safe_extract_zip(archive, destination)
+
+    assert not destination.exists()
+    assert not (tmp_path / "escape.usd").exists()
+
+
 def test_runtime_datachannel_offer_is_private_authenticated_and_run_bound(
     monkeypatch,
 ) -> None:
