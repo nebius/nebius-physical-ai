@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """R8 driver: 8x1 TP-1 replicas, 24 synchronized attempts, 720p/189f T2V."""
 
+import http.client
 import json
 import os
 import statistics
@@ -8,7 +9,6 @@ import subprocess
 import sys
 import threading
 import time
-import urllib.request
 import uuid
 
 BASE = os.environ["R8_BASE"]
@@ -62,15 +62,20 @@ def build_fields(prompt, negative, seed):
 
 def one_request(port, attempt_id, seed, prompt, negative, telemetry):
     body, ctype = multipart(build_fields(prompt, negative, seed))
-    url = f"http://127.0.0.1:{port}/v1/videos/sync"
     started = time.monotonic()
     started_utc = utc()
     record = {"attempt_id": attempt_id, "replica": f"r{port - 8100}",
               "seed": seed, "started_utc": started_utc, "kind": "production"}
     try:
-        request = urllib.request.Request(url, data=body, headers={"Content-Type": ctype})
-        with urllib.request.urlopen(request, timeout=TIMEOUT) as response:  # nosec B310 - fixed http://127.0.0.1 URL
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=TIMEOUT)
+        try:
+            connection.request("POST", "/v1/videos/sync", body=body, headers={"Content-Type": ctype})
+            response = connection.getresponse()
             payload = response.read()
+        finally:
+            connection.close()
+        if response.status != 200:
+            raise RuntimeError(f"HTTP Error {response.status}: {response.reason}")
         client_wall = time.monotonic() - started
         path = os.path.join(CLIPS, f"{attempt_id}.mp4")
         with open(path, "wb") as handle:

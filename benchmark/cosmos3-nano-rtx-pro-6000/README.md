@@ -248,8 +248,10 @@ writes to `$R8_BASE/$R8_RUN_DIR/`. Its settings come from `R8_CELL`,
 `R8_WIDTH`, `R8_HEIGHT`, `R8_FRAMES` and `R8_GUIDANCE`. The published client
 differs from the one that ran in three ways: its base directory comes from
 `R8_BASE` instead of a fixed host path, two lines that computed an internal
-planning figure are removed, and the `urlopen` call carries a `# nosec B310`
-comment for the security scanner. Its docstring still describes only R8,
+planning figure are removed, and each request goes through
+`http.client.HTTPConnection` to `127.0.0.1` instead of `urllib.request.urlopen`
+(the repository's scanner rejects `urlopen`); a non-200 response is still
+recorded as a failure. Its docstring still describes only R8,
 and `import sys` is unused.
 
 Prepare the prompts once:
