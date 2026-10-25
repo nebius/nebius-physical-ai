@@ -161,7 +161,11 @@ def test_isaac_lab_sweep_spec_uses_parallel_group_and_distinct_variants() -> Non
     plan = build_plan(spec, run_id="probe")
     sweep_steps = [step for step in plan.steps if step.group]
     assert len(sweep_steps) == 4
-    assert all("npa.workflows.rl_sweep" in step.shell for step in sweep_steps)
+    assert all(
+        step.argv[:2] == ["python3", "-c"]
+        and "npa.workflows.rl_sweep" in step.argv[2]
+        for step in sweep_steps
+    )
 
 
 def test_isaac_lab_runner_renders_and_submits(monkeypatch, tmp_path, capsys) -> None:

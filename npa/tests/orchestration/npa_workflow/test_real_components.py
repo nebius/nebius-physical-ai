@@ -309,10 +309,8 @@ def test_evaluate_runs_the_real_cosmos_evaluator() -> None:
     assert states["cosmos-curate"]["params"]["augment_uri"] == selected_batch
     assert states["curate"]["params"]["augment_uri"] == selected_batch
     assert states["curate"]["params"]["lance_uri"] == selected_batch
-    assert (
-        "selection_uri='{{config.selection_uri}}iteration-{{loop.grade}}/'"
-        in states["finalize"]["run"]["shell"]
-    )
+    finalize_argv = states["finalize"]["run"]["argv"]
+    assert "{{config.selection_uri}}iteration-{{loop.grade}}/" in finalize_argv
     disposition = states["quality-disposition"]
     disposition_command = " ".join(disposition["run"]["argv"])
     assert disposition["writesDecision"] is True
@@ -538,14 +536,28 @@ def _cli_options_for(path_parts: list[str]) -> set[str]:
     return opts
 
 
-def test_blueprint_run_shell_cli_flags_match_real_cli() -> None:
-    """Any `npa workbench <group> <cmd> --flags` in a run.shell stage must use the
-    tool's ACTUAL CLI options. Guards raw run.shell CLI calls (e.g.
-    annotate-augmented's token-factory caption) against flag drift the same way
-    the toolRef contract test guards catalog argv."""
+def test_blueprint_run_command_cli_flags_match_real_cli() -> None:
+    """Any raw `npa workbench <group> <cmd> --flags` command must use real options.
+
+    This covers both the legacy ``run.shell`` escape hatch and the preferred
+    token-safe ``run.argv`` representation.
+    """
     checked = 0
     for name, state in _states().items():
         run = state.get("run") or {}
+        argv = [str(argument) for argument in run.get("argv", [])]
+        if argv[:2] == ["npa", "workbench"] and len(argv) >= 4:
+            group, cmd = argv[2:4]
+            flags = [argument for argument in argv[4:] if argument.startswith("--")]
+            if flags:
+                cli_opts = _cli_options_for(["workbench", group, cmd])
+                for flag in flags:
+                    assert flag in cli_opts, (
+                        f"stage '{name}' run.argv uses `{flag}` for "
+                        f"`npa workbench {group} {cmd}`, which is not a real CLI "
+                        f"option ({sorted(cli_opts)}). Fix the run.argv."
+                    )
+                checked += 1
         shell = str(run.get("shell", ""))
         # Whitespace-collapse the folded YAML scalar, then find npa workbench calls.
         for match in re.finditer(
@@ -563,9 +575,7 @@ def test_blueprint_run_shell_cli_flags_match_real_cli() -> None:
                     f"which is not a real CLI option ({sorted(cli_opts)}). Fix the run.shell."
                 )
             checked += 1
-    assert checked >= 1, (
-        "expected at least one npa-workbench run.shell call to validate"
-    )
+    assert checked >= 1, "expected at least one npa-workbench run command to validate"
 
 
 # ---------------------------------------------------------------------------------
@@ -708,8 +718,9 @@ def test_living_lab_every_shard_is_real_nurec_work_on_rtx_gpu() -> None:
 def test_living_lab_join_runs_the_real_module_and_publishes_a_twin() -> None:
     join = _living_lab_states()["join"]
     assert join["resources"] == "cpu"
-    shell = join["run"]["shell"]
-    assert "npa.workflows.living_lab" in shell and "join_living_lab_zones" in shell
+    argv = join["run"]["argv"]
+    assert any("npa.workflows.living_lab" in arg for arg in argv)
+    assert any("join_living_lab_zones" in arg for arg in argv)
     outputs = {o["uri"] for o in join["outputs"]}
     assert any("{{config.report_uri}}" in u for u in outputs)
     assert any("{{config.panorama_uri}}" in u for u in outputs)

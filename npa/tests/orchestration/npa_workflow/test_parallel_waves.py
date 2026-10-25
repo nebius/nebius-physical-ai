@@ -490,10 +490,20 @@ def test_shipped_sweep_spec_wave_shape() -> None:
     ]
     assert waves[0].max_concurrency == 4
     # Every variant trains with its own Hydra overrides and output prefix.
-    shells = [step.shell for step in waves[0].steps]
-    assert sum("learning_rate=1.0e-3" in shell for shell in shells) == 1
-    assert sum("entropy_coef=0.01" in shell for shell in shells) == 1
-    assert len({shell for shell in shells}) == 4
+    argv = [step.argv for step in waves[0].steps]
+    assert (
+        sum(
+            "learning_rate=1.0e-3" in argument
+            for command in argv
+            for argument in command
+        )
+        == 1
+    )
+    assert (
+        sum("entropy_coef=0.01" in argument for command in argv for argument in command)
+        == 1
+    )
+    assert len({tuple(command) for command in argv}) == 4
 
 
 @pytest.mark.parametrize(
@@ -576,8 +586,8 @@ def test_shipped_specs_render_without_placeholders(
         assert len(group_docs) - 1 == len(wave.steps)
 
 
-def test_stage_shell_gets_the_right_interpreter(parallel_spec) -> None:
-    """A stage body must run with an interpreter that has npa AND its dependencies.
+def test_stage_argv_gets_the_right_interpreter(parallel_spec) -> None:
+    """A stage command must run with an interpreter that has npa AND its dependencies.
 
     Regression guard for three live failures on real GPUs, all caused by stage
     commands running in a LOGIN shell that re-resolved python3:
@@ -597,12 +607,12 @@ def test_stage_shell_gets_the_right_interpreter(parallel_spec) -> None:
         render_task_run_script,
     )
 
-    # The seam no longer wraps stage shells in a login shell.
+    # The command remains argv, so resolved data cannot become shell source.
     shipped = load_spec(SHIPPED / "token-factory-parallel-fanout.yaml")
     plan = build_plan(shipped, run_id="shell-1")
-    join_step = [step for step in plan.steps if step.shell.strip()][0]
+    join_step = next(step for step in plan.steps if step.state == "aggregate")
     task = build_scheduler_task(shipped, join_step, run_id="shell-1")
-    assert task["command"][:2] == ["bash", "-c"]
+    assert task["command"] == join_step.argv
     assert "join_shards" in task["command"][2]
 
     setup = default_npa_setup()

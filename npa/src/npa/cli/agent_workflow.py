@@ -56,10 +56,11 @@ def _real_finalize_run() -> OrderedDict[str, Any]:
                 "python3",
                 "-c",
                 (
-                    "from npa.workflows.data_factory_stages import finalize; "
-                    "finalize('s3://{{config.bucket}}/{{config.prefix}}/', "
-                    "'{{config.finalize_report_uri}}')"
+                    "import sys; from npa.workflows.data_factory_stages import finalize; "
+                    "finalize(*sys.argv[1:])"
                 ),
+                "s3://{{config.bucket}}/{{config.prefix}}/",
+                "{{config.finalize_report_uri}}",
             ]
         }
     )
@@ -973,10 +974,13 @@ def _workflow_specs() -> dict[str, dict[str, Any]]:
                             ),
                             "run": OrderedDict(
                                 {
-                                    "shell": (
-                                        "python3 -m npa.workflows.token_factory_deployment_input "
-                                        "--output-uri '{{config.prompts_uri}}'"
-                                    )
+                                    "argv": [
+                                        "python3",
+                                        "-m",
+                                        "npa.workflows.token_factory_deployment_input",
+                                        "--output-uri",
+                                        "{{config.prompts_uri}}",
+                                    ]
                                 }
                             ),
                             "resources": "cpu",
@@ -1745,12 +1749,18 @@ def _data_factory_spec() -> dict[str, Any]:
                         "resources": "cpu",
                         "run": OrderedDict(
                             {
-                                "shell": (
-                                    'python3 -c "from npa.workflows.data_factory_stages import '
-                                    "grade_gate; grade_gate('{{config.scores_uri}}', "
-                                    "'{{config.decision_uri}}', '{{config.grade_threshold}}', "
-                                    "'{{config.refinement_uri}}')\""
-                                )
+                                "argv": [
+                                    "python3",
+                                    "-c",
+                                    (
+                                        "import sys; from npa.workflows.data_factory_stages "
+                                        "import grade_gate; grade_gate(*sys.argv[1:])"
+                                    ),
+                                    "{{config.scores_uri}}",
+                                    "{{config.decision_uri}}",
+                                    "{{config.grade_threshold}}",
+                                    "{{config.refinement_uri}}",
+                                ]
                             }
                         ),
                         "outputs": [
@@ -1986,14 +1996,24 @@ def _data_factory_spec() -> dict[str, Any]:
                         "resources": "cpu",
                         "run": OrderedDict(
                             {
-                                "shell": (
-                                    "npa workbench token-factory caption "
-                                    '--input-path "{{config.augmented_frames_uri}}" '
-                                    '--output-path "{{config.labeled_augmented_uri}}" '
-                                    '--model "{{config.caption_model}}" '
-                                    '--max-images "{{config.max_images}}" '
-                                    '--max-tokens "{{config.max_tokens}}" --output json'
-                                )
+                                "argv": [
+                                    "npa",
+                                    "workbench",
+                                    "token-factory",
+                                    "caption",
+                                    "--input-path",
+                                    "{{config.augmented_frames_uri}}",
+                                    "--output-path",
+                                    "{{config.labeled_augmented_uri}}",
+                                    "--model",
+                                    "{{config.caption_model}}",
+                                    "--max-images",
+                                    "{{config.max_images}}",
+                                    "--max-tokens",
+                                    "{{config.max_tokens}}",
+                                    "--output",
+                                    "json",
+                                ]
                             }
                         ),
                         "outputs": [
@@ -2099,11 +2119,16 @@ def _data_factory_spec() -> dict[str, Any]:
                         "resources": "cpu",
                         "run": OrderedDict(
                             {
-                                "shell": (
-                                    'python3 -c "from npa.workflows.data_factory_stages import '
-                                    "finalize; finalize('{{config.run_root_uri}}', "
-                                    "'{{config.finalize_report_uri}}')\""
-                                )
+                                "argv": [
+                                    "python3",
+                                    "-c",
+                                    (
+                                        "import sys; from npa.workflows.data_factory_stages "
+                                        "import finalize; finalize(*sys.argv[1:])"
+                                    ),
+                                    "{{config.run_root_uri}}",
+                                    "{{config.finalize_report_uri}}",
+                                ]
                             }
                         ),
                         "outputs": [
