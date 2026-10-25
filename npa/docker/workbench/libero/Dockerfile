@@ -1,4 +1,4 @@
-FROM python:3.10-slim-bookworm@sha256:999137905e8718de681744822ccd965e1950e1baba089035060418e05e1d7496
+FROM python:3.11.16-slim-bookworm@sha256:b1add8a6f2aca6bcfcf0b9c9b522352f7ce0d62a3d556a2f2f32511aa0cca250
 
 ARG NPA_SOURCE_SHA
 ARG DEBIAN_SNAPSHOT=20260824T000000Z
@@ -12,7 +12,7 @@ LABEL org.opencontainers.image.title="NPA LIBERO neutral bootstrap" \
       org.nebius.npa.third-party-notices="/opt/npa/libero/THIRD_PARTY_NOTICES.md" \
       org.nebius.npa.redistribution="public-neutral-bootstrap" \
       org.nebius.npa.validation-status="quarantined-unvalidated" \
-      org.nebius.npa.base-manifest="sha256:999137905e8718de681744822ccd965e1950e1baba089035060418e05e1d7496" \
+      org.nebius.npa.base-manifest="sha256:b1add8a6f2aca6bcfcf0b9c9b522352f7ce0d62a3d556a2f2f32511aa0cca250" \
       org.nebius.npa.base-rootfs-material="sha256:5ae3c39ebd15e229dcedd5cee596b2497182493d41ff162e824ba13fc1b2b867" \
       org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"
 
@@ -95,8 +95,9 @@ COPY docker/workbench/libero/entrypoint.sh /usr/local/bin/npa-libero-entrypoint
 COPY docker/workbench/libero/smoke.sh /opt/npa/libero/smoke.sh
 
 RUN set -eux; \
-    echo '98dd8b82f1e8fc259c627a5b94c6d5f5347452092ed6a53e8dae72d89c97ab57  /opt/npa/libero/runtime-manifest.json' | sha256sum -c -; \
-    echo '233d6802c8317a5be1c15bb4ae89daf71d51e9335f912f1685dff5fef79f98bc  /opt/npa/libero/runtime-requirements.txt' | sha256sum -c -; \
+    echo '03b68662093313a8f971519c4f677038242f6266261eff67b6f84385282ebffd  /opt/npa/libero/runtime-manifest.json' | sha256sum -c -; \
+    echo '62703583c24f612e6655fe3dd114b8e79ef5d1063b7632c890aaa3beaad90e04  /opt/npa/libero/runtime-requirements.txt' | sha256sum -c -; \
+    python3 -c 'import sys; assert sys.version_info[:2] == (3, 11)'; \
     chmod 0755 /opt/npa/libero/runtime-bootstrap.py /opt/npa/libero/smoke.sh /usr/local/sbin/npa-skypilot-bootstrap-guard /usr/local/bin/npa-libero-entrypoint; \
     ln -s npa-skypilot-bootstrap-guard /usr/local/sbin/apt-get; \
     ln -s /usr/local/sbin/npa-skypilot-bootstrap-guard /usr/local/bin/timeout; \

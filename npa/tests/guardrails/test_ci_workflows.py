@@ -45,6 +45,34 @@ def test_automatic_pr_workflows_cancel_superseded_commits() -> None:
         }, name
 
 
+def test_workflow_checkouts_do_not_persist_github_tokens() -> None:
+    """Prevent workflow code from recovering checkout credentials after setup."""
+
+    for workflow_path in WORKFLOW_DIR.glob("*.y*ml"):
+        workflow = _load_workflow(workflow_path.name)
+        for job_name, job in workflow["jobs"].items():
+            for step in job.get("steps", []):
+                if "actions/checkout@" in step.get("uses", ""):
+                    assert step.get("with", {}).get("persist-credentials") == "false", (
+                        f"{workflow_path.name}:{job_name} persists checkout credentials"
+                    )
+
+
+def test_release_uses_the_runner_cli_with_an_explicit_token() -> None:
+    """Avoid granting repository-write credentials to an unnecessary action."""
+
+    steps = _load_workflow("release.yml")["jobs"]["build"]["steps"]
+    release = next(
+        step for step in steps if step["name"] == "Create GitHub Release with artifacts"
+    )
+    assert release["env"] == {"GH_TOKEN": "${{ github.token }}"}
+    assert (
+        release["run"]
+        == 'gh release create "$GITHUB_REF_NAME" npa/dist/* --generate-notes'
+    )
+    assert "uses" not in release
+
+
 def test_one_pr_workflow_owns_every_merge_gate() -> None:
     """Keep PR updates atomic instead of spawning six independent workflows."""
 

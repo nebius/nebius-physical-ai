@@ -1,15 +1,16 @@
-# Serving closure matched to vLLM-Omni 0.28.0 at
-# eb11446b7f2e30ca582f8aff3afe12e9a2e66f6c; source is installed separately.
+# Serving closure matched to vLLM 0.31.0 and vLLM-Omni 0.31.0rc1 at
+# 6dd0d1f9310f7598b773c796b434c8000c2816ec; source is installed separately.
 # PyTorch 2.13 fixes the torch.jit.script memory corruption advisory.
-vllm==0.28.0
-transformers >= 5.10.1, < 5.15
+vllm==0.31.0
+transformers >= 5.13.0, < 5.15
 av>=14.0.0
 omegaconf>=2.3.0
 diffusers==0.40.0
-kernels==0.14.1
+kernels==0.16.1
 safetensors>=0.8.0
 accelerate==1.12.0
 soundfile>=0.13.1
+soxr>=0.5.0.post1
 cache-dit==1.5.0
 tqdm>=4.66.0
 torchsde>=0.2.6
@@ -27,8 +28,24 @@ pydantic>=2.1.0
 pydantic-settings>=2.0.0
 gguf>=0.10.0
 cosmos-guardrail>=0.3.1
+scipy>=1.11.0
+s3tokenizer==0.3.0
 onnxruntime>=1.23.2
 fa3-fwd==0.0.3
+aiohttp==3.14.4
+certifi==2026.10.19
+opentelemetry-api==1.45.1
+pillow==13.0.0
+filelock==4.2.4
+# vLLM 0.30 allows the current MCP 2.x line. Pin the maintained releases so
+# the closure does not retain older vulnerable transitive versions.
+mcp==2.3.0
+httpx2==2.16.0
+pyjwt==2.15.1
+# vLLM 0.31.0 declares setuptools<81 on Python 3.12. Its current compatible
+# upstream release therefore prevents the fixed setuptools 83 series; retain the
+# explicit bound until an upstream release supports it rather than forcing an
+# unsatisfied wheel into the runtime closure.
 setuptools==80.10.2
 setuptools-scm==10.2.3
 wheel==0.48.0
