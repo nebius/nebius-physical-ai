@@ -62,9 +62,14 @@ def test_release_uses_the_runner_cli_with_an_explicit_token() -> None:
     """Avoid granting repository-write credentials to an unnecessary action."""
 
     steps = _load_workflow("release.yml")["jobs"]["build"]["steps"]
-    release = next(step for step in steps if step["name"] == "Create GitHub Release with artifacts")
+    release = next(
+        step for step in steps if step["name"] == "Create GitHub Release with artifacts"
+    )
     assert release["env"] == {"GH_TOKEN": "${{ github.token }}"}
-    assert release["run"] == 'gh release create "$GITHUB_REF_NAME" npa/dist/* --generate-notes'
+    assert (
+        release["run"]
+        == 'gh release create "$GITHUB_REF_NAME" npa/dist/* --generate-notes'
+    )
     assert "uses" not in release
 
 
@@ -573,7 +578,9 @@ def test_dependabot_preserves_manually_qualified_runtimes() -> None:
         assert {"torch", "mujoco"} <= ignored
 
 
-def test_dependabot_stabilizes_version_updates_without_delaying_security_updates() -> None:
+def test_dependabot_stabilizes_version_updates_without_delaying_security_updates() -> (
+    None
+):
     """Keep a review window for version updates while alert remediation stays immediate."""
 
     configuration = yaml.safe_load((REPO_ROOT / ".github/dependabot.yml").read_text())
