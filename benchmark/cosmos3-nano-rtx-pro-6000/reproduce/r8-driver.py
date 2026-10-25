@@ -69,7 +69,7 @@ def one_request(port, attempt_id, seed, prompt, negative, telemetry):
               "seed": seed, "started_utc": started_utc, "kind": "production"}
     try:
         request = urllib.request.Request(url, data=body, headers={"Content-Type": ctype})
-        with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+        with urllib.request.urlopen(request, timeout=TIMEOUT) as response:  # nosec B310 - fixed http://127.0.0.1 URL
             payload = response.read()
         client_wall = time.monotonic() - started
         path = os.path.join(CLIPS, f"{attempt_id}.mp4")

@@ -246,9 +246,10 @@ which calls each service's `/v1/videos/sync` directly. It needs Python 3 with
 writes to `$R8_BASE/$R8_RUN_DIR/`. Its settings come from `R8_CELL`,
 `R8_RUN_DIR`, `R8_PORTS` (default 8100 to 8107), `R8_ROUNDS` (default 3),
 `R8_WIDTH`, `R8_HEIGHT`, `R8_FRAMES` and `R8_GUIDANCE`. The published client
-differs from the one that ran in two ways: its base directory comes from
-`R8_BASE` instead of a fixed host path, and two lines that computed an
-internal planning figure are removed. Its docstring still describes only R8,
+differs from the one that ran in three ways: its base directory comes from
+`R8_BASE` instead of a fixed host path, two lines that computed an internal
+planning figure are removed, and the `urlopen` call carries a `# nosec B310`
+comment for the security scanner. Its docstring still describes only R8,
 and `import sys` is unused.
 
 Prepare the prompts once:
