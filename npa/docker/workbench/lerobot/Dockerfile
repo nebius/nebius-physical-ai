@@ -81,6 +81,9 @@ RUN python3.12 -m venv /opt/lerobot/venv \
     && /opt/lerobot/venv/bin/python -m pip install \
          --no-cache-dir --disable-pip-version-check --only-binary=:all: \
          --require-hashes --no-deps -r /opt/lerobot/bootstrap-requirements.lock \
+    && test "$(/opt/lerobot/venv/bin/python -c \
+         'from pip._vendor import certifi; print(certifi.__version__)')" \
+         = 2026.10.19 \
     && if [ "${LEROBOT_VERSION}" = "0.6.0" ]; then \
          /opt/lerobot/venv/bin/python /opt/lerobot/prepare-secure-wheel-060.py \
            --output-dir /opt/lerobot/secure-wheel \

@@ -242,6 +242,13 @@ def test_build_dependency_closure_has_no_moving_repository_or_python_resolution(
         "packaging==25.0 "
         "--hash=sha256:29572ef2b1f17581046b3a2227d5c611fb25ec70ca1ba8554b24b0e69331a484"
     ) in bootstrap_lock
+    assert (
+        "pip==26.2.2 "
+        "--hash=sha256:fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70"
+    ) in bootstrap_lock
+    assert "pip==26.2.1" not in bootstrap_lock
+    assert "from pip._vendor import certifi; print(certifi.__version__)" in text
+    assert "= 2026.10.19" in text
     assert ".venv-local/" in (ROOT / "npa/.dockerignore").read_text()
     assert "/npa/.venv-local/" in (ROOT / ".gitignore").read_text()
     for name, local_wheel, wheel_hash in (
