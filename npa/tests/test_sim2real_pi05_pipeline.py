@@ -1289,6 +1289,119 @@ def test_smolvla_temporal_ensemble_retains_future_chunk_actions() -> None:
         },
     ]
 
+    episode = {
+        "receding_horizon": {
+            "model_horizon": horizon,
+            "configured_execute_prefix": 1,
+            "action_selection": pi05_closed_loop._smolvla_action_selection_protocol(
+                horizon
+            ),
+        },
+        "queries": [
+            {
+                "decision": 0,
+                "action_receipt": first_receipt,
+                "action_selection": {
+                    **pi05_closed_loop._smolvla_action_selection_protocol(horizon),
+                    "decision": 0,
+                    "contributor_count": 1,
+                    "contributors": [
+                        {
+                            "origin_decision": 0,
+                            "action_index": 0,
+                            "chunk_sha256": first_receipt["sha256"],
+                        }
+                    ],
+                    "weight_per_contributor": 1.0,
+                    "applied_action_sha256": hashlib.sha256(
+                        np.ascontiguousarray(first[0]).tobytes()
+                    ).hexdigest(),
+                    "applied_action_dtype": "float64",
+                    "applied_action_shape": [8],
+                    "applied_action": first[0].tolist(),
+                    "applied_gripper_score": float(first[0, 7]),
+                    "applied_gripper_command": int(float(first[0, 7]) > 0.5),
+                },
+            },
+            {
+                "decision": 1,
+                "action_receipt": second_receipt,
+                "action_selection": selection,
+            },
+        ],
+    }
+    pi05_closed_loop._validate_action_selection_history(episode)
+    pi05_closed_loop.validate_success_report(
+        {
+            "schema": "npa.sim2real.policy_interchange.closed_loop_eval.v1",
+            "checkpoint_role": "adapted",
+            "split": "gold",
+            "episode_count": 1,
+            "episodes": [episode],
+            "review_artifacts": {
+                "mp4": {"bytes": 1},
+                "witness_mp4": {"bytes": 1},
+                "rrd": {"bytes": 1},
+            },
+        },
+        Namespace(
+            episodes=1,
+            wrist_ablation_modes=["fresh"],
+            checkpoint_role="adapted",
+            split="gold",
+            policy_backend="lerobot_smolvla",
+        ),
+    )
+    episode["queries"][1]["action_selection"]["contributors"][0]["action_index"] = 0
+    with pytest.raises(RuntimeError, match="ensemble lineage"):
+        pi05_closed_loop._validate_action_selection_history(episode)
+
+
+def test_smolvla_temporal_ensemble_rejects_wrong_horizon_and_mean() -> None:
+    horizon = 3
+    actions = np.arange(horizon * 8, dtype=np.float64).reshape(horizon, 8)
+    receipt = pi05_closed_loop._action_receipt(actions)
+    context = {
+        "policy_backend": "lerobot_smolvla",
+        "record": {"model_horizon": horizon},
+    }
+    _target, selection = pi05_closed_loop._temporally_ensembled_target(
+        context, actions, {"decision": 0, "action_receipt": receipt}
+    )
+    episode = {
+        "receding_horizon": {
+            "model_horizon": horizon,
+            "action_selection": pi05_closed_loop._smolvla_action_selection_protocol(
+                horizon
+            ),
+        },
+        "queries": [
+            {
+                "decision": 0,
+                "action_receipt": receipt,
+                "action_selection": selection,
+            }
+        ],
+    }
+    episode["queries"][0]["action_selection"]["applied_action"][0] += 1.0
+    with pytest.raises(RuntimeError, match="ensemble receipt"):
+        pi05_closed_loop._validate_action_selection_history(episode)
+
+    episode["queries"][0]["action_selection"] = selection
+    episode["receding_horizon"]["action_selection"] = (
+        pi05_closed_loop._smolvla_action_selection_protocol(horizon + 1)
+    )
+    with pytest.raises(RuntimeError, match="horizon is inconsistent"):
+        pi05_closed_loop._validate_action_selection_history(episode)
+
+    episode["receding_horizon"]["action_selection"] = (
+        pi05_closed_loop._smolvla_action_selection_protocol(horizon)
+    )
+    episode["receding_horizon"]["model_horizon"] = horizon
+    episode["queries"][0]["decision"] = 1
+    with pytest.raises(RuntimeError, match="decision history"):
+        pi05_closed_loop._validate_action_selection_history(episode)
+
 
 def _clock_native(control_steps: int) -> types.SimpleNamespace:
     return types.SimpleNamespace(

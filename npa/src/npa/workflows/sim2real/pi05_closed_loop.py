@@ -2467,7 +2467,9 @@ def _validate_query_numeric_receipts(
         raise RuntimeError("policy query numeric receipt is invalid")
 
 
-def _valid_action_chunk_receipt(receipt: dict[str, Any]) -> bool:
+def _valid_action_chunk_receipt(
+    receipt: dict[str, Any], horizon: int = ACTION_HORIZON
+) -> bool:
     import numpy as np
 
     try:
@@ -2476,9 +2478,11 @@ def _valid_action_chunk_receipt(receipt: dict[str, Any]) -> bool:
         return False
     value = np.ascontiguousarray(actions)
     return bool(
-        receipt.get("shape") == [ACTION_HORIZON, 8]
+        isinstance(horizon, int)
+        and horizon > 0
+        and receipt.get("shape") == [horizon, 8]
         and receipt.get("dtype") == "float64"
-        and value.shape == (ACTION_HORIZON, 8)
+        and value.shape == (horizon, 8)
         and np.isfinite(value).all()
         and receipt.get("sha256") == hashlib.sha256(value.tobytes()).hexdigest()
         and receipt.get("gripper_scores") == value[:, 7].tolist()
@@ -2487,7 +2491,11 @@ def _valid_action_chunk_receipt(receipt: dict[str, Any]) -> bool:
     )
 
 
-def _valid_action_selection_receipt(selection: dict, decision: Any) -> bool:
+def _valid_action_selection_receipt(
+    selection: dict,
+    decision: Any,
+    protocol: dict[str, Any] | None = None,
+) -> bool:
     import numpy as np
 
     try:
@@ -2496,12 +2504,9 @@ def _valid_action_selection_receipt(selection: dict, decision: Any) -> bool:
         return False
     digest = hashlib.sha256(np.ascontiguousarray(applied).tobytes()).hexdigest()
     score = selection.get("applied_gripper_score")
+    expected = protocol or _action_selection_protocol()
     return bool(
-        selection.get("schema") == _action_selection_protocol()["schema"]
-        and selection.get("method") == "uniform_mean"
-        and selection.get("model_horizon") == ACTION_HORIZON
-        and selection.get("fresh_observation_per_control") is True
-        and selection.get("causality") == "current_and_past_predictions_only"
+        all(selection.get(key) == value for key, value in expected.items())
         and selection.get("decision") == decision
         and selection.get("applied_action_shape") == [8]
         and selection.get("applied_action_dtype") == "float64"
@@ -2518,14 +2523,35 @@ def _validate_action_selection_history(episode: dict[str, Any]) -> None:
     import numpy as np
 
     queries = episode.get("queries") or []
+    receding = episode.get("receding_horizon") or {}
+    protocol = receding.get("action_selection") or _action_selection_protocol()
+    horizon = protocol.get("model_horizon")
+    if protocol not in (
+        _action_selection_protocol(),
+        _smolvla_action_selection_protocol(horizon) if isinstance(horizon, int) else {},
+    ):
+        raise RuntimeError("temporal action ensemble protocol is invalid")
+    if not isinstance(horizon, int) or horizon < 1:
+        raise RuntimeError("temporal action ensemble horizon is invalid")
+    decisions = [int(query["decision"]) for query in queries]
+    if not queries or decisions != list(range(len(queries))):
+        raise RuntimeError("temporal action ensemble decision history is invalid")
+    declared_horizon = receding.get("model_horizon")
+    if declared_horizon is not None and declared_horizon != horizon:
+        raise RuntimeError("temporal action ensemble horizon is inconsistent")
     receipts = {
         int(query["decision"]): query.get("action_receipt") or {} for query in queries
     }
     for query in queries:
         decision = int(query["decision"])
         selection = query.get("action_selection") or {}
+        receipt = receipts[decision]
+        if not _valid_action_chunk_receipt(receipt, horizon):
+            raise RuntimeError("temporal action chunk receipt is invalid")
+        if not _valid_action_selection_receipt(selection, decision, protocol):
+            raise RuntimeError("temporal action ensemble receipt is invalid")
         contributors = selection.get("contributors") or []
-        origins = list(range(max(0, decision - ACTION_HORIZON + 1), decision + 1))
+        origins = list(range(max(0, decision - horizon + 1), decision + 1))
         if (
             selection.get("contributor_count") != len(origins)
             or len(contributors) != len(origins)
@@ -3207,6 +3233,9 @@ def validate_success_report(report: dict[str, Any], args: argparse.Namespace) ->
     for name in ("mp4", "witness_mp4", "rrd"):
         if int((artifacts.get(name) or {}).get("bytes", 0)) < 1:
             raise RuntimeError(f"closed-loop report lacks decoded {name} evidence")
+    if getattr(args, "policy_backend", "openpi_pi05") == "lerobot_smolvla":
+        for episode in report["episodes"]:
+            _validate_action_selection_history(episode)
 
 
 def main(argv: list[str] | None = None) -> int:
