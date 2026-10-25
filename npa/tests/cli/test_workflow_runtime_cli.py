@@ -823,6 +823,67 @@ def test_runtime_defers_free_capacity_to_the_actual_wave(
     capacity.assert_not_called()
 
 
+def test_runtime_refresh_reuses_explicit_identity_environment(
+    fake_runtime,
+    gpu_then_cpu_spec: Path,
+    tmp_path: Path,
+    mocker,
+) -> None:
+    """Every accelerator discovery must bind the same selected principal."""
+    environments: list[dict[str, str]] = []
+
+    def resolve(*_args, **kwargs):  # noqa: ANN001
+        environment = kwargs.get("environment")
+        assert isinstance(environment, dict)
+        environments.append(dict(environment))
+        return {}
+
+    mocker.patch(
+        "npa.cli.workbench.workflow._resolve_submit_accelerators",
+        side_effect=resolve,
+    )
+    mocker.patch("npa.cli.workbench.workflow._adopt_npa_kubeconfig", return_value=True)
+    mocker.patch("npa.cli.workbench.workflow._verify_submit_controller_owner")
+    mocker.patch(
+        "npa.orchestration.npa_workflow.model_cache_preflight.adopt_model_cache_claim",
+        return_value="",
+    )
+    mocker.patch(
+        "npa.cli.workbench.workflow._execution_target_preflight",
+        return_value=(None, {}),
+    )
+    wave = tmp_path / "identity-refresh.yaml"
+    wave.write_text("name: generate\nrun: 'true'\n")
+
+    def run(spec, **kwargs):  # noqa: ANN001
+        kwargs["options"].pre_submit_hook(wave)
+        return RuntimeReport(workflow=spec.name, run_id=kwargs["run_id"], status="succeeded")
+
+    mocker.patch(
+        "npa.orchestration.npa_workflow.runtime.run_workflow_runtime", side_effect=run
+    )
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(gpu_then_cpu_spec),
+            "--run-id",
+            "identity-refresh",
+            "--runtime",
+            "--infra",
+            "k8s/unit-context",
+            "--no-deploy-if-absent",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert len(environments) == 2
+    assert environments[0] == environments[1]
+    assert environments[0]["NPA_S3_BUCKET"] == "rt-bucket"
+
+
 def test_runtime_uses_configured_secrets_for_local_ledger_without_leaking_env(
     mocker, monkeypatch, satisfied_preflight
 ) -> None:

@@ -3026,6 +3026,7 @@ def submit_cmd(
                     sky_bin=sky_bin,
                     assume_decision=assume_decision,
                     enabled=resolve_accelerators,
+                    environment=runtime_environment,
                     diagnostic_secrets=submission_redaction_secrets,
                     config_path=config_path,
                     isolated_config_dir=isolated_config_dir,
