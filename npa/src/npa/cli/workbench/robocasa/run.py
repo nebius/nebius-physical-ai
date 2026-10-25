@@ -76,6 +76,16 @@ def run_cmd(
         "--heldout-env-ids",
         help="Comma-separated held-out RoboCasa env ids to evaluate.",
     ),
+    expected_image_source_sha: str = typer.Option(
+        "",
+        "--expected-image-source-sha",
+        help="Exact 40-hex source SHA expected from a deployed service.",
+    ),
+    expected_image_manifest_digest: str = typer.Option(
+        "",
+        "--expected-image-manifest-digest",
+        help="Exact sha256 manifest digest expected from a deployed service.",
+    ),
     service: bool = typer.Option(
         False, "--service", help="Call a deployed service endpoint."
     ),
@@ -112,6 +122,10 @@ def run_cmd(
             )
     except PathContractError as exc:
         fail(str(exc))
+    if service:
+        _require_service_identity(
+            expected_image_source_sha, expected_image_manifest_digest
+        )
     request = RoboCasaRunRequest(
         env_id=env_id,
         capability=capability,
@@ -124,6 +138,8 @@ def run_cmd(
         checkpoint_uri=checkpoint_uri,
         train_env_ids=train_env_ids,
         heldout_env_ids=heldout_env_ids,
+        expected_image_source_sha=expected_image_source_sha,
+        expected_image_manifest_digest=expected_image_manifest_digest,
     )
     if service:
         result = request_json(
@@ -139,6 +155,8 @@ def run_cmd(
 
         local_payload = request.model_dump(mode="json")
         local_payload.pop("output_uri")
+        local_payload.pop("expected_image_source_sha")
+        local_payload.pop("expected_image_manifest_digest")
         result = run(output_path=output_path, **local_payload).model_dump(mode="json")
     if wait:
         run_id = str(result.get("run_id") or "")
@@ -154,6 +172,13 @@ def run_cmd(
         output=output,
         text=f"run_id: {result.get('run_id')}\nstatus: {result.get('status')}",
     )
+
+
+def _require_service_identity(source_sha: str, manifest_digest: str) -> None:
+    if not source_sha.strip():
+        fail("--expected-image-source-sha is required with --service")
+    if not manifest_digest.strip():
+        fail("--expected-image-manifest-digest is required with --service")
 
 
 def _wait_for_run(

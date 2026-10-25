@@ -354,7 +354,25 @@ def _rrd_source_images(root: Path, settings: dict) -> dict:
     return expected
 
 
-def _rrd_source_rows(chunks: list, expected: dict) -> set:
+def _rrd_image_timeline(chunk, settings):
+    schema = settings["schema"]
+    if schema == "npa.nurec.rrd-review.v1":
+        _require(
+            not any(
+                str(name).startswith("nurec_image:") for name in chunk.timeline_names
+            ),
+            "rrd_schema_timeline_mismatch",
+        )
+        return "frame"
+    timeline = "nurec_image:" + str(chunk.entity_path).lstrip("/")
+    _require(
+        set(chunk.timeline_names) <= {timeline, "log_tick", "log_time"},
+        "rrd_schema_timeline_mismatch",
+    )
+    return timeline
+
+
+def _rrd_source_rows(chunks: list, expected: dict, settings: dict) -> set:
     from PIL import Image
 
     observed = set()
@@ -363,12 +381,13 @@ def _rrd_source_rows(chunks: list, expected: dict) -> set:
         if not entity.startswith(("/novel_view/", "/reconstruction/")):
             continue
         batch = chunk.to_record_batch()
+        timeline = _rrd_image_timeline(chunk, settings)
         _require(
-            {"EncodedImage:blob", "frame"} <= set(batch.schema.names),
+            {"EncodedImage:blob", timeline} <= set(batch.schema.names),
             "rrd_missing_image_data",
         )
         rows = zip(
-            batch.column("frame").to_pylist(),
+            batch.column(timeline).to_pylist(),
             batch.column("EncodedImage:blob").to_pylist(),
             strict=True,
         )
@@ -409,7 +428,7 @@ def _rrd_image_checks(root, chunks, settings, settings_source):
             "image_verification_scope": "legacy_novel_views_only",
         }
     expected = _rrd_source_images(root, settings)
-    observed = _rrd_source_rows(chunks, expected)
+    observed = _rrd_source_rows(chunks, expected, settings)
     _rrd_sample_coverage(expected, observed, settings["max_frames_per_entity"])
     novel = sum(entity.startswith("/novel_view/") for entity, _ in observed)
     return {
@@ -460,8 +479,17 @@ def _rrd_review(root, terminal, chunks, evidence):
     else:
         settings = _legacy_rrd_review(root, terminal, evidence)
     _require(
-        settings.get("schema") == "npa.nurec.rrd-review.v1", "wrong_rrd_review_schema"
+        settings.get("schema")
+        in {"npa.nurec.rrd-review.v1", "npa.nurec.rrd-review.v2"},
+        "wrong_rrd_review_schema",
     )
+    if settings["schema"] == "npa.nurec.rrd-review.v2":
+        _require(
+            embedded
+            and settings.get("timeline_policy")
+            == "independent-entity-filename-indices",
+            "wrong_rrd_timeline_policy",
+        )
     _require(
         all(
             type(settings.get(key)) is int

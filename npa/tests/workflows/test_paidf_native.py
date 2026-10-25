@@ -433,9 +433,28 @@ def test_prepare_images_writes_verified_pane_metadata(tmp_path: Path) -> None:
     }
 
 
-@pytest.mark.parametrize("workflow", ["iaa", "evg"])
+@pytest.mark.parametrize(
+    ("workflow", "seed", "expected_variables"),
+    [
+        ("iaa", 7, None),
+        ("evg", 7, None),
+        (
+            "iaa",
+            0,
+            {
+                "top_outer_color": "red",
+                "top_outer_type": "vest",
+                "bottom_type": "jeans",
+                "bottom_color": "blue",
+                "shoe_type": "sneakers",
+                "shoe_color": "white",
+            },
+        ),
+        ("evg", 6, {"anomaly_type": "fire_or_smoke", "env_type": "warehouse"}),
+    ],
+)
 def test_build_configs_mutates_pinned_upstream_protocol_without_replacing_it(
-    tmp_path: Path, monkeypatch, workflow: str
+    tmp_path: Path, monkeypatch, workflow: str, seed: int, expected_variables
 ) -> None:
     prepared = tmp_path / "prepared.json"
     prepared.write_text(
@@ -511,7 +530,7 @@ def test_build_configs_mutates_pinned_upstream_protocol_without_replacing_it(
         str(output),
         str(tmp_path / "configs.json"),
         1,
-        7,
+        seed,
         TOKEN_FACTORY_ENDPOINT,
         "vlm-model",
         TOKEN_FACTORY_ENDPOINT,
@@ -528,13 +547,18 @@ def test_build_configs_mutates_pinned_upstream_protocol_without_replacing_it(
     }
     assert config["evaluators"] == [{"attribute_verification": {"enabled": True}}]
     if workflow == "iaa":
-        assert config["augmentation"]["parameters"]["extra_body"]["seed"] == 7
+        assert config["augmentation"]["parameters"]["extra_body"]["seed"] == seed
     else:
-        assert config["augmentation"]["parameters"]["seed"] == 7
+        assert config["augmentation"]["parameters"]["seed"] == seed
         assert (
             config["augmentation"]["parameters"]["extra_params"]["guardrails"] is True
         )
     assert config["data"][0]["output"]["metadata"].endswith("output_metadata.json")
+    if expected_variables is not None:
+        assert result["configs"][0]["variables"] == expected_variables
+        assert config["captioning"]["llm"]["variables"] == {
+            name: [value] for name, value in expected_variables.items()
+        }
 
 
 def test_evg_finalize_and_terminal_validation_require_published_sidecars(

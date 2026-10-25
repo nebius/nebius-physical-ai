@@ -2,12 +2,12 @@
 
 # Nebius Physical AI
 
-**The control plane your coding agent uses to run physical-AI workloads on Nebius.**
+**The agent control plane for Physical AI on Nebius.**
 
 <img src="docs/assets/workbench-architecture.png" alt="Workbench architecture: selected NVIDIA and open-ecosystem integrations are packaged into public GHCR images. npa uses workflow YAML, its workflow engine, and SkyPilot to run workloads on Nebius Kubernetes. Kubernetes pulls images; Object Storage holds artifacts and run state. Token Factory provides hosted inference. Models and vendor runtimes are fetched at runtime where required." width="960" />
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![Platforms: macOS · Linux · WSL2](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20WSL2-lightgrey.svg)](docs/install.md)
 [![Test](https://github.com/nebius/nebius-physical-ai/actions/workflows/test.yml/badge.svg)](https://github.com/nebius/nebius-physical-ai/actions/workflows/test.yml)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
@@ -16,6 +16,7 @@
 **[Guides](docs/workbench/guides/README.md)** ·
 **[Manual workflows](docs/workbench/guides/manual-workflow-operations.md)** ·
 **[Workbench docs](docs/workbench/README.md)** ·
+**[Shared access](docs/workbench/shared-workbench-quickstart.md)** ·
 **[Benchmarks](benchmark/README.md)** ·
 **[Operator tools](docs/tools/README.md)** ·
 **[CLI reference](docs/cli/README.md)** ·
@@ -26,17 +27,26 @@
 </div>
 
 
-For shared Kubernetes clusters, use [team namespaces](docs/workbench/namespaces.md) to configure
-namespace selection and private SkyPilot contexts with `npa workbench namespace`.
+For a shared Workbench endpoint, start with the
+[shared-access quickstart](docs/workbench/shared-workbench-quickstart.md).
+Operators install the HTTPS service once; users and coding agents connect with
+`npa login` using a personal key or Nebius human sign-in. Workbench access adds
+personal namespaces, GPU caps, and scoped storage. The CLI and agents reuse
+the saved connection through the same authenticated API.
+Operators managing Kubernetes directly can use
+[team namespaces](docs/workbench/namespaces.md) to select namespaces and private
+SkyPilot contexts with `npa workbench namespace`.
 
 ## What is Workbench?
 
-Workbench is the agent-facing control plane for physical AI on Nebius. You
-describe the outcome; Codex, Claude Code, or another coding agent with terminal
-access to this checkout uses `npa` to configure the project, check access, plan
-resources, run containerized tools and workflows, and inspect the result with
-you. You can drive the same operations directly through the CLI, and supported
-tools also expose Python interfaces.
+Workbench is NPA's agent control plane for Physical AI on Nebius AI Cloud,
+covering infrastructure setup and management, simulation, robot policy training,
+synthetic data, and evaluation. Codex, Claude Code, or another coding agent with
+terminal access to this checkout uses repository skills and `npa` to configure
+projects, check access, provision GPU clusters and object storage, run
+containerized tools and workflows, and inspect artifacts with you. You can use
+the same operations directly through the CLI; supported tools also expose
+Python interfaces.
 
 ### How Workbench runs a task
 
@@ -115,9 +125,14 @@ The prompts keep credentials private, stop at human approval gates, validate
 the plan before provisioning, and stay with the run through artifact inspection.
 The manual path below exposes the same control-plane steps.
 
+Joining an existing shared Workbench? Complete **1. Install**, then follow the
+[shared-access quickstart](docs/workbench/shared-workbench-quickstart.md).
+The project connection steps below are for operators; `npa configure` does not
+install the shared service or its LoadBalancer.
+
 ### 1. Install
 
-Use Python **3.10+** on macOS, Linux, or WSL2 Ubuntu. Clone the repository,
+Use Python **3.11+** on macOS, Linux, or WSL2 Ubuntu. Clone the repository,
 then run the remaining commands from its root:
 
 ```bash
@@ -172,6 +187,10 @@ Keep the returned run ID: you use it to inspect logs, find artifacts, and resume
 For video augmentation, the [PAIDF + Cosmos 3 runbook](workflows/guides/paidf-cosmos3.md)
 includes a public source-video example and full submission commands.
 
+For a shared installation, [team PAIDF](docs/workbench/team-paidf.md) covers
+new-user sign-in, local groups, scoped allocations, and 20 LeRobot episodes
+submitted through the shared CLI or SDK.
+
 <a id="pick-your-first-win"></a>
 
 ## Choose your first workload
@@ -222,6 +241,8 @@ See the [workflow catalog](workflows/README.md),
 [14-stage Sim2Real pipeline](docs/workbench/guides/sim2real-workflow.md) uses this
 same runtime at [`workflows/main/sim2real.yaml`](workflows/main/sim2real.yaml)
 and requires its own prepared images, task data, and resource profiles.
+Its manual runbook starts with a fresh CLI install and a qualified five-image
+release gate before provisioning; running it requires no agent deployment.
 Its [data contracts](docs/workbench/guides/sim2real-data-contracts.md) preserve
 simulator episode resets across sparse samples and exclude reset intervals from
 training credit. The older `sim2real/runbook.yaml` is a legacy path.

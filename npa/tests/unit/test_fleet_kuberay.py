@@ -288,7 +288,7 @@ def test_recipe_mutants_refused_before_any_cloud_mutation(
         L, "resolve_project_id", lambda *a, **kw: pytest.fail("project mutation")
     )
     monkeypatch.setattr(
-        L, "preflight_region", lambda *a, **kw: pytest.fail("quota preflight")
+        L, "preflight_fleet_region", lambda *a, **kw: pytest.fail("quota preflight")
     )
     with pytest.raises(ValueError, match="reviewed CPU KubeRay contract"):
         L.deploy_fleet(declaration, work_root=recipe.parent / "state")
@@ -474,7 +474,7 @@ def _isolated_deploy(recipe, tmp_path, monkeypatch):
         L, "resolve_project_id", lambda *a, **kw: pytest.fail("project mutation")
     )
     monkeypatch.setattr(
-        L, "preflight_region", lambda *a, **kw: pytest.fail("quota preflight")
+        L, "preflight_fleet_region", lambda *a, **kw: pytest.fail("quota preflight")
     )
     root = tmp_path / "state"
     destination = root / declaration.name / project.key() / desired.name

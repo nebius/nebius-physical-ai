@@ -60,8 +60,8 @@ def test_lancedb_dependency_overlay_is_consistent() -> None:
 def test_lancedb_preserves_the_parent_header_security_refresh() -> None:
     text = DOCKERFILE.read_text(encoding="utf-8")
 
-    assert "ARG UBUNTU_SNAPSHOT=20260910T000000Z" in text
-    assert "ARG LINUX_LIBC_DEV_VERSION=6.8.0-139.139" in text
+    assert "ARG UBUNTU_SNAPSHOT=20261018T000000Z" in text
+    assert "ARG LINUX_LIBC_DEV_VERSION=6.8.0-147.147" in text
     assert '"${UBUNTU_SNAPSHOT}" "${LINUX_LIBC_DEV_VERSION}"' in text
     assert "6.8.0-138.138" not in text
 

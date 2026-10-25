@@ -105,7 +105,7 @@ def sample():
     return report, rows
 
 
-def reviewed(tmp_path):
+def reviewed(tmp_path, semantic_role="non-operational-source-example"):
     report, rows = sample()
     population = A.population(report, rows)
     ctx = {
@@ -139,7 +139,7 @@ def reviewed(tmp_path):
             "occurrence_id": key,
             "record_sha256": occurrence["record_sha256"],
             "record_bytes": occurrence["record_bytes"],
-            "semantic_role": "non-operational-source-example",
+            "semantic_role": semantic_role,
             "operational_credential": False,
             "provenance_evidence": [provenance],
             "semantic_evidence": [semantics],
@@ -175,7 +175,13 @@ def check(case):
     return A.dispositions(*case[:6])
 
 
-def test_conserves_identical_native_findings_and_literal_occurrences(tmp_path):
+@pytest.mark.parametrize(
+    "semantic_role",
+    ["non-operational-source-example", "public-x509-certificate-data"],
+)
+def test_conserves_identical_native_findings_and_literal_occurrences(
+    tmp_path, semantic_role
+):
     report, rows = sample()
     raw_before = copy.deepcopy(report)
     found = A.population(report, rows)
@@ -183,7 +189,7 @@ def test_conserves_identical_native_findings_and_literal_occurrences(tmp_path):
     assert (
         len({key for key, value in found.items() if value["record_ordinal"] == 2}) == 3
     )
-    assert check(reviewed(tmp_path)) == 4
+    assert check(reviewed(tmp_path, semantic_role)) == 4
     assert report == raw_before and report["valid"] is False
 
 
@@ -351,10 +357,14 @@ def test_dispositions_need_every_exact_independent_review(tmp_path, mutation):
         "stale_semantics",
     ],
 )
+@pytest.mark.parametrize(
+    "semantic_role",
+    ["non-operational-source-example", "public-x509-certificate-data"],
+)
 def test_independent_acceptance_never_waives_changed_or_unsafe_evidence(
-    tmp_path, mutation
+    tmp_path, mutation, semantic_role
 ):
-    case = reviewed(tmp_path)
+    case = reviewed(tmp_path, semantic_role)
     manifest, review, _population, _ctx, _digest, _loader, proofs, files = case
     first = manifest["dispositions"][0]
     proof = proofs[first["occurrence_id"]]
@@ -403,7 +413,7 @@ def test_exact_authorization_is_required_before_reading_untrusted_manifest(tmp_p
         A.pinned_json(path, "0" * 64)
 
 
-def complete_case(tmp_path):
+def complete_case(tmp_path, verification_schema="npa.curobo.image-verification.v1"):
     """Generate real archive/ledger bindings with the existing protocol oracle."""
     # This is the existing hermetic framing detector, never a security claim.
     sys.path.insert(0, str(CHECKOUT / "npa/tests/docker"))
@@ -444,6 +454,7 @@ def complete_case(tmp_path):
     )
     verification = json.loads(Path(auth["verification_report"]["path"]).read_bytes())
     verification.update(
+        schema_version=verification_schema,
         expected_image_id=image_id,
         image_config_digest="sha256:" + sha(config_bytes),
         image_manifest_digest=image_id,
@@ -534,18 +545,37 @@ def complete_case(tmp_path):
     )
 
 
+@pytest.mark.parametrize(
+    "verification_schema",
+    [
+        "npa.curobo.image-verification.v1",
+        "npa.docker-save.image-verification.v1",
+    ],
+)
 def test_real_archive_binding_preserves_raw_failure_and_separates_source_revisions(
-    tmp_path, committed_source_oracle
+    tmp_path, committed_source_oracle, verification_schema
 ):
     tmp_path.chmod(0o700)
     with W.authorized_roots(tmp_path, CHECKOUT):
-        args, _auth, report = complete_case(tmp_path)
+        args, _auth, report = complete_case(
+            tmp_path, verification_schema=verification_schema
+        )
         result = A.verify(args)
         assert result["accepted"] is True and result["raw_scan_valid"] is False
         assert result["accepted_occurrences"] == report["findings"]
         assert json.loads(args.report.read_bytes()) == report
         assert result["context"]["image_source_sha"] == "a" * 40
         assert result["context"]["scanner_source_sha"] != "a" * 40
+
+
+def test_unknown_verification_schema_is_rejected():
+    with pytest.raises(W.ScanError, match="adjudication_verification_failed"):
+        A._verified_docker_save_report(
+            {
+                "valid": True,
+                "schema_version": "npa.unknown.image-verification.v1",
+            }
+        )
 
 
 @pytest.mark.parametrize(

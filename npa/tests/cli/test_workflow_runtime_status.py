@@ -99,6 +99,39 @@ def test_empty_manifest_queries_each_observed_job(observed_status):
     assert resolution.manifest["steps"] == []
 
 
+@pytest.mark.parametrize("current_status", ["running", "starting", "failed"])
+@pytest.mark.parametrize("prior_status", ["cancelled", "failed"])
+def test_rebatched_resume_reports_current_job_not_old_cancelled_batch(
+    observed_status, current_status, prior_status
+):
+    resolution, jobs = observed_status
+    resolution.job_id = "21"
+    resolution.runtime_state["waves"] = [
+        {
+            "key": "002|collect|collect:collect-a:-,collect:collect-b:-",
+            "states": ["collect-a", "collect-b"],
+            "attempt": 1,
+            "job_id": "20",
+            "status": prior_status,
+        },
+        {
+            "key": "003|collect|collect:collect-a:-",
+            "states": ["collect-a"],
+            "attempt": 1,
+            "job_id": "21",
+            "status": current_status,
+        },
+    ]
+
+    payload = _durable_workflow_status("run-test")
+
+    assert [call.args[0] for call in jobs.call_args_list] == ["20", "21"]
+    assert payload["status"] == current_status.upper()
+    assert payload["stages"]["collect-a"]["managed_job_id"] == "21"
+    assert payload["stages"]["collect-b"]["managed_job_id"] == "20"
+    assert payload["verification_status"] == "VERIFIED"
+
+
 @pytest.mark.parametrize("cached", [False, True])
 def test_supervisor_snapshot_does_not_inherit_live_status_trust(
     observed_status, mocker, cached
@@ -881,6 +914,10 @@ def test_direct_strict_task_query_errors_redact_credentials(mocker, detail):
         (0, "[]", "permission denied"),
         (0, '{"jobs": []}', "error: queue unavailable"),
         (0, "[]\n[]", ""),
+        (0, '[{"job_id": 11, "status": "SUCCEEDED"}, {"status": "RUNNING"}]', ""),
+        (0, '[{"job_id": 11, "status": "SUCCEEDED"}, {"job_id": true}]', ""),
+        (0, '[{"job_id": 11, "status": "SUCCEEDED"}, {"job_id": 7.0}]', ""),
+        (0, '[{"job_id": 11, "status": "SUCCEEDED"}, {"job_id": "07"}]', ""),
     ],
 )
 @pytest.mark.parametrize("surface", ["callback", "json", "watch"])
@@ -1473,7 +1510,13 @@ def test_real_completion_still_requires_actual_final_artifact(
     payload = json.loads(result.stdout)
     assert payload["status"] == "partial" and payload["verified"] is False
     assert "no .rrd artifact exists" in payload["detail"]
-    head.assert_called_once_with(Bucket="bucket", Key="run-test/reports/sim2real.rrd")
+    assert [call.kwargs for call in head.call_args_list] == [
+        {
+            "Bucket": "bucket",
+            "Key": "run-test/reports/.sim2real-publication.json",
+        },
+        {"Bucket": "bucket", "Key": "run-test/reports/sim2real.rrd"},
+    ]
     agents.assert_not_called()
 
 

@@ -4,11 +4,11 @@
 
 Install `npa`, connect a Nebius project, and choose a GPU workload. Each linked
 workload guide takes you through setup, execution, and inspecting its outputs.
-Workbench is designed to be the control plane for a coding agent with terminal
-access to this checkout. For guided terminal work, paste the
+Run Workbench directly from your terminal, or use a coding agent with terminal
+access to this checkout. The manual commands below require no agent deployment.
+For guided terminal work, paste the
 [setup prompt](workbench/agent-first-run.md#set-up-workbench) or go directly to
 the [Cosmos 3 workflow prompt](workbench/agent-first-run.md#run-cosmos-3-generation).
-The commands below are the corresponding manual path.
 
 ## 1. Platform overview
 
@@ -19,7 +19,7 @@ text generation, and reasoning for tools that use those capabilities.
 
 ## 2. Prerequisites
 
-- macOS, Linux, or Windows with WSL2 Ubuntu; Python 3.10+ and Git.
+- macOS, Linux, or Windows with WSL2 Ubuntu; Python 3.11+ and Git.
 - A Nebius account and access to a project in your workload's region.
 - The [Nebius CLI](install.md#4-nebius-cli-required) on `PATH`.
 - For managed infrastructure: Terraform; for Kubernetes: `kubectl` and the
@@ -124,19 +124,23 @@ For a first workload, continue below.
 | Augment your video | [PAIDF + Cosmos 3](workbench/guides/paidf-cosmos3.md) | Raw generated clips, evaluator reports, and accepted outputs |
 | Build a labeled dataset | [Physical AI Data Factory](workbench/guides/physical-ai-data-factory-deploy.md) | Augmented frames, labels, curation reports, and Rerun recording |
 | Train or evaluate a robot policy | [Robot guides](workbench/guides/README.md) | The guide's checkpoint, rollout, and evaluation artifacts |
+| Run the complete simulated robot learning loop manually | [Sim2Real from a fresh checkout](workbench/guides/sim2real-workflow.md) | Checkpoint, strict held-out result, RRD, and MCAP; a qualified five-image set is required |
 | Reconstruct a captured scene | [Neural reconstruction](workbench/guides/neural-reconstruction.md) | Renderable scene, novel views, and Rerun recording |
 
 ### Standalone Cosmos 3 generation
 
 The [Cosmos 3 guide](workbench/cosmos3-generate.md) uses
 `workflows/testing/cosmos3-generate.yaml`. Its default requests one H100,
-16 CPU, and 80 GiB host memory for public Cosmos3-Nano text-to-image generation.
-The requested guardrails additionally need access to gated Hugging Face weights.
-Check the guide's model/image/GPU compatibility and guardrail limitations.
+16 CPU, and 80 GiB host memory for public Cosmos3-Nano text-to-image generation,
+but the default image is deliberately quarantined. The spec is therefore a
+planning and quarantine-refusal reference, not a first-submit path. The requested
+guardrails additionally need access to gated Hugging Face weights. Check the
+guide's model/image/GPU compatibility and guardrail limitations.
 
-Complete [Workbench setup](workbench/getting-started.md), then follow the
-[submission example](workbench/cosmos3-generate.md#workflow). Inspect the media
-and manifest after success; job completion alone does not establish usable output.
+Complete [Workbench setup](workbench/getting-started.md), then choose a
+release-ready workload from the [workload guides](workbench/guides/README.md).
+Do not submit the stock Cosmos3 spec unless an operator has separately supplied
+an independently qualified immutable image and authorized that run.
 
 ## 8. Do more with npa
 

@@ -1131,13 +1131,22 @@ def _install_reason_model_double(monkeypatch, model_payload):
     import torch
 
     processor = _ReasonProcessor(model_payload)
+
+    def load_processor(model_id, **kwargs):
+        assert model_id == DEFAULT_REASON2_MODEL
+        assert kwargs["revision"] == "a9fae2cf89dc64db96b12860417f0eb403013bb9"
+        assert kwargs["trust_remote_code"] is False
+        return processor
+
+    def load_model(model_id, **kwargs):
+        assert model_id == DEFAULT_REASON2_MODEL
+        assert kwargs["revision"] == "a9fae2cf89dc64db96b12860417f0eb403013bb9"
+        assert kwargs["trust_remote_code"] is False
+        return _ReasonModel()
+
     transformer = SimpleNamespace(
-        AutoProcessor=SimpleNamespace(
-            from_pretrained=lambda *_args, **_kwargs: processor
-        ),
-        AutoModelForImageTextToText=SimpleNamespace(
-            from_pretrained=lambda *_args, **_kwargs: _ReasonModel()
-        ),
+        AutoProcessor=SimpleNamespace(from_pretrained=load_processor),
+        AutoModelForImageTextToText=SimpleNamespace(from_pretrained=load_model),
     )
     monkeypatch.setitem(sys.modules, "transformers", transformer)
     monkeypatch.setitem(

@@ -251,6 +251,8 @@ def test_workflow_uses_isaac_image_route_and_cpu_validator(workflow):
     if "prepare" in spec.states:
         assert tool_image_key(spec.states["prepare"].tool_ref) == "isaac-lab"
         assert spec.states["prepare"].next == "capture"
+    if workflow.endswith("warehouse"):
+        assert spec.config["required_immutable_images"] == ["isaac_image"]
 
 
 @pytest.mark.parametrize(
@@ -264,9 +266,15 @@ def test_render_stages_branch_source_in_gpu_and_cpu_tasks(monkeypatch, workflow)
     source = "s3://example-bucket/staged-source/npa"
     monkeypatch.setenv("NPA_SRC_S3_URI", source)
     path = Path(__file__).resolve().parents[3] / f"workflows/testing/{workflow}.yaml"
+    config_overrides = None
+    if workflow.endswith("warehouse"):
+        config_overrides = {
+            "isaac_image": "registry.example.invalid/isaac@sha256:" + "0" * 64
+        }
     prepared = prepare_npa_workflow_for_submit(
         path,
         run_id="source-proof",
+        config_overrides=config_overrides,
         render_options=SkypilotRenderOptions(
             registry="registry.example.invalid/operator/workbench",
             materialize_registry_secrets=False,
@@ -284,6 +292,7 @@ def test_render_stages_branch_source_in_gpu_and_cpu_tasks(monkeypatch, workflow)
             assert "prepare-reference" in prepare["run"]
             assert prepare["envs"]["NPA_SRC_OVERLAY"] == "1"
             assert "/isaac-sim/python.sh" in prepare["setup"]
+            assert prepare["resources"]["image_id"].endswith("@sha256:" + "0" * 64)
         assert capture["envs"]["NPA_SRC_OVERLAY"] == "1"
         assert capture["envs"]["NPA_SRC_S3_URI"] == source
         assert "/isaac-sim/python.sh" in capture["setup"]

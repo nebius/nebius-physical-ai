@@ -26,7 +26,7 @@ npa/.venv/bin/npa --version
 Nebius, Hugging Face, NGC, Kubernetes, or S3 credentials at all. If they do not,
 the problem is the install, not your cloud setup.
 
-Python 3.10+ is required. Terraform 1.x must be on `PATH` for anything managed
+Python 3.11+ is required. Terraform 1.x must be on `PATH` for anything managed
 (`npa cluster up`, `npa agent fresh-setup`); `pip install -e npa` does not install
 it. On Windows, work inside WSL2 — the cloud paths assume POSIX.
 

@@ -31,9 +31,9 @@ IMAGE="${1:-npa-lerobot:${VERSION}}"
 set +e
 docker run --rm --gpus all --entrypoint /bin/bash "$IMAGE" -lc '
 set +e
-python -m npa.smoke.test_lerobot_env
+/opt/lerobot/venv/bin/python -m npa.smoke.test_lerobot_env
 env_code=$?
-python -m npa.smoke.test_lerobot_functional
+/opt/lerobot/venv/bin/python -m npa.smoke.test_lerobot_functional
 functional_code=$?
 
 echo "ENV_SMOKE_EXIT_CODE=${env_code}"

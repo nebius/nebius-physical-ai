@@ -1,0 +1,59 @@
+# Gemini -> Nebius GPU distillation workflow.
+#
+# Teacher-student loop:
+#   1. plan  - ER-2 (Gemini API) produces a manipulation plan. Runs anywhere.
+#   2. demos - MuJoCo generates domain-randomized demos from the plan. CPU.
+#   3. train - PyTorch behavior-clones a student policy. **Nebius GPU.**
+#   4. eval  - MuJoCo closed-loop eval of the student. CPU.
+#
+# The student runs locally with no API key, no latency, no per-call cost.
+# New workflows are YAML files, not CLI subcommands.
+#
+#   or: python -m npa.workflows.byof.gemini_robotics_distill --task "..." --output-dir ./out
+
+name: gemini-distill
+description: Distill an ER-2 manipulation plan into a local student policy (Gemini -> Nebius GPU).
+
+params:
+  task: "Pick up the red cube and place it precisely in the center of the green pad."
+  n_demos: 200
+  train_epochs: 60
+  eval_episodes: 20
+  seed: 0
+  output_dir: "/workspace/gemini-distill/output"
+
+stages:
+  - name: plan
+    uses: npa.workflows.byof.gemini_robotics_distill:plan_stage
+    description: ER-2 embodied-reasoning plan via the live Gemini API.
+    # Runs anywhere; needs GOOGLE_API_KEY (env or <user-credentials-file>).
+
+  - name: demos
+    uses: npa.workflows.byof.gemini_robotics_distill:generate_demonstrations
+    description: Scripted MuJoCo rollouts from the plan (domain-randomized).
+    resources:
+      cpus: 4+
+      memory: 16+
+
+  - name: train
+    uses: npa.workflows.byof.gemini_robotics_distill:train_student
+    description: Behavior-clone the student policy (PyTorch on Nebius GPU).
+    resources:
+      # *** Real Nebius GPU usage is here. ***
+      accelerators: H100:1
+      cpus: 8+
+      memory: 32+
+    # Turnkey GPU execution: the runner submits this stage as a Nebius job.
+    nebius_image: pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime
+    nebius_script: /home/ubuntu/gpu_full.py
+    nebius_files:
+      - /home/ubuntu/gpu_full.py:/data/gpu_full.py
+      - /home/ubuntu/scene.xml:/data/scene.xml
+    nebius_command: "pip install -q mujoco && python3 -u /data/gpu_full.py"
+
+  - name: eval
+    uses: npa.workflows.byof.gemini_robotics_distill:eval_student
+    description: Closed-loop MuJoCo eval of the student policy.
+    resources:
+      cpus: 4+
+      memory: 16+

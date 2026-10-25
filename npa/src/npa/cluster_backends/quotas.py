@@ -10,9 +10,10 @@ This module derives what a fleet's clusters need, validates explicitly bound
 GPU capacity block groups, compares the remaining requirements against the
 *tenant's* quota allowances for the target region, and lets the caller fail fast
 with the shortfall. Reservation-backed GPUs do not consume the ordinary GPU
-quota, but node/disk/GPU-cluster/storage quotas still apply. Project allowances
-only subdivide the tenant allowance, so the tenant is the meaningful container
-to check.
+quota, but node/disk/GPU-cluster/storage quotas still apply. Existing-project
+setup can use exact-project constraints after a typed tenant IAM denial. The
+provider still enforces unseen tenant capacity and reservation compatibility.
+Fleet operations that create projects continue to require tenant evidence.
 
 Only read APIs are used (``nebius capacity capacity-block-group list`` and
 ``nebius quotas quota-allowance list``). Quota evidence is fail-closed: an
@@ -25,6 +26,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from collections.abc import Mapping
 from decimal import Decimal, InvalidOperation, ROUND_FLOOR
 from typing import Any, Callable, Iterable
 
@@ -77,7 +79,7 @@ def _preset_vcpus(preset: str) -> int:
 
 @dataclass(frozen=True)
 class QuotaShortfall:
-    """One quota whose tenant limit cannot cover what the fleet requires."""
+    """One verified allowance whose headroom cannot cover the requested resources."""
 
     name: str
     region: str
@@ -85,6 +87,7 @@ class QuotaShortfall:
     limit: int
     available: int | None = None
     unit: str = ""
+    scope: str = "tenant"
 
     def describe(self) -> str:
         """Describe exact demand, remaining allowance, and the capacity deficit.
@@ -99,7 +102,7 @@ class QuotaShortfall:
         available = self.limit if self.available is None else self.available
         description = (
             f"{self.name} [{self.region}]: needs {self.required}{f' {self.unit}' if self.unit else ''}, "
-            f"{available} available from tenant limit {self.limit}"
+            f"{available} available from {self.scope} limit {self.limit}"
         )
         deficit = max(0, self.required - available)
         if self.unit == "byte":
@@ -628,12 +631,23 @@ def parse_allowances(
 
 
 def find_shortfalls(
-    needed: dict[str, int], allowances: dict[str, dict[str, Any]], region: str
+    needed: dict[str, int],
+    allowances: dict[str, dict[str, Any]],
+    region: str,
+    *,
+    scope: str = "tenant",
 ) -> list[QuotaShortfall]:
-    """Return the quotas whose tenant limit is below what the fleet requires.
+    """Return the verified quotas whose headroom cannot cover the request.
 
-    Current consumption is subtracted using the exact usage count when present,
-    or the authoritative live 0..1 fractional ``usage_percentage`` wire field.
+    Args:
+        needed: Required incremental amounts by quota name.
+        allowances: Parsed allowances with authoritative available quantities.
+        region: Region whose capacity is being checked.
+        scope: Actual permission scope, tenant or project, for diagnostics.
+    Returns:
+        Exact deficits, retaining their verified permission scope.
+    Raises:
+        None.
     """
 
     shortfalls: list[QuotaShortfall] = []
@@ -653,6 +667,7 @@ def find_shortfalls(
                     limit=allowance["limit"],
                     available=available,
                     unit=allowance["unit"],
+                    scope=scope,
                 )
             )
     return shortfalls
@@ -669,6 +684,16 @@ def shortfall_message(shortfalls: list[QuotaShortfall], tenant_id: str) -> str:
     Raises:
         None.
     """
+    if shortfalls and all(item.scope == "project" for item in shortfalls):
+        return "\n".join(
+            [
+                "project quota allowances cannot cover the requested resources:",
+                *(f"  - {item.describe()}" for item in shortfalls),
+                "Release resources you own, reduce the request, or ask the project "
+                "administrator to review the exact project allowance. Tenant limits "
+                "remain independently enforced by the provider.",
+            ]
+        )
     lines = [
         f"tenant {tenant_id} quota is too low for this fleet:",
         *(f"  - {s.describe()}" for s in shortfalls),
@@ -695,101 +720,103 @@ def preflight_region(
     clusters: Iterable[Any],
     env: dict[str, str],
     new_projects: int = 0,
+    project_id: str = "",
     object_storage: Iterable[Any] = (),
     profile: str = "",
     run_capture: Callable[..., Any],
     nebius_argv: Callable[[str, str], list[str]],
     on_status: Callable[[str], None] | None = None,
 ) -> list[QuotaShortfall]:
-    """Check one region's tenant allowances against *clusters*' requirements.
+    """Check regional capacity using the caller's authorized quota scope.
 
-    Returns quota shortfalls (empty when the fleet fits). Unreadable, incomplete,
-    or malformed capacity/quota evidence raises before project creation. A
-    preflight that cannot prove remaining capacity must not authorize mutation.
+    Args:
+        nebius_bin: Provider CLI executable.
+        tenant_id: Selected tenant whose aggregate remains provider-enforced.
+        region: Exact target region.
+        clusters: Desired cluster topologies.
+        env: Isolated provider environment.
+        new_projects: Number of new projects; requires tenant evidence.
+        project_id: Exact existing project eligible for the IAM-denial fallback.
+        object_storage: Desired object-storage allocations.
+        profile: Explicit provider identity selector.
+        run_capture: Provider subprocess adapter.
+        nebius_argv: Profile-preserving CLI argument builder.
+        on_status: Optional non-secret progress sink.
+    Returns:
+        Verified deficits, empty when visible constraints permit the request.
+    Raises:
+        ValueError: Required capacity or compatibility evidence is unavailable.
     """
 
+    from npa.cluster_backends.project_preflight import ProjectCapacityReader
+
+    reader = ProjectCapacityReader(
+        nebius_bin,
+        tenant_id,
+        project_id if not new_projects else "",
+        profile,
+        env,
+        run_capture,
+        nebius_argv,
+    )
     clusters = list(clusters)
     reservations = required_reservations(clusters, region)
     if reservations:
-        reservation_result = run_capture(
-            [
-                *nebius_argv(nebius_bin, profile),
-                "capacity",
-                "capacity-block-group",
-                "list",
-                "--parent-id",
-                tenant_id,
-                "--all",
-                "--format",
-                "json",
-            ],
-            env=env,
-            check=False,
-            timeout=120,
-        )
-        reservation_payload = getattr(reservation_result, "stdout", "") or ""
-        if (
-            getattr(reservation_result, "returncode", 1) != 0
-            or not reservation_payload.strip()
-        ):
-            raise ValueError(
-                "could not read capacity block groups; refusing to bypass STRICT "
-                "reservation preflight"
-            )
-        blocks = parse_capacity_blocks(reservation_payload)
-        reservation_shortfalls = find_reservation_shortfalls(
-            reservations, blocks, tenant_id
-        )
-        if reservation_shortfalls:
-            raise ValueError(reservation_shortfall_message(reservation_shortfalls))
-        if on_status is not None:
-            reserved = sum(item.required_gpus for item in reservations.values())
-            on_status(
-                f"validated {reserved} GPU(s) against {len(reservations)} active "
-                "capacity block group(s); ordinary GPU quota excluded"
-            )
+        reader.verify_reservations(reservations, on_status)
 
     needed = required_quotas(
         clusters, new_projects=new_projects, object_storage=object_storage
     )
+    return preflight_quota_requirements(reader, region, needed, on_status)
+
+
+def preflight_quota_requirements(
+    reader, region: str, needed: Mapping[str, int], on_status=None
+) -> list[QuotaShortfall]:
+    """Check cumulative quota demand independently of reservation inventory.
+
+    Args:
+        reader: Explicitly scoped provider capacity reader.
+        region: Exact deployment region.
+        needed: Cumulative quota requirements.
+        on_status: Optional non-secret progress sink.
+    Returns:
+        Verified quota shortfalls.
+    Raises:
+        ValueError: Evidence is unreadable, incomplete or incompatible.
+    """
     if not needed:
         return []
-    result = run_capture(
-        [
-            *nebius_argv(nebius_bin, profile),
-            "quotas",
-            "quota-allowance",
-            "list",
-            "--parent-id",
-            tenant_id,
-            "--all",
-            "--format",
-            "json",
-        ],
-        env=env,
-        check=False,
-        timeout=120,
-    )
-    if (
-        getattr(result, "returncode", 1) != 0
-        or not (getattr(result, "stdout", "") or "").strip()
-    ):
-        raise ValueError(
-            f"could not read tenant quota allowances for {region}; refusing to "
-            "create projects or resources without capacity evidence"
-        )
+    catalog = reader.quota_catalog(region, needed)
     allowances = parse_allowances(
-        result.stdout, region, required=needed, container_id=tenant_id
+        json.dumps(catalog.payload),
+        region,
+        required=needed,
+        container_id=reader.project_id
+        if catalog.scope == "project"
+        else reader.tenant_id,
     )
+    if catalog.scope == "project" and on_status is not None:
+        on_status(
+            "Project quota allowances verified; tenant aggregate is unavailable "
+            "due to RBAC and remains enforced by the provider during apply."
+        )
     missing = sorted(set(needed) - set(allowances))
     required_missing = [
         name for name in missing if name not in _OPTIONAL_UNADVERTISED_QUOTAS
     ]
     if required_missing:
         raise ValueError(
-            f"tenant quota response for {region} omitted required allowances: "
+            f"{catalog.scope} quota response for {region} omitted required allowances: "
             f"{', '.join(required_missing)}"
         )
+    _report_quota_allowances(
+        needed, allowances, missing, region, catalog.scope, on_status
+    )
+    return find_shortfalls(needed, allowances, region, scope=catalog.scope)
+
+
+def _report_quota_allowances(needed, allowances, missing, region, scope, on_status):
     if on_status is not None:
         for name in missing:
             on_status(
@@ -804,7 +831,7 @@ def preflight_region(
             if allowance.get("unlimited"):
                 on_status(
                     f"quota {name} [{region}]: needs {required_amount}{unit}; "
-                    "tenant allowance is unlimited"
+                    f"{scope} allowance has no additional limit"
                 )
             else:
                 on_status(
@@ -813,4 +840,3 @@ def preflight_region(
                     f"{allowance['limit']} (usage evidence: "
                     f"{allowance['usage_source']})"
                 )
-    return find_shortfalls(needed, allowances, region)

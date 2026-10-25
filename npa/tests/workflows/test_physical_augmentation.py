@@ -18,16 +18,21 @@ from npa.workflows.physical_augmentation_contract import (
 from npa.workflows.physical_augmentation_report import verify_episode
 
 
+ISAAC_IMAGE = "registry.example.invalid/npa-isaac-lab@sha256:" + "a" * 64
+
+
 def test_workflow_argv_matches_stage_parser_and_gpu_requirement():
     from npa.orchestration.npa_workflow.interpreter import build_plan
     from npa.orchestration.npa_workflow.spec import load_spec
+    from npa.orchestration.npa_workflow.submit import merge_config_overrides
     from npa.workflows.physical_augmentation import build_parser
 
     path = (
         Path(__file__).resolve().parents[3]
         / "workflows/testing/physical-augmentation.yaml"
     )
-    plan = build_plan(load_spec(path), run_id="test-physical")
+    spec = merge_config_overrides(load_spec(path), {"isaac_image": ISAAC_IMAGE})
+    plan = build_plan(spec, run_id="test-physical")
     assert [step.state for step in plan.steps] == ["prepare", "collect", "report"]
     for step in plan.steps:
         args = build_parser().parse_args(step.argv[3:])

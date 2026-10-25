@@ -14,6 +14,22 @@ NPA="${REPO}/npa/.venv/bin/npa"
 export NPA_INTEGRATION_E2E=1
 SPECS="${REPO}/workflows"
 DYNAMIC="sim2real.yaml tokenfactory-cosmos-gate.yaml"
+WORKFLOW_SMOKE_DIGEST="$(printf '0%.0s' {1..64})"
+
+workflow_image_fixture_keys() {
+  "${PY}" - "$1" <<'PY'
+from pathlib import Path
+import sys
+
+import yaml
+
+payload = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+keys = payload.get("config", {}).get("required_immutable_images", [])
+if not isinstance(keys, list) or not all(isinstance(key, str) and key for key in keys):
+    raise SystemExit("required_immutable_images must be a list of non-empty strings")
+print("\n".join(keys))
+PY
+}
 
 LOG="/tmp/npa-workflow-real-infra-$(date -u +%Y%m%dT%H%M%SZ).log"
 exec > >(tee -a "$LOG") 2>&1
@@ -75,7 +91,7 @@ from npa_workflow_live_helpers import live_bucket
 print(live_bucket(None))
 PY
 )"
-  for spec in "${SPECS}/main"/*.yaml "${SPECS}/testing"/*.yaml "${SPECS}/partners"/*/*.yaml; do
+  for spec in "${SPECS}/main"/*.yaml "${SPECS}/testing"/*.yaml "${SPECS}/cosmos-data-factory"/*.yaml "${SPECS}/partners"/*/*.yaml; do
     [[ -f "$spec" ]] || continue
     base=$(basename "$spec")
     stem="${base%.yaml}"
@@ -107,8 +123,17 @@ PY
     if [[ " ${DYNAMIC} " == *" ${base} "* ]]; then
       extra=(--assume-decision promote_checkpoint)
     fi
+    if ! fixture_keys="$(workflow_image_fixture_keys "${LIVE_SPEC}")"; then
+      FAILED=1
+      continue
+    fi
+    image_args=()
+    while IFS= read -r key; do
+      [[ -n "${key}" ]] || continue
+      image_args+=(--var "${key}=registry.example.invalid/workflow-smoke@sha256:${WORKFLOW_SMOKE_DIGEST}")
+    done <<< "${fixture_keys}"
     if ! "${NPA}" workbench workflow plan-spec "${LIVE_SPEC}" \
-      --run-id "${RUN_ID}-${stem}" "${extra[@]}"; then
+      --run-id "${RUN_ID}-${stem}" "${extra[@]}" "${image_args[@]}"; then
       FAILED=1
       continue
     fi
@@ -116,6 +141,7 @@ PY
       if ! "${NPA}" workbench workflow plan-spec "${LIVE_SPEC}" \
         --run-id "${RUN_ID}-${stem}-loop" \
         --assume-decision loop_back \
+        "${image_args[@]}" \
         --json | "${PY}" -c "
 import json, sys
 from pathlib import Path
@@ -135,6 +161,7 @@ print('loop_back steps', len(p['steps']))
       --plan-only \
       --scheduler-plan \
       "${extra[@]}" \
+      "${image_args[@]}" \
       --json | "${PY}" -c "
 import json, sys
 from pathlib import Path

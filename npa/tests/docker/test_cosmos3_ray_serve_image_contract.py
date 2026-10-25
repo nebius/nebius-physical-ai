@@ -15,7 +15,7 @@ from pathlib import Path
 import yaml
 import pytest
 
-from npa.deploy.images import UNVALIDATED_PUBLICATION_TOOLS
+from npa.deploy.images import UNVALIDATED_PUBLICATION_TOOLS, public_release_manifest
 
 
 _SCANNER_PATH = (
@@ -51,9 +51,11 @@ def test_image_is_registered_as_gpu_accepted_public_service() -> None:
     assert "cosmos3-ray-serve" not in UNVALIDATED_PUBLICATION_TOOLS
 
 
-def test_image_uses_exact_accepted_framework_parent_and_bakes_no_weights() -> None:
+def test_image_uses_exact_repaired_framework_parent_and_bakes_no_weights() -> None:
     text = DOCKERFILE.read_text(encoding="utf-8")
-    assert "npa-cosmos3@sha256:0eb459" in text
+    candidate = public_release_manifest()["workflow_validation_candidates"]["cosmos3"]
+    assert f"npa-cosmos3@{candidate['published_digest']}" in text
+    assert candidate["development_sha"] in text
     assert "5e67049cd94acb667786f1e6dd0dab821cb90c97" in text
     assert 'npa.serving.backend="cosmos-framework-native-ray-serve"' in text
     assert "vllm" not in text.lower()

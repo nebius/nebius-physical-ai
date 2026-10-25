@@ -7,6 +7,8 @@ import httpx
 import pytest
 import yaml
 
+from npa.cli.agent_verification_ui import verify_agent_ui
+
 from .agent_live_helpers import (
     RERUN_STATIC_CANDIDATES,
     STOCK_FRANKA_SELECTION,
@@ -39,7 +41,7 @@ def test_agent_ui_html_smoke(ctx: AgentLiveContext) -> None:
     html = resp.text
     for marker in UI_WIRING_MARKERS:
         assert marker in html, f"missing UI marker: {marker}"
-    assert_ui_version_marker(html)
+    verify_agent_ui(html, ui_version=assert_ui_version_marker(html), fail=pytest.fail)
     for control_id in UI_BUTTON_IDS:
         assert f'id="{control_id}"' in html
         assert re.search(rf'bindClick\(\s*"{re.escape(control_id)}"', html)

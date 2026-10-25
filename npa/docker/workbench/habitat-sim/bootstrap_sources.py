@@ -16,6 +16,9 @@ def fields(text: str) -> dict[str, str]:
     result: dict[str, str] = {}
     key = ""
     for line in text.splitlines():
+        # Armor metadata can also have a Version field; it is not package data.
+        if line == "-----BEGIN PGP SIGNATURE-----":
+            break
         if line.startswith(" ") and key:
             result[key] += "\n" + line.strip()
         elif ": " in line:
