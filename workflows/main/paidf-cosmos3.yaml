@@ -250,9 +250,15 @@ states:
     needs: [evaluate]
     resources: cpu
     run:
-      shell: >-
-        python3 -c "from npa.workflows.data_factory_stages import grade_gate;
-        grade_gate('{{config.scores_uri}}', '{{config.decision_uri}}', '{{config.grade_threshold}}')"
+      argv:
+        - python3
+        - -c
+        - >-
+          import sys; from npa.workflows.data_factory_stages import grade_gate;
+          grade_gate(*sys.argv[1:])
+        - "{{config.scores_uri}}"
+        - "{{config.decision_uri}}"
+        - "{{config.grade_threshold}}"
     outputs:
       - uri: "{{config.decision_uri}}"
         schema: npa.sim2real.threshold_decision.v1

@@ -101,7 +101,9 @@ states:
       argv:
         - python3
         - -c
-        - "from npa.workflows.data_factory_stages import finalize; finalize('s3://{{config.bucket}}/{{config.prefix}}/', '{{config.finalize_report_uri}}')"
+        - "import sys; from npa.workflows.data_factory_stages import finalize; finalize(*sys.argv[1:])"
+        - "s3://{{config.bucket}}/{{config.prefix}}/"
+        - "{{config.finalize_report_uri}}"
     outputs:
       - uri: "{{config.finalize_report_uri}}"
         schema: npa.sim2real.e2e_report.v1

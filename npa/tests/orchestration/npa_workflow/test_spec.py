@@ -17,7 +17,12 @@ from npa.orchestration.npa_workflow import (
 )
 from npa.orchestration.npa_workflow.blueprints import resolve_npa_workflow_spec
 from npa.orchestration.npa_workflow.predicates import evaluate_predicate
-from npa.orchestration.npa_workflow.tokens import TokenError, resolve_tokens
+from npa.orchestration.npa_workflow.tokens import (
+    TokenError,
+    resolve_tokens,
+    validate_argv_code_token_safety,
+    validate_shell_token_safety,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 SPECS = REPO_ROOT / "workflows" / "testing"
@@ -229,6 +234,118 @@ def test_base64_token_transform_keeps_shell_metacharacters_as_data() -> None:
     encoded = base64.b64encode(hostile.encode()).decode()
     assert text == f'export VALUE_B64="{encoded}"'
     assert "INJECTED" not in text
+
+
+def test_shell_rejects_unencoded_token_interpolation(tmp_path: Path) -> None:
+    """A config value must never be pasted into a bash program."""
+
+    path = tmp_path / "unsafe-shell-token.yaml"
+    path.write_text(
+        """\
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata: {name: unsafe-shell-token}
+config: {value: harmless}
+states:
+  work:
+    run:
+      shell: "printf '%s' '{{config.value}}'"
+    terminal: true
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        NpaWorkflowError, match=r"run\.shell tokens must use the \|base64"
+    ):
+        load_spec(path)
+
+
+def test_base64_shell_token_keeps_hostile_value_as_data(tmp_path: Path) -> None:
+    """A base64-decoded shell value cannot become an additional command."""
+
+    marker = tmp_path / "shell-token-injection-marker"
+    path = tmp_path / "safe-shell-token.yaml"
+    payload = f'"; touch {marker}; #'
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "apiVersion": "npa.workflow/v0.0.1",
+                "kind": "Workflow",
+                "metadata": {"name": "safe-shell-token"},
+                "config": {"value": payload},
+                "states": {
+                    "work": {
+                        "run": {
+                            "shell": (
+                                "value=$(printf '%s' '{{config.value|base64}}' | "
+                                "base64 --decode)\nprintf '%s' \"$value\" >/dev/null"
+                            )
+                        },
+                        "terminal": True,
+                    }
+                },
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    step = build_plan(load_spec(path), run_id="safe-shell-token").steps[0]
+    from npa.orchestration.npa_workflow.interpreter import _execute_step
+
+    assert _execute_step(step, execute=True)["status"] == "ok"
+    assert not marker.exists()
+
+
+def test_checked_in_workflow_shells_keep_tokens_data_only() -> None:
+    """Prevent a future authored workflow from restoring direct shell tokens."""
+
+    for path in sorted((REPO_ROOT / "workflows").rglob("*.yaml")):
+        document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        if document.get("apiVersion") != "npa.workflow/v0.0.1":
+            continue
+        states = document.get("states") or {}
+        state_values = states.values() if isinstance(states, dict) else states
+        for state in state_values:
+            if not isinstance(state, dict):
+                continue
+            run = state.get("run") or {}
+            shell = run.get("shell") if isinstance(run, dict) else None
+            if isinstance(shell, str):
+                validate_shell_token_safety(shell)
+
+
+def test_argv_rejects_token_interpolation_in_interpreter_source(tmp_path: Path) -> None:
+    """Resolved values must be arguments, not Python program text."""
+
+    path = tmp_path / "unsafe-argv-code-token.yaml"
+    path.write_text(
+        """\
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata: {name: unsafe-argv-code-token}
+config: {value: harmless}
+states:
+  work:
+    run:
+      argv: [python3, -c, "print('{{config.value}}')"]
+    terminal: true
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        NpaWorkflowError,
+        match=r"run\.argv interpreter code must not interpolate tokens",
+    ):
+        load_spec(path)
+
+
+def test_argv_allows_tokens_as_data_after_interpreter_source() -> None:
+    validate_argv_code_token_safety(
+        ["python3", "-c", "import sys; print(sys.argv[1])", "{{config.value}}"]
+    )
 
 
 def test_unknown_token_transform_fails_closed() -> None:

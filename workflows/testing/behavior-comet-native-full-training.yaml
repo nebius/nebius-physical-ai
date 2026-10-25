@@ -87,35 +87,88 @@ states:
   preflight:
     resources: cpu
     run:
-      shell: |
-        set -eu
-        ATTEMPT_ID="${NPA_WORKFLOW_ATTEMPT_ID:-$(date +%s)-$$}"
-        python -m npa.workflows.behavior_challenge.comet_native_workflow preflight \
-        --prefix '{{config.prefix}}' --preflight-uri '{{config.prefix}}/preflight/receipt.json' \
-        --openpi-uri '{{config.openpi_uri}}' --openpi-sha256 '{{config.openpi_sha256}}' --openpi-bytes '{{config.openpi_bytes}}' \
-        --worker-uri '{{config.worker_uri}}' --worker-sha256 '{{config.worker_sha256}}' \
-        --worker-bytes '{{config.worker_bytes}}' --worker-package-root '{{config.worker_package_root}}' \
-        --worker-manifest-sha256 '{{config.worker_manifest_sha256}}' --dataset-uri '{{config.dataset_uri}}' \
-        --dataset-sha256 '{{config.dataset_sha256}}' --dataset-bytes '{{config.dataset_bytes}}' \
-        --parent-uri '{{config.parent_uri}}' --parent-sha256 '{{config.parent_sha256}}' \
-        --parent-bytes '{{config.parent_bytes}}' --admission-uri '{{config.admission_uri}}' \
-        --admission-sha256 '{{config.admission_sha256}}' --admission-bytes '{{config.admission_bytes}}' \
-        --runtime-manifest-uri '{{config.runtime_manifest_uri}}' \
-        --runtime-manifest-sha256 '{{config.runtime_manifest_sha256}}' \
-        --scientific-python-relative '{{config.scientific_python_relative}}' \
-        --scientific-python-link-target '{{config.scientific_python_link_target}}' \
-        --scientific-python-base-relative '{{config.scientific_python_base_relative}}' \
-        --scientific-python-base-sha256 '{{config.scientific_python_base_sha256}}' \
-        --scientific-python-base-bytes '{{config.scientific_python_base_bytes}}' \
-        --scientific-runtime-receipt-relative '{{config.scientific_runtime_receipt_relative}}' \
-        --scientific-runtime-receipt-sha256 '{{config.scientific_runtime_receipt_sha256}}' \
-        --scientific-runtime-receipt-bytes '{{config.scientific_runtime_receipt_bytes}}' \
-        --attempt-id "$ATTEMPT_ID" \
-        --config-name '{{config.config_name}}' --split-sha256 '{{config.split_sha256}}' \
-        --dataset-relative '{{config.dataset_relative}}' --split-relative '{{config.split_relative}}' \
-        --home '{{config.home}}' --runtime-workspace '{{config.runtime_workspace}}' \
-        --workspace "/tmp/comet-native-preflight-$ATTEMPT_ID" --checkpoint-root '{{config.checkpoint_root}}' \
-        --final-step '{{config.final_step}}' --milestones '{{config.milestones}}'
+      argv:
+        - python3
+        - -c
+        - >-
+          import os, subprocess, sys, time; operation=sys.argv[1]; attempt=os.environ.get("NPA_WORKFLOW_ATTEMPT_ID") or f"{int(time.time())}-{os.getpid()}"; subprocess.run([sys.executable, "-m", "npa.workflows.behavior_challenge.comet_native_workflow", operation, *sys.argv[2:], "--attempt-id", attempt, "--workspace", f"/tmp/comet-native-{operation}-{attempt}"], check=True)
+        - preflight
+        - --prefix
+        - "{{config.prefix}}"
+        - --preflight-uri
+        - "{{config.prefix}}/preflight/receipt.json"
+        - --openpi-uri
+        - "{{config.openpi_uri}}"
+        - --openpi-sha256
+        - "{{config.openpi_sha256}}"
+        - --openpi-bytes
+        - "{{config.openpi_bytes}}"
+        - --worker-uri
+        - "{{config.worker_uri}}"
+        - --worker-sha256
+        - "{{config.worker_sha256}}"
+        - --worker-bytes
+        - "{{config.worker_bytes}}"
+        - --worker-package-root
+        - "{{config.worker_package_root}}"
+        - --worker-manifest-sha256
+        - "{{config.worker_manifest_sha256}}"
+        - --dataset-uri
+        - "{{config.dataset_uri}}"
+        - --dataset-sha256
+        - "{{config.dataset_sha256}}"
+        - --dataset-bytes
+        - "{{config.dataset_bytes}}"
+        - --parent-uri
+        - "{{config.parent_uri}}"
+        - --parent-sha256
+        - "{{config.parent_sha256}}"
+        - --parent-bytes
+        - "{{config.parent_bytes}}"
+        - --admission-uri
+        - "{{config.admission_uri}}"
+        - --admission-sha256
+        - "{{config.admission_sha256}}"
+        - --admission-bytes
+        - "{{config.admission_bytes}}"
+        - --runtime-manifest-uri
+        - "{{config.runtime_manifest_uri}}"
+        - --runtime-manifest-sha256
+        - "{{config.runtime_manifest_sha256}}"
+        - --scientific-python-relative
+        - "{{config.scientific_python_relative}}"
+        - --scientific-python-link-target
+        - "{{config.scientific_python_link_target}}"
+        - --scientific-python-base-relative
+        - "{{config.scientific_python_base_relative}}"
+        - --scientific-python-base-sha256
+        - "{{config.scientific_python_base_sha256}}"
+        - --scientific-python-base-bytes
+        - "{{config.scientific_python_base_bytes}}"
+        - --scientific-runtime-receipt-relative
+        - "{{config.scientific_runtime_receipt_relative}}"
+        - --scientific-runtime-receipt-sha256
+        - "{{config.scientific_runtime_receipt_sha256}}"
+        - --scientific-runtime-receipt-bytes
+        - "{{config.scientific_runtime_receipt_bytes}}"
+        - --config-name
+        - "{{config.config_name}}"
+        - --split-sha256
+        - "{{config.split_sha256}}"
+        - --dataset-relative
+        - "{{config.dataset_relative}}"
+        - --split-relative
+        - "{{config.split_relative}}"
+        - --home
+        - "{{config.home}}"
+        - --runtime-workspace
+        - "{{config.runtime_workspace}}"
+        - --checkpoint-root
+        - "{{config.checkpoint_root}}"
+        - --final-step
+        - "{{config.final_step}}"
+        - --milestones
+        - "{{config.milestones}}"
     outputs:
       - uri: '{{config.prefix}}/preflight/receipt.json'
         schema: npa.behavior.comet-native-input-preflight.v1
@@ -123,35 +176,88 @@ states:
   train:
     resources: gpu
     run:
-      shell: |
-        set -eu
-        ATTEMPT_ID="${NPA_WORKFLOW_ATTEMPT_ID:-$(date +%s)-$$}"
-        python -m npa.workflows.behavior_challenge.comet_native_workflow train \
-        --prefix '{{config.prefix}}' --preflight-uri '{{config.prefix}}/preflight/receipt.json' \
-        --openpi-uri '{{config.openpi_uri}}' --openpi-sha256 '{{config.openpi_sha256}}' --openpi-bytes '{{config.openpi_bytes}}' \
-        --worker-uri '{{config.worker_uri}}' --worker-sha256 '{{config.worker_sha256}}' \
-        --worker-bytes '{{config.worker_bytes}}' --worker-package-root '{{config.worker_package_root}}' \
-        --worker-manifest-sha256 '{{config.worker_manifest_sha256}}' --dataset-uri '{{config.dataset_uri}}' \
-        --dataset-sha256 '{{config.dataset_sha256}}' --dataset-bytes '{{config.dataset_bytes}}' \
-        --parent-uri '{{config.parent_uri}}' --parent-sha256 '{{config.parent_sha256}}' \
-        --parent-bytes '{{config.parent_bytes}}' --admission-uri '{{config.admission_uri}}' \
-        --admission-sha256 '{{config.admission_sha256}}' --admission-bytes '{{config.admission_bytes}}' \
-        --runtime-manifest-uri '{{config.runtime_manifest_uri}}' \
-        --runtime-manifest-sha256 '{{config.runtime_manifest_sha256}}' \
-        --scientific-python-relative '{{config.scientific_python_relative}}' \
-        --scientific-python-link-target '{{config.scientific_python_link_target}}' \
-        --scientific-python-base-relative '{{config.scientific_python_base_relative}}' \
-        --scientific-python-base-sha256 '{{config.scientific_python_base_sha256}}' \
-        --scientific-python-base-bytes '{{config.scientific_python_base_bytes}}' \
-        --scientific-runtime-receipt-relative '{{config.scientific_runtime_receipt_relative}}' \
-        --scientific-runtime-receipt-sha256 '{{config.scientific_runtime_receipt_sha256}}' \
-        --scientific-runtime-receipt-bytes '{{config.scientific_runtime_receipt_bytes}}' \
-        --attempt-id "$ATTEMPT_ID" \
-        --config-name '{{config.config_name}}' --split-sha256 '{{config.split_sha256}}' \
-        --dataset-relative '{{config.dataset_relative}}' --split-relative '{{config.split_relative}}' \
-        --home '{{config.home}}' --runtime-workspace '{{config.runtime_workspace}}' \
-        --workspace "/tmp/comet-native-train-$ATTEMPT_ID" --checkpoint-root '{{config.checkpoint_root}}' \
-        --final-step '{{config.final_step}}' --milestones '{{config.milestones}}'
+      argv:
+        - python3
+        - -c
+        - >-
+          import os, subprocess, sys, time; operation=sys.argv[1]; attempt=os.environ.get("NPA_WORKFLOW_ATTEMPT_ID") or f"{int(time.time())}-{os.getpid()}"; subprocess.run([sys.executable, "-m", "npa.workflows.behavior_challenge.comet_native_workflow", operation, *sys.argv[2:], "--attempt-id", attempt, "--workspace", f"/tmp/comet-native-{operation}-{attempt}"], check=True)
+        - train
+        - --prefix
+        - "{{config.prefix}}"
+        - --preflight-uri
+        - "{{config.prefix}}/preflight/receipt.json"
+        - --openpi-uri
+        - "{{config.openpi_uri}}"
+        - --openpi-sha256
+        - "{{config.openpi_sha256}}"
+        - --openpi-bytes
+        - "{{config.openpi_bytes}}"
+        - --worker-uri
+        - "{{config.worker_uri}}"
+        - --worker-sha256
+        - "{{config.worker_sha256}}"
+        - --worker-bytes
+        - "{{config.worker_bytes}}"
+        - --worker-package-root
+        - "{{config.worker_package_root}}"
+        - --worker-manifest-sha256
+        - "{{config.worker_manifest_sha256}}"
+        - --dataset-uri
+        - "{{config.dataset_uri}}"
+        - --dataset-sha256
+        - "{{config.dataset_sha256}}"
+        - --dataset-bytes
+        - "{{config.dataset_bytes}}"
+        - --parent-uri
+        - "{{config.parent_uri}}"
+        - --parent-sha256
+        - "{{config.parent_sha256}}"
+        - --parent-bytes
+        - "{{config.parent_bytes}}"
+        - --admission-uri
+        - "{{config.admission_uri}}"
+        - --admission-sha256
+        - "{{config.admission_sha256}}"
+        - --admission-bytes
+        - "{{config.admission_bytes}}"
+        - --runtime-manifest-uri
+        - "{{config.runtime_manifest_uri}}"
+        - --runtime-manifest-sha256
+        - "{{config.runtime_manifest_sha256}}"
+        - --scientific-python-relative
+        - "{{config.scientific_python_relative}}"
+        - --scientific-python-link-target
+        - "{{config.scientific_python_link_target}}"
+        - --scientific-python-base-relative
+        - "{{config.scientific_python_base_relative}}"
+        - --scientific-python-base-sha256
+        - "{{config.scientific_python_base_sha256}}"
+        - --scientific-python-base-bytes
+        - "{{config.scientific_python_base_bytes}}"
+        - --scientific-runtime-receipt-relative
+        - "{{config.scientific_runtime_receipt_relative}}"
+        - --scientific-runtime-receipt-sha256
+        - "{{config.scientific_runtime_receipt_sha256}}"
+        - --scientific-runtime-receipt-bytes
+        - "{{config.scientific_runtime_receipt_bytes}}"
+        - --config-name
+        - "{{config.config_name}}"
+        - --split-sha256
+        - "{{config.split_sha256}}"
+        - --dataset-relative
+        - "{{config.dataset_relative}}"
+        - --split-relative
+        - "{{config.split_relative}}"
+        - --home
+        - "{{config.home}}"
+        - --runtime-workspace
+        - "{{config.runtime_workspace}}"
+        - --checkpoint-root
+        - "{{config.checkpoint_root}}"
+        - --final-step
+        - "{{config.final_step}}"
+        - --milestones
+        - "{{config.milestones}}"
     inputs:
       - uri: '{{config.prefix}}/preflight/receipt.json'
         schema: npa.behavior.comet-native-input-preflight.v1

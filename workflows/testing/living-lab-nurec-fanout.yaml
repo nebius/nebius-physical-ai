@@ -110,8 +110,11 @@ states:
       rig_rotation_offset: 0,0,0
       rig_translation_offset: 0,0.25,0
     run:
-      shell: "set -euo pipefail\nZONE=\"{{config.zone_name}}\"\nRUN_URI=\"{{config.run_prefix_uri}}\"\n\
-        DATASET_ID=\"{{config.dataset_id}}\"\nSCENE=\"{{config.scene}}\"\nVARIANT=\"{{config.variant}}\"\
+      shell: "set -euo pipefail\ndecode_b64() { printf '%s' \"$1\" | base64 --decode; }\nZONE=\"$(decode_b64\
+        \ '{{config.zone_name|base64}}')\"\nRUN_URI=\"$(decode_b64 '{{config.run_prefix_uri|base64}}')\"\
+        \nDATASET_ID=\"$(decode_b64 '{{config.dataset_id|base64}}')\"\nSCENE=\"$(decode_b64 '{{config.scene|base64}}')\"\
+        \nVARIANT=\"$(decode_b64 '{{config.variant|base64}}')\"\nRIG_TRANSLATION_OFFSET=\"$(decode_b64\
+        \ '{{config.rig_translation_offset|base64}}')\"\nRIG_ROTATION_OFFSET=\"$(decode_b64 '{{config.rig_rotation_offset|base64}}')\"\
         \nZU=\"${RUN_URI}zones/${ZONE}/\"\nNC=\"${ZU}ncore/\"\nRC=\"${ZU}reconstruction/\"\nNV=\"${ZU}novel_views/\"\
         \nINPUT=\"${ZU}input/\"\nRRD=\"${ZU}reports/sim2real.rrd\"\nFINAL=\"${ZU}reports/final.json\"\n\
         MF=\"${ZU}zone_manifest.json\"\n\n# ---- runtime setup inside the NRE container --------------------------------\n\
@@ -174,15 +177,15 @@ states:
         \ or '')\")\nexport USDZ METRICS_PATH\ntest -n \"${USDZ}\"\n\necho \"=== zone $ZONE: render novel\
         \ views (rig-offset, not training views) ===\"\nnpa workbench nurec render --artifact-path \"\
         ${USDZ}\" --output-dir /tmp/render-out --camera-id \"${CAMERA}\" --renderer default --rig-translation-offset\
-        \ \"{{config.rig_translation_offset}}\" --rig-rotation-offset \"{{config.rig_rotation_offset}}\"\
-        \ --no-replicate-training-views --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\
-        \necho \"=== zone $ZONE: visualize (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench\
-        \ nurec visualize --input-uri \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\
-        \necho \"=== zone $ZONE: finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri\
-        \ \"${ZU}\" --output-uri \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\
-        \nEND=$(date +%s)\nexport END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n\
-        \    default = default if default is not None else {}\n    try:\n        with open(path) as fh:\n\
-        \            return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
+        \ \"${RIG_TRANSLATION_OFFSET}\" --rig-rotation-offset \"${RIG_ROTATION_OFFSET}\" --no-replicate-training-views\
+        \ --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\necho \"=== zone $ZONE: visualize\
+        \ (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench nurec visualize --input-uri\
+        \ \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\necho \"=== zone $ZONE:\
+        \ finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri \"${ZU}\" --output-uri\
+        \ \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\nEND=$(date +%s)\n\
+        export END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n    default\
+        \ = default if default is not None else {}\n    try:\n        with open(path) as fh:\n       \
+        \     return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
         /tmp/nurec-reconstruct.json\")\nfinal = _load_json(\"/tmp/nurec-final.json\")\nraw_metrics = recon.get(\"\
         metrics\") or {}\nmetrics_path = os.environ.get(\"METRICS_PATH\", \"\")\n# Keep an unavailable\
         \ metric distinct from a measured value: None means no\n# value was produced, never substitute\
@@ -227,8 +230,11 @@ states:
       rig_rotation_offset: 120,0,0
       rig_translation_offset: 0,0,0.45
     run:
-      shell: "set -euo pipefail\nZONE=\"{{config.zone_name}}\"\nRUN_URI=\"{{config.run_prefix_uri}}\"\n\
-        DATASET_ID=\"{{config.dataset_id}}\"\nSCENE=\"{{config.scene}}\"\nVARIANT=\"{{config.variant}}\"\
+      shell: "set -euo pipefail\ndecode_b64() { printf '%s' \"$1\" | base64 --decode; }\nZONE=\"$(decode_b64\
+        \ '{{config.zone_name|base64}}')\"\nRUN_URI=\"$(decode_b64 '{{config.run_prefix_uri|base64}}')\"\
+        \nDATASET_ID=\"$(decode_b64 '{{config.dataset_id|base64}}')\"\nSCENE=\"$(decode_b64 '{{config.scene|base64}}')\"\
+        \nVARIANT=\"$(decode_b64 '{{config.variant|base64}}')\"\nRIG_TRANSLATION_OFFSET=\"$(decode_b64\
+        \ '{{config.rig_translation_offset|base64}}')\"\nRIG_ROTATION_OFFSET=\"$(decode_b64 '{{config.rig_rotation_offset|base64}}')\"\
         \nZU=\"${RUN_URI}zones/${ZONE}/\"\nNC=\"${ZU}ncore/\"\nRC=\"${ZU}reconstruction/\"\nNV=\"${ZU}novel_views/\"\
         \nINPUT=\"${ZU}input/\"\nRRD=\"${ZU}reports/sim2real.rrd\"\nFINAL=\"${ZU}reports/final.json\"\n\
         MF=\"${ZU}zone_manifest.json\"\n\n# ---- runtime setup inside the NRE container --------------------------------\n\
@@ -291,15 +297,15 @@ states:
         \ or '')\")\nexport USDZ METRICS_PATH\ntest -n \"${USDZ}\"\n\necho \"=== zone $ZONE: render novel\
         \ views (rig-offset, not training views) ===\"\nnpa workbench nurec render --artifact-path \"\
         ${USDZ}\" --output-dir /tmp/render-out --camera-id \"${CAMERA}\" --renderer default --rig-translation-offset\
-        \ \"{{config.rig_translation_offset}}\" --rig-rotation-offset \"{{config.rig_rotation_offset}}\"\
-        \ --no-replicate-training-views --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\
-        \necho \"=== zone $ZONE: visualize (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench\
-        \ nurec visualize --input-uri \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\
-        \necho \"=== zone $ZONE: finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri\
-        \ \"${ZU}\" --output-uri \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\
-        \nEND=$(date +%s)\nexport END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n\
-        \    default = default if default is not None else {}\n    try:\n        with open(path) as fh:\n\
-        \            return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
+        \ \"${RIG_TRANSLATION_OFFSET}\" --rig-rotation-offset \"${RIG_ROTATION_OFFSET}\" --no-replicate-training-views\
+        \ --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\necho \"=== zone $ZONE: visualize\
+        \ (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench nurec visualize --input-uri\
+        \ \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\necho \"=== zone $ZONE:\
+        \ finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri \"${ZU}\" --output-uri\
+        \ \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\nEND=$(date +%s)\n\
+        export END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n    default\
+        \ = default if default is not None else {}\n    try:\n        with open(path) as fh:\n       \
+        \     return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
         /tmp/nurec-reconstruct.json\")\nfinal = _load_json(\"/tmp/nurec-final.json\")\nraw_metrics = recon.get(\"\
         metrics\") or {}\nmetrics_path = os.environ.get(\"METRICS_PATH\", \"\")\n# Keep an unavailable\
         \ metric distinct from a measured value: None means no\n# value was produced, never substitute\
@@ -344,8 +350,11 @@ states:
       rig_rotation_offset: 0,0,0
       rig_translation_offset: 0,0.25,0
     run:
-      shell: "set -euo pipefail\nZONE=\"{{config.zone_name}}\"\nRUN_URI=\"{{config.run_prefix_uri}}\"\n\
-        DATASET_ID=\"{{config.dataset_id}}\"\nSCENE=\"{{config.scene}}\"\nVARIANT=\"{{config.variant}}\"\
+      shell: "set -euo pipefail\ndecode_b64() { printf '%s' \"$1\" | base64 --decode; }\nZONE=\"$(decode_b64\
+        \ '{{config.zone_name|base64}}')\"\nRUN_URI=\"$(decode_b64 '{{config.run_prefix_uri|base64}}')\"\
+        \nDATASET_ID=\"$(decode_b64 '{{config.dataset_id|base64}}')\"\nSCENE=\"$(decode_b64 '{{config.scene|base64}}')\"\
+        \nVARIANT=\"$(decode_b64 '{{config.variant|base64}}')\"\nRIG_TRANSLATION_OFFSET=\"$(decode_b64\
+        \ '{{config.rig_translation_offset|base64}}')\"\nRIG_ROTATION_OFFSET=\"$(decode_b64 '{{config.rig_rotation_offset|base64}}')\"\
         \nZU=\"${RUN_URI}zones/${ZONE}/\"\nNC=\"${ZU}ncore/\"\nRC=\"${ZU}reconstruction/\"\nNV=\"${ZU}novel_views/\"\
         \nINPUT=\"${ZU}input/\"\nRRD=\"${ZU}reports/sim2real.rrd\"\nFINAL=\"${ZU}reports/final.json\"\n\
         MF=\"${ZU}zone_manifest.json\"\n\n# ---- runtime setup inside the NRE container --------------------------------\n\
@@ -408,15 +417,15 @@ states:
         \ or '')\")\nexport USDZ METRICS_PATH\ntest -n \"${USDZ}\"\n\necho \"=== zone $ZONE: render novel\
         \ views (rig-offset, not training views) ===\"\nnpa workbench nurec render --artifact-path \"\
         ${USDZ}\" --output-dir /tmp/render-out --camera-id \"${CAMERA}\" --renderer default --rig-translation-offset\
-        \ \"{{config.rig_translation_offset}}\" --rig-rotation-offset \"{{config.rig_rotation_offset}}\"\
-        \ --no-replicate-training-views --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\
-        \necho \"=== zone $ZONE: visualize (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench\
-        \ nurec visualize --input-uri \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\
-        \necho \"=== zone $ZONE: finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri\
-        \ \"${ZU}\" --output-uri \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\
-        \nEND=$(date +%s)\nexport END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n\
-        \    default = default if default is not None else {}\n    try:\n        with open(path) as fh:\n\
-        \            return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
+        \ \"${RIG_TRANSLATION_OFFSET}\" --rig-rotation-offset \"${RIG_ROTATION_OFFSET}\" --no-replicate-training-views\
+        \ --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\necho \"=== zone $ZONE: visualize\
+        \ (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench nurec visualize --input-uri\
+        \ \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\necho \"=== zone $ZONE:\
+        \ finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri \"${ZU}\" --output-uri\
+        \ \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\nEND=$(date +%s)\n\
+        export END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n    default\
+        \ = default if default is not None else {}\n    try:\n        with open(path) as fh:\n       \
+        \     return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
         /tmp/nurec-reconstruct.json\")\nfinal = _load_json(\"/tmp/nurec-final.json\")\nraw_metrics = recon.get(\"\
         metrics\") or {}\nmetrics_path = os.environ.get(\"METRICS_PATH\", \"\")\n# Keep an unavailable\
         \ metric distinct from a measured value: None means no\n# value was produced, never substitute\
@@ -461,8 +470,11 @@ states:
       rig_rotation_offset: 120,0,0
       rig_translation_offset: 0,0,0.45
     run:
-      shell: "set -euo pipefail\nZONE=\"{{config.zone_name}}\"\nRUN_URI=\"{{config.run_prefix_uri}}\"\n\
-        DATASET_ID=\"{{config.dataset_id}}\"\nSCENE=\"{{config.scene}}\"\nVARIANT=\"{{config.variant}}\"\
+      shell: "set -euo pipefail\ndecode_b64() { printf '%s' \"$1\" | base64 --decode; }\nZONE=\"$(decode_b64\
+        \ '{{config.zone_name|base64}}')\"\nRUN_URI=\"$(decode_b64 '{{config.run_prefix_uri|base64}}')\"\
+        \nDATASET_ID=\"$(decode_b64 '{{config.dataset_id|base64}}')\"\nSCENE=\"$(decode_b64 '{{config.scene|base64}}')\"\
+        \nVARIANT=\"$(decode_b64 '{{config.variant|base64}}')\"\nRIG_TRANSLATION_OFFSET=\"$(decode_b64\
+        \ '{{config.rig_translation_offset|base64}}')\"\nRIG_ROTATION_OFFSET=\"$(decode_b64 '{{config.rig_rotation_offset|base64}}')\"\
         \nZU=\"${RUN_URI}zones/${ZONE}/\"\nNC=\"${ZU}ncore/\"\nRC=\"${ZU}reconstruction/\"\nNV=\"${ZU}novel_views/\"\
         \nINPUT=\"${ZU}input/\"\nRRD=\"${ZU}reports/sim2real.rrd\"\nFINAL=\"${ZU}reports/final.json\"\n\
         MF=\"${ZU}zone_manifest.json\"\n\n# ---- runtime setup inside the NRE container --------------------------------\n\
@@ -525,15 +537,15 @@ states:
         \ or '')\")\nexport USDZ METRICS_PATH\ntest -n \"${USDZ}\"\n\necho \"=== zone $ZONE: render novel\
         \ views (rig-offset, not training views) ===\"\nnpa workbench nurec render --artifact-path \"\
         ${USDZ}\" --output-dir /tmp/render-out --camera-id \"${CAMERA}\" --renderer default --rig-translation-offset\
-        \ \"{{config.rig_translation_offset}}\" --rig-rotation-offset \"{{config.rig_rotation_offset}}\"\
-        \ --no-replicate-training-views --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\
-        \necho \"=== zone $ZONE: visualize (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench\
-        \ nurec visualize --input-uri \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\
-        \necho \"=== zone $ZONE: finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri\
-        \ \"${ZU}\" --output-uri \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\
-        \nEND=$(date +%s)\nexport END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n\
-        \    default = default if default is not None else {}\n    try:\n        with open(path) as fh:\n\
-        \            return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
+        \ \"${RIG_TRANSLATION_OFFSET}\" --rig-rotation-offset \"${RIG_ROTATION_OFFSET}\" --no-replicate-training-views\
+        \ --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\necho \"=== zone $ZONE: visualize\
+        \ (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench nurec visualize --input-uri\
+        \ \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\necho \"=== zone $ZONE:\
+        \ finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri \"${ZU}\" --output-uri\
+        \ \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\nEND=$(date +%s)\n\
+        export END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n    default\
+        \ = default if default is not None else {}\n    try:\n        with open(path) as fh:\n       \
+        \     return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
         /tmp/nurec-reconstruct.json\")\nfinal = _load_json(\"/tmp/nurec-final.json\")\nraw_metrics = recon.get(\"\
         metrics\") or {}\nmetrics_path = os.environ.get(\"METRICS_PATH\", \"\")\n# Keep an unavailable\
         \ metric distinct from a measured value: None means no\n# value was produced, never substitute\
@@ -578,8 +590,11 @@ states:
       rig_rotation_offset: 0,0,0
       rig_translation_offset: 0,0.25,0
     run:
-      shell: "set -euo pipefail\nZONE=\"{{config.zone_name}}\"\nRUN_URI=\"{{config.run_prefix_uri}}\"\n\
-        DATASET_ID=\"{{config.dataset_id}}\"\nSCENE=\"{{config.scene}}\"\nVARIANT=\"{{config.variant}}\"\
+      shell: "set -euo pipefail\ndecode_b64() { printf '%s' \"$1\" | base64 --decode; }\nZONE=\"$(decode_b64\
+        \ '{{config.zone_name|base64}}')\"\nRUN_URI=\"$(decode_b64 '{{config.run_prefix_uri|base64}}')\"\
+        \nDATASET_ID=\"$(decode_b64 '{{config.dataset_id|base64}}')\"\nSCENE=\"$(decode_b64 '{{config.scene|base64}}')\"\
+        \nVARIANT=\"$(decode_b64 '{{config.variant|base64}}')\"\nRIG_TRANSLATION_OFFSET=\"$(decode_b64\
+        \ '{{config.rig_translation_offset|base64}}')\"\nRIG_ROTATION_OFFSET=\"$(decode_b64 '{{config.rig_rotation_offset|base64}}')\"\
         \nZU=\"${RUN_URI}zones/${ZONE}/\"\nNC=\"${ZU}ncore/\"\nRC=\"${ZU}reconstruction/\"\nNV=\"${ZU}novel_views/\"\
         \nINPUT=\"${ZU}input/\"\nRRD=\"${ZU}reports/sim2real.rrd\"\nFINAL=\"${ZU}reports/final.json\"\n\
         MF=\"${ZU}zone_manifest.json\"\n\n# ---- runtime setup inside the NRE container --------------------------------\n\
@@ -642,15 +657,15 @@ states:
         \ or '')\")\nexport USDZ METRICS_PATH\ntest -n \"${USDZ}\"\n\necho \"=== zone $ZONE: render novel\
         \ views (rig-offset, not training views) ===\"\nnpa workbench nurec render --artifact-path \"\
         ${USDZ}\" --output-dir /tmp/render-out --camera-id \"${CAMERA}\" --renderer default --rig-translation-offset\
-        \ \"{{config.rig_translation_offset}}\" --rig-rotation-offset \"{{config.rig_rotation_offset}}\"\
-        \ --no-replicate-training-views --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\
-        \necho \"=== zone $ZONE: visualize (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench\
-        \ nurec visualize --input-uri \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\
-        \necho \"=== zone $ZONE: finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri\
-        \ \"${ZU}\" --output-uri \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\
-        \nEND=$(date +%s)\nexport END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n\
-        \    default = default if default is not None else {}\n    try:\n        with open(path) as fh:\n\
-        \            return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
+        \ \"${RIG_TRANSLATION_OFFSET}\" --rig-rotation-offset \"${RIG_ROTATION_OFFSET}\" --no-replicate-training-views\
+        \ --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\necho \"=== zone $ZONE: visualize\
+        \ (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench nurec visualize --input-uri\
+        \ \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\necho \"=== zone $ZONE:\
+        \ finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri \"${ZU}\" --output-uri\
+        \ \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\nEND=$(date +%s)\n\
+        export END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n    default\
+        \ = default if default is not None else {}\n    try:\n        with open(path) as fh:\n       \
+        \     return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
         /tmp/nurec-reconstruct.json\")\nfinal = _load_json(\"/tmp/nurec-final.json\")\nraw_metrics = recon.get(\"\
         metrics\") or {}\nmetrics_path = os.environ.get(\"METRICS_PATH\", \"\")\n# Keep an unavailable\
         \ metric distinct from a measured value: None means no\n# value was produced, never substitute\
@@ -695,8 +710,11 @@ states:
       rig_rotation_offset: 120,0,0
       rig_translation_offset: 0,0,0.45
     run:
-      shell: "set -euo pipefail\nZONE=\"{{config.zone_name}}\"\nRUN_URI=\"{{config.run_prefix_uri}}\"\n\
-        DATASET_ID=\"{{config.dataset_id}}\"\nSCENE=\"{{config.scene}}\"\nVARIANT=\"{{config.variant}}\"\
+      shell: "set -euo pipefail\ndecode_b64() { printf '%s' \"$1\" | base64 --decode; }\nZONE=\"$(decode_b64\
+        \ '{{config.zone_name|base64}}')\"\nRUN_URI=\"$(decode_b64 '{{config.run_prefix_uri|base64}}')\"\
+        \nDATASET_ID=\"$(decode_b64 '{{config.dataset_id|base64}}')\"\nSCENE=\"$(decode_b64 '{{config.scene|base64}}')\"\
+        \nVARIANT=\"$(decode_b64 '{{config.variant|base64}}')\"\nRIG_TRANSLATION_OFFSET=\"$(decode_b64\
+        \ '{{config.rig_translation_offset|base64}}')\"\nRIG_ROTATION_OFFSET=\"$(decode_b64 '{{config.rig_rotation_offset|base64}}')\"\
         \nZU=\"${RUN_URI}zones/${ZONE}/\"\nNC=\"${ZU}ncore/\"\nRC=\"${ZU}reconstruction/\"\nNV=\"${ZU}novel_views/\"\
         \nINPUT=\"${ZU}input/\"\nRRD=\"${ZU}reports/sim2real.rrd\"\nFINAL=\"${ZU}reports/final.json\"\n\
         MF=\"${ZU}zone_manifest.json\"\n\n# ---- runtime setup inside the NRE container --------------------------------\n\
@@ -759,15 +777,15 @@ states:
         \ or '')\")\nexport USDZ METRICS_PATH\ntest -n \"${USDZ}\"\n\necho \"=== zone $ZONE: render novel\
         \ views (rig-offset, not training views) ===\"\nnpa workbench nurec render --artifact-path \"\
         ${USDZ}\" --output-dir /tmp/render-out --camera-id \"${CAMERA}\" --renderer default --rig-translation-offset\
-        \ \"{{config.rig_translation_offset}}\" --rig-rotation-offset \"{{config.rig_rotation_offset}}\"\
-        \ --no-replicate-training-views --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\
-        \necho \"=== zone $ZONE: visualize (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench\
-        \ nurec visualize --input-uri \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\
-        \necho \"=== zone $ZONE: finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri\
-        \ \"${ZU}\" --output-uri \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\
-        \nEND=$(date +%s)\nexport END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n\
-        \    default = default if default is not None else {}\n    try:\n        with open(path) as fh:\n\
-        \            return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
+        \ \"${RIG_TRANSLATION_OFFSET}\" --rig-rotation-offset \"${RIG_ROTATION_OFFSET}\" --no-replicate-training-views\
+        \ --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\necho \"=== zone $ZONE: visualize\
+        \ (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench nurec visualize --input-uri\
+        \ \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\necho \"=== zone $ZONE:\
+        \ finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri \"${ZU}\" --output-uri\
+        \ \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\nEND=$(date +%s)\n\
+        export END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n    default\
+        \ = default if default is not None else {}\n    try:\n        with open(path) as fh:\n       \
+        \     return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
         /tmp/nurec-reconstruct.json\")\nfinal = _load_json(\"/tmp/nurec-final.json\")\nraw_metrics = recon.get(\"\
         metrics\") or {}\nmetrics_path = os.environ.get(\"METRICS_PATH\", \"\")\n# Keep an unavailable\
         \ metric distinct from a measured value: None means no\n# value was produced, never substitute\
@@ -812,8 +830,11 @@ states:
       rig_rotation_offset: 0,0,0
       rig_translation_offset: 0,0.25,0
     run:
-      shell: "set -euo pipefail\nZONE=\"{{config.zone_name}}\"\nRUN_URI=\"{{config.run_prefix_uri}}\"\n\
-        DATASET_ID=\"{{config.dataset_id}}\"\nSCENE=\"{{config.scene}}\"\nVARIANT=\"{{config.variant}}\"\
+      shell: "set -euo pipefail\ndecode_b64() { printf '%s' \"$1\" | base64 --decode; }\nZONE=\"$(decode_b64\
+        \ '{{config.zone_name|base64}}')\"\nRUN_URI=\"$(decode_b64 '{{config.run_prefix_uri|base64}}')\"\
+        \nDATASET_ID=\"$(decode_b64 '{{config.dataset_id|base64}}')\"\nSCENE=\"$(decode_b64 '{{config.scene|base64}}')\"\
+        \nVARIANT=\"$(decode_b64 '{{config.variant|base64}}')\"\nRIG_TRANSLATION_OFFSET=\"$(decode_b64\
+        \ '{{config.rig_translation_offset|base64}}')\"\nRIG_ROTATION_OFFSET=\"$(decode_b64 '{{config.rig_rotation_offset|base64}}')\"\
         \nZU=\"${RUN_URI}zones/${ZONE}/\"\nNC=\"${ZU}ncore/\"\nRC=\"${ZU}reconstruction/\"\nNV=\"${ZU}novel_views/\"\
         \nINPUT=\"${ZU}input/\"\nRRD=\"${ZU}reports/sim2real.rrd\"\nFINAL=\"${ZU}reports/final.json\"\n\
         MF=\"${ZU}zone_manifest.json\"\n\n# ---- runtime setup inside the NRE container --------------------------------\n\
@@ -876,15 +897,15 @@ states:
         \ or '')\")\nexport USDZ METRICS_PATH\ntest -n \"${USDZ}\"\n\necho \"=== zone $ZONE: render novel\
         \ views (rig-offset, not training views) ===\"\nnpa workbench nurec render --artifact-path \"\
         ${USDZ}\" --output-dir /tmp/render-out --camera-id \"${CAMERA}\" --renderer default --rig-translation-offset\
-        \ \"{{config.rig_translation_offset}}\" --rig-rotation-offset \"{{config.rig_rotation_offset}}\"\
-        \ --no-replicate-training-views --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\
-        \necho \"=== zone $ZONE: visualize (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench\
-        \ nurec visualize --input-uri \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\
-        \necho \"=== zone $ZONE: finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri\
-        \ \"${ZU}\" --output-uri \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\
-        \nEND=$(date +%s)\nexport END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n\
-        \    default = default if default is not None else {}\n    try:\n        with open(path) as fh:\n\
-        \            return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
+        \ \"${RIG_TRANSLATION_OFFSET}\" --rig-rotation-offset \"${RIG_ROTATION_OFFSET}\" --no-replicate-training-views\
+        \ --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\necho \"=== zone $ZONE: visualize\
+        \ (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench nurec visualize --input-uri\
+        \ \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\necho \"=== zone $ZONE:\
+        \ finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri \"${ZU}\" --output-uri\
+        \ \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\nEND=$(date +%s)\n\
+        export END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n    default\
+        \ = default if default is not None else {}\n    try:\n        with open(path) as fh:\n       \
+        \     return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
         /tmp/nurec-reconstruct.json\")\nfinal = _load_json(\"/tmp/nurec-final.json\")\nraw_metrics = recon.get(\"\
         metrics\") or {}\nmetrics_path = os.environ.get(\"METRICS_PATH\", \"\")\n# Keep an unavailable\
         \ metric distinct from a measured value: None means no\n# value was produced, never substitute\
@@ -929,8 +950,11 @@ states:
       rig_rotation_offset: 120,0,0
       rig_translation_offset: 0,0,0.45
     run:
-      shell: "set -euo pipefail\nZONE=\"{{config.zone_name}}\"\nRUN_URI=\"{{config.run_prefix_uri}}\"\n\
-        DATASET_ID=\"{{config.dataset_id}}\"\nSCENE=\"{{config.scene}}\"\nVARIANT=\"{{config.variant}}\"\
+      shell: "set -euo pipefail\ndecode_b64() { printf '%s' \"$1\" | base64 --decode; }\nZONE=\"$(decode_b64\
+        \ '{{config.zone_name|base64}}')\"\nRUN_URI=\"$(decode_b64 '{{config.run_prefix_uri|base64}}')\"\
+        \nDATASET_ID=\"$(decode_b64 '{{config.dataset_id|base64}}')\"\nSCENE=\"$(decode_b64 '{{config.scene|base64}}')\"\
+        \nVARIANT=\"$(decode_b64 '{{config.variant|base64}}')\"\nRIG_TRANSLATION_OFFSET=\"$(decode_b64\
+        \ '{{config.rig_translation_offset|base64}}')\"\nRIG_ROTATION_OFFSET=\"$(decode_b64 '{{config.rig_rotation_offset|base64}}')\"\
         \nZU=\"${RUN_URI}zones/${ZONE}/\"\nNC=\"${ZU}ncore/\"\nRC=\"${ZU}reconstruction/\"\nNV=\"${ZU}novel_views/\"\
         \nINPUT=\"${ZU}input/\"\nRRD=\"${ZU}reports/sim2real.rrd\"\nFINAL=\"${ZU}reports/final.json\"\n\
         MF=\"${ZU}zone_manifest.json\"\n\n# ---- runtime setup inside the NRE container --------------------------------\n\
@@ -993,15 +1017,15 @@ states:
         \ or '')\")\nexport USDZ METRICS_PATH\ntest -n \"${USDZ}\"\n\necho \"=== zone $ZONE: render novel\
         \ views (rig-offset, not training views) ===\"\nnpa workbench nurec render --artifact-path \"\
         ${USDZ}\" --output-dir /tmp/render-out --camera-id \"${CAMERA}\" --renderer default --rig-translation-offset\
-        \ \"{{config.rig_translation_offset}}\" --rig-rotation-offset \"{{config.rig_rotation_offset}}\"\
-        \ --no-replicate-training-views --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\
-        \necho \"=== zone $ZONE: visualize (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench\
-        \ nurec visualize --input-uri \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\
-        \necho \"=== zone $ZONE: finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri\
-        \ \"${ZU}\" --output-uri \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\
-        \nEND=$(date +%s)\nexport END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n\
-        \    default = default if default is not None else {}\n    try:\n        with open(path) as fh:\n\
-        \            return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
+        \ \"${RIG_TRANSLATION_OFFSET}\" --rig-rotation-offset \"${RIG_ROTATION_OFFSET}\" --no-replicate-training-views\
+        \ --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\necho \"=== zone $ZONE: visualize\
+        \ (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench nurec visualize --input-uri\
+        \ \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\necho \"=== zone $ZONE:\
+        \ finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri \"${ZU}\" --output-uri\
+        \ \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\nEND=$(date +%s)\n\
+        export END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n    default\
+        \ = default if default is not None else {}\n    try:\n        with open(path) as fh:\n       \
+        \     return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
         /tmp/nurec-reconstruct.json\")\nfinal = _load_json(\"/tmp/nurec-final.json\")\nraw_metrics = recon.get(\"\
         metrics\") or {}\nmetrics_path = os.environ.get(\"METRICS_PATH\", \"\")\n# Keep an unavailable\
         \ metric distinct from a measured value: None means no\n# value was produced, never substitute\
@@ -1046,8 +1070,11 @@ states:
       rig_rotation_offset: 0,0,0
       rig_translation_offset: 0,0.25,0
     run:
-      shell: "set -euo pipefail\nZONE=\"{{config.zone_name}}\"\nRUN_URI=\"{{config.run_prefix_uri}}\"\n\
-        DATASET_ID=\"{{config.dataset_id}}\"\nSCENE=\"{{config.scene}}\"\nVARIANT=\"{{config.variant}}\"\
+      shell: "set -euo pipefail\ndecode_b64() { printf '%s' \"$1\" | base64 --decode; }\nZONE=\"$(decode_b64\
+        \ '{{config.zone_name|base64}}')\"\nRUN_URI=\"$(decode_b64 '{{config.run_prefix_uri|base64}}')\"\
+        \nDATASET_ID=\"$(decode_b64 '{{config.dataset_id|base64}}')\"\nSCENE=\"$(decode_b64 '{{config.scene|base64}}')\"\
+        \nVARIANT=\"$(decode_b64 '{{config.variant|base64}}')\"\nRIG_TRANSLATION_OFFSET=\"$(decode_b64\
+        \ '{{config.rig_translation_offset|base64}}')\"\nRIG_ROTATION_OFFSET=\"$(decode_b64 '{{config.rig_rotation_offset|base64}}')\"\
         \nZU=\"${RUN_URI}zones/${ZONE}/\"\nNC=\"${ZU}ncore/\"\nRC=\"${ZU}reconstruction/\"\nNV=\"${ZU}novel_views/\"\
         \nINPUT=\"${ZU}input/\"\nRRD=\"${ZU}reports/sim2real.rrd\"\nFINAL=\"${ZU}reports/final.json\"\n\
         MF=\"${ZU}zone_manifest.json\"\n\n# ---- runtime setup inside the NRE container --------------------------------\n\
@@ -1110,15 +1137,15 @@ states:
         \ or '')\")\nexport USDZ METRICS_PATH\ntest -n \"${USDZ}\"\n\necho \"=== zone $ZONE: render novel\
         \ views (rig-offset, not training views) ===\"\nnpa workbench nurec render --artifact-path \"\
         ${USDZ}\" --output-dir /tmp/render-out --camera-id \"${CAMERA}\" --renderer default --rig-translation-offset\
-        \ \"{{config.rig_translation_offset}}\" --rig-rotation-offset \"{{config.rig_rotation_offset}}\"\
-        \ --no-replicate-training-views --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\
-        \necho \"=== zone $ZONE: visualize (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench\
-        \ nurec visualize --input-uri \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\
-        \necho \"=== zone $ZONE: finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri\
-        \ \"${ZU}\" --output-uri \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\
-        \nEND=$(date +%s)\nexport END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n\
-        \    default = default if default is not None else {}\n    try:\n        with open(path) as fh:\n\
-        \            return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
+        \ \"${RIG_TRANSLATION_OFFSET}\" --rig-rotation-offset \"${RIG_ROTATION_OFFSET}\" --no-replicate-training-views\
+        \ --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\necho \"=== zone $ZONE: visualize\
+        \ (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench nurec visualize --input-uri\
+        \ \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\necho \"=== zone $ZONE:\
+        \ finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri \"${ZU}\" --output-uri\
+        \ \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\nEND=$(date +%s)\n\
+        export END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n    default\
+        \ = default if default is not None else {}\n    try:\n        with open(path) as fh:\n       \
+        \     return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
         /tmp/nurec-reconstruct.json\")\nfinal = _load_json(\"/tmp/nurec-final.json\")\nraw_metrics = recon.get(\"\
         metrics\") or {}\nmetrics_path = os.environ.get(\"METRICS_PATH\", \"\")\n# Keep an unavailable\
         \ metric distinct from a measured value: None means no\n# value was produced, never substitute\
@@ -1163,8 +1190,11 @@ states:
       rig_rotation_offset: 120,0,0
       rig_translation_offset: 0,0,0.45
     run:
-      shell: "set -euo pipefail\nZONE=\"{{config.zone_name}}\"\nRUN_URI=\"{{config.run_prefix_uri}}\"\n\
-        DATASET_ID=\"{{config.dataset_id}}\"\nSCENE=\"{{config.scene}}\"\nVARIANT=\"{{config.variant}}\"\
+      shell: "set -euo pipefail\ndecode_b64() { printf '%s' \"$1\" | base64 --decode; }\nZONE=\"$(decode_b64\
+        \ '{{config.zone_name|base64}}')\"\nRUN_URI=\"$(decode_b64 '{{config.run_prefix_uri|base64}}')\"\
+        \nDATASET_ID=\"$(decode_b64 '{{config.dataset_id|base64}}')\"\nSCENE=\"$(decode_b64 '{{config.scene|base64}}')\"\
+        \nVARIANT=\"$(decode_b64 '{{config.variant|base64}}')\"\nRIG_TRANSLATION_OFFSET=\"$(decode_b64\
+        \ '{{config.rig_translation_offset|base64}}')\"\nRIG_ROTATION_OFFSET=\"$(decode_b64 '{{config.rig_rotation_offset|base64}}')\"\
         \nZU=\"${RUN_URI}zones/${ZONE}/\"\nNC=\"${ZU}ncore/\"\nRC=\"${ZU}reconstruction/\"\nNV=\"${ZU}novel_views/\"\
         \nINPUT=\"${ZU}input/\"\nRRD=\"${ZU}reports/sim2real.rrd\"\nFINAL=\"${ZU}reports/final.json\"\n\
         MF=\"${ZU}zone_manifest.json\"\n\n# ---- runtime setup inside the NRE container --------------------------------\n\
@@ -1227,15 +1257,15 @@ states:
         \ or '')\")\nexport USDZ METRICS_PATH\ntest -n \"${USDZ}\"\n\necho \"=== zone $ZONE: render novel\
         \ views (rig-offset, not training views) ===\"\nnpa workbench nurec render --artifact-path \"\
         ${USDZ}\" --output-dir /tmp/render-out --camera-id \"${CAMERA}\" --renderer default --rig-translation-offset\
-        \ \"{{config.rig_translation_offset}}\" --rig-rotation-offset \"{{config.rig_rotation_offset}}\"\
-        \ --no-replicate-training-views --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\
-        \necho \"=== zone $ZONE: visualize (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench\
-        \ nurec visualize --input-uri \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\
-        \necho \"=== zone $ZONE: finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri\
-        \ \"${ZU}\" --output-uri \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\
-        \nEND=$(date +%s)\nexport END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n\
-        \    default = default if default is not None else {}\n    try:\n        with open(path) as fh:\n\
-        \            return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
+        \ \"${RIG_TRANSLATION_OFFSET}\" --rig-rotation-offset \"${RIG_ROTATION_OFFSET}\" --no-replicate-training-views\
+        \ --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\necho \"=== zone $ZONE: visualize\
+        \ (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench nurec visualize --input-uri\
+        \ \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\necho \"=== zone $ZONE:\
+        \ finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri \"${ZU}\" --output-uri\
+        \ \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\nEND=$(date +%s)\n\
+        export END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n    default\
+        \ = default if default is not None else {}\n    try:\n        with open(path) as fh:\n       \
+        \     return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
         /tmp/nurec-reconstruct.json\")\nfinal = _load_json(\"/tmp/nurec-final.json\")\nraw_metrics = recon.get(\"\
         metrics\") or {}\nmetrics_path = os.environ.get(\"METRICS_PATH\", \"\")\n# Keep an unavailable\
         \ metric distinct from a measured value: None means no\n# value was produced, never substitute\
@@ -1280,8 +1310,11 @@ states:
       rig_rotation_offset: 0,0,0
       rig_translation_offset: 0,0.25,0
     run:
-      shell: "set -euo pipefail\nZONE=\"{{config.zone_name}}\"\nRUN_URI=\"{{config.run_prefix_uri}}\"\n\
-        DATASET_ID=\"{{config.dataset_id}}\"\nSCENE=\"{{config.scene}}\"\nVARIANT=\"{{config.variant}}\"\
+      shell: "set -euo pipefail\ndecode_b64() { printf '%s' \"$1\" | base64 --decode; }\nZONE=\"$(decode_b64\
+        \ '{{config.zone_name|base64}}')\"\nRUN_URI=\"$(decode_b64 '{{config.run_prefix_uri|base64}}')\"\
+        \nDATASET_ID=\"$(decode_b64 '{{config.dataset_id|base64}}')\"\nSCENE=\"$(decode_b64 '{{config.scene|base64}}')\"\
+        \nVARIANT=\"$(decode_b64 '{{config.variant|base64}}')\"\nRIG_TRANSLATION_OFFSET=\"$(decode_b64\
+        \ '{{config.rig_translation_offset|base64}}')\"\nRIG_ROTATION_OFFSET=\"$(decode_b64 '{{config.rig_rotation_offset|base64}}')\"\
         \nZU=\"${RUN_URI}zones/${ZONE}/\"\nNC=\"${ZU}ncore/\"\nRC=\"${ZU}reconstruction/\"\nNV=\"${ZU}novel_views/\"\
         \nINPUT=\"${ZU}input/\"\nRRD=\"${ZU}reports/sim2real.rrd\"\nFINAL=\"${ZU}reports/final.json\"\n\
         MF=\"${ZU}zone_manifest.json\"\n\n# ---- runtime setup inside the NRE container --------------------------------\n\
@@ -1344,15 +1377,15 @@ states:
         \ or '')\")\nexport USDZ METRICS_PATH\ntest -n \"${USDZ}\"\n\necho \"=== zone $ZONE: render novel\
         \ views (rig-offset, not training views) ===\"\nnpa workbench nurec render --artifact-path \"\
         ${USDZ}\" --output-dir /tmp/render-out --camera-id \"${CAMERA}\" --renderer default --rig-translation-offset\
-        \ \"{{config.rig_translation_offset}}\" --rig-rotation-offset \"{{config.rig_rotation_offset}}\"\
-        \ --no-replicate-training-views --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\
-        \necho \"=== zone $ZONE: visualize (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench\
-        \ nurec visualize --input-uri \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\
-        \necho \"=== zone $ZONE: finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri\
-        \ \"${ZU}\" --output-uri \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\
-        \nEND=$(date +%s)\nexport END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n\
-        \    default = default if default is not None else {}\n    try:\n        with open(path) as fh:\n\
-        \            return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
+        \ \"${RIG_TRANSLATION_OFFSET}\" --rig-rotation-offset \"${RIG_ROTATION_OFFSET}\" --no-replicate-training-views\
+        \ --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\necho \"=== zone $ZONE: visualize\
+        \ (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench nurec visualize --input-uri\
+        \ \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\necho \"=== zone $ZONE:\
+        \ finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri \"${ZU}\" --output-uri\
+        \ \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\nEND=$(date +%s)\n\
+        export END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n    default\
+        \ = default if default is not None else {}\n    try:\n        with open(path) as fh:\n       \
+        \     return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
         /tmp/nurec-reconstruct.json\")\nfinal = _load_json(\"/tmp/nurec-final.json\")\nraw_metrics = recon.get(\"\
         metrics\") or {}\nmetrics_path = os.environ.get(\"METRICS_PATH\", \"\")\n# Keep an unavailable\
         \ metric distinct from a measured value: None means no\n# value was produced, never substitute\
@@ -1397,8 +1430,11 @@ states:
       rig_rotation_offset: 120,0,0
       rig_translation_offset: 0,0,0.45
     run:
-      shell: "set -euo pipefail\nZONE=\"{{config.zone_name}}\"\nRUN_URI=\"{{config.run_prefix_uri}}\"\n\
-        DATASET_ID=\"{{config.dataset_id}}\"\nSCENE=\"{{config.scene}}\"\nVARIANT=\"{{config.variant}}\"\
+      shell: "set -euo pipefail\ndecode_b64() { printf '%s' \"$1\" | base64 --decode; }\nZONE=\"$(decode_b64\
+        \ '{{config.zone_name|base64}}')\"\nRUN_URI=\"$(decode_b64 '{{config.run_prefix_uri|base64}}')\"\
+        \nDATASET_ID=\"$(decode_b64 '{{config.dataset_id|base64}}')\"\nSCENE=\"$(decode_b64 '{{config.scene|base64}}')\"\
+        \nVARIANT=\"$(decode_b64 '{{config.variant|base64}}')\"\nRIG_TRANSLATION_OFFSET=\"$(decode_b64\
+        \ '{{config.rig_translation_offset|base64}}')\"\nRIG_ROTATION_OFFSET=\"$(decode_b64 '{{config.rig_rotation_offset|base64}}')\"\
         \nZU=\"${RUN_URI}zones/${ZONE}/\"\nNC=\"${ZU}ncore/\"\nRC=\"${ZU}reconstruction/\"\nNV=\"${ZU}novel_views/\"\
         \nINPUT=\"${ZU}input/\"\nRRD=\"${ZU}reports/sim2real.rrd\"\nFINAL=\"${ZU}reports/final.json\"\n\
         MF=\"${ZU}zone_manifest.json\"\n\n# ---- runtime setup inside the NRE container --------------------------------\n\
@@ -1461,15 +1497,15 @@ states:
         \ or '')\")\nexport USDZ METRICS_PATH\ntest -n \"${USDZ}\"\n\necho \"=== zone $ZONE: render novel\
         \ views (rig-offset, not training views) ===\"\nnpa workbench nurec render --artifact-path \"\
         ${USDZ}\" --output-dir /tmp/render-out --camera-id \"${CAMERA}\" --renderer default --rig-translation-offset\
-        \ \"{{config.rig_translation_offset}}\" --rig-rotation-offset \"{{config.rig_rotation_offset}}\"\
-        \ --no-replicate-training-views --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\
-        \necho \"=== zone $ZONE: visualize (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench\
-        \ nurec visualize --input-uri \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\
-        \necho \"=== zone $ZONE: finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri\
-        \ \"${ZU}\" --output-uri \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\
-        \nEND=$(date +%s)\nexport END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n\
-        \    default = default if default is not None else {}\n    try:\n        with open(path) as fh:\n\
-        \            return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
+        \ \"${RIG_TRANSLATION_OFFSET}\" --rig-rotation-offset \"${RIG_ROTATION_OFFSET}\" --no-replicate-training-views\
+        \ --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\necho \"=== zone $ZONE: visualize\
+        \ (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench nurec visualize --input-uri\
+        \ \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\necho \"=== zone $ZONE:\
+        \ finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri \"${ZU}\" --output-uri\
+        \ \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\nEND=$(date +%s)\n\
+        export END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n    default\
+        \ = default if default is not None else {}\n    try:\n        with open(path) as fh:\n       \
+        \     return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
         /tmp/nurec-reconstruct.json\")\nfinal = _load_json(\"/tmp/nurec-final.json\")\nraw_metrics = recon.get(\"\
         metrics\") or {}\nmetrics_path = os.environ.get(\"METRICS_PATH\", \"\")\n# Keep an unavailable\
         \ metric distinct from a measured value: None means no\n# value was produced, never substitute\
@@ -1514,8 +1550,11 @@ states:
       rig_rotation_offset: 0,0,0
       rig_translation_offset: 0,0.25,0
     run:
-      shell: "set -euo pipefail\nZONE=\"{{config.zone_name}}\"\nRUN_URI=\"{{config.run_prefix_uri}}\"\n\
-        DATASET_ID=\"{{config.dataset_id}}\"\nSCENE=\"{{config.scene}}\"\nVARIANT=\"{{config.variant}}\"\
+      shell: "set -euo pipefail\ndecode_b64() { printf '%s' \"$1\" | base64 --decode; }\nZONE=\"$(decode_b64\
+        \ '{{config.zone_name|base64}}')\"\nRUN_URI=\"$(decode_b64 '{{config.run_prefix_uri|base64}}')\"\
+        \nDATASET_ID=\"$(decode_b64 '{{config.dataset_id|base64}}')\"\nSCENE=\"$(decode_b64 '{{config.scene|base64}}')\"\
+        \nVARIANT=\"$(decode_b64 '{{config.variant|base64}}')\"\nRIG_TRANSLATION_OFFSET=\"$(decode_b64\
+        \ '{{config.rig_translation_offset|base64}}')\"\nRIG_ROTATION_OFFSET=\"$(decode_b64 '{{config.rig_rotation_offset|base64}}')\"\
         \nZU=\"${RUN_URI}zones/${ZONE}/\"\nNC=\"${ZU}ncore/\"\nRC=\"${ZU}reconstruction/\"\nNV=\"${ZU}novel_views/\"\
         \nINPUT=\"${ZU}input/\"\nRRD=\"${ZU}reports/sim2real.rrd\"\nFINAL=\"${ZU}reports/final.json\"\n\
         MF=\"${ZU}zone_manifest.json\"\n\n# ---- runtime setup inside the NRE container --------------------------------\n\
@@ -1578,15 +1617,15 @@ states:
         \ or '')\")\nexport USDZ METRICS_PATH\ntest -n \"${USDZ}\"\n\necho \"=== zone $ZONE: render novel\
         \ views (rig-offset, not training views) ===\"\nnpa workbench nurec render --artifact-path \"\
         ${USDZ}\" --output-dir /tmp/render-out --camera-id \"${CAMERA}\" --renderer default --rig-translation-offset\
-        \ \"{{config.rig_translation_offset}}\" --rig-rotation-offset \"{{config.rig_rotation_offset}}\"\
-        \ --no-replicate-training-views --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\
-        \necho \"=== zone $ZONE: visualize (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench\
-        \ nurec visualize --input-uri \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\
-        \necho \"=== zone $ZONE: finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri\
-        \ \"${ZU}\" --output-uri \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\
-        \nEND=$(date +%s)\nexport END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n\
-        \    default = default if default is not None else {}\n    try:\n        with open(path) as fh:\n\
-        \            return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
+        \ \"${RIG_TRANSLATION_OFFSET}\" --rig-rotation-offset \"${RIG_ROTATION_OFFSET}\" --no-replicate-training-views\
+        \ --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\necho \"=== zone $ZONE: visualize\
+        \ (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench nurec visualize --input-uri\
+        \ \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\necho \"=== zone $ZONE:\
+        \ finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri \"${ZU}\" --output-uri\
+        \ \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\nEND=$(date +%s)\n\
+        export END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n    default\
+        \ = default if default is not None else {}\n    try:\n        with open(path) as fh:\n       \
+        \     return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
         /tmp/nurec-reconstruct.json\")\nfinal = _load_json(\"/tmp/nurec-final.json\")\nraw_metrics = recon.get(\"\
         metrics\") or {}\nmetrics_path = os.environ.get(\"METRICS_PATH\", \"\")\n# Keep an unavailable\
         \ metric distinct from a measured value: None means no\n# value was produced, never substitute\
@@ -1631,8 +1670,11 @@ states:
       rig_rotation_offset: 120,0,0
       rig_translation_offset: 0,0,0.45
     run:
-      shell: "set -euo pipefail\nZONE=\"{{config.zone_name}}\"\nRUN_URI=\"{{config.run_prefix_uri}}\"\n\
-        DATASET_ID=\"{{config.dataset_id}}\"\nSCENE=\"{{config.scene}}\"\nVARIANT=\"{{config.variant}}\"\
+      shell: "set -euo pipefail\ndecode_b64() { printf '%s' \"$1\" | base64 --decode; }\nZONE=\"$(decode_b64\
+        \ '{{config.zone_name|base64}}')\"\nRUN_URI=\"$(decode_b64 '{{config.run_prefix_uri|base64}}')\"\
+        \nDATASET_ID=\"$(decode_b64 '{{config.dataset_id|base64}}')\"\nSCENE=\"$(decode_b64 '{{config.scene|base64}}')\"\
+        \nVARIANT=\"$(decode_b64 '{{config.variant|base64}}')\"\nRIG_TRANSLATION_OFFSET=\"$(decode_b64\
+        \ '{{config.rig_translation_offset|base64}}')\"\nRIG_ROTATION_OFFSET=\"$(decode_b64 '{{config.rig_rotation_offset|base64}}')\"\
         \nZU=\"${RUN_URI}zones/${ZONE}/\"\nNC=\"${ZU}ncore/\"\nRC=\"${ZU}reconstruction/\"\nNV=\"${ZU}novel_views/\"\
         \nINPUT=\"${ZU}input/\"\nRRD=\"${ZU}reports/sim2real.rrd\"\nFINAL=\"${ZU}reports/final.json\"\n\
         MF=\"${ZU}zone_manifest.json\"\n\n# ---- runtime setup inside the NRE container --------------------------------\n\
@@ -1695,15 +1737,15 @@ states:
         \ or '')\")\nexport USDZ METRICS_PATH\ntest -n \"${USDZ}\"\n\necho \"=== zone $ZONE: render novel\
         \ views (rig-offset, not training views) ===\"\nnpa workbench nurec render --artifact-path \"\
         ${USDZ}\" --output-dir /tmp/render-out --camera-id \"${CAMERA}\" --renderer default --rig-translation-offset\
-        \ \"{{config.rig_translation_offset}}\" --rig-rotation-offset \"{{config.rig_rotation_offset}}\"\
-        \ --no-replicate-training-views --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\
-        \necho \"=== zone $ZONE: visualize (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench\
-        \ nurec visualize --input-uri \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\
-        \necho \"=== zone $ZONE: finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri\
-        \ \"${ZU}\" --output-uri \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\
-        \nEND=$(date +%s)\nexport END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n\
-        \    default = default if default is not None else {}\n    try:\n        with open(path) as fh:\n\
-        \            return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
+        \ \"${RIG_TRANSLATION_OFFSET}\" --rig-rotation-offset \"${RIG_ROTATION_OFFSET}\" --no-replicate-training-views\
+        \ --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\necho \"=== zone $ZONE: visualize\
+        \ (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench nurec visualize --input-uri\
+        \ \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\necho \"=== zone $ZONE:\
+        \ finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri \"${ZU}\" --output-uri\
+        \ \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\nEND=$(date +%s)\n\
+        export END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n    default\
+        \ = default if default is not None else {}\n    try:\n        with open(path) as fh:\n       \
+        \     return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
         /tmp/nurec-reconstruct.json\")\nfinal = _load_json(\"/tmp/nurec-final.json\")\nraw_metrics = recon.get(\"\
         metrics\") or {}\nmetrics_path = os.environ.get(\"METRICS_PATH\", \"\")\n# Keep an unavailable\
         \ metric distinct from a measured value: None means no\n# value was produced, never substitute\
@@ -1748,8 +1790,11 @@ states:
       rig_rotation_offset: 0,0,0
       rig_translation_offset: 0,0.25,0
     run:
-      shell: "set -euo pipefail\nZONE=\"{{config.zone_name}}\"\nRUN_URI=\"{{config.run_prefix_uri}}\"\n\
-        DATASET_ID=\"{{config.dataset_id}}\"\nSCENE=\"{{config.scene}}\"\nVARIANT=\"{{config.variant}}\"\
+      shell: "set -euo pipefail\ndecode_b64() { printf '%s' \"$1\" | base64 --decode; }\nZONE=\"$(decode_b64\
+        \ '{{config.zone_name|base64}}')\"\nRUN_URI=\"$(decode_b64 '{{config.run_prefix_uri|base64}}')\"\
+        \nDATASET_ID=\"$(decode_b64 '{{config.dataset_id|base64}}')\"\nSCENE=\"$(decode_b64 '{{config.scene|base64}}')\"\
+        \nVARIANT=\"$(decode_b64 '{{config.variant|base64}}')\"\nRIG_TRANSLATION_OFFSET=\"$(decode_b64\
+        \ '{{config.rig_translation_offset|base64}}')\"\nRIG_ROTATION_OFFSET=\"$(decode_b64 '{{config.rig_rotation_offset|base64}}')\"\
         \nZU=\"${RUN_URI}zones/${ZONE}/\"\nNC=\"${ZU}ncore/\"\nRC=\"${ZU}reconstruction/\"\nNV=\"${ZU}novel_views/\"\
         \nINPUT=\"${ZU}input/\"\nRRD=\"${ZU}reports/sim2real.rrd\"\nFINAL=\"${ZU}reports/final.json\"\n\
         MF=\"${ZU}zone_manifest.json\"\n\n# ---- runtime setup inside the NRE container --------------------------------\n\
@@ -1812,15 +1857,15 @@ states:
         \ or '')\")\nexport USDZ METRICS_PATH\ntest -n \"${USDZ}\"\n\necho \"=== zone $ZONE: render novel\
         \ views (rig-offset, not training views) ===\"\nnpa workbench nurec render --artifact-path \"\
         ${USDZ}\" --output-dir /tmp/render-out --camera-id \"${CAMERA}\" --renderer default --rig-translation-offset\
-        \ \"{{config.rig_translation_offset}}\" --rig-rotation-offset \"{{config.rig_rotation_offset}}\"\
-        \ --no-replicate-training-views --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\
-        \necho \"=== zone $ZONE: visualize (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench\
-        \ nurec visualize --input-uri \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\
-        \necho \"=== zone $ZONE: finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri\
-        \ \"${ZU}\" --output-uri \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\
-        \nEND=$(date +%s)\nexport END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n\
-        \    default = default if default is not None else {}\n    try:\n        with open(path) as fh:\n\
-        \            return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
+        \ \"${RIG_TRANSLATION_OFFSET}\" --rig-rotation-offset \"${RIG_ROTATION_OFFSET}\" --no-replicate-training-views\
+        \ --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\necho \"=== zone $ZONE: visualize\
+        \ (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench nurec visualize --input-uri\
+        \ \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\necho \"=== zone $ZONE:\
+        \ finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri \"${ZU}\" --output-uri\
+        \ \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\nEND=$(date +%s)\n\
+        export END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n    default\
+        \ = default if default is not None else {}\n    try:\n        with open(path) as fh:\n       \
+        \     return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
         /tmp/nurec-reconstruct.json\")\nfinal = _load_json(\"/tmp/nurec-final.json\")\nraw_metrics = recon.get(\"\
         metrics\") or {}\nmetrics_path = os.environ.get(\"METRICS_PATH\", \"\")\n# Keep an unavailable\
         \ metric distinct from a measured value: None means no\n# value was produced, never substitute\
@@ -1865,8 +1910,11 @@ states:
       rig_rotation_offset: 120,0,0
       rig_translation_offset: 0,0,0.45
     run:
-      shell: "set -euo pipefail\nZONE=\"{{config.zone_name}}\"\nRUN_URI=\"{{config.run_prefix_uri}}\"\n\
-        DATASET_ID=\"{{config.dataset_id}}\"\nSCENE=\"{{config.scene}}\"\nVARIANT=\"{{config.variant}}\"\
+      shell: "set -euo pipefail\ndecode_b64() { printf '%s' \"$1\" | base64 --decode; }\nZONE=\"$(decode_b64\
+        \ '{{config.zone_name|base64}}')\"\nRUN_URI=\"$(decode_b64 '{{config.run_prefix_uri|base64}}')\"\
+        \nDATASET_ID=\"$(decode_b64 '{{config.dataset_id|base64}}')\"\nSCENE=\"$(decode_b64 '{{config.scene|base64}}')\"\
+        \nVARIANT=\"$(decode_b64 '{{config.variant|base64}}')\"\nRIG_TRANSLATION_OFFSET=\"$(decode_b64\
+        \ '{{config.rig_translation_offset|base64}}')\"\nRIG_ROTATION_OFFSET=\"$(decode_b64 '{{config.rig_rotation_offset|base64}}')\"\
         \nZU=\"${RUN_URI}zones/${ZONE}/\"\nNC=\"${ZU}ncore/\"\nRC=\"${ZU}reconstruction/\"\nNV=\"${ZU}novel_views/\"\
         \nINPUT=\"${ZU}input/\"\nRRD=\"${ZU}reports/sim2real.rrd\"\nFINAL=\"${ZU}reports/final.json\"\n\
         MF=\"${ZU}zone_manifest.json\"\n\n# ---- runtime setup inside the NRE container --------------------------------\n\
@@ -1929,15 +1977,15 @@ states:
         \ or '')\")\nexport USDZ METRICS_PATH\ntest -n \"${USDZ}\"\n\necho \"=== zone $ZONE: render novel\
         \ views (rig-offset, not training views) ===\"\nnpa workbench nurec render --artifact-path \"\
         ${USDZ}\" --output-dir /tmp/render-out --camera-id \"${CAMERA}\" --renderer default --rig-translation-offset\
-        \ \"{{config.rig_translation_offset}}\" --rig-rotation-offset \"{{config.rig_rotation_offset}}\"\
-        \ --no-replicate-training-views --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\
-        \necho \"=== zone $ZONE: visualize (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench\
-        \ nurec visualize --input-uri \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\
-        \necho \"=== zone $ZONE: finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri\
-        \ \"${ZU}\" --output-uri \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\
-        \nEND=$(date +%s)\nexport END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n\
-        \    default = default if default is not None else {}\n    try:\n        with open(path) as fh:\n\
-        \            return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
+        \ \"${RIG_TRANSLATION_OFFSET}\" --rig-rotation-offset \"${RIG_ROTATION_OFFSET}\" --no-replicate-training-views\
+        \ --output-uri \"${NV}\" --output json >/tmp/nurec-render.json\n\necho \"=== zone $ZONE: visualize\
+        \ (reports/sim2real.rrd for the agent panel) ===\"\nnpa workbench nurec visualize --input-uri\
+        \ \"${ZU}\" --output-uri \"${RRD}\" --output json >/tmp/nurec-viz.json\n\necho \"=== zone $ZONE:\
+        \ finalize (reports/final.json) ===\"\nnpa workbench nurec finalize --input-uri \"${ZU}\" --output-uri\
+        \ \"${FINAL}\" --run-id \"${ZONE}\" --output json >/tmp/nurec-final.json\n\nEND=$(date +%s)\n\
+        export END\n\npython3 - <<'PY'\nimport json, os\ndef _load_json(path, default=None):\n    default\
+        \ = default if default is not None else {}\n    try:\n        with open(path) as fh:\n       \
+        \     return json.load(fh)\n    except Exception:\n        return default\nrecon = _load_json(\"\
         /tmp/nurec-reconstruct.json\")\nfinal = _load_json(\"/tmp/nurec-final.json\")\nraw_metrics = recon.get(\"\
         metrics\") or {}\nmetrics_path = os.environ.get(\"METRICS_PATH\", \"\")\n# Keep an unavailable\
         \ metric distinct from a measured value: None means no\n# value was produced, never substitute\
@@ -1980,9 +2028,16 @@ states:
     - living-lab-zones
     resources: cpu
     run:
-      shell: python3 -c "from npa.workflows.living_lab import join_living_lab_zones; join_living_lab_zones(zones_uri='{{config.zones_uri}}',
-        report_uri='{{config.report_uri}}', panorama_uri='{{config.panorama_uri}}', shards='{{config.zones}}',
-        run_id='{{run.id}}')"
+      argv:
+      - python3
+      - -c
+      - import sys; from npa.workflows.living_lab import join_living_lab_zones; join_living_lab_zones(zones_uri=sys.argv[1],
+        report_uri=sys.argv[2], panorama_uri=sys.argv[3], shards=sys.argv[4], run_id=sys.argv[5])
+      - '{{config.zones_uri}}'
+      - '{{config.report_uri}}'
+      - '{{config.panorama_uri}}'
+      - '{{config.zones}}'
+      - '{{run.id}}'
     outputs:
     - uri: '{{config.report_uri}}'
       schema: npa.living_lab.digital_twin.v1

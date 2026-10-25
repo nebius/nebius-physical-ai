@@ -68,12 +68,19 @@ states:
       overrides: "agent.save_interval=1 agent.algorithm.learning_rate=1.0e-3"
       variant_uri: "s3://{{config.bucket}}/{{config.prefix}}/variants/lr-1e-3/"
     run:
-      shell: >
-        python3 -c "from npa.workflows.rl_sweep import train_variant;
-        train_variant(variant='{{config.variant}}', output_uri='{{config.variant_uri}}',
-        task='{{config.task_name}}', iterations='{{config.iterations}}',
-        num_envs='{{config.num_envs}}', overrides='{{config.overrides}}',
-        run_id='{{run.id}}')"
+      argv:
+        - python3
+        - -c
+        - >-
+          import sys; from npa.workflows.rl_sweep import train_variant;
+          train_variant(variant=sys.argv[1], output_uri=sys.argv[2], task=sys.argv[3], iterations=sys.argv[4], num_envs=sys.argv[5], overrides=sys.argv[6], run_id=sys.argv[7])
+        - "{{config.variant}}"
+        - "{{config.variant_uri}}"
+        - "{{config.task_name}}"
+        - "{{config.iterations}}"
+        - "{{config.num_envs}}"
+        - "{{config.overrides}}"
+        - "{{run.id}}"
     outputs:
       - uri: "{{config.variant_uri}}npa_rl_sweep_metrics.json"
         schema: npa.rl_sweep.variant_metrics.v1
@@ -86,12 +93,19 @@ states:
       overrides: "agent.save_interval=1 agent.algorithm.learning_rate=3.0e-4"
       variant_uri: "s3://{{config.bucket}}/{{config.prefix}}/variants/lr-3e-4/"
     run:
-      shell: >
-        python3 -c "from npa.workflows.rl_sweep import train_variant;
-        train_variant(variant='{{config.variant}}', output_uri='{{config.variant_uri}}',
-        task='{{config.task_name}}', iterations='{{config.iterations}}',
-        num_envs='{{config.num_envs}}', overrides='{{config.overrides}}',
-        run_id='{{run.id}}')"
+      argv:
+        - python3
+        - -c
+        - >-
+          import sys; from npa.workflows.rl_sweep import train_variant;
+          train_variant(variant=sys.argv[1], output_uri=sys.argv[2], task=sys.argv[3], iterations=sys.argv[4], num_envs=sys.argv[5], overrides=sys.argv[6], run_id=sys.argv[7])
+        - "{{config.variant}}"
+        - "{{config.variant_uri}}"
+        - "{{config.task_name}}"
+        - "{{config.iterations}}"
+        - "{{config.num_envs}}"
+        - "{{config.overrides}}"
+        - "{{run.id}}"
     outputs:
       - uri: "{{config.variant_uri}}npa_rl_sweep_metrics.json"
         schema: npa.rl_sweep.variant_metrics.v1
@@ -104,12 +118,19 @@ states:
       overrides: "agent.save_interval=1 agent.algorithm.entropy_coef=0.0"
       variant_uri: "s3://{{config.bucket}}/{{config.prefix}}/variants/entropy-0/"
     run:
-      shell: >
-        python3 -c "from npa.workflows.rl_sweep import train_variant;
-        train_variant(variant='{{config.variant}}', output_uri='{{config.variant_uri}}',
-        task='{{config.task_name}}', iterations='{{config.iterations}}',
-        num_envs='{{config.num_envs}}', overrides='{{config.overrides}}',
-        run_id='{{run.id}}')"
+      argv:
+        - python3
+        - -c
+        - >-
+          import sys; from npa.workflows.rl_sweep import train_variant;
+          train_variant(variant=sys.argv[1], output_uri=sys.argv[2], task=sys.argv[3], iterations=sys.argv[4], num_envs=sys.argv[5], overrides=sys.argv[6], run_id=sys.argv[7])
+        - "{{config.variant}}"
+        - "{{config.variant_uri}}"
+        - "{{config.task_name}}"
+        - "{{config.iterations}}"
+        - "{{config.num_envs}}"
+        - "{{config.overrides}}"
+        - "{{run.id}}"
     outputs:
       - uri: "{{config.variant_uri}}npa_rl_sweep_metrics.json"
         schema: npa.rl_sweep.variant_metrics.v1
@@ -122,12 +143,19 @@ states:
       overrides: "agent.save_interval=1 agent.algorithm.entropy_coef=0.01"
       variant_uri: "s3://{{config.bucket}}/{{config.prefix}}/variants/entropy-0-01/"
     run:
-      shell: >
-        python3 -c "from npa.workflows.rl_sweep import train_variant;
-        train_variant(variant='{{config.variant}}', output_uri='{{config.variant_uri}}',
-        task='{{config.task_name}}', iterations='{{config.iterations}}',
-        num_envs='{{config.num_envs}}', overrides='{{config.overrides}}',
-        run_id='{{run.id}}')"
+      argv:
+        - python3
+        - -c
+        - >-
+          import sys; from npa.workflows.rl_sweep import train_variant;
+          train_variant(variant=sys.argv[1], output_uri=sys.argv[2], task=sys.argv[3], iterations=sys.argv[4], num_envs=sys.argv[5], overrides=sys.argv[6], run_id=sys.argv[7])
+        - "{{config.variant}}"
+        - "{{config.variant_uri}}"
+        - "{{config.task_name}}"
+        - "{{config.iterations}}"
+        - "{{config.num_envs}}"
+        - "{{config.overrides}}"
+        - "{{run.id}}"
     outputs:
       - uri: "{{config.variant_uri}}npa_rl_sweep_metrics.json"
         schema: npa.rl_sweep.variant_metrics.v1
@@ -140,10 +168,16 @@ states:
     needs: [sweep]
     resources: cpu
     run:
-      shell: >
-        python3 -c "from npa.workflows.rl_sweep import select_best;
-        select_best(sweep_uri='{{config.sweep_uri}}', report_uri='{{config.report_uri}}',
-        run_id='{{run.id}}', expected_variants='{{config.expected_variants}}')"
+      argv:
+        - python3
+        - -c
+        - >-
+          import sys; from npa.workflows.rl_sweep import select_best;
+          select_best(sweep_uri=sys.argv[1], report_uri=sys.argv[2], run_id=sys.argv[3], expected_variants=sys.argv[4])
+        - "{{config.sweep_uri}}"
+        - "{{config.report_uri}}"
+        - "{{run.id}}"
+        - "{{config.expected_variants}}"
     inputs:
       - uri: "{{config.sweep_uri}}"
         schema: npa.rl_sweep.variant_metrics.v1
