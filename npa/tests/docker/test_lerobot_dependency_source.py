@@ -228,13 +228,13 @@ def test_build_dependency_closure_has_no_moving_repository_or_python_resolution(
     for name, local_wheel, wheel_hash in (
         (
             "requirements-051.lock",
-            "lerobot-0.5.1+npa.secure2-py3-none-any.whl",
-            "d9cb2060e608fb25c86b0dddb98d98570753c8eaf0a2b861f7152a549ccd5b4c",
+            "lerobot-0.5.1+npa.secure4-py3-none-any.whl",
+            "fce5dce533558d694c463e4a3c0cd5dbc8f9eb3dedbbd4ecd4719e5f3044fe7b",
         ),
         (
             "requirements-060.lock",
-            "lerobot-0.6.0+npa.secure2-py3-none-any.whl",
-            "ac87bf7b9b114defbd906163a41c67d77799686101123bb26e22d14d5807e5f9",
+            "lerobot-0.6.0+npa.secure4-py3-none-any.whl",
+            "e339d769b2501233de5d219caa52cc12adf0b543bada54903ab14c99324b5d2c",
         ),
     ):
         lock = (RECIPE / name).read_text()
@@ -257,7 +257,7 @@ def test_build_dependency_closure_has_no_moving_repository_or_python_resolution(
             "requirements-051.lock",
             (
                 "certifi==2026.10.19",
-                "setuptools==83.0.0",
+                "setuptools==84.2.1",
                 "transformers==5.10.0",
             ),
         ),
@@ -267,7 +267,7 @@ def test_build_dependency_closure_has_no_moving_repository_or_python_resolution(
                 "certifi==2026.10.19",
                 "diffusers==0.38.0",
                 "pillow==13.0.0",
-                "setuptools==83.0.0",
+                "setuptools==84.2.1",
                 "torch==2.13.0",
                 "transformers==5.10.0",
             ),
