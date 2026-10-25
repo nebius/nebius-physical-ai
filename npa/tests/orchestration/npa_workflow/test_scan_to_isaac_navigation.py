@@ -14,10 +14,16 @@ from npa.orchestration.npa_workflow.skypilot_render import (
     render_skypilot_yaml,
 )
 from npa.orchestration.npa_workflow.spec import load_spec
+from npa.orchestration.npa_workflow.submit import merge_config_overrides
 from npa.orchestration.npa_workflow.submit_matrix import SUBMIT_LIVE_MATRIX
 
 ROOT = Path(__file__).resolve().parents[4]
 SPEC = ROOT / "workflows/testing/scan-to-isaac-navigation.yaml"
+ISAAC = "registry.example.invalid/npa-isaac-lab@sha256:" + "a" * 64
+
+
+def _operator_spec(path):
+    return merge_config_overrides(load_spec(path), {"isaac_image": ISAAC})
 
 
 def test_scene_workflow_hands_exact_assembly_to_native_physics() -> None:
@@ -30,7 +36,7 @@ def test_scene_workflow_hands_exact_assembly_to_native_physics() -> None:
     Raises:
         AssertionError: Graph, inputs, or expected runtime differs.
     """
-    spec = load_spec(SPEC)
+    spec = _operator_spec(SPEC)
     plan = build_plan(spec, run_id="scene-contract")
     prepare, physics = plan.steps
     assert [step.state for step in plan.steps] == ["prepare", "physics"]
@@ -45,7 +51,7 @@ def test_scene_workflow_hands_exact_assembly_to_native_physics() -> None:
         "npa.workbench.nurec.navigation_probe",
     ]
     assert prepare.argv[prepare.argv.index("--input-path") + 1] == ""
-    assert physics.argv[physics.argv.index("--runtime-image") + 1] == "tool://isaac-lab"
+    assert physics.argv[physics.argv.index("--runtime-image") + 1] == ISAAC
     assembled = prepare.argv[prepare.argv.index("--output-path") + 1]
     assert physics.argv[physics.argv.index("--input-path") + 1] == assembled
     assert {item["uri"] for item in prepare.outputs} == {
@@ -68,7 +74,7 @@ def test_scene_render_preserves_source_and_separate_cpu_rtx_images(monkeypatch) 
         AssertionError: Image, accelerator, interpreter, or source route is wrong.
     """
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/source-fixture")
-    spec = load_spec(SPEC)
+    spec = _operator_spec(SPEC)
     rendered = render_skypilot_yaml(
         spec,
         build_plan(spec, run_id="scene-render"),
@@ -103,8 +109,9 @@ def test_scene_live_case_requires_operator_inputs_and_readiness_matches_bytes() 
         AssertionError: Registration or readiness incorrectly claims qualification.
     """
     case = next(case for case in SUBMIT_LIVE_MATRIX if case.spec == SPEC.name)
-    assert case.tier == "gpu" and case.runtime and not case.plan_only
+    assert case.tier == "gpu" and case.runtime and case.plan_only
     assert case.rotation_skip and "operator" in case.skip_reason
+    assert "qualified immutable" in case.plan_only_justification
     assert case.max_wait_seconds == 0
     readiness = json.loads(SPEC.with_suffix(".readiness.json").read_text())
     assert readiness["workflow_sha256"] == hashlib.sha256(SPEC.read_bytes()).hexdigest()
@@ -122,7 +129,7 @@ def test_metric_capture_workflow_uses_real_reconstruction_and_surface_handoff():
         AssertionError: Source-to-surface handoffs or live registration differ.
     """
     path = SPEC.with_name("rgbd-scan-to-isaac.yaml")
-    spec = load_spec(path)
+    spec = _operator_spec(path)
     reconstruct, prepare, physics = build_plan(spec, run_id="metric-capture").steps
     assert reconstruct.argv[:3] == [
         "/opt/npa/venv/bin/python",
@@ -144,7 +151,8 @@ def test_metric_capture_workflow_uses_real_reconstruction_and_surface_handoff():
         f"{reconstruct.argv[-1]}/surface.npz",
     }
     case = next(case for case in SUBMIT_LIVE_MATRIX if case.spec == path.name)
-    assert case.runtime and case.tier == "gpu" and not case.plan_only
+    assert case.runtime and case.tier == "gpu" and case.plan_only
+    assert "qualified immutable" in case.plan_only_justification
     assert case.max_wait_seconds == 0
     readiness = json.loads(path.with_suffix(".readiness.json").read_text())
     assert readiness["workflow_sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
@@ -161,7 +169,7 @@ def test_metric_capture_render_retains_cpu_dependency_interpreters(monkeypatch):
         AssertionError: Image routing or interpreter selection changes.
     """
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/source-fixture")
-    spec = load_spec(SPEC.with_name("rgbd-scan-to-isaac.yaml"))
+    spec = _operator_spec(SPEC.with_name("rgbd-scan-to-isaac.yaml"))
     rendered = render_skypilot_yaml(
         spec,
         build_plan(spec, run_id="metric"),

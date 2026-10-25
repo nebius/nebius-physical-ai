@@ -29,6 +29,14 @@ this gate and the robomimic payload scan on the exact pushed digest. Required
 security, license, SBOM, provenance and anonymous-pull gates still apply.
 Release promotion remains quarantined until real GPU validation passes.
 
+The source runtime lock `robomimic-cu128-py311-v2` updates urllib3 to 2.8.0 and
+fsspec to 2026.7.0, and reconciles Safetensors with Diffusers' declared minimum.
+Its JSON package map and installer are included in dependency
+scanning. The legacy Torch/CUDA closure still needs security remediation and
+compatible functional qualification. This source lock does not update an
+existing image or customer runtime: a new inventory and matching entitlement
+must bind its exact bytes before use.
+
 The CUDA-capable training runtime is a separate boundary. Before an
 operator-supplied, pre-populated, read-only runtime volume is accessed, the
 customer must explicitly accept the exact official CUDA/cuDNN terms for its

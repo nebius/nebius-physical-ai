@@ -39,8 +39,8 @@ class _AgentResponse:
     def __exit__(self, *_args):  # noqa: ANN204
         return False
 
-    def read(self) -> bytes:
-        return self._body
+    def read(self, size: int = -1) -> bytes:
+        return self._body if size < 0 else self._body[:size]
 
 
 def _evaluation(*, real: bool = True) -> dict:
@@ -1280,8 +1280,18 @@ def test_denoising_knob_is_not_exposed_when_upstream_ignores_it() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "download_url",
+    [
+        None,
+        "https://attacker.invalid/file",
+        "//attacker.invalid/file",
+        "http://agent.invalid/file",
+    ],
+)
 def test_agent_ui_handoff_paginates_exact_source_and_posts_strict_v3(
     monkeypatch: pytest.MonkeyPatch,
+    download_url: str | None,
 ) -> None:
     run_id = "groot-run"
     run_ref = "npa1_groot_run"
@@ -1365,7 +1375,7 @@ def test_agent_ui_handoff_paginates_exact_source_and_posts_strict_v3(
                         "rerun_ready": rerun,
                         "lichtblick_ready": not rerun,
                         "artifact_download_url": (
-                            "/api/artifacts/file/learning.rrd"
+                            download_url or "/api/artifacts/file/learning.rrd"
                             if rerun
                             else "/api/artifacts/file/learning.mcap"
                         ),
@@ -1375,12 +1385,35 @@ def test_agent_ui_handoff_paginates_exact_source_and_posts_strict_v3(
         raise AssertionError(f"unexpected synthetic path: {parsed.path}")
 
     monkeypatch.setenv("NPA_AGENT_BASIC_AUTH", "user:password")
-    monkeypatch.setattr(learning.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(
+        learning, "_agent_http_opener", lambda _origin: SimpleNamespace(open=urlopen)
+    )
     monkeypatch.setattr(
         learning,
         "_put_json",
         lambda _client, uri, payload: written.append((uri, payload)),
     )
+
+    if download_url:
+        with pytest.raises(
+            learning.GrootVisualizationError, match="byte-range endpoint"
+        ):
+            learning.verify_agent_ui_handoff(
+                "https://agent.invalid",
+                report_uri,
+                rrd_uri,
+                mcap_uri,
+                "s3://bucket/output.json",
+                run_id,
+                s3_client=object(),
+            )
+        assert all(
+            urllib.parse.urlsplit(r.full_url).netloc == "agent.invalid"
+            for r in requests
+        )
+        assert not any(r.get_header("Range") for r in requests)
+        assert not written
+        return
 
     result = learning.verify_agent_ui_handoff(
         "https://agent.invalid",
@@ -1425,7 +1458,9 @@ def test_agent_ui_handoff_preserves_ambiguous_run_failure(
         )
 
     monkeypatch.setenv("NPA_AGENT_BASIC_AUTH", "user:password")
-    monkeypatch.setattr(learning.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(
+        learning, "_agent_http_opener", lambda _origin: SimpleNamespace(open=urlopen)
+    )
     monkeypatch.setattr(
         learning,
         "_put_json",

@@ -13,7 +13,7 @@ IMAGE = ROOT / "docker/workbench/cosmos3-serving"
 @pytest.fixture
 def backport():
     spec = importlib.util.spec_from_file_location(
-        "manifest_backport", IMAGE / "backport_setuptools_manifest.py"
+        "manifest_backport", IMAGE.parent / "common/backport_setuptools_manifest.py"
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -23,9 +23,12 @@ def backport():
 @pytest.mark.parametrize(
     "path", ["setuptools/command/egg_info.py", "setuptools/unicode_utils.py"]
 )
-def test_unreviewed_installed_source_is_rejected(backport, path):
+@pytest.mark.parametrize("version", ["80.10.2", "81.0.0"])
+def test_unreviewed_installed_source_is_rejected(backport, path, version):
     with pytest.raises(RuntimeError, match="differs from the reviewed"):
-        backport.patched_source(path, b"unexpected package replacement\n")
+        backport.patched_source(
+            path, b"unexpected package replacement\n", version=version
+        )
 
 
 def test_backport_does_not_relax_the_dependency_constraint(backport, monkeypatch):
@@ -51,6 +54,6 @@ def test_fresh_and_reused_runtime_apply_backport_before_execution():
     assert install.index(call) < install.index('"${VENV}/bin/python" -m pip check')
     assert install.index(call) < install.index('touch "${MARKER}"')
     assert (
-        "COPY --chmod=0644 docker/workbench/cosmos3-serving/backport_setuptools_manifest.py"
+        "COPY --chmod=0644 docker/workbench/common/backport_setuptools_manifest.py"
         in (IMAGE / "Dockerfile").read_text()
     )

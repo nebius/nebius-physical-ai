@@ -34,7 +34,9 @@ from typer.testing import CliRunner
 
 from npa.cli.main import app
 from npa.orchestration.npa_workflow.submit_matrix import (
+    execution_config_vars,
     one_shot_submit_cases,
+    plan_only_config_vars,
     runtime_submit_cases,
 )
 from npa.orchestration.npa_workflow.skypilot_render import (
@@ -231,25 +233,6 @@ def _image_args(case: SubmitLiveCase, registry: str) -> list[str]:
     return []
 
 
-def _plan_only_config_vars(
-    case: SubmitLiveCase, registry: str
-) -> tuple[tuple[str, str], ...]:
-    """Supply non-live immutable pins for render-only cases with operator images."""
-
-    if case.spec != "sim2real.yaml":
-        return case.config_vars
-    digest = "sha256:" + "0" * 64
-    roles = ("controller", "transfer", "envgen", "isaac", "viewer")
-    return (
-        *(
-            (f"{role}_image", f"{registry}/plan-only/sim2real-{role}@{digest}")
-            for role in roles
-        ),
-        ("source_sha", "0" * 40),
-        ("isaac_cache_pvc", "plan-only-isaac-cache"),
-    )
-
-
 @pytest.mark.parametrize(
     "case",
     one_shot_submit_cases(),
@@ -286,7 +269,7 @@ def test_npa_workflow_submit_live_reaches_terminal(
         project=e2e_project,
         assume_decision=assume,
         preset=case.preset,
-        config_vars=_plan_only_config_vars(case, e2e_registry),
+        config_vars=plan_only_config_vars(case, e2e_registry),
         image_args=_image_args(case, e2e_registry),
         skypilot_config_args=_skypilot_config_args(),
     )
@@ -309,7 +292,7 @@ def test_npa_workflow_submit_live_reaches_terminal(
         project=e2e_project,
         assume_decision=assume,
         preset=case.preset,
-        config_vars=_plan_only_config_vars(case, e2e_registry),
+        config_vars=execution_config_vars(case),
         image_args=_image_args(case, e2e_registry),
         secret_env_args=_secret_env_args(case),
         skypilot_config_args=_skypilot_config_args(),
@@ -384,7 +367,6 @@ def test_npa_workflow_submit_live_reaches_terminal(
             and last_status not in TERMINAL_OK
             and not _is_terminal_fail(last_status)
         ):
-            # Best-effort cancel via sky jobs cancel through workflow helper.
             try:
                 from npa.orchestration.skypilot._bin import resolve_config
                 from npa.orchestration.skypilot.workflow_state import (
@@ -392,14 +374,27 @@ def test_npa_workflow_submit_live_reaches_terminal(
                 )
 
                 runtime = resolve_config()
-                cancel_workflow_job(
+                cancellation = cancel_workflow_job(
                     sky_bin=str(runtime.sky_bin),
                     job_id=str(job_id),
                     run_id=run_id,
                     cluster=run_id,
                 )
+                if (
+                    cancellation.get("cancel_returncode") != 0
+                    or cancellation.get("terminal_confirmed") is not True
+                    or cancellation.get("down_attempted") is not True
+                    or cancellation.get("down_returncode") != 0
+                ):
+                    pytest.fail(
+                        "timed-out workflow cancellation did not converge before "
+                        "cluster teardown; inspect private runtime evidence"
+                    )
             except Exception:
-                pass
+                pytest.fail(
+                    "timed-out workflow cancellation failed; retained job state "
+                    "must be inspected before deleting compute"
+                )
 
 
 # Provisioning failures that say "this cluster/image cannot host the task", as
@@ -579,13 +574,31 @@ def test_npa_workflow_runtime_live_reaches_terminal(
         assert_parallel_run(waves, case.expected_parallel_tasks)
 
 
+def _published_variant_base(bucket, prefix, variant):
+    """Follow the manifest's publication while retaining its run and clip boundary."""
+    from urllib.parse import unquote, urlsplit
+
+    clip = variant["clip"]
+    assert clip and clip not in {".", ".."} and "/" not in clip and "\\" not in clip
+    selected = urlsplit(variant["augmented_video_uri"])
+    assert selected.scheme == "s3" and selected.netloc == bucket
+    assert not selected.query and not selected.fragment
+    key = selected.path.lstrip("/")
+    assert key.startswith(prefix + f"cosmos_augmented/{clip}/"), (
+        "Published variant must remain in its selected run and clip"
+    )
+    assert key.endswith("/augmented_video.mp4")
+    assert all(part not in {"", ".", ".."} for part in unquote(key).split("/"))
+    return key[len(prefix) :].rsplit("/", 1)[0] + "/"
+
+
 def _assert_transfer_variant(
     client, bucket, prefix, variant, evaluated, source, folder, read_json
 ):
     from npa.workflows.paidf_cosmos3_media import verify_pair, video_sha256
 
     clip = variant["clip"]
-    base = f"cosmos_augmented/{clip}/"
+    base = _published_variant_base(bucket, prefix, variant)
     generated = folder / f"{clip}.mp4"
     client.download_file(bucket, prefix + base + "augmented_video.mp4", str(generated))
     alignment = verify_pair(source, generated, variant["temporal_alignment"]["fps"])
@@ -790,12 +803,28 @@ def _assert_recorded_curation(text, raw, relative):
 
 
 def _assert_transfer_recording(client, bucket, prefix, folder, variants, read_json):
+    import subprocess
+    import sys
+
     from npa.viz.recordings import load_recording
+    from npa.workflows.data_factory_viz import APPLICATION_ID
 
     path = folder / "final.rrd"
     client.download_file(bucket, prefix + "reports/sim2real.rrd", str(path))
+    subprocess.run(
+        [sys.executable, "-m", "rerun", "rrd", "verify", str(path)],
+        check=True,
+        capture_output=True,
+    )
+    recording = load_recording(path)
+    # The CLI also accepts legacy streams; a fresh publication needs its footer.
+    recording.reader.store(store=recording.entry)
+    assert recording.application_id() == APPLICATION_ID, "Wrong PAIDF application"
+    assert recording.recording_id() == prefix.rstrip("/").rsplit("/", 1)[-1], (
+        "Recording belongs to a different run"
+    )
     entities = {}
-    for chunk in load_recording(path).chunks():
+    for chunk in recording.chunks():
         entities.setdefault(str(chunk.entity_path), []).append(chunk.to_record_batch())
 
     def document(entity):
@@ -949,16 +978,16 @@ def _assert_paidf_live_artifacts(
         assert augment.get("model")
         assert isinstance(augment.get("variants"), list)
         for variant in augment["variants"]:
-            relative = str(variant["clip"])
+            base = _published_variant_base(bucket, prefix, variant)
             for leaf in ("augmented_video.mp4", "metadata.json"):
                 head = client.head_object(
                     Bucket=bucket,
-                    Key=prefix + f"cosmos_augmented/{relative}/{leaf}",
+                    Key=prefix + base + leaf,
                 )
                 assert int(head.get("ContentLength") or 0) > 0
             frames = client.list_objects_v2(
                 Bucket=bucket,
-                Prefix=prefix + f"cosmos_augmented/{relative}/frame-",
+                Prefix=prefix + base + "frame-",
             ).get("Contents", [])
             assert any(int(item.get("Size") or 0) > 0 for item in frames)
     evaluator = read_json("grade/cosmos_evaluator.json")
@@ -1422,7 +1451,7 @@ def test_npa_workflow_submit_plan_only_matrix_no_leak(
         project=e2e_project,
         assume_decision=assume,
         preset=case.preset,
-        config_vars=_plan_only_config_vars(case, e2e_registry),
+        config_vars=plan_only_config_vars(case, e2e_registry),
     )
     result = RUNNER.invoke(app, args)
     payload = parse_json_payload(result, forbidden_markers)

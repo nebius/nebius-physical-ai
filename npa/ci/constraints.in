@@ -1,8 +1,12 @@
 # Keep the checkpoint runtime identical to the required security gate.
 torch==2.14.0
-# ONNX Runtime 1.24 has no Linux CPython 3.10 wheel despite its package metadata.
-onnxruntime<1.24; python_version < '3.11'
 # Reject the OAuthLib releases affected by CVE-2026-49264 and CVE-2026-49265.
 oauthlib>=4.0.0
 # Keep Flask's Windows safe_join dependency above CVE-2026-102598.
 werkzeug>=3.1.9
+# Exclude aiohttp resource-exhaustion releases through 3.14.3 in CI.
+aiohttp>=3.14.4
+# Require the patched trust bundle, Git submodule handling, and trace attributes.
+certifi>=2026.10.19
+gitpython>=3.2.1
+opentelemetry-api>=1.45.1

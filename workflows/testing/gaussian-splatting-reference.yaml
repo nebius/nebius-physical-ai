@@ -1,0 +1,101 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: gaussian-splatting-reference
+  executionMode: runtime
+  description: >
+    Reference COLMAP camera registration and pinned gsplat training on calibrated
+    perspective images. Requires an operator-provided CUDA runtime image;
+    execution and reconstruction quality remain unqualified.
+config:
+  bucket: example-bucket
+  prefix: gaussian-splatting/{{run.id}}
+  source_overlay: false
+  training_image: registry.example.invalid/splat-runtime@sha256:0000000000000000000000000000000000000000000000000000000000000000
+  accelerator: RTXPRO6000:1
+  input_uri: s3://{{config.bucket}}/splat-input/
+  dataset_uri: s3://{{config.bucket}}/{{config.prefix}}/colmap/
+  result_uri: s3://{{config.bucket}}/{{config.prefix}}/results/
+  intrinsics: exported-pinhole-fx-fy-cx-cy-required
+  test_every: 8
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: '{{config.accelerator}}'
+    cpus: 16
+    memory: 96Gi
+    image: '{{config.training_image}}'
+initial: recover-poses
+states:
+  recover-poses:
+    description: Register one calibrated perspective camera and export a single COLMAP component.
+    resources: gpu
+    run:
+      shell: |
+        set -euo pipefail
+        umask 077
+        image=$(printf '%s' '{{config.training_image|base64}}' | base64 --decode)
+        intrinsics=$(printf '%s' '{{config.intrinsics|base64}}' | base64 --decode)
+        input_uri=$(printf '%s' '{{config.input_uri|base64}}' | base64 --decode)
+        dataset_uri=$(printf '%s' '{{config.dataset_uri|base64}}' | base64 --decode)
+        case "$image" in *registry.example.invalid*|*@sha256:000000*) echo 'Provide an immutable compatible training image' >&2; exit 2 ;; esac
+        if [[ ! "$image" =~ @sha256:[0-9a-f]{64}$ ]]; then echo 'Training image must be digest-pinned' >&2; exit 2; fi
+        /opt/splat-venv/bin/python -c "import math,sys; values=[float(value) for value in sys.argv[1].split(',')]; assert len(values)==4 and all(math.isfinite(value) for value in values) and values[0]>0 and values[1]>0, 'Provide finite calibrated PINHOLE fx,fy,cx,cy with positive focal lengths'" "$intrinsics"
+        for uri in "$input_uri" "$dataset_uri"; do [[ "$uri" == s3://*/ ]] || { echo 'Private input and dataset prefixes must be S3 URIs ending in /' >&2; exit 2; }; done
+        command -v colmap >/dev/null
+        command -v aws >/dev/null
+        scratch=$(mktemp -d)
+        trap 'rm -rf -- "$scratch"' EXIT
+        mkdir -p "$scratch/images" "$scratch/sparse"
+        aws s3 sync "${input_uri%/}/images/" "$scratch/images/" --only-show-errors
+        colmap feature_extractor --database_path "$scratch/database.db" --image_path "$scratch/images" --ImageReader.camera_model PINHOLE --ImageReader.single_camera 1 --ImageReader.camera_params "$intrinsics"
+        colmap exhaustive_matcher --database_path "$scratch/database.db"
+        colmap mapper --database_path "$scratch/database.db" --image_path "$scratch/images" --output_path "$scratch/sparse"
+        shopt -s nullglob
+        components=("$scratch"/sparse/*/)
+        if [[ ${#components[@]} != 1 ]]; then echo 'Review missing or disconnected COLMAP components before training' >&2; exit 3; fi
+        colmap image_undistorter --image_path "$scratch/images" --input_path "${components[0]}" --output_path "$scratch/dataset" --output_type COLMAP
+        for name in cameras images points3D; do test -s "$scratch/dataset/sparse/$name.bin"; done
+        aws s3 sync "$scratch/dataset/" "$dataset_uri" --only-show-errors
+    inputs:
+      - uri: '{{config.input_uri}}images/'
+    outputs:
+      - uri: '{{config.dataset_uri}}sparse/cameras.bin'
+      - uri: '{{config.dataset_uri}}sparse/images.bin'
+      - uri: '{{config.dataset_uri}}sparse/points3D.bin'
+    next: fit-splats
+  fit-splats:
+    description: Fit the exact upstream gsplat example and retain its native PLY, checkpoints and evaluation artifacts.
+    resources: gpu
+    run:
+      shell: |
+        set -euo pipefail
+        umask 077
+        dataset_uri=$(printf '%s' '{{config.dataset_uri|base64}}' | base64 --decode)
+        result_uri=$(printf '%s' '{{config.result_uri|base64}}' | base64 --decode)
+        test_every=$(printf '%s' '{{config.test_every|base64}}' | base64 --decode)
+        if [[ ! "$test_every" =~ ^[0-9]+$ ]] || (( 10#$test_every < 2 )); then echo 'Evaluation stride must be at least two' >&2; exit 2; fi
+        test "$(git -C /opt/gsplat rev-parse HEAD)" = 937e29912570c372bed6747a5c9bf85fed877bae
+        git -C /opt/gsplat diff --quiet HEAD --
+        /opt/splat-venv/bin/python -c "import torch; from importlib.metadata import version; assert version('gsplat') == '1.5.3', 'The pinned gsplat library is required'; assert torch.cuda.is_available(), 'CUDA is required'"
+        for uri in "$dataset_uri" "$result_uri"; do [[ "$uri" == s3://*/ ]] || { echo 'Private dataset and result prefixes must be S3 URIs ending in /' >&2; exit 2; }; done
+        scratch=$(mktemp -d)
+        trap 'rm -rf -- "$scratch"' EXIT
+        mkdir -p "$scratch/dataset"
+        aws s3 sync "$dataset_uri" "$scratch/dataset/" --only-show-errors
+        /opt/splat-venv/bin/python /opt/gsplat/examples/simple_trainer.py default --data-dir "$scratch/dataset" --data-factor 1 --result-dir "$scratch/results" --test-every "$test_every" --disable-viewer --save-ply
+        shopt -s nullglob
+        splats=("$scratch"/results/ply/*.ply)
+        checkpoints=("$scratch"/results/ckpts/*.pt)
+        if (( ${#splats[@]} == 0 || ${#checkpoints[@]} == 0 )); then echo 'Native Gaussian exports or checkpoints are missing' >&2; exit 3; fi
+        for artifact in "${splats[@]}" "${checkpoints[@]}"; do test -s "$artifact"; done
+        tar -czf "$scratch/native-results.tar.gz" -C "$scratch/results" .
+        aws s3 cp "$scratch/native-results.tar.gz" "${result_uri%/}/native-results.tar.gz" --only-show-errors
+    inputs:
+      - uri: '{{config.dataset_uri}}sparse/cameras.bin'
+      - uri: '{{config.dataset_uri}}sparse/images.bin'
+      - uri: '{{config.dataset_uri}}sparse/points3D.bin'
+    outputs:
+      - uri: '{{config.result_uri}}native-results.tar.gz'
+        schema: application/gzip
+    terminal: true

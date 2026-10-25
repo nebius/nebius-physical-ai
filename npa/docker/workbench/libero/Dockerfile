@@ -95,8 +95,8 @@ COPY docker/workbench/libero/entrypoint.sh /usr/local/bin/npa-libero-entrypoint
 COPY docker/workbench/libero/smoke.sh /opt/npa/libero/smoke.sh
 
 RUN set -eux; \
-    echo '73cc3db0419d8431deab96461c33df4237074269a11956f367e272033356c6aa  /opt/npa/libero/runtime-manifest.json' | sha256sum -c -; \
-    echo 'e268334cb849d3ce8912b47361a04adada88b53fcdc72d9dac36727a473a6266  /opt/npa/libero/runtime-requirements.txt' | sha256sum -c -; \
+    echo '98dd8b82f1e8fc259c627a5b94c6d5f5347452092ed6a53e8dae72d89c97ab57  /opt/npa/libero/runtime-manifest.json' | sha256sum -c -; \
+    echo '233d6802c8317a5be1c15bb4ae89daf71d51e9335f912f1685dff5fef79f98bc  /opt/npa/libero/runtime-requirements.txt' | sha256sum -c -; \
     chmod 0755 /opt/npa/libero/runtime-bootstrap.py /opt/npa/libero/smoke.sh /usr/local/sbin/npa-skypilot-bootstrap-guard /usr/local/bin/npa-libero-entrypoint; \
     ln -s npa-skypilot-bootstrap-guard /usr/local/sbin/apt-get; \
     ln -s /usr/local/sbin/npa-skypilot-bootstrap-guard /usr/local/bin/timeout; \

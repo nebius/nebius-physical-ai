@@ -6,30 +6,49 @@ authenticated HTTP service, and declarative workflows.
 
 Use a Nebius GPU workflow for training. The image recipe is
 `npa/docker/workbench/mjlab/Dockerfile`; its pinned dependency closure includes
-PyTorch 2.13.0's CUDA 13.0 wheels. **The MJLab image is not a published release.** Build
-an operator image and supply its complete reference in the workflow GPU resource
-profile (`image_id: docker:<your-image>`). The current private CUDA 13.0 image
-has executed G1 training, checkpoint resume and rendered evaluation on RTX PRO
-6000. Earlier B200 and RTX acceptance uses a separate CUDA 12.8 image; its results
-remain bound to those bytes. Public promotion remains quarantined until the
-exact-image security, licensing and bootstrap gates pass.
+PyTorch 2.13.0's CUDA 13.0 wheels. A **public development candidate** is available
+with [digest-bound image, native HD and RTX GPU evidence](validation/mjlab-native-hd-gpu-20261010.json).
+The supplied workflows already pin its exact digest and select RTX PRO 6000.
+The NPA workflow resource profile uses `image`:
+
+```yaml
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+    image: ghcr.io/nebius/nebius-physical-ai/npa-mjlab@sha256:ec8c099dc8ab34c8a390c6076d3cc3c07a88e27818d0eb0b6b6cf819663f242e
+```
+
+This image passed trusted publication gates and one-GPU RTX PRO 6000 native
+Cartpole/G1/Go1/YAM train/eval/ONNX checks, authenticated service resume and
+isolation checks, fresh unmodified SkyPilot VM startup, and native NVIDIA G1
+rendering at 1920 × 1080 and 50 fps. The four task checks used two training
+updates each. Separately, the image evaluated a verified 3,000-update G1 policy
+across 64 complete episodes and exported checked ONNX. The standalone HTML
+passed full-frame decoding, offline playback, seeking and mobile layout checks.
+Its record preserves the original training image separately from this evaluation.
+Supported-release promotion remains quarantined; current B200 and multi-GPU
+qualification remain unverified. The examples use the qualified RTX digest
+explicitly, so they do not depend on broad release promotion.
 
 ```bash
 npa workbench workflow validate-spec workflows/testing/mjlab-train-eval.yaml
 npa workbench workflow plan-spec workflows/testing/mjlab-train-eval.yaml
 ```
 
-Customize the workflow's bucket, task and training settings, and override the
-GPU image before submission. Its four stages train a native policy, evaluate
-complete episodes, export ONNX, and evaluate the same checkpoint with seed 43.
+Customize the workflow's bucket, task and training settings before submission.
+Its four stages train a native policy, render complete measured episodes into
+MP4 and standalone HTML, export ONNX, and evaluate the same checkpoint with seed 43.
 Every stage exchanges actual artifacts through S3. The evaluation-only template
 is `workflows/testing/mjlab-eval.yaml` and requires an existing native checkpoint.
-Neither template is advertised as a completed GPU qualification run.
+The native components were exercised through SkyPilot; these complete reference
+workflow specs have been validated and rendered, rather than submitted as a graph.
+Their adjacent readiness records identify the storage and checkpoint inputs to configure.
 
 ## Capabilities
 
 Inside the GPU image, or after `pip install -e 'npa[mjlab]'` on a compatible
-Python 3.10–3.13 environment:
+Python 3.11–3.13 environment:
 
 ```bash
 npa workbench mjlab list
@@ -54,7 +73,7 @@ training is not exposed. Set the workflow resource GPU count accordingly.
 G1 tracking and YAM manipulation tasks. It fails if MJLab is missing; `status`
 and `system-info` can report missing dependencies without importing the simulator.
 Camera tasks require a compatible rendering runtime. Headless state-based
-workflows default to H100; use a graphics-capable GPU for `eval --video`.
+workflows select the qualified RTX PRO 6000 image, including `eval --video`.
 
 Tracking tasks require `--input-path s3://.../motion.npz` in **MJLab's native
 motion format**. Raw SONIC retargeting pickles and arbitrary checkpoint JSON are
@@ -111,12 +130,25 @@ npa workbench mjlab eval --task Mjlab-Velocity-Flat-Unitree-G1 \
 This uses the same implementation as `EvalRequest(video=True)` in the SDK and
 `POST /eval` with `"video": true` in the authenticated service. Native MuJoCo
 renders the evaluated policy's first complete episode, and Workbench verifies
-that the MP4 decodes before publishing it. The result manifest lists both
+the encoded resolution, frame rate and frame count against that episode.
+Video defaults to **1920 × 1080**, recorded at the simulator's native step rate
+(50 fps for G1), with H.264 CRF 18 encoding and browser-compatible YUV 4:2:0.
+`--video-width` and `--video-height` select other even pixel dimensions; the SDK
+and API use `video_width` and `video_height`. Workbench renders those pixels
+directly rather than enlarging a smaller capture. The HTML page preserves the
+aspect ratio, starts muted with playback controls, and embeds the unchanged MP4.
+It displays the measured dimensions, timing and active OpenGL renderer alongside
+the CUDA simulation GPU. Verify NVIDIA rendering in `rendering.vendor`; CUDA
+simulation alone does not establish which OpenGL implementation rendered frames.
+
+Workbench also verifies that the MP4 decodes before publishing it. The result manifest lists both
 `artifacts["rollout.mp4"]` and `artifacts["rollout.html"]` with S3 URI, SHA-256
 and byte count.
 
 `rollout.html` embeds the unchanged MP4 bytes, measured evaluation results and
-the input checkpoint hash. Download and open it directly, or create an
+the input checkpoint hash. It also records the evaluated device, measured GPU
+model and compute capability, Torch/CUDA versions, and baked source revision.
+Download and open it directly, or create an
 authenticated S3 GET URL with response content type `text/html` and content
 disposition `inline`. The page needs no separate viewer server, JavaScript,
 external media request or bucket CORS change. Keep signed links out of Git and
@@ -125,7 +157,7 @@ PR text; share them only with the intended reviewer and state their expiry.
 For an NPA workflow, declare `rollout.mp4` and `rollout.html` as stage outputs.
 The supplied `workflows/testing/mjlab-render.yaml` does this with the
 `workbench.mjlab.render` toolRef and an RTX PRO 6000 resource profile. Supply your
-trained checkpoint and explicit operator image before submission.
+trained checkpoint and configured storage before submission; its image is already pinned.
 The Workbench artifact browser classifies the MP4 as video and provides normal
 playback; HTML remains a downloadable report. This does not require an MJLab
 specific UI route or executing arbitrary HTML inside the agent application.
@@ -189,7 +221,7 @@ update: 2,000 initial PPO updates followed by 1,000 resumed updates, totaling
 golden smoke harness.
 
 The initial checkpoint used the historical CUDA 12.8 image. Resume, both
-evaluations, rendering and ONNX export used the current CUDA 13.0 image built
+evaluations, rendering and ONNX export used the recorded CUDA 13.0 image built
 from `0202f396fb23f7d066fd452b469578e67151d382`, with Torch 2.13.0. The record
 preserves both image identities and the checkpoint hash chain.
 

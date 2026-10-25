@@ -71,6 +71,16 @@ def _encoded(path, wrong=False):
     return buffer.getvalue()
 
 
+def _set_image_time(recording, entity, frame, defect):
+    recording.reset_time()
+    timeline = "nurec_image:" + entity.lstrip("/")
+    if defect == "shared_frame":
+        timeline = "frame"
+    recording.set_time(timeline, sequence=frame)
+    if defect == "foreign_timeline":
+        recording.set_time("nurec_image:unrelated/camera", sequence=123)
+
+
 def _log_images(recording, sources, cap, pattern, defect):
     rr = pytest.importorskip("rerun")
     groups = defaultdict(list)
@@ -91,7 +101,7 @@ def _log_images(recording, sources, cap, pattern, defect):
         )
         for ordinal, frame in enumerate(chosen):
             reset = defect == "reset_ids" and entity.startswith("/reconstruction/")
-            recording.set_time("frame", sequence=ordinal if reset else frame)
+            _set_image_time(recording, target, ordinal if reset else frame, defect)
             contents = _encoded(
                 sources[entity, frame],
                 defect == "wrong_reconstruction_image"
@@ -114,11 +124,17 @@ def _recording(root, sources, cap, *, pattern="early", defect=""):
     recording = rr.RecordingStream("neural-reconstruction", recording_id="rrd-contract")
     recording.save(str(path))
     settings = {
-        "schema": "npa.nurec.rrd-review.v1",
+        "schema": "npa.nurec.rrd-review.v2",
+        "timeline_policy": "independent-entity-filename-indices",
         "max_frames_per_entity": cap,
         "max_frame_dim": 0,
         "jpeg_quality": 75,
     }
+    if defect in {"legacy_schema", "unknown_schema"}:
+        version = "1" if defect == "legacy_schema" else "999"
+        settings["schema"] = "npa.nurec.rrd-review.v" + version
+    if defect == "wrong_timeline_policy":
+        settings["timeline_policy"] = "shared-capture-time"
     metrics = yaml.safe_load((root / "reconstruction/metrics.yaml").read_text())
     for entity, document in (
         ("provenance/rrd_review", settings),
@@ -180,6 +196,24 @@ def test_live_rejects_ambiguous_source_identity(helpers, tmp_path):
     original = next(iter(sources.values()))
     original.with_name("alternate-" + original.name).write_bytes(original.read_bytes())
     with pytest.raises(AssertionError, match="duplicate source"):
+        _assert_recording(helpers, tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("defect", "message"),
+    [
+        ("legacy_schema", "unsupported RRD review settings schema"),
+        ("unknown_schema", "unsupported RRD review settings schema"),
+        ("wrong_timeline_policy", "unsupported RRD timeline policy"),
+        ("shared_frame", "no frame timeline"),
+        ("foreign_timeline", "mixes incompatible timelines"),
+    ],
+)
+def test_live_rejects_unsupported_review_contract(helpers, tmp_path, defect, message):
+    """Reject schema and timeline drift independently of the production writer."""
+    sources = _source_images(tmp_path)
+    _recording(tmp_path, sources, 3, defect=defect)
+    with pytest.raises(AssertionError, match=message):
         _assert_recording(helpers, tmp_path)
 
 

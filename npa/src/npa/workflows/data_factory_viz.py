@@ -20,7 +20,9 @@ import logging
 import math
 import os
 import re
+import sqlite3
 import tempfile
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
@@ -97,6 +99,17 @@ def _int_env(name: str, default: int) -> int:
 RRD_MAX_FRAME_DIM = _int_env("NPA_RRD_MAX_DIM", 512)
 RRD_JPEG_QUALITY = _int_env("NPA_RRD_JPEG_QUALITY", 75)
 RRD_MAX_FRAMES_PER_ENTITY = _int_env("NPA_RRD_MAX_FRAMES", 24)
+RRD_VERIFY_MAX_FILE_BYTES = 2**31
+RRD_VERIFY_MAX_CHUNKS = 50_000
+RRD_VERIFY_MAX_ROWS = 1_000_000
+RRD_VERIFY_MAX_CHUNK_BYTES = 128 * 1024 * 1024
+RRD_VERIFY_MAX_DECODED_BYTES = 2**31
+RRD_VERIFY_MAX_MEDIA_BYTES = 2**30
+RRD_VERIFY_MAX_ENTITIES = 100_000
+_BLUEPRINT_UUID = re.compile(
+    r"(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-"
+    r"[89ab][0-9a-f]{3}-[0-9a-f]{12}\b"
+)
 
 
 class DataFactoryVizError(RuntimeError):
@@ -176,6 +189,16 @@ def _set_frame(rr: Any, rec: Any, idx: int) -> None:
         rr.set_time("frame", sequence=idx, recording=rec)
     except (TypeError, AttributeError):
         rr.set_time_sequence("frame", idx, recording=rec)
+
+
+def _nurec_image_timeline(entity: str) -> str:
+    """Keep unrelated producer filename identities on independent timelines."""
+    return "nurec_image:" + entity.lstrip("/")
+
+
+def _set_nurec_image(rr: Any, rec: Any, entity: str, index: int) -> None:
+    rr.reset_time(recording=rec)
+    rr.set_time(_nurec_image_timeline(entity), sequence=index, recording=rec)
 
 
 def _log_video_asset(
@@ -377,6 +400,41 @@ def _build_data_factory_blueprint(
     )
 
 
+def _resolve_existing_output_publication(
+    storage_client: Any,
+    output_uri: str,
+    *,
+    inventory_keys: set[str],
+) -> tuple[str, Any | None]:
+    """Resolve an existing reserved RRD through its committed journal."""
+
+    from npa.agent_backend.publication_reader import publication_root_from_canonical_uri
+    from npa.workflows.sim2real.publication import (
+        resolve_committed_publication_snapshot,
+    )
+
+    try:
+        publication_root_from_canonical_uri(output_uri)
+    except ValueError:
+        _, output_key = _split_s3_object(output_uri)
+        return (output_uri, None) if output_key in inventory_keys else ("", None)
+    _, output_key = _split_s3_object(output_uri)
+    inventory_contains_output = output_key in inventory_keys
+    publication = resolve_committed_publication_snapshot(storage_client, output_uri)
+    if not publication.journaled:
+        return (
+            (output_uri, publication)
+            if inventory_contains_output
+            else ("", publication)
+        )
+    resolved = publication.resolve(output_uri)
+    if not resolved:
+        raise DataFactoryVizError(
+            "committed publication does not contain the requested RRD"
+        )
+    return resolved, publication
+
+
 def build_run_rrd(
     input_uri: str,
     output_uri: str,
@@ -425,7 +483,9 @@ def build_run_rrd(
     source_inventory: list[dict[str, Any]] = []
     require_colmap_lineage = False
     output_object_key = ""
-    output_exists = False
+    existing_output_uri = ""
+    existing_publication = None
+    inventory_output_key = ""
     preview_bytes = None
     if input_uri.startswith("s3://"):
         if active_storage is None:
@@ -444,7 +504,23 @@ def build_run_rrd(
         require_colmap_lineage = _inventory_has_colmap_lineage(
             source_inventory, source_prefix
         )
-        output_exists = any(row["key"] == output_object_key for row in source_inventory)
+        inventory_keys = {str(row["key"]) for row in source_inventory}
+        existing_output_uri, existing_publication = (
+            _resolve_existing_output_publication(
+                active_storage,
+                output_uri,
+                inventory_keys=inventory_keys,
+            )
+        )
+        inventory_output_key = output_object_key
+        if existing_output_uri:
+            existing_bucket, inventory_output_key = _split_s3_object(
+                existing_output_uri
+            )
+            if existing_bucket != source_bucket:
+                raise DataFactoryVizError(
+                    "committed RRD resolved outside the canonical run bucket"
+                )
 
     with tempfile.TemporaryDirectory(prefix="npa-df-viz-") as tmp:
         local = _materialize_run(
@@ -452,6 +528,10 @@ def build_run_rrd(
             Path(tmp) / "run",
             storage_client=active_storage,
             require_colmap_lineage=require_colmap_lineage,
+            require_reconstruction_receipt=any(
+                row["key"] == source_prefix + "reconstruction/reconstruction.json"
+                for row in source_inventory
+            ),
         )
         review = _PaidfReview(local, input_uri)
         captions = _load_captions(local, review=review)
@@ -575,13 +655,16 @@ def build_run_rrd(
             source_video_count += 1
 
         for frame in _subsample(_image_files(input_root), RRD_MAX_FRAMES_PER_ENTITY):
-            _set_frame(rr, rec, _frame_index(frame.stem))
             if frame.name.startswith("conditioning-frame-"):
                 entity = "conditioning/derived"
             elif source_kind == "synthetic_fixture":
                 entity = "fixture/synthetic_seeded"
             else:
                 entity = f"source/{_input_entity(frame, input_root)}"
+            if effective_app_id == "neural-reconstruction":
+                _set_nurec_image(rr, rec, entity, _frame_index(frame.stem))
+            else:
+                _set_frame(rr, rec, _frame_index(frame.stem))
             _log_frame(rr, rec, entity, _load_rgb(frame))
             logged += 1
 
@@ -719,17 +802,29 @@ def build_run_rrd(
         # always contains Rerun's terminal manifest/footer.
         rec.flush()
         rec.disconnect()
-        if output_exists:
+        if existing_output_uri:
             existing_path = Path(tmp) / "existing-sim2real.rrd"
             assert active_storage is not None
-            active_storage.download_file(output_uri, str(existing_path))
+            active_storage.download_file(existing_output_uri, str(existing_path))
+            if existing_publication is not None:
+                from npa.workflows.sim2real.publication import (
+                    verify_committed_publication_file,
+                )
+
+                verify_committed_publication_file(
+                    existing_publication,
+                    output_uri,
+                    existing_path,
+                    client=active_storage,
+                )
+            _verify_existing_rrd_semantics(existing_path, out_path)
             _verify_terminal_rrd_media(
                 existing_path,
                 variant_records=variant_records,
                 quality_status=quality_status if variant_records else "UNKNOWN",
                 source_video_records=source_video_records,
             )
-            written_uri = output_uri
+            written_uri = existing_output_uri
         else:
             written_uri = _publish(
                 str(out_path), output_uri, storage_client=active_storage
@@ -754,7 +849,7 @@ def build_run_rrd(
     if source_inventory:
         after = _s3_inventory(active_storage, input_uri)
         source_rows = _verify_additive_publication(
-            source_inventory, after, output_object_key
+            source_inventory, after, inventory_output_key
         )
         inventory_proof = {
             "source_inventory_object_count": len(source_rows),
@@ -930,97 +1025,464 @@ def _verify_terminal_rrd_media(
 ) -> dict[str, int]:
     """Prove a preserved RRD contains each candidate's exact video and disposition."""
 
+    expected_videos, dispositions, counts = _expected_terminal_rrd_media(
+        variant_records,
+        source_video_records or [],
+    )
+    observed_videos, observed_dispositions = _scan_terminal_rrd(
+        rrd_path,
+        expected_videos=set(expected_videos),
+        expected_dispositions=set(dispositions),
+        quality_status=str(quality_status or "UNKNOWN").upper(),
+    )
+    for entity, expected_digest in expected_videos.items():
+        count, observed_digest = observed_videos.get(entity, (0, ""))
+        if count != 1 or observed_digest != expected_digest:
+            kind = "source" if entity.startswith("/source/") else "augmented"
+            raise DataFactoryVizError(
+                f"existing RRD {kind} video differs from its canonical input"
+            )
+    if not all(observed_dispositions.get(entity, False) for entity in dispositions):
+        raise DataFactoryVizError(
+            "existing RRD candidate disposition is missing or inconsistent"
+        )
+    return counts
+
+
+def _expected_terminal_rrd_media(
+    variant_records: list[dict[str, Any]],
+    source_video_records: list[dict[str, Any]],
+) -> tuple[dict[str, str], set[str], dict[str, int]]:
+    if not variant_records:
+        raise DataFactoryVizError("existing RRD has no committed candidates to verify")
+    videos: dict[str, str] = {}
+    dispositions: set[str] = set()
+    for record in source_video_records:
+        entity = str(record.get("entity") or "")
+        video = record.get("video")
+        if not entity or not isinstance(video, Path) or not video.is_file():
+            raise DataFactoryVizError(
+                "existing RRD verification requires every source video"
+            )
+        video_entity = f"/{entity}/video"
+        if video_entity in videos:
+            raise DataFactoryVizError("existing RRD verification has duplicate media")
+        videos[video_entity] = _sha256_path(video)
+    for record in variant_records:
+        candidate = str(record.get("candidate_id") or "")
+        video = record.get("video")
+        if not candidate or not isinstance(video, Path) or not video.is_file():
+            raise DataFactoryVizError(
+                "existing RRD verification requires every committed candidate video"
+            )
+        video_entity = f"/augmented/{candidate}/video"
+        if video_entity in videos:
+            raise DataFactoryVizError("existing RRD verification has duplicate media")
+        videos[video_entity] = _sha256_path(video)
+        dispositions.add(f"/augmented/{candidate}/disposition")
+    return (
+        videos,
+        dispositions,
+        {
+            "source_video_entities": len(source_video_records),
+            "augmented_video_entities": len(variant_records),
+            "augmented_disposition_entities": len(variant_records),
+        },
+    )
+
+
+def _bounded_recording_batches(rrd_path: Path):
     try:
         from npa.viz.recordings import load_recording
     except ImportError as exc:  # pragma: no cover - rerun is a runtime dependency
         raise DataFactoryVizError(
             "rerun recording loader is required to verify an existing RRD"
         ) from exc
-    if not rrd_path.is_file() or rrd_path.stat().st_size <= 0:
+    _validate_rrd_file(rrd_path)
+    yield from _bounded_rrd_batches(load_recording(rrd_path).chunks())
+
+
+def _validate_rrd_file(path: Path) -> None:
+    if not path.is_file() or path.stat().st_size <= 0:
         raise DataFactoryVizError("existing RRD is empty")
-    chunks = list(load_recording(rrd_path).chunks())
-    by_entity: dict[str, list[Any]] = {}
-    for chunk in chunks:
-        by_entity.setdefault(str(chunk.entity_path), []).append(chunk)
+    if path.stat().st_size > RRD_VERIFY_MAX_FILE_BYTES:
+        raise DataFactoryVizError("RRD exceeds the bounded file-size limit")
 
-    verified_videos = 0
-    verified_dispositions = 0
-    verified_source_videos = 0
-    for record in source_video_records or []:
-        entity = str(record.get("entity") or "")
-        video_path = record.get("video")
-        if not entity or not isinstance(video_path, Path) or not video_path.is_file():
-            raise DataFactoryVizError(
-                "existing RRD verification requires every source video"
-            )
-        embedded: list[bytes] = []
-        for chunk in by_entity.get(f"/{entity}/video", []):
-            batch = chunk.to_record_batch()
-            if "AssetVideo:blob" not in batch.schema.names:
-                continue
-            for row in batch.column("AssetVideo:blob").to_pylist():
-                if row:
-                    embedded.append(bytes(row[0]))
-        if len(embedded) != 1 or hashlib.sha256(
-            embedded[0]
-        ).hexdigest() != _sha256_path(video_path):
-            raise DataFactoryVizError(
-                "existing RRD source video differs from its canonical input"
-            )
-        verified_source_videos += 1
-    expected_status = str(quality_status or "UNKNOWN").upper()
-    for record in variant_records:
-        candidate = str(record.get("candidate_id") or "")
-        video_path = record.get("video")
+
+def _bounded_rrd_batches(chunks):
+    contextual = ((None, chunk) for chunk in chunks)
+    for _context, entity, batch in _bounded_context_rrd_batches(contextual):
+        yield entity, batch
+
+
+def _bounded_context_rrd_batches(items):
+    chunk_count = row_count = decoded_bytes = 0
+    entities: set[str] = set()
+    for context, chunk in items:
+        chunk_count += 1
+        if chunk_count > RRD_VERIFY_MAX_CHUNKS:
+            raise DataFactoryVizError("RRD exceeds the decoded chunk limit")
+        chunk_rows = int(chunk.num_rows)
+        if row_count + chunk_rows > RRD_VERIFY_MAX_ROWS:
+            raise DataFactoryVizError("RRD exceeds bounded decoded data limits")
+        batch = chunk.to_record_batch()
+        if int(batch.num_rows) != chunk_rows:
+            raise DataFactoryVizError("RRD chunk row count changed during decoding")
+        row_count += chunk_rows
+        decoded_bytes += int(batch.nbytes)
         if (
-            not candidate
-            or not isinstance(video_path, Path)
-            or not video_path.is_file()
+            row_count > RRD_VERIFY_MAX_ROWS
+            or int(batch.nbytes) > RRD_VERIFY_MAX_CHUNK_BYTES
+            or decoded_bytes > RRD_VERIFY_MAX_DECODED_BYTES
         ):
-            raise DataFactoryVizError(
-                "existing RRD verification requires every committed candidate video"
-            )
-        video_entity = f"/augmented/{candidate}/video"
-        disposition_entity = f"/augmented/{candidate}/disposition"
-        embedded: list[bytes] = []
-        for chunk in by_entity.get(video_entity, []):
-            batch = chunk.to_record_batch()
-            if "AssetVideo:blob" not in batch.schema.names:
-                continue
-            for row in batch.column("AssetVideo:blob").to_pylist():
-                if row:
-                    embedded.append(bytes(row[0]))
-        if len(embedded) != 1 or hashlib.sha256(
-            embedded[0]
-        ).hexdigest() != _sha256_path(video_path):
-            raise DataFactoryVizError(
-                "existing RRD augmented video differs from its canonical candidate"
-            )
-        verified_videos += 1
+            raise DataFactoryVizError("RRD exceeds bounded decoded data limits")
+        entity = str(chunk.entity_path)
+        entities.add(entity)
+        if len(entities) > RRD_VERIFY_MAX_ENTITIES:
+            raise DataFactoryVizError("RRD exceeds the decoded entity limit")
+        yield context, entity, batch
 
-        text_values: list[str] = []
-        for chunk in by_entity.get(disposition_entity, []):
-            batch = chunk.to_record_batch()
-            for name in batch.schema.names:
-                if "text" not in name.lower() and "body" not in name.lower():
-                    continue
-                text_values.extend(
-                    str(value) for value in batch.column(name).to_pylist()
-                )
-        if not text_values or not any(
-            expected_status in value.upper() for value in text_values
+
+def _first_rrd_blob(value: Any) -> bytes | None:
+    if isinstance(value, bytes):
+        return value
+    if isinstance(value, memoryview):
+        return value.tobytes()
+    if isinstance(value, (list, tuple)):
+        if value and all(type(item) is int and 0 <= item <= 255 for item in value):
+            return bytes(value)
+        for item in value:
+            blob = _first_rrd_blob(item)
+            if blob is not None:
+                return blob
+    return None
+
+
+def _rrd_blob_identities(scalar: Any) -> list[tuple[int, str]] | None:
+    values = getattr(scalar, "values", None)
+    if values is not None:
+        identities: list[tuple[int, str]] = []
+        for index in range(len(values)):
+            inner = values[index]
+            raw = getattr(inner, "values", None)
+            if raw is None or str(getattr(raw, "type", "")) != "uint8":
+                identities = []
+                break
+            view = memoryview(raw.to_numpy(zero_copy_only=False))
+            identities.append((len(raw), hashlib.sha256(view).hexdigest()))
+        if identities:
+            return identities
+    blob = _first_rrd_blob(scalar.as_py())
+    if blob is None:
+        return None
+    return [(len(blob), hashlib.sha256(blob).hexdigest())]
+
+
+def _scan_terminal_rrd(
+    rrd_path: Path,
+    *,
+    expected_videos: set[str],
+    expected_dispositions: set[str],
+    quality_status: str,
+) -> tuple[dict[str, tuple[int, str]], dict[str, bool]]:
+    videos = {entity: (0, "") for entity in expected_videos}
+    dispositions = {entity: False for entity in expected_dispositions}
+    media_bytes = 0
+    for entity, batch in _bounded_recording_batches(rrd_path):
+        if entity in expected_videos and "AssetVideo:blob" in batch.schema.names:
+            for index in range(batch.num_rows):
+                blobs = _rrd_blob_identities(batch.column("AssetVideo:blob")[index])
+                for size_bytes, blob_digest in blobs or []:
+                    media_bytes += size_bytes
+                    if media_bytes > RRD_VERIFY_MAX_MEDIA_BYTES:
+                        raise DataFactoryVizError("RRD exceeds the decoded media limit")
+                    count, digest = videos[entity]
+                    videos[entity] = (
+                        count + 1,
+                        blob_digest if count == 0 else digest,
+                    )
+        if entity not in expected_dispositions:
+            continue
+        for name in batch.schema.names:
+            if "text" not in name.lower() and "body" not in name.lower():
+                continue
+            for index in range(batch.num_rows):
+                if quality_status in str(batch.column(name)[index].as_py()).upper():
+                    dispositions[entity] = True
+    return videos, dispositions
+
+
+def _stable_rrd_value(value: Any) -> Any:
+    if isinstance(value, bytes):
+        return {
+            "sha256": hashlib.sha256(value).hexdigest(),
+            "size_bytes": len(value),
+        }
+    if isinstance(value, memoryview):
+        return _stable_rrd_value(value.tobytes())
+    if isinstance(value, dict):
+        return {
+            str(key): _stable_rrd_value(item)
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+        }
+    if isinstance(value, (list, tuple)):
+        return [_stable_rrd_value(item) for item in value]
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    return str(value)
+
+
+def _stable_blueprint_value(value: Any, identities=None) -> Any:
+    def identity(raw):
+        key = str(uuid.UUID(str(raw)))
+        return identities(key) if identities is not None else key
+
+    if isinstance(value, bytes) and len(value) == 16:
+        return {"blueprint_uuid": identity(uuid.UUID(bytes=value))}
+    if isinstance(value, memoryview):
+        return _stable_blueprint_value(value.tobytes(), identities)
+    if isinstance(value, str):
+        return _BLUEPRINT_UUID.sub(lambda match: identity(match.group()), value)
+    if isinstance(value, dict):
+        return {
+            str(key): _stable_blueprint_value(item, identities)
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+        }
+    if isinstance(value, (list, tuple)):
+        if len(value) == 16 and all(
+            type(item) is int and 0 <= item <= 255 for item in value
         ):
-            raise DataFactoryVizError(
-                "existing RRD candidate disposition is missing or inconsistent"
-            )
-        verified_dispositions += 1
-    if not variant_records:
-        raise DataFactoryVizError("existing RRD has no committed candidates to verify")
-    return {
-        "source_video_entities": verified_source_videos,
-        "augmented_video_entities": verified_videos,
-        "augmented_disposition_entities": verified_dispositions,
+            return {"blueprint_uuid": identity(uuid.UUID(bytes=bytes(value)))}
+        return [_stable_blueprint_value(item, identities) for item in value]
+    return _stable_rrd_value(value)
+
+
+def _rrd_store_identity(entry: Any) -> list[str]:
+    kind = str(entry.kind)
+    identity = [kind, str(entry.application_id)]
+    if kind != "blueprint":
+        identity.append(str(entry.recording_id))
+    return identity
+
+
+def _rrd_semantic_row(entry: Any, entity: str, batch: Any, index: int) -> dict:
+    ephemeral = {
+        "rerun.controls.RowId",
+        "log_time",
+        "RecordingInfo:start_time",
     }
+    stable = (
+        _stable_blueprint_value if str(entry.kind) == "blueprint" else _stable_rrd_value
+    )
+    names = [name for name in batch.schema.names if name not in ephemeral]
+    normalized_entity = stable(entity)
+    row = {}
+    timelines, is_static = {}, True
+    for name in names:
+        scalar = batch.column(name)[index]
+        metadata = batch.schema.field(name).metadata or {}
+        if scalar.as_py() is None:
+            continue
+        if metadata.get(b"rerun:kind") == b"index":
+            timelines[name] = stable(scalar.as_py())
+            continue
+        blobs = None if str(entry.kind) == "blueprint" else _rrd_blob_identities(scalar)
+        row[name] = (
+            [{"size_bytes": size, "sha256": digest} for size, digest in blobs]
+            if blobs is not None
+            else stable(scalar.as_py())
+        )
+    for field in batch.schema:
+        if (field.metadata or {}).get(b"rerun:kind") == b"index":
+            if batch.column(field.name)[index].as_py() is not None:
+                is_static = False
+    return {
+        "type": "row",
+        "store": _rrd_store_identity(entry),
+        "entity": normalized_entity,
+        "timelines": timelines,
+        "is_static": is_static,
+        "row": row,
+    }
+
+
+def _insert_semantic_digest(connection, payload, *, row_id=b"") -> None:
+    # Absolute RowIds are incidental; order within every selectable timeline
+    # is not. Project each index separately so an auxiliary index cannot hide
+    # writes competing on another timeline. Do not partition by entity or
+    # component: recursive clears also compete with descendant component rows.
+    values = payload.get("row")
+    cells = values.items() if values is not None else [("store", payload)]
+    for name, value in cells:
+        identity = {key: item for key, item in payload.items() if key != "row"}
+        identity.update(component=name, value=value)
+        encoded = json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
+        for group in _semantic_precedence_groups(payload):
+            group_key = json.dumps(group, sort_keys=True, separators=(",", ":"))
+            connection.execute(
+                "INSERT INTO semantic_rows(group_key, precedence, digest) VALUES (?, ?, ?)",
+                (group_key, row_id, hashlib.sha256(encoded).hexdigest()),
+            )
+
+
+def _semantic_precedence_groups(payload):
+    if "row" not in payload:
+        return [payload]
+    scope = {
+        "type": "row",
+        "store": payload["store"],
+        "is_static": payload["is_static"],
+    }
+    timelines = payload["timelines"]
+    if not timelines:
+        return [scope]
+    return [
+        {**scope, "selected_timeline": name, "index": value}
+        for name, value in timelines.items()
+    ]
+
+
+class _BlueprintSemantics:
+    """Canonicalize reachable UUID nodes by ordered graph traversal, not collapse."""
+
+    def __init__(self, connection, store_index: int):
+        self.connection = connection
+        self.store_index = store_index
+        self.nodes: dict[str, list[str]] = {}
+        self.roots = []
+        self.mapping: dict[str, str] = {}
+        self.queue: list[str] = []
+        entities = connection.execute(
+            "SELECT DISTINCT entity FROM raw_blueprint WHERE store_index=? ORDER BY entity",
+            (store_index,),
+        )
+        for (entity,) in entities:
+            matches = _BLUEPRINT_UUID.findall(entity)
+            if matches:
+                self.nodes.setdefault(str(uuid.UUID(matches[0])), []).append(entity)
+            else:
+                self.roots.append(entity)
+
+    def identify(self, key):
+        if key not in self.nodes:
+            return key  # Unknown/non-node UUIDs remain exact, fail-closed values.
+        if key not in self.mapping:
+            self.mapping[key] = f"<blueprint-node-{len(self.mapping)}>"
+            self.queue.append(key)
+        return self.mapping[key]
+
+    def insert_entity(self, entity, identities):
+        for row_id, encoded in self.connection.execute(
+            "SELECT row_id, payload FROM raw_blueprint "
+            "WHERE store_index=? AND entity=? ORDER BY row_id, payload",
+            (self.store_index, entity),
+        ):
+            payload = _stable_blueprint_value(json.loads(encoded), identities)
+            _insert_semantic_digest(self.connection, payload, row_id=row_id)
+
+    def insert(self):
+        for entity in self.roots:
+            self.insert_entity(entity, self.identify)
+        index = 0
+        while index < len(self.queue):
+            key = self.queue[index]
+            index += 1
+            for entity in sorted(
+                self.nodes[key], key=lambda value: value.replace(key, "")
+            ):
+                self.insert_entity(entity, self.identify)
+        # Unreachable nodes have no traversal identity. Preserve their UUIDs
+        # rather than treating unknown topologies as equivalent.
+        for key in sorted(set(self.nodes) - set(self.mapping)):
+            for entity in self.nodes[key]:
+                self.insert_entity(entity, lambda value: self.mapping.get(value, value))
+
+
+def _semantic_rrd_stores(path: Path):
+    try:
+        from rerun.chunk import RrdReader
+    except ImportError as exc:  # pragma: no cover - rerun is a runtime dependency
+        raise DataFactoryVizError(
+            "rerun recording loader is required to compare an existing RRD"
+        ) from exc
+    _validate_rrd_file(path)
+    reader = RrdReader(path)
+    recordings = reader.recordings()
+    if not recordings:
+        raise DataFactoryVizError("RRD contains no recording store")
+    stores = recordings + reader.blueprints()
+    if len(stores) > 1024:
+        raise DataFactoryVizError("RRD exceeds the decoded store limit")
+    return reader, stores
+
+
+def _insert_rrd_semantic_batch(connection, store_indices, entry, entity, batch):
+    for index in range(batch.num_rows):
+        payload = _rrd_semantic_row(entry, entity, batch, index)
+        if not payload["row"]:
+            continue
+        row_id = batch.column("rerun.controls.RowId")[index].as_py()
+        if not isinstance(row_id, bytes) or len(row_id) != 16:
+            raise DataFactoryVizError("RRD lacks valid component precedence")
+        if str(entry.kind) == "blueprint":
+            connection.execute(
+                "INSERT INTO raw_blueprint VALUES (?, ?, ?, ?)",
+                (
+                    store_indices[id(entry)],
+                    entity,
+                    row_id,
+                    json.dumps(payload, sort_keys=True),
+                ),
+            )
+        else:
+            _insert_semantic_digest(connection, payload, row_id=row_id)
+
+
+def _populate_rrd_semantics(connection, reader, stores):
+    connection.execute(
+        "CREATE TABLE semantic_rows (group_key TEXT, precedence BLOB, digest TEXT)"
+    )
+    connection.execute(
+        "CREATE TABLE raw_blueprint (store_index INTEGER, entity TEXT, row_id BLOB, payload TEXT)"
+    )
+    store_indices = {id(entry): index for index, entry in enumerate(stores)}
+    chunks = (
+        (entry, chunk) for entry in stores for chunk in reader.stream(store=entry)
+    )
+    for entry in stores:
+        _insert_semantic_digest(
+            connection, {"type": "store", "identity": _rrd_store_identity(entry)}
+        )
+    for entry, entity, batch in _bounded_context_rrd_batches(chunks):
+        _insert_rrd_semantic_batch(connection, store_indices, entry, entity, batch)
+    for index, entry in enumerate(stores):
+        if str(entry.kind) == "blueprint":
+            _BlueprintSemantics(connection, index).insert()
+    connection.commit()
+
+
+def _rrd_semantic_sha256(path: Path) -> str:
+    """Hash stores, ordered component precedence and distinct blueprint references."""
+    reader, stores = _semantic_rrd_stores(path)
+    with tempfile.TemporaryDirectory(prefix="npa-rrd-semantic-") as directory:
+        connection = sqlite3.connect(str(Path(directory) / "rows.sqlite3"))
+        try:
+            _populate_rrd_semantics(connection, reader, stores)
+            digest = hashlib.sha256()
+            query = "SELECT group_key, digest FROM semantic_rows ORDER BY group_key, precedence, digest"
+            for group_key, row_digest in connection.execute(query):
+                digest.update(str(group_key).encode())
+                digest.update(b":")
+                digest.update(str(row_digest).encode())
+                digest.update(b"\n")
+            return digest.hexdigest()
+        finally:
+            connection.close()
+
+
+def _verify_existing_rrd_semantics(existing: Path, current: Path) -> None:
+    if _rrd_semantic_sha256(existing) != _rrd_semantic_sha256(current):
+        raise DataFactoryVizError("existing RRD does not match all current run inputs")
 
 
 def _sha256_path(path: Path) -> str:
@@ -1257,8 +1719,9 @@ def _log_nurec_entities(rr: Any, rec: Any, local: Path) -> int:
             continue
         for group, frames in sorted(_grouped_images(root).items()):
             for frame in _subsample(frames, RRD_MAX_FRAMES_PER_ENTITY):
-                _set_frame(rr, rec, _frame_index(frame.stem))
-                _log_frame(rr, rec, f"{prefix}/{group}", _load_rgb(frame))
+                entity = f"{prefix}/{group}"
+                _set_nurec_image(rr, rec, entity, _frame_index(frame.stem))
+                _log_frame(rr, rec, entity, _load_rgb(frame))
                 logged += 1
     return logged
 
@@ -1708,7 +2171,9 @@ def _colmap_conversion_lineage(report: dict) -> dict:
     """Keep conversion facts without embedding source filenames or private paths."""
     payload = _lineage_fields(
         report,
-        "schema_version status engine counts poses_component_group time_mapping point_filter",
+        "schema_version status engine counts poses_component_group time_mapping point_filter "
+        "lineage_origin original_execution_sha source_receipt_sha256 "
+        "executed_input_inventory_sha256 original_rrd_sha256 reconstruction_receipt_sha256",
     )
     payload["source"] = _lineage_fields(
         report.get("source", {}), "archive_sha256 counts origin_points_filtered"
@@ -1719,9 +2184,50 @@ def _colmap_conversion_lineage(report: dict) -> dict:
     return payload
 
 
+def _reconstruction_conversion_sha(local: Path) -> str:
+    receipt = _read_lineage(local / "reconstruction/reconstruction.json") or {}
+    declared_input = receipt.get("input", {})
+    if not isinstance(declared_input, dict):
+        raise DataFactoryVizError("NuRec reconstruction input is invalid")
+    value = declared_input.get("conversion_report_sha256", "")
+    if not isinstance(value, str) or (
+        value and not re.fullmatch(r"[0-9a-f]{64}", value)
+    ):
+        raise DataFactoryVizError("NuRec reconstruction conversion hash is invalid")
+    return value
+
+
+def _verify_colmap_receipt_members(local: Path) -> None:
+    """Bind declared conversion and rig sidecars to the actual reconstruction input."""
+    receipt = _read_lineage(local / "reconstruction/reconstruction.json") or {}
+    if not _reconstruction_conversion_sha(local):
+        return
+    from npa.workbench.nurec.evidence import RECONSTRUCTION_RECEIPT_FORMAT
+
+    if receipt.get("format") != RECONSTRUCTION_RECEIPT_FORMAT:
+        raise DataFactoryVizError("NuRec reconstruction receipt schema differs")
+    members = receipt["input"].get("sequence_members")
+    if not isinstance(members, list):
+        raise DataFactoryVizError("NuRec reconstruction input inventory is missing")
+    for name in ("conversion.json", "npa-rig.json"):
+        rows = [
+            row for row in members if isinstance(row, dict) and row.get("path") == name
+        ]
+        path = local / "ncore/sequence" / name
+        if (
+            len(rows) != 1
+            or rows[0].get("sha256") != _sha256_path(path)
+            or rows[0].get("bytes") != path.stat().st_size
+        ):
+            raise DataFactoryVizError("NuRec reconstruction lineage member differs")
+
+
 def _load_colmap_docs(local: Path, stage_log: list[str]) -> dict[str, str]:
     """Bind COLMAP capture, conversion and derived rig facts to their source bytes."""
-    if not any((local / relative).exists() for relative in _COLMAP_LINEAGE_MARKERS):
+    conversion_sha = _reconstruction_conversion_sha(local)
+    if not conversion_sha and not any(
+        (local / relative).exists() for relative in _COLMAP_LINEAGE_MARKERS
+    ):
         return {}
     docs: dict[str, str] = {}
     for entity, relative, title, fields in _COLMAP_LINEAGE_ARTIFACTS:
@@ -1735,16 +2241,25 @@ def _load_colmap_docs(local: Path, stage_log: list[str]) -> dict[str, str]:
             else _lineage_fields(report, fields)
         )
         payload["artifact_sha256"] = _sha256_path(path)
+        if entity == "conversion" and conversion_sha:
+            if conversion_sha != payload["artifact_sha256"]:
+                raise DataFactoryVizError(
+                    "NuRec reconstruction conversion hash differs"
+                )
         docs[f"provenance/{entity}"] = _json_block(title, payload)
-    if docs:
-        docs["pipeline/1_ncore"] = (
-            "## NCore input capture\n\n"
-            "_Capture counts describe conversion input/output, not NRE training coverage. "
-            "Photographic ordering is not synchronized capture time; sparse SfM points "
-            "are not physical LiDAR._\n\n" + "\n".join(docs.values())
-        )
-        stage_log.append("ncore: COLMAP capture lineage recorded from run artifacts")
+    _verify_colmap_receipt_members(local)
+    docs["pipeline/1_ncore"] = _colmap_lineage_summary(docs)
+    stage_log.append("ncore: COLMAP capture lineage recorded from run artifacts")
     return docs
+
+
+def _colmap_lineage_summary(docs: dict[str, str]) -> str:
+    return (
+        "## NCore input capture\n\n"
+        "_Capture counts describe conversion input/output, not NRE training coverage. "
+        "Photographic ordering is not synchronized capture time; sparse SfM points "
+        "are not physical LiDAR._\n\n" + "\n".join(docs.values())
+    )
 
 
 def _load_nurec_docs(local: Path, stage_log: list[str]) -> dict[str, str]:
@@ -1758,7 +2273,13 @@ def _load_nurec_docs(local: Path, stage_log: list[str]) -> dict[str, str]:
         docs["provenance/rrd_review"] = _json_block(
             "Novel-view review settings",
             {
-                "schema": "npa.nurec.rrd-review.v1",
+                "schema": "npa.nurec.rrd-review.v2",
+                "timeline_policy": "independent-entity-filename-indices",
+                "timeline_scope": (
+                    "Each image entity has its own nurec_image:<entity> timeline. "
+                    "Values preserve trailing filename integers, not synchronized "
+                    "capture time or paired source, validation and novel views."
+                ),
                 "max_frames_per_entity": RRD_MAX_FRAMES_PER_ENTITY,
                 "max_frame_dim": RRD_MAX_FRAME_DIM,
                 "jpeg_quality": RRD_JPEG_QUALITY,
@@ -1923,6 +2444,7 @@ def _materialize_run(
     *,
     storage_client: "StorageClient | None",
     require_colmap_lineage: bool = False,
+    require_reconstruction_receipt: bool = False,
 ) -> Path:
     if not input_uri.startswith("s3://"):
         return Path(input_uri)
@@ -1939,7 +2461,11 @@ def _materialize_run(
         except Exception:
             # Optional subtrees (labeled_*) may not exist; input/augmented drive the recording.
             continue
-    _download_colmap_lineage(client, root, dest, required=require_colmap_lineage)
+    if require_reconstruction_receipt:
+        relative = "reconstruction/reconstruction.json"
+        client.download_file(f"{root}/{relative}", str(dest / relative))
+    required = require_colmap_lineage or bool(_reconstruction_conversion_sha(dest))
+    _download_colmap_lineage(client, root, dest, required=required)
     return dest
 
 
@@ -1965,6 +2491,27 @@ def _publish(
     from npa.clients.storage import StorageClient
 
     client = storage_client or StorageClient.from_environment()
+    from npa.agent_backend.publication_reader import (
+        publication_root_from_canonical_uri,
+    )
+    from npa.workflows.sim2real.publication import (
+        remote_object_snapshot,
+        replace_unjournaled_legacy_file,
+    )
+
+    try:
+        publication_root = publication_root_from_canonical_uri(output_uri)
+    except ValueError:
+        publication_root = ""
+    if publication_root:
+        lock_uri = f"{publication_root}/reports/.sim2real-publication.json"
+        return replace_unjournaled_legacy_file(
+            client,
+            Path(local_path),
+            output_uri,
+            snapshot=None,
+            lock_snapshot=remote_object_snapshot(client, lock_uri),
+        )
     client.put_bytes_conditional(
         Path(local_path).read_bytes(),
         output_uri,

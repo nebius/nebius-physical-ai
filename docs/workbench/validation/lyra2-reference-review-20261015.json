@@ -1,0 +1,37 @@
+{
+  "schema": "npa.lyra-retained-review-validation.v1",
+  "date": "2026-10-15",
+  "status": "passed",
+  "qualification_record": "docs/workbench/validation/lyra2-rtx-20261009.json",
+  "source_html_sha256": "03017fd5e2a6d6e7a240f7f8687e8f4a20bf36737212a33c140bda7403a7b2d7",
+  "html_sha256": "63893f1860a3c32c7611e39452d5a8ed19d694a5b1a2630998ce09fadaceff8b",
+  "scope": "Revalidated retained artifacts from the recorded native GPU run; inference was not rerun during packaging. Perspective capture, not 360/fisheye qualification.",
+  "gpu_inference_rerun": false,
+  "gaussian_count": 8658944,
+  "reconstruction_views": 128,
+  "source_video_sha256": "4ec79b8de6078910870f0405bbc3d88d2eedde59ee611d608a38c6d4c77fba9b",
+  "native_render_sha256": "31614d636525cc38ebd63d4a1953673a3d42e4795a1e3f03d5b00b2899585ada",
+  "replay": {
+    "paired_frames": 320,
+    "width": 640,
+    "height": 480,
+    "fps": 30.0,
+    "rgb_mse": 730.7902948099772,
+    "psnr_db": 19.492875897550903,
+    "scope": "Decoded RGB replay on the original camera trajectory; not held-out novel-view quality or a haze-improvement measurement."
+  },
+  "browser": {
+    "desktop_mobile": "passed",
+    "webgl": true,
+    "point_count": 176128,
+    "play_pause_seek": "passed",
+    "confidence_zoom_reset": "passed",
+    "yaml_downloads": "both exact",
+    "evidence_download": "passed",
+    "javascript_errors": [],
+    "http_requests": [],
+    "html_sha256": "63893f1860a3c32c7611e39452d5a8ed19d694a5b1a2630998ce09fadaceff8b",
+    "scope": "Offline retained-result review; no new GPU inference."
+  },
+  "delivery": "Generated HTML embeds attributed public reference media and model predictions for private internal R&D; generated media remains outside Git."
+}

@@ -42,12 +42,12 @@ only running a slice:
 ```
 
 Use the serial form when a failure needs a readable, ordered traceback. PR CI runs the full Python 3.12 coverage suite, Cypress,
-and focused Python 3.10/3.14 compatibility checks. The merge queue requires
+and focused Python 3.11/3.14 compatibility checks. The merge queue requires
 fresh successful evidence for the identical Git tree and repeats security
 scanning. A different combined tree reruns all tests, lint, guardrails and
 hostile-input checks, plus image checks when their inputs changed. The five-minute
 `pr-precheck` is an early signal, not a substitute for these tests. The full suite uses xdist
-inside eight duration-balanced shards, then merges coverage before enforcing
+inside six duration-balanced shards, then merges coverage before enforcing
 the floor. Narrow prose-only candidates retain smoke, docs, guardrails, and
 security gates; see `CONTRIBUTING.md` for the trusted-base classification.
 Scheduled/manual audits repeat four shards across supported interpreters.

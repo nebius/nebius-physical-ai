@@ -1,0 +1,123 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+# Qualification-only downstream route. The candidate NCore converter runs from
+# its locally loaded immutable image ID with --pull=never, and its independently
+# audited S3 sequence is supplied here. This spec never pulls the candidate image.
+
+metadata:
+  name: nurec-reconstruct-render
+  description: >
+    Consume an already converted and independently audited struktur28 NCore V4
+    sequence with the separately licensed, digest-pinned NRE runtime.
+
+config:
+  bucket: example-bucket
+  prefix: "neural-reconstruction-colmap/{{run.id}}"
+  nurec_image: "nvcr.io/nvidia/nre/nre-ga@sha256:97f43e7130c5636ce3e80ea3184d97f56a87fdd989b05cce42230881dbdea284"
+  config_name: "configs/experimental/3dgut/3dgut_colmap.yaml"
+  mode: trainval
+  max_epochs: "0"
+  world_size: "1"
+  poses_component_group: "npa_rig"
+  rig_translation_offset: "0,0.25,0"
+  rig_rotation_offset: "0,0,0"
+  render_image_scale: "0.5"
+  renderer: "default"
+  cache_dir: "~/.cache/npa/nurec"
+  out_dir: "/tmp/npa-nurec-out"
+  render_dir: "/tmp/npa-nurec-out/novel_views"
+  run_root_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
+  ncore_sequence_uri: "s3://{{config.bucket}}/{{config.prefix}}/ncore/sequence/"
+  input_uri: "s3://{{config.bucket}}/{{config.prefix}}/input/"
+  reconstruction_uri: "s3://{{config.bucket}}/{{config.prefix}}/reconstruction/"
+  novel_views_uri: "s3://{{config.bucket}}/{{config.prefix}}/novel_views/"
+  rrd_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/sim2real.rrd"
+  final_report_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/final.json"
+
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
+    cpus: 8
+    memory: 64Gi
+    image: "nvcr.io/nvidia/nre/nre-ga@sha256:97f43e7130c5636ce3e80ea3184d97f56a87fdd989b05cce42230881dbdea284"
+    kubernetes:
+      pod_config:
+        spec:
+          imagePullSecrets:
+            - name: ngc-nvcr-imagepullsecret
+          initContainers:
+            - name: npa-sudo-shim
+              image: "nvcr.io/nvidia/nre/nre-ga@sha256:97f43e7130c5636ce3e80ea3184d97f56a87fdd989b05cce42230881dbdea284"
+              command: [/bin/sh, -c]
+              args:
+                - |
+                  printf '#!/bin/sh\nexec "$@"\n' > /shim/sudo
+                  chmod 0755 /shim/sudo
+              volumeMounts:
+                - name: npa-sudo-shim
+                  mountPath: /shim
+          containers:
+            - name: ray-node
+              volumeMounts:
+                - name: npa-sudo-shim
+                  mountPath: /usr/local/sbin
+                - name: dshm
+                  mountPath: /dev/shm
+          volumes:
+            - name: npa-sudo-shim
+              emptyDir: {}
+            - name: dshm
+              emptyDir:
+                medium: Memory
+                sizeLimit: 64Gi
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+
+initial: reconstruct
+
+states:
+  reconstruct:
+    description: Train and export the complete audited sequence with native NRE.
+    toolRef: workbench.nurec.reconstruct
+    resources: gpu
+    inputs:
+      - uri: "{{config.ncore_sequence_uri}}"
+    outputs:
+      - uri: "{{config.reconstruction_uri}}metrics.yaml"
+      - uri: "{{config.reconstruction_uri}}reconstruction.json"
+    next: render
+
+  render:
+    description: Render native NRE novel views from the exact trained USDZ.
+    needs: [reconstruct]
+    toolRef: workbench.nurec.render
+    resources: gpu
+    inputs:
+      - uri: "{{config.reconstruction_uri}}"
+    outputs:
+      - uri: "{{config.novel_views_uri}}"
+    next: visualize
+
+  visualize:
+    description: Emit the factual Rerun recording from retained artifacts.
+    needs: [render]
+    toolRef: workbench.nurec.visualize
+    resources: cpu
+    inputs:
+      - uri: "{{config.run_root_uri}}"
+    outputs:
+      - uri: "{{config.rrd_uri}}"
+    next: finalize
+
+  finalize:
+    description: Aggregate the retained run evidence.
+    needs: [visualize]
+    toolRef: workbench.nurec.finalize
+    resources: cpu
+    outputs:
+      - uri: "{{config.final_report_uri}}"
+    terminal: true

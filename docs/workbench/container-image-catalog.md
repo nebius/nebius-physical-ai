@@ -2,6 +2,14 @@
 
 [Workbench docs](README.md)
 
+The optional [team gateway](team-access.md) has a separate CPU service recipe
+at `npa/docker/team-server/Dockerfile`. It is built into an operator-controlled
+private registry and is outside the public image plan and release table below.
+Its Python and kubectl bases are digest-pinned. A private deployment does not
+establish a supported public release. Its isolated SkyPilot environment includes
+the AWS CLI for existing EKS cluster authentication; runtime AWS profiles stay
+in private configuration, and the execution policy remains Kubernetes-only.
+
 The **2026-10-10 UTC audit** of `main` at `e0819bd13` verified all **27 current
 release tags** against their recorded GHCR digests and all **three additional
 table aliases** anonymously. The GPU chart matches the publishing plan and
@@ -19,6 +27,13 @@ now records 18 anonymously verified immutable images from the newer main snapsho
 matching source inputs and 36 independently verified provenance/SBOM signatures.
 Supported release defaults still select their previously qualified digests;
 the GPU chart describes those release digests. MJLab is outside this refresh.
+
+The client now requires Python 3.11+ and Pillow 13. Source dependency repairs
+update GitPython, certifi, virtualenv, and their affected locks; they do not
+establish a rebuilt or qualified image. Genesis, Cosmos, and GR00T use isolated vendor environments with a source
+launcher for their NPA adapters. Their current source recipes use Python 3.12
+and Pillow 13 alongside the separately pinned runtime dependencies. These source changes require independent
+image rebuild, byte scanning, and capability validation before release promotion.
 
 [Marble workflows](marble.md) reuse the existing EnvGen CUDA/compiler image
 for gsplat and Warp consumers, with pinned dependencies installed at runtime.
@@ -50,6 +65,14 @@ upstream source, Shadow asset, MuJoCo/Python workload runtime, or populated
 cache in its layers. It has no accepted release build and remains release
 quarantined; it has no public image row, but now has a truthful immutable
 development-build path for byte and capability validation.
+
+EmbodiedGen V2 is intentionally absent from the public-image table. Its
+operator-private CUDA development image exists solely to compile the upstream
+TRELLIS extensions; it carries no upstream source, model, input, cache, output,
+or credential bytes. One private digest has completed live qualification, but
+its CUDA distribution terms do not establish anonymous registry delivery: only
+configured private delivery may supply a digest, and each target still needs
+its own pull preflight.
 
 The September 18 accepted-release manifest contained **38 release references**, including
 Flex-Pi r2, Isaac Arena and OpenArm. The incoming Flex-Pi qualification records
@@ -99,12 +122,40 @@ complete SDXL generations. The opt-in FA4 inference profile improves selected
 attention calls; complete-model performance is effectively tied with FA2.
 These candidates do not change the accepted images listed below.
 
-The current source inventory has **62 packaging entries** (53 redistribution-eligible
-and nine restricted) and **53 mapped tools**: 27 public-release members, two
-restricted tools, and 24 quarantined tools. These counts come from
+The current source inventory has **63 packaging entries** (54 redistribution-eligible
+and nine restricted) and **54 mapped tools**: 27 public-release members, two
+restricted tools, and 25 quarantined tools. These counts come from
 `packaging-contract.yaml` and `npa.deploy.images`;
 the seven restricted PAIDF images have no mapped tool entry. These counts do not
 constitute acceptance of the quarantined images.
+
+The October 16 security repair candidate updates the shared Isaac Python
+closures, uses the verified upstream NLTK sandbox fix for Cosmos Transfer, and
+updates Wan's Accelerate and Transformers dependencies. Isaac's constrained
+Setuptools 81 receives the same hash-bound Unicode manifest backport used by
+Cosmos3 serving. MoviePy 2.2.1 retains its released code while its exact,
+hash-checked metadata adopts upstream Pillow 12 compatibility and requires the
+actual patched Pillow 12.3 installation. Wan's dependency union, real MoviePy
+resize/MP4 encode/decode, NLTK sandbox, and source-distribution regression checks
+pass. Isaac's vendor version constraints still need reconciliation and GPU
+qualification. These source repairs require fresh image builds and complete
+artifact scans; they do not repair existing release digests.
+
+The subsequent [checkpoint-loader source repair](../../npa/docker/workbench/common/README.md)
+rejects malicious shard paths and named pipes in the exact Accelerate 1.12–1.15
+sources used by Wan, Cosmos, Cosmos3 Reason/Serving and RoboCasa. Both real
+checkpoint APIs pass regular/nested tensor and cache-symlink checks on all four
+repaired versions with CPU Torch 2.13. The upstream 1.15 wheel still reproduced
+the traversal, so its version alone is not a fix. These recipe changes introduce
+no new published image and do not qualify any replacement GPU stack.
+
+The FiftyOne LeRobot importer and LeRobot policy-container source also freeze
+custom Hub transfers to operator-selected full commits and record provenance.
+Bundled examples have fixed reviewed commits. Model caches
+use a directory per commit to prevent stale files crossing revisions. Real Hub
+SDK 0.36.2 and 1.26 HTTP tests exercise a branch moving during download. This
+source behavior requires deployment of the updated code; the accepted image
+digests in this catalog retain their original bytes.
 
 Gymnasium-Robotics is selected by the immutable development-build matrix but
 remains separately tracked outside the mapped release inventory. It appears in the GPU
@@ -136,6 +187,14 @@ disabled so the original dependency archive is not retained in the image.
 This source repair does not accept a new image or lift either version's
 quarantine.
 
+A fresh generic 0.5.1 rebuild subsequently failed its independent installed
+dependency and native default camera-decoder checks. Its narrow CPU ACT
+optimizer/checkpoint result does not qualify the image. See the
+[exact-image failure and compatible-closure repair](validation/lerobot-default-native-closure-20261006.md);
+a later candidate passed its scoped publication and native CPU gates but remains
+quarantined pending default/GPU capability qualification. It does not add a
+public release row or change the default.
+
 The four-wave [LeRobot transfer experiment](guides/lerobot-transfer.md) selects
 that optional 0.6.0 image by digest and stages its adapters from the checkout.
 It uses the image's non-root runtime user and baked SkyPilot prerequisites;
@@ -148,6 +207,17 @@ the independently pulled digest, both verified attestations and clean layer scan
 Use the [runtime-fetch instructions](../../npa/docker/workbench/sam3/README.md).
 Gated checkpoint access and real GPU qualification remain pending; this does
 not replace the accepted SAM 2.1 release or add a supported release row.
+
+The NPA application now requires Python 3.11 or newer and Pillow 13. Source
+recipes that install NPA use compatible interpreters and refreshed dependency
+locks; the Jammy Cosmos, Genesis, and GR00T environments use Python 3.12.
+The security overlay also updates GitPython to 3.2.1, including hash-bound
+runtime-fetch inputs and their matching license records. These source changes
+do not qualify rebuilt GPU artifacts or replace the
+accepted digests below. In particular, the Cosmos CP312 custom-kernel tuple
+requires fresh B200 kernel and checkpoint-backed inference evidence before
+release promotion. Standalone vendor workers that do not install NPA retain
+their separately pinned Python/CUDA compatibility contracts.
 
 ## 2026-09-17 flex-pi r2 publication
 
@@ -205,7 +275,8 @@ documented BF16 tolerance and five durable read-back objects per final target.
   [development build](https://github.com/nebius/nebius-physical-ai/actions/runs/36092335522)
   is bound to its GPU report, artifact manifest, provenance, SBOM, and recorded
   image inputs in the [development evidence manifest](validation/habitat-sim-development-image-manifest.json).
-  The current SDK package initializer differs from that producer. A rebuild
+  The current runtime lock, SDK package initializer and shared signed
+  source-descriptor parser differ from that producer. A rebuild
   from current source requires fresh image qualification; these retained
   results apply only to the recorded digest.
   This 19-step functional workload is not a long benchmark or policy-training
@@ -314,8 +385,31 @@ it redistribution-eligible but quarantined from public publication until its
 exact-image scans and real capability evidence are accepted. There is no
 accepted public release row or verified anonymous pull claim for this image.
 Select development bytes only with an explicit immutable image digest.
-The existing NRE GPU consumer remains separately licensed. The new full
-COLMAP-to-reconstruction workflow is **not yet live validated**.
+The shared Actions publisher excludes this candidate: no private reviewed
+acceptance-bundle transport is configured. The private OCI CLI preserves
+qualification and requires an exact reviewed acceptance bundle for any separately
+authorized publication. The existing NRE GPU consumer remains separately
+licensed. Source execution evidence and supported-image acceptance are separate;
+neither successful stage completion nor a local diagnostic scan proves acceptance.
+
+## Pending SeedVR2 restoration image
+
+`npa-seedvr2` is a zero-weight, zero-input public-image candidate for official
+SeedVR2-3B video restoration. It bakes pinned Apache-2.0 source and a
+hash-locked CUDA/PyTorch inference closure; the public Apache-2.0 model
+payloads, sensor clips, outputs, credentials, and populated caches remain
+runtime-only. Repository packaging marks it redistribution-eligible but
+publication-quarantined until complete built-byte scans, anonymous digest
+verification, real H100 or B200 workflow execution, objective preservation metrics,
+calibrated VLM review, and independent review are accepted for the same commit
+and digest. There is no accepted public release row or verified anonymous pull
+claim for this image.
+
+The candidate recipe now exports its repaired runtime filesystem through a
+clean-root stage, separately pins the full setuptools bootstrap seed, and
+requires the measured NVIDIA/NPA runtime-config contract. This source change
+does not repair prior image digests or qualify a replacement image; complete
+byte, bootstrap, GPU and quality evidence remain separate gates.
 
 ## Pending Open3D registration image
 
@@ -533,6 +627,24 @@ checks all shipped plans without image overrides and records the remaining
 blocked workflows and derivative images. It distinguishes canonical Sim2Real's
 required operator images from legacy automatic public-image selection.
 
+The Ray Serve Dockerfile now derives from PAIDF's repaired Cosmos3 digest rather
+than retaining the withdrawn parent's SSH-key layers. The Isaac 3 OSS dependency
+lock and Transfer's hash-verified security override both select PyJWT 2.15.1,
+which fixes the critical signature-verification issue that blocked their rebuilt
+image scans. The controller and viewer use the immutable
+2026-10-02 Debian snapshot with fixed Perl, GLib and Mbed TLS, and both upgrade
+inherited packages. EnvGen uses the 2026-10-09 Ubuntu snapshot and Loop Eval
+uses the 2026-10-02 Ubuntu snapshot; both pin the fixed `linux-libc-dev`
+5.15.0-198.208 package. EnvGen also applies cuRobo's
+existing exact-source correction to an inert scikit-image recipe containing a
+historical token. The correction preserves executable behavior and removes
+the original source and bytecode before flattening the sanitized filesystem;
+derivatives must be rebuilt from that corrected parent to discard the old
+bytes from their layers. These are source repairs:
+newly built images must still pass all publication scans and real capability
+validation before any public default is restored. Historical releases remain
+quarantined; this source repair does not change other published defaults.
+
 The scan-to-policy workflow selects repaired immutable development candidates
 for Isaac Lab and SONIC, and the GR00T training workflow selects a development
 image with Kubernetes bootstrap and MCAP support. Their workflow guides track
@@ -552,6 +664,22 @@ the accepted plan. The recipes now record only generic base profiles, and the
 three thin Genesis derivatives override inherited base metadata explicitly.
 Replacements must pass exact-config disclosure checks, non-root validation,
 image scanning, and capability evaluation before re-entering this table.
+
+The [October 6 rebuild follow-up](validation/807-image-rebuild-follow-up-20261006.md)
+replaces stale Isaac and EnvGen parents in the derivative build recipes and fixes
+additional dependency and snapshot inputs. Its parent development builds passed
+their trusted publication jobs and independent anonymous source/config checks.
+Seven child jobs also passed trusted publication and independent digest/source
+and provenance/SBOM signature verification, as recorded in that follow-up.
+Genesis has a rebuilt candidate that passed its narrow CPU gate, but GPU teacher
+optimization, export, and rendered-physics qualification remain pending. Default
+LeRobot still requires a compatible policy closure and native execution. The
+[stock public Genesis contract](../../npa/docker/workbench/genesis/README.md)
+documents its retained rigid workload, ACT dependencies and excluded optional
+capabilities. None is added to the accepted-release table by these source changes. Current examples
+also stop automatically selecting withdrawn image digests through literal
+resource or provenance inputs. Historical validation records retain their
+original image identities.
 
 | Friendly name | Image (`ghcr.io/nebius/nebius-physical-ai/...`) | Published tag(s) | Built | What it does |
 | --- | --- | --- | --- | --- |
@@ -805,12 +933,25 @@ verified SSH or Kubernetes port-forward access; see the
 [FiftyOne access guidance](../../skills/tools/fiftyone/SKILL.md).
 
 The source security candidates update the SONIC MuJoCo evaluator to the
-hash-locked Torch 2.13 closure
-on a patched Python base. The Cosmos3 native Ray candidate selects the pinned
+hash-locked Torch 2.13 closure on a patched Python base, and reject XML entity
+declarations in its scene and robot includes. The Cosmos3 native Ray candidate selects the pinned
 framework's supported Torch 2.13 CUDA 13 group, including its matching NATTEN
 extension, and removes inherited attention binaries from the older Torch ABI.
 The Cosmos3 serving bootstrap also uses a patched Python base and verified
-runtime installation tools. These source changes do not republish or qualify
+runtime installation tools. The Wan candidate uses an upgraded Ubuntu 26.04
+runtime and copies Python 3.10.22 from a separate, pinned official Python stage
+after repairing its global and ensurepip installers. The donor's Debian layers
+and shared libraries are excluded from the final image. The prepared filesystem
+copy also excludes the unused Pebble service manager and superseded package
+bytes from every shipped layer. This preserves the
+installer repair when runtime venvs are created. A composed runtime passed
+shared-library, strict TLS, complete video decoding, fresh-venv and CPU checkpoint
+checks; exact replacement-image scans and GPU qualification remain required.
+The Ubuntu parser, cryptographic self-test, Unicode name and optional hardware
+loader literals have a separate [exact-byte source review](../../npa/docker/workbench/wan2-2/ubuntu-literal-audits.json).
+Its signed-package identities do not waive vulnerabilities or the independent
+complete-byte audit.
+These source changes do not republish or qualify
 the existing supported image digests listed above.
 
 ## GPU coverage of the published set
@@ -877,6 +1018,12 @@ historical evidence.
   62-entry runtime is a separately authorized, exact-inventory read-only mount;
   access records do not grant redistribution rights.
 
+  The next source runtime lock updates urllib3 and fsspec and reconciles
+  Safetensors with Diffusers' declared minimum. Dependency scans now cover its
+  JSON package map and installer. The source candidate still contains a legacy
+  Torch/CUDA closure and needs a new independently bound inventory and functional
+  qualification; these changes do not update the development image above.
+
   A supplemental qualification of that same image with a separately declared
   runtime bundle completed 2,000 epochs and 200,000 CUDA optimizer updates on
   RTX PRO 6000, then succeeded on 50/50 Lift episodes and decoded 2,244 frames.
@@ -907,13 +1054,27 @@ historical evidence.
   only the SkyPilot worker bootstrap closure and must be built into the
   operator's own registry; it is deliberately excluded from the public catalog.
 - **`npa-robocasa`** is a validation candidate, not yet in the public publishing
-  plan. It is licence-eligible for public redistribution (Apache-2.0 RoboCasa and
-  robosuite), but its built-image payload scan and real GPU capability validation
-  have not yet been recorded, so it is quarantined from `publicly_publishable_tools()`
+  plan. It is licence-eligible for public redistribution (MIT RoboCasa, whose
+  license includes a separate Apache-2.0 notice for partial DeepMind MuJoCo, and
+  Apache-2.0 robosuite). Its resolved closure also includes LGPL-3.0
+  qpsolvers and GPL-2.0-or-later quadprog, whose exact source archives and
+  license texts must remain in every distributed image. Its built-image payload
+  scan and real GPU capability validation have not yet been recorded, so it is quarantined from `publicly_publishable_tools()`
   via `VALIDATION_CANDIDATE_TOOLS`. It will gain a public row only when its accepted
   digest and GPU evidence are recorded.
   It is a non-root service image with no passwordless-sudo grant; workflow
   toolRefs call the deployed service from the standard task image.
+  The candidate recipe upgrades inherited Ubuntu packages before dependency
+  installation, requires the fixed GnuPG/OpenSSL versions, and hash-locks pip.
+  Its scratch final stage copies the prepared filesystem while retaining exact
+  CUDA/service settings and notices, so superseded base-layer binaries are not
+  shipped merely because a later layer installed their replacements.
+  Those source controls do not qualify the older image bytes or establish that
+  the replacement image has no vulnerabilities; exact-image scans and runtime
+  validation remain required.
+  Its [candidate runtime boundary](../../npa/docker/workbench/robocasa/REDISTRIBUTION.md)
+  uses a minimal CUDA12.9 base and same-layer, exact-hash cuDNN runtime packaging;
+  older cuDNN development layers are not inherited or reclassified.
 
 The historical SONIC L40S and inherited MuJoCo variants remain restricted and
 quarantined in `sonic_image_manifest.json`. The old SONIC `0.1.2` alias was
@@ -923,6 +1084,29 @@ table. The independently rebuilt `sonic-mujoco:0.2.0-runtime` and zero-payload
 `cosmos3-serving:0.2.0-oss` each have their own accepted public-plan row.
 
 ## Verification scope
+
+The [2026-10-18 post-merge development build](https://github.com/nebius/nebius-physical-ai/actions/runs/39153996361)
+failed 19 of 31 image jobs after the source checks passed. Current build sources
+repair FiftyOne's non-root receipt directory, the MJLab/Lyra client dependency
+closure, unnecessary OpenPI/GR00T startup imports, the SONIC snapshot mismatch,
+and the reported header, PyJWT and optional Nsight vulnerability findings.
+Cosmos and Genesis install imageio-ffmpeg from source, omit its wheel-bundled
+executable before committing the dependency layer, and verify system FFmpeg
+with a tiny encode/decode probe during the build.
+These are source repairs; replacement images still require their own complete
+publication checks and functional validation.
+
+These source repairs preserve the newer EnvGen and Isaac Lab parent pins
+already merged into main. Parent build evidence does not establish GPU
+qualification for a new derivative. Supported release tags and their recorded
+digests are unchanged by these repairs.
+
+The same run also stopped cuRobo, SeedVR2, Cosmos3 Ray Serve and Alpamayo at
+payload verification. The failed run retained no Actions artifacts for those
+reports; unavailable reports and credential-pattern matches cannot be treated
+as clean evidence or cleared by a scanner exclusion. These historical refusals
+do not describe the state of newer images. Current accepted releases and their
+independently recorded validations elsewhere in this catalog remain authoritative.
 
 `npa-lyra2:2.0-rtfetch2` promotes the exact scanned development digest that
 completed native reconstruction on one preemptible RTX PRO 6000, with independent
@@ -979,10 +1163,36 @@ or newer. The published Genesis release tags above continue to identify their
 original immutable builds; GPU train/save/load/export and demo validation must
 complete before promoting a replacement release.
 
-MJLab's dedicated `npa-mjlab` recipe is excluded from the public table and the
-publication plan. A historical private CUDA 12.8 image completed native B200 and
-RTX PRO 6000 GPU qualification. The current CUDA 13.0 candidate replaces vulnerable
-Torch and setuptools pins and has separate [trained G1 rollout evidence](validation/mjlab-trained-g1-20260925.json)
-on RTX PRO 6000. Public promotion still requires the exact-image security,
-licensing and bootstrap gates. See [MJLab](mjlab.md) for the measured scope,
-operator builds and workflow overrides.
+## MJLab public development candidate
+
+MJLab has an anonymously pullable development image, built through the trusted
+publication workflow and qualified on one RTX PRO 6000. It remains excluded
+from the supported-release table and automatic public-release plan.
+
+The immutable `npa-mjlab:dev-d5cfdcc261d586c25caa877d332feab052369a1f`
+tag resolves to
+`sha256:ec8c099dc8ab34c8a390c6076d3cc3c07a88e27818d0eb0b6b6cf819663f242e`.
+Its measured RTX scope covers Cartpole, G1, Go1 and YAM native train/eval/ONNX;
+service resume/auth/scope/concurrency; fresh unmodified SkyPilot VM startup;
+and native NVIDIA G1 video at 1920 × 1080 and 50 fps.
+
+The [2026-10-10 native HD image and GPU record](validation/mjlab-native-hd-gpu-20261010.json)
+binds those results to the published digest and source commit. The four task
+cycles each trained for two updates and read back 49 artifacts in total; these
+are functional checks. Separately, the current image re-evaluated a verified
+3,000-update G1 checkpoint across 64 complete episodes, exported checked ONNX,
+and produced an unchanged 20-second native HD MP4. All 1,000 frames decoded;
+standalone HTML passed offline playback, seeking and mobile layout checks.
+The record preserves the original training image identity separately.
+The current digest has no B200 or multi-GPU qualification. Earlier CUDA 12.8 acceptance and the
+[2026-09-25 trained G1 rollout](validation/mjlab-trained-g1-20260925.json) apply
+only to their recorded image bytes.
+
+The trusted build passed vulnerability/license and all-severity secret gates,
+payload scans before and after publication, non-root SkyPilot bootstrap checks,
+and signed provenance/SPDX verification. The image delivers source for 239
+Debian components and 23 locked Python/native archives, retains required
+notices, and removes cuDNN SDK files before the dependency layer commits.
+The catalog audit verified all 27 accepted release digests anonymously on
+2026-10-10; this development candidate is separate from that release inventory.
+Use the explicit digest override in [MJLab](mjlab.md).

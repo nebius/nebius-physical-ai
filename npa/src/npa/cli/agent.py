@@ -10,6 +10,7 @@ import json
 import os
 import secrets
 import shlex
+import ssl
 import subprocess
 from pathlib import Path
 from typing import Any, NoReturn
@@ -127,6 +128,7 @@ from npa.smoke._versions import supported_tool_version
 from npa.cli.agent_public import (
     AgentConfig,
     build_agent_urls,
+    probe_agent_health,
     record_public_https as _record_public_https,
     record_tls_verify as _record_tls_verify,
     record_customer_url as _record_customer_url,
@@ -165,6 +167,10 @@ from npa.cli.agent_embed import embedded_python_source
 from npa.cli.agent_site import (
     DEFAULT_LICHTBLICK_PORT,
     nginx_agent_site_body as _nginx_agent_site_body,
+)
+from npa.cli.agent_verification import (
+    run_agent_verification_tests,
+    verify_agent_endpoints,
 )
 from npa.cli.agent_service_install import install_agent_services
 from npa.cli.agent_deployment import (
@@ -7814,10 +7820,17 @@ def sim_viz_load_run(payload: dict | None = None):
     session_response = _load_session_run_if_known(body=session_body, run_id=run_id, requested_camera=requested_camera)
     if session_response is not None:
         return session_response
+    requested_bucket, requested_project, requested_resolved_prefix, source_selected = _selected_run_request(body)
+    exact_source_requested = bool(
+        requested_run_ref
+        or requested_bucket
+        or requested_project
+        or "resolved_prefix" in body
+        or source_selected
+    )
     try:
         s3, settings = _agent_artifact_s3_client()
         requested_prefix = str(body.get("prefix") or "")
-        requested_bucket, requested_project, requested_resolved_prefix, source_selected = _selected_run_request(body)
         artifacts = []
         resolution = None
         selected_prefix = ""
@@ -7848,24 +7861,43 @@ def sim_viz_load_run(payload: dict | None = None):
                 run_ref=requested_run_ref,
                 prefix=requested_prefix,
             )
-        preferred = select_preferred_artifact(artifacts)
+        artifacts, _report_artifact, preferred, _authority_keys, publication_snapshot = (
+            _committed_publication_artifacts(
+                s3,
+                selected_bucket,
+                resolved_run_id,
+                artifacts,
+                include_snapshot=True,
+            )
+        )
         # Prefer a run-scoped Rerun recording over stale history entries.
         if preferred and (preferred.render == "rerun" or (requested_bucket and source_selected)):
-            local_name = _artifact_filename(preferred.key)
-            local_path = RECORDINGS_DIR / local_name
-            download_s3_uri(preferred.s3_uri, local_path, s3=s3)
-            state = _load_state()
-            sim_viz = _apply_loaded_artifact(
-                state=state,
-                run_id=resolved_run_id,
-                key=preferred.key,
-                s3_uri=preferred.s3_uri,
-                render=preferred.render,
-                local_path=local_path,
-                source_identity=(selected_bucket, selected_project, selected_prefix),
-                run_ref=resolved_ref,
-                requested_camera=requested_camera,
+            local_path = _download_verified_viewer_artifact(
+                s3,
+                selected_bucket,
+                preferred,
+                recordings_dir=RECORDINGS_DIR,
             )
+            try:
+                _assert_legacy_publication_snapshot_still_unjournaled(
+                    s3,
+                    selected_bucket,
+                    publication_snapshot,
+                )
+                state = _load_state()
+                sim_viz = _apply_loaded_artifact(
+                    state=state,
+                    run_id=resolved_run_id,
+                    key=preferred.key,
+                    s3_uri=preferred.s3_uri,
+                    render=preferred.render,
+                    local_path=local_path,
+                    source_identity=(selected_bucket, selected_project, selected_prefix),
+                    run_ref=resolved_ref,
+                    requested_camera=requested_camera,
+                )
+            finally:
+                release_verified_recording(local_path)
             return {{
                 "ok": True,
                 "contract": ARTIFACT_DISCOVERY_CONTRACT,
@@ -7874,6 +7906,11 @@ def sim_viz_load_run(payload: dict | None = None):
                 "run_ref": resolved_ref,
             }}
         if artifacts:
+            _assert_legacy_publication_snapshot_still_unjournaled(
+                s3,
+                selected_bucket,
+                publication_snapshot,
+            )
             # A selected run is still real and usable when its capability is a
             # service/session artifact rather than an RRD recording. Persist an
             # artifact-backed active context so conditional tabs (LeIsaac in
@@ -7938,6 +7975,11 @@ def sim_viz_load_run(payload: dict | None = None):
             }}
         if requested_bucket:
             raise HTTPException(status_code=404, detail="selected artifact source has no loadable artifacts")
+    except PublicationConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="the selected publication generation is not committed",
+        ) from exc
     except AmbiguousRunError as exc:
         raise HTTPException(
             status_code=409,
@@ -7950,7 +7992,19 @@ def sim_viz_load_run(payload: dict | None = None):
         raise HTTPException(status_code=400, detail="invalid run artifact request") from exc
     except HTTPException:
         raise
-    except (ClientError, BotoCoreError, OSError, KeyError, TypeError, ValueError):
+    except (
+        ClientError,
+        BotoCoreError,
+        OSError,
+        KeyError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        if exact_source_requested:
+            raise HTTPException(
+                status_code=502,
+                detail="the selected artifact source could not be verified",
+            ) from exc
         # Fall back to the historical in-memory run selector below; callers still
         # get a useful 404 if the run has never been seen.
         pass
@@ -8309,6 +8363,11 @@ def artifacts_runs(
             effective_prefix=base,
             source_tuples=source_tuples,
         )
+    except PublicationConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="the selected publication generation is not committed",
+        ) from exc
     except HTTPException:
         raise
     except Exception as exc:
@@ -8557,12 +8616,43 @@ def artifacts_for_run(
             cursor=cursor,
             s3=s3,
         )
-        preferred = select_preferred_artifact(page.artifacts)
-        role_counts = artifact_inventory_counts(page.artifacts)
+        (
+            visible_artifacts,
+            _report_artifact,
+            preferred,
+            _authority_keys,
+            publication_snapshot,
+        ) = (
+            _committed_publication_artifacts(
+                s3,
+                run_bucket,
+                normalized_run,
+                page.artifacts,
+                require_complete=False,
+                include_snapshot=True,
+            )
+        )
+        page = ArtifactListPage(
+            artifacts=visible_artifacts,
+            truncated=page.truncated,
+            next_cursor=page.next_cursor,
+            page_size=page.page_size,
+        )
+        role_counts = artifact_inventory_counts(visible_artifacts)
+        summary_artifacts = list(visible_artifacts)
+        if preferred is not None and all(
+            str(item.key) != str(preferred.key) for item in summary_artifacts
+        ):
+            summary_artifacts.append(preferred)
         summary = build_run_summary(
             normalized_run,
-            page.artifacts,
-            _summary_documents_for_run(s3, run_bucket, page.artifacts),
+            summary_artifacts,
+            _summary_documents_for_run(s3, run_bucket, visible_artifacts),
+        )
+        _assert_legacy_publication_snapshot_still_unjournaled(
+            s3,
+            run_bucket,
+            publication_snapshot,
         )
         if exact_source_request:
             # The card is rendered immediately before its playback action. Keep
@@ -8583,7 +8673,7 @@ def artifacts_for_run(
                 resource_bucket=run_bucket,
                 project_id=str(bucket_projects.get(run_bucket) or ""),
                 resolved_prefix=artifact_prefix,
-                artifacts=page.artifacts,
+                artifacts=summary_artifacts,
             )
         return build_artifact_run_detail_response(
             selected=selected,
@@ -8602,6 +8692,11 @@ def artifacts_for_run(
                 "recording_state": str(summary.get("recording_state") or ""),
             }},
         )
+    except PublicationConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="the selected publication generation is not committed",
+        ) from exc
     except AmbiguousRunError as exc:
         raise HTTPException(
             status_code=409,
@@ -8696,6 +8791,16 @@ def artifacts_stage(
             )
             if selected_project:
                 bucket_projects[run_bucket] = selected_project
+        artifacts, _report, _preferred, _logical_keys, publication_snapshot = (
+            _committed_publication_artifacts(
+                s3,
+                run_bucket,
+                normalized_run,
+                artifacts,
+                require_complete=False,
+                include_snapshot=True,
+            )
+        )
         wanted = str(stage_key or "").strip()
         keys = [str(item.key or "") for item in artifacts]
         marker = "/" + normalized_run + "/"
@@ -8726,11 +8831,20 @@ def artifacts_stage(
                 continue
             rel = k.split("/" + normalized_run + "/", 1)[-1]
             try:
-                payload = _read_bounded_json_object(s3, run_bucket, k)
+                payload = _read_publication_bound_json_object(
+                    s3, run_bucket, k, publication_snapshot=publication_snapshot
+                )
                 if isinstance(payload, dict):
                     info[rel] = _public_artifact_info(payload)
+            except PublicationConflict:
+                raise
             except Exception:
                 continue
+        _assert_legacy_publication_snapshot_still_unjournaled(
+            s3,
+            run_bucket,
+            publication_snapshot,
+        )
         return {{
             "ok": True,
             "run_id": normalized_run,
@@ -8745,6 +8859,11 @@ def artifacts_stage(
             "artifacts": [item.to_dict() for item in stage_arts],
             "info": info,
         }}
+    except PublicationConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="the selected publication generation is not committed",
+        ) from exc
     except HTTPException:
         raise
     except Exception as exc:
@@ -8799,17 +8918,36 @@ def fiftyone_dataset(
                 prefix=prefix,
             )
 
+        artifacts, _report, _preferred, _logical_keys, publication_snapshot = (
+            _committed_publication_artifacts(
+                s3,
+                bucket,
+                normalized_run,
+                artifacts,
+                require_complete=False,
+                include_snapshot=True,
+            )
+        )
+
         def _read_json(key: str):
             if not key:
                 return None
             try:
-                body = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
-                return json.loads(body)
+                return _read_publication_bound_json_object(
+                    s3, bucket, key, publication_snapshot=publication_snapshot
+                )
+            except PublicationConflict:
+                raise
             except Exception:
                 return None
 
         keys = [str(a.key or "") for a in artifacts]
         dataset = build_fiftyone_dataset(keys, run_id=normalized_run, read_json=_read_json, bucket=bucket)
+        _assert_legacy_publication_snapshot_still_unjournaled(
+            s3,
+            bucket,
+            publication_snapshot,
+        )
         return {{
             "ok": True,
             "run_id": normalized_run,
@@ -8819,6 +8957,11 @@ def fiftyone_dataset(
             "resolved_prefix": exact_prefix,
             **dataset,
         }}
+    except PublicationConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="the selected publication generation is not committed",
+        ) from exc
     except HTTPException:
         raise
     except Exception as exc:
@@ -8872,18 +9015,36 @@ def artifacts_run_provenance(
                 run_id=normalized_run,
                 prefix=prefix,
             )
+        artifacts, _report, _preferred, _logical_keys, publication_snapshot = (
+            _committed_publication_artifacts(
+                s3,
+                run_bucket,
+                normalized_run,
+                artifacts,
+                require_complete=False,
+                include_snapshot=True,
+            )
+        )
         keys = [str(a.key or "") for a in artifacts]
 
         def _read_json(key: str):
             if not key:
                 return None
             try:
-                body = s3.get_object(Bucket=run_bucket, Key=key)["Body"].read()
-                return json.loads(body)
+                return _read_publication_bound_json_object(
+                    s3, run_bucket, key, publication_snapshot=publication_snapshot
+                )
+            except PublicationConflict:
+                raise
             except Exception:
                 return None
 
         prov = build_run_provenance(keys, run_id=normalized_run, read_json=_read_json)
+        _assert_legacy_publication_snapshot_still_unjournaled(
+            s3,
+            run_bucket,
+            publication_snapshot,
+        )
         return {{
             "ok": True,
             "run_id": normalized_run,
@@ -8892,6 +9053,11 @@ def artifacts_run_provenance(
             "resolved_prefix": exact_prefix,
             **prov,
         }}
+    except PublicationConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="the selected publication generation is not committed",
+        ) from exc
     except HTTPException:
         raise
     except Exception as exc:
@@ -8959,33 +9125,35 @@ def sim_viz_load_artifact(payload: dict | None = None):
         key = str(artifact.key)
         s3_uri = str(artifact.s3_uri)
         resolved_ref = requested_run_ref
-        local_name = _artifact_filename(key)
-        local_path = RECORDINGS_DIR / local_name
-        download_s3_uri(s3_uri, local_path, s3=s3)
-        render = render_hint_for_object(key=key)
-        state = _load_state()
-        run_summary = build_run_summary(
-            run_id,
-            [],
-            {{}},
+        local_path = _download_verified_viewer_artifact(
+            s3,
+            bucket,
+            artifact,
+            recordings_dir=RECORDINGS_DIR,
         )
-        learning_summary = run_summary.get("learning")
-        learning_contract = (
-            learning_summary.get("artifact_contract")
-            if isinstance(learning_summary, dict)
-            else None
-        )
-        sim_viz = _apply_loaded_artifact(
-            state=state,
-            run_id=run_id,
-            key=key,
-            s3_uri=s3_uri,
-            render=render,
-            local_path=local_path,
-            source_identity=(source_bucket, source_project, source_prefix),
-            run_ref=resolved_ref,
-            artifact_contract=learning_contract,
-        )
+        try:
+            render = render_hint_for_object(key=key)
+            state = _load_state()
+            run_summary = build_run_summary(run_id, [], {{}})
+            learning_summary = run_summary.get("learning")
+            learning_contract = (
+                learning_summary.get("artifact_contract")
+                if isinstance(learning_summary, dict)
+                else None
+            )
+            sim_viz = _apply_loaded_artifact(
+                state=state,
+                run_id=run_id,
+                key=key,
+                s3_uri=s3_uri,
+                render=render,
+                local_path=local_path,
+                source_identity=(source_bucket, source_project, source_prefix),
+                run_ref=resolved_ref,
+                artifact_contract=learning_contract,
+            )
+        finally:
+            release_verified_recording(local_path)
         return {{"ok": True, "contract": ARTIFACT_DISCOVERY_CONTRACT, "sim_viz": sim_viz, "render": render, "artifact_uri": s3_uri, "run_ref": resolved_ref}}
     except AmbiguousRunError as exc:
         raise HTTPException(
@@ -8995,6 +9163,11 @@ def sim_viz_load_artifact(payload: dict | None = None):
         ) from exc
     except ArtifactDiscoveryError as exc:
         raise HTTPException(status_code=400, detail="invalid run artifact request") from exc
+    except PublicationConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="the selected publication generation is not committed",
+        ) from exc
     except HTTPException:
         raise
     except Exception:
@@ -9228,17 +9401,46 @@ def _foxglove_resolve_artifact_with_access(payload: dict) -> dict:
             resolved_prefix=source_prefix,
             artifacts=resolution.artifacts,
         )
-    artifact = next((item for item in resolution.artifacts if item.key == key), None)
+    run_root_key = "/".join(
+        part for part in (resolution.source_prefix, resolution.run_id) if part
+    )
+    try:
+        authoritative_key = _resolve_committed_artifact_key(
+            s3,
+            resolution.bucket,
+            run_root_key,
+            key,
+        )
+    except PublicationConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="the selected publication generation is not committed",
+        ) from exc
+    artifact = next(
+        (item for item in resolution.artifacts if item.key == authoritative_key),
+        None,
+    )
+    if artifact is None and exact_source_request:
+        artifact = _authorized_artifact_from_head(
+            s3,
+            run_id=resolution.run_id,
+            bucket=resolution.bucket,
+            source_prefix=source_prefix,
+            key=authoritative_key,
+        )
     if artifact is None:
         raise HTTPException(status_code=400, detail="artifact key is outside the selected run")
     if not exact_source_request:
         source_bucket, source_project, source_prefix = _artifact_source_metadata(
-            _agent_access_report(), resolution.bucket, key, resolution.run_id
+            _agent_access_report(),
+            resolution.bucket,
+            authoritative_key,
+            resolution.run_id,
         )
     selected = {{
         "run_id": resolution.run_id,
         "run_ref": resolution.run_ref,
-        "key": key,
+        "key": authoritative_key,
         "s3_uri": str(artifact.s3_uri),
         "bucket": source_bucket or resolution.bucket,
         "resource_bucket": source_bucket or resolution.bucket,
@@ -9256,9 +9458,11 @@ def _foxglove_resolve_artifact_with_access(payload: dict) -> dict:
             if requested_field == "bucket" and "resource_bucket" in body
             else requested_field
         )
-        if request_key in body and str(body.get(request_key) or "") != str(
-            selected.get(actual_field) or ""
-        ):
+        requested_value = str(body.get(request_key) or "")
+        accepted_values = {{str(selected.get(actual_field) or "")}}
+        if requested_field == "s3_uri":
+            accepted_values.add(f"s3://{{resolution.bucket}}/{{key}}")
+        if request_key in body and requested_value not in accepted_values:
             raise HTTPException(
                 status_code=409,
                 detail=f"the selected Foxglove artifact {{requested_field}} does not match discovery",
@@ -10934,7 +11138,7 @@ def _health(
     user: str,
     password: str,
     timeout: float = 5.0,
-    verify: bool = True,
+    verify: bool | ssl.SSLContext = True,
 ) -> tuple[bool, int]:
     try:
         response = httpx.get(url, auth=(user, password), timeout=timeout, verify=verify)
@@ -10947,7 +11151,7 @@ def _basic_auth_protects_endpoint(
     url: str,
     *,
     timeout: float = 5.0,
-    verify: bool = True,
+    verify: bool | ssl.SSLContext = True,
 ) -> tuple[bool, int]:
     """Prove that an unauthenticated request cannot reach the agent UI."""
     try:
@@ -10973,7 +11177,7 @@ def _verify_artifact_only_live(
     record: dict[str, Any],
     auth_user: str,
     auth_password: str,
-    tls_verify: bool,
+    tls_verify: bool | ssl.SSLContext,
     project: str,
     name: str,
 ) -> None:
@@ -12804,18 +13008,17 @@ def status_cmd(
         )
     )
     public_url = _record_customer_url(record)
-    tls_verify = _record_tls_verify(record)
-    ui_ok, ui_code = _health(
-        agent_url, user=auth_user, password=auth_password, verify=tls_verify
-    )
-    basic_auth_enforced, unauthenticated_ui_code = _basic_auth_protects_endpoint(
+    health = probe_agent_health(
+        record,
         agent_url,
-        verify=tls_verify,
+        sim_viz_url,
+        user=auth_user,
+        password=auth_password,
+        tls_verifier=_record_tls_verify,
+        health_check=_health,
+        auth_check=_basic_auth_protects_endpoint,
     )
-    rerun_ok, rerun_code = _health(
-        sim_viz_url, user=auth_user, password=auth_password, verify=tls_verify
-    )
-    endpoint_disclosure_allowed = bool(ui_ok and basic_auth_enforced)
+    endpoint_disclosure_allowed = health["endpoint_disclosure_allowed"]
     payload = {
         "project": project,
         "name": name,
@@ -12830,20 +13033,18 @@ def status_cmd(
         "sim_viz_url": sim_viz_url if endpoint_disclosure_allowed else "",
         "sim_assets_url": sim_assets_url if endpoint_disclosure_allowed else "",
         "cameras_api_url": cameras_api_url if endpoint_disclosure_allowed else "",
-        "health": bool(ui_ok and rerun_ok and basic_auth_enforced),
-        "basic_auth_enforced": basic_auth_enforced,
-        "unauthenticated_ui_status_code": unauthenticated_ui_code,
+        **health,
         "endpoint_disclosure_allowed": endpoint_disclosure_allowed,
-        "ui_status_code": ui_code,
-        "rerun_status_code": rerun_code,
         "llm": record.get("llm", {}),
         "artifact_credentials": _artifact_credential_record_summary(record),
     }
     if output_json:
         typer.echo(json.dumps(payload, indent=2, sort_keys=True))
-        return
-    for key, value in payload.items():
-        typer.echo(f"{key}: {value}")
+    else:
+        for key, value in payload.items():
+            typer.echo(f"{key}: {value}")
+    if health.get("error_category"):
+        raise typer.Exit(code=1)
 
 
 @app.command("destroy")
@@ -12855,17 +13056,8 @@ def destroy_cmd(*args: Any, **kwargs: Any) -> None:
     _destroy_cmd_impl(*args, **kwargs)
 
 
-@app.command("verify-live")
-def verify_live_cmd(
-    project: str = typer.Option(
-        "", "--project", help="NPA project alias (default: configured default_project)."
-    ),
-    name: str = typer.Option(
-        DEFAULT_AGENT_NAME, "--name", help="Agent deployment name."
-    ),
-) -> None:
-    """Exit 0 only when live infra checks and tests pass."""
-    project = _resolve_project_alias(project)
+def _live_verification_record(project: str, name: str) -> dict[str, Any]:
+    """Require a deployed agent with a public address and recorded region."""
     record = _agent_record(project, name)
     if not record:
         _fail(f"Agent config not found for {project}/{name}")
@@ -12881,826 +13073,46 @@ def verify_live_cmd(
         _fail("agent VM does not have a non-localhost public IP")
     if not region:
         _fail("agent record is missing its deploy region")
+    return record
+
+
+def _live_verification_auth(record: dict[str, Any]) -> tuple[str, str]:
+    """Resolve the saved HTTP credentials before probing the deployment."""
     try:
-        auth_user, auth_password = _load_auth_secret(
-            str(record.get("auth_secret_path", ""))
-        )
+        return _load_auth_secret(str(record.get("auth_secret_path", "")))
     except ValueError as exc:
         _fail(str(exc))
 
-    customer_url = _record_customer_url(record)
-    tls_verify = _record_tls_verify(record)
-    if customer_url:
-        if _record_public_https(record) and customer_url != f"https://{public_ip}/":
-            _fail("public customer URL is not the canonical HTTPS public-IP endpoint")
-        try:
-            welcome_resp = httpx.get(
-                f"{customer_url.rstrip('/')}/welcome",
-                timeout=5.0,
-                verify=tls_verify,
-            )
-            if welcome_resp.status_code != 200:
-                _fail(
-                    f"public welcome page unhealthy (status={welcome_resp.status_code})"
-                )
-            healthz_resp = httpx.get(
-                f"{customer_url.rstrip('/')}/healthz",
-                timeout=5.0,
-                verify=tls_verify,
-            )
-            if healthz_resp.status_code != 200:
-                _fail(f"public healthz unhealthy (status={healthz_resp.status_code})")
-            unauthenticated_ui = httpx.get(
-                customer_url,
-                timeout=5.0,
-                verify=tls_verify,
-                follow_redirects=False,
-            )
-            if unauthenticated_ui.status_code != 401:
-                _fail(
-                    "public UI did not enforce basic authentication "
-                    f"(status={unauthenticated_ui.status_code})"
-                )
-            api_health = httpx.get(
-                f"{customer_url.rstrip('/')}/api/health",
-                auth=(auth_user, auth_password),
-                timeout=5.0,
-                verify=tls_verify,
-            )
-            if api_health.status_code != 200:
-                _fail(
-                    "authenticated public API unhealthy "
-                    f"(status={api_health.status_code})"
-                )
-        except httpx.HTTPError as exc:
-            _fail(f"public customer URL unreachable: {exc}")
 
-    ui_ok, ui_code = _health(
-        str(record.get("agent_url", "")),
-        user=auth_user,
-        password=auth_password,
-        verify=tls_verify,
+@app.command("verify-live", help="Exit 0 only when live infra checks and tests pass.")
+def verify_live_cmd(
+    project: str = typer.Option(
+        "", "--project", help="NPA project alias (default: configured default_project)."
+    ),
+    name: str = typer.Option(
+        DEFAULT_AGENT_NAME, "--name", help="Agent deployment name."
+    ),
+) -> None:
+    """Exit 0 only when live infra checks and tests pass.
+
+    Args:
+        project: Configured project alias, or the configured default.
+        name: Agent deployment name.
+
+    Returns:
+        None.
+
+    Raises:
+        typer.Exit: If configuration, endpoint verification, or tests fail.
+    """
+    project = _resolve_project_alias(project)
+    record = _live_verification_record(project, name)
+    verify_agent_endpoints(
+        record,
+        auth=_live_verification_auth(record),
+        ui_version=AGENT_UI_VERSION,
+        health_check=_health,
+        fail=_fail,
     )
-    if not ui_ok:
-        _fail(f"UI health failed behind basic auth (status={ui_code})")
-    sim_viz_url = str(record.get("sim_viz_url", record.get("rerun_url", "")))
-    rerun_ok, rerun_code = _health(
-        sim_viz_url,
-        user=auth_user,
-        password=auth_password,
-        verify=tls_verify,
-    )
-    if not rerun_ok:
-        _fail(f"embedded rerun iframe endpoint unhealthy (status={rerun_code})")
-    try:
-        sim_viz_status_resp = httpx.get(
-            f"{str(record.get('agent_url', '')).rstrip('/')}/api/sim-viz/status",
-            auth=(auth_user, auth_password),
-            timeout=5.0,
-            verify=tls_verify,
-        )
-        sim_viz_status_resp.raise_for_status()
-        sim_viz_status = sim_viz_status_resp.json()
-    except Exception as exc:  # noqa: BLE001
-        _fail(f"sim viz status endpoint unhealthy: {exc}")
-    if not isinstance(sim_viz_status, dict):
-        _fail("sim viz status endpoint did not return JSON object")
-
-    sim_assets_base = str(
-        record.get("sim_assets_url", record.get("agent_url", ""))
-    ).rstrip("/")
-    if not sim_assets_base:
-        _fail("sim_assets_url missing from agent config")
-    try:
-        sim_assets_resp = httpx.get(
-            f"{sim_assets_base}/api/sim-assets",
-            auth=(auth_user, auth_password),
-            timeout=5.0,
-            verify=tls_verify,
-        )
-        sim_assets_resp.raise_for_status()
-        sim_assets_payload = sim_assets_resp.json()
-    except Exception as exc:  # noqa: BLE001
-        _fail(f"sim assets endpoint unhealthy: {exc}")
-    if (
-        not isinstance(sim_assets_payload, dict)
-        or "scene_spec" not in sim_assets_payload
-        or "robot_spec" not in sim_assets_payload
-    ):
-        _fail("sim assets endpoint missing scene_spec/robot_spec payload")
-
-    try:
-        cameras_resp = httpx.get(
-            f"{sim_assets_base}/api/sim-assets/cameras",
-            auth=(auth_user, auth_password),
-            timeout=5.0,
-            verify=tls_verify,
-        )
-        cameras_resp.raise_for_status()
-        cameras_payload = cameras_resp.json()
-    except Exception as exc:  # noqa: BLE001
-        _fail(f"cameras endpoint unhealthy: {exc}")
-    cameras = (
-        cameras_payload.get("cameras", []) if isinstance(cameras_payload, dict) else []
-    )
-    if not isinstance(cameras, list) or not cameras:
-        _fail("cameras endpoint returned no cameras")
-
-    selection_body = {
-        "robot_preset": "franka",
-        "sim_backend": "isaac",
-        "scene_spec_uri": "stock://scene/default",
-        "assets_uri": "",
-        "robot_spec_uri": "stock://robot/franka",
-        "cameras_uri": "stock://cameras/default",
-        "props": ["cube"],
-    }
-    try:
-        selection_set = httpx.post(
-            f"{sim_assets_base}/api/sim-assets/selection",
-            auth=(auth_user, auth_password),
-            json=selection_body,
-            timeout=5.0,
-            verify=tls_verify,
-        )
-        selection_set.raise_for_status()
-        selection_get = httpx.get(
-            f"{sim_assets_base}/api/sim-assets/selection",
-            auth=(auth_user, auth_password),
-            timeout=5.0,
-            verify=tls_verify,
-        )
-        selection_get.raise_for_status()
-        selected_payload = selection_get.json()
-    except Exception as exc:  # noqa: BLE001
-        _fail(f"sim asset selection round-trip failed: {exc}")
-    if not isinstance(selected_payload, dict):
-        _fail("sim asset selection GET did not return JSON object")
-    for key in (
-        "scene_spec_uri",
-        "assets_uri",
-        "robot_spec_uri",
-        "cameras_uri",
-        "robot_preset",
-        "sim_backend",
-    ):
-        if selected_payload.get(key) != selection_body[key]:
-            _fail(f"sim asset selection round-trip did not persist {key}")
-
-    try:
-        submit_resp = httpx.post(
-            f"{str(record.get('agent_url', '')).rstrip('/')}/api/workflows/sim2real/submit",
-            auth=(auth_user, auth_password),
-            json={},
-            timeout=5.0,
-            verify=tls_verify,
-        )
-        submit_resp.raise_for_status()
-        submit_payload = submit_resp.json()
-    except Exception as exc:  # noqa: BLE001
-        _fail(f"workflow submit endpoint failed: {exc}")
-    if not isinstance(submit_payload, dict) or not submit_payload.get("run_id"):
-        _fail("workflow submit endpoint did not return run_id")
-    submit_run_id = str(submit_payload.get("run_id") or "").strip()
-    submit_viz = submit_payload.get("sim_viz", {})
-    if not isinstance(submit_viz, dict) or submit_viz.get("run_id") != submit_run_id:
-        _fail("workflow submit endpoint did not return run-scoped sim_viz")
-    if not (submit_viz.get("rrd_uri") or submit_viz.get("rerun_ready")):
-        _fail("workflow submit endpoint did not attach a visualizable .rrd to the run")
-    try:
-        submitted_status_resp = httpx.get(
-            f"{str(record.get('agent_url', '')).rstrip('/')}/api/sim-viz/status",
-            auth=(auth_user, auth_password),
-            params={"run_id": submit_run_id},
-            timeout=15.0,
-            verify=tls_verify,
-        )
-        submitted_status_resp.raise_for_status()
-        submitted_status = submitted_status_resp.json()
-    except Exception as exc:  # noqa: BLE001
-        _fail(f"submitted sim2real run status endpoint failed: {exc}")
-    if (
-        not isinstance(submitted_status, dict)
-        or submitted_status.get("run_id") != submit_run_id
-    ):
-        _fail("submitted sim2real run status did not preserve run_id")
-    if not submitted_status.get("rrd_uri"):
-        _fail("submitted sim2real run status did not include rrd_uri")
-    try:
-        submitted_rrd_blob = httpx.get(
-            f"{str(record.get('agent_url', '')).rstrip('/')}/api/sim-viz/rrd-blob",
-            auth=(auth_user, auth_password),
-            params={"run_id": submit_run_id},
-            timeout=15.0,
-            verify=tls_verify,
-        )
-        submitted_rrd_blob.raise_for_status()
-    except Exception as exc:  # noqa: BLE001
-        _fail(f"submitted sim2real run rrd-blob endpoint failed: {exc}")
-    if len(submitted_rrd_blob.content) < 64:
-        _fail(
-            "submitted sim2real run rrd-blob endpoint returned unexpectedly small payload"
-        )
-
-    try:
-        load_demo_resp = httpx.post(
-            f"{str(record.get('agent_url', '')).rstrip('/')}/api/sim-viz/load-franka-demo",
-            auth=(auth_user, auth_password),
-            json={"camera": "workspace"},
-            timeout=30.0,
-            verify=tls_verify,
-        )
-        load_demo_resp.raise_for_status()
-        load_demo_payload = load_demo_resp.json()
-    except Exception as exc:  # noqa: BLE001
-        _fail(f"load-franka-demo endpoint failed: {exc}")
-    if not isinstance(load_demo_payload, dict) or not load_demo_payload.get("ok"):
-        _fail("load-franka-demo endpoint did not return ok=true")
-    sim_viz_after_demo = load_demo_payload.get("sim_viz", {})
-    if not isinstance(sim_viz_after_demo, dict) or not (
-        sim_viz_after_demo.get("rerun_ready") or sim_viz_after_demo.get("rrd_uri")
-    ):
-        _fail("load-franka-demo did not mark rerun_ready/rrd_uri")
-
-    try:
-        preview_resp = httpx.post(
-            f"{str(record.get('agent_url', '')).rstrip('/')}/api/sim-viz/camera-preview",
-            auth=(auth_user, auth_password),
-            json={"camera": "workspace"},
-            timeout=15.0,
-            verify=tls_verify,
-        )
-        preview_resp.raise_for_status()
-        preview_payload = preview_resp.json()
-    except Exception as exc:  # noqa: BLE001
-        _fail(f"camera-preview endpoint failed: {exc}")
-    if not isinstance(preview_payload, dict) or not preview_payload.get("ok"):
-        _fail("camera-preview endpoint did not return ok=true")
-
-    agent_base = str(record.get("agent_url", "")).rstrip("/")
-    try:
-        rrd_resp = httpx.get(
-            f"{agent_base}/api/sim-viz/rrd",
-            auth=(auth_user, auth_password),
-            timeout=15.0,
-            verify=tls_verify,
-        )
-        rrd_resp.raise_for_status()
-    except Exception as exc:  # noqa: BLE001
-        _fail(f"sim-viz rrd endpoint failed after load-franka-demo: {exc}")
-    rrd_ct = str(rrd_resp.headers.get("content-type", ""))
-    if "application/json" in rrd_ct:
-        if not isinstance(rrd_resp.json(), dict):
-            _fail("sim-viz rrd JSON response was not an object")
-    elif len(rrd_resp.content) < 64:
-        _fail("sim-viz rrd endpoint returned unexpectedly small payload")
-    try:
-        rrd_blob_resp = httpx.get(
-            f"{agent_base}/api/sim-viz/rrd-blob",
-            auth=(auth_user, auth_password),
-            timeout=15.0,
-            verify=tls_verify,
-        )
-        rrd_blob_resp.raise_for_status()
-    except Exception as exc:  # noqa: BLE001
-        _fail(f"sim-viz rrd-blob endpoint failed after load-franka-demo: {exc}")
-    rrd_blob_ct = str(rrd_blob_resp.headers.get("content-type", ""))
-    if "application/json" in rrd_blob_ct:
-        if not isinstance(rrd_blob_resp.json(), dict):
-            _fail("sim-viz rrd-blob JSON response was not an object")
-    elif len(rrd_blob_resp.content) < 64:
-        _fail("sim-viz rrd-blob endpoint returned unexpectedly small payload")
-
-    rerun_static_ok = False
-    for static_path in (
-        "/rerun/index.js",
-        "/rerun/re_viewer.js",
-        "/rerun/favicon.ico",
-        "/rerun/version",
-    ):
-        try:
-            static_resp = httpx.get(
-                f"{agent_base}{static_path}",
-                auth=(auth_user, auth_password),
-                timeout=15.0,
-                verify=tls_verify,
-            )
-            if static_resp.status_code == 200 and static_resp.content:
-                rerun_static_ok = True
-                break
-        except httpx.HTTPError:
-            continue
-    if not rerun_static_ok:
-        _fail(
-            "rerun static asset probe failed (no /rerun/*.js|ico|version responded 200)"
-        )
-
-    # Lichtblick embed probe (informational): the recordings alias serves the co-served
-    # MCAP same-origin, and /lichtblick/ proxies the viewer sidecar. The sidecar is
-    # best-effort (docker/image), so this never fails the run — it reports embed status.
-    for lichtblick_path in ("/lichtblick/recordings/sim2real.mcap", "/lichtblick/"):
-        try:
-            lb_resp = httpx.get(
-                f"{agent_base}{lichtblick_path}",
-                auth=(auth_user, auth_password),
-                timeout=15.0,
-                verify=tls_verify,
-            )
-            typer.echo(
-                f"lichtblick embed probe {lichtblick_path} -> {lb_resp.status_code}"
-            )
-        except httpx.HTTPError as exc:
-            typer.echo(f"lichtblick embed probe {lichtblick_path} -> error: {exc}")
-
-    from npa.agent_rerun_bundle_check import (
-        check_rerun_bundle_load_budget,
-        format_bundle_budget_report,
-    )
-
-    bundle_result = check_rerun_bundle_load_budget(
-        agent_base,
-        auth=(auth_user, auth_password),
-        verify=tls_verify,
-    )
-    typer.echo(format_bundle_budget_report(bundle_result))
-    if not bundle_result.ok:
-        _fail("rerun bundle load budget failed: " + "; ".join(bundle_result.errors[:4]))
-
-    try:
-        health_resp = httpx.get(
-            f"{agent_base}/api/health",
-            auth=(auth_user, auth_password),
-            timeout=5.0,
-            verify=tls_verify,
-        )
-        health_resp.raise_for_status()
-        health_payload = health_resp.json()
-    except Exception as exc:  # noqa: BLE001
-        _fail(f"health endpoint failed: {exc}")
-    if not isinstance(health_payload, dict) or not health_payload.get("ok"):
-        _fail("health endpoint did not return ok=true")
-
-    try:
-        leisaac_status_resp = httpx.get(
-            f"{agent_base}/api/leisaac/status",
-            auth=(auth_user, auth_password),
-            timeout=10.0,
-            verify=tls_verify,
-        )
-        leisaac_status_resp.raise_for_status()
-        leisaac_status_payload = leisaac_status_resp.json()
-    except Exception as exc:  # noqa: BLE001
-        _fail(f"LeIsaac status endpoint failed: {exc}")
-    if not isinstance(leisaac_status_payload, dict) or not isinstance(
-        leisaac_status_payload.get("available"), bool
-    ):
-        _fail("LeIsaac status endpoint did not return an availability object")
-
-    try:
-        workflow_status_resp = httpx.get(
-            f"{agent_base}/api/workflows/sim2real/status",
-            auth=(auth_user, auth_password),
-            timeout=30.0,
-            verify=tls_verify,
-        )
-        workflow_status_resp.raise_for_status()
-        workflow_status_payload = workflow_status_resp.json()
-    except Exception as exc:  # noqa: BLE001
-        _fail(f"workflow status endpoint failed: {exc}")
-    if not isinstance(workflow_status_payload, dict):
-        _fail("workflow status endpoint did not return JSON object")
-
-    ui_resp = httpx.get(
-        str(record.get("agent_url", "")),
-        auth=(auth_user, auth_password),
-        timeout=10.0,
-        verify=tls_verify,
-    )
-    if ui_resp.status_code != 200:
-        _fail(f"UI html fetch failed (status={ui_resp.status_code})")
-    ui_html = ui_resp.text
-    for marker in (
-        'name="viewport" content="width=device-width',
-        'id="chatForm"',
-        'id="mobileChatAuth"',
-        'id="tabMain"',
-        'id="tabRerun"',
-        'id="stagesPanel"',
-        'id="agentAccessPanel"',
-        'id="agentAccessProjectSelect"',
-        "/api/access",
-        "<h3>Stages</h3>",
-        'id="stagesRunSelect"',
-        'id="stagesLoadRun"',
-        "loadSelectedRun",
-        "stages-run-picker",
-        "filterStagesRunSelect",
-        "Search NPA workflow/artifact runs",
-        "function sendChat(",
-        "function wireUi(",
-        "activateMainTab",
-        "initNpaAgentUi",
-        "mobile-agent",
-        "history.replaceState",
-        "location.username",
-        f'name="npa-ui-version" content="{AGENT_UI_VERSION}"',
-        # Media preview contract — keep in sync with AGENT_MEDIA_PREVIEW_CONTRACT
-        # (HTML-visible subset; backend route markers are source-tested separately).
-        "authenticatedPreviewObjectUrl",
-        "Loading video preview…",
-        'id="renderModeVideo"',
-        'id="artifactPreviewHost"',
-        'id="viewerPaneMedia"',
-        "URL.createObjectURL(blob)",
-        # No user-visible Rerun "Loading application bundle" splash.
-        'id="rerunBundleCover"',
-        "waitUntilRerunPastBundleSplash",
-        "Preparing viewer…",
-        "Warm Rerun assets before revealing the iframe",
-        "Uncover without blocking mount latency",
-        "scheduleRerunBundleUncover",
-        "safeHideRerunBundleCover",
-        "non-blank canvas",
-        "swapRerunRecordingInPlace",
-        "add_receiver",
-        # Describe-this visual feedback (vision tier).
-        'id="describeVisual"',
-        "captureVisualContext",
-        "describeVisual",
-        "[npa-visual-feedback]",
-        "visual_context",
-        "enqueueChatJob",
-        "processChatQueue",
-        "queueChatText",
-        "viewer-focus",
-        'id="chatDrawerToggle"',
-        "thinking-ellipsis",
-        "waitForQualityRerunFrame",
-        "captureCanvasDataUrl",
-        "ensureRerunCaptureBridge",
-        "pickBestIframeCanvas",
-        "sampleFrameStats",
-        "skipUserAppend",
-        "Describe this — capturing",
-        "do not prefetch .rrd bytes",
-        'id="openFullChatTab"',
-        "openFullChatTab",
-        'id="chatDrawerClose"',
-        "chat-fab",
-        "transform-origin: bottom right",
-        # Embedded Foxglove viewer pane.
-        'id="renderModeFoxglove"',
-        'id="viewerPaneFoxglove"',
-        'id="foxgloveHost"',
-        "ensureFoxgloveViewer",
-        "mountFoxgloveViewer",
-        "/api/foxglove/config",
-        'id="tenantResourcesPanel"',
-        "<h3>Tenant resources</h3>",
-        'id="tenantResourcesRefresh"',
-        "refreshTenantResources",
-        "/api/resources",
-        "Accessible / discovered",
-        "Configured references",
-        # Capability-gated LeIsaac tab and authenticated WebRTC bridge.
-        LEISAAC_CONTROL_READINESS_CONTRACT,
-        "ensureLeIsaacTab",
-        "ensureLeIsaacTab(leisaacCapability)",
-        "unavailableLeIsaacStatus",
-        "removeLeIsaacTab",
-        "refreshLeIsaacCapability",
-        "connectLeIsaac",
-        "/api/leisaac/status",
-        "/api/leisaac/select",
-        "/api/leisaac/bundles/reset",
-    ):
-        if marker not in ui_html:
-            _fail(f"UI html missing wiring marker: {marker}")
-    if 'loading="lazy"' in ui_html:
-        _fail("UI html must not use lazy-loading on the Rerun iframe")
-    if ".tab-panel[hidden]" in ui_html:
-        _fail("UI html must not hide tab panels with display:none via hidden attribute")
-    if (
-        'Mount the viewer immediately so "Loading application bundle" starts early'
-        in ui_html
-    ):
-        _fail(
-            "UI must not mount Rerun before bundle warm (exposes Loading application bundle)"
-        )
-    if "await waitUntilRerunPastBundleSplash(iframe, 45000)" in ui_html:
-        _fail("UI must not block mount on long splash wait (latency)")
-    if "await waitUntilRerunPastBundleSplash(iframe, 120000)" in ui_html:
-        _fail("UI must not block mount on long splash wait (latency)")
-    load_art_src = ui_html.split("async function loadArtifact(payload)")[1].split(
-        "async function refresh()"
-    )[0]
-    if "swapRerunRecordingInPlace" not in load_art_src:
-        _fail(
-            "loadArtifact must soft-swap Rerun recordings instead of always remounting wasm"
-        )
-    # Guard against regressions that put bare authenticated URLs on <video src>
-    # (browsers omit Authorization headers for media elements under basic auth).
-    if (
-        '`<video controls src="${previewUrl}">`' in ui_html
-        or '<video controls src="${previewUrl}">' in ui_html
-    ):
-        _fail("UI html must not assign artifact previewUrl directly to <video src>")
-    if '`<img alt="artifact image" src="${previewUrl}"' in ui_html:
-        _fail("UI html must not assign artifact previewUrl directly to <img src>")
-
-    try:
-        session_resp = httpx.get(
-            f"{str(record.get('agent_url', '')).rstrip('/')}/api/session",
-            auth=(auth_user, auth_password),
-            timeout=5.0,
-            verify=tls_verify,
-        )
-        session_resp.raise_for_status()
-        session_payload = session_resp.json()
-    except Exception as exc:  # noqa: BLE001
-        _fail(f"session endpoint failed: {exc}")
-    if not isinstance(session_payload, dict):
-        _fail("session endpoint did not return JSON object")
-
-    try:
-        access_resp = httpx.get(
-            f"{str(record.get('agent_url', '')).rstrip('/')}/api/access",
-            auth=(auth_user, auth_password),
-            timeout=5.0,
-            verify=tls_verify,
-        )
-        access_resp.raise_for_status()
-        access_payload = access_resp.json()
-    except Exception as exc:  # noqa: BLE001
-        _fail(f"agent access endpoint failed: {exc}")
-    try:
-        agent_artifact_options.validate_live_access_payload(record, access_payload)
-    except AgentStorageCredentialError as exc:
-        _fail(str(exc))
-
-    try:
-        tools_resp = httpx.get(
-            f"{str(record.get('agent_url', '')).rstrip('/')}/api/tools",
-            auth=(auth_user, auth_password),
-            timeout=5.0,
-            verify=tls_verify,
-        )
-        tools_resp.raise_for_status()
-        tool_refs = tools_resp.json().get("tool_refs", [])
-    except Exception as exc:  # noqa: BLE001
-        _fail(f"agent toolRef catalog request failed: {exc}")
-    if len(tool_refs) < 19:
-        _fail(f"toolRef catalog too small: expected >=19, got {len(tool_refs)}")
-    try:
-        resolve_resp = httpx.get(
-            f"{str(record.get('agent_url', '')).rstrip('/')}/api/tools/{tool_refs[0]}",
-            auth=(auth_user, auth_password),
-            timeout=5.0,
-            verify=tls_verify,
-        )
-        resolve_resp.raise_for_status()
-        resolved = resolve_resp.json()
-    except Exception as exc:  # noqa: BLE001
-        _fail(f"agent toolRef resolve failed: {exc}")
-    if not resolved.get("ok"):
-        _fail("agent failed to resolve toolRef catalog entry")
-    if not isinstance(resolved.get("argv_template"), list):
-        _fail("resolved toolRef entry missing argv_template list")
-    try:
-        chat_smoke = httpx.post(
-            f"{str(record.get('agent_url', '')).rstrip('/')}/api/chat",
-            auth=(auth_user, auth_password),
-            json={
-                "messages": [
-                    {"role": "user", "content": "what is the current sim2real status"}
-                ]
-            },
-            timeout=30.0,
-            verify=tls_verify,
-        )
-        chat_smoke.raise_for_status()
-        chat_payload = chat_smoke.json()
-    except Exception as exc:  # noqa: BLE001
-        _fail(f"chat endpoint smoke failed: {exc}")
-    if not isinstance(chat_payload, dict) or not chat_payload.get("ok"):
-        _fail("chat endpoint did not return ok=true")
-    reply = str(chat_payload.get("reply") or "")
-    if "run_id" not in reply and "stage" not in reply:
-        _fail("chat status reply missing run_id/stage fields")
-    if (
-        reply.strip().startswith("GET /api")
-        or reply.strip() == "GET /api/sim-viz/status"
-    ):
-        _fail("chat status reply returned raw GET path instead of unpacked status")
-    if not chat_payload.get("grounded"):
-        _fail("chat status reply expected grounded=true from intent router")
-    apis_used = chat_payload.get("apis_used")
-    if not isinstance(apis_used, list) or not apis_used:
-        _fail("chat status reply expected non-empty apis_used list")
-
-    try:
-        wf_chat = httpx.post(
-            f"{str(record.get('agent_url', '')).rstrip('/')}/api/chat",
-            auth=(auth_user, auth_password),
-            json={
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": "create 2-step sim2real workflow with 5000 environments, seed 9, an RTX PRO 6000 accelerator, and 1 GPU",
-                    }
-                ]
-            },
-            timeout=30.0,
-            verify=tls_verify,
-        )
-        wf_chat.raise_for_status()
-        wf_payload = wf_chat.json()
-    except Exception as exc:  # noqa: BLE001
-        _fail(f"create-workflow chat smoke failed: {exc}")
-    if not isinstance(wf_payload, dict) or not wf_payload.get("workflow_yaml"):
-        _fail("create-workflow chat did not return workflow_yaml")
-    wf_yaml = str(wf_payload.get("workflow_yaml") or "")
-    # Assert the chat authored a real npa.workflow spec, not specific stage names:
-    # the author's stage naming is not a stable contract (a valid 2-step sim2real
-    # spec may use finalize/heldout-eval rather than augment/envgen), and the
-    # validate + submit dry-run below already prove the spec is runnable.
-    if "apiVersion" not in wf_yaml or "npa.workflow" not in wf_yaml:
-        _fail("create-workflow chat yaml is not an npa.workflow spec")
-    try:
-        wf_validate = httpx.post(
-            f"{agent_base}/api/workflows/validate",
-            auth=(auth_user, auth_password),
-            json={"yaml": wf_yaml},
-            timeout=15.0,
-            verify=tls_verify,
-        )
-        wf_validate.raise_for_status()
-        wf_val_payload = wf_validate.json()
-    except Exception as exc:  # noqa: BLE001
-        _fail(f"workflow validate endpoint failed: {exc}")
-    if not isinstance(wf_val_payload, dict) or not wf_val_payload.get("ok"):
-        _fail("workflow validate endpoint did not return ok=true")
-    try:
-        infra_resp = httpx.get(
-            f"{agent_base}/api/infra/k8s",
-            auth=(auth_user, auth_password),
-            timeout=15.0,
-            verify=tls_verify,
-        )
-        infra_resp.raise_for_status()
-        infra_payload = infra_resp.json()
-    except Exception as exc:  # noqa: BLE001
-        _fail(f"infra discovery endpoint failed: {exc}")
-    if not isinstance(infra_payload, dict) or not infra_payload.get("ok"):
-        _fail("infra discovery endpoint did not return ok=true")
-    if not infra_payload.get("agent_npa_ready"):
-        _fail(f"agent NPA runtime is not ready: {infra_payload.get('agent_npa_error')}")
-    try:
-        resources_resp = httpx.get(
-            f"{agent_base}/api/resources?refresh=true",
-            auth=(auth_user, auth_password),
-            timeout=60.0,
-            verify=tls_verify,
-        )
-        resources_resp.raise_for_status()
-        resources_payload = resources_resp.json()
-    except Exception as exc:  # noqa: BLE001
-        _fail(f"tenant resource inventory endpoint failed: {exc}")
-    try:
-        agent_resources.validate_resource_inventory(resources_payload)
-    except ValueError as exc:
-        _fail(str(exc))
-    try:
-        wf_submit = httpx.post(
-            f"{agent_base}/api/workflows/submit",
-            auth=(auth_user, auth_password),
-            json={
-                "yaml": wf_yaml,
-                "run_id": "verify-live-agent-infra",
-                "dry_run": True,
-                "allow_provision": True,
-                "validate_infra": False,
-            },
-            timeout=120.0,
-            verify=tls_verify,
-        )
-        wf_submit.raise_for_status()
-        wf_submit_payload = wf_submit.json()
-    except Exception as exc:  # noqa: BLE001
-        _fail(f"workflow submit dry-run endpoint failed: {exc}")
-    if not isinstance(wf_submit_payload, dict) or not wf_submit_payload.get("ok"):
-        _fail("workflow submit dry-run endpoint did not return ok=true")
-    if "scheduler_plan" not in wf_submit_payload:
-        _fail("workflow submit dry-run missing scheduler_plan")
-    if str(wf_submit_payload.get("submit_mode") or "") != "agent-live-infra-dry-run":
-        _fail("workflow submit dry-run did not report agent-live-infra-dry-run")
-
-    try:
-        onboard_chat = httpx.post(
-            f"{str(record.get('agent_url', '')).rstrip('/')}/api/chat",
-            auth=(auth_user, auth_password),
-            json={
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": (
-                            "add an open source repo, containerize, push to registry, and run LeIsaac on live infra"
-                        ),
-                    }
-                ]
-            },
-            timeout=30.0,
-            verify=tls_verify,
-        )
-        onboard_chat.raise_for_status()
-        onboard_payload = onboard_chat.json()
-    except Exception as exc:  # noqa: BLE001
-        _fail(f"onboard_solution chat smoke failed: {exc}")
-    if not isinstance(onboard_payload, dict) or not onboard_payload.get("ok"):
-        _fail("onboard_solution chat did not return ok=true")
-    onboard_reply = str(onboard_payload.get("reply") or "")
-    if (
-        "npa workbench byof run" not in onboard_reply
-        and "run_byof_repo.py" not in onboard_reply
-    ):
-        _fail(
-            "onboard_solution chat reply missing byof CLI or run_byof_repo.py command"
-        )
-    if (
-        "byof-onboard" not in onboard_reply
-        and "skills/workflows/byof-onboard" not in onboard_reply
-    ):
-        _fail("onboard_solution chat reply missing byof-onboard skill reference")
-    if "--base-profile" not in onboard_reply and "--base-image" not in onboard_reply:
-        _fail("onboard_solution chat reply missing base image guidance")
-    if "<repo-url>" not in onboard_reply:
-        _fail("onboard_solution chat reply missing runnable placeholders")
-    if onboard_reply.strip().startswith("GET /api"):
-        _fail("onboard_solution chat returned raw GET path instead of guidance")
-    if not onboard_payload.get("grounded"):
-        _fail("onboard_solution chat expected grounded=true")
-    onboard_apis = onboard_payload.get("apis_used")
-    if not isinstance(onboard_apis, list) or "tools" not in onboard_apis:
-        _fail("onboard_solution chat expected tools in apis_used")
-
-    test_env = {
-        **dict(os.environ),
-        "NPA_INTEGRATION_E2E": "1",
-        "NPA_AGENT_LIVE": "1",
-        "NPA_AGENT_PROJECT": project,
-        "NPA_AGENT_NAME": name,
-    }
-    if os.environ.get("NPA_AGENT_CHAT_LIVE") == "1":
-        test_env["NPA_AGENT_CHAT_LIVE"] = "1"
-    # Run the local test gate with the *current* interpreter and the repo root
-    # (resolved from this file's location) as cwd, so the command works from any
-    # cwd within the source checkout. Previously it shelled out to a relative
-    # "npa/.venv/bin/python" and relative test paths, which raised
-    # FileNotFoundError unless invoked from the repo root. This gate is a
-    # source-tree dev/operator command (the npa/tests/ tree it runs is not
-    # shipped in a wheel), so the parents[4] repo-root resolution is expected.
-    import sys as _sys
-
-    repo_root = Path(__file__).resolve().parents[4]
-    py = _sys.executable or "python3"
-    smoke = subprocess.run(
-        [
-            py,
-            "-m",
-            "pytest",
-            "npa/tests/smoke/test_agent_smoke.py",
-            "npa/tests/smoke/test_agent_chat_smoke.py",
-            "-q",
-        ],
-        check=False,
-        env=test_env,
-        cwd=str(repo_root),
-    )
-    if smoke.returncode != 0:
-        _fail(
-            "pytest npa/tests/smoke/test_agent_smoke.py test_agent_chat_smoke.py failed"
-        )
-    unit = subprocess.run(
-        [
-            py,
-            "-m",
-            "pytest",
-            "npa/tests/cli/test_agent.py",
-            "npa/tests/cli/test_agent_workflow.py",
-            "-q",
-        ],
-        check=False,
-        env=test_env,
-        cwd=str(repo_root),
-    )
-    if unit.returncode != 0:
-        _fail("pytest npa/tests/cli/test_agent.py failed")
-    e2e = subprocess.run(
-        [py, "-m", "pytest", "npa/tests/e2e/test_agent_live.py", "-q"],
-        check=False,
-        env=test_env,
-        cwd=str(repo_root),
-    )
-    if e2e.returncode != 0:
-        _fail("pytest npa/tests/e2e/test_agent_live.py failed")
+    run_agent_verification_tests(project, name, fail=_fail)
     typer.echo("verify-live: ok")

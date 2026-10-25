@@ -36,7 +36,9 @@ def _build_text(tool: str) -> str:
     assert dockerfile.is_file(), dockerfile
     text = dockerfile.read_text(encoding="utf-8")
     parts = [text]
-    for script in sorted((DOCKER_ROOT / "common").glob("*.sh")):
+    scripts = [*sorted((DOCKER_ROOT / "common").glob("*.sh"))]
+    scripts.extend(sorted(dockerfile.parent.glob("*.sh")))
+    for script in scripts:
         # Only scripts this Dockerfile actually invokes count towards the guard.
         if script.name in text:
             parts.append(script.read_text(encoding="utf-8"))
@@ -51,6 +53,7 @@ SKYPILOT_HOSTED_IMAGES = (
     "mjlab",
     "cosmos2-transfer",
     "cosmos3-reason",
+    "genesis",
     "groot",
     "isaac-lab",
     "lancedb",
@@ -211,7 +214,15 @@ def test_openssh_install_layers_do_not_bake_reusable_host_keys() -> None:
             )
             assert instruction.index("openssh-server") < instruction.index(cleanup)
 
-    for installer in sorted((DOCKER_ROOT / "common").glob("*.sh")):
+    installers = [*sorted((DOCKER_ROOT / "common").glob("*.sh"))]
+    installers.extend(sorted((DOCKER_ROOT / "lerobot").glob("*.sh")))
+    for installer in installers:
+        if installer.parent != DOCKER_ROOT / "common":
+            dockerfile = installer.parent / "Dockerfile"
+            if not dockerfile.is_file() or installer.name not in dockerfile.read_text(
+                encoding="utf-8"
+            ):
+                continue
         text = installer.read_text(encoding="utf-8")
         if "apt-get install" not in text or "openssh-server" not in text:
             continue
@@ -389,15 +400,33 @@ def test_derived_prereq_dockerfile_matches_the_shipped_one(tool: str) -> None:
         assert "OMNI_USER_DIR" in text and "OMNI_LOG_DIR" in text
 
 
-@pytest.mark.parametrize("tool", ("sim2real-envgen", "sim2real-eval"))
-def test_genesis_derived_workflow_images_pin_the_bootstrap_closure(tool: str) -> None:
-    """The two Genesis-derived canonical stages failed identically without sudo."""
+@pytest.mark.parametrize(
+    ("tool", "snapshot"),
+    (
+        ("genesis", "20261002T000000Z"),
+        ("sim2real-envgen", "20261009T000000Z"),
+        ("sim2real-eval", "20261002T000000Z"),
+    ),
+)
+def test_genesis_workflow_images_pin_the_bootstrap_closure(
+    tool: str, snapshot: str
+) -> None:
+    """Genesis workflow images use the pinned non-root SkyPilot closure."""
 
     dockerfile = (DOCKER_ROOT / tool / "Dockerfile").read_text(encoding="utf-8")
-    snapshot = "20261009T000000Z" if tool == "sim2real-envgen" else "20260820T000000Z"
     assert f"ARG UBUNTU_SNAPSHOT={snapshot}" in dockerfile
+    if tool == "sim2real-envgen":
+        assert "ARG ENVGEN_LINUX_LIBC_DEV_VERSION=5.15.0-198.208" in dockerfile
+        assert '"${UBUNTU_SNAPSHOT}" "${ENVGEN_LINUX_LIBC_DEV_VERSION}"' in dockerfile
     assert "install_workflow_runtime_prereqs.sh" in dockerfile
-    assert 'install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}"' in dockerfile
+    if tool == "sim2real-envgen":
+        assert "ARG ENVGEN_LINUX_LIBC_DEV_VERSION=5.15.0-198.208" in dockerfile
+        assert (
+            'install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}" '
+            '"${ENVGEN_LINUX_LIBC_DEV_VERSION}" \\'
+        ) in dockerfile
+    else:
+        assert 'install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}"' in dockerfile
 
     installer = (
         DOCKER_ROOT / "common" / "install_workflow_runtime_prereqs.sh"
@@ -410,8 +439,8 @@ def test_genesis_derived_workflow_images_pin_the_bootstrap_closure(tool: str) ->
     assert "ubuntu:22.04" in snapshot_config
     assert "ubuntu:24.04" in snapshot_config
     assert "ubuntu:22.04" in installer
-    assert 'linux_libc_dev_version="5.15.0-190.200"' in installer
-    assert 'linux_libc_dev_version="6.8.0-139.139"' in installer
+    assert 'linux_libc_dev_version="5.15.0-198.208"' in installer
+    assert 'linux_libc_dev_version="6.8.0-147.147"' in installer
     assert "apt-get --fix-broken install -y --no-install-recommends" in installer
     assert '"linux-libc-dev=${linux_libc_dev_version}"' in installer
     assert "sudo" in installer and "rsync" in installer
