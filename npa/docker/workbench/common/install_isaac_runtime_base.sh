@@ -271,6 +271,14 @@ if [ "$ISAAC_PYTHON_MINOR" = 3.12 ]; then
   # reviewed constrained bytes receive the bounded compatibility backport.
   "$ISAAC_VENV/bin/python" "${COMMON_DIR}/backport_setuptools_manifest.py"
 fi
+# Torch 2.11.0+cu128's released metadata caps Setuptools below the reviewed
+# Isaac 3 security floor, although its tested extension interface works with
+# 84.2.1. Restrict the RECORD-preserving compatibility repair to this exact
+# Python 3.12/cu128 closure; every other Torch closure retains its own metadata.
+if [ "$ISAAC_PYTHON_MINOR" = 3.12 ] && [ "$SKIP_TORCH" != 1 ] \
+  && [ "$TORCH_VERSION" = 2.11.0 ] && [[ "$TORCH_INDEX_URL" == */cu128 ]]; then
+  "$ISAAC_VENV/bin/python" "${COMMON_DIR}/torch_setuptools_compat.py"
+fi
 "$ISAAC_VENV/bin/python" -m pip check
 
 log "runtime-fetch bootstrap, wheel manifest, and the /isaac-sim/python.sh shim"
