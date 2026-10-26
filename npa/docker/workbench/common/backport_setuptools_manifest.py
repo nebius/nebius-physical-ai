@@ -1,9 +1,10 @@
 """Backport Setuptools' official Unicode manifest exclusion fix.
 
 The exact upstream dd9f436a36486b4cb8a4c70a2321548b0be09b8f change preserves
-vLLM's Setuptools<81 and Isaac's Torch Setuptools<82 constraints.
-Unknown source bytes are rejected. Installed
-license, version, APIs, RECORD hashes, and checked-hash bytecode are preserved.
+the older vLLM and Isaac constraints. The current secure Isaac pin 84.1.0
+already contains that upstream fix, so its exact reviewed bytes are verified
+without mutation. Unknown source bytes are rejected. Installed license,
+version, APIs, RECORD hashes, and checked-hash bytecode are preserved.
 
 The patch fragments below are derived from Setuptools under its MIT license:
 Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -45,6 +46,16 @@ _SETUPTOOLS_80_HASHES = {
         "0e400678e34254f1f7e8ef29a85515473e9df98699ea4d4314098ee414721d52",
     ),
 }
+_SETUPTOOLS_84_NATIVE_HASHES = {
+    "setuptools/command/egg_info.py": (
+        "37bbdddc1a29864675b4a9bf97d131c336907ac83ed63d91e899006662a77134",
+        "37bbdddc1a29864675b4a9bf97d131c336907ac83ed63d91e899006662a77134",
+    ),
+    "setuptools/unicode_utils.py": (
+        "0e400678e34254f1f7e8ef29a85515473e9df98699ea4d4314098ee414721d52",
+        "0e400678e34254f1f7e8ef29a85515473e9df98699ea4d4314098ee414721d52",
+    ),
+}
 SOURCE_HASHES = {
     "80.10.2": _SETUPTOOLS_80_HASHES,
     "81.0.0": {
@@ -54,6 +65,7 @@ SOURCE_HASHES = {
             "75fde7317f70bedfe7ab2ac596aa16fc79e869e04dc429d6ee36377459ef1ddd",
         ),
     },
+    "84.1.0": _SETUPTOOLS_84_NATIVE_HASHES,
 }
 
 MATCHER = '''class _NormalizedMatcher:
@@ -135,7 +147,8 @@ def main() -> None:
     distribution = metadata.distribution("setuptools")
     if distribution.version not in SOURCE_HASHES:
         raise RuntimeError(
-            "the manifest backport requires exact Setuptools 80.10.2 or 81.0.0"
+            "the manifest verifier requires reviewed Setuptools "
+            + ", ".join(SOURCE_HASHES)
         )
     source_hashes = SOURCE_HASHES[distribution.version]
     root = Path(distribution.locate_file(""))
