@@ -218,10 +218,15 @@ def test_pip_bootstrap_distribution_is_content_pinned():
 def test_full_setuptools_seed_has_its_own_fixed_wheel_lock():
     seed_lock = DOCKERFILE.with_name("setuptools-seed.lock").read_text()
     lock_lines = [line for line in seed_lock.splitlines() if not line.startswith("#")]
-    digest = "51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670"
-    assert lock_lines == ["setuptools==84.0.0 \\", f"    --hash=sha256:{digest}"]
+    digest = "ca140b45d5325a9478f880e351484f62fef15f336462e449ca0c03c873d589c2"
+    assert lock_lines == ["setuptools==84.2.1 \\", f"    --hash=sha256:{digest}"]
     runtime_lock = DOCKERFILE.with_name("requirements.lock").read_text()
-    assert f"setuptools==84.0.0 \\\n    --hash=sha256:{digest}" in runtime_lock
+    runtime_pin = re.search(
+        r"(?ms)^setuptools==84\.2\.1 \\\n.*?(?=^[A-Za-z0-9][A-Za-z0-9_.-]*==|\Z)",
+        runtime_lock,
+    )
+    assert runtime_pin is not None
+    assert f"--hash=sha256:{digest}" in runtime_pin.group(0)
     text = DOCKERFILE.read_text()
     builder = text.split("AS runtime-producer", 1)[0]
     final = runtime_producer()
@@ -302,8 +307,8 @@ def test_bootstrap_seed_contract_binds_lock_and_recipe(mutation):
         seed_lock = re.sub(r"sha256:[0-9a-f]{64}", "sha256:" + "0" * 64, seed_lock)
     elif mutation == "install":
         dockerfile = dockerfile.replace(
-            "install -m 0444 /opt/setuptools-84.0.0-py3-none-any.whl /usr/share/python-wheels/",
-            "install -m 0444 /opt/setuptools-84.0.0-py3-none-any.whl /wrong/",
+            "install -m 0444 /opt/setuptools-84.2.1-py3-none-any.whl /usr/share/python-wheels/",
+            "install -m 0444 /opt/setuptools-84.2.1-py3-none-any.whl /wrong/",
         )
     elif mutation == "remove":
         dockerfile = dockerfile.replace(
@@ -327,8 +332,8 @@ def test_full_seed_replacement_occurs_before_the_apt_layer_is_committed():
     final = runtime_producer()
     instructions = re.sub(r"\\\n\s*", " ", final).splitlines()
     apt = next(line for line in instructions if line.startswith("RUN --mount="))
-    wheel = "setuptools-84.0.0-py3-none-any.whl"
-    digest = "51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670"
+    wheel = "setuptools-84.2.1-py3-none-any.whl"
+    digest = "ca140b45d5325a9478f880e351484f62fef15f336462e449ca0c03c873d589c2"
     mount = f"source=/opt/setuptools-seed/{wheel},target=/opt/{wheel},ro"
     verified = f"{digest}  /opt/{wheel}"
     old_removed = "rm /usr/share/python-wheels/pip-24.0-py3-none-any.whl"

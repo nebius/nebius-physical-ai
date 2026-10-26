@@ -27,8 +27,8 @@ SERVING_SMOKE = IMAGE_DIR / "smoke_serving.sh"
 GUARDRAIL_PREP = IMAGE_DIR / "prepare_guardrail_runtime.py"
 HF_SNAPSHOT_PIN = IMAGE_DIR / "hf_snapshot_pin.py"
 CONTRACT = NPA_ROOT / "docker/workbench/packaging-contract.yaml"
-SOURCE_REVISION = "eb11446b7f2e30ca582f8aff3afe12e9a2e66f6c"
-SOURCE_SHA256 = "a0380c02b403f3c71ba4360fd23fc2461ea8a84c28d5543b8ac4c08a31a97a3f"
+SOURCE_REVISION = "6dd0d1f9310f7598b773c796b434c8000c2816ec"
+SOURCE_SHA256 = "a608b9f9739124439935da8a1a1e05139377cdbdb3caae6bd727eb1950dad42e"
 
 
 def _module(name: str, path: Path):
@@ -104,9 +104,10 @@ def test_source_base_and_dependency_closure_are_immutable() -> None:
     assert 'mv "${work}/venv" "${VENV}"' not in bootstrap
     assert "prepare_guardrail_runtime.py" in bootstrap
     assert "sitecustomize.py" in bootstrap
+    assert "VLLM_OMNI_VERSION_OVERRIDE=0.31.0" in bootstrap
     assert "vllm/vllm-omni" not in text
     assert "nvcr.io" not in text
-    assert "vllm==0.28.0" in LOCK.read_text(encoding="utf-8")
+    assert "vllm==0.31.0" in LOCK.read_text(encoding="utf-8")
     assert "torch==2.13.0" in LOCK.read_text(encoding="utf-8")
     assert "COPY --chmod=0644" in text
     assert "su -s /bin/sh -c 'test -r" in text

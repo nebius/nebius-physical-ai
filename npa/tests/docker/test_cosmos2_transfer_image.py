@@ -101,9 +101,9 @@ def test_lfs_media_models_and_build_credentials_are_excluded() -> None:
         "sha256=83efa1c898e0fc5380fc0cabbf75164c52e3b5cbb45973710d75821928380c73"
         in overrides
     )
-    assert "setuptools-84.0.0-py3-none-any.whl" in overrides
+    assert "setuptools-84.2.1-py3-none-any.whl" in overrides
     assert (
-        "sha256=51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670"
+        "sha256=ca140b45d5325a9478f880e351484f62fef15f336462e449ca0c03c873d589c2"
         in overrides
     )
     assert "files.pythonhosted.org" in overrides
