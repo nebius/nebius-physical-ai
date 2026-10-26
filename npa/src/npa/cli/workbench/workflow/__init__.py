@@ -9450,6 +9450,11 @@ def cancel_cmd(
     cluster: str = typer.Option(
         "", "--cluster", help="SkyPilot cluster name to tear down. Defaults to run ID."
     ),
+    preserve_cluster: bool = typer.Option(
+        False,
+        "--preserve-cluster",
+        help="Cancel one explicit active job without tearing down its run cluster.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON."),
 ) -> None:
     """Cancel a launched run; never-launched and terminal runs are repeat-safe no-ops."""
@@ -9457,13 +9462,18 @@ def cancel_cmd(
     identity = None
     result: dict[str, Any]
     try:
+        from npa.orchestration.skypilot.workflow_state import WorkflowStateError
+
+        if preserve_cluster and cluster:
+            raise ValueError("--preserve-cluster cannot be combined with --cluster.")
+        if preserve_cluster and not job_id.strip():
+            raise ValueError("--preserve-cluster requires an explicit --job-id.")
         from npa.orchestration.npa_workflow.cancellation import (
             assess_run_cancellation,
             is_terminal_workflow_state,
             reverify_active_cancellation,
         )
         from npa.orchestration.npa_workflow.run_resolution import resolve_run
-        from npa.orchestration.skypilot.workflow_state import WorkflowStateError
         from npa.cleanup_identity import resolve_cleanup_identity
         from npa.clients.config import resolve_environment
 
@@ -9654,6 +9664,15 @@ def cancel_cmd(
                     cleanup_launched_workflows,
                 )
 
+                if preserve_cluster and (
+                    len(assessment.active_jobs) != 1
+                    or assessment.active_jobs[0].job_id != job_id.strip()
+                ):
+                    raise ValueError(
+                        "--preserve-cluster requires the explicit --job-id to be the "
+                        "only active managed job recorded for this run."
+                    )
+
                 reverify_errors = call_with_workflow_storage(
                     resolution.state,
                     reverify_active_cancellation,
@@ -9682,6 +9701,9 @@ def cancel_cmd(
                         ),
                     }
                 else:
+                    cleanup_options = (
+                        {"teardown_cluster": False} if preserve_cluster else {}
+                    )
                     cleanup = call_with_workflow_storage(
                         resolution.state,
                         cleanup_launched_workflows,
@@ -9693,6 +9715,7 @@ def cancel_cmd(
                         cluster=cluster,
                         sky_bin=sky_bin or None,
                         isolated_config_dir=isolated_config_dir,
+                        **cleanup_options,
                     )
                     errors = [*assessment.errors, *cleanup.errors]
                     owned_teardown_allowed = (
@@ -9711,6 +9734,7 @@ def cancel_cmd(
                         "cancelled_job_ids": active_ids,
                         "cloud_calls": True,
                         "jobs": jobs_payload,
+                        "cluster_preserved": preserve_cluster,
                         "durable_absence_conflict_job_ids": absence_conflict_ids,
                         "durable_absence_conflict_errors": (
                             assessment.absence_conflict_errors
@@ -9720,7 +9744,10 @@ def cancel_cmd(
                         "commands": cleanup.commands,
                         "errors": errors,
                         "message": (
-                            f"Cancellation converged for {len(active_ids)} active managed job(s)."
+                            f"Cancellation converged for {len(active_ids)} active managed job(s); "
+                            "the run cluster was preserved."
+                            if not errors and preserve_cluster
+                            else f"Cancellation converged for {len(active_ids)} active managed job(s)."
                             if not errors
                             else "Every live managed job converged; only contradictory "
                             "durable state for exact verified-absent jobs remains. An "
@@ -9781,6 +9808,11 @@ def cancel_cmd(
             action={
                 "kind": "managed_job_cancel" if result.get("cloud_calls") else "none",
                 "cancelled_job_ids": result.get("cancelled_job_ids", []),
+                **(
+                    {"cluster_preserved": True}
+                    if result.get("cluster_preserved")
+                    else {}
+                ),
             },
             verification={
                 "outcome": result.get("outcome", ""),
