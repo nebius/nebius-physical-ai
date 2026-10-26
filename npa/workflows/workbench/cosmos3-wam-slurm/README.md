@@ -153,7 +153,7 @@ receipt; the original capture is retained unchanged.
 | `preserve-slurm-ipc.sh` | Prevent login-session cleanup from deleting batch-job shared memory |
 | `ipc_probe.py` | Thirty-second background shared-memory survival check across SSH logout |
 | `add_worker.py` / `bootstrap-worker.sh` / `slurm_worker.py` | Private second-worker bundle, shared storage, and native Slurm join |
-| `prepare_simulation.py` / `simulation-requirements.txt` | Separate pinned Python 3.10.21 CPU LIBERO environment |
+| `prepare_simulation.py` / `simulation-requirements.txt` | Separate pinned Python 3.11.16 CPU LIBERO environment |
 | `simulation_probe.py` | All 500 initial states and actual two-camera renders for all ten tasks |
 | `simulation_client.py` | Native evaluator with restricted NumPy state deserialization |
 | `evaluate.py` | Native policy servers and all ten tasks, with per-trial evidence and strict result checks |
@@ -256,7 +256,7 @@ insufficient evidence. The reporter rejects Python tracebacks from worker
 threads as well as failed optimizer updates.
 
 `prepare_simulation.py --shared-root PATH` creates a fresh `PATH/simulation`
-with Python 3.10.21, CPU PyTorch 2.14.0, the pinned LIBERO source and the exact
+with Python 3.11.16, CPU PyTorch 2.14.0, the pinned LIBERO source and the exact
 packages in `simulation-requirements.txt`. It needs `uv`, git, `libosmesa6`,
 `cmake` and `build-essential`. It preserves the separate CUDA training venv.
 The simulator's `LIBERO_CONFIG_PATH` and source `PYTHONPATH` are set explicitly.
