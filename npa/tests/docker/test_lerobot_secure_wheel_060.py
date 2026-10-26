@@ -30,7 +30,8 @@ def test_metadata_rewrite_is_the_reviewed_secure_dependency_closure():
         "torchcodec<0.12.0,>=0.7.0": "torchcodec<0.17.0,>=0.16.0",
         "torchcodec<0.12.0,>=0.11.0": "torchcodec<0.17.0,>=0.16.0",
         "diffusers<0.36.0,>=0.27.2": "diffusers<0.39.0,>=0.38.0",
-        "setuptools<81.0.0,>=71.0.0": "setuptools<84.0.0,>=83.0.0",
+        "Pillow<13.0.0,>=10.0.0": "Pillow<14.0.0,>=13.0.0",
+        "setuptools<81.0.0,>=71.0.0": "setuptools<85.0.0,>=84.1.0",
         "transformers<5.6.0,>=5.4.0": "transformers<5.11.0,>=5.10.0",
         "wandb<0.28.0,>=0.24.0": "wandb<0.31.0,>=0.30.0",
         "datasets<5.0.0,>=4.7.0": "datasets<5.1.0,>=5.0.1",
@@ -43,6 +44,7 @@ def test_metadata_rewrite_is_the_reviewed_secure_dependency_closure():
         "torchcodec<0.12.0,>=0.7.0": '; sys_platform == "win32" and extra == "dataset"',
         "torchcodec<0.12.0,>=0.11.0": '; (sys_platform == "linux" and (platform_machine == "aarch64" or platform_machine == "arm64")) and extra == "dataset"',
         "diffusers<0.36.0,>=0.27.2": '; extra == "diffusers-dep"',
+        "Pillow<13.0.0,>=10.0.0": "",
         "setuptools<81.0.0,>=71.0.0": "",
         "transformers<5.6.0,>=5.4.0": '; extra == "transformers-dep"',
         "wandb<0.28.0,>=0.24.0": '; extra == "training"',
@@ -53,7 +55,7 @@ def test_metadata_rewrite_is_the_reviewed_secure_dependency_closure():
         for dependency in expected
     )
     rewritten = module._metadata(upstream)
-    assert b"Version: 0.6.0+npa.secure2\n" in rewritten
+    assert b"Version: 0.6.0+npa.secure4\n" in rewritten
     for dependency, replacement in expected.items():
         assert (
             f"Requires-Dist: {replacement}{markers[dependency]}\n".encode() in rewritten

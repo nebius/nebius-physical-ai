@@ -110,7 +110,7 @@ def test_hub_literal_review_binds_the_selected_package_and_exact_source_files() 
 def test_hub_literal_paths_cannot_admit_credential_or_other_byte_drift(
     tmp_path, relative
 ) -> None:
-    path = "opt/wan-base/lib/python3.10/site-packages/huggingface_hub/" + relative
+    path = "opt/wan-base/lib/python3.11/site-packages/huggingface_hub/" + relative
     payload = b"hf_token = hf_actual_secret_value\n"
     findings = scanner.scan(_tar(tmp_path / "changed-hub.tar", {path: payload}), {})
     assert {"audited_literal_byte_drift", "credential_content"} <= {
@@ -778,7 +778,7 @@ def test_known_debian_parser_and_optional_acceleration_literals_pass(
 def test_secret_literal_exception_requires_exact_audited_bytes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    path = "opt/wan-base/lib/python3.10/site-packages/example.py"
+    path = "opt/wan-base/lib/python3.11/site-packages/example.py"
     audited_payload = b"example = 'AKIAABCDEFGHIJKLMNOP'\n"
     monkeypatch.setattr(
         scanner,
@@ -811,7 +811,7 @@ def test_secret_literal_allowlist_contains_no_precompiled_bytecode() -> None:
 def test_secret_literal_exception_mutations_fail_closed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: bytes
 ) -> None:
-    path = "opt/wan-base/lib/python3.10/site-packages/example.py"
+    path = "opt/wan-base/lib/python3.11/site-packages/example.py"
     audited_payload = b"example = 'AKIAABCDEFGHIJKLMNOP'\n"
     monkeypatch.setattr(
         scanner,
