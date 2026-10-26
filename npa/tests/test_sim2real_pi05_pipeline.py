@@ -1302,9 +1302,7 @@ def test_smolvla_gold_protocol_reports_current_native_action(
     }
     monkeypatch.setattr(workflow_io, "read_json", lambda *_args, **_kwargs: collection)
     monkeypatch.setattr(pi05_closed_loop, "_validate_gold_scenarios", lambda *_: None)
-    monkeypatch.setattr(
-        pi05_closed_loop, "_validated_robot_plant", lambda value: value
-    )
+    monkeypatch.setattr(pi05_closed_loop, "_validated_robot_plant", lambda value: value)
     monkeypatch.setattr(pi05_closed_loop, "_validate_object_source", lambda *_: None)
     monkeypatch.setattr(
         pi05_closed_loop,
@@ -1332,9 +1330,7 @@ def test_smolvla_gold_protocol_reports_current_native_action(
     assert protocol["action_selection"] == pi05_closed_loop._action_selection_protocol(
         "lerobot_smolvla"
     )
-    assert protocol["action_selection"]["method"] == (
-        "native_fresh_chunk_first_action"
-    )
+    assert protocol["action_selection"]["method"] == ("native_fresh_chunk_first_action")
     assert protocol["sha256"] == pi05_closed_loop._sha(
         {
             key: value

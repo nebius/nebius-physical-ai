@@ -2899,9 +2899,7 @@ def _validate_effectiveness_protocol(report: dict[str, Any], role: str) -> None:
         or scenarios != expected_scenarios
     ):
         raise RuntimeError("closed-loop protocol provenance is invalid")
-    _validate_protocol_contents(
-        protocol, report.get("policy_backend", "openpi_pi05")
-    )
+    _validate_protocol_contents(protocol, report.get("policy_backend", "openpi_pi05"))
     _validate_checkpoint_provenance(report, role)
 
 
