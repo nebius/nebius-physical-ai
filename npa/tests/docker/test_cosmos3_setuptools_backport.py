@@ -50,10 +50,10 @@ def test_current_isaac_python312_setuptools_closure_is_reviewed(backport):
         for line in requirements.splitlines()
         if line.startswith("setuptools==")
     ]
-    assert selected == ["81.0.0"]
-    assert int(selected[0].partition(".")[0]) < 82
+    assert selected == ["84.2.1"]
+    assert int(selected[0].partition(".")[0]) >= 84
     assert all(
-        original != patched
+        original == patched
         for original, patched in backport.SOURCE_HASHES[selected[0]].values()
     )
 

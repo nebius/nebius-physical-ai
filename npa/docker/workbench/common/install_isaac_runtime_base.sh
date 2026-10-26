@@ -266,9 +266,21 @@ if [ "$ISAAC_PYTHON_MINOR" = 3.11 ] && grep -qiE '^moviepy==' "$OSS_DEPS_FILE"; 
   "$ISAAC_VENV/bin/python" "${COMMON_DIR}/moviepy_pillow_compat.py"
 fi
 if [ "$ISAAC_PYTHON_MINOR" = 3.12 ]; then
-  # Torch 2.11 requires Setuptools<82. Apply the upstream security fix to the
-  # exact reviewed 81.0.0 bytes while preserving its declared version and API.
+  # Torch 2.11's released wheel retained an unnecessary Setuptools<82 runtime
+  # bound. Apply PyTorch upstream c776884 to exact reviewed wheel metadata,
+  # then verify the security-fixed Setuptools bytes and runtime imports.
+  "$ISAAC_VENV/bin/python" "${COMMON_DIR}/torch_setuptools_compat.py"
   "$ISAAC_VENV/bin/python" "${COMMON_DIR}/backport_setuptools_manifest.py"
+  "$ISAAC_VENV/bin/python" - <<'PY'
+from importlib import metadata
+
+import torch
+from torch.utils.cpp_extension import BuildExtension, CppExtension, CUDAExtension
+
+assert torch.__version__ == "2.11.0+cu128"
+assert metadata.version("setuptools") == "84.2.1"
+assert all((BuildExtension, CppExtension, CUDAExtension))
+PY
 fi
 "$ISAAC_VENV/bin/python" -m pip check
 
