@@ -73,6 +73,9 @@ printf '%s\n' \
   'Components: main restricted universe multiverse' \
   'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
   > /etc/apt/sources.list.d/ubuntu.sources
+# Retry only acquisition from the same immutable snapshot. A transient 5xx must
+# not cause this secure, source-pinned build to substitute a moving mirror.
+printf '%s\n' 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/99npa-snapshot-retries
 apt-get update
 # CUDA's Jammy base retains an old linux-libc-dev build. These are development
 # headers rather than the host kernel, but the fixed immutable-snapshot build is
