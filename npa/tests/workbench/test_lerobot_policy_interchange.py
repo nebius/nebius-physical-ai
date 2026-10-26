@@ -435,52 +435,14 @@ def test_native_runtime_consumes_every_fresh_observation_with_paired_noise(
 
     first, first_sampling = runtime.infer_with_sampling({}, sampling_seed=19)
     second, second_sampling = runtime.infer_with_sampling({}, sampling_seed=19)
-    chunk, chunk_sampling = runtime.infer_action_chunk_with_sampling(
-        {}, sampling_seed=19
-    )
 
     assert first == [1.0] * 7
     assert second == [2.0] * 7
-    assert chunk[0] == [3.0] * 7
-    assert chunk[1:] == [[0.0] * 7 for _ in range(49)]
-    assert len(calls) == 3
+    assert len(calls) == 2
     assert torch.equal(calls[0][1], calls[1][1])
-    assert torch.equal(calls[1][1], calls[2][1])
     assert (
         first_sampling["sampler_noise_sha256"]
         == second_sampling["sampler_noise_sha256"]
-        == chunk_sampling["sampler_noise_sha256"]
-    )
-
-    from npa.workflows.sim2real.interchange_contract import PolicyAction
-
-    profile = SimpleNamespace(
-        backend="lerobot_smolvla",
-        identity=runtime.manifest["policy_identity"],
-        checkpoint_sha256=runtime.manifest["checkpoint_sha256"],
-        action=PolicyAction(
-            representation="absolute_joint_position",
-            names=tuple(runtime.manifest["action"]["names"]),
-            units=tuple(runtime.manifest["action"]["units"]),
-            frame="joint",
-            gripper_semantics="normalized_closed",
-            horizon=50,
-            control_hz=15.0,
-            execute_prefix=1,
-        ),
-    )
-    observation = SimpleNamespace(
-        input_identity="fresh-input",
-        to_wire_dict=lambda: {},
-    )
-    output, typed_sampling = runtime.infer_typed_with_sampling(
-        observation, profile, sampling_seed=19
-    )
-    assert len(output.action_chunk) == 50
-    assert output.action_chunk[0] == (4.0,) * 7
-    assert output.action_chunk[1:] == ((0.0,) * 7,) * 49
-    assert (
-        typed_sampling["sampler_noise_sha256"] == first_sampling["sampler_noise_sha256"]
     )
 
 

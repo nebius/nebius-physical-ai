@@ -1252,155 +1252,77 @@ def _effectiveness_report(role: str, successes: dict[str, set[int]]) -> dict:
     return pi05_closed_loop._result(args, episodes, artifacts, protocol, receipt)
 
 
-def test_smolvla_temporal_ensemble_retains_future_chunk_actions() -> None:
-    horizon = 4
-    context = {
-        "policy_backend": "lerobot_smolvla",
-        "record": {"model_horizon": horizon},
-    }
-    first = np.arange(horizon * 8, dtype=np.float64).reshape(horizon, 8)
-    first_receipt = pi05_closed_loop._action_receipt(first)
-    target, selection = pi05_closed_loop._temporally_ensembled_target(
-        context, first, {"decision": 0, "action_receipt": first_receipt}
-    )
-    assert target.tolist() == list(range(8))
-    assert selection["schema"] == "npa.sim2real.smolvla.temporal_action_ensemble.v1"
-    assert selection["contributor_count"] == 1
-
-    second = np.full((horizon, 8), 40.0, dtype=np.float64)
-    second_receipt = pi05_closed_loop._action_receipt(second)
-    target, selection = pi05_closed_loop._temporally_ensembled_target(
-        context, second, {"decision": 1, "action_receipt": second_receipt}
-    )
-    assert target.tolist() == ((first[1] + second[0]) / 2.0).tolist()
-    assert selection["method"] == "uniform_mean"
-    assert selection["model_horizon"] == horizon
-    assert selection["contributor_count"] == 2
-    assert selection["contributors"] == [
-        {
-            "origin_decision": 0,
-            "action_index": 1,
-            "chunk_sha256": first_receipt["sha256"],
-        },
-        {
-            "origin_decision": 1,
-            "action_index": 0,
-            "chunk_sha256": second_receipt["sha256"],
-        },
-    ]
-
-    episode = {
-        "receding_horizon": {
-            "model_horizon": horizon,
-            "configured_execute_prefix": 1,
-            "action_selection": pi05_closed_loop._smolvla_action_selection_protocol(
-                horizon
-            ),
-        },
-        "queries": [
+def test_smolvla_uses_first_action_from_current_fresh_chunk() -> None:
+    for decision in range(3):
+        actions = (np.arange(8, dtype=np.float64) + decision * 10).reshape(1, 8)
+        action_receipt = pi05_closed_loop._action_receipt(actions)
+        target, selection = pi05_closed_loop._current_action_target(
+            actions, {"decision": decision, "action_receipt": action_receipt}
+        )
+        assert np.array_equal(target, actions[0])
+        assert selection["schema"] == "npa.sim2real.current_native_action.v1"
+        assert selection["method"] == "native_fresh_chunk_first_action"
+        assert selection["decision"] == decision
+        assert selection["contributor_count"] == 1
+        assert selection["contributors"] == [
             {
-                "decision": 0,
-                "action_receipt": first_receipt,
-                "action_selection": {
-                    **pi05_closed_loop._smolvla_action_selection_protocol(horizon),
-                    "decision": 0,
-                    "contributor_count": 1,
-                    "contributors": [
-                        {
-                            "origin_decision": 0,
-                            "action_index": 0,
-                            "chunk_sha256": first_receipt["sha256"],
-                        }
-                    ],
-                    "weight_per_contributor": 1.0,
-                    "applied_action_sha256": hashlib.sha256(
-                        np.ascontiguousarray(first[0]).tobytes()
-                    ).hexdigest(),
-                    "applied_action_dtype": "float64",
-                    "applied_action_shape": [8],
-                    "applied_action": first[0].tolist(),
-                    "applied_gripper_score": float(first[0, 7]),
-                    "applied_gripper_command": int(float(first[0, 7]) > 0.5),
-                },
-            },
-            {
-                "decision": 1,
-                "action_receipt": second_receipt,
-                "action_selection": selection,
-            },
-        ],
-    }
-    pi05_closed_loop._validate_action_selection_history(episode)
-    pi05_closed_loop.validate_success_report(
-        {
-            "schema": "npa.sim2real.policy_interchange.closed_loop_eval.v1",
-            "checkpoint_role": "adapted",
-            "split": "gold",
-            "episode_count": 1,
-            "episodes": [episode],
-            "review_artifacts": {
-                "mp4": {"bytes": 1},
-                "witness_mp4": {"bytes": 1},
-                "rrd": {"bytes": 1},
-            },
-        },
-        Namespace(
-            episodes=1,
-            wrist_ablation_modes=["fresh"],
-            checkpoint_role="adapted",
-            split="gold",
-            policy_backend="lerobot_smolvla",
-        ),
-    )
-    episode["queries"][1]["action_selection"]["contributors"][0]["action_index"] = 0
-    with pytest.raises(RuntimeError, match="ensemble lineage"):
-        pi05_closed_loop._validate_action_selection_history(episode)
-
-
-def test_smolvla_temporal_ensemble_rejects_wrong_horizon_and_mean() -> None:
-    horizon = 3
-    actions = np.arange(horizon * 8, dtype=np.float64).reshape(horizon, 8)
-    receipt = pi05_closed_loop._action_receipt(actions)
-    context = {
-        "policy_backend": "lerobot_smolvla",
-        "record": {"model_horizon": horizon},
-    }
-    _target, selection = pi05_closed_loop._temporally_ensembled_target(
-        context, actions, {"decision": 0, "action_receipt": receipt}
-    )
-    episode = {
-        "receding_horizon": {
-            "model_horizon": horizon,
-            "action_selection": pi05_closed_loop._smolvla_action_selection_protocol(
-                horizon
-            ),
-        },
-        "queries": [
-            {
-                "decision": 0,
-                "action_receipt": receipt,
-                "action_selection": selection,
+                "origin_decision": decision,
+                "action_index": 0,
+                "chunk_sha256": action_receipt["sha256"],
             }
-        ],
+        ]
+        assert selection["applied_action_shape"] == [8]
+        assert selection["applied_action"] == actions[0].tolist()
+
+    with pytest.raises(RuntimeError, match="one finite current 8D action"):
+        pi05_closed_loop._current_action_target(
+            np.zeros((2, 8), dtype=np.float64),
+            {"decision": 3, "action_receipt": {}},
+        )
+
+
+def test_smolvla_execute_prefix_never_uses_prior_chunk_actions(monkeypatch) -> None:
+    applied: list[np.ndarray] = []
+    context = {
+        "policy_backend": "lerobot_smolvla",
+        "bridge": ([0.0] * 7, [0.5] * 7, 8, 0, 7),
+        "env": object(),
+        "native": object(),
+        "initial_z": 0.024,
+        "target_xy": np.asarray([0.5, 0.18]),
+        "object_width_m": 0.048,
+        "record": {"physics_trace": []},
     }
-    episode["queries"][0]["action_selection"]["applied_action"][0] += 1.0
-    with pytest.raises(RuntimeError, match="ensemble receipt"):
-        pi05_closed_loop._validate_action_selection_history(episode)
 
-    episode["queries"][0]["action_selection"] = selection
-    episode["receding_horizon"]["action_selection"] = (
-        pi05_closed_loop._smolvla_action_selection_protocol(horizon + 1)
-    )
-    with pytest.raises(RuntimeError, match="horizon is inconsistent"):
-        pi05_closed_loop._validate_action_selection_history(episode)
+    def apply_target(_env, target, **_kwargs):
+        applied.append(np.asarray(target).copy())
+        return {
+            "terminated": False,
+            "truncated": False,
+            "resulting_state_time_s": len(applied) / 15.0,
+        }
 
-    episode["receding_horizon"]["action_selection"] = (
-        pi05_closed_loop._smolvla_action_selection_protocol(horizon)
-    )
-    episode["receding_horizon"]["model_horizon"] = horizon
-    episode["queries"][0]["decision"] = 1
-    with pytest.raises(RuntimeError, match="decision history"):
-        pi05_closed_loop._validate_action_selection_history(episode)
+    monkeypatch.setattr(pi05_closed_loop, "_apply_target", apply_target)
+    monkeypatch.setattr(pi05_closed_loop, "_physics_sample", lambda *_args: {})
+
+    for decision in range(3):
+        actions = np.full((1, 8), float(decision + 1), dtype=np.float64)
+        query = {
+            "decision": decision,
+            "action_receipt": pi05_closed_loop._action_receipt(actions),
+            "controller_proofs": [],
+        }
+        assert pi05_closed_loop._execute_prefix(context, actions, query) is False
+        assert np.array_equal(applied[-1], actions[0])
+        assert query["action_selection"]["contributors"] == [
+            {
+                "origin_decision": decision,
+                "action_index": 0,
+                "chunk_sha256": query["action_receipt"]["sha256"],
+            }
+        ]
+
+    assert "action_chunks" not in context
 
 
 def _clock_native(control_steps: int) -> types.SimpleNamespace:

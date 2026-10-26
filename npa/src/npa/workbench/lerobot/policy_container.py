@@ -389,29 +389,37 @@ class LeRobotPolicyRuntime:
     ) -> tuple[list[float], dict[str, Any]]:
         """Infer one fresh action and report the exact optional sampler noise."""
 
-        chunk, sampling = self.infer_action_chunk_with_sampling(
-            observation, sampling_seed=sampling_seed
-        )
-        return chunk[0], sampling
-
-    def infer_action_chunk_with_sampling(
-        self, observation: dict[str, Any], *, sampling_seed: int | None = None
-    ) -> tuple[list[list[float]], dict[str, Any]]:
-        """Infer the complete fresh native chunk and retain sampler evidence."""
-
         batch = _smolvla_batch(observation, self.manifest, self.device)
         try:
             import torch
 
-            noise, sampling = _smolvla_sampling_noise(
-                torch, self.policy, self.device, sampling_seed
-            )
+            noise = None
+            noise_sha256 = None
+            if sampling_seed is not None:
+                if not 0 <= sampling_seed < 2**63:
+                    raise PolicyContainerError(
+                        "SmolVLA sampling seed must be in [0, 2**63)"
+                    )
+                shape = (
+                    1,
+                    int(self.policy.config.chunk_size),
+                    int(self.policy.config.max_action_dim),
+                )
+                generator = torch.Generator(device="cpu")
+                generator.manual_seed(sampling_seed)
+                cpu_noise = torch.randn(
+                    shape, generator=generator, dtype=torch.float32, device="cpu"
+                )
+                noise_sha256 = hashlib.sha256(
+                    cpu_noise.contiguous().numpy().tobytes()
+                ).hexdigest()
+                noise = cpu_noise.to(self.device)
             with torch.inference_mode():
                 action_chunk = self.policy.predict_action_chunk(
                     self.preprocessor(batch), noise=noise
                 )
-                actions = self.postprocessor(action_chunk)
-            values = actions.detach().cpu().numpy()
+                action = self.postprocessor(action_chunk[:, 0, :])
+            values = action.detach().cpu().numpy().reshape(-1)
         except PolicyContainerError:
             raise
         except Exception as exc:
@@ -419,14 +427,18 @@ class LeRobotPolicyRuntime:
                 f"native SmolVLA inference failed: {exc}"
             ) from exc
         expected = list(self.manifest["action"]["names"])
-        horizon = int(self.manifest["action"]["horizon"])
-        if values.shape != (1, horizon, len(expected)) or not all(
-            math.isfinite(float(value)) for value in values.reshape(-1)
+        if values.shape != (len(expected),) or not all(
+            math.isfinite(float(value)) for value in values
         ):
             raise PolicyContainerError(
-                "native SmolVLA output does not match the declared finite action chunk"
+                "native SmolVLA output does not match the declared finite action vector"
             )
-        return [[float(value) for value in row] for row in values[0]], sampling
+        return [float(value) for value in values], {
+            "fresh_observation_consumed": True,
+            "sampler_noise_sha256": noise_sha256,
+            "sampler_noise_shape": list(noise.shape) if noise is not None else None,
+            "sampling_seed": sampling_seed,
+        }
 
     def rollout(self, observations: list[dict[str, Any]]) -> list[list[float]]:
         if not observations:
@@ -467,7 +479,7 @@ class LeRobotPolicyRuntime:
             raise PolicyContainerError(
                 "typed SmolVLA profile does not match loaded checkpoint"
             )
-        values, sampling = self.infer_action_chunk_with_sampling(
+        values, sampling = self.infer_with_sampling(
             observation.to_wire_dict(), sampling_seed=sampling_seed
         )
         return PolicyOutput(
@@ -475,37 +487,9 @@ class LeRobotPolicyRuntime:
             policy_identity=policy_profile.identity,
             checkpoint_sha256=policy_profile.checkpoint_sha256,
             action=policy_profile.action,
-            action_chunk=tuple(tuple(row) for row in values),
+            action_chunk=(tuple(values),),
             generated_timestamp_s=time.time(),
         ), sampling
-
-
-def _smolvla_sampling_noise(
-    torch: Any, policy: Any, device: str, sampling_seed: int | None
-) -> tuple[Any, dict[str, Any]]:
-    """Create the exact optional CPU-seeded flow-noise tensor."""
-
-    noise = None
-    noise_sha256 = None
-    if sampling_seed is not None:
-        if not 0 <= sampling_seed < 2**63:
-            raise PolicyContainerError("SmolVLA sampling seed must be in [0, 2**63)")
-        shape = (1, int(policy.config.chunk_size), int(policy.config.max_action_dim))
-        generator = torch.Generator(device="cpu")
-        generator.manual_seed(sampling_seed)
-        cpu_noise = torch.randn(
-            shape, generator=generator, dtype=torch.float32, device="cpu"
-        )
-        noise_sha256 = hashlib.sha256(
-            cpu_noise.contiguous().numpy().tobytes()
-        ).hexdigest()
-        noise = cpu_noise.to(device)
-    return noise, {
-        "fresh_observation_consumed": True,
-        "sampler_noise_sha256": noise_sha256,
-        "sampler_noise_shape": list(noise.shape) if noise is not None else None,
-        "sampling_seed": sampling_seed,
-    }
 
 
 def _load_interchange_manifest(checkpoint: Path) -> dict[str, Any]:
