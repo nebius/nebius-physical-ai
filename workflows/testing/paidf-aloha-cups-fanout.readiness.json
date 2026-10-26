@@ -43,9 +43,12 @@
       "evidence": []
     },
     "target_runtime": {
-      "status": "unverified",
-      "reason": "The complete twelve-candidate review has not been submitted or audited from this recipe. Verify an RTX PRO 6000 node, full source/output timelines, native controls and guardrails, fresh seven-wave receipts, evaluator rejection/acceptance accounting and decoded Rerun media. Historical fanout output is comparative evidence only.",
-      "evidence": []
+      "status": "verified",
+      "reason": "A retained source-bound execution of these exact workflow bytes selected the explicit Qwen override, completed all seven terminal stages for twelve candidates, independently decoded terminal Rerun evidence, and preserved a strict rejected 0/12 disposition with owned cleanup receipts. This verifies fail-closed review behavior at the recorded unchanged thresholds only; it does not qualify generated media, training-data promotion, the default MiniMax profile, an image, or a public/default runtime.",
+      "evidence": [
+        "Private retained runtime evidence is bound to workflow SHA-256 380dabb58e52bf4fab0d756b1719eb22b4b40d19a06a3c3cd9a2d6120851b729: seven terminal stages, twelve candidates, strict rejected 0/12 disposition, decoded terminal Rerun recording, and owned cleanup receipts.",
+        "npa/tests/orchestration/npa_workflow/test_paidf_aloha_cups_fanout.py: strict rejection is persisted without refinement or promotion, and the readiness scope remains limited to fail-closed review behavior."
+      ]
     }
   }
 }

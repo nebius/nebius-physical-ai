@@ -190,6 +190,24 @@ def test_terminal_review_persists_a_strict_rejection(monkeypatch):
     assert published[0][0]["quality_status"] == "rejected"
 
 
+def test_readiness_scopes_runtime_proof_to_fail_closed_review_behavior():
+    readiness = json.loads(SPEC.with_suffix(".readiness.json").read_text())
+    runtime = readiness["prerequisites"]["target_runtime"]
+
+    assert runtime["status"] == "verified"
+    scope = runtime["reason"]
+    assert "fail-closed review behavior" in scope
+    assert "strict rejected 0/12 disposition" in scope
+    for unqualified_capability in (
+        "training-data promotion",
+        "default MiniMax profile",
+        "image",
+        "public/default runtime",
+    ):
+        assert unqualified_capability in scope
+    assert readiness["prerequisites"]["source_image"]["status"] == "unverified"
+
+
 def test_live_registration_keeps_full_review_and_public_defaults(monkeypatch, tmp_path):
     case = next(case for case in SUBMIT_LIVE_MATRIX if case.spec == SPEC.name)
     assert case.runtime and case.tier == "gpu" and not case.plan_only
