@@ -148,7 +148,16 @@ MANIPULATION_EVENT_ORDER = (
 )
 
 
-def _action_selection_protocol() -> dict[str, Any]:
+def _action_selection_protocol(
+    policy_backend: str = "openpi_pi05",
+) -> dict[str, Any]:
+    if policy_backend == "lerobot_smolvla":
+        return {
+            "schema": "npa.sim2real.current_native_action.v1",
+            "method": "native_fresh_chunk_first_action",
+            "fresh_observation_per_control": True,
+            "causality": "current_observation_and_explicit_paired_sampler_noise",
+        }
     return {
         "schema": "npa.sim2real.pi05.temporal_action_ensemble.v1",
         "method": "uniform_mean",
@@ -1105,10 +1114,7 @@ def _current_action_target(
         raise RuntimeError("SmolVLA must return one finite current 8D action")
     target = value[0].copy()
     return target, {
-        "schema": "npa.sim2real.current_native_action.v1",
-        "method": "native_fresh_chunk_first_action",
-        "fresh_observation_per_control": True,
-        "causality": "current_observation_and_explicit_paired_sampler_noise",
+        **_action_selection_protocol("lerobot_smolvla"),
         "decision": int(query["decision"]),
         "contributor_count": 1,
         "contributors": [
@@ -1324,12 +1330,7 @@ def _episode_context(
     backend = getattr(client, "metadata", {}).get("backend", "openpi_pi05")
     if backend == "lerobot_smolvla":
         record["model_horizon"] = policy_profile.action.horizon
-        record["action_selection_protocol"] = {
-            "schema": "npa.sim2real.current_native_action.v1",
-            "method": "native_fresh_chunk_first_action",
-            "fresh_observation_per_control": True,
-            "causality": "current_observation_and_explicit_paired_sampler_noise",
-        }
+        record["action_selection_protocol"] = _action_selection_protocol(backend)
     return {
         "env": env,
         "native": native,
@@ -1866,7 +1867,9 @@ def _load_gold_protocol(
         "robot_plant": robot_plant,
         "control_hz": CONTROL_HZ,
         "execution_prefix": EXECUTION_PREFIX,
-        "action_selection": _action_selection_protocol(),
+        "action_selection": _action_selection_protocol(
+            getattr(args, "policy_backend", "openpi_pi05")
+        ),
         "scenarios": scenarios,
     }
     if not protocol["object_identity"] or not protocol["scene_id"]:
@@ -2896,11 +2899,15 @@ def _validate_effectiveness_protocol(report: dict[str, Any], role: str) -> None:
         or scenarios != expected_scenarios
     ):
         raise RuntimeError("closed-loop protocol provenance is invalid")
-    _validate_protocol_contents(protocol)
+    _validate_protocol_contents(
+        protocol, report.get("policy_backend", "openpi_pi05")
+    )
     _validate_checkpoint_provenance(report, role)
 
 
-def _validate_protocol_contents(protocol: dict[str, Any]) -> None:
+def _validate_protocol_contents(
+    protocol: dict[str, Any], policy_backend: str = "openpi_pi05"
+) -> None:
     scale = _vector(protocol.get("object_scale"), 3, "comparison object scale")
     geometry = _validated_geometry_receipt(protocol.get("object_geometry") or {}, scale)
     if (
@@ -2912,7 +2919,8 @@ def _validate_protocol_contents(protocol: dict[str, Any]) -> None:
         or not protocol.get("scene_id")
         or not isinstance(protocol.get("decisions"), int)
         or protocol["decisions"] < 1
-        or protocol.get("action_selection") != _action_selection_protocol()
+        or protocol.get("action_selection")
+        != _action_selection_protocol(policy_backend)
     ):
         raise RuntimeError("closed-loop task protocol is incomplete")
     _validate_object_source(protocol.get("object_usd"))

@@ -30,6 +30,7 @@ from npa.workflows.sim2real import (
     pi05_data,
     pi05_isaac,
     pi05_stage,
+    workflow_io,
 )
 from npa.workflows.byof.openpi_service_lifecycle import (
     _inject_checkpoint_probe,
@@ -1253,6 +1254,12 @@ def _effectiveness_report(role: str, successes: dict[str, set[int]]) -> dict:
 
 
 def test_smolvla_uses_first_action_from_current_fresh_chunk() -> None:
+    assert pi05_closed_loop._action_selection_protocol("lerobot_smolvla") == {
+        "schema": "npa.sim2real.current_native_action.v1",
+        "method": "native_fresh_chunk_first_action",
+        "fresh_observation_per_control": True,
+        "causality": "current_observation_and_explicit_paired_sampler_noise",
+    }
     for decision in range(3):
         actions = (np.arange(8, dtype=np.float64) + decision * 10).reshape(1, 8)
         action_receipt = pi05_closed_loop._action_receipt(actions)
@@ -1279,6 +1286,62 @@ def test_smolvla_uses_first_action_from_current_fresh_chunk() -> None:
             np.zeros((2, 8), dtype=np.float64),
             {"decision": 3, "action_receipt": {}},
         )
+
+
+def test_smolvla_gold_protocol_reports_current_native_action(
+    monkeypatch, tmp_path: Path
+) -> None:
+    collection = {
+        "schema": "npa.sim2real.pi05.expert_collection.v1",
+        "object_asset": {"scale": [1.0, 1.0, 1.0], "geometry": {}},
+        "support_surface_contract": support_surface_contract(),
+        "successful_scenarios": [{"scene_seed": 1000}],
+        "robot_plant": {"identity": "franka"},
+        "scene_id": "sealed-scene",
+        "destination_marker_contract": {"identity": "goal"},
+    }
+    monkeypatch.setattr(workflow_io, "read_json", lambda *_args, **_kwargs: collection)
+    monkeypatch.setattr(pi05_closed_loop, "_validate_gold_scenarios", lambda *_: None)
+    monkeypatch.setattr(
+        pi05_closed_loop, "_validated_robot_plant", lambda value: value
+    )
+    monkeypatch.setattr(pi05_closed_loop, "_validate_object_source", lambda *_: None)
+    monkeypatch.setattr(
+        pi05_closed_loop,
+        "_protocol_object_fields",
+        lambda *_: {
+            "object_identity": "sealed-cube",
+            "object_usd": "task_default",
+            "object_scale": [1.0, 1.0, 1.0],
+            "object_width_m": 0.06,
+            "object_height_m": 0.06,
+            "object_geometry": {},
+        },
+    )
+    args = Namespace(
+        gold_collection_uri="s3://private/gold.json",
+        episodes=1,
+        split="gold",
+        seed=1000,
+        decisions=192,
+        policy_backend="lerobot_smolvla",
+    )
+
+    protocol = pi05_closed_loop._load_gold_protocol(args, tmp_path)
+
+    assert protocol["action_selection"] == pi05_closed_loop._action_selection_protocol(
+        "lerobot_smolvla"
+    )
+    assert protocol["action_selection"]["method"] == (
+        "native_fresh_chunk_first_action"
+    )
+    assert protocol["sha256"] == pi05_closed_loop._sha(
+        {
+            key: value
+            for key, value in protocol.items()
+            if key not in {"sha256", "scenario_sha256"}
+        }
+    )
 
 
 def test_smolvla_execute_prefix_never_uses_prior_chunk_actions(monkeypatch) -> None:
