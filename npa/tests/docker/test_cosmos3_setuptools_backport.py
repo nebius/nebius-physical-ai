@@ -23,7 +23,7 @@ def backport():
 @pytest.mark.parametrize(
     "path", ["setuptools/command/egg_info.py", "setuptools/unicode_utils.py"]
 )
-@pytest.mark.parametrize("version", ["80.10.2", "81.0.0", "84.1.0"])
+@pytest.mark.parametrize("version", ["80.10.2", "81.0.0", "84.1.0", "84.2.1"])
 def test_unreviewed_installed_source_is_rejected(backport, path, version):
     with pytest.raises(RuntimeError, match="differs from the reviewed"):
         backport.patched_source(
@@ -42,8 +42,9 @@ def test_verifier_does_not_accept_an_unreviewed_distribution(backport, monkeypat
         backport.main()
 
 
-def test_secure_isaac_setuptools_is_reviewed_native_fix(backport):
-    hashes = backport.SOURCE_HASHES["84.1.0"]
+@pytest.mark.parametrize("version", ["84.1.0", "84.2.1"])
+def test_secure_isaac_setuptools_is_reviewed_native_fix(backport, version):
+    hashes = backport.SOURCE_HASHES[version]
     assert set(hashes) == {
         "setuptools/command/egg_info.py",
         "setuptools/unicode_utils.py",

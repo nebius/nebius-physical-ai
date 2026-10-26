@@ -1,9 +1,9 @@
 """Backport Setuptools' official Unicode manifest exclusion fix.
 
 The exact upstream dd9f436a36486b4cb8a4c70a2321548b0be09b8f change preserves
-the older vLLM and Isaac constraints. The current secure Isaac pin 84.1.0
-already contains that upstream fix, so its exact reviewed bytes are verified
-without mutation. Unknown source bytes are rejected. Installed license,
+the older vLLM and Isaac constraints. The secure Isaac 84.1.0 and 84.2.1
+closures already contain that upstream fix, so their exact reviewed bytes are
+verified without mutation. Unknown source bytes are rejected. Installed license,
 version, APIs, RECORD hashes, and checked-hash bytecode are preserved.
 
 The patch fragments below are derived from Setuptools under its MIT license:
@@ -66,6 +66,7 @@ SOURCE_HASHES = {
         ),
     },
     "84.1.0": _SETUPTOOLS_84_NATIVE_HASHES,
+    "84.2.1": _SETUPTOOLS_84_NATIVE_HASHES,
 }
 
 MATCHER = '''class _NormalizedMatcher:
