@@ -171,13 +171,13 @@ def test_smoke_identifies_local_integration_without_changing_upstream_selection(
 
     monkeypatch.setenv("NPA_LEROBOT_VERSION", "0.5.1")
     monkeypatch.setattr(_versions, "_has_secure_lerobot_integration", lambda: True)
-    assert _versions.expected_lerobot_version(__file__) == "0.5.1+npa.secure2"
+    assert _versions.expected_lerobot_version(__file__) == "0.5.1+npa.secure4"
     assert resolve_lerobot_version(None) == "0.5.1"
     monkeypatch.setattr(_versions, "_has_secure_lerobot_integration", lambda: False)
     assert _versions.expected_lerobot_version(__file__) == "0.5.1"
     monkeypatch.delenv("NPA_LEROBOT_VERSION")
     monkeypatch.setattr(_versions, "_has_secure_lerobot_integration", lambda: True)
-    assert _versions.expected_lerobot_version(__file__) == "0.5.1+npa.secure2"
+    assert _versions.expected_lerobot_version(__file__) == "0.5.1+npa.secure4"
     monkeypatch.setenv("NPA_LEROBOT_VERSION", "0.6.0")
     assert _versions.expected_lerobot_version(__file__) == "0.6.0"
 
@@ -191,9 +191,9 @@ def test_smoke_identifies_matching_060_secure_integration(
     monkeypatch.setattr(
         _versions,
         "_secure_lerobot_integration_version",
-        lambda: "0.6.0+npa.secure2",
+        lambda: "0.6.0+npa.secure4",
     )
-    assert _versions.expected_lerobot_version(__file__) == "0.6.0+npa.secure2"
+    assert _versions.expected_lerobot_version(__file__) == "0.6.0+npa.secure4"
 
 
 def test_env_smoke_uses_distribution_metadata_for_secure_integration(
@@ -204,7 +204,7 @@ def test_env_smoke_uses_distribution_metadata_for_secure_integration(
     monkeypatch.setattr(
         test_lerobot_env.metadata,
         "version",
-        lambda name: "0.5.1+npa.secure2" if name == "lerobot" else "unexpected",
+        lambda name: "0.5.1+npa.secure4" if name == "lerobot" else "unexpected",
     )
 
-    assert test_lerobot_env._package_version("lerobot") == "0.5.1+npa.secure2"
+    assert test_lerobot_env._package_version("lerobot") == "0.5.1+npa.secure4"

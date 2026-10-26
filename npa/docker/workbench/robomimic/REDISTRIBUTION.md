@@ -29,11 +29,10 @@ this gate and the robomimic payload scan on the exact pushed digest. Required
 security, license, SBOM, provenance and anonymous-pull gates still apply.
 Release promotion remains quarantined until real GPU validation passes.
 
-The source runtime lock `robomimic-cu128-py311-v2` updates urllib3 to 2.8.0 and
-fsspec to 2026.7.0, and reconciles Safetensors with Diffusers' declared minimum.
-Its JSON package map and installer are included in dependency
-scanning. The legacy Torch/CUDA closure still needs security remediation and
-compatible functional qualification. This source lock does not update an
+The source runtime lock `robomimic-cu130-py311-v4` binds the supported CUDA 13.0,
+PyTorch 2.13 and Pillow 13 runtime closure. Its JSON package map and installer
+are included in dependency scanning. This source lock still requires compatible
+GPU functional qualification. It does not update an
 existing image or customer runtime: a new inventory and matching entitlement
 must bind its exact bytes before use.
 

@@ -131,7 +131,8 @@ npa workbench workflow submit workflows/testing/flex-pi-b200-inference.yaml \
 Use `flex-pi-rtxpro-inference.yaml` for the independent RTX PRO 6000 path.
 Use `flex-pi-b300-inference.yaml` for the experimental one-B300 path. It
 requires the current NPA source overlay and runtime-fetches a hash-pinned private
-PyTorch 2.8.0/CUDA 12.9/Triton 3.4.0 stack plus CUDA 12.9.86 assembler for native
+PyTorch 2.13.0/CUDA 12.9/Triton 3.7.1 stack and the upstream-compatible CPU
+TorchCodec 0.13 decoder, plus CUDA 12.9.86 assembler for native
 `sm_103a` compilation. Require its compiled reduction preflight before model fetch. Keep its NVIDIA CUDA Toolkit
 EULA beside the private runtime binary; do not bake or publish that binary.
 Submit automatically stages source when the workflow requests an overlay, even

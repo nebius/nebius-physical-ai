@@ -237,7 +237,7 @@ def build(work: Path, output: Path) -> Path:
         "builder_sha256": digest(Path(__file__).read_bytes()),
         "build_tools_lock_sha256": digest((HERE / "build-tools.lock").read_bytes()),
         "namespace_patch_sha256": digest((HERE / "pkg_resources.patch").read_bytes()),
-        "scope": "Released pip source, upstream vendoring machinery, three pinned vendor replacements; not upstream endorsement or image qualification.",
+        "scope": "Released pip source, upstream vendoring machinery, four pinned vendor replacements; not upstream endorsement or image qualification.",
     }
     (source / "src/pip/NPA_VENDOR_REPAIR.json").write_text(
         json.dumps(provenance, indent=2) + "\n"

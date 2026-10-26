@@ -360,18 +360,35 @@ def test_runtime_requirements_mirror_all_locked_artifacts():
     module = runtime()
     lock = module.read_lock(PACKAGING / "runtime-lock.json")
     for phase in ("runtime", "build"):
-        actual = {
-            line
-            for line in (PACKAGING / f"{phase}-requirements.lock")
-            .read_text()
-            .splitlines()
-            if line and not line.startswith("#")
+        lock_hashes = _read_lock_hashes(PACKAGING / f"{phase}-requirements.lock")
+        artifacts = {
+            f"{artifact['name']}=={artifact['version']}": artifact["sha256"]
+            for artifact in lock["artifacts"]
+            if artifact["phase"] == phase
         }
-        assert actual == {
-            f"{a['name']}=={a['version']} --hash=sha256:{a['sha256']}"
-            for a in lock["artifacts"]
-            if a["phase"] == phase
-        }
+        assert set(lock_hashes) == set(artifacts)
+        for package, artifact_hash in artifacts.items():
+            assert f"sha256:{artifact_hash}" in lock_hashes[package]
+
+
+def _read_lock_hashes(path: Path) -> dict[str, set[str]]:
+    hashes_by_package = {}
+    package = None
+    for raw_line in path.read_text().splitlines():
+        line = raw_line.strip()
+        continues = line.endswith("\\")
+        if continues:
+            line = line[:-1].rstrip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("--hash="):
+            assert package is not None
+            hashes_by_package[package].add(line.removeprefix("--hash="))
+            continue
+        package, _, hash_value = line.partition(" --hash=")
+        assert hash_value or continues
+        hashes_by_package[package] = {hash_value} if hash_value else set()
+    return hashes_by_package
 
 
 def test_runtime_exec_preserves_arguments_signals_and_credentials_without_python_overlay(

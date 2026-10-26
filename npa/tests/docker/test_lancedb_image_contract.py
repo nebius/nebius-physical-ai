@@ -54,7 +54,7 @@ def test_lancedb_dependency_overlay_is_consistent() -> None:
     )
     assert "npa-detection-training parent" in requirements
     assert "npa-workbench-cuda-base" not in requirements
-    assert "pillow==12.3.0" in requirements
+    assert "pillow==13.0.0" in requirements
 
 
 def test_lancedb_preserves_the_parent_header_security_refresh() -> None:

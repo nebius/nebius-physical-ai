@@ -73,10 +73,10 @@
     },
     {
       "name": "certifi",
-      "version": "2026.6.17",
-      "filename": "certifi-2026.6.17-py3-none-any.whl",
-      "url": "https://files.pythonhosted.org/packages/ef/2f/c5464532e965badff2f4c4c1a3a83f5697f0d7c407ed0cda44aaa99bb451/certifi-2026.6.17-py3-none-any.whl",
-      "sha256": "2227dcbaafe0d2f59279d1762ddddc37783ed4354594f194ffc31d20f41fc3db"
+      "version": "2026.10.19",
+      "filename": "certifi-2026.10.19-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/c4/51/29046e48f693c54e5b7412216d447a1d8362c9653148d98c02cdf65fa733/certifi-2026.10.19-py3-none-any.whl",
+      "sha256": "42d35340cc5b9ba78e818ddbff0c5b1c2b779de448a340fd1b989f5fa8670e1b"
     },
     {
       "name": "idna",
@@ -143,6 +143,10 @@
     }
   ],
   "replacements": {
+    "certifi": {
+      "from": "2026.6.17",
+      "to": "2026.10.19"
+    },
     "urllib3": {
       "from": "2.7.0",
       "to": "2.8.0"
