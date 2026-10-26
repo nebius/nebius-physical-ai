@@ -9,5 +9,5 @@ click==8.3.3
 defusedxml==0.7.1
 joblib==1.6.0
 regex==2026.9.3
-setuptools==84.0.0
+setuptools==84.2.1
 tqdm==4.70.0

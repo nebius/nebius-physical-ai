@@ -8,7 +8,7 @@
 # Robosuite is installed separately from an immutable Git commit so its
 # direct_url.json can bind the checkout.
 # The unseeded venv uses the source-identified installer in pip-bootstrap.lock.
-setuptools==83.0.0
+setuptools==84.2.1
 wheel==0.46.2
 
 numpy==2.2.5
@@ -16,7 +16,7 @@ numba==0.61.2
 scipy==1.15.3
 mujoco==3.3.1
 pygame
-Pillow
+Pillow==13.0.0
 opencv-python>=4.9,<4.14
 pyyaml
 pynput
@@ -31,6 +31,9 @@ hidapi
 gymnasium==0.29.1
 huggingface_hub>=1.6.0,<2.0.0
 requests>=2.32.0,<3.0.0
+aiohttp==3.14.4
+certifi==2026.10.19
+opentelemetry-api==1.45.1
 
 fastapi==0.136.1
 uvicorn[standard]==0.38.0
@@ -59,3 +62,4 @@ pytest>=8,<10
 
 torch==2.13.0
 torchvision==0.28.0
+filelock==4.2.4

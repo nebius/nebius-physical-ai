@@ -18,7 +18,7 @@
       "datasets_pin": "datasets==5.0.1",
       "wandb_pin": "wandb==0.30.0",
       "package_source": "npa-secure-integration",
-      "notes": "Default package pin. The maintained 0.5.1+npa.secure2 integration constrains this source closure; its publication remains quarantined. The image_tag selects the separately validated Python 3.12 / torch 2.9 cu130 B300 build."
+      "notes": "Default package pin. The maintained 0.5.1+npa.secure4 integration constrains this source closure; its publication remains quarantined. The image_tag selects the separately validated Python 3.12 / torch 2.9 cu130 B300 build."
     },
     "0.6.0": {
       "image_tag": "0.6.0-d6-extras-20260912",

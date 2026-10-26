@@ -213,16 +213,16 @@
     {
       "archive": "wheel",
       "delivery_status": "runtime-only",
-      "filename": "pillow-12.3.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
-      "final_url": "https://files.pythonhosted.org/packages/84/21/a35af28dcc61f37ed850a2d64c65c701321dfbf25085e469d5559360cbbf/pillow-12.3.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+      "filename": "pillow-13.0.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
+      "final_url": "https://files.pythonhosted.org/packages/e6/99/fdf65cc539e266ab93546c261bdf98411fe165c6e4e13f9dbf597097192b/pillow-13.0.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl",
       "license": "MIT-CMU-and-bundled-notices",
       "max_unpacked_bytes": 1073741824,
-      "name": "pillow-12.3.0-python-wheel",
+      "name": "pillow-13.0.0-python-wheel",
       "role": "python-wheel",
-      "sha256": "78cb2c6865a35ab8ff8b75fd122f6033b92a62c82801110e48ddd6c936a45d91",
-      "size_bytes": 6940830,
+      "sha256": "42d63be3af4f9b951b199b0a9d23365d37ab14687e6d77b74940432c8515c4ca",
+      "size_bytes": 7144542,
       "strip_prefix": null,
-      "url": "https://files.pythonhosted.org/packages/84/21/a35af28dcc61f37ed850a2d64c65c701321dfbf25085e469d5559360cbbf/pillow-12.3.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl"
+      "url": "https://files.pythonhosted.org/packages/e6/99/fdf65cc539e266ab93546c261bdf98411fe165c6e4e13f9dbf597097192b/pillow-13.0.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl"
     },
     {
       "archive": "wheel",
@@ -322,7 +322,7 @@
   "expected_python_distribution_count": 19,
   "mujoco_version": "3.12.0",
   "reason": "Exact runtime-fetch bytes are locked for the separately reviewed private internal run; this manifest grants no rights.",
-  "requirements_lock_sha256": "30d48e4b2bfcf0c590b47ed569393104dd759476d720a608aa9f441cd9976e4a",
+  "requirements_lock_sha256": "834e1d6f95eeaeb4f7e201a01033a928d5eee1387b31950223ead31b3172bf80",
   "resolved_python_artifact_count": 19,
   "rights_boundary": "Runtime fetch changes delivery only; it does not grant or resolve use, derivative-work, output, or hosted-service rights.",
   "schema": "npa.gymnasium-robotics.runtime-fetch-lock.v2",

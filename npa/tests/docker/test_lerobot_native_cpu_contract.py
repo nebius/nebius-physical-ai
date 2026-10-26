@@ -67,7 +67,7 @@ def test_default_dependencies_identify_secure_integration_and_decoder_abi():
     recipe = (RECIPE / "Dockerfile").read_text()
     lock = (RECIPE / "requirements-051.lock").read_text()
     assert "--require-hashes --no-deps -r /opt/lerobot/requirements-051.lock" in recipe
-    assert "lerobot==0.5.1+npa.secure2" in lock
+    assert "lerobot==0.5.1+npa.secure4" in lock
     assert "torch==2.13.0" in lock
     assert "torchcodec==0.16.0" in lock
     optional_branch, default_branch = recipe.split(
@@ -97,7 +97,7 @@ def test_default_dependencies_identify_secure_integration_and_decoder_abi():
     assert "stage's own NPA install" in recipe
     assert "shipping it here would make the repair's import" in recipe
     assert "prepare-secure-wheel.py" in recipe
-    assert "lerobot==0.5.1+npa.secure2" in lock
+    assert "lerobot==0.5.1+npa.secure4" in lock
     assert (
         'ENTRYPOINT ["/opt/lerobot/venv/bin/python", "-m", "npa.server.app"]' in recipe
     )
