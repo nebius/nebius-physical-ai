@@ -34,7 +34,7 @@ def _checkout(root, env, log):
 
 def _install(root, env, log):
     python = str(root / "libenv/bin/python")
-    _run(["uv", "venv", "--python", "3.10.21", "libenv"], root, env, log)
+    _run(["uv", "venv", "--python", "3.11.16", "libenv"], root, env, log)
     install = ["uv", "pip", "install", "--python", python]
     _run(
         [

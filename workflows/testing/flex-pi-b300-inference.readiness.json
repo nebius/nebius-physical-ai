@@ -41,8 +41,8 @@
       ]
     },
     "source_image": {
-      "status": "verified",
-      "reason": "Uses the released r2 base image, the submitted NPA source overlay, and a separately hash-pinned private PyTorch 2.8.0/CUDA 12.9/Triton 3.4.0 runtime with CUDA 12.9.86 assembler.",
+      "status": "unverified",
+      "reason": "The released r2 base image remains unchanged, but the submitted overlay now binds a private PyTorch 2.13.0/CUDA 12.9/Triton 3.7.1 runtime with the upstream-compatible CPU TorchCodec 0.13 decoder. Its source-to-runtime combination requires new B300 qualification.",
       "evidence": [
         "npa/src/npa/deploy/public_release_manifest.json",
         "npa/src/npa/workbench/flex_pi/compiler.py",
@@ -50,13 +50,12 @@
       ]
     },
     "target_runtime": {
-      "status": "verified",
-      "reason": "On 2026-09-23, one preemptible B300 passed native compiled-kernel preflight and full compiled policy inference with PyTorch 2.8.0+cu129/Triton 3.4.0. NPA live-verified SUCCEEDED; three artifacts were read back and validated. This qualifies the pinned overlay/runtime combination, not the unchanged r2 image or training.",
+      "status": "unverified",
+      "reason": "The candidate has hash-verified CPython 3.11 resolver, source-import and CPU Inductor evidence, but the PyTorch 2.13.0+cu129/Triton 3.7.1 B300 compiled preflight and real policy inference have not run. Historical PyTorch 2.8.0+cu129/Triton 3.4.0 evidence does not qualify this candidate.",
       "evidence": [
         "docs/workbench/flex-pi.md",
-        "sanitized private terminal audit and artifact readback",
-        "NPA source fingerprint feec30a5483ae7ceb193eb65d37da2eae7a76cc8cf0b0747aa49d114b93b0978",
-        "runtime lock SHA-256 e6de5c8518344b0cdeaf4655ce283f5a24c91f9baf8b6678a015cd294e2c577f"
+        "npa/src/npa/workbench/flex_pi/compiler.py",
+        "npa/src/npa/workbench/flex_pi/b300-runtime-requirements.txt"
       ]
     }
   }

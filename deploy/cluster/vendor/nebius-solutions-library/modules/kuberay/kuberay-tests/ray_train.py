@@ -94,7 +94,7 @@ result = trainer.fit()
 # [6] Load the trained model.
 with result.checkpoint.as_directory() as checkpoint_dir:
     model_state_dict = torch.load(
-        os.path.join(checkpoint_dir, "model.pt"), map_location="cpu"
+        os.path.join(checkpoint_dir, "model.pt"), map_location="cpu", weights_only=True
     )
     model = resnet18(num_classes=10)
     model.conv1 = torch.nn.Conv2d(

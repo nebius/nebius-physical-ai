@@ -246,6 +246,10 @@ def test_b300_runtime_lock_has_only_hash_pinned_official_wheels():
     )
     lines = [line for line in lock.splitlines() if line and not line.startswith("#")]
     assert len(lines) == 19
+    assert "torchaudio" not in lock
+    assert "torch-2.13.0%2Bcu129" in lock
+    assert "torchcodec-0.13.0" in lock
+    assert "triton-3.7.1" in lock
     for line in lines:
         name, separator, artifact = line.partition(" @ ")
         assert name and separator
@@ -259,3 +263,10 @@ def test_b300_runtime_lock_has_only_hash_pinned_official_wheels():
         assert parsed.scheme == "https"
         assert parsed.hostname in {"download.pytorch.org", "files.pythonhosted.org"}
         assert parsed.path.endswith(".whl") and not parsed.query
+
+
+def test_b300_compiled_preflight_binds_the_resolved_native_stack():
+    preflight = compiler._COMPILED_KERNEL_PREFLIGHT
+    assert "torch.__version__ == '2.13.0+cu129'" in preflight
+    assert "torchcodec.__version__ == '0.13.0+cpu'" in preflight
+    assert "triton.__version__ == '3.7.1'" in preflight
