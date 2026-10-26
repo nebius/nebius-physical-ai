@@ -7,17 +7,22 @@ the standard NPA workflow runtime; they do not deploy an Encord service.
 | Workflow | Result |
 | --- | --- |
 | [Labeling demo](encord-labeling-demo.yaml) | Upload videos → create ontology/project → save box/polygon tracks and scene labels → export labels/media → verify → render annotated MP4s. |
-| [Roundtrip demo](encord-roundtrip-smoke.yaml) | Push → pull → verify exact media identity and bytes; no labeling. |
+| [Roundtrip demo](encord-roundtrip-smoke.yaml) | Push media, filter it into a Collection, pull the selection, and verify item identities and bytes. |
 | [Push](encord-push.yaml) | Register or explicitly upload media and write a durable receipt. |
 | [Pull](encord-pull.yaml) | Materialize an existing dataset, collection, or project into S3. |
 
 Register mode requires source read permission and can read the full input
 prefix for SHA-256 hashing. See the [transfer and manifest migration notes](../../../docs/workbench/encord.md).
 New pull artifacts use `pull_manifest.v2`; readers retain v1 support.
+The roundtrip demo uses the intrinsic Encord width filter by default. Set
+`encord_curate_filters` to a comma-separated filter list for a different rule.
+For brightness, sharpness, or file-size filters, first compute quality metrics
+for the folder in Encord.
+The opt-in live test has completed push, curate, pull, and verification against
+Encord and S3. Its run artifacts are retained privately. Kubernetes pod
+execution remains untested.
 
-The three transport workflows moved here from `workflows/testing/`. Their file
-names are unchanged. The versioned pull manifest migration is described above.
-Imported prelabels are real object annotations, with human review still pending.
+Imported prelabels are real object annotations that still need human review.
 
 ## Prepare inputs
 
