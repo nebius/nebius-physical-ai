@@ -71,7 +71,7 @@ RUNTIME_METADATA_MAX_BYTES = 4 * 1024 * 1024
 # The runtime lock currently names 62 public and vendor wheel objects. Keep a
 # small bounded headroom for a customer inventory while refusing an open-ended
 # closure; the exact inventory still has to match the lock byte-for-byte.
-RUNTIME_ARTIFACT_MAX_COUNT = 64
+RUNTIME_ARTIFACT_MAX_COUNT = 72
 RUNTIME_OBJECT_MAX_BYTES = 4 * 1024 * 1024 * 1024
 RUNTIME_PAYLOAD_MAX_BYTES = 8 * 1024 * 1024 * 1024
 # Installed wheels expand into more filesystem entries than source objects.

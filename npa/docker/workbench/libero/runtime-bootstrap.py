@@ -73,8 +73,8 @@ EXPECTED_MANIFEST_KEYS = frozenset(
     }
 )
 EXPECTED_RUNTIME_PYTHON = {
-    "version": "3.10",
-    "abi": "cp310",
+    "version": "3.11",
+    "abi": "cp311",
     "platform": "linux_x86_64",
 }
 EXPECTED_CUSTOMER_AUTHORIZATION_METADATA = {
@@ -88,10 +88,10 @@ EXPECTED_BOUNDARIES = {
     "rendering": False,
 }
 EXPECTED_RUNTIME_MANIFEST_SHA256 = (
-    "98dd8b82f1e8fc259c627a5b94c6d5f5347452092ed6a53e8dae72d89c97ab57"
+    "03b68662093313a8f971519c4f677038242f6266261eff67b6f84385282ebffd"
 )
 EXPECTED_RUNTIME_REQUIREMENTS_SHA256 = (
-    "233d6802c8317a5be1c15bb4ae89daf71d51e9335f912f1685dff5fef79f98bc"
+    "62703583c24f612e6655fe3dd114b8e79ef5d1063b7632c890aaa3beaad90e04"
 )
 DEFAULT_MANIFEST = Path("/opt/npa/libero/runtime-manifest.json")
 DEFAULT_REQUIREMENTS = Path("/opt/npa/libero/runtime-requirements.txt")

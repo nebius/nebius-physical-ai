@@ -103,10 +103,11 @@ def prepare_b300_compiler(directory: Path) -> tuple[dict[str, str], dict]:
 
 
 _COMPILED_KERNEL_PREFLIGHT = """
-import json, torch, triton
+import json, torch, torchcodec, triton
 from torch._inductor import metrics
-assert torch.__version__ == '2.8.0+cu129', torch.__version__
-assert triton.__version__ == '3.4.0', triton.__version__
+assert torch.__version__ == '2.13.0+cu129', torch.__version__
+assert torchcodec.__version__ == '0.13.0+cpu', torchcodec.__version__
+assert triton.__version__ == '3.7.1', triton.__version__
 assert torch.cuda.device_count() == 1
 assert torch.cuda.get_device_capability(0) == (10, 3)
 def kernel(x):
