@@ -1,9 +1,10 @@
 """Backport Setuptools' official Unicode manifest exclusion fix.
 
-The exact upstream dd9f436a36486b4cb8a4c70a2321548b0be09b8f change preserves
-vLLM's Setuptools<81 and Isaac's Torch Setuptools<82 constraints.
-Unknown source bytes are rejected. Installed
-license, version, APIs, RECORD hashes, and checked-hash bytecode are preserved.
+The exact upstream dd9f436a36486b4cb8a4c70a2321548b0be09b8f change is
+backported for older constrained runtimes. Newer reviewed Setuptools releases
+which already contain that change are verified byte-for-byte and left intact.
+Unknown versions and source bytes are rejected. Installed license, version,
+APIs, RECORD hashes, and checked-hash bytecode are preserved.
 
 The patch fragments below are derived from Setuptools under its MIT license:
 Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -52,6 +53,19 @@ SOURCE_HASHES = {
         "setuptools/command/egg_info.py": (
             "ff2658273e42acb874698793d865c1a7a6e31746b442062fa03477b8174a2597",
             "75fde7317f70bedfe7ab2ac596aa16fc79e869e04dc429d6ee36377459ef1ddd",
+        ),
+    },
+    # Setuptools 84.2.1 already contains the reviewed upstream fix. Using the
+    # same digest for both tuple entries makes ``patched_source`` a verified
+    # no-op while retaining the exact-source fail-closed boundary.
+    "84.2.1": {
+        "setuptools/command/egg_info.py": (
+            "37bbdddc1a29864675b4a9bf97d131c336907ac83ed63d91e899006662a77134",
+            "37bbdddc1a29864675b4a9bf97d131c336907ac83ed63d91e899006662a77134",
+        ),
+        "setuptools/unicode_utils.py": (
+            "0e400678e34254f1f7e8ef29a85515473e9df98699ea4d4314098ee414721d52",
+            "0e400678e34254f1f7e8ef29a85515473e9df98699ea4d4314098ee414721d52",
         ),
     },
 }
@@ -135,7 +149,7 @@ def main() -> None:
     distribution = metadata.distribution("setuptools")
     if distribution.version not in SOURCE_HASHES:
         raise RuntimeError(
-            "the manifest backport requires exact Setuptools 80.10.2 or 81.0.0"
+            "the manifest backport requires exact Setuptools 80.10.2, 81.0.0, or 84.2.1"
         )
     source_hashes = SOURCE_HASHES[distribution.version]
     root = Path(distribution.locate_file(""))
