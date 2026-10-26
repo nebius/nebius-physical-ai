@@ -190,7 +190,7 @@ s3transfer==0.14.0
 safetensors==0.8.0
 scipy==1.17.0
 sentry-sdk==2.42.1
-setuptools==84.2.1
+setuptools==81.0.0
 shellingham==1.5.4
 six==1.17.0
 smmap==5.0.3
