@@ -1,13 +1,13 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "c3989f6308802867f28312a87968bfa71f1d3bf5b0776a05dbc35583a50b636b",
+  "workflow_sha256": "ba5d4c895eb2bbaed3015f66f3c156a1e294ebf03a3cc7563e9ea253fbe48162",
   "planning": {
     "validation": {
       "status": "verified",
       "reason": "The standard workflow parser and production renderer accepted the fourteen-stage graph with the declared time-aligned SmolVLA action strategy.",
       "evidence": [
         "validate-spec status valid",
-        "plan-spec --check-render status valid with 14 tasks and render SHA-256 c8b7461cada439586f5c1f25f9c0c64a7aff354335be820fbc777b1286973a3b"
+        "plan-spec --check-render status valid with 14 tasks, distinct CPU/Isaac/LeRobot baked-source identities and render SHA-256 c30b20a3c87c848cd31c8a0ddd1c96a5c714b02bb30b69b2801188214d79d11a"
       ]
     },
     "task_fidelity": {
@@ -15,7 +15,7 @@
       "reason": "The resolved graph retains collect, export, base service/evaluation, native train/reload, adapted service/evaluation, cleanup and factual finalization, and both gold evaluations receive the same explicit action-selection value.",
       "evidence": [
         "npa/tests/orchestration/npa_workflow/test_sim2real_policy_interchange_workflow.py",
-        "164 exact pipeline tests passed on qualified Python 3.12.14 and CPU Torch 2.14.0"
+        "234 exact-source focused tests passed on qualified Python 3.12.14 and CPU Torch 2.14.0"
       ]
     }
   },
@@ -39,7 +39,7 @@
       "status": "blocked",
       "reason": "The exact execution-strategy source and affected Isaac image have focused validation but have not completed source, CI, security, provenance and anonymous-byte qualification.",
       "evidence": [
-        "candidate source 8883db5582a1eb482563fdc1c3377c0468b7322f",
+        "candidate source 5c7746b2ae917fa245f808dfe6f806e264f943ab",
         "canonical-8883db55-execution-strategy-chain-20261027.private.json"
       ]
     },
