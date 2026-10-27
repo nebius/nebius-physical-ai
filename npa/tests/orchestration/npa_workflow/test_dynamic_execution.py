@@ -29,6 +29,100 @@ SIM2REAL_DEMO = (
 PAIDF = SPECS / "physical-ai-data-factory.yaml"
 
 
+FAILURE_HANDLER_SPEC = """
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: failure-handler-test
+initial: work
+onFailure: cleanup
+states:
+  work:
+    run: {argv: [work]}
+    next: done
+  done: {terminal: true}
+  cleanup:
+    parallel: [cleanup-a, cleanup-b]
+    maxConcurrency: 2
+  cleanup-a:
+    run: {argv: [cleanup-a]}
+  cleanup-b:
+    run: {argv: [cleanup-b]}
+"""
+
+
+def _failure_handler_spec(tmp_path: Path):
+    path = tmp_path / "failure-handler.yaml"
+    path.write_text(FAILURE_HANDLER_SPEC)
+    return load_spec(path)
+
+
+def test_failure_handler_attempts_all_cleanup_and_preserves_primary_error(
+    tmp_path: Path,
+) -> None:
+    spec = _failure_handler_spec(tmp_path)
+
+    class Executor:
+        states: list[str] = []
+
+        def execute(self, step: PlanStep) -> dict:
+            self.states.append(step.state)
+            if step.state == "work":
+                return {"state": step.state, "status": "failed", "error": "payload"}
+            return {"state": step.state, "status": "ok"}
+
+        def execute_parallel(self, steps, **_kwargs):
+            return [self.execute(step) for step in steps]
+
+    executor = Executor()
+    with pytest.raises(
+        NpaWorkflowError,
+        match=(
+            "payload; failure handler 'cleanup' completed.*"
+            "original workflow failure remains authoritative"
+        ),
+    ):
+        run_workflow(
+            spec,
+            run_id="failure-cleanup",
+            execute=True,
+            step_executor=executor,
+        )
+
+    assert executor.states == ["work", "cleanup-a", "cleanup-b"]
+
+
+def test_failure_handler_error_does_not_replace_primary_error(tmp_path: Path) -> None:
+    spec = _failure_handler_spec(tmp_path)
+
+    class Executor:
+        def execute(self, step: PlanStep) -> dict:
+            errors = {"work": "payload", "cleanup-b": "cleanup-b-error"}
+            if step.state in errors:
+                return {
+                    "state": step.state,
+                    "status": "failed",
+                    "error": errors[step.state],
+                }
+            return {"state": step.state, "status": "ok"}
+
+        def execute_parallel(self, steps, **_kwargs):
+            return [self.execute(step) for step in steps]
+
+    with pytest.raises(NpaWorkflowError) as caught:
+        run_workflow(
+            spec,
+            run_id="failure-cleanup-fails",
+            execute=True,
+            step_executor=Executor(),
+        )
+
+    message = str(caught.value)
+    assert message.startswith("payload;")
+    assert "cleanup-b-error" in message
+    assert "original workflow failure remains authoritative" in message
+
+
 def test_dynamic_execute_reads_decision_for_promote(monkeypatch) -> None:
     spec = load_spec(SIM2REAL_DEMO)
 

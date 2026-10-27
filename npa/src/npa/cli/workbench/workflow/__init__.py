@@ -10106,13 +10106,32 @@ def _check_static_plan_render(
         for document in yaml.safe_load_all(rendered)
         if isinstance(document, dict) and "resources" in document
     )
-    return {
+    result: dict[str, object] = {
         "status": "valid",
         "tasks": task_count,
         "sha256": hashlib.sha256(rendered.encode("utf-8")).hexdigest(),
         "provider_actions": False,
         "registry_secrets_materialized": False,
     }
+    from npa.orchestration.npa_workflow import build_failure_plan
+
+    failure_plan = build_failure_plan(
+        spec, run_id=run_id, assume_decision=plan.assume_decision
+    )
+    if failure_plan is not None:
+        failure_rendered = render_skypilot_yaml(
+            spec,
+            failure_plan,
+            run_id=run_id,
+            options=options,
+        )
+        assert_no_unresolved_placeholders(failure_rendered)
+        result["failure_handler"] = {
+            "state": spec.on_failure,
+            "tasks": len(failure_plan.steps),
+            "sha256": hashlib.sha256(failure_rendered.encode("utf-8")).hexdigest(),
+        }
+    return result
 
 
 def _emit_render_check(render_check: Mapping[str, object]) -> None:
@@ -10121,6 +10140,13 @@ def _emit_render_check(render_check: Mapping[str, object]) -> None:
     typer.echo(
         f"render: valid (tasks={render_check['tasks']} sha256={render_check['sha256']})"
     )
+    failure = render_check.get("failure_handler")
+    if isinstance(failure, Mapping):
+        typer.echo(
+            "failure handler: valid "
+            f"(state={failure['state']} tasks={failure['tasks']} "
+            f"sha256={failure['sha256']})"
+        )
 
 
 @app.command("plan-spec")

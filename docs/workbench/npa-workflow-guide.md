@@ -254,6 +254,7 @@ stored in durable run state, including names written by older NPA versions.
 | `toolRef` | Cataloged workbench tool (preferred) |
 | `run.shell` / `run.argv` | Ad-hoc command when no catalog entry exists |
 | `next` | Linear edge to the next state |
+| top-level `onFailure` | State or group executed once after a terminal state failure; its failure is recorded separately and never replaces the original error |
 | `sequence` | Ordered sub-states (optionally inside `loop`) |
 | `parallel` | Fan-out group: members launch concurrently (SkyPilot JobGroup) and the group's `next` state is the barrier |
 | `maxConcurrency` | Cap on concurrent members of a `parallel` group (int or `{{config.attr}}`); larger groups are submitted in batches |
@@ -267,6 +268,15 @@ stored in durable run state, including names written by older NPA versions.
 | `writesDecision` | State writes `config.decision_uri`; engine reads S3 after this state |
 | `inputs` / `outputs` | Artifact URIs + optional schema labels |
 | `terminal: true` | End state |
+
+Use `onFailure` for idempotent, exact-owned cleanup that must run after a
+terminal payload failure. Include every cleanup command in one `parallel` group
+when one failed cleanup must not prevent the others from being attempted. The
+runtime fingerprints this path, records its waves beside the failed payload,
+and preserves the payload error as authoritative. After the handler succeeds,
+the failed run has released its resources and cannot be resumed; retry the
+payload with a new run ID. `--resume` remains the supported path for an
+interrupted non-terminal driver, where no terminal failure handler ran.
 
 Declare `inputs` and `outputs` beside `run` in the state mapping. A `run` block
 accepts only `shell` or `argv`; validation rejects nested artifact declarations

@@ -1,21 +1,23 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "ba5d4c895eb2bbaed3015f66f3c156a1e294ebf03a3cc7563e9ea253fbe48162",
+  "workflow_sha256": "ba3c786f72b9e571a0ec6d9b7286e9225b572d4c308a9a7af2374e4f05f64c86",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "The standard workflow parser and production renderer accepted the fourteen-stage graph with the declared time-aligned SmolVLA action strategy.",
+      "reason": "The standard workflow parser and production renderer accepted the fourteen-stage graph, declared time-aligned SmolVLA action strategy and exact-owned terminal failure cleanup group.",
       "evidence": [
         "validate-spec status valid",
-        "plan-spec --check-render status valid with 14 tasks, distinct CPU/Isaac/LeRobot baked-source identities and render SHA-256 c30b20a3c87c848cd31c8a0ddd1c96a5c714b02bb30b69b2801188214d79d11a"
+        "plan-spec --check-render status valid with 14 normal-path tasks and render SHA-256 82722aedabc06f1ca33d249b69b64a92c2b54aba7d4b88e8666b7c7a9f5ed2b5",
+        "failure handler render valid with 2 cleanup tasks and render SHA-256 1eda0f659cc8ec4938c7cc9f19121d0e3dace995ceeb13cfe5112a90483d9c7d",
+        "runtime failure-handler regression preserves the payload error, attempts both cleanup states, fingerprints the cleanup path and submits nothing on unsafe terminal resume"
       ]
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "The resolved graph retains collect, export, base service/evaluation, native train/reload, adapted service/evaluation, cleanup and factual finalization, and both gold evaluations receive the same explicit action-selection value.",
+      "reason": "The resolved graph retains collect, export, base service/evaluation, native train/reload, adapted service/evaluation, normal and failure cleanup, and factual finalization; both gold evaluations receive the same explicit action-selection value.",
       "evidence": [
         "npa/tests/orchestration/npa_workflow/test_sim2real_policy_interchange_workflow.py",
-        "234 exact-source focused tests passed on qualified Python 3.12.14 and CPU Torch 2.14.0"
+        "focused workflow/runtime tests passed on qualified Python 3.12.14"
       ]
     }
   },
@@ -37,15 +39,15 @@
     },
     "source_image": {
       "status": "blocked",
-      "reason": "The exact execution-strategy source and affected Isaac image have focused validation but have not completed source, CI, security, provenance and anonymous-byte qualification.",
+      "reason": "The exact-94 execution-strategy source and affected images are guarded behind exact-0925 qualification and have not completed source, CI, security, provenance and anonymous-byte qualification. This cleanup successor is not yet source- or image-qualified.",
       "evidence": [
-        "candidate source 5c7746b2ae917fa245f808dfe6f806e264f943ab",
-        "canonical-8883db55-execution-strategy-chain-20261027.private.json"
+        "candidate parent source 94addc4d8243524152f0f89b2fbb94fecd733a7f",
+        "canonical-94addc4d-post-image-components.private.json"
       ]
     },
     "target_runtime": {
       "status": "blocked",
-      "reason": "No clean-start standard-runtime execution has yet demonstrated strict held-out placement, interruption/resume, exact cleanup and standalone final proof under this strategy.",
+      "reason": "No clean-start standard-runtime execution has yet demonstrated strict held-out placement, real interrupted-run adoption, exact live cleanup and standalone final proof under this strategy. Unit tests do not establish those live outcomes.",
       "evidence": [
         "historical accepted baseline remains 0/24 placements"
       ]

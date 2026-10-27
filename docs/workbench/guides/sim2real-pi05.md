@@ -393,12 +393,13 @@ npa workbench workflow plan-spec workflows/testing/sim2real-pi05.yaml \
 
 Run health and exact access checks before submission. Use the standard runtime
 submit path; the spec declares service start, Isaac clients, normal-path cleanup,
-durable S3 handoffs, and resume behavior. The current workflow interpreter has
-no `finally`/`on_failure` transition, so an ungracefully lost downstream Isaac
-Job does not prove service teardown. Before a live service run, operate a scoped
-owner-only failure monitor that invokes the exact cleanup toolRef, or first add
-and validate a real failure transition. Do not use local `run-spec --execute` as
-a substitute for a SkyPilot/Kubernetes acceptance run.
+durable S3 handoffs, and resume behavior. Its top-level `onFailure` group attempts
+both exact-owned service cleanups after a terminal payload failure and records a
+cleanup failure separately without replacing the original error. A terminally
+failed run whose cleanup completed requires a new run ID; `--resume` is reserved
+for an interrupted non-terminal driver and adopts its durable waves. Do not use
+local `run-spec --execute` as a substitute for a SkyPilot/Kubernetes acceptance
+run.
 
 The Isaac collector fails before Kit startup unless the container can load the
 injected NVIDIA GLX/EGL libraries and `vulkaninfo` enumerates an NVIDIA physical

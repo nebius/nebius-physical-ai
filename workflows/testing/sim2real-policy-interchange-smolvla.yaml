@@ -98,6 +98,7 @@ config:
 
   base_service_start_uri: "{{config.root_uri}}/stage_05_base_service/start.json"
   base_service_cleanup_uri: "{{config.root_uri}}/stage_07_base_cleanup/cleanup.json"
+  failure_base_service_cleanup_uri: "{{config.root_uri}}/failure_cleanup/base.json"
   base_gold_uri: "{{config.root_uri}}/stage_06_base_gold/report.json"
   base_artifact_root_uri: "{{config.root_uri}}/stage_06_base_gold/"
 
@@ -108,6 +109,7 @@ config:
 
   adapted_service_start_uri: "{{config.root_uri}}/stage_10_adapted_service/start.json"
   adapted_service_cleanup_uri: "{{config.root_uri}}/stage_13_adapted_cleanup/cleanup.json"
+  failure_adapted_service_cleanup_uri: "{{config.root_uri}}/failure_cleanup/adapted.json"
   adapted_gold_uri: "{{config.root_uri}}/stage_11_adapted_gold/report.json"
   adapted_artifact_root_uri: "{{config.root_uri}}/stage_11_adapted_gold/"
   external_seam_uri: "{{config.root_uri}}/stage_12_external/seam.json"
@@ -213,6 +215,7 @@ resources:
     image: "{{config.cpu_image}}"
 
 initial: prepare-contract
+onFailure: failure-cleanup-services
 
 states:
   prepare-contract:
@@ -368,3 +371,26 @@ states:
       - {uri: "{{config.final_html_uri}}", schema: text/html}
       - {uri: "{{config.component_root_uri}}/components/stage_14.json", schema: npa.sim2real.policy_interchange.component_record.v1}
     terminal: true
+
+  failure-cleanup-services:
+    description: Attempt both exact-owned service cleanups after a terminal workflow failure while preserving the original failure.
+    parallel: [failure-cleanup-base-service, failure-cleanup-adapted-service]
+    maxConcurrency: 2
+
+  failure-cleanup-base-service:
+    description: Idempotently delete only the exactly owned base service after failure.
+    toolRef: workbench.lerobot.smolvla_base_service_cleanup
+    resources: base-service-control
+    params:
+      base_service_cleanup_uri: "{{config.failure_base_service_cleanup_uri}}"
+    outputs:
+      - {uri: "{{config.failure_base_service_cleanup_uri}}", schema: npa.sim2real.smolvla_service_cleanup.v1}
+
+  failure-cleanup-adapted-service:
+    description: Idempotently delete only the exactly owned adapted service after failure.
+    toolRef: workbench.lerobot.smolvla_adapted_service_cleanup
+    resources: adapted-service-control
+    params:
+      adapted_service_cleanup_uri: "{{config.failure_adapted_service_cleanup_uri}}"
+    outputs:
+      - {uri: "{{config.failure_adapted_service_cleanup_uri}}", schema: npa.sim2real.smolvla_service_cleanup.v1}

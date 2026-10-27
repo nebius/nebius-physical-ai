@@ -745,6 +745,35 @@ states:
     terminal: true
 """
 
+FAILURE_CLEANUP_SPEC = """
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: failure-cleanup-runtime
+config:
+  bucket: example-bucket
+  prefix: "failure-cleanup/{{run.id}}"
+resources:
+  cpu: {cloud: kubernetes, cpus: 1}
+initial: work
+onFailure: cleanup
+states:
+  work:
+    run: {shell: "echo work"}
+    resources: cpu
+    next: done
+  done: {terminal: true}
+  cleanup:
+    parallel: [cleanup-a, cleanup-b]
+    maxConcurrency: 2
+  cleanup-a:
+    run: {shell: "echo cleanup-a"}
+    resources: cpu
+  cleanup-b:
+    run: {shell: "echo cleanup-b"}
+    resources: cpu
+"""
+
 
 # --------------------------------------------------------------------------- fakes
 
@@ -1008,6 +1037,67 @@ def _fake_clock():
         return ticks["now"]
 
     return clock
+
+
+def test_runtime_records_completed_failure_cleanup_and_refuses_unsafe_resume(
+    tmp_path: Path,
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, FAILURE_CLEANUP_SPEC))
+    store = MemoryStore(prefix="failure-cleanup/terminal")
+    first = _executor(
+        spec,
+        run_id="terminal",
+        store=store,
+        status_fn=FakeStatus(["FAILED", "SUCCEEDED"]),
+    )
+
+    report = run_workflow_runtime(
+        spec,
+        run_id="terminal",
+        executor=first,
+        options=first.options,
+    )
+
+    assert report.status == "failed"
+    assert report.primary_error
+    assert report.failure_handler == "cleanup"
+    assert report.failure_cleanup_error == ""
+    persisted = store.read_runtime_state(
+        expected_workflow=spec.name,
+        expected_run_id="terminal",
+    )
+    assert persisted is not None
+    assert persisted.watermarks["failure_handler_completed"] is True
+    assert [wave["states"] for wave in persisted.waves] == [
+        ["work"],
+        ["cleanup-a", "cleanup-b"],
+    ]
+
+    resume_options = RuntimeOptions(poll_seconds=0, max_wait_seconds=60, resume=True)
+    submitter = FakeSubmitter()
+    resumed = _executor(
+        spec,
+        run_id="terminal",
+        store=store,
+        options=resume_options,
+        submitter=submitter,
+    )
+    with pytest.raises(NpaWorkflowError, match="use a new run ID"):
+        run_workflow_runtime(
+            spec,
+            run_id="terminal",
+            executor=resumed,
+            options=resume_options,
+        )
+    assert submitter.calls == []
+
+
+def test_failure_handler_changes_plan_fingerprint(tmp_path: Path) -> None:
+    spec = load_spec(_write_spec(tmp_path, FAILURE_CLEANUP_SPEC))
+    original = plan_fingerprint(spec, run_id="fingerprint")
+    spec.states["cleanup-a"].run.shell = "echo changed-cleanup"
+
+    assert plan_fingerprint(spec, run_id="fingerprint") != original
 
 
 def test_default_skypilot_calls_preserve_explicit_runtime_isolation(
