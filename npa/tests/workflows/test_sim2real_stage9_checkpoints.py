@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -20,6 +22,10 @@ from npa.workflows.sim2real.stage9_checkpoints import (
     validation_checkpoints,
 )
 from npa.workflows.sim2real.stage9_replay import existing_replay
+from npa.workflows.sim2real.stage9_training_evidence import (
+    validation_selection_record,
+)
+from npa.workflows.sim2real.workflow_io import json_file_sha256
 
 
 def _update():
@@ -92,6 +98,18 @@ def test_canonical_sweep_keeps_stronger_periodic_actor_after_full_pass(
     assert selected["checkpoint_uri"].endswith("model_100.pt")
     assert selected["checkpoint_size_bytes"] == 101
     assert selected["generator_policy_sha256"] == "1" * 64
+    assert candidates[0]["validation_report_sha256"] == json_file_sha256(
+        {
+            "success_rate": 0.75,
+            "policy_checkpoint_sha256": "1" * 64,
+            "policy_checkpoint_size_bytes": 101,
+            "policy_inference_provenance": {"generator_policy_sha256": "1" * 64},
+            "per_env": [
+                {"env_id": f"validation-{env}", "success": env < 48}
+                for env in range(64)
+            ],
+        }
+    )
     selection, candidate = resolve_selected_checkpoint(
         {
             "selected_checkpoint_uri": selected["checkpoint_uri"],
@@ -130,6 +148,146 @@ def test_stage9_candidate_rejects_incomplete_validation_identity() -> None:
             outer_iteration=args.outer_iteration,
             inner_iteration=args.inner_iteration,
         )
+
+
+def test_compact_selection_record_binds_ranked_validation_reports() -> None:
+    report = {
+        "success_rate": 0.75,
+        "per_env": [{"env_id": "validation-1", "success": True}],
+    }
+    candidate = {
+        "evaluation_split": "validation",
+        "outer_iteration": 1,
+        "inner_iteration": 1,
+        "training_iteration": 100,
+        "checkpoint_uri": "s3://sim2real-test/checkpoints/model_100.pt",
+        "checkpoint_sha256": "a" * 64,
+        "checkpoint_size_bytes": 128,
+        "generator_policy_sha256": "a" * 64,
+        "validation_report_uri": "s3://sim2real-test/eval/validation/report.json",
+        "validation_report_sha256": json_file_sha256(report),
+        "validation_report": report,
+    }
+    selection = select_best_checkpoint([candidate])
+
+    record = validation_selection_record(
+        run_id="run-1",
+        source_sha="b" * 40,
+        outer_iteration=1,
+        selection=selection,
+    )
+
+    material = {key: value for key, value in record.items() if key != "content_sha256"}
+    expected = hashlib.sha256(
+        json.dumps(material, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    assert record["content_sha256"] == expected
+    assert record["selected_checkpoint"]["validation_report_sha256"] == (
+        json_file_sha256(report)
+    )
+    assert record["ranked_candidates"][0]["validation_report_sha256"] == (
+        json_file_sha256(report)
+    )
+    assert "validation_report" not in record["selected_checkpoint"]
+    assert all("validation_report" not in row for row in record["ranked_candidates"])
+    assert "validation-1" not in json.dumps(record, sort_keys=True)
+
+
+def test_stage9_commit_publishes_compact_selection_record(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    candidate = {
+        "evaluation_split": "validation",
+        "outer_iteration": 1,
+        "inner_iteration": 1,
+        "training_iteration": 100,
+        "checkpoint_uri": "s3://sim2real-test/checkpoints/model_100.pt",
+        "checkpoint_sha256": "a" * 64,
+        "checkpoint_size_bytes": 128,
+        "generator_policy_sha256": "a" * 64,
+        "validation_report_uri": "s3://sim2real-test/eval/validation/report.json",
+        "validation_report_sha256": "b" * 64,
+        "validation_report": {
+            "success_rate": 0.75,
+            "per_env": [{"env_id": "validation-1", "success": True}],
+        },
+    }
+    args = SimpleNamespace(
+        run_id="run-1",
+        outer_iteration=1,
+        inner_iteration=1,
+        ppo_iterations=100,
+    )
+    evaluation_dir = tmp_path / "evaluations"
+    signal_dir = tmp_path / "signals"
+    evaluation_dir.mkdir()
+    signal_dir.mkdir()
+    inputs = {
+        "evaluation_dir": evaluation_dir,
+        "signal_dir": signal_dir,
+        "evaluation_uri": "s3://sim2real-test/evaluations/",
+        "signal_uri": "s3://sim2real-test/signals/",
+        "lane_base": "s3://sim2real-test/lane/",
+        "actions_uri": "s3://sim2real-test/actions/",
+        "evaluations": [{"rollout_id": "rollout-1"}],
+        "signals": [{"rollout_id": "rollout-1", "weight": 1.0}],
+        "evaluator_usage": {},
+    }
+    published: list[tuple[str, dict]] = []
+    loop_outputs: list[dict] = []
+    records: list[dict] = []
+    monkeypatch.setattr(
+        workflow_stage, "_stage9_validation_candidates", lambda *_args: [candidate]
+    )
+    monkeypatch.setattr(workflow_stage, "source_sha", lambda: "c" * 40)
+    monkeypatch.setattr(
+        workflow_stage,
+        "write_json",
+        lambda uri, payload, **_kwargs: published.append((uri, payload)),
+    )
+    monkeypatch.setattr(
+        workflow_stage,
+        "write_loop_output",
+        lambda _uri, payload, *_args: loop_outputs.append(payload),
+    )
+    monkeypatch.setattr(
+        workflow_stage,
+        "storage",
+        lambda: SimpleNamespace(upload_directory=lambda *_args, **_kwargs: None),
+    )
+    monkeypatch.setattr(
+        workflow_stage,
+        "publish_component_record",
+        lambda **kwargs: records.append(kwargs),
+    )
+
+    workflow_stage._stage9_commit(
+        args,
+        "s3://sim2real-test/run",
+        tmp_path,
+        inputs,
+        {},
+        {"component_invocation": {"mode": "npa_workflow_skypilot_task"}},
+        {"robot": "Franka"},
+        "s3://sim2real-test/run/inner_loop/outer-01/evidence.json",
+    )
+
+    uri, record = published[0]
+    assert (
+        uri == "s3://sim2real-test/run/checkpoints/validation-selection/outer-01.json"
+    )
+    assert record["selection_input_split"] == "validation"
+    assert (
+        record["selected_checkpoint"]["checkpoint_uri"] == candidate["checkpoint_uri"]
+    )
+    selection_reference = loop_outputs[0]["validation_selection_record"]
+    assert selection_reference["uri"] == uri
+    assert selection_reference["content_sha256"] == record["content_sha256"]
+    assert selection_reference["sha256"] == json_file_sha256(record)
+    artifacts = records[0]["artifacts"]
+    assert artifacts["validation_selection_record"] == uri
+    assert artifacts["validation_selection_record_sha256"] == json_file_sha256(record)
 
 
 def test_stage9_candidate_rejects_validation_bytes_other_than_native_candidate() -> (

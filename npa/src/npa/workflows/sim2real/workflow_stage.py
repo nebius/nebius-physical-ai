@@ -39,8 +39,11 @@ from npa.workflows.sim2real.stage9_replay import (
 )
 from npa.workflows.sim2real.stage9_training_evidence import (
     component_record_kwargs as _stage9_record_kwargs,
-    loop_evidence as _stage9_loop_evidence,
+    prepared_loop_evidence as _stage9_prepared_loop_evidence,
     temporal_signals as _stage9_temporal_signals,
+)
+from npa.workflows.sim2real.training_curriculum import (
+    ppo_environment as _stage9_ppo_environment,
 )
 from npa.workflows.sim2real.workflow_io import (
     aggregate_parallel_provenance,
@@ -694,34 +697,21 @@ def _stage9_republish(args, root, work, inputs, prior, evidence_uri):
     return True
 
 
-def _stage9_ppo_environment(args, root, work, signal_batch, training_output):
-    from npa.workflows.sim2real.training_curriculum import resume_environment
-
-    env = _common_isaac_env(args, split_uri=f"{root}/envs/train/envs.jsonl")
-    env.update(resume_environment(_prior_training_evidence(args, work)))
-    env.update(
-        {
-            "NPA_SIM2REAL_SIGNAL_JSON": signal_batch,
-            "NPA_SIM2REAL_OUTPUT_JSON": training_output,
-            "NPA_SIM2REAL_TRAINER_TAG": (
-                f"outer-{args.outer_iteration:02d}-iter-{args.inner_iteration:02d}"
-            ),
-            "NPA_BYO_ISAAC_NUM_ENVS": args.ppo_num_envs,
-            "NPA_BYO_ISAAC_ITERATIONS": args.ppo_iterations,
-            "NPA_BYO_ISAAC_STEPS_PER_ENV": args.ppo_steps_per_env,
-            "NPA_BYO_ISAAC_VALIDATION_INTERVAL": min(100, args.ppo_iterations),
-        }
-    )
-    return env
-
-
 def _stage9_train(args, root, work, signals):
     from npa.workflows.sim2real import byo_isaac_trainer
 
     signal_batch = work / "signal-batch.json"
     signal_batch.write_text(json.dumps({"signals": signals}, indent=2))
     training_output = work / "training-update.json"
-    _set_env(_stage9_ppo_environment(args, root, work, signal_batch, training_output))
+    _set_env(
+        _stage9_ppo_environment(
+            args,
+            _common_isaac_env(args, split_uri=f"{root}/envs/train/envs.jsonl"),
+            _prior_training_evidence(args, work),
+            signal_batch,
+            training_output,
+        )
+    )
     if byo_isaac_trainer.main() != 0:
         raise RuntimeError("Stage 9 genuine BYO Isaac PPO failed")
     update = json.loads(training_output.read_text())
@@ -753,8 +743,18 @@ def _stage9_commit(args, root, work, inputs, prior, update, embodiment, evidence
             "Stage 9 refuses to select a checkpoint without complete byte identity"
         ) from exc
     selection = select_best_checkpoint(candidates)
-    evidence = _stage9_loop_evidence(
-        args, inputs, prior, update, embodiment, candidates, selection
+    evidence = _stage9_prepared_loop_evidence(
+        args,
+        root,
+        work,
+        inputs,
+        prior,
+        update,
+        embodiment,
+        candidates,
+        selection,
+        source_sha(),
+        write_json,
     )
     storage().upload_directory(str(inputs["evaluation_dir"]), inputs["evaluation_uri"])
     storage().upload_directory(str(inputs["signal_dir"]), inputs["signal_uri"])

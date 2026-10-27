@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import re
+from pathlib import Path
 from typing import Any
 
 from npa.workflows.sim2real.checkpoint_selection import (
@@ -130,6 +131,44 @@ def resume_environment(evidence: dict[str, Any]) -> dict[str, str]:
             "NPA_SIM2REAL_POLICY_CHECKPOINT_URI": progress["checkpoint_uri"],
             "NPA_BYO_ISAAC_RESUME_PHASE": progress["phase"],
             "NPA_SIM2REAL_RESUME_CURRICULUM_JSON": json.dumps(progress, sort_keys=True),
+        }
+    )
+    return environment
+
+
+def ppo_environment(
+    args: Any,
+    base_environment: dict[str, Any],
+    prior_evidence: dict[str, Any],
+    signal_batch: Path,
+    training_output: Path,
+) -> dict[str, Any]:
+    """Build the native Stage 9 PPO environment from validated resume evidence.
+
+    Args:
+        args: Stage arguments with loop and PPO settings.
+        base_environment: Current canonical Isaac runtime environment.
+        prior_evidence: Durable evidence from the preceding completed pass.
+        signal_batch: Local temporal-signal batch consumed by the trainer.
+        training_output: Local path where the trainer writes its result.
+    Returns:
+        Fully bound native PPO environment.
+    Raises:
+        ValueError: If prior checkpoint selection is not validation-eligible.
+    """
+    environment = dict(base_environment)
+    environment.update(resume_environment(prior_evidence))
+    environment.update(
+        {
+            "NPA_SIM2REAL_SIGNAL_JSON": signal_batch,
+            "NPA_SIM2REAL_OUTPUT_JSON": training_output,
+            "NPA_SIM2REAL_TRAINER_TAG": (
+                f"outer-{args.outer_iteration:02d}-iter-{args.inner_iteration:02d}"
+            ),
+            "NPA_BYO_ISAAC_NUM_ENVS": args.ppo_num_envs,
+            "NPA_BYO_ISAAC_ITERATIONS": args.ppo_iterations,
+            "NPA_BYO_ISAAC_STEPS_PER_ENV": args.ppo_steps_per_env,
+            "NPA_BYO_ISAAC_VALIDATION_INTERVAL": min(100, args.ppo_iterations),
         }
     )
     return environment

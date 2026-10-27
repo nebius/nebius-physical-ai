@@ -7,6 +7,8 @@ import re
 from typing import Any
 from urllib.parse import urlparse
 
+from npa.workflows.sim2real.workflow_io import json_file_sha256
+
 # Sentinel for a genuinely absent mean-distance metric: worse than any
 # physically plausible distance, so a checkpoint with no distance evidence
 # never outranks one that does. Must stay distinguishable from a real 0.0m
@@ -70,6 +72,7 @@ def stage9_checkpoint_candidate(
         "checkpoint_size_bytes": validation.get("policy_checkpoint_size_bytes", 0),
         "generator_policy_sha256": provenance.get("generator_policy_sha256", ""),
         "validation_report_uri": validation_uri,
+        "validation_report_sha256": json_file_sha256(validation),
         "validation_report": validation,
         "embodiment": embodiment,
     }
@@ -212,6 +215,7 @@ def validation_checkpoint_candidate(
         "checkpoint_size_bytes": report.get("policy_checkpoint_size_bytes", 0),
         "generator_policy_sha256": provenance.get("generator_policy_sha256", ""),
         "validation_report_uri": report["report_uri"],
+        "validation_report_sha256": json_file_sha256(report),
         "validation_report": report,
     }
 
@@ -270,6 +274,7 @@ def _ranked_checkpoint(candidate: dict[str, Any]) -> dict[str, Any]:
             (candidate.get("validation_report") or {}).get("success_summary") or {}
         ).get("mean_object_goal_distance_m"),
         "validation_report_uri": candidate.get("validation_report_uri"),
+        "validation_report_sha256": candidate.get("validation_report_sha256"),
         "stable_grasp_and_lift_rate": _paired_lift_rate(report),
         "rank_key": list(checkpoint_rank_key(candidate)),
     }
