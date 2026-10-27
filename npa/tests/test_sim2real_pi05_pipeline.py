@@ -485,15 +485,56 @@ def test_terminal_witness_rejects_state_time_mismatch(monkeypatch) -> None:
         )
 
 
-def test_dual_witness_panel_preserves_both_native_frames() -> None:
+def test_evidence_panel_preserves_policy_inputs_and_both_witnesses() -> None:
+    workspace = np.full((224, 224, 3), 7, dtype=np.uint8)
+    wrist = np.full((224, 224, 3), 11, dtype=np.uint8)
     goal = np.full((224, 224, 3), 17, dtype=np.uint8)
     release = np.full((224, 224, 3), 53, dtype=np.uint8)
 
-    panel = pi05_closed_loop._witness_panel(goal, release, "terminal")
+    panel = pi05_closed_loop._evidence_panel(
+        workspace, wrist, goal, release, "terminal"
+    )
 
-    assert panel.shape == (256, 448, 3)
-    assert np.array_equal(panel[32:, :224], goal)
-    assert np.array_equal(panel[32:, 224:], release)
+    assert panel.shape == (256, 896, 3)
+    assert np.array_equal(panel[32:, :224], workspace)
+    assert np.array_equal(panel[32:, 224:448], wrist)
+    assert np.array_equal(panel[32:, 448:672], goal)
+    assert np.array_equal(panel[32:, 672:], release)
+
+
+def test_policy_input_archive_separates_source_and_consumed_wrist(tmp_path) -> None:
+    workspace = np.full((2, 2, 3), 3, dtype=np.uint8)
+    source_wrist = np.full((2, 2, 3), 5, dtype=np.uint8)
+    consumed_wrist = np.full((2, 2, 3), 9, dtype=np.uint8)
+    source_hash = hashlib.sha256(source_wrist.tobytes()).hexdigest()
+    consumed_hash = hashlib.sha256(consumed_wrist.tobytes()).hexdigest()
+    episode = {
+        "wrist_ablation_mode": "frozen",
+        "queries": [
+            {
+                "inference": {
+                    "wrist_intervention": {
+                        "source_sha256": source_hash,
+                        "policy_sha256": consumed_hash,
+                    }
+                }
+            }
+        ],
+        "_exterior_frames": [workspace],
+        "_wrist_frames": [source_wrist],
+        "_policy_exterior_frames": [workspace],
+        "_policy_wrist_frames": [consumed_wrist],
+    }
+
+    receipt = pi05_closed_loop._write_policy_input_arrays(tmp_path, [episode])
+
+    with np.load(tmp_path / receipt["path"], allow_pickle=False) as archive:
+        assert np.array_equal(archive["episode_000000_source_wrist"][0], source_wrist)
+        assert np.array_equal(archive["episode_000000_policy_wrist"][0], consumed_wrist)
+    row = receipt["episodes"][0]
+    assert row["source_wrist_hashes"] == [source_hash]
+    assert row["policy_wrist_hashes"] == [consumed_hash]
+    assert receipt["pre_video_encoding"] is True
 
 
 def _partial_execution_context(record: dict) -> dict:
@@ -546,6 +587,28 @@ def test_policy_query_receipt_survives_controller_failure(monkeypatch) -> None:
     assert (
         query["execution_error"] == "RuntimeError: controller rejected <redacted-uri>"
     )
+
+
+def test_fresh_chunk_protocol_retains_chunk_but_applies_only_action_zero() -> None:
+    actions = np.arange(120, dtype=np.float64).reshape(15, 8)
+    query = {
+        "decision": 9,
+        "action_receipt": pi05_closed_loop._action_receipt(actions),
+    }
+
+    target, selection = pi05_closed_loop._current_action_target(actions, query)
+
+    assert np.array_equal(target, actions[0])
+    assert query["action_receipt"]["shape"] == [15, 8]
+    assert query["action_receipt"]["actions"] == actions.tolist()
+    assert selection["method"] == "native_fresh_chunk_first_action"
+    assert selection["contributors"] == [
+        {
+            "origin_decision": 9,
+            "action_index": 0,
+            "chunk_sha256": query["action_receipt"]["sha256"],
+        }
+    ]
 
 
 def test_policy_query_records_applied_target_with_failed_physics_observation(
@@ -1226,13 +1289,26 @@ def _effectiveness_report(role: str, successes: dict[str, set[int]]) -> dict:
     ]
     args = Namespace(checkpoint_role=role, split="gold", wrist_ablation_modes=modes)
     artifacts = {
+        "policy_input_rgb": {
+            "bytes": 30,
+            "encoding": "numpy_npz_lossless",
+            "pre_video_encoding": True,
+            "episodes": [{"episode": index} for index in range(6)],
+        },
         "mp4": {"bytes": 10, "frames": 288, "ffprobe": [{"codec_name": "h264"}]},
         "witness_mp4": {
             "bytes": 10,
             "frames": 294,
             "ffprobe": [{"codec_name": "h264"}],
-            "policy_input": False,
+            "policy_inputs_included": True,
+            "witness_policy_input": False,
             "replay": False,
+            "panels": [
+                {"role": "workspace", "policy_input": True},
+                {"role": "wrist", "policy_input": True},
+                {"role": "goal_witness", "policy_input": False},
+                {"role": "release_witness", "policy_input": False},
+            ],
         },
         "rrd": {
             "bytes": 20,
@@ -1257,6 +1333,8 @@ def test_smolvla_uses_first_action_from_current_fresh_chunk() -> None:
     assert pi05_closed_loop._action_selection_protocol("lerobot_smolvla") == {
         "schema": "npa.sim2real.current_native_action.v1",
         "method": "native_fresh_chunk_first_action",
+        "action_owner": "policy",
+        "recovery_component": "disabled_baseline",
         "fresh_observation_per_control": True,
         "causality": "current_observation_and_explicit_paired_sampler_noise",
     }
@@ -1281,9 +1359,9 @@ def test_smolvla_uses_first_action_from_current_fresh_chunk() -> None:
         assert selection["applied_action_shape"] == [8]
         assert selection["applied_action"] == actions[0].tolist()
 
-    with pytest.raises(RuntimeError, match="one finite current 8D action"):
+    with pytest.raises(RuntimeError, match="nonempty 8D action chunk"):
         pi05_closed_loop._current_action_target(
-            np.zeros((2, 8), dtype=np.float64),
+            np.zeros((0, 8), dtype=np.float64),
             {"decision": 3, "action_receipt": {}},
         )
 
@@ -3154,7 +3232,13 @@ def test_failed_camera_admission_retains_pixels_without_a_fictitious_query(
         pi05_closed_loop, "_camera_query_receipts", lambda *_: (timing, receipts)
     )
     monkeypatch.setattr(
-        pi05_closed_loop, "_infer_query", lambda *_: ([], {"wire_input": {}})
+        pi05_closed_loop,
+        "_infer_query",
+        lambda *_: (
+            [],
+            {"wire_input": {}},
+            {"exterior": exterior, "wrist": wrist},
+        ),
     )
 
     def fail_marker(*_):
@@ -3191,6 +3275,24 @@ def test_destination_occlusion_is_allowed_only_during_retreat(monkeypatch) -> No
         "_semantic_encoding_receipt",
         lambda *_args: {"schema": "test"},
     )
+    monkeypatch.setattr(
+        pi05_closed_loop,
+        "_policy_camera_semantic_geometry",
+        lambda *_args: {
+            "semantics": "native_source_rgb_before_any_wrist_intervention",
+            "target": {"pixels": 0, "bbox_xyxy": None, "centroid_xy": None},
+            "left_finger": {
+                "pixels": 0,
+                "bbox_xyxy": None,
+                "centroid_xy": None,
+            },
+            "right_finger": {
+                "pixels": 0,
+                "bbox_xyxy": None,
+                "centroid_xy": None,
+            },
+        },
+    )
     monkeypatch.setattr(pi05_closed_loop, "_policy_phase", lambda _record: phase)
     record = {"physics_trace": [], "camera_trace": []}
     receipts = {"exterior": {}, "wrist": {}, "witness": {}, "release_witness": {}}
@@ -3201,6 +3303,38 @@ def test_destination_occlusion_is_allowed_only_during_retreat(monkeypatch) -> No
     pi05_closed_loop._record_query_camera(None, record, receipts, {})
     assert record["camera_trace"][0]["phase"] == "retreat"
     assert record["camera_trace"][0]["exterior_destination_pixels"] == 0
+
+
+def test_policy_crop_evidence_reports_clipping_without_rejecting_episode() -> None:
+    def component(box):
+        return {"pixels": 20 if box else 0, "bbox_xyxy": box, "centroid_xy": None}
+
+    trace = {
+        "phase": "grasp",
+        "policy_source_semantic_geometry": {
+            "workspace": {
+                "target": component([0, 100, 20, 130]),
+                "left_finger": component(None),
+                "right_finger": component(None),
+            },
+            "wrist": {
+                "target": component([60, 210, 90, 223]),
+                "left_finger": component([20, 20, 30, 50]),
+                "right_finger": component(None),
+            },
+        },
+    }
+
+    evidence = pi05_closed_loop._policy_crop_evidence([trace])
+
+    phase = evidence["phase_evidence"]["grasp"]
+    assert phase["workspace_target"] == {
+        "visible_samples": 1,
+        "edge_touch_samples": 1,
+    }
+    assert phase["wrist_target"]["edge_touch_samples"] == 1
+    assert phase["wrist_right_finger"]["visible_samples"] == 0
+    assert evidence["semantics"].startswith("source_semantic_masks")
 
 
 def test_admitted_camera_frames_match_completed_query_count(monkeypatch) -> None:
@@ -3222,7 +3356,13 @@ def test_admitted_camera_frames_match_completed_query_count(monkeypatch) -> None
         pi05_closed_loop, "_camera_query_receipts", lambda *_: ({}, receipts)
     )
     monkeypatch.setattr(
-        pi05_closed_loop, "_infer_query", lambda *_: ("actions", {"wire_input": {}})
+        pi05_closed_loop,
+        "_infer_query",
+        lambda *_: (
+            "actions",
+            {"wire_input": {}},
+            {"exterior": exterior, "wrist": wrist},
+        ),
     )
     monkeypatch.setattr(pi05_closed_loop, "_record_query_camera", lambda *_: None)
     actions, _, _ = pi05_closed_loop._query_policy(
@@ -3232,6 +3372,8 @@ def test_admitted_camera_frames_match_completed_query_count(monkeypatch) -> None
     assert (
         len(record["_exterior_frames"])
         == len(record["_wrist_frames"])
+        == len(record["_policy_exterior_frames"])
+        == len(record["_policy_wrist_frames"])
         == len(record["_witness_frames"])
         == len(record["_release_witness_frames"])
         == 1
@@ -3369,6 +3511,9 @@ def _rrd_episode() -> dict:
                 "witness_capture_time_s": observation - 1.5e-6,
                 "release_witness_capture_time_s": observation - 1.25e-6,
                 "inference": {"wire_input": {"capture_age_s": 1.0e-6}},
+                "action_selection": {
+                    "applied_action": [0.0] * 8,
+                },
                 "controller_proofs": [
                     {
                         "command_application_time_s": command,
@@ -3385,6 +3530,8 @@ def _rrd_episode() -> dict:
         "queries": queries,
         "_exterior_frames": frames,
         "_wrist_frames": frames,
+        "_policy_exterior_frames": frames,
+        "_policy_wrist_frames": frames,
         "_witness_frames": frames,
         "_release_witness_frames": frames,
         "_terminal_witness_frame": frames[-1],
@@ -3422,7 +3569,7 @@ def test_closed_loop_rrd_is_finalized_and_causally_timed(tmp_path: Path) -> None
         text=True,
     ).stdout
     assert decoded.count("* entity_path: /episodes/0/physics/") == 6
-    assert decoded.count("* entity_path: /episodes/0/queries/") == 10
+    assert decoded.count("* entity_path: /episodes/0/queries/") == 18
     assert decoded.count("* entity_path: /episodes/0/terminal/witness") == 1
     assert decoded.count("* entity_path: /episodes/0/terminal/release_witness") == 1
     assert all(

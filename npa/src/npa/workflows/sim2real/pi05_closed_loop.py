@@ -155,12 +155,16 @@ def _action_selection_protocol(
         return {
             "schema": "npa.sim2real.current_native_action.v1",
             "method": "native_fresh_chunk_first_action",
+            "action_owner": "policy",
+            "recovery_component": "disabled_baseline",
             "fresh_observation_per_control": True,
             "causality": "current_observation_and_explicit_paired_sampler_noise",
         }
     return {
         "schema": "npa.sim2real.pi05.temporal_action_ensemble.v1",
         "method": "uniform_mean",
+        "action_owner": "policy",
+        "recovery_component": "disabled_baseline",
         "model_horizon": ACTION_HORIZON,
         "fresh_observation_per_control": True,
         "causality": "current_and_past_predictions_only",
@@ -588,6 +592,8 @@ def _new_episode_record() -> dict[str, Any]:
         "wrist_mount_receipts": [],
         "_exterior_frames": [],
         "_wrist_frames": [],
+        "_policy_exterior_frames": [],
+        "_policy_wrist_frames": [],
         "_witness_frames": [],
         "_release_witness_frames": [],
     }
@@ -668,6 +674,13 @@ def _record_query_camera(native: Any, record: dict, receipts: dict, wire: dict) 
             "release_witness_finger_pixels": _finger_pixel_counts(
                 native, "pi05_release_witness"
             ),
+            "policy_source_semantic_geometry": {
+                name: _policy_camera_semantic_geometry(native, sensor)
+                for name, sensor in (
+                    ("workspace", "pi05_exterior"),
+                    ("wrist", "pi05_wrist"),
+                )
+            },
             "semantic_encoding": {
                 name: _semantic_encoding_receipt(native, name)
                 for name in (
@@ -691,6 +704,68 @@ def _record_query_camera(native: Any, record: dict, receipts: dict, wire: dict) 
             **camera,
         }
     )
+
+
+def _policy_camera_semantic_geometry(native: Any, sensor: str) -> dict[str, Any]:
+    """Record native source-camera mask extents without grading visibility."""
+
+    return {
+        "semantics": "native_source_rgb_before_any_wrist_intervention",
+        "target": _semantic_component_geometry(native, sensor, "pi05_target_object"),
+        "left_finger": _semantic_component_geometry(native, sensor, "pi05_left_finger"),
+        "right_finger": _semantic_component_geometry(
+            native, sensor, "pi05_right_finger"
+        ),
+    }
+
+
+def _bbox_touches_image_edge(component: dict[str, Any]) -> bool | None:
+    """Return whether one visible 224-square semantic extent touches an edge."""
+
+    box = component.get("bbox_xyxy")
+    if box is None:
+        return None
+    if not isinstance(box, list) or len(box) != 4:
+        raise RuntimeError("policy camera semantic bounding box is invalid")
+    return box[0] == 0 or box[1] == 0 or box[2] == 223 or box[3] == 223
+
+
+def _policy_crop_evidence(traces: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize phase-wise source-camera clipping without rejecting failures."""
+
+    phases = {}
+    for phase in sorted({str(row.get("phase", "policy_query")) for row in traces}):
+        rows = [row for row in traces if row.get("phase", "policy_query") == phase]
+        fields: dict[str, list[bool | None]] = {
+            "workspace_target": [],
+            "wrist_target": [],
+            "wrist_left_finger": [],
+            "wrist_right_finger": [],
+        }
+        for row in rows:
+            geometry = row["policy_source_semantic_geometry"]
+            fields["workspace_target"].append(
+                _bbox_touches_image_edge(geometry["workspace"]["target"])
+            )
+            for name in ("target", "left_finger", "right_finger"):
+                fields[f"wrist_{name}"].append(
+                    _bbox_touches_image_edge(geometry["wrist"][name])
+                )
+        phases[phase] = {
+            "samples": len(rows),
+            **{
+                name: {
+                    "visible_samples": sum(value is not None for value in values),
+                    "edge_touch_samples": sum(value is True for value in values),
+                }
+                for name, values in fields.items()
+            },
+        }
+    return {
+        "semantics": "source_semantic_masks_not_model_attention_or_causal_score",
+        "image_size_wh": [224, 224],
+        "phase_evidence": phases,
+    }
 
 
 def _wrist_variant(
@@ -752,7 +827,7 @@ def _query_policy(
     timing["witness_rgb_sha256"] = receipts["witness"]["sha256"]
     timing["release_witness_rgb_sha256"] = receipts["release_witness"]["sha256"]
     try:
-        actions, inference = _infer_query(
+        actions, inference, policy_frames = _infer_query(
             context, decision, (exterior, wrist, joint, gripper), receipts
         )
         _record_query_camera(native, record, receipts, inference["wire_input"])
@@ -763,6 +838,8 @@ def _query_policy(
         raise
     record["_exterior_frames"].append(exterior)
     record["_wrist_frames"].append(wrist)
+    record["_policy_exterior_frames"].append(policy_frames["exterior"])
+    record["_policy_wrist_frames"].append(policy_frames["wrist"])
     record["_witness_frames"].append(witness)
     record["_release_witness_frames"].append(release_witness)
     return actions, inference, timing
@@ -772,7 +849,7 @@ def _infer_query(context: dict, decision: int, observation: tuple, receipts: dic
     exterior, wrist, joint, gripper = observation
     policy_wrist, intervention = _wrist_variant(context, wrist, decision)
     if context.get("policy_backend") == "lerobot_smolvla":
-        return _infer_smolvla_query(
+        actions, inference = _infer_smolvla_query(
             context,
             decision,
             exterior,
@@ -780,6 +857,7 @@ def _infer_query(context: dict, decision: int, observation: tuple, receipts: dic
             receipts,
             intervention,
         )
+        return actions, inference, {"exterior": exterior, "wrist": policy_wrist}
     sampling_noise, sampling_sequence = _decision_noise(context, decision)
     actions, inference = context["client"].infer(
         exterior=exterior,
@@ -793,7 +871,7 @@ def _infer_query(context: dict, decision: int, observation: tuple, receipts: dic
         sampling_sequence=sampling_sequence,
     )
     inference["wrist_intervention"] = intervention
-    return actions, inference
+    return actions, inference, {"exterior": exterior, "wrist": policy_wrist}
 
 
 def _infer_smolvla_query(
@@ -1110,8 +1188,10 @@ def _current_action_target(
     import numpy as np
 
     value = np.ascontiguousarray(actions, dtype=np.float64)
-    if value.shape != (1, 8) or not np.isfinite(value).all():
-        raise RuntimeError("SmolVLA must return one finite current 8D action")
+    if value.ndim != 2 or value.shape[0] < 1 or value.shape[1] != 8:
+        raise RuntimeError("SmolVLA must return a nonempty 8D action chunk")
+    if not np.isfinite(value).all():
+        raise RuntimeError("SmolVLA action chunk must be finite")
     target = value[0].copy()
     return target, {
         **_action_selection_protocol("lerobot_smolvla"),
@@ -1245,6 +1325,9 @@ def _finish_episode(record: dict[str, Any]) -> dict[str, Any]:
     camera_trace = record["camera_trace"]
     record["camera_evidence"] = _verify_camera_motion(
         camera_trace, require_expert_phases=False
+    )
+    record["camera_evidence"]["policy_input_crop_evidence"] = _policy_crop_evidence(
+        camera_trace
     )
     record.pop("camera_trace")
     record["measured_inference_round_trip_ms"] = [
@@ -1420,8 +1503,8 @@ def _write_video(work: Path, episodes: list[dict[str, Any]]) -> tuple[Path, int]
     rows = [
         row
         for row in episodes
-        if row.get("_exterior_frames")
-        and row.get("_wrist_frames")
+        if row.get("_policy_exterior_frames")
+        and row.get("_policy_wrist_frames")
         and row.get("queries")
     ]
     if not rows:
@@ -1431,14 +1514,20 @@ def _write_video(work: Path, episodes: list[dict[str, Any]]) -> tuple[Path, int]
     panels = []
     for episode_index, row in enumerate(rows):
         for query_index, (exterior, wrist, query) in enumerate(
-            zip(row["_exterior_frames"], row["_wrist_frames"], row["queries"])
+            zip(
+                row["_policy_exterior_frames"],
+                row["_policy_wrist_frames"],
+                row["queries"],
+                strict=True,
+            )
         ):
             canvas = Image.new("RGB", (448, 256), "black")
             canvas.paste(Image.fromarray(np.asarray(exterior)), (0, 32))
             canvas.paste(Image.fromarray(np.asarray(wrist)), (224, 32))
             text = (
                 f"episode={episode_index} query={query_index} "
-                f"t={query['observation_time_s']:.3f}s ext|wrist"
+                f"t={query['observation_time_s']:.3f}s "
+                "model workspace|model wrist"
             )
             ImageDraw.Draw(canvas).text((4, 8), text, fill="white")
             panels.append(np.asarray(canvas))
@@ -1450,14 +1539,26 @@ def _write_video(work: Path, episodes: list[dict[str, Any]]) -> tuple[Path, int]
     return mp4, len(preview)
 
 
-def _witness_panel(goal_frame: Any, release_frame: Any, label: str) -> Any:
+def _evidence_panel(
+    workspace: Any,
+    wrist: Any,
+    goal_frame: Any,
+    release_frame: Any,
+    label: str,
+) -> Any:
     import numpy as np
     from PIL import Image, ImageDraw
 
-    canvas = Image.new("RGB", (448, 256), "black")
-    canvas.paste(Image.fromarray(np.asarray(goal_frame)), (0, 32))
-    canvas.paste(Image.fromarray(np.asarray(release_frame)), (224, 32))
-    ImageDraw.Draw(canvas).text((4, 8), label + " goal|release", fill="white")
+    canvas = Image.new("RGB", (896, 256), "black")
+    canvas.paste(Image.fromarray(np.asarray(workspace)), (0, 32))
+    canvas.paste(Image.fromarray(np.asarray(wrist)), (224, 32))
+    canvas.paste(Image.fromarray(np.asarray(goal_frame)), (448, 32))
+    canvas.paste(Image.fromarray(np.asarray(release_frame)), (672, 32))
+    ImageDraw.Draw(canvas).text(
+        (4, 8),
+        label + " model-workspace|model-wrist|goal-witness|release-witness",
+        fill="white",
+    )
     return np.asarray(canvas)
 
 
@@ -1472,18 +1573,29 @@ def _write_witness_video(
     for episode_index, episode in enumerate(episodes):
         frames = episode.get("_witness_frames") or []
         release_frames = episode.get("_release_witness_frames") or []
+        workspace_frames = episode.get("_policy_exterior_frames") or []
+        wrist_frames = episode.get("_policy_wrist_frames") or []
         queries = episode.get("queries") or []
         terminal = episode.get("_terminal_witness_frame")
         terminal_release = episode.get("_terminal_release_witness_frame")
         if (
             len(frames) != len(queries)
             or len(release_frames) != len(queries)
+            or len(workspace_frames) != len(queries)
+            or len(wrist_frames) != len(queries)
             or terminal is None
             or terminal_release is None
         ):
             raise RuntimeError("witness frames do not cover the complete policy trial")
-        for query_index, (frame, release_frame, query) in enumerate(
-            zip(frames, release_frames, queries, strict=True)
+        for query_index, (workspace, wrist, frame, release_frame, query) in enumerate(
+            zip(
+                workspace_frames,
+                wrist_frames,
+                frames,
+                release_frames,
+                queries,
+                strict=True,
+            )
         ):
             mapped_state = (
                 "reset-settle-state"
@@ -1492,14 +1604,19 @@ def _write_witness_video(
             )
             label = (
                 f"ep={episode_index} q={query_index} pre-command "
-                f"{mapped_state} policy_input=false"
+                f"{mapped_state} witnesses-policy-input=false"
             )
-            panels.append(_witness_panel(frame, release_frame, label))
+            panels.append(
+                _evidence_panel(workspace, wrist, frame, release_frame, label)
+            )
         panels.append(
-            _witness_panel(
+            _evidence_panel(
+                workspace_frames[-1],
+                wrist_frames[-1],
                 terminal,
                 terminal_release,
-                f"ep={episode_index} terminal post-control; no extra action/physics",
+                f"ep={episode_index} terminal witnesses post-control; "
+                "policy panels are last consumed inputs; no extra action/physics",
             )
         )
     preview = np.stack(panels)
@@ -1528,6 +1645,70 @@ def _write_rrd(
     if not rrd.is_file() or rrd.stat().st_size == 0 or step < 1:
         raise RuntimeError("closed-loop Rerun readback is empty")
     return rrd, step
+
+
+def _write_policy_input_arrays(
+    work: Path, episodes: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Persist exact source and model-consumed RGB bytes before video encoding."""
+
+    import numpy as np
+
+    arrays: dict[str, Any] = {}
+    rows = []
+    for episode_index, episode in enumerate(episodes):
+        queries = list(episode.get("queries") or [])
+        roles = {
+            "source_workspace": episode.get("_exterior_frames") or [],
+            "source_wrist": episode.get("_wrist_frames") or [],
+            "policy_workspace": episode.get("_policy_exterior_frames") or [],
+            "policy_wrist": episode.get("_policy_wrist_frames") or [],
+        }
+        if any(len(frames) != len(queries) for frames in roles.values()):
+            raise RuntimeError("raw policy input arrays do not match policy queries")
+        if not queries:
+            continue
+        role_rows = {}
+        for role, frames in roles.items():
+            value = np.ascontiguousarray(np.stack(frames), dtype=np.uint8)
+            key = f"episode_{episode_index:06d}_{role}"
+            arrays[key] = value
+            role_rows[role] = {
+                "archive_key": key,
+                "shape": list(value.shape),
+                "dtype": str(value.dtype),
+                "rgb_bytes_sha256": hashlib.sha256(value.tobytes()).hexdigest(),
+            }
+        rows.append(
+            {
+                "episode": episode_index,
+                "wrist_ablation_mode": episode.get("wrist_ablation_mode"),
+                "query_count": len(queries),
+                "roles": role_rows,
+                "policy_wrist_hashes": [
+                    query["inference"]["wrist_intervention"]["policy_sha256"]
+                    for query in queries
+                ],
+                "source_wrist_hashes": [
+                    query["inference"]["wrist_intervention"]["source_sha256"]
+                    for query in queries
+                ],
+            }
+        )
+    if not arrays:
+        raise RuntimeError("evaluation produced no exact policy input arrays")
+    path = work / "policy-input-rgb.npz"
+    np.savez_compressed(path, **arrays)
+    if not path.is_file() or path.stat().st_size == 0:
+        raise RuntimeError("exact policy input archive is empty")
+    return {
+        "path": path.name,
+        "bytes": path.stat().st_size,
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "encoding": "numpy_npz_lossless",
+        "pre_video_encoding": True,
+        "episodes": rows,
+    }
 
 
 def _rrd_time(
@@ -1605,11 +1786,20 @@ def _log_rrd_queries(
     queries = list(episode.get("queries", []))
     exterior = episode.get("_exterior_frames", [])
     wrist = episode.get("_wrist_frames", [])
+    policy_exterior = episode.get("_policy_exterior_frames", [])
+    policy_wrist = episode.get("_policy_wrist_frames", [])
     witness = episode.get("_witness_frames", [])
     release_witness = episode.get("_release_witness_frames", [])
     if any(
         len(frames) != len(queries)
-        for frames in (exterior, wrist, witness, release_witness)
+        for frames in (
+            exterior,
+            wrist,
+            policy_exterior,
+            policy_wrist,
+            witness,
+            release_witness,
+        )
     ):
         raise RuntimeError("Rerun camera frames do not match policy queries")
     for query_index, query in enumerate(queries):
@@ -1621,7 +1811,10 @@ def _log_rrd_queries(
             query_index,
             float(query["exterior_capture_time_s"]),
         )
-        recording.log(root + "/exterior", rr.Image(exterior[query_index]))
+        recording.log(root + "/source_workspace", rr.Image(exterior[query_index]))
+        recording.log(
+            root + "/policy_workspace", rr.Image(policy_exterior[query_index])
+        )
         _rrd_time(
             recording,
             episode_index,
@@ -1629,7 +1822,8 @@ def _log_rrd_queries(
             query_index,
             float(query["wrist_capture_time_s"]),
         )
-        recording.log(root + "/wrist", rr.Image(wrist[query_index]))
+        recording.log(root + "/source_wrist", rr.Image(wrist[query_index]))
+        recording.log(root + "/policy_wrist", rr.Image(policy_wrist[query_index]))
         _rrd_time(
             recording,
             episode_index,
@@ -1657,6 +1851,17 @@ def _log_rrd_queries(
             root + "/capture_age_s",
             rr.Scalars([query["inference"]["wire_input"]["capture_age_s"]]),
         )
+        selection = query.get("action_selection") or {}
+        proofs = query.get("controller_proofs") or []
+        action = selection.get("applied_action")
+        if not isinstance(action, list) or not proofs:
+            raise RuntimeError("Rerun query lacks applied action or controller proof")
+        command_time = float(proofs[0]["command_application_time_s"])
+        result_time = float(proofs[-1]["resulting_state_time_s"])
+        _rrd_time(recording, episode_index, "query", query_index, command_time)
+        recording.log(root + "/applied_action", rr.Scalars(action))
+        _rrd_time(recording, episode_index, "query", query_index, result_time)
+        recording.log(root + "/resulting_state_time_s", rr.Scalars([result_time]))
 
 
 def _log_rrd_terminal_witness(
@@ -1751,6 +1956,7 @@ def _write_review_artifacts(
     recording_id: str,
 ) -> dict[str, Any]:
     failed_cameras = _write_failed_camera_evidence(work, episodes)
+    policy_inputs = _write_policy_input_arrays(work, episodes)
     mp4, frames = _write_video(work, episodes)
     witness_mp4, witness_frames = _write_witness_video(work, episodes)
     rrd, steps = _write_rrd(work, episodes, checkpoint_role, recording_id)
@@ -1759,12 +1965,15 @@ def _write_review_artifacts(
     for episode in episodes:
         episode.pop("_exterior_frames", None)
         episode.pop("_wrist_frames", None)
+        episode.pop("_policy_exterior_frames", None)
+        episode.pop("_policy_wrist_frames", None)
         episode.pop("_witness_frames", None)
         episode.pop("_release_witness_frames", None)
         episode.pop("_terminal_witness_frame", None)
         episode.pop("_terminal_release_witness_frame", None)
     return {
         "failed_camera_observations": failed_cameras,
+        "policy_input_rgb": policy_inputs,
         "mp4": {
             "path": mp4.name,
             "bytes": mp4.stat().st_size,
@@ -1776,10 +1985,32 @@ def _write_review_artifacts(
             "bytes": witness_mp4.stat().st_size,
             "frames": witness_frames,
             "ffprobe": witness_probe["streams"],
-            "policy_input": False,
+            "policy_inputs_included": True,
+            "witness_policy_input": False,
             "replay": False,
-            "layout": "goal_witness_left_release_witness_right",
-            "native_views": ["pi05_witness", "pi05_release_witness"],
+            "layout": ("policy_workspace_policy_wrist_goal_witness_release_witness"),
+            "panels": [
+                {
+                    "role": "workspace",
+                    "pixels": "model_consumed",
+                    "policy_input": True,
+                },
+                {
+                    "role": "wrist",
+                    "pixels": "model_consumed",
+                    "policy_input": True,
+                },
+                {
+                    "role": "goal_witness",
+                    "pixels": "native_sensor",
+                    "policy_input": False,
+                },
+                {
+                    "role": "release_witness",
+                    "pixels": "native_sensor",
+                    "policy_input": False,
+                },
+            ],
         },
         "rrd": {
             "path": rrd.name,
@@ -1801,6 +2032,8 @@ def _persist_partial_episodes(work: Path, episodes: list[dict[str, Any]]) -> Non
             not in {
                 "_exterior_frames",
                 "_wrist_frames",
+                "_policy_exterior_frames",
+                "_policy_wrist_frames",
                 "_witness_frames",
                 "_release_witness_frames",
                 "_terminal_witness_frame",
@@ -2804,19 +3037,29 @@ def _validate_effectiveness_cohort(episodes: list[dict[str, Any]]) -> None:
 def _validate_effectiveness_artifacts(
     artifacts: dict[str, Any], episodes: list[dict[str, Any]]
 ) -> None:
+    policy_inputs = artifacts.get("policy_input_rgb") or {}
     mp4 = artifacts.get("mp4") or {}
     witness_mp4 = artifacts.get("witness_mp4") or {}
     rrd = artifacts.get("rrd") or {}
     query_count = sum(len(episode.get("queries") or []) for episode in episodes)
     physics_count = sum(len(episode.get("physics_trace") or []) for episode in episodes)
     if (
-        int(mp4.get("bytes", 0)) < 1
+        int(policy_inputs.get("bytes", 0)) < 1
+        or policy_inputs.get("encoding") != "numpy_npz_lossless"
+        or policy_inputs.get("pre_video_encoding") is not True
+        or len(policy_inputs.get("episodes") or []) != len(episodes)
+        or int(mp4.get("bytes", 0)) < 1
         or int(mp4.get("frames", 0)) != query_count
         or not mp4.get("ffprobe")
         or int(witness_mp4.get("bytes", 0)) < 1
         or int(witness_mp4.get("frames", 0)) != query_count + len(episodes)
         or not witness_mp4.get("ffprobe")
-        or witness_mp4.get("policy_input") is not False
+        or witness_mp4.get("policy_inputs_included") is not True
+        or witness_mp4.get("witness_policy_input") is not False
+        or [row.get("role") for row in witness_mp4.get("panels") or []]
+        != ["workspace", "wrist", "goal_witness", "release_witness"]
+        or [row.get("policy_input") for row in witness_mp4.get("panels") or []]
+        != [True, True, False, False]
         or witness_mp4.get("replay") is not False
         or int(rrd.get("bytes", 0)) < 1
         or int(rrd.get("timeline_rows", 0)) != physics_count

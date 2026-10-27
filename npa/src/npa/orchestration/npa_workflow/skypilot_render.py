@@ -2353,7 +2353,10 @@ def render_setup_for_tool(
             # module; other stages preserve the historical CLI contract.
             f"importlib.import_module({baked_import!r})\n"
             "actual = os.environ.get('NPA_IMAGE_SOURCE_SHA', '').strip().lower()\n"
-            "expected = os.environ.get('NPA_SIM2REAL_SOURCE_SHA', '').strip().lower()\n"
+            "expected = os.environ.get(\n"
+            "    'NPA_EXPECTED_IMAGE_SOURCE_SHA',\n"
+            "    os.environ.get('NPA_SIM2REAL_SOURCE_SHA', ''),\n"
+            ").strip().lower()\n"
             "if len(actual) != 40 or actual != expected:\n"
             "    raise SystemExit('baked NPA source attestation does not match workflow source SHA')\n"
             f"{evaluator_probe}"
@@ -2858,6 +2861,24 @@ def _build_skypilot_task_doc(
         "on",
     }
     expected_source_sha = str(spec.config.get("source_sha") or "").strip().lower()
+    image_source_map = spec.config.get("baked_image_source_sha_by_image") or {}
+    if not isinstance(image_source_map, dict) or any(
+        not isinstance(key, str)
+        or re.fullmatch(r".+/.+@sha256:[0-9a-f]{64}", key.strip()) is None
+        or not isinstance(value, str)
+        for key, value in image_source_map.items()
+    ):
+        raise NpaWorkflowRenderError(
+            "config.baked_image_source_sha_by_image must map images to SHAs"
+        )
+    expected_image_source_sha = (
+        str(
+            image_source_map.get(str(image or "").removeprefix("docker:"))
+            or expected_source_sha
+        )
+        .strip()
+        .lower()
+    )
     if require_baked or immutable_narrow_image or seedvr2_baked_image:
         from npa.orchestration.skypilot.image_bootstrap_contract import (
             ImageBootstrapContractError,
@@ -2976,6 +2997,14 @@ def _build_skypilot_task_doc(
                 "config.source_sha must be an exact 40-character hexadecimal SHA"
             )
         envs["NPA_SIM2REAL_SOURCE_SHA"] = expected_source_sha
+    if require_baked:
+        if len(expected_image_source_sha) != 40 or any(
+            char not in "0123456789abcdef" for char in expected_image_source_sha
+        ):
+            raise NpaWorkflowRenderError(
+                "baked image source override must be an exact 40-character SHA"
+            )
+        envs["NPA_EXPECTED_IMAGE_SOURCE_SHA"] = expected_image_source_sha
     envs.update(
         isaac_eula_envs(
             str(scheduler_task.get("tool_ref") or ""),

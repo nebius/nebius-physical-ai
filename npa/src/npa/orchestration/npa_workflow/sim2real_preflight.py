@@ -54,6 +54,18 @@ def _is_source_sha(value: str) -> bool:
     return len(value) == 40 and all(char in "0123456789abcdef" for char in value)
 
 
+def _is_immutable_image(value: str) -> bool:
+    """Return whether a config key is a registry image pinned by SHA-256."""
+
+    prefix, separator, digest = value.strip().partition("@sha256:")
+    return bool(
+        separator
+        and "/" in prefix
+        and len(digest) == 64
+        and all(char in "0123456789abcdef" for char in digest)
+    )
+
+
 def _source_sha_issues(config: Mapping[str, Any]) -> list[Issue]:
     """Mirror the renderer's two independent ``config.source_sha`` gates.
 
@@ -83,6 +95,22 @@ def _source_sha_issues(config: Mapping[str, Any]) -> list[Issue]:
                 "enabled",
                 "set --var source_sha=<40-hex> to the exact source commit the "
                 "attested immutable task images were built from",
+            )
+        )
+    image_sources = config.get("baked_image_source_sha_by_image") or {}
+    if not isinstance(image_sources, Mapping) or any(
+        not isinstance(key, str)
+        or not _is_immutable_image(key)
+        or not isinstance(value, str)
+        or not _is_source_sha(value.strip().lower())
+        for key, value in (
+            image_sources.items() if isinstance(image_sources, Mapping) else ()
+        )
+    ):
+        issues.append(
+            (
+                "config.baked_image_source_sha_by_image is invalid",
+                "map each immutable image reference to its baked source SHA",
             )
         )
     return issues

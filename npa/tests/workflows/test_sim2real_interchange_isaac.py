@@ -645,6 +645,34 @@ def test_native_visual_evidence_preserves_exact_rgb_bytes(tmp_path: Path) -> Non
     assert _visual_evidence_decisions(192) == {0, 96, 191}
 
 
+def test_native_policy_chunk_is_retained_while_only_action_zero_is_selected() -> None:
+    from types import SimpleNamespace
+
+    from npa.workflows.sim2real.interchange_isaac_runtime import (
+        _current_policy_action,
+    )
+
+    chunk = tuple(
+        tuple(float(row * 8 + column) for column in range(8)) for row in range(15)
+    )
+    output = SimpleNamespace(
+        action=SimpleNamespace(
+            execute_prefix=1,
+            horizon=15,
+            names=tuple(f"action_{index}" for index in range(8)),
+        ),
+        action_chunk=chunk,
+    )
+
+    selected, receipt = _current_policy_action(output)
+
+    assert selected == chunk[0]
+    assert receipt["shape"] == [15, 8]
+    assert receipt["actions"] == [list(row) for row in chunk]
+    assert receipt["selection_method"] == "native_fresh_chunk_first_action"
+    assert receipt["selected_action_index"] == 0
+
+
 def test_native_child_command_uses_every_explicit_binding(tmp_path: Path) -> None:
     paths = [
         tmp_path / name

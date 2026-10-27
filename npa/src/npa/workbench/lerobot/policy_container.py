@@ -389,6 +389,25 @@ class LeRobotPolicyRuntime:
     ) -> tuple[list[float], dict[str, Any]]:
         """Infer one fresh action and report the exact optional sampler noise."""
 
+        chunk, sampling = self.infer_action_chunk_with_sampling(
+            observation, sampling_seed=sampling_seed
+        )
+        return chunk[0], sampling
+
+    def infer_action_chunk_with_sampling(
+        self, observation: dict[str, Any], *, sampling_seed: int | None = None
+    ) -> tuple[list[list[float]], dict[str, Any]]:
+        """Infer and postprocess the complete native action chunk.
+
+        Args:
+            observation: One model-neutral typed observation payload.
+            sampling_seed: Optional explicit native flow-noise seed.
+        Returns:
+            The complete physical-action chunk and bound sampling evidence.
+        Raises:
+            PolicyContainerError: If inference or the declared action shape fails.
+        """
+
         batch = _smolvla_batch(observation, self.manifest, self.device)
         try:
             import torch
@@ -418,8 +437,14 @@ class LeRobotPolicyRuntime:
                 action_chunk = self.policy.predict_action_chunk(
                     self.preprocessor(batch), noise=noise
                 )
-                action = self.postprocessor(action_chunk[:, 0, :])
-            values = action.detach().cpu().numpy().reshape(-1)
+                if action_chunk.ndim != 3:
+                    raise PolicyContainerError(
+                        "native SmolVLA prediction is not a batched action chunk"
+                    )
+                action_shape = tuple(action_chunk.shape)
+                flattened = action_chunk.reshape(-1, action_shape[-1])
+                physical = self.postprocessor(flattened).reshape(action_shape)
+            values = physical.detach().cpu().numpy()
         except PolicyContainerError:
             raise
         except Exception as exc:
@@ -427,13 +452,14 @@ class LeRobotPolicyRuntime:
                 f"native SmolVLA inference failed: {exc}"
             ) from exc
         expected = list(self.manifest["action"]["names"])
-        if values.shape != (len(expected),) or not all(
-            math.isfinite(float(value)) for value in values
+        horizon = int(self.manifest["action"]["horizon"])
+        if values.shape != (1, horizon, len(expected)) or not all(
+            math.isfinite(float(value)) for value in values.reshape(-1)
         ):
             raise PolicyContainerError(
-                "native SmolVLA output does not match the declared finite action vector"
+                "native SmolVLA output does not match the declared finite action chunk"
             )
-        return [float(value) for value in values], {
+        return [[float(value) for value in row] for row in values[0]], {
             "fresh_observation_consumed": True,
             "sampler_noise_sha256": noise_sha256,
             "sampler_noise_shape": list(noise.shape) if noise is not None else None,
@@ -479,7 +505,7 @@ class LeRobotPolicyRuntime:
             raise PolicyContainerError(
                 "typed SmolVLA profile does not match loaded checkpoint"
             )
-        values, sampling = self.infer_with_sampling(
+        values, sampling = self.infer_action_chunk_with_sampling(
             observation.to_wire_dict(), sampling_seed=sampling_seed
         )
         return PolicyOutput(
@@ -487,7 +513,7 @@ class LeRobotPolicyRuntime:
             policy_identity=policy_profile.identity,
             checkpoint_sha256=policy_profile.checkpoint_sha256,
             action=policy_profile.action,
-            action_chunk=(tuple(values),),
+            action_chunk=tuple(tuple(row) for row in values),
             generated_timestamp_s=time.time(),
         ), sampling
 

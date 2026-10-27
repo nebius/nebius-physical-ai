@@ -251,10 +251,13 @@ The policy authentication token enters camera-bearing pods through
 the token remains in the operator-managed Secret. The ledger accepts validated
 selectors and rejects malformed selectors or embedded credential fields.
 
-The `source_sha` variable must match the code baked into all three runtime
-images. Record the operator-side submission client's revision separately when
-updating the submission manager, and retain the runtime images' signed source
-provenance.
+The `source_sha` variable identifies the workflow consumer source. Normally it
+also matches every baked runtime image. When a reviewed workflow reuses an
+unchanged image from an older source, `baked_image_source_sha_by_image` must map
+that exact digest-pinned image reference to its actual baked source SHA. Setup
+then checks the image against that SHA without relabelling its provenance as
+the newer consumer source. Record the operator-side submission client's
+revision separately and retain every runtime image's signed source provenance.
 
 The Isaac dependency closure remains mounted read-only. Camera-bearing jobs
 separately mount a pod-local writable `emptyDir` at `/tmp/npa-isaac-state` for
@@ -486,3 +489,22 @@ does not qualify physical-robot deployment, and model-specific imitation losses
 must not be used to rank different policy backends. Update this table only from
 immutable source/image/robot/object/dataset/checkpoint/seed evidence and retain
 failed combinations rather than converting unavailable metrics to zero.
+
+## Policy-camera evidence and recovery ownership
+
+Closed-loop review artifacts distinguish source sensor pixels from the pixels
+actually consumed by the policy. The lossless policy-input archive retains the
+workspace and wrist arrays before video encoding, including frozen or
+pixel-value-shuffled wrist interventions. The review MP4 and Rerun timeline show
+the consumed workspace and wrist inputs beside both independent witness views,
+with observation, command and resulting-state clocks plus the applied action.
+Video remains a visualization; the array and per-query hashes are authoritative.
+
+Nominal successful demonstrations do not establish learned recovery behavior.
+The recovery contract therefore classifies command/measurement blockage,
+motion without task progress and poor workspace/wrist visibility separately.
+Any view-seeking fallback is a distinct `recovery_planner` action owner. It must
+bind the resolved robot joint order and limits, calibrated camera extrinsics and
+collision model, and it may not release an active grasp. The frozen baseline
+declares recovery disabled. Enabling a planner is a separate one-component
+experiment and its actions must never be attributed to the VLA.

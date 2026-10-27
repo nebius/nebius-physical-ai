@@ -446,6 +446,43 @@ def test_native_runtime_consumes_every_fresh_observation_with_paired_noise(
     )
 
 
+def test_native_runtime_retains_and_postprocesses_the_complete_action_chunk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    torch = pytest.importorskip("torch")
+    import npa.workbench.lerobot.policy_container as policy_container
+    from npa.workbench.lerobot.policy_container import LeRobotPolicyRuntime
+
+    postprocessor_shapes: list[tuple[int, ...]] = []
+
+    class Policy:
+        config = SimpleNamespace(chunk_size=50, max_action_dim=32)
+
+        def predict_action_chunk(self, _batch, *, noise):
+            assert noise is None
+            return torch.arange(350, dtype=torch.float32).reshape(1, 50, 7)
+
+    def postprocess(actions):
+        postprocessor_shapes.append(tuple(actions.shape))
+        return actions + 0.25
+
+    runtime = object.__new__(LeRobotPolicyRuntime)
+    runtime.device = "cpu"
+    runtime.manifest = _manifest("a" * 64)
+    runtime.policy = Policy()
+    runtime.preprocessor = lambda batch: batch
+    runtime.postprocessor = postprocess
+    monkeypatch.setattr(policy_container, "_smolvla_batch", lambda *_args: {"x": 1})
+
+    chunk, sampling = runtime.infer_action_chunk_with_sampling({})
+
+    assert postprocessor_shapes == [(50, 7)]
+    assert len(chunk) == 50
+    assert chunk[0] == [float(index) + 0.25 for index in range(7)]
+    assert chunk[-1] == [float(index) + 0.25 for index in range(343, 350)]
+    assert sampling["fresh_observation_consumed"] is True
+
+
 def test_real_image_decode_and_stale_camera_rejection() -> None:
     pytest.importorskip("torch")
     manifest = _manifest("a" * 64)

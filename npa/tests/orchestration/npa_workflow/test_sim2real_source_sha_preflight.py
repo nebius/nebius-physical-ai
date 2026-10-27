@@ -98,3 +98,25 @@ def test_uppercase_and_whitespace_are_normalized_to_valid_sha(baked: str) -> Non
     for value in ("  " + ("A" * 40) + "  ", "\t" + ("A" * 40) + "\n"):
         issues = _run_preflight(_config(require_baked_npa=baked, source_sha=value))
         assert not any("source_sha" in item for item, _ in issues)
+
+
+def test_baked_image_source_map_requires_exact_image_and_sha_strings() -> None:
+    valid = {
+        "registry.example/image@sha256:" + "b" * 64: "c" * 40,
+    }
+    issues = _run_preflight(
+        _config(
+            require_baked_npa="1",
+            source_sha="a" * 40,
+            baked_image_source_sha_by_image=valid,
+        )
+    )
+    assert not any("baked_image_source" in item for item, _ in issues)
+
+    invalid = _config(
+        require_baked_npa="1",
+        source_sha="a" * 40,
+        baked_image_source_sha_by_image={"": "short"},
+    )
+    issues = _run_preflight(invalid)
+    assert any("baked_image_source_sha_by_image" in item for item, _ in issues)

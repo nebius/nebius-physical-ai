@@ -83,6 +83,7 @@ class PolicyTrace:
     inference: list[dict[str, Any]] = field(default_factory=list)
     camera_hashes: list[dict[str, str]] = field(default_factory=list)
     observation_clocks: list[dict[str, Any]] = field(default_factory=list)
+    action_chunks: list[dict[str, Any]] = field(default_factory=list)
     visuals: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -1338,11 +1339,8 @@ def _policy_step(
     output, inference = client.infer_typed(
         observation=observation, policy=inputs.policy
     )
-    if len(output.action_chunk) != 1:
-        raise RuntimeError("native service must return one current queued action")
-    control = apply_absolute_joint_target(
-        env, output.action_chunk[0], profile=inputs.robot
-    )
+    action, action_receipt = _current_policy_action(output)
+    control = apply_absolute_joint_target(env, action, profile=inputs.robot)
     if control["terminated"] or control["truncated"]:
         raise RuntimeError("native policy environment reset during evaluation")
     sample = _sample(native, inputs.robot, inputs.prop, inputs.task, initial_z)
@@ -1352,6 +1350,33 @@ def _policy_step(
     trace.inference.append(inference)
     trace.camera_hashes.append(hashes)
     trace.observation_clocks.append(clock)
+    trace.action_chunks.append(action_receipt)
+
+
+def _current_policy_action(output: Any) -> tuple[tuple[float, ...], dict[str, Any]]:
+    """Retain a typed native chunk while selecting its declared first action."""
+
+    import numpy as np
+
+    values = np.ascontiguousarray(output.action_chunk, dtype=np.float64)
+    if (
+        output.action.execute_prefix != 1
+        or values.ndim != 2
+        or values.shape[0] < 1
+        or values.shape[0] > output.action.horizon
+        or values.shape[1] != len(output.action.names)
+        or not np.isfinite(values).all()
+    ):
+        raise RuntimeError("native service returned an invalid current action chunk")
+    return tuple(float(value) for value in values[0]), {
+        "schema": "npa.sim2real.native_action_chunk.v1",
+        "shape": list(values.shape),
+        "dtype": str(values.dtype),
+        "sha256": hashlib.sha256(values.tobytes()).hexdigest(),
+        "actions": values.tolist(),
+        "selection_method": "native_fresh_chunk_first_action",
+        "selected_action_index": 0,
+    }
 
 
 def _policy_rollout(
@@ -1484,6 +1509,7 @@ def _trace_report(
         "controls": trace.controls,
         "physics": trace.physics,
         "inference": trace.inference,
+        "action_chunks": trace.action_chunks,
         "camera_hashes": trace.camera_hashes,
         "observation_clocks": trace.observation_clocks,
         "visual_evidence": trace.visuals,
