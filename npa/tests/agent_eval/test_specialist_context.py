@@ -4,6 +4,9 @@ import copy
 import json
 from types import SimpleNamespace
 
+import httpx
+import pytest
+
 from npa.agent_backend.specialists.context import model_messages
 
 
@@ -60,9 +63,9 @@ def test_edit_invalidates_old_source_without_mutating_durable_history():
 
 def test_disjoint_and_partially_overlapping_current_ranges_are_preserved():
     messages = []
-    _read(messages, "header", start=1, end=10)
-    _read(messages, "function", start=50, end=80)
-    _read(messages, "overlap", start=75, end=90)
+    _read(messages, "header" * 1000, start=1, end=10)
+    _read(messages, "function" * 1000, start=50, end=80)
+    _read(messages, "overlap" * 1000, start=75, end=90)
     assert model_messages(messages) == messages
     _read(messages, "whole current source", start=1, end=100)
     result = model_messages(messages)
@@ -89,7 +92,7 @@ def test_only_superseded_successful_operation_output_is_omitted():
         "run_operation",
         operation="check",
         returncode=0,
-        stdout="old pass",
+        stdout="old pass" * 1000,
         stderr="",
     )
     _observation(
@@ -171,3 +174,83 @@ def test_graph_sends_compact_view_and_records_bytes_without_altering_history(tmp
     assert events[0]["type"] == "context_view"
     assert events[0]["request_message_bytes"] < events[0]["full_message_bytes"]
     assert "stale source" not in json.dumps(events)
+
+
+@pytest.mark.parametrize("payload", ["", "tiny", '\n"\\' * 5, "α" * 5, "🙂" * 3])
+def test_small_superseded_reads_keep_original_receipts_when_metadata_would_grow(
+    payload,
+):
+    messages = []
+    _read(messages, payload)
+    _read(messages, "latest", digest="new")
+    original = copy.deepcopy(messages)
+    assert model_messages(messages) == original
+    assert messages == original
+
+
+def test_short_repeated_successful_logs_do_not_expand_the_request():
+    messages = []
+    for text in ("old pass", "latest pass"):
+        _observation(
+            messages,
+            "run_operation",
+            operation="status",
+            returncode=0,
+            stdout=text,
+            stderr="",
+        )
+    assert model_messages(messages, observation_operations={"status"}) == messages
+
+
+def test_utf8_request_cannot_grow_even_when_ascii_size_proxy_would_shrink():
+    from npa.agent_backend.specialists.context import _omitted
+
+    messages = []
+    for text, digest in (("x" * 450, "old"), ("latest", "new")):
+        _observation(
+            messages,
+            "read_file",
+            path="α" * 100,
+            sha256=digest,
+            start_line=1,
+            end_line=1,
+            content=text,
+        )
+    result = json.loads(messages[1]["content"])
+    messages[1]["content"] = json.dumps(result, ensure_ascii=False)
+    proposal = {**messages[1], "content": json.dumps(_omitted(result, ("content",)))}
+    assert len(json.dumps(proposal)) < len(json.dumps(messages[1]))
+    # HTTPX 0.28 switched to compact UTF-8; the counterexample must also hold
+    # when the installed, supported HTTPX version still uses ASCII JSON.
+    before = json.dumps(messages[1], ensure_ascii=False, separators=(",", ":")).encode()
+    after = json.dumps(proposal, ensure_ascii=False, separators=(",", ":")).encode()
+    assert len(after) > len(before)
+    rendered = model_messages(messages)
+    assert rendered == messages
+    request = {"messages": messages}
+    compact_request = {"messages": rendered}
+    before = httpx.Request("POST", "https://example.invalid", json=request).content
+    after = httpx.Request(
+        "POST", "https://example.invalid", json=compact_request
+    ).content
+    assert len(after) <= len(before)
+
+
+def test_large_observation_still_shrinks_actual_httpx_request_without_changing_pairs():
+    messages = []
+    _read(messages, 'long source with escapes "\\\n' * 1000)
+    _read(messages, "latest", digest="new")
+    original = copy.deepcopy(messages)
+    rendered = model_messages(messages)
+    before = httpx.Request(
+        "POST", "https://example.invalid", json={"messages": messages}
+    ).content
+    after = httpx.Request(
+        "POST", "https://example.invalid", json={"messages": rendered}
+    ).content
+    assert len(after) < len(before)
+    assert rendered[-1] == messages[-1]
+    assert messages == original
+    assert [message.get("tool_call_id") for message in rendered] == [
+        message.get("tool_call_id") for message in messages
+    ]

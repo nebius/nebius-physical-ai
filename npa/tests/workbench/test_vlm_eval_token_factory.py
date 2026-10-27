@@ -90,6 +90,12 @@ def test_api_backend_requires_a_key(monkeypatch) -> None:
             {"chat_template_kwargs": {"thinking_mode": "disabled"}},
         ),
         (
+            "Qwen/Qwen3.8-27B",
+            True,
+            True,
+            {"chat_template_kwargs": {"enable_thinking": False}},
+        ),
+        (
             "moonshotai/Kimi-K3",
             True,
             False,
@@ -145,6 +151,7 @@ def test_hosted_model_switch_exists_only_in_shared_client_profile() -> None:
     assert "moonshotai/Kimi-K3" not in source
     assert "MiniMaxAI/MiniMax-M3" not in source
     assert "nvidia/Nemotron-3_5-Lightning" not in source
+    assert "Qwen/Qwen3.8-27B" not in source
 
 
 def test_self_hosted_kimi_keeps_generic_request_shape(monkeypatch) -> None:

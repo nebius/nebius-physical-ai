@@ -6,7 +6,7 @@ if test -e /etc/slurm/slurm.conf; then
     echo "Refusing to replace an existing Slurm configuration" >&2
     exit 1
 fi
-uv python install 3.13.15 3.10.21
+uv python install 3.13.15 3.11.16
 sudo /usr/bin/python3 "$(dirname "$0")/slurm_worker.py" --bundle "$WAM_WORKER_BUNDLE" --prepare-user
 sudo env DEBIAN_FRONTEND=noninteractive apt-get update
 sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y \

@@ -1,5 +1,5 @@
 # The shared FastAPI + lancedb + pyarrow + boto3 + torch/CUDA stack is provided
 # by the accepted npa-detection-training parent this Dockerfile builds on.
 # Keep Pillow explicit because the BDD100K dHash path requires its 12.x API.
-pillow==12.3.0
+pillow==13.0.0
 transformers==5.10.2

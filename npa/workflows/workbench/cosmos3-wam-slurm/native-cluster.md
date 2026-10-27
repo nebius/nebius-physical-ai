@@ -130,7 +130,7 @@ Install `uv` for the same operator user on the second worker. Set
 bash "$WAM_RECIPE/bootstrap-worker.sh"
 ```
 
-The worker installs Python 3.13.15 and 3.10.21 at the paths needed by the shared
+The worker installs Python 3.13.15 and 3.11.16 at the paths needed by the shared
 environments, preserves the controller's Slurm service UID/GID, installs the
 same Slurm version, verifies eight B200s and mounts NFS with hard TCP mounts.
 Both bootstraps install FFmpeg. Sharing the Python environment over NFS does

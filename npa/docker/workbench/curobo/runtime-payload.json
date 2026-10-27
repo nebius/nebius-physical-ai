@@ -7,9 +7,9 @@
         "sha256": "a71a4e82929d20ecd881f3081749cbaad14875b99f162d6387c3f1889735ae27"
       },
       {
-        "path": "usr/share/python-wheels/setuptools-84.0.0-py3-none-any.whl",
-        "size": 818216,
-        "sha256": "51a52592b3b99e102b609654876bd65f19f999935166d1352678931132b0c670"
+        "path": "usr/share/python-wheels/setuptools-84.2.1-py3-none-any.whl",
+        "size": 876263,
+        "sha256": "ca140b45d5325a9478f880e351484f62fef15f336462e449ca0c03c873d589c2"
       },
       {
         "path": "usr/share/doc/npa-curobo/secure-pip-build.json",

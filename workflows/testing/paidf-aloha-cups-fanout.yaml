@@ -1,0 +1,292 @@
+# Fresh pinned LeRobot source -> twelve appearance candidates -> strict review evidence.
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: paidf-aloha-cups-fanout
+  executionMode: runtime
+  description: Single-pass review of twelve native Cosmos3-Nano appearance scenarios from pinned LeRobot
+    ALOHA cup-opening episode zero. Preserve strict quality measurements and all rejected candidates;
+    no refinement, curation or training promotion.
+config:
+  bucket: example-bucket
+  prefix: "paidf-aloha-cups-fanout/{{run.id}}"
+  # Use the submitted main checkout's adapters over immutable vendor images.
+  source_overlay: true
+  input_kind: lerobot
+  input_video_uri: ''
+  lerobot_dataset_uri: "s3://{{config.bucket}}/datasets/paidf-aloha-cups-fanout/{{run.id}}/"
+  input_episode: '0'
+  input_camera: observation.images.cam_high
+  cosmos3_mode: video2video
+  cosmos3_checkpoint: Cosmos3-Nano
+  structural_control: edge
+  conditioning_fps: '24'
+  transfer_chunk_frames: '93'
+  control_guidance: '1.0'
+  transfer_edge_threshold: low
+  transfer_rgb_weight: 0.25
+  transfer_first_chunk_conditional_frames: '0'
+  transfer_cfg_normalization: disabled
+  prompt: Apply only the selected tabletop material, lighting and color treatment. Preserve the transparent
+    cup and lid, robot arms, white grippers, small markings, object identities, scene layout, camera,
+    geometry, grasp contacts, source motion and timing. Retain the existing tabletop plane and boundaries.
+    Keep black letterbox padding black. Do not add objects or change the action.
+  negative_prompt: distorted robot geometry, opaque cup, added objects, changed grasp contacts, impossible
+    motion, double exposure, colored letterbox padding, unsafe content
+  seed: '17'
+  guidance: '5.0'
+  steps: '35'
+  variant_count: '12'
+  # GPU concurrency can change without changing the twelve appearance profiles.
+  variant_parallelism: '1'
+  augmentation_seed: '30'
+  appearance_profiles_json: |
+    [
+      {
+        "lighting": "soft diffuse daylight with neutral exposure and coherent contact shadows",
+        "background": "the existing tabletop has pale oak wood grain, retaining its exact plane and boundaries",
+        "color_grade": "neutral balanced white balance; pale beige restricted to the tabletop",
+        "surface_finish": "dry matte oak with subtle lengthwise grain, no seams or planks"
+      },
+      {
+        "lighting": "soft warm studio illumination with gentle coherent shadows",
+        "background": "the existing tabletop has dark brown walnut grain, retaining its exact plane and boundaries",
+        "color_grade": "gently warm white balance while preserving the white grippers and clear cup",
+        "surface_finish": "satin walnut with restrained wood sheen, no seams or planks"
+      },
+      {
+        "lighting": "bright neutral overhead laboratory illumination with coherent contact shadows",
+        "background": "the existing tabletop is silver brushed aluminum, retaining its exact plane and boundaries",
+        "color_grade": "neutral balanced white balance with silver-gray confined to the tabletop",
+        "surface_finish": "finely brushed metal with broad soft specular reflections, not a mirror"
+      },
+      {
+        "lighting": "cool diffuse laboratory illumination with coherent contact shadows",
+        "background": "the existing tabletop is stainless steel, retaining its exact plane and boundaries",
+        "color_grade": "slightly cool white balance without recoloring robot parts or the clear cup",
+        "surface_finish": "smooth satin stainless steel with subtle broad reflections, not a mirror"
+      },
+      {
+        "lighting": "broad overcast daylight with soft coherent contact shadows",
+        "background": "the existing tabletop is fine-grained medium-gray granite, retaining its exact plane and boundaries",
+        "color_grade": "neutral low-saturation white balance preserving foreground identity colors",
+        "surface_finish": "honed stone with fine natural speckles and low gloss, no cracks or seams"
+      },
+      {
+        "lighting": "warm directional light from the upper left with coherent soft-edged shadows",
+        "background": "the existing tabletop is muted terracotta-colored stone, retaining its exact plane and boundaries",
+        "color_grade": "warm natural white balance with orange-brown restricted to the tabletop",
+        "surface_finish": "dry matte terracotta with very fine pores, no tiles or grout lines"
+      },
+      {
+        "lighting": "large neutral softbox illumination preserving visibility of dark robot joints",
+        "background": "the existing tabletop has a charcoal-black rubber surface, retaining its exact plane and boundaries",
+        "color_grade": "neutral balanced white balance with readable shadows and no crushed blacks",
+        "surface_finish": "fine-grained matte rubber with low reflectivity, no added mat or raised edges"
+      },
+      {
+        "lighting": "soft diffuse daylight with coherent contact shadows",
+        "background": "the existing tabletop is warm tan cork, retaining its exact plane and boundaries",
+        "color_grade": "neutral balanced white balance with tan restricted to the tabletop",
+        "surface_finish": "matte fine-grained cork with subtle natural pores, no seams or added objects"
+      },
+      {
+        "lighting": "bright broad neutral overhead light with highlight detail retained",
+        "background": "the existing tabletop is ivory-white ceramic, retaining its exact plane and boundaries",
+        "color_grade": "neutral high-key exposure without clipping white grippers or transparent plastic",
+        "surface_finish": "smooth glazed ceramic with soft restrained highlights, no tiles or seams"
+      },
+      {
+        "lighting": "soft neutral daylight with coherent contact shadows",
+        "background": "the existing tabletop is muted green laminate, retaining its exact plane and boundaries",
+        "color_grade": "neutral white balance with muted green restricted to the tabletop",
+        "surface_finish": "smooth matte laminate with uniform low gloss and no pattern or seams"
+      },
+      {
+        "lighting": "warm low-angle light from the left with longer coherent soft-edged shadows",
+        "background": "the existing tabletop remains a plain medium-gray surface with its exact original boundaries",
+        "color_grade": "warm late-afternoon white balance with preserved foreground identity colors",
+        "surface_finish": "matte gray surface with a subtle directional sheen and no added texture"
+      },
+      {
+        "lighting": "cool blue-hour ambient illumination with a soft neutral overhead fill and readable contact shadows",
+        "background": "the existing tabletop remains a plain medium-gray surface with its exact original boundaries",
+        "color_grade": "cool low-key treatment with visible dark joints and unclipped white grippers",
+        "surface_finish": "matte gray surface with soft low-gloss highlights and no added texture"
+      }
+    ]
+  parallelism_preset: latency
+  retry_seed_stride: '1000'
+  retry_guidance_delta: '-0.5'
+  retry_steps_delta: '4'
+  source_motion_weight: '0.0'
+  # A completed review records strict rejection; it never promotes training data.
+  grade_threshold: '0.75'
+  attribute_threshold: '1.0'
+  alignment_mode: required
+  attribute_sample_policy: ranking
+  augment_subject: two ALOHA robot arms opening a transparent cup and lid on the existing tabletop
+  temporal_consistency_mode: required
+  temporal_consistency_threshold: '0.8'
+  temporal_noise_floor: '0.25'
+  temporal_blur_ksize: '7'
+  temporal_regions_json: ''
+  appearance_fidelity_mode: advisory
+  appearance_fidelity_threshold: '0.8'
+  appearance_luminance_tolerance: '18.0'
+  appearance_global_chroma_tolerance: '8.0'
+  appearance_local_chroma_tolerance: '6.0'
+  appearance_chroma_instability_tolerance: '4.0'
+  appearance_blur_ksize: '7'
+  appearance_max_dimension: '256'
+  appearance_regions_json: ''
+  caption_model: MiniMaxAI/MiniMax-M3
+  caption_instruction: "Describe visible objects, robot parts, and contacts in one or two factual sentences.\
+    \ Task context: {{config.augment_subject}}. Treat this context as a hypothesis, not proof. State uncertainty\
+    \ when small features or object identities are unclear. Do not infer motion or task completion from\
+    \ a single frame."
+  vlm_backend: api
+  max_images: '8'
+  max_tokens: '512'
+  run_root_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
+  input_uri: "s3://{{config.bucket}}/{{config.prefix}}/input/"
+  conditioning_video_uri: "s3://{{config.bucket}}/{{config.prefix}}/input/source.mp4"
+  input_provenance_uri: "s3://{{config.bucket}}/{{config.prefix}}/input/provenance.json"
+  images_uri: "s3://{{config.bucket}}/{{config.prefix}}/input/"
+  configs_uri: "s3://{{config.bucket}}/{{config.prefix}}/configs/"
+  captions_uri: "s3://{{config.bucket}}/{{config.prefix}}/labeled_original/"
+  refinement_attempt_uri: "s3://{{config.bucket}}/{{config.prefix}}/configs/cosmos3-attempt.json"
+  augment_uri: "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/"
+  augment_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/manifest.json"
+  rollouts_uri: "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/"
+  scores_uri: "s3://{{config.bucket}}/{{config.prefix}}/grade/"
+  decision_uri: "s3://{{config.bucket}}/{{config.prefix}}/grade/decision.json"
+  quality_disposition_uri: "s3://{{config.bucket}}/{{config.prefix}}/grade/quality_disposition.json"
+  augmented_frames_uri: "s3://{{config.bucket}}/{{config.prefix}}/cosmos_augmented/"
+  quality_rrd_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/quality-evidence.rrd"
+  rrd_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/quality-evidence.rrd"
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+    cpus: 16+
+    memory: 128+
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+initial: prepare-input
+states:
+  prepare-input:
+    description: Select exactly one generic MP4 or LeRobot v2/v3 episode and camera. Retain the original,
+      normalize the complete source timeline, and stage decoded caption frames, hashes and the normalization
+      recipe.
+    toolRef: workbench.cosmos3.prepare_video_input
+    resources: cpu
+    outputs:
+    - uri: "{{config.input_provenance_uri}}"
+      schema: npa.paidf.cosmos3.input.v1
+    - uri: "{{config.images_uri}}"
+      schema: npa.data_factory.frames.v1
+    next: generate-configs
+  generate-configs:
+    description: Sample configuration-driven appearance prompts for each variant.
+    needs:
+    - prepare-input
+    resources: cpu
+    run:
+      argv:
+      - python3
+      - -c
+      - import sys; from npa.workflows.data_factory_stages import generate_configs; generate_configs(*sys.argv[1:])
+      - "{{config.configs_uri}}"
+      - "{{config.variant_count}}"
+      - "{{run.id}}"
+      - "{{config.images_uri}}"
+      - 'false'
+      - 'false'
+      - "{{config.augment_subject}}"
+      - "{{config.augmentation_seed}}"
+      - ''
+      - "{{config.appearance_profiles_json}}"
+    outputs:
+    - uri: "{{config.configs_uri}}manifest.json"
+      schema: npa.data_factory.configs.v1
+    next: annotate-original
+  annotate-original:
+    description: Understand and caption decoded frames from the selected source video.
+    needs:
+    - generate-configs
+    toolRef: workbench.token_factory.caption
+    resources: cpu
+    inputs:
+    - uri: "{{config.images_uri}}"
+      schema: npa.data_factory.frames.v1
+    outputs:
+    - uri: "{{config.captions_uri}}captions.json"
+      schema: npa.token_factory.captions.v1
+    next: generate-variants
+  generate-variants:
+    description: Run native Cosmos 3 edge transfer across every prepared source frame. Check effective
+      prompts and generated output with model guardrails, verify output timestamps and frame count, then
+      publish generation/control evidence.
+    toolRef: workbench.cosmos3.generate_variants
+    resources: gpu
+    inputs:
+    - uri: "{{config.conditioning_video_uri}}"
+      schema: npa.paidf.cosmos3.input.v1
+    - uri: "{{config.captions_uri}}captions.json"
+      schema: npa.token_factory.captions.v1
+    outputs:
+    - uri: "{{config.augment_manifest_uri}}"
+      schema: npa.paidf.cosmos3.augment.v1
+    next: evaluate
+    needs:
+    - annotate-original
+  evaluate:
+    description: Verify source/output alignment and hashes, then run real Cosmos Evaluator checks over
+      every variant.
+    toolRef: workbench.cosmos_evaluator.evaluate
+    resources: cpu
+    inputs:
+    - uri: "{{config.rollouts_uri}}"
+      schema: npa.paidf.cosmos3.augment.v1
+    outputs:
+    - uri: "{{config.scores_uri}}cosmos_evaluator.json"
+      schema: npa.cosmos_evaluator.report.v1
+    next: quality-disposition
+    needs:
+    - generate-variants
+  quality-disposition:
+    description: Persist a strict accepted or rejected disposition from the final evaluator report.
+    needs:
+    - evaluate
+    resources: cpu
+    run:
+      argv:
+      - python3
+      - -c
+      - import sys; from npa.workflows.data_factory_stages import write_quality_disposition; write_quality_disposition(*sys.argv[1:])
+      - "{{config.scores_uri}}"
+      - "{{config.quality_disposition_uri}}"
+      - "{{config.decision_uri}}"
+      - "{{config.grade_threshold}}"
+    outputs:
+    - uri: "{{config.quality_disposition_uri}}"
+      schema: npa.data_factory.quality_disposition.v1
+    - uri: "{{config.decision_uri}}"
+      schema: npa.sim2real.threshold_decision.v1
+    next: visualize-quality-evidence
+  visualize-quality-evidence:
+    description: Preserve all twelve actual candidates and their measured quality disposition in a terminal
+      review recording; this workflow never promotes data.
+    needs:
+    - quality-disposition
+    toolRef: workbench.nurec.visualize
+    resources: cpu
+    params:
+      rrd_uri: "{{config.quality_rrd_uri}}"
+    outputs:
+    - uri: "{{config.quality_rrd_uri}}"
+      schema: npa.sim2real.rerun.v1
+    terminal: true

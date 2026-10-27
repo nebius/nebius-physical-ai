@@ -72,6 +72,11 @@ The marketplace driver defaults may omit zonal RTX selectors. NPA supplies an
 exact platform and preset override through
 `nebius.nvidiaDriverCRDPatch.profiles`, with RDMA disabled. A configuration hash
 makes changes to those write-only Helm values update existing releases.
+Both the shared backend and the direct Terraform wrapper carry this profile.
+It also sets the toolkit's `RUNTIME_CONFIG_SOURCE=file` so the generated
+containerd drop-in uses the on-disk root configuration's schema. The default
+`containerd config dump` path can migrate an older schema in memory and produce
+a drop-in that the unchanged root configuration cannot load.
 Alternate recipes must wire `gpu_operator_rtx_driver_profile` or preflight
 rejects them before cloud mutation.
 
