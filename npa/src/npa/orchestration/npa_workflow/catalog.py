@@ -348,6 +348,8 @@ def _smolvla_closed_loop_argv(role: str) -> list[str]:
         "npa.workflows.sim2real.pi05_closed_loop_entry",
         "--policy-backend",
         "lerobot_smolvla",
+        "--smolvla-action-selection",
+        "{{config.smolvla_action_selection}}",
         "--preparation-uri",
         "{{config.preparation_uri}}",
         "--service-receipt-uri",

@@ -1,0 +1,54 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "44639440b22d9d96a2c6ce916ebf57ab1c6f85204481a5c262fadd03cb40bb3d",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "The standard workflow parser and production renderer accepted the fourteen-stage graph with the declared time-aligned SmolVLA action strategy.",
+      "evidence": [
+        "validate-spec status valid",
+        "plan-spec --check-render status valid with 14 tasks and render SHA-256 985045a65546b82c5902f4a22258e185ed71ec0782531f7a41017845e8d7f12e"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "The resolved graph retains collect, export, base service/evaluation, native train/reload, adapted service/evaluation, cleanup and factual finalization, and both gold evaluations receive the same explicit action-selection value.",
+      "evidence": [
+        "npa/tests/orchestration/npa_workflow/test_sim2real_policy_interchange_workflow.py",
+        "164 exact pipeline tests passed on qualified Python 3.12.14 and CPU Torch 2.14.0"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "The checked-in example bucket is intentionally not a writable destination; a normal configured project bucket must pass read/write preflight before submission.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "A supported immutable Franka/cube/SmolVLA profile URI must be staged and consumed from worker-readable storage in a clean-start run.",
+      "evidence": []
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "The operator-owned Hugging Face credential, registry pull access and project authentication must be checked in the actual clean-start environment without embedding secrets in the spec.",
+      "evidence": []
+    },
+    "source_image": {
+      "status": "blocked",
+      "reason": "The exact execution-strategy source and affected Isaac image have focused validation but have not completed source, CI, security, provenance and anonymous-byte qualification.",
+      "evidence": [
+        "candidate source 8883db5582a1eb482563fdc1c3377c0468b7322f",
+        "canonical-8883db55-execution-strategy-chain-20261027.private.json"
+      ]
+    },
+    "target_runtime": {
+      "status": "blocked",
+      "reason": "No clean-start standard-runtime execution has yet demonstrated strict held-out placement, interruption/resume, exact cleanup and standalone final proof under this strategy.",
+      "evidence": [
+        "historical accepted baseline remains 0/24 placements"
+      ]
+    }
+  }
+}

@@ -56,6 +56,7 @@ config:
   eval_decisions: "192"
   wrist_ablation_modes: fresh,frozen,pixel_channel_shuffle
   wrist_ablation_seed: "20271008"
+  smolvla_action_selection: uniform_temporal_ensemble
   train_steps: "1000"
   train_batch_size: "8"
   policy_device: cuda
@@ -260,7 +261,7 @@ states:
     next: evaluate-base-gold
 
   evaluate-base-gold:
-    description: Run actual native base-policy actions on the sealed untouched gold cohort.
+    description: Run the declared native action-chunk execution strategy on the sealed untouched gold cohort.
     needs: [start-base-service]
     toolRef: workbench.sim2real.smolvla_base_gold
     resources: isaac
@@ -313,7 +314,7 @@ states:
     next: evaluate-adapted-gold
 
   evaluate-adapted-gold:
-    description: Repeat identical gold scenarios with fresh, frozen and spatial-and-channel pixel-value-shuffled wrist interventions.
+    description: Repeat the same declared action-chunk strategy and gold scenarios with fresh, frozen and spatial-and-channel pixel-value-shuffled wrist interventions.
     needs: [start-adapted-service]
     toolRef: workbench.sim2real.smolvla_adapted_gold
     resources: isaac

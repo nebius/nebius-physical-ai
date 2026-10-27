@@ -457,7 +457,19 @@ reference. It uses real LeRobotDataset materialization and native SmolVLA
 training, processor-bound reload and typed serving. OpenPI/DROID translation,
 padding, MessagePack/WebSocket and explicit sampler-noise coupling remain only
 inside the pi0.5 adapter. SmolVLA instead declares its native action queue and
-requires independently seeded repeated paired task trials.
+requires independently seeded repeated paired task trials. The reference
+declares `smolvla_action_selection: uniform_temporal_ensemble`: each control
+uses the mean of only time-aligned predictions from the current and still-live
+prior native chunks, and the current fresh observation always contributes
+action zero. `first_action` remains an explicit negative-baseline option; the
+two protocols must never be combined under one result label.
+
+This reference is not yet a supported turnkey default. The normal product
+surface will be the standard `npa workbench workflow submit ... --runtime
+--resume` path after the clean-start image, profile, storage, private service,
+strict held-out task-success, cleanup, and interrupted-run resume checks have
+all passed in one source-bound run. Until then, operators must treat it as a
+qualification workflow rather than a supported one-command adaptation recipe.
 
 `sim2real-policy-interchange-non-franka.yaml` is the second complete 14-stage
 acceptance graph. It collects successful geometry-aware teacher episodes for
