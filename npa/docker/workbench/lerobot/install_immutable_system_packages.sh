@@ -62,15 +62,15 @@ while IFS=' ' read -r package sha256; do
     --output "/tmp/npa-python312/${package}"
   printf '%s  %s\n' "${sha256}" "/tmp/npa-python312/${package}" | sha256sum --check --status
 done <<'PYTHON312_PACKAGES'
-libpython3.12_3.12.15-1+jammy1_amd64.deb f89750316bb92d36c5a15c970893044732806217f80d58c97b018082f2259823
-libpython3.12-dev_3.12.15-1+jammy1_amd64.deb 990b8bfac930065343c4d8f87098888ba27b28c22470111e15e3987fff382e94
-libpython3.12-stdlib_3.12.15-1+jammy1_amd64.deb 691f31a5a861c96c5b8ebc81787da86688a4f5671a3adbc059e5e0691d930dcd
-python3.12_3.12.15-1+jammy1_amd64.deb 0994bc05716e910c314f89212672ac835bfacefbf6e3d56d613789dd876fd3af
-python3.12-dev_3.12.15-1+jammy1_amd64.deb 361f4f0a9bc8babe977716735204b9f6943309bd85eecfc31d1f0c0c95a74689
-python3.12-venv_3.12.15-1+jammy1_amd64.deb a15bfc45040d8a9d863d3b79175f4d8f381191746fd49df198968c779301ed3e
+libpython3.12_3.12.16-1+jammy1_amd64.deb 80c863d7d18530e9b58d4ec90519fd52f1f57b88ed2d407ada3d35af5a73d1e5
+libpython3.12-dev_3.12.16-1+jammy1_amd64.deb cac6c77319ecff0cd4276cd6ef927f973ef019a37052bcd3165d01e97de9e422
+libpython3.12-stdlib_3.12.16-1+jammy1_amd64.deb 60c27abdaec2057115f3b557d73f521715062bf29ca403a53d63ab35069ed219
+python3.12_3.12.16-1+jammy1_amd64.deb 1824684d47a9711fad480f2330ae86749cdf6b93516868863db39550563e4915
+python3.12-dev_3.12.16-1+jammy1_amd64.deb 9e0bb14ece20676cfb0c8e58d77354892551c59228f8e42ec3ec0a2bbb9cf6f4
+python3.12-venv_3.12.16-1+jammy1_amd64.deb 92c86592323e3bc01ed6dfebeca053832735ca74bddd525c00e6f19ff72c8337
 PYTHON312_PACKAGES
 apt-get install -y --no-install-recommends /tmp/npa-python312/*.deb
-test "$(python3.12 --version)" = "Python 3.12.15"
+test "$(python3.12 --version)" = "Python 3.12.16"
 rm -f /etc/ssh/ssh_host_*
 test -z "$(find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*' -print -quit)"
 # The image-byte gate treats these as path-only findings in every layer. After

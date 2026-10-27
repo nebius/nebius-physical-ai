@@ -215,7 +215,7 @@ def test_build_dependency_closure_has_no_moving_repository_or_python_resolution(
     assert "apt-get install" not in text
     assert "pip install --upgrade" not in text
     assert "--require-hashes --no-deps" in text
-    assert "python3.12_3.12.15-1+jammy1_amd64.deb" in system_packages
+    assert "python3.12_3.12.16-1+jammy1_amd64.deb" in system_packages
     assert "sha256sum --check --status" in system_packages
     assert "apt-get install -y --no-install-recommends" in system_packages
     bootstrap_lock = (RECIPE / "bootstrap-requirements.lock").read_text()
