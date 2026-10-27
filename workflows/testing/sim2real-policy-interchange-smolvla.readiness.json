@@ -1,13 +1,13 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "44639440b22d9d96a2c6ce916ebf57ab1c6f85204481a5c262fadd03cb40bb3d",
+  "workflow_sha256": "c3989f6308802867f28312a87968bfa71f1d3bf5b0776a05dbc35583a50b636b",
   "planning": {
     "validation": {
       "status": "verified",
       "reason": "The standard workflow parser and production renderer accepted the fourteen-stage graph with the declared time-aligned SmolVLA action strategy.",
       "evidence": [
         "validate-spec status valid",
-        "plan-spec --check-render status valid with 14 tasks and render SHA-256 985045a65546b82c5902f4a22258e185ed71ec0782531f7a41017845e8d7f12e"
+        "plan-spec --check-render status valid with 14 tasks and render SHA-256 c8b7461cada439586f5c1f25f9c0c64a7aff354335be820fbc777b1286973a3b"
       ]
     },
     "task_fidelity": {

@@ -38,6 +38,26 @@ def _digest(value: dict) -> str:
     ).hexdigest()
 
 
+def test_offline_viewer_embeds_four_panel_native_evidence_without_network() -> None:
+    report = {
+        "terminal_success_rate": 0.25,
+        "wrist_ablation": {"qualification": "matched_effectiveness_eligible"},
+        "checkpoint_provenance": {"checkpoint_sha256": DIGEST_A},
+        "episodes": [{"queries": [{"action_selection": {"action_owner": "policy"}}]}],
+    }
+
+    document = interchange_stage._offline_viewer_html(report, b"native-mp4")
+
+    assert "model-consumed workspace" in document
+    assert "model-consumed wrist" in document
+    assert "goal witness" in document
+    assert "release witness" in document
+    assert "data:video/mp4;base64," in document
+    assert "default-src 'none'" in document
+    assert "https://" not in document
+    assert "checkpoint_sha256" in document
+
+
 def _camera(key: str, role: str, mount_link: str) -> dict:
     return {
         "key": key,

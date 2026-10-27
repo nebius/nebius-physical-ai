@@ -107,7 +107,10 @@ config:
   external_seam_uri: "{{config.root_uri}}/stage_12_external/seam.json"
   final_report_uri: "{{config.root_uri}}/reports/policy-interchange-smolvla.json"
   final_mp4_uri: "{{config.root_uri}}/reports/policy-interchange-smolvla.mp4"
+  final_witness_mp4_uri: "{{config.root_uri}}/reports/policy-interchange-smolvla-witness.mp4"
   final_rrd_uri: "{{config.root_uri}}/reports/policy-interchange-smolvla.rrd"
+  final_policy_inputs_uri: "{{config.root_uri}}/reports/policy-input-rgb.npz"
+  final_html_uri: "{{config.root_uri}}/reports/policy-interchange-smolvla.html"
 
 resources:
   cpu:
@@ -353,6 +356,9 @@ states:
     outputs:
       - {uri: "{{config.final_report_uri}}", schema: npa.sim2real.policy_interchange.final_report.v1}
       - {uri: "{{config.final_mp4_uri}}", schema: video/mp4}
+      - {uri: "{{config.final_witness_mp4_uri}}", schema: video/mp4}
       - {uri: "{{config.final_rrd_uri}}", schema: application/vnd.rerun.rrd}
+      - {uri: "{{config.final_policy_inputs_uri}}", schema: application/x-npz}
+      - {uri: "{{config.final_html_uri}}", schema: text/html}
       - {uri: "{{config.component_root_uri}}/components/stage_14.json", schema: npa.sim2real.policy_interchange.component_record.v1}
     terminal: true

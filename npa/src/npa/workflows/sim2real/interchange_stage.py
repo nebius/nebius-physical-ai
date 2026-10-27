@@ -8,7 +8,9 @@ contract, and native policy adapter before a GPU job can be submitted.
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
+import html
 import json
 import math
 import os
@@ -709,12 +711,69 @@ def _validate_closed_loop_pair(baseline: dict, adapted: dict) -> tuple[dict, dic
 
 
 def _review_artifacts(args: argparse.Namespace, work: Path) -> dict[str, Any]:
-    """Copy exact final MP4 and RRD bytes with hashes."""
+    """Copy exact policy, witness, RRD and native-input evidence bytes."""
 
     root = args.adapted_artifact_root_uri.rstrip("/")
     return {
         "mp4": _copy_artifact(root + "/rollouts.mp4", args.final_mp4_uri, work),
+        "witness_mp4": _copy_artifact(
+            root + "/witness-rollouts.mp4", args.final_witness_mp4_uri, work
+        ),
         "rrd": _copy_artifact(root + "/rollouts.rrd", args.final_rrd_uri, work),
+        "policy_input_rgb": _copy_artifact(
+            root + "/policy-input-rgb.npz", args.final_policy_inputs_uri, work
+        ),
+    }
+
+
+def _offline_viewer_html(adapted: dict[str, Any], witness_video: bytes) -> str:
+    """Build one network-free viewer from the exact synchronized witness video."""
+
+    if not witness_video:
+        raise InterchangeContractError("standalone viewer witness video is empty")
+    report = json.dumps(adapted, indent=2, sort_keys=True)
+    encoded_video = base64.b64encode(witness_video).decode("ascii")
+    summary = {
+        "terminal_success_rate": adapted.get("terminal_success_rate"),
+        "wrist_ablation": adapted.get("wrist_ablation"),
+        "checkpoint_provenance": adapted.get("checkpoint_provenance"),
+        "limitations": [
+            "Simulation evidence only; physical-robot deployment is unperformed.",
+            "Sensitivity is separate from positive causal task benefit.",
+            "The lossless policy-input NPZ and per-query hashes are authoritative.",
+        ],
+    }
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; media-src data:; style-src 'unsafe-inline'">
+<title>SmolVLA Sim2Real offline evidence</title>
+<style>body{{font:16px system-ui;max-width:1100px;margin:auto;padding:1rem;background:#10151c;color:#eef}} video{{width:100%;background:#000}} pre{{white-space:pre-wrap;overflow-wrap:anywhere;background:#18212c;padding:1rem}} .panels{{font-weight:600}}</style>
+</head><body><h1>SmolVLA Sim2Real offline evidence</h1>
+<p class="panels">Panels: model-consumed workspace | model-consumed wrist | goal witness | release witness.</p>
+<video controls preload="metadata" src="data:video/mp4;base64,{encoded_video}"></video>
+<h2>Measured summary</h2><pre>{html.escape(json.dumps(summary, indent=2, sort_keys=True))}</pre>
+<details><summary>Complete native report and action lineage</summary><pre>{html.escape(report)}</pre></details>
+</body></html>"""
+
+
+def _write_offline_viewer(
+    args: argparse.Namespace, adapted: dict[str, Any], work: Path
+) -> dict[str, Any]:
+    """Emit and upload the standalone HTML after exact media materialization."""
+
+    witness_path = work / "witness-rollouts.mp4"
+    document = _offline_viewer_html(adapted, witness_path.read_bytes())
+    path = work / "policy-interchange-smolvla.html"
+    path.write_text(document, encoding="utf-8")
+    storage().upload_file(str(path), args.final_html_uri)
+    payload = path.read_bytes()
+    return {
+        "uri": args.final_html_uri,
+        "bytes": len(payload),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "external_network_required": False,
+        "panels": ["workspace", "wrist", "goal_witness", "release_witness"],
     }
 
 
@@ -725,7 +784,13 @@ def _publish_final(
 
     artifacts = {"report": args.output_uri}
     if media:
-        artifacts.update(mp4=args.final_mp4_uri, rrd=args.final_rrd_uri)
+        artifacts.update(
+            mp4=args.final_mp4_uri,
+            witness_mp4=args.final_witness_mp4_uri,
+            rrd=args.final_rrd_uri,
+            policy_input_rgb=args.final_policy_inputs_uri,
+            html=args.final_html_uri,
+        )
     publish_component_record(
         component_schema=POLICY_INTERCHANGE_COMPONENT_SCHEMA,
         root_uri=args.component_root_uri,
@@ -747,6 +812,7 @@ def _finalize(args: argparse.Namespace) -> dict[str, Any]:
         )
         before_rate, after_rate = _fresh_rate(baseline), _fresh_rate(adapted)
         copied = _review_artifacts(args, work / "media")
+        copied["offline_html"] = _write_offline_viewer(args, adapted, work / "media")
         result = {
             "schema": "npa.sim2real.policy_interchange.final_report.v1",
             "run_id": args.run_id,
@@ -926,7 +992,10 @@ def build_parser() -> argparse.ArgumentParser:
         + (
             "adapted-artifact-root-uri",
             "final-mp4-uri",
+            "final-witness-mp4-uri",
             "final-rrd-uri",
+            "final-policy-inputs-uri",
+            "final-html-uri",
             "output-uri",
             "component-root-uri",
         ),
