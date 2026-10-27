@@ -1835,8 +1835,8 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         plan_only=True,
         plan_only_justification=(
             "Execution requires qualified immutable LeRobot and Isaac images, an "
-            "exact operator-authorized SmolVLA revision, scoped service RBAC, and "
-            "pre-provisioned durable policy and Isaac cache PVCs."
+            "exact operator-authorized SmolVLA revision, and live acceptance of the "
+            "workflow-owned cache, authentication, scoped RBAC and resume lifecycle."
         ),
         runtime=True,
         expected_parallel_tasks=2,

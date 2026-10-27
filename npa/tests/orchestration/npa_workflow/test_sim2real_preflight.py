@@ -341,6 +341,25 @@ def test_kubernetes_preflight_parses_nodes_and_pvc():
     ]
 
 
+def test_kubernetes_preflight_defers_declared_workflow_owned_prerequisites():
+    calls = []
+
+    def run(args):
+        calls.append(args)
+        return SimpleNamespace(returncode=0, stdout=_nodes(), stderr="")
+
+    config = _config(
+        runtime_prerequisites_mode="workflow_owned",
+        policy_cache_pvc="npa-smolvla-run-policy-cache",
+        isaac_warm_job="npa-smolvla-run-isaac-warm",
+        service_auth_secret="npa-smolvla-run-auth",
+        base_service_account="npa-smolvla-run-base-ctl",
+        adapted_service_account="npa-smolvla-run-adapted-ctl",
+    )
+    assert kubernetes_prerequisites(config, runner=run) == []
+    assert [call[:2] for call in calls] == [["get", "nodes"]]
+
+
 def test_kubernetes_preflight_reports_every_missing_cluster_object_together():
     def run(args):
         if args[:2] == ["get", "nodes"]:

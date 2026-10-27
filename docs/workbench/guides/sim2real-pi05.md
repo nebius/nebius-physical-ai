@@ -458,8 +458,13 @@ node's allocatable ceiling; a rendered plan must still be checked before every
 submission. Runtime resource overrides may narrow a request, but cannot change
 robot, object, policy, cohort, or scorer identity.
 
-`sim2real-policy-interchange-smolvla.yaml` is the model-neutral 14-stage
-reference. It uses real LeRobotDataset materialization and native SmolVLA
+`sim2real-policy-interchange-smolvla.yaml` is the model-neutral 16-stage
+reference. Its first stage creates or exactly adopts run-owned policy and Isaac
+cache PVCs, an authentication secret and role-specific service RBAC, then warms
+the digest-pinned Isaac runtime. Its terminal stage deletes only those exact
+owned resources after the report is durable. Interrupted execution adopts the
+same identities and rejects foreign or drifted resources. The middle stages use
+real LeRobotDataset materialization and native SmolVLA
 training, processor-bound reload and typed serving. OpenPI/DROID translation,
 padding, MessagePack/WebSocket and explicit sampler-noise coupling remain only
 inside the pi0.5 adapter. SmolVLA instead declares its native action queue and
@@ -470,7 +475,9 @@ prior native chunks, and the current fresh observation always contributes
 action zero. `first_action` remains an explicit negative-baseline option; the
 two protocols must never be combined under one result label.
 
-This reference is not yet a supported turnkey default. The normal product
+The clean-start lifecycle is implemented but has not yet passed a complete live
+run or interrupted-run resume. This reference is therefore not yet a supported
+turnkey default. The normal product
 surface will be the standard `npa workbench workflow submit ... --runtime
 --resume` path after the clean-start image, profile, storage, private service,
 strict held-out task-success, cleanup, and interrupted-run resume checks have

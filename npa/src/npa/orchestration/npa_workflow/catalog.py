@@ -307,6 +307,48 @@ def _smolvla_service_argv(command: str, role: str) -> list[str]:
     ]
 
 
+def _sim2real_runtime_prerequisite_argv(action: str) -> list[str]:
+    output_key = (
+        "runtime_prerequisites_uri"
+        if action == "apply"
+        else "runtime_prerequisites_cleanup_uri"
+    )
+    return [
+        "python3",
+        "-m",
+        "npa.workflows.sim2real.runtime_prerequisites",
+        action,
+        "--run-id",
+        "{{run.id}}",
+        "--namespace",
+        "{{config.service_namespace}}",
+        "--isaac-image",
+        "{{config.isaac_image}}",
+        "--isaac-cache-pvc",
+        "{{config.isaac_cache_pvc}}",
+        "--policy-cache-pvc",
+        "{{config.policy_cache_pvc}}",
+        "--auth-secret",
+        "{{config.service_auth_secret}}",
+        "--base-service-account",
+        "{{config.base_service_account}}",
+        "--adapted-service-account",
+        "{{config.adapted_service_account}}",
+        "--isaac-warm-job",
+        "{{config.isaac_warm_job}}",
+        "--storage-class",
+        "{{config.runtime_storage_class}}",
+        "--isaac-cache-size",
+        "{{config.isaac_cache_size}}",
+        "--policy-cache-size",
+        "{{config.policy_cache_size}}",
+        "--warm-timeout-seconds",
+        "{{config.isaac_cache_warm_timeout_seconds}}",
+        "--output-uri",
+        f"{{{{config.{output_key}}}}}",
+    ]
+
+
 def _pi05_closed_loop_argv(role: str) -> list[str]:
     return [
         _ISAAC_RUNTIME_PYTHON,
@@ -3295,6 +3337,22 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         ],
         omit_flags_when_empty=("--adapter-output-uri", "--execution-profile"),
         config_defaults={"policy_adapter_uri": "", "execution_profile": ""},
+    ),
+    "workbench.sim2real.runtime_prerequisites_apply": ToolEntry(
+        name="workbench.sim2real.runtime_prerequisites_apply",
+        description=(
+            "Create or exactly adopt the run-owned cache, authentication, and "
+            "service-controller prerequisites, then warm the exact Isaac cache."
+        ),
+        argv_template=_sim2real_runtime_prerequisite_argv("apply"),
+    ),
+    "workbench.sim2real.runtime_prerequisites_cleanup": ToolEntry(
+        name="workbench.sim2real.runtime_prerequisites_cleanup",
+        description=(
+            "Delete only the exact run-owned cache, authentication, and "
+            "service-controller prerequisites."
+        ),
+        argv_template=_sim2real_runtime_prerequisite_argv("cleanup"),
     ),
     "workbench.sim2real.pi05_external_seam": ToolEntry(
         name="workbench.sim2real.pi05_external_seam",

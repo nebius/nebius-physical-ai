@@ -30,8 +30,14 @@ config:
     cpu_image: cpu_image_source_sha
     isaac_image: isaac_image_source_sha
     runtime_image: runtime_image_source_sha
-  isaac_cache_pvc: ""
-  policy_cache_pvc: ""
+  runtime_prerequisites_mode: workflow_owned
+  isaac_cache_pvc: "npa-smolvla-{{run.id}}-isaac-cache"
+  policy_cache_pvc: "npa-smolvla-{{run.id}}-policy-cache"
+  isaac_warm_job: "npa-smolvla-{{run.id}}-isaac-warm"
+  runtime_storage_class: csi-mounted-fs-path-sc
+  isaac_cache_size: 40Gi
+  policy_cache_size: 100Gi
+  isaac_cache_warm_timeout_seconds: "3600"
   base_checkpoint_uri: "hf://lerobot/smolvla_base@5e8d12a6e2975b0e5e5fce7c8caf47c371d257b6"
   prepared_base_checkpoint_uri: "{{config.root_uri}}/stage_04_artifact/prepared-base/"
   base_service_checkpoint_uri: "{{config.prepared_base_checkpoint_uri}}"
@@ -72,9 +78,9 @@ config:
   policy_adapter_relative_path: meta/npa_policy_adapter.json
 
   service_namespace: default
-  service_auth_secret: replace-with-run-scoped-policy-auth-secret
-  base_service_account: replace-with-run-scoped-base-controller
-  adapted_service_account: replace-with-run-scoped-adapted-controller
+  service_auth_secret: "npa-smolvla-{{run.id}}-auth"
+  base_service_account: "npa-smolvla-{{run.id}}-base-ctl"
+  adapted_service_account: "npa-smolvla-{{run.id}}-adapted-ctl"
   service_gpu_count: "1"
   service_gpu_node_selector_key: nebius.com/gpu-name
   service_gpu_node_selector_value: RTXPRO6000
@@ -98,7 +104,6 @@ config:
 
   base_service_start_uri: "{{config.root_uri}}/stage_05_base_service/start.json"
   base_service_cleanup_uri: "{{config.root_uri}}/stage_07_base_cleanup/cleanup.json"
-  failure_base_service_cleanup_uri: "{{config.root_uri}}/failure_cleanup/base.json"
   base_gold_uri: "{{config.root_uri}}/stage_06_base_gold/report.json"
   base_artifact_root_uri: "{{config.root_uri}}/stage_06_base_gold/"
 
@@ -109,7 +114,6 @@ config:
 
   adapted_service_start_uri: "{{config.root_uri}}/stage_10_adapted_service/start.json"
   adapted_service_cleanup_uri: "{{config.root_uri}}/stage_13_adapted_cleanup/cleanup.json"
-  failure_adapted_service_cleanup_uri: "{{config.root_uri}}/failure_cleanup/adapted.json"
   adapted_gold_uri: "{{config.root_uri}}/stage_11_adapted_gold/report.json"
   adapted_artifact_root_uri: "{{config.root_uri}}/stage_11_adapted_gold/"
   external_seam_uri: "{{config.root_uri}}/stage_12_external/seam.json"
@@ -119,6 +123,9 @@ config:
   final_rrd_uri: "{{config.root_uri}}/reports/policy-interchange-smolvla.rrd"
   final_policy_inputs_uri: "{{config.root_uri}}/reports/policy-input-rgb.npz"
   final_html_uri: "{{config.root_uri}}/reports/policy-interchange-smolvla.html"
+  runtime_prerequisites_uri: "{{config.root_uri}}/runtime/prerequisites.json"
+  runtime_prerequisites_cleanup_uri: "{{config.root_uri}}/runtime/cleanup.json"
+  failure_runtime_prerequisites_cleanup_uri: "{{config.root_uri}}/failure_cleanup/runtime.json"
 
 resources:
   cpu:
@@ -215,9 +222,18 @@ resources:
     image: "{{config.cpu_image}}"
 
 initial: prepare-contract
-onFailure: failure-cleanup-services
+onFailure: failure-cleanup-runtime-prerequisites
 
 states:
+  provision-runtime-prerequisites:
+    description: Create or adopt exact run-owned caches, authentication and scoped service RBAC, then warm the immutable Isaac runtime.
+    toolRef: workbench.sim2real.runtime_prerequisites_apply
+    resources: cpu
+    outputs:
+      - {uri: "{{config.runtime_prerequisites_uri}}", schema: npa.sim2real.runtime_prerequisites.v1}
+    needs: [prepare-contract]
+    next: collect-expert
+
   prepare-contract:
     description: Validate sealed Franka, cameras, rigid object, task and SmolVLA contracts before GPU submission.
     toolRef: workbench.sim2real.policy_interchange_prepare
@@ -226,11 +242,11 @@ states:
       - {uri: "{{config.preparation_uri}}", schema: npa.sim2real.policy_interchange.preparation.v1}
       - {uri: "{{config.policy_adapter_uri}}", schema: npa.sim2real.lerobot_policy_adapter.v1}
       - {uri: "{{config.component_root_uri}}/components/stage_01.json", schema: npa.sim2real.policy_interchange.component_record.v1}
-    next: collect-expert
+    next: provision-runtime-prerequisites
 
   collect-expert:
     description: Collect the currently qualified Franka/cube-family expert with causal exterior and wrist observations.
-    needs: [prepare-contract]
+    needs: [provision-runtime-prerequisites]
     toolRef: workbench.sim2real.policy_interchange_franka_collect
     resources: isaac
     outputs:
@@ -370,27 +386,22 @@ states:
       - {uri: "{{config.final_policy_inputs_uri}}", schema: application/x-npz}
       - {uri: "{{config.final_html_uri}}", schema: text/html}
       - {uri: "{{config.component_root_uri}}/components/stage_14.json", schema: npa.sim2real.policy_interchange.component_record.v1}
+    next: cleanup-runtime-prerequisites
+
+  cleanup-runtime-prerequisites:
+    description: Release only the exact run-owned runtime prerequisites after the report is durable.
+    needs: [finalize]
+    toolRef: workbench.sim2real.runtime_prerequisites_cleanup
+    resources: cpu
+    outputs:
+      - {uri: "{{config.runtime_prerequisites_cleanup_uri}}", schema: npa.sim2real.runtime_prerequisites.v1}
     terminal: true
 
-  failure-cleanup-services:
-    description: Attempt both exact-owned service cleanups after a terminal workflow failure while preserving the original failure.
-    parallel: [failure-cleanup-base-service, failure-cleanup-adapted-service]
-    maxConcurrency: 2
-
-  failure-cleanup-base-service:
-    description: Idempotently delete only the exactly owned base service after failure.
-    toolRef: workbench.lerobot.smolvla_base_service_cleanup
-    resources: base-service-control
+  failure-cleanup-runtime-prerequisites:
+    description: Delete exact-owned SmolVLA services first, then release only this run's authentication, RBAC and caches while preserving the original failure.
+    toolRef: workbench.sim2real.runtime_prerequisites_cleanup
+    resources: cpu
     params:
-      base_service_cleanup_uri: "{{config.failure_base_service_cleanup_uri}}"
+      runtime_prerequisites_cleanup_uri: "{{config.failure_runtime_prerequisites_cleanup_uri}}"
     outputs:
-      - {uri: "{{config.failure_base_service_cleanup_uri}}", schema: npa.sim2real.smolvla_service_cleanup.v1}
-
-  failure-cleanup-adapted-service:
-    description: Idempotently delete only the exactly owned adapted service after failure.
-    toolRef: workbench.lerobot.smolvla_adapted_service_cleanup
-    resources: adapted-service-control
-    params:
-      adapted_service_cleanup_uri: "{{config.failure_adapted_service_cleanup_uri}}"
-    outputs:
-      - {uri: "{{config.failure_adapted_service_cleanup_uri}}", schema: npa.sim2real.smolvla_service_cleanup.v1}
+      - {uri: "{{config.failure_runtime_prerequisites_cleanup_uri}}", schema: npa.sim2real.runtime_prerequisites.v1}

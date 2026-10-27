@@ -17,6 +17,7 @@ SPEC = ROOT / "workflows/testing/sim2real-policy-interchange-smolvla.yaml"
 NON_FRANKA_SPEC = ROOT / "workflows/testing/sim2real-policy-interchange-non-franka.yaml"
 STATES = [
     "prepare-contract",
+    "provision-runtime-prerequisites",
     "collect-expert",
     "export-dataset",
     "artifact-preflight",
@@ -30,6 +31,7 @@ STATES = [
     "physical-robot-seam",
     "cleanup-adapted-service",
     "finalize",
+    "cleanup-runtime-prerequisites",
 ]
 
 
@@ -37,7 +39,7 @@ def _value(argv: list[str], flag: str) -> str:
     return argv[argv.index(flag) + 1]
 
 
-def test_smolvla_reference_is_standard_static_fourteen_stage_graph() -> None:
+def test_smolvla_reference_is_standard_static_clean_start_graph() -> None:
     spec = load_spec(SPEC)
     plan = build_plan(spec, run_id="smolvla-interchange")
     assert [step.state for step in plan.steps] == STATES
@@ -125,7 +127,8 @@ def test_every_stage_declares_explicit_interchange_component_record() -> None:
     assert sorted(uri.rsplit("_", 1)[-1] for uri in components) == [
         f"{stage:02d}.json" for stage in range(1, 15)
     ]
-    assert spec.states["finalize"].terminal is True
+    assert spec.states["finalize"].terminal is False
+    assert spec.states["cleanup-runtime-prerequisites"].terminal is True
 
 
 def test_reference_labels_its_bounded_franka_cube_scope() -> None:
@@ -170,7 +173,7 @@ def test_reference_renders_distinct_consumer_and_baked_image_sources() -> None:
         images["runtime_image"]: sources["runtime_image_source_sha"],
     }
     tasks = [doc for doc in yaml.safe_load_all(rendered) if doc and doc.get("envs")]
-    assert len(tasks) == 14
+    assert len(tasks) == 16
     for task in tasks:
         assert task["envs"]["NPA_SIM2REAL_SOURCE_SHA"] == "a" * 40
         task_image = task["envs"]["NPA_TASK_IMAGE"]

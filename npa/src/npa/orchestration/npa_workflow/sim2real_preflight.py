@@ -430,6 +430,25 @@ def _driver_placement_issues(nodes, placements) -> list[Issue]:
 
 
 def _isaac_cache_issues(config, runner, namespace) -> list[Issue]:
+    if str(config.get("runtime_prerequisites_mode") or "").strip() == "workflow_owned":
+        required = (
+            "isaac_cache_pvc",
+            "policy_cache_pvc",
+            "isaac_warm_job",
+            "service_auth_secret",
+            "base_service_account",
+            "adapted_service_account",
+        )
+        missing = [name for name in required if not str(config.get(name) or "").strip()]
+        if missing:
+            return [
+                (
+                    "workflow-owned Sim2Real prerequisites have incomplete identities: "
+                    + ", ".join(missing),
+                    "restore the shipped run-scoped prerequisite templates before submit",
+                )
+            ]
+        return []
     if namespace is None:
         return [
             (
