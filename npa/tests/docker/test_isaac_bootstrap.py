@@ -869,6 +869,27 @@ def test_isaac3_image_uses_fixed_noble_snapshot_and_removes_optional_nsight() ->
     assert "command -v nvcc >/dev/null" in installer
 
 
+def test_isaac3_snapshot_reads_have_bounded_transport_retries() -> None:
+    """Transient snapshot failures must not change the immutable package source."""
+
+    dockerfile = (COMMON.parent / "isaac-lab" / "Dockerfile").read_text(
+        encoding="utf-8"
+    )
+    retry_path = "/etc/apt/apt.conf.d/80-npa-ubuntu-snapshot-retries"
+    retry_create = dockerfile.index(f"> {retry_path}")
+    installer = dockerfile.index(
+        "/opt/npa/docker/workbench/common/install_isaac_runtime_base.sh"
+    )
+    ffmpeg_update = dockerfile.index("&& apt-get update", installer)
+    retry_remove = dockerfile.index(f"&& rm -f {retry_path}", ffmpeg_update)
+
+    assert "'Acquire::Retries \"10\";'" in dockerfile
+    assert retry_create < installer < ffmpeg_update < retry_remove
+    assert "NPA_UBUNTU_SNAPSHOT=20261018T000000Z" in dockerfile
+    assert "archive.ubuntu.com" not in dockerfile
+    assert "security.ubuntu.com" not in dockerfile
+
+
 # --------------------------------------------------------------------------------------
 # The shim
 # --------------------------------------------------------------------------------------

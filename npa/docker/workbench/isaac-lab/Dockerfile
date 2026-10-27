@@ -95,9 +95,13 @@ RUN find /opt/npa/docker/workbench/common -type d -exec chmod 0755 {} + \
 # + the bootstrap, the /isaac-sim/python.sh shim and the SkyPilot k8s prerequisites. The
 # script ends by asserting that the bootstrap REFUSES without EULA acceptance and that no
 # isaacsim/isaaclab distribution is importable - the build proves the absence of the thing
-# it used to prove the presence of.
+# it used to prove the presence of. Keep retries scoped to this immutable snapshot install:
+# transient 5xx responses may be retried, but neither a mutable mirror nor different package
+# bytes may satisfy the layer.
 RUN chmod +x /opt/npa/docker/workbench/common/*.sh \
     && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
+    && printf '%s\n' 'Acquire::Retries "10";' \
+      > /etc/apt/apt.conf.d/80-npa-ubuntu-snapshot-retries \
     && NPA_RUNTIME_USER="${NPA_RUNTIME_USER}" \
        NPA_ISAAC_VENV=/opt/npa/sim/venv \
        NPA_UBUNTU_SNAPSHOT=20261018T000000Z \
@@ -110,6 +114,7 @@ RUN chmod +x /opt/npa/docker/workbench/common/*.sh \
        /opt/npa/docker/workbench/common/install_isaac_runtime_base.sh \
     && apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -f /etc/apt/apt.conf.d/80-npa-ubuntu-snapshot-retries \
     && rm -rf /var/lib/apt/lists/* \
     && find /opt/npa/sim/venv -type f \
       -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
