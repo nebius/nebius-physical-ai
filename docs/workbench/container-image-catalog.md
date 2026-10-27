@@ -459,13 +459,15 @@ the public layers contain none of those bytes. The exact controller digest also
 passed a real Kubernetes rootless-bootstrap pod start with UID 1000,
 runtime-generated SSH host keys, ready `sshd`, `rsync`, and forwarded worker
 arguments before cleanup. This is a coherent image and capability release, not
-a claim that the complete 14-stage workflow ran; the canonical run was blocked
-before launch because the required hosted Cosmos3 model was stopped upstream.
+evidence that the complete 14-stage workflow ran. In the historical attempt
+covered here, launch did not begin because the required hosted Cosmos3 model
+was stopped upstream.
 
 This historical set predates the current MiniMax-compatible Stage 8/9 evaluator
-contract. It remains anonymously pullable, but cannot run the current canonical
-Sim2Real workflow with its MiniMax-M3 default. Select a newer coherent image set
-for that workflow; the [operator runbook](guides/sim2real-workflow.md#5-buildpush-once-and-prove-the-exact-image-pulls)
+contract. Although anonymously pullable, this historical image set is
+incompatible with the current canonical workflow when that workflow uses its
+MiniMax-M3 default. Select a newer coherent image set for that configuration;
+the [operator runbook](guides/sim2real-workflow.md#5-buildpush-once-and-prove-the-exact-image-pulls)
 explains explicit Cosmos 3 selection and the baked evaluator compatibility check.
 
 The current EnvGen candidate deliberately no longer derives from the Genesis

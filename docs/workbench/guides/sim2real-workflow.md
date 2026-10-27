@@ -97,7 +97,8 @@ preflight with the same argument set.
 When an agent backend generates a canonical Sim2Real draft, its selected
 profile must provide all five raw role fields: `controller_image`,
 `cosmos3_image`, `envgen_image`, `isaac_image`, and `viewer_image`. A missing
-or partial set remains non-runnable. NPA does not infer those roles from legacy
+or partial role set is rejected before execution. NPA does not infer those
+roles from legacy
 `policy_image` or `vlm_image` fields, and it never combines selections from
 different profiles. This selection check is separate from qualification: each
 chosen immutable image still has to pass the complete five-role preflight.
