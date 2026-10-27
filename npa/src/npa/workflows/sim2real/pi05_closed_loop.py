@@ -150,11 +150,19 @@ MANIPULATION_EVENT_ORDER = (
 
 def _action_selection_protocol(
     policy_backend: str = "openpi_pi05",
+    smolvla_strategy: str = "first_action",
 ) -> dict[str, Any]:
     if policy_backend == "lerobot_smolvla":
+        methods = {
+            "first_action": "native_fresh_chunk_first_action",
+            "uniform_temporal_ensemble": "native_fresh_chunk_uniform_temporal_mean",
+        }
+        if smolvla_strategy not in methods:
+            raise ValueError("unsupported SmolVLA action-selection strategy")
         return {
             "schema": "npa.sim2real.current_native_action.v1",
-            "method": "native_fresh_chunk_first_action",
+            "method": methods[smolvla_strategy],
+            "strategy": smolvla_strategy,
             "action_owner": "policy",
             "recovery_component": "disabled_baseline",
             "fresh_observation_per_control": True,
@@ -1213,7 +1221,15 @@ def _write_failed_camera_evidence(work: Path, episodes: list[dict]) -> list[dict
 def _execute_prefix(context: dict[str, Any], actions: Any, query: dict) -> bool:
     bridge = context["bridge"]
     if context.get("policy_backend") == "lerobot_smolvla":
-        target, selection = _current_action_target(actions, query)
+        if (
+            context.get("smolvla_action_selection", "first_action")
+            == "uniform_temporal_ensemble"
+        ):
+            target, selection = _smolvla_temporally_ensembled_target(
+                context, actions, query
+            )
+        else:
+            target, selection = _current_action_target(actions, query)
     else:
         target, selection = _temporally_ensembled_target(context, actions, query)
     query["action_selection"] = selection
@@ -1276,6 +1292,64 @@ def _current_action_target(
             }
         ],
         "weight_per_contributor": 1.0,
+        "applied_action_sha256": hashlib.sha256(target.tobytes()).hexdigest(),
+        "applied_action_dtype": str(target.dtype),
+        "applied_action_shape": list(target.shape),
+        "applied_action": target.tolist(),
+        "applied_gripper_score": float(target[7]),
+        "applied_gripper_command": int(float(target[7]) > 0.5),
+    }
+
+
+def _smolvla_temporally_ensembled_target(
+    context: dict[str, Any], actions: Any, query: dict[str, Any]
+) -> tuple[Any, dict[str, Any]]:
+    """Average only time-aligned native predictions available at this decision."""
+
+    import numpy as np
+
+    decision = int(query["decision"])
+    value = np.ascontiguousarray(actions, dtype=np.float64)
+    if value.ndim != 2 or value.shape[0] < 1 or value.shape[1] != 8:
+        raise RuntimeError("SmolVLA must return a nonempty 8D action chunk")
+    if not np.isfinite(value).all():
+        raise RuntimeError("SmolVLA action chunk must be finite")
+    history = context.setdefault("smolvla_action_chunks", [])
+    if decision == 0:
+        history.clear()
+    elif not history or int(history[-1]["origin_decision"]) != decision - 1:
+        raise RuntimeError("SmolVLA ensemble history is not episode-contiguous")
+    history.append(
+        {
+            "origin_decision": decision,
+            "actions": value.copy(),
+            "chunk_sha256": query["action_receipt"]["sha256"],
+        }
+    )
+    contributors, candidates = [], []
+    retained = []
+    for row in history:
+        offset = decision - int(row["origin_decision"])
+        if 0 <= offset < row["actions"].shape[0]:
+            retained.append(row)
+            candidates.append(row["actions"][offset])
+            contributors.append(
+                {
+                    "origin_decision": int(row["origin_decision"]),
+                    "action_index": offset,
+                    "chunk_sha256": row["chunk_sha256"],
+                }
+            )
+    history[:] = retained
+    if not candidates or contributors[-1]["action_index"] != 0:
+        raise RuntimeError("SmolVLA ensemble lacks the current prediction")
+    target = np.ascontiguousarray(np.mean(np.stack(candidates), axis=0))
+    return target, {
+        **_action_selection_protocol("lerobot_smolvla", "uniform_temporal_ensemble"),
+        "decision": decision,
+        "contributor_count": len(contributors),
+        "contributors": contributors,
+        "weight_per_contributor": 1.0 / len(contributors),
         "applied_action_sha256": hashlib.sha256(target.tobytes()).hexdigest(),
         "applied_action_dtype": str(target.dtype),
         "applied_action_shape": list(target.shape),
@@ -1428,6 +1502,7 @@ def _episode(
     *,
     robot_profile: Any = None,
     policy_profile: Any = None,
+    smolvla_action_selection: str = "first_action",
 ) -> dict[str, Any]:
     native = env.unwrapped
     if getattr(client, "metadata", {}).get("backend") == "lerobot_smolvla":
@@ -1453,6 +1528,7 @@ def _episode(
         ablation_seed,
         robot_profile=robot_profile,
         policy_profile=policy_profile,
+        smolvla_action_selection=smolvla_action_selection,
     )
     record["wrist_ablation_mode"] = wrist_mode
     record["scenario_seed"] = int(scenario["scene_seed"])
@@ -1478,13 +1554,16 @@ def _episode_context(
     *,
     robot_profile: Any = None,
     policy_profile: Any = None,
+    smolvla_action_selection: str = "first_action",
 ) -> dict[str, Any]:
     import numpy as np
 
     backend = getattr(client, "metadata", {}).get("backend", "openpi_pi05")
     if backend == "lerobot_smolvla":
         record["model_horizon"] = policy_profile.action.horizon
-        record["action_selection_protocol"] = _action_selection_protocol(backend)
+        record["action_selection_protocol"] = _action_selection_protocol(
+            backend, smolvla_action_selection
+        )
     return {
         "env": env,
         "native": native,
@@ -1501,6 +1580,7 @@ def _episode_context(
         "policy_backend": backend,
         "robot_profile": robot_profile,
         "policy_profile": policy_profile,
+        "smolvla_action_selection": smolvla_action_selection,
     }
 
 
@@ -2245,7 +2325,8 @@ def _load_gold_protocol(
         "control_hz": CONTROL_HZ,
         "execution_prefix": EXECUTION_PREFIX,
         "action_selection": _action_selection_protocol(
-            getattr(args, "policy_backend", "openpi_pi05")
+            getattr(args, "policy_backend", "openpi_pi05"),
+            getattr(args, "smolvla_action_selection", "first_action"),
         ),
         "scenarios": scenarios,
     }
@@ -2551,6 +2632,9 @@ def _evaluate(
                         {
                             "robot_profile": robot_profile,
                             "policy_profile": policy_profile,
+                            "smolvla_action_selection": getattr(
+                                args, "smolvla_action_selection", "first_action"
+                            ),
                         }
                         if robot_profile is not None or policy_profile is not None
                         else {}
@@ -3305,7 +3389,10 @@ def _validate_protocol_contents(
         or not isinstance(protocol.get("decisions"), int)
         or protocol["decisions"] < 1
         or protocol.get("action_selection")
-        != _action_selection_protocol(policy_backend)
+        != _action_selection_protocol(
+            policy_backend,
+            (protocol.get("action_selection") or {}).get("strategy", "first_action"),
+        )
     ):
         raise RuntimeError("closed-loop task protocol is incomplete")
     _validate_object_source(protocol.get("object_usd"))
@@ -3567,6 +3654,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("openpi_pi05", "lerobot_smolvla"),
         default="openpi_pi05",
     )
+    parser.add_argument(
+        "--smolvla-action-selection",
+        choices=("first_action", "uniform_temporal_ensemble"),
+        default="first_action",
+        help="Declare the sole SmolVLA action-chunk execution strategy.",
+    )
     parser.add_argument("--preparation-uri", default="")
     parser.add_argument("--gold-collection-uri", required=True)
     parser.add_argument("--output-uri", required=True)
@@ -3597,6 +3690,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         )
     if min(args.episodes, args.decisions) < 1:
         parser.error("episodes and decisions must be positive")
+    if (
+        args.policy_backend != "lerobot_smolvla"
+        and args.smolvla_action_selection != "first_action"
+    ):
+        parser.error(
+            "--smolvla-action-selection applies only to --policy-backend lerobot_smolvla"
+        )
     expected_output = f"{args.artifact_root_uri.rstrip('/')}/report.json"
     if args.output_uri != expected_output:
         parser.error("--output-uri must be <artifact-root-uri>/report.json")

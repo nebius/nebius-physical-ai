@@ -1382,6 +1382,7 @@ def test_smolvla_uses_first_action_from_current_fresh_chunk() -> None:
     assert pi05_closed_loop._action_selection_protocol("lerobot_smolvla") == {
         "schema": "npa.sim2real.current_native_action.v1",
         "method": "native_fresh_chunk_first_action",
+        "strategy": "first_action",
         "action_owner": "policy",
         "recovery_component": "disabled_baseline",
         "fresh_observation_per_control": True,
@@ -1412,6 +1413,43 @@ def test_smolvla_uses_first_action_from_current_fresh_chunk() -> None:
         pi05_closed_loop._current_action_target(
             np.zeros((0, 8), dtype=np.float64),
             {"decision": 3, "action_receipt": {}},
+        )
+
+
+def test_smolvla_uniform_temporal_mean_uses_only_time_aligned_predictions() -> None:
+    context = {"smolvla_action_chunks": []}
+    chunks = [
+        np.stack([np.full(8, 0.1), np.full(8, 0.3), np.full(8, 0.5)], axis=0),
+        np.stack([np.full(8, 0.7), np.full(8, 0.9)], axis=0),
+        np.stack([np.full(8, 1.1)], axis=0),
+    ]
+    expected = (0.1, 0.5, 0.8333333333333334)
+
+    for decision, (chunk, scalar) in enumerate(zip(chunks, expected, strict=True)):
+        receipt = pi05_closed_loop._action_receipt(chunk)
+        target, selection = pi05_closed_loop._smolvla_temporally_ensembled_target(
+            context,
+            chunk,
+            {"decision": decision, "action_receipt": receipt},
+        )
+        assert np.allclose(target, scalar)
+        assert selection["method"] == "native_fresh_chunk_uniform_temporal_mean"
+        assert selection["strategy"] == "uniform_temporal_ensemble"
+        assert selection["contributor_count"] == decision + 1
+        assert selection["contributors"][-1]["action_index"] == 0
+
+
+def test_smolvla_temporal_mean_rejects_noncontiguous_decisions() -> None:
+    chunk = np.zeros((2, 8), dtype=np.float64)
+    receipt = pi05_closed_loop._action_receipt(chunk)
+    context: dict[str, object] = {"smolvla_action_chunks": []}
+    pi05_closed_loop._smolvla_temporally_ensembled_target(
+        context, chunk, {"decision": 0, "action_receipt": receipt}
+    )
+
+    with pytest.raises(RuntimeError, match="not episode-contiguous"):
+        pi05_closed_loop._smolvla_temporally_ensembled_target(
+            context, chunk, {"decision": 2, "action_receipt": receipt}
         )
 
 
