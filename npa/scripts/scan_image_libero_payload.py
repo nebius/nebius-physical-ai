@@ -192,7 +192,7 @@ FORBIDDEN_PAYLOAD_CONTENT: tuple[re.Pattern[bytes], ...] = (
 )
 NEUTRAL_PAYLOAD_CONTENT_ALLOWLIST = {
     "opt/npa/libero/libero_smoke.py": (
-        "15aee0a137a39bf99c6a5cebc2c1912923d1937cc4ed11f13a228ef20300c9cf"
+        "005294cd86a0c0376ebe161c0adf227dc77ec7bef275560e5b149910d8c40061"
     )
 }
 NEVER_MATCH_ELF = re.compile(rb"(?!)")
