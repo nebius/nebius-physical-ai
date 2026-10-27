@@ -13,6 +13,7 @@ from typing import Any, Mapping, Sequence
 import yaml
 
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+from npa.orchestration.npa_workflow.image_inputs import resolved_baked_image_sources
 from npa.orchestration.npa_workflow.interpreter import (  # noqa: F401
     ExecutionPlan,
     PlanStep,
@@ -2861,16 +2862,10 @@ def _build_skypilot_task_doc(
         "on",
     }
     expected_source_sha = str(spec.config.get("source_sha") or "").strip().lower()
-    image_source_map = spec.config.get("baked_image_source_sha_by_image") or {}
-    if not isinstance(image_source_map, dict) or any(
-        not isinstance(key, str)
-        or re.fullmatch(r".+/.+@sha256:[0-9a-f]{64}", key.strip()) is None
-        or not isinstance(value, str)
-        for key, value in image_source_map.items()
-    ):
-        raise NpaWorkflowRenderError(
-            "config.baked_image_source_sha_by_image must map images to SHAs"
-        )
+    try:
+        image_source_map = resolved_baked_image_sources(spec.config)
+    except NpaWorkflowError as exc:
+        raise NpaWorkflowRenderError(str(exc)) from exc
     expected_image_source_sha = (
         str(
             image_source_map.get(str(image or "").removeprefix("docker:"))

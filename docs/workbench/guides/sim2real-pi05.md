@@ -252,12 +252,17 @@ the token remains in the operator-managed Secret. The ledger accepts validated
 selectors and rejects malformed selectors or embedded credential fields.
 
 The `source_sha` variable identifies the workflow consumer source. Normally it
-also matches every baked runtime image. When a reviewed workflow reuses an
-unchanged image from an older source, `baked_image_source_sha_by_image` must map
-that exact digest-pinned image reference to its actual baked source SHA. Setup
-then checks the image against that SHA without relabelling its provenance as
-the newer consumer source. Record the operator-side submission client's
-revision separately and retain every runtime image's signed source provenance.
+also matches every baked runtime image. The SmolVLA interchange reference
+exposes `cpu_image_source_sha`, `isaac_image_source_sha`, and
+`runtime_image_source_sha` as ordinary scalar config inputs alongside the three
+digest-pinned image inputs. They default to `source_sha`; when a reviewed
+workflow reuses an unchanged image from an older source, override the matching
+source input with that image's actual baked source SHA. The renderer resolves
+those pairs into the fail-closed image-source map before provisioning. Setup
+then checks each image against its own SHA without relabelling its provenance
+as the newer consumer source. Conflicting identities fail rendering. Record
+the operator-side submission client's revision separately and retain every
+runtime image's signed source provenance.
 
 The Isaac dependency closure remains mounted read-only. Camera-bearing jobs
 separately mount a pod-local writable `emptyDir` at `/tmp/npa-isaac-state` for

@@ -120,3 +120,34 @@ def test_baked_image_source_map_requires_exact_image_and_sha_strings() -> None:
     )
     issues = _run_preflight(invalid)
     assert any("baked_image_source_sha_by_image" in item for item, _ in issues)
+
+
+def test_baked_image_sources_resolve_from_cli_overridable_config_keys() -> None:
+    image = "registry.example/image@sha256:" + "b" * 64
+    config = _config(
+        require_baked_npa="1",
+        source_sha="a" * 40,
+        runtime_image=image,
+        runtime_image_source_sha="c" * 40,
+        baked_image_source_sha_by_config_key={
+            "runtime_image": "runtime_image_source_sha"
+        },
+    )
+    issues = _run_preflight(config)
+    assert not any("baked_image_source" in item for item, _ in issues)
+
+
+def test_baked_image_source_config_keys_fail_closed_on_conflicting_identity() -> None:
+    image = "registry.example/image@sha256:" + "b" * 64
+    config = _config(
+        require_baked_npa="1",
+        source_sha="a" * 40,
+        runtime_image=image,
+        runtime_image_source_sha="c" * 40,
+        baked_image_source_sha_by_image={image: "d" * 40},
+        baked_image_source_sha_by_config_key={
+            "runtime_image": "runtime_image_source_sha"
+        },
+    )
+    issues = _run_preflight(config)
+    assert any("conflicting baked source" in item for item, _ in issues)

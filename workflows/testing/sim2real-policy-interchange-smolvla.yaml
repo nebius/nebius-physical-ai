@@ -18,12 +18,18 @@ config:
   source_sha: ""
   require_baked_npa: "1"
   baked_npa_import: npa.workflows.sim2real.interchange_stage
-
   profile_uri: "s3://example-bucket/private-profiles/franka-cube-smolvla/"
   execution_profile: pi05_franka_surface_v1
   cpu_image: ""
   isaac_image: ""
   runtime_image: "registry.example.invalid/lerobot@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  cpu_image_source_sha: "{{config.source_sha}}"
+  isaac_image_source_sha: "{{config.source_sha}}"
+  runtime_image_source_sha: "{{config.source_sha}}"
+  baked_image_source_sha_by_config_key:
+    cpu_image: cpu_image_source_sha
+    isaac_image: isaac_image_source_sha
+    runtime_image: runtime_image_source_sha
   isaac_cache_pvc: ""
   policy_cache_pvc: ""
   base_checkpoint_uri: "hf://lerobot/smolvla_base@5e8d12a6e2975b0e5e5fce7c8caf47c371d257b6"
@@ -31,7 +37,7 @@ config:
   base_service_checkpoint_uri: "{{config.prepared_base_checkpoint_uri}}"
   hf_token_secret: ""
 
-  training_gpu_type: B200
+  training_gpu_type: RTXPRO6000
   training_gpu_count: "1"
   training_num_nodes: "1"
   gpu_cpus: "16"
@@ -71,8 +77,8 @@ config:
   adapted_service_account: replace-with-run-scoped-adapted-controller
   service_gpu_count: "1"
   service_gpu_node_selector_key: nebius.com/gpu-name
-  service_gpu_node_selector_value: B200
-  service_hardware_topology: single-b200
+  service_gpu_node_selector_value: RTXPRO6000
+  service_hardware_topology: single-rtxpro6000
   service_server_cpus: "16"
   service_server_memory: 96Gi
   service_server_ready_timeout_seconds: "1200"
