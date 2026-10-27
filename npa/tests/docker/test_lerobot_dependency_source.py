@@ -205,6 +205,22 @@ def test_bootstrap_sshd_is_baked_before_apt_hardening_and_has_no_host_keys():
     assert "linux-libc-dev" in hardening
 
 
+def test_shared_python_bootstraps_bind_the_same_exact_debian_artifacts():
+    common = (
+        ROOT / "npa/docker/workbench/common/install_python312_jammy.sh"
+    ).read_text()
+    lerobot = (RECIPE / "install_immutable_system_packages.sh").read_text()
+    pattern = r"^((?:lib)?python3\.12[^\s|]*\.deb)[ |]([0-9a-f]{64})$"
+    common_pins = re.findall(pattern, common, re.MULTILINE)
+    lerobot_pins = re.findall(pattern, lerobot, re.MULTILINE)
+
+    assert len(common_pins) == len(lerobot_pins) == 6
+    assert set(common_pins) == set(lerobot_pins)
+    assert all("_3.12.16-1+jammy1_" in name for name, _ in common_pins)
+    assert "sha256sum --check --strict" in common
+    assert "sha256sum --check --status" in lerobot
+
+
 def test_build_dependency_closure_has_no_moving_repository_or_python_resolution():
     """Prevent a future build from reintroducing a moving bootstrap input."""
 
@@ -215,7 +231,7 @@ def test_build_dependency_closure_has_no_moving_repository_or_python_resolution(
     assert "apt-get install" not in text
     assert "pip install --upgrade" not in text
     assert "--require-hashes --no-deps" in text
-    assert "python3.12_3.12.15-1+jammy1_amd64.deb" in system_packages
+    assert "python3.12_3.12.16-1+jammy1_amd64.deb" in system_packages
     assert "sha256sum --check --status" in system_packages
     assert "apt-get install -y --no-install-recommends" in system_packages
     bootstrap_lock = (RECIPE / "bootstrap-requirements.lock").read_text()
