@@ -50,51 +50,13 @@ Python interfaces.
 
 ### How Workbench runs a task
 
-```mermaid
-%%{init: {"theme": "base", "fontFamily": "Arial, sans-serif", "themeVariables": {"fontFamily": "Arial, sans-serif", "fontSize": "16px", "primaryColor": "#E0FF4F", "primaryTextColor": "#052B42", "primaryBorderColor": "#052B42", "lineColor": "#526575", "edgeLabelBackground": "#FFFFFF", "clusterBkg": "#EEF3FF", "clusterBorder": "#B4C9DC", "clusterTextColor": "#052B42", "tertiaryTextColor": "#052B42"}, "flowchart": {"htmlLabels": true, "curve": "linear", "nodeSpacing": 32, "rankSpacing": 48}}}%%
-flowchart TB
-    accTitle: How Workbench runs a task on Nebius
-    accDescr: You use a coding agent or the CLI and supported Python interfaces to control npa. Workflow YAML drives the workflow engine and SkyPilot, which launch containerized GPU and CPU jobs on Nebius Kubernetes. Tools read and write S3 artifacts; npa reads and writes durable run state. Token Factory is a separate hosted inference API. Results return through npa for inspection.
-
-    access["You + your coding agent<br/>or direct CLI / supported Python interfaces"]
-    control["npa control plane<br/>Configure · preflight · plan · submit · inspect"]
-    spec["npa.workflow YAML<br/>States · toolRefs · resource profiles"]
-    workflow["Workflow engine + SkyPilot<br/>Plan waves · submit jobs · track status"]
-
-    access <-->|"requests / results"| control
-    spec --> control
-    control <-->|"submit / monitor / resume"| workflow
-
-    subgraph nebius["Nebius AI Cloud"]
-        tools["Containerized tools · Kubernetes<br/>GPU + CPU<br/>Simulate · train · generate<br/>Curate · reconstruct · evaluate"]
-        storage["Object Storage · S3<br/>Inputs · checkpoints · media<br/>Reports · durable run state"]
-        hosted["Token Factory<br/>Hosted inference API<br/>No customer GPU required"]
-        tools <-->|"read / write"| storage
-    end
-
-    workflow <-->|"jobs / status / logs"| tools
-    control <-->|"direct API"| hosted
-    control <-.->|"artifacts / durable state"| storage
-
-    classDef access fill:#FFFFFF,stroke:#B4C9DC,color:#052B42,stroke-width:1.5px,rx:12,ry:12;
-    classDef control fill:#E0FF4F,stroke:#052B42,color:#052B42,stroke-width:2px,rx:12,ry:12;
-    classDef orchestration fill:#EEF3FF,stroke:#052B42,color:#052B42,stroke-width:1.5px,rx:12,ry:12;
-    classDef service fill:#FFFFFF,stroke:#052B42,color:#052B42,stroke-width:1.5px,rx:12,ry:12;
-    classDef data fill:#052B42,stroke:#052B42,color:#FFFFFF,stroke-width:1.5px,rx:12,ry:12;
-    class access,spec access;
-    class control control;
-    class workflow orchestration;
-    class tools,hosted service;
-    class storage data;
-```
-
 The architecture overview maps selected NVIDIA and open-ecosystem solutions to
 NPA's [public GHCR container catalog](docs/workbench/container-image-catalog.md)
 at `ghcr.io/nebius/nebius-physical-ai` and the Nebius services that run and support
 them. Some images fetch models or vendor runtimes at execution time; the
 [packaging contract](docs/workbench/container-packaging.md) records those boundaries.
 
-The task flow above shows the standard Kubernetes workflow path. The
+For the standard Kubernetes workflow path, the
 [workflow engine](docs/workbench/npa-workflow-guide.md#runtime-orchestrator---runtime)
 plans execution waves, submits them through SkyPilot, and uses S3 artifacts and
 durable run state to evaluate decisions and resume runs. The operator-side
