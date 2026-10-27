@@ -226,6 +226,10 @@ USER ubuntu
 # Recheck the actual baked lifecycle and policy entry points after final PATH
 # and security hardening, not only in the earlier cached source layer.
 RUN test "$(command -v npa)" = /opt/lerobot/venv/bin/npa \
+    && test "$(dpkg-query -W -f='${Version}' fuse)" = 2.9.9-5ubuntu3 \
+    && test "$(dpkg-query -W -f='${Version}' wget)" = 1.21.2-2ubuntu1.4 \
+    && test -x /bin/fusermount \
+    && test -x /usr/bin/wget \
     && "$NPA_BAKED_PYTHON" -c \
       "from kubernetes import client, config; import defusedxml; import npa.workbench.lerobot.policy_container; import npa.workflows.sim2real.interchange_stage; import npa.workflows.sim2real.smolvla_service_lifecycle; assert client and config"
 

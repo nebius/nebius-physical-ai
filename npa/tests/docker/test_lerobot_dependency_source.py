@@ -193,6 +193,12 @@ def test_bootstrap_sshd_is_baked_before_apt_hardening_and_has_no_host_keys():
     system_packages = (RECIPE / "install_immutable_system_packages.sh").read_text()
     assert "openssh-server=1:8.9p1-3ubuntu0.16" in system_packages
     assert "netcat-openbsd=1.218-4ubuntu1" in system_packages
+    assert "fuse=2.9.9-5ubuntu3" in system_packages
+    assert "wget=1.21.2-2ubuntu1.4" in system_packages
+    assert "dpkg-query -W -f='${Version}' fuse" in system_packages
+    assert "dpkg-query -W -f='${Version}' wget" in system_packages
+    assert "test -x /bin/fusermount" in system_packages
+    assert "test -x /usr/bin/wget" in system_packages
     assert "python3=3.10.6-1~22.04.1" in system_packages
     assert "python3=3.10.4-0ubuntu2" not in system_packages
     assert "https://snapshot.ubuntu.com/ubuntu/20260820T000000Z" in system_packages
@@ -222,6 +228,23 @@ def test_bootstrap_sshd_is_baked_before_apt_hardening_and_has_no_host_keys():
     ) in prereq
     assert prereq_index < hardening_index
     assert "linux-libc-dev" in hardening
+
+
+def test_final_hardened_image_retains_skypilot_core_setup_packages():
+    """Refuse an image that can build but fails SkyPilot's first setup pod."""
+
+    instructions = _instructions(DOCKERFILE.read_text())
+    final_contract = next(
+        body
+        for kind, body in reversed(instructions)
+        if kind == "RUN" and "dpkg-query -W -f='${Version}' fuse" in body
+    )
+    assert "dpkg-query -W -f='${Version}' fuse" in final_contract
+    assert "= 2.9.9-5ubuntu3" in final_contract
+    assert "dpkg-query -W -f='${Version}' wget" in final_contract
+    assert "= 1.21.2-2ubuntu1.4" in final_contract
+    assert "test -x /bin/fusermount" in final_contract
+    assert "test -x /usr/bin/wget" in final_contract
 
 
 def test_build_dependency_closure_has_no_moving_repository_or_python_resolution():
