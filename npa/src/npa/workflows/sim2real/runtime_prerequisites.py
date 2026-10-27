@@ -33,6 +33,14 @@ def _slug(run_id: str) -> str:
         raise RuntimePrerequisiteError(
             "run id must already be a lowercase DNS label of at most 180 characters"
         )
+    # The longest prerequisite suffix is ``-policy-cache`` (13 characters),
+    # while ``npa-smolvla-`` consumes another 12.  Keep the variable stem at
+    # most 38 characters so every generated name is also safe when copied into
+    # the warm Job's 63-character Kubernetes label value.  The hash prevents
+    # distinct long run IDs with the same readable prefix from colliding.
+    if len(value) > 38:
+        digest = hashlib.sha256(run_id.encode()).hexdigest()[:8]
+        value = f"{value[:29].rstrip('-')}-{digest}"
     return value
 
 

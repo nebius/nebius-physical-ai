@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from argparse import Namespace
 from types import SimpleNamespace
 
@@ -91,6 +92,23 @@ def test_manifest_rejects_operator_substituted_identity_or_mutable_image() -> No
         build_manifests(_args(auth_secret="shared-secret"))
     with pytest.raises(RuntimePrerequisiteError, match="digest-pinned"):
         build_manifests(_args(isaac_image="registry.example/npa-isaac:latest"))
+
+
+def test_long_run_ids_produce_distinct_kubernetes_label_safe_identities() -> None:
+    common = "turnkey-smolvla-customer-adaptation-run-with-a-long-prefix-"
+    first = resource_identities(common + "first")
+    second = resource_identities(common + "second")
+
+    assert first != second
+    assert all(len(name) <= 63 for name in first.values())
+    assert all(
+        re.fullmatch(r"[a-z0-9](?:[-a-z0-9]*[a-z0-9])?", name)
+        for name in first.values()
+    )
+
+    args = _args(run_id=common + "first", **first)
+    warm = build_manifests(args)["isaac_warm_job"]
+    assert len(warm["metadata"]["labels"]["app"]) <= 63
 
 
 def test_foreign_existing_resource_is_never_adopted() -> None:
