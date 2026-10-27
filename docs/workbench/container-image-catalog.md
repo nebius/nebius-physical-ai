@@ -35,6 +35,14 @@ launcher for their NPA adapters. Their current source recipes use Python 3.12
 and Pillow 13 alongside the separately pinned runtime dependencies. These source changes require independent
 image rebuild, byte scanning, and capability validation before release promotion.
 
+The October 27 source dependency repair advances maintained Hydra Core inputs
+and their artifact hashes to 1.3.8, including the Libero runtime identity and
+the Flex-Pi source dependency patch. It addresses
+[GHSA-wf6j-7hvr-gr93](https://github.com/advisories/GHSA-wf6j-7hvr-gr93).
+These source updates add no published image, change no supported image digest,
+and establish no new GPU qualification; the retained release evidence below
+continues to apply to its recorded bytes.
+
 [Marble workflows](marble.md) reuse the existing EnvGen CUDA/compiler image
 for gsplat and Warp consumers, with pinned dependencies installed at runtime.
 The manufacturing pallet experiment additionally reuses the existing
