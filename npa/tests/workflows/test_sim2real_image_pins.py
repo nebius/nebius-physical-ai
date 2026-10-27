@@ -183,7 +183,8 @@ def test_isaac_exact_source_image_imports_the_runtime_stage() -> None:
     assert "npa-exact-source.pth" in dockerfile
     assert "env -u PYTHONPATH /opt/npa/sim/venv/bin/python -c" in dockerfile
     assert (
-        "import boto3, kubernetes, mcap, "
+        "import boto3, defusedxml, kubernetes, mcap, "
+        "npa.workflows.sim2real.interchange_stage, "
         "npa.workflows.sim2real.runtime_attestation, "
         "npa.workflows.sim2real.workflow_stage" in (dockerfile)
     )
@@ -529,6 +530,8 @@ def test_sim2real_control_plane_requirement_closure_is_exact() -> None:
     )
     assert "chmod -R" not in isaac_dockerfile
     assert "PYTHONPATH=/opt/npa/src" in isaac_dockerfile
+    assert '"defusedxml==0.7.1"' in isaac_dockerfile
+    assert "npa.workflows.sim2real.interchange_stage" in isaac_dockerfile
     assert "npa.workflows.sim2real.workflow_stage" in isaac_dockerfile
 
     genesis_requirements = (
