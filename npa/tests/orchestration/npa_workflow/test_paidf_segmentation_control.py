@@ -219,6 +219,12 @@ def test_submit_capacity_preflight_uses_resolved_paidf_gang_and_free_nodes(
     # SkyPilot renders this profile's memory request as decimal Kubernetes G.
     # Exact capacity must fit; a binary-Gi estimate would reject both nodes.
     requested_memory_bytes = 128 * 1000**3
+    labels = (
+        (
+            "nebius.com/gpu-name",
+            "RTXPRO-6000-BLACKWELL-SERVER-EDITION",
+        ),
+    )
 
     def node(
         name: str, *, free: int = 1, memory_bytes: int = requested_memory_bytes
@@ -238,6 +244,7 @@ def test_submit_capacity_preflight_uses_resolved_paidf_gang_and_free_nodes(
             free_memory_bytes=memory_bytes,
             allocatable_pods=110,
             free_pod_slots=110,
+            labels=labels,
         )
 
     inventory = gpu_catalog.KubernetesGpuInventory(
@@ -247,7 +254,7 @@ def test_submit_capacity_preflight_uses_resolved_paidf_gang_and_free_nodes(
         capacity=2,
         allocatable=2,
         products=("RTXPRO-6000-BLACKWELL-SERVER-EDITION",),
-        node_labels={},
+        node_labels={"gpu-a": dict(labels), "gpu-b": dict(labels)},
         nodes=(node("gpu-a"), node("gpu-b")),
     )
     monkeypatch.setattr(

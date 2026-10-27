@@ -398,11 +398,15 @@ resolve those values from the provider inventory before deployment.
    that validation does it exclude those GPUs from ordinary GPU quota; all
    node, boot-disk, GPU-cluster, Kubernetes, and storage quotas still apply.
 5. **Preflight quotas at the tenant, before anything else.** Each cluster needs,
-   in the target region: `compute.instance.count` (worker nodes only; the
+   in the target region: `compute.instance.count` (regular worker nodes only; the
    managed control plane is service-owned),
    `compute.instance.non-gpu.vcpu` for the CPU preset,
-   `compute.instance.gpu.<family>` for the GPU preset (on-demand GPU quota is
-   frequently **0**), `compute.disk.count`/`compute.disk.size.network-ssd`,
+   `compute.instance.gpu.<family>` for regular unreserved GPU workers (on-demand
+   GPU quota is frequently **0**). Preemptible GPU workers use
+   `compute.instance.preemptible.count` instead: this counts worker VMs, so an
+   eight-GPU worker needs one slot. They do not consume regular VM or GPU-family
+   quota. CPU workers retain the recipe's regular allocation mode. Both GPU
+   modes still require `compute.disk.count`/`compute.disk.size.network-ssd`,
    `compute.gpucluster.count` when `enable_gpu_cluster`, and
    `compute.filesystem.count` + `compute.filesystem.size.network-ssd` when
    `enable_filestore`. Each private worker consumes two
