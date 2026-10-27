@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import importlib.util
 from pathlib import Path
+import subprocess
 from types import CodeType, FunctionType
 
 from packaging.requirements import Requirement
@@ -99,12 +100,30 @@ def test_default_dependencies_identify_secure_integration_and_decoder_abi():
     assert "prepare-secure-wheel.py" in recipe
     assert "lerobot==0.5.1+npa.secure4" in lock
     assert (
-        'ENTRYPOINT ["/opt/lerobot/venv/bin/python", "-m", "npa.server.app"]' in recipe
+        "COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh"
+        in recipe
     )
+    assert "/usr/local/bin/npa-workflow-entrypoint" in recipe
+    assert "printf workflow-argv-ok" in recipe
+    assert 'ENTRYPOINT ["/usr/local/bin/npa-workflow-entrypoint"]' in recipe
+    assert 'CMD ["/opt/lerobot/venv/bin/python", "-m", "npa.server.app"]' in recipe
     assert 'CMD /opt/lerobot/venv/bin/python -c "' in recipe
     assert recipe.index("ENV PATH=/usr/bin:$PATH") < recipe.index(
         'RUN if [ "${LEROBOT_VERSION}" = "0.5.1" ]; then'
     )
+
+
+def test_workflow_entrypoint_executes_orchestrator_argv_without_server_prefix():
+    entrypoint = ROOT / "npa/docker/workbench/common/workflow_runtime_entrypoint.sh"
+    result = subprocess.run(
+        [str(entrypoint), "/bin/sh", "-c", "printf workflow-argv-ok"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    assert result.stdout == "workflow-argv-ok"
+    assert result.stderr == ""
 
 
 def test_security_only_metadata_edges_do_not_become_runtime_manifest_pins():

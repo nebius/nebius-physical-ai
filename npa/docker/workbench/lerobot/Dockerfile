@@ -21,10 +21,14 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NPA_LEROBOT_VERSION=${LEROBOT_VERSION} \
     IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg
 
+COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh \
+    /usr/local/bin/npa-workflow-entrypoint
 COPY docker/workbench/lerobot/install_immutable_system_packages.sh \
     /usr/local/bin/install-immutable-lerobot-system-packages
 RUN chmod 0755 /usr/local/bin/install-immutable-lerobot-system-packages \
-    && /usr/local/bin/install-immutable-lerobot-system-packages
+    && /usr/local/bin/install-immutable-lerobot-system-packages \
+    && test "$(npa-workflow-entrypoint /bin/sh -c 'printf workflow-argv-ok')" \
+         = workflow-argv-ok
 
 RUN useradd -m -s /bin/bash -u 1000 ubuntu \
     && install -d -m 0755 -o ubuntu -g ubuntu \
@@ -238,4 +242,5 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD /opt/lerobot/venv/bin/python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)" || exit 1
 
-ENTRYPOINT ["/opt/lerobot/venv/bin/python", "-m", "npa.server.app"]
+ENTRYPOINT ["/usr/local/bin/npa-workflow-entrypoint"]
+CMD ["/opt/lerobot/venv/bin/python", "-m", "npa.server.app"]
