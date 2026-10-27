@@ -35,6 +35,7 @@ BOOTSTRAP = COMMON / "isaac_bootstrap.sh"
 SHIM = COMMON / "isaac_python.sh"
 BASE_INSTALLER = COMMON / "install_isaac_runtime_base.sh"
 NPA_CLI = COMMON.parent / "isaac-lab" / "npa_cli.sh"
+APT_GET_RETRY = COMMON.parent / "isaac-lab" / "apt-get"
 WHEELS = COMMON / "isaac-nvidia-wheels.txt"
 OSS_DEPS = COMMON / "isaac-oss-deps.txt"
 ISAAC3_WHEELS = COMMON / "isaac3-nvidia-wheels.txt"
@@ -877,6 +878,7 @@ def test_isaac3_snapshot_reads_have_bounded_transport_retries() -> None:
     )
     retry_path = "/etc/apt/apt.conf.d/80-npa-ubuntu-snapshot-retries"
     retry_create = dockerfile.index(f"> {retry_path}")
+    retry_wrapper = dockerfile.index('export PATH="/opt/npa/apt-retry-bin:${PATH}"')
     installer = dockerfile.index(
         "/opt/npa/docker/workbench/common/install_isaac_runtime_base.sh"
     )
@@ -884,10 +886,85 @@ def test_isaac3_snapshot_reads_have_bounded_transport_retries() -> None:
     retry_remove = dockerfile.index(f"&& rm -f {retry_path}", ffmpeg_update)
 
     assert "'Acquire::Retries \"10\";'" in dockerfile
-    assert retry_create < installer < ffmpeg_update < retry_remove
+    assert "'Acquire::Queue-Mode \"access\";'" in dockerfile
+    assert "'Acquire::https::Pipeline-Depth \"0\";'" in dockerfile
+    assert retry_create < retry_wrapper < installer < ffmpeg_update < retry_remove
+    assert "apt-retry-bin/apt-get" in dockerfile
     assert "NPA_UBUNTU_SNAPSHOT=20261018T000000Z" in dockerfile
     assert "archive.ubuntu.com" not in dockerfile
     assert "security.ubuntu.com" not in dockerfile
+
+
+def test_isaac3_snapshot_retry_wrapper_retains_the_exact_transaction(
+    tmp_path: Path,
+) -> None:
+    """A transient failure retries the identical APT argv and then succeeds."""
+
+    counter = tmp_path / "counter"
+    calls = tmp_path / "calls"
+    fake_apt_get = tmp_path / "apt-get-real"
+    fake_apt_get.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+counter_file="$NPA_TEST_COUNTER"
+calls_file="$NPA_TEST_CALLS"
+count=0
+if [ -f "$counter_file" ]; then count="$(cat "$counter_file")"; fi
+count=$((count + 1))
+printf '%s' "$count" > "$counter_file"
+printf '%q ' "$@" >> "$calls_file"
+printf '\n' >> "$calls_file"
+if [ "$count" -lt 3 ]; then exit 100; fi
+""",
+        encoding="utf-8",
+    )
+    fake_apt_get.chmod(0o755)
+    env = {
+        **os.environ,
+        "NPA_REAL_APT_GET": str(fake_apt_get),
+        "NPA_APT_RETRY_SLEEP_SECONDS": "0",
+        "NPA_TEST_COUNTER": str(counter),
+        "NPA_TEST_CALLS": str(calls),
+    }
+
+    subprocess.run(
+        [str(APT_GET_RETRY), "install", "-y", "python3.12"],
+        check=True,
+        env=env,
+        timeout=60,
+    )
+
+    assert counter.read_text(encoding="utf-8") == "3"
+    assert calls.read_text(encoding="utf-8").splitlines() == [
+        "install -y python3.12 ",
+        "install -y python3.12 ",
+        "install -y python3.12 ",
+    ]
+
+
+def test_isaac3_snapshot_retry_wrapper_fails_after_three_attempts(
+    tmp_path: Path,
+) -> None:
+    """Persistent snapshot failure remains a nonzero build failure."""
+
+    fake_apt_get = tmp_path / "apt-get-real"
+    fake_apt_get.write_text("#!/usr/bin/env bash\nexit 42\n", encoding="utf-8")
+    fake_apt_get.chmod(0o755)
+    result = subprocess.run(
+        [str(APT_GET_RETRY), "update"],
+        check=False,
+        env={
+            **os.environ,
+            "NPA_REAL_APT_GET": str(fake_apt_get),
+            "NPA_APT_RETRY_SLEEP_SECONDS": "0",
+        },
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert result.returncode == 42
+    assert "failed after 3 attempts" in result.stderr
 
 
 # --------------------------------------------------------------------------------------
@@ -896,7 +973,7 @@ def test_isaac3_snapshot_reads_have_bounded_transport_retries() -> None:
 
 
 def test_shim_and_bootstrap_are_valid_bash() -> None:
-    for script in (BOOTSTRAP, SHIM, BASE_INSTALLER, NPA_CLI):
+    for script in (BOOTSTRAP, SHIM, BASE_INSTALLER, NPA_CLI, APT_GET_RETRY):
         subprocess.run(["bash", "-n", str(script)], check=True, timeout=60)
 
 

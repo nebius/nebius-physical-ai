@@ -81,6 +81,7 @@ COPY --chmod=0755 docker/workbench/common/workflow_runtime_entrypoint.sh \
     /usr/local/bin/npa-workflow-entrypoint
 COPY docker/workbench/isaac-lab/smoke_env.py /opt/npa/docker/workbench/isaac-lab/smoke_env.py
 COPY docker/workbench/isaac-lab/smoke_functional.py /opt/npa/docker/workbench/isaac-lab/smoke_functional.py
+COPY --chmod=0755 docker/workbench/isaac-lab/apt-get /opt/npa/apt-retry-bin/apt-get
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
@@ -100,8 +101,13 @@ RUN find /opt/npa/docker/workbench/common -type d -exec chmod 0755 {} + \
 # bytes may satisfy the layer.
 RUN chmod +x /opt/npa/docker/workbench/common/*.sh \
     && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
-    && printf '%s\n' 'Acquire::Retries "10";' \
+    && printf '%s\n' \
+      'Acquire::Retries "10";' \
+      'Acquire::Queue-Mode "access";' \
+      'Acquire::http::Pipeline-Depth "0";' \
+      'Acquire::https::Pipeline-Depth "0";' \
       > /etc/apt/apt.conf.d/80-npa-ubuntu-snapshot-retries \
+    && export PATH="/opt/npa/apt-retry-bin:${PATH}" \
     && NPA_RUNTIME_USER="${NPA_RUNTIME_USER}" \
        NPA_ISAAC_VENV=/opt/npa/sim/venv \
        NPA_UBUNTU_SNAPSHOT=20261018T000000Z \
