@@ -649,6 +649,32 @@ def _policy_phase(record: dict[str, Any]) -> str:
 
 def _record_query_camera(native: Any, record: dict, receipts: dict, wire: dict) -> None:
     camera = _camera_pose_sample(native)
+    wire["camera_pose"] = dict(camera)
+    calibrations = [
+        _native_policy_camera_calibration(native, role, sensor, mount_link)
+        for role, sensor, mount_link in (
+            ("exterior", "pi05_exterior", "world"),
+            ("wrist", "pi05_wrist", "panda_hand"),
+        )
+    ]
+    wire["native_policy_camera_calibration"] = calibrations
+    wire.setdefault(
+        "policy_observation_cameras",
+        [
+            {
+                "key": calibration["sensor"],
+                "role": role,
+                "calibration_sha256": calibration["calibration_sha256"],
+                "mask": True,
+                "capture_timestamp_s": receipts[role]["capture_time_s"],
+                "state_timestamp_s": receipts[role]["observation_time_s"],
+                "image_sha256": receipts[role]["sha256"],
+            }
+            for role, calibration in zip(
+                ("exterior", "wrist"), calibrations, strict=True
+            )
+        ],
+    )
     destination_pixels = _destination_pixel_count(native, "pi05_exterior")
     phase = _policy_phase(record)
     if destination_pixels < 16 and phase != "retreat":
@@ -704,6 +730,34 @@ def _record_query_camera(native: Any, record: dict, receipts: dict, wire: dict) 
             **camera,
         }
     )
+
+
+def _native_policy_camera_calibration(
+    native: Any, role: str, sensor_name: str, mount_link: str
+) -> dict[str, Any]:
+    """Retain the native calibration that produced one policy RGB frame."""
+
+    import numpy as np
+
+    sensor = native.scene[sensor_name]
+    matrix = np.asarray(
+        _proxy_torch(sensor.intrinsic_matrices)[0].detach().cpu().numpy(),
+        dtype=np.float64,
+    )
+    if matrix.shape != (3, 3) or not np.isfinite(matrix).all():
+        raise RuntimeError("native policy camera intrinsics are invalid")
+    receipt = {
+        "role": role,
+        "sensor": sensor_name,
+        "mount_link": mount_link,
+        "intrinsic_matrix": matrix.tolist(),
+        "image_size_wh": [224, 224],
+        "layout": "HWC",
+    }
+    receipt["calibration_sha256"] = hashlib.sha256(
+        json.dumps(receipt, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return receipt
 
 
 def _policy_camera_semantic_geometry(native: Any, sensor: str) -> dict[str, Any]:
@@ -830,7 +884,12 @@ def _query_policy(
         actions, inference, policy_frames = _infer_query(
             context, decision, (exterior, wrist, joint, gripper), receipts
         )
-        _record_query_camera(native, record, receipts, inference["wire_input"])
+        wire = inference["wire_input"]
+        wire.setdefault(
+            "input_identity",
+            f"scene-{context['scenario_seed']}-decision-{decision}-{context['wrist_mode']}",
+        )
+        _record_query_camera(native, record, receipts, wire)
     except Exception as error:
         _retain_failed_camera(
             record, exterior, wrist, witness, release_witness, timing, error
@@ -978,6 +1037,18 @@ def _infer_smolvla_query(
         ),
         "measured_state_names": list(observation.measured_state_names),
         "camera_clock_provenance": camera_clock_provenance,
+        "policy_observation_cameras": [
+            {
+                "key": view.key,
+                "role": view.role,
+                "calibration_sha256": view.calibration_sha256,
+                "mask": view.mask,
+                "capture_timestamp_s": view.capture_timestamp_s,
+                "state_timestamp_s": view.state_timestamp_s,
+                "image_sha256": view.rgb_sha256,
+            }
+            for view in observation.views
+        ],
     }
     inference["wrist_intervention"] = intervention
     return actions, inference
@@ -1693,6 +1764,9 @@ def _write_policy_input_arrays(
                     query["inference"]["wrist_intervention"]["source_sha256"]
                     for query in queries
                 ],
+                "query_lineage": [
+                    _policy_input_query_lineage(query) for query in queries
+                ],
             }
         )
     if not arrays:
@@ -1708,6 +1782,76 @@ def _write_policy_input_arrays(
         "encoding": "numpy_npz_lossless",
         "pre_video_encoding": True,
         "episodes": rows,
+    }
+
+
+def _policy_input_query_lineage(query: dict[str, Any]) -> dict[str, Any]:
+    """Bind exact policy RGB arrays to calibration, clocks, pose, and action."""
+
+    inference = query.get("inference") or {}
+    wire = inference.get("wire_input") or {}
+    intervention = inference.get("wrist_intervention") or {}
+    calibrations = wire.get("native_policy_camera_calibration")
+    observation_cameras = wire.get("policy_observation_cameras")
+    camera_pose = wire.get("camera_pose")
+    lineage_hashes = (
+        query.get("exterior_rgb_sha256"),
+        intervention.get("source_sha256"),
+        wire.get("exterior_rgb_sha256"),
+        intervention.get("policy_sha256"),
+    )
+    action_owner = (query.get("action_selection") or {}).get("action_owner")
+    if (
+        not isinstance(calibrations, list)
+        or [row.get("role") for row in calibrations] != ["exterior", "wrist"]
+        or not all(
+            _valid_receipt_hash(row.get("calibration_sha256")) for row in calibrations
+        )
+        or not isinstance(observation_cameras, list)
+        or [row.get("role") for row in observation_cameras] != ["exterior", "wrist"]
+        or any(row.get("mask") is not True for row in observation_cameras)
+        or not all(
+            _valid_receipt_hash(row.get("calibration_sha256"))
+            for row in observation_cameras
+        )
+        or not all(_valid_receipt_hash(value) for value in lineage_hashes)
+        or not isinstance(camera_pose, dict)
+        or not str(wire.get("input_identity") or "").strip()
+        or action_owner not in {"policy", "recovery_planner"}
+    ):
+        raise RuntimeError("policy input camera calibration or pose is incomplete")
+    command_result_clocks = []
+    for proof in query.get("controller_proofs") or []:
+        command = proof.get("command_application_time_s")
+        result = proof.get("resulting_state_time_s")
+        if not all(isinstance(value, (int, float)) for value in (command, result)):
+            raise RuntimeError("policy input command/result clocks are incomplete")
+        if not float(command) < float(result):
+            raise RuntimeError("policy input command/result clocks are unordered")
+        command_result_clocks.append(
+            {
+                "command_application_time_s": float(command),
+                "resulting_state_time_s": float(result),
+                "physics_observation_status": proof.get("physics_observation_status"),
+            }
+        )
+    if not command_result_clocks:
+        raise RuntimeError("policy input lineage lacks an applied controller action")
+    return {
+        "decision": int(query["decision"]),
+        "input_identity": wire.get("input_identity"),
+        "source_workspace_sha256": query.get("exterior_rgb_sha256"),
+        "source_wrist_sha256": intervention.get("source_sha256"),
+        "policy_workspace_sha256": wire.get("exterior_rgb_sha256"),
+        "policy_wrist_sha256": intervention.get("policy_sha256"),
+        "observation_time_s": float(query["observation_time_s"]),
+        "workspace_capture_time_s": float(query["exterior_capture_time_s"]),
+        "wrist_capture_time_s": float(query["wrist_capture_time_s"]),
+        "policy_observation_cameras": observation_cameras,
+        "native_policy_camera_calibration": calibrations,
+        "camera_pose": camera_pose,
+        "action_owner": action_owner,
+        "command_result_clocks": command_result_clocks,
     }
 
 

@@ -508,16 +508,54 @@ def test_policy_input_archive_separates_source_and_consumed_wrist(tmp_path) -> N
     consumed_wrist = np.full((2, 2, 3), 9, dtype=np.uint8)
     source_hash = hashlib.sha256(source_wrist.tobytes()).hexdigest()
     consumed_hash = hashlib.sha256(consumed_wrist.tobytes()).hexdigest()
+    workspace_hash = hashlib.sha256(workspace.tobytes()).hexdigest()
+    calibration_hashes = [hashlib.sha256(value).hexdigest() for value in (b"e", b"w")]
     episode = {
         "wrist_ablation_mode": "frozen",
         "queries": [
             {
+                "decision": 0,
+                "observation_time_s": 1.0,
+                "exterior_capture_time_s": 0.99,
+                "wrist_capture_time_s": 0.99,
+                "exterior_rgb_sha256": workspace_hash,
+                "action_selection": {"action_owner": "policy"},
+                "controller_proofs": [
+                    {
+                        "command_application_time_s": 1.0,
+                        "resulting_state_time_s": 1.01,
+                        "physics_observation_status": "recorded",
+                    }
+                ],
                 "inference": {
+                    "wire_input": {
+                        "input_identity": "scene-1-decision-0-frozen",
+                        "exterior_rgb_sha256": workspace_hash,
+                        "camera_pose": {"wrist_camera_position_m": [0.0, 0.0, 0.0]},
+                        "native_policy_camera_calibration": [
+                            {"role": role, "calibration_sha256": digest}
+                            for role, digest in zip(
+                                ("exterior", "wrist"), calibration_hashes, strict=True
+                            )
+                        ],
+                        "policy_observation_cameras": [
+                            {
+                                "role": "exterior",
+                                "mask": True,
+                                "calibration_sha256": calibration_hashes[0],
+                            },
+                            {
+                                "role": "wrist",
+                                "mask": True,
+                                "calibration_sha256": calibration_hashes[1],
+                            },
+                        ],
+                    },
                     "wrist_intervention": {
                         "source_sha256": source_hash,
                         "policy_sha256": consumed_hash,
-                    }
-                }
+                    },
+                },
             }
         ],
         "_exterior_frames": [workspace],
@@ -534,6 +572,17 @@ def test_policy_input_archive_separates_source_and_consumed_wrist(tmp_path) -> N
     row = receipt["episodes"][0]
     assert row["source_wrist_hashes"] == [source_hash]
     assert row["policy_wrist_hashes"] == [consumed_hash]
+    lineage = row["query_lineage"][0]
+    assert lineage["input_identity"] == "scene-1-decision-0-frozen"
+    assert lineage["native_policy_camera_calibration"][1]["role"] == "wrist"
+    assert lineage["camera_pose"]["wrist_camera_position_m"] == [0.0, 0.0, 0.0]
+    assert lineage["command_result_clocks"] == [
+        {
+            "command_application_time_s": 1.0,
+            "resulting_state_time_s": 1.01,
+            "physics_observation_status": "recorded",
+        }
+    ]
     assert receipt["pre_video_encoding"] is True
 
 
@@ -3246,7 +3295,15 @@ def test_failed_camera_admission_retains_pixels_without_a_fictitious_query(
 
     monkeypatch.setattr(pi05_closed_loop, "_record_query_camera", fail_marker)
     with pytest.raises(RuntimeError, match="destination marker"):
-        pi05_closed_loop._query_policy({"native": None, "record": record}, 0)
+        pi05_closed_loop._query_policy(
+            {
+                "native": None,
+                "record": record,
+                "scenario_seed": 1,
+                "wrist_mode": "fresh",
+            },
+            0,
+        )
     assert not record["queries"] and not record["_wrist_frames"]
     assert record["failed_camera_observations"][0]["policy_query_recorded"] is False
     artifacts = pi05_closed_loop._write_failed_camera_evidence(tmp_path, [record])
@@ -3262,6 +3319,16 @@ def test_failed_camera_admission_retains_pixels_without_a_fictitious_query(
 def test_destination_occlusion_is_allowed_only_during_retreat(monkeypatch) -> None:
     phase = "approach"
     monkeypatch.setattr(pi05_closed_loop, "_camera_pose_sample", lambda _native: {})
+    monkeypatch.setattr(
+        pi05_closed_loop,
+        "_native_policy_camera_calibration",
+        lambda _native, role, sensor, mount: {
+            "role": role,
+            "sensor": sensor,
+            "mount_link": mount,
+            "calibration_sha256": hashlib.sha256(role.encode()).hexdigest(),
+        },
+    )
     monkeypatch.setattr(pi05_closed_loop, "_destination_pixel_count", lambda *_args: 0)
     monkeypatch.setattr(pi05_closed_loop, "_target_pixel_count", lambda *_args: 0)
     monkeypatch.setattr(pi05_closed_loop, "_finger_in_frustum", lambda _native: True)
@@ -3295,7 +3362,17 @@ def test_destination_occlusion_is_allowed_only_during_retreat(monkeypatch) -> No
     )
     monkeypatch.setattr(pi05_closed_loop, "_policy_phase", lambda _record: phase)
     record = {"physics_trace": [], "camera_trace": []}
-    receipts = {"exterior": {}, "wrist": {}, "witness": {}, "release_witness": {}}
+    receipt = {
+        "capture_time_s": 0.9,
+        "observation_time_s": 1.0,
+        "sha256": hashlib.sha256(b"rgb").hexdigest(),
+    }
+    receipts = {
+        "exterior": receipt,
+        "wrist": receipt,
+        "witness": {},
+        "release_witness": {},
+    }
     with pytest.raises(RuntimeError, match="destination marker"):
         pi05_closed_loop._record_query_camera(None, record, receipts, {})
 
@@ -3366,7 +3443,13 @@ def test_admitted_camera_frames_match_completed_query_count(monkeypatch) -> None
     )
     monkeypatch.setattr(pi05_closed_loop, "_record_query_camera", lambda *_: None)
     actions, _, _ = pi05_closed_loop._query_policy(
-        {"native": None, "record": record}, 0
+        {
+            "native": None,
+            "record": record,
+            "scenario_seed": 1,
+            "wrist_mode": "fresh",
+        },
+        0,
     )
     assert actions == "actions"
     assert (
