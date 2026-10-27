@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import os
 import importlib.metadata
+import os
 from pathlib import Path
 
 from packaging.markers import default_environment
@@ -40,6 +40,10 @@ def verify_accelerator_dependencies() -> None:
 
 def main() -> None:
     verify_accelerator_dependencies()
+    if importlib.metadata.version("gradio") != "6.16.0+npa.pillow13.1":
+        raise RuntimeError("framework environment lacks the reviewed Gradio derivative")
+    if importlib.metadata.version("pillow") != "13.0.0":
+        raise RuntimeError("framework environment does not contain patched Pillow 13")
     if (Path(ray.__file__).parent / "jars" / "ray_dist.jar").exists():
         raise RuntimeError("unused Java worker bundle remains in Python serving image")
     from natten.functional import attention

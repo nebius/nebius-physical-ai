@@ -1,0 +1,7 @@
+Metadata-Version: 2.4
+Name: gradio
+Version: 6.16.0
+License-Expression: Apache-2.0
+License-File: LICENSE
+Requires-Python: >=3.10
+Requires-Dist: pillow<13.0,>=8.0

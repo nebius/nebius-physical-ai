@@ -28,20 +28,24 @@ def test_portable_overlay_hashes_and_application_order(image: str) -> None:
     for requirement, hashes in entries:
         assert re.search(r"--hash=sha256:[0-9a-f]{64}", requirement + hashes)
     docker = (directory / "Dockerfile").read_text()
-    assert "--no-deps --require-hashes" in docker
     sync = docker.index("uv sync")
-    overlay = docker.index("--no-deps --require-hashes", sync)
+    if image == "cosmos3-ray-serve":
+        resolver = "uv pip install --python .venv/bin/python --require-hashes"
+        assert "--find-links /tmp/gradio-derivative" in docker
+    else:
+        resolver = "--no-deps --require-hashes"
+    overlay = docker.index(resolver, sync)
     check = docker.index('"pip","check"' if image == "openpi" else "pip check", overlay)
     assert sync < overlay < check
     if image == "cosmos3-ray-serve":
+        assert "--no-deps" not in docker[overlay:check]
         for requirement in (
             "aiohttp==3.14.4",
             "certifi==2026.10.19",
             "opentelemetry-api==1.45.1",
         ):
             assert requirement in lock
-    expected_pillow = "12.3.0" if image == "cosmos3-ray-serve" else "13.0.0"
-    assert f"pillow=={expected_pillow}" in lock
+    assert "pillow==13.0.0" in lock
     assert "setuptools==84.2.1" in lock
     if image == "cosmos3":
         assert "certifi==2026.10.23" in lock
