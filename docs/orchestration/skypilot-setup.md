@@ -180,6 +180,20 @@ Every SkyPilot check, GPU discovery, launch, status poll, and cleanup remains
 scoped to the selected context, and the command succeeds only after the GPU task
 completes and its ephemeral SkyPilot cluster is removed.
 
+Replacement GPU nodes may be Ready and report allocatable GPUs while lacking
+the SkyPilot label installed during setup. For reviewed RTX PRO 6000 Blackwell
+and B200 products, GPU submission preflight checks the lowercase
+`skypilot.co/accelerator` value against the effective task request when that
+formatter is selected, in addition to native hardware and free capacity.
+An exact supported native GFD/Nebius accelerator name remains usable when no
+SkyPilot label formatter is selected. It checks each GPU wave again, so a
+replacement after CPU stages cannot pass a canonical bridge request solely
+on its native product label.
+Correctly labelled fitting nodes in a mixed pool remain eligible. This gate
+does not label nodes; rerun the exact-context GPU setup above, or explicitly
+invoke `wait_for_kubernetes_accelerators(..., label_known_gpus=True)` through
+the SDK, before resuming the same workflow.
+
 Cluster validation uses one owned local API session for the credential check,
 GPU discovery, launch, and cleanup. It selects the requested SkyPilot interpreter
 and a durable working directory even when another SkyPilot API is already
@@ -204,7 +218,23 @@ default, and the renewable token cache remains `HOME/.nebius/credentials.yaml`.
 retain the incoming CLI home configuration. For a verified RSA service-account
 profile, normal cache refresh, creation, and pruning preserve API identity;
 the effective profile file, account, key, and explicit credential sources remain
-bound. Unsupported or mixed authentication formats remain byte-strict.
+bound. Both split RSA-key profiles and the CLI's
+`service-account-credentials-file-path` profile are supported. The latter binds
+the absolute JSON file path and its complete bytes, verifies the native
+`subject-credentials` RSA/RS256 format, and binds the account and public-key
+identity. An optional profile `name` remains part of the bound configuration.
+No token is fetched to calculate this identity. Unknown cache entries, OAuth,
+mixed authentication settings, relative credential paths, and explicit bearer
+aliases retain full-byte verification.
+To verify this route with the actual CLI, run
+`npa/tests/e2e/test_nebius_json_sa_identity.py` with `NPA_INTEGRATION_E2E=1`,
+`NPA_E2E_NEBIUS_JSON_SA_CONFIG` set to the absolute owner-only CLI configuration,
+and `NPA_E2E_NEBIUS_JSON_SA_PROFILE` set to its selected JSON service-account
+profile. `NPA_E2E_NEBIUS_CLI` optionally selects an absolute CLI executable;
+otherwise the test uses `nebius` from `PATH`. The contract targets CLI
+`0.12.254`. It reads the selected config and credentials without changing them,
+mints into a fresh private test home, verifies the full durable binding before
+and after native cache creation, and starts no API, controller, or cloud job.
 The native attached-VM profile is also supported when it contains exactly
 `endpoint`, `parent-id`, `tenant-id`, and the provider's standard metadata
 `token-endpoint`. Its unchanged profile selects the attached identity while
