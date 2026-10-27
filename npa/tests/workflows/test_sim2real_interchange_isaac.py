@@ -211,8 +211,8 @@ def test_teacher_parent_surfaces_structured_runtime_failure(
     monkeypatch.setattr(
         interchange_teacher_collect.subprocess,
         "run",
-        lambda *_args, **_kwargs: interchange_teacher_collect.subprocess.CompletedProcess(
-            [], 0
+        lambda *_args, **_kwargs: (
+            interchange_teacher_collect.subprocess.CompletedProcess([], 0)
         ),
     )
 
