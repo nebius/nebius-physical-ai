@@ -8,7 +8,9 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import sys
 import time
+import traceback
 from typing import Any
 
 from npa.workflows.lerobot_transfer_data import write_json
@@ -262,22 +264,68 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _run_with_app(args: argparse.Namespace, app: Any) -> dict[str, Any]:
-    """Run collection and preserve premature native exits as failures."""
+def _failure_receipt(args: argparse.Namespace, error: BaseException) -> dict[str, Any]:
+    """Persist a sanitized native failure before Isaac cleanup can terminate."""
 
+    receipt = {
+        "schema": "npa.sim2real.policy_interchange.teacher_runtime_failure.v1",
+        "status": "failed",
+        "error_type": type(error).__name__,
+        "error": str(error),
+        "system_exit_code": error.code if isinstance(error, SystemExit) else None,
+        "report_written": (args.output_path / "report.json").is_file(),
+    }
+    args.output_path.mkdir(parents=True, exist_ok=True)
+    write_json(args.output_path / "runtime_failure.json", receipt)
+    print(
+        "NPA_TEACHER_RUNTIME_FAILURE " + json.dumps(receipt, sort_keys=True),
+        file=sys.stderr,
+        flush=True,
+    )
+    traceback.print_exception(error, file=sys.stderr)
+    return receipt
+
+
+def _run_with_app(args: argparse.Namespace, app: Any) -> dict[str, Any]:
+    """Run collection without allowing Isaac cleanup to erase its failure."""
+
+    result: dict[str, Any] | None = None
+    failure: BaseException | None = None
+    started = time.monotonic()
     try:
-        started = time.monotonic()
         result = run(args)
         result["duration_seconds"] = time.monotonic() - started
         write_json(args.output_path / "report.json", result)
-        return result
-    except SystemExit as exc:
-        raise RuntimeError(
-            "native teacher runtime exited before completing its report "
-            f"(SystemExit code={exc.code!r})"
-        ) from exc
-    finally:
+    except BaseException as error:
+        failure = error
+        _failure_receipt(args, error)
+    try:
         app.close()
+    except BaseException as close_error:
+        if failure is None:
+            raise
+        print(
+            "NPA_TEACHER_RUNTIME_CLOSE_FAILURE "
+            + json.dumps(
+                {
+                    "error_type": type(close_error).__name__,
+                    "error": str(close_error),
+                },
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+            flush=True,
+        )
+    if failure is not None:
+        if isinstance(failure, SystemExit):
+            raise RuntimeError(
+                "native teacher runtime exited before completing its report "
+                f"(SystemExit code={failure.code!r})"
+            ) from failure
+        raise failure.with_traceback(failure.__traceback__)
+    if result is None:  # pragma: no cover - defensive invariant
+        raise RuntimeError("native teacher runtime returned no result")
+    return result
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -97,8 +97,15 @@ def _execute(command: list[str], output: Path, log: Path) -> dict:
     report_path = output / "report.json"
     if result.returncode or not report_path.is_file():
         excerpt = log.read_text(encoding="utf-8", errors="replace")[-12_000:]
+        failure_path = output / "runtime_failure.json"
+        failure = (
+            failure_path.read_text(encoding="utf-8", errors="replace")
+            if failure_path.is_file()
+            else "native runtime emitted no structured failure receipt"
+        )
         raise RuntimeError(
-            f"native teacher collection failed with {result.returncode}\n{excerpt}"
+            "native teacher collection failed with "
+            f"{result.returncode}; failure={failure}\n{excerpt}"
         )
     return json.loads(report_path.read_text(encoding="utf-8"))
 

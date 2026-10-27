@@ -38,7 +38,10 @@ from npa.workflows.sim2real.interchange_isaac_runtime import (
     _write_png_rgb8,
 )
 from npa.workflows.sim2real.interchange_isaac_entry import _child_command
-from npa.workflows.sim2real import interchange_teacher_runtime
+from npa.workflows.sim2real import (
+    interchange_teacher_collect,
+    interchange_teacher_runtime,
+)
 from npa.workflows.sim2real.interchange_teacher_runtime import _scenario_offset
 from npa.workflows.sim2real.interchange_teacher_export import (
     EPISODE_FILES,
@@ -158,6 +161,63 @@ def test_teacher_runtime_turns_premature_zero_exit_into_failure(
     assert isinstance(failure.value.__cause__, SystemExit)
     assert app.closed is True
     assert not (tmp_path / "report.json").exists()
+    receipt = json.loads((tmp_path / "runtime_failure.json").read_text())
+    assert receipt == {
+        "error": "0",
+        "error_type": "SystemExit",
+        "report_written": False,
+        "schema": "npa.sim2real.policy_interchange.teacher_runtime_failure.v1",
+        "status": "failed",
+        "system_exit_code": 0,
+    }
+
+
+def test_teacher_runtime_preserves_original_failure_when_close_exits(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    class App:
+        def close(self) -> None:
+            raise SystemExit(0)
+
+    args = argparse.Namespace(output_path=tmp_path)
+    monkeypatch.setattr(
+        interchange_teacher_runtime,
+        "run",
+        lambda _args: (_ for _ in ()).throw(ValueError("live action layout mismatch")),
+    )
+
+    with pytest.raises(ValueError, match="live action layout mismatch"):
+        interchange_teacher_runtime._run_with_app(args, App())
+
+    receipt = json.loads((tmp_path / "runtime_failure.json").read_text())
+    assert receipt["error_type"] == "ValueError"
+    assert receipt["error"] == "live action layout mismatch"
+    assert receipt["system_exit_code"] is None
+
+
+def test_teacher_parent_surfaces_structured_runtime_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    output = tmp_path / "output"
+    output.mkdir()
+    log = tmp_path / "teacher.log"
+    failure = {
+        "schema": "npa.sim2real.policy_interchange.teacher_runtime_failure.v1",
+        "status": "failed",
+        "error_type": "ValueError",
+        "error": "live action layout mismatch",
+    }
+    (output / "runtime_failure.json").write_text(json.dumps(failure))
+    monkeypatch.setattr(
+        interchange_teacher_collect.subprocess,
+        "run",
+        lambda *_args, **_kwargs: interchange_teacher_collect.subprocess.CompletedProcess(
+            [], 0
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="live action layout mismatch"):
+        interchange_teacher_collect._execute(["native"], output, log)
 
 
 def _layout(profile: RobotSensorProfile) -> IsaacActionLayout:
