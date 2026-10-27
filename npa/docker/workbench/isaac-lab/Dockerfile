@@ -106,6 +106,7 @@ RUN chmod +x /opt/npa/docker/workbench/common/*.sh \
       'Acquire::Queue-Mode "access";' \
       'Acquire::http::Pipeline-Depth "0";' \
       'Acquire::https::Pipeline-Depth "0";' \
+      'APT::Update::Error-Mode "any";' \
       > /etc/apt/apt.conf.d/80-npa-ubuntu-snapshot-retries \
     && export PATH="/opt/npa/apt-retry-bin:${PATH}" \
     && NPA_RUNTIME_USER="${NPA_RUNTIME_USER}" \

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Retry complete APT transactions against the same immutable Ubuntu snapshot.
+# Retry APT commands against the same immutable Ubuntu snapshot.
 
 set -euo pipefail
 

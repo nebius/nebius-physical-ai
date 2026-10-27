@@ -888,6 +888,7 @@ def test_isaac3_snapshot_reads_have_bounded_transport_retries() -> None:
     assert "'Acquire::Retries \"10\";'" in dockerfile
     assert "'Acquire::Queue-Mode \"access\";'" in dockerfile
     assert "'Acquire::https::Pipeline-Depth \"0\";'" in dockerfile
+    assert "'APT::Update::Error-Mode \"any\";'" in dockerfile
     assert retry_create < retry_wrapper < installer < ffmpeg_update < retry_remove
     assert "apt-retry-bin/apt-get" in dockerfile
     assert "NPA_UBUNTU_SNAPSHOT=20261018T000000Z" in dockerfile
@@ -895,7 +896,23 @@ def test_isaac3_snapshot_reads_have_bounded_transport_retries() -> None:
     assert "security.ubuntu.com" not in dockerfile
 
 
-def test_isaac3_snapshot_retry_wrapper_retains_the_exact_transaction(
+def test_python_runtime_probe_retries_failed_snapshot_indexes() -> None:
+    """The independent Jammy probe must share the bounded snapshot retry."""
+
+    dockerfile = (
+        REPO_ROOT / "npa/tests/docker/fixtures/python-runtime.Dockerfile"
+    ).read_text(encoding="utf-8")
+
+    assert "docker/workbench/isaac-lab/apt-get" in dockerfile
+    assert "'Acquire::Retries \"10\";'" in dockerfile
+    assert "'Acquire::Queue-Mode \"access\";'" in dockerfile
+    assert "'Acquire::https::Pipeline-Depth \"0\";'" in dockerfile
+    assert "'APT::Update::Error-Mode \"any\";'" in dockerfile
+    assert 'export PATH="/opt/npa/apt-retry-bin:${PATH}"' in dockerfile
+    assert dockerfile.index("apt-retry-bin") < dockerfile.index("apt-get -o")
+
+
+def test_isaac3_snapshot_retry_wrapper_retains_the_exact_apt_command(
     tmp_path: Path,
 ) -> None:
     """A transient failure retries the identical APT argv and then succeeds."""
