@@ -1839,11 +1839,11 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "workflow-owned cache, authentication, scoped RBAC and resume lifecycle."
         ),
         runtime=True,
-        expected_parallel_tasks=2,
         notes=(
             "Model-neutral Franka surface-placement graph with native SmolVLA "
             "training, exact reload, private serving, matched gold trials, and a "
-            "two-service terminal failure cleanup group."
+            "workflow-owned terminal failure cleanup that removes both services "
+            "before releasing run-scoped prerequisites."
         ),
     ),
     SubmitLiveCase(
