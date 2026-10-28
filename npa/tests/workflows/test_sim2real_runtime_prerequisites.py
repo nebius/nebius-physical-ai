@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import re
 from argparse import Namespace
 from pathlib import PurePosixPath
@@ -75,6 +76,10 @@ def test_manifests_bind_exact_run_owned_resources_and_hardened_warmer() -> None:
         args.isaac_cache_pvc
     )
     assert manifests["isaac_cache_pvc"]["spec"]["accessModes"] == ["ReadWriteOnce"]
+    auth_token = base64.b64decode(
+        manifests["auth_secret"]["data"]["auth_token"], validate=True
+    )
+    assert re.fullmatch(rb"[A-Za-z0-9_-]{32}", auth_token)
 
 
 def test_manifests_support_declared_multi_writer_storage() -> None:
@@ -172,6 +177,15 @@ def test_owned_pvc_and_rbac_drift_are_rejected() -> None:
         _assert_contract(
             "auth_secret",
             {"type": "Opaque", "data": {"auth_token": "dG9vLXNob3J0"}},
+            secret,
+        )
+    with pytest.raises(RuntimePrerequisiteError, match="drifted"):
+        _assert_contract(
+            "auth_secret",
+            {
+                "type": "Opaque",
+                "data": {"auth_token": base64.b64encode(bytes(range(32))).decode()},
+            },
             secret,
         )
 

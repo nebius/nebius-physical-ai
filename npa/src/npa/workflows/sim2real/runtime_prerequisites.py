@@ -134,7 +134,11 @@ def build_manifests(args: argparse.Namespace) -> dict[str, dict[str, Any]]:
         "kind": "Secret",
         "metadata": _metadata(args.auth_secret, args.namespace, args.run_id),
         "type": "Opaque",
-        "data": {"auth_token": base64.b64encode(secrets.token_bytes(32)).decode()},
+        "data": {
+            "auth_token": base64.b64encode(
+                secrets.token_urlsafe(24).encode("ascii")
+            ).decode()
+        },
     }
     for role in ("base", "adapted"):
         account = getattr(args, f"{role}_service_account")
@@ -333,7 +337,10 @@ def _assert_contract(key: str, actual: Any, desired: dict[str, Any]) -> None:
             token = base64.b64decode(encoded, validate=True)
         except (binascii.Error, ValueError, TypeError):
             token = b""
-        matches = value.get("type") == "Opaque" and len(token) == 32
+        matches = (
+            value.get("type") == "Opaque"
+            and re.fullmatch(rb"[A-Za-z0-9_-]{32}", token) is not None
+        )
     elif key.endswith("_service_account"):
         matches = value.get("automountServiceAccountToken") is True
     elif key.endswith("_role"):
