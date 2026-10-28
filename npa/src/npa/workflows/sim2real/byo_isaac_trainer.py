@@ -1031,13 +1031,10 @@ def build_isaac_job_manifest(
             + "export ROBOT_OBJECT_SCALE="
             + shlex.quote(str(object_scale or ""))
             + "\n"
-            # tee the FULL wrapper output to /tmp/train_full.log before tailing: the
-            # retarget plan + the honest task/robot compatibility verdict are printed
-            # right after AppLauncher boot, so `| tail -120` alone discards them
-            # behind the training-loop logs (and entirely when an incompatible robot
-            # fails at env build). The markers are re-dumped from this file post-run,
-            # and the file IS the per-iteration reward curve uploaded for plotting.
-            + '"$PY" /opt/npa/isaac-runtime/isaac_robot_train.py 2>&1 | tee /tmp/train_full.log | tail -120\n'
+            # Keep the complete curve for durable telemetry while streaming progress
+            # from the workflow-owned task. A terminal `tail` buffers the trainer's
+            # output until exit, which hides bootstrap and recovery failures.
+            + '"$PY" /opt/npa/isaac-runtime/isaac_robot_train.py 2>&1 | tee /tmp/train_full.log\n'
         )
     elif physics:
         # Generated-physics path runs the task module + post-boot wrapper baked
