@@ -14,7 +14,9 @@ from pathlib import Path
 from typing import Any
 
 from npa.workflows.sim2real.workflow_io import (
+    declared_loop_uri,
     image_provenance,
+    json_file_sha256,
     publish_component_record,
     storage,
     write_loop_output,
@@ -66,6 +68,9 @@ def _publish(args: argparse.Namespace, payload: dict[str, Any], work: Path) -> N
     write_loop_output(
         output_uri, payload, work / "out", args.outer_iteration, args.inner_iteration
     )
+    declared_output_uri = declared_loop_uri(
+        output_uri, args.outer_iteration, args.inner_iteration
+    )
     publish_component_record(
         root_uri=root,
         stage=8,
@@ -74,6 +79,8 @@ def _publish(args: argparse.Namespace, payload: dict[str, Any], work: Path) -> N
         evidence=f"Hosted {args.reason_model} scored every Stage 7 rollout with event-local labels through Token Factory.",
         artifacts={
             "result": output_uri,
+            "declared_output": declared_output_uri,
+            "result_payload_sha256": json_file_sha256(payload),
             "model": args.reason_model,
             "reason_family": payload["reason_family"],
             "provider": "nebius",

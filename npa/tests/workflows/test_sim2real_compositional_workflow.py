@@ -23,6 +23,7 @@ from npa.orchestration.npa_workflow.skypilot_render import (
 )
 from npa.workflows.sim2real.workflow_io import (
     declared_loop_uri,
+    json_file_sha256,
     write_loop_output,
 )
 from npa.workflows.sim2real.capture import DEFAULT_PPO_ITERATIONS
@@ -230,6 +231,11 @@ def test_stage8_scores_every_rollout_once_with_hosted_token_factory(
     assert payload["model"] == model
     assert payload["reason_family"] == family
     assert records[0]["artifacts"]["reason_family"] == family
+    assert records[0]["artifacts"]["result"] == writes[0][0]
+    assert records[0]["artifacts"]["declared_output"] == (
+        "s3://unit/run/vlm_eval/train/outer-1/iter-1/token-factory.json"
+    )
+    assert records[0]["artifacts"]["result_payload_sha256"] == json_file_sha256(payload)
     assert model in records[0]["evidence"]
     assert payload["evaluator_usage"]["request_count"] == 2
     assert payload["evaluator_usage"]["total_tokens"] == 30
@@ -803,6 +809,8 @@ def test_stage9_conflicting_same_iteration_replay_fails_closed() -> None:
         "boolean_step_index",
         "record_usage",
         "record_rollout_count",
+        "declared_output_binding",
+        "result_payload_hash",
         "duplicate_request_ids",
         "inconsistent_token_total",
         "negative_cost",
@@ -853,6 +861,9 @@ def test_stage9_retry_republishes_exact_evidence_without_training(
             "artifacts": {
                 **provenance,
                 "result": lane_base + "token-factory.json",
+                "declared_output": (
+                    f"{root}/vlm_eval/train/outer-1/iter-1/token-factory.json"
+                ),
                 "model": model,
                 "reason_family": family,
                 "provider": "nebius",
@@ -998,6 +1009,11 @@ def test_stage9_retry_republishes_exact_evidence_without_training(
         # Keep duplicated component accounting consistent so accounting mutations
         # exercise their own semantic gate rather than failing only the copy check.
         record["evaluator_usage"] = json.loads(json.dumps(envelope["evaluator_usage"]))
+    record["result_payload_sha256"] = json_file_sha256(envelope)
+    if corruption == "declared_output_binding":
+        record["declared_output"] = lane_base + "token-factory.json"
+    elif corruption == "result_payload_hash":
+        record["result_payload_sha256"] = "b" * 64
     component = lanes[f"{root}/components/stage_08.json"]
     component["content_sha256"] = hashlib.sha256(
         json.dumps(component, sort_keys=True, separators=(",", ":")).encode()

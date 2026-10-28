@@ -13,6 +13,7 @@ from npa.workbench.cosmos.visual_grounding import (
     HOSTED_EVAL_SCHEMA,
     validate_stored_visual_grounding,
 )
+from npa.workflows.sim2real.workflow_io import declared_loop_uri, json_file_sha256
 
 
 class EvaluatorContractError(RuntimeError):
@@ -176,6 +177,9 @@ def validate_hosted_evaluator(
             expected_token_factory_endpoint
         )
         artifacts = stage8_record.get("artifacts") or {}
+        declared_output_uri = declared_loop_uri(
+            evaluator_uri, outer_iteration, inner_iteration
+        )
         if (
             evaluator.get("schema") != "npa.sim2real.token_factory_evaluator.v1"
             or evaluator.get("evaluator") != "token_factory_rollout"
@@ -187,6 +191,8 @@ def validate_hosted_evaluator(
             or stage8_record.get("stage") != 8
             or stage8_record.get("name") != "stage_08_vlm_eval_train"
             or artifacts.get("result") != evaluator_uri
+            or artifacts.get("declared_output") != declared_output_uri
+            or artifacts.get("result_payload_sha256") != json_file_sha256(evaluator)
             or artifacts.get("backend") != "token_factory"
             or artifacts.get("provider") != "nebius"
             or artifacts.get("model") != expected_model
