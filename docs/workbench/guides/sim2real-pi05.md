@@ -459,11 +459,12 @@ submission. Runtime resource overrides may narrow a request, but cannot change
 robot, object, policy, cohort, or scorer identity.
 
 `sim2real-policy-interchange-smolvla.yaml` is the model-neutral 16-stage
-reference. Its first stage creates or exactly adopts run-owned policy and Isaac
-cache PVCs, an authentication secret and role-specific service RBAC, then warms
-the digest-pinned Isaac runtime. Its terminal stage deletes only those exact
-owned resources after the report is durable. Interrupted execution adopts the
-same identities and rejects foreign or drifted resources. The middle stages use
+reference. After initial profile validation, it creates or exactly adopts
+run-owned policy and Isaac cache PVCs, an authentication secret and
+role-specific service RBAC, then warms the digest-pinned Isaac runtime. Its
+terminal stage deletes only those exact owned resources after the report is
+durable. Interrupted execution adopts the same identities and rejects foreign
+or drifted resources. The middle stages use
 real LeRobotDataset materialization and native SmolVLA
 training, processor-bound reload and typed serving. OpenPI/DROID translation,
 padding, MessagePack/WebSocket and explicit sampler-noise coupling remain only
