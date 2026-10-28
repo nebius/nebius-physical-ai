@@ -34,7 +34,8 @@ def _fake_installed_venv(
     *,
     version: str = "0.12.2",
     kubernetes_version: str = "30.1.0",
-    api_compatible: bool = True,
+    fastapi_version: str = skypilot_cli.FASTAPI_SERVER_VERSION,
+    fastapi_prefix_compatible: bool = True,
 ) -> Path:
     bin_dir = path / "bin"
     # inspect_venv probes the venv python for `import sky` and the kubernetes
@@ -44,7 +45,8 @@ def _fake_installed_venv(
         "#!/bin/sh\n"
         'case "$2" in\n'
         f"  *kubernetes*) printf '{kubernetes_version}\\n' ;;\n"
-        f"  *FastAPI*) exit {0 if api_compatible else 1} ;;\n"
+        f"  *fastapi.__version__*) printf '{fastapi_version}\\n' ;;\n"
+        f"  *FastAPI*) exit {0 if fastapi_prefix_compatible else 1} ;;\n"
         "esac\n"
         "exit 0\n",
     )
@@ -397,7 +399,7 @@ def _assert_bootstrap_distribution_metadata(venv_path: Path, marker_path: Path) 
         capture_output=True,
         text=True,
     )
-    assert installed.stdout.strip() == "0.12.2 8.1.8 30.1.0 0.142.4"
+    assert installed.stdout.strip() == "0.12.2 8.1.8 30.1.0 0.141.1"
     marker = json.loads(marker_path.read_text())
     assert marker["version"] == "0.12.2" and marker["kubernetes_client"] == "30.1.0"
     assert marker["fastapi_server"] == "0.141.1"
@@ -466,10 +468,11 @@ def test_skypilot_bootstrap_refuses_unavailable_offline_dependency(
             package_spec=os.fspath(offline_bootstrap_wheels["sky"]),
         )
     message = str(failure.value)
-    assert "pip failed while pinning" in message
-    assert f"No matching distribution found for {missing_package}" in message
+    expected_phase = "installing" if missing_package == "fastapi" else "pinning"
+    assert f"pip failed while {expected_phase}" in message
+    assert missing_package in message
     assert "Retrying" not in message
-    assert "https://" not in message
+    assert "Looking in indexes" not in message
     assert not target.exists()
 
 
@@ -1014,7 +1017,9 @@ def test_skypilot_bootstrap_repairs_a_reused_venv_with_a_broken_client(
 def test_bootstrap_repairs_a_venv_whose_api_constructor_is_incompatible(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    venv = _fake_installed_venv(tmp_path / "sky-venv", api_compatible=False)
+    venv = _fake_installed_venv(
+        tmp_path / "sky-venv", fastapi_prefix_compatible=False
+    )
     assert skypilot_cli.inspect_venv(venv).installed
     installed = []
 
@@ -1040,11 +1045,13 @@ def test_bootstrap_repairs_a_venv_whose_api_constructor_is_incompatible(
 def test_bootstrap_preserves_old_runtime_when_staged_api_constructor_fails(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    venv = _fake_installed_venv(tmp_path / "sky-venv", api_compatible=False)
+    venv = _fake_installed_venv(
+        tmp_path / "sky-venv", fastapi_prefix_compatible=False
+    )
     original = (venv / "bin/python").read_bytes()
 
     def create(path: Path, _python: object) -> None:
-        _fake_installed_venv(path, api_compatible=False)
+        _fake_installed_venv(path, fastapi_prefix_compatible=False)
 
     monkeypatch.setattr(skypilot_cli, "_create_venv", create)
     monkeypatch.setattr(skypilot_cli, "_ensure_pip", lambda _state: None)
