@@ -37,6 +37,17 @@ Operators managing Kubernetes directly can use
 [team namespaces](docs/workbench/namespaces.md) to select namespaces and private
 SkyPilot contexts with `npa workbench namespace`.
 
+For Cosmos3 hosted inference, use the
+[Nebius Stream beta skill](skills/tools/nebius-stream-beta/SKILL.md).
+The portable Python client uses an operator-supplied HTTPS origin
+(`WMH_BASE_URL`) and private inference/S3 credential files
+(`WMH_API_KEY_FILE`, `WMH_S3_CREDENTIAL_FILE`). The
+[customer guide](skills/tools/nebius-stream-beta/references/iteration.md)
+explains setup, `WMH_WORK_DIR`, Nano/Super capability discovery, video
+augmentation, bucket batches, recovery, and usage exports. Input may use
+approved S3-compatible storage; output must be verified Nebius Object Storage.
+Beta access is issued separately by the operator.
+
 ## What is Workbench?
 
 Workbench is NPA's agent control plane for Physical AI on Nebius AI Cloud,
