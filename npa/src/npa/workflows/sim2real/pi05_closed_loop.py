@@ -747,7 +747,7 @@ def _native_policy_camera_calibration(
 
     import numpy as np
 
-    sensor = native.scene[sensor_name]
+    sensor = native.scene[sensor_name].data
     matrix = np.asarray(
         _proxy_torch(sensor.intrinsic_matrices)[0].detach().cpu().numpy(),
         dtype=np.float64,

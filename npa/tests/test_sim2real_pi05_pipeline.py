@@ -93,6 +93,30 @@ SUCCESS_EVENTS = [
 ]
 
 
+def test_native_policy_camera_calibration_uses_tiled_camera_data() -> None:
+    """Isaac 6 exposes runtime intrinsics on TiledCamera.data, not the sensor."""
+
+    intrinsics = [
+        [100.0, 0.0, 112.0],
+        [0.0, 100.0, 112.0],
+        [0.0, 0.0, 1.0],
+    ]
+    sensor = types.SimpleNamespace(
+        data=types.SimpleNamespace(
+            intrinsic_matrices=_JointTensor([intrinsics]),
+        )
+    )
+    native = types.SimpleNamespace(scene={"pi05_wrist": sensor})
+
+    receipt = pi05_closed_loop._native_policy_camera_calibration(
+        native, "wrist", "pi05_wrist", "panda_hand"
+    )
+
+    assert receipt["intrinsic_matrix"] == intrinsics
+    assert receipt["role"] == "wrist"
+    assert len(receipt["calibration_sha256"]) == 64
+
+
 def test_pi05_service_rbac_contract_uses_two_exact_owners() -> None:
     run_id = "pi05-rbac"
     args = Namespace(
