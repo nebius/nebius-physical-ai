@@ -198,7 +198,7 @@ def _full_app() -> typer.Typer:
 
 
 def _rerun_viewer_light_app() -> typer.Typer:
-    """Build the dependency-minimal nurec surface for the Rerun viewer image.
+    """Build the visualization and hosted-caption surface for CPU workers.
 
     The npa-rerun-viewer image bakes the light flag, but the workflow stages it
     exists for (``workbench.nurec.visualize`` / ``workbench.nurec.finalize``)
@@ -209,6 +209,7 @@ def _rerun_viewer_light_app() -> typer.Typer:
     """
 
     from npa.cli.nurec import app as nurec_app
+    from npa.cli.workbench.token_factory import app as token_factory_app
 
     light = typer.Typer(
         name="workbench",
@@ -226,6 +227,7 @@ def _rerun_viewer_light_app() -> typer.Typer:
         )
 
     light.add_typer(nurec_app, name="nurec")
+    light.add_typer(token_factory_app, name="token-factory")
     return light
 
 

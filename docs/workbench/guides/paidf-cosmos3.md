@@ -16,7 +16,9 @@ For a complete manual setup and run, start with the
 project setup, new or existing Kubernetes clusters, credential-file formats,
 Token Factory key creation, Python and CLI installation checks, submission, and
 artifact inspection.
-For twelve separate appearance videos with automatic padding preservation, use
+For twelve candidates using the current workflow defaults, follow
+[the count-only fanout](#twelve-variants-with-the-current-defaults) below.
+For twelve separate appearance videos with task-specific profiles and automatic padding preservation, use
 the [copy-paste recipe guide](paidf-appearance-12.md#apply-the-recipe).
 Use this page for the workflow's input, generation, and acceptance contracts.
 For the configuration keys and timing contract, see the setup guide's
@@ -63,6 +65,67 @@ omitted, so every failed evaluation reaches the next bounded refinement pass and
 the terminal disposition controls the final branch. An explicit `--no-runtime`
 is rejected before staging or submission. `--assume-decision` is allowed only
 for planning previews; execution requires actual evaluator decisions.
+
+## Twelve variants with the current defaults
+
+Complete the [operator setup](../../../workflows/guides/paidf-cosmos3.md#before-you-start)
+and retain its verified project, bucket, GPU selection and Kubernetes context.
+If setting `NPA_WORKFLOW_GPU_ACCELERATOR`, use the exact product name printed by
+`npa workbench workflow gpus --cluster "$KUBE_CONTEXT"`; explicit overrides are
+passed literally to SkyPilot.
+The canonical workflow needs only `--var variant_count=12` to generate twelve
+candidates from the pinned starter video. It retains the current prompts,
+sampler, 24 base steps, native edge controls, guardrails and exploratory quality
+thresholds. A quality-gate retry follows the shipped refinement policy, which
+changes the attempt's seed, guidance and step count.
+The separate [twelve-profile recipe](paidf-appearance-12.md) changes
+those settings and is a different experiment.
+
+Inline CPU stages use the existing pinned Rerun workbench image, including its supported
+Python and media dependencies. This keeps source installation compatible with
+current NPA, which requires Python 3.11 or newer. The submitted source also
+registers Token Factory captioning in that image's light workbench CLI.
+
+From the checkout installed in `npa/.venv`, run:
+
+```bash
+SPEC=workflows/main/paidf-cosmos3.yaml
+RUN_ID="$(npa/.venv/bin/npa workbench workflow prepare-run "$SPEC" --project "$PROJECT_ALIAS")"
+export NPA_SKYPILOT_ISOLATED_CONFIG_DIR="$HOME/.npa/workflow-runs/$RUN_ID/skypilot"
+export NPA_E2E_PAIDF_FANOUT_FRESH_AFTER="$(date -u +%Y-%m-%dT%H:%M:%S+00:00)"
+npa/.venv/bin/npa workbench workflow submit "$SPEC" \
+  --project "$PROJECT_ALIAS" --run-id "$RUN_ID" --runtime --max-wait-seconds 0 \
+  --infra "k8s/$KUBE_CONTEXT" --var bucket="$BUCKET" --var variant_count=12 \
+  --secret-env HF_TOKEN --secret-env NEBIUS_TOKEN_FACTORY_KEY \
+  --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
+```
+
+Omitting an input selector uses the verified starter. Add `--input-video`,
+`--input-uri`, or the documented LeRobot selectors to use your own source;
+the starter-specific audit below then does not apply. Twelve candidates run
+sequentially with the shipped `variant_parallelism: 1` and one-GPU task.
+Increasing the candidate count does not request twelve concurrent GPUs.
+`--max-wait-seconds 0` leaves the complete generation wave unbounded, as in
+the setup guide; the shared runtime's one-hour default can expire a large batch.
+Each candidate is evaluated, and every accepted candidate receives its own
+captions before real Cosmos Curator, FiftyOne and finalization run. Actual
+evaluation controls refinement and rejection; count alone never guarantees
+acceptance.
+
+After successful finalization, audit the starter run without launching work:
+
+```bash
+NPA_INTEGRATION_E2E=1 NPA_E2E_PROJECT="$PROJECT_ALIAS" \
+  NPA_E2E_PAIDF_FANOUT_RUN_URI="s3://$BUCKET/paidf-cosmos3/$RUN_ID/" \
+  npa/.venv/bin/python -m pytest npa/tests/e2e/test_paidf_cosmos3_fanout_live.py -q
+```
+
+Require one passed test with no skip. The audit verifies fresh starter bytes,
+all completed stages, exactly twelve configurations, published variants,
+evaluated clips and annotated variants, unchanged default sampling and quality
+settings, full-video alignment, effective model guardrails, real curation and
+both Rerun recordings. Keep the pre-submission timestamp and private run state
+for this read-only audit and the setup guide's scoped cleanup.
 
 ## Native variant recovery
 
@@ -335,6 +398,32 @@ including accepted captioning, real Cosmos Curator and FiftyOne curation, and
 final recording/report verification. The guide retains the measured quality
 diagnostics, curation fallback, and limits; execution success does not certify
 training-data suitability.
+
+A fresh October 24, 2026 starter run with the startup repairs completed all 15
+stages on one RTX PRO 6000 Blackwell GPU. Both default variants passed on the
+first generation attempt with an aggregate evaluator score of `0.570243`, using
+the unchanged `0.2` quality and `0.25` attribute thresholds. Both received
+captions and remained in the curated output. The independent starter audit
+passed, including fresh pinned input bytes, full decoded alignment, native
+controls and guardrails, artifact hashes, real component reports, and Rerun
+identity and media checks. The run and its owned controller/API were closed
+with verified cleanup receipts. This establishes an exploratory starter smoke;
+it does not qualify manipulation-task fidelity.
+
+The count-only twelve-variant override generated all twelve videos in both the
+initial and shipped refinement passes, with zero generation failures. The
+first evaluator accepted ten clips; the final evaluator accepted eleven with
+an aggregate score of `0.393762`. The remaining clip missed all four requested
+appearance attributes, so it failed the unchanged `0.25` attribute threshold
+despite clearing the `0.2` aggregate threshold. Increasing the variant count
+therefore proved generation coverage, without establishing an accepted
+twelve-variant dataset.
+The workflow completed the evidence stages and stopped at `reject-quality`.
+An independent read-only rejection audit verified all twelve decoded videos,
+native controls and guardrails, fresh source provenance, and the Rerun video's
+hashes, timelines and rejected dispositions. Accepted-only captioning, curation
+and finalization artifacts were absent. The accepted twelve-variant audit above
+was not passed by this rejected run.
 
 The publication regression can separately reuse retained real GPU output.
 Run `npa/tests/e2e/test_paidf_cosmos3_publication_live.py` with
