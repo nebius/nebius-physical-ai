@@ -560,7 +560,23 @@ def _delete(
             absent.append(key)
             continue
         _assert_owned(actual, manifest, args.run_id)
-        deleter(name, args.namespace, _request_timeout=30)
+        if key == "isaac_warm_job":
+            # A background/default Job deletion can orphan its completed pod.
+            # Cleanup then waits forever for a pod whose controller has already
+            # disappeared. Foreground propagation keeps the Job as the owner
+            # until Kubernetes has removed its exact dependent pod.
+            deleter(
+                name,
+                args.namespace,
+                body={
+                    "apiVersion": "v1",
+                    "kind": "DeleteOptions",
+                    "propagationPolicy": "Foreground",
+                },
+                _request_timeout=30,
+            )
+        else:
+            deleter(name, args.namespace, _request_timeout=30)
         deleted.append(key)
         if key == "isaac_warm_job":
             deadline = time.monotonic() + min(args.warm_timeout_seconds, 600.0)

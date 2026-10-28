@@ -180,6 +180,7 @@ def test_apply_is_exactly_resumable_and_cleanup_is_idempotent(monkeypatch) -> No
     args = _args()
     manifests = build_manifests(args)
     stored = {}
+    deletion_bodies = {}
 
     def objects(*_clients):
         result = {}
@@ -191,7 +192,15 @@ def test_apply_is_exactly_resumable_and_cleanup_is_idempotent(monkeypatch) -> No
             def create(_namespace, body, _request_timeout, *, item=key):
                 stored[item] = body
 
-            def delete(_name, _namespace, _request_timeout, *, item=key):
+            def delete(
+                _name,
+                _namespace,
+                _request_timeout,
+                body=None,
+                *,
+                item=key,
+            ):
+                deletion_bodies[item] = body
                 stored.pop(item, None)
 
             result[key] = (read, create, delete)
@@ -223,3 +232,11 @@ def test_apply_is_exactly_resumable_and_cleanup_is_idempotent(monkeypatch) -> No
     assert set(cleaned["changed"]) == set(manifests)
     assert set(repeated["retained_or_absent"]) == set(manifests)
     assert stored == {}
+    assert deletion_bodies["isaac_warm_job"] == {
+        "apiVersion": "v1",
+        "kind": "DeleteOptions",
+        "propagationPolicy": "Foreground",
+    }
+    assert all(
+        body is None for key, body in deletion_bodies.items() if key != "isaac_warm_job"
+    )
