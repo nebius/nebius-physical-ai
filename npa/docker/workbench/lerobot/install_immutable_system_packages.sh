@@ -70,7 +70,7 @@ python3.12-dev_3.12.16-1+jammy1_amd64.deb 9e0bb14ece20676cfb0c8e58d77354892551c5
 python3.12-venv_3.12.16-1+jammy1_amd64.deb 92c86592323e3bc01ed6dfebeca053832735ca74bddd525c00e6f19ff72c8337
 PYTHON312_PACKAGES
 apt-get install -y --no-install-recommends /tmp/npa-python312/*.deb
-test "$(python3.12 --version)" = "Python 3.12.15"
+test "$(python3.12 --version)" = "Python 3.12.16"
 rm -f /etc/ssh/ssh_host_*
 test -z "$(find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*' -print -quit)"
 # The image-byte gate treats these as path-only findings in every layer. After

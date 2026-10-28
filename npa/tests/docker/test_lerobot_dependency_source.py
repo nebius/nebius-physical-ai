@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import re
+import subprocess
 
 import pytest
 
@@ -219,6 +220,39 @@ def test_shared_python_bootstraps_bind_the_same_exact_debian_artifacts():
     assert all("_3.12.16-1+jammy1_" in name for name, _ in common_pins)
     assert "sha256sum --check --strict" in common
     assert "sha256sum --check --status" in lerobot
+
+
+@pytest.mark.parametrize("patch_offset", [-1, 0, 1])
+def test_system_python_guard_accepts_only_the_pinned_release(patch_offset):
+    """Exercise the build's version check against its actual Debian package pin."""
+    system_packages = (RECIPE / "install_immutable_system_packages.sh").read_text()
+    pinned_version = re.search(
+        r"^python3\.12_([0-9.]+)-[^_]+_amd64\.deb ", system_packages, re.MULTILINE
+    ).group(1)
+    major, minor, patch = map(int, pinned_version.split("."))
+    installed_version = f"{major}.{minor}.{patch + patch_offset}"
+    guard = next(
+        line
+        for line in system_packages.splitlines()
+        if line.startswith('test "$(python3.12 --version)"')
+    )
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'installed_version="$1"\n'
+            'python3.12() { printf "Python %s\\n" "$installed_version"; }\n' + guard,
+            "version-guard",
+            installed_version,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == (0 if patch_offset == 0 else 1), (
+        f"build guard must accept only pinned Python {pinned_version}; "
+        f"installed Python {installed_version} returned {result.returncode}"
+    )
 
 
 def test_build_dependency_closure_has_no_moving_repository_or_python_resolution():
