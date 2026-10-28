@@ -1848,11 +1848,12 @@ def test_baked_setup_separates_consumer_and_image_source_attestations(
     tmp_path: Path,
 ) -> None:
     record = tmp_path / "npa-python"
+    rendered_probe = Path("/").joinpath("tmp", "npa-python").as_posix()
     setup = render_setup_for_tool(
         "run.shell",
         config={"require_baked_npa": "1"},
         options=SkypilotRenderOptions(),
-    ).replace("/tmp/npa-python", str(record))
+    ).replace(rendered_probe, str(record))
     environment = {
         "PATH": "/usr/bin:/bin",
         "NPA_BAKED_PYTHON": sys.executable,
