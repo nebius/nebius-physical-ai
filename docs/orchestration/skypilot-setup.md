@@ -93,6 +93,15 @@ By default this installs `skypilot[nebius,kubernetes]==0.12.2` into
 `~/.npa/skypilot-venv`. Use `--path` or `NPA_SKYPILOT_VENV_PATH` when an
 operator-managed location is required.
 
+Bootstrap also constrains FastAPI below `0.145`, whose removal of unused
+constructor arguments prevents SkyPilot 0.12.2's API from starting. See the
+[FastAPI release notes](https://fastapi.tiangolo.com/release-notes/#01450).
+It tests the server's application constructor before reusing an existing
+environment and before activating a new one. If an earlier bootstrap installed
+an incompatible FastAPI, rerun `npa skypilot bootstrap` after updating NPA;
+it prepares and checks a replacement while preserving the previous runtime on
+failure. Finish active runs using that environment before upgrading it.
+
 ## Point NPA At It
 
 Set `NPA_SKYPILOT_BIN` to the venv's `sky` executable:

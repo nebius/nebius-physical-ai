@@ -945,6 +945,48 @@ def test_answer_question_constrains_the_answer_to_the_offered_options() -> None:
     assert answer == "UNKNOWN"
 
 
+@pytest.mark.parametrize(
+    ("reply", "expected"),
+    [("B", "B"), ("D", "UNKNOWN"), ("NO IMAGE RECEIVED.", "UNKNOWN")],
+)
+def test_answer_question_sends_pixels_first_and_preserves_verification_contract(
+    reply: str, expected: str
+) -> None:
+    client = FakeTokenFactory([reply])
+    options = {"A": "red", "B": "blue"}
+    data_url = "data:image/png;base64,AAA="
+    answer = av.answer_question(
+        client=client,
+        question="What colour?",
+        options=options,
+        data_url=data_url,
+        model="MiniMaxAI/MiniMax-M3",
+        max_tokens=10,
+        evidence_context="  Judge only the visible background.  ",
+    )
+
+    assert answer == expected
+    content = [
+        {"type": "image_url", "image_url": {"url": data_url}},
+        {
+            "type": "text",
+            "text": "Judge only the visible background.\n\n"
+            + av.format_question("What colour?", options),
+        },
+    ]
+    assert client.requests == [
+        {
+            "model": "MiniMaxAI/MiniMax-M3",
+            "messages": [
+                {"role": "system", "content": av.VERIFY_SYSTEM_PROMPT},
+                {"role": "user", "content": content},
+            ],
+            "temperature": 0.0,
+            "max_tokens": 10,
+        }
+    ]
+
+
 def _qwen_answer_client(requests: list[dict[str, Any]]) -> TokenFactoryClient:
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(json.loads(request.content))
@@ -998,8 +1040,8 @@ def test_answer_question_uses_qwen_direct_output_profile_with_real_client(
         {
             "role": "user",
             "content": [
-                {"type": "text", "text": av.format_question("What colour?", options)},
                 {"type": "image_url", "image_url": {"url": data_url}},
+                {"type": "text", "text": av.format_question("What colour?", options)},
             ],
         },
     ]

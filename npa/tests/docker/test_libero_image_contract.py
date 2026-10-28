@@ -415,7 +415,7 @@ def test_runtime_manifest_is_metadata_only_and_never_an_acceptance_proxy() -> No
         "certifi": "2026.10.19",
         "contourpy": "1.3.3",
         "future": "0.18.3",
-        "hydra-core": "1.3.7",
+        "hydra-core": "1.3.8",
         "matplotlib": "3.10.8",
         "opencv-python": "4.8.1.78",
         "pillow": "13.0.0",
@@ -507,7 +507,7 @@ def test_runtime_manifest_is_metadata_only_and_never_an_acceptance_proxy() -> No
         for item in manifest["runtime_artifacts"]
     )
     assert sum(item["size_bytes"] for item in manifest["runtime_artifacts"]) == (
-        3_275_394_288
+        3_275_394_447
     )
     lines = [
         line

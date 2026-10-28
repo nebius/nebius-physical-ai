@@ -45,6 +45,11 @@ SkyPilot lives in an isolated virtualenv outside NPA's main Python environment. 
 
 Use `npa skypilot bootstrap` to create or reuse the pinned SkyPilot `0.12.2`
 venv, then set `NPA_SKYPILOT_BIN="$(npa skypilot status --bin-path)"`.
+Bootstrap also constrains FastAPI below `0.145` and probes the application
+constructor required by SkyPilot. After updating NPA, rerun bootstrap to repair
+an older environment that imports SkyPilot but cannot start its API. Finish
+active runs using that environment first; bootstrap checks a replacement before
+activating it and preserves the previous runtime if preparation fails.
 
 The cluster GPU smoke uses an owned validation API session across its credential
 check, discovery, launch, and cleanup. Selecting a CLI executable alone does not

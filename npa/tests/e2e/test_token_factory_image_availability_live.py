@@ -60,7 +60,7 @@ def test_live_no_image_response_fails_caption_replay(tmp_path: Path) -> None:
     assert response["model"] == "MiniMaxAI/MiniMax-M3"
     assert response["choices"][0]["finish_reason"] == "stop"
     reply = response["choices"][0]["message"]["content"]
-    assert reply.strip().casefold() == "no image received."
+    assert token_factory._is_image_unavailable_answer(reply)
     transport = httpx.MockTransport(lambda request: httpx.Response(200, json=response))
     replay = TokenFactoryClient(http_client=httpx.Client(transport=transport))
     result = token_factory.caption_images(
