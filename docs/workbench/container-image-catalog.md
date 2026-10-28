@@ -44,6 +44,8 @@ and establish no new GPU qualification; the retained release evidence below
 continues to apply to its recorded bytes.
 The shared Jammy bootstrap also pins the available Python 3.12.16 Debian
 packages by SHA-256 after the previous package version left the upstream pool.
+LeRobot's post-install interpreter check requires that same 3.12.16 release;
+the build guard is tested against the pinned release and neighboring patch versions.
 
 [Marble workflows](marble.md) reuse the existing EnvGen CUDA/compiler image
 for gsplat and Warp consumers, with pinned dependencies installed at runtime.
