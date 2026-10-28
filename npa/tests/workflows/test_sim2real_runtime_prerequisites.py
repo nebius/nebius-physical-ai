@@ -65,6 +65,10 @@ def test_manifests_bind_exact_run_owned_resources_and_hardened_warmer() -> None:
         "runAsNonRoot": True,
         "capabilities": {"drop": ["ALL"]},
     }
+    mounts = {item["name"]: item["mountPath"] for item in container["volumeMounts"]}
+    volumes = {item["name"]: item for item in pod["volumes"]}
+    assert mounts["tmp"] == "/tmp"
+    assert volumes["tmp"]["emptyDir"] == {"sizeLimit": "12Gi"}
     assert pod["volumes"][0]["persistentVolumeClaim"]["claimName"] == (
         args.isaac_cache_pvc
     )

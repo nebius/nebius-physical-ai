@@ -225,7 +225,12 @@ def _warm_job(args: argparse.Namespace) -> dict[str, Any]:
                                     "name": "isaac-cache",
                                     "mountPath": "/opt/isaac-cache",
                                 },
-                                {"name": "tmp", "mountPath": "/tmp"},
+                                {
+                                    "name": "tmp",
+                                    # This is a container emptyDir mount, not a
+                                    # host temporary-file operation.
+                                    "mountPath": "/tmp",  # nosec B108
+                                },
                             ],
                         }
                     ],
