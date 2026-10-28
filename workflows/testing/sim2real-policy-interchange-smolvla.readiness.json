@@ -1,14 +1,14 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "630091a40b10b5f60c2e7198f5c4f30adaff75bc97d10f95431744495484ab9f",
+  "workflow_sha256": "a8bc821638fbaf25db0a9579c5f35f68e248d91bf4ba6e54e06239cf78a9280d",
   "planning": {
     "validation": {
       "status": "verified",
       "reason": "The standard workflow parser and production renderer accepted the sixteen-stage graph, declared time-aligned SmolVLA action strategy and exact-owned terminal failure cleanup group.",
       "evidence": [
         "validate-spec status valid",
-        "plan-spec --check-render status valid with 16 normal-path tasks and render SHA-256 ab932d038847c84b588e9731a1c74332775be22ea3b6459a0242f44976269123",
-        "failure handler render valid with 1 cleanup task and render SHA-256 d9d1745078467c03f6ad5d5b1dd46b22f35d68c6a0cb7c815c4abf421003bbe6",
+        "plan-spec --check-render status valid with 16 normal-path tasks and render SHA-256 6ee9f30b23b8f3a45718ff2495daa529027636b43f6c7d08deed7471742aa18c",
+        "failure handler render valid with 1 cleanup task and render SHA-256 b5cc0cdef91f2ba728ea5fca6a2d6230331648c9439d26d957a76c66d79c5aba",
         "runtime failure-handler regression preserves the payload error, attempts both cleanup states, fingerprints the cleanup path and submits nothing on unsafe terminal resume"
       ]
     },
@@ -39,10 +39,10 @@
     },
     "source_image": {
       "status": "blocked",
-      "reason": "The exact-323f clean-start successor is prepared behind the active exact-7df qualification chain and has not completed its own source, CI, security, provenance, anonymous-byte or live clean-start qualification.",
+      "reason": "The exact-a952 clean-start runtime repair is in source qualification and has not completed exact-head CI, security, provenance, anonymous-byte or live clean-start qualification.",
       "evidence": [
-        "candidate source 323f3a3a2188b1dd5d5a51cfb730260b6466acd3 based on exact 7df6936c8becf45de165a122a032a3b7424f9580",
-        "canonical-323f3a3a-turnkey-focused-validation.private.json"
+        "candidate source a95285b4f65922a5b3535b63ecdbca5a9375b667 based on exact 6b3dfb4eccbf2b17eee0266d5025c6a88f7a8460",
+        "focused runtime-prerequisite, toolRef/catalog and sixteen-stage production-render validation passed; the complete source population remains prerequisite evidence"
       ]
     },
     "target_runtime": {
