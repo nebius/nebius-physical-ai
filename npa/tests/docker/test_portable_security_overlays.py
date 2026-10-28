@@ -46,6 +46,8 @@ def test_portable_overlay_hashes_and_application_order(image: str) -> None:
         ):
             assert requirement in lock
     assert "pillow==13.0.0" in lock
+    if image in {"openpi", "cosmos3", "cosmos3-ray-serve"}:
+        assert "msgpack==1.2.3" in lock
     assert "setuptools==84.2.1" in lock
     if image == "cosmos3":
         assert "certifi==2026.10.23" in lock
