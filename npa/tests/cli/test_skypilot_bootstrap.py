@@ -1017,9 +1017,7 @@ def test_skypilot_bootstrap_repairs_a_reused_venv_with_a_broken_client(
 def test_bootstrap_repairs_a_venv_whose_api_constructor_is_incompatible(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    venv = _fake_installed_venv(
-        tmp_path / "sky-venv", fastapi_prefix_compatible=False
-    )
+    venv = _fake_installed_venv(tmp_path / "sky-venv", fastapi_prefix_compatible=False)
     assert skypilot_cli.inspect_venv(venv).installed
     installed = []
 
@@ -1045,9 +1043,7 @@ def test_bootstrap_repairs_a_venv_whose_api_constructor_is_incompatible(
 def test_bootstrap_preserves_old_runtime_when_staged_api_constructor_fails(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    venv = _fake_installed_venv(
-        tmp_path / "sky-venv", fastapi_prefix_compatible=False
-    )
+    venv = _fake_installed_venv(tmp_path / "sky-venv", fastapi_prefix_compatible=False)
     original = (venv / "bin/python").read_bytes()
 
     def create(path: Path, _python: object) -> None:
