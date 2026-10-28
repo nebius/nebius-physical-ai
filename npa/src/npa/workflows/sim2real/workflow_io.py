@@ -145,19 +145,45 @@ def write_loop_output(
     return result
 
 
-def source_sha() -> str:
-    actual = os.environ.get("NPA_IMAGE_SOURCE_SHA", "").strip().lower()
-    expected = os.environ.get("NPA_SIM2REAL_SOURCE_SHA", "").strip().lower()
-    for label, value in (("image", actual), ("workflow", expected)):
-        if len(value) != 40 or any(char not in "0123456789abcdef" for char in value):
-            raise RuntimeError(
-                f"workflow stage lacks an exact 40-character {label} source SHA"
-            )
-    if actual != expected:
+def _source_identity(label: str, environment_name: str) -> str:
+    value = os.environ.get(environment_name, "").strip().lower()
+    if len(value) != 40 or any(char not in "0123456789abcdef" for char in value):
         raise RuntimeError(
-            "workflow source SHA does not match the immutable task image attestation"
+            f"workflow stage lacks an exact 40-character {label} source SHA"
         )
-    return actual
+    return value
+
+
+def source_sha() -> str:
+    """Return the workflow consumer source after verifying its baked image.
+
+    Args:
+        None.
+
+    Returns:
+        The exact workflow consumer source commit.
+
+    Raises:
+        RuntimeError: If a source identity is missing, malformed, or mismatched.
+    """
+
+    image_source = _source_identity("image", "NPA_IMAGE_SOURCE_SHA")
+    workflow_source = _source_identity("workflow", "NPA_SIM2REAL_SOURCE_SHA")
+    expected_image_source = (
+        os.environ.get("NPA_EXPECTED_IMAGE_SOURCE_SHA", "").strip().lower()
+        or workflow_source
+    )
+    if len(expected_image_source) != 40 or any(
+        char not in "0123456789abcdef" for char in expected_image_source
+    ):
+        raise RuntimeError(
+            "workflow stage lacks an exact 40-character expected image source SHA"
+        )
+    if image_source != expected_image_source:
+        raise RuntimeError(
+            "expected image source SHA does not match the immutable task image attestation"
+        )
+    return workflow_source
 
 
 def _gpu_device_evidence_is_valid(products: object, rows: object) -> bool:
@@ -198,10 +224,12 @@ def image_provenance(*, require_gpu: bool) -> dict[str, Any]:
     image = os.environ.get("NPA_TASK_IMAGE", "").removeprefix("docker:").strip()
     if "@sha256:" not in image:
         raise RuntimeError("workflow stage lacks an immutable NPA_TASK_IMAGE digest")
+    workflow_source = source_sha()
     proof: dict[str, Any] = {
         "image": image,
         "image_digest": image.split("@", 1)[1],
-        "source_sha": source_sha(),
+        "source_sha": workflow_source,
+        "image_source_sha": os.environ["NPA_IMAGE_SOURCE_SHA"].strip().lower(),
         "workflow_job": os.environ.get("SKYPILOT_TASK_ID", "")
         or os.environ.get("SKYPILOT_CLUSTER_NAME", ""),
         "execution_mode": "standard_npa_workflow_skypilot",
