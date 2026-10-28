@@ -35,6 +35,16 @@ launcher for their NPA adapters. Their current source recipes use Python 3.12
 and Pillow 13 alongside the separately pinned runtime dependencies. These source changes require independent
 image rebuild, byte scanning, and capability validation before release promotion.
 
+The October 27 source dependency repair advances maintained Hydra Core inputs
+and their artifact hashes to 1.3.8, including the Libero runtime identity and
+the Flex-Pi source dependency patch. It addresses
+[GHSA-wf6j-7hvr-gr93](https://github.com/advisories/GHSA-wf6j-7hvr-gr93).
+These source updates add no published image, change no supported image digest,
+and establish no new GPU qualification; the retained release evidence below
+continues to apply to its recorded bytes.
+The shared Jammy bootstrap also pins the available Python 3.12.16 Debian
+packages by SHA-256 after the previous package version left the upstream pool.
+
 [Marble workflows](marble.md) reuse the existing EnvGen CUDA/compiler image
 for gsplat and Warp consumers, with pinned dependencies installed at runtime.
 The manufacturing pallet experiment additionally reuses the existing
@@ -168,14 +178,24 @@ corresponding-source closure exists. Runtime fetching later changes delivery
 only, not use, derivative, output, or service rights. No accepted release,
 anonymous pull, or current GPU capability is claimed.
 
-LeRobot 0.6.0 is selectable package support with an accepted optional public
-image. The resolver uses the additive `0.6.0-d6-extras-20260912` tag and exact
+LeRobot 0.6.0 is selectable package support with a historical optional public
+image pin. Its version manifest records the additive `0.6.0-d6-extras-20260912` tag and exact
 digest recorded in `lerobot_version_manifest.json`; the `0.6.0` tag is only a
 compatibility alias for those same bytes. The rebuilt image passed the standard
 publication gates plus the checked-in Blackwell validator and real
 `DiffusionPolicy` construction on B200. This optional version does not replace
 0.5.1 as the current default or add a second `lerobot` row to the default public
 release plan.
+
+Automatic public-image selection currently rejects both versions under
+LeRobot's tool-level quarantine. Optional 0.6.0 requires independent current
+byte and real ACT train/eval qualification before version-scoped consumption
+can be restored. Its Dockerfile now removes the exact reviewed inert
+scikit-image recipe containing a historical token in the installing layer,
+preserving executable behavior and recording the correction. Pip caches are
+disabled so the original dependency archive is not retained in the image.
+This source repair does not accept a new image or lift either version's
+quarantine.
 
 A fresh generic 0.5.1 rebuild subsequently failed its independent installed
 dependency and native default camera-decoder checks. Its narrow CPU ACT
@@ -188,7 +208,7 @@ public release row or change the default.
 The four-wave [LeRobot transfer experiment](guides/lerobot-transfer.md) selects
 that optional 0.6.0 image by digest and stages its adapters from the checkout.
 It uses the image's non-root runtime user and baked SkyPilot prerequisites;
-no new image publication is required for the experiment.
+the exact selected bytes still require current operator qualification.
 
 SAM 3.1 has a [public GHCR development image](https://github.com/orgs/nebius/packages/container/package/nebius-physical-ai%2Fnpa-sam3).
 Its immutable tag is `dev-f287041cffa5a703270413e1746348dccb8e7591`;

@@ -374,6 +374,10 @@ def _genesis_serverless_train_teacher(
         _fail(
             "Genesis train-teacher --runtime serverless requires --project-id or a configured project."
         )
+    try:
+        selected_image = image or container_image_for_tool("genesis")
+    except ValueError as exc:
+        _fail(str(exc))
     name = job_name or _serverless_job_name(proj_alias, wb_name, "genesis")
     out = output_path.rstrip("/") + "/"
     try:
@@ -395,10 +399,6 @@ def _genesis_serverless_train_teacher(
     merged_env = dict(env)
     merged_env.update(extra_env)
     env, extra_env = split_serverless_env(merged_env)
-    try:
-        selected_image = image or container_image_for_tool("genesis")
-    except ValueError as exc:
-        _fail(str(exc))
     try:
         selected_image = _pin_serverless_image(selected_image)
     except Exception as exc:  # noqa: BLE001 - immutable image is a launch gate

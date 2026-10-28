@@ -560,13 +560,13 @@
     },
     {
       "name": "hydra-core",
-      "version": "1.3.7",
-      "filename": "hydra_core-1.3.7-py3-none-any.whl",
-      "url": "https://files.pythonhosted.org/packages/25/0c/21890c10cc94da917c8e47efc1c55cd3e56a1d25ab5947bdd35abaf9fdc1/hydra_core-1.3.7-py3-none-any.whl",
-      "sha256": "83606c4a05c770f1e026e0489875f28989829d151799eabd8cfa8cbe82164515",
-      "size_bytes": 168790,
+      "version": "1.3.8",
+      "filename": "hydra_core-1.3.8-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/13/69/8e5cf7ad847538fc180fbd06e8442b8bede53ee4852458a16e24231395e9/hydra_core-1.3.8-py3-none-any.whl",
+      "sha256": "d5f184c291691cba835c7f04bc4e36270ad88b1d7e394a3712f5af084c30b394",
+      "size_bytes": 168949,
       "license_expression": "MIT",
-      "metadata_source": "https://pypi.org/pypi/hydra-core/1.3.7/json"
+      "metadata_source": "https://pypi.org/pypi/hydra-core/1.3.8/json"
     },
     {
       "name": "idna",

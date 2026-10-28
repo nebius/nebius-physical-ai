@@ -138,6 +138,12 @@ resources:
     cloud: kubernetes
     cpus: 4
     memory: 16Gi
+  adapter:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+    # Keep source-overlay stages on the supported Python and media runtime.
+    image: tool://rerun-viewer
   caption:
     cloud: kubernetes
     cpus: 4
@@ -165,7 +171,7 @@ states:
   generate-configs:
     description: Sample configuration-driven appearance prompts for each variant.
     needs: [prepare-input]
-    resources: cpu
+    resources: adapter
     run:
       argv:
         - python3
@@ -192,7 +198,7 @@ states:
     description: Understand and caption decoded frames from the selected source video.
     needs: [generate-configs]
     toolRef: workbench.token_factory.caption
-    resources: cpu
+    resources: caption
     inputs:
       - uri: "{{config.images_uri}}"
         schema: npa.data_factory.frames.v1
@@ -248,7 +254,7 @@ states:
     description: Fail closed to loop_back on failed checks, incomplete reports, or missing decisions.
     writesDecision: true
     needs: [evaluate]
-    resources: cpu
+    resources: adapter
     run:
       shell: >-
         python3 -c "from npa.workflows.data_factory_stages import grade_gate;
@@ -260,7 +266,7 @@ states:
   quality-disposition:
     description: Persist a strict accepted or rejected disposition from the final evaluator report.
     needs: [refinement]
-    resources: cpu
+    resources: adapter
     run:
       argv:
         - python3
@@ -295,7 +301,7 @@ states:
     description: Route only from the durable quality disposition after evidence visualization.
     writesDecision: true
     needs: [visualize-quality-evidence]
-    resources: cpu
+    resources: adapter
     run:
       argv:
         - python3
@@ -317,7 +323,7 @@ states:
   require-accepted-quality:
     description: Revalidate the durable accepted disposition before annotation.
     needs: [quality-route]
-    resources: cpu
+    resources: adapter
     run:
       argv:
         - python3
@@ -331,7 +337,7 @@ states:
   reject-quality:
     description: Terminate only after rejected Rerun evidence is durable.
     needs: [quality-route]
-    resources: cpu
+    resources: adapter
     run:
       argv:
         - python3
@@ -399,7 +405,7 @@ states:
   finalize:
     description: Verify and aggregate genuine Cosmos 3, evaluator, curator, FiftyOne, and Rerun evidence.
     needs: [visualize]
-    resources: cpu
+    resources: adapter
     run:
       argv:
         - python3

@@ -34,8 +34,7 @@ def _fake_installed_venv(
     *,
     version: str = "0.12.2",
     kubernetes_version: str = "30.1.0",
-    fastapi_version: str = "0.141.1",
-    fastapi_prefix_compatible: bool = True,
+    api_compatible: bool = True,
 ) -> Path:
     bin_dir = path / "bin"
     # inspect_venv probes the venv python for `import sky` and the kubernetes
@@ -45,8 +44,7 @@ def _fake_installed_venv(
         "#!/bin/sh\n"
         'case "$2" in\n'
         f"  *kubernetes*) printf '{kubernetes_version}\\n' ;;\n"
-        f"  *fastapi.__version__*) printf '{fastapi_version}\\n' ;;\n"
-        f"  *FastAPI\\(prefix=*) test '{str(fastapi_prefix_compatible).lower()}' = true || exit 1 ;;\n"
+        f"  *FastAPI*) exit {0 if api_compatible else 1} ;;\n"
         "esac\n"
         "exit 0\n",
     )
@@ -298,13 +296,16 @@ def _write_synthetic_wheel(
     name: str,
     version: str,
     files: dict[str, str],
+    requires: tuple[str, ...] = (),
 ) -> Path:
     """Create a valid pure-Python test wheel, never actual vendor software."""
     metadata = f"{name}-{version}.dist-info"
     members = {path: content.encode() for path, content in files.items()}
     members[f"{metadata}/METADATA"] = (
         f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n"
-        "Summary: Synthetic bootstrap installation test fixture\n\n"
+        "Summary: Synthetic bootstrap installation test fixture\n"
+        + "".join(f"Requires-Dist: {requirement}\n" for requirement in requires)
+        + "\n"
     ).encode()
     members[f"{metadata}/WHEEL"] = (
         "Wheel-Version: 1.0\nGenerator: npa-test-fixture\n"
@@ -361,6 +362,19 @@ def offline_bootstrap_wheels(tmp_path, monkeypatch):
             "sky/cli.py": "def main():\n    print('SkyPilot 0.12.2')\n",
             "fake_skypilot-0.12.2.dist-info/entry_points.txt": "[console_scripts]\nsky = sky.cli:main\n",
         },
+        requires=("fastapi>=0.142.4",),
+    )
+    wheels["fastapi"] = _write_synthetic_wheel(
+        directory,
+        "fastapi",
+        "0.142.4",
+        {
+            "fastapi/__init__.py": (
+                "class FastAPI:\n"
+                "    def __init__(self, *, prefix, debug):\n"
+                "        self.prefix = prefix\n"
+            ),
+        },
     )
     return wheels
 
@@ -376,13 +390,14 @@ def _assert_bootstrap_distribution_metadata(venv_path: Path, marker_path: Path) 
             str(state.python_bin),
             "-c",
             "import importlib.metadata as m; "
-            "print(m.version('fake-skypilot'), m.version('click'), m.version('kubernetes'), m.version('fastapi'))",
+            "print(m.version('fake-skypilot'), m.version('click'), "
+            "m.version('kubernetes'), m.version('fastapi'))",
         ],
         check=True,
         capture_output=True,
         text=True,
     )
-    assert installed.stdout.strip() == "0.12.2 8.1.8 30.1.0 0.141.1"
+    assert installed.stdout.strip() == "0.12.2 8.1.8 30.1.0 0.142.4"
     marker = json.loads(marker_path.read_text())
     assert marker["version"] == "0.12.2" and marker["kubernetes_client"] == "30.1.0"
     assert marker["fastapi_server"] == "0.141.1"
@@ -455,6 +470,24 @@ def test_skypilot_bootstrap_refuses_unavailable_offline_dependency(
     assert f"No matching distribution found for {missing_package}" in message
     assert "Retrying" not in message
     assert "https://" not in message
+    assert not target.exists()
+
+
+def test_bootstrap_refuses_unavailable_offline_fastapi(
+    tmp_path: Path, offline_bootstrap_wheels: dict[str, Path]
+) -> None:
+    offline_bootstrap_wheels["fastapi"].unlink()
+    target = tmp_path / "sky-venv"
+    with pytest.raises(skypilot_cli.SkyPilotBootstrapError) as failure:
+        skypilot_cli.bootstrap_skypilot(
+            venv_path=target,
+            python_bin=sys.executable,
+            package_spec=os.fspath(offline_bootstrap_wheels["sky"]),
+        )
+    message = str(failure.value)
+    assert "pip failed while installing" in message
+    assert "fastapi" in message
+    assert "Retrying" not in message and "Looking in indexes" not in message
     assert not target.exists()
 
 
@@ -978,28 +1011,66 @@ def test_skypilot_bootstrap_repairs_a_reused_venv_with_a_broken_client(
     assert (venv / "bin" / "sky").read_bytes() == original_bytes
 
 
-def test_skypilot_bootstrap_repairs_a_reused_venv_with_broken_fastapi(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+def test_bootstrap_repairs_a_venv_whose_api_constructor_is_incompatible(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    venv = _fake_installed_venv(
-        tmp_path / "sky-venv",
-        fastapi_version="0.142.0",
-        fastapi_prefix_compatible=False,
-    )
+    venv = _fake_installed_venv(tmp_path / "sky-venv", api_compatible=False)
+    assert skypilot_cli.inspect_venv(venv).installed
+    installed = []
 
-    def fake_create(path: Path, _python: object) -> None:
+    def create(path: Path, _python: object) -> None:
         _fake_installed_venv(path)
 
-    monkeypatch.setattr(skypilot_cli, "_create_venv", fake_create)
+    monkeypatch.setattr(skypilot_cli, "_create_venv", create)
     monkeypatch.setattr(skypilot_cli, "_ensure_pip", lambda _state: None)
-    monkeypatch.setattr(skypilot_cli, "_install_package", lambda _state, _spec: None)
-
+    monkeypatch.setattr(
+        skypilot_cli,
+        "_install_package",
+        lambda state, _spec: installed.append(state.path),
+    )
     result = runner.invoke(app, ["skypilot", "bootstrap", "--path", str(venv)])
 
     assert result.exit_code == 0, result.output
-    state = skypilot_cli.inspect_venv(venv)
-    assert state.fastapi_version == "0.141.1" and state.fastapi_compatible
+    assert len(installed) == 1 and installed[0] != venv
+    assert skypilot_cli._api_application_compatible(venv / "bin/python")
+    marker = json.loads((venv / skypilot_cli.MARKER_FILE).read_text())
+    assert marker["reused_existing_venv"] is False
+
+
+def test_bootstrap_preserves_old_runtime_when_staged_api_constructor_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    venv = _fake_installed_venv(tmp_path / "sky-venv", api_compatible=False)
+    original = (venv / "bin/python").read_bytes()
+
+    def create(path: Path, _python: object) -> None:
+        _fake_installed_venv(path, api_compatible=False)
+
+    monkeypatch.setattr(skypilot_cli, "_create_venv", create)
+    monkeypatch.setattr(skypilot_cli, "_ensure_pip", lambda _state: None)
+    monkeypatch.setattr(skypilot_cli, "_install_package", lambda _state, _spec: None)
+    result = runner.invoke(app, ["skypilot", "bootstrap", "--path", str(venv)])
+
+    assert result.exit_code == 1
+    message = " ".join(result.output.split())
+    assert "FastAPI cannot construct" in message
+    assert "previous runtime was preserved" in message
+    assert (venv / "bin/python").read_bytes() == original
+
+
+def test_bootstrap_constraints_exclude_the_fastapi_constructor_break() -> None:
+    from packaging.requirements import Requirement
+
+    requirements = [
+        Requirement(line)
+        for line in skypilot_cli.CONSTRAINTS_FILE.read_text().splitlines()
+        if line and not line.startswith("#")
+    ]
+    fastapi = next(item for item in requirements if item.name == "fastapi")
+    assert "0.142.4" in fastapi.specifier
+    assert "0.144.0" in fastapi.specifier
+    assert "0.145.0" not in fastapi.specifier
+    assert "0.161.1" not in fastapi.specifier
 
 
 def test_skypilot_uninstall_removes_venv_and_clears_saved_bin(tmp_path: Path) -> None:

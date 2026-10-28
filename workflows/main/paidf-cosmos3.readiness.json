@@ -1,14 +1,15 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "ee7893ba55f44049cb88701111d80e091661cd3e33754a281e144e4feb4333b7",
+  "workflow_sha256": "93ce3a1c0d2270b2c965e3073c6566e91dd36583bc39ce46e81bf89cc066a032",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "Schema validation and accepted/rejected plans passed on September 17, 2026. Custom-profile and native CFG-normalization forwarding into the real sampler, plus rejection of invalid config overrides, have regression coverage. The accepted plan ends at finalize; the rejected plan ends at reject-quality.",
+      "reason": "Schema validation and accepted/rejected plans passed on October 23, 2026, including the count-only twelve-variant override. Render regression coverage verifies that inline CPU adapters and captioning select the supported pinned CPU runtime while generation, evaluator, Cosmos Curator and FiftyOne retain their component images. Custom-profile and native CFG-normalization forwarding, and invalid-config rejection, remain covered. The accepted plan ends at finalize; the rejected plan ends at reject-quality.",
       "evidence": [
         "npa workbench workflow validate-spec workflows/main/paidf-cosmos3.yaml --json",
         "npa workbench workflow plan-spec workflows/main/paidf-cosmos3.yaml --run-id paidf-quality-contract --assume-decision loop_back --json",
-        "npa workbench workflow plan-spec workflows/main/paidf-cosmos3.yaml --run-id paidf-quality-contract --assume-decision promote_checkpoint --json"
+        "npa workbench workflow plan-spec workflows/main/paidf-cosmos3.yaml --run-id paidf-quality-contract --assume-decision promote_checkpoint --json",
+        "npa/tests/orchestration/npa_workflow/test_paidf_cosmos3_workflow.py"
       ]
     },
     "task_fidelity": {
@@ -45,16 +46,17 @@
     },
     "source_image": {
       "status": "unverified",
-      "reason": "This workflow stages the submitted NPA source and selects it over pinned workbench images. Each submission must verify the staged revision, image pullability, model access and pinned Cosmos runtime.",
+      "reason": "This workflow stages the submitted NPA source and selects it over pinned workbench images. Inline CPU adapters and captioning use the existing pinned Rerun workbench image with a supported Python runtime; component toolRefs retain their own images. Each submission must verify the staged revision, image pullability, model access and pinned Cosmos runtime.",
       "evidence": [
         "workflows/guides/paidf-cosmos3.md#validation"
       ]
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "The manipulation recipes executed on RTX PRO 6000 Blackwell and B200, but their reviewed candidates were rejected. Every future target must independently prove project access, Kubernetes readiness, supported GPU discovery, image pullability and sufficient per-node resources; runtime execution alone does not qualify generated data.",
+      "reason": "A fresh October 24, 2026 starter run completed all 15 stages on one RTX PRO 6000 Blackwell GPU, and its independent default-starter media, guardrail, provenance and Rerun audit passed. The count-only twelve-variant override generated all twelve videos in both default refinement passes; the final evaluator accepted eleven, while the remaining clip failed the required appearance checks. No accepted twelve-variant dataset is claimed. The manipulation recipes also executed on RTX PRO 6000 Blackwell and B200, but their reviewed candidates were rejected. Every future target must independently prove project access, Kubernetes readiness, supported GPU discovery, image pullability and sufficient per-node resources; runtime execution alone does not qualify generated data.",
       "evidence": [
-        "workflows/guides/paidf-cosmos3.md#validation"
+        "workflows/guides/paidf-cosmos3.md#validation",
+        "docs/workbench/guides/paidf-cosmos3.md#live-validation-scope"
       ]
     }
   }

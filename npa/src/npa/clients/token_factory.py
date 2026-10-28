@@ -114,6 +114,10 @@ _CHAT_PROFILES = {
         use_vlm_response_format=False,
         require_exact_model=True,
     ),
+    "Qwen/Qwen3.8-27B": TokenFactoryChatProfile(
+        chat_template_kwargs=(("enable_thinking", False),),
+        require_exact_model=True,
+    ),
     "google/gemma-3-27b-it": TokenFactoryChatProfile(require_exact_model=True),
     "openbmb/MiniCPM-V-4_5": TokenFactoryChatProfile(require_exact_model=True),
     "moonshotai/Kimi-K3": TokenFactoryChatProfile(

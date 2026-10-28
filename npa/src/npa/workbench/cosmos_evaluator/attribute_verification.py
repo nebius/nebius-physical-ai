@@ -466,8 +466,9 @@ def answer_question(
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": formatted},
+                    # MiniMax can miss valid pixels when the instruction comes first.
                     {"type": "image_url", "image_url": {"url": data_url}},
+                    {"type": "text", "text": formatted},
                 ],
             },
         ],

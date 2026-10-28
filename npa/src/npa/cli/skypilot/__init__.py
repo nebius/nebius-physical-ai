@@ -928,7 +928,11 @@ def bootstrap_skypilot(
     with _BootstrapLock(lock_path):
         _recover_bootstrap_exchange(path)
         state = inspect_venv(path)
-        if state.installed and state.kubernetes_compatible and state.fastapi_compatible:
+        if (
+            state.installed
+            and state.kubernetes_compatible
+            and _api_application_compatible(state.python_bin)
+        ):
             _write_marker(
                 state,
                 package_spec=package_spec,
@@ -1203,10 +1207,8 @@ def _validate_staged_runtime(state: VenvState, *, expected_version: str) -> None
         problems.append("kubernetes client import/version check failed")
     elif not state.kubernetes_compatible:
         problems.append(kubernetes_client_remedy(state.kubernetes_version))
-    if not state.fastapi_version:
-        problems.append("FastAPI import/version check failed")
-    elif not state.fastapi_compatible:
-        problems.append(fastapi_server_remedy(state.fastapi_version))
+    if not _api_application_compatible(state.python_bin):
+        problems.append("FastAPI cannot construct the SkyPilot API application")
     if problems:
         raise SkyPilotBootstrapError(
             f"Staged SkyPilot runtime self-check failed in {state.path}: "
@@ -1571,6 +1573,26 @@ def _sky_version(sky_bin: Path) -> str | None:
 
 def _sky_importable(python_bin: Path) -> bool:
     result = _run_no_raise([str(python_bin), "-c", "import sky"])
+    return result.returncode == 0
+
+
+def _api_application_compatible(python_bin: Path) -> bool:
+    """Probe the application constructor used by the pinned SkyPilot server.
+
+    Args:
+        python_bin: Interpreter in the isolated SkyPilot environment.
+    Returns:
+        Whether FastAPI accepts SkyPilot 0.12.2's constructor arguments.
+    Raises:
+        None.
+    """
+    result = _run_no_raise(
+        [
+            str(python_bin),
+            "-c",
+            "from fastapi import FastAPI; FastAPI(prefix='/api/v1', debug=True)",
+        ]
+    )
     return result.returncode == 0
 
 

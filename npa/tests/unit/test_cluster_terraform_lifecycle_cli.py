@@ -42,6 +42,36 @@ def test_cluster_terraform_wires_operator_filesystem_csi_repository() -> None:
     )
 
 
+def test_direct_terraform_forwards_the_optional_rtx_driver_profile() -> None:
+    import hcl2
+    from hcl2.utils import SerializationOptions
+
+    cluster_dir = Path(__file__).resolve().parents[3] / "deploy" / "cluster"
+    options = SerializationOptions(
+        with_comments=False, strip_string_quotes=True, explicit_blocks=False
+    )
+    variables = hcl2.loads(
+        (cluster_dir / "variables.tf").read_text(), serialization_options=options
+    )["variable"]
+    profile = next(
+        (
+            item["gpu_operator_rtx_driver_profile"]
+            for item in variables
+            if "gpu_operator_rtx_driver_profile" in item
+        ),
+        None,
+    )
+    assert profile is not None, "Direct root omits the RTX driver profile input"
+    assert profile["default"] is None
+    modules = hcl2.loads(
+        (cluster_dir / "main.tf").read_text(), serialization_options=options
+    )["module"]
+    training = next(item["k8s_training"] for item in modules)
+    assert training["gpu_operator_rtx_driver_profile"] == (
+        "${var.gpu_operator_rtx_driver_profile}"
+    )
+
+
 runner = CliRunner()
 _REAL_WHOLE_PATH_PREFLIGHT = tf_mod._preflight_whole_path_capacity
 
@@ -237,6 +267,98 @@ def _find_call(stream_calls: list[list[str]], *prefix: str) -> list[str] | None:
         if call[: len(prefix)] == list(prefix):
             return call
     return None
+
+
+def _capture_legacy_apply(monkeypatch, directory, flags):
+    directory.mkdir()
+    (directory / "terraform.tfstate").write_text("{}")
+    (directory / "terraform.tfvars").write_text(
+        'parent_id = "project-test"\n'
+        'tenant_id = "tenant-test"\n'
+        'region = "eu-test1"\n'
+        'subnet_id = "subnet-test"\n'
+        'cluster_name = "rtx-test"\n'
+    )
+    calls = []
+
+    def stream(argv, **_kwargs):
+        calls.append(argv)
+        if argv[:2] == ["terraform", "apply"]:
+            raise RuntimeError("mocked apply boundary reached")
+        return _completed()
+
+    monkeypatch.setattr(tf_mod, "_require_bin", lambda name: name)
+    monkeypatch.setattr(tf_mod, "_terraform_env", lambda *_args: {})
+    monkeypatch.setattr(tf_mod, "_preflight_terraform_version", lambda *_args: None)
+    monkeypatch.setattr(tf_mod, "_guard_unmanaged_duplicate", lambda *_args: None)
+    monkeypatch.setattr(tf_mod, "_preflight_filestore_quota", lambda *_args: None)
+    monkeypatch.setattr(tf_mod, "_preflight_gpu_capacity", lambda *_args: None)
+    monkeypatch.setattr(tf_mod, "_run_stream", stream)
+    monkeypatch.setattr(tf_mod, "_run_capture", lambda *_args, **_kwargs: _completed())
+    result = runner.invoke(app, ["up", "--terraform-dir", str(directory), *flags])
+    apply = _find_call(calls, "terraform", "apply", "-auto-approve")
+    assert apply is not None, (result.output, repr(result.exception), calls)
+    assert "mocked apply boundary reached" in result.output
+    return apply
+
+
+@pytest.mark.parametrize("platform", ["gpu-rtx6000", "gpu-rtx6000-a"])
+@pytest.mark.parametrize("preset", ["1gpu-24vcpu-218gb", "8gpu-192vcpu-1744gb"])
+def test_legacy_rtx_provision_carries_exact_profile_to_terraform(
+    monkeypatch, tmp_path, platform, preset
+):
+    apply = _capture_legacy_apply(
+        monkeypatch,
+        tmp_path / "legacy",
+        [
+            "--gpu-workload-profile",
+            "rtx-rendering",
+            "--gpu-platform",
+            platform,
+            "--gpu-preset",
+            preset,
+            # RTX graphics validation now rejects the quarantined tool default
+            # before Terraform. This legacy-argument test needs an explicit
+            # operator-controlled image to reach its Terraform boundary.
+            "--gpu-graphics-smoke-image",
+            "registry.example/graphics:operator",
+        ],
+    )
+    profiles = [
+        item.partition("=")[2]
+        for item in apply
+        if item.startswith("gpu_operator_rtx_driver_profile=")
+    ]
+    assert len(profiles) == 1, "Legacy apply dropped the explicit RTX driver profile"
+    assert json.loads(profiles[0]) == {"platform": platform, "preset": preset}
+
+
+def test_legacy_unprofiled_provision_keeps_operator_values_unset(monkeypatch, tmp_path):
+    apply = _capture_legacy_apply(monkeypatch, tmp_path / "legacy", [])
+    assert not any(
+        item.startswith("gpu_operator_rtx_driver_profile=") for item in apply
+    )
+
+
+def test_sky_smoke_rejects_unsupported_host_before_terraform(monkeypatch, tmp_path):
+    from npa.orchestration.skypilot import local_api
+
+    (tmp_path / "terraform.tfvars").write_text('parent_id = "project-test"\n')
+
+    def unsupported_host():
+        raise local_api.IsolatedApiError(
+            "SkyPilot smoke requires a Linux operator host"
+        )
+
+    monkeypatch.setattr(local_api, "_require_linux_host", unsupported_host)
+    monkeypatch.setattr(
+        tf_mod,
+        "_require_bin",
+        lambda _name: pytest.fail("unsupported host reached Terraform prerequisites"),
+    )
+    result = runner.invoke(app, ["up", "--terraform-dir", str(tmp_path), "--sky-smoke"])
+    assert result.exit_code != 0
+    assert "Linux operator host" in result.output
 
 
 def test_run_stream_capture_output_is_visible_and_retained(capsys) -> None:

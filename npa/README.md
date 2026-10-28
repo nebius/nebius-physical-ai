@@ -332,6 +332,9 @@ environments, and the separate SkyPilot environment.
 
 The cluster GPU smoke manages an owned SkyPilot API session through workload
 cleanup; see [SkyPilot setup](../docs/orchestration/skypilot-setup.md#verify).
+GPU submission also checks reviewed SkyPilot bridge labels after node replacement;
+native Ready/allocatable GPU capacity alone does not establish placement. See the
+same setup guide for the exact-context repair and supported workflow resume.
 The [PAIDF starter guide](../workflows/guides/paidf-cosmos3.md#audit-a-completed-default-starter-run)
 also provides a read-only live audit using the selected run URI, project, and
 saved pre-submission UTC timestamp. Its test settings are scoped to the audit
@@ -474,6 +477,13 @@ Choose a runtime supported by the selected tool:
 See [runtime modes](../docs/workbench/runtime-modes.md) for direct deploy,
 BYOVM, and serverless examples. A mode supported by one tool does not imply
 support in every other tool.
+
+Genesis teacher training and LeRobot training or profiling reject quarantined
+public images with an actionable `Error:` and exit code 1 before contacting the
+serverless job provider. Pass `--image <reviewed-image@sha256:digest>` to select
+a separately validated replacement. This does not change the public image
+acceptance policy. Isaac Lab can reconnect to an existing job without selecting
+a new image; creating a new job still enforces quarantine.
 
 <a id="config"></a>
 
