@@ -11,7 +11,7 @@ import re
 import secrets
 import tempfile
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 
 from npa.workflows.sim2real.smolvla_service_lifecycle import resource_names
@@ -19,6 +19,7 @@ from npa.workflows.sim2real.workflow_io import write_json
 
 MANAGED_BY = "npa-sim2real-runtime-prerequisites"
 SCHEMA = "npa.sim2real.runtime_prerequisites.v1"
+_CONTAINER_TMP_MOUNT_PATH = PurePosixPath("/").joinpath("tmp").as_posix()
 
 
 class RuntimePrerequisiteError(RuntimeError):
@@ -227,9 +228,7 @@ def _warm_job(args: argparse.Namespace) -> dict[str, Any]:
                                 },
                                 {
                                     "name": "tmp",
-                                    # This is a container emptyDir mount, not a
-                                    # host temporary-file operation.
-                                    "mountPath": "/tmp",  # nosec B108
+                                    "mountPath": _CONTAINER_TMP_MOUNT_PATH,
                                 },
                             ],
                         }

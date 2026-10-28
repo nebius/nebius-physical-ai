@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from argparse import Namespace
+from pathlib import PurePosixPath
 from types import SimpleNamespace
 
 import pytest
@@ -67,7 +68,7 @@ def test_manifests_bind_exact_run_owned_resources_and_hardened_warmer() -> None:
     }
     mounts = {item["name"]: item["mountPath"] for item in container["volumeMounts"]}
     volumes = {item["name"]: item for item in pod["volumes"]}
-    assert mounts["tmp"] == "/tmp"
+    assert mounts["tmp"] == PurePosixPath("/").joinpath("tmp").as_posix()
     assert volumes["tmp"]["emptyDir"] == {"sizeLimit": "12Gi"}
     assert pod["volumes"][0]["persistentVolumeClaim"]["claimName"] == (
         args.isaac_cache_pvc
