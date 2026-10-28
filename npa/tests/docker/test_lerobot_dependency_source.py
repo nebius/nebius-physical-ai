@@ -259,6 +259,10 @@ def test_shared_python_bootstraps_bind_the_same_exact_debian_artifacts():
     assert len(common_pins) == len(lerobot_pins) == 6
     assert set(common_pins) == set(lerobot_pins)
     assert all("_3.12.16-1+jammy1_" in name for name, _ in common_pins)
+    assert (
+        'test "$(dpkg-query -W -f=\'${Version}\' python3.12)" = "3.12.16-1+jammy1"'
+    ) in lerobot
+    assert "Python 3.12.15" not in lerobot
     assert "sha256sum --check --strict" in common
     assert "sha256sum --check --status" in lerobot
 
