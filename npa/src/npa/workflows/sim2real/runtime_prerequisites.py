@@ -109,6 +109,10 @@ def build_manifests(args: argparse.Namespace) -> dict[str, dict[str, Any]]:
             )
     if not re.fullmatch(r"[^@\s]+@sha256:[0-9a-f]{64}", args.isaac_image):
         raise RuntimePrerequisiteError("Isaac image must be registry digest-pinned")
+    if args.storage_access_mode not in {"ReadWriteOnce", "ReadWriteMany"}:
+        raise RuntimePrerequisiteError(
+            "storage access mode must be ReadWriteOnce or ReadWriteMany"
+        )
     manifests: dict[str, dict[str, Any]] = {}
     for purpose, size in (
         ("isaac_cache", args.isaac_cache_size),
@@ -120,7 +124,7 @@ def build_manifests(args: argparse.Namespace) -> dict[str, dict[str, Any]]:
             "kind": "PersistentVolumeClaim",
             "metadata": _metadata(name, args.namespace, args.run_id),
             "spec": {
-                "accessModes": ["ReadWriteMany"],
+                "accessModes": [args.storage_access_mode],
                 "storageClassName": args.storage_class,
                 "resources": {"requests": {"storage": size}},
             },
@@ -608,6 +612,7 @@ def build_parser() -> argparse.ArgumentParser:
     for name in resource_identities("placeholder"):
         parser.add_argument(f"--{name.replace('_', '-')}", required=True)
     parser.add_argument("--storage-class", default="csi-mounted-fs-path-sc")
+    parser.add_argument("--storage-access-mode", default="ReadWriteOnce")
     parser.add_argument("--isaac-cache-size", default="40Gi")
     parser.add_argument("--policy-cache-size", default="100Gi")
     parser.add_argument("--warm-timeout-seconds", type=float, default=3600.0)

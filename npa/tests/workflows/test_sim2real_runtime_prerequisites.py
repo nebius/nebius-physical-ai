@@ -26,6 +26,7 @@ def _args(**overrides) -> Namespace:
         "isaac_image": "registry.example/npa-isaac@sha256:" + "a" * 64,
         **resource_identities(run_id),
         "storage_class": "csi-mounted-fs-path-sc",
+        "storage_access_mode": "ReadWriteOnce",
         "isaac_cache_size": "40Gi",
         "policy_cache_size": "100Gi",
         "warm_timeout_seconds": 3600.0,
@@ -73,6 +74,18 @@ def test_manifests_bind_exact_run_owned_resources_and_hardened_warmer() -> None:
     assert pod["volumes"][0]["persistentVolumeClaim"]["claimName"] == (
         args.isaac_cache_pvc
     )
+    assert manifests["isaac_cache_pvc"]["spec"]["accessModes"] == ["ReadWriteOnce"]
+
+
+def test_manifests_support_declared_multi_writer_storage() -> None:
+    manifests = build_manifests(_args(storage_access_mode="ReadWriteMany"))
+
+    assert manifests["policy_cache_pvc"]["spec"]["accessModes"] == ["ReadWriteMany"]
+
+
+def test_manifests_reject_unknown_storage_access_mode() -> None:
+    with pytest.raises(RuntimePrerequisiteError, match="storage access mode"):
+        build_manifests(_args(storage_access_mode="ReadOnlyMany"))
 
 
 def test_controller_roles_are_limited_to_their_checkpoint_role() -> None:
@@ -136,7 +149,7 @@ def test_owned_pvc_and_rbac_drift_are_rejected() -> None:
     pvc = manifests["policy_cache_pvc"]
     drifted_pvc = {
         "spec": {
-            "accessModes": ["ReadWriteOnce"],
+            "accessModes": ["ReadWriteMany"],
             "storageClassName": pvc["spec"]["storageClassName"],
             "resources": pvc["spec"]["resources"],
         }

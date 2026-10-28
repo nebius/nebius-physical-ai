@@ -34,7 +34,8 @@ config:
   isaac_cache_pvc: "npa-smolvla-{{run.id}}-isaac-cache"
   policy_cache_pvc: "npa-smolvla-{{run.id}}-policy-cache"
   isaac_warm_job: "npa-smolvla-{{run.id}}-isaac-warm"
-  runtime_storage_class: csi-mounted-fs-path-sc
+  runtime_storage_class: compute-csi-default-sc
+  runtime_storage_access_mode: ReadWriteOnce
   isaac_cache_size: 40Gi
   policy_cache_size: 100Gi
   isaac_cache_warm_timeout_seconds: "3600"

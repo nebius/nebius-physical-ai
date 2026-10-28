@@ -10,6 +10,7 @@ from npa.orchestration.npa_workflow.skypilot_render import (
     render_skypilot_yaml,
 )
 from npa.orchestration.npa_workflow.spec import load_spec
+from npa.workflows.sim2real.runtime_prerequisites import resource_identities
 
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -146,6 +147,29 @@ def test_reference_defaults_to_the_qualified_rtx_route() -> None:
     assert config["isaac_gpu_type"] == "RTXPRO6000"
     assert config["service_gpu_node_selector_value"] == "RTXPRO6000"
     assert config["service_hardware_topology"] == "single-rtxpro6000"
+
+
+def test_clean_start_binds_supported_storage_and_long_run_identities() -> None:
+    spec = load_spec(SPEC)
+    run_id = "customer-sim2real-adaptation-with-a-deliberately-long-run-identity"
+    steps = {step.state: step for step in build_plan(spec, run_id=run_id).steps}
+    prerequisite = steps["provision-runtime-prerequisites"].argv
+    expected = resource_identities(run_id)
+
+    assert _value(prerequisite, "--storage-class") == "compute-csi-default-sc"
+    assert _value(prerequisite, "--storage-access-mode") == "ReadWriteOnce"
+    assert _value(prerequisite, "--isaac-cache-pvc") == expected["isaac_cache_pvc"]
+    assert _value(prerequisite, "--auth-secret") == expected["auth_secret"]
+    assert (
+        _value(prerequisite, "--adapted-service-account")
+        == expected["adapted_service_account"]
+    )
+    assert (
+        steps["start-adapted-service"].resources_profile["kubernetes"]["pod_config"][
+            "spec"
+        ]["serviceAccountName"]
+        == expected["adapted_service_account"]
+    )
 
 
 def test_reference_renders_distinct_consumer_and_baked_image_sources() -> None:

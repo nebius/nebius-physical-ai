@@ -338,6 +338,8 @@ def _sim2real_runtime_prerequisite_argv(action: str) -> list[str]:
         "{{config.isaac_warm_job}}",
         "--storage-class",
         "{{config.runtime_storage_class}}",
+        "--storage-access-mode",
+        "{{config.runtime_storage_access_mode}}",
         "--isaac-cache-size",
         "{{config.isaac_cache_size}}",
         "--policy-cache-size",

@@ -417,10 +417,33 @@ def _make_context(spec: NpaWorkflowSpec, *, run_id: str) -> RunContext:
             continue
         for key, value in config_defaults_for_tool(state.tool_ref).items():
             config_with_tool_defaults.setdefault(key, value)
+    _bind_workflow_owned_runtime_identities(config_with_tool_defaults, run_id)
     config = _resolve_config_strings(config_with_tool_defaults, run=run)
     if config.get("prefix"):
         run["prefix"] = resolve_tokens(str(config["prefix"]), config=config, run=run)
     return RunContext(config=config, run=run)
+
+
+def _bind_workflow_owned_runtime_identities(
+    config: dict[str, Any], run_id: str
+) -> None:
+    """Bind collision-safe prerequisite names before config token resolution."""
+
+    if str(config.get("runtime_prerequisites_mode") or "") != "workflow_owned":
+        return
+    from npa.workflows.sim2real.runtime_prerequisites import resource_identities
+
+    identities = resource_identities(run_id)
+    config_keys = {
+        "auth_secret": "service_auth_secret",
+        "base_service_account": "base_service_account",
+        "adapted_service_account": "adapted_service_account",
+        "isaac_cache_pvc": "isaac_cache_pvc",
+        "policy_cache_pvc": "policy_cache_pvc",
+        "isaac_warm_job": "isaac_warm_job",
+    }
+    for identity_key, config_key in config_keys.items():
+        config[config_key] = identities[identity_key]
 
 
 def _resolve_config_strings(

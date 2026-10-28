@@ -476,6 +476,16 @@ prior native chunks, and the current fresh observation always contributes
 action zero. `first_action` remains an explicit negative-baseline option; the
 two protocols must never be combined under one result label.
 
+The reference declares `runtime_storage_class: compute-csi-default-sc` and
+`runtime_storage_access_mode: ReadWriteOnce`. Each PVC has one active consumer:
+the Isaac warmer and evaluator use their cache sequentially, while the policy
+service alone mounts its checkpoint cache. A cluster with a qualified shared
+filesystem may override both values together and select `ReadWriteMany`; an
+unsupported access mode fails before creating a PVC. Long run IDs are mapped to
+the same collision-resistant Kubernetes identities in planning, rendering,
+prerequisite creation, resume, and cleanup rather than being truncated only in
+the runtime container.
+
 The clean-start lifecycle is implemented but has not yet passed a complete live
 run or interrupted-run resume. This reference is therefore not yet a supported
 turnkey default. The normal product
