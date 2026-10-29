@@ -1959,8 +1959,11 @@ Supply `WMH_API_KEY` through the existing `workflow submit --secret-env
 WMH_API_KEY` binding, alongside the pipeline's S3 and Token Factory secrets.
 Alternatively, `endpoint_key_file` or `WMH_API_KEY_FILE` may identify a private,
 owner-readable regular file **on the executing worker**. A VDI-local path is not
-implicitly mounted into cluster tasks. HTTPS certificate validation is required;
-redirects and insecure HTTP are rejected. Customers need endpoint access, not
+implicitly mounted into cluster tasks. The key file accepts a bare key or the
+operator tool's single `WMH_API_KEY=...`
+line without evaluating it as shell code. Permissions remain private (`0600`).
+HTTPS certificate validation is required; redirects and insecure HTTP are
+rejected. Customers need endpoint access, not
 permission to administer the serving cluster or access its model weights.
 
 `variant_parallelism` bounds simultaneous submitted/polled jobs; it does not

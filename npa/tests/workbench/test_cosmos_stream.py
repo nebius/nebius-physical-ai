@@ -255,6 +255,25 @@ def test_private_key_permissions_and_symlink(tmp_path):
         read_api_key(str(link), {})
 
 
+@pytest.mark.parametrize("prefix", ["", "WMH_API_KEY="])
+def test_private_key_file_accepts_raw_and_operator_delivery_format(tmp_path, prefix):
+    key = tmp_path / "key"
+    key.write_text(prefix + "synthetic-secret\n")
+    key.chmod(0o600)
+    assert read_api_key(str(key), {}) == "synthetic-secret"
+
+
+@pytest.mark.parametrize(
+    "value", ["WMH_API_KEY=", "WMH_API_KEY=first\nWMH_API_KEY=second"]
+)
+def test_operator_key_file_rejects_empty_or_multiple_credentials(tmp_path, value):
+    key = tmp_path / "key"
+    key.write_text(value)
+    key.chmod(0o600)
+    with pytest.raises(StreamError, match="required"):
+        read_api_key(str(key), {})
+
+
 def test_rate_limited_reads_wait_but_submissions_are_not_automatically_replayed(
     monkeypatch,
 ):

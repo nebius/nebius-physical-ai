@@ -42,6 +42,7 @@ def read_api_key(path: str, environ: Mapping[str, str]) -> str:
                 if info.st_uid != os.geteuid() or info.st_size > 512:
                     raise StreamError("Stream key file has invalid ownership or size")
                 key = stream.read().decode("utf-8").strip()
+                key = key.removeprefix("WMH_API_KEY=")
         except (OSError, UnicodeError):
             raise StreamError("Cannot read the private Stream key file") from None
     else:
