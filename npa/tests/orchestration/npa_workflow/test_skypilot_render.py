@@ -2725,7 +2725,9 @@ def test_default_npa_setup_has_optin_source_overlay() -> None:
     # A thin image's incomplete source must not fail before the explicitly
     # selected complete source is downloaded.
     assert (
-        'if ! command -v npa >/dev/null 2>&1 && { [ "$NPA_SRC_OVERLAY" != "1" ] '
+        "if { ! command -v npa >/dev/null 2>&1 || "
+        "! \"$npa_setup_python\" -c 'import npa.cli.main' >/dev/null 2>&1; } && { "
+        '[ "$NPA_SRC_OVERLAY" != "1" ] '
         '|| [ -z "$NPA_SRC_S3_URI" ]; }; then' in setup
     )
 
@@ -2775,6 +2777,9 @@ def test_default_npa_setup_uses_an_importable_baked_runtime_without_reinstalling
     }
 
     setup = default_npa_setup()
+    setup = setup.replace("/tmp/", str(tmp_path) + "/").replace(
+        "/usr/local/bin/npa", str(tmp_path / "npa-link")
+    )
     subprocess.run(["bash", "-c", setup], check=True, env=environment)
 
     shim = home / ".local" / "bin" / "npa"

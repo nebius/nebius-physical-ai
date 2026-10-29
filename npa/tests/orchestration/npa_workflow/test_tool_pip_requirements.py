@@ -367,18 +367,19 @@ def test_default_setup_records_thin_image_source_for_vendor_interpreter() -> Non
     assert setup.index(record) < setup.index("if ! command -v npa")
 
 
-def test_default_setup_rejects_python310_before_mutating_an_image() -> None:
-    """The package floor must fail clearly instead of a late pip resolution error."""
+def test_default_setup_prepares_supported_python_before_installing_npa() -> None:
+    """Old workers must select a supported runtime before dependency resolution."""
 
     from npa.orchestration.npa_workflow.skypilot_render import default_npa_setup
 
     setup = default_npa_setup()
 
     assert (
-        "NPA source requires Python >=3.11; image supplied no compatible control interpreter"
+        "NPA source requires Python >=3.11; supply a compatible control interpreter or uv"
         in setup
     )
     assert "for npa_candidate_python in python3.12 python3.11" in setup
+    assert 'uv venv --python 3.12 --seed "$npa_setup_env"' in setup
     assert setup.index("NPA source requires Python >=3.11") < setup.index(
         '"$npa_setup_python" -m pip --version'
     )

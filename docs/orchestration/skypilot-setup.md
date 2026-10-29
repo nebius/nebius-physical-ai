@@ -102,6 +102,16 @@ an incompatible FastAPI, rerun `npa skypilot bootstrap` after updating NPA;
 it prepares and checks a replacement while preserving the previous runtime on
 failure. Finish active runs using that environment before upgrading it.
 
+Worker source setup requires Python 3.11 or later. It prefers the image's
+declared NPA interpreter, then compatible `python3`, `python3.12`, or
+`python3.11` executables. If the worker supplies only an older Python, setup
+uses its available `uv` to create a separate Python 3.12 environment under
+`/tmp/npa-setup-venv.*`, with pip for subsequent tool setup. uv downloads Python
+when needed, so this fallback requires access to its Python distribution and
+package sources. Setup records the selected interpreter for the stage command.
+If uv or its downloads are unavailable, supply a worker image with a compatible
+NPA interpreter; setup stops before attempting the NPA source install.
+
 ## Point NPA At It
 
 Set `NPA_SKYPILOT_BIN` to the venv's `sky` executable:
