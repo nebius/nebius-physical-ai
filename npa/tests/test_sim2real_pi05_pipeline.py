@@ -2003,6 +2003,97 @@ def test_episode_failure_redacts_query_and_top_level_uri(monkeypatch) -> None:
     assert "private/location" not in json.dumps(result)
 
 
+def test_runtime_boundary_smoke_is_excluded_and_binds_applied_control(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    native = object()
+    reset_seeds = []
+    env = Namespace(
+        unwrapped=native, reset=lambda **kwargs: reset_seeds.append(kwargs["seed"])
+    )
+    client = Namespace(
+        metadata={"backend": "lerobot_smolvla"},
+        reset=lambda **_kwargs: {"reset": True},
+    )
+    monkeypatch.setattr(pi05_closed_loop, "_joint_bridge", lambda _: ([], [], 8, 0, 7))
+    monkeypatch.setattr(
+        pi05_closed_loop, "_settle_policy_reset", lambda *_: {"control_steps": 8}
+    )
+    monkeypatch.setattr(
+        pi05_closed_loop,
+        "_verified_initial_object_position",
+        lambda *_: np.asarray([0.4, 0.0, 0.03]),
+    )
+    monkeypatch.setattr(pi05_closed_loop, "_wrist_mount_receipt", lambda *_: None)
+
+    def context(*args, **_kwargs):
+        return {
+            "record": args[3],
+            "policy_backend": "lerobot_smolvla",
+        }
+
+    monkeypatch.setattr(pi05_closed_loop, "_episode_context", context)
+
+    def decision(context, decision):
+        record = context["record"]
+        proof = {
+            "command_application_time_s": 0.1,
+            "resulting_state_time_s": 0.2,
+            "physics_observation_status": "recorded",
+            "physics_trace_index": 0,
+        }
+        record["queries"].append(
+            {
+                "decision": decision,
+                "execution_status": "completed",
+                "action_receipt": {"shape": [15, 8], "sha256": "a" * 64},
+                "action_selection": {"applied_action": [0.0] * 8},
+                "controller_proofs": [proof],
+            }
+        )
+        record["physics_trace"].append({"simulator_time_s": 0.2})
+        frame = np.zeros((2, 2, 3), dtype=np.uint8)
+        record["_policy_exterior_frames"].append(frame)
+        record["_policy_wrist_frames"].append(frame)
+        return False
+
+    monkeypatch.setattr(pi05_closed_loop, "_decision_step", decision)
+    monkeypatch.setattr(
+        pi05_closed_loop,
+        "_policy_input_query_lineage",
+        lambda _query: {"input_identity": "real-boundary"},
+    )
+    monkeypatch.setattr(pi05_closed_loop, "_validate_query_lineage", lambda *_: None)
+    monkeypatch.setattr(
+        pi05_closed_loop, "_validate_action_selection_history", lambda *_: None
+    )
+    monkeypatch.setattr(
+        pi05_closed_loop,
+        "_physics_rows",
+        lambda _record: [(_record["physics_trace"][0], 0.2)],
+    )
+    args = Namespace(
+        seed=1000,
+        ablation_seed=2000,
+        smolvla_action_selection="uniform_temporal_ensemble",
+    )
+    protocol = {
+        "scenarios": [{"scene_seed": 3000}],
+        "object_width_m": 0.072,
+    }
+
+    receipt = pi05_closed_loop._runtime_boundary_smoke(
+        env, client, args, protocol, tmp_path
+    )
+
+    assert reset_seeds == [1000]
+    assert receipt["training_or_evaluation_row"] is False
+    assert receipt["excluded_from_task_metrics"] is True
+    assert receipt["input_lineage"]["input_identity"] == "real-boundary"
+    assert receipt["controller_proof"]["physics_observation_status"] == "recorded"
+    assert json.loads((tmp_path / "runtime-boundary-smoke.json").read_text()) == receipt
+
+
 def test_partial_episode_receipt_retains_query_without_raw_frames(
     tmp_path: Path,
 ) -> None:
@@ -3692,6 +3783,61 @@ def _rrd_episode() -> dict:
     }
 
 
+def _rrd_scale_episode(sample_count: int = 192) -> dict:
+    trace, queries = [], []
+    frame = np.zeros((1, 1, 3), dtype=np.uint8)
+    frames = [frame] * sample_count
+    for index in range(sample_count):
+        observation = (index + 1) / 15.0
+        command = observation + 1.0e-6
+        result = observation + 2.0e-6
+        trace.append(
+            {
+                "object_position_m": [0.5, 0.1, 0.03],
+                "object_speed_m_s": 0.0,
+                "target_xy_distance_m": 0.01,
+                "simulator_time_s": result,
+            }
+        )
+        queries.append(
+            {
+                "observation_time_s": observation,
+                "exterior_capture_time_s": observation - 4.0e-6,
+                "wrist_capture_time_s": observation - 3.0e-6,
+                "witness_capture_time_s": observation - 2.0e-6,
+                "release_witness_capture_time_s": observation - 1.0e-6,
+                "inference": {"wire_input": {"capture_age_s": 4.0e-6}},
+                "action_selection": {"applied_action": [0.0] * 8},
+                "controller_proofs": [
+                    {
+                        "command_application_time_s": command,
+                        "resulting_state_time_s": result,
+                        "physics_observation_status": "recorded",
+                        "physics_trace_index": index,
+                    }
+                ],
+            }
+        )
+    return {
+        "physics_trace": trace,
+        "queries": queries,
+        "_exterior_frames": frames,
+        "_wrist_frames": frames,
+        "_policy_exterior_frames": frames,
+        "_policy_wrist_frames": frames,
+        "_witness_frames": frames,
+        "_release_witness_frames": frames,
+        "_terminal_witness_frame": frame,
+        "_terminal_release_witness_frame": frame,
+        "terminal_witness_dwell": {
+            "post_control_witness": {"capture_time_s": trace[-1]["simulator_time_s"]},
+            "post_control_release_witness": {
+                "capture_time_s": trace[-1]["simulator_time_s"]
+            },
+        },
+    }
+
+
 def test_closed_loop_rrd_is_finalized_and_causally_timed(tmp_path: Path) -> None:
     episodes = [_rrd_episode()]
 
@@ -3713,16 +3859,35 @@ def test_closed_loop_rrd_is_finalized_and_causally_timed(tmp_path: Path) -> None
         capture_output=True,
         text=True,
     ).stdout
-    assert decoded.count("* entity_path: /episodes/0/physics/") == 6
-    assert decoded.count("* entity_path: /episodes/0/queries/") == 18
+    assert decoded.count("* entity_path: /episodes/0/physics/") == 3
+    assert decoded.count("* entity_path: /episodes/0/queries/") == 9
     assert decoded.count("* entity_path: /episodes/0/terminal/witness") == 1
     assert decoded.count("* entity_path: /episodes/0/terminal/release_witness") == 1
+    assert "/episodes/0/physics/0/" not in decoded
+    assert "/episodes/0/queries/0/" not in decoded
     assert all(
         value in decoded
         for value in ("PT0.2S", "PT0.733333S", "PT0.133331S", "PT0.666666S")
     )
     assert not any(
         "physics_step" in line and "query" in line for line in decoded.splitlines()
+    )
+
+
+@pytest.mark.timeout(120)
+def test_closed_loop_rrd_full_sealed_cohort_has_decodable_footer(
+    tmp_path: Path,
+) -> None:
+    episodes = [_rrd_scale_episode() for _ in range(24)]
+
+    rrd, steps = pi05_closed_loop._write_rrd(
+        tmp_path, episodes, "adapted", "full-sealed-cohort"
+    )
+
+    assert steps == 24 * 192
+    subprocess.run(
+        [sys.executable, "-m", "rerun", "rrd", "verify", str(rrd)],
+        check=True,
     )
 
 

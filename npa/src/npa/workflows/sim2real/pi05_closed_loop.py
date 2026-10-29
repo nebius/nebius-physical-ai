@@ -1989,9 +1989,9 @@ def _physics_rows(episode: dict) -> list[tuple[dict, float]]:
 
 def _log_rrd_physics(recording: Any, rr: Any, episode: dict, episode_index: int) -> int:
     rows = _physics_rows(episode)
+    root = f"episodes/{episode_index}/physics"
     for step, (sample, result_time) in enumerate(rows):
         _rrd_time(recording, episode_index, "physics_step", step, result_time)
-        root = f"episodes/{episode_index}/physics/{step}"
         recording.log(
             root + "/object_position", rr.Points3D([sample["object_position_m"]])
         )
@@ -2026,8 +2026,8 @@ def _log_rrd_queries(
         )
     ):
         raise RuntimeError("Rerun camera frames do not match policy queries")
+    root = f"episodes/{episode_index}/queries"
     for query_index, query in enumerate(queries):
-        root = f"episodes/{episode_index}/queries/{query_index}"
         _rrd_time(
             recording,
             episode_index,
@@ -2658,6 +2658,89 @@ def _evaluate(
     return episodes
 
 
+def _runtime_boundary_smoke(
+    env: Any,
+    client: Pi05PolicyClient,
+    args: argparse.Namespace,
+    protocol: dict[str, Any],
+    work: Path,
+    *,
+    robot_profile: Any = None,
+    policy_profile: Any = None,
+) -> dict[str, Any]:
+    """Exercise one real camera-to-policy-to-controller interaction before trials."""
+
+    scenario = protocol["scenarios"][0]
+    record = _new_episode_record()
+    env.reset(seed=args.seed)
+    native = env.unwrapped
+    try:
+        if getattr(client, "metadata", {}).get("backend") == "lerobot_smolvla":
+            record["policy_reset"] = client.reset(policy=policy_profile)
+        bridge = _joint_bridge(native)
+        settle = _settle_policy_reset(env, bridge)
+        initial = _verified_initial_object_position(native, scenario)
+        _wrist_mount_receipt(native, record)
+        context = _episode_context(
+            env,
+            native,
+            client,
+            record,
+            bridge,
+            initial,
+            scenario,
+            float(protocol["object_width_m"]),
+            "fresh",
+            args.ablation_seed,
+            robot_profile=robot_profile,
+            policy_profile=policy_profile,
+            smolvla_action_selection=getattr(
+                args, "smolvla_action_selection", "first_action"
+            ),
+        )
+        record["wrist_ablation_mode"] = "fresh"
+        record["scenario_seed"] = int(scenario["scene_seed"])
+        record["reset_settle"] = settle
+        _decision_step(context, 0)
+        query = record["queries"][0]
+        lineage = _policy_input_query_lineage(query)
+        _validate_query_lineage(record, query)
+        _validate_action_selection_history(record)
+        physics = _physics_rows(record)
+        if (
+            query.get("execution_status") != "completed"
+            or len(record["queries"]) != 1
+            or len(physics) != 1
+            or len(query.get("controller_proofs") or []) != 1
+            or len(record["_policy_exterior_frames"]) != 1
+            or len(record["_policy_wrist_frames"]) != 1
+        ):
+            raise RuntimeError(
+                "native camera-to-policy-to-controller boundary smoke is incomplete"
+            )
+        receipt = {
+            "schema": "npa.sim2real.native_policy_boundary_smoke.v1",
+            "training_or_evaluation_row": False,
+            "excluded_from_task_metrics": True,
+            "reset_repeated_before_sealed_trials": True,
+            "policy_backend": context["policy_backend"],
+            "scenario_seed": int(scenario["scene_seed"]),
+            "input_lineage": lineage,
+            "predicted_action_chunk": query["action_receipt"],
+            "decoded_applied_action": query["action_selection"],
+            "controller_proof": query["controller_proofs"][0],
+            "physics_trace_index": 0,
+        }
+        (work / "runtime-boundary-smoke.json").write_text(
+            json.dumps(receipt, indent=2, sort_keys=True), encoding="utf-8"
+        )
+        return receipt
+    except Exception:
+        _write_failed_camera_evidence(work, [record])
+        _persist_partial_episodes(work, [record])
+        raise
+
+
 def _checkpoint_provenance(receipt: dict[str, Any]) -> dict[str, Any]:
     if receipt.get("schema") == "npa.sim2real.smolvla_service_start.v1":
         interchange = receipt.get("interchange") or {}
@@ -2695,6 +2778,8 @@ def _result(
     artifacts: dict[str, Any],
     protocol: dict[str, Any],
     receipt: dict[str, Any],
+    *,
+    runtime_boundary_smoke: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     latched_passes = sum(_episode_passed(row) for row in episodes)
     terminal_passes = sum(_episode_terminal_passed(row) for row in episodes)
@@ -2750,6 +2835,7 @@ def _result(
         },
         "task_comparison": comparison,
         "physical_robot_deployment": False,
+        "runtime_boundary_smoke": runtime_boundary_smoke,
         "episodes": episodes,
         "review_artifacts": artifacts,
     }
@@ -3623,6 +3709,15 @@ def _run_evaluation(
         _validate_eval_object_source(env.unwrapped, protocol)
         _validate_eval_geometry(env.unwrapped, protocol)
         _validate_eval_robot_plant(env.unwrapped, protocol)
+        runtime_boundary_smoke = _runtime_boundary_smoke(
+            env,
+            client,
+            args,
+            protocol,
+            work,
+            robot_profile=robot_profile,
+            policy_profile=policy_profile,
+        )
         episodes = _evaluate(
             env,
             client,
@@ -3635,7 +3730,14 @@ def _run_evaluation(
             artifacts = _write_review_artifacts(
                 work, episodes, args.checkpoint_role, args.recording_id
             )
-            result = _result(args, episodes, artifacts, protocol, receipt)
+            result = _result(
+                args,
+                episodes,
+                artifacts,
+                protocol,
+                receipt,
+                runtime_boundary_smoke=runtime_boundary_smoke,
+            )
         except Exception:
             _persist_partial_episodes(work, episodes)
             raise
