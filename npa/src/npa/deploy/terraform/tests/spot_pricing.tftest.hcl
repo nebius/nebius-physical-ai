@@ -18,6 +18,7 @@ run "preemptible_follows_spot_price" {
   assert {
     condition = (
       nebius_compute_v1_instance.workbench.preemptible.on_preemption == "STOP" &&
+      nebius_compute_v1_instance.workbench.preemptible.priority == null &&
       nebius_compute_v1_instance.workbench.follows_spot_price != null
     )
     error_message = "Preemptible VMs must explicitly follow the current spot price."

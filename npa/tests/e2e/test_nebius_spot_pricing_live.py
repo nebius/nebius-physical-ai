@@ -71,5 +71,5 @@ def test_serverless_pricing_request_is_accepted_without_allocation(
                 gpu_type="gpu-rtx6000",
                 gpu_count=1,
                 command="true",
-                output_path="/tmp/pricing-validation",
+                output_path="/workspace/pricing-validation",
             )

@@ -39,6 +39,24 @@ def test_standalone_vm_spot_provider_pin_and_lock_do_not_drift() -> None:
     assert f'version     = "{VM_PROVIDER}"' in lock
 
 
+def test_preemptible_vm_template_pairs_spot_price_without_retired_priority() -> None:
+    template = (ROOT / "npa/src/npa/deploy/terraform/main.tf").read_text()
+    assert re.search(
+        r"(?m)^\s*follows_spot_price\s*=\s*var.enable_preemptible\s*\?\s*\{\}\s*:\s*null$",
+        template,
+    )
+    preemptible = re.search(
+        r"preemptible\s*=\s*var.enable_preemptible\s*\?\s*\{([^}]+)\}\s*:\s*null",
+        template,
+    )
+    assert preemptible
+    assert re.search(r'on_preemption\s*=\s*"STOP"', preemptible.group(1))
+    assert not re.search(r"(?m)^\s*priority\s*=", preemptible.group(1))
+    assert re.search(
+        r"ignore_changes\s*=\s*\[[^\]]*\bpreemptible\.priority\b", template
+    )
+
+
 def test_documented_cluster_shape_uses_real_cli_flags() -> None:
     paidf = (
         ROOT / "docs" / "workbench" / "guides" / "physical-ai-data-factory-deploy.md"

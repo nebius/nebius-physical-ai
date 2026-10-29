@@ -146,6 +146,11 @@ this version on the backend service's PATH. Preemptible jobs, endpoints, and
 standalone workbench VMs follow the current spot price; on-demand selections
 keep their existing pricing.
 
+The VM recipe preserves existing values of the retired preemption-priority
+attribute during updates. The provider still marks that attribute immutable;
+removing it from an existing VM would otherwise trigger replacement. Fresh VMs
+omit it and use the explicit spot-pricing setting.
+
 `npa configure` creates or reuses a local profile for you (no manual
 `nebius profile create` step). See <https://docs.nebius.com/cli/install> for
 details.
