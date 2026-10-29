@@ -5,7 +5,8 @@ from __future__ import annotations
 from dataclasses import replace
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+import re
 import shlex
 import subprocess
 import sys
@@ -2777,9 +2778,15 @@ def test_default_npa_setup_uses_an_importable_baked_runtime_without_reinstalling
     }
 
     setup = default_npa_setup()
-    setup = setup.replace("/tmp/", str(tmp_path) + "/").replace(
-        "/usr/local/bin/npa", str(tmp_path / "npa-link")
-    )
+    worker_paths = set()
+    for value in re.findall(r"/[A-Za-z0-9_./-]+", setup):
+        parts = PurePosixPath(value).parts
+        if len(parts) >= 3 and parts[1] == "tmp" and parts[2].startswith("npa-"):
+            worker_paths.add(PurePosixPath(*parts[:3]))
+    assert worker_paths
+    for path in sorted(worker_paths, key=str, reverse=True):
+        setup = setup.replace(str(path), str(tmp_path / path.name))
+    setup = setup.replace("/usr/local/bin/npa", str(tmp_path / "npa-link"))
     subprocess.run(["bash", "-c", setup], check=True, env=environment)
 
     shim = home / ".local" / "bin" / "npa"

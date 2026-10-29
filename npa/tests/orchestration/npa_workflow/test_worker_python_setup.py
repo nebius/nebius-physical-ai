@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+import re
 import shlex
 import shutil
 import subprocess
@@ -74,9 +75,16 @@ def worker(tmp_path: Path) -> dict[str, str]:
 
 
 def _isolated(script: str, tmp_path: Path) -> str:
+    worker_paths = set()
+    for value in re.findall(r"/[A-Za-z0-9_./-]+", script):
+        parts = PurePosixPath(value).parts
+        if len(parts) >= 3 and parts[1] == "tmp" and parts[2].startswith("npa-"):
+            worker_paths.add(PurePosixPath(*parts[:3]))
+    assert worker_paths
+    for path in sorted(worker_paths, key=str, reverse=True):
+        script = script.replace(str(path), str(tmp_path / "runtime" / path.name))
     return (
-        script.replace("/tmp/", str(tmp_path / "runtime") + "/")
-        .replace("/opt/", str(tmp_path / "absent-opt") + "/")
+        script.replace("/opt/", str(tmp_path / "absent-opt") + "/")
         .replace("/usr/local/bin/npa", str(tmp_path / "npa-link"))
         .replace("/etc/profile.d", str(tmp_path / "absent-profiles"))
     )

@@ -8,8 +8,8 @@ real stage commands, the Rerun recording the agent displays).
 
 from __future__ import annotations
 
-import tempfile
-from pathlib import Path
+import re
+from pathlib import Path, PurePosixPath
 
 import typer
 import yaml
@@ -811,11 +811,13 @@ def test_explicit_source_overlay_precedes_baked_image_setup() -> None:
     )
 
     setup = default_npa_setup()
-    assert "if ! command -v npa >/dev/null 2>&1 && {" in setup
+    assert "if { ! command -v npa >/dev/null 2>&1 || " in setup
+    assert "! \"$npa_setup_python\" -c 'import npa.cli.main'" in setup
     # The explicit-overlay guard skips a thin baked project when its complete
     # selected source is available, then stages that source in the overlay path.
     assert 'NPA_SRC_OVERLAY" != "1"' in setup
-    assert str(Path(tempfile.gettempdir()) / "npa-src-overlay") in setup
+    paths = [PurePosixPath(value) for value in re.findall(r"/[A-Za-z0-9_./-]+", setup)]
+    assert any(path.parts == ("/", "tmp", "npa-src-overlay") for path in paths)
 
     # And an unrelated tool's setup is unchanged by the NuRec additions.
     other = render_setup_for_tool(

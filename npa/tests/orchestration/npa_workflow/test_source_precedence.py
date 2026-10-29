@@ -145,7 +145,14 @@ def _write_pip_intercepting_python(path: Path) -> None:
 
 
 def _replace_setup_paths(setup: str, paths: dict[str, Path]) -> str:
+    worker_paths = {}
+    for value in re.findall(r"/[A-Za-z0-9_./-]+", setup):
+        parts = PurePosixPath(value).parts
+        if len(parts) >= 3 and parts[1] == "tmp" and parts[2].startswith("npa-"):
+            worker_paths[parts[2]] = str(PurePosixPath(*parts[:3]))
     for original, replacement in paths.items():
+        if original.startswith("npa-"):
+            original = worker_paths[original]
         setup = setup.replace(original, str(replacement))
     return setup
 
@@ -193,10 +200,11 @@ def _render_overlay_setup(
         {
             "/opt/npa": partial,
             "/opt/lerobot/venv/bin/python": vendor_python,
-            "/tmp/npa-src-overlay": overlay,
-            "/tmp/npa-src-root": source_root,
-            "/tmp/npa-python": recorded_python,
-            "/tmp/npa-overlay-venv": overlay_venv,
+            "npa-src-overlay": overlay,
+            "npa-src-root": source_root,
+            "npa-python": recorded_python,
+            "npa-overlay-venv": overlay_venv,
+            "/usr/local/bin/npa": overlay.parent / "npa-link",
         },
     )
     branch = (
