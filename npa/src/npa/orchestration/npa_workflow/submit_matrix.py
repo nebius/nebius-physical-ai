@@ -1844,6 +1844,23 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "sim2real-policy-interchange-object-eval.yaml",
+        "multi",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        plan_only=True,
+        plan_only_justification=(
+            "Execution requires qualified immutable LeRobot and Isaac images, a "
+            "previously qualified native SmolVLA checkpoint, a split-disjoint rigid "
+            "object profile, and live workflow-owned cache, authentication and RBAC."
+        ),
+        runtime=True,
+        notes=(
+            "Evaluation-only Franka offset-spool workflow that keeps the checkpoint, "
+            "controller, calibrated cameras, placement task and scorer fixed while "
+            "measuring a zero-shot rigid-object swap and exact-owned cleanup."
+        ),
+    ),
+    SubmitLiveCase(
         "sim2real-policy-interchange-non-franka.yaml",
         "multi",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
