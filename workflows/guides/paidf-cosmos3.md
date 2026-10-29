@@ -1986,6 +1986,9 @@ Transient transport and gateway failures on JSON reads receive up to two
 additional attempts with backoff. Authentication failures and submissions are
 not automatically replayed. An exhausted polling failure is retained in the
 job's endpoint state; resume that same identity instead of generating a new job.
+Artifact downloads also honor delivery backpressure (`429` and `Retry-After`)
+before creating a local file. Delivery failures retain sanitized diagnostics in
+endpoint state; model execution is never repeated to acquire a download slot.
 
 Hosted augmentation currently accepts seed, denoising steps, guidance scale,
 control guidance, and the appearance prompt. It requires full-source edge

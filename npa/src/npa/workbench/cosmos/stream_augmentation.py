@@ -333,8 +333,13 @@ class StreamAugmentation:
             )
         directory = Path(directory)
         directory.mkdir(mode=0o700, parents=True, exist_ok=False)
-        for artifact in artifacts:
-            self.api.download(job_id, artifact, directory)
+        try:
+            for artifact in artifacts:
+                self.api.download(job_id, artifact, directory)
+        except StreamError as exc:
+            state.setdefault("delivery_errors", []).append(str(exc))
+            _write_json(state, state_uri, storage=self.storage)
+            raise
         if _sha256(directory / "source.mp4") != _sha256(source):
             raise StreamError(
                 "Stream processed different source bytes; reject this output"

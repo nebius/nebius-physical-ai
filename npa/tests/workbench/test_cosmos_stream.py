@@ -453,6 +453,59 @@ def test_redirect_is_not_followed_and_hash_mismatch_is_rejected(tmp_path):
     assert not (tmp_path / "video.mp4").exists()
 
 
+def test_artifact_backpressure_waits_without_creating_a_partial_file(
+    tmp_path, monkeypatch
+):
+    calls, pauses = [], []
+    payload = b"complete retained video"
+
+    def transport(request):
+        calls.append((request.method, request.url.path))
+        assert not (tmp_path / "video.mp4").exists()
+        if len(calls) < 3:
+            return httpx.Response(429, headers={"Retry-After": "3"})
+        return httpx.Response(200, content=payload)
+
+    monkeypatch.setattr("npa.workbench.cosmos.stream_client.time.sleep", pauses.append)
+    client = StreamClient(
+        "https://stream.example.invalid",
+        "synthetic-secret",
+        transport=httpx.MockTransport(transport),
+    )
+    target = client.download(
+        "retained-job",
+        {"name": "video.mp4", "sha256": hashlib.sha256(payload).hexdigest()},
+        tmp_path,
+    )
+    assert target.read_bytes() == payload
+    assert calls == [("GET", "/v1/jobs/retained-job/artifacts/video.mp4")] * 3
+    assert pauses == [3, 3]
+    client.close()
+
+
+def test_artifact_auth_failure_is_retained_without_retry(tmp_path, monkeypatch):
+    service, storage = Service(), Storage()
+    original = service.handle
+    failures = []
+
+    def handle(request):
+        if request.url.path.endswith("/artifacts/source.mp4"):
+            failures.append(request.url.path)
+            return httpx.Response(403)
+        return original(request)
+
+    service.handle = handle
+    pauses = []
+    monkeypatch.setattr("npa.workbench.cosmos.stream_client.time.sleep", pauses.append)
+    with pytest.raises(StreamError, match="403"):
+        generate(adapter(service, storage), tmp_path)
+    assert len(failures) == 1 and pauses == []
+    state = json.loads(next(iter(storage.objects.values())))
+    assert state["job_id"] == "job-synthetic"
+    assert state["delivery_errors"] == ["Stream artifact returned HTTP 403"]
+    assert not (tmp_path / "download/source.mp4").exists()
+
+
 def test_hosted_workflow_selects_cpu_and_has_no_native_model_access_requirement():
     from npa.cli.workbench.workflow import _workflow_access_requirements
     from npa.orchestration.npa_workflow.interpreter import build_reachability_plan

@@ -243,25 +243,35 @@ class StreamClient:
         name, expected = _artifact_identity(artifact)
         target = directory / name
         digest = hashlib.sha256()
-        try:
-            with self._client.stream(
-                "GET", f"/v1/jobs/{job_id}/artifacts/{name}"
-            ) as response:
-                if response.status_code != 200:
-                    raise StreamError(
-                        f"Stream artifact returned HTTP {response.status_code}"
-                    )
-                fd = os.open(
-                    target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600
-                )
-                with os.fdopen(fd, "wb") as output:
-                    for chunk in response.iter_bytes():
-                        digest.update(chunk)
-                        output.write(chunk)
-        except (httpx.HTTPError, OSError):
-            raise StreamError(
-                "Stream artifact download failed; resume the retained job"
-            ) from None
+        while True:
+            try:
+                with self._client.stream(
+                    "GET", f"/v1/jobs/{job_id}/artifacts/{name}"
+                ) as response:
+                    if response.status_code == 429:
+                        delay = _retry_delay(response, default=5.0)
+                    else:
+                        if response.status_code != 200:
+                            raise StreamError(
+                                f"Stream artifact returned HTTP {response.status_code}"
+                            )
+                        fd = os.open(
+                            target,
+                            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                            0o600,
+                        )
+                        with os.fdopen(fd, "wb") as output:
+                            for chunk in response.iter_bytes():
+                                digest.update(chunk)
+                                output.write(chunk)
+                        break
+            except (httpx.HTTPError, OSError):
+                raise StreamError(
+                    "Stream artifact download failed; resume the retained job"
+                ) from None
+            # Release the response before waiting for a delivery slot. A 429
+            # creates no local file and never causes another model submission.
+            time.sleep(delay)
         if digest.hexdigest() != expected:
             target.unlink()
             raise StreamError("Stream artifact checksum mismatch")
