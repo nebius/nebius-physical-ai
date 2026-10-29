@@ -109,6 +109,7 @@ def test_source_base_and_dependency_closure_are_immutable() -> None:
     assert "nvcr.io" not in text
     assert "vllm==0.31.0" in LOCK.read_text(encoding="utf-8")
     assert "torch==2.13.0" in LOCK.read_text(encoding="utf-8")
+    assert "msgpack==1.2.3" in LOCK.read_text(encoding="utf-8")
     assert "COPY --chmod=0644" in text
     assert "su -s /bin/sh -c 'test -r" in text
 

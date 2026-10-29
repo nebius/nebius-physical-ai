@@ -1,0 +1,4 @@
+# The exact local-version Gradio derivative widens only the conservative Pillow
+# upper bound after functional compatibility validation. Keep its resolver
+# closure on the patched Pillow release.
+pillow==13.0.0

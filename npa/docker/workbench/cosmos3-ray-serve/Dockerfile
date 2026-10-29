@@ -75,17 +75,30 @@ COPY --chown=ubuntu:ubuntu docker/workbench/cosmos3-ray-serve/verify_env.py /opt
 COPY --chown=ubuntu:ubuntu --chmod=755 docker/workbench/cosmos3-ray-serve/entrypoint.sh /usr/local/bin/cosmos3-ray-serve-entrypoint
 COPY --chown=ubuntu:ubuntu --chmod=755 docker/workbench/cosmos3-ray-serve/smoke_functional.sh /opt/cosmos3-ray-serve/smoke_functional.sh
 COPY --chown=ubuntu:ubuntu docker/workbench/cosmos3-ray-serve/security-upgrades-requirements.txt /tmp/cosmos3-ray-security-upgrades-requirements.txt
+COPY --chown=ubuntu:ubuntu docker/workbench/cosmos3-ray-serve/build_gradio_pillow13_wheel.py /opt/cosmos3-ray-serve/build_gradio_pillow13_wheel.py
+COPY --chown=ubuntu:ubuntu docker/workbench/cosmos3-ray-serve/verify_gradio_pillow13.py /opt/cosmos3-ray-serve/verify_gradio_pillow13.py
 COPY --chown=ubuntu:ubuntu --chmod=755 docker/workbench/common/install_hardened_nltk.sh /opt/npa/install_hardened_nltk.sh
 COPY --chown=ubuntu:ubuntu docker/workbench/common/verify_hardened_nltk.py /opt/npa/verify_hardened_nltk.py
 COPY --chown=ubuntu:ubuntu docker/workbench/sonic/packaging-requirements.txt /tmp/cosmos3-packaging-requirements.txt
+ADD --chown=ubuntu:ubuntu --chmod=0644 \
+    --checksum=sha256:a5de01bf17336bf421d52af4b5dbd9fdbd530762c485067748456ccb797700bb \
+    https://files.pythonhosted.org/packages/2a/12/ac98683fa45d84c2c96c14acdb040aa746209089ea045c766f380549ecec/gradio-6.16.0-py3-none-any.whl \
+    /tmp/gradio-source/gradio-6.16.0-py3-none-any.whl
 
 RUN export UV_CACHE_DIR=/tmp/uv-cache \
     && cd /opt/cosmos3/cosmos-framework \
     && uv sync --frozen --inexact \
        --extra guardrail --extra serve --group cu130-torch213 \
-    && uv pip uninstall --python .venv/bin/python flash-attn flash-attn-3-nv gradio \
-    && uv pip install --python .venv/bin/python --no-deps --require-hashes \
+    && uv pip uninstall --python .venv/bin/python flash-attn flash-attn-3-nv \
+    && mkdir -p /tmp/gradio-derivative \
+    && .venv/bin/python /opt/cosmos3-ray-serve/build_gradio_pillow13_wheel.py \
+       /tmp/gradio-source/gradio-6.16.0-py3-none-any.whl \
+       /tmp/gradio-derivative \
+       | tee /opt/cosmos3-ray-serve/gradio-pillow13-derivative.json \
+    && uv pip install --python .venv/bin/python --require-hashes \
+       --find-links /tmp/gradio-derivative \
        --requirement /tmp/cosmos3-ray-security-upgrades-requirements.txt \
+    && .venv/bin/python /opt/cosmos3-ray-serve/verify_gradio_pillow13.py \
     && /opt/npa/install_hardened_nltk.sh .venv/bin/python \
     && .venv/bin/python -c 'from pathlib import Path; import ray; p=Path(ray.__file__).parent / "jars" / "ray_dist.jar"; p.unlink(missing_ok=True)' \
     && uv pip check --python .venv/bin/python \
@@ -96,6 +109,7 @@ RUN export UV_CACHE_DIR=/tmp/uv-cache \
     && uv pip install --python /opt/npa/.venv/bin/python --no-deps "pillow==13.0.0" "certifi==2026.10.19" \
     && uv pip install --python /opt/npa/.venv/bin/python --no-deps -e /opt/npa \
     && rm -rf /tmp/uv-cache /home/ubuntu/.cache/uv \
+       /tmp/gradio-source /tmp/gradio-derivative \
     && test ! -e /tmp/uv-cache && test ! -e /home/ubuntu/.cache/uv \
     && /opt/cosmos3/cosmos-framework/.venv/bin/python /opt/cosmos3-ray-serve/verify_env.py \
     && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \

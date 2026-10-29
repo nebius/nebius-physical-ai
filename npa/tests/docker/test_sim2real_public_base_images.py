@@ -2,14 +2,35 @@
 
 from __future__ import annotations
 
+import importlib.util
+import json
 import re
+import sys
 from pathlib import Path
+from types import ModuleType
 
 from packaging.version import Version
 
 
 ROOT = Path(__file__).resolve().parents[3]
 WORKBENCH = ROOT / "npa" / "docker" / "workbench"
+
+
+def _load_pip_vendor_updater(monkeypatch, module_root: Path):
+    pip = ModuleType("pip")
+    pip.__file__ = str(module_root / "pip" / "__init__.py")
+    internal = ModuleType("pip._internal")
+    metadata = ModuleType("pip._internal.metadata")
+    metadata.select_backend = lambda: None
+    monkeypatch.setitem(sys.modules, "pip", pip)
+    monkeypatch.setitem(sys.modules, "pip._internal", internal)
+    monkeypatch.setitem(sys.modules, "pip._internal.metadata", metadata)
+    path = WORKBENCH / "common" / "update_pip_vendor.py"
+    spec = importlib.util.spec_from_file_location("update_pip_vendor", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_cosmos_and_genesis_never_commit_wheel_bundled_ffmpeg() -> None:
@@ -125,7 +146,7 @@ def test_cpu_images_update_system_and_viewer_bootstrap_dependencies() -> None:
     assert "pip==26.2.2" in lock
     assert "setuptools==84.2.1" in lock
     assert "wheel==0.48.0" in lock
-    assert "msgpack==1.2.1" in lock
+    assert "msgpack==1.2.3" in lock
     assert "urllib3==2.8.0" in lock
     for relative in ("sim2real-control/Dockerfile", "rerun-viewer/Dockerfile"):
         text = (WORKBENCH / relative).read_text()
@@ -136,6 +157,39 @@ def test_cpu_images_update_system_and_viewer_bootstrap_dependencies() -> None:
         assert "python /opt/npa/update_pip_vendor.py" in text
     viewer = (WORKBENCH / "rerun-viewer/Dockerfile").read_text()
     assert viewer.count("python /opt/npa/update_pip_vendor.py") == 2
+
+
+def test_pip_vendor_inventory_accepts_current_layout_without_setuptools(
+    tmp_path: Path, monkeypatch
+) -> None:
+    updater = _load_pip_vendor_updater(monkeypatch, tmp_path)
+    vendor = tmp_path / "vendor"
+    vendor.mkdir()
+    (vendor / "vendor.txt").write_text("msgpack==1.2.3\nurllib3==2.8.0\n")
+    components = [
+        {
+            "name": name,
+            "version": version,
+            "purl": f"pkg:pypi/{name}@{version}",
+            "bom-ref": f"pkg:pypi/{name}@{version}",
+        }
+        for name, version in updater.FIXED_VERSIONS.items()
+    ]
+    bom = {
+        "version": 1,
+        "components": components,
+        "dependencies": [{"ref": item["bom-ref"]} for item in components],
+    }
+    (vendor / "bom.cdx.json").write_text(json.dumps(bom))
+
+    updater.update_inventory(vendor)
+
+    updated = json.loads((vendor / "bom.cdx.json").read_text())
+    assert updated["version"] == 2
+    assert {item["name"] for item in updated["components"]} == {
+        "msgpack",
+        "urllib3",
+    }
 
 
 def test_envgen_flattens_a_dedicated_exact_source_runtime() -> None:

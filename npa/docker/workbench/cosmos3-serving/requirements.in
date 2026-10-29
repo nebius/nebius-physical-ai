@@ -22,7 +22,7 @@ prettytable>=3.8.0
 aenum==3.1.16
 pyzmq>=25.0.0
 janus>=1.0.0
-msgpack>=1.0.0
+msgpack==1.2.3
 multidict==6.9.1
 pydantic>=2.1.0
 pydantic-settings>=2.0.0

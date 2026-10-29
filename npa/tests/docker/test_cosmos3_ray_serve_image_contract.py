@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import ast
+import base64
+import csv
+import hashlib
 import importlib.metadata
 import importlib.util
 import io
@@ -10,6 +13,7 @@ import json
 import re
 import sys
 import tarfile
+import zipfile
 from pathlib import Path
 
 import yaml
@@ -77,7 +81,8 @@ def test_image_uses_exact_repaired_framework_parent_and_bakes_no_weights() -> No
         "uv pip uninstall --python .venv/bin/python flash-attn flash-attn-3-nv" in text
     )
     # Security upgrade path: must use uv pip install in RUN (not nonexistent .venv/bin/pip)
-    assert "uv pip install --python .venv/bin/python --no-deps" in text
+    assert "uv pip install --python .venv/bin/python --require-hashes" in text
+    assert "--find-links /tmp/gradio-derivative" in text
     assert "security-upgrades-requirements.txt" in text
     assert "uv pip install --python /opt/npa/.venv/bin/python" in text
 
@@ -147,7 +152,7 @@ def test_dockerfile_uses_uv_not_pip_in_run_directives() -> None:
         line for line in text.split("\n") if not line.strip().startswith("#")
     ]
     non_comment = "\n".join(non_comment_lines)
-    assert "uv pip install --python .venv/bin/python --no-deps" in non_comment
+    assert "uv pip install --python .venv/bin/python --require-hashes" in non_comment
     # The executable instruction must not use the nonexistent pip binary
     assert ".venv/bin/pip " not in non_comment, (
         "executable instructions must not invoke .venv/bin/pip; use uv pip install --python"
@@ -165,11 +170,187 @@ def test_security_upgrades_requirements_file_has_hash_pinned_cves() -> None:
     assert "filelock==4.2.4" in content
     assert "setuptools==84.2.1" in content
     assert "virtualenv==21.14.13" in content
+    assert "pillow==13.0.0" in content
+    assert "gradio==6.16.0+npa.pillow13.1" in content
+    assert (
+        "--hash=sha256:2523b8b34006626382b2afa315c229c3ef4515b17c6925b766308f32e161c749"
+        in content
+    )
     # Every dependency is exact and hash-bound, including the new serve extra.
     requirements = re.split(r"\n(?=[a-zA-Z])", content)
     for requirement in requirements[1:]:
         assert re.match(r"[\w.\[\]-]+==[\w.+-]+", requirement)
         assert "--hash=sha256:" in requirement
+
+
+def _gradio_derivative_builder():
+    path = IMAGE / "build_gradio_pillow13_wheel.py"
+    spec = importlib.util.spec_from_file_location("gradio_pillow_derivative", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _record_row(path: str, payload: bytes) -> list[str]:
+    digest = base64.urlsafe_b64encode(hashlib.sha256(payload).digest()).rstrip(b"=")
+    return [path, f"sha256={digest.decode()}", str(len(payload))]
+
+
+def _synthetic_gradio_wheel(path: Path) -> bytes:
+    metadata = (
+        Path(__file__).parent / "fixtures" / "gradio-6.16.0-metadata.txt"
+    ).read_bytes()
+    payloads = {
+        "gradio/__init__.py": b'__version__ = "6.16.0"\n',
+        "gradio-6.16.0.dist-info/METADATA": metadata,
+        "gradio-6.16.0.dist-info/WHEEL": (
+            b"Wheel-Version: 1.0\nGenerator: test\nRoot-Is-Purelib: true\n"
+            b"Tag: py3-none-any\n"
+        ),
+    }
+    rows = [_record_row(name, payload) for name, payload in payloads.items()]
+    rows.append(["gradio-6.16.0.dist-info/RECORD", "", ""])
+    record = io.StringIO(newline="")
+    csv.writer(record, lineterminator="\n").writerows(rows)
+    payloads["gradio-6.16.0.dist-info/RECORD"] = record.getvalue().encode()
+    with zipfile.ZipFile(path, "w") as archive:
+        for name, payload in payloads.items():
+            archive.writestr(name, payload)
+    return metadata
+
+
+def test_gradio_pillow_derivative_is_exact_and_rebuilds_record(
+    monkeypatch, tmp_path: Path
+) -> None:
+    module = _gradio_derivative_builder()
+    source = tmp_path / "gradio-6.16.0-py3-none-any.whl"
+    metadata = _synthetic_gradio_wheel(source)
+    monkeypatch.setattr(
+        module, "SOURCE_WHEEL_SHA256", hashlib.sha256(source.read_bytes()).hexdigest()
+    )
+    monkeypatch.setattr(
+        module, "ORIGINAL_METADATA_SHA256", hashlib.sha256(metadata).hexdigest()
+    )
+    real_sha256 = module._sha256
+    monkeypatch.setattr(module, "DERIVATIVE_WHEEL_SHA256", "f" * 64)
+    monkeypatch.setattr(
+        module,
+        "_sha256",
+        lambda payload: (
+            real_sha256(payload)
+            if payload in {source.read_bytes(), metadata}
+            else "f" * 64
+        ),
+    )
+    first = tmp_path / "first" / module.DERIVATIVE_FILENAME
+    second = tmp_path / "second" / module.DERIVATIVE_FILENAME
+    module.build_derivative(source, first)
+    module.build_derivative(source, second)
+    assert first.read_bytes() == second.read_bytes()
+    with zipfile.ZipFile(first) as archive:
+        names = archive.namelist()
+        assert len(names) == len(set(names))
+        assert module.SOURCE_RECORD not in names
+        assert module.DERIVATIVE_RECORD in names
+        patched = archive.read(f"{module.DERIVATIVE_DIST_INFO}/METADATA")
+        assert module.PATCHED_VERSION in patched
+        assert module.PATCHED_REQUIREMENT in patched
+        rows = list(
+            csv.reader(io.StringIO(archive.read(module.DERIVATIVE_RECORD).decode()))
+        )
+        assert {row[0] for row in rows} == set(names)
+    assert module.SOURCE_WHEEL_SHA256 != module.DERIVATIVE_WHEEL_SHA256
+    assert module.DERIVATIVE_WHEEL_SHA256 == "f" * 64
+    assert _gradio_derivative_builder().DERIVATIVE_WHEEL_SHA256 == (
+        "2523b8b34006626382b2afa315c229c3ef4515b17c6925b766308f32e161c749"
+    )
+    assert _gradio_derivative_builder().SOURCE_WHEEL_SHA256 == (
+        "a5de01bf17336bf421d52af4b5dbd9fdbd530762c485067748456ccb797700bb"
+    )
+
+
+def test_gradio_pillow_derivative_rejects_unreviewed_bytes(tmp_path: Path) -> None:
+    module = _gradio_derivative_builder()
+    source = tmp_path / "gradio-6.16.0-py3-none-any.whl"
+    source.write_bytes(b"unreviewed wheel")
+    with pytest.raises(RuntimeError, match="source wheel SHA-256"):
+        module.build_derivative(source, tmp_path / module.DERIVATIVE_FILENAME)
+
+
+def test_gradio_pillow_derivative_rejects_symlink(tmp_path: Path) -> None:
+    module = _gradio_derivative_builder()
+    regular = tmp_path / "gradio.whl"
+    regular.write_bytes(b"wheel")
+    link = tmp_path / "gradio-link.whl"
+    link.symlink_to(regular)
+    with pytest.raises(RuntimeError, match="regular file"):
+        module.build_derivative(link, tmp_path / module.DERIVATIVE_FILENAME)
+
+
+@pytest.mark.parametrize("member", ["../escape", "unsafe\\path"])
+def test_gradio_pillow_derivative_rejects_unsafe_members(
+    tmp_path: Path, member: str
+) -> None:
+    module = _gradio_derivative_builder()
+    source = tmp_path / "unsafe.whl"
+    with zipfile.ZipFile(source, "w") as archive:
+        archive.writestr(member, b"unsafe")
+        archive.writestr(module.SOURCE_RECORD, b"")
+    with zipfile.ZipFile(source) as archive:
+        with pytest.raises(RuntimeError, match="unsafe path"):
+            module._safe_members(archive)
+
+
+def test_gradio_pillow_derivative_rejects_duplicate_members(tmp_path: Path) -> None:
+    module = _gradio_derivative_builder()
+    source = tmp_path / "duplicate.whl"
+    with pytest.warns(UserWarning, match="Duplicate name"):
+        with zipfile.ZipFile(source, "w") as archive:
+            archive.writestr("gradio/duplicate.py", b"first")
+            archive.writestr("gradio/duplicate.py", b"second")
+            archive.writestr(module.SOURCE_RECORD, b"")
+    with zipfile.ZipFile(source) as archive:
+        with pytest.raises(RuntimeError, match="duplicate paths"):
+            module._safe_members(archive)
+
+
+def test_gradio_pillow_derivative_rejects_record_mismatch(tmp_path: Path) -> None:
+    module = _gradio_derivative_builder()
+    source = tmp_path / "mismatch.whl"
+    _synthetic_gradio_wheel(source)
+    with zipfile.ZipFile(source, "a") as archive:
+        archive.writestr("gradio/tampered.py", b"tampered after RECORD generation")
+    with zipfile.ZipFile(source) as archive:
+        members = module._safe_members(archive)
+        with pytest.raises(RuntimeError, match="exact archive"):
+            module._validate_source_record(archive, members)
+
+
+def test_dockerfile_builds_derivative_before_resolver_and_dependency_check() -> None:
+    text = DOCKERFILE.read_text(encoding="utf-8")
+    build = ".venv/bin/python /opt/cosmos3-ray-serve/build_gradio_pillow13_wheel.py"
+    install = "uv pip install --python .venv/bin/python --require-hashes"
+    probe = ".venv/bin/python /opt/cosmos3-ray-serve/verify_gradio_pillow13.py"
+    assert (
+        "COPY --chown=ubuntu:ubuntu docker/workbench/cosmos3-ray-serve/build_gradio_pillow13_wheel.py"
+        in text
+    )
+    assert (
+        "COPY --chown=ubuntu:ubuntu docker/workbench/cosmos3-ray-serve/verify_gradio_pillow13.py"
+        in text
+    )
+    assert (
+        "--checksum=sha256:a5de01bf17336bf421d52af4b5dbd9fdbd530762c485067748456ccb797700bb"
+        in text
+    )
+    assert text.index(build) < text.index(install)
+    assert text.index(install) < text.index(probe)
+    assert text.index(probe) < text.index("uv pip check --python .venv/bin/python")
+    assert "gradio-pillow13-derivative.json" in text
+    assert "patch_gradio_pillow13_metadata.py" not in text
+    override = (IMAGE / "security-upgrades-overrides.txt").read_text()
+    assert "pillow==13.0.0" in override
 
 
 def test_dockerfile_copies_security_requirements_and_verifies_versions() -> None:
@@ -183,7 +364,7 @@ def test_dockerfile_copies_security_requirements_and_verifies_versions() -> None
     assert "/opt/npa/install_hardened_nltk.sh .venv/bin/python" in text
     assert ".venv/bin/python /opt/npa/verify_hardened_nltk.py" in text
     assert "${COSMOS3_RAY_VERSION}" in text
-    assert "--no-deps --require-hashes" in text
+    assert "--find-links /tmp/gradio-derivative" in text
     # Must verify the Ray version matches the ARG value post-install
     assert (
         "test \"$(.venv/bin/python -c 'import ray; print(ray.__version__)')\""
