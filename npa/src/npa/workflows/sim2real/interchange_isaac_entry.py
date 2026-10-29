@@ -20,6 +20,7 @@ from npa.workflows.sim2real import isaac_robot_asset
 
 
 SCHEMA = "npa.sim2real.policy_interchange.non_franka_execution.v1"
+COHORT_SCHEMA = "npa.sim2real.policy_interchange.non_franka_execution_cohort.v1"
 
 
 def _sha256(path: Path) -> str:
@@ -73,6 +74,8 @@ def _child_command(
     manifest: Path,
     usd: Path,
     output: Path,
+    *,
+    seed: int | None = None,
 ) -> list[str]:
     """Build the native Isaac child command from explicit file bindings."""
 
@@ -95,8 +98,60 @@ def _child_command(
         "--decisions",
         str(args.decisions),
         "--seed",
-        str(args.seed),
+        str(args.seed if seed is None else seed),
     ]
+
+
+def _cohort_report(reports: list[dict], *, seed: int) -> dict:
+    """Summarize a split-disjoint native cohort without hiding failures."""
+
+    identity_fields = (
+        "robot_identity",
+        "object_identity",
+        "task_identity",
+        "checkpoint_sha256",
+        "normalization_identity",
+    )
+    if not reports or any(
+        report.get("seed") != seed + index
+        or report.get("execution_valid") is not True
+        or any(
+            report.get(field) != reports[0].get(field) or not report.get(field)
+            for field in identity_fields
+        )
+        for index, report in enumerate(reports)
+    ):
+        raise RuntimeError("native object cohort identities or seeds are inconsistent")
+
+    return {
+        "schema": COHORT_SCHEMA,
+        "execution_valid": all(
+            report.get("execution_valid") is True for report in reports
+        ),
+        "task_success_measured": True,
+        "episode_count": len(reports),
+        "success_count": sum(report.get("task_success") is True for report in reports),
+        "success_rate": (
+            sum(report.get("task_success") is True for report in reports) / len(reports)
+            if reports
+            else 0.0
+        ),
+        "base_seed": seed,
+        "episodes": [
+            {
+                "episode_index": index,
+                "seed": report.get("seed"),
+                "execution_valid": report.get("execution_valid") is True,
+                "task_success": report.get("task_success") is True,
+                "ordered_event_steps": report.get("ordered_event_steps") or {},
+                "robot_identity": report.get("robot_identity"),
+                "object_identity": report.get("object_identity"),
+                "task_identity": report.get("task_identity"),
+                "checkpoint_sha256": report.get("checkpoint_sha256"),
+            }
+            for index, report in enumerate(reports)
+        ],
+    }
 
 
 def _run_child(command: list[str], output: Path, log: Path) -> dict:
@@ -207,7 +262,7 @@ def _publish_component(args: argparse.Namespace) -> None:
 
 
 def run(args: argparse.Namespace) -> dict:
-    """Run, validate, and publish one native non-Franka policy trial."""
+    """Run, validate, and publish a native non-Franka policy cohort."""
 
     with tempfile.TemporaryDirectory(prefix="npa-policy-interchange-isaac-") as value:
         work = Path(value)
@@ -215,18 +270,46 @@ def run(args: argparse.Namespace) -> dict:
             args, work
         )
         robot, manifest_path, usd_path = _fetch_robot(preparation, work)
-        output, log = work / "output", work / "isaac-runtime.log"
-        command = _child_command(
-            args, prepared, prep_path, service_path, manifest_path, usd_path, output
+        published = work / "published"
+        if args.episodes > 1:
+            published.mkdir()
+        reports = []
+        for episode_index in range(args.episodes):
+            if args.episodes == 1:
+                output = work / "output"
+                log = work / "isaac-runtime.log"
+            else:
+                episode = published / "episodes" / f"episode-{episode_index:03d}"
+                output = episode / "native"
+                log = episode / "isaac-runtime.log"
+                episode.mkdir(parents=True)
+            command = _child_command(
+                args,
+                prepared,
+                prep_path,
+                service_path,
+                manifest_path,
+                usd_path,
+                output,
+                seed=args.seed + episode_index,
+            )
+            report = _run_child(command, output, log)
+            teacher = _validate_report_shape(report, args.decisions)
+            _validate_camera_clocks(report, teacher)
+            _validate_outputs(report, teacher, output, robot)
+            if args.episodes == 1:
+                (output / "isaac-runtime.log").write_bytes(log.read_bytes())
+            reports.append(report)
+        result = (
+            reports[0]
+            if args.episodes == 1
+            else _cohort_report(reports, seed=args.seed)
         )
-        report = _run_child(command, output, log)
-        teacher = _validate_report_shape(report, args.decisions)
-        _validate_camera_clocks(report, teacher)
-        _validate_outputs(report, teacher, output, robot)
-        (output / "isaac-runtime.log").write_bytes(log.read_bytes())
-        publish(output, args.output_uri)
+        if args.episodes > 1:
+            write_json(published / "report.json", result)
+        publish(output if args.episodes == 1 else published, args.output_uri)
     _publish_component(args)
-    return report
+    return result
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -242,6 +325,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--policy-role", choices=("base", "adapted"), required=True)
     parser.add_argument("--decisions", type=int, required=True)
     parser.add_argument("--seed", type=int, required=True)
+    parser.add_argument("--episodes", type=int, default=1)
     return parser
 
 
@@ -249,8 +333,8 @@ def main(argv: list[str] | None = None) -> int:
     """Materialize inputs, execute Isaac, and publish the report."""
 
     args = build_parser().parse_args(argv)
-    if args.decisions < 1 or args.seed < 0:
-        raise ValueError("decisions must be positive and seed nonnegative")
+    if args.decisions < 1 or args.episodes < 1 or args.seed < 0:
+        raise ValueError("decisions and episodes must be positive and seed nonnegative")
     result = run(args)
     print(json.dumps(result, sort_keys=True), flush=True)
     return 0

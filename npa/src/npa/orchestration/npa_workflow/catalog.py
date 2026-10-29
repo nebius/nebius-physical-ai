@@ -3200,7 +3200,10 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.non_franka_decisions}}",
             "--seed",
             "{{config.non_franka_seed}}",
+            "--episodes",
+            "{{config.non_franka_episodes}}",
         ],
+        config_defaults={"non_franka_episodes": "1"},
     ),
     "workbench.sim2real.policy_interchange_non_franka_base_execute": ToolEntry(
         name="workbench.sim2real.policy_interchange_non_franka_base_execute",
@@ -3230,7 +3233,10 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.non_franka_decisions}}",
             "--seed",
             "{{config.non_franka_seed}}",
+            "--episodes",
+            "{{config.non_franka_episodes}}",
         ],
+        config_defaults={"non_franka_episodes": "1"},
     ),
     "workbench.sim2real.policy_interchange_non_franka_collect": ToolEntry(
         name="workbench.sim2real.policy_interchange_non_franka_collect",

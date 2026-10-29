@@ -37,7 +37,10 @@ from npa.workflows.sim2real.interchange_isaac_runtime import (
     _write_teacher_episode,
     _write_png_rgb8,
 )
-from npa.workflows.sim2real.interchange_isaac_entry import _child_command
+from npa.workflows.sim2real.interchange_isaac_entry import (
+    _child_command,
+    _cohort_report,
+)
 from npa.workflows.sim2real import (
     interchange_teacher_collect,
     interchange_teacher_runtime,
@@ -707,3 +710,45 @@ def test_native_child_command_uses_every_explicit_binding(tmp_path: Path) -> Non
         "--seed",
         "7",
     ]
+
+
+def test_native_child_command_accepts_split_disjoint_episode_seed(
+    tmp_path: Path,
+) -> None:
+    paths = [
+        tmp_path / name
+        for name in ("prepared", "prep", "service", "manifest", "robot", "output")
+    ]
+    command = _child_command(argparse.Namespace(decisions=12, seed=7), *paths, seed=11)
+    assert command[-2:] == ["--seed", "11"]
+
+
+def test_native_object_cohort_preserves_each_result_and_identity() -> None:
+    reports = [
+        {
+            "execution_valid": True,
+            "task_success": success,
+            "seed": 41 + index,
+            "ordered_event_steps": {"contact": 3} if success else {},
+            "robot_identity": "franka",
+            "object_identity": "offset-spool",
+            "task_identity": "surface-placement",
+            "checkpoint_sha256": "a" * 64,
+            "normalization_identity": "b" * 64,
+        }
+        for index, success in enumerate((True, False, True))
+    ]
+    cohort = _cohort_report(reports, seed=41)
+    assert cohort["execution_valid"] is True
+    assert cohort["task_success_measured"] is True
+    assert cohort["episode_count"] == 3
+    assert cohort["success_count"] == 2
+    assert cohort["success_rate"] == pytest.approx(2 / 3)
+    assert [episode["seed"] for episode in cohort["episodes"]] == [41, 42, 43]
+    assert {episode["object_identity"] for episode in cohort["episodes"]} == {
+        "offset-spool"
+    }
+
+    reports[1]["object_identity"] = "different-object"
+    with pytest.raises(RuntimeError, match="identities or seeds"):
+        _cohort_report(reports, seed=41)
