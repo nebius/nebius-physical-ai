@@ -186,7 +186,7 @@ release promotion.
 
 Both CPU builds also upgrade the system Python bootstrap from an exact shared
 lock and replace pip's vendored MessagePack and urllib3 with the actual
-`msgpack==1.2.1` and `urllib3==2.8.0` wheel bytes while retaining their licenses. Upgrading only the
+`msgpack==1.2.3` and `urllib3==2.8.0` wheel bytes while retaining their licenses. Upgrading only the
 viewer virtualenv leaves the system bootstrap vulnerable; installing a newer
 external MessagePack package leaves pip's independent vendor copy unchanged.
 The replacement also updates pip's vendor inventory and CycloneDX dependency

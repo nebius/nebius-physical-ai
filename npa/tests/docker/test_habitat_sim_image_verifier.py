@@ -2288,9 +2288,15 @@ def test_report_publication_failure_cleans_only_created_output(
     monkeypatch.setattr(VERIFIER, "_arguments", lambda _: args)
     monkeypatch.setattr(VERIFIER, "_verify_archive", lambda _: {"valid": True})
     if boundary == "link":
+        _isolate_verifier_os(monkeypatch)
         monkeypatch.setattr(
             VERIFIER.os, "link", Mock(side_effect=OSError("inert refusal"))
         )
+        global_source = tmp_path / "global-link-source"
+        global_target = tmp_path / "global-link-target"
+        global_source.write_bytes(b"global os.link remains available\n")
+        os.link(global_source, global_target)
+        assert global_target.read_bytes() == global_source.read_bytes()
     elif boundary == "readback":
         monkeypatch.setattr(
             VERIFIER,
