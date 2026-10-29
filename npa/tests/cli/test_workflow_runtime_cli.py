@@ -2107,7 +2107,7 @@ def runtime_api_environment(fake_runtime, mocker, monkeypatch, tmp_path):
             "explicit/environment-test",
         ),
         ([], False, "token-factory-fanout/environment-test"),
-        ([], True, "inherited/old-run"),
+        ([], True, "token-factory-fanout/environment-test"),
     ],
 )
 def test_runtime_readiness_uses_resolved_environment(
@@ -2145,6 +2145,85 @@ def test_runtime_readiness_uses_resolved_environment(
     assert snapshots[0]["AWS_ACCESS_KEY_ID"] == "selected-access"
     assert snapshots[0]["AWS_SECRET_ACCESS_KEY"] == "selected-secret"
     assert all(snapshots[0][name] == "https://selected.invalid" for name in names[2:-2])
+    assert {name: os.environ.get(name) for name in names} == before
+
+
+def test_runtime_declared_storage_ignores_stale_daemon_environment(
+    runtime_api_environment,
+    tmp_path,
+):
+    snapshots, driver, names = runtime_api_environment
+    before = {name: os.environ.get(name) for name in names}
+    declared_spec = tmp_path / "declared-storage.yaml"
+    declared_spec.write_text(
+        FANOUT.read_text(encoding="utf-8").replace(
+            "bucket: example-bucket", "bucket: declared-bucket", 1
+        ),
+        encoding="utf-8",
+    )
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(declared_spec),
+            "--runtime",
+            "--run-id",
+            "declared-storage",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert driver.call_count == 1
+    submitted_spec = driver.call_args.args[0]
+    assert submitted_spec.config["prefix"] == ("token-factory-fanout/{{run.id}}")
+    assert submitted_spec.config["bucket"] == "declared-bucket"
+    assert len(snapshots) == 5
+    assert all(snapshot == snapshots[0] for snapshot in snapshots)
+    assert snapshots[0]["NPA_S3_PREFIX"] == ("token-factory-fanout/declared-storage")
+    assert snapshots[0]["NPA_S3_BUCKET"] == "declared-bucket"
+    assert {name: os.environ.get(name) for name in names} == before
+
+
+def test_runtime_uses_ambient_storage_only_when_spec_omits_destination(
+    runtime_api_environment,
+    tmp_path,
+):
+    snapshots, driver, names = runtime_api_environment
+    before = {name: os.environ.get(name) for name in names}
+    fallback_spec = tmp_path / "ambient-storage.yaml"
+    fallback_spec.write_text(
+        """apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata: {name: ambient-storage}
+config: {}
+initial: execute
+states:
+  execute:
+    run: {shell: 'true'}
+    terminal: true
+""",
+        encoding="utf-8",
+    )
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(fallback_spec),
+            "--runtime",
+            "--run-id",
+            "ambient-storage",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert driver.call_count == 1
+    submitted_spec = driver.call_args.args[0]
+    assert submitted_spec.config["prefix"] == "inherited/old-run"
+    assert submitted_spec.config["bucket"] == "inherited-bucket"
+    assert snapshots[0]["NPA_S3_PREFIX"] == "inherited/old-run"
+    assert snapshots[0]["NPA_S3_BUCKET"] == "inherited-bucket"
     assert {name: os.environ.get(name) for name in names} == before
 
 

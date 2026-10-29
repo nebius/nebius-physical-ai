@@ -1555,12 +1555,8 @@ def submit_cmd(
         # the runtime ledger, not only a later materializer's environment.
         if s3_bucket:
             substitutions["bucket"] = s3_bucket
-        elif "bucket" not in substitutions and os.environ.get("NPA_S3_BUCKET"):
-            substitutions["bucket"] = os.environ["NPA_S3_BUCKET"]
         if s3_prefix:
             substitutions["prefix"] = s3_prefix
-        elif "prefix" not in substitutions and os.environ.get("NPA_S3_PREFIX"):
-            substitutions["prefix"] = os.environ["NPA_S3_PREFIX"]
     if preset and not is_npa_spec:
         _fail("--preset is supported only for npa.workflow/v0.0.1 specs")
         return
@@ -1579,11 +1575,27 @@ def submit_cmd(
         from npa.orchestration.npa_workflow.submit import load_spec_for_submit
 
         try:
+            declared_npa_spec = load_spec(yaml_path)
             substitutions = preset_overrides(
-                workflow_name=load_spec(yaml_path).name,
+                workflow_name=declared_npa_spec.name,
                 preset=preset,
                 explicit=substitutions,
             )
+            # An owned daemon can retain storage variables from an earlier run.
+            # They are fallbacks only for specs that do not declare their own
+            # destination; silently treating them as explicit overrides makes a
+            # validated plan and the live submit write to different run roots.
+            for key, env_name in (
+                ("bucket", "NPA_S3_BUCKET"),
+                ("prefix", "NPA_S3_PREFIX"),
+            ):
+                inherited = os.environ.get(env_name)
+                if (
+                    key not in substitutions
+                    and key not in declared_npa_spec.config
+                    and inherited
+                ):
+                    substitutions[key] = inherited
             # This is the authoritative spec for every later preflight.  It is
             # intentionally loaded before credentials, images, ledgers, input
             # staging, provisioning, or accelerator discovery.
