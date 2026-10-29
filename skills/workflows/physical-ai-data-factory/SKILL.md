@@ -934,3 +934,31 @@ Follow `skills/atomic/testing-conventions/SKILL.md` ("Live-Infra Testing Is A
 Priority"). The blueprint is registered in `SUBMIT_LIVE_MATRIX` and
 `DYNAMIC_SPECS`; smoke via `test_all_workflow_yamls.py`; the Rerun builder via
 `npa/tests/workflows/test_data_factory_viz.py`.
+
+### Opt-in Stream backend for the main Cosmos3 workflow
+
+`workflows/main/paidf-cosmos3.yaml` keeps `use_hosted_endpoint: false` by default.
+For hosted generation, set it to true, provide `endpoint_url`, owner-scoped
+`endpoint_input_connection` and `endpoint_output_connection`, and transport the
+key using `--secret-env WMH_API_KEY` or a private key file present on the worker.
+Use the [Stream client skill](../../tools/nebius-stream-beta/SKILL.md) to register
+connections. Scope input access to the prepared video and output access to the
+run's augmentation prefix. Only a verified Nebius output bucket is accepted;
+NPA's publication S3 endpoint must match that registered destination.
+
+The main workflow still prepares/captions inputs and evaluates, refines, curates,
+and publishes actual outputs. Set `variant_count: "12"` and
+`variant_parallelism: "12"` to exercise concurrent submissions; service lanes
+control actual GPU concurrency. Do not report submitted jobs as active GPUs.
+Preserve endpoint state on interruption and resume the same run identity.
+Native-only chunk/RGB/CFG/topology overrides are rejected. Hosted negative
+prompts are unsupported; `endpoint_negative_prompt` stays empty. Guardrails
+remain enabled. Follow the [configuration contract](../../../workflows/guides/paidf-cosmos3.md#optional-hosted-cosmos3-generation)
+for supported parameters and honest endpoint execution receipts.
+
+Present the canonical manifest's `augmented_video_uri` in demos and downstream
+consumers. Both backends restore verified source borders during PAIDF publication
+without changing generated scene pixels. Retained raw model videos can alter
+padding and are diagnostic artifacts, not the final publication. Label compressed
+viewing copies explicitly and retain their canonical-file provenance. The live
+endpoint audit checks border and scene pixels across every decoded frame.

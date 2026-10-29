@@ -1918,3 +1918,103 @@ npa destroy --project "<alias>" --all
 The plan previews read-only until you pass `--yes`, and the Nebius project
 itself is retained by default. See [teardown](../../docs/teardown.md) for what
 `npa destroy` removes (cloud spend) versus what it keeps.
+
+## Optional hosted Cosmos3 generation
+
+Cluster inference remains the default (`use_hosted_endpoint: false`). Set it to
+`true` to run the generation stage through Nebius Stream from a CPU worker.
+The input preparation, appearance sampler, Token Factory captions, Cosmos
+Evaluator, refinement decisions, curation, and publication stages still execute
+in PAIDF. This is a generation backend option, not a claim that the whole
+pipeline is a hosted service.
+
+Register input and output connections with the same customer key using the
+[Stream client skill](../../skills/tools/nebius-stream-beta/SKILL.md). The input
+connection must read the **prepared** `input/source.mp4`, not just the original
+fixture. The output connection must cover the run's `cosmos_augmented/` prefix.
+The server must verify it as Nebius Object Storage; NPA also checks that its own
+S3 publication client uses that same endpoint and bucket scope. An arbitrary
+S3-compatible input is supported, but final outputs must use Nebius.
+An empty registered read or write prefix intentionally permits the whole bucket
+for that direction. The adapter checks the registered scope; server ownership
+checks and storage IAM enforce access. Register explicit prefixes when the key
+should only reach one dataset or run.
+
+These are workflow config overrides; keep endpoint addresses and connection IDs
+in private configuration. Never put the bearer secret in YAML, command arguments,
+Git, reports, or HTML:
+
+```yaml
+config:
+  use_hosted_endpoint: true
+  endpoint_url: https://stream.example.invalid
+  endpoint_input_connection: registered-input
+  endpoint_output_connection: registered-output
+  cosmos3_checkpoint: Cosmos3-Nano  # Or Cosmos3-Super, explicitly.
+  variant_count: "12"
+  variant_parallelism: "12"
+  steps: "24"
+  guidance: "5.0"
+  control_guidance: "1.5"
+  seed: "17"
+```
+
+Supply `WMH_API_KEY` through the existing `workflow submit --secret-env
+WMH_API_KEY` binding, alongside the pipeline's S3 and Token Factory secrets.
+Alternatively, `endpoint_key_file` or `WMH_API_KEY_FILE` may identify a private,
+owner-readable regular file **on the executing worker**. A VDI-local path is not
+implicitly mounted into cluster tasks. The key file accepts a bare key or the
+operator tool's single `WMH_API_KEY=...`
+line without evaluating it as shell code. Permissions remain private (`0600`).
+HTTPS certificate validation is required; redirects and insecure HTTP are
+rejected. Customers need endpoint access, not
+permission to administer the serving cluster or access its model weights.
+
+`variant_parallelism` bounds simultaneous submitted/polled jobs; it does not
+allocate GPUs or change the endpoint's replica topology. The service admits and
+queues jobs according to its active model lanes. Twelve variants therefore need
+not run on twelve GPUs. Re-running the same workflow identity resumes stored
+jobs; it does not replace failed jobs silently. A degraded or failed evaluator
+stops the hosted workflow before another paid refinement; repair and rerun
+evaluation of retained outputs first. Inspect retained endpoint state
+and use the service's recovery operations for publication failures.
+The adapter polls active jobs until they reach a terminal state; it adds no
+implicit job deadline. Interrupting the worker or reaching an external workflow
+deadline does not cancel admitted endpoint jobs. Retain their IDs and inspect,
+resume, or explicitly cancel those same jobs through the service.
+Transient transport and gateway failures on JSON reads receive up to two
+additional attempts with backoff. Authentication failures and submissions are
+not automatically replayed. An exhausted polling failure is retained in the
+job's endpoint state; resume that same identity instead of generating a new job.
+Artifact downloads also honor delivery backpressure (`429` and `Retry-After`)
+before creating a local file. Delivery failures retain sanitized diagnostics in
+endpoint state; model execution is never repeated to acquire a download slot.
+
+Hosted augmentation currently accepts seed, denoising steps, guidance scale,
+control guidance, and the appearance prompt. It requires full-source edge
+conditioning at 24 FPS. Chunk windows and generated-frame continuity are server
+owned and recorded in each `endpoint_execution.json`; native chunk tuning, RGB
+hints, CFG normalization, and topology overrides are rejected. The hosted
+`endpoint_negative_prompt` must stay empty because the API has no such field;
+the existing `negative_prompt` continues to apply only to the native branch.
+Guardrails stay enabled. Technical delivery and timeline alignment do not prove
+semantic fidelity or task usefulness: PAIDF's actual evaluator and quality gate
+still decide the result, including rejection or refinement.
+
+Artifacts retain `engine: nebius-stream`, the actual model, job IDs, effective
+settings, source and artifact SHA-256 hashes, and full-source temporal checks.
+They do not claim native cluster execution. A resumed request is bound to its
+owner, origin, source hash, complete request, run, variant, and refinement pass.
+Use each canonical manifest variant's `augmented_video_uri` for consumers and
+demos. PAIDF applies the same border-preservation stage to native and hosted
+generation: detected source padding is restored exactly, while generated pixels
+inside the verified scene bounds remain unchanged. The retained
+`raw_model_video.mp4` and the endpoint's `generated.mp4` are diagnostic model
+outputs before that stage; they can contain augmented borders and must not be
+presented as the final PAIDF publication. This is deterministic publication
+processing, not a guarantee that diffusion itself excludes padding.
+
+The live endpoint audit compares every decoded published border pixel with the
+prepared source and every scene pixel with the retained raw output. If demos
+use compressed viewing copies, identify them as previews and retain the
+canonical publication hash separately from the preview hash.

@@ -1454,9 +1454,14 @@ skills:
           - workflows/testing/openpi-pi05-full-droid-finetune.yaml
   - name: physical-ai-data-factory
     category: workflows
-    when_to_use: "Author, run, submit, or view the native NVIDIA Physical AI Data Factory VDA, DIG, IAA, and EVG translations or the NPA-specific Cosmos3 VDA alternative, including count-only fanout with shipped defaults, on Nebius + SkyPilot."
+    when_to_use: "Author, run, submit, or view the native NVIDIA Physical AI Data Factory VDA, DIG, IAA, and EVG translations or the NPA-specific Cosmos3 VDA alternative, including count-only fanout with shipped defaults and opt-in Nebius Stream Cosmos3 generation, on Nebius + SkyPilot."
     path: skills/workflows/physical-ai-data-factory/SKILL.md
     smoke:
+      - type: file_exists
+        path: npa/src/npa/workbench/cosmos/stream_augmentation.py
+      - type: cli_help
+        args: ["workbench", "cosmos3", "generate-variants", "--help"]
+        contains: "--hosted-endpoint"
       - type: cli_help
         args: ["workbench", "cosmos-evaluator", "report", "--help"]
         contains: "--input-path"
