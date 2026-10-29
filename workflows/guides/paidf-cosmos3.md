@@ -1935,6 +1935,10 @@ fixture. The output connection must cover the run's `cosmos_augmented/` prefix.
 The server must verify it as Nebius Object Storage; NPA also checks that its own
 S3 publication client uses that same endpoint and bucket scope. An arbitrary
 S3-compatible input is supported, but final outputs must use Nebius.
+An empty registered read or write prefix intentionally permits the whole bucket
+for that direction. The adapter checks the registered scope; server ownership
+checks and storage IAM enforce access. Register explicit prefixes when the key
+should only reach one dataset or run.
 
 These are workflow config overrides; keep endpoint addresses and connection IDs
 in private configuration. Never put the bearer secret in YAML, command arguments,
@@ -1974,6 +1978,10 @@ jobs; it does not replace failed jobs silently. A degraded or failed evaluator
 stops the hosted workflow before another paid refinement; repair and rerun
 evaluation of retained outputs first. Inspect retained endpoint state
 and use the service's recovery operations for publication failures.
+The adapter polls active jobs until they reach a terminal state; it adds no
+implicit job deadline. Interrupting the worker or reaching an external workflow
+deadline does not cancel admitted endpoint jobs. Retain their IDs and inspect,
+resume, or explicitly cancel those same jobs through the service.
 
 Hosted augmentation currently accepts seed, denoising steps, guidance scale,
 control guidance, and the appearance prompt. It requires full-source edge
