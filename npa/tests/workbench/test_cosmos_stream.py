@@ -379,6 +379,44 @@ def test_hosted_workflow_selects_cpu_and_has_no_native_model_access_requirement(
     assert not _workflow_access_requirements(spec)
 
 
+@pytest.mark.parametrize("model", ["Cosmos3-Nano", "Cosmos3-Super"])
+@pytest.mark.parametrize("decision", ["promote_checkpoint", "loop_back"])
+@pytest.mark.parametrize("count", ["2", "12"])
+def test_hosted_switch_preserves_surrounding_workflow(model, decision, count):
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.spec import load_spec
+
+    path = Path(__file__).resolve().parents[3] / "workflows/main/paidf-cosmos3.yaml"
+    spec = load_spec(path)
+    spec.config.update(
+        cosmos3_checkpoint=model, variant_count=count, variant_parallelism=count
+    )
+    native = build_plan(spec, run_id="backend-contract", assume_decision=decision)
+    spec.config["use_hosted_endpoint"] = True
+    hosted = build_plan(spec, run_id="backend-contract", assume_decision=decision)
+    generation = {"generate-variants", "generate-variants-endpoint"}
+
+    def surrounding(plan):
+        fields = ("state", "argv", "shell", "resources", "inputs", "outputs")
+        return [
+            tuple(getattr(step, field) for field in fields)
+            for step in plan.steps
+            if step.state not in generation | {"verify-endpoint-evaluation"}
+        ]
+
+    assert surrounding(native) == surrounding(hosted)
+    for plan, expected in (
+        (native, "generate-variants"),
+        (hosted, "generate-variants-endpoint"),
+    ):
+        steps = [step for step in plan.steps if step.state in generation]
+        assert steps and all(
+            step.state == expected and model in step.argv for step in steps
+        )
+    assert all(step.state != "verify-endpoint-evaluation" for step in native.steps)
+    assert any(step.state == "verify-endpoint-evaluation" for step in hosted.steps)
+
+
 def test_static_config_transition_executes_without_a_decision_artifact(tmp_path):
     from npa.orchestration.npa_workflow.interpreter import run_workflow
     from npa.orchestration.npa_workflow.spec import load_spec
