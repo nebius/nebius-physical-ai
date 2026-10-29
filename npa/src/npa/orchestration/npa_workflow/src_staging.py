@@ -277,10 +277,7 @@ def _staged_catalog_files(root: Path, catalog: Path) -> dict[Path, Path]:
 
 def _include_required_build_files(root: Path, files: dict[Path, Path]) -> None:
     """Keep Hatch's required inputs present without broadly bypassing gitignore."""
-    try:
-        import tomllib
-    except ImportError:
-        import tomli as tomllib
+    import tomllib
 
     project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
     targets = (

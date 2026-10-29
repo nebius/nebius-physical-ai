@@ -47,6 +47,7 @@ if TYPE_CHECKING:
         RunStorageLocation,
     )
     from npa.orchestration.npa_workflow.spec import NpaWorkflowSpec
+    from npa.orchestration.npa_workflow.submission_state import SubmissionStateRead
     from npa.orchestration.npa_workflow.submit_credentials import (
         SubmitCredentialContext,
     )
@@ -2394,6 +2395,11 @@ def submit_cmd(
                             context=infra_context,
                             kubeconfig=kubeconfig,
                             isaac_placements=isaac_placements,
+                            allow_wait_for_first_consumer=(
+                                _has_canonical_isaac_cache_warm_initial_state(
+                                    merged_npa_spec
+                                )
+                            ),
                         )
                     )
             if missing:
@@ -2891,6 +2897,7 @@ def submit_cmd(
             _runtime_submit_environment(
                 merged_npa_spec,
                 run_id=resolved_run_id,
+                project=project,
                 secret_env_values=extra_env,
                 endpoint=render_endpoint,
                 isolated_config_dir=isolated_config_dir,
@@ -3034,6 +3041,7 @@ def submit_cmd(
                     sky_bin=sky_bin,
                     assume_decision=assume_decision,
                     enabled=resolve_accelerators,
+                    environment=runtime_environment,
                     diagnostic_secrets=submission_redaction_secrets,
                     config_path=config_path,
                     isolated_config_dir=isolated_config_dir,
@@ -3867,25 +3875,15 @@ def _workflow_submission_receipt(
     return receipt
 
 
-def _recorded_runtime_store(
-    project: str,
-    run_id: str,
-    *,
-    resume: bool,
-    credentials: SubmitCredentialContext,
-) -> RunStateStore | None:
-    """Return the receipt's exact store so legacy resumes do not move ledgers."""
+def _recorded_resume_prefix(
+    recorded: SubmissionStateRead, *, project: str, run_id: str
+) -> str | None:
+    """Resolve a recorded prefix or prove that this exact run never launched."""
 
-    if not resume:
-        return None
-    from npa.orchestration.npa_workflow.run_state import (
-        store_for_recorded_run_prefix,
-    )
     from npa.orchestration.npa_workflow.submission_state import (
-        inspect_submission_state,
+        submission_proves_never_launched,
     )
 
-    recorded = inspect_submission_state(project or "default", run_id)
     if recorded.outcome == "absent":
         return None
     if recorded.outcome == "unavailable":
@@ -3898,7 +3896,36 @@ def _recorded_runtime_store(
         raise ValueError("resume receipt has no valid workflow record")
     run_prefix_uri = str(workflow.get("run_prefix_uri") or "").strip()
     if not run_prefix_uri:
+        if submission_proves_never_launched(
+            recorded.payload, project=project, run_id=run_id
+        ):
+            return None
         raise ValueError("resume receipt workflow has no recorded run_prefix_uri")
+    return run_prefix_uri
+
+
+def _recorded_runtime_store(
+    project: str,
+    run_id: str,
+    *,
+    resume: bool,
+    credentials: SubmitCredentialContext,
+) -> RunStateStore | None:
+    """Keep the exact resume store; prelaunch plans use current verified storage."""
+
+    if not resume:
+        return None
+    from npa.orchestration.npa_workflow.run_state import (
+        store_for_recorded_run_prefix,
+    )
+    from npa.orchestration.npa_workflow.submission_state import (
+        inspect_submission_state,
+    )
+
+    recorded = inspect_submission_state(project or "default", run_id)
+    run_prefix_uri = _recorded_resume_prefix(recorded, project=project, run_id=run_id)
+    if run_prefix_uri is None:
+        return None
     return store_for_recorded_run_prefix(
         run_prefix_uri,
         endpoint_url=credentials.endpoint_url,
@@ -3959,6 +3986,7 @@ def _runtime_submit_environment(
     spec,
     *,
     run_id: str,
+    project: str,
     secret_env_values: Mapping[str, str],
     endpoint: str,
     isolated_config_dir: Path | None = None,
@@ -3971,6 +3999,9 @@ def _runtime_submit_environment(
     )
 
     environment = dict(secret_env_values)
+    # The first discovery starts the owned API. Its project must already match
+    # the target that stage submission and durable observations will select.
+    environment["NPA_SKYPILOT_PROJECT"] = project or "default"
     resolved_config = _make_context(spec, run_id=run_id).config
     for key in ("bucket", "prefix"):
         if key in resolved_config:
@@ -4128,6 +4159,7 @@ def _run_npa_workflow_runtime(
     runtime_env = _runtime_submit_environment(
         spec,
         run_id=run_id,
+        project=project,
         secret_env_values=secret_env_values,
         endpoint=str(getattr(render_options, "aws_endpoint_url", "") or "").strip(),
         isolated_config_dir=isolated_config_dir,
@@ -4631,8 +4663,98 @@ def _sim2real_cache_namespace(context, kubeconfig):
     return context_namespace(context=context, kubeconfig=kubeconfig)
 
 
+def _has_canonical_isaac_cache_warm_initial_state(spec: NpaWorkflowSpec) -> bool:
+    """Return whether the workflow begins with the exact canonical cache writer.
+
+    A delayed-binding PVC can be admitted only when this initial state actually
+    mounts the supplied claim read-write, runs the cache bootstrap, and publishes
+    the cache receipt before the rest of the workflow starts.  Checking the
+    command alone would let a copied spec skip the PVC mount and deadlock again.
+    """
+
+    state = spec.states.get("stage-00-isaac-cache-warm")
+    expected_argv = [
+        "/opt/npa/sim/venv/bin/python",
+        "-m",
+        "npa.workflows.sim2real.cache_warm",
+        "--root-uri",
+        "{{config.root_uri}}",
+        "--run-id",
+        "{{run.id}}",
+    ]
+    if state is None:
+        return False
+    resource = spec.resources.get("isaac-cache-warm")
+    if not isinstance(resource, dict):
+        return False
+    try:
+        pod_spec = resource["kubernetes"]["pod_config"]["spec"]
+        containers = pod_spec["containers"]
+        volumes = pod_spec["volumes"]
+    except (KeyError, TypeError):
+        return False
+    if not isinstance(containers, list) or not isinstance(volumes, list):
+        return False
+    cache_container = next(
+        (
+            container
+            for container in containers
+            if isinstance(container, dict) and container.get("name") == "ray-node"
+        ),
+        None,
+    )
+    if not isinstance(cache_container, dict):
+        return False
+    env = {
+        entry.get("name"): entry.get("value")
+        for entry in cache_container.get("env", [])
+        if isinstance(entry, dict)
+    }
+    writable_cache_mount = any(
+        isinstance(mount, dict)
+        and mount.get("name") == "npa-isaac-runtime-cache"
+        and mount.get("mountPath") == "/opt/isaac-cache"
+        for mount in cache_container.get("volumeMounts", [])
+    )
+    claim_volume = any(
+        isinstance(volume, dict)
+        and volume.get("name") == "npa-isaac-runtime-cache"
+        and isinstance(volume.get("persistentVolumeClaim"), dict)
+        and volume["persistentVolumeClaim"].get("claimName")
+        == "{{config.isaac_cache_pvc}}"
+        for volume in volumes
+    )
+    emits_cache_receipt = len(state.outputs) == 1 and (
+        state.outputs[0].uri == "{{config.root_uri}}/cache/isaac-warm.json"
+        and state.outputs[0].schema == "npa.sim2real.isaac_cache_warm.v1"
+    )
+    return bool(
+        spec.name == "sim2real"
+        and spec.initial == "stage-00-isaac-cache-warm"
+        and state.resources == "isaac-cache-warm"
+        and state.run is not None
+        and state.run.argv == expected_argv
+        and state.next == "stage-01-trigger"
+        and resource.get("cloud") == "kubernetes"
+        and resource.get("image") == "{{config.isaac_image}}"
+        and env.get("NPA_SIM2REAL_ISAAC_CACHE_PVC") == "{{config.isaac_cache_pvc}}"
+        and env.get("NPA_ISAAC_CACHE_DIR") == "/opt/isaac-cache"
+        and env.get("NPA_ISAAC_CACHE_READONLY") == "0"
+        and env.get("NPA_ISAAC_BOOTSTRAP_OFFLINE") == "0"
+        and writable_cache_mount
+        and claim_volume
+        and emits_cache_receipt
+    )
+
+
 def _sim2real_kubernetes_prerequisites_for_submit(
-    config, *, runner, context, kubeconfig, isaac_placements
+    config,
+    *,
+    runner,
+    context,
+    kubeconfig,
+    isaac_placements,
+    allow_wait_for_first_consumer: bool = False,
 ):
     """Check the Isaac cache in the namespace selected for this submission.
 
@@ -4642,6 +4764,8 @@ def _sim2real_kubernetes_prerequisites_for_submit(
         context: Selected Kubernetes context.
         kubeconfig: Selected authenticated kubeconfig.
         isaac_placements: Effective Isaac render placement constraints.
+        allow_wait_for_first_consumer: Admit a verified delayed-binding claim only
+            when this submission begins at the canonical cache-warm writer.
     Returns:
         Missing prerequisites, including unreadable namespace evidence.
     Raises:
@@ -4656,7 +4780,11 @@ def _sim2real_kubernetes_prerequisites_for_submit(
     except ValueError:
         namespace = None
     return kubernetes_prerequisites(
-        config, runner=runner, namespace=namespace, isaac_placements=isaac_placements
+        config,
+        runner=runner,
+        namespace=namespace,
+        isaac_placements=isaac_placements,
+        allow_wait_for_first_consumer=allow_wait_for_first_consumer,
     )
 
 
@@ -9497,6 +9625,11 @@ def cancel_cmd(
     cluster: str = typer.Option(
         "", "--cluster", help="SkyPilot cluster name to tear down. Defaults to run ID."
     ),
+    preserve_cluster: bool = typer.Option(
+        False,
+        "--preserve-cluster",
+        help="Cancel one explicit active job without tearing down its run cluster.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON."),
 ) -> None:
     """Cancel a launched run; never-launched and terminal runs are repeat-safe no-ops."""
@@ -9504,13 +9637,18 @@ def cancel_cmd(
     identity = None
     result: dict[str, Any]
     try:
+        from npa.orchestration.skypilot.workflow_state import WorkflowStateError
+
+        if preserve_cluster and cluster:
+            raise ValueError("--preserve-cluster cannot be combined with --cluster.")
+        if preserve_cluster and not job_id.strip():
+            raise ValueError("--preserve-cluster requires an explicit --job-id.")
         from npa.orchestration.npa_workflow.cancellation import (
             assess_run_cancellation,
             is_terminal_workflow_state,
             reverify_active_cancellation,
         )
         from npa.orchestration.npa_workflow.run_resolution import resolve_run
-        from npa.orchestration.skypilot.workflow_state import WorkflowStateError
         from npa.cleanup_identity import resolve_cleanup_identity
         from npa.clients.config import resolve_environment
 
@@ -9701,6 +9839,15 @@ def cancel_cmd(
                     cleanup_launched_workflows,
                 )
 
+                if preserve_cluster and (
+                    len(assessment.active_jobs) != 1
+                    or assessment.active_jobs[0].job_id != job_id.strip()
+                ):
+                    raise ValueError(
+                        "--preserve-cluster requires the explicit --job-id to be the "
+                        "only active managed job recorded for this run."
+                    )
+
                 reverify_errors = call_with_workflow_storage(
                     resolution.state,
                     reverify_active_cancellation,
@@ -9729,6 +9876,9 @@ def cancel_cmd(
                         ),
                     }
                 else:
+                    cleanup_options = (
+                        {"teardown_cluster": False} if preserve_cluster else {}
+                    )
                     cleanup = call_with_workflow_storage(
                         resolution.state,
                         cleanup_launched_workflows,
@@ -9740,6 +9890,7 @@ def cancel_cmd(
                         cluster=cluster,
                         sky_bin=sky_bin or None,
                         isolated_config_dir=isolated_config_dir,
+                        **cleanup_options,
                     )
                     errors = [*assessment.errors, *cleanup.errors]
                     owned_teardown_allowed = (
@@ -9758,6 +9909,7 @@ def cancel_cmd(
                         "cancelled_job_ids": active_ids,
                         "cloud_calls": True,
                         "jobs": jobs_payload,
+                        "cluster_preserved": preserve_cluster,
                         "durable_absence_conflict_job_ids": absence_conflict_ids,
                         "durable_absence_conflict_errors": (
                             assessment.absence_conflict_errors
@@ -9767,7 +9919,10 @@ def cancel_cmd(
                         "commands": cleanup.commands,
                         "errors": errors,
                         "message": (
-                            f"Cancellation converged for {len(active_ids)} active managed job(s)."
+                            f"Cancellation converged for {len(active_ids)} active managed job(s); "
+                            "the run cluster was preserved."
+                            if not errors and preserve_cluster
+                            else f"Cancellation converged for {len(active_ids)} active managed job(s)."
                             if not errors
                             else "Every live managed job converged; only contradictory "
                             "durable state for exact verified-absent jobs remains. An "
@@ -9828,6 +9983,11 @@ def cancel_cmd(
             action={
                 "kind": "managed_job_cancel" if result.get("cloud_calls") else "none",
                 "cancelled_job_ids": result.get("cancelled_job_ids", []),
+                **(
+                    {"cluster_preserved": True}
+                    if result.get("cluster_preserved")
+                    else {}
+                ),
             },
             verification={
                 "outcome": result.get("outcome", ""),

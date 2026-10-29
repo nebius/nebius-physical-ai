@@ -231,7 +231,7 @@ def new_run_id(prefix: str = "sim2real-b") -> str:
 
 
 def default_vlm_image(*, registry: str | None = None) -> str:
-    """Return the reference Cosmos3-reason-compatible VLM image."""
+    """Return the legacy Cosmos3-reason-compatible VLM image for loop adapters."""
 
     return container_image_for_tool("cosmos3-reason", registry=registry)
 
@@ -243,7 +243,7 @@ def default_envgen_image(*, registry: str | None = None) -> str:
 
 
 def default_augment_image(*, registry: str | None = None) -> str:
-    """Return the reference Cosmos2 transfer image used by Stage 3."""
+    """Return the legacy Cosmos Transfer 2.5 image for archived loop adapters."""
 
     return container_image_for_tool("cosmos2-transfer", registry=registry)
 

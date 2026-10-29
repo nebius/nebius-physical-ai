@@ -52,13 +52,14 @@ caused a real downgrade refusal, not an access or transport failure. No downgrad
 override is used. These dependency pins
 do not qualify an image without its fresh complete artifact gates.
 
-EnvGen also removes one hash-bound, inert `grass()` sample-download example
-from inherited scikit-image source. The example contains a token-bearing URL
-flagged by the image scan; no assertion is made that it is a private credential.
-The sanitizer refuses changed source or package `RECORD`, preserves executable
-ASTs and primary API documentation, and updates the exact modified source hash
-in `RECORD`. It runs before filesystem flattening, not as a scanner suppression.
-Original failing image bytes and scan populations remain separate evidence.
+The dedicated current-source EnvGen runtime does not inherit or sanitize a
+Genesis scikit-image installation. It removes the complete inherited
+`/opt/npa` tree before creating its own uv-managed CPython 3.12.14 NPA-only
+environment. The digest-pinned, Apache-2.0 OR MIT `uv` builder is removed after
+creating the PSF-2.0 interpreter-backed venv; its lock excludes Genesis,
+LeRobot, datasets, Torch, and scikit-image. Historical scikit-image findings
+and original image bytes remain separate evidence; no scanner suppression or
+inherited-package repair is used for the new role.
 
 Every workflow image must satisfy version `skypilot-0.12.2-v1`: a usable
 effective user; root or verified passwordless sudo; `openssh-server`, `rsync`,
@@ -176,9 +177,10 @@ dependency check does not qualify an existing or replacement image digest.
 
 The Sim2Real controller and Rerun viewer builds use the October 2, 2026 Debian
 snapshot and explicitly install `perl-base=5.40.1-6+deb13u1` to remove the three
-fixable critical findings in the prior CPU builds. EnvGen clears inherited NPA
-source and workflow directories before copying the selected source revision;
-Docker directory copies otherwise preserve files removed from that revision.
+fixable critical findings in the prior CPU builds. EnvGen clears the complete
+inherited `/opt/npa` tree before copying the selected source revision and its
+dedicated role environment; Docker directory copies otherwise preserve files
+removed from that revision or an unrelated inherited dependency closure.
 These build changes require new immutable images and fresh validation before
 release promotion.
 
@@ -217,7 +219,7 @@ All first-class images live under `npa/docker/workbench/`:
 | `npa-robotwin` | `robotwin/Dockerfile` | neutral development bootstrap; supported release quarantined; CPU refusal verified |
 | `npa-retargeting` | `retargeting/Dockerfile` | job shell |
 | `npa-foxglove-embed` | `foxglove-embed/Dockerfile` | static host `:8099` (Foxglove embed SDK + MCAP data) |
-| Sim2Real stack | `sim2real-*/`, `cosmos3-reason/`, `lerobot-vlm-rl/` | workflow modules |
+| Canonical Sim2Real | `sim2real-control/`, `cosmos3/`, `sim2real-envgen/`, `isaac-lab/`, `rerun-viewer/` | 14-stage workflow; hosted evaluator runs in the CPU controller |
 | Base CUDA 13 | `base/cuda13-blackwell/Dockerfile` | build base only |
 | PAIDF AnomalyGen Sky compatibility (restricted) | `paidf-anomalygen-sky/Dockerfile` | operator-built job shell; never public GHCR |
 | PAIDF Qwen Image Edit Sky compatibility (restricted) | `paidf-image-edit-sky/Dockerfile` | operator-built worker shell over the pinned upstream runtime; never public GHCR |
@@ -592,7 +594,7 @@ pod pay its generation's cold fetch. Warm a **shared** volume once instead:
 
 ```bash
 kubectl apply -f npa/docker/workbench/common/warm-isaac-cache.yaml
-kubectl wait --for=condition=complete job/npa-warm-isaac-cache --timeout=30m
+kubectl wait --for=condition=complete job/npa-warm-isaac-cache --timeout=-1s
 ```
 
 Then run workload pods against the same volume with `NPA_ISAAC_CACHE_READONLY=1`, so the

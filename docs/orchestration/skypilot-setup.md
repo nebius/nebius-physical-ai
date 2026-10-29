@@ -329,8 +329,8 @@ update all of them together and re-run the SkyPilot guardrail tests:
 1. `npa/src/npa/orchestration/skypilot/_bin.py` — `REQUIRED_SKYPILOT_VERSION`
    (canonical pin; `npa skypilot bootstrap` and `_bin` fail closed on mismatch).
    `npa/src/npa/cli/skypilot/__init__.py` aliases it as `SKYPILOT_VERSION`.
-2. `npa/src/npa/cli/skypilot/constraints-0.12.2.txt` — rename to the new
-   version and re-resolve the pinned dependency set.
+2. `npa/src/npa/cli/skypilot/skypilot-constraints.txt` — re-resolve the
+   SkyPilot-compatible dependency set, including its exact local API server pin.
 3. `npa/src/npa/orchestration/skypilot/local_api.py` — health-check version
    assertion against the isolated API daemon (`health.get("version")`).
 4. `npa/src/npa/orchestration/skypilot/native_preflight.py` —

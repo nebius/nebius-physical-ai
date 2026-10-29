@@ -230,7 +230,14 @@ def scene_spec_from_uri(uri: str) -> SceneSpec:
 
 
 def frame_uris_from_transfer_manifest(uri: str) -> tuple[str, ...]:
-    """Load and validate the exact frame list a real Cosmos transfer published."""
+    """Load the exact frames from an accepted Stage 3 transfer manifest.
+
+    ``npa.cosmos3.structural-transfer.v1`` is the canonical current contract.
+    The former Transfer 2.5 schema remains readable solely for historical runs;
+    it is not emitted or selected by the current workflow source.  Keeping the
+    two validation branches explicit prevents a legacy receipt from being
+    silently relabelled as Cosmos3 evidence.
+    """
 
     from npa.workbench.cosmos.transfer import (
         TRANSFER_MANIFEST_MODE,
@@ -251,19 +258,74 @@ def frame_uris_from_transfer_manifest(uri: str) -> tuple[str, ...]:
         local_ref = ref.removeprefix("file://").removeprefix("local://")
         payload = _read_json_object(Path(local_ref), source=ref)
 
-    if payload.get("schema") != TRANSFER_MANIFEST_SCHEMA:
+    schema = payload.get("schema")
+    if schema == "npa.cosmos3.structural-transfer.v1":
+        if payload.get("mode") != "cosmos3_nano_video2video_edge_gpu":
+            raise Sim2RealEnvGenError(
+                f"Cosmos3 transfer manifest {ref!r} must use native edge-controlled "
+                "video2video mode"
+            )
+        if (
+            payload.get("status") != "executed"
+            or payload.get("input_conditioned") is not True
+        ):
+            raise Sim2RealEnvGenError(
+                f"Cosmos3 transfer manifest {ref!r} lacks executed input-conditioned evidence"
+            )
+        guardrails = payload.get("guardrail_state")
+        if not isinstance(guardrails, dict) or (
+            guardrails.get("status") != "passed"
+            or guardrails.get("effective") is not True
+        ):
+            raise Sim2RealEnvGenError(
+                f"Cosmos3 transfer manifest {ref!r} lacks effective guardrail evidence"
+            )
+        structural = payload.get("structural_transfer")
+        if not isinstance(structural, dict) or not all(
+            structural.get(key) is True
+            for key in (
+                "text_guardrail_passed",
+                "video_guardrail_passed",
+                "guardrail_postprocessing_applied",
+            )
+        ):
+            raise Sim2RealEnvGenError(
+                f"Cosmos3 transfer manifest {ref!r} lacks native structural-transfer evidence"
+            )
+        coverage = payload.get("full_source_coverage")
+        if not isinstance(coverage, dict) or coverage.get("complete") is not True:
+            raise Sim2RealEnvGenError(
+                f"Cosmos3 transfer manifest {ref!r} does not attest complete source coverage"
+            )
+        counts = [
+            coverage.get("selected_source_frames"),
+            coverage.get("prepared_frames"),
+            coverage.get("generated_frames"),
+            coverage.get("decoded_envgen_frames"),
+            payload.get("frame_count"),
+        ]
+        if (
+            not all(isinstance(count, int) and count > 0 for count in counts)
+            or len(set(counts)) != 1
+        ):
+            raise Sim2RealEnvGenError(
+                f"Cosmos3 transfer manifest {ref!r} has inconsistent full-source frame counts"
+            )
+    elif schema == TRANSFER_MANIFEST_SCHEMA:
+        if payload.get("mode") != TRANSFER_MANIFEST_MODE:
+            raise Sim2RealEnvGenError(
+                f"transfer manifest {ref!r} must use real-transfer mode "
+                f"{TRANSFER_MANIFEST_MODE!r}"
+            )
+        if payload.get("status") != TRANSFER_MANIFEST_STATUS:
+            raise Sim2RealEnvGenError(
+                f"transfer manifest {ref!r} must have successful status "
+                f"{TRANSFER_MANIFEST_STATUS!r}"
+            )
+    else:
         raise Sim2RealEnvGenError(
-            f"transfer manifest {ref!r} must use schema {TRANSFER_MANIFEST_SCHEMA!r}"
-        )
-    if payload.get("mode") != TRANSFER_MANIFEST_MODE:
-        raise Sim2RealEnvGenError(
-            f"transfer manifest {ref!r} must use real-transfer mode "
-            f"{TRANSFER_MANIFEST_MODE!r}"
-        )
-    if payload.get("status") != TRANSFER_MANIFEST_STATUS:
-        raise Sim2RealEnvGenError(
-            f"transfer manifest {ref!r} must have successful status "
-            f"{TRANSFER_MANIFEST_STATUS!r}"
+            f"transfer manifest {ref!r} must use canonical Cosmos3 or historical "
+            f"{TRANSFER_MANIFEST_SCHEMA!r} schema"
         )
     frames = payload.get("frames")
     if not isinstance(frames, list) or not frames:
@@ -283,6 +345,17 @@ def frame_uris_from_transfer_manifest(uri: str) -> tuple[str, ...]:
                 f"transfer manifest {ref!r} frames[{index}].uri must be non-empty"
             )
         frame_uris.append(frame_uri.strip())
+    if len(set(frame_uris)) != len(frame_uris):
+        raise Sim2RealEnvGenError(
+            f"transfer manifest {ref!r} must not reuse one generated frame URI"
+        )
+    if (
+        schema == "npa.cosmos3.structural-transfer.v1"
+        and len(frame_uris) != payload["frame_count"]
+    ):
+        raise Sim2RealEnvGenError(
+            f"Cosmos3 transfer manifest {ref!r} frame list differs from full-source coverage"
+        )
     return tuple(frame_uris)
 
 

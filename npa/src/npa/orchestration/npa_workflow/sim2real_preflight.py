@@ -16,15 +16,13 @@ from npa.orchestration.skypilot.controller import (
     DEFAULT_K8S_CONTROLLER_CPUS,
     DEFAULT_K8S_CONTROLLER_MEMORY_GB,
 )
-from npa.orchestration.npa_workflow.errors import NpaWorkflowError
-from npa.orchestration.npa_workflow.image_inputs import resolved_baked_image_sources
-from npa.workflows.sim2real.constants import DEFAULT_COSMOS3_MODEL
+from npa.workflows.sim2real.constants import DEFAULT_TOKEN_FACTORY_MODEL
 
 
 Issue = tuple[str, str]
 _IMAGE_KEYS = (
     "controller_image",
-    "transfer_image",
+    "cosmos3_image",
     "envgen_image",
     "isaac_image",
     "viewer_image",
@@ -38,6 +36,7 @@ _REQUIRED_SECRET_ENVS = (
 _DIGEST_IMAGE = re.compile(r"^[^/\s]+/.+@sha256:[0-9a-fA-F]{64}$")
 _SIM2REAL_CPU_MILLICORES = (8 + DEFAULT_K8S_CONTROLLER_CPUS) * 1000
 _SIM2REAL_MEMORY_BYTES = (32 + DEFAULT_K8S_CONTROLLER_MEMORY_GB) * 1024**3
+_WAIT_FOR_FIRST_CONSUMER = "WaitForFirstConsumer"
 
 
 def cpu_placement_requirement() -> str:
@@ -54,6 +53,44 @@ def _config_is_enabled(value: Any) -> bool:
 def _is_source_sha(value: str) -> bool:
     """Return whether a value is an exact lowercase 40-character hexadecimal SHA."""
     return len(value) == 40 and all(char in "0123456789abcdef" for char in value)
+
+
+def _evaluation_issues(config: Mapping[str, Any]) -> list[Issue]:
+    try:
+        concurrency = int(str(config.get("evaluation_concurrency", "8")))
+        max_frames = int(str(config.get("evaluation_max_frames", "0")))
+        if concurrency > 0 and max_frames >= 0:
+            return []
+    except (TypeError, ValueError):
+        pass
+    return [
+        (
+            "Sim2Real hosted evaluation settings are invalid",
+            "set evaluation_concurrency to a positive integer and evaluation_max_frames "
+            "to a nonnegative integer; zero sends every declared primary frame",
+        )
+    ]
+
+
+def _token_factory_endpoint_issues(config: Mapping[str, Any]) -> list[Issue]:
+    """Reject an unsafe or stale configured hosted-inference endpoint."""
+
+    from npa.clients.token_factory import DEFAULT_BASE_URL
+    from npa.workflows.sim2real.hosted_evaluation import validate_token_factory_endpoint
+
+    try:
+        validate_token_factory_endpoint(
+            str(config.get("token_factory_base_url") or DEFAULT_BASE_URL)
+        )
+    except (TypeError, ValueError) as exc:
+        return [
+            (
+                f"Sim2Real Token Factory endpoint is invalid: {exc}",
+                "set token_factory_base_url to the credential-free HTTPS endpoint "
+                "that Stage 8 and Stage 9 will bind exactly",
+            )
+        ]
+    return []
 
 
 def _source_sha_issues(config: Mapping[str, Any]) -> list[Issue]:
@@ -99,6 +136,30 @@ def _source_sha_issues(config: Mapping[str, Any]) -> list[Issue]:
     return issues
 
 
+def _cosmos3_role_issues(config: Mapping[str, Any]) -> list[Issue]:
+    """Reject the known VLM-only image from the Stage 03 generation role.
+
+    Args:
+        config: Resolved Sim2Real workflow configuration.
+    Returns:
+        A preflight issue when the Cosmos-Reason image is assigned to Stage 03.
+    Raises:
+        None.
+    """
+    cosmos3_image = str(config.get("cosmos3_image") or "").strip().lower()
+    if "/npa-cosmos3-reason@" not in cosmos3_image:
+        return []
+    return [
+        (
+            "config.cosmos3_image selects npa-cosmos3-reason, which is a VLM "
+            "judge image and does not contain the Cosmos 3 generation framework",
+            "set cosmos3_image to an independently qualified npa-cosmos3 framework "
+            "image or compatible framework-bearing derivative; do not use "
+            "npa-cosmos3-reason for Stage 03",
+        )
+    ]
+
+
 def image_prerequisites(config: Mapping[str, Any]) -> list[Issue]:
     """Validate the complete immutable Sim2Real image bundle before pull probes.
 
@@ -127,6 +188,7 @@ def image_prerequisites(config: Mapping[str, Any]) -> list[Issue]:
         )
 
     issues.extend(_source_sha_issues(config))
+    issues.extend(_cosmos3_role_issues(config))
     return issues
 
 
@@ -141,15 +203,20 @@ def static_prerequisites(
     """Validate immutable inputs, consent, secret forwarding, and gated access."""
 
     issues = image_prerequisites(config)
+    issues.extend(_evaluation_issues(config))
+    issues.extend(_token_factory_endpoint_issues(config))
 
     pvc = str(config.get("isaac_cache_pvc") or "").strip()
     if not pvc:
         issues.append(
             (
                 "config.isaac_cache_pvc is empty",
-                "create and warm the shared Isaac cache from "
-                "npa/docker/workbench/common/warm-isaac-cache.yaml, then pass "
-                "--var isaac_cache_pvc=<bound-rwx-pvc>",
+                "run `npa workbench sim2real cache provision --name <rwx-pvc> "
+                "--context <context> --namespace <namespace>`, then pass "
+                "--var isaac_cache_pvc=<rwx-pvc>; canonical submission verifies "
+                "that it is Bound or, for WaitForFirstConsumer, that the guarded "
+                "cache writer is initial, then warms and attests it in the first "
+                "SkyPilot state",
             )
         )
 
@@ -221,16 +288,20 @@ def static_prerequisites(
     hf_token = str(secret_values.get("HF_TOKEN") or "").strip()
     if hf_token:
         # Derive the gated repos from the sim2real capability's single source of
-        # truth so this pre-launch gate matches `health access --capability
-        # sim2real`. Cosmos Transfer (Stage 3) also fetches the pinned
-        # Predict2.5 tokenizer and the Cosmos Guardrail weights at runtime;
-        # probing only Cosmos-Transfer2.5-2B here let a run pass preflight and
-        # then fail inside Stage 3 on an unaccepted dependency.
-        from npa.workbench.model_access import gated_hf_repos
+        # truth so this pre-launch gate matches the canonical Cosmos3 Stage 3.
+        # Nano and Guardrail1 fetch at runtime; an old Transfer2.5 approval is
+        # neither substituted nor treated as acceptance of the current model.
+        from npa.workbench.model_access import HF, assets_for
 
-        repos = list(dict.fromkeys(gated_hf_repos(("sim2real",))))
+        repos = list(
+            dict.fromkeys(
+                asset.repo
+                for asset in assets_for(("sim2real",))
+                if asset.provider == HF
+            )
+        )
         if not repos:
-            repos = ["nvidia/Cosmos-Transfer2.5-2B"]
+            repos = ["nvidia/Cosmos3-Nano", "nvidia/Cosmos-Guardrail1"]
         denied: list[str] = []
         for repo in (item for item in repos if item):
             result = hf_validator(hf_token, repo)
@@ -254,19 +325,29 @@ def static_prerequisites(
             hosted_rollout_model_family,
         )
 
-        model = str(config.get("cosmos3_model") or DEFAULT_COSMOS3_MODEL).strip()
+        model = str(
+            config.get("token_factory_model") or DEFAULT_TOKEN_FACTORY_MODEL
+        ).strip()
         try:
             hosted_rollout_model_family(model)
         except CosmosReasonError as exc:
             issues.append(
                 (
                     str(exc),
-                    "select a supported hosted rollout evaluator with cosmos3_model "
+                    "select a supported hosted rollout evaluator with token_factory_model "
                     "before provisioning",
                 )
             )
             return issues
-        result = token_factory_validator(token_factory_key, model)
+        from npa.clients.token_factory import DEFAULT_BASE_URL
+        from npa.workflows.sim2real.hosted_evaluation import (
+            validate_token_factory_endpoint,
+        )
+
+        endpoint = validate_token_factory_endpoint(
+            str(config.get("token_factory_base_url") or DEFAULT_BASE_URL)
+        )
+        result = token_factory_validator(token_factory_key, model, base_url=endpoint)
         if not getattr(result, "ok", False):
             detail = str(getattr(result, "error", "") or "access not verified")
             issues.append(
@@ -331,7 +412,7 @@ def _managed_driver_isaac_nodes(nodes_json: str, *, placements=None) -> list[str
     Isaac Sim's camera-bearing rollouts are validated on Kubernetes only against the
     GPU-Operator mounted RTX driver stack that `--gpu-workload-profile rtx-rendering`
     provisions. The Nebius managed-driver image still satisfies pure-compute CUDA, so
-    Cosmos Transfer and EnvGen succeed on it and the mismatch stays invisible until
+    Cosmos3 structural transfer and EnvGen succeed on it and the mismatch stays invisible until
     Stage 7 renders, where it surfaces as an opaque Warp illegal-memory-access after
     the earlier GPU stages have already been paid for.
     """
@@ -429,26 +510,30 @@ def _driver_placement_issues(nodes, placements) -> list[Issue]:
     ]
 
 
-def _isaac_cache_issues(config, runner, namespace) -> list[Issue]:
-    if str(config.get("runtime_prerequisites_mode") or "").strip() == "workflow_owned":
-        required = (
-            "isaac_cache_pvc",
-            "policy_cache_pvc",
-            "isaac_warm_job",
-            "service_auth_secret",
-            "base_service_account",
-            "adapted_service_account",
-        )
-        missing = [name for name in required if not str(config.get(name) or "").strip()]
-        if missing:
-            return [
-                (
-                    "workflow-owned Sim2Real prerequisites have incomplete identities: "
-                    + ", ".join(missing),
-                    "restore the shipped run-scoped prerequisite templates before submit",
-                )
-            ]
-        return []
+def _is_delayed_binding_isaac_cache(pvc: Mapping[str, Any], runner) -> bool:
+    """Return whether an RWX claim can bind at the canonical cache-warm stage."""
+
+    spec = pvc.get("spec") if isinstance(pvc.get("spec"), Mapping) else {}
+    storage_class = str(spec.get("storageClassName") or "").strip()
+    if not storage_class:
+        return False
+    result = runner(["get", "storageclass", storage_class, "-o", "json"])
+    if getattr(result, "returncode", 1) != 0:
+        return False
+    try:
+        payload = json.loads(str(getattr(result, "stdout", ""))) or {}
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(payload, Mapping):
+        return False
+    return (
+        str(payload.get("volumeBindingMode") or "").strip() == _WAIT_FOR_FIRST_CONSUMER
+    )
+
+
+def _isaac_cache_issues(
+    config, runner, namespace, *, allow_wait_for_first_consumer: bool = False
+) -> list[Issue]:
     if namespace is None:
         return [
             (
@@ -468,16 +553,24 @@ def _isaac_cache_issues(config, runner, namespace) -> list[Issue]:
             except json.JSONDecodeError:
                 pvc = {}
         modes = set((pvc.get("spec") or {}).get("accessModes") or [])
-        if (pvc.get("status") or {}).get(
-            "phase"
-        ) != "Bound" or "ReadWriteMany" not in modes:
+        phase = str((pvc.get("status") or {}).get("phase") or "").strip()
+        bound_rwx = phase == "Bound" and "ReadWriteMany" in modes
+        delayed_binding = (
+            allow_wait_for_first_consumer
+            and phase == "Pending"
+            and "ReadWriteMany" in modes
+            and _is_delayed_binding_isaac_cache(pvc, runner)
+        )
+        if not bound_rwx and not delayed_binding:
             issues.append(
                 (
                     f"Isaac cache PVC {pvc_name!r} is missing or is not Bound ReadWriteMany "
                     f"in namespace {namespace!r}",
-                    "apply npa/docker/workbench/common/warm-isaac-cache.yaml with the "
-                    "selected immutable Isaac image, wait for the warm Job to complete, "
-                    "and pass that PVC name",
+                    "provision or inspect this exact claim with `npa workbench sim2real "
+                    "cache provision --name <pvc> --context <context> --namespace "
+                    f"{namespace}`; a Pending RWX claim is admissible only when its exact "
+                    "StorageClass uses WaitForFirstConsumer and the canonical stage-00 "
+                    "cache-warm state is the initial consumer; otherwise wait for Bound",
                 )
             )
 
@@ -490,6 +583,7 @@ def kubernetes_prerequisites(
     runner: Callable[[list[str]], Any],
     namespace: str | None = "default",
     isaac_placements=None,
+    allow_wait_for_first_consumer: bool = False,
 ) -> list[Issue]:
     """Validate cluster objects the real Sim2Real/SkyPilot path consumes.
 
@@ -498,6 +592,8 @@ def kubernetes_prerequisites(
         runner: Exact-context Kubernetes reader.
         namespace: Selected workflow namespace; None refuses cache lookup.
         isaac_placements: Effective render stage placement constraints.
+        allow_wait_for_first_consumer: Permit an RWX delayed-binding claim only
+            for the canonical initial cache-warm consumer.
     Returns:
         Missing prerequisites and their remediation guidance.
     Raises:
@@ -507,5 +603,10 @@ def kubernetes_prerequisites(
     return (
         _cpu_placement_issues(nodes)
         + _driver_placement_issues(nodes, isaac_placements)
-        + _isaac_cache_issues(config, runner, namespace)
+        + _isaac_cache_issues(
+            config,
+            runner,
+            namespace,
+            allow_wait_for_first_consumer=allow_wait_for_first_consumer,
+        )
     )

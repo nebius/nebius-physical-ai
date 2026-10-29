@@ -823,6 +823,69 @@ def test_runtime_defers_free_capacity_to_the_actual_wave(
     capacity.assert_not_called()
 
 
+def test_runtime_refresh_reuses_explicit_identity_environment(
+    fake_runtime,
+    gpu_then_cpu_spec: Path,
+    tmp_path: Path,
+    mocker,
+) -> None:
+    """Every accelerator discovery must bind the same selected principal."""
+    environments: list[dict[str, str]] = []
+
+    def resolve(*_args, **kwargs):  # noqa: ANN001
+        environment = kwargs.get("environment")
+        assert isinstance(environment, dict)
+        environments.append(dict(environment))
+        return {}
+
+    mocker.patch(
+        "npa.cli.workbench.workflow._resolve_submit_accelerators",
+        side_effect=resolve,
+    )
+    mocker.patch("npa.cli.workbench.workflow._adopt_npa_kubeconfig", return_value=True)
+    mocker.patch("npa.cli.workbench.workflow._verify_submit_controller_owner")
+    mocker.patch(
+        "npa.orchestration.npa_workflow.model_cache_preflight.adopt_model_cache_claim",
+        return_value="",
+    )
+    mocker.patch(
+        "npa.cli.workbench.workflow._execution_target_preflight",
+        return_value=(None, {}),
+    )
+    wave = tmp_path / "identity-refresh.yaml"
+    wave.write_text("name: generate\nrun: 'true'\n")
+
+    def run(spec, **kwargs):  # noqa: ANN001
+        kwargs["options"].pre_submit_hook(wave)
+        return RuntimeReport(
+            workflow=spec.name, run_id=kwargs["run_id"], status="succeeded"
+        )
+
+    mocker.patch(
+        "npa.orchestration.npa_workflow.runtime.run_workflow_runtime", side_effect=run
+    )
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(gpu_then_cpu_spec),
+            "--run-id",
+            "identity-refresh",
+            "--runtime",
+            "--infra",
+            "k8s/unit-context",
+            "--no-deploy-if-absent",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert len(environments) == 2
+    assert environments[0] == environments[1]
+    assert environments[0]["NPA_S3_BUCKET"] == "rt-bucket"
+
+
 def test_runtime_uses_configured_secrets_for_local_ledger_without_leaking_env(
     mocker, monkeypatch, satisfied_preflight
 ) -> None:
@@ -954,6 +1017,7 @@ def configured_gpu_runtime(mocker, monkeypatch, satisfied_preflight):
     expected = {
         "AWS_ACCESS_KEY_ID": "project-access",
         "AWS_SECRET_ACCESS_KEY": "project-secret",
+        "NPA_SKYPILOT_PROJECT": "selected-project",
         "NPA_S3_BUCKET": "rt-bucket",
         "NPA_S3_PREFIX": "runs/identity-test",
         **dict.fromkeys(STORAGE_ENDPOINT_ENV_NAMES, "https://storage.example.invalid"),
@@ -962,6 +1026,7 @@ def configured_gpu_runtime(mocker, monkeypatch, satisfied_preflight):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.delenv("NPA_WORKFLOW_GPU_ACCELERATOR", raising=False)
     monkeypatch.setenv("AWS_ENDPOINT_URL", "https://ambient.example.invalid")
+    monkeypatch.setenv("NPA_SKYPILOT_PROJECT", "ambient-project")
     original_environment = {key: os.environ.get(key) for key in expected}
     mocker.patch(
         "npa.orchestration.npa_workflow.submit_credentials.resolve_project_storage",
@@ -1030,6 +1095,8 @@ def test_runtime_discovery_preserves_resolved_identity_and_restores_environment(
             str(gpu_then_cpu_spec),
             "--run-id",
             "identity-test",
+            "--project",
+            "selected-project",
             "--runtime",
             "--infra",
             "k8s/unit-context",
@@ -2463,6 +2530,96 @@ def _write_local_receipt(monkeypatch, tmp_path: Path, run_id: str, raw: str) -> 
     path = submission_state_path("unit", run_id)
     path.parent.mkdir(parents=True)
     path.write_text(raw, encoding="utf-8")
+
+
+def test_cli_resume_recovers_the_plan_from_failed_prelaunch_preflight(
+    fake_runtime, monkeypatch, tmp_path: Path
+) -> None:
+    from npa.clients import config
+    from npa.orchestration.npa_workflow import submission_state
+
+    monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / "config.yaml")
+    run_id = "prelaunch-recovery"
+    submission_state.record_submission_plan(
+        "unit",
+        run_id,
+        workflow={
+            "name": "token-factory-parallel-fanout",
+            "kind": "npa.workflow/v0.0.1",
+        },
+        planning={"state": "durable", "source_action": "not-required"},
+    )
+    original = submission_state.load_submission_state("unit", run_id)
+    assert "run_prefix_uri" not in original["workflow"]
+    assert "launch" not in original
+
+    result = RUNNER.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(FANOUT),
+            "--runtime",
+            "--resume",
+            "--run-id",
+            run_id,
+            "--project",
+            "unit",
+            "--var",
+            "bucket=rt-bucket",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert fake_runtime["run_id"] == run_id
+    assert fake_runtime["state_store"] is None
+    recovered = submission_state.load_submission_state("unit", run_id)
+    assert recovered["workflow"]["run_prefix_uri"].startswith("s3://rt-bucket/")
+    assert "launch" in recovered
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"launch": {}},
+        {"launch": {"status": "failed"}},
+        {"launch": {"status": "launching", "job_id": ""}},
+        {"schema_version": "npa.workflow.submission.v0"},
+        {"project": "other"},
+        {"run_id": "other"},
+        {"workflow": None},
+    ],
+)
+def test_resume_without_prefix_rejects_launch_evidence_or_uncertain_identity(
+    monkeypatch, override
+) -> None:
+    from types import SimpleNamespace
+
+    from npa.cli.workbench.workflow import _recorded_runtime_store
+    from npa.orchestration.npa_workflow import submission_state
+
+    payload = {
+        "schema_version": submission_state.SCHEMA_VERSION,
+        "project": "unit",
+        "run_id": "prelaunch-recovery",
+        "launch_state": "planned",
+        "workflow": {"name": "test"},
+        **override,
+    }
+    monkeypatch.setattr(
+        submission_state,
+        "inspect_submission_state",
+        lambda *_: SimpleNamespace(outcome="found", payload=payload),
+    )
+
+    with pytest.raises(ValueError, match="resume receipt"):
+        _recorded_runtime_store(
+            "unit",
+            "prelaunch-recovery",
+            resume=True,
+            credentials=_selected_storage_credentials(),
+        )
 
 
 def test_cli_resume_preserves_recorded_legacy_store(

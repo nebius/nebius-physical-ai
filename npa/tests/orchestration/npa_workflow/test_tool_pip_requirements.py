@@ -341,6 +341,12 @@ def test_vendor_setup_installs_npa_there_and_records_it() -> None:
     assert "-c 'import npa.workbench'" in setup
     # Skips a candidate that is not present, rather than failing the stage.
     assert '[ -x "$npa_vendor_python" ] || continue' in setup
+    # A legacy vendor Python may retain its upstream ABI, but cannot receive
+    # NPA now that the package floor is Python 3.11.
+    assert (
+        "skipping unsupported NPA vendor interpreter (requires Python >=3.11)" in setup
+    )
+    assert "sys.version_info < (3, 11)" in setup
     # And when it gives up on a candidate it says why: job 268's bare warning blamed a
     # shadowing partial npa when the cause was missing dependencies.
     assert (
@@ -359,6 +365,23 @@ def test_default_setup_records_thin_image_source_for_vendor_interpreter() -> Non
     record = "npa_record_src_root /opt/npa"
     assert "[ -f /opt/npa/pyproject.toml ] && [ -d /opt/npa/src/npa ]" in setup
     assert setup.index(record) < setup.index("if ! command -v npa")
+
+
+def test_default_setup_rejects_python310_before_mutating_an_image() -> None:
+    """The package floor must fail clearly instead of a late pip resolution error."""
+
+    from npa.orchestration.npa_workflow.skypilot_render import default_npa_setup
+
+    setup = default_npa_setup()
+
+    assert (
+        "NPA source requires Python >=3.11; image supplied no compatible control interpreter"
+        in setup
+    )
+    assert "for npa_candidate_python in python3.12 python3.11" in setup
+    assert setup.index("NPA source requires Python >=3.11") < setup.index(
+        '"$npa_setup_python" -m pip --version'
+    )
 
 
 def test_no_vendor_interpreter_renders_nothing() -> None:

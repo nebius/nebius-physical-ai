@@ -46,13 +46,18 @@ npa workbench workflow validate-spec "$SPEC"
 npa workbench workflow plan-spec "$SPEC" \
   --run-id "$RUN_ID" \
   --var robot_spec_uri="$ROBOT_SPEC_URI" \
+  --var controller_image="$CONTROLLER_IMAGE" \
+  --var cosmos3_image="$COSMOS3_IMAGE" \
+  --var envgen_image="$ENVGEN_IMAGE" \
+  --var isaac_image="$ISAAC_IMAGE" \
+  --var viewer_image="$VIEWER_IMAGE" \
   --assume-decision loop_back
 npa workbench workflow submit "$SPEC" --runtime \
   --run-id "$RUN_ID" \
   --var robot_spec_uri="$ROBOT_SPEC_URI" \
   --var bucket="$NPA_BUCKET" \
   --var controller_image="$CONTROLLER_IMAGE" \
-  --var transfer_image="$TRANSFER_IMAGE" \
+  --var cosmos3_image="$COSMOS3_IMAGE" \
   --var envgen_image="$ENVGEN_IMAGE" \
   --var isaac_image="$ISAAC_IMAGE" \
   --var viewer_image="$VIEWER_IMAGE" \
@@ -63,8 +68,13 @@ npa workbench workflow submit "$SPEC" --runtime \
   --secret-env HF_TOKEN
 ```
 
-Run `npa workbench health preflight` and `npa workbench health sim2real`
-before submit. Image values must be registry-qualified immutable digests.
+Run `npa workbench health preflight` and `npa workbench health sim2real
+--project <configured-project-alias>` before submit. The latter's default
+preimage checks validate coherence, project-scoped storage, service tokens, and
+the selected Kubernetes context without resolving retired loop images. Run the
+canonical workflow's complete five-role `workflow preflight-images` command
+with registry-qualified immutable digests before submit; health preimage does
+not certify role-image pullability or source attestation.
 
 ## Integrity and observability
 

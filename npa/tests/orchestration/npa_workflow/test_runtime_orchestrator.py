@@ -3052,12 +3052,16 @@ def _canonical_sim2real_1x1():
             "outer_iterations": "1",
             "inner_iterations": "1",
             "env_count": "12",
+            # Keep these logical resume tests independent of the production
+            # capacity default: the eight deterministic shards form one fake
+            # wave here, while production derives its bound from live capacity.
+            "gpu_concurrency": "8",
             "rollout_count": "1",
             "ppo_iterations": "2",
             "validation_count": "3",
             "gold_count": "3",
             "controller_image": image,
-            "transfer_image": image,
+            "cosmos3_image": image,
             "envgen_image": image,
             "isaac_image": image,
             "viewer_image": image,
@@ -3075,7 +3079,15 @@ def test_canonical_three_iteration_budget_promotes_and_finalizes_outer_one() -> 
     spec = _canonical_sim2real_1x1()
     spec.config.update({"outer_iterations": "3", "allow_early_exit": "1"})
     submitter = FakeSubmitter()
-    executor = _executor(spec, run_id="canonical-early-one", submitter=submitter)
+    executor = _executor(
+        spec,
+        run_id="canonical-early-one",
+        submitter=submitter,
+        # Canonical role pins are task authority; this successful mocked path
+        # must not install the generic wildcard override used by unrelated
+        # renderer tests.
+        render_options=SkypilotRenderOptions(),
+    )
 
     report = run_workflow_runtime(
         spec,
@@ -3111,8 +3123,9 @@ def test_canonical_resume_replays_single_stage8_then_restarts_at_stage9() -> Non
         spec,
         run_id="canonical-stage8-resume",
         submitter=first_submitter,
-        status_fn=FakeStatus(["SUCCEEDED"] * 8 + ["FAILED"]),
+        status_fn=FakeStatus(["SUCCEEDED"] * 9 + ["FAILED"]),
         store=store,
+        render_options=SkypilotRenderOptions(),
     )
     first_report = run_workflow_runtime(
         spec,
@@ -3123,7 +3136,7 @@ def test_canonical_resume_replays_single_stage8_then_restarts_at_stage9() -> Non
         trigger_waiter=_trigger_ready,
     )
     assert first_report.status == "failed"
-    assert first_submitter.calls[-2]["tasks"] == ["stage-08-cosmos3"]
+    assert first_submitter.calls[-2]["tasks"] == ["stage-08-token-factory"]
     assert first_submitter.calls[-1]["tasks"] == ["stage-09-ppo"]
 
     options = RuntimeOptions(
@@ -3140,6 +3153,7 @@ def test_canonical_resume_replays_single_stage8_then_restarts_at_stage9() -> Non
         submitter=resumed_submitter,
         options=options,
         store=store,
+        render_options=SkypilotRenderOptions(),
     )
     report = run_workflow_runtime(
         spec,
@@ -3158,7 +3172,9 @@ def test_canonical_resume_replays_single_stage8_then_restarts_at_stage9() -> Non
         ["stage-13-retrigger"],
         ["stage-14-visualize"],
     ]
-    stage8 = next(wave for wave in report.waves if "stage-08-cosmos3" in wave["states"])
+    stage8 = next(
+        wave for wave in report.waves if "stage-08-token-factory" in wave["states"]
+    )
     assert stage8["replayed"] is True
 
 
@@ -3168,8 +3184,9 @@ def test_canonical_finalization_resume_submits_only_stage14() -> None:
     first = _executor(
         spec,
         run_id="canonical-finalize-resume",
-        status_fn=FakeStatus(["SUCCEEDED"] * 13 + ["FAILED"]),
+        status_fn=FakeStatus(["SUCCEEDED"] * 14 + ["FAILED"]),
         store=store,
+        render_options=SkypilotRenderOptions(),
     )
     first_report = run_workflow_runtime(
         spec,
@@ -3196,6 +3213,7 @@ def test_canonical_finalization_resume_submits_only_stage14() -> None:
         submitter=submitter,
         options=options,
         store=store,
+        render_options=SkypilotRenderOptions(),
     )
     report = run_workflow_runtime(
         spec,

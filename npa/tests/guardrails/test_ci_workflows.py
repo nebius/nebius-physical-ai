@@ -991,13 +991,8 @@ def _run_fresh_install_step(tmp_path: Path, version: str, fingerprint_exit: int)
 python() { [[ "$*" == "-m venv npa/.venv" ]]; }
 uv() {
   [[ "$*" == "pip install --python npa/.venv/bin/python -c npa/ci/requirements.txt "* ]]
-  if [[ "${@: -1}" == tomli ]]; then
-    touch tomli-installed
-    echo bootstrap >> "$BOOTSTRAP_LOG"
-  else
-    [[ "${@: -2}" == "-e npa[dev,adapter,encord]" ]]
-    echo full-install >> "$BOOTSTRAP_LOG"
-  fi
+  [[ "${@: -2}" == "-e npa[dev,adapter,encord]" ]]
+  echo full-install >> "$BOOTSTRAP_LOG"
 }
 """
     result = subprocess.run(
@@ -1015,7 +1010,7 @@ uv() {
 def test_fresh_ci_environment_checks_fingerprint_before_full_install(
     tmp_path: Path, version: str, fingerprint_exit: int
 ) -> None:
-    """Bootstrap only the missing TOML parser and reject stale dependency pins.
+    """Reject stale dependency pins before installing the complete environment.
 
     Args:
         tmp_path: Isolated shell environment without installed dependencies.
@@ -1024,7 +1019,7 @@ def test_fresh_ci_environment_checks_fingerprint_before_full_install(
     Returns:
         None.
     Raises:
-        AssertionError: Setup omits the parser or installs with stale pins.
+        AssertionError: Setup installs with stale pins.
     """
     result, commands = _run_fresh_install_step(tmp_path, version, fingerprint_exit)
     expected = ["fingerprint"]

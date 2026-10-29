@@ -11,10 +11,8 @@ warning promoted to an error, so any invalid escape sequence anywhere in the
 package fails here instead of greeting a new user on install.
 
 Version nuance that matters: CPython only made invalid escape sequences a
-``SyntaxWarning`` in 3.12; on 3.10/3.11 they are a ``DeprecationWarning``. Since
-``requires-python >= 3.10`` (and Ubuntu 22.04 LTS ships 3.10), the guard must
-promote **both** categories, or it silently misses the exact regression it
-exists to catch on the versions where new users most often hit it.
+``SyntaxWarning`` in 3.12; on Python 3.11 they are a ``DeprecationWarning``.
+The supported floor is Python 3.11, so the guard promotes both categories.
 """
 
 from __future__ import annotations
@@ -40,7 +38,7 @@ def test_package_has_source_files() -> None:
 
 
 # Invalid escapes surface as SyntaxWarning (>=3.12) or DeprecationWarning
-# (3.10/3.11); promoting both to errors keeps the guard effective across the
+# (3.11); promoting both to errors keeps the guard effective across the
 # whole supported matrix. When promoted, ``compile()`` raises either the warning
 # itself or a SyntaxError depending on the CPython version.
 _ESCAPE_WARNING_CATEGORIES = (SyntaxWarning, DeprecationWarning)
@@ -70,7 +68,7 @@ def test_guard_would_catch_a_bad_escape() -> None:
     """Self-test: an invalid escape must trip the same filter this guard uses.
 
     The warning category differs by CPython version (``SyntaxWarning`` on >=3.12,
-    ``DeprecationWarning`` on 3.10/3.11), and once promoted to an error
+    ``DeprecationWarning`` on 3.11), and once promoted to an error
     ``compile()`` may raise the warning or a ``SyntaxError`` — so the guard (and
     this self-test) must accept all of them.
     """

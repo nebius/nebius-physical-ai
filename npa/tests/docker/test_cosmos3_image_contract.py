@@ -121,10 +121,22 @@ def test_image_build_requires_the_fail_closed_generated_media_wrapper() -> None:
 
 def test_image_repairs_inherited_unused_or_stale_vulnerable_bytes() -> None:
     instructions = _dockerfile_instructions()
+    verifier = VERIFY_ENV.read_text(encoding="utf-8")
 
     assert "linux-libc-dev" in instructions
     assert "plugins/efa_metrics/nic_sampler" in instructions
     assert "-delete" in instructions
+    assert (
+        "ghcr.io/astral-sh/uv:0.13.4@sha256:"
+        "9f130421e930bfbdc563c00740466603f8723158e90297d07957c2294640262b"
+    ) in instructions
+    assert "UV_CACHE_DIR=/tmp/uv-cache" in instructions
+    assert "rm -rf /tmp/uv-cache /home/ubuntu/.cache/uv" in instructions
+    assert "test ! -e /home/ubuntu/.cache/uv" in instructions
+    assert '"Pillow": "13.0.0"' in verifier
+    assert '"certifi": "2026.10.23"' in verifier
+    assert '"uv": "0.13.4"' in verifier
+    assert "check_image_resize" in verifier
 
 
 def test_cosmos3_image_satisfies_the_skypilot_bootstrap_contract() -> None:
@@ -206,6 +218,21 @@ def test_image_build_accepts_the_measured_compatible_xet_pair(monkeypatch) -> No
     assert module.check_hf_transfer_pair() == (
         "huggingface_hub=0.36.2 hf-xet=1.3.2 (Xet enabled)"
     )
+
+
+def test_image_build_rejects_security_overlay_drift(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_verify_env()
+    versions = dict(module.SECURITY_OVERLAY_VERSIONS)
+    monkeypatch.setattr(module.metadata, "version", versions.__getitem__)
+    assert module.check_security_overlay() == (
+        "Pillow=13.0.0 certifi=2026.10.23 uv=0.13.4"
+    )
+
+    versions["Pillow"] = "12.3.0"
+    with pytest.raises(RuntimeError, match="security overlay drifted"):
+        module.check_security_overlay()
 
 
 def test_smoke_script_requires_the_operator_token() -> None:

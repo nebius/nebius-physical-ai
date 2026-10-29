@@ -7,9 +7,10 @@ kind: Workflow
 # for execution; the stage adapters fail closed otherwise.
 metadata:
   name: sim2real
+  executionMode: runtime
   description: >
     Compositional 14-stage Sim2Real workflow: validate a task-aligned trigger,
-    consume the Isaac task contract, run Cosmos Transfer, parallel EnvGen,
+    consume the Isaac task contract, run guarded Cosmos3-Nano structural transfer, parallel EnvGen,
     sealed train/validation/gold split, Isaac rollouts, hosted vision-language scoring,
     genuine BYO Isaac PPO, validation-only checkpoint selection, untouched gold
     evaluation, an honest external seam, and Rerun plus MCAP finalization.
@@ -44,23 +45,23 @@ config:
   allow_early_exit: "1"
   env_count: "10000"
   train_fraction: "0.8"
-  # EnvGen is rank-aware and scales horizontally; use half of a 16-GPU pool so
-  # adjacent GPU stages retain scheduling headroom.
+  # EnvGen is rank-aware and uses eight deterministic shards; the task-scoped
+  # submitter waves those shards according to live placement capacity.
   shard_count: "8"
-  # Concurrent Stage 4 tasks per JobGroup. Must not exceed the cluster's
-  # concurrent-GPU capacity: a group larger than the schedulable GPU count
-  # deadlocks, because the admitted shards' pods are only reaped when the whole
-  # group starts, while the remaining shards wait on the GPUs those pods hold.
-  # Set to min(shard_count, concurrent GPUs), e.g. --var gpu_concurrency=2 on a
-  # 2-GPU cluster (renders ceil(8/2)=4 sequential batches).
-  gpu_concurrency: "8"
+  # Fail closed at one concurrent Stage 4 task.  A static workflow cannot know
+  # the dynamic, compatible, schedulable GPU capacity of its submit target.
+  # A task-scoped submit wrapper must first measure that capacity and set this
+  # to min(shard_count, measured capacity); for example, 2 GPUs renders four
+  # batches of the eight shards.  Never infer this value from nominal or total
+  # pool size: exceeding schedulable capacity can deadlock a JobGroup.
+  gpu_concurrency: "1"
   envgen_seed: "42"
   rollout_count: "64"
   steps_per_rollout: "32"
   ppo_num_envs: "1024"
-  # Three resumed 2,000-update passes cover the manipulation curriculum's
-  # observed convergence window; 500-update passes terminate before grasp/place
-  # behavior emerges even when reward improves.
+  # Each pass performs 2,000 new PPO updates. Validation selects the next
+  # checkpoint and exploration/consolidation phase; the strict held-out gate
+  # establishes policy efficacy, rather than update count or reward alone.
   ppo_iterations: "2000"
   ppo_steps_per_env: "24"
   validation_count: "64"
@@ -70,20 +71,40 @@ config:
   capture_width: "640"
   capture_height: "480"
   png_compress_level: "2"
-  # Exact Stage 8 model ID. The former public Cosmos3 endpoint retired August 31;
-  # select nvidia/Cosmos3-Super-Reasoner explicitly on an endpoint serving it.
-  # Forward a custom endpoint with --secret-env NEBIUS_TOKEN_FACTORY_BASE_URL.
-  cosmos3_model: MiniMaxAI/MiniMax-M3
+  # Stage 8/9 use a hosted rollout evaluator, not Cosmos3 reasoning. Current
+  # Token Factory discovery selects MiniMax-M3; a custom endpoint requires its
+  # own availability/inference contract preflight.
+  token_factory_model: MiniMaxAI/MiniMax-M3
+  token_factory_base_url: https://api.tokenfactory.nebius.com/v1/
+  # Parallel hosted requests; each worker retains its own transport accounting.
+  evaluation_concurrency: "8"
+  # Zero sends every primary frame. Positive values select a deterministic sample.
+  evaluation_max_frames: "0"
+  # Compute-only stages may use B200; Isaac rendering stays on RTX PRO 6000.
+  cosmos3_accelerator: RTXPRO6000:1
+  envgen_accelerator: RTXPRO6000:1
 
   # Required live inputs. The controller image is the purpose-built CPU-only
   # stage adapter, never a Genesis/trainer runtime. Empty defaults keep this
   # repository portable; runtime preflight and every stage reject
   # mutable/missing task images.
   controller_image: ""
-  transfer_image: ""
+  # Stage 03 needs the Cosmos 3 generation framework.  Do not supply the
+  # VLM-only npa-cosmos3-reason image here; use npa-cosmos3 or a qualified
+  # framework-bearing derivative instead.
+  cosmos3_image: ""
   envgen_image: ""
   isaac_image: ""
   viewer_image: ""
+  # These five role images are a single immutable execution contract.  The
+  # generic renderer rejects global or tool-specific overrides that would
+  # start a stage in bytes other than the corresponding attested role image.
+  required_immutable_images:
+    - controller_image
+    - cosmos3_image
+    - envgen_image
+    - isaac_image
+    - viewer_image
   isaac_cache_pvc: ""
   # Isaac EULA acceptance is injected by the renderer (default on, explicit CLI opt-out).
 
@@ -93,19 +114,57 @@ resources:
     cpus: 8
     memory: 32Gi
     image: "{{config.controller_image}}"
-  transfer-gpu:
+  isaac-cache-warm:
+    # This is the only canonical workflow state allowed to write the
+    # operator-provisioned Isaac cache. It is CPU-only and produces a durable
+    # cache receipt before any GPU state can mount the same claim read-only.
     cloud: kubernetes
-    accelerators: RTXPRO6000:1
-    cpus: 16
-    memory: 128Gi
-    image: "{{config.transfer_image}}"
+    cpus: 8
+    memory: 32Gi
+    image: "{{config.isaac_image}}"
     kubernetes:
       pod_config:
         spec:
-          # The immutable Cosmos Transfer image keeps its model cache under /opt,
-          # but SkyPilot bootstraps uv as its non-root runtime user before the task
-          # starts. Keep only bootstrap caches in writable ephemeral storage; model
-          # weights and task outputs retain their existing attested locations.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+            fsGroupChangePolicy: OnRootMismatch
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: ray-node
+              env:
+                - name: NPA_SIM2REAL_ISAAC_CACHE_PVC
+                  value: "{{config.isaac_cache_pvc}}"
+                - name: NPA_ISAAC_CACHE_DIR
+                  value: /opt/isaac-cache
+                - name: NPA_ISAAC_CACHE_READONLY
+                  value: "0"
+                - name: NPA_ISAAC_BOOTSTRAP_OFFLINE
+                  value: "0"
+                - name: PIP_COMPILE
+                  value: "0"
+              volumeMounts:
+                - name: npa-isaac-runtime-cache
+                  mountPath: /opt/isaac-cache
+          volumes:
+            - name: npa-isaac-runtime-cache
+              persistentVolumeClaim:
+                claimName: "{{config.isaac_cache_pvc}}"
+  cosmos3-gpu:
+    cloud: kubernetes
+    accelerators: "{{config.cosmos3_accelerator}}"
+    cpus: 16
+    memory: 128Gi
+    image: "{{config.cosmos3_image}}"
+    kubernetes:
+      pod_config:
+        spec:
+          # Cosmos3 code is image-pinned but checkpoint and guardrail weights are
+          # runtime-fetched under the operator's authorized access declaration.
+          # Keep bootstrap caches writable without baking model bytes into the image.
           containers:
             - name: ray-node
               env:
@@ -115,7 +174,7 @@ resources:
                   value: /tmp/npa-skypilot-xdg-cache
   envgen-gpu:
     cloud: kubernetes
-    accelerators: RTXPRO6000:1
+    accelerators: "{{config.envgen_accelerator}}"
     cpus: 8
     memory: 32Gi
     image: "{{config.envgen_image}}"
@@ -172,9 +231,18 @@ resources:
                 limits:
                   ephemeral-storage: 48Gi
 
-initial: stage-01-trigger
+initial: stage-00-isaac-cache-warm
 
 states:
+  stage-00-isaac-cache-warm:
+    description: Warm the declared RWX Isaac cache through the canonical SkyPilot workflow and publish its source-bound receipt.
+    resources: isaac-cache-warm
+    run:
+      argv: [/opt/npa/sim/venv/bin/python, -m, npa.workflows.sim2real.cache_warm, --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}"]
+    outputs:
+      - {uri: "{{config.root_uri}}/cache/isaac-warm.json", schema: npa.sim2real.isaac_cache_warm.v1}
+    next: stage-01-trigger
+
   stage-01-trigger:
     description: Stage 1 - validate the real task-aligned trigger and seed manifest.
     resources: cpu
@@ -202,14 +270,14 @@ states:
     next: stage-03-transfer
 
   stage-03-transfer:
-    description: Stage 3 - real input-conditioned Cosmos Transfer 2.5 augmentation.
-    resources: transfer-gpu
+    description: Stage 3 - real guarded Cosmos3-Nano edge-controlled structural video transfer.
+    resources: cosmos3-gpu
     inputs:
       - {uri: "{{config.trigger_uri}}", schema: npa.sim2real.task_seed_dataset.v1}
     run:
       argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "3", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --trigger-uri, "{{config.trigger_uri}}", --assets-uri, "{{config.assets_uri}}", --scene-spec-uri, "{{config.scene_spec_uri}}"]
     outputs:
-      - {uri: "{{config.root_uri}}/augment/manifest.json", schema: npa.cosmos2.transfer.v1}
+      - {uri: "{{config.root_uri}}/augment/manifest.json", schema: npa.cosmos3.structural-transfer.v1}
     next: stage-04-wave
 
   stage-04-wave:
@@ -323,7 +391,7 @@ states:
     description: Standard durable inner loop over Isaac rollout, hosted vision-language evaluation, and PPO.
     loop:
       max: "{{config.inner_iterations}}"
-    sequence: [stage-07-rollouts, stage-08-cosmos3, stage-09-ppo]
+    sequence: [stage-07-rollouts, stage-08-token-factory, stage-09-ppo]
 
   stage-07-rollouts:
     description: Stage 7 - real Isaac policy rollouts with event-local multi-camera observations.
@@ -336,14 +404,14 @@ states:
     outputs:
       - {uri: "{{config.root_uri}}/actions/train/outer-{{loop.outer-loop}}/iter-{{loop.inner-loop}}/rollouts-result.json", schema: npa.sim2real.policy_rollouts.v1}
 
-  stage-08-cosmos3:
-    description: Hosted MiniMax-M3 rollout evaluation through Nebius Token Factory; historical Cosmos3 lane names remain compatible.
+  stage-08-token-factory:
+    description: Hosted MiniMax-M3 rollout evaluation through Nebius Token Factory.
     resources: stage8-cpu
     params: {outer_iteration: "{{loop.outer-loop}}", inner_iteration: "{{loop.inner-loop}}"}
     run:
-      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "8", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --outer-iteration, "{{config.outer_iteration}}", --inner-iteration, "{{config.inner_iteration}}", --reason-model, "{{config.cosmos3_model}}", --threshold, "{{config.threshold}}"]
+      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "8", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --outer-iteration, "{{config.outer_iteration}}", --inner-iteration, "{{config.inner_iteration}}", --reason-model, "{{config.token_factory_model}}", --token-factory-base-url, "{{config.token_factory_base_url}}", --threshold, "{{config.threshold}}", --evaluation-concurrency, "{{config.evaluation_concurrency}}", --evaluation-max-frames, "{{config.evaluation_max_frames}}"]
     outputs:
-      - {uri: "{{config.root_uri}}/vlm_eval/train/outer-{{loop.outer-loop}}/iter-{{loop.inner-loop}}/cosmos3.json", schema: npa.sim2real.cosmos3_evaluator.v1}
+      - {uri: "{{config.root_uri}}/vlm_eval/train/outer-{{loop.outer-loop}}/iter-{{loop.inner-loop}}/token-factory.json", schema: npa.sim2real.token_factory_evaluator.v1}
       - {uri: "{{config.root_uri}}/components/stage_08.json", schema: npa.sim2real.component_record.v1}
 
   stage-09-ppo:
@@ -352,10 +420,10 @@ states:
     params: {outer_iteration: "{{loop.outer-loop}}", inner_iteration: "{{loop.inner-loop}}"}
     inputs:
       - {uri: "{{config.root_uri}}/actions/train/outer-{{loop.outer-loop}}/iter-{{loop.inner-loop}}/rollouts-result.json", schema: npa.sim2real.policy_rollouts.v1}
-      - {uri: "{{config.root_uri}}/vlm_eval/train/outer-{{loop.outer-loop}}/iter-{{loop.inner-loop}}/cosmos3.json", schema: npa.sim2real.cosmos3_evaluator.v1}
+      - {uri: "{{config.root_uri}}/vlm_eval/train/outer-{{loop.outer-loop}}/iter-{{loop.inner-loop}}/token-factory.json", schema: npa.sim2real.token_factory_evaluator.v1}
       - {uri: "{{config.root_uri}}/components/stage_08.json", schema: npa.sim2real.component_record.v1}
     run:
-      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "9", --reason-model, "{{config.cosmos3_model}}", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --task-id, "{{config.task_id}}", --outer-iteration, "{{config.outer_iteration}}", --inner-iteration, "{{config.inner_iteration}}", --threshold, "{{config.threshold}}", --ppo-num-envs, "{{config.ppo_num_envs}}", --ppo-iterations, "{{config.ppo_iterations}}", --ppo-steps-per-env, "{{config.ppo_steps_per_env}}", --validation-count, "{{config.validation_count}}", --capture-fps, "{{config.capture_fps}}", --capture-width, "{{config.capture_width}}", --capture-height, "{{config.capture_height}}", --png-compress-level, "{{config.png_compress_level}}"]
+      argv: [python3, -m, npa.workflows.sim2real.workflow_stage, --stage, "9", --reason-model, "{{config.token_factory_model}}", --token-factory-base-url, "{{config.token_factory_base_url}}", --root-uri, "{{config.root_uri}}", --run-id, "{{run.id}}", --task-id, "{{config.task_id}}", --outer-iteration, "{{config.outer_iteration}}", --inner-iteration, "{{config.inner_iteration}}", --threshold, "{{config.threshold}}", --ppo-num-envs, "{{config.ppo_num_envs}}", --ppo-iterations, "{{config.ppo_iterations}}", --ppo-steps-per-env, "{{config.ppo_steps_per_env}}", --validation-count, "{{config.validation_count}}", --capture-fps, "{{config.capture_fps}}", --capture-width, "{{config.capture_width}}", --capture-height, "{{config.capture_height}}", --png-compress-level, "{{config.png_compress_level}}"]
     outputs:
       - {uri: "{{config.root_uri}}/inner_loop/outer-{{loop.outer-loop}}/evidence.json", schema: npa.sim2real.inner_loop_evidence.v1}
 

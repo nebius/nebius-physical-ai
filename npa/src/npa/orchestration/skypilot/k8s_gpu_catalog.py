@@ -300,11 +300,12 @@ def kubernetes_sky_environment(
         config = yaml.safe_load(Path(inherited).read_text(encoding="utf-8")) or {}
         if not isinstance(config, dict):
             raise RuntimeError("SkyPilot configuration must be a mapping")
-    api_server = config.get("api_server")
-    if isinstance(api_server, dict) and verified_parent_endpoint:
-        inherited_endpoint = str(api_server.get("endpoint") or "")
-        if inherited_endpoint.rstrip("/") == verified_parent_endpoint.rstrip("/"):
-            api_server.pop("endpoint", None)
+    # The validation session owns a distinct local API endpoint.  Carrying the
+    # parent controller's ``api_server.endpoint`` into this per-context config
+    # makes the new validation receipt fail its own endpoint-identity check
+    # before it can perform read-only GPU discovery.  Retain ordinary policy
+    # settings below, but let the scope-owned API publish its own endpoint.
+    config.pop("api_server", None)
     kubernetes = config.setdefault("kubernetes", {})
     if not isinstance(kubernetes, dict):
         raise RuntimeError("SkyPilot Kubernetes configuration must be a mapping")

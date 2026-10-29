@@ -571,6 +571,20 @@ jobs:
             test "$IMAGE" = "$NPA_PUBLIC_REGISTRY/npa-robocasa:dev-$DEVELOPMENT_SHA"
             exit 0
           fi
+          if [[ "$TOOL" == envgen ]]; then
+            # EnvGen removes inherited NPA bytes, but still needs a freshly
+            # built Cosmos3 runtime as its source-attested CUDA/Kubernetes
+            # parent.  The generic one-Dockerfile path cannot establish that
+            # parent relationship.  Build both locally; later gates inspect
+            # and publish only the final EnvGen development image.
+            NPA_SOURCE_SHA="$DEVELOPMENT_SHA" \
+              VLM_TAG="dev-${DEVELOPMENT_SHA}" \
+              ENVGEN_TAG="dev-${DEVELOPMENT_SHA}" \
+              npa/docker/workbench/sim2real-build.sh \
+                --registry "$NPA_PUBLIC_REGISTRY" --envgen-only
+            test "$IMAGE" = "$NPA_PUBLIC_REGISTRY/npa-envgen:dev-$DEVELOPMENT_SHA"
+            exit 0
+          fi
           build_context=npa
           if [[ "$TOOL" == robomimic ]]; then
             build_context=npa/docker/workbench/robomimic

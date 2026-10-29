@@ -729,7 +729,28 @@ def test_public_recipes_use_immutable_external_build_sources() -> None:
         if dockerfile in checked:
             continue
         checked.add(dockerfile)
+        source_attested = entry.get("source_attested_parent")
         for source in _resolved_build_sources(dockerfile.read_text(encoding="utf-8")):
+            if source == "${BASE_IMAGE}" and source_attested:
+                assert isinstance(source_attested, dict), image_name
+                label = source_attested.get("source_label")
+                assert label == "org.opencontainers.image.revision", image_name
+                text = dockerfile.read_text(encoding="utf-8")
+                assert "ARG NPA_SOURCE_SHA" in text, image_name
+                assert 'org.opencontainers.image.revision="${NPA_SOURCE_SHA}"' in text
+                assert "NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA}" in text
+                assert 'test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40' in text
+                for relative in source_attested.get("build_scripts", []):
+                    script = (WORKBENCH_DOCKER / relative).read_text(encoding="utf-8")
+                    assert "image inspect" in script, relative
+                    assert label in script, relative
+                    assert "NPA_SOURCE_SHA" in script, relative
+                manual = WORKBENCH_DOCKER / str(
+                    source_attested.get("manual_preflight") or ""
+                )
+                assert manual.is_file(), image_name
+                assert "docker image inspect" in manual.read_text(encoding="utf-8")
+                continue
             if not _is_immutable_build_source(source):
                 offenders.append(f"{image_name}: {source}")
 
@@ -737,6 +758,21 @@ def test_public_recipes_use_immutable_external_build_sources() -> None:
         "public image build sources must use @sha256 (FROM and external COPY); "
         f"unpinned sources: {offenders}"
     )
+
+
+def test_genesis_and_envgen_source_attestation_manuals_stay_role_specific() -> None:
+    contract = _load_contract()["images"]
+    assert contract["genesis"]["source_attested_parent"]["manual_preflight"] == (
+        "genesis/README.md"
+    )
+    assert contract["envgen"]["source_attested_parent"]["manual_preflight"] == (
+        "sim2real-envgen/README.md"
+    )
+    envgen_manual = (WORKBENCH_DOCKER / "sim2real-envgen/README.md").read_text(
+        encoding="utf-8"
+    )
+    assert 'index .Config.Labels "org.opencontainers.image.revision"' in envgen_manual
+    assert "remote parent\nmust be addressed by immutable digest" in envgen_manual
 
 
 def test_robocasa_build_binds_the_exact_npa_source_revision() -> None:

@@ -4,6 +4,7 @@ anyio==4.14.2
 boto3==1.43.62
 botocore==1.43.62
 certifi==2026.10.19
+defusedxml==0.7.1
 h11==0.16.0
 httpcore==1.0.9
 httpx==0.28.1

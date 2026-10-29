@@ -928,7 +928,9 @@ images:
       NPA_COSMOS3_REQUIRE_NGC=1), so distribution never carries weight bytes. The
       build fails if a checkpoint file lands in a layer or if the known-bad
       huggingface_hub 1.23.0 / hf-xet 1.5.1 pair is resolved; the compatible
-      frozen pair keeps Xet enabled. Ships sudo, rsync, and openssh-server with
+      frozen pair keeps Xet enabled. Its portable security overlay pins Pillow
+      13.0.0, certifi 2026.10.23, and uv 0.13.4 above the immutable framework
+      lock and removes all build-time uv cache bytes. Ships sudo, rsync, and openssh-server with
       a command-passthrough entrypoint and a NOPASSWD grant for the non-root
       runtime user because the SkyPilot Kubernetes bootstrap installs its SSH runtime in-pod; see
       docs/security/container-golden-evals.md.
@@ -1092,6 +1094,12 @@ images:
     dockerfile: genesis/Dockerfile
     tier: interactive
     redistribution: public
+    source_attested_parent:
+      source_label: org.opencontainers.image.revision
+      build_scripts:
+        - genesis/build.sh
+        - genesis/build_sm120.sh
+      manual_preflight: genesis/README.md
     notes: >-
       The stock public runtime retains rigid Panda/Box teacher, export, camera
       demo conversion, native PyAV dataset reading and ACT dependencies. It
@@ -1102,6 +1110,11 @@ images:
       NPA_GENESIS_SUPPORTED_STUDENT_POLICIES=act rejects Diffusion/SmolVLA before
       framework imports. Additional policies require a separately qualified
       operator image. CPU checks do not qualify real GPU physics or rendering.
+      Current source Genesis is blocked before that CPU gate: its upstream
+      LeRobot/Datasets closure conflicts with the mandatory fsspec security
+      floor, so Genesis is not qualified or publishable. The separate EnvGen
+      role does not use that closure and must be independently qualified from
+      its source-attested role image.
   isaac-lab:
     dockerfile: isaac-lab/Dockerfile
     isaac_runtime_fetch: true
@@ -1241,17 +1254,21 @@ images:
   envgen:
     dockerfile: sim2real-envgen/Dockerfile
     tier: interactive
+    source_attested_parent:
+      source_label: org.opencontainers.image.revision
+      build_scripts:
+        - sim2real-build.sh
+      manual_preflight: sim2real-envgen/README.md
     notes: >-
-      The flattened public runtime removes the parent image's optional AGPL
-      tetgen wrapper, W&B client, and Nsight Compute tree. Canonical Sim2Real
-      environment generation does not use tetrahedralization, experiment
-      tracking, or profiler tooling. The runtime correspondingly removes the
-      Genesis/LeRobot metadata edges for those absent optional dependencies;
-      a repository-owned fail-closed import shim rejects tetrahedralization,
-      while build-time imports and pip consistency checks protect the reduced
-      contract. The same build layer applies the exact-hash, AST-preserving
-      scikit-image dependency-source correction and emits its receipt before
-      the flattened public runtime is produced.
+      The flattened public runtime removes the complete inherited NPA tree and
+      creates a dedicated Python 3.12 EnvGen venv from the reviewed exact
+      closure using uv-managed CPython 3.12.14. The digest-pinned uv builder
+      is Apache-2.0 OR MIT and is removed before the flattened public runtime;
+      the retained CPython interpreter is PSF-2.0. It contains scenario/task-
+      contract code, Pillow 13 and fsspec 2026.6.0, but no Genesis, LeRobot,
+      datasets, Torch, model weights, source assets, credentials, or runtime
+      caches. Genesis is a separate fail-closed tool and must not be relabelled
+      as EnvGen qualification.
     redistribution: public
     skypilot_bootstrap_contract: skypilot-0.12.2-v1
   rerun-viewer:

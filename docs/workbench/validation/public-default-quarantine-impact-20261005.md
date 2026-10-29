@@ -141,8 +141,8 @@ access and workload acceptance requirements continue to apply.
 The preceding tables preserve the original dated resolver observation. That
 audit missed literal Isaac and SONIC digests, which bypassed tool-default
 quarantine. The follow-up removes those automatic selections. All 133 shipped
-specs now have **48 guarded default selections across 42 workflows**: 35 deny
-quarantined tool-image selection, and thirteen deny missing exact operator image
+specs now have **48 guarded default selections across 40 workflows**: 30 deny
+quarantined tool-image selection, and eighteen deny missing exact operator image
 inputs before task expansion. These categories are audited independently:
 supplying exact operator inputs can reveal additional quarantined task-image
 defaults. This is planning evidence only, not fresh image or GPU acceptance.
@@ -202,6 +202,7 @@ still required for the operator-selected bytes.
 | `workflows/testing/multicamera-rgbd-warehouse.yaml` | `isaac_image` |
 | `workflows/testing/physical-augmentation.yaml` | `isaac_image` |
 | `workflows/main/rgbd-scan-to-policy-demo.yaml` | `assembly_image, reconstruction_image, isaac_image` |
+| `workflows/main/sim2real.yaml` | `controller_image, cosmos3_image, envgen_image, isaac_image, viewer_image` |
 | `workflows/testing/rgbd-scan-to-isaac.yaml` | `isaac_image` |
 | `workflows/testing/scan-to-isaac-navigation.yaml` | `isaac_image` |
 
@@ -213,3 +214,8 @@ automatically. The optional LeRobot 0.6 image in Franka and
 LeRobot transfer remains a distinct exact-version qualification scope; the
 default LeRobot 0.5 quarantine is unchanged. Repaired explicit development
 candidates are not accepted public defaults.
+
+The canonical Sim2Real graph likewise requires a complete five-role operator
+selection before planning. Those inputs bind the controller, Cosmos3, EnvGen,
+Isaac, and viewer execution roles independently; a tag-only or partial profile
+does not establish a coherent runtime lineage.

@@ -18,7 +18,7 @@
 | Artifact bucket vs trigger bucket | `config.yaml`, operator env, runbook `NPA_SIM2REAL_*` | `NPA_SIM2REAL_BUCKET` (alias `S3_BUCKET`), `NPA_SIM2REAL_TRIGGER_DATASET_URI` (alias `TRIGGER_DATASET_URI`), `storage.bucket`, `storage.sim2real_stock_trigger_uri` |
 | External object-store bucket | endpoint + HMAC keys | `AWS_ENDPOINT_URL`, `S3_ENDPOINT_URL`, `storage.endpoint_url`, `~/.npa/credentials.yaml` `storage.aws_*` |
 | Task seed/trigger dataset | trigger URI, dataset id | `NPA_SIM2REAL_TRIGGER_DATASET_URI`, `NPA_SIM2REAL_TRIGGER_DATASET_ID` (alias `TRIGGER_DATASET_ID`), default `npa/isaac-lift-cube-franka-seed-v1`; real mode requires a matching `task-dataset-manifest.json` and fails closed on PushT/Franka mismatch |
-| Custom container images | operator env before submit | `AUGMENT_IMAGE`, `ENVGEN_IMAGE`, `POLICY_IMAGE`, `VLM_IMAGE`, `EVAL_IMAGE`, `TRAINER_IMAGE`, `ISAAC_IMAGE`, `NPA_SIM2REAL_RERUN_IMAGE` |
+| Canonical task images | operator env before submit | `CONTROLLER_IMAGE`, `COSMOS3_IMAGE`, `ENVGEN_IMAGE`, `ISAAC_IMAGE`, `VIEWER_IMAGE` |
 
 Trace portable inputs from `workflows/main/sim2real.yaml` `config:` and the stateless `workflow_stage` adapters.
 
@@ -184,9 +184,10 @@ export POLICY_IMAGE="<registry>/npa-reference-policy:cuda13-b300-0.1.2-sm80-sm90
 export BYO_POLICY_COMMAND='your-policy-rollout-hook.sh'
 ```
 
-Same placeholder pattern applies to **`AUGMENT_IMAGE`** at Stage 3: unresolved image →
-reference augment locally, component tier **SEAM** until the operator pushes a
-registry-qualified Cosmos Transfer image.
+Canonical Stage 3 instead requires **`COSMOS3_IMAGE`** to be a registry-qualified
+immutable digest. It has no local/reference-augment fallback: an unresolved image
+or missing effective guarded Cosmos3 structural-transfer receipt fails before
+downstream EnvGen work starts.
 
 ---
 
@@ -206,15 +207,15 @@ the operator supplies a registry-qualified image or customer asset.
 | --- | --- | --- | --- |
 | 1 | Task-aligned seed trigger | **WORKS** | Verified Isaac trajectory manifest at `NPA_SIM2REAL_TRIGGER_DATASET_URI` |
 | 2 | LanceDB curation | **SEAM** | Trigger path only; no LanceDB stage |
-| 3 | Cosmos augment | **WORKS** | Canonical submit requires qualified Cosmos Transfer 2.5 and real Job evidence |
+| 3 | Cosmos3 structural augment | **WORKS** | Canonical submit requires qualified guarded Cosmos3-Nano video2video, full-source edge control, decoded coverage, and real GPU receipt evidence |
 | 4 | Sim assets / catalog | **WORKS** | Stock SceneSpec + Franka; BYO RobotSpec validates and content-addresses complete URDF packages |
 | 5 | 10K envgen | **WORKS** | `NPA_ENV_COUNT=10000` via `sim2real_envgen` |
 | 5–6 | Curated train/validation/gold splits and feature lineage | **WORKS** | `NPA_TRAIN_FRACTION=0.8`; state carries all three disjoint split URIs and Stage 6 declares state-PPO consumption honestly |
 | 7 | Policy action rollouts | **WORKS** | Real Isaac standard-workflow task; every frame names the loaded checkpoint |
-| 8–9 | VLM + RL trainer | **WORKS** | Cosmos Reason + real Isaac RSL-RL PPO on cluster |
+| 8–9 | Hosted evaluator + RL trainer | **WORKS** | Current-endpoint Token Factory MiniMax-M3 evaluation plus real Isaac RSL-RL PPO on cluster; a Cosmos3 Reasoner is not implied |
 | 10 | Held-out eval | **WORKS** | Candidate-loaded Isaac inference; BYO robot/scene must load with no silent fallback |
 | 11 | Threshold gate | **WORKS** | Promote vs loop-back |
-| 12 | Real-world validation | **SEAM** | `stage_12_external_validation/external_stub.json` — customer deploys checkpoint |
+| 12 | Real-world validation | **SEAM** | `external_validation/seam.json` — customer deploys checkpoint |
 | 13 | Next batch | **Explicit data gate** | Retriggers only after verified new real failure data or corrected scenario data; no S3 polling |
 
 The remaining intentional seam is Stage 12 external real-world validation.
@@ -245,7 +246,7 @@ cluster-side preflight (kube context, registry secret, gated HF models).
    path uses verified Isaac lift-cube trajectories and never relabels PushT.
 2. **Trigger** — `export TRIGGER_DATASET_URI=s3://…/` then `<private-operator-pack>/sim2real-rtxpro/trigger-pipeline.sh` (or workflow submit with the same URI).
 3. **Robot** — For production: `ROBOT_PRESET` + `ROBOT_SPEC_URI` (UR/Flexiv URDF). Stock Franka is smoke-only.
-4. **Images** — Registry-qualified `POLICY_IMAGE`, `AUGMENT_IMAGE`, `VLM_IMAGE`, etc.
+4. **Images** — Registry-qualified immutable `CONTROLLER_IMAGE`, `COSMOS3_IMAGE`, `ENVGEN_IMAGE`, `ISAAC_IMAGE`, and `VIEWER_IMAGE`.
 5. **Real-world loop** — Deploy promoted checkpoint (BYO), collect new data, upload, trigger again.
 
 ### Capacity-aware GPU placement

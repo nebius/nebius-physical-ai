@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import os
+from pathlib import Path
 import signal
 import subprocess
 import threading
@@ -13,11 +14,23 @@ import time
 
 from fastapi.testclient import TestClient
 import pytest
+from typer.testing import CliRunner
 
 from npa.agent_backend.specialists.config import Operation, Profile, TeamConfig
 from npa.agent_backend.specialists.service import create_app
 from npa.agent_backend.specialists.team import SpecialistTeam
 from npa.agent_backend.specialists.tools import WorkbenchTools
+from npa.cli.main import app
+
+
+_ROOT = Path(__file__).resolve().parents[3]
+_SIM2REAL_ROLE_IMAGE_KEYS = (
+    "controller_image",
+    "cosmos3_image",
+    "envgen_image",
+    "isaac_image",
+    "viewer_image",
+)
 
 
 def _response(
@@ -94,6 +107,28 @@ def configuration(tmp_path):
 
 def _team(configuration, responses):
     return SpecialistTeam(configuration, clients={"simulation": _Client(responses)})
+
+
+def test_example_sim2real_plan_has_inert_digest_for_each_execution_role(monkeypatch):
+    """The fixed specialist operation must still render the attested role inputs."""
+
+    example = json.loads(
+        (_ROOT / "npa/examples/specialists/team.json").read_text(encoding="utf-8")
+    )
+    profile = next(item for item in example["profiles"] if item["name"] == "sim2real")
+    argv = profile["operations"]["plan"]["argv"]
+    variables = [argument for flag, argument in zip(argv, argv[1:]) if flag == "--var"]
+    for key in _SIM2REAL_ROLE_IMAGE_KEYS:
+        expected = key + "=registry.example.invalid/npa/sim2real@sha256:"
+        assert any(variable.startswith(expected) for variable in variables)
+
+    # The specialist explicitly owns a checked-out repository workspace, so
+    # its relative workflow path must be exercised from that workspace rather
+    # than from whichever subdirectory invoked pytest (CI runs from ``npa``).
+    monkeypatch.chdir(_ROOT)
+    result = CliRunner().invoke(app, argv[3:])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["steps"]
 
 
 def test_tool_checkpoint_survives_new_coordinator(configuration):

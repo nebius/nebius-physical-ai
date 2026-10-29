@@ -56,8 +56,11 @@ DEFAULT_ACTION_ENV_LIMIT = 256
 DEFAULT_SIGNAL_ADAPTER_LEARNING_RATE = 0.08
 DEFAULT_REFERENCE_VLM_MODEL = "nvidia/Cosmos-Reason2-8B"
 DEFAULT_REASON2_MODEL = "nvidia/Cosmos-Reason2-8B"
-# Historical config/lane name retained; model provenance identifies the actual VLM.
-DEFAULT_COSMOS3_MODEL = "MiniMaxAI/MiniMax-M3"
+# Canonical Stage 8/9 hosted evaluator. This name intentionally does not imply
+# that MiniMax is a Cosmos model. ``DEFAULT_COSMOS3_MODEL`` remains only for
+# the older loop API that still exposes an archived field name.
+DEFAULT_TOKEN_FACTORY_MODEL = "MiniMaxAI/MiniMax-M3"
+DEFAULT_COSMOS3_MODEL = DEFAULT_TOKEN_FACTORY_MODEL
 DEFAULT_LEROBOT_DATASET_ID = "npa/isaac-lift-cube-franka-seed-v1"
 REFERENCE_VLM_ALIASES = {
     "",
@@ -68,7 +71,7 @@ REFERENCE_VLM_ALIASES = {
     "cosmos3",
 }
 DEFAULT_VLM_SEAM_EVIDENCE = (
-    f"The canonical evaluator is hosted {DEFAULT_COSMOS3_MODEL} through Nebius "
+    f"The canonical evaluator is hosted {DEFAULT_TOKEN_FACTORY_MODEL} through Nebius "
     "Token Factory. Verify key-scoped model access and balance before launch; "
     "see sim2real-workflow.md."
 )

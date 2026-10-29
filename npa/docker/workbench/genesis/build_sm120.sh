@@ -8,6 +8,11 @@ REGISTRY=""
 BASE_IMAGE=""
 TAG=""
 PUSH=0
+NPA_SOURCE_SHA="${NPA_SOURCE_SHA:-$(git -C "${NPA_DIR}/.." rev-parse HEAD)}"
+
+# The widened CUDA variant uses the same unsupported native LeRobot closure;
+# after parent attestation, fail before any Docker build.
+source "${SCRIPT_DIR}/require_secure_closure.sh"
 
 usage() {
   cat <<'EOF'
@@ -55,6 +60,32 @@ if [[ -z "${BASE_IMAGE}" ]]; then
   exit 2
 fi
 
+if [[ ! "${NPA_SOURCE_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "NPA_SOURCE_SHA must be the exact 40-character checkout SHA" >&2
+  exit 2
+fi
+
+if [[ "$(git -C "${NPA_DIR}/.." rev-parse HEAD)" != "${NPA_SOURCE_SHA}" ]]; then
+  echo "NPA_SOURCE_SHA must match the build-context checkout HEAD" >&2
+  exit 2
+fi
+if [[ "${PUSH}" == "1" && -z "${REGISTRY}" ]]; then
+  echo "--push requires --registry" >&2
+  exit 2
+fi
+
+DOCKER=(docker)
+if [[ -n "${DOCKER_CONTEXT:-}" ]]; then
+  DOCKER+=(--context "${DOCKER_CONTEXT}")
+fi
+parent_source_sha="$("${DOCKER[@]}" image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "${BASE_IMAGE}" 2>/dev/null || true)"
+if [[ "${parent_source_sha}" != "${NPA_SOURCE_SHA}" ]]; then
+  echo "BASE_IMAGE must carry org.opencontainers.image.revision=${NPA_SOURCE_SHA}; found ${parent_source_sha:-missing}" >&2
+  exit 2
+fi
+
+require_current_secure_genesis_closure
+
 if [[ -z "${TAG}" ]]; then
   TAG="0.4.6-sm80-sm90-sm100-sm103-sm120-$(date -u +%Y%m%dT%H%M%SZ)"
 fi
@@ -62,6 +93,7 @@ fi
 LOCAL_IMAGE="npa-genesis:${TAG}"
 BUILD_ARGS=(
   --build-arg "BASE_IMAGE=${BASE_IMAGE}"
+  --build-arg "NPA_SOURCE_SHA=${NPA_SOURCE_SHA}"
   -f "${SCRIPT_DIR}/Dockerfile.sm120"
   -t "${LOCAL_IMAGE}"
 )
@@ -71,14 +103,14 @@ if [[ -n "${REGISTRY}" ]]; then
   BUILD_ARGS+=(-t "${REGISTRY_IMAGE}")
 fi
 
-docker build "${BUILD_ARGS[@]}" "${NPA_DIR}"
+"${DOCKER[@]}" build "${BUILD_ARGS[@]}" "${NPA_DIR}"
 
 if [[ "${PUSH}" == "1" ]]; then
   if [[ -z "${REGISTRY}" ]]; then
     echo "--push requires --registry" >&2
     exit 2
   fi
-  docker push "${REGISTRY_IMAGE}"
+  "${DOCKER[@]}" push "${REGISTRY_IMAGE}"
   echo "${REGISTRY_IMAGE}"
 else
   echo "${LOCAL_IMAGE}"

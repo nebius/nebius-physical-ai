@@ -29,7 +29,8 @@ class Sim2RealDiagnosticConfig:
         k8s_namespace: Namespace used by permission and cache checks.
         k8s_context: Kubernetes context selected for the probes.
         k8s_kubeconfig: Explicit kubeconfig used by the probes.
-        k8s_isaac_cache_pvc: Runtime-cache claim checked for Bound RWX status.
+        k8s_isaac_cache_pvc: Runtime-cache claim checked for Bound RWX status or
+            the canonical Stage-00 Pending RWX WaitForFirstConsumer state.
         k8s_gpu_resource: Resource counted on schedulable nodes.
         k8s_gpu_product: Requested GPU product checked against node labels.
         k8s_gpu_candidates: Accepted alternative GPU products.
@@ -59,6 +60,7 @@ def build_diagnostic_config_from_env(
     k8s_namespace: str = "",
     k8s_context: str = "",
     k8s_kubeconfig: str = "",
+    k8s_isaac_cache_pvc: str = "",
 ) -> Sim2RealDiagnosticConfig:
     """Resolve image-independent health settings with the existing env precedence.
 
@@ -69,6 +71,7 @@ def build_diagnostic_config_from_env(
         k8s_namespace: Explicit namespace, otherwise the configured or pod namespace.
         k8s_context: Explicit context, otherwise the configured environment value.
         k8s_kubeconfig: Explicit path, otherwise KUBECONFIG then the NPA environment.
+        k8s_isaac_cache_pvc: Explicit cache claim, otherwise the configured default.
     Returns:
         Storage and cluster settings with no execution image fields.
     Raises:
@@ -82,6 +85,7 @@ def build_diagnostic_config_from_env(
         k8s_namespace,
         k8s_context,
         k8s_kubeconfig,
+        k8s_isaac_cache_pvc,
     )
 
 
@@ -92,6 +96,7 @@ def _diagnostic_config(
     namespace: str,
     context: str,
     kubeconfig: str,
+    cache_pvc: str,
 ) -> Sim2RealDiagnosticConfig:
     return Sim2RealDiagnosticConfig(
         run_id=run_id,
@@ -105,7 +110,8 @@ def _diagnostic_config(
         k8s_kubeconfig=kubeconfig
         or os.environ.get("KUBECONFIG")
         or os.environ.get("NPA_SIM2REAL_KUBECONFIG", ""),
-        k8s_isaac_cache_pvc=os.environ.get("NPA_SIM2REAL_ISAAC_CACHE_PVC")
+        k8s_isaac_cache_pvc=cache_pvc
+        or os.environ.get("NPA_SIM2REAL_ISAAC_CACHE_PVC")
         or DEFAULT_K8S_ISAAC_CACHE_PVC,
         k8s_gpu_resource=os.environ.get("NPA_SIM2REAL_K8S_GPU_RESOURCE")
         or DEFAULT_K8S_GPU_RESOURCE,

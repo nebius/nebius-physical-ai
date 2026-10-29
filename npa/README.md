@@ -564,6 +564,26 @@ For artifact conversion and sharing, see the
 [Foxglove export](../docs/workbench/foxglove-export.md), and
 [Rerun sharing](../docs/workbench/rerun-sharing.md).
 
+The [Sim2Real runbook](../docs/workbench/guides/sim2real-workflow.md) follows
+the canonical 14-stage graph. Fresh stock-Franka training defaults
+`NPA_BYO_ISAAC_BOOTSTRAP=auto` to `franka-cartesian-gru-distillation-v2`: native
+Cartesian actions, normalized measured observations, and a recurrent actor
+shared by training and inference. At least three retained demonstration fits
+precede a strict actor-only placement check across the complete training split.
+If the initial mixed collection misses its placement guard, another guarded
+teacher-only collection refits the actor before retrying the mixture. The audit
+retains each failed collection and recovery fit; the placement threshold stays fixed.
+Corrective fitting repeats when that check fails, before the complete PPO pass
+begins. `none` disables the training bootstrap; an explicit profile rejects
+ineligible tasks and resumed checkpoints. Native checkpoint
+metadata binds the action scale, observations, model, and reset-clock contract.
+Successful demonstration training freezes its empirical observation statistics
+before PPO. Every checkpoint records that bound and restores it on resume.
+Stock demonstration and resumed transport/convergence passes default to fixed
+PPO updates at `0.00001`, zero entropy, and initial/convergence action noise
+`0.005`; existing learning-rate, entropy, and noise overrides still apply.
+Validation and Gold execute the learned actor alone.
+
 NPA pins its recording SDK and default hosted/share viewers to Rerun 0.38.1.
 Recording inspection uses the supported streaming reader and accepts existing
 0.31.4 RRD files without rewriting their contents or provenance. A recording

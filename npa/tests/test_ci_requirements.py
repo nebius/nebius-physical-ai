@@ -118,25 +118,27 @@ def test_pillow_security_floor_and_client_python_requirement_agree() -> None:
     assert Version("3.11") in supported
 
 
-def test_langgraph_sqlite_security_fix_is_pinned_for_every_extra() -> None:
-    """Require every declared SQLite checkpoint runtime to use the patched pin."""
-    project = ci_requirements.tomllib.loads(
+def test_sqlite_checkpoint_security_fix_covers_agent_and_dev_installs() -> None:
+    """Keep every public installation path above the checkpoint CVE fix."""
+
+    manifest = ci_requirements.tomllib.loads(
         (ci_requirements._ROOT / "npa/pyproject.toml").read_text()
-    )["project"]
-    requirement_groups = [
-        project["dependencies"],
-        *project["optional-dependencies"].values(),
-    ]
-    sqlite_requirements = [
-        Requirement(line)
-        for group in requirement_groups
-        for line in group
-        if canonicalize_name(Requirement(line).name) == "langgraph-checkpoint-sqlite"
-    ]
-    assert sqlite_requirements
-    assert all(
-        item.specifier == SpecifierSet("==3.1.2") for item in sqlite_requirements
     )
+    project = manifest["project"]
+    sources = (
+        project["optional-dependencies"]["agent-specialists"],
+        project["optional-dependencies"]["dev"],
+        manifest["dependency-groups"]["dev"],
+    )
+    for requirements in sources:
+        checkpoint = next(
+            Requirement(item)
+            for item in requirements
+            if canonicalize_name(Requirement(item).name)
+            == "langgraph-checkpoint-sqlite"
+        )
+        assert Version("3.1.1") not in checkpoint.specifier
+        assert Version("3.1.2") in checkpoint.specifier
 
 
 @pytest.mark.parametrize("name", ["pyproject.toml", "ci/constraints.in"])

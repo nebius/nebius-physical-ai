@@ -606,3 +606,92 @@ def test_live_benchmark_confusion_preserves_provider_evidence(tmp_path: Path) ->
         _assert_live_benchmark_confusion(config)
         for case in config["results"]:
             _assert_live_benchmark_case(case, config["config"]["success_threshold"])
+
+
+def _receipt_test_rollout(directory: Path) -> Path:
+    directory.mkdir()
+    metadata, actions = [], []
+    for step in range(32):
+        frame = _shape_frame(
+            directory / f"camera-{step:03d}.png", red_inside=step >= 16
+        )
+        metadata.append(
+            dict(
+                path=frame.name,
+                sim_step=step,
+                view_name="primary",
+                episode_id=directory.name,
+                simulator_episode_id=0,
+            )
+        )
+        actions.append(
+            dict(
+                step=step,
+                sim_step=step,
+                action=[0.1],
+                episode_boundary=_episode_without_reset(),
+            )
+        )
+    manifest = directory / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "rollout_id": directory.name,
+                "camera_observations": [frame["path"] for frame in metadata],
+                "camera_frame_metadata": {"primary": metadata},
+                "task_description": "Move the red square inside the green outline in these diagrams.",
+                "actions": actions,
+            }
+        )
+    )
+    return manifest
+
+
+def _assert_receipt_test_evaluation(result):
+    from npa.workbench.cosmos.visual_grounding import validate_stored_visual_grounding
+
+    validate_stored_visual_grounding(result)
+    assert result["frame_count"] == result["action_count"] == 32
+    assert all(event["visual_grounding"]["supported"] for event in result["per_step"])
+    assert result["request"]["request_id"] and result["request"]["total_tokens"] > 0
+
+
+def test_live_sim2real_evaluation_receipts_resume_without_inference(
+    tmp_path: Path,
+) -> None:
+    """Verify full frame coverage, concurrent hosted scoring, and S3 replay."""
+    _require_key()
+    if not os.environ.get("NPA_SIM2REAL_EVALUATION_LIVE_S3_PREFIX"):
+        pytest.skip(
+            "Set NPA_SIM2REAL_EVALUATION_LIVE_S3_PREFIX to a private writable prefix"
+        )
+    prefix = os.environ["NPA_SIM2REAL_EVALUATION_LIVE_S3_PREFIX"]
+    from npa.clients.storage import StorageClient
+    from npa.workflows.sim2real.hosted_evaluation import evaluate_rollouts
+
+    manifests = [
+        _receipt_test_rollout(tmp_path / f"rollout-{index:04d}") for index in range(2)
+    ]
+    settings = dict(
+        store=StorageClient.from_environment(),
+        prefix=prefix,
+        model=DEFAULT_REASONER_MODEL,
+        threshold=0.5,
+        source_sha="a" * 40,
+        concurrency=2,
+        max_frames=0,
+    )
+    first, first_reused = evaluate_rollouts(manifests, **settings)
+    second, second_reused = evaluate_rollouts(manifests, **settings)
+    assert first_reused == 0 and second_reused == 2 and first == second
+    for result in first:
+        _assert_receipt_test_evaluation(result)
+    evidence = dict(
+        new_requests=2,
+        replayed_requests=0,
+        reused_rollouts=second_reused,
+        evaluations=first,
+    )
+    (tmp_path / "hosted-evaluation-replay.json").write_text(
+        json.dumps(evidence, indent=2)
+    )

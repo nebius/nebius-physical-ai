@@ -19,6 +19,17 @@ from npa.cli.agent_workflow import generate_workflow_draft
 
 
 METADATA = {"NPA_NEBIUS_CREDENTIAL_SOURCE": "instance_metadata"}
+_SIM2REAL_TEST_IMAGE = "registry.example.invalid/npa/sim2real@sha256:" + "a" * 64
+_SIM2REAL_ROLE_IMAGES = {
+    key: _SIM2REAL_TEST_IMAGE
+    for key in (
+        "controller_image",
+        "cosmos3_image",
+        "envgen_image",
+        "isaac_image",
+        "viewer_image",
+    )
+}
 
 
 @pytest.mark.parametrize("source", ["", "configured_profile", "operator-profile"])
@@ -176,6 +187,7 @@ def test_verified_accelerator_inventory_checks_requested_gpu(available):
                     "raw": {
                         "accelerator_discovery": {"status": "available"},
                         "available_accelerators": available,
+                        **_SIM2REAL_ROLE_IMAGES,
                     },
                 }
             ],
@@ -201,7 +213,13 @@ def test_failed_cloud_accelerators_do_not_override_configured_backend(monkeypatc
             "has_infra": True,
             "cloud_clusters": inventory["items"],
             "configured": [
-                {"context": "chosen", "raw": {"gpu_accelerator": "RTXPRO6000"}}
+                {
+                    "context": "chosen",
+                    "raw": {
+                        "gpu_accelerator": "RTXPRO6000",
+                        **_SIM2REAL_ROLE_IMAGES,
+                    },
+                }
             ],
         },
     )

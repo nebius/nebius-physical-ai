@@ -465,6 +465,7 @@ def _write_inputs(
         + "\n",
         encoding="utf-8",
     )
+    requirements.chmod(0o600)
     urls = {
         "https://github.com/example/source.tar.gz": source,
         "https://files.pythonhosted.org/packages/fixture.whl": wheel,
@@ -518,8 +519,10 @@ def _write_inputs(
         payload.update(mutate)
     manifest = tmp_path / "source-lock.json"
     manifest.write_text(json.dumps(payload), encoding="utf-8")
+    manifest.chmod(0o600)
     corresponding = tmp_path / "corresponding-source.lock.json"
     corresponding.write_bytes(CORRESPONDING_LOCK.read_bytes())
+    corresponding.chmod(0o600)
     contract = tmp_path / "runtime-fetch-manifest.json"
     contract.write_text(
         json.dumps(
@@ -554,6 +557,7 @@ def _write_inputs(
         ),
         encoding="utf-8",
     )
+    contract.chmod(0o600)
     return manifest, requirements, urls
 
 
@@ -577,6 +581,7 @@ def _refresh_contract_source_binding(manifest: Path) -> None:
         manifest.read_bytes()
     ).hexdigest()
     contract.write_text(json.dumps(payload), encoding="utf-8")
+    contract.chmod(0o600)
 
 
 def _installer(stage: Path, requirements: Path) -> None:
@@ -656,6 +661,7 @@ def test_repository_lock_refuses_before_any_network_access(tmp_path: Path) -> No
     payload["status"] = "incomplete"
     manifest = tmp_path / "source-lock.json"
     manifest.write_text(json.dumps(payload), encoding="utf-8")
+    manifest.chmod(0o600)
     calls: list[str] = []
     with pytest.raises(BOOTSTRAP.BootstrapRefusal, match="before network access"):
         BOOTSTRAP.prepare(
@@ -1694,7 +1700,7 @@ def test_installer_retains_stage_identity_and_external_requirements(
     replace_stage: bool,
 ) -> None:
     stage = tmp_path / "stage"
-    stage.mkdir()
+    stage.mkdir(mode=0o700)
     requirements = tmp_path / "immutable-requirements.lock"
     requirements.write_text("synthetic locked requirements")
     requirements.chmod(0o400)
@@ -1707,7 +1713,7 @@ def test_installer_retains_stage_identity_and_external_requirements(
         calls.append((command, installation_directory_fd))
         if replace_stage:
             stage.rename(tmp_path / "original-stage")
-            stage.mkdir()
+            stage.mkdir(mode=0o700)
         return 0
 
     monkeypatch.setattr(BOOTSTRAP, "_execute_isolated_command", install)

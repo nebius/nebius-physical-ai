@@ -2,6 +2,7 @@
 # To update: re-resolve via registry API and update digest below.
 FROM nvidia/cuda:12.4.1-devel-ubuntu22.04@sha256:da6791294b0b04d7e65d87b7451d6f2390b4d36225ab0701ee7dfec5769829f5
 
+ARG NPA_SOURCE_SHA
 ARG GENESIS_VERSION=0.4.6
 ARG LEROBOT_VERSION=0.4.4
 ARG RSL_RL_VERSION=5.5.1
@@ -10,7 +11,9 @@ ARG TORCHVISION_VERSION=0.21.0
 ARG UBUNTU_SNAPSHOT=20261002T000000Z
 
 LABEL npa.tool="genesis" \
-      npa.version="${GENESIS_VERSION}"
+      npa.version="${GENESIS_VERSION}" \
+      npa.image.flavor="sm80-sm90-sm100-sm103-sm120" \
+      org.opencontainers.image.revision="${NPA_SOURCE_SHA}"
 
 ENV DEBIAN_FRONTEND=noninteractive \
     GENESIS_VERSION=${GENESIS_VERSION} \
@@ -20,8 +23,17 @@ ENV DEBIAN_FRONTEND=noninteractive \
     IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
     NPA_GENESIS_SUPPORTED_STUDENT_POLICIES=act \
-    NPA_GENESIS_HOME=/opt/genesis
+    NPA_GENESIS_HOME=/opt/genesis \
+    GENESIS_VENV=/opt/genesis/venv \
+    NPA_BAKED_PYTHON=/opt/genesis/venv/bin/python \
+    NVIDIA_DRIVER_CAPABILITIES=compute,graphics,utility \
+    EGL_PLATFORM=device \
+    PATH=/opt/genesis/venv/bin:/opt/npa/venv/bin:$PATH \
+    PYTHONPATH=/opt/npa/src \
+    NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
+    NPA_SKIP_EAGER_IMPORTS=1
 
 COPY --chmod=0755 docker/workbench/common/install_python312_jammy.sh /usr/local/bin/install-python312-jammy
 
@@ -51,41 +63,37 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && install-python312-jammy \
     && rm -rf /var/lib/apt/lists/*
 
-RUN useradd -m -s /bin/bash -u 1000 ubuntu \
-    && install -d -m 0755 -o ubuntu -g ubuntu \
+USER root
+
+RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu; \
+    install -d -m 0755 -o ubuntu -g ubuntu \
       /opt/genesis \
       /opt/genesis/outputs \
       /opt/npa/src/npa \
-      /opt/npa/docker/workbench/genesis
-
-# Permissions fix for /dev/dri access on serverless runtimes.
-# /dev/dri/card0 is owned by root:video (GID 44), while the render node is
-# owned by a runtime-provided numeric render group (GID 992).
-RUN groupadd -g 44 video 2>/dev/null || true; \
+      /opt/npa/docker/workbench/genesis; \
+    groupadd -g 44 video 2>/dev/null || true; \
     groupadd -g 992 render 2>/dev/null || true; \
     usermod -aG video,render ubuntu
 
-USER ubuntu
-# Force NVIDIA EGL device extension for headless EGL rendering on GPU.
-# Required by Genesis demo generation; combined with the video/render group
-# additions above, enables the full /dev/dri + EGL stack.
-ENV NVIDIA_DRIVER_CAPABILITIES=compute,graphics,utility
-ENV EGL_PLATFORM=device
-WORKDIR /opt/genesis
-
-COPY --chown=ubuntu:ubuntu docker/workbench/curobo/remove_scikit_image_recipe.py \
+COPY --chmod=0644 docker/workbench/curobo/remove_scikit_image_recipe.py \
     /opt/genesis/remove-scikit-image-recipe.py
-COPY --chown=ubuntu:ubuntu docker/workbench/genesis/prepare_public_runtime.py \
+COPY --chmod=0644 docker/workbench/genesis/prepare_public_runtime.py \
     /opt/genesis/prepare-public-runtime.py
-COPY --chown=ubuntu:ubuntu docker/workbench/genesis/prepare_public_policies.py \
+COPY --chmod=0644 docker/workbench/genesis/prepare_public_policies.py \
     /opt/genesis/prepare-public-policies.py
-COPY --chown=ubuntu:ubuntu docker/workbench/common/envgen_compat/tetgen.py \
+COPY --chmod=0644 docker/workbench/common/envgen_compat/tetgen.py \
     /opt/genesis/compat/tetgen.py
+
+USER ubuntu
+WORKDIR /opt/genesis
 
 # Keep the reviewed scikit-image 0.25.2 source correction in this installation
 # layer so the embedded recipe never reaches an ancestor image layer.
 RUN python3.12 -m venv /opt/genesis/venv \
-    && /opt/genesis/venv/bin/python -m pip install --upgrade pip setuptools wheel \
+    && /opt/genesis/venv/bin/python -m pip install --no-cache-dir --upgrade \
+      'pip==26.2.0' \
+      'setuptools==84.1.0' \
+      'wheel==0.48.0' \
     && /opt/genesis/venv/bin/pip install \
       "torch==${TORCH_VERSION}" \
       "torchvision==${TORCHVISION_VERSION}" \
@@ -137,10 +145,6 @@ RUN python3.12 -m venv /opt/genesis/venv \
     && /opt/genesis/venv/bin/python -c \
       'import imageio_ffmpeg, os; p="/tmp/genesis-ffmpeg-probe.mp4"; w=imageio_ffmpeg.write_frames(p,(2,2),fps=1,macro_block_size=1); w.send(None); w.send(bytes([0,0,0]*4)); w.close(); r=imageio_ffmpeg.read_frames(p,pix_fmt="rgb24"); m=next(r); f=next(r); r.close(); assert m["size"] == (2,2) and len(f) == 12; os.unlink(p)'
 
-ENV PATH=/opt/genesis/venv/bin:$PATH \
-    PYTHONPATH=/opt/npa/src \
-    NPA_SKIP_EAGER_IMPORTS=1
-
 COPY --chown=ubuntu:ubuntu pyproject.toml /opt/npa/pyproject.toml
 COPY --chown=ubuntu:ubuntu src/npa /opt/npa/src/npa
 COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
@@ -153,17 +157,21 @@ COPY --chmod=0555 docker/workbench/common/configure_ubuntu_snapshot.sh \
 COPY --chmod=0555 docker/workbench/common/install_workflow_runtime_prereqs.sh \
     /usr/local/bin/install-workflow-runtime-prereqs
 
-RUN python /opt/npa/install_npa_source_launcher.py /opt/npa/src \
+RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
+    && python /opt/npa/install_npa_source_launcher.py /opt/npa/src \
     && python - <<'PY'
 import os
 from importlib import metadata
+
 import genesis
+import torch
 
 expected = os.environ["GENESIS_VERSION"]
 actual = getattr(genesis, "__version__", metadata.version("genesis-world"))
 if actual != expected:
     raise RuntimeError(f"expected genesis-world {expected}, found {actual}")
 print(f"GENESIS_BUILD_IMPORT_OK {actual}")
+print(f"TORCH_BUILD_CUDA {torch.__version__} cuda={torch.version.cuda}")
 PY
 
 RUN python /opt/npa/docker/workbench/genesis/smoke_public_cpu.py
@@ -189,6 +197,5 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 USER ubuntu
-
 WORKDIR /opt/genesis
 ENTRYPOINT ["/bin/bash"]

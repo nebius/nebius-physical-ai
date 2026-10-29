@@ -40,9 +40,11 @@ login, and every base digest is resolvable anonymously.
 
 CI fetches those Docker Hub references through `mirror.gcr.io`, including the
 isolated BuildKit driver image. The original repository, tag, and SHA256 digest
-remain intact, so the mirror cannot substitute different image content. This
-avoids coupling required security checks to Docker Hub's anonymous pull-rate
-window; scans never fall back to a tag-only or otherwise unpinned reference.
+remain intact, so the mirror cannot substitute different image content. If the
+mirror cannot prepare a patched scan target, CI retries the same canonical
+digest directly; it never falls back to a tag-only or otherwise unpinned
+reference. This avoids coupling required security checks to either the mirror's
+retention window or Docker Hub's anonymous pull-rate window.
 
 ### OSS source-built images (Lichtblick)
 
@@ -122,6 +124,9 @@ Patched targets export directly from an isolated Buildx `docker-container`
 builder, which is removed before the archive scan begins. Unmodified digest
 references use Trivy's remote source through the same digest-preserving public
 mirror, avoiding the shared Docker image store and anonymous Docker Hub limits.
+For a patched target only, a failed mirror preparation retries the unchanged
+canonical digest in the same isolated builder; a failed canonical retry remains
+blocking and the scanner never reports the unprepared target as scanned.
 No global image, builder, or volume pruning occurs. A builder-removal failure
 fails validation and retains its private `builder.json` and Buildx configuration
 for recovery; it is never reported as successful cleanup.

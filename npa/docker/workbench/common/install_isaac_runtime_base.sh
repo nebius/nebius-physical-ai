@@ -73,6 +73,9 @@ printf '%s\n' \
   'Components: main restricted universe multiverse' \
   'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
   > /etc/apt/sources.list.d/ubuntu.sources
+# Retry only acquisition from the same immutable snapshot. A transient 5xx must
+# not cause this secure, source-pinned build to substitute a moving mirror.
+printf '%s\n' 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/99npa-snapshot-retries
 apt-get update
 # CUDA's Jammy base retains an old linux-libc-dev build. These are development
 # headers rather than the host kernel, but the fixed immutable-snapshot build is
@@ -190,7 +193,7 @@ else
 fi
 "$ISAAC_VENV/bin/python" -m pip install --no-cache-dir --no-deps \
   "pip==26.2.2" \
-  "setuptools==84.0.0" \
+  "setuptools==84.1.0" \
   "wheel==0.47.0" \
   "packaging==26.3"
 "$ISAAC_VENV/bin/python" -m pip check
@@ -266,10 +269,9 @@ if [ "$ISAAC_PYTHON_MINOR" = 3.11 ] && grep -qiE '^moviepy==' "$OSS_DEPS_FILE"; 
   "$ISAAC_VENV/bin/python" "${COMMON_DIR}/moviepy_pillow_compat.py"
 fi
 if [ "$ISAAC_PYTHON_MINOR" = 3.12 ]; then
-  # Torch 2.11's released wheel retained an unnecessary Setuptools<82 runtime
-  # bound. Apply PyTorch upstream c776884 to exact reviewed wheel metadata,
-  # then verify the security-fixed Setuptools bytes and runtime imports.
-  "$ISAAC_VENV/bin/python" "${COMMON_DIR}/torch_setuptools_compat.py"
+  # Verify/backport the upstream Unicode manifest fix against reviewed exact
+  # bytes. The secure 84.1.0 pin carries the official fix natively; older
+  # reviewed constrained bytes receive the bounded compatibility backport.
   "$ISAAC_VENV/bin/python" "${COMMON_DIR}/backport_setuptools_manifest.py"
   "$ISAAC_VENV/bin/python" - <<'PY'
 from importlib import metadata
@@ -281,6 +283,14 @@ assert torch.__version__ == "2.11.0+cu128"
 assert metadata.version("setuptools") == "84.2.1"
 assert all((BuildExtension, CppExtension, CUDAExtension))
 PY
+fi
+# Torch 2.11.0+cu128's released metadata caps Setuptools below the reviewed
+# Isaac 3 security floor, although its tested extension interface works with
+# 84.2.1. Restrict the RECORD-preserving compatibility repair to this exact
+# Python 3.12/cu128 closure; every other Torch closure retains its own metadata.
+if [ "$ISAAC_PYTHON_MINOR" = 3.12 ] && [ "$SKIP_TORCH" != 1 ] \
+  && [ "$TORCH_VERSION" = 2.11.0 ] && [[ "$TORCH_INDEX_URL" == */cu128 ]]; then
+  "$ISAAC_VENV/bin/python" "${COMMON_DIR}/torch_setuptools_compat.py"
 fi
 "$ISAAC_VENV/bin/python" -m pip check
 

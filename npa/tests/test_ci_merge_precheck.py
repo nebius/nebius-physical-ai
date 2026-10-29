@@ -37,7 +37,7 @@ def repository(tmp_path: Path) -> Path:
     _git(tmp_path, "config", "user.email", "test@example.com")
     (tmp_path / "npa/ci").mkdir(parents=True)
     (tmp_path / "npa/pyproject.toml").write_text(
-        '[project]\nrequires-python = ">=3.10"\ndependencies = ["anyio>=4.14.2"]\n'
+        '[project]\nrequires-python = ">=3.11"\ndependencies = ["anyio>=4.14.2"]\n'
         "[project.optional-dependencies]\ndev = []\nadapter = []\nsonic = []\ngenesis-test = []\n"
     )
     (tmp_path / "npa/ci/constraints.in").write_text("# constraints\n")

@@ -306,7 +306,6 @@ def test_correction_runs_before_installation_layer_commits():
 def test_correction_consumers_declare_their_capabilities() -> None:
     consumers = {
         "curobo/Dockerfile": "--capability curobo",
-        "sim2real-envgen/Dockerfile": "--capability envgen",
         "fiftyone/Dockerfile": "--capability fiftyone",
         "genesis/Dockerfile": "--capability genesis",
         "genesis/Dockerfile.sm120": "--capability genesis",
@@ -317,7 +316,8 @@ def test_correction_consumers_declare_their_capabilities() -> None:
         assert capability in (workbench / relative).read_text()
 
 
-def test_envgen_explicitly_allows_only_a_verified_parent_correction() -> None:
+def test_envgen_removes_its_parent_without_consuming_genesis_corrections() -> None:
     dockerfile = (IMAGE.parent / "sim2real-envgen/Dockerfile").read_text()
-    correction = dockerfile.index("remove-scikit-image-recipe.py")
-    assert "--allow-corrected" in dockerfile[correction:]
+    assert "rm -rf /opt/npa" in dockerfile
+    assert "remove-scikit-image-recipe.py" not in dockerfile
+    assert "--allow-corrected" not in dockerfile

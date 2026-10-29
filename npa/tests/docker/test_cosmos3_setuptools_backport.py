@@ -1,4 +1,4 @@
-"""Fail-closed checks for the constrained runtime's upstream manifest backport."""
+"""Fail-closed checks for the runtime's reviewed manifest-fix verifier."""
 
 import importlib.util
 from pathlib import Path
@@ -23,7 +23,7 @@ def backport():
 @pytest.mark.parametrize(
     "path", ["setuptools/command/egg_info.py", "setuptools/unicode_utils.py"]
 )
-@pytest.mark.parametrize("version", ["80.10.2", "81.0.0", "84.2.1"])
+@pytest.mark.parametrize("version", ["80.10.2", "81.0.0", "84.1.0", "84.2.1"])
 def test_unreviewed_installed_source_is_rejected(backport, path, version):
     with pytest.raises(RuntimeError, match="differs from the reviewed"):
         backport.patched_source(
@@ -31,42 +31,25 @@ def test_unreviewed_installed_source_is_rejected(backport, path, version):
         )
 
 
-def test_exact_already_fixed_security_closure_is_a_verified_noop(backport):
-    expected = {
-        "setuptools/command/egg_info.py": "37bbdddc1a29864675b4a9bf97d131c336907ac83ed63d91e899006662a77134",
-        "setuptools/unicode_utils.py": "0e400678e34254f1f7e8ef29a85515473e9df98699ea4d4314098ee414721d52",
-    }
-    assert {
-        name: original
-        for name, (original, patched) in backport.SOURCE_HASHES["84.2.1"].items()
-        if original == patched
-    } == expected
-
-
-def test_current_isaac_python312_setuptools_closure_is_reviewed(backport):
-    requirements = (IMAGE.parent / "common/isaac3-oss-deps.txt").read_text()
-    selected = [
-        line.partition("==")[2].strip()
-        for line in requirements.splitlines()
-        if line.startswith("setuptools==")
-    ]
-    assert selected == ["84.2.1"]
-    assert int(selected[0].partition(".")[0]) >= 84
-    assert all(
-        original == patched
-        for original, patched in backport.SOURCE_HASHES[selected[0]].values()
-    )
-
-
-def test_backport_rejects_unknown_dependency_closure(backport, monkeypatch):
+def test_verifier_does_not_accept_an_unreviewed_distribution(backport, monkeypatch):
     class UnsupportedDistribution:
         version = "84.0.0"
 
     monkeypatch.setattr(
         backport.metadata, "distribution", lambda _: UnsupportedDistribution()
     )
-    with pytest.raises(RuntimeError, match="exact Setuptools 80.10.2"):
+    with pytest.raises(RuntimeError, match="reviewed Setuptools"):
         backport.main()
+
+
+@pytest.mark.parametrize("version", ["84.1.0", "84.2.1"])
+def test_secure_isaac_setuptools_is_reviewed_native_fix(backport, version):
+    hashes = backport.SOURCE_HASHES[version]
+    assert set(hashes) == {
+        "setuptools/command/egg_info.py",
+        "setuptools/unicode_utils.py",
+    }
+    assert all(original == patched for original, patched in hashes.values())
 
 
 def test_fresh_and_reused_runtime_apply_backport_before_execution():

@@ -1,4 +1,7 @@
 # Resolver-closed control-plane additions for purpose-built Sim2Real images.
+# The Isaac role imports robot_contract during rollout, so this shared compatible
+# closure owns its XML hardening dependency without importing the CPU role's
+# incompatible boto3/botocore pins.
 # Install with --no-deps: every direct and transitive package is exact here;
 # the remaining common Python closure is inherited from a digest-pinned base.
 anyio==4.14.2
@@ -7,6 +10,7 @@ cffi==2.1.1
 certifi==2026.10.19
 charset-normalizer==3.4.9
 durationpy==0.10
+defusedxml==0.7.1
 google-auth==2.56.3
 h11==0.16.0
 httpcore==1.0.9
