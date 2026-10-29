@@ -2185,6 +2185,88 @@ def test_runtime_boundary_smoke_is_excluded_and_binds_applied_control(
     assert json.loads((tmp_path / "runtime-boundary-smoke.json").read_text()) == receipt
 
 
+def _native_smolvla_boundary_query() -> tuple[dict, dict]:
+    actions = np.arange(400, dtype=np.float64).reshape(50, 8) / 100.0
+    action_receipt = pi05_closed_loop._action_receipt(actions)
+    target, selection = pi05_closed_loop._smolvla_temporally_ensembled_target(
+        {"smolvla_action_chunks": []},
+        actions,
+        {"decision": 0, "action_receipt": action_receipt},
+    )
+    assert np.array_equal(target, actions[0])
+    exterior, wrist = "1" * 64, "2" * 64
+    query = {
+        "decision": 0,
+        "exterior_rgb_sha256": exterior,
+        "wrist_rgb_sha256": wrist,
+        "witness_rgb_sha256": "3" * 64,
+        "release_witness_rgb_sha256": "4" * 64,
+        "execution_status": "completed",
+        "action_receipt": action_receipt,
+        "action_selection": selection,
+        "inference": {
+            "backend": "lerobot_smolvla",
+            "request_sha256": "5" * 64,
+            "response_sha256": "6" * 64,
+            "fresh_observation_consumed": True,
+            "deterministic_noise_coupled": True,
+            "sampler_noise_sha256": "7" * 64,
+            "sampler_noise_shape": [50, 32],
+            "sampling_sequence": "scene-20281007-decision-0",
+            "camera_sha256": {"workspace": exterior, "wrist": wrist},
+            "wire_input": {
+                "schema": "npa.sim2real.policy_observation_receipt.v1",
+                "exterior_rgb_sha256": exterior,
+                "wrist_rgb_sha256": wrist,
+                "capture_age_s": 0.0,
+            },
+            "wrist_intervention": {
+                "mode": "fresh",
+                "intervention_label": "fresh",
+                "decision": 0,
+                "source_sha256": wrist,
+                "policy_sha256": wrist,
+            },
+        },
+    }
+    return {"scenario_seed": 20281007, "queries": [query]}, query
+
+
+def test_native_smolvla_boundary_accepts_backend_specific_camera_and_action_receipts() -> (
+    None
+):
+    episode, query = _native_smolvla_boundary_query()
+
+    pi05_closed_loop._validate_query_lineage(episode, query)
+    pi05_closed_loop._validate_action_selection_history(episode)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("fresh_observation_consumed", False),
+        ("request_sha256", "bad"),
+        ("sampler_noise_shape", [50, 0]),
+    ],
+)
+def test_native_smolvla_boundary_rejects_invalid_runtime_receipts(
+    field: str, value: object
+) -> None:
+    episode, query = _native_smolvla_boundary_query()
+    query["inference"][field] = value
+
+    with pytest.raises(RuntimeError, match="policy query"):
+        pi05_closed_loop._validate_query_lineage(episode, query)
+
+
+def test_native_smolvla_boundary_rejects_consumed_wrist_hash_mismatch() -> None:
+    episode, query = _native_smolvla_boundary_query()
+    query["inference"]["camera_sha256"]["wrist"] = "8" * 64
+
+    with pytest.raises(RuntimeError, match="policy query wrist lineage"):
+        pi05_closed_loop._validate_query_lineage(episode, query)
+
+
 def test_partial_episode_receipt_retains_query_without_raw_frames(
     tmp_path: Path,
 ) -> None:

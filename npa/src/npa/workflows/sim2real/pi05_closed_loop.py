@@ -3077,34 +3077,61 @@ def _validate_query_lineage(episode: dict[str, Any], query: dict[str, Any]) -> N
     inference = query.get("inference") or {}
     intervention = inference.get("wrist_intervention") or {}
     wire = inference.get("wire_input") or {}
-    transform = inference.get("model_wrist_transform") or {}
     seed, decision = int(episode["scenario_seed"]), int(query["decision"])
     expected_sequence = f"scene-{seed}-decision-{decision}"
-    hashes = (
-        wire.get("payload_sha256"),
-        wire.get("exterior_rgb_sha256"),
-        wire.get("wrist_rgb_sha256"),
-        transform.get("left_wrist_0_rgb_sha256"),
-        transform.get("right_wrist_0_rgb_sha256"),
-    )
     if (
-        not all(_valid_receipt_hash(value) for value in hashes)
+        not _valid_receipt_hash(wire.get("exterior_rgb_sha256"))
+        or not _valid_receipt_hash(wire.get("wrist_rgb_sha256"))
         or not _valid_receipt_hash(query.get("witness_rgb_sha256"))
         or not _valid_receipt_hash(query.get("release_witness_rgb_sha256"))
         or query.get("wrist_rgb_sha256") != intervention.get("source_sha256")
         or query.get("exterior_rgb_sha256") != wire.get("exterior_rgb_sha256")
         or wire.get("wrist_rgb_sha256") != intervention.get("policy_sha256")
-        or wire.get("wrist_source_hash_matched") is not True
-        or transform.get("schema") != "npa.openpi.pi05-live-wrist-transform.v1"
-        or transform.get("source_wrist_sha256") != intervention.get("policy_sha256")
-        or transform.get("left_wrist_mask") is not True
-        or transform.get("right_wrist_mask") is not False
         or inference.get("sampling_sequence") != expected_sequence
         or "witness" in wire
         or "release_witness" in wire
     ):
         raise RuntimeError("policy query wrist lineage is invalid")
+    if inference.get("backend") == "lerobot_smolvla":
+        _validate_smolvla_query_lineage(inference, wire)
+    else:
+        _validate_openpi_query_lineage(inference, intervention, wire)
     _validate_query_numeric_receipts(query, inference, wire)
+
+
+def _validate_openpi_query_lineage(
+    inference: dict[str, Any], intervention: dict[str, Any], wire: dict[str, Any]
+) -> None:
+    transform = inference.get("model_wrist_transform") or {}
+    hashes = (
+        wire.get("payload_sha256"),
+        transform.get("left_wrist_0_rgb_sha256"),
+        transform.get("right_wrist_0_rgb_sha256"),
+    )
+    if (
+        not all(_valid_receipt_hash(value) for value in hashes)
+        or wire.get("wrist_source_hash_matched") is not True
+        or transform.get("schema") != "npa.openpi.pi05-live-wrist-transform.v1"
+        or transform.get("source_wrist_sha256") != intervention.get("policy_sha256")
+        or transform.get("left_wrist_mask") is not True
+        or transform.get("right_wrist_mask") is not False
+    ):
+        raise RuntimeError("policy query wrist lineage is invalid")
+
+
+def _validate_smolvla_query_lineage(
+    inference: dict[str, Any], wire: dict[str, Any]
+) -> None:
+    cameras = inference.get("camera_sha256") or {}
+    if (
+        not _valid_receipt_hash(inference.get("request_sha256"))
+        or not _valid_receipt_hash(inference.get("response_sha256"))
+        or cameras.get("workspace") != wire.get("exterior_rgb_sha256")
+        or cameras.get("wrist") != wire.get("wrist_rgb_sha256")
+        or set(cameras) != {"workspace", "wrist"}
+        or inference.get("fresh_observation_consumed") is not True
+    ):
+        raise RuntimeError("policy query wrist lineage is invalid")
 
 
 def _validate_query_numeric_receipts(
@@ -3117,6 +3144,23 @@ def _validate_query_numeric_receipts(
     action = query.get("action_receipt") or {}
     selection = query.get("action_selection") or {}
     horizon = inference.get("shape")
+    if inference.get("backend") == "lerobot_smolvla":
+        if (
+            not isinstance(age, (int, float))
+            or not math.isfinite(float(age))
+            or not 0.0 <= float(age) <= 1.0 / CONTROL_HZ
+            or not isinstance(shape, list)
+            or len(shape) != 2
+            or any(not isinstance(value, int) or value < 1 for value in shape)
+            or inference.get("deterministic_noise_coupled") is not True
+            or not _valid_receipt_hash(inference.get("sampler_noise_sha256"))
+            or not _valid_native_action_chunk_receipt(action)
+            or not _valid_native_action_selection_receipt(
+                selection, query.get("decision")
+            )
+        ):
+            raise RuntimeError("policy query numeric receipt is invalid")
+        return
     if (
         shape != PI05_SAMPLER_NOISE_SHAPE
         or not isinstance(age, (int, float))
@@ -3133,6 +3177,56 @@ def _validate_query_numeric_receipts(
         or not _valid_action_selection_receipt(selection, query.get("decision"))
     ):
         raise RuntimeError("policy query numeric receipt is invalid")
+
+
+def _valid_native_action_chunk_receipt(receipt: dict[str, Any]) -> bool:
+    import numpy as np
+
+    try:
+        actions = np.asarray(receipt.get("actions"), dtype=np.float64)
+    except (TypeError, ValueError):
+        return False
+    value = np.ascontiguousarray(actions)
+    return bool(
+        value.ndim == 2
+        and value.shape[0] >= 1
+        and value.shape[1] == 8
+        and receipt.get("shape") == list(value.shape)
+        and receipt.get("dtype") == "float64"
+        and np.isfinite(value).all()
+        and receipt.get("sha256") == hashlib.sha256(value.tobytes()).hexdigest()
+        and receipt.get("gripper_scores") == value[:, 7].tolist()
+        and receipt.get("thresholded_gripper_commands")
+        == [int(score > 0.5) for score in value[:, 7]]
+    )
+
+
+def _valid_native_action_selection_receipt(
+    selection: dict[str, Any], decision: Any
+) -> bool:
+    import numpy as np
+
+    try:
+        applied = np.asarray(selection.get("applied_action"), dtype=np.float64)
+        protocol = _action_selection_protocol(
+            "lerobot_smolvla", selection.get("strategy", "")
+        )
+    except (TypeError, ValueError):
+        return False
+    digest = hashlib.sha256(np.ascontiguousarray(applied).tobytes()).hexdigest()
+    score = selection.get("applied_gripper_score")
+    return bool(
+        all(selection.get(key) == value for key, value in protocol.items())
+        and selection.get("decision") == decision
+        and selection.get("applied_action_shape") == [8]
+        and selection.get("applied_action_dtype") == "float64"
+        and applied.shape == (8,)
+        and np.isfinite(applied).all()
+        and selection.get("applied_action_sha256") == digest
+        and isinstance(score, (int, float))
+        and float(score) == float(applied[7])
+        and selection.get("applied_gripper_command") == int(float(score) > 0.5)
+    )
 
 
 def _valid_action_chunk_receipt(receipt: dict[str, Any]) -> bool:
@@ -3193,7 +3287,14 @@ def _validate_action_selection_history(episode: dict[str, Any]) -> None:
         decision = int(query["decision"])
         selection = query.get("action_selection") or {}
         contributors = selection.get("contributors") or []
-        origins = list(range(max(0, decision - ACTION_HORIZON + 1), decision + 1))
+        if selection.get("schema") == "npa.sim2real.current_native_action.v1":
+            origins = [
+                origin
+                for origin in sorted(receipts)
+                if 0 <= decision - origin < len(receipts[origin].get("actions") or [])
+            ]
+        else:
+            origins = list(range(max(0, decision - ACTION_HORIZON + 1), decision + 1))
         if (
             selection.get("contributor_count") != len(origins)
             or len(contributors) != len(origins)
