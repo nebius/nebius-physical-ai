@@ -38,10 +38,11 @@ git clone https://github.com/nebius/nebius-physical-ai.git
 cd nebius-physical-ai
 ```
 
-For the measured development reproduction, select the checkout in the
-[execution receipt](../validation/sim2real-manual-development-20261010.md)
-before creating the virtualenv. It records the execution and cleanup revisions.
-For another image set, use its maintainer's compatible checkout.
+Select the checkout recorded with your immutable image set before creating the
+virtualenv. The [current development image-set receipt](../validation/sim2real-development-image-set-20261028.md)
+provides the source revision and all five public role digests. The
+[October 10 execution receipt](../validation/sim2real-manual-development-20261010.md)
+remains a dated reproduction of its earlier execution and cleanup revisions.
 
 ```bash
 python3.12 -m venv npa/.venv
@@ -61,14 +62,14 @@ Validation proves the declaration, not image availability or a GPU run.
 
 ## 2. Select a qualified image set before provisioning
 
-The canonical YAML intentionally leaves all five image references and
-`source_sha` empty. Obtain an image-set receipt from your image maintainer or
-use the measured development set below.
+The canonical YAML accepts an explicit five-role image set and its common
+`source_sha`. Use the [current development image-set receipt](../validation/sim2real-development-image-set-20261028.md)
+for exact public pins, or obtain a compatible qualified set from your maintainer.
+Each run verifies those exact images on its selected target before launch.
 
-The [October 10 development execution receipt](../validation/sim2real-manual-development-20261010.md)
-provides five exact public development pins and their tested operator revisions.
-It records full execution and zero strict placement successes; it does not
-promote the quarantined release defaults.
+The [October 10 execution receipt](../validation/sim2real-manual-development-20261010.md)
+retains its earlier full execution and zero strict-placement result as historical
+evidence. Its image selection and measurements remain tied to that dated run.
 
 | Setting | Image and required capability |
 | --- | --- |
@@ -110,11 +111,13 @@ reproducing the result; its revision can differ from the common image source
 SHA. Pullability and matching labels alone do not prove those capabilities.
 Retain both revisions with your run settings.
 
-**Release gate:** the checked-in [readiness record](../../../workflows/main/sim2real.readiness.json)
-currently marks `source_image` as `unverified`; this checkout does not supply a
-qualified five-image default. Stop before provisioning if you have no qualified
-set. Image maintainers use [container packaging and publication](../container-packaging.md)
-to close that prerequisite. The historical September 4 coherent set predates
+**Image selection:** provide the five explicit source-attested pins before
+provisioning. The [readiness record](../../../workflows/main/sim2real.readiness.json)
+tracks automatic default-image selection; its `source_image: unverified` value
+does not describe an explicitly selected set that passes preflight. Use the
+[current development receipt](../validation/sim2real-development-image-set-20261028.md)
+or your maintainer's compatible set. Image maintainers follow
+[container packaging and publication](../container-packaging.md). The historical September 4 coherent set predates
 the current MiniMax evaluator contract, and affected historical public releases
 remain [quarantined](../validation/public-default-quarantine-impact-20261005.md#other-quarantined-images-and-sim2real).
 Neither substitutes for a compatible set. Do not bypass preflight, inject source
@@ -703,6 +706,14 @@ selected for gold. Promotion uses strict 5 cm stable
 placement and threshold `0.50`. Reduced plumbing runs must declare overrides
 and cannot claim production efficacy. `--max-wait-seconds 0` removes the wave
 wait deadline without weakening success predicates.
+
+To evaluate Gold after each full training pass, set `--var inner_iterations=1`
+and `--var allow_early_exit=1` in the same argument set used for planning, image
+preflight, and submission. Retain 2,000 PPO updates per pass, the full scenario
+split, and 64 validation and Gold cases. This supported cadence checks the same
+strict threshold sooner; it does not shorten the training pass or manually
+select a checkpoint. Record these options with the result so another operator
+can reproduce the cadence.
 
 Allow hours for the full run. Measured 2,000-update PPO passes on one RTX PRO
 6000 Blackwell took about 44 minutes each, before validation and uploads;
