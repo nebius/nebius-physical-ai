@@ -49,7 +49,7 @@ def _check_runtime():
 
     if torch.__version__.split("+")[0] != "2.7.1" or not torch.cuda.is_available():
         raise FlexPiError("training CUDA graphs require the pinned CUDA Torch 2.7.1")
-    if torch._dynamo.config.suppress_errors:
+    if getattr(torch._dynamo.config, "suppress_errors", False):
         raise FlexPiError("training CUDA graphs forbid compiler error suppression")
 
 

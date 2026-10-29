@@ -152,9 +152,19 @@ def test_incompatible_runtime_or_error_suppression_is_rejected(
 
     monkeypatch.setattr(torch, "__version__", version)
     monkeypatch.setattr(torch.cuda, "is_available", lambda: available)
-    monkeypatch.setattr(_dynamo.config, "suppress_errors", suppress)
+    monkeypatch.setattr(_dynamo.config, "suppress_errors", suppress, raising=False)
     with pytest.raises(FlexPiError, match="training CUDA graphs"):
         graphs._check_runtime()
+
+
+def test_compatible_runtime_accepts_removed_suppress_errors_setting(monkeypatch):
+    torch = pytest.importorskip("torch")
+    from torch import _dynamo
+
+    monkeypatch.setattr(torch, "__version__", "2.7.1+cu128")
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.delattr(_dynamo.config, "suppress_errors", raising=False)
+    graphs._check_runtime()
 
 
 def test_native_replay_observation_requires_pinned_closure_layout():
