@@ -364,16 +364,17 @@ def offline_bootstrap_wheels(tmp_path, monkeypatch):
             "sky/cli.py": "def main():\n    print('SkyPilot 0.12.2')\n",
             "fake_skypilot-0.12.2.dist-info/entry_points.txt": "[console_scripts]\nsky = sky.cli:main\n",
         },
-        requires=("fastapi>=0.142.4",),
+        requires=("fastapi>=0.136.1,<0.145",),
     )
     wheels["fastapi"] = _write_synthetic_wheel(
         directory,
         "fastapi",
-        "0.142.4",
+        skypilot_cli.FASTAPI_SERVER_VERSION,
         {
             "fastapi/__init__.py": (
+                "__version__ = '0.141.1'\n"
                 "class FastAPI:\n"
-                "    def __init__(self, *, prefix, debug):\n"
+                "    def __init__(self, *, prefix, debug=None):\n"
                 "        self.prefix = prefix\n"
             ),
         },
@@ -1011,6 +1012,30 @@ def test_skypilot_bootstrap_repairs_a_reused_venv_with_a_broken_client(
 
     assert result.exit_code == 0, result.output
     assert skypilot_cli.inspect_venv(venv).kubernetes_version == "34.1.0"
+    assert (venv / "bin" / "sky").read_bytes() == original_bytes
+
+
+def test_skypilot_bootstrap_repairs_a_reused_venv_with_broken_fastapi(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    venv = _fake_installed_venv(tmp_path / "sky-venv", fastapi_version="0.146.0")
+    original_bytes = (venv / "bin" / "sky").read_bytes()
+
+    def fake_create(path: Path, _python: object) -> None:
+        _fake_installed_venv(path)
+
+    monkeypatch.setattr(skypilot_cli, "_create_venv", fake_create)
+    monkeypatch.setattr(skypilot_cli, "_ensure_pip", lambda _state: None)
+    monkeypatch.setattr(skypilot_cli, "_install_package", lambda _state, _spec: None)
+
+    result = runner.invoke(app, ["skypilot", "bootstrap", "--path", str(venv)])
+
+    assert result.exit_code == 0, result.output
+    assert (
+        skypilot_cli.inspect_venv(venv).fastapi_version
+        == skypilot_cli.FASTAPI_SERVER_VERSION
+    )
     assert (venv / "bin" / "sky").read_bytes() == original_bytes
 
 

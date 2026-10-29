@@ -1047,6 +1047,31 @@ def _process(
     return matches[0] if matches else None
 
 
+def _recover_exact_process(
+    record: Mapping[str, Any], *, verify_files: bool = True
+) -> dict[str, Any] | None:
+    """Recover a lost PID only when the saved identity proves one exact server.
+
+    A local process may survive after the daemon receipt's PID write is lost or
+    becomes stale.  Never use a port alone to recover that situation: inspect
+    every same-user process with the saved marker, interpreter, bound
+    environment, configuration, and credential-file identity instead.  A
+    current PID that disagrees with the receipt is still rejected by
+    :func:`_process` before this helper is reached.
+    """
+    if sys.platform == "darwin" or not record.get("interpreter"):
+        return None
+    candidate = dict(record)
+    candidate.pop("pid", None)
+    candidate.pop("start_ticks", None)
+    process = _process(candidate, verify_files=verify_files)
+    if not process:
+        return None
+    if not _listener_owned(candidate, process):
+        return None
+    return process
+
+
 def _darwin_process_fingerprint(line: str, record: Mapping[str, Any]) -> str:
     """Keep CPython's framework launcher transition within one process lifetime."""
     original = hashlib.sha256(line.encode()).hexdigest()
@@ -1262,6 +1287,8 @@ def isolated_api_environment(
             }
             _write(root / "daemon.json", record)
         process = _process(record) if record.get("interpreter") else None
+        if process is None:
+            process = _recover_exact_process(record)
         if process:
             _listener_owned(record, process)
         selected = {
@@ -1425,6 +1452,11 @@ def ensure_isolated_api(
         files = _identity_files(daemon_env, config=parsed_config)
         spawned = None
         process = _process(record) if record.get("interpreter") else None
+        if process is None:
+            process = _recover_exact_process(record)
+            if process:
+                record.update(process)
+                _write(root / "daemon.json", record)
         if process:
             if (
                 record.get("interpreter") != interpreter
@@ -1599,6 +1631,11 @@ def owned_daemon_environment(isolated_dir: Path) -> dict[str, str]:
                 "controller transaction requires an owned source API"
             )
         process = _process(record)
+        if process is None:
+            process = _recover_exact_process(record)
+            if process:
+                record.update(process)
+                _write(root / "daemon.json", record)
         if not process or not _listener_owned(record, process):
             raise IsolatedApiError(
                 "controller transaction source API is not verified ready"
@@ -1627,6 +1664,8 @@ def stop_isolated_api(isolated_dir: Path) -> None:
         if record is None or not record.get("interpreter"):
             return
         process = _process(record, verify_files=False)
+        if process is None:
+            process = _recover_exact_process(record, verify_files=False)
         if process:
             # Recover a Popen-success/PID-save crash before any signal is sent.
             record.update(process)

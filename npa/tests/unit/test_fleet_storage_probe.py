@@ -166,6 +166,39 @@ def test_every_node_reads_every_unique_payload(configuration):
     assert _action(configuration, "audit")["base_directory_absent"]
 
 
+def test_classless_default_probe_uses_portable_block_io_and_exact_cleanup(
+    configuration,
+):
+    result = _action(configuration, "default")
+
+    assert result["ordinary_pvc_io"] is True
+    assert len(result["checksum"]) == 64
+    cleanup = _action(configuration, "cleanup", ordinary_pvc=True)
+    assert cleanup["run_directory_absent"] is True
+
+
+def test_classless_default_probe_does_not_apply_filesystem_or_host_mount_checks(
+    configuration, monkeypatch
+):
+    monkeypatch.setattr(
+        storage_probe,
+        "_host_state",
+        lambda _configuration: pytest.fail("ordinary PVC must not use host checks"),
+    )
+    monkeypatch.setattr(
+        storage_probe,
+        "_backing_path",
+        lambda _configuration: pytest.fail("ordinary PVC must not use CSI backing"),
+    )
+
+    assert (
+        storage_probe._verify_probe_mount(
+            {**configuration, "root_path": "/data", "ordinary_pvc": True}
+        )
+        is None
+    )
+
+
 def test_cross_node_wrong_checksum_fails(configuration):
     token = configuration["node_token"]
     _action(configuration, "write")

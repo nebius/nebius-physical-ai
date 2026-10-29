@@ -552,13 +552,32 @@ def provision_if_absent(
                 actions.append("k8s:verified exact MIG topology and CUDA allocation")
             else:
                 from npa.cli.cluster.terraform_lifecycle import (
+                    _direct_storage_default_policy,
                     _require_bin,
+                    _resolve_terraform_dir,
+                    _read_tfvars,
                     _validate_cluster,
                 )
 
                 kubectl_bin = _require_bin(
                     os.environ.get("NPA_KUBECTL_BIN") or "kubectl"
                 )
+                direct_tf_dir = _resolve_terraform_dir(terraform_dir)
+                direct_tfvars = _read_tfvars(direct_tf_dir)
+                storage_policy = _direct_storage_default_policy(
+                    direct_tf_dir,
+                    direct_tfvars,
+                    dict(os.environ),
+                    context=context,
+                    project_id=str(getattr(environment, "project_id", "") or ""),
+                )
+                if storage_policy["errors"]:
+                    raise RuntimeError(
+                        "Cannot safely infer the existing Shared Filesystem StorageClass "
+                        "policy; inspect `npa cluster storage-default-policy "
+                        f"--terraform-dir {direct_tf_dir} --json` "
+                        f"({', '.join(storage_policy['errors'])})."
+                    )
                 _validate_cluster(
                     kubectl_bin,
                     Path(kubeconfig_path),
@@ -573,6 +592,9 @@ def provision_if_absent(
                         ),
                         "allow_unsafe_nvswitch_operator": bool(
                             allow_unsafe_nvswitch_operator
+                        ),
+                        "filesystem_csi_make_default_storage_class": bool(
+                            storage_policy["filesystem_csi_make_default_storage_class"]
                         ),
                     },
                     gpu_health_timeout_minutes,

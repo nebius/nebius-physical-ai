@@ -931,6 +931,7 @@ def bootstrap_skypilot(
         if (
             state.installed
             and state.kubernetes_compatible
+            and state.fastapi_compatible
             and _api_application_compatible(state.python_bin)
         ):
             _write_marker(

@@ -43,9 +43,8 @@ def _render(args):
         "accounting": True,
         "slurm_rest_enabled": True,
         "jail_size_gib": 2048,
-        "slurm_operator_version": "4.1.6",
-        "k8s_version": "1.34",
-        "node_group_version": "72",
+        "slurm_operator_version": "4.1.13",
+        "k8s_version": "1.35",
     }
     descriptor = os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(descriptor, "w") as stream:

@@ -254,6 +254,17 @@ variable "filesystem_csi_chart_repository" {
   default     = ""
 }
 
+variable "filesystem_csi_make_default_storage_class" {
+  description = "Promote the named Shared Filesystem CSI StorageClass to the default. False preserves the compute/block StorageClass for ordinary PVCs; requires enable_filestore or existing_filestore."
+  type        = bool
+  default     = false
+
+  validation {
+    condition     = !var.filesystem_csi_make_default_storage_class || var.enable_filestore || trimspace(var.existing_filestore) != ""
+    error_message = "filesystem_csi_make_default_storage_class requires enable_filestore or existing_filestore."
+  }
+}
+
 variable "previous_default_storage_class_name" {
   description = "StorageClass to demote before making the shared filesystem StorageClass the default. Empty disables demotion."
   type        = string

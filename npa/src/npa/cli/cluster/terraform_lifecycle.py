@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 from dataclasses import replace
@@ -22,9 +23,11 @@ from npa.cluster.state import (
     ClusterState,
     kubeconfig_file,
     load_cluster_state,
+    metadata_file,
     save_cluster_state,
     utc_now_iso,
 )
+from npa.cluster.exceptions import ClusterStateError
 from npa.cluster.gpu_driver import (
     DEFAULT_MANAGED_DRIVER_PRESET,
     GpuDriverSelection,
@@ -531,6 +534,27 @@ def up_cmd(
         _apply_project_tf_vars(env, project, tfvars)
         _guard_tfvars_iam_token(tf_dir, tfvars)
         _apply_capacity_block_group_tfvars(tfvars, capacity_block_group)
+        storage_default_policy = _direct_storage_default_policy(
+            tf_dir,
+            tfvars,
+            env,
+            context=context,
+            project_id=str(_tfvar_value(tfvars, env, "parent_id", "") or ""),
+        )
+        if storage_default_policy["errors"]:
+            raise typer.BadParameter(
+                "Cannot safely infer the existing Shared Filesystem StorageClass "
+                "policy; no apply ran. Inspect the machine-readable recovery plan "
+                "with `npa cluster storage-default-policy --terraform-dir "
+                f"{tf_dir} --json` ({', '.join(storage_default_policy['errors'])})."
+            )
+        # A direct installation predating this option may have a filesystem-default
+        # StorageClass. Preserve that trusted local-state contract in the in-memory
+        # desired state, readiness check, and explicit Terraform apply argument.
+        # Fresh installations deliberately resolve to the compute/block default.
+        tfvars["filesystem_csi_make_default_storage_class"] = bool(
+            storage_default_policy["filesystem_csi_make_default_storage_class"]
+        )
         # MIG uses the recipe's deliberately small 128 GiB worker disk. Apply
         # that resolved desired state before whole-path disk quota accounting.
         if mig_enabled:
@@ -619,6 +643,9 @@ def up_cmd(
             ),
             filesystem_csi_chart_repository=str(
                 _tfvar_value(tfvars, env, "filesystem_csi_chart_repository", "") or ""
+            ),
+            filesystem_csi_make_default_storage_class=_tfvar_bool(
+                tfvars, env, "filesystem_csi_make_default_storage_class", False
             ),
             subnet_id=str(_tfvar_value(tfvars, env, "subnet_id", "") or ""),
             filestore_disk_size_gibibytes=int(
@@ -830,9 +857,22 @@ def up_cmd(
                 )
             return
         _terraform_init(terraform_bin, tf_dir, env)
+        _require_no_provider_migration(terraform_bin, tf_dir, env)
         _guard_unmanaged_duplicate(nebius_bin, terraform_bin, tf_dir, tfvars, env)
         _preflight_filestore_quota(nebius_bin, tfvars, env)
         _preflight_gpu_capacity(nebius_bin, tfvars, env)
+
+        # Keep the newly resolved value beside the direct Terraform installation
+        # before Terraform can create durable state.  Terraform state alone does
+        # not say whether it predates the compute-default release, so a later
+        # flag-omitting reconcile must not reinterpret a fresh installation as
+        # legacy filesystem-default merely because state now exists.
+        _persist_direct_storage_default_policy(
+            tf_dir,
+            storage_default_policy,
+            context=context,
+            project_id=project_id_value,
+        )
 
         apply_args = [
             terraform_bin,
@@ -854,6 +894,9 @@ def up_cmd(
             *_string_var_args("gpu_nodes_preset", gpu_preset),
             *_string_var_args("gpu_driver_mode", gpu_driver_mode),
             *_string_var_args("managed_driver_preset", managed_driver_preset),
+            "-var",
+            "filesystem_csi_make_default_storage_class="
+            + str(bool(tfvars["filesystem_csi_make_default_storage_class"])).lower(),
             *_rtx_driver_profile_var_args(backend_desired),
             *(
                 [
@@ -1801,6 +1844,7 @@ def down_cmd(
         if preview_state_issue is not None:
             preview_inventory = None
         _terraform_init(terraform_bin, tf_dir, env)
+        _require_no_provider_migration(terraform_bin, tf_dir, env)
         if saved_cluster is not None or exact_cluster_id:
             if not exact_cluster_id:
                 raise typer.BadParameter(
@@ -2440,6 +2484,525 @@ def _terraform_init(
             f"Terraform detail: {detail[-3000:]}"
         )
     raise typer.BadParameter(f"Terraform init failed: {detail[-3000:]}") from init_error
+
+
+_RETIRED_NEBIUS_PROVIDER_ADDRESS = (
+    "terraform-provider.storage.eu-north1.nebius.cloud/nebius/nebius"
+)
+_OFFICIAL_NEBIUS_PROVIDER_ADDRESS = "registry.terraform.io/nebius/nebius"
+
+
+def _provider_migration_report(
+    terraform_bin: str,
+    terraform_dir: Path,
+    env: dict[str, str],
+) -> dict[str, Any]:
+    """Inspect state for the retired Nebius provider address without changing it.
+
+    Terraform state may be local or remote.  The returned document deliberately
+    contains provider addresses and fixed failure categories only; it never
+    serializes state, resource names, IDs, or provider diagnostics.
+    """
+
+    completed = _run_capture(
+        [terraform_bin, "state", "pull"],
+        cwd=terraform_dir,
+        env=env,
+        timeout=120,
+        check=False,
+    )
+    if completed.returncode:
+        detail = "\n".join((completed.stdout, completed.stderr)).lower()
+        no_state = any(
+            phrase in detail
+            for phrase in (
+                "no state file was found",
+                "no state was found",
+                "state file not found",
+            )
+        )
+        return {
+            "migration_required": False,
+            "state_present": False,
+            "legacy_provider_addresses": [],
+            "errors": [] if no_state else ["terraform_state_unavailable"],
+        }
+    state_text = (completed.stdout or "").strip()
+    # A fresh local backend can successfully return an empty state pull. That
+    # is not an unreadable state and must not turn first-time provisioning into
+    # a false provider-migration block.
+    if not state_text:
+        return {
+            "migration_required": False,
+            "state_present": False,
+            "legacy_provider_addresses": [],
+            "errors": [],
+        }
+    try:
+        state = json.loads(state_text)
+    except (TypeError, ValueError):
+        return {
+            "migration_required": False,
+            "state_present": True,
+            "legacy_provider_addresses": [],
+            "errors": ["terraform_state_invalid"],
+        }
+    if not isinstance(state, dict):
+        return {
+            "migration_required": False,
+            "state_present": True,
+            "legacy_provider_addresses": [],
+            "errors": ["terraform_state_invalid"],
+        }
+    addresses = set()
+    for resource in state.get("resources", []):
+        if not isinstance(resource, dict):
+            continue
+        provider = resource.get("provider")
+        if not isinstance(provider, str):
+            continue
+        match = re.fullmatch(r'provider\["([^"\\]+)"\]', provider)
+        if match:
+            addresses.add(match.group(1))
+    legacy = sorted(
+        address for address in addresses if address == _RETIRED_NEBIUS_PROVIDER_ADDRESS
+    )
+    return {
+        "migration_required": bool(legacy),
+        "state_present": True,
+        "legacy_provider_addresses": legacy,
+        "errors": [],
+    }
+
+
+def _require_no_provider_migration(
+    terraform_bin: str, terraform_dir: Path, env: dict[str, str]
+) -> None:
+    """Stop normal lifecycle actions before an unreviewed state rewrite."""
+
+    report = _provider_migration_report(terraform_bin, terraform_dir, env)
+    if report["errors"]:
+        raise typer.BadParameter(
+            "Terraform provider migration preflight could not inspect the exact "
+            "state (" + ", ".join(report["errors"]) + "); no apply or destroy ran."
+        )
+    if report["migration_required"]:
+        raise typer.BadParameter(
+            "Terraform state still uses the retired Nebius provider address; "
+            "no apply or destroy ran. Review the machine-readable plan with "
+            "`npa cluster provider-migration --terraform-dir "
+            f"{terraform_dir} --json`, then rerun with --execute only for this "
+            "owned installation."
+        )
+
+
+@resolve_typer_defaults
+@json_stdout_contract(fail_closed_on_exception=True)
+@intent_boundary(OperationIntent.MUTATE)
+def provider_migration_cmd(
+    terraform_dir: Path | None = typer.Option(
+        None,
+        "--terraform-dir",
+        help="Exact owned Terraform cluster directory to inspect or migrate.",
+    ),
+    execute: bool = typer.Option(
+        False,
+        "--execute",
+        help="Replace the retired provider address after reviewing the emitted plan.",
+    ),
+    output_json: bool = typer.Option(
+        False, "--json", help="Emit one machine-readable migration document."
+    ),
+) -> None:
+    """Plan or intentionally execute one exact Terraform provider-address migration."""
+
+    from npa.cli.cluster.terraform_runtime import isolated_terraform_data_dir
+
+    tf_dir = _resolve_terraform_dir(terraform_dir)
+    terraform_bin = _require_bin(os.environ.get("NPA_TERRAFORM_BIN") or "terraform")
+    nebius_bin = _require_bin(os.environ.get("NPA_NEBIUS_BIN") or "nebius")
+    _preflight_provider_lock(tf_dir)
+    with isolated_terraform_data_dir(tf_dir, "provider-migration") as terraform_data:
+        env = _terraform_env(nebius_bin)
+        env["TF_DATA_DIR"] = str(terraform_data)
+        _terraform_init(terraform_bin, tf_dir, env)
+        report = _provider_migration_report(terraform_bin, tf_dir, env)
+        document = {
+            "source_provider": _RETIRED_NEBIUS_PROVIDER_ADDRESS,
+            "target_provider": _OFFICIAL_NEBIUS_PROVIDER_ADDRESS,
+            "execute_requested": execute,
+            **report,
+        }
+        if report["errors"]:
+            document["status"] = "blocked"
+            document["executed"] = False
+            typer.echo(json.dumps(document, indent=2, sort_keys=True))
+            raise typer.Exit(1)
+        if not report["migration_required"]:
+            document.update(status="completed", executed=False)
+            typer.echo(json.dumps(document, indent=2, sort_keys=True))
+            return
+        if not execute:
+            document.update(status="planned", executed=False)
+            typer.echo(json.dumps(document, indent=2, sort_keys=True))
+            return
+        replacement = _run_capture(
+            [
+                terraform_bin,
+                "state",
+                "replace-provider",
+                "-auto-approve",
+                _RETIRED_NEBIUS_PROVIDER_ADDRESS,
+                _OFFICIAL_NEBIUS_PROVIDER_ADDRESS,
+            ],
+            cwd=tf_dir,
+            env=env,
+            timeout=120,
+            check=False,
+        )
+        if replacement.returncode:
+            document.update(
+                status="blocked", executed=False, errors=["replace_provider_failed"]
+            )
+            typer.echo(json.dumps(document, indent=2, sort_keys=True))
+            raise typer.Exit(1)
+        verified = _provider_migration_report(terraform_bin, tf_dir, env)
+        document.update(verified)
+        if verified["errors"] or verified["migration_required"]:
+            document.update(
+                status="blocked",
+                executed=True,
+                errors=(verified["errors"] or ["replace_provider_unverified"]),
+            )
+            typer.echo(json.dumps(document, indent=2, sort_keys=True))
+            raise typer.Exit(1)
+        document.update(status="completed", executed=True)
+        typer.echo(json.dumps(document, indent=2, sort_keys=True))
+
+
+def _local_terraform_state_paths(terraform_dir: Path) -> list[Path]:
+    """Return the only durable direct-state files that can carry legacy intent."""
+
+    return [
+        candidate
+        for candidate in (
+            terraform_dir / "terraform.tfstate",
+            terraform_dir / "errored.tfstate",
+        )
+        if candidate.is_file()
+    ]
+
+
+def _storage_default_policy_receipt_path(terraform_dir: Path) -> Path:
+    """Return the direct-installation receipt ignored by Terraform itself."""
+
+    return terraform_dir / ".npa-storage-default-policy.json"
+
+
+def _read_direct_storage_default_policy_receipt(
+    terraform_dir: Path, *, context: str, project_id: str
+) -> tuple[bool | None, str | None]:
+    """Read one identity-bound direct-policy receipt without changing it."""
+
+    path = _storage_default_policy_receipt_path(terraform_dir)
+    if not path.exists():
+        return None, None
+    if path.is_symlink() or not path.is_file():
+        return None, "storage_default_policy_receipt_invalid"
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None, "storage_default_policy_receipt_invalid"
+    if not isinstance(document, dict) or document.get("schema_version") != 1:
+        return None, "storage_default_policy_receipt_invalid"
+    if (
+        str(document.get("context") or "") != context
+        or str(document.get("project_id") or "") != project_id
+    ):
+        return None, "storage_default_policy_receipt_identity_mismatch"
+    value = document.get("filesystem_csi_make_default_storage_class")
+    if not isinstance(value, bool):
+        return None, "storage_default_policy_receipt_invalid"
+    return value, None
+
+
+def _persist_direct_storage_default_policy(
+    terraform_dir: Path,
+    policy: dict[str, Any],
+    *,
+    context: str,
+    project_id: str,
+) -> None:
+    """Atomically persist a resolved direct policy at the apply boundary.
+
+    This is intentionally called only by ``cluster up`` immediately before a
+    direct Terraform apply.  The observation command remains read-only, while
+    a create interrupted after Terraform writes state still has an unambiguous
+    choice when it is resumed.
+    """
+
+    value = policy.get("filesystem_csi_make_default_storage_class")
+    if policy.get("errors") or not isinstance(value, bool):
+        raise ValueError("cannot persist an unresolved direct storage policy")
+    payload = {
+        "schema_version": 1,
+        "context": context,
+        "project_id": project_id,
+        "filesystem_csi_make_default_storage_class": value,
+        "policy_source": str(policy.get("policy_source") or ""),
+    }
+    fd, temporary_name = tempfile.mkstemp(
+        prefix=".npa-storage-default-policy.", dir=terraform_dir
+    )
+    temporary = Path(temporary_name)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, _storage_default_policy_receipt_path(terraform_dir))
+    except BaseException:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def _saved_npa_storage_default_policy(
+    *, context: str, project_id: str
+) -> tuple[bool | None, str | None]:
+    """Return a recorded choice for a known local NPA installation, if any."""
+
+    try:
+        state = load_cluster_state(context)
+    except (ClusterStateError, OSError):
+        return None, "npa_cluster_state_invalid"
+    if state is None:
+        return None, None
+    if state.name != context or state.project_id != project_id:
+        return None, "npa_cluster_identity_mismatch"
+    path = metadata_file(context)
+    if path.is_symlink() or not path.is_file():
+        return None, "adopted_cluster_storage_default_unknown"
+    try:
+        metadata = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None, "npa_cluster_metadata_invalid"
+    if not isinstance(metadata, dict):
+        return None, "npa_cluster_metadata_invalid"
+    value = metadata.get("filesystem_csi_make_default_storage_class")
+    if not isinstance(value, bool):
+        return None, "adopted_cluster_storage_default_unknown"
+    return value, None
+
+
+def _direct_storage_default_policy(
+    terraform_dir: Path,
+    tfvars: dict[str, Any],
+    env: dict[str, str],
+    *,
+    context: str,
+    project_id: str,
+) -> dict[str, Any]:
+    """Resolve a direct-installation StorageClass policy without mutating state.
+
+    The old direct Terraform wrapper always made the filesystem CSI class the
+    default.  The current recipe intentionally makes compute/block the default
+    for new clusters.  A new direct apply persists its resolved choice before it
+    can write Terraform state; state without that receipt retains the old
+    contract only after exact identity validation.  Never guess from malformed,
+    foreign, or known-but-unrecorded adoption evidence: the caller gets a
+    bounded, machine-readable recovery requirement before Terraform is invoked.
+    """
+
+    explicit = (
+        "filesystem_csi_make_default_storage_class" in tfvars
+        or "TF_VAR_filesystem_csi_make_default_storage_class" in env
+    )
+    state_paths = _local_terraform_state_paths(terraform_dir)
+    document: dict[str, Any] = {
+        "state_present": bool(state_paths),
+        "migration_required": False,
+        "errors": [],
+    }
+    if explicit:
+        document.update(
+            filesystem_csi_make_default_storage_class=_tfvar_bool(
+                tfvars, env, "filesystem_csi_make_default_storage_class", False
+            ),
+            policy_source="explicit",
+        )
+        return document
+    if not _shared_filesystem_requested(tfvars, env):
+        document.update(
+            filesystem_csi_make_default_storage_class=False,
+            policy_source="fresh_or_no_filesystem",
+        )
+        return document
+    receipt_value, receipt_error = _read_direct_storage_default_policy_receipt(
+        terraform_dir, context=context, project_id=project_id
+    )
+    if receipt_error:
+        document.update(
+            migration_required=True,
+            errors=[receipt_error],
+            policy_source="unresolved",
+        )
+        return document
+    if not state_paths:
+        if receipt_value is not None:
+            document.update(
+                filesystem_csi_make_default_storage_class=receipt_value,
+                policy_source="persisted_direct_policy",
+            )
+            return document
+        saved_value, saved_error = _saved_npa_storage_default_policy(
+            context=context, project_id=project_id
+        )
+        if saved_error:
+            document.update(
+                migration_required=True,
+                errors=[saved_error],
+                policy_source="unresolved",
+            )
+            return document
+        if saved_value is not None:
+            document.update(
+                filesystem_csi_make_default_storage_class=saved_value,
+                policy_source="persisted_npa_cluster_metadata",
+            )
+            return document
+        document.update(
+            filesystem_csi_make_default_storage_class=False,
+            policy_source="fresh",
+        )
+        return document
+    if len(state_paths) != 1:
+        document.update(
+            migration_required=True,
+            errors=["terraform_state_ambiguous"],
+            policy_source="unresolved",
+        )
+        return document
+    try:
+        state = json.loads(state_paths[0].read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        document.update(
+            migration_required=True,
+            errors=["terraform_state_invalid"],
+            policy_source="unresolved",
+        )
+        return document
+    if not isinstance(state, dict) or not isinstance(state.get("resources"), list):
+        document.update(
+            migration_required=True,
+            errors=["terraform_state_invalid"],
+            policy_source="unresolved",
+        )
+        return document
+    clusters = [
+        resource
+        for resource in state["resources"]
+        if isinstance(resource, dict)
+        and resource.get("type") == "nebius_mk8s_v1_cluster"
+        and isinstance(resource.get("instances"), list)
+    ]
+    if len(clusters) != 1 or len(clusters[0]["instances"]) != 1:
+        document.update(
+            migration_required=True,
+            errors=["terraform_cluster_identity_unavailable"],
+            policy_source="unresolved",
+        )
+        return document
+    instance = clusters[0]["instances"][0]
+    attributes = instance.get("attributes") if isinstance(instance, dict) else None
+    if not isinstance(attributes, dict):
+        document.update(
+            migration_required=True,
+            errors=["terraform_cluster_identity_unavailable"],
+            policy_source="unresolved",
+        )
+        return document
+    if (
+        str(attributes.get("name") or "") != context
+        or str(attributes.get("parent_id") or "") != project_id
+    ):
+        document.update(
+            migration_required=True,
+            errors=["terraform_cluster_identity_mismatch"],
+            policy_source="unresolved",
+        )
+        return document
+    if receipt_value is not None:
+        document.update(
+            filesystem_csi_make_default_storage_class=receipt_value,
+            policy_source="persisted_direct_policy",
+        )
+        return document
+    document.update(
+        filesystem_csi_make_default_storage_class=True,
+        policy_source="trusted_legacy_local_state",
+    )
+    return document
+
+
+@resolve_typer_defaults
+@json_stdout_contract(fail_closed_on_exception=True)
+@intent_boundary(OperationIntent.OBSERVE)
+def storage_default_policy_cmd(
+    terraform_dir: Path | None = typer.Option(
+        None,
+        "--terraform-dir",
+        help="Exact direct-installation Terraform directory to inspect without mutation.",
+    ),
+    context_name: str = typer.Option(
+        "", "--context", "--cluster-name", help="Expected cluster name override."
+    ),
+    project_id: str = typer.Option(
+        "", "--project-id", help="Expected project ID override."
+    ),
+    output_json: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit one machine-readable storage-default policy document.",
+    ),
+) -> None:
+    """Inspect the safe StorageClass-default policy for one direct installation."""
+
+    tf_dir = _resolve_terraform_dir(terraform_dir)
+    tfvars = _read_tfvars(tf_dir)
+    env = dict(os.environ)
+    context = context_name.strip() or str(tfvars.get("cluster_name") or "npa-cluster")
+    resolved_project = project_id.strip() or str(
+        _tfvar_value(tfvars, env, "parent_id", "") or ""
+    )
+    policy = _direct_storage_default_policy(
+        tf_dir,
+        tfvars,
+        env,
+        context=context,
+        project_id=resolved_project,
+    )
+    document = {
+        "context": context,
+        "filesystem_csi_make_default_storage_class": policy.get(
+            "filesystem_csi_make_default_storage_class"
+        ),
+        "migration_required": bool(policy["migration_required"]),
+        "policy_source": policy["policy_source"],
+        "state_present": bool(policy["state_present"]),
+        "errors": list(policy["errors"]),
+    }
+    if policy["errors"]:
+        document["status"] = "blocked"
+        typer.echo(json.dumps(document, indent=2, sort_keys=True))
+        raise typer.Exit(1)
+    document["status"] = "ready"
+    typer.echo(json.dumps(document, indent=2, sort_keys=True))
 
 
 def _preflight_provider_lock(terraform_dir: Path) -> str:
@@ -3940,6 +4503,12 @@ def _save_terraform_cluster_state(
         state,
         metadata={
             "managed_by": "npa cluster terraform",
+            "filesystem_csi_make_default_storage_class": _tfvar_bool(
+                tfvars,
+                env or {},
+                "filesystem_csi_make_default_storage_class",
+                False,
+            ),
             "event": (
                 "gpu_health_validated"
                 if last_seen_state == "RUNNING"
@@ -4155,13 +4724,16 @@ def _validate_cluster_once(
         if annotations.get("storageclass.kubernetes.io/is-default-class") == "true":
             default_sc = item.get("metadata", {}).get("name", "")
             break
-    # The filesystem CSI is installed only when the shared filesystem is enabled.
-    # Respect environment overrides and existing-filesystem attachment semantics,
-    # then validate the exact expected default on both sides of that decision.
-    filestore_enabled = _shared_filesystem_requested(tfvars, resolved_env)
+    # The named filesystem CSI class can remain non-default. New installations
+    # retain the compute/block class for ordinary PVCs unless the explicit
+    # promotion switch is set; existing filesystem attachment semantics only
+    # determine whether the CSI component exists.
+    make_filesystem_default = _tfvar_bool(
+        tfvars, resolved_env, "filesystem_csi_make_default_storage_class", False
+    )
     expected_default_sc = (
         "csi-mounted-fs-path-sc"
-        if filestore_enabled
+        if make_filesystem_default
         else str(
             tfvars.get("previous_default_storage_class_name")
             or "compute-csi-default-sc"

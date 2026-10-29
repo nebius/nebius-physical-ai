@@ -249,7 +249,7 @@ def _validate_cluster_basics_once(
     ]
     expected_storage = (
         "csi-mounted-fs-path-sc"
-        if cluster.enable_filestore or bool(cluster.existing_filestore)
+        if cluster.filesystem_csi_make_default_storage_class
         else "compute-csi-default-sc"
     )
     if defaults != [expected_storage]:
@@ -631,13 +631,22 @@ def _prepare_install_dir(
     )
     protected = bool(guarded.kuberay and guarded.kuberay.enabled)
     install_dir.mkdir(parents=True, exist_ok=True)
+    materialized_source = recipe_root.resolve() == install_dir.resolve()
+    if materialized_source and (
+        not workdir.is_dir() or not (install_dir / _MODULES_SUBDIR).is_dir()
+    ):
+        raise RuntimeError(
+            "persisted MK8s installation is missing its materialized recipe; use a "
+            "reviewed migration or replacement rather than re-vendoring it"
+        )
     # Terraform trusts cached source-to-directory mappings. Rebuild those from
-    # the reviewed recipe; keep initialized provider caches and state intact.
-    if protected:
+    # a reviewed new recipe; saved date releases instead retain their already
+    # materialized source and only refresh their rendered inputs.
+    if protected and not materialized_source:
         _reset_kuberay_module_cache(workdir)
     modules_dst = install_dir / _MODULES_SUBDIR
     # Refresh recipe files but preserve any existing terraform state/plugins.
-    if workdir.exists():
+    if workdir.exists() and not materialized_source:
         for item in workdir.iterdir():
             preserve_state = (
                 item.name in KUBERAY_STATE_FILES
@@ -651,10 +660,11 @@ def _prepare_install_dir(
                 shutil.rmtree(item, ignore_errors=True)
             else:
                 item.unlink()
-    shutil.copytree(recipe_root / _K8S_TRAINING_SUBDIR, workdir, dirs_exist_ok=True)
-    if modules_dst.exists():
-        shutil.rmtree(modules_dst, ignore_errors=True)
-    shutil.copytree(recipe_root / _MODULES_SUBDIR, modules_dst)
+    if not materialized_source:
+        shutil.copytree(recipe_root / _K8S_TRAINING_SUBDIR, workdir, dirs_exist_ok=True)
+        if modules_dst.exists():
+            shutil.rmtree(modules_dst, ignore_errors=True)
+        shutil.copytree(recipe_root / _MODULES_SUBDIR, modules_dst)
 
     locals_file = workdir / "locals.tf"
     if locals_file.is_file():
@@ -2534,6 +2544,7 @@ def _deploy_one_cluster(
     basic_validation_timeout_minutes: int = 30,
     kubectl_bin: str = "",
     repair_stopped_placeholder: bool = False,
+    recipe_release: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     project_key = project.key()
     install_dir = fleet_root / project_key / cluster.name
@@ -2598,6 +2609,11 @@ def _deploy_one_cluster(
             ),
             "status": "provisioning",
             "provider_rpc_deadlines": rpc_deadlines,
+            **(
+                {"mk8s_recipe_release": recipe_release}
+                if recipe_release is not None
+                else {}
+            ),
         }
         if guarded.kuberay and guarded.kuberay.enabled:
             sidecar.update(

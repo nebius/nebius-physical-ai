@@ -7,4 +7,4 @@ kubernetes>=20.0.0,!=32.0.0,<36
 click>=8.1,<8.2
 # SkyPilot constructs FastAPI(prefix=...), accepted through FastAPI 0.144.
 # FastAPI 0.145 removes unused constructor kwargs and prevents API startup.
-fastapi<0.145
+fastapi>=0.136.1,<0.145

@@ -5,6 +5,7 @@ resource "nebius_compute_v1_filesystem" "shared-filesystem" {
   type             = var.filestore_disk_type
   size_bytes       = provider::units::from_gib(var.filestore_disk_size_gibibytes)
   block_size_bytes = provider::units::from_kib(var.filestore_block_size_kibibytes)
+  forbid_deletion  = var.filestore_forbid_deletion
 
   lifecycle {
     ignore_changes = [
@@ -49,11 +50,16 @@ resource "helm_release" "filesystem_csi" {
       name  = "dataDir"
       value = local.filesystem_csi_data_dir
     },
+    {
+      name  = "image.repository"
+      value = var.filesystem_csi.image_repository
+    },
   ]
 
   depends_on = [
     nebius_mk8s_v1_node_group.cpu-only,
     nebius_mk8s_v1_node_group.gpu,
+    nebius_mk8s_v1_node_group.gb300,
   ]
 }
 

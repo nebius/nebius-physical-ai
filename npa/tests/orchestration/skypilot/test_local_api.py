@@ -536,6 +536,20 @@ def test_create_response_crash_recovers_exact_existing_process(local_runtime):
     assert _record(local_runtime)["pid"] == original_pid
 
 
+def test_stale_missing_pid_recovers_only_the_exact_existing_process(local_runtime):
+    api.ensure_isolated_api(**local_runtime)
+    record = _record(local_runtime)
+    original_pid = record["pid"]
+    record.update(pid=original_pid + 1_000_000, start_ticks=None, state="ready")
+    api._write(local_runtime["isolated_dir"] / "local-api" / "daemon.json", record)
+
+    api.ensure_isolated_api(**local_runtime)
+
+    recovered = _record(local_runtime)
+    assert recovered["pid"] == original_pid
+    assert api._listener_owned(recovered, api._process(recovered))
+
+
 def test_stopped_owned_daemon_restarts_same_endpoint_and_scope(local_runtime):
     api.ensure_isolated_api(**local_runtime)
     first = _record(local_runtime)

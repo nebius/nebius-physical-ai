@@ -8,7 +8,7 @@ from typing import Any, Callable
 
 from npa.cluster_backends.base import BackendCapabilities, MaterializedPlan
 from npa.soperator.lifecycle import DEFAULT_GPU_CREATION_CHECK_TIMEOUT_SECONDS
-from npa.soperator.spec import DEFAULT_SOLUTIONS_LIBRARY_REF, SoperatorSpec
+from npa.soperator.spec import SoperatorSpec
 from npa.soperator.tfvars import render_tfvars
 
 
@@ -16,7 +16,7 @@ from npa.soperator.tfvars import render_tfvars
 class SoperatorApplyRequest:
     terraform_dir: Path | None = None
     work_root: Path | None = None
-    solutions_library_ref: str = DEFAULT_SOLUTIONS_LIBRARY_REF
+    solutions_library_ref: str | None = None
     root_login_ssh_public_key_file: Path | None = None
     project: str | None = None
     timeout_minutes: int = 90
@@ -46,7 +46,7 @@ class SoperatorStatusRequest:
 class SoperatorDestroyRequest:
     terraform_dir: Path | None = None
     work_root: Path | None = None
-    solutions_library_ref: str = DEFAULT_SOLUTIONS_LIBRARY_REF
+    solutions_library_ref: str | None = None
     project: str | None = None
     timeout_minutes: int = 90
     source_preflight_only: bool = False
