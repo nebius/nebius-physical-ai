@@ -1990,5 +1990,16 @@ Artifacts retain `engine: nebius-stream`, the actual model, job IDs, effective
 settings, source and artifact SHA-256 hashes, and full-source temporal checks.
 They do not claim native cluster execution. A resumed request is bound to its
 owner, origin, source hash, complete request, run, variant, and refinement pass.
-The raw model output is retained if the existing padding-preservation stage
-restores the prepared source's letterbox pixels.
+Use each canonical manifest variant's `augmented_video_uri` for consumers and
+demos. PAIDF applies the same border-preservation stage to native and hosted
+generation: detected source padding is restored exactly, while generated pixels
+inside the verified scene bounds remain unchanged. The retained
+`raw_model_video.mp4` and the endpoint's `generated.mp4` are diagnostic model
+outputs before that stage; they can contain augmented borders and must not be
+presented as the final PAIDF publication. This is deterministic publication
+processing, not a guarantee that diffusion itself excludes padding.
+
+The live endpoint audit compares every decoded published border pixel with the
+prepared source and every scene pixel with the retained raw output. If demos
+use compressed viewing copies, identify them as previews and retain the
+canonical publication hash separately from the preview hash.

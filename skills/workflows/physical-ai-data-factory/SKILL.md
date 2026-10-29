@@ -955,3 +955,10 @@ Native-only chunk/RGB/CFG/topology overrides are rejected. Hosted negative
 prompts are unsupported; `endpoint_negative_prompt` stays empty. Guardrails
 remain enabled. Follow the [configuration contract](../../../workflows/guides/paidf-cosmos3.md#optional-hosted-cosmos3-generation)
 for supported parameters and honest endpoint execution receipts.
+
+Present the canonical manifest's `augmented_video_uri` in demos and downstream
+consumers. Both backends restore verified source borders during PAIDF publication
+without changing generated scene pixels. Retained raw model videos can alter
+padding and are diagnostic artifacts, not the final publication. Label compressed
+viewing copies explicitly and retain their canonical-file provenance. The live
+endpoint audit checks border and scene pixels across every decoded frame.
