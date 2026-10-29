@@ -2454,17 +2454,13 @@ def supported_tool_version(tool: str) -> str:
         OSError: Project TOML or SONIC metadata cannot be read.
         ValueError: Invalid TOML/JSON or unusable SONIC image metadata.
         KeyError, TypeError, AttributeError: Required metadata is malformed.
-        ImportError: Neither the standard nor fallback TOML loader exists.
     """
     if tool == "sonic":
         return str(_default_sonic_image()["tag"])
     if tool in NEUTRAL_UNBUILT_CANDIDATE_TOOLS:
         return NEUTRAL_UNBUILT_DISPLAY_TAGS[tool]
 
-    try:
-        import tomllib
-    except ModuleNotFoundError:
-        import tomli as tomllib
+    import tomllib
 
     for directory in Path(__file__).resolve().parents:
         pyproject = directory / "pyproject.toml"

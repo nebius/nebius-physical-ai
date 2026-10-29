@@ -7,6 +7,8 @@ import re
 from typing import Any
 from urllib.parse import urlparse
 
+from npa.workflows.sim2real.workflow_io import json_file_sha256
+
 # Sentinel for a genuinely absent mean-distance metric: worse than any
 # physically plausible distance, so a checkpoint with no distance evidence
 # never outranks one that does. Must stay distinguishable from a real 0.0m
@@ -40,6 +42,50 @@ _IDENTITY_FIELDS = (
         GENERATOR_DIGEST_ALIASES,
     ),
 )
+
+
+def stage9_checkpoint_candidate(
+    checkpoint: dict[str, Any],
+    validation: dict[str, Any],
+    validation_uri: str,
+    embodiment: dict[str, Any],
+    *,
+    outer_iteration: int,
+    inner_iteration: int,
+) -> dict[str, Any]:
+    """Bind a validation result to the exact periodic trainer checkpoint."""
+
+    # A validation report must corroborate the bytes that the native trainer
+    # actually published. Replacing missing producer metadata with a later
+    # evaluator field allowed an incomplete trainer result to reach Gold.
+    if not checkpoint_candidate_has_complete_identity(checkpoint):
+        raise RuntimeError("Stage 9 trainer checkpoint identity is incomplete")
+    provenance = validation.get("policy_inference_provenance")
+    if not isinstance(provenance, dict):
+        provenance = {}
+    candidate = {
+        **checkpoint,
+        "evaluation_split": "validation",
+        "outer_iteration": outer_iteration,
+        "inner_iteration": inner_iteration,
+        "checkpoint_sha256": validation.get("policy_checkpoint_sha256", ""),
+        "checkpoint_size_bytes": validation.get("policy_checkpoint_size_bytes", 0),
+        "generator_policy_sha256": provenance.get("generator_policy_sha256", ""),
+        "validation_report_uri": validation_uri,
+        "validation_report_sha256": json_file_sha256(validation),
+        "validation_report": validation,
+        "embodiment": embodiment,
+    }
+    if not checkpoint_candidate_has_complete_identity(candidate):
+        raise RuntimeError("Stage 9 validation checkpoint identity is incomplete")
+    for _label, field, _aliases in _IDENTITY_FIELDS:
+        if _complete_identity_value(
+            field, checkpoint[field]
+        ) != _complete_identity_value(field, candidate[field]):
+            raise RuntimeError(
+                "Stage 9 validation did not load the trainer-published checkpoint bytes"
+            )
+    return candidate
 
 
 def _finite_metric(value: Any, *, field: str) -> float:
@@ -91,6 +137,22 @@ def _strict_rate(report: dict[str, Any]) -> float:
     if not 0.0 <= rate <= 1.0:
         raise ValueError(f"strict success rate out of [0, 1]: {rate}")
     return rate
+
+
+def _paired_lift_rate(report: dict[str, Any]) -> float:
+    """Prefer lifts accompanied by stable grasp in the same native episode."""
+    pairs = [
+        (
+            (row.get("details") or {}).get("stable_grasp"),
+            (row.get("details") or {}).get("lift"),
+        )
+        for row in report.get("per_env") or []
+    ]
+    if not pairs or all(grasp is None and lift is None for grasp, lift in pairs):
+        return 0.0
+    if any(type(grasp) is not bool or type(lift) is not bool for grasp, lift in pairs):
+        raise ValueError("paired checkpoint skill requires literal grasp/lift verdicts")
+    return sum(grasp and lift for grasp, lift in pairs) / len(pairs)
 
 
 def _mean_distance(summary: dict[str, Any]) -> float:
@@ -153,6 +215,7 @@ def validation_checkpoint_candidate(
         "checkpoint_size_bytes": report.get("policy_checkpoint_size_bytes", 0),
         "generator_policy_sha256": provenance.get("generator_policy_sha256", ""),
         "validation_report_uri": report["report_uri"],
+        "validation_report_sha256": json_file_sha256(report),
         "validation_report": report,
     }
 
@@ -162,6 +225,13 @@ def checkpoint_rank_key(candidate: dict[str, Any]) -> tuple[Any, ...]:
 
     Earlier checkpoints win a fully equal numeric tie. This explicitly avoids
     quietly preferring ``model_latest.pt`` when validation proves no difference.
+
+    Args:
+        candidate: Checkpoint identity and its simulator validation report.
+    Returns:
+        Comparable strict success, paired skill, distance, and identity evidence.
+    Raises:
+        ValueError: A present metric or paired episode verdict is invalid.
     """
 
     report = dict(candidate.get("validation_report") or {})
@@ -170,6 +240,7 @@ def checkpoint_rank_key(candidate: dict[str, Any]) -> tuple[Any, ...]:
     return (
         _strict_rate(report),
         _rate(report, "place"),
+        _paired_lift_rate(report),
         _rate(report, "lift"),
         _rate(report, "stable_grasp"),
         _rate(report, "reach"),
@@ -184,8 +255,58 @@ def checkpoint_rank_key(candidate: dict[str, Any]) -> tuple[Any, ...]:
     )
 
 
+def _ranked_checkpoint(candidate: dict[str, Any]) -> dict[str, Any]:
+    """Retain the measured skill and identity used for each ranking decision."""
+    report = candidate.get("validation_report") or {}
+    return {
+        "checkpoint_uri": candidate.get("checkpoint_uri"),
+        "checkpoint_sha256": candidate.get("checkpoint_sha256"),
+        "outer_iteration": candidate.get("outer_iteration"),
+        "inner_iteration": candidate.get("inner_iteration"),
+        "training_iteration": candidate.get("training_iteration"),
+        "strict_success_rate": (candidate.get("validation_report") or {}).get(
+            "success_rate", 0.0
+        ),
+        "decomposed_metrics": (candidate.get("validation_report") or {}).get(
+            "decomposed_metrics", {}
+        ),
+        "mean_object_goal_distance_m": (
+            (candidate.get("validation_report") or {}).get("success_summary") or {}
+        ).get("mean_object_goal_distance_m"),
+        "validation_report_uri": candidate.get("validation_report_uri"),
+        "validation_report_sha256": candidate.get("validation_report_sha256"),
+        "stable_grasp_and_lift_rate": _paired_lift_rate(report),
+        "rank_key": list(checkpoint_rank_key(candidate)),
+    }
+
+
+def _is_selection_eligible(candidate: dict[str, Any]) -> bool:
+    """Return the producer-declared validation-selection eligibility.
+
+    Args:
+        candidate: Byte-bound validation candidate from the native trainer.
+    Returns:
+        ``True`` when this candidate may compete in validation ranking.
+    Raises:
+        ValueError: If the optional eligibility marker is not a literal boolean.
+    """
+
+    eligible = candidate.get("validation_selection_eligible", True)
+    if type(eligible) is not bool:
+        raise ValueError("checkpoint selection eligibility must be a literal boolean")
+    return eligible
+
+
 def select_best_checkpoint(candidates: list[dict[str, Any]]) -> dict[str, Any]:
-    """Select the best exact checkpoint using only a fixed validation split."""
+    """Select the best exact checkpoint using only a fixed validation split.
+
+    Args:
+        candidates: Checkpoint identities and their per-episode validation reports.
+    Returns:
+        Selected candidate with its ranking policy and all candidate comparisons.
+    Raises:
+        ValueError: Evidence is absent, unbound, from another split, or invalid.
+    """
 
     if not candidates:
         raise ValueError("checkpoint selection requires at least one candidate")
@@ -198,35 +319,23 @@ def select_best_checkpoint(candidates: list[dict[str, Any]]) -> dict[str, Any]:
             raise ValueError(
                 "checkpoint candidate lacks per-environment validation evidence"
             )
-    ranked = sorted(candidates, key=checkpoint_rank_key, reverse=True)
+    eligible_candidates = [
+        candidate for candidate in candidates if _is_selection_eligible(candidate)
+    ]
+    if not eligible_candidates:
+        raise ValueError(
+            "checkpoint selection requires one eligible validation candidate"
+        )
+    ranked = sorted(eligible_candidates, key=checkpoint_rank_key, reverse=True)
     best = dict(ranked[0])
     best["rank_key"] = list(checkpoint_rank_key(best))
     best["selection_policy"] = (
-        "strict_success,place,lift,stable_grasp,reach,contact,"
-        "lower_mean_final_distance,earlier_checkpoint"
+        "eligible_validation_candidates,strict_success,place,stable_grasp_and_lift,"
+        "lift,stable_grasp,reach,contact,lower_mean_final_distance,earlier_checkpoint"
     )
     best["candidate_count"] = len(ranked)
-    best["ranked_candidates"] = [
-        {
-            "checkpoint_uri": item.get("checkpoint_uri"),
-            "checkpoint_sha256": item.get("checkpoint_sha256"),
-            "outer_iteration": item.get("outer_iteration"),
-            "inner_iteration": item.get("inner_iteration"),
-            "training_iteration": item.get("training_iteration"),
-            "strict_success_rate": (item.get("validation_report") or {}).get(
-                "success_rate", 0.0
-            ),
-            "decomposed_metrics": (item.get("validation_report") or {}).get(
-                "decomposed_metrics", {}
-            ),
-            "mean_object_goal_distance_m": (
-                (item.get("validation_report") or {}).get("success_summary") or {}
-            ).get("mean_object_goal_distance_m"),
-            "validation_report_uri": item.get("validation_report_uri"),
-            "rank_key": list(checkpoint_rank_key(item)),
-        }
-        for item in ranked
-    ]
+    best["audited_candidate_count"] = len(candidates)
+    best["ranked_candidates"] = [_ranked_checkpoint(candidate) for candidate in ranked]
     return best
 
 
@@ -282,10 +391,8 @@ def _assert_matching_identity(
     selection_iteration = selection.get("training_iteration")
     candidate_iteration = candidate.get("training_iteration")
     if (
-        type(selection_iteration) is not int
-        or selection_iteration <= 0
-        or type(candidate_iteration) is not int
-        or candidate_iteration <= 0
+        not _has_valid_training_iteration(selection)
+        or not _has_valid_training_iteration(candidate)
         or selection_iteration != candidate_iteration
     ):
         raise ValueError(
@@ -297,16 +404,67 @@ def _assert_matching_identity(
         raise ValueError("selected checkpoint generator digest disagrees with bytes")
 
 
+def _has_valid_training_iteration(record: dict[str, Any]) -> bool:
+    """Return whether one record declares a valid trainer iteration."""
+
+    iteration = record.get("training_iteration")
+    if type(iteration) is not int or iteration < 0:
+        return False
+    if iteration > 0:
+        return True
+    completed_updates = record.get("checkpoint_completed_updates")
+    return (
+        type(completed_updates) is int
+        and completed_updates == 1
+        and record.get("checkpoint_iteration_semantics") == "last_completed_zero_based"
+    )
+
+
 def checkpoint_candidate_has_complete_identity(candidate: object) -> bool:
     """Return whether one validation candidate has a complete byte identity."""
 
     if not isinstance(candidate, dict):
         return False
     try:
-        _assert_matching_identity(candidate, candidate)
+        for _label, field, aliases in _IDENTITY_FIELDS:
+            if field not in candidate:
+                return False
+            expected = _complete_identity_value(field, candidate[field])
+            for alias in aliases:
+                if (
+                    alias in candidate
+                    and _complete_identity_value(field, candidate[alias]) != expected
+                ):
+                    return False
+        if _identity_value(
+            "checkpoint_sha256", candidate["generator_policy_sha256"]
+        ) != _identity_value("checkpoint_sha256", candidate["checkpoint_sha256"]):
+            return False
     except (KeyError, TypeError, ValueError):
         return False
     return True
+
+
+def require_complete_checkpoint_candidate_pool(
+    candidates: list[dict[str, Any]],
+) -> None:
+    """Reject a validation pool containing an incomplete checkpoint identity.
+
+    Args:
+        candidates: Validation candidates considered for checkpoint selection.
+    Returns:
+        None.
+    Raises:
+        ValueError: If any candidate lacks a complete, internally consistent
+            checkpoint byte identity.
+    """
+
+    for index, candidate in enumerate(candidates):
+        if not checkpoint_candidate_has_complete_identity(candidate):
+            raise ValueError(
+                "checkpoint selection candidate "
+                f"at index {index} lacks complete checkpoint byte identity"
+            )
 
 
 def _identity_value(field: str, value: Any) -> Any:

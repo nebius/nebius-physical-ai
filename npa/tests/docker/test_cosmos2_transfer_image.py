@@ -20,6 +20,9 @@ ROOT = Path(__file__).resolve().parents[3]
 IMAGE_DIR = ROOT / "npa" / "docker" / "workbench" / "cosmos2-transfer"
 DOCKERFILE = IMAGE_DIR / "Dockerfile"
 SOURCE_SHA = "67d56b7d550a3911024a32dc23ae0bae5258e633"
+SOURCE_ARCHIVE_SHA256 = (
+    "978bfb03a49213669551701659641ae7b8414649480eb45c4c9c1f8d5e5a92a8"
+)
 SAM2_SOURCE_SHA = "2b90b9f5ceec907a1c18123530e92e794ad901a4"
 BUILD_BASE_SHA = (
     "sha256:3986465b3dd3b4d602c07061f2cff417e0bfb24810129408d4eb12e111015a6c"
@@ -37,6 +40,24 @@ def _dockerfile() -> str:
 def test_source_base_uv_and_python_are_immutable() -> None:
     text = _dockerfile()
     assert f"COSMOS_TRANSFER_REVISION={SOURCE_SHA}" in text
+    assert f"COSMOS_TRANSFER_ARCHIVE_SHA256={SOURCE_ARCHIVE_SHA256}" in text
+    assert (
+        "https://codeload.github.com/nvidia-cosmos/cosmos-transfer2.5/tar.gz/"
+        "${COSMOS_TRANSFER_REVISION}"
+    ) in text
+    assert (
+        'echo "${COSMOS_TRANSFER_ARCHIVE_SHA256}  ${archive}" | '
+        "sha256sum --check --status"
+    ) in text
+    assert 'tar -xzf "${archive}" --strip-components=1' in text
+    assert (
+        "git remote add origin https://github.com/nvidia-cosmos/cosmos-transfer2.5.git"
+        not in text
+    )
+    assert (
+        'org.nebius.npa.cosmos_transfer_archive_sha256="${COSMOS_TRANSFER_ARCHIVE_SHA256}"'
+        in text
+    )
     assert f"SAM2_REVISION={SAM2_SOURCE_SHA}" in text
     assert f"cudnn-devel-ubuntu24.04@{BUILD_BASE_SHA}" in text
     assert f"cudnn-runtime-ubuntu24.04@{RUNTIME_BASE_SHA}" in text
@@ -64,7 +85,9 @@ def test_source_base_uv_and_python_are_immutable() -> None:
 
 def test_lfs_media_models_and_build_credentials_are_excluded() -> None:
     text = _dockerfile()
-    assert text.count("GIT_LFS_SKIP_SMUDGE=1") >= 3
+    # The Transfer tree now comes from an integrity-checked public archive; SAM2
+    # remains a separate Git fetch and must keep its LFS-smudge protections.
+    assert text.count("GIT_LFS_SKIP_SMUDGE=1") >= 2
     assert "filter.lfs.smudge=" in text
     assert "rm -rf .git assets" in text
     assert "matplotlib/mpl-data/sample_data" in text
@@ -143,15 +166,27 @@ def test_lfs_media_models_and_build_credentials_are_excluded() -> None:
     assert "pip install --no-deps /opt/npa" not in text
     assert "python -m npa.cli.entry" in text
     assert "python -m npa.cli.main" not in text
-    assert "PYTHONPATH=/opt/npa/src" in text
-    assert "NPA_BAKED_PYTHON=/opt/cosmos/cosmos-transfer2.5/.venv/bin/python" in text
+    assert "NPA_CONTROL_PYTHON=/opt/npa/control-venv/bin/python" in text
+    assert "NPA_BAKED_PYTHON=/opt/npa/control-venv/bin/python" in text
+    assert (
+        "COSMOS_TRANSFER_PYTHON=/opt/cosmos/cosmos-transfer2.5/.venv/bin/python" in text
+    )
+    assert "python3 python3-venv" in text
     assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in text
     assert "*/imageio_ffmpeg/binaries/ffmpeg*" in text
     assert "imageio_ffmpeg.get_ffmpeg_exe()" in text
     assert '== "/usr/bin/ffmpeg"' in text
-    assert "ln -sfn /opt/npa/src/npa" in text
+    assert "npa-exact-source.pth" in text
+    assert "uv venv --python /usr/bin/python3 /opt/npa/control-venv" in text
+    assert (
+        "/usr/bin/python3 -c 'import sys; assert sys.version_info >= (3, 11)'" in text
+    )
+    assert text.index("--requirement /tmp/npa-cli-requirements.txt") < text.index(
+        "import npa.cli.entry; import npa.workflows.sim2real.runtime_attestation"
+    )
+    assert "ln -sfn /opt/npa/src/npa" not in text
     assert 'env -u PYTHONPATH "${NPA_BAKED_PYTHON}" -c' in text
-    assert "no build backend or package index is consulted" in text
+    assert "No build backend or package index is consulted" in text
     assert "import npa.cli.entry" in text
     assert "import npa.cli.main" not in text
     assert "workbench cosmos2 transfer --help" in text
@@ -242,7 +277,7 @@ def test_final_runtime_is_non_root_relocated_and_cache_writable_by_design() -> N
     assert "--no-deps --require-hashes" in text
     assert "-m npa.cli.entry" in text
     assert "-m npa.cli.main" not in text
-    assert "/opt/cosmos/cosmos-transfer2.5/.venv/bin/npa" in text
+    assert "exec /opt/npa/control-venv/bin/python -m npa.cli.entry" in text
     assert "workbench cosmos2 transfer --help" in text
     assert "rm -rf /opt/cosmos/model-cache/xdg/uv" in text
 

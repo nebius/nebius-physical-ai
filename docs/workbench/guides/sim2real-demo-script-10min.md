@@ -26,13 +26,33 @@ identifiers out of shared slides, screenshots, and exported reports.
 | Time | Show | Explain |
 | --- | --- | --- |
 | 0:00–1:00 | [14-stage graph](sim2real-architecture.md) and terminal runtime status | One standard workflow owns stages, parallel shards, iterations, and durable state |
-| 1:00–2:30 | Trigger manifest, task contract, Transfer manifest, curation and split manifests | Real seed data leads to simulated scenarios; train, validation, and gold remain disjoint |
+| 1:00–2:30 | Trigger manifest, task contract, Cosmos3 structural-transfer manifest, curation and split manifests | Real seed data leads to simulated scenarios; train, validation, and gold remain disjoint |
 | 2:30–4:00 | Actual primary/side/overhead rollout frames and action metadata | Rendered task visibility and exact action/frame/episode bindings establish usable evidence |
 | 4:00–5:30 | Hosted critique, training signal, measured PPO losses | Stage 8 records the actual model/provider; bounded grounded critique shapes real PPO |
 | 5:30–7:00 | Validation selection and gold report | Validation chooses the checkpoint; gold measures strict 5 cm stable placement |
 | 7:00–8:00 | Promotion decision and candidate metadata | Report the measured result, including below-threshold outcomes; completion alone does not prove efficacy |
 | 8:00–9:00 | Stage 12 external seam and Stage 13 retrigger record | Physical-robot validation is external; retrigger requires verified new or corrected data |
 | 9:00–10:00 | Decoded RRD/MCAP timeline and final report | All 14 ComponentRecords and accessible artifacts connect execution to the result |
+
+Stage 8 uses the canonical `MiniMaxAI/MiniMax-M3` hosted evaluator on Token
+Factory. Stage 3's Cosmos3-Nano generation is separate; a Cosmos3 reasoning
+backend requires separate implementation and evaluator-contract validation.
+Use the model identity in this run's evidence when describing results. Stage 8
+uses one model, all declared primary frames by default, and concurrent
+independent rollout requests.
+
+Show an evaluation's exact action-to-frame bindings and a verified receipt.
+Receipts bind source, endpoint identity, model, action metadata, and frame bytes.
+A retry reads back matching receipts before reusing results. Unsupported visual
+actions retain neutral labels and zero confidence; do not describe them as
+observed task success.
+
+Production training uses 1,024 vector environments and 2,000 PPO updates per
+pass. Show actual measured updates, the recurrent policy profile, and the
+training-only actor handoff audit. Validation and Gold run the learned actor
+alone. The quality gate requires at least half of 64 Gold scenarios to satisfy
+the strict 5 cm stable-placement predicate; training handoff success alone does
+not establish that result.
 
 The final report must show Stage 12 as `SEAM` and the other 13 canonical
 components as `WORKS`. Missing RRD/MCAP is a verification failure, not an optional

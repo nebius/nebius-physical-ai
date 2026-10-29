@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import os
 from pathlib import Path
 import stat
@@ -154,6 +155,62 @@ def desired_state(cluster: MK8sDesired) -> dict[str, Any]:
             else None
         ),
     }
+
+
+def _read_gpu_health_evidence(
+    *,
+    result: dict[str, Any],
+    source_kubeconfig: Path,
+) -> bytes | None:
+    """Read successful native GPU evidence before standalone state changes.
+
+    Args:
+        result: Native managed-Kubernetes apply result.
+        source_kubeconfig: Kubeconfig retained by native backend state.
+
+    Returns:
+        The report bytes, or ``None`` when no GPU report was emitted.
+
+    Raises:
+        RuntimeError: If native evidence is not the expected healthy report.
+    """
+    reported = str(result.get("gpu_health_evidence") or "").strip()
+    if not reported:
+        return None
+    source = Path(reported)
+    expected = source_kubeconfig.parent / "gpu-health.json"
+    if source != expected or not source.is_file():
+        raise RuntimeError("native mk8s GPU health evidence is missing or unexpected")
+    try:
+        payload = json.loads(source.read_bytes())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("native mk8s GPU health evidence is unreadable") from exc
+    if not isinstance(payload, dict) or payload.get("status") != "healthy":
+        raise RuntimeError("native mk8s GPU health evidence is not healthy")
+    return source.read_bytes()
+
+
+def _write_gpu_health_evidence(
+    *, target_kubeconfig: Path, contents: bytes | None
+) -> Path | None:
+    """Write validated GPU evidence beside an adopted standalone kubeconfig."""
+    if contents is None:
+        return None
+    target = target_kubeconfig.parent / "gpu-health.json"
+    target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb", dir=target.parent, prefix=f".{target.name}.", delete=False
+        ) as handle:
+            handle.write(contents)
+            temporary = Path(handle.name)
+        temporary.chmod(stat.S_IRUSR | stat.S_IWUSR)
+        os.replace(temporary, target)
+        return target
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 class MK8sBackend:
@@ -399,6 +456,19 @@ class MK8sBackend:
             payload["current-context"] = context
         target.parent.mkdir(parents=True, exist_ok=True)
         temporary: Path | None = None
+        gpu_health_contents = _read_gpu_health_evidence(
+            result=result,
+            source_kubeconfig=source,
+        )
+        if (
+            desired.gpu_count() > 0
+            and not (desired.mig and desired.mig.enabled)
+            and request.post_deploy_validation != "skip"
+            and gpu_health_contents is None
+        ):
+            raise RuntimeError(
+                "native mk8s apply reported a GPU target without durable GPU health evidence"
+            )
         try:
             with tempfile.NamedTemporaryFile(
                 mode="w", dir=target.parent, prefix=f".{target.name}.", delete=False
@@ -411,6 +481,11 @@ class MK8sBackend:
         finally:
             if temporary is not None:
                 temporary.unlink(missing_ok=True)
+
+        adopted_gpu_health = _write_gpu_health_evidence(
+            target_kubeconfig=target,
+            contents=gpu_health_contents,
+        )
 
         primary = desired.gpu_nodes or desired.cpu_nodes
         state = ClusterState(
@@ -450,6 +525,11 @@ class MK8sBackend:
                 "filesystem_csi_make_default_storage_class": (
                     desired.filesystem_csi_make_default_storage_class
                 ),
+                **(
+                    {"gpu_health_evidence": str(adopted_gpu_health)}
+                    if adopted_gpu_health is not None
+                    else {}
+                ),
             },
         )
         if source_context and source_context != context:
@@ -459,6 +539,11 @@ class MK8sBackend:
             "kube_context": context,
             "kubeconfig": str(target),
             "ownership": "standalone-shared-mk8s-backend",
+            **(
+                {"gpu_health_evidence": str(adopted_gpu_health)}
+                if adopted_gpu_health is not None
+                else {}
+            ),
         }
 
     def status(

@@ -87,6 +87,15 @@ def test_isaac_sources_bake_skypilot_early_packages(
         _assert_early_package_block(source, start, end)
 
 
+def test_isaac_snapshot_acquisition_retries_without_mirror_fallback() -> None:
+    """Keep transient snapshot 5xx recovery pinned to the configured snapshot."""
+
+    installer = (DOCKER_ROOT / "common" / "install_isaac_runtime_base.sh").read_text()
+    assert "https://snapshot.ubuntu.com/ubuntu/${UBUNTU_SNAPSHOT}/" in installer
+    assert 'Acquire::Retries "5";' in installer
+    assert "99npa-snapshot-retries" in installer
+
+
 @pytest.mark.parametrize(
     ("state", "expected_returncode"),
     (("installed", 0), ("removed", 1), ("missing", 1)),

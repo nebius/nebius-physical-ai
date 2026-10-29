@@ -8,7 +8,10 @@ from pathlib import Path
 
 import pytest
 
-from npa.workflows.sim2real.runtime_attestation import attest_runtime_source
+from npa.workflows.sim2real.runtime_attestation import (
+    attest_runtime_source,
+    attest_warmed_isaac_cache,
+)
 
 
 SOURCE_SHA = "1" * 40
@@ -80,6 +83,35 @@ def test_readonly_isaac_runtime_attests_content_addressed_cache(
         result["isaac_bootstrap_sha256"]
         == hashlib.sha256(bootstrap.read_bytes()).hexdigest()
     )
+
+
+def test_canonical_warm_state_attests_the_same_content_addressed_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _source_env(monkeypatch)
+    target, bootstrap, manifest_bytes = _cache_tree(tmp_path, monkeypatch)
+    monkeypatch.setenv("NPA_ISAAC_CACHE_READONLY", "0")
+    monkeypatch.setenv("NPA_ISAAC_BOOTSTRAP_OFFLINE", "0")
+
+    result = attest_warmed_isaac_cache()
+
+    assert result == {
+        "isaac_cache_pvc": "npa-isaac-cache",
+        "isaac_cache_stamp": target.name,
+        "isaac_cache_manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+        "isaac_bootstrap_sha256": hashlib.sha256(bootstrap.read_bytes()).hexdigest(),
+        "isaac_cache_mode": "warm-readwrite",
+    }
+
+
+def test_canonical_warm_state_refuses_readonly_or_offline_mount(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _source_env(monkeypatch)
+    _cache_tree(tmp_path, monkeypatch)
+
+    with pytest.raises(RuntimeError, match="read-write"):
+        attest_warmed_isaac_cache()
 
 
 def test_readonly_isaac_cache_fails_if_network_is_still_allowed(

@@ -105,7 +105,7 @@ RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
       /opt/npa/src/npa/workflows/sim2real/stage14_finalize.py \
       /opt/npa/src/npa/workflows/sim2real/workflow_io.py \
       /opt/npa/src/npa/workflows/sim2real/workflow_stage.py \
-    && env -u PYTHONPATH python -c "import os; os.environ['NEBIUS_TOKEN_FACTORY_KEY']='build-smoke'; import boto3, httpx, yaml; from npa.clients.token_factory import TokenFactoryClient; from npa.workbench.cosmos.reason import run_token_factory_rollout_vlm; from npa.workflows.sim2real.stage8_cosmos3 import run; from npa.workflows.sim2real.workflow_stage import main; assert callable(run_token_factory_rollout_vlm) and callable(run) and callable(main); TokenFactoryClient()" \
+    && env -u PYTHONPATH python -c "import os; os.environ['NEBIUS_TOKEN_FACTORY_KEY']='build-smoke'; import boto3, httpx, yaml; from npa.clients.token_factory import TokenFactoryClient; from npa.workbench.cosmos.reason import run_token_factory_rollout_vlm; from npa.workflows.sim2real import robot_contract; from npa.workflows.sim2real.stage8_cosmos3 import run; from npa.workflows.sim2real.workflow_stage import main; assert callable(run_token_factory_rollout_vlm) and callable(run) and callable(main) and robot_contract.ROBOT_CONTRACT_SCHEMA; TokenFactoryClient()" \
     && chown -R ubuntu:ubuntu /workspace
 
 USER ubuntu

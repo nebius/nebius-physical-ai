@@ -252,19 +252,21 @@ def test_paidf_access_covers_translation_models_and_transfer_checkpoints() -> No
     assert by_repo["nvidia/Cosmos-Guardrail1"].gated
 
 
-def test_sim2real_access_includes_cosmos_transfer_runtime_dependencies() -> None:
+def test_sim2real_access_includes_cosmos3_structural_transfer_dependencies() -> None:
     assets = {asset.repo: asset for asset in assets_for(["sim2real"])}
 
     guardrail = assets["nvidia/Cosmos-Guardrail1"]
     assert guardrail.revision == "d6d4bfa899a71454a700907664f3e88f503950cf"
     assert guardrail.probe_path == "video_content_safety_filter/safety_filter.pt"
 
-    tokenizer = assets["nvidia/Cosmos-Predict2.5-2B"]
-    assert tokenizer.revision == "85f8ae7bfe8f5525c8d103429524dcf12f98bf7b"
-    assert tokenizer.probe_path == "tokenizer.pth"
+    nano = assets["nvidia/Cosmos3-Nano"]
+    assert nano.revision == "411f42a8fdfb8c5b2583cb8786e0938f49796eaa"
+    assert (
+        nano.probe_path
+        == "transformer/diffusion_pytorch_model-00001-of-00007.safetensors"
+    )
 
-    assert guardrail.gated and tokenizer.gated
-    assert assets["lerobot/pusht"].repo_type == "dataset"
+    assert guardrail.gated and not nano.gated
 
 
 @pytest.mark.parametrize(
@@ -272,6 +274,11 @@ def test_sim2real_access_includes_cosmos_transfer_runtime_dependencies() -> None
 )
 def test_cosmos2_access_checks_auxiliary_runtime_dependencies(denied_repo: str) -> None:
     observed = {}
+    assets = {asset.repo: asset for asset in assets_for(["cosmos2"])}
+    tokenizer = assets["nvidia/Cosmos-Predict2.5-2B"]
+    assert tokenizer.revision == "85f8ae7bfe8f5525c8d103429524dcf12f98bf7b"
+    assert tokenizer.probe_path == "tokenizer.pth"
+    assert tokenizer.gated
 
     def validate(_token, repo, _repo_type, revision, probe_path):
         observed[repo] = (revision, probe_path)
@@ -674,3 +681,9 @@ def test_known_public_nvidia_defaults_are_not_marked_gated() -> None:
         "nvidia/PhysicalAI-NuRec-PPISP",
     }:
         assert repo not in gated, f"{repo} should be marked gated=False"
+
+
+def test_sim2real_access_excludes_unrelated_pusht_dataset():
+    assert "lerobot/pusht" not in [asset.repo for asset in assets_for(["sim2real"])]
+    lerobot_assets = {asset.repo: asset for asset in assets_for(["lerobot"])}
+    assert lerobot_assets["lerobot/pusht"].repo_type == "dataset"

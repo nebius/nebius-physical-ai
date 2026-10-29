@@ -13,6 +13,7 @@ from npa.workbench.cosmos.visual_grounding import (
     HOSTED_EVAL_SCHEMA,
     validate_stored_visual_grounding,
 )
+from npa.workflows.sim2real.workflow_io import declared_loop_uri, json_file_sha256
 
 
 class EvaluatorContractError(RuntimeError):
@@ -83,10 +84,11 @@ def _provenance_matches(
     )
 
 
-def _request_valid(request: dict[str, Any]) -> bool:
+def _request_valid(request: dict[str, Any], endpoint: str) -> bool:
     return (
         isinstance(request.get("request_id"), str)
         and bool(request["request_id"].strip())
+        and request.get("endpoint_url") == endpoint
         and all(
             _integer(request.get(key), minimum=1)
             for key in ("input_tokens", "output_tokens", "total_tokens")
@@ -101,9 +103,11 @@ def _request_valid(request: dict[str, Any]) -> bool:
 
 
 def _usage_matches(
-    usage: dict[str, Any], requests: list[dict[str, Any]], model: str
+    usage: dict[str, Any], requests: list[dict[str, Any]], model: str, endpoint: str
 ) -> bool:
-    if not requests or not all(_request_valid(request) for request in requests):
+    if not requests or not all(
+        _request_valid(request, endpoint) for request in requests
+    ):
         return False
     ids = [request["request_id"] for request in requests]
     priced = all(request["cost_usd"] is not None for request in requests)
@@ -111,6 +115,7 @@ def _usage_matches(
         usage.get("model") == model
         and usage.get("provider") == "nebius"
         and usage.get("backend") == "token_factory"
+        and usage.get("endpoint_url") == endpoint
         and _integer(usage.get("request_count"), minimum=1)
         and usage["request_count"] == len(requests)
         and len(set(ids)) == len(ids)
@@ -147,6 +152,7 @@ def validate_hosted_evaluator(
     evaluator: dict[str, Any],
     stage8_record: dict[str, Any],
     expected_model: str,
+    expected_token_factory_endpoint: str,
     expected_source_sha: str,
     evaluator_uri: str,
     outer_iteration: int,
@@ -163,17 +169,20 @@ def validate_hosted_evaluator(
     """
 
     from npa.workbench.cosmos.reason import hosted_rollout_model_family
+    from npa.workflows.sim2real.hosted_evaluation import validate_token_factory_endpoint
 
     try:
         expected_family = hosted_rollout_model_family(expected_model)
+        expected_endpoint = validate_token_factory_endpoint(
+            expected_token_factory_endpoint
+        )
         artifacts = stage8_record.get("artifacts") or {}
+        declared_output_uri = declared_loop_uri(
+            evaluator_uri, outer_iteration, inner_iteration
+        )
         if (
-            evaluator.get("schema")
-            not in {
-                "npa.sim2real.cosmos3_evaluator.v1",
-                "npa.sim2real.cosmos_reason_lane.v2",
-            }
-            or (evaluator.get("evaluator") or evaluator.get("lane")) != "cosmos3"
+            evaluator.get("schema") != "npa.sim2real.token_factory_evaluator.v1"
+            or evaluator.get("evaluator") != "token_factory_rollout"
             or evaluator.get("model") != expected_model
             or evaluator.get("reason_family") != expected_family
             or evaluator.get("backend") != "token_factory"
@@ -182,24 +191,28 @@ def validate_hosted_evaluator(
             or stage8_record.get("stage") != 8
             or stage8_record.get("name") != "stage_08_vlm_eval_train"
             or artifacts.get("result") != evaluator_uri
+            or artifacts.get("declared_output") != declared_output_uri
+            or artifacts.get("result_payload_sha256") != json_file_sha256(evaluator)
             or artifacts.get("backend") != "token_factory"
             or artifacts.get("provider") != "nebius"
             or artifacts.get("model") != expected_model
             or artifacts.get("reason_family") != expected_family
+            or evaluator.get("token_factory_endpoint") != expected_endpoint
+            or artifacts.get("token_factory_endpoint") != expected_endpoint
             or int(artifacts.get("outer_iteration") or 0) != outer_iteration
             or int(artifacts.get("inner_iteration") or 0) != inner_iteration
         ):
             raise _migration_error(
                 "Stage 8 requires the configured hosted model identity, family, and provenance"
             )
-        rows = validate_stage7_cosmos3_coverage(stage7, evaluator)
+        rows = validate_stage7_hosted_evaluation_coverage(stage7, evaluator)
         usage = dict(evaluator.get("evaluator_usage") or {})
         requests = [dict(item.get("request") or {}) for item in rows.values()]
         if (
             artifacts.get("evaluator_usage") != usage
             or not _integer(artifacts.get("rollout_count"), minimum=1)
             or artifacts["rollout_count"] != len(rows)
-            or not _usage_matches(usage, requests, expected_model)
+            or not _usage_matches(usage, requests, expected_model, expected_endpoint)
         ) or any(
             item.get("schema") != HOSTED_EVAL_SCHEMA
             or item.get("backend") != "token_factory"
@@ -231,10 +244,10 @@ def validate_hosted_evaluator(
     return rows
 
 
-def validate_stage7_cosmos3_coverage(
-    stage7: dict[str, Any], cosmos3: dict[str, Any]
+def validate_stage7_hosted_evaluation_coverage(
+    stage7: dict[str, Any], evaluator: dict[str, Any]
 ) -> dict[str, dict[str, Any]]:
-    """Return evaluations only when one Cosmos3 result covers Stage 7 exactly."""
+    """Return evaluations only when one hosted evaluator covers Stage 7 exactly."""
 
     rollout_dirs = stage7.get("rollout_dirs")
     stage7_ids = (
@@ -242,14 +255,14 @@ def validate_stage7_cosmos3_coverage(
         if isinstance(rollout_dirs, list)
         else []
     )
-    evaluations = cosmos3.get("evaluations")
+    evaluations = evaluator.get("evaluations")
     evaluation_rows = evaluations if isinstance(evaluations, list) else []
     evaluation_ids = [
         str(item.get("rollout_id") or "")
         for item in evaluation_rows
         if isinstance(item, dict)
     ]
-    source_ids_value = cosmos3.get("source_rollout_ids")
+    source_ids_value = evaluator.get("source_rollout_ids")
     source_ids = (
         [str(item) for item in source_ids_value]
         if isinstance(source_ids_value, list)
@@ -271,7 +284,7 @@ def validate_stage7_cosmos3_coverage(
         or set(stage7_ids) != set(evaluation_ids)
     ):
         raise _migration_error(
-            "Stage 8 Cosmos3 evaluations do not exactly cover Stage 7 rollouts"
+            "Stage 8 hosted evaluations do not exactly cover Stage 7 rollouts"
         )
     return {
         rollout_id: item for rollout_id, item in zip(evaluation_ids, evaluation_rows)

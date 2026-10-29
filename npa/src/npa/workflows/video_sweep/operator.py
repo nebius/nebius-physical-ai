@@ -156,7 +156,7 @@ def _initialize(path):
         "accelerators": "B200:1",
         "generator": "cosmos3-nano",
         "sources": ["s3://<bucket>/inputs/source.mp4"],
-        "reasoner_model": "nvidia/Cosmos3-Super-Reasoner",
+        "reasoner_model": "MiniMaxAI/MiniMax-M3",
         "merge_model": "nvidia/Nemotron-3_5-Lightning",
         "samples": 8,
         "threshold": 0.8,

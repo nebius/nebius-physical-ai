@@ -6,7 +6,7 @@
 | Enactic openarm_isaac_lab (`bad82e…`, extension 0.1.0) | yes | Apache-2.0 source and OpenArm USD assets; upstream license retained. |
 | MuJoCo 3.6.0 | yes | Apache-2.0 binary wheel; exact hashes in `mujoco-requirements.txt`. |
 | FastAPI 0.136.1 / Starlette 1.6.0 / Pydantic 2.13.5 / Uvicorn 0.53.0 | yes | MIT-licensed API, ASGI toolkit, schema, and server runtime; exact hashes and transitive dependencies are recorded in `mujoco-requirements.txt`. OpenArm overrides the shared Isaac 2 closure's vulnerable Starlette release. |
-| GitPython 3.2.1 / gitdb 4.0.12 / smmap 5.0.3 | yes | BSD-3-Clause helper and dependencies. OpenArm's exact lock upgrades the shared closure's vulnerable GitPython 3.1.57 before publication. |
+| GitPython 3.2.1 / gitdb 4.0.12 / smmap 5.0.3 | yes | BSD-3-Clause helper and dependencies. OpenArm's exact lock enforces the current GitPython security floor before publication. |
 | absl-py 2.5.0 / etils 1.14.0 | yes | Apache-2.0. |
 | glfw 2.10.2 | yes | zlib/libpng-style license. |
 | PyOpenGL 3.1.10 | yes | BSD-3-Clause. |

@@ -2610,6 +2610,7 @@ def test_robomimic_dataset_retry_cleans_owned_stale_partial_before_network(
     monkeypatch.setattr(module, "verify_customer_runtime_entitlement", lambda **_kw: {})
     input_dir = tmp_path / "inputs"
     input_dir.mkdir()
+    input_dir.chmod(0o700)
     partial = input_dir / "lift_ph_lowdim_v15.download"
     partial.write_bytes(b"interrupted")
     opened: list[bool] = []
@@ -2636,6 +2637,7 @@ def test_robomimic_dataset_retry_rejects_stale_partial_symlink(
     monkeypatch.setattr(module, "verify_customer_runtime_entitlement", lambda **_kw: {})
     input_dir = tmp_path / "inputs"
     input_dir.mkdir()
+    input_dir.chmod(0o700)
     outside = tmp_path / "outside"
     outside.write_bytes(b"preserve")
     partial = input_dir / "lift_ph_lowdim_v15.download"
@@ -2817,6 +2819,7 @@ def test_robomimic_expiry_preserves_preexisting_partial_until_authorized(
     binding = _inert_smoke_entitlement(tmp_path, monkeypatch, module, expire_at_check=2)
     inputs = tmp_path / "inputs"
     inputs.mkdir()
+    inputs.chmod(0o700)
     partial = inputs / "lift_ph_lowdim_v15.download"
     partial.write_bytes(b"inert-owned-partial")
     monkeypatch.setattr(

@@ -1,7 +1,4 @@
-"""The shared dependency correction must precede the flattened Envgen layer.
-
-Native sanitizer behavior is covered in test_curobo_dependency_source.py.
-"""
+"""EnvGen must isolate its fresh closure before flattening the delivery layer."""
 
 from pathlib import Path
 
@@ -13,10 +10,19 @@ DOCKERFILE = (
 )
 
 
-def _require_pre_layer_sanitization(text):
+def _require_pre_layer_isolation(text):
     intermediate, final = text.split("FROM scratch AS runtime", 1)
     assert "FROM ${BASE_IMAGE} AS sanitized" in intermediate
-    assert "python /usr/local/lib/npa/remove-scikit-image-recipe.py" in intermediate
+    # The dedicated role does not install scikit-image.  It must remove the
+    # complete parent NPA tree before copying current source, rather than
+    # retaining an ancestor interpreter and trying to clean its bytes later.
+    command = "rm -rf /opt/npa\n"
+    assert command in intermediate
+    assert intermediate.index(command) < intermediate.index(
+        "COPY --chown=ubuntu:ubuntu pyproject.toml"
+    )
+    assert "remove-scikit-image-recipe.py" not in intermediate
+    assert "scikit-image" not in intermediate
     assert "COPY --from=sanitized / /" in final
     assert "FROM " not in final
     assert "COPY --from=sanitized / /" not in intermediate
@@ -24,8 +30,8 @@ def _require_pre_layer_sanitization(text):
     assert "COPY --from=" not in final.replace("COPY --from=sanitized / /", "")
 
 
-def test_example_is_removed_before_building_the_scratch_delivery_layer():
-    _require_pre_layer_sanitization(DOCKERFILE.read_text())
+def test_parent_npa_tree_is_removed_before_building_the_scratch_delivery_layer():
+    _require_pre_layer_isolation(DOCKERFILE.read_text())
 
 
 @pytest.mark.parametrize(
@@ -33,12 +39,14 @@ def test_example_is_removed_before_building_the_scratch_delivery_layer():
 )
 def test_recipe_must_not_claim_a_later_deletion_clears_ancestor_bytes(case):
     text = DOCKERFILE.read_text()
-    command = "python /usr/local/lib/npa/remove-scikit-image-recipe.py"
     if case == "parent-retained":
-        text = text.replace("FROM scratch AS runtime", "FROM sanitized AS runtime")
+        text = text.replace("rm -rf /opt/npa", "rm -rf /opt/npa/src")
     elif case == "later-deletion":
-        text = text.replace(command, "true") + "\nRUN " + command + "\n"
+        text = text.replace("rm -rf /opt/npa", "true")
+        text = text.replace(
+            "FROM scratch AS runtime", "RUN rm -rf /opt/npa\n\nFROM scratch AS runtime"
+        )
     else:
         text += "\nCOPY --from=sanitized /tmp /inherited-cache\n"
     with pytest.raises((AssertionError, ValueError)):
-        _require_pre_layer_sanitization(text)
+        _require_pre_layer_isolation(text)

@@ -1106,8 +1106,8 @@ def test_base_installer_uses_immutable_system_and_bootstrap_inputs() -> None:
     assert "sha256sum --check --strict" in text
     assert text.count("3.11.17-1+jammy1") >= 9
     for requirement in (
-        "pip==26.2.1",
-        "setuptools==84.0.0",
+        "pip==26.2.2",
+        "setuptools==84.1.0",
         "wheel==0.47.0",
         "packaging==26.3",
     ):
@@ -1115,6 +1115,11 @@ def test_base_installer_uses_immutable_system_and_bootstrap_inputs() -> None:
     assert "pip install --no-cache-dir --no-deps" in text
     assert '"$ISAAC_VENV/bin/python" -m pip check' in text
     assert "pip uninstall --yes wheel" in text
+    manifest_verifier = (
+        '"$ISAAC_VENV/bin/python" "${COMMON_DIR}/backport_setuptools_manifest.py"'
+    )
+    assert manifest_verifier in text
+    assert text.index('"setuptools==84.1.0"') < text.index(manifest_verifier)
 
     for closure_path in (OSS_DEPS, ISAAC3_OSS_DEPS):
         closure = closure_path.read_text(encoding="utf-8")

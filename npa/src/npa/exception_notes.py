@@ -16,7 +16,7 @@ def add_exception_note(error: BaseException, note: str) -> None:
     if callable(add_note):
         add_note(note)
         return
-    # Python 3.10 has no add_note; retain notes for programmatic consumers.
+    # Retain a programmatic diagnostic when an exception hides ``add_note``.
     notes = list(getattr(error, "__notes__", ()))
     notes.append(note)
     error.__notes__ = notes

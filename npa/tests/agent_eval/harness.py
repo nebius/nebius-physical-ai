@@ -37,6 +37,27 @@ _EVAL_TOOL_REFS = frozenset(
         "workbench.sonic.train",
     }
 )
+_SIM2REAL_EVAL_IMAGE = "registry.example.invalid/npa/agent-eval@sha256:" + "a" * 64
+_SIM2REAL_EVAL_INFRASTRUCTURE = {
+    "has_infra": True,
+    "configured": [
+        {
+            "raw": {
+                "gpu_accelerator": "RTXPRO6000",
+                **{
+                    key: _SIM2REAL_EVAL_IMAGE
+                    for key in (
+                        "controller_image",
+                        "cosmos3_image",
+                        "envgen_image",
+                        "isaac_image",
+                        "viewer_image",
+                    )
+                },
+            }
+        }
+    ],
+}
 
 
 @dataclass
@@ -109,7 +130,10 @@ def _run_workflow(
             sc.id, sc.kind, False, steps=1, tokens=0, detail=f"intent={intent}"
         )
     draft = workflow.generate_workflow_draft(
-        intent=intent, user_text=sc.goal, tool_refs=_EVAL_TOOL_REFS
+        intent=intent,
+        user_text=sc.goal,
+        tool_refs=_EVAL_TOOL_REFS,
+        infrastructure=_SIM2REAL_EVAL_INFRASTRUCTURE,
     )
     validation = (
         draft.get("validation") if isinstance(draft.get("validation"), dict) else {}

@@ -3724,8 +3724,9 @@ def test_cancel_mixed_live_and_absence_conflict_requires_clean_live_cancellation
     assert (allowance is not None) is teardown_allowed
 
 
+@pytest.mark.parametrize("preserve_cluster", [False, True])
 def test_launched_workflow_cancel_uses_guarded_cleanup_and_reports_cancelled(
-    monkeypatch,
+    monkeypatch, preserve_cluster
 ) -> None:
     fake_s3 = FakeWorkflowS3()
     _patch_workflow_s3(monkeypatch, fake_s3)
@@ -3768,7 +3769,7 @@ def test_launched_workflow_cancel_uses_guarded_cleanup_and_reports_cancelled(
     monkeypatch.setattr(
         "npa.orchestration.npa_workflow.cancellation.lookup_managed_job", lookup
     )
-    calls: list[tuple[list[tuple[str, str]], str, str, object, object]] = []
+    calls: list[tuple[list[tuple[str, str]], str, str, object, object, bool]] = []
 
     def fake_cleanup(
         jobs,
@@ -3777,8 +3778,18 @@ def test_launched_workflow_cancel_uses_guarded_cleanup_and_reports_cancelled(
         cluster="",
         sky_bin=None,
         isolated_config_dir=None,
+        teardown_cluster=True,
     ):
-        calls.append((jobs, actual_run_id, cluster, sky_bin, isolated_config_dir))
+        calls.append(
+            (
+                jobs,
+                actual_run_id,
+                cluster,
+                sky_bin,
+                isolated_config_dir,
+                teardown_cluster,
+            )
+        )
         return SimpleNamespace(
             ok=True,
             resources_removed=[actual_run_id],
@@ -3790,26 +3801,27 @@ def test_launched_workflow_cancel_uses_guarded_cleanup_and_reports_cancelled(
         "npa.orchestration.skypilot.cleanup.cleanup_launched_workflows", fake_cleanup
     )
 
-    result = runner.invoke(
-        app,
-        [
-            "workbench",
-            "workflow",
-            "cancel",
-            f"s3://bucket/{key}",
-            "--sky-bin",
-            "/npa/pinned/sky",
-            "--isolated-config-dir",
-            "/npa/controllers/run-55",
-            "--json",
-        ],
-    )
+    arguments = [
+        "workbench",
+        "workflow",
+        "cancel",
+        f"s3://bucket/{key}",
+        "--sky-bin",
+        "/npa/pinned/sky",
+        "--isolated-config-dir",
+        "/npa/controllers/run-55",
+        "--json",
+    ]
+    if preserve_cluster:
+        arguments.extend(["--job-id", "55", "--preserve-cluster"])
+    result = runner.invoke(app, arguments)
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["outcome"] == "cancelled"
     assert payload["cloud_calls"] is True
     assert payload["errors"] == []
+    assert payload.get("cluster_preserved", False) is preserve_cluster
     assert calls == [
         (
             [("55", run_id)],
@@ -3817,10 +3829,39 @@ def test_launched_workflow_cancel_uses_guarded_cleanup_and_reports_cancelled(
             "",
             "/npa/pinned/sky",
             Path("/npa/controllers/run-55"),
+            not preserve_cluster,
         )
     ]
     assert lookup_dirs
     assert all(path == Path("/npa/controllers/run-55") for path in lookup_dirs)
+
+
+@pytest.mark.parametrize(
+    ("extra_args", "expected_error"),
+    [
+        (
+            ["--preserve-cluster"],
+            "--preserve-cluster requires an explicit --job-id.",
+        ),
+        (
+            ["--preserve-cluster", "--job-id", "55", "--cluster", "shared"],
+            "--preserve-cluster cannot be combined with --cluster.",
+        ),
+    ],
+)
+def test_preserve_cluster_cancel_rejects_ambiguous_targets(
+    extra_args, expected_error
+) -> None:
+    result = runner.invoke(
+        app,
+        ["workbench", "workflow", "cancel", "run-55", "--json", *extra_args],
+    )
+
+    assert result.exit_code == 2
+    payload = json.loads(result.output)
+    assert payload["outcome"] == "verification_failed"
+    assert payload["cloud_calls"] is False
+    assert payload["message"] == f"ValueError: {expected_error}"
 
 
 def test_ordinary_missing_workflow_cancel_is_verification_failure(monkeypatch) -> None:

@@ -57,8 +57,16 @@ _ACTIVE_STATUSES = frozenset({"queued", "running"})
 _WORKER_MESSAGE_LIMIT = 16 * 1024 * 1024
 _WORKER_TERMINATE_GRACE_SECONDS = 2.0
 _WORKER_KILL_REAP_GRACE_SECONDS = 10.0
+_WORKER_STOP_DRAIN_ATTEMPTS = 2
 _WORKER_STOP_ACK_GRACE_SECONDS = (
-    _WORKER_TERMINATE_GRACE_SECONDS + _WORKER_KILL_REAP_GRACE_SECONDS + 4.0
+    # The supervisor acknowledges only after up to two complete TERM+KILL
+    # drains.  A first drain can time out under a heavily parallel host while
+    # the final cleanup would otherwise succeed after it has already reported
+    # ``stopped=false``.  Budget both bounded attempts plus a small scheduling
+    # and IPC margin, without accepting an unproven cleanup.
+    _WORKER_STOP_DRAIN_ATTEMPTS
+    * (_WORKER_TERMINATE_GRACE_SECONDS + _WORKER_KILL_REAP_GRACE_SECONDS)
+    + 4.0
 )
 
 
@@ -681,7 +689,7 @@ def _supervisor_worker_entry(
                     command = sender.recv_bytes(1)
                 except (EOFError, OSError):
                     command = b""
-                cleaned = _stop_supervised_children(child)
+                cleaned = _drain_supervised_children(child)
                 stopped = command == b"\0" and cleaned
                 _send_worker_message(
                     sender,
@@ -697,7 +705,7 @@ def _supervisor_worker_entry(
                     "error": f"RoboCasa containment failed: {type(exc).__name__}: {exc}",
                 },
             )
-            stopped = _stop_supervised_children(child)
+            stopped = _drain_supervised_children(child)
             _send_worker_message(
                 sender,
                 {"kind": "stopped", "stopped": stopped},
@@ -708,7 +716,7 @@ def _supervisor_worker_entry(
         if child is not None:
             # Control EOF or a failed acknowledgement must not strand a child
             # after the service has poisoned its execution gate.
-            _stop_supervised_children(child)
+            _drain_supervised_children(child)
         if child_sender is not None:
             child_sender.close()
         if receiver is not None:
@@ -871,6 +879,20 @@ def _stop_supervised_children(primary: Any = None) -> bool:
     except (OSError, RoboCasaError, ValueError):
         LOGGER.debug("RoboCasa containment supervisor failed closed", exc_info=True)
         return False
+
+
+def _drain_supervised_children(primary: Any = None) -> bool:
+    """Prove the worker tree is gone before an acknowledgement can be sent.
+
+    A bounded retry is intentional: the caller remains fail-closed unless one
+    drain observes no direct children and a reaped primary process.  This
+    covers host scheduling delays without turning a cleanup failure into a
+    successful run.
+    """
+    for _attempt in range(_WORKER_STOP_DRAIN_ATTEMPTS):
+        if _stop_supervised_children(primary):
+            return True
+    return False
 
 
 def _execute_capability_in_worker(

@@ -14,13 +14,8 @@ _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
-def _attest_isaac_cache() -> dict[str, str]:
-    """Attest the operator-fetched closure consumed by an Isaac GPU Job."""
-
-    if os.environ.get("NPA_ISAAC_CACHE_READONLY", "").strip() != "1":
-        return {}
-    if os.environ.get("NPA_ISAAC_BOOTSTRAP_OFFLINE", "").strip() != "1":
-        raise RuntimeError("read-only Isaac cache consumption must also be offline")
+def _attest_isaac_cache_tree() -> dict[str, str]:
+    """Validate one complete content-addressed cache tree independently of mode."""
 
     root = Path(os.environ.get("NPA_ISAAC_CACHE_DIR", "/opt/isaac-cache")).resolve()
     current = root / "current"
@@ -69,8 +64,33 @@ def _attest_isaac_cache() -> dict[str, str]:
         "isaac_cache_stamp": target.name,
         "isaac_cache_manifest_sha256": manifest_sha,
         "isaac_bootstrap_sha256": bootstrap_sha,
-        "isaac_cache_mode": "offline-readonly",
     }
+
+
+def _attest_isaac_cache() -> dict[str, str]:
+    """Attest the operator-fetched closure consumed by an Isaac GPU Job."""
+
+    if os.environ.get("NPA_ISAAC_CACHE_READONLY", "").strip() != "1":
+        return {}
+    if os.environ.get("NPA_ISAAC_BOOTSTRAP_OFFLINE", "").strip() != "1":
+        raise RuntimeError("read-only Isaac cache consumption must also be offline")
+    return {**_attest_isaac_cache_tree(), "isaac_cache_mode": "offline-readonly"}
+
+
+def attest_warmed_isaac_cache() -> dict[str, str]:
+    """Attest the writer state after the canonical cache-warm workflow stage.
+
+    The cache writer is deliberately neither offline nor read-only: it is the
+    single declared SkyPilot state allowed to acquire the operator-approved
+    runtime closure.  GPU consumers still use :func:`_attest_isaac_cache` and
+    therefore require the stricter offline/read-only mode.
+    """
+
+    if os.environ.get("NPA_ISAAC_CACHE_READONLY", "").strip() == "1":
+        raise RuntimeError("Isaac cache warm state must mount its cache read-write")
+    if os.environ.get("NPA_ISAAC_BOOTSTRAP_OFFLINE", "").strip() == "1":
+        raise RuntimeError("Isaac cache warm state cannot run in offline mode")
+    return {**_attest_isaac_cache_tree(), "isaac_cache_mode": "warm-readwrite"}
 
 
 def attest_runtime_source() -> dict[str, Any]:

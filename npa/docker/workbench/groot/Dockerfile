@@ -45,6 +45,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NPA_ISAAC_CACHE_DIR=/opt/isaac-cache \
     NPA_ISAAC_BASE_PYTHON=/opt/isaac-lab/venv/bin/python \
     NPA_IMAGE_PYTHON=/opt/isaac-lab/venv/bin/python \
+    NPA_BAKED_PYTHON=/opt/isaac-lab/venv/bin/python \
     NPA_ISAAC_WHEELS_FILE=/opt/npa/docker/workbench/common/isaac-nvidia-wheels.txt \
     ISAAC_LAB_PYTHON=/isaac-sim/python.sh \
     GROOT_RUNTIME_VERSION=${GROOT_RUNTIME_VERSION} \
@@ -236,7 +237,7 @@ RUN cd "${GROOT_REPO}" \
       jinja2==3.1.6 \
       "mcap>=1.3,<2" \
     && uv pip install --python "${GROOT_VENV}/bin/python" --no-deps --upgrade \
-      "GitPython>=3.1.50" \
+      "GitPython>=3.2.1" \
       "PyJWT>=2.15.1" \
       "aiohttp>=3.13.3" \
       "aiomysql>=0.3.0" \
@@ -283,7 +284,7 @@ RUN chmod +x /opt/npa/docker/workbench/common/*.sh \
 USER ubuntu
 
 RUN /opt/isaac-lab/venv/bin/python -m pip install --no-deps --upgrade \
-      "GitPython>=3.1.50" \
+      "GitPython>=3.2.1" \
       "PyJWT>=2.15.1" \
       "aiohttp>=3.13.3" \
       "aiomysql>=0.3.0" \
@@ -291,6 +292,7 @@ RUN /opt/isaac-lab/venv/bin/python -m pip install --no-deps --upgrade \
       "cryptography>=48.0.1" \
       "diffusers>=0.38.0" \
       "jaraco.context>=6.1.0" \
+      "mcap==1.5.0" \
       "msgpack>=1.2.1" \
       "onnx>=1.21.0" \
       "pillow>=13.0.0,<14.0" \
@@ -308,17 +310,20 @@ COPY --chown=ubuntu:ubuntu workflows /opt/npa/workflows
 COPY --chown=ubuntu:ubuntu docker/workbench/groot/smoke_env.py /opt/npa/docker/workbench/groot/smoke_env.py
 COPY --chown=ubuntu:ubuntu docker/workbench/groot/smoke_functional.py /opt/npa/docker/workbench/groot/smoke_functional.py
 COPY --chown=ubuntu:ubuntu docker/workbench/groot/entrypoint.sh /opt/npa/docker/workbench/groot/entrypoint.sh
-COPY --chown=ubuntu:ubuntu docker/workbench/common/install_npa_source_launcher.py /opt/npa/install_npa_source_launcher.py
 
 RUN chmod 0755 /opt/npa/docker/workbench/groot/entrypoint.sh
 
-RUN "${GROOT_VENV}/bin/python" /opt/npa/install_npa_source_launcher.py /opt/npa/src \
-    && "${GROOT_VENV}/bin/python" -c 'from npa.cli.entry import main; main()' \
+# The vendor GR00T environment is CPython 3.12, matching the patched upstream
+# runtime. NPA's control CLI remains separate in the Python 3.11 Isaac control
+# environment, so the build validates each interpreter through its own path.
+RUN "${NPA_BAKED_PYTHON}" -c 'import sys; assert sys.version_info >= (3, 11), sys.version' \
+    && uv pip install --python "${NPA_BAKED_PYTHON}" --no-deps -e /opt/npa \
+    && env -u PYTHONPATH "${NPA_BAKED_PYTHON}" -c 'from npa.cli.entry import main; main()' \
       workbench groot finetune --help >/dev/null \
-    && "${GROOT_VENV}/bin/python" - <<'PY'
+    && env -u PYTHONPATH "${NPA_BAKED_PYTHON}" - <<'PY'
 import os
+import subprocess
 from io import BytesIO
-from importlib import metadata
 from pathlib import Path
 
 from mcap.reader import make_reader
@@ -326,7 +331,10 @@ from mcap.writer import Writer
 from npa.cli.groot import DEFAULT_EMBODIMENT_TAG, DEFAULT_MODEL, _build_server_py
 
 expected = os.environ["GROOT_RUNTIME_VERSION"]
-actual = metadata.version("gr00t")
+actual = subprocess.check_output(
+    [os.environ["GROOT_VENV"] + "/bin/python", "-c", "from importlib.metadata import version; print(version('gr00t'))"],
+    text=True,
+).strip()
 if actual != expected:
     raise RuntimeError(f"expected gr00t {expected}, found {actual}")
 buffer = BytesIO()

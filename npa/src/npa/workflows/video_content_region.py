@@ -218,8 +218,10 @@ def crop_content(source: Path, destination: Path, bounds: list[int]) -> str:
             "-an",
             "-vf",
             filters,
-            "-fps_mode",
-            "passthrough",
+            # FFmpeg 4.4 calls this passthrough mode `-vsync 0`; newer FFmpeg
+            # releases retain the equivalent legacy spelling.
+            "-vsync",
+            "0",
             "-c:v",
             "ffv1",
             "-fflags",

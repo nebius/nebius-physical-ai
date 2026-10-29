@@ -40,4 +40,6 @@ setuptools==84.2.1
 urllib3==2.8.0
 virtualenv==21.14.13
 brotli==1.2.1
-pip==26.2.1
+# The secure shared role bootstrap must not reintroduce pip's stale vendored
+# certificate bundle into the framework venv.
+pip==26.2.2

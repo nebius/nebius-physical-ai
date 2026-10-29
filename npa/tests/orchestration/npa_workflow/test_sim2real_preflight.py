@@ -8,6 +8,7 @@ import pytest
 from npa.orchestration.npa_workflow.sim2real_preflight import (
     _managed_driver_isaac_nodes,
     _ready_schedulable_cpu_nodes,
+    image_prerequisites,
     kubernetes_prerequisites,
     static_prerequisites,
 )
@@ -17,12 +18,13 @@ def _config(**overrides):
     digest = f"registry.example/registry/image@sha256:{'a' * 64}"
     config = {
         "controller_image": digest,
-        "transfer_image": digest,
+        "cosmos3_image": digest,
         "envgen_image": digest,
         "isaac_image": digest,
         "viewer_image": digest,
         "isaac_cache_pvc": "npa-isaac-cache",
-        "cosmos3_model": "nvidia/Cosmos3-Super-Reasoner",
+        "token_factory_model": "MiniMaxAI/MiniMax-M3",
+        "token_factory_base_url": "https://api.tokenfactory.nebius.com/v1/",
         "env_count": "10000",
         "train_fraction": "0.8",
         "rollout_count": "64",
@@ -34,47 +36,46 @@ def _config(**overrides):
 
 
 def test_static_preflight_checks_hf_models_and_hosted_model_before_submission():
-    from npa.workbench.model_access import gated_hf_repos
+    from npa.workbench.model_access import HF, assets_for
 
     checked = []
     hosted = []
 
     def validate(_token, repo):
         checked.append(repo)
-        return SimpleNamespace(ok=repo != "nvidia/Cosmos-Transfer2.5-2B", error="403")
+        return SimpleNamespace(ok=repo != "nvidia/Cosmos3-Nano", error="403")
 
     issues = static_prerequisites(
         _config(),
         requested_secret_envs=["HF_TOKEN", "NEBIUS_TOKEN_FACTORY_KEY"],
         secret_values={"HF_TOKEN": "redacted", "NEBIUS_TOKEN_FACTORY_KEY": "redacted"},
         hf_validator=validate,
-        token_factory_validator=lambda _key, model: (
+        token_factory_validator=lambda _key, model, **_kwargs: (
             hosted.append(model) or SimpleNamespace(ok=True)
         ),
     )
 
-    # The gate mirrors the sim2real capability's single source of truth rather
-    # than a hardcoded repo, so the pinned Predict2.5 tokenizer and Cosmos
-    # Guardrail dependencies of Stage 3 are verified before launch.
-    expected = list(dict.fromkeys(gated_hf_repos(("sim2real",))))
+    # The gate mirrors the Sim2Real capability's single source of truth rather
+    # than a hardcoded legacy Transfer2.5 payload.
+    expected = list(
+        dict.fromkeys(
+            asset.repo for asset in assets_for(("sim2real",)) if asset.provider == HF
+        )
+    )
     assert checked == expected
-    assert "nvidia/Cosmos-Transfer2.5-2B" in checked
-    assert "nvidia/Cosmos-Predict2.5-2B" in checked
+    assert "nvidia/Cosmos3-Nano" in checked
     assert "nvidia/Cosmos-Guardrail1" in checked
+    assert "nvidia/Cosmos-Transfer2.5-2B" not in checked
     assert "nvidia/Cosmos-Reason2-8B" not in checked
-    assert hosted == ["nvidia/Cosmos3-Super-Reasoner"]
+    assert hosted == ["MiniMaxAI/MiniMax-M3"]
     rendered = "\n".join(item for item, _ in issues)
-    assert "Cosmos-Transfer2.5-2B" in rendered
+    assert "Cosmos3-Nano" in rendered
     assert "AWS_ACCESS_KEY_ID" in rendered
     assert "AWS_SECRET_ACCESS_KEY" in rendered
 
 
-def test_static_preflight_surfaces_unaccepted_transfer_dependencies():
-    # Regression: an operator with Cosmos-Transfer2.5-2B accepted but the pinned
-    # Predict2.5 tokenizer (or Cosmos Guardrail) unaccepted previously passed
-    # this preflight and only failed inside Stage 3. The gate must report those
-    # repos before any GPU work.
-    denied_repo = "nvidia/Cosmos-Predict2.5-2B"
+def test_static_preflight_surfaces_unaccepted_cosmos3_dependencies():
+    denied_repo = "nvidia/Cosmos3-Nano"
 
     def validate(_token, repo):
         return SimpleNamespace(ok=repo != denied_repo, error="403 gated")
@@ -84,7 +85,9 @@ def test_static_preflight_surfaces_unaccepted_transfer_dependencies():
         requested_secret_envs=["HF_TOKEN", "NEBIUS_TOKEN_FACTORY_KEY"],
         secret_values={"HF_TOKEN": "redacted", "NEBIUS_TOKEN_FACTORY_KEY": "redacted"},
         hf_validator=validate,
-        token_factory_validator=lambda _key, _model: SimpleNamespace(ok=True),
+        token_factory_validator=lambda _key, _model, **_kwargs: SimpleNamespace(
+            ok=True
+        ),
     )
 
     rendered = "\n".join(item for item, _ in issues)
@@ -92,11 +95,11 @@ def test_static_preflight_surfaces_unaccepted_transfer_dependencies():
     assert "Hugging Face access failed" in rendered
 
 
-def test_archived_reason3_config_key_does_not_change_canonical_hosted_probe():
+def test_archived_cosmos3_config_key_does_not_change_canonical_hosted_probe():
     checked = []
     config = _config()
-    config.pop("cosmos3_model")
-    config["reason3_model"] = "nvidia/Cosmos-Reason2-2B"
+    config.pop("token_factory_model")
+    config["cosmos3_model"] = "nvidia/Cosmos-Reason2-2B"
 
     static_prerequisites(
         config,
@@ -110,7 +113,7 @@ def test_archived_reason3_config_key_does_not_change_canonical_hosted_probe():
         hf_validator=lambda _token, repo: (
             checked.append(repo) or SimpleNamespace(ok=True)
         ),
-        token_factory_validator=lambda _key, model: (
+        token_factory_validator=lambda _key, model, **_kwargs: (
             checked.append(model) or SimpleNamespace(ok=True)
         ),
     )
@@ -121,11 +124,11 @@ def test_archived_reason3_config_key_does_not_change_canonical_hosted_probe():
 
 def test_unsupported_hosted_family_fails_before_model_probe():
     issues = static_prerequisites(
-        _config(cosmos3_model="nvidia/Cosmos-Reason2-8B"),
+        _config(token_factory_model="nvidia/Cosmos-Reason2-8B"),
         requested_secret_envs=["NEBIUS_TOKEN_FACTORY_KEY"],
         secret_values={"NEBIUS_TOKEN_FACTORY_KEY": "redacted"},
         hf_validator=lambda *_args: SimpleNamespace(ok=True),
-        token_factory_validator=lambda *_args: pytest.fail(
+        token_factory_validator=lambda *_args, **_kwargs: pytest.fail(
             "unsupported model was probed"
         ),
     )
@@ -145,7 +148,7 @@ def test_static_preflight_rejects_mutable_images_without_manual_eula_inputs():
         ],
         secret_values={"HF_TOKEN": "redacted", "NEBIUS_TOKEN_FACTORY_KEY": "redacted"},
         hf_validator=lambda _token, repo: SimpleNamespace(ok=True, repo=repo),
-        token_factory_validator=lambda _key, model: SimpleNamespace(
+        token_factory_validator=lambda _key, model, **_kwargs: SimpleNamespace(
             ok=True, model=model
         ),
     )
@@ -153,6 +156,16 @@ def test_static_preflight_rejects_mutable_images_without_manual_eula_inputs():
     rendered = "\n".join(item for item, _ in issues)
     assert "controller_image" in rendered
     assert "accept_eula" not in rendered.lower()
+
+
+def test_image_prerequisites_rejects_cosmos_reason_as_stage03_runtime():
+    issues = image_prerequisites(
+        _config(cosmos3_image="registry.example/npa-cosmos3-reason@sha256:" + "b" * 64)
+    )
+
+    rendered = "\n".join(message for message, _ in issues)
+    assert "npa-cosmos3-reason" in rendered
+    assert "generation framework" in rendered
 
 
 def test_static_preflight_rejects_unresolved_token_factory_key():
@@ -166,7 +179,7 @@ def test_static_preflight_rejects_unresolved_token_factory_key():
         ],
         secret_values={"HF_TOKEN": "redacted"},
         hf_validator=lambda _token, repo: SimpleNamespace(ok=True, repo=repo),
-        token_factory_validator=lambda *_args: pytest.fail(
+        token_factory_validator=lambda *_args, **_kwargs: pytest.fail(
             "missing key must not be probed"
         ),
     )
@@ -209,7 +222,7 @@ def test_static_preflight_rejects_counts_larger_than_sealed_splits(
         ],
         secret_values={"HF_TOKEN": "redacted", "NEBIUS_TOKEN_FACTORY_KEY": "redacted"},
         hf_validator=lambda _token, repo: SimpleNamespace(ok=True, repo=repo),
-        token_factory_validator=lambda _key, model: SimpleNamespace(
+        token_factory_validator=lambda _key, model, **_kwargs: SimpleNamespace(
             ok=True, model=model
         ),
     )
@@ -249,7 +262,7 @@ def test_static_preflight_accepts_counts_that_fit_all_sealed_splits(
         ],
         secret_values={"HF_TOKEN": "redacted", "NEBIUS_TOKEN_FACTORY_KEY": "redacted"},
         hf_validator=lambda _token, repo: SimpleNamespace(ok=True, repo=repo),
-        token_factory_validator=lambda _key, model: SimpleNamespace(
+        token_factory_validator=lambda _key, model, **_kwargs: SimpleNamespace(
             ok=True, model=model
         ),
     )
@@ -274,7 +287,9 @@ def test_static_preflight_rejects_unparseable_split_inputs(key, invalid_value):
         requested_secret_envs=[],
         secret_values={},
         hf_validator=lambda *_args: pytest.fail("no token supplied"),
-        token_factory_validator=lambda *_args: pytest.fail("no key supplied"),
+        token_factory_validator=lambda *_args, **_kwargs: pytest.fail(
+            "no key supplied"
+        ),
     )
 
     assert any("split inputs are missing or not numeric" in item for item, _ in issues)
@@ -339,6 +354,83 @@ def test_kubernetes_preflight_parses_nodes_and_pvc():
         ["get", "nodes"],
         ["get", "pvc"],
     ]
+
+
+def test_kubernetes_preflight_admits_only_canonical_delayed_cache_binding():
+    calls = []
+
+    def run(args):
+        calls.append(args)
+        if args[:2] == ["get", "nodes"]:
+            return SimpleNamespace(returncode=0, stdout=_nodes(), stderr="")
+        if args[:2] == ["get", "pvc"]:
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "spec": {
+                            "accessModes": ["ReadWriteMany"],
+                            "storageClassName": "delayed-rwx",
+                        },
+                        "status": {"phase": "Pending"},
+                    }
+                ),
+                stderr="",
+            )
+        if args[:2] == ["get", "storageclass"]:
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps({"volumeBindingMode": "WaitForFirstConsumer"}),
+                stderr="",
+            )
+        return SimpleNamespace(returncode=1, stdout="", stderr="unexpected")
+
+    assert (
+        kubernetes_prerequisites(
+            _config(),
+            runner=run,
+            allow_wait_for_first_consumer=True,
+        )
+        == []
+    )
+    assert [call[:2] for call in calls] == [
+        ["get", "nodes"],
+        ["get", "pvc"],
+        ["get", "storageclass"],
+    ]
+
+    issues = kubernetes_prerequisites(_config(), runner=run)
+    assert any("not Bound ReadWriteMany" in issue for issue, _ in issues)
+
+
+def test_kubernetes_preflight_rejects_pending_immediate_cache_binding():
+    def run(args):
+        if args[:2] == ["get", "nodes"]:
+            return SimpleNamespace(returncode=0, stdout=_nodes(), stderr="")
+        if args[:2] == ["get", "pvc"]:
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "spec": {
+                            "accessModes": ["ReadWriteMany"],
+                            "storageClassName": "immediate-rwx",
+                        },
+                        "status": {"phase": "Pending"},
+                    }
+                ),
+                stderr="",
+            )
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps({"volumeBindingMode": "Immediate"}),
+            stderr="",
+        )
+
+    issues = kubernetes_prerequisites(
+        _config(), runner=run, allow_wait_for_first_consumer=True
+    )
+    assert any("not Bound ReadWriteMany" in issue for issue, _ in issues)
 
 
 def test_kubernetes_preflight_reports_every_missing_cluster_object_together():
@@ -476,3 +568,14 @@ def test_malformed_node_identity_is_reported_without_traceback(broken):
         {}, runner=lambda _: SimpleNamespace(returncode=0, stdout=json.dumps(payload))
     )
     assert any("placement could not be verified" in issue for issue, _ in issues)
+
+
+@pytest.mark.parametrize(
+    "concurrency,frames", [(0, 0), (-1, 8), (8, -1), ("invalid", 0)]
+)
+def test_hosted_evaluation_settings_refuse_before_launch(concurrency, frames):
+    from npa.orchestration.npa_workflow.sim2real_preflight import _evaluation_issues
+
+    assert _evaluation_issues(
+        {"evaluation_concurrency": concurrency, "evaluation_max_frames": frames}
+    )

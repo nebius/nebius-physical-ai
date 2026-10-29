@@ -436,6 +436,7 @@ def test_genesis_workflow_images_pin_the_bootstrap_closure(
     ).read_text(encoding="utf-8")
     assert "configure-ubuntu-snapshot" in installer
     assert "snapshot.ubuntu.com/ubuntu/${snapshot}" in snapshot_config
+    assert 'Acquire::Retries "5";' in snapshot_config
     assert "ubuntu:22.04" in snapshot_config
     assert "ubuntu:24.04" in snapshot_config
     assert "ubuntu:22.04" in installer

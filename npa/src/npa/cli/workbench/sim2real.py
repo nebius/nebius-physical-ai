@@ -16,7 +16,12 @@ from npa.clients.config import ConfigError, list_projects, resolve_project_stora
 from npa.clients.credentials import load_credentials
 from npa.clients.project_credential_store import ProjectCredentialStoreError
 from npa.clients.storage import StorageClient
-from npa.lifecycle_intent import OperationIntent, operation_intent
+from npa.lifecycle_intent import (
+    OperationIntent,
+    intent_boundary,
+    json_stdout_contract,
+    operation_intent,
+)
 from npa.workflows.sim2real.constants import (
     DEFAULT_ACTION_ENV_LIMIT,
     DEFAULT_ENVGEN_SHARD_COUNT,
@@ -82,6 +87,12 @@ app = typer.Typer(
     help="Sim2Real VLM-to-RL loop and threshold-gated workflow.",
     no_args_is_help=True,
 )
+cache_app = typer.Typer(
+    name="cache",
+    help="Provision the durable claim consumed by the canonical Isaac cache-warm state.",
+    no_args_is_help=True,
+)
+app.add_typer(cache_app, name="cache")
 
 
 @dataclass(frozen=True)
@@ -118,6 +129,85 @@ def _selected_project_storage(project: str):
             "Configure a bucket, endpoint, and S3 key pair for this project."
         )
     return storage
+
+
+@cache_app.command("provision")
+@json_stdout_contract(fail_closed_on_exception=True)
+@intent_boundary(OperationIntent.MUTATE)
+def provision_isaac_cache_claim(
+    name: str = typer.Option(..., "--name", help="DNS-safe RWX PVC name."),
+    context: str = typer.Option(
+        ...,
+        "--context",
+        help="Exact Kubernetes context; never inferred from ambient state.",
+    ),
+    namespace: str = typer.Option(
+        "default", "--namespace", help="Namespace that the canonical workflow will use."
+    ),
+    storage_class: str = typer.Option(
+        "csi-mounted-fs-path-sc",
+        "--storage-class",
+        help="RWX-capable StorageClass for the operator-owned cache.",
+    ),
+    storage: str = typer.Option(
+        "64Gi", "--storage", help="Requested persistent-cache capacity."
+    ),
+    kubeconfig: str = typer.Option(
+        "", "--kubeconfig", help="Optional isolated kubeconfig for the exact context."
+    ),
+    wait: bool = typer.Option(
+        True,
+        "--wait/--no-wait",
+        help="Wait until the claim is Bound; default has no artificial deadline.",
+    ),
+    output_json: bool = typer.Option(False, "--json", help="Emit one JSON receipt."),
+) -> None:
+    """Create one managed RWX claim or verify an existing claim without replacing it."""
+
+    from npa.workflows.sim2real.isaac_cache import provision_cache_claim
+    from npa.workflows.sim2real.k8s_client import KubernetesJobClient
+
+    try:
+        client = KubernetesJobClient.from_environment(
+            namespace=namespace,
+            kubeconfig=kubeconfig,
+            context=context,
+            prefer_kubeconfig=True,
+        )
+        receipt = provision_cache_claim(
+            core_api=client.core,
+            name=name,
+            namespace=namespace,
+            storage_class=storage_class,
+            storage=storage,
+            wait=wait,
+        )
+    except Exception as exc:
+        if output_json:
+            raise RuntimeError(str(exc)) from exc
+        typer.echo(f"Isaac cache claim provisioning failed: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    payload = {
+        "status": "ready" if receipt.phase == "Bound" else "pending",
+        "claim": receipt.to_dict(),
+        "next": (
+            "submit the canonical workflow with --var isaac_cache_pvc=" + receipt.name
+            if receipt.phase == "Bound"
+            else (
+                "for a Pending claim, submit only through the canonical workflow "
+                "after its guarded preflight verifies this exact RWX StorageClass "
+                "uses WaitForFirstConsumer"
+            )
+        ),
+    }
+    if output_json:
+        typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+        return
+    typer.echo(
+        f"Isaac cache claim {receipt.name!r}: {receipt.phase} "
+        f"({receipt.custody}; namespace={receipt.namespace})"
+    )
+    typer.echo(payload["next"])
 
 
 def _resolve_rerun_storage(

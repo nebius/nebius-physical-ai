@@ -96,3 +96,12 @@ def test_hackathon_guide_does_not_claim_stand_in_agency() -> None:
     assert "stylized stand-ins, not Isaac Sim renders" in guide
     assert "not as evidence that the arm" in guide
     assert "isaac-agency" in guide
+
+
+def test_hackathon_guide_uses_the_current_hosted_reasoner() -> None:
+    guide = HACKATHON_GUIDE.read_text(encoding="utf-8")
+
+    assert "then call **`MiniMaxAI/MiniMax-M3`**" in guide
+    assert 'model="MiniMaxAI/MiniMax-M3"' in guide
+    assert "--model MiniMaxAI/MiniMax-M3" in guide
+    assert "--model nvidia/Cosmos3-Super-Reasoner" not in guide

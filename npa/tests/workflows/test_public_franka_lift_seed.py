@@ -52,7 +52,7 @@ def _video_bytes(tmp_path: Path, name: str) -> bytes:
         stream.width = 16
         stream.height = 16
         stream.pix_fmt = "yuv420p"
-        for value in (25, 75, 125, 225):
+        for value in (25, 50, 75, 100, 125, 150, 190, 225):
             array = np.full((16, 16, 3), value, dtype=np.uint8)
             for packet in stream.encode(
                 av.VideoFrame.from_ndarray(array, format="rgb24")
@@ -102,7 +102,7 @@ def _fetcher(tmp_path: Path, *, revision: str = PUBLIC_FRANKA_LIFT_DATASET_REVIS
     return fetch
 
 
-def test_stage_public_franka_lift_derives_real_subset_counts_and_hashes(
+def test_stage_public_franka_lift_derives_complete_sequence_counts_and_hashes(
     tmp_path: Path,
 ) -> None:
     storage = MemoryStorage()
@@ -115,16 +115,11 @@ def test_stage_public_franka_lift_derives_real_subset_counts_and_hashes(
 
     assert result["dataset_id"] == PUBLIC_FRANKA_LIFT_DATASET_ID
     assert result["action_count"] == 3
-    assert result["camera_observation_count"] == 4
+    assert result["camera_observation_count"] == 8
     frame_names = sorted(
         uri.rsplit("/", 1)[-1] for uri in storage.objects if "/frames/" in uri
     )
-    assert frame_names == [
-        "camera-000.png",
-        "camera-001.png",
-        "camera-002.png",
-        "camera-003.png",
-    ]
+    assert frame_names == [f"camera-{index:03d}.png" for index in range(8)]
     assert all(
         name.removeprefix("camera-").removesuffix(".png").isdigit()
         for name in frame_names
@@ -138,12 +133,16 @@ def test_stage_public_franka_lift_derives_real_subset_counts_and_hashes(
     assert [
         (record["source_camera"], record["source_frame_index"])
         for record in frame_records
-    ] == [
-        ("image", 0),
-        ("image", 1),
-        ("image", 2),
-        ("image", 3),
-    ]
+    ] == [("image", index) for index in range(8)]
+    assert manifest["source_provenance"]["primary_camera_sequence"] == {
+        "source_path": SOURCE_PATHS["main_video"],
+        "source_camera": "image",
+        "selection": "complete_episode_in_decode_order",
+        "complete": True,
+        "source_video_decoded_frames": 8,
+        "staged_frame_count": 8,
+        "minimum_frames_for_cosmos3": 6,
+    }
     assert (
         manifest["source_provenance"]["repository"]
         == PUBLIC_FRANKA_LIFT_DATASET_REPOSITORY

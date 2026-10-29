@@ -27,6 +27,7 @@ def _copies(tmp_path: Path) -> tuple[Path, Path, Path]:
     )
     for target, source in zip(paths, (MANIFEST, SOURCE_LOCK, CORRESPONDING_LOCK)):
         target.write_bytes(source.read_bytes())
+        target.chmod(0o600)
     return paths
 
 

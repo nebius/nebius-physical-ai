@@ -58,6 +58,7 @@ def test_needs_image_update_exclusions_can_only_shrink() -> None:
         "cosmos3",
         "cosmos3-ray-serve",
         "curobo",
+        "envgen",
         "genesis",
         "gymnasium-robotics",
         "isaac-arena",

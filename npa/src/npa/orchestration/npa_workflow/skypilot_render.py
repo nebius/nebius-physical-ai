@@ -389,7 +389,7 @@ def tool_vendor_interpreters(tool_ref: str) -> tuple[str, ...]:
 
 
 def render_vendor_interpreter_setup(candidates: Sequence[str]) -> str:
-    """Install npa into the vendor image's interpreter and make it the stage interpreter."""
+    """Install npa into a supported vendor interpreter and make it the stage interpreter."""
 
     if not candidates:
         return ""
@@ -429,6 +429,14 @@ def render_vendor_interpreter_setup(candidates: Sequence[str]) -> str:
         "# there and that interpreter has to be the one the stage runs.\n"
         f"for npa_vendor_python in {listed}; do\n"
         '  [ -x "$npa_vendor_python" ] || continue\n'
+        # The checkout declares Python >=3.11.  Some upstream vendor runtimes
+        # remain on 3.10 for their compiled ABI, but NPA must not be installed
+        # into those environments: pip's eventual Requires-Python failure hid
+        # the actionable interpreter mismatch behind dependency noise.
+        '  if ! "$npa_vendor_python" -c "import sys; raise SystemExit(sys.version_info < (3, 11))"; then\n'
+        '    echo "skipping unsupported NPA vendor interpreter (requires Python >=3.11): $npa_vendor_python" >&2\n'
+        "    continue\n"
+        "  fi\n"
         '  npa_vendor_src=""\n'
         "  if [ -s /tmp/npa-src-root ]; then\n"
         '    npa_vendor_src="$(cat /tmp/npa-src-root)"\n'
@@ -1774,6 +1782,22 @@ def default_npa_setup() -> str:
         '|| ! "$npa_setup_python" -c "import sys" >/dev/null 2>&1; then\n'
         '  npa_setup_python="$(command -v python3)"\n'
         "fi\n"
+        # Current NPA metadata requires Python >=3.11. Prefer a compatible
+        # control interpreter before touching an image's dependency closure;
+        # a vendor's retained Python 3.10 inference ABI is not an NPA runtime.
+        'if ! "$npa_setup_python" -c "import sys; raise SystemExit(sys.version_info < (3, 11))" >/dev/null 2>&1; then\n'
+        "  for npa_candidate_python in python3.12 python3.11; do\n"
+        '    npa_candidate_path="$(command -v "$npa_candidate_python" 2>/dev/null || true)"\n'
+        '    if [ -n "$npa_candidate_path" ] && "$npa_candidate_path" -c "import sys; raise SystemExit(sys.version_info < (3, 11))" >/dev/null 2>&1; then\n'
+        '      npa_setup_python="$npa_candidate_path"\n'
+        "      break\n"
+        "    fi\n"
+        "  done\n"
+        "fi\n"
+        'if ! "$npa_setup_python" -c "import sys; raise SystemExit(sys.version_info < (3, 11))" >/dev/null 2>&1; then\n'
+        '  echo "NPA source requires Python >=3.11; image supplied no compatible control interpreter" >&2\n'
+        "  exit 1\n"
+        "fi\n"
         # Thin workbench images keep the installable project at /opt/npa rather than the
         # legacy /opt/nebius-physical-ai/npa path.  Record it even when the baked `npa`
         # launcher is already on PATH: vendor-interpreter setup still needs the source root
@@ -2319,10 +2343,14 @@ def render_setup_for_tool(
             from npa.orchestration.npa_workflow.sim2real_evaluator_probe import (
                 render_evaluator_probe,
             )
-            from npa.workflows.sim2real.constants import DEFAULT_COSMOS3_MODEL
+            from npa.clients.token_factory import DEFAULT_BASE_URL
+            from npa.workflows.sim2real.constants import DEFAULT_TOKEN_FACTORY_MODEL
 
             evaluator_probe = render_evaluator_probe(
-                str(config.get("cosmos3_model") or DEFAULT_COSMOS3_MODEL).strip()
+                str(
+                    config.get("token_factory_model") or DEFAULT_TOKEN_FACTORY_MODEL
+                ).strip(),
+                str(config.get("token_factory_base_url") or DEFAULT_BASE_URL).strip(),
             )
         return (
             "set -e\n"

@@ -8,12 +8,8 @@ in npa.cli.main.
 from __future__ import annotations
 
 from importlib import resources
+import tomllib
 from typing import Any
-
-try:
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover - Python < 3.11 fallback.
-    import tomli as tomllib
 
 
 SolutionEntry = dict[str, str]

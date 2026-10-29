@@ -7,13 +7,9 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
-import sys
 import tempfile
 
-if sys.version_info >= (3, 11):
-    import tomllib
-else:
-    import tomli as tomllib
+import tomllib
 
 
 _ROOT = Path(__file__).resolve().parents[2]

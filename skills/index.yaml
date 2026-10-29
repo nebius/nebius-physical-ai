@@ -40,6 +40,17 @@ licenses:
     applies_to:
       - neural-reconstruction
 skills:
+  - name: nebius-stream-beta
+    category: tools
+    when_to_use: "Use an operator-supplied Nebius Stream beta HTTPS endpoint to discover Cosmos3 Nano/Super capabilities, register S3 input and verified Nebius output, augment media or inventories, recover artifacts, and export customer-scoped usage."
+    path: skills/tools/nebius-stream-beta/SKILL.md
+    smoke:
+      - type: file_exists
+        path: skills/tools/nebius-stream-beta/scripts/cosmos_client.py
+      - type: file_exists
+        path: skills/tools/nebius-stream-beta/references/requests.md
+      - type: file_exists
+        path: skills/tools/nebius-stream-beta/references/iteration.md
   - name: embodiedgen
     category: tools
     when_to_use: "Run or review EmbodiedGen V2 image-to-rigid-object generation through the operator-private TRELLIS runtime, exported URDF/collision geometry, PyBullet validation, and factual view artifacts."

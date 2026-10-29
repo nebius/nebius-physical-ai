@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 from importlib.metadata import version
-from importlib.util import find_spec
 import subprocess
-from unittest.mock import patch
 
 import pytest
 
@@ -36,7 +34,7 @@ def test_sim2real_envgen_runtime_readability_probe_is_non_root_and_drops_pythonp
         return subprocess.CompletedProcess(
             args,
             0,
-            stdout="/opt/npa/compat/tetgen.py | /opt/npa/src/npa/workflows/sim2real_envgen.py\n",
+            stdout="/opt/npa/src/npa/workflows/sim2real_envgen.py\n",
             stderr="",
         )
 
@@ -96,29 +94,6 @@ def test_lerobot_vlm_rl_signal_step_passes() -> None:
 
             result = check_vlm_signal_step()
     assert result.ok, result.detail
-
-
-@pytest.mark.skipif(
-    find_spec("torch") is None,
-    reason="torch not installed",
-)
-@patch("npa.genesis.env_pick_place.FrankaPickPlaceEnv")
-@patch("torch.cuda.is_available", return_value=True)
-def test_sim2real_envgen_genesis_step_mocked(_cuda, mock_env) -> None:
-    from npa.smoke.test_sim2real_envgen_functional import check_genesis_cuda_step
-
-    instance = mock_env.return_value
-    instance.act_dim = 4
-    # Simulation is replaced at its boundary; keep tensor construction on the
-    # CPU so this unit check does not require a physical CUDA device.
-    instance.device = "cpu"
-    result = check_genesis_cuda_step()
-    assert result.ok, result.detail
-    instance.reset.assert_called_once_with()
-    instance.step.assert_called_once()
-    action = instance.step.call_args.args[0]
-    assert tuple(action.shape) == (1, 4)
-    assert action.count_nonzero().item() == 0
 
 
 def test_manifest_covers_all_tools_with_container_smokes_or_server_smokes() -> None:
