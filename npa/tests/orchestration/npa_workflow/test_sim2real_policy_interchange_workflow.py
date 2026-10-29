@@ -16,6 +16,9 @@ from npa.workflows.sim2real.runtime_prerequisites import resource_identities
 ROOT = Path(__file__).resolve().parents[4]
 SPEC = ROOT / "workflows/testing/sim2real-policy-interchange-smolvla.yaml"
 NON_FRANKA_SPEC = ROOT / "workflows/testing/sim2real-policy-interchange-non-franka.yaml"
+OBJECT_EVAL_SPEC = (
+    ROOT / "workflows/testing/sim2real-policy-interchange-object-eval.yaml"
+)
 STATES = [
     "prepare-contract",
     "provision-runtime-prerequisites",
@@ -330,3 +333,56 @@ def test_non_franka_acceptance_uses_standard_runtime_and_real_native_seams() -> 
     description = str(spec.metadata["description"]).lower()
     assert "execution validity separate" in description
     assert "statistical improvement" in description
+
+
+def test_object_eval_is_evaluation_only_held_out_cohort() -> None:
+    spec = load_spec(OBJECT_EVAL_SPEC)
+    plan = build_plan(spec, run_id="franka-offset-spool-zero-shot")
+
+    assert [step.state for step in plan.steps] == [
+        "prepare-contract",
+        "provision-runtime-prerequisites",
+        "start-adapted-service",
+        "evaluate-object-cohort",
+        "cleanup-adapted-service",
+        "cleanup-runtime-prerequisites",
+    ]
+    assert spec.on_failure == "failure-cleanup-runtime-prerequisites"
+    assert len(str(spec.config["source_sha"])) == 40
+    assert all(
+        str(spec.config[key]).startswith("registry.example.invalid/")
+        and "@sha256:" in str(spec.config[key])
+        for key in ("cpu_image", "isaac_image", "runtime_image")
+    )
+    assert not {
+        "collect-expert",
+        "export-dataset",
+        "train-native",
+        "reload-validation",
+    }.intersection(spec.states)
+
+    steps = {step.state: step for step in plan.steps}
+    service = steps["start-adapted-service"].argv
+    execute = steps["evaluate-object-cohort"].argv
+    assert _value(service, "--checkpoint-uri") == spec.config["adapted_checkpoint_uri"]
+    assert execute[:3] == [
+        "/isaac-sim/python.sh",
+        "-m",
+        "npa.workflows.sim2real.interchange_isaac_entry",
+    ]
+    assert _value(execute, "--episodes") == "8"
+    assert _value(execute, "--decisions") == "192"
+    assert _value(execute, "--policy-role") == "adapted"
+    assert (
+        _value(execute, "--prepared-robot-uri")
+        == spec.config["non_franka_prepared_robot_uri"]
+    )
+    assert _value(execute, "--preparation-uri").endswith(
+        "/stage_01_prepare/preparation.json"
+    )
+    assert _value(execute, "--service-receipt-uri").endswith(
+        "/stage_10_adapted_service/start.json"
+    )
+    description = str(spec.metadata["description"]).lower()
+    assert "zero-shot" in description
+    assert "does not train" in description
