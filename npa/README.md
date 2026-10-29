@@ -330,6 +330,13 @@ your Python environment; remote workloads use their container dependencies.
 See [installation](../docs/install.md) for supported platforms, virtual
 environments, and the separate SkyPilot environment.
 
+Cosmos checkpoint fetch supports the current Hugging Face `hf` CLI and older
+`huggingface-cli` environments, including installations whose scripts are absent
+from `PATH`. Self-hosted Cosmos Reason supports the official Reason1 7B and
+Reason2 8B/2B models at reviewed immutable revisions. Custom remote repositories
+still require `NPA_COSMOS_REASON_MODEL_REVISION` set to a full 40-character commit
+SHA; model and processor loading keeps remote code execution disabled.
+
 The cluster GPU smoke manages an owned SkyPilot API session through workload
 cleanup; see [SkyPilot setup](../docs/orchestration/skypilot-setup.md#verify).
 GPU submission also checks reviewed SkyPilot bridge labels after node replacement;

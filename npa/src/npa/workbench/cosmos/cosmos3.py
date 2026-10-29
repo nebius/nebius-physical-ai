@@ -550,19 +550,19 @@ def _hf_env(config: Cosmos3AccessConfig, env: Mapping[str, str]) -> dict[str, st
 
 
 def _huggingface_cli() -> list[str]:
-    """Return an argv prefix for the Hugging Face CLI, preferring the module over the script.
+    """Select the current Hub CLI while supporting older vendor environments.
 
-    Live job 290: `[Errno 2] No such file or directory: 'huggingface-cli'` on a host where
-    `huggingface_hub` was installed moments earlier. Console scripts land in whichever scripts
-    directory pip chose — which under a PEP 668 `--user` fallback is not the one on PATH — while
-    the module is importable from the interpreter that installed it, by construction. Falling
-    back to `python -m` removes the PATH dependency instead of papering over it.
+    Hub 1.x retains a failing legacy launcher in some releases. Prefer ``hf``
+    when both scripts exist. Module fallback uses this interpreter's package
+    when its scripts directory is absent from PATH.
     """
-
-    executable = shutil.which("huggingface-cli")
-    if executable:
-        return [executable]
+    for name in ("hf", "huggingface-cli"):
+        executable = shutil.which(name)
+        if executable:
+            return [executable]
     if importlib.util.find_spec("huggingface_hub") is not None:
+        if importlib.util.find_spec("huggingface_hub.cli") is not None:
+            return [sys.executable, "-m", "huggingface_hub.cli.hf"]
         return [sys.executable, "-m", "huggingface_hub.commands.huggingface_cli"]
     return ["huggingface-cli"]
 

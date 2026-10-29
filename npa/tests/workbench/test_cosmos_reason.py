@@ -1136,21 +1136,21 @@ class _ReasonModel:
         return [[10, 20]]
 
 
-def _install_reason_model_double(monkeypatch, model_payload):
+def _install_reason_model_double(monkeypatch, model_payload, expected_model, revision):
     """Replace external model execution while retaining the public inference path."""
     import torch
 
     processor = _ReasonProcessor(model_payload)
 
     def load_processor(model_id, **kwargs):
-        assert model_id == DEFAULT_REASON2_MODEL
-        assert kwargs["revision"] == "a9fae2cf89dc64db96b12860417f0eb403013bb9"
+        assert model_id == expected_model
+        assert kwargs["revision"] == revision
         assert kwargs["trust_remote_code"] is False
         return processor
 
     def load_model(model_id, **kwargs):
-        assert model_id == DEFAULT_REASON2_MODEL
-        assert kwargs["revision"] == "a9fae2cf89dc64db96b12860417f0eb403013bb9"
+        assert model_id == expected_model
+        assert kwargs["revision"] == revision
         assert kwargs["trust_remote_code"] is False
         return _ReasonModel()
 
@@ -1168,8 +1168,14 @@ def _install_reason_model_double(monkeypatch, model_payload):
     monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda: False)
 
 
-@pytest.fixture
-def self_hosted_reason(monkeypatch, tmp_path):
+@pytest.fixture(
+    params=[
+        (DEFAULT_REASON2_MODEL, "a9fae2cf89dc64db96b12860417f0eb403013bb9"),
+        ("nvidia/Cosmos-Reason2-2B", "9ce19a195e423419c349abfc86fd07178b230561"),
+    ],
+    ids=["reason2-8b", "reason2-2b"],
+)
+def self_hosted_reason(monkeypatch, tmp_path, request):
     """A decoded local frame plus external model doubles; no live inference."""
     from PIL import Image
 
@@ -1177,11 +1183,14 @@ def self_hosted_reason(monkeypatch, tmp_path):
     Image.new("RGB", (2, 2)).save(frame)
     monkeypatch.setenv("HF_HOME", str(tmp_path / "hf"))
     monkeypatch.setenv("NPA_COSMOS_REASON2_CACHE", str(tmp_path / "cache"))
+    monkeypatch.setenv("NPA_COSMOS_REASON3_CACHE", str(tmp_path / "cache-2b"))
+    monkeypatch.delenv("NPA_COSMOS_REASON_MODEL_REVISION", raising=False)
+    model_id, revision = request.param
 
     def run(model_payload):
-        _install_reason_model_double(monkeypatch, model_payload)
+        _install_reason_model_double(monkeypatch, model_payload, model_id, revision)
         return reason_module.run_cosmos_reason_vlm(
-            model_id=DEFAULT_REASON2_MODEL,
+            model_id=model_id,
             image_paths=[frame],
             actions=[{"step": 0, "action": [0.0]}],
             task_description="Hold the cube.",

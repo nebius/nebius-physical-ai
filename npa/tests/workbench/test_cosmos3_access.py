@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 import httpx
+import pytest
 import yaml
 
 from npa.workbench.cosmos.cosmos3 import (
@@ -184,11 +185,17 @@ def test_cosmos3_check_uses_public_defaults_anonymously(
     ]
 
 
+@pytest.mark.parametrize(
+    "launcher",
+    [["hf"], ["huggingface-cli"], ["python", "-m", "huggingface_hub.cli.hf"]],
+)
 def test_cosmos3_fetch_clones_and_downloads_without_token_args(
     mocker,
     tmp_path: Path,
+    launcher,
 ) -> None:
     mocker.patch("httpx.head", return_value=httpx.Response(200))
+    mocker.patch("npa.workbench.cosmos.cosmos3._huggingface_cli", return_value=launcher)
     run, calls = _runner()
     cfg = Cosmos3AccessConfig(
         model_id="org/private-model",
@@ -210,8 +217,8 @@ def test_cosmos3_fetch_clones_and_downloads_without_token_args(
     commands = [call[0] for call in calls]
     assert commands[0][:3] == ["git", "ls-remote", "--exit-code"]
     assert commands[1][:3] == ["git", "clone", "--depth"]
-    assert Path(commands[2][0]).name == "huggingface-cli"
-    assert commands[2][1] == "download"
+    assert commands[2][: len(launcher)] == launcher
+    assert commands[2][len(launcher)] == "download"
     assert "--include" in commands[2]
     assert "gh-secret" not in " ".join(" ".join(command) for command in commands)
     assert "hf-secret" not in " ".join(" ".join(command) for command in commands)
