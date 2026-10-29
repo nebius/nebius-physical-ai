@@ -12,6 +12,11 @@ Source: `1f0a36b4973a8ba1d4e9e7c29a76a9db82b3d2b0`. All five exact development i
 | Isaac Lab | `ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:4673d22f550502f3bc33b4f11b7ae83736c8f54c5bbd6b45cf555f32f068cc45` |
 | Viewer | `ghcr.io/nebius/nebius-physical-ai/npa-rerun-viewer@sha256:32c8e261767fbc30fc8990f92ffbcbcd05de96d8780612851d8b828290cd7535` |
 
+The [October 29 manual qualification](sim2real-manual-qualification-20261029.md)
+completed the canonical workflow with this exact image set and achieved 48/64
+strict held-out Gold successes. Each new run measures its own result against the
+unchanged 32/64 acceptance gate.
+
 For earlier measurements, the [October 10 manual execution receipt](sim2real-manual-development-20261010.md) retains its own source, image set, and result. Those measurements are not attached to this image set.
 
 For the faster full-pass cadence, declare `inner_iterations=1` and `allow_early_exit=1` while retaining 2,000 PPO updates, all 10,000 scenarios with disjoint splits, and 64 validation/64 Gold cases. The standard workflow performs validation-only selection and accepts at least 32/64 strict Gold successes at threshold `0.50`. Record the actual result and exact manual arguments in the run evidence.

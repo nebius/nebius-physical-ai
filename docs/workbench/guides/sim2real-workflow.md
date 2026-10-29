@@ -8,6 +8,12 @@ Franka seed and stock robot; no agent deployment or private operator scripts
 are required. Stage 12 records the external physical-robot validation seam.
 Completing the simulated workflow does not establish real-robot success.
 
+The [October 29 manual qualification](../validation/sim2real-manual-qualification-20261029.md)
+achieved **48/64 held-out Gold successes (75%)** with the explicit development
+image set and the full-pass cadence documented below. A new run measures its own
+result; promotion requires at least **32/64 (50%)**, with validation-only
+checkpoint selection.
+
 Run the commands from the checkout root in **one Bash shell** on Linux with
 `/proc` mounted. Replace quoted placeholders with
 your private values. Keep the run settings outside Git so the same arguments
@@ -113,10 +119,11 @@ Retain both revisions with your run settings.
 
 **Image selection:** provide the five explicit source-attested pins before
 provisioning. The [readiness record](../../../workflows/main/sim2real.readiness.json)
-tracks automatic default-image selection; its `source_image: unverified` value
-does not describe an explicitly selected set that passes preflight. Use the
-[current development receipt](../validation/sim2real-development-image-set-20261028.md)
-or your maintainer's compatible set. Image maintainers follow
+records the verified reference image set and its completed manual qualification.
+Use the [current development receipt](../validation/sim2real-development-image-set-20261028.md)
+or your maintainer's compatible set, then run target-specific preflight. Operator
+credentials, storage, seed staging, and target health are checked for each run.
+Image maintainers follow
 [container packaging and publication](../container-packaging.md). The historical September 4 coherent set predates
 the current MiniMax evaluator contract, and affected historical public releases
 remain [quarantined](../validation/public-default-quarantine-impact-20261005.md#other-quarantined-images-and-sim2real).
@@ -905,7 +912,7 @@ show explicit endpoint and credential-profile selection. Inspect:
 | `reports/sim2real.mcap` | Non-empty, independently decoded camera and evaluation evidence |
 | `npa-workflow/runtime.json` | Completed graph, not merely some successful jobs |
 
-The measured development run emitted a 15.4 GB RRD and 10.5 GB MCAP. Inspect
+The historical October 10 development run emitted a 15.4 GB RRD and 10.5 GB MCAP. Inspect
 the artifact sizes and available disk space before downloading both; leave room
 for the selected files and their readers. Open downloaded recordings with the
 [viewer guides](../rerun-sharing.md).

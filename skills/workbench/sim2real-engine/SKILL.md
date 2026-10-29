@@ -22,7 +22,7 @@ or spawn sibling Jobs.
 | ---: | --- | --- |
 | 1 | `stage_01_trigger` | task-aligned trigger/seed validation |
 | 2 | `stage_02_assets` | task/assets/camera/strict-success contract |
-| 3 | `stage_03_augment` | real Cosmos Transfer 2.5 |
+| 3 | `stage_03_augment` | real guarded Cosmos3-Nano video2video |
 | 4 | `stage_04_envs_raw` | parallel raw EnvGen shards |
 | 5 | `stage_05_envs_train` | sealed train/validation/gold split |
 | 6 | `stage_06_tokens` | explicit S3 token/scenario manifest |

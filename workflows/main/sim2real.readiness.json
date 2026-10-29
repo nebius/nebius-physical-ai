@@ -4,7 +4,7 @@
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "Canonical YAML schema validation, wave planning, and compositional workflow tests verify the runtime and concurrent evaluator configuration.",
+      "reason": "Canonical YAML schema validation, wave planning, and compositional workflow tests verify the runtime and canonical evaluator configuration.",
       "evidence": [
         "npa workbench workflow validate-spec workflows/main/sim2real.yaml --json",
         "npa/tests/workflows/test_sim2real_compositional_workflow.py"
@@ -35,9 +35,12 @@
       "evidence": []
     },
     "source_image": {
-      "status": "unverified",
-      "reason": "The historical bundle predates canonical Cosmos3 Stage 3, the current MiniMax endpoint, and durable concurrent scoring. A newly built coherent five-image set must pass the baked evaluator probe and target runtime qualification.",
-      "evidence": []
+      "status": "verified",
+      "reason": "The explicit five-role development image set at source 1f0a36b4973a8ba1d4e9e7c29a76a9db82b3d2b0 passed immutable image and current-target runtime qualification in the October 29 canonical manual run (48/64 strict Gold). Set all five role pins and their SOURCE_SHA explicitly; each operator still verifies access, pulls, cache, and target health. This does not select or promote historical default release tags.",
+      "evidence": [
+        "docs/workbench/validation/sim2real-development-image-set-20261028.md",
+        "docs/workbench/validation/sim2real-manual-qualification-20261029.md"
+      ]
     },
     "target_runtime": {
       "status": "unverified",
