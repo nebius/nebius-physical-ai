@@ -747,11 +747,53 @@ def _native_policy_camera_calibration(
 
     import numpy as np
 
-    sensor = native.scene[sensor_name].data
-    matrix = np.asarray(
-        _proxy_torch(sensor.intrinsic_matrices)[0].detach().cpu().numpy(),
-        dtype=np.float64,
-    )
+    camera = native.scene[sensor_name]
+    data = camera.data
+    matrix = None
+    intrinsic_source = None
+    for source, candidate in (
+        ("camera_data.intrinsic_matrices", data),
+        ("camera.intrinsic_matrices", camera),
+    ):
+        intrinsic_matrices = getattr(candidate, "intrinsic_matrices", None)
+        if intrinsic_matrices is None:
+            continue
+        value = _proxy_torch(intrinsic_matrices)[0]
+        if hasattr(value, "detach"):
+            value = value.detach()
+        if hasattr(value, "cpu"):
+            value = value.cpu()
+        if hasattr(value, "numpy"):
+            value = value.numpy()
+        matrix = np.asarray(value, dtype=np.float64)
+        intrinsic_source = source
+        break
+
+    image_shape = getattr(data, "image_shape", None)
+    if image_shape is None:
+        image_shape = (camera.cfg.height, camera.cfg.width)
+    height, width = (int(value) for value in image_shape)
+    if matrix is None:
+        spawn = camera.cfg.spawn
+        focal_length = float(spawn.focal_length)
+        horizontal_aperture = float(spawn.horizontal_aperture)
+        if not (
+            np.isfinite(focal_length)
+            and focal_length > 0.0
+            and np.isfinite(horizontal_aperture)
+            and horizontal_aperture > 0.0
+        ):
+            raise RuntimeError("native policy camera authored intrinsics are invalid")
+        focal_pixels = width * focal_length / horizontal_aperture
+        matrix = np.asarray(
+            [
+                [focal_pixels, 0.0, width * 0.5],
+                [0.0, focal_pixels, height * 0.5],
+                [0.0, 0.0, 1.0],
+            ],
+            dtype=np.float64,
+        )
+        intrinsic_source = "camera.cfg.spawn_pinhole"
     if matrix.shape != (3, 3) or not np.isfinite(matrix).all():
         raise RuntimeError("native policy camera intrinsics are invalid")
     receipt = {
@@ -759,7 +801,10 @@ def _native_policy_camera_calibration(
         "sensor": sensor_name,
         "mount_link": mount_link,
         "intrinsic_matrix": matrix.tolist(),
-        "image_size_wh": [224, 224],
+        "intrinsic_source": intrinsic_source,
+        "camera_class": type(camera).__name__,
+        "camera_data_class": type(data).__name__,
+        "image_size_wh": [width, height],
         "layout": "HWC",
     }
     receipt["calibration_sha256"] = hashlib.sha256(
@@ -2614,6 +2659,7 @@ def _evaluate(
     policy_profile: Any = None,
 ) -> list[dict[str, Any]]:
     episodes = []
+    stop_after_repeated_setup_failure = False
     for mode in args.wrist_ablation_modes:
         for index in range(args.episodes):
             env.reset(seed=args.seed + index)
@@ -2655,7 +2701,48 @@ def _evaluate(
                 )
                 result = record
             episodes.append(result)
+            if _repeated_prequery_setup_failure(episodes):
+                stop_after_repeated_setup_failure = True
+                break
+        if stop_after_repeated_setup_failure:
+            break
     return episodes
+
+
+def _repeated_prequery_setup_failure(episodes: list[dict[str, Any]]) -> bool:
+    """Stop a structural pre-query failure before it is repeated as nominal trials."""
+
+    if len(episodes) < 2:
+        return False
+    latest = episodes[-2:]
+    failures = [str(episode.get("failure") or "") for episode in latest]
+    return bool(
+        failures[0]
+        and failures[0] == failures[1]
+        and all(not episode.get("queries") for episode in latest)
+    )
+
+
+def _require_policy_evaluation_queries(
+    work: Path, episodes: list[dict[str, Any]], *, expected_episode_count: int
+) -> None:
+    """Reject invalid evaluation setup without hiding its first native cause."""
+
+    if len(episodes) == expected_episode_count and all(
+        episode.get("queries") for episode in episodes
+    ):
+        return
+    _persist_partial_episodes(work, episodes)
+    failures = [
+        str(episode.get("failure")) for episode in episodes if episode.get("failure")
+    ]
+    first_failure = failures[0] if failures else "no policy query was recorded"
+    raise RuntimeError(
+        "evaluation setup did not complete every declared policy trial; "
+        f"completed={len(episodes)} expected={expected_episode_count}; "
+        "first native failure: "
+        f"{first_failure}"
+    )
 
 
 def _runtime_boundary_smoke(
@@ -2701,6 +2788,13 @@ def _runtime_boundary_smoke(
         record["wrist_ablation_mode"] = "fresh"
         record["scenario_seed"] = int(scenario["scene_seed"])
         record["reset_settle"] = settle
+        prequery_calibration = [
+            _native_policy_camera_calibration(native, role, sensor, mount_link)
+            for role, sensor, mount_link in (
+                ("exterior", "pi05_exterior", "world"),
+                ("wrist", "pi05_wrist", "panda_hand"),
+            )
+        ]
         _decision_step(context, 0)
         query = record["queries"][0]
         lineage = _policy_input_query_lineage(query)
@@ -2725,6 +2819,7 @@ def _runtime_boundary_smoke(
             "reset_repeated_before_sealed_trials": True,
             "policy_backend": context["policy_backend"],
             "scenario_seed": int(scenario["scene_seed"]),
+            "prequery_calibration": prequery_calibration,
             "input_lineage": lineage,
             "predicted_action_chunk": query["action_receipt"],
             "decoded_applied_action": query["action_selection"],
@@ -3725,6 +3820,13 @@ def _run_evaluation(
             protocol,
             robot_profile=robot_profile,
             policy_profile=policy_profile,
+        )
+        _require_policy_evaluation_queries(
+            work,
+            episodes,
+            expected_episode_count=(
+                len(args.wrist_ablation_modes) * int(args.episodes)
+            ),
         )
         try:
             artifacts = _write_review_artifacts(

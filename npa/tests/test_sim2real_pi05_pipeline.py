@@ -104,6 +104,7 @@ def test_native_policy_camera_calibration_uses_tiled_camera_data() -> None:
     sensor = types.SimpleNamespace(
         data=types.SimpleNamespace(
             intrinsic_matrices=_JointTensor([intrinsics]),
+            image_shape=(224, 224),
         )
     )
     native = types.SimpleNamespace(scene={"pi05_wrist": sensor})
@@ -113,8 +114,37 @@ def test_native_policy_camera_calibration_uses_tiled_camera_data() -> None:
     )
 
     assert receipt["intrinsic_matrix"] == intrinsics
+    assert receipt["intrinsic_source"] == "camera_data.intrinsic_matrices"
     assert receipt["role"] == "wrist"
     assert len(receipt["calibration_sha256"]) == 64
+
+
+def test_native_policy_camera_calibration_uses_authored_pinhole_fallback() -> None:
+    """The Isaac beta runtime may expose RGB without a calibration buffer."""
+
+    spawn = types.SimpleNamespace(focal_length=18.0, horizontal_aperture=20.955)
+
+    class BetaCamera:
+        def __init__(self) -> None:
+            self.data = self
+            self.image_shape = (224, 224)
+            self.cfg = types.SimpleNamespace(height=224, width=224, spawn=spawn)
+
+    camera = BetaCamera()
+    native = types.SimpleNamespace(scene={"pi05_wrist": camera})
+
+    receipt = pi05_closed_loop._native_policy_camera_calibration(
+        native, "wrist", "pi05_wrist", "panda_hand"
+    )
+
+    focal_pixels = 224 * 18.0 / 20.955
+    assert receipt["intrinsic_source"] == "camera.cfg.spawn_pinhole"
+    assert receipt["image_size_wh"] == [224, 224]
+    assert receipt["intrinsic_matrix"] == [
+        [focal_pixels, 0.0, 112.0],
+        [0.0, focal_pixels, 112.0],
+        [0.0, 0.0, 1.0],
+    ]
 
 
 def test_pi05_service_rbac_contract_uses_two_exact_owners() -> None:
@@ -2003,6 +2033,54 @@ def test_episode_failure_redacts_query_and_top_level_uri(monkeypatch) -> None:
     assert "private/location" not in json.dumps(result)
 
 
+def test_evaluation_stops_repeated_identical_prequery_setup_failure(
+    monkeypatch,
+) -> None:
+    def fail(*_args, **_kwargs):
+        raise AttributeError("camera calibration is unavailable")
+
+    monkeypatch.setattr(pi05_closed_loop, "_episode", fail)
+    args = Namespace(
+        wrist_ablation_modes=["fresh", "frozen"],
+        episodes=8,
+        seed=1,
+        decisions=1,
+        ablation_seed=2,
+    )
+    env = Namespace(reset=lambda **_kwargs: None)
+    protocol = {"scenarios": [{}] * 8, "object_width_m": 0.048}
+
+    episodes = pi05_closed_loop._evaluate(env, object(), args, protocol)
+
+    assert len(episodes) == 2
+    assert all(not episode["queries"] for episode in episodes)
+    assert episodes[0]["failure"] == episodes[1]["failure"]
+
+
+def test_missing_policy_queries_preserves_first_native_failure(tmp_path: Path) -> None:
+    episodes = [
+        {
+            "queries": [],
+            "failure": "AttributeError: native calibration unavailable",
+        },
+        {
+            "queries": [],
+            "failure": "AttributeError: native calibration unavailable",
+        },
+    ]
+
+    with pytest.raises(
+        RuntimeError,
+        match="first native failure: AttributeError: native calibration unavailable",
+    ):
+        pi05_closed_loop._require_policy_evaluation_queries(
+            tmp_path, episodes, expected_episode_count=24
+        )
+
+    preserved = json.loads((tmp_path / "partial-episodes.json").read_text())
+    assert preserved == episodes
+
+
 def test_runtime_boundary_smoke_is_excluded_and_binds_applied_control(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2025,6 +2103,15 @@ def test_runtime_boundary_smoke_is_excluded_and_binds_applied_control(
         lambda *_: np.asarray([0.4, 0.0, 0.03]),
     )
     monkeypatch.setattr(pi05_closed_loop, "_wrist_mount_receipt", lambda *_: None)
+    monkeypatch.setattr(
+        pi05_closed_loop,
+        "_native_policy_camera_calibration",
+        lambda _native, role, sensor, mount: {
+            "role": role,
+            "sensor": sensor,
+            "mount_link": mount,
+        },
+    )
 
     def context(*args, **_kwargs):
         return {
@@ -2091,6 +2178,10 @@ def test_runtime_boundary_smoke_is_excluded_and_binds_applied_control(
     assert receipt["excluded_from_task_metrics"] is True
     assert receipt["input_lineage"]["input_identity"] == "real-boundary"
     assert receipt["controller_proof"]["physics_observation_status"] == "recorded"
+    assert [row["role"] for row in receipt["prequery_calibration"]] == [
+        "exterior",
+        "wrist",
+    ]
     assert json.loads((tmp_path / "runtime-boundary-smoke.json").read_text()) == receipt
 
 
