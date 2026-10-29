@@ -938,9 +938,17 @@ def _mock_archive_arguments():
     )
 
 
+def _isolate_verifier_os(monkeypatch):
+    """Keep descriptor fault injection from replacing process-global os hooks."""
+    isolated = SimpleNamespace(**vars(VERIFIER.os))
+    monkeypatch.setattr(VERIFIER, "os", isolated)
+    return isolated
+
+
 def _mock_archive_verification(monkeypatch):
     """Prepare an inert descriptor; never open or parse an actual image."""
     args, info = _mock_archive_arguments(), _mock_archive_info()
+    _isolate_verifier_os(monkeypatch)
     monkeypatch.setattr(VERIFIER, "_require_root", Mock())
     monkeypatch.setattr(
         VERIFIER.W,
@@ -2348,6 +2356,7 @@ def test_report_cleanup_attempts_close_after_unlink_failure(
     """Mock all filesystem effects; a cleanup error cannot replace the result."""
     info = SimpleNamespace(st_dev=1, st_ino=2)
     close = Mock()
+    _isolate_verifier_os(monkeypatch)
     monkeypatch.setattr(VERIFIER.os, "open", Mock(return_value=42))
     monkeypatch.setattr(VERIFIER.os, "fstat", Mock(return_value=info))
     monkeypatch.setattr(VERIFIER.os, "stat", Mock(return_value=info))
@@ -2373,6 +2382,7 @@ def test_report_cleanup_diagnostics_cannot_replace_primary_failure(monkeypatch) 
             raise OSError("inert diagnostic refusal")
 
     info = SimpleNamespace(st_dev=1, st_ino=2)
+    _isolate_verifier_os(monkeypatch)
     monkeypatch.setattr(VERIFIER.sys, "stderr", BrokenStderr())
     monkeypatch.setattr(VERIFIER.os, "open", Mock(return_value=42))
     monkeypatch.setattr(VERIFIER.os, "fstat", Mock(return_value=info))
@@ -2389,6 +2399,7 @@ def test_report_cleanup_diagnostics_cannot_replace_primary_failure(monkeypatch) 
 def test_report_cleanup_does_not_remove_unmatched_identity(monkeypatch, capsys) -> None:
     """An inert identity mismatch must never authorize unlink."""
     unlink = Mock()
+    _isolate_verifier_os(monkeypatch)
     monkeypatch.setattr(
         VERIFIER.os, "fstat", Mock(return_value=SimpleNamespace(st_dev=1, st_ino=2))
     )

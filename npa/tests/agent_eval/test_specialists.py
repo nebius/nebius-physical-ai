@@ -471,6 +471,8 @@ def test_store_rejects_unsafe_runtime_files(tmp_path, monkeypatch, unsafe, filen
     path = directory / filename
     if unsafe == "owner":
         actual_fstat = os.fstat
+        isolated_os = SimpleNamespace(**vars(store.os))
+        monkeypatch.setattr(store, "os", isolated_os)
 
         def other_owner(descriptor):
             info = actual_fstat(descriptor)
@@ -478,7 +480,7 @@ def test_store_rejects_unsafe_runtime_files(tmp_path, monkeypatch, unsafe, filen
                 st_uid=info.st_uid + 1, st_mode=info.st_mode, st_nlink=info.st_nlink
             )
 
-        monkeypatch.setattr(store.os, "fstat", other_owner)
+        monkeypatch.setattr(isolated_os, "fstat", other_owner)
     elif unsafe == "permissions":
         path.chmod(0o640)
     else:
