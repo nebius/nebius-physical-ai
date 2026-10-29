@@ -467,24 +467,35 @@ def test_generate_variants_rejects_unconditioned_mode(tmp_path: Path) -> None:
         )
 
 
-def test_finalize_requires_every_real_component(tmp_path: Path) -> None:
+@pytest.mark.parametrize("engine", [c3.ENGINE, "nebius-stream"])
+def test_finalize_requires_every_real_component(tmp_path: Path, engine: str) -> None:
     root = tmp_path / "run"
     for directory in ("cosmos_augmented", "grade", "curation", "reports"):
         (root / directory).mkdir(parents=True)
     (root / "cosmos_augmented" / "manifest.json").write_text(
         json.dumps(
             {
-                "engine": c3.ENGINE,
+                "engine": engine,
                 "schema": c3.MANIFEST_SCHEMA,
                 "status": "executed",
                 "mode": "video2video",
                 "video_bytes": 1234,
+                "frame_count": 24,
                 "variant_count": 1,
                 "variants": [
                     {
                         "clip": "variant-0000",
-                        "augmented_video_uri": "s3://example/variant-0000/video.mp4",
+                        "augmented_video_uri": str(
+                            root / "cosmos_augmented/variant-0000/augmented_video.mp4"
+                        ),
                         "video_bytes": 1234,
+                        "frame_count": 24,
+                        "seed": 17,
+                        "endpoint_job_id": "job-synthetic",
+                        "endpoint_execution_uri": str(
+                            root
+                            / "cosmos_augmented/variant-0000/endpoint_execution.json"
+                        ),
                     }
                 ],
                 "input_conditioned": True,
@@ -516,8 +527,19 @@ def test_finalize_requires_every_real_component(tmp_path: Path) -> None:
 
     result = c3.finalize(str(root), str(root / "reports" / "final.json"))
     assert result["status"] == "completed"
+    assert result["engine"] == engine
     assert result["evaluator_score"] == 0.88
     assert result["has_rrd"] is True
+
+    if engine == "nebius-stream":
+        path = root / "cosmos_augmented/manifest.json"
+        original = path.read_text()
+        document = json.loads(original)
+        document["variants"][0].pop("endpoint_execution_uri")
+        path.write_text(json.dumps(document))
+        with pytest.raises(c3.PaidfCosmos3Error, match="endpoint execution evidence"):
+            c3.finalize(str(root), str(root / "reports/final.json"))
+        path.write_text(original)
 
     (root / "curation" / "report.json").write_text(
         json.dumps({"curation_engine": "report-only"}), encoding="utf-8"
@@ -622,6 +644,7 @@ def test_generate_variants_requires_s3_publication_before_generation(
     "field",
     [
         "schema",
+        "engine",
         "mode",
         "model",
         "guardrails",

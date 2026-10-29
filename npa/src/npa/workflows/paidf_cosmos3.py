@@ -1742,7 +1742,6 @@ def finalize(
     required_manifest = {
         "schema": MANIFEST_SCHEMA,
         "status": "executed",
-        "engine": ENGINE,
         "mode": VIDEO_MODE,
         "input_conditioned": True,
         "input_conditioning": "source-video",
@@ -1755,6 +1754,10 @@ def finalize(
         for field, expected in required_manifest.items()
         if manifest.get(field) != expected
     ]
+    if manifest.get("engine") not in {ENGINE, "nebius-stream"}:
+        missing_or_invalid.append("engine")
+    if manifest.get("engine") == "nebius-stream":
+        validate_committed_augment_manifest(manifest, root + "cosmos_augmented/")
     model = manifest.get("model")
     lineage = manifest.get("lineage")
     variants = manifest.get("variants")
@@ -1819,7 +1822,7 @@ def finalize(
     payload = {
         "schema": FINAL_SCHEMA,
         "status": "completed",
-        "engine": ENGINE,
+        "engine": manifest["engine"],
         "mode": VIDEO_MODE,
         "input_conditioned": True,
         "model": model,
