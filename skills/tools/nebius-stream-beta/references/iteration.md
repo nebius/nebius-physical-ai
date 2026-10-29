@@ -82,6 +82,11 @@ The customer can stage it using their provider's console or existing tooling.
 
 ## Baseline and tuned full-source requests
 
+For the complete HTTP request, all five sampling settings, and Nano's source
+requirements, start with the [full-source request reference](requests.md#full-source-video-to-video).
+The paired example below changes only the step count and leaves other optional
+sampling settings at the selected model's service defaults.
+
 Discover the live model matrix and schema before using this example. Make
 `baseline-request.json` private (mode 0600), substituting the exact owner-bound
 input/output and explicitly chosen model. The model must expose full-source

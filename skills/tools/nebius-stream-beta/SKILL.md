@@ -54,8 +54,12 @@ python3 scripts/cosmos_client.py submit --route /v1/augmentations --request "$WM
 python3 scripts/cosmos_client.py resume --state "$WMH_WORK_DIR/run.json" --output-dir "$WMH_WORK_DIR/results"
 ```
 
-Read [the request guide](references/requests.md) for storage configuration,
-input/output examples and supported profile distinctions. Read
+Read [the request guide](references/requests.md) for storage registration and
+credential injection. Its [full-source video-to-video example](references/requests.md#full-source-video-to-video)
+contains the complete Super request JSON, Nano model selection and input
+requirements, HTTP headers, and explanations of all five sampling settings.
+Keep full-source augmentation separate from the fixed video profiles in that
+guide. Read
 [the independent iteration guide](references/iteration.md) for complete
 customer setup, staged MP4 and LeRobot-derivative boundaries, baseline/tuned
 requests, source inventories, batch recovery and private usage exports. Replace placeholders
