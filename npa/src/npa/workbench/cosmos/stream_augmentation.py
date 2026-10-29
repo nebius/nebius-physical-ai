@@ -294,7 +294,15 @@ class StreamAugmentation:
             state["job"] = job
             _write_json(state, state_uri, storage=self.storage)
 
-        self.api.wait(job_id, observe=observe)
+        try:
+            self.api.wait(job_id, observe=observe)
+        except StreamError as exc:
+            # StreamError messages are fixed client diagnostics, never response
+            # bodies or credentials. Retain the cause when the CLI summarizes
+            # failures across a fanout, so an agent can recover the same job.
+            state.setdefault("poll_errors", []).append(str(exc))
+            _write_json(state, state_uri, storage=self.storage)
+            raise
         manifest = self.api.request("GET", f"/v1/jobs/{job_id}/artifacts").get(
             "manifest", {}
         )

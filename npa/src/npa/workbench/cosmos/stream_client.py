@@ -155,23 +155,32 @@ class StreamClient:
         ):
             raise StreamError("Invalid Stream API route")
         headers = {"Idempotency-Key": identity} if identity else {}
+        read_failures = 0
         while True:
             try:
                 response = self._client.request(
                     method, route, json=body, headers=headers
                 )
             except httpx.HTTPError:
+                if method == "GET" and read_failures < 2:
+                    time.sleep(2**read_failures)
+                    read_failures += 1
+                    continue
                 raise StreamError(
                     "Stream transport failed; retain the request identity"
                 ) from None
+            if (
+                method == "GET"
+                and response.status_code in {408, 500, 502, 503, 504}
+                and read_failures < 2
+            ):
+                time.sleep(_retry_delay(response, default=2**read_failures))
+                read_failures += 1
+                continue
             if response.status_code != 429 or method != "GET":
                 break
             # Reads are safe to retry. Keep the admitted job and honor backpressure.
-            try:
-                delay = float(response.headers.get("Retry-After", "5"))
-            except ValueError:
-                delay = 5.0
-            time.sleep(delay if math.isfinite(delay) and delay >= 1 else 5.0)
+            time.sleep(_retry_delay(response, default=5.0))
         if not 200 <= response.status_code < 300:
             raise StreamError(f"Stream API returned HTTP {response.status_code}")
         try:
@@ -257,6 +266,14 @@ class StreamClient:
             target.unlink()
             raise StreamError("Stream artifact checksum mismatch")
         return target
+
+
+def _retry_delay(response: httpx.Response, *, default: float) -> float:
+    try:
+        delay = float(response.headers.get("Retry-After", str(default)))
+    except ValueError:
+        return default
+    return delay if math.isfinite(delay) and delay >= 1 else default
 
 
 def _identifier(value: str) -> None:

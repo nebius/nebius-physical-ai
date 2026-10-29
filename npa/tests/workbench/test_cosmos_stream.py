@@ -170,18 +170,110 @@ def generate(client, tmp_path, directory="download"):
     )
 
 
-def test_interrupted_poll_resumes_same_job_without_new_admission(tmp_path):
+def test_interrupted_poll_resumes_same_job_without_new_admission(tmp_path, monkeypatch):
+    monkeypatch.setattr("npa.workbench.cosmos.stream_client.time.sleep", lambda _: None)
     service, storage = Service(), Storage()
     service.fail_poll = True
     with pytest.raises(StreamError, match="transport"):
         generate(adapter(service, storage), tmp_path)
     assert len(service.admissions) == 1
+    state = json.loads(next(iter(storage.objects.values())))
+    assert state["job_id"] == "job-synthetic"
+    assert state["poll_errors"] == [
+        "Stream transport failed; retain the request identity"
+    ]
     service.fail_poll = False
     result = generate(adapter(service, storage), tmp_path)
     assert len(service.admissions) == 1
     assert result["endpoint_execution"]["status"] == "verified"
     assert Path(result["output_path"]).read_bytes() == b"generated.mp4"
     assert b"synthetic-secret" not in b"".join(storage.objects.values())
+
+
+@pytest.mark.parametrize("failure", [httpx.ReadTimeout, httpx.RemoteProtocolError])
+def test_transient_read_transport_recovers_same_job(failure, monkeypatch):
+    calls, pauses = [], []
+
+    def transport(request):
+        calls.append((request.method, request.url.path))
+        if len(calls) < 3:
+            raise failure("synthetic interrupted read")
+        return httpx.Response(200, json={"job_id": "retained-job", "status": "running"})
+
+    monkeypatch.setattr("npa.workbench.cosmos.stream_client.time.sleep", pauses.append)
+    client = StreamClient(
+        "https://stream.example.invalid",
+        "synthetic-secret",
+        transport=httpx.MockTransport(transport),
+    )
+    assert client.request("GET", "/v1/jobs/retained-job")["job_id"] == "retained-job"
+    assert calls == [("GET", "/v1/jobs/retained-job")] * 3
+    assert pauses == [1, 2]
+    client.close()
+
+
+@pytest.mark.parametrize("status", [408, 500, 502, 503, 504])
+def test_transient_read_http_status_honors_backoff(status, monkeypatch):
+    calls, pauses = [], []
+
+    def transport(request):
+        calls.append(request.method)
+        if len(calls) == 1:
+            return httpx.Response(status, headers={"Retry-After": "7"})
+        return httpx.Response(200, json={"status": "succeeded"})
+
+    monkeypatch.setattr("npa.workbench.cosmos.stream_client.time.sleep", pauses.append)
+    client = StreamClient(
+        "https://stream.example.invalid",
+        "synthetic-secret",
+        transport=httpx.MockTransport(transport),
+    )
+    assert client.request("GET", "/v1/jobs/retained-job")["status"] == "succeeded"
+    assert calls == ["GET", "GET"] and pauses == [7]
+    client.close()
+
+
+@pytest.mark.parametrize("failure", [httpx.ReadTimeout, 401, 403, 404, 502])
+def test_submission_and_authorization_failures_are_not_replayed(failure, monkeypatch):
+    calls, pauses = [], []
+
+    def transport(request):
+        calls.append(request.method)
+        if isinstance(failure, int):
+            return httpx.Response(failure)
+        raise failure("synthetic ambiguous submission")
+
+    monkeypatch.setattr("npa.workbench.cosmos.stream_client.time.sleep", pauses.append)
+    client = StreamClient(
+        "https://stream.example.invalid",
+        "synthetic-secret",
+        transport=httpx.MockTransport(transport),
+    )
+    method = "GET" if failure in (401, 403, 404) else "POST"
+    route = "/v1/jobs/retained-job" if method == "GET" else "/v1/augmentations"
+    with pytest.raises(StreamError):
+        client.request(method, route, body={}, identity="retained-identity")
+    assert calls == [method] and pauses == []
+    client.close()
+
+
+def test_persistent_read_gateway_failure_returns_for_durable_recovery(monkeypatch):
+    calls, pauses = [], []
+
+    def transport(request):
+        calls.append(request.url.path)
+        return httpx.Response(502)
+
+    monkeypatch.setattr("npa.workbench.cosmos.stream_client.time.sleep", pauses.append)
+    client = StreamClient(
+        "https://stream.example.invalid",
+        "synthetic-secret",
+        transport=httpx.MockTransport(transport),
+    )
+    with pytest.raises(StreamError, match="502"):
+        client.request("GET", "/v1/jobs/retained-job")
+    assert calls == ["/v1/jobs/retained-job"] * 3 and pauses == [1, 2]
+    client.close()
 
 
 @pytest.mark.parametrize("model", ["nvidia/Cosmos3-Nano", "nvidia/Cosmos3-Super"])
