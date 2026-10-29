@@ -127,7 +127,7 @@ Install the tested Nebius CLI and configure your project:
 
 ```bash
 curl -fsSL https://storage.eu-north1.nebius.cloud/cli/install.sh \
-  | NEBIUS_CLI_VERSION=0.12.254 bash
+  | NEBIUS_CLI_VERSION=0.12.298 bash
 export PATH="${HOME}/.nebius/bin:${PATH}"
 npa configure
 npa workbench health preflight --checks nebius --json

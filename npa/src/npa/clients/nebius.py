@@ -148,7 +148,7 @@ def storage_binding_group_name(project_id: str) -> str:
 # ── Low-level CLI runner ─────────────────────────────────────────────────
 
 _NEBIUS_VERSION_CHECKED = False
-_TESTED_NEBIUS_CLI_VERSIONS = frozenset({"0.12.227", "0.12.254"})
+_TESTED_NEBIUS_CLI_VERSIONS = frozenset({"0.12.298"})
 _NEBIUS_CLI_INSTALL_URL = "https://storage.eu-north1.nebius.cloud/cli/install.sh"
 
 

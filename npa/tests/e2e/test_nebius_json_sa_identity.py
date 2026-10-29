@@ -132,8 +132,8 @@ def test_native_json_service_account_cache_creation_preserves_identity(tmp_path)
         text=True,
         check=False,
     )
-    assert version.returncode == 0 and "0.12.254" in version.stdout, (
-        "This auth contract requires Nebius CLI 0.12.254"
+    assert version.returncode == 0 and "0.12.298" in version.stdout, (
+        "This auth contract requires Nebius CLI 0.12.298"
     )
     original_config = config.read_bytes()
     original_credentials = credentials.read_bytes()

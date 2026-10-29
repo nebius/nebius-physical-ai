@@ -220,7 +220,7 @@ when one is selected. Keep `current-session.json` and its referenced
 the next invocation creates a new session so it can use newly selected
 credentials or an updated interpreter without changing an active session.
 
-The owned API follows Nebius CLI `0.12.254` authentication selection: `--config`
+The owned API follows Nebius CLI `0.12.298` authentication selection: `--config`
 selects the profile file, `--profile` overrides `NEBIUS_PROFILE` and the saved
 default, and the renewable token cache remains `HOME/.nebius/credentials.yaml`.
 `NEBIUS_CONFIG_DIR` does not redirect either CLI file. Isolated SkyPilot homes
@@ -241,7 +241,7 @@ To verify this route with the actual CLI, run
 and `NPA_E2E_NEBIUS_JSON_SA_PROFILE` set to its selected JSON service-account
 profile. `NPA_E2E_NEBIUS_CLI` optionally selects an absolute CLI executable;
 otherwise the test uses `nebius` from `PATH`. The contract targets CLI
-`0.12.254`. It reads the selected config and credentials without changing them,
+`0.12.298`. It reads the selected config and credentials without changing them,
 mints into a fresh private test home, verifies the full durable binding before
 and after native cache creation, and starts no API, controller, or cloud job.
 The native attached-VM profile is also supported when it contains exactly
