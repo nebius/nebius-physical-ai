@@ -12,6 +12,8 @@ from npa.orchestration.npa_workflow.kubernetes_prerequisites import (
     format_cpu_memory_requirement,
     ready_schedulable_cpu_nodes,
 )
+from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+from npa.orchestration.npa_workflow.image_inputs import resolved_baked_image_sources
 from npa.orchestration.skypilot.controller import (
     DEFAULT_K8S_CONTROLLER_CPUS,
     DEFAULT_K8S_CONTROLLER_MEMORY_GB,
