@@ -9,7 +9,6 @@ import shlex
 import shutil
 import subprocess
 import sys
-import tempfile
 import textwrap
 from pathlib import Path, PurePosixPath
 
@@ -146,7 +145,14 @@ def _write_pip_intercepting_python(path: Path) -> None:
 
 
 def _replace_setup_paths(setup: str, paths: dict[str, Path]) -> str:
+    worker_paths = {}
+    for value in re.findall(r"/[A-Za-z0-9_./-]+", setup):
+        parts = PurePosixPath(value).parts
+        if len(parts) >= 3 and parts[1] == "tmp" and parts[2].startswith("npa-"):
+            worker_paths[parts[2]] = str(PurePosixPath(*parts[:3]))
     for original, replacement in paths.items():
+        if original.startswith("npa-"):
+            original = worker_paths[original]
         setup = setup.replace(original, str(replacement))
     return setup
 
@@ -194,10 +200,11 @@ def _render_overlay_setup(
         {
             "/opt/npa": partial,
             "/opt/lerobot/venv/bin/python": vendor_python,
-            str(Path(tempfile.gettempdir()) / "npa-src-overlay"): overlay,
-            str(Path(tempfile.gettempdir()) / "npa-src-root"): source_root,
-            str(Path(tempfile.gettempdir()) / "npa-python"): recorded_python,
-            str(Path(tempfile.gettempdir()) / "npa-overlay-venv"): overlay_venv,
+            "npa-src-overlay": overlay,
+            "npa-src-root": source_root,
+            "npa-python": recorded_python,
+            "npa-overlay-venv": overlay_venv,
+            "/usr/local/bin/npa": overlay.parent / "npa-link",
         },
     )
     branch = (
@@ -205,7 +212,8 @@ def _render_overlay_setup(
         "    : # stage the explicitly selected source before any image-local install\n"
     )
     guarded_fallback = (
-        "if ! command -v npa >/dev/null 2>&1 && { "
+        "if { ! command -v npa >/dev/null 2>&1 || "
+        "! \"$npa_setup_python\" -c 'import npa.cli.main' >/dev/null 2>&1; } && { "
         '[ "$NPA_SRC_OVERLAY" != "1" ] || [ -z "$NPA_SRC_S3_URI" ]; }; then\n'
     )
     return setup, setup.replace(

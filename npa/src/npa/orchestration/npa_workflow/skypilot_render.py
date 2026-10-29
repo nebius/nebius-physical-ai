@@ -1798,8 +1798,20 @@ def default_npa_setup() -> str:
         "    fi\n"
         "  done\n"
         "fi\n"
+        # SkyPilot's default worker can expose only Python 3.10. Prepare a
+        # separate control environment rather than changing a vendor runtime
+        # or weakening NPA's dependency requirements. Seed pip for later
+        # tool-specific setup that invokes the recorded interpreter directly.
         'if ! "$npa_setup_python" -c "import sys; raise SystemExit(sys.version_info < (3, 11))" >/dev/null 2>&1; then\n'
-        '  echo "NPA source requires Python >=3.11; image supplied no compatible control interpreter" >&2\n'
+        "  if command -v uv >/dev/null 2>&1; then\n"
+        '    npa_setup_env="$(mktemp -d /tmp/npa-setup-venv.XXXXXX)"\n'
+        '    uv venv --python 3.12 --seed "$npa_setup_env"\n'
+        '    npa_setup_python="$npa_setup_env/bin/python"\n'
+        '    export PATH="$npa_setup_env/bin:$PATH"\n'
+        "  fi\n"
+        "fi\n"
+        'if ! "$npa_setup_python" -c "import sys; raise SystemExit(sys.version_info < (3, 11))" >/dev/null 2>&1; then\n'
+        '  echo "NPA source requires Python >=3.11; supply a compatible control interpreter or uv to prepare one" >&2\n'
         "  exit 1\n"
         "fi\n"
         # Thin workbench images keep the installable project at /opt/npa rather than the
@@ -1854,14 +1866,20 @@ def default_npa_setup() -> str:
         '[ "$npa_setup_python" = "${NPA_BAKED_PYTHON:-}" ] && '
         "\"$npa_setup_python\" -c 'import npa.cli.main' >/dev/null 2>&1; then\n"
         '  mkdir -p "$HOME/.local/bin"\n'
-        '  printf "%s\\n" "#!/bin/sh" "exec ${npa_setup_python@Q} -c \'from npa.cli.entry import main; main()\' \\"\\$@\\"" '
-        '> "$HOME/.local/bin/npa"\n'
+        '  npa_quoted_python="$("$npa_setup_python" -c '
+        "'import shlex, sys; print(shlex.quote(sys.argv[1]))' "
+        '"$npa_setup_python")"\n'
+        '  printf \'#!/bin/sh\\nexec %s -c "from npa.cli.entry import main; main()" "$@"\\n\' '
+        '"$npa_quoted_python" > "$HOME/.local/bin/npa"\n'
         '  chmod 0755 "$HOME/.local/bin/npa"\n'
         "fi\n"
         # An explicit staged overlay is the complete source of truth. Thin vendor
         # images may contain a partial /opt/npa tree without the build hook; do
         # not try installing it before the requested overlay can be fetched.
-        "if ! command -v npa >/dev/null 2>&1 && { "
+        # A launcher left on PATH by the old interpreter does not make NPA
+        # available inside a newly prepared control environment.
+        "if { ! command -v npa >/dev/null 2>&1 || "
+        "! \"$npa_setup_python\" -c 'import npa.cli.main' >/dev/null 2>&1; } && { "
         '[ "$NPA_SRC_OVERLAY" != "1" ] || [ -z "$NPA_SRC_S3_URI" ]; }; then\n'
         # The active runtime-fetch images intentionally ship the installable
         # project under /opt/npa but not a shell-visible `npa` launcher. Recording
