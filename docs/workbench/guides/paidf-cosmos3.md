@@ -465,3 +465,6 @@ Use fresh run IDs so neither engine overwrites the other. Record the fixture
 SHA-256, workflow commit SHA, model/checkpoint, seed, guardrail posture, and
 evaluator config. Keep exact private object and infrastructure identifiers in
 access-controlled evidence, not documentation or PR text.
+
+Hosted generation is an opt-in backend for the main workflow; see the
+[endpoint configuration and recovery contract](../../../workflows/guides/paidf-cosmos3.md#optional-hosted-cosmos3-generation). Native cluster inference remains the default.

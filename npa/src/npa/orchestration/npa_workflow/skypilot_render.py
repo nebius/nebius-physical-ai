@@ -83,6 +83,7 @@ TOOL_REF_IMAGE_TOOL: dict[str, str | None] = {
     "workbench.cosmos3.policy_feedback": "cosmos3",
     "workbench.cosmos3.failure_candidates": "cosmos3",
     "workbench.cosmos3.generate_variants": "cosmos3",
+    "workbench.cosmos3.generate_variants_endpoint": "rerun-viewer",
     "workbench.cosmos3.prepare_video_input": "cosmos3",
     "workbench.cosmos3.checkpoint_eval": "cosmos3",
     # The image's command-forwarding entrypoint runs only the CPU/S3 client for
@@ -132,6 +133,7 @@ HABITAT_SIM_ACCELERATOR = "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
 OPENPI_TERMS_ENV = "NPA_OPENPI_ACCEPT_GEMMA_TERMS"
 
 SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
+    "workbench.cosmos3.generate_variants_endpoint": ("WMH_API_KEY",),
     "workbench.marble.pallet_preflight": ("WLT_API_KEY",),
     "workflow.policy_public": ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
     "workflow.policy_training": ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),

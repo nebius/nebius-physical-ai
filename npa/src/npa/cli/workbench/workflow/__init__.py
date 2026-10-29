@@ -668,8 +668,12 @@ def _submit_failure_code(error: BaseException) -> int:
 def _workflow_access_requirements(spec) -> tuple:  # noqa: ANN001
     from npa.workbench.access_approval import requirements_for_tool_refs
 
+    from npa.orchestration.npa_workflow.interpreter import reachable_state_names
+
     return requirements_for_tool_refs(
-        state.tool_ref for state in spec.states.values() if state.tool_ref
+        spec.states[name].tool_ref
+        for name in reachable_state_names(spec)
+        if spec.states[name].tool_ref
     )
 
 

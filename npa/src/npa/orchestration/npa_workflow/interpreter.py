@@ -141,6 +141,47 @@ def build_plan(
     return plan
 
 
+def reachable_state_names(spec: NpaWorkflowSpec) -> list[str]:
+    """List possible states after applying ordered static configuration branches.
+
+    Args:
+        spec: Parsed workflow with its effective configuration overrides.
+    Returns:
+        Reachable state names, retaining every possible dynamic-predicate branch.
+    Raises:
+        KeyError: The spec references a missing state.
+    """
+    reachable: list[str] = []
+    pending = [spec.initial]
+    while pending:
+        state_name = pending.pop()
+        if state_name in reachable:
+            continue
+        state = spec.states[state_name]
+        reachable.append(state_name)
+        if state.terminal:
+            continue
+        pending.extend(reversed(state.parallel))
+        pending.extend(reversed(state.sequence))
+        possible_targets = []
+        for transition in state.transitions:
+            if transition.if_config and not config_truthy(
+                transition.if_config, spec.config
+            ):
+                continue
+            possible_targets.append(transition.goto)
+            # Ordered transitions stop at the first statically applicable fallback.
+            # Dynamic predicates before it remain possible execution branches.
+            if not transition.when:
+                break
+        else:
+            if state.next:
+                possible_targets.append(state.next)
+        pending.extend(reversed(possible_targets))
+
+    return reachable
+
+
 def build_reachability_plan(
     spec: NpaWorkflowSpec,
     *,
@@ -169,26 +210,7 @@ def build_reachability_plan(
         combined.steps.extend(candidate.steps)
         covered_states.update(step.state for step in candidate.steps)
 
-    reachable: list[str] = []
-    pending = [spec.initial]
-    while pending:
-        state_name = pending.pop()
-        if state_name in reachable:
-            continue
-        state = spec.states[state_name]
-        reachable.append(state_name)
-        if state.terminal:
-            continue
-        pending.extend(reversed(state.parallel))
-        pending.extend(reversed(state.sequence))
-        if state.next:
-            pending.append(state.next)
-        pending.extend(
-            transition.goto
-            for transition in reversed(state.transitions)
-            if not transition.if_config
-            or config_truthy(transition.if_config, spec.config)
-        )
+    reachable = reachable_state_names(spec)
 
     context = _make_context(spec, run_id=run_id)
     for state_name in reachable:
@@ -921,7 +943,9 @@ def _execute_state_machine(
         raise NpaWorkflowError(str(record.get("error") or f"state {state.name} failed"))
     if state.terminal:
         return results
-    if state.transitions:
+    if state.transitions and (
+        state.writes_decision or any(tr.when for tr in state.transitions)
+    ):
         _refresh_decision(ctx, state=state, reader=decision_reader, read_s3=True)
         if not ctx.last_decision:
             ctx.last_decision = assume_decision

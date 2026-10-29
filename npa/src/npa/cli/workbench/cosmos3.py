@@ -505,11 +505,27 @@ def generate_variants_cmd(
         "--variant-recovery",
         help="auto reuses only fully verified immutable same-run variants; disabled regenerates all variants.",
     ),
+    hosted_endpoint: bool = typer.Option(
+        False,
+        "--hosted-endpoint",
+        help="Use authenticated Nebius Stream jobs instead of local GPU inference.",
+    ),
+    endpoint: str = typer.Option(
+        "", "--endpoint", help="Operator-supplied verified HTTPS service origin."
+    ),
+    endpoint_key_file: str = typer.Option(
+        "",
+        "--endpoint-key-file",
+        help="Private worker key file; otherwise use WMH_API_KEY_FILE or NPA's WMH_API_KEY secret binding.",
+    ),
+    endpoint_input_connection: str = typer.Option("", "--endpoint-input-connection"),
+    endpoint_output_connection: str = typer.Option("", "--endpoint-output-connection"),
 ) -> None:
     """Generate and publish real source-video-conditioned Cosmos 3 variants."""
 
     from npa.workflows.paidf_cosmos3 import PaidfCosmos3Error, generate_variants
     from npa.workflows.paidf_cosmos3_media import VideoAlignmentError
+    from npa.workbench.cosmos.stream_client import StreamError
 
     try:
         payload = generate_variants(
@@ -545,9 +561,15 @@ def generate_variants_cmd(
             transfer_first_chunk_conditional_frames=transfer_first_chunk_conditional_frames,
             transfer_cfg_normalization=transfer_cfg_normalization,
             variant_recovery=variant_recovery,
+            hosted_endpoint=hosted_endpoint,
+            endpoint=endpoint,
+            endpoint_key_file=endpoint_key_file,
+            endpoint_input_connection=endpoint_input_connection,
+            endpoint_output_connection=endpoint_output_connection,
         )
     except (
         PaidfCosmos3Error,
+        StreamError,
         Cosmos3GenerateError,
         VideoAlignmentError,
         ValueError,
