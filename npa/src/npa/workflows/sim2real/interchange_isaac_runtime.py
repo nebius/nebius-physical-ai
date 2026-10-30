@@ -710,7 +710,12 @@ def _teacher_environment(
         controller_representation="relative_ee_pose",
     )
     configure_policy_interchange_surface_task(
-        config, robot, prop, task, object_usd_path=object_usd_path
+        config,
+        robot,
+        prop,
+        task,
+        object_usd_path=object_usd_path,
+        robot_rigid_body_prim_paths=configuration["rigid_body_prim_paths"],
     )
     configure_policy_interchange_cameras(config, robot)
     return gym.make(POLICY_INTERCHANGE_SCAFFOLD_TASK, cfg=config), timing, configuration
@@ -1262,6 +1267,7 @@ def _policy_environment(
         inputs.prop,
         inputs.task,
         object_usd_path=inputs.object_usd_path,
+        robot_rigid_body_prim_paths=robot_configuration["rigid_body_prim_paths"],
     )
     configure_policy_interchange_cameras(config, inputs.robot)
     return gym.make(POLICY_INTERCHANGE_SCAFFOLD_TASK, cfg=config), robot_configuration

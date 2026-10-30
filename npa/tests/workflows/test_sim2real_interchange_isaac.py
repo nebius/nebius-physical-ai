@@ -6,6 +6,8 @@ import json
 import math
 from pathlib import Path
 import struct
+import sys
+import types
 from types import SimpleNamespace
 import zlib
 
@@ -52,7 +54,11 @@ from npa.workflows.sim2real.interchange_teacher_export import (
     EPISODE_FILES,
     _validated_episodes,
 )
-from npa.workflows.franka_rl_environment import policy_interchange_timing
+from npa.workflows.franka_rl_environment import (
+    _policy_interchange_contact_prim_paths,
+    configure_policy_interchange_surface_task,
+    policy_interchange_timing,
+)
 
 
 def _profile(dof: int = 6) -> RobotSensorProfile:
@@ -121,6 +127,131 @@ def test_gripper_tolerance_uses_actual_velocity_limit_and_physics_period() -> No
         gripper_position_tolerances(
             velocity_limits=(0.2,), physics_dt=0.0, profile=profile
         )
+
+
+def test_contact_sensors_follow_nested_converted_finger_rigid_bodies() -> None:
+    profile = _profile()
+    resolved = {
+        "base_link": "Geometry/base_link",
+        "tool0": "Geometry/base_link/arm/tool0",
+        "left_pad": "Geometry/base_link/arm/tool0/gripper/left_pad",
+        "right_pad": "Geometry/base_link/arm/tool0/gripper/right_pad",
+    }
+
+    assert _policy_interchange_contact_prim_paths(profile, resolved) == (
+        "{ENV_REGEX_NS}/Robot/Geometry/base_link/arm/tool0/gripper/left_pad",
+        "{ENV_REGEX_NS}/Robot/Geometry/base_link/arm/tool0/gripper/right_pad",
+    )
+
+
+def test_contact_sensor_resolution_rejects_missing_finger_body() -> None:
+    profile = _profile()
+    with pytest.raises(ValueError, match="right_pad"):
+        _policy_interchange_contact_prim_paths(
+            profile,
+            {"left_pad": "Geometry/base_link/gripper/left_pad"},
+        )
+
+
+def test_surface_task_binds_contact_sensors_to_resolved_finger_bodies(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    class _Cfg(SimpleNamespace):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+
+    sim = types.ModuleType("isaaclab.sim")
+    sim.UsdFileCfg = _Cfg
+    sim.MassPropertiesCfg = _Cfg
+    sim.RigidBodyMaterialCfg = _Cfg
+    sensors = types.ModuleType("isaaclab.sensors")
+    sensors.ContactSensorCfg = _Cfg
+    isaaclab = types.ModuleType("isaaclab")
+    isaaclab.sim = sim
+    isaaclab.sensors = sensors
+    monkeypatch.setitem(sys.modules, "isaaclab", isaaclab)
+    monkeypatch.setitem(sys.modules, "isaaclab.sim", sim)
+    monkeypatch.setitem(sys.modules, "isaaclab.sensors", sensors)
+
+    import npa.workflows.sim2real.pi05_isaac as pi05_isaac
+
+    monkeypatch.setattr(pi05_isaac, "configure_support_surface", lambda _cfg: None)
+    monkeypatch.setattr(
+        pi05_isaac, "configure_surface_goal", lambda _cfg, _target: None
+    )
+    monkeypatch.setattr(
+        pi05_isaac, "configure_destination_marker", lambda _cfg, _target: None
+    )
+    profile = _profile()
+    prop = RigidObjectProfile(
+        identity="offset-spool",
+        source_uri="s3://example/assets/spool.usda",
+        source_sha256="a" * 64,
+        bundle_sha256="b" * 64,
+        kind="rigid",
+        units_m_per_unit=1.0,
+        scale_xyz=(1.0, 1.0, 1.0),
+        world_from_root=Transform((0.48, -0.14, 0.0), (0.0, 0.0, 0.0, 1.0)),
+        root_from_reference=Transform((0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0)),
+        root_from_grasp=Transform((0.0, 0.0, 0.026), (0.0, 0.0, 0.0, 1.0)),
+        grasp_extents_m=(0.054, 0.054, 0.052),
+        collision_declared=True,
+        inertia_declared=True,
+        material_declared=True,
+        mass_kg=0.12,
+        static_friction=0.8,
+        dynamic_friction=0.6,
+        restitution=0.05,
+        grasp_axis="y",
+    )
+    task = SurfacePlacementTask(
+        identity="surface-placement-v1",
+        target_world_xyz_m=(0.55, 0.15, 0.0),
+        approach_clearance_m=0.08,
+        lift_delta_m=0.08,
+        retreat_distance_m=0.1,
+    )
+    object_usd = tmp_path / "object.usda"
+    object_usd.touch()
+    spawn = SimpleNamespace(rigid_props=object(), activate_contact_sensors=False)
+    config = SimpleNamespace(
+        scene=SimpleNamespace(
+            robot=SimpleNamespace(
+                spawn=SimpleNamespace(activate_contact_sensors=False)
+            ),
+            object=SimpleNamespace(
+                spawn=spawn,
+                init_state=SimpleNamespace(pos=None, rot=None),
+            ),
+            table=SimpleNamespace(
+                spawn=SimpleNamespace(activate_contact_sensors=False)
+            ),
+        ),
+        events=SimpleNamespace(
+            reset_object_position=SimpleNamespace(params={"pose_range": {}})
+        ),
+    )
+    paths = {
+        "left_pad": "Geometry/base_link/arm/tool0/gripper/left_pad",
+        "right_pad": "Geometry/base_link/arm/tool0/gripper/right_pad",
+    }
+
+    configure_policy_interchange_surface_task(
+        config,
+        profile,
+        prop,
+        task,
+        object_usd_path=object_usd,
+        robot_rigid_body_prim_paths=paths,
+    )
+
+    assert config.scene.robot.spawn.activate_contact_sensors is True
+    assert config.scene.npa_left_object_contact.prim_path == (
+        "{ENV_REGEX_NS}/Robot/Geometry/base_link/arm/tool0/gripper/left_pad"
+    )
+    assert config.scene.npa_right_object_contact.prim_path == (
+        "{ENV_REGEX_NS}/Robot/Geometry/base_link/arm/tool0/gripper/right_pad"
+    )
 
 
 def test_measured_policy_state_bounds_one_physics_step_of_joint_overshoot() -> None:

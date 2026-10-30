@@ -1164,10 +1164,24 @@ def test_resolved_rigid_body_paths_preserve_nested_converted_usd_hierarchy(
         rigid_body_api=rigid_body_api,
         parent=base,
     )
+    left_finger = _FakeBodyPrim(
+        "/panda/Geometry/panda_link0/panda_link1/panda_hand/panda_leftfinger",
+        rigid=True,
+        rigid_body_api=rigid_body_api,
+        parent=hand,
+    )
+    right_finger = _FakeBodyPrim(
+        "/panda/Geometry/panda_link0/panda_link1/panda_hand/panda_rightfinger",
+        rigid=True,
+        rigid_body_api=rigid_body_api,
+        parent=hand,
+    )
     stage = SimpleNamespace(
         GetDefaultPrim=lambda: root,
         Traverse=lambda predicate: (
-            [root, base, hand] if predicate is instance_proxy_predicate else []
+            [root, base, hand, left_finger, right_finger]
+            if predicate is instance_proxy_predicate
+            else []
         ),
     )
     pxr = SimpleNamespace(
@@ -1180,10 +1194,22 @@ def test_resolved_rigid_body_paths_preserve_nested_converted_usd_hierarchy(
     monkeypatch.setitem(sys.modules, "pxr", pxr)
 
     assert isaac_robot_asset.resolved_rigid_body_prim_paths(
-        Path("robot.usd"), ("panda_link0", "panda_hand")
+        Path("robot.usd"),
+        (
+            "panda_link0",
+            "panda_hand",
+            "panda_leftfinger",
+            "panda_rightfinger",
+        ),
     ) == {
         "panda_link0": "Geometry/panda_link0",
         "panda_hand": "Geometry/panda_link0/panda_link1/panda_hand",
+        "panda_leftfinger": (
+            "Geometry/panda_link0/panda_link1/panda_hand/panda_leftfinger"
+        ),
+        "panda_rightfinger": (
+            "Geometry/panda_link0/panda_link1/panda_hand/panda_rightfinger"
+        ),
     }
 
 

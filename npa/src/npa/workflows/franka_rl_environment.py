@@ -10,6 +10,22 @@ POLICY_INTERCHANGE_SCAFFOLD_TASK = "Isaac-Lift-Cube-Franka-IK-Rel-v0"
 POLICY_INTERCHANGE_SIMULATION_HZ = 60.0
 
 
+def _policy_interchange_contact_prim_paths(
+    robot_profile, rigid_body_prim_paths: dict[str, str]
+) -> tuple[str, str]:
+    """Resolve live contact-sensor paths from the converted USD hierarchy."""
+
+    resolved: list[str] = []
+    for link in robot_profile.gripper.finger_links:
+        relative = rigid_body_prim_paths.get(link)
+        if not isinstance(relative, str) or not relative:
+            raise ValueError(f"resolved RobotSpec USD lacks finger rigid body {link!r}")
+        resolved.append(f"{{ENV_REGEX_NS}}/Robot/{relative}")
+    if len(resolved) != 2:
+        raise ValueError("surface placement requires exactly two finger contact bodies")
+    return resolved[0], resolved[1]
+
+
 def policy_interchange_timing(*, control_hz: float) -> dict[str, float | int]:
     """Resolve an exact controller cadence against the owned physics rate."""
 
@@ -114,7 +130,12 @@ def configure_policy_interchange_robot(
     if not robot_usd_path.is_file():
         raise ValueError("resolved RobotSpec USD is missing")
     rigid_body_paths = resolved_rigid_body_prim_paths(
-        robot_usd_path, (robot_profile.base_link, robot_profile.ee_link)
+        robot_usd_path,
+        (
+            robot_profile.base_link,
+            robot_profile.ee_link,
+            *robot_profile.gripper.finger_links,
+        ),
     )
 
     def spawned_prim_path(relative: str) -> str:
@@ -386,7 +407,13 @@ def configure_policy_interchange_cameras(config, robot_profile) -> None:
 
 
 def configure_policy_interchange_surface_task(
-    config, robot_profile, object_profile, task, *, object_usd_path: Path
+    config,
+    robot_profile,
+    object_profile,
+    task,
+    *,
+    object_usd_path: Path,
+    robot_rigid_body_prim_paths: dict[str, str],
 ) -> None:
     """Bind a non-Franka Isaac lift template to the released-surface protocol."""
 
@@ -438,14 +465,16 @@ def configure_policy_interchange_surface_task(
     config.scene.robot.spawn.activate_contact_sensors = True
     config.scene.object.spawn.activate_contact_sensors = True
     config.scene.table.spawn.activate_contact_sensors = True
-    left, right = robot_profile.gripper.finger_links
+    left_path, right_path = _policy_interchange_contact_prim_paths(
+        robot_profile, robot_rigid_body_prim_paths
+    )
     config.scene.npa_left_object_contact = ContactSensorCfg(
-        prim_path=f"{{ENV_REGEX_NS}}/Robot/{left}",
+        prim_path=left_path,
         filter_prim_paths_expr=["{ENV_REGEX_NS}/Object"],
         history_length=3,
     )
     config.scene.npa_right_object_contact = ContactSensorCfg(
-        prim_path=f"{{ENV_REGEX_NS}}/Robot/{right}",
+        prim_path=right_path,
         filter_prim_paths_expr=["{ENV_REGEX_NS}/Object"],
         history_length=3,
     )
