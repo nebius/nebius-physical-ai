@@ -10,7 +10,9 @@ import math
 import os
 from pathlib import Path
 import struct
+import sys
 import time
+import traceback
 from typing import Any
 from urllib.parse import urlparse
 import zlib
@@ -1593,6 +1595,67 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _failure_receipt(args: argparse.Namespace, error: BaseException) -> dict[str, Any]:
+    """Persist the native failure before Isaac cleanup can terminate."""
+
+    receipt = {
+        "schema": "npa.sim2real.policy_interchange.isaac_runtime_failure.v1",
+        "status": "failed",
+        "error_type": type(error).__name__,
+        "error": str(error),
+        "system_exit_code": error.code if isinstance(error, SystemExit) else None,
+        "report_written": (args.output_path / "report.json").is_file(),
+    }
+    args.output_path.mkdir(parents=True, exist_ok=True)
+    write_json(args.output_path / "runtime_failure.json", receipt)
+    print(
+        "NPA_INTERCHANGE_ISAAC_RUNTIME_FAILURE " + json.dumps(receipt, sort_keys=True),
+        file=sys.stderr,
+        flush=True,
+    )
+    traceback.print_exception(error, file=sys.stderr)
+    return receipt
+
+
+def _run_with_app(args: argparse.Namespace, app: Any) -> dict[str, Any]:
+    """Run policy evaluation without allowing Isaac cleanup to erase failure."""
+
+    result: dict[str, Any] | None = None
+    failure: BaseException | None = None
+    started = time.monotonic()
+    try:
+        result = run(args)
+        result["duration_seconds"] = time.monotonic() - started
+        write_json(args.output_path / "report.json", result)
+    except BaseException as error:
+        failure = error
+        _failure_receipt(args, error)
+    try:
+        app.close()
+    except BaseException as close_error:
+        if failure is None:
+            raise
+        print(
+            "NPA_INTERCHANGE_ISAAC_RUNTIME_CLOSE_FAILURE "
+            + json.dumps(
+                {"error_type": type(close_error).__name__, "error": str(close_error)},
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+            flush=True,
+        )
+    if failure is not None:
+        if isinstance(failure, SystemExit):
+            raise RuntimeError(
+                "native policy runtime exited before completing its report "
+                f"(SystemExit code={failure.code!r})"
+            ) from failure
+        raise failure.with_traceback(failure.__traceback__)
+    if result is None:  # pragma: no cover - defensive invariant
+        raise RuntimeError("native policy runtime returned no result")
+    return result
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run one native Isaac rollout and emit its factual report."""
 
@@ -1604,13 +1667,7 @@ def main(argv: list[str] | None = None) -> int:
     from isaaclab.app import AppLauncher
 
     app = AppLauncher(headless=True, enable_cameras=True, kit_args=kit_args).app
-    try:
-        started = time.monotonic()
-        result = run(args)
-        result["duration_seconds"] = time.monotonic() - started
-        write_json(args.output_path / "report.json", result)
-    finally:
-        app.close()
+    result = _run_with_app(args, app)
     print(json.dumps(result, sort_keys=True), flush=True)
     return 0
 

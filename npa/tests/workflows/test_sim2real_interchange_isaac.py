@@ -32,6 +32,7 @@ from npa.workflows.sim2real.interchange_isaac import (
 )
 from npa.workflows.sim2real.interchange_isaac_runtime import (
     _axis_angle_error,
+    _run_with_app,
     _update_events,
     _visual_evidence_decisions,
     _write_teacher_episode,
@@ -40,6 +41,7 @@ from npa.workflows.sim2real.interchange_isaac_runtime import (
 from npa.workflows.sim2real.interchange_isaac_entry import (
     _child_command,
     _cohort_report,
+    _run_child,
 )
 from npa.workflows.sim2real import (
     interchange_teacher_collect,
@@ -221,6 +223,80 @@ def test_teacher_parent_surfaces_structured_runtime_failure(
 
     with pytest.raises(RuntimeError, match="live action layout mismatch"):
         interchange_teacher_collect._execute(["native"], output, log)
+
+
+def test_policy_runtime_preserves_original_failure_when_close_exits(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    class App:
+        def close(self) -> None:
+            raise SystemExit(0)
+
+    args = argparse.Namespace(output_path=tmp_path)
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.interchange_isaac_runtime.run",
+        lambda _args: (_ for _ in ()).throw(ValueError("camera role mismatch")),
+    )
+
+    with pytest.raises(ValueError, match="camera role mismatch"):
+        _run_with_app(args, App())
+
+    receipt = json.loads((tmp_path / "runtime_failure.json").read_text())
+    assert receipt["error_type"] == "ValueError"
+    assert receipt["error"] == "camera role mismatch"
+    assert receipt["system_exit_code"] is None
+    assert receipt["report_written"] is False
+
+
+def test_policy_runtime_turns_premature_zero_exit_into_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    class App:
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    app = App()
+    args = argparse.Namespace(output_path=tmp_path)
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.interchange_isaac_runtime.run",
+        lambda _args: (_ for _ in ()).throw(SystemExit(0)),
+    )
+
+    with pytest.raises(RuntimeError, match="SystemExit code=0") as failure:
+        _run_with_app(args, app)
+
+    assert isinstance(failure.value.__cause__, SystemExit)
+    assert app.closed is True
+    receipt = json.loads((tmp_path / "runtime_failure.json").read_text())
+    assert receipt["error_type"] == "SystemExit"
+    assert receipt["system_exit_code"] == 0
+    assert receipt["report_written"] is False
+
+
+def test_policy_parent_surfaces_structured_runtime_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    output = tmp_path / "output"
+    output.mkdir()
+    log = tmp_path / "policy.log"
+    failure = {
+        "schema": "npa.sim2real.policy_interchange.isaac_runtime_failure.v1",
+        "status": "failed",
+        "error_type": "ValueError",
+        "error": "camera role mismatch",
+    }
+    (output / "runtime_failure.json").write_text(json.dumps(failure))
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.interchange_isaac_entry.subprocess.run",
+        lambda *_args, **_kwargs: (
+            interchange_teacher_collect.subprocess.CompletedProcess([], 0)
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="camera role mismatch"):
+        _run_child(["native"], output, log)
 
 
 def _layout(profile: RobotSensorProfile) -> IsaacActionLayout:

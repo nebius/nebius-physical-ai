@@ -165,8 +165,15 @@ def _run_child(command: list[str], output: Path, log: Path) -> dict:
         )
     if result.returncode or not (output / "report.json").is_file():
         excerpt = log.read_text(encoding="utf-8", errors="replace")[-12_000:]
+        failure_path = output / "runtime_failure.json"
+        failure = (
+            failure_path.read_text(encoding="utf-8", errors="replace")
+            if failure_path.is_file()
+            else "native runtime emitted no structured failure receipt"
+        )
         raise RuntimeError(
-            f"native non-Franka policy trial failed with {result.returncode}\n{excerpt}"
+            "native non-Franka policy trial failed with "
+            f"{result.returncode}; failure={failure}\n{excerpt}"
         )
     return json.loads((output / "report.json").read_text(encoding="utf-8"))
 
