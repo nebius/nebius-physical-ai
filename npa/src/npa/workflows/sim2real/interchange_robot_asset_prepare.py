@@ -8,9 +8,8 @@ import os
 from pathlib import Path
 import tempfile
 
-from npa.workflows.lerobot_transfer_data import write_json
 from npa.workflows.sim2real import isaac_robot_asset
-from npa.workflows.sim2real.workflow_io import read_json
+from npa.workflows.sim2real.workflow_io import read_json, write_json
 
 
 SCHEMA = "npa.sim2real.policy_interchange.robot_asset_prepare.v1"

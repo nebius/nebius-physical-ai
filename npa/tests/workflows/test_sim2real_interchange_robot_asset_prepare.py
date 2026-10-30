@@ -77,6 +77,49 @@ def test_stage_converts_preparation_robot_and_publishes_receipt(
     assert json.loads(stage.os.environ["NPA_BYO_ROBOT_SPEC_JSON"]) == spec
 
 
+def test_stage_publishes_through_real_workflow_uri_contract(monkeypatch) -> None:
+    spec = _spec()
+    preparation_uri = "s3://private/preparation.json"
+    output_uri = "s3://private/robot-asset.json"
+    objects = {
+        preparation_uri: json.dumps({"robot_asset": {"robot_spec": spec}}).encode()
+    }
+
+    class Storage:
+        def download_file(self, uri: str, target: str) -> None:
+            destination = Path(target)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(objects[uri])
+
+        def upload_file(self, source: str, uri: str) -> str:
+            objects[uri] = Path(source).read_bytes()
+            return uri
+
+    monkeypatch.setattr("npa.workflows.sim2real.workflow_io.storage", lambda: Storage())
+    monkeypatch.setattr(
+        stage,
+        "_launch_and_convert",
+        lambda: (
+            {"usd_sha256": "d" * 64, "asset_tree_sha256": "e" * 64},
+            type("App", (), {"close": lambda self: None})(),
+        ),
+    )
+    args = stage.build_parser().parse_args(
+        [
+            "--run-id",
+            "run-1",
+            "--preparation-uri",
+            preparation_uri,
+            "--output-uri",
+            output_uri,
+        ]
+    )
+
+    receipt = stage.run(args)
+
+    assert json.loads(objects[output_uri]) == receipt
+
+
 def test_stage_rejects_preparation_without_robot_spec(monkeypatch) -> None:
     monkeypatch.setattr(stage, "read_json", lambda uri, *, directory: {})
     args = stage.build_parser().parse_args(
