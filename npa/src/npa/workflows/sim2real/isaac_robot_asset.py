@@ -20,11 +20,12 @@ class IsaacRobotAssetError(RuntimeError):
 
 URDF_CONVERSION_RECIPE = {
     "converter": "isaaclab.sim.converters.UrdfConverter",
-    "version": 2,
+    "version": 3,
     "fix_base": True,
     "force_usd_conversion": True,
     "merge_fixed_joints": False,
     "make_instanceable": False,
+    "flatten_composition": True,
     "joint_drive_stiffness": None,
 }
 USD_IDENTITY_RECIPE = {"converter": "identity", "version": 1}
@@ -401,12 +402,16 @@ def resolved_rigid_body_prim_paths(
 
 
 def _install_usd_entrypoint(produced: Path, resolved: Path) -> None:
-    """Create the stable entrypoint without relocating relative composition arcs."""
+    """Create one portable entrypoint without nested composition arcs.
 
-    if produced.resolve() == resolved.resolve():
-        return
+    Isaac Lab 3 / Isaac Sim 6 cannot reliably activate contact reporters on
+    nested rigid bodies reached through converter-authored payload/reference
+    arcs.  Flattening is therefore part of the immutable conversion recipe,
+    rather than a rollout-time mutation of the fetched asset.
+    """
+
     try:
-        relative = produced.resolve().relative_to(resolved.parent.resolve())
+        produced.resolve().relative_to(resolved.parent.resolve())
     except ValueError as exc:
         raise IsaacRobotAssetError(
             "Isaac UrdfConverter produced USD outside the resolved asset tree"
@@ -414,7 +419,7 @@ def _install_usd_entrypoint(produced: Path, resolved: Path) -> None:
 
     from pxr import Usd
 
-    source_stage = Usd.Stage.Open(str(produced), Usd.Stage.LoadNone)
+    source_stage = Usd.Stage.Open(str(produced), Usd.Stage.LoadAll)
     if source_stage is None:
         raise IsaacRobotAssetError(
             f"Isaac UrdfConverter produced an unreadable USD: {produced}"
@@ -425,27 +430,20 @@ def _install_usd_entrypoint(produced: Path, resolved: Path) -> None:
             "Isaac UrdfConverter produced USD without a default prim"
         )
 
-    entrypoint = Usd.Stage.CreateNew(str(resolved))
-    if entrypoint is None:
+    flattened = source_stage.Flatten()
+    if flattened is None:
+        raise IsaacRobotAssetError("could not flatten converted robot USD")
+    temporary = resolved.with_name(f".{resolved.name}.flattening.tmp.usd")
+    temporary.unlink(missing_ok=True)
+    if not flattened.Export(str(temporary)):
         raise IsaacRobotAssetError(
-            f"could not create resolved USD entrypoint: {resolved}"
+            f"could not export flattened resolved USD: {resolved}"
         )
-    prim_path = f"/{source_prim.GetName()}"
-    prim = entrypoint.DefinePrim(prim_path, source_prim.GetTypeName() or "Xform")
-    reference_path = relative.as_posix()
-    if not prim.GetReferences().AddReference(reference_path):
+    if not temporary.is_file() or temporary.stat().st_size == 0:
         raise IsaacRobotAssetError(
-            f"could not reference converted USD from entrypoint: {reference_path}"
+            f"flattened resolved USD is missing or empty: {temporary}"
         )
-    entrypoint.SetDefaultPrim(prim)
-    for metadata in ("upAxis", "metersPerUnit", "kilogramsPerUnit"):
-        value = source_stage.GetMetadata(metadata)
-        if value is not None:
-            entrypoint.SetMetadata(metadata, value)
-    if not entrypoint.GetRootLayer().Save():
-        raise IsaacRobotAssetError(
-            f"could not save resolved USD entrypoint: {resolved}"
-        )
+    os.replace(temporary, resolved)
 
 
 def prepare_with_running_app() -> dict:

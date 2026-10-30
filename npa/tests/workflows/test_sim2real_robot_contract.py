@@ -761,7 +761,9 @@ def test_isaac_prepare_converts_urdf_and_publishes_digest_manifest(
         def __init__(self, cfg: FakeCfg) -> None:
             converter_cfgs.append(cfg)
             self.usd_path = str(Path(cfg.usd_dir) / cfg.usd_file_name)
-            Path(self.usd_path).write_bytes(b'#usda 1.0\ndef Xform "robot" {}\n')
+            Path(self.usd_path).write_bytes(
+                b'#usda 1.0\n(defaultPrim = "robot")\ndef Xform "robot" {}\n'
+            )
             configuration = Path(cfg.usd_dir) / "configuration"
             configuration.mkdir()
             (configuration / "robot_physics.usd").write_bytes(
@@ -801,39 +803,6 @@ def test_isaac_prepare_converts_urdf_and_publishes_digest_manifest(
     assert published_manifest["embodiment_digest"] == spec["embodiment_digest"]
 
 
-class _FakeUsdReferences:
-    def __init__(self, calls: dict[str, object]) -> None:
-        self.calls = calls
-
-    def AddReference(self, value: str) -> bool:
-        self.calls["reference"] = value
-        return True
-
-
-class _FakeUsdEntrypoint:
-    def __init__(self, resolved: Path, calls: dict[str, object]) -> None:
-        self.resolved = resolved
-        self.calls = calls
-
-    def DefinePrim(self, path: str, type_name: str) -> object:
-        self.calls["prim"] = (path, type_name)
-        references = _FakeUsdReferences(self.calls)
-        return SimpleNamespace(GetReferences=lambda: references)
-
-    def SetDefaultPrim(self, prim: object) -> None:
-        self.calls["default_prim"] = prim
-
-    def SetMetadata(self, name: str, value: object) -> None:
-        self.calls.setdefault("metadata", {})[name] = value
-
-    def GetRootLayer(self) -> object:
-        def save() -> bool:
-            self.resolved.write_text("entrypoint")
-            return True
-
-        return SimpleNamespace(Save=save)
-
-
 def _fake_usd_module(
     produced: Path, resolved: Path, calls: dict[str, object]
 ) -> object:
@@ -842,24 +811,27 @@ def _fake_usd_module(
         GetName=lambda: "panda",
         GetTypeName=lambda: "Xform",
     )
+
+    def export(path: str) -> bool:
+        calls["export"] = path
+        Path(path).write_text("flattened")
+        return True
+
     source_stage = SimpleNamespace(
         GetDefaultPrim=lambda: default_prim,
-        GetMetadata=lambda name: {"upAxis": "Z", "metersPerUnit": 1.0}.get(name),
+        Flatten=lambda: SimpleNamespace(Export=export),
     )
-    load_none = object()
+    load_all = object()
     stage_api = SimpleNamespace(
-        LoadNone=load_none,
+        LoadAll=load_all,
         Open=lambda path, load: (
-            source_stage if path == str(produced) and load is load_none else None
-        ),
-        CreateNew=lambda path: (
-            _FakeUsdEntrypoint(resolved, calls) if path == str(resolved) else None
+            source_stage if path == str(produced) and load is load_all else None
         ),
     )
     return SimpleNamespace(Usd=SimpleNamespace(Stage=stage_api))
 
 
-def test_isaac_entrypoint_references_nested_converter_output(
+def test_isaac_entrypoint_flattens_nested_converter_output(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     resolved = tmp_path / "resolved" / "robot.usd"
@@ -871,10 +843,8 @@ def test_isaac_entrypoint_references_nested_converter_output(
 
     isaac_robot_asset._install_usd_entrypoint(produced, resolved)
 
-    assert calls["prim"] == ("/panda", "Xform")
-    assert calls["reference"] == "panda/panda.usda"
-    assert calls["metadata"] == {"upAxis": "Z", "metersPerUnit": 1.0}
-    assert resolved.read_text() == "entrypoint"
+    assert calls["export"].endswith(".robot.usd.flattening.tmp.usd")
+    assert resolved.read_text() == "flattened"
 
 
 def test_isaac_entrypoint_rejects_converter_output_outside_asset_tree(
@@ -889,7 +859,7 @@ def test_isaac_entrypoint_rejects_converter_output_outside_asset_tree(
         isaac_robot_asset._install_usd_entrypoint(produced, resolved)
 
 
-def test_isaac_entrypoint_preserves_nested_relative_composition(
+def test_isaac_entrypoint_flattens_nested_relative_composition(
     tmp_path: Path,
 ) -> None:
     from pxr import Usd
@@ -914,6 +884,7 @@ def test_isaac_entrypoint_preserves_nested_relative_composition(
     stage = Usd.Stage.Open(str(resolved))
     assert stage is not None
     assert stage.GetPrimAtPath("/panda/panda_link0").IsValid()
+    assert len(stage.GetLayerStack(False)) == 1
 
 
 class _FakeTargetPrim:
