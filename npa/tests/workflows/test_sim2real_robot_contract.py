@@ -545,11 +545,44 @@ def test_isaac_contract_inputs_are_cleaned_on_success_and_failure(
     assert list(tmp_path.iterdir()) == []
 
 
+def _install_fake_physx_schema(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Provide the one Isaac-only schema API to the CPU USD test runtime."""
+
+    import pxr
+    from pxr import Sdf
+
+    class ContactReportAPI:
+        @staticmethod
+        def Apply(prim: object) -> None:
+            schemas = list(prim.GetAppliedSchemas())
+            if "PhysxContactReportAPI" not in schemas:
+                schemas.append("PhysxContactReportAPI")
+            prim.SetMetadata("apiSchemas", Sdf.TokenListOp.CreateExplicit(schemas))
+
+    module = SimpleNamespace(PhysxContactReportAPI=ContactReportAPI)
+    monkeypatch.setattr(pxr, "PhysxSchema", module, raising=False)
+    monkeypatch.setitem(sys.modules, "pxr.PhysxSchema", module)
+
+
 def test_resolved_usd_fetch_verifies_manifest_and_bytes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from pxr import Sdf, Usd, UsdPhysics
+
+    _install_fake_physx_schema(monkeypatch)
+
     usd = tmp_path / "published.usd"
-    usd.write_bytes(b'#usda 1.0\ndef Xform "robot" {}\n')
+    usd_stage = Usd.Stage.CreateNew(str(usd))
+    root = usd_stage.DefinePrim("/robot", "Xform")
+    usd_stage.SetDefaultPrim(root)
+    UsdPhysics.RigidBodyAPI.Apply(root)
+    root.SetMetadata(
+        "apiSchemas",
+        Sdf.TokenListOp.CreateExplicit(
+            [*root.GetAppliedSchemas(), "PhysxContactReportAPI"]
+        ),
+    )
+    usd_stage.GetRootLayer().Save()
     usd_sha = hashlib.sha256(usd.read_bytes()).hexdigest()
     spec = {
         "asset_root_uri": "s3://private-run/source/",
@@ -596,6 +629,7 @@ def test_resolved_usd_fetch_verifies_manifest_and_bytes(
         "entrypoint": "robot.usd",
         "asset_files": asset_files,
         "asset_tree_sha256": tree_hasher.hexdigest(),
+        "contact_reporter_rigid_body_paths": [""],
     }
     manifest_path = tmp_path / "published-manifest.json"
     manifest_path.write_text(json.dumps(manifest))
@@ -700,6 +734,7 @@ def test_resolved_usd_fetch_rejects_unsafe_asset_paths(
 def test_isaac_prepare_converts_urdf_and_publishes_digest_manifest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _install_fake_physx_schema(monkeypatch)
     source_bytes = b'<robot name="r"><link name="base"/></robot>\n'
     source_sha = hashlib.sha256(source_bytes).hexdigest()
     tree_hasher = hashlib.sha256()
@@ -759,11 +794,15 @@ def test_isaac_prepare_converts_urdf_and_publishes_digest_manifest(
 
     class FakeConverter:
         def __init__(self, cfg: FakeCfg) -> None:
+            from pxr import Usd, UsdPhysics
+
             converter_cfgs.append(cfg)
             self.usd_path = str(Path(cfg.usd_dir) / cfg.usd_file_name)
-            Path(self.usd_path).write_bytes(
-                b'#usda 1.0\n(defaultPrim = "robot")\ndef Xform "robot" {}\n'
-            )
+            stage = Usd.Stage.CreateNew(self.usd_path)
+            root = stage.DefinePrim("/robot", "Xform")
+            stage.SetDefaultPrim(root)
+            UsdPhysics.RigidBodyAPI.Apply(root)
+            stage.GetRootLayer().Save()
             configuration = Path(cfg.usd_dir) / "configuration"
             configuration.mkdir()
             (configuration / "robot_physics.usd").write_bytes(
@@ -789,6 +828,7 @@ def test_isaac_prepare_converts_urdf_and_publishes_digest_manifest(
     assert converter_cfgs[0].joint_drive.gains.stiffness is None
     assert manifest["converter"] == "isaaclab.sim.converters.UrdfConverter"
     assert manifest["schema"] == "npa.sim2real.resolved_robot_asset.v2"
+    assert manifest["contact_reporter_rigid_body_paths"] == [""]
     assert [entry["path"] for entry in manifest["asset_files"]] == [
         "configuration/robot_physics.usd",
         "robot.usd",
@@ -806,11 +846,35 @@ def test_isaac_prepare_converts_urdf_and_publishes_digest_manifest(
 def _fake_usd_module(
     produced: Path, resolved: Path, calls: dict[str, object]
 ) -> object:
+    rigid_body_api = object()
+
+    class ContactReportAPI:
+        @staticmethod
+        def Apply(prim: object) -> None:
+            prim.apis.add("PhysxContactReportAPI")
+
+    contact_report_api = ContactReportAPI
     default_prim = SimpleNamespace(
         IsValid=lambda: True,
         GetName=lambda: "panda",
         GetTypeName=lambda: "Xform",
+        GetPath=lambda: "/panda",
     )
+
+    class BodyPrim:
+        def __init__(self) -> None:
+            self.apis = {rigid_body_api}
+
+        def GetPath(self) -> str:
+            return "/panda/panda_leftfinger"
+
+        def HasAPI(self, api: object) -> bool:
+            return api in self.apis
+
+        def GetAppliedSchemas(self) -> list[str]:
+            return [api for api in self.apis if isinstance(api, str)]
+
+    body = BodyPrim()
 
     def export(path: str) -> bool:
         calls["export"] = path
@@ -819,16 +883,28 @@ def _fake_usd_module(
 
     source_stage = SimpleNamespace(
         GetDefaultPrim=lambda: default_prim,
+        Traverse=lambda _predicate: [body],
         Flatten=lambda: SimpleNamespace(Export=export),
     )
     load_all = object()
     stage_api = SimpleNamespace(
         LoadAll=load_all,
         Open=lambda path, load: (
-            source_stage if path == str(produced) and load is load_all else None
+            source_stage
+            if path
+            in {
+                str(produced),
+                str(resolved.with_name(f".{resolved.name}.flattening.tmp.usd")),
+            }
+            and load is load_all
+            else None
         ),
     )
-    return SimpleNamespace(Usd=SimpleNamespace(Stage=stage_api))
+    return SimpleNamespace(
+        PhysxSchema=SimpleNamespace(PhysxContactReportAPI=contact_report_api),
+        Usd=SimpleNamespace(Stage=stage_api, TraverseInstanceProxies=lambda: object()),
+        UsdPhysics=SimpleNamespace(RigidBodyAPI=rigid_body_api),
+    )
 
 
 def test_isaac_entrypoint_flattens_nested_converter_output(
@@ -841,10 +917,11 @@ def test_isaac_entrypoint_flattens_nested_converter_output(
     calls: dict[str, object] = {}
     monkeypatch.setitem(sys.modules, "pxr", _fake_usd_module(produced, resolved, calls))
 
-    isaac_robot_asset._install_usd_entrypoint(produced, resolved)
+    paths = isaac_robot_asset._install_usd_entrypoint(produced, resolved)
 
     assert calls["export"].endswith(".robot.usd.flattening.tmp.usd")
     assert resolved.read_text() == "flattened"
+    assert paths == ["panda_leftfinger"]
 
 
 def test_isaac_entrypoint_rejects_converter_output_outside_asset_tree(
@@ -860,9 +937,11 @@ def test_isaac_entrypoint_rejects_converter_output_outside_asset_tree(
 
 
 def test_isaac_entrypoint_flattens_nested_relative_composition(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from pxr import Usd
+    from pxr import Usd, UsdPhysics
+
+    _install_fake_physx_schema(monkeypatch)
 
     resolved = tmp_path / "resolved" / "robot.usd"
     produced = tmp_path / "resolved" / "panda" / "panda.usda"
@@ -878,13 +957,56 @@ def test_isaac_entrypoint_flattens_nested_relative_composition(
         '#usda 1.0\n(defaultPrim = "panda")\n'
         'def Xform "panda" (prepend references = @./payloads/base.usda@) {}\n'
     )
+    payload_stage = Usd.Stage.Open(str(payload))
+    assert payload_stage is not None
+    UsdPhysics.RigidBodyAPI.Apply(payload_stage.GetPrimAtPath("/panda/panda_link0"))
+    payload_stage.GetRootLayer().Save()
 
-    isaac_robot_asset._install_usd_entrypoint(produced, resolved)
+    contact_paths = isaac_robot_asset._install_usd_entrypoint(produced, resolved)
 
     stage = Usd.Stage.Open(str(resolved))
     assert stage is not None
-    assert stage.GetPrimAtPath("/panda/panda_link0").IsValid()
+    body = stage.GetPrimAtPath("/panda/panda_link0")
+    assert body.IsValid()
+    assert (
+        "PhysxContactReportAPI"
+        in body.GetMetadata("apiSchemas").GetAddedOrExplicitItems()
+    )
+    assert contact_paths == ["panda_link0"]
     assert len(stage.GetLayerStack(False)) == 1
+
+
+def test_isaac_entrypoint_authors_contact_reporters_on_nested_rigid_bodies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from pxr import Usd, UsdPhysics
+
+    _install_fake_physx_schema(monkeypatch)
+
+    resolved = tmp_path / "resolved" / "robot.usd"
+    produced = tmp_path / "resolved" / "nested.usda"
+    produced.parent.mkdir(parents=True)
+    stage = Usd.Stage.CreateNew(str(produced))
+    root = stage.DefinePrim("/panda", "Xform")
+    stage.SetDefaultPrim(root)
+    parent = stage.DefinePrim("/panda/panda_link0", "Xform")
+    finger = stage.DefinePrim("/panda/panda_link0/panda_leftfinger", "Xform")
+    UsdPhysics.RigidBodyAPI.Apply(parent)
+    UsdPhysics.RigidBodyAPI.Apply(finger)
+    stage.GetRootLayer().Save()
+
+    contact_paths = isaac_robot_asset._install_usd_entrypoint(produced, resolved)
+
+    resolved_stage = Usd.Stage.Open(str(resolved), Usd.Stage.LoadAll)
+    assert resolved_stage is not None
+    assert contact_paths == ["panda_link0", "panda_link0/panda_leftfinger"]
+    for path in contact_paths:
+        prim = resolved_stage.GetPrimAtPath(f"/panda/{path}")
+        assert prim.HasAPI(UsdPhysics.RigidBodyAPI)
+        assert (
+            "PhysxContactReportAPI"
+            in prim.GetMetadata("apiSchemas").GetAddedOrExplicitItems()
+        )
 
 
 class _FakeTargetPrim:

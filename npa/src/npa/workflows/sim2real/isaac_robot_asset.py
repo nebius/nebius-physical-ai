@@ -20,12 +20,13 @@ class IsaacRobotAssetError(RuntimeError):
 
 URDF_CONVERSION_RECIPE = {
     "converter": "isaaclab.sim.converters.UrdfConverter",
-    "version": 3,
+    "version": 4,
     "fix_base": True,
     "force_usd_conversion": True,
     "merge_fixed_joints": False,
     "make_instanceable": False,
     "flatten_composition": True,
+    "author_contact_reporters_on_all_rigid_bodies": True,
     "joint_drive_stiffness": None,
 }
 USD_IDENTITY_RECIPE = {"converter": "identity", "version": 1}
@@ -401,7 +402,54 @@ def resolved_rigid_body_prim_paths(
     return {name: values[0] for name, values in matches.items()}
 
 
-def _install_usd_entrypoint(produced: Path, resolved: Path) -> None:
+def _rigid_body_contact_reporter_paths(stage: object, *, author: bool) -> list[str]:
+    """Author or verify contact reporting on every nested rigid body."""
+
+    from pxr import PhysxSchema, Usd, UsdPhysics
+
+    default_prim = stage.GetDefaultPrim()
+    if not default_prim or not default_prim.IsValid():
+        raise IsaacRobotAssetError("resolved robot USD has no valid default prim")
+    root = str(default_prim.GetPath()).rstrip("/")
+    paths: list[str] = []
+    missing: list[str] = []
+
+    def has_contact_reporter(prim: object) -> bool:
+        schemas = {str(value) for value in prim.GetAppliedSchemas()}
+        get_metadata = getattr(prim, "GetMetadata", None)
+        operation = get_metadata("apiSchemas") if callable(get_metadata) else None
+        get_items = getattr(operation, "GetAddedOrExplicitItems", None)
+        if callable(get_items):
+            schemas.update(str(value) for value in get_items())
+        return "PhysxContactReportAPI" in schemas
+
+    for prim in stage.Traverse(Usd.TraverseInstanceProxies()):
+        if not prim.HasAPI(UsdPhysics.RigidBodyAPI):
+            continue
+        absolute = str(prim.GetPath())
+        if absolute != root and not absolute.startswith(root + "/"):
+            raise IsaacRobotAssetError(
+                f"resolved rigid body {absolute!r} is outside the default prim"
+            )
+        contact_reporter_present = has_contact_reporter(prim)
+        if author and not contact_reporter_present:
+            PhysxSchema.PhysxContactReportAPI.Apply(prim)
+            contact_reporter_present = has_contact_reporter(prim)
+        if not contact_reporter_present:
+            missing.append(absolute)
+            continue
+        paths.append(absolute[len(root) :].lstrip("/"))
+    if missing:
+        raise IsaacRobotAssetError(
+            "resolved robot rigid bodies lack PhysxContactReportAPI: "
+            + ", ".join(sorted(missing))
+        )
+    if not paths:
+        raise IsaacRobotAssetError("resolved robot USD contains no rigid bodies")
+    return sorted(paths)
+
+
+def _install_usd_entrypoint(produced: Path, resolved: Path) -> list[str]:
     """Create one portable entrypoint without nested composition arcs.
 
     Isaac Lab 3 / Isaac Sim 6 cannot reliably activate contact reporters on
@@ -430,6 +478,9 @@ def _install_usd_entrypoint(produced: Path, resolved: Path) -> None:
             "Isaac UrdfConverter produced USD without a default prim"
         )
 
+    contact_reporter_paths = _rigid_body_contact_reporter_paths(
+        source_stage, author=True
+    )
     flattened = source_stage.Flatten()
     if flattened is None:
         raise IsaacRobotAssetError("could not flatten converted robot USD")
@@ -443,7 +494,16 @@ def _install_usd_entrypoint(produced: Path, resolved: Path) -> None:
         raise IsaacRobotAssetError(
             f"flattened resolved USD is missing or empty: {temporary}"
         )
+    flattened_stage = Usd.Stage.Open(str(temporary), Usd.Stage.LoadAll)
+    if flattened_stage is None:
+        raise IsaacRobotAssetError(f"flattened resolved USD is unreadable: {temporary}")
+    flattened_paths = _rigid_body_contact_reporter_paths(flattened_stage, author=False)
+    if flattened_paths != contact_reporter_paths:
+        raise IsaacRobotAssetError(
+            "flattened resolved USD changed rigid-body contact reporter paths"
+        )
     os.replace(temporary, resolved)
+    return contact_reporter_paths
 
 
 def prepare_with_running_app() -> dict:
@@ -472,6 +532,7 @@ def prepare_with_running_app() -> dict:
         )
 
     try:
+        contact_reporter_paths: list[str] | None = None
         if spec["source_format"] == "urdf":
             os.environ["ROS_PACKAGE_PATH"] = str(source_root)
             from isaaclab.sim.converters import UrdfConverter, UrdfConverterCfg
@@ -498,7 +559,7 @@ def prepare_with_running_app() -> dict:
                 raise IsaacRobotAssetError(
                     f"Isaac UrdfConverter produced no USD for {source.name}"
                 )
-            _install_usd_entrypoint(produced, resolved)
+            contact_reporter_paths = _install_usd_entrypoint(produced, resolved)
         elif spec["source_format"] == "usd":
             shutil.copy2(source, resolved)
         else:
@@ -525,6 +586,7 @@ def prepare_with_running_app() -> dict:
             "entrypoint": "robot.usd",
             "asset_files": asset_files,
             "asset_tree_sha256": asset_tree_sha256,
+            "contact_reporter_rigid_body_paths": contact_reporter_paths,
             "expected_action_dim": int(spec["expected_action_dim"]),
             "expected_observation_dim": (
                 int(spec["expected_observation_dim"])
@@ -639,6 +701,17 @@ def fetch() -> dict:
         raise IsaacRobotAssetError(
             "resolved robot entrypoint does not match the manifest USD evidence"
         )
+    if spec["source_format"] == "urdf":
+        from pxr import Usd
+
+        stage = Usd.Stage.Open(str(work / "robot.usd"), Usd.Stage.LoadAll)
+        if stage is None:
+            raise IsaacRobotAssetError("resolved robot entrypoint is unreadable")
+        actual_contact_paths = _rigid_body_contact_reporter_paths(stage, author=False)
+        if actual_contact_paths != manifest.get("contact_reporter_rigid_body_paths"):
+            raise IsaacRobotAssetError(
+                "resolved robot contact reporter evidence does not match robot.usd"
+            )
     print("ROBOT_ASSET_FETCHED " + json.dumps(manifest, sort_keys=True), flush=True)
     return manifest
 
