@@ -362,9 +362,16 @@ def test_object_eval_is_evaluation_only_held_out_cohort() -> None:
     }.intersection(spec.states)
 
     steps = {step.state: step for step in plan.steps}
+    prepare = steps["prepare-contract"].argv
     service = steps["start-adapted-service"].argv
     execute = steps["evaluate-object-cohort"].argv
     assert _value(service, "--checkpoint-uri") == spec.config["adapted_checkpoint_uri"]
+    assert _value(service, "--bind-adapter-uri").endswith(
+        "/stage_01_prepare/policy-adapter.json"
+    )
+    assert _value(service, "--bind-adapter-uri") == _value(
+        prepare, "--adapter-output-uri"
+    )
     assert execute[:3] == [
         "/isaac-sim/python.sh",
         "-m",
