@@ -737,6 +737,7 @@ def test_isaac_prepare_converts_urdf_and_publishes_digest_manifest(
 
     manifest = isaac_robot_asset.prepare()
     assert converter_cfgs[0].merge_fixed_joints is False
+    assert converter_cfgs[0].make_instanceable is False
     assert converter_cfgs[0].joint_drive.gains.stiffness is None
     assert manifest["converter"] == "isaaclab.sim.converters.UrdfConverter"
     assert manifest["schema"] == "npa.sim2real.resolved_robot_asset.v2"

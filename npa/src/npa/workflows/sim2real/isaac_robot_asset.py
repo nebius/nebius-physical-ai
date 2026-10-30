@@ -443,6 +443,10 @@ def prepare_with_running_app() -> dict:
                     force_usd_conversion=True,
                     fix_base=True,
                     merge_fixed_joints=False,
+                    # ContactSensorCfg requires PhysxContactReportAPI on the
+                    # selected rigid bodies.  Isaac cannot author that API on
+                    # instance proxies produced by an instanceable robot USD.
+                    make_instanceable=False,
                     joint_drive=UrdfConverterCfg.JointDriveCfg(
                         gains=UrdfConverterCfg.JointDriveCfg.PDGainsCfg(stiffness=None)
                     ),
