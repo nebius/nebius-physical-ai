@@ -405,7 +405,7 @@ def resolved_rigid_body_prim_paths(
 def _rigid_body_contact_reporter_paths(stage: object, *, author: bool) -> list[str]:
     """Author or verify contact reporting on every nested rigid body."""
 
-    from pxr import PhysxSchema, Usd, UsdPhysics
+    from pxr import Usd, UsdPhysics
 
     default_prim = stage.GetDefaultPrim()
     if not default_prim or not default_prim.IsValid():
@@ -433,6 +433,11 @@ def _rigid_body_contact_reporter_paths(stage: object, *, author: bool) -> list[s
             )
         contact_reporter_present = has_contact_reporter(prim)
         if author and not contact_reporter_present:
+            # PhysxSchema is registered only after Isaac/PhysX plugins start.  Asset
+            # fetch runs in a plain USD parent process and only verifies authored
+            # metadata, so importing it eagerly breaks the real runtime boundary.
+            from pxr import PhysxSchema
+
             PhysxSchema.PhysxContactReportAPI.Apply(prim)
             contact_reporter_present = has_contact_reporter(prim)
         if not contact_reporter_present:

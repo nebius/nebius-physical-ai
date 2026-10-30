@@ -567,9 +567,13 @@ def _install_fake_physx_schema(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_resolved_usd_fetch_verifies_manifest_and_bytes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    import pxr
     from pxr import Sdf, Usd, UsdPhysics
 
-    _install_fake_physx_schema(monkeypatch)
+    # Fetch is a pre-Kit verification boundary.  PhysX schemas are unavailable
+    # there even though their authored API token remains readable from USD.
+    monkeypatch.delattr(pxr, "PhysxSchema", raising=False)
+    monkeypatch.delitem(sys.modules, "pxr.PhysxSchema", raising=False)
 
     usd = tmp_path / "published.usd"
     usd_stage = Usd.Stage.CreateNew(str(usd))
