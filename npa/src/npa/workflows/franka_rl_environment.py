@@ -84,6 +84,9 @@ def configure_policy_interchange_robot(
     import isaaclab.sim as sim
     from isaaclab.actuators import ImplicitActuatorCfg
     from isaaclab.envs import mdp
+    from npa.workflows.sim2real.isaac_robot_asset import (
+        resolved_rigid_body_prim_paths,
+    )
 
     names = list(robot_spec.get("joint_names") or ())
     expected = [*robot_profile.arm_joint_names, *robot_profile.gripper.joint_names]
@@ -110,6 +113,13 @@ def configure_policy_interchange_robot(
         raise ValueError("resolved RobotSpec links differ from the policy profile")
     if not robot_usd_path.is_file():
         raise ValueError("resolved RobotSpec USD is missing")
+    rigid_body_paths = resolved_rigid_body_prim_paths(
+        robot_usd_path, (robot_profile.base_link, robot_profile.ee_link)
+    )
+
+    def spawned_prim_path(relative: str) -> str:
+        root = "{ENV_REGEX_NS}/Robot"
+        return f"{root}/{relative}" if relative else root
 
     old_spawn = config.scene.robot.spawn
     spawn = sim.UsdFileCfg(usd_path=str(robot_usd_path))
@@ -183,9 +193,11 @@ def configure_policy_interchange_robot(
         ),
     )
     config.commands.object_pose.body_name = robot_profile.ee_link
-    config.scene.ee_frame.prim_path = "{ENV_REGEX_NS}/Robot/" + robot_profile.base_link
+    config.scene.ee_frame.prim_path = spawned_prim_path(
+        rigid_body_paths[robot_profile.base_link]
+    )
     target = config.scene.ee_frame.target_frames[0]
-    target.prim_path = "{ENV_REGEX_NS}/Robot/" + robot_profile.ee_link
+    target.prim_path = spawned_prim_path(rigid_body_paths[robot_profile.ee_link])
     target.offset.pos = (0.0, 0.0, 0.0)
     target.offset.rot = (0.0, 0.0, 0.0, 1.0)
     return {
@@ -196,6 +208,7 @@ def configure_policy_interchange_robot(
         "force_lower": list(arrays["force_lower"]),
         "force_upper": list(arrays["force_upper"]),
         "usd_path": str(robot_usd_path),
+        "rigid_body_prim_paths": rigid_body_paths,
         "controller_representation": controller_representation,
     }
 

@@ -99,6 +99,8 @@ def _child_command(
         str(args.decisions),
         "--seed",
         str(args.seed if seed is None else seed),
+        "--action-selection",
+        str(args.action_selection),
     ]
 
 
@@ -111,6 +113,7 @@ def _cohort_report(reports: list[dict], *, seed: int) -> dict:
         "task_identity",
         "checkpoint_sha256",
         "normalization_identity",
+        "action_selection_strategy",
     )
     if not reports or any(
         report.get("seed") != seed + index
@@ -148,6 +151,7 @@ def _cohort_report(reports: list[dict], *, seed: int) -> dict:
                 "object_identity": report.get("object_identity"),
                 "task_identity": report.get("task_identity"),
                 "checkpoint_sha256": report.get("checkpoint_sha256"),
+                "action_selection_strategy": report.get("action_selection_strategy"),
             }
             for index, report in enumerate(reports)
         ],
@@ -182,6 +186,7 @@ def _validate_report_shape(report: dict, decisions: int) -> dict:
     """Validate required native policy and teacher evidence collections."""
 
     teacher = report.get("teacher") or {}
+    smoke = report.get("runtime_boundary_smoke") or {}
     if (
         report.get("schema") != SCHEMA
         or report.get("execution_valid") is not True
@@ -197,6 +202,16 @@ def _validate_report_shape(report: dict, decisions: int) -> dict:
         or len(teacher.get("camera_hashes") or ()) != len(teacher.get("controls") or ())
         or len(teacher.get("camera_clocks") or ()) != len(teacher.get("controls") or ())
         or len(report.get("observation_clocks") or ()) != decisions
+        or smoke.get("schema")
+        != "npa.sim2real.policy_interchange.runtime_boundary_smoke.v1"
+        or smoke.get("status") != "passed"
+        or smoke.get("training_or_evaluation_row") is not False
+        or smoke.get("excluded_from_task_metrics") is not True
+        or not smoke.get("camera_hashes")
+        or not smoke.get("inference")
+        or not smoke.get("action_chunk")
+        or not smoke.get("controller_proof")
+        or not smoke.get("physics_observation")
     ):
         raise RuntimeError("native non-Franka execution report is incomplete")
     return teacher
@@ -333,6 +348,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--decisions", type=int, required=True)
     parser.add_argument("--seed", type=int, required=True)
     parser.add_argument("--episodes", type=int, default=1)
+    parser.add_argument(
+        "--action-selection",
+        choices=("first_action", "uniform_temporal_ensemble"),
+        default="first_action",
+    )
     return parser
 
 

@@ -380,6 +380,7 @@ def test_object_eval_is_evaluation_only_held_out_cohort() -> None:
     assert _value(execute, "--episodes") == "8"
     assert _value(execute, "--decisions") == "192"
     assert _value(execute, "--policy-role") == "adapted"
+    assert _value(execute, "--action-selection") == "uniform_temporal_ensemble"
     assert (
         _value(execute, "--prepared-robot-uri")
         == spec.config["non_franka_prepared_robot_uri"]

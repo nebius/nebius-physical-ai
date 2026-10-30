@@ -70,6 +70,7 @@ config:
   non_franka_decisions: "192"
   non_franka_seed: "20321014"
   non_franka_episodes: "8"
+  interchange_action_selection: uniform_temporal_ensemble
 
   preparation_uri: "{{config.root_uri}}/stage_01_prepare/preparation.json"
   policy_adapter_uri: "{{config.root_uri}}/stage_01_prepare/policy-adapter.json"
@@ -172,7 +173,7 @@ states:
     next: evaluate-object-cohort
 
   evaluate-object-cohort:
-    description: Run eight split-disjoint offset-spool episodes with native teacher validity and actual frozen-checkpoint actions; retain every episode and failure.
+    description: Run eight split-disjoint offset-spool episodes with native teacher validity and the qualified causal uniform temporal ensemble; retain every episode and failure.
     needs: [start-adapted-service]
     toolRef: workbench.sim2real.policy_interchange_non_franka_execute
     resources: isaac

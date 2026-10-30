@@ -752,6 +752,43 @@ def test_native_policy_chunk_is_retained_while_only_action_zero_is_selected() ->
     assert receipt["selected_action_index"] == 0
 
 
+def test_native_policy_uniform_temporal_ensemble_is_causal_and_time_aligned() -> None:
+    from types import SimpleNamespace
+
+    from npa.workflows.sim2real.interchange_isaac_runtime import (
+        _select_policy_action,
+    )
+
+    history: list[dict] = []
+    chunks = (
+        ((0.1,) * 8, (0.3,) * 8, (0.5,) * 8),
+        ((0.7,) * 8, (0.9,) * 8),
+        ((1.1,) * 8,),
+    )
+    expected = (0.1, 0.5, 0.8333333333333334)
+    for decision, (chunk, scalar) in enumerate(zip(chunks, expected, strict=True)):
+        output = SimpleNamespace(
+            action=SimpleNamespace(
+                execute_prefix=1,
+                horizon=3,
+                names=tuple(f"action_{index}" for index in range(8)),
+            ),
+            action_chunk=chunk,
+        )
+        selected, receipt = _select_policy_action(
+            output,
+            decision=decision,
+            strategy="uniform_temporal_ensemble",
+            history=history,
+        )
+        assert selected == pytest.approx((scalar,) * 8)
+        assert receipt["selection_method"] == (
+            "native_fresh_chunk_uniform_temporal_mean"
+        )
+        assert receipt["contributor_count"] == decision + 1
+        assert receipt["contributors"][-1]["action_index"] == 0
+
+
 def test_native_child_command_uses_every_explicit_binding(tmp_path: Path) -> None:
     paths = [
         tmp_path / name
@@ -764,7 +801,14 @@ def test_native_child_command_uses_every_explicit_binding(tmp_path: Path) -> Non
             "output",
         )
     ]
-    command = _child_command(argparse.Namespace(decisions=12, seed=7), *paths)
+    command = _child_command(
+        argparse.Namespace(
+            decisions=12,
+            seed=7,
+            action_selection="uniform_temporal_ensemble",
+        ),
+        *paths,
+    )
     assert command == [
         "/isaac-sim/python.sh",
         "-m",
@@ -785,6 +829,8 @@ def test_native_child_command_uses_every_explicit_binding(tmp_path: Path) -> Non
         "12",
         "--seed",
         "7",
+        "--action-selection",
+        "uniform_temporal_ensemble",
     ]
 
 
@@ -795,8 +841,17 @@ def test_native_child_command_accepts_split_disjoint_episode_seed(
         tmp_path / name
         for name in ("prepared", "prep", "service", "manifest", "robot", "output")
     ]
-    command = _child_command(argparse.Namespace(decisions=12, seed=7), *paths, seed=11)
-    assert command[-2:] == ["--seed", "11"]
+    command = _child_command(
+        argparse.Namespace(decisions=12, seed=7, action_selection="first_action"),
+        *paths,
+        seed=11,
+    )
+    assert command[-4:] == [
+        "--seed",
+        "11",
+        "--action-selection",
+        "first_action",
+    ]
 
 
 def test_native_object_cohort_preserves_each_result_and_identity() -> None:
@@ -811,6 +866,7 @@ def test_native_object_cohort_preserves_each_result_and_identity() -> None:
             "task_identity": "surface-placement",
             "checkpoint_sha256": "a" * 64,
             "normalization_identity": "b" * 64,
+            "action_selection_strategy": "uniform_temporal_ensemble",
         }
         for index, success in enumerate((True, False, True))
     ]

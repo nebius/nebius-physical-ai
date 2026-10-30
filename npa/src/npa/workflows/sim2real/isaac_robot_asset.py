@@ -308,6 +308,55 @@ def _validate_usd(path: Path, spec: dict) -> None:
         )
 
 
+def resolved_rigid_body_prim_paths(
+    path: Path, link_names: list[str] | tuple[str, ...]
+) -> dict[str, str]:
+    """Resolve declared link names to prim paths relative to the USD default prim.
+
+    URDF conversion is free to nest links below grouping prims such as
+    ``Geometry``.  Isaac spawns the USD default prim at the configured robot
+    prim, so constructing ``Robot/<link-name>`` is only valid for flat assets.
+    This resolver retains the converted hierarchy and requires every selected
+    link to be an actual rigid body before an environment is launched.
+    """
+
+    from pxr import Usd, UsdPhysics
+
+    requested = tuple(str(name) for name in link_names)
+    if (
+        not requested
+        or any(not name for name in requested)
+        or len(set(requested)) != len(requested)
+    ):
+        raise IsaacRobotAssetError("rigid-body link names must be unique and nonempty")
+    stage = Usd.Stage.Open(str(path))
+    if stage is None:
+        raise IsaacRobotAssetError(f"Isaac produced an unreadable USD: {path}")
+    default_prim = stage.GetDefaultPrim()
+    if not default_prim or not default_prim.IsValid():
+        raise IsaacRobotAssetError("resolved robot USD has no valid default prim")
+    root = str(default_prim.GetPath()).rstrip("/")
+    matches: dict[str, list[str]] = {name: [] for name in requested}
+    for prim in stage.Traverse(Usd.TraverseInstanceProxies()):
+        name = str(prim.GetName())
+        if name not in matches or not prim.HasAPI(UsdPhysics.RigidBodyAPI):
+            continue
+        absolute = str(prim.GetPath())
+        if absolute != root and not absolute.startswith(root + "/"):
+            raise IsaacRobotAssetError(
+                f"resolved rigid body {absolute!r} is outside the default prim"
+            )
+        relative = absolute[len(root) :].lstrip("/")
+        matches[name].append(relative)
+    invalid = {name: values for name, values in matches.items() if len(values) != 1}
+    if invalid:
+        raise IsaacRobotAssetError(
+            "converted USD rigid-body paths are missing or ambiguous: "
+            + ", ".join(f"{name}={values}" for name, values in sorted(invalid.items()))
+        )
+    return {name: values[0] for name, values in matches.items()}
+
+
 def _install_usd_entrypoint(produced: Path, resolved: Path) -> None:
     """Create the stable entrypoint without relocating relative composition arcs."""
 

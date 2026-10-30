@@ -1146,6 +1146,47 @@ def test_isaac_usd_validation_resolves_child_targets_to_rigid_body_ancestors(
     isaac_robot_asset._validate_usd(Path("robot.usd"), _doc())
 
 
+def test_resolved_rigid_body_paths_preserve_nested_converted_usd_hierarchy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rigid_body_api = object()
+    instance_proxy_predicate = object()
+    root = _FakeBodyPrim("/panda", rigid=False, rigid_body_api=rigid_body_api)
+    base = _FakeBodyPrim(
+        "/panda/Geometry/panda_link0",
+        rigid=True,
+        rigid_body_api=rigid_body_api,
+        parent=root,
+    )
+    hand = _FakeBodyPrim(
+        "/panda/Geometry/panda_link0/panda_link1/panda_hand",
+        rigid=True,
+        rigid_body_api=rigid_body_api,
+        parent=base,
+    )
+    stage = SimpleNamespace(
+        GetDefaultPrim=lambda: root,
+        Traverse=lambda predicate: (
+            [root, base, hand] if predicate is instance_proxy_predicate else []
+        ),
+    )
+    pxr = SimpleNamespace(
+        Usd=SimpleNamespace(
+            Stage=SimpleNamespace(Open=lambda _path: stage),
+            TraverseInstanceProxies=lambda: instance_proxy_predicate,
+        ),
+        UsdPhysics=SimpleNamespace(RigidBodyAPI=rigid_body_api),
+    )
+    monkeypatch.setitem(sys.modules, "pxr", pxr)
+
+    assert isaac_robot_asset.resolved_rigid_body_prim_paths(
+        Path("robot.usd"), ("panda_link0", "panda_hand")
+    ) == {
+        "panda_link0": "Geometry/panda_link0",
+        "panda_hand": "Geometry/panda_link0/panda_link1/panda_hand",
+    }
+
+
 def test_isaac_cli_returns_nonzero_without_closing_kit_on_conversion_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -1341,7 +1341,12 @@ def _policy_step(
     output, inference = client.infer_typed(
         observation=observation, policy=inputs.policy
     )
-    action, action_receipt = _current_policy_action(output)
+    action, action_receipt = _select_policy_action(
+        output,
+        decision=decision,
+        strategy=args.action_selection,
+        history=context.setdefault("action_chunk_history", []),
+    )
     control = apply_absolute_joint_target(env, action, profile=inputs.robot)
     if control["terminated"] or control["truncated"]:
         raise RuntimeError("native policy environment reset during evaluation")
@@ -1355,8 +1360,14 @@ def _policy_step(
     trace.action_chunks.append(action_receipt)
 
 
-def _current_policy_action(output: Any) -> tuple[tuple[float, ...], dict[str, Any]]:
-    """Retain a typed native chunk while selecting its declared first action."""
+def _select_policy_action(
+    output: Any,
+    *,
+    decision: int,
+    strategy: str,
+    history: list[dict[str, Any]],
+) -> tuple[tuple[float, ...], dict[str, Any]]:
+    """Select one causal action while retaining the complete native chunk."""
 
     import numpy as np
 
@@ -1370,15 +1381,73 @@ def _current_policy_action(output: Any) -> tuple[tuple[float, ...], dict[str, An
         or not np.isfinite(values).all()
     ):
         raise RuntimeError("native service returned an invalid current action chunk")
-    return tuple(float(value) for value in values[0]), {
+    if decision == 0:
+        history.clear()
+    elif not history or int(history[-1]["origin_decision"]) != decision - 1:
+        raise RuntimeError("native action-chunk history is not episode-contiguous")
+    chunk_sha256 = hashlib.sha256(values.tobytes()).hexdigest()
+    history.append(
+        {
+            "origin_decision": decision,
+            "actions": values.copy(),
+            "chunk_sha256": chunk_sha256,
+        }
+    )
+    if strategy == "first_action":
+        selected = values[0].copy()
+        contributors = [
+            {
+                "origin_decision": decision,
+                "action_index": 0,
+                "chunk_sha256": chunk_sha256,
+            }
+        ]
+        history[:] = history[-1:]
+        method = "native_fresh_chunk_first_action"
+    elif strategy == "uniform_temporal_ensemble":
+        retained, candidates, contributors = [], [], []
+        for row in history:
+            offset = decision - int(row["origin_decision"])
+            if 0 <= offset < row["actions"].shape[0]:
+                retained.append(row)
+                candidates.append(row["actions"][offset])
+                contributors.append(
+                    {
+                        "origin_decision": int(row["origin_decision"]),
+                        "action_index": offset,
+                        "chunk_sha256": row["chunk_sha256"],
+                    }
+                )
+        history[:] = retained
+        if not candidates or contributors[-1]["action_index"] != 0:
+            raise RuntimeError("native temporal ensemble lacks the current prediction")
+        selected = np.ascontiguousarray(np.mean(np.stack(candidates), axis=0))
+        method = "native_fresh_chunk_uniform_temporal_mean"
+    else:
+        raise RuntimeError(f"unsupported native action-selection strategy {strategy!r}")
+    return tuple(float(value) for value in selected), {
         "schema": "npa.sim2real.native_action_chunk.v1",
         "shape": list(values.shape),
         "dtype": str(values.dtype),
-        "sha256": hashlib.sha256(values.tobytes()).hexdigest(),
+        "sha256": chunk_sha256,
         "actions": values.tolist(),
-        "selection_method": "native_fresh_chunk_first_action",
-        "selected_action_index": 0,
+        "selection_strategy": strategy,
+        "selection_method": method,
+        "selected_action_index": 0 if strategy == "first_action" else None,
+        "contributors": contributors,
+        "contributor_count": len(contributors),
+        "weight_per_contributor": 1.0 / len(contributors),
+        "selected_action_sha256": hashlib.sha256(selected.tobytes()).hexdigest(),
+        "selected_action": selected.tolist(),
     }
+
+
+def _current_policy_action(output: Any) -> tuple[tuple[float, ...], dict[str, Any]]:
+    """Compatibility helper for callers explicitly selecting chunk row zero."""
+
+    return _select_policy_action(
+        output, decision=0, strategy="first_action", history=[]
+    )
 
 
 def _policy_rollout(
@@ -1485,6 +1554,7 @@ def _execution_report(
         "teacher": teacher,
         "seed": args.seed,
         "decisions": args.decisions,
+        "action_selection_strategy": args.action_selection,
     }
     report.update(_trace_report(args, trace, evidence_decisions))
     return report
@@ -1522,6 +1592,73 @@ def _trace_report(
     }
 
 
+def _runtime_boundary_smoke(
+    gym: Any, args: argparse.Namespace, inputs: RuntimeInputs
+) -> dict[str, Any]:
+    """Exercise one real camera-to-model-to-controller boundary before trials."""
+
+    env, configuration = _policy_environment(gym, args, inputs)
+    try:
+        env.reset(seed=args.seed)
+        native = env.unwrapped
+        binding, embodiment = _live_binding(native, inputs, configuration)
+        client = _policy_client(inputs)
+        reset = client.reset(policy=inputs.policy)
+        context = {
+            "ordered_event_steps": {},
+            "required_events": inputs.task.success_events,
+            "retreat_distance_m": inputs.task.retreat_distance_m,
+            "stable_steps": 0,
+        }
+        trace = PolicyTrace()
+        _policy_step(
+            env=env,
+            native=native,
+            args=args,
+            inputs=inputs,
+            client=client,
+            decision=0,
+            initial_z=_reference_position(native, inputs.prop)[2],
+            context=context,
+            trace=trace,
+            evidence_decisions=set(),
+        )
+        if not all(
+            len(rows) == 1
+            for rows in (
+                trace.controls,
+                trace.physics,
+                trace.inference,
+                trace.action_chunks,
+                trace.camera_hashes,
+                trace.observation_clocks,
+            )
+        ):
+            raise RuntimeError(
+                "native runtime boundary smoke emitted incomplete evidence"
+            )
+        receipt = {
+            "schema": "npa.sim2real.policy_interchange.runtime_boundary_smoke.v1",
+            "status": "passed",
+            "training_or_evaluation_row": False,
+            "excluded_from_task_metrics": True,
+            "action_selection_strategy": args.action_selection,
+            "robot_binding": binding,
+            "embodiment": embodiment,
+            "service_reset": reset,
+            "camera_hashes": trace.camera_hashes[0],
+            "observation_clock": trace.observation_clocks[0],
+            "inference": trace.inference[0],
+            "action_chunk": trace.action_chunks[0],
+            "controller_proof": trace.controls[0],
+            "physics_observation": trace.physics[0],
+        }
+        write_json(args.output_path / "runtime-boundary-smoke.json", receipt)
+        return receipt
+    finally:
+        env.close()
+
+
 def run(args: argparse.Namespace) -> dict[str, Any]:
     """Execute the sealed teacher and SmolVLA policy in native Isaac."""
 
@@ -1529,6 +1666,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
     inputs = _runtime_inputs(args)
     args.output_path.mkdir(parents=True, exist_ok=False)
+    boundary_smoke = _runtime_boundary_smoke(gym, args, inputs)
     teacher = _policy_teacher(gym, args, inputs)
     env, configuration = _policy_environment(gym, args, inputs)
     try:
@@ -1549,6 +1687,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             trace=trace,
             evidence_decisions=evidence,
         )
+        report["runtime_boundary_smoke"] = boundary_smoke
         write_json(args.output_path / "report.json", report)
         return report
     finally:
@@ -1592,6 +1731,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-path", type=Path, required=True)
     parser.add_argument("--decisions", type=int, required=True)
     parser.add_argument("--seed", type=int, required=True)
+    parser.add_argument(
+        "--action-selection",
+        choices=("first_action", "uniform_temporal_ensemble"),
+        default="first_action",
+    )
     return parser
 
 
