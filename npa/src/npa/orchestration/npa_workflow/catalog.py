@@ -3276,6 +3276,24 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.expert_seed}}",
         ],
     ),
+    "workbench.sim2real.policy_interchange_robot_asset_prepare": ToolEntry(
+        name="workbench.sim2real.policy_interchange_robot_asset_prepare",
+        description=(
+            "Convert the declared robot source with the content-addressed Isaac "
+            "recipe before collection or evaluation."
+        ),
+        argv_template=[
+            _ISAAC_RUNTIME_PYTHON,
+            "-m",
+            "npa.workflows.sim2real.interchange_robot_asset_prepare",
+            "--run-id",
+            "{{run.id}}",
+            "--preparation-uri",
+            "{{config.preparation_uri}}",
+            "--output-uri",
+            "{{config.robot_asset_prepare_uri}}",
+        ],
+    ),
     "workbench.sim2real.policy_interchange_non_franka_export": ToolEntry(
         name="workbench.sim2real.policy_interchange_non_franka_export",
         description=(

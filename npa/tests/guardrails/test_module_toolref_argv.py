@@ -61,6 +61,7 @@ PARSER_FACTORIES = {
     "npa.workflows.sim2real.interchange_stage": "build_parser",
     "npa.workflows.sim2real.interchange_isaac_entry": "build_parser",
     "npa.workflows.sim2real.interchange_teacher_collect": "build_parser",
+    "npa.workflows.sim2real.interchange_robot_asset_prepare": "build_parser",
     "npa.workflows.sim2real.interchange_teacher_export": "build_parser",
     "npa.workflows.sim2real.smolvla_service_lifecycle": "build_parser",
     "npa.workflows.sim2real.runtime_prerequisites": "build_parser",

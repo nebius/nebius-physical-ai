@@ -18,6 +18,38 @@ class IsaacRobotAssetError(RuntimeError):
     """Raised when Isaac cannot honor the immutable robot asset contract."""
 
 
+URDF_CONVERSION_RECIPE = {
+    "converter": "isaaclab.sim.converters.UrdfConverter",
+    "version": 2,
+    "fix_base": True,
+    "force_usd_conversion": True,
+    "merge_fixed_joints": False,
+    "make_instanceable": False,
+    "joint_drive_stiffness": None,
+}
+USD_IDENTITY_RECIPE = {"converter": "identity", "version": 1}
+
+
+def conversion_recipe(source_format: str) -> dict:
+    """Return the exact conversion behavior that participates in asset identity."""
+
+    if source_format == "urdf":
+        return dict(URDF_CONVERSION_RECIPE)
+    if source_format == "usd":
+        return dict(USD_IDENTITY_RECIPE)
+    raise IsaacRobotAssetError(f"unsupported robot source format {source_format!r}")
+
+
+def conversion_recipe_sha256(source_format: str) -> str:
+    """Return the canonical digest for one supported conversion recipe."""
+
+    return hashlib.sha256(
+        json.dumps(
+            conversion_recipe(source_format), sort_keys=True, separators=(",", ":")
+        ).encode()
+    ).hexdigest()
+
+
 def _spec() -> dict:
     try:
         payload = json.loads(os.environ["NPA_BYO_ROBOT_SPEC_JSON"])
@@ -204,6 +236,8 @@ def _validate_spec(spec: dict) -> None:
         "embodiment_digest",
         "resolved_usd_uri",
         "resolved_manifest_uri",
+        "conversion_recipe",
+        "conversion_recipe_sha256",
     )
     missing = []
     for name in required:
@@ -217,6 +251,15 @@ def _validate_spec(spec: dict) -> None:
         raise IsaacRobotAssetError(
             "resolved RobotSpec is missing immutable asset fields: "
             + ", ".join(missing)
+        )
+    expected_recipe = conversion_recipe(str(spec["source_format"]))
+    expected_digest = conversion_recipe_sha256(str(spec["source_format"]))
+    if (
+        spec.get("conversion_recipe") != expected_recipe
+        or spec.get("conversion_recipe_sha256") != expected_digest
+    ):
+        raise IsaacRobotAssetError(
+            "resolved RobotSpec conversion recipe does not match this runtime"
         )
 
 
@@ -476,6 +519,8 @@ def prepare_with_running_app() -> dict:
             "source_tree_sha256": spec["source_tree_sha256"],
             "source_sha256": spec["source_sha256"],
             "source_format": spec["source_format"],
+            "conversion_recipe": spec["conversion_recipe"],
+            "conversion_recipe_sha256": spec["conversion_recipe_sha256"],
             "usd_uri": spec["resolved_usd_uri"],
             "usd_sha256": usd_sha256,
             "usd_size_bytes": resolved.stat().st_size,
@@ -560,6 +605,8 @@ def fetch() -> dict:
             "source_tree_sha256",
             "expected_action_dim",
             "expected_observation_dim",
+            "conversion_recipe",
+            "conversion_recipe_sha256",
         )
         if manifest.get(name) != spec[name]
     }

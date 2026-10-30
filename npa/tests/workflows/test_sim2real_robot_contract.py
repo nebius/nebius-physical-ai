@@ -177,6 +177,17 @@ def test_stage2_materializes_content_addressed_urdf_contract(tmp_path: Path) -> 
     assert spec["urdf_dependencies"] == ["meshes/arm.stl"]
     assert spec["expected_action_dim"] == 4
     assert spec["expected_observation_dim"] == 24
+    recipe_sha = isaac_robot_asset.conversion_recipe_sha256("urdf")
+    assert spec["conversion_recipe"] == isaac_robot_asset.conversion_recipe("urdf")
+    assert spec["conversion_recipe_sha256"] == recipe_sha
+    assert (
+        f"/{contract['embodiment_digest']}/{recipe_sha}/robot.usd"
+        in spec["resolved_usd_uri"]
+    )
+    assert (
+        f"/{contract['embodiment_digest']}/{recipe_sha}/manifest.json"
+        in spec["resolved_manifest_uri"]
+    )
     assert contract["embodiment"]["arm_joint_names"] == [
         "joint1",
         "joint2",
@@ -551,6 +562,8 @@ def test_resolved_usd_fetch_verifies_manifest_and_bytes(
         "resolved_manifest_uri": "s3://private-run/resolved/manifest.json",
         "expected_action_dim": 8,
         "expected_observation_dim": 36,
+        "conversion_recipe": isaac_robot_asset.conversion_recipe("urdf"),
+        "conversion_recipe_sha256": isaac_robot_asset.conversion_recipe_sha256("urdf"),
     }
     payload = tmp_path / "configuration" / "robot_physics.usd"
     payload.parent.mkdir()
@@ -576,6 +589,8 @@ def test_resolved_usd_fetch_verifies_manifest_and_bytes(
         "source_tree_sha256": spec["source_tree_sha256"],
         "expected_action_dim": spec["expected_action_dim"],
         "expected_observation_dim": spec["expected_observation_dim"],
+        "conversion_recipe": spec["conversion_recipe"],
+        "conversion_recipe_sha256": spec["conversion_recipe_sha256"],
         "usd_sha256": usd_sha,
         "usd_size_bytes": usd.stat().st_size,
         "entrypoint": "robot.usd",
@@ -611,7 +626,7 @@ def test_resolved_usd_fetch_verifies_manifest_and_bytes(
         isaac_robot_asset.fetch()
 
 
-def test_resolved_usd_fetch_rejects_unsafe_asset_paths(
+def test_resolved_usd_fetch_rejects_legacy_unversioned_conversion(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     spec = {
@@ -626,12 +641,41 @@ def test_resolved_usd_fetch_rejects_unsafe_asset_paths(
         "expected_action_dim": 8,
         "expected_observation_dim": 36,
     }
+    monkeypatch.setattr(isaac_robot_asset, "_spec", lambda: spec)
+    monkeypatch.setenv("NPA_ROBOT_WORK_DIR", str(tmp_path / "runtime"))
+
+    with pytest.raises(
+        isaac_robot_asset.IsaacRobotAssetError,
+        match="missing immutable asset fields.*conversion_recipe",
+    ):
+        isaac_robot_asset.fetch()
+
+
+def test_resolved_usd_fetch_rejects_unsafe_asset_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = {
+        "asset_root_uri": "s3://private-run/source/",
+        "source_relative_path": "robot.urdf",
+        "source_tree_sha256": "a" * 64,
+        "source_sha256": "b" * 64,
+        "source_format": "urdf",
+        "embodiment_digest": "c" * 64,
+        "resolved_usd_uri": "s3://private-run/resolved/robot.usd",
+        "resolved_manifest_uri": "s3://private-run/resolved/manifest.json",
+        "expected_action_dim": 8,
+        "expected_observation_dim": 36,
+        "conversion_recipe": isaac_robot_asset.conversion_recipe("urdf"),
+        "conversion_recipe_sha256": isaac_robot_asset.conversion_recipe_sha256("urdf"),
+    }
     manifest = {
         "schema": "npa.sim2real.resolved_robot_asset.v2",
         "embodiment_digest": spec["embodiment_digest"],
         "source_tree_sha256": spec["source_tree_sha256"],
         "expected_action_dim": spec["expected_action_dim"],
         "expected_observation_dim": spec["expected_observation_dim"],
+        "conversion_recipe": spec["conversion_recipe"],
+        "conversion_recipe_sha256": spec["conversion_recipe_sha256"],
         "entrypoint": "robot.usd",
         "asset_files": [
             {"path": "robot.usd", "sha256": "d" * 64, "size_bytes": 1},
@@ -674,6 +718,8 @@ def test_isaac_prepare_converts_urdf_and_publishes_digest_manifest(
         "base_link": "base",
         "ee_link": "tool",
         "finger_links": ["left", "right"],
+        "conversion_recipe": isaac_robot_asset.conversion_recipe("urdf"),
+        "conversion_recipe_sha256": isaac_robot_asset.conversion_recipe_sha256("urdf"),
     }
     uploads: dict[str, bytes] = {}
 

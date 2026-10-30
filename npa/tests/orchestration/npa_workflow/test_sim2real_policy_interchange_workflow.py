@@ -275,6 +275,7 @@ def test_non_franka_acceptance_uses_standard_runtime_and_real_native_seams() -> 
     plan = build_plan(spec, run_id="ur10e-spool-smolvla")
     assert [step.state for step in plan.steps] == [
         "prepare-contract",
+        "prepare-robot-asset",
         "collect-expert",
         "export-dataset",
         "artifact-preflight",
@@ -290,11 +291,20 @@ def test_non_franka_acceptance_uses_standard_runtime_and_real_native_seams() -> 
         "finalize",
     ]
     steps = {step.state: step for step in plan.steps}
+    robot_asset = steps["prepare-robot-asset"]
     collect = steps["collect-expert"]
     export = steps["export-dataset"]
     execute = steps["evaluate-adapted"]
     assert spec.states["evaluate-adapted"].tool_ref == (
         "workbench.sim2real.policy_interchange_non_franka_execute"
+    )
+    assert robot_asset.argv[:3] == [
+        "/isaac-sim/python.sh",
+        "-m",
+        "npa.workflows.sim2real.interchange_robot_asset_prepare",
+    ]
+    assert _value(robot_asset.argv, "--preparation-uri").endswith(
+        "/stage_01_prepare/preparation.json"
     )
     assert collect.argv[:3] == [
         "/isaac-sim/python.sh",

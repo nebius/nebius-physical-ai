@@ -88,6 +88,7 @@ NON_CLI_ARGV = frozenset(
         "workbench.sim2real.policy_interchange_non_franka_execute",
         "workbench.sim2real.policy_interchange_non_franka_base_execute",
         "workbench.sim2real.policy_interchange_non_franka_collect",
+        "workbench.sim2real.policy_interchange_robot_asset_prepare",
         "workbench.sim2real.policy_interchange_non_franka_export",
         "workbench.sim2real.policy_interchange_non_franka_finalize",
         "workbench.sim2real.smolvla_base_gold",

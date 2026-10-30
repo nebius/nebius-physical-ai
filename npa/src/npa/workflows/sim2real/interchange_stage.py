@@ -150,6 +150,9 @@ def _validated_robot_asset_binding(
         or robot_spec.get("source_tree_sha256") != robot.bundle_sha256
         or robot_spec.get("source_sha256") != robot.source_sha256
         or isaac_asset.get("resolved_usd_uri") != robot_spec.get("resolved_usd_uri")
+        or isaac_asset.get("conversion_recipe") != robot_spec.get("conversion_recipe")
+        or isaac_asset.get("conversion_recipe_sha256")
+        != robot_spec.get("conversion_recipe_sha256")
         or not robot_spec.get("resolved_manifest_uri")
     ):
         raise InterchangeContractError(

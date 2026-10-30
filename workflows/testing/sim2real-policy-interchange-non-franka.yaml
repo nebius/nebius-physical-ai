@@ -77,6 +77,7 @@ config:
 
   preparation_uri: "{{config.root_uri}}/stage_01_prepare/preparation.json"
   policy_adapter_uri: "{{config.root_uri}}/stage_01_prepare/policy-adapter.json"
+  robot_asset_prepare_uri: "{{config.root_uri}}/stage_01_prepare/robot-asset.json"
   collection_root_uri: "{{config.root_uri}}/stage_02_expert/"
   dataset_root_uri: "{{config.root_uri}}/stage_03_dataset/"
   lerobot_uri: "{{config.dataset_root_uri}}lerobot-v3/"
@@ -196,11 +197,20 @@ states:
       - {uri: "{{config.preparation_uri}}", schema: npa.sim2real.policy_interchange.preparation.v1}
       - {uri: "{{config.policy_adapter_uri}}", schema: npa.sim2real.lerobot_policy_adapter.v1}
       - {uri: "{{config.component_root_uri}}/components/stage_01.json", schema: npa.sim2real.policy_interchange.component_record.v1}
+    next: prepare-robot-asset
+
+  prepare-robot-asset:
+    description: Convert and publish the exact robot source with the recipe bound by the sealed profile before any controller or contact-sensor use.
+    needs: [prepare-contract]
+    toolRef: workbench.sim2real.policy_interchange_robot_asset_prepare
+    resources: isaac
+    outputs:
+      - {uri: "{{config.robot_asset_prepare_uri}}", schema: npa.sim2real.policy_interchange.robot_asset_prepare.v1}
     next: collect-expert
 
   collect-expert:
     description: Collect successful geometry-aware teacher episodes over split-disjoint object layouts with causal exterior and moving-wrist views.
-    needs: [prepare-contract]
+    needs: [prepare-robot-asset]
     toolRef: workbench.sim2real.policy_interchange_non_franka_collect
     resources: isaac
     outputs:

@@ -14,7 +14,11 @@ from defusedxml import ElementTree as ET
 from defusedxml.common import DefusedXmlException
 
 from npa.genesis import robot_assets
-from npa.workflows.sim2real import isaac_byo_robot_task, onboarding_derive
+from npa.workflows.sim2real import (
+    isaac_byo_robot_task,
+    isaac_robot_asset,
+    onboarding_derive,
+)
 
 
 ROBOT_CONTRACT_SCHEMA = "npa.sim2real.robot_contract.v1"
@@ -518,23 +522,32 @@ def materialize_robot_contract(
         "urdf": source["urdf"],
     }
     embodiment_digest = _canonical_digest(embodiment)
+    conversion_recipe = isaac_robot_asset.conversion_recipe(source["source_format"])
+    conversion_recipe_sha256 = isaac_robot_asset.conversion_recipe_sha256(
+        source["source_format"]
+    )
     normalized_spec.update(
         {
             "embodiment_digest": embodiment_digest,
             "expected_action_dim": expected_action_dim,
             "expected_observation_dim": expected_observation_dim,
             "task_config": task_config,
+            "conversion_recipe": conversion_recipe,
+            "conversion_recipe_sha256": conversion_recipe_sha256,
         }
     )
     resolved_usd_uri = (
         immutable_source_uri
         if spec.robot_source == robot_assets.ROBOT_SOURCE_BYO_USD
-        else f"{root_uri.rstrip('/')}/stage_02_assets/robot/resolved/{embodiment_digest}/robot.usd"
+        else (
+            f"{root_uri.rstrip('/')}/stage_02_assets/robot/resolved/"
+            f"{embodiment_digest}/{conversion_recipe_sha256}/robot.usd"
+        )
     )
     normalized_spec["resolved_usd_uri"] = resolved_usd_uri
     normalized_spec["resolved_manifest_uri"] = (
         f"{root_uri.rstrip('/')}/stage_02_assets/robot/resolved/"
-        f"{embodiment_digest}/manifest.json"
+        f"{embodiment_digest}/{conversion_recipe_sha256}/manifest.json"
     )
     contract = {
         "schema": ROBOT_CONTRACT_SCHEMA,
@@ -557,6 +570,8 @@ def materialize_robot_contract(
                 if spec.robot_source == "byo_urdf"
                 else "none"
             ),
+            "conversion_recipe": conversion_recipe,
+            "conversion_recipe_sha256": conversion_recipe_sha256,
         },
         "requested_inputs": {
             "robot_spec_uri": robot_spec_uri,
