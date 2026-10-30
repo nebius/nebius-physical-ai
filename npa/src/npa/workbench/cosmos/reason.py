@@ -24,6 +24,7 @@ DEFAULT_COSMOS3_MODEL = "nvidia/Cosmos3-Super-Reasoner"
 _REASON_MODEL_REVISIONS = {
     DEFAULT_REASON1_MODEL: "375e24000b24baed78f4618d3dd779e47cd96323",
     DEFAULT_REASON2_MODEL: "a9fae2cf89dc64db96b12860417f0eb403013bb9",
+    "nvidia/Cosmos-Reason2-2B": "9ce19a195e423419c349abfc86fd07178b230561",
 }
 DEFAULT_REASON1_CACHE = "/tmp/hf_home/cosmos-reason1"
 DEFAULT_REASON2_CACHE = "/tmp/hf_home/cosmos-reason2"
