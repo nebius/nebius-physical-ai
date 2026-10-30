@@ -76,7 +76,7 @@ and exact API identity so the final `stop_isolated_api` step can recover without
 repeating cloud deletion. It stops local processes only and retains run state.
 See `docs/teardown.md#owned-local-workflow-api`; never use unscoped `sky api stop`.
 
-Nebius CLI `0.12.254` selects profiles with `--config`, `--profile`, and
+Nebius CLI `0.12.298` selects profiles with `--config`, `--profile`, and
 `NEBIUS_PROFILE`; it ignores `NEBIUS_CONFIG_DIR` and keeps its renewable cache
 under `HOME/.nebius/credentials.yaml` even with `--config`. Do not infer a private
 CLI cache from that environment variable. The owned API binds supported RSA

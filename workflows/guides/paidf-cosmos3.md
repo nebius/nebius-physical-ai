@@ -136,18 +136,18 @@ existing cluster does not require Terraform.
 
 ### P2. Install the Nebius CLI
 
-The recorded setup used version `0.12.254`, which is accepted by
+Use version `0.12.298`, which is accepted by
 the repository's CLI compatibility check:
 
 ```bash
-curl -fsSL https://storage.eu-north1.nebius.cloud/cli/install.sh | NEBIUS_CLI_VERSION=0.12.254 bash
+curl -fsSL https://storage.eu-north1.nebius.cloud/cli/install.sh | NEBIUS_CLI_VERSION=0.12.298 bash
 export PATH="$HOME/.nebius/bin:$PATH"
 hash -r
 command -v nebius
 nebius version
 ```
 
-Require the selected executable to report `0.12.254` before continuing. An
+Require the selected executable to report `0.12.298` before continuing. An
 existing compatible installation can be reused by putting its bin directory
 first on `PATH` and running the last three commands again. Repeat this check
 after changing `PATH` or activating another environment. `NPA_NEBIUS_BIN` alone

@@ -3,7 +3,7 @@ terraform {
   required_providers {
     nebius = {
       source  = "terraform-provider.storage.eu-north1.nebius.cloud/nebius/nebius"
-      version = "~> 0.5.201"
+      version = "~> 0.5.293"
     }
   }
 }
@@ -165,10 +165,12 @@ resource "nebius_compute_v1_instance" "workbench" {
     ssh_host_key_nonce = var.ssh_host_key_nonce
   })
 
+  # The API retired priority on 2026-05-11; it no longer affects preemption.
   preemptible = var.enable_preemptible ? {
     on_preemption = "STOP"
-    priority      = 1
   } : null
+
+  follows_spot_price = var.enable_preemptible ? {} : null
 
   recovery_policy = var.enable_preemptible ? "FAIL" : "RECOVER"
 
@@ -185,7 +187,9 @@ resource "nebius_compute_v1_instance" "workbench" {
   lifecycle {
     # Cloud-init is bootstrap-only here. Updating user_data on a running instance
     # fails in Nebius unless the VM is stopped first.
-    ignore_changes = [cloud_init_user_data]
+    # Priority is retired, but the provider still treats its old value as immutable.
+    # Keep that value on existing VMs so adding spot pricing cannot replace them.
+    ignore_changes = [cloud_init_user_data, preemptible.priority]
   }
 }
 
