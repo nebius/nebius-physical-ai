@@ -33,8 +33,11 @@ from npa.workflows.sim2real.interchange_isaac import (
     surface_teacher_waypoints,
 )
 from npa.workflows.sim2real.interchange_isaac_runtime import (
+    TeacherTrace,
     _axis_angle_error,
     _run_with_app,
+    _teacher_trace,
+    _write_teacher_failure_evidence,
     _update_events,
     _visual_evidence_decisions,
     _write_teacher_episode,
@@ -43,6 +46,7 @@ from npa.workflows.sim2real.interchange_isaac_runtime import (
 from npa.workflows.sim2real.interchange_isaac_entry import (
     _child_command,
     _cohort_report,
+    _publish_failure_evidence,
     _run_child,
 )
 from npa.workflows.sim2real import (
@@ -331,6 +335,88 @@ def test_teacher_runtime_preserves_original_failure_when_close_exits(
     assert receipt["system_exit_code"] is None
 
 
+def test_teacher_failure_retains_partial_controls_cameras_and_state(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    prop = SimpleNamespace(identity="offset-spool")
+    task = SimpleNamespace(identity="surface-placement")
+    trace = TeacherTrace(
+        controls=[{"step": 0, "phase": "approach"}],
+        physics=[{"step": 0, "position_error_m": 0.04}],
+        camera_hashes=[{"workspace": "a" * 64, "wrist": "b" * 64}],
+        camera_clocks=[{"step": 0, "command_application_time_s": 0.0}],
+        states=[[0.0, 0.1]],
+        actions=[[0.2, 0.3]],
+        frames=[
+            {
+                "workspace": (bytes([1, 2, 3]), 1, 1, "exterior"),
+                "wrist": (bytes([4, 5, 6]), 1, 1, "wrist"),
+            }
+        ],
+        timestamps=[0.0],
+        step=1,
+    )
+    error = RuntimeError("geometry-aware teacher failed to reach approach")
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.interchange_isaac_runtime._teacher_waypoint_receipts",
+        lambda *_args: [{"phase": "approach"}],
+    )
+
+    _write_teacher_failure_evidence(tmp_path, prop, task, trace, error)
+
+    report = json.loads((tmp_path / "native-teacher-failure.json").read_text())
+    assert report["failed_phase"] == "approach"
+    assert report["completed_control_steps"] == 1
+    assert report["controls"] == trace.controls
+    assert set(report["artifacts"]) == {
+        "teacher-failure-actions.npy",
+        "teacher-failure-obs-workspace.npy",
+        "teacher-failure-obs-wrist.npy",
+        "teacher-failure-state.npy",
+        "teacher-failure-timestamps.npy",
+    }
+    assert all(
+        row["bytes"] > 0 and len(row["sha256"]) == 64
+        for row in report["artifacts"].values()
+    )
+    assert np.load(tmp_path / "teacher-failure-obs-workspace.npy").shape == (1, 1, 1, 3)
+    assert np.load(tmp_path / "teacher-failure-obs-wrist.npy")[0, 0, 0].tolist() == [
+        4,
+        5,
+        6,
+    ]
+    np.testing.assert_allclose(
+        np.load(tmp_path / "teacher-failure-actions.npy"), trace.actions
+    )
+
+
+def test_teacher_failure_evidence_error_does_not_replace_native_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def fail_waypoint(*_args: object) -> None:
+        raise RuntimeError("native approach failure")
+
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.interchange_isaac_runtime._execute_teacher_waypoints",
+        fail_waypoint,
+    )
+    args = argparse.Namespace(output_path=tmp_path)
+
+    with pytest.raises(RuntimeError, match="native approach failure"):
+        _teacher_trace(
+            None,
+            None,
+            args,
+            None,
+            SimpleNamespace(),
+            SimpleNamespace(),
+            {},
+            0.0,
+            {},
+        )
+
+
 def test_teacher_parent_surfaces_structured_runtime_failure(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -428,6 +514,40 @@ def test_policy_parent_surfaces_structured_runtime_failure(
 
     with pytest.raises(RuntimeError, match="camera role mismatch"):
         _run_child(["native"], output, log)
+
+
+def test_policy_parent_publishes_failure_as_invalid_setup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    published = tmp_path / "published"
+    output = published / "episodes" / "episode-000" / "native"
+    output.mkdir(parents=True)
+    (output / "runtime_failure.json").write_text('{"status":"failed"}')
+    log = tmp_path / "isaac.log"
+    log.write_text("native approach failure\n")
+    calls: list[tuple[Path, str]] = []
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.interchange_isaac_entry.publish",
+        lambda root, uri: calls.append((root, uri)),
+    )
+    args = argparse.Namespace(episodes=8, output_uri="s3://example/run/stage")
+
+    _publish_failure_evidence(
+        args,
+        published,
+        output,
+        log,
+        0,
+        RuntimeError("geometry-aware teacher failed to reach approach"),
+    )
+
+    receipt = json.loads((published / "failure.json").read_text())
+    assert receipt["execution_valid"] is False
+    assert receipt["task_success_measured"] is False
+    assert receipt["episode_index"] == 0
+    assert "episodes/episode-000/native/runtime_failure.json" in receipt["artifacts"]
+    assert "episodes/episode-000/native/isaac-runtime.log" in receipt["artifacts"]
+    assert calls == [(published, "s3://example/run/stage")]
 
 
 def _layout(profile: RobotSensorProfile) -> IsaacActionLayout:

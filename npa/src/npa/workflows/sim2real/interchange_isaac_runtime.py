@@ -654,6 +654,65 @@ def _write_teacher_episode(
     return metadata
 
 
+def _teacher_failure_report(
+    prop: Any, task: Any, trace: TeacherTrace, error: Exception
+) -> dict[str, Any]:
+    """Build the partial native evidence retained after teacher failure."""
+
+    failed_phase = trace.controls[-1]["phase"] if trace.controls else None
+    return {
+        "schema": "npa.sim2real.policy_interchange.native_teacher_failure.v1",
+        "status": "failed",
+        "error_type": type(error).__name__,
+        "error": str(error),
+        "failed_phase": failed_phase,
+        "completed_control_steps": trace.step,
+        "waypoints": _teacher_waypoint_receipts(prop, task),
+        "controls": trace.controls,
+        "physics": trace.physics,
+        "camera_hashes": trace.camera_hashes,
+        "camera_clocks": trace.camera_clocks,
+        "visual_evidence": trace.visuals,
+    }
+
+
+def _write_teacher_failure_evidence(
+    directory: Path, prop: Any, task: Any, trace: TeacherTrace, error: Exception
+) -> None:
+    """Persist synchronized partial teacher bytes without admitting them to training."""
+
+    import numpy as np
+
+    directory.mkdir(parents=True, exist_ok=True)
+    views = _teacher_views(trace.frames)
+    outputs = {
+        "teacher-failure-obs-workspace.npy": np.stack(views["exterior"]),
+        "teacher-failure-obs-wrist.npy": np.stack(views["wrist"]),
+        "teacher-failure-state.npy": np.asarray(trace.states, dtype=np.float32),
+        "teacher-failure-actions.npy": np.asarray(trace.actions, dtype=np.float32),
+        "teacher-failure-timestamps.npy": np.asarray(
+            trace.timestamps, dtype=np.float64
+        ),
+    }
+    if any((directory / name).exists() for name in outputs):
+        raise RuntimeError("teacher failure evidence already exists")
+    for name, values in outputs.items():
+        np.save(directory / name, values)
+    artifacts = {
+        name: {
+            "bytes": (directory / name).stat().st_size,
+            "sha256": _sha256(directory / name),
+        }
+        for name in outputs
+    }
+    report = _teacher_failure_report(prop, task, trace, error)
+    report["artifacts"] = artifacts
+    write_json(
+        directory / "native-teacher-failure.json",
+        report,
+    )
+
+
 def _validate_teacher_episode(
     robot: Any,
     teacher: dict[str, Any],
@@ -1080,7 +1139,7 @@ def _run_teacher(
         layout = _teacher_layout(native, robot)
         initial_z = _reference_position(native, prop)[2]
         context = _event_context(task)
-        trace = _execute_teacher_waypoints(
+        trace = _teacher_trace(
             env, native, args, robot, prop, task, layout, initial_z, context
         )
         return _finish_teacher(
@@ -1096,6 +1155,45 @@ def _run_teacher(
         )
     finally:
         env.close()
+
+
+def _teacher_trace(
+    env: Any,
+    native: Any,
+    args: argparse.Namespace,
+    robot: Any,
+    prop: Any,
+    task: Any,
+    layout: dict[str, Any],
+    initial_z: float,
+    context: dict[str, Any],
+) -> TeacherTrace:
+    """Execute teacher waypoints while retaining any partial native evidence."""
+
+    trace = TeacherTrace()
+    try:
+        _execute_teacher_waypoints(
+            env, native, args, robot, prop, task, layout, initial_z, context, trace
+        )
+    except Exception as error:
+        _preserve_teacher_failure_evidence(args.output_path, prop, task, trace, error)
+        raise
+    return trace
+
+
+def _preserve_teacher_failure_evidence(
+    directory: Path, prop: Any, task: Any, trace: TeacherTrace, error: Exception
+) -> None:
+    """Keep the original native error authoritative if evidence writing fails."""
+
+    try:
+        _write_teacher_failure_evidence(directory, prop, task, trace, error)
+    except Exception as evidence_error:
+        print(
+            f"NPA_TEACHER_FAILURE_EVIDENCE_ERROR {evidence_error}",
+            file=sys.stderr,
+            flush=True,
+        )
 
 
 def _event_context(task: Any) -> dict[str, Any]:
@@ -1117,10 +1215,10 @@ def _execute_teacher_waypoints(
     layout: dict[str, Any],
     initial_z: float,
     context: dict[str, Any],
+    trace: TeacherTrace,
 ) -> TeacherTrace:
     """Execute every geometry-derived phase into one evidence trace."""
 
-    trace = TeacherTrace()
     for waypoint in surface_teacher_waypoints(prop, task):
         _teacher_waypoint(
             env=env,

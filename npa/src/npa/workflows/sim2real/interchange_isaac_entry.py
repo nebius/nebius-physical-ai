@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 
 from npa.workflows.lerobot_transfer_data import materialize, publish, write_json
@@ -182,6 +183,65 @@ def _run_child(command: list[str], output: Path, log: Path) -> dict:
     return json.loads((output / "report.json").read_text(encoding="utf-8"))
 
 
+def _failure_artifacts(root: Path) -> dict[str, dict[str, object]]:
+    """Hash every retained native failure byte before publication."""
+
+    return {
+        path.relative_to(root).as_posix(): {
+            "bytes": path.stat().st_size,
+            "sha256": _sha256(path),
+        }
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
+
+
+def _publish_failure_evidence(
+    args: argparse.Namespace,
+    published: Path,
+    output: Path,
+    log: Path,
+    episode_index: int,
+    error: RuntimeError,
+) -> None:
+    """Publish invalid-setup evidence without turning it into a task result."""
+
+    output.mkdir(parents=True, exist_ok=True)
+    (output / "isaac-runtime.log").write_bytes(log.read_bytes())
+    root = output if args.episodes == 1 else published
+    receipt = {
+        "schema": "npa.sim2real.policy_interchange.failed_execution.v1",
+        "status": "failed",
+        "execution_valid": False,
+        "task_success_measured": False,
+        "episode_index": episode_index,
+        "error": str(error),
+        "artifacts": _failure_artifacts(root),
+    }
+    write_json(root / "failure.json", receipt)
+    publish(root, args.output_uri)
+
+
+def _preserve_failure_evidence(
+    args: argparse.Namespace,
+    published: Path,
+    output: Path,
+    log: Path,
+    episode_index: int,
+    error: RuntimeError,
+) -> None:
+    """Keep the native failure authoritative if durable publication also fails."""
+
+    try:
+        _publish_failure_evidence(args, published, output, log, episode_index, error)
+    except Exception as publication_error:
+        print(
+            f"NPA_FAILED_EXECUTION_PUBLICATION_ERROR {publication_error}",
+            file=sys.stderr,
+            flush=True,
+        )
+
+
 def _validate_report_shape(report: dict, decisions: int) -> dict:
     """Validate required native policy and teacher evidence collections."""
 
@@ -315,7 +375,13 @@ def run(args: argparse.Namespace) -> dict:
                 output,
                 seed=args.seed + episode_index,
             )
-            report = _run_child(command, output, log)
+            try:
+                report = _run_child(command, output, log)
+            except RuntimeError as error:
+                _preserve_failure_evidence(
+                    args, published, output, log, episode_index, error
+                )
+                raise
             teacher = _validate_report_shape(report, args.decisions)
             _validate_camera_clocks(report, teacher)
             _validate_outputs(report, teacher, output, robot)
