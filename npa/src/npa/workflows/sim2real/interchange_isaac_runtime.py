@@ -53,6 +53,7 @@ class TeacherTrace:
     physics: list[dict[str, Any]] = field(default_factory=list)
     camera_hashes: list[dict[str, str]] = field(default_factory=list)
     camera_clocks: list[dict[str, Any]] = field(default_factory=list)
+    tracking: list[dict[str, Any]] = field(default_factory=list)
     states: list[list[float]] = field(default_factory=list)
     actions: list[list[float]] = field(default_factory=list)
     frames: list[dict[str, tuple[bytes, int, int, str]]] = field(default_factory=list)
@@ -515,6 +516,59 @@ def _teacher_command(
     return command, float(np.linalg.norm(translation)), float(np.linalg.norm(rotation))
 
 
+def _teacher_end_effector_pose(native: Any) -> dict[str, list[float]]:
+    """Read the exact frame used by the native differential-IK controller."""
+
+    frame = native.scene["ee_frame"].data
+    position = _native_tensor(frame.target_pos_w)[0, 0, :3].detach().cpu().tolist()
+    quaternion = _native_tensor(frame.target_quat_w)[0, 0, :4].detach().cpu().tolist()
+    return {
+        "translation_m": [float(value) for value in position],
+        "quaternion_xyzw": [float(value) for value in quaternion],
+    }
+
+
+def _teacher_tracking_receipt(
+    pose_before: dict[str, list[float]],
+    pose_after: dict[str, list[float]],
+    waypoint: Any,
+    robot: Any,
+    measured_after: dict[str, float],
+) -> dict[str, Any]:
+    """Bind controller tracking and physical joint margins to one command."""
+
+    import numpy as np
+
+    target = waypoint.world_from_ee
+    target_position = np.asarray(target.translation_m, dtype=float)
+    before_position = np.asarray(pose_before["translation_m"], dtype=float)
+    after_position = np.asarray(pose_after["translation_m"], dtype=float)
+    before_rotation = _axis_angle_error(
+        pose_before["quaternion_xyzw"], target.quaternion_xyzw
+    )
+    after_rotation = _axis_angle_error(
+        pose_after["quaternion_xyzw"], target.quaternion_xyzw
+    )
+    joints = [float(measured_after[name]) for name in robot.arm_joint_names]
+    margins = [
+        min(value - lower, upper - value)
+        for value, (lower, upper) in zip(joints, robot.joint_limits_rad, strict=True)
+    ]
+    return {
+        "target_world_pose": target.to_dict(),
+        "ee_world_pose_before": pose_before,
+        "ee_world_pose_after": pose_after,
+        "translation_error_before_m": (target_position - before_position).tolist(),
+        "translation_error_after_m": (target_position - after_position).tolist(),
+        "rotation_error_before_rad": before_rotation.tolist(),
+        "rotation_error_after_rad": after_rotation.tolist(),
+        "arm_joint_positions_after_rad": joints,
+        "arm_joint_position_limit_margins_after_rad": margins,
+        "collision_evidence_available": False,
+        "solver_state_available": False,
+    }
+
+
 def _teacher_camera_capture(
     native: Any, robot: Any
 ) -> tuple[
@@ -672,6 +726,7 @@ def _teacher_failure_report(
         "physics": trace.physics,
         "camera_hashes": trace.camera_hashes,
         "camera_clocks": trace.camera_clocks,
+        "tracking": trace.tracking,
         "visual_evidence": trace.visuals,
     }
 
@@ -822,7 +877,7 @@ def _teacher_step(
     hashes, frames, captures, poses, measured_before = _teacher_step_inputs(
         native, robot, args, trace, waypoint, first
     )
-    command, errors, times, sample, measured_after = _apply_teacher_step(
+    command, errors, times, sample, measured_after, tracking = _apply_teacher_step(
         env, native, robot, prop, task, layout, waypoint, initial_z, captures
     )
     _update_events(context, sample, trace.step)
@@ -838,6 +893,7 @@ def _teacher_step(
         poses,
         measured_before,
         measured_after,
+        tracking,
         robot,
         frames,
     )
@@ -856,6 +912,7 @@ def _record_teacher_transition(
     poses: dict[str, dict],
     measured_before: dict[str, float],
     measured_after: dict[str, float],
+    tracking: dict[str, Any],
     robot: Any,
     frames: dict[str, Any],
 ) -> None:
@@ -873,6 +930,7 @@ def _record_teacher_transition(
         poses=poses,
         measured_before=measured_before,
         measured_after=measured_after,
+        tracking=tracking,
         robot=robot,
         frames=frames,
     )
@@ -906,10 +964,16 @@ def _apply_teacher_step(
     initial_z: float,
     captures: dict[str, float],
 ) -> tuple[
-    Any, tuple[float, float], tuple[float, float], dict[str, Any], dict[str, float]
+    Any,
+    tuple[float, float],
+    tuple[float, float],
+    dict[str, Any],
+    dict[str, float],
+    dict[str, Any],
 ]:
     """Apply one teacher command after proving its cameras are causal."""
 
+    pose_before = _teacher_end_effector_pose(native)
     command, position_error, orientation_error = _teacher_command(
         native, layout, waypoint
     )
@@ -922,12 +986,16 @@ def _apply_teacher_step(
         raise RuntimeError(f"native teacher reset during {waypoint.phase}")
     sample = _sample(native, robot, prop, task, initial_z)
     measured_after = measured_policy_state(native, robot)
+    tracking = _teacher_tracking_receipt(
+        pose_before, _teacher_end_effector_pose(native), waypoint, robot, measured_after
+    )
     return (
         command,
         (position_error, orientation_error),
         (before, after),
         sample,
         measured_after,
+        tracking,
     )
 
 
@@ -946,6 +1014,7 @@ def _record_teacher_step(
     poses: dict[str, dict],
     measured_before: dict[str, float],
     measured_after: dict[str, float],
+    tracking: dict[str, Any],
     robot: Any,
     frames: dict[str, tuple[bytes, int, int, str]],
 ) -> None:
@@ -967,6 +1036,7 @@ def _record_teacher_step(
     trace.camera_clocks.append(
         _teacher_clock(trace.step, captures, poses, before, after)
     )
+    trace.tracking.append(tracking)
     _record_teacher_arrays(
         trace, robot, measured_before, measured_after, frames, before
     )
@@ -1093,6 +1163,7 @@ def _teacher_result(
         "physics": trace.physics,
         "camera_hashes": trace.camera_hashes,
         "camera_clocks": trace.camera_clocks,
+        "tracking": trace.tracking,
         "visual_evidence": trace.visuals,
         "privileged_object_state_policy_input": False,
     }

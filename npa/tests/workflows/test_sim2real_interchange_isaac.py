@@ -36,6 +36,7 @@ from npa.workflows.sim2real.interchange_isaac_runtime import (
     TeacherTrace,
     _axis_angle_error,
     _run_with_app,
+    _teacher_tracking_receipt,
     _teacher_trace,
     _write_teacher_failure_evidence,
     _update_events,
@@ -346,6 +347,7 @@ def test_teacher_failure_retains_partial_controls_cameras_and_state(
         physics=[{"step": 0, "position_error_m": 0.04}],
         camera_hashes=[{"workspace": "a" * 64, "wrist": "b" * 64}],
         camera_clocks=[{"step": 0, "command_application_time_s": 0.0}],
+        tracking=[{"translation_error_after_m": [0.01, 0.0, 0.0]}],
         states=[[0.0, 0.1]],
         actions=[[0.2, 0.3]],
         frames=[
@@ -369,6 +371,7 @@ def test_teacher_failure_retains_partial_controls_cameras_and_state(
     assert report["failed_phase"] == "approach"
     assert report["completed_control_steps"] == 1
     assert report["controls"] == trace.controls
+    assert report["tracking"] == trace.tracking
     assert set(report["artifacts"]) == {
         "teacher-failure-actions.npy",
         "teacher-failure-obs-workspace.npy",
@@ -389,6 +392,36 @@ def test_teacher_failure_retains_partial_controls_cameras_and_state(
     np.testing.assert_allclose(
         np.load(tmp_path / "teacher-failure-actions.npy"), trace.actions
     )
+
+
+def test_teacher_tracking_receipt_binds_pose_residual_and_joint_margins() -> None:
+    robot = _profile()
+    waypoint = SimpleNamespace(
+        world_from_ee=Transform((0.5, 0.1, 0.2), (0.0, 0.0, 0.0, 1.0))
+    )
+    measured = {name: 0.5 for name in robot.measured_state_names}
+
+    receipt = _teacher_tracking_receipt(
+        {
+            "translation_m": [0.4, 0.1, 0.2],
+            "quaternion_xyzw": [0.0, 0.0, 0.0, 1.0],
+        },
+        {
+            "translation_m": [0.45, 0.1, 0.2],
+            "quaternion_xyzw": [0.0, 0.0, 0.0, 1.0],
+        },
+        waypoint,
+        robot,
+        measured,
+    )
+
+    assert receipt["translation_error_before_m"] == pytest.approx([0.1, 0.0, 0.0])
+    assert receipt["translation_error_after_m"] == pytest.approx([0.05, 0.0, 0.0])
+    assert receipt["rotation_error_after_rad"] == pytest.approx([0.0, 0.0, 0.0])
+    assert receipt["arm_joint_positions_after_rad"] == [0.5] * 6
+    assert receipt["arm_joint_position_limit_margins_after_rad"] == [1.5] * 6
+    assert receipt["collision_evidence_available"] is False
+    assert receipt["solver_state_available"] is False
 
 
 def test_teacher_failure_evidence_error_does_not_replace_native_error(
