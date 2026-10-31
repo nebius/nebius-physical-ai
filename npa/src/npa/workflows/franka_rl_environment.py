@@ -483,6 +483,10 @@ def configure_policy_interchange_surface_task(
         filter_prim_paths_expr=["{ENV_REGEX_NS}/Table"],
         history_length=3,
     )
+    config.scene.npa_robot_contact = ContactSensorCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/.*",
+        history_length=3,
+    )
 
 
 def build_runner(env, recipe: dict, output=None):

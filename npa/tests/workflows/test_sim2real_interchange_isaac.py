@@ -37,6 +37,8 @@ from npa.workflows.sim2real.interchange_isaac_runtime import (
     _axis_angle_error,
     _run_with_app,
     _teacher_tracking_receipt,
+    _teacher_contact_evidence,
+    _teacher_solver_evidence,
     _teacher_trace,
     _write_teacher_failure_evidence,
     _update_events,
@@ -257,6 +259,8 @@ def test_surface_task_binds_contact_sensors_to_resolved_finger_bodies(
     assert config.scene.npa_right_object_contact.prim_path == (
         "{ENV_REGEX_NS}/Robot/Geometry/base_link/arm/tool0/gripper/right_pad"
     )
+    assert config.scene.npa_robot_contact.prim_path == "{ENV_REGEX_NS}/Robot/.*"
+    assert getattr(config.scene.npa_robot_contact, "filter_prim_paths_expr", []) == []
 
 
 def test_measured_policy_state_bounds_one_physics_step_of_joint_overshoot() -> None:
@@ -413,6 +417,14 @@ def test_teacher_tracking_receipt_binds_pose_residual_and_joint_margins() -> Non
         waypoint,
         robot,
         measured,
+        {
+            "measurement": "unfiltered_net_contact_force_per_robot_rigid_body",
+            "maximum_force_n": 0.0,
+        },
+        {
+            "method": "dls",
+            "jacobian_condition_number": 2.0,
+        },
     )
 
     assert receipt["translation_error_before_m"] == pytest.approx([0.1, 0.0, 0.0])
@@ -420,8 +432,60 @@ def test_teacher_tracking_receipt_binds_pose_residual_and_joint_margins() -> Non
     assert receipt["rotation_error_after_rad"] == pytest.approx([0.0, 0.0, 0.0])
     assert receipt["arm_joint_positions_after_rad"] == [0.5] * 6
     assert receipt["arm_joint_position_limit_margins_after_rad"] == [1.5] * 6
-    assert receipt["collision_evidence_available"] is False
+    assert receipt["collision_evidence_available"] is True
+    assert receipt["robot_contact"]["maximum_force_n"] == 0.0
     assert receipt["solver_state_available"] is False
+    assert receipt["solver_kinematic_evidence_available"] is True
+    assert receipt["differential_ik"]["jacobian_condition_number"] == 2.0
+
+
+def test_teacher_contact_evidence_binds_named_robot_body_forces() -> None:
+    torch = pytest.importorskip("torch")
+    native = SimpleNamespace(
+        scene={
+            "npa_robot_contact": SimpleNamespace(
+                body_names=["base", "tool"],
+                data=SimpleNamespace(
+                    net_forces_w=torch.tensor([[[0.0, 0.0, 0.0], [0.0, 3.0, 4.0]]])
+                ),
+            )
+        }
+    )
+
+    receipt = _teacher_contact_evidence(native)
+
+    assert receipt["forces_by_body_n"] == {"base": 0.0, "tool": 5.0}
+    assert receipt["maximum_force_n"] == 5.0
+    assert receipt["bodies_above_contact_threshold"] == ["tool"]
+    assert receipt["contact_partner_identity_available"] is False
+
+
+def test_teacher_solver_evidence_binds_commands_and_jacobian_conditioning() -> None:
+    torch = pytest.importorskip("torch")
+    arm = SimpleNamespace(
+        raw_actions=torch.tensor([[1.0, 0.0, 0.0, 0.0, 0.0, 0.0]]),
+        processed_actions=torch.tensor([[0.1, 0.0, 0.0, 0.0, 0.0, 0.0]]),
+        jacobian_w=torch.diag(torch.tensor([6.0, 5.0, 4.0, 3.0, 2.0, 1.0])).unsqueeze(
+            0
+        ),
+        cfg=SimpleNamespace(controller=SimpleNamespace(ik_method="dls")),
+    )
+    native = SimpleNamespace(
+        action_manager=SimpleNamespace(
+            active_terms=["arm_action", "gripper_action"],
+            action_term_dim=[6, 1],
+            get_term=lambda name: arm if name == "arm_action" else SimpleNamespace(),
+        )
+    )
+
+    receipt = _teacher_solver_evidence(native)
+
+    assert receipt["method"] == "dls"
+    assert receipt["raw_action"] == [1.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    assert receipt["processed_action"] == pytest.approx([0.1, 0.0, 0.0, 0.0, 0.0, 0.0])
+    assert receipt["jacobian_singular_values"] == pytest.approx([6, 5, 4, 3, 2, 1])
+    assert receipt["jacobian_condition_number"] == pytest.approx(6.0)
+    assert receipt["joint_target_available"] is False
 
 
 def test_teacher_failure_evidence_error_does_not_replace_native_error(

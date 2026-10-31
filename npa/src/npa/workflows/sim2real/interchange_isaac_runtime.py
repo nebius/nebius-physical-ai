@@ -534,6 +534,8 @@ def _teacher_tracking_receipt(
     waypoint: Any,
     robot: Any,
     measured_after: dict[str, float],
+    contact_evidence: dict[str, Any],
+    solver_evidence: dict[str, Any],
 ) -> dict[str, Any]:
     """Bind controller tracking and physical joint margins to one command."""
 
@@ -564,8 +566,86 @@ def _teacher_tracking_receipt(
         "rotation_error_after_rad": after_rotation.tolist(),
         "arm_joint_positions_after_rad": joints,
         "arm_joint_position_limit_margins_after_rad": margins,
-        "collision_evidence_available": False,
+        "collision_evidence_available": True,
+        "robot_contact": contact_evidence,
         "solver_state_available": False,
+        "solver_kinematic_evidence_available": True,
+        "differential_ik": solver_evidence,
+    }
+
+
+def _teacher_contact_evidence(native: Any) -> dict[str, Any]:
+    """Read unfiltered per-body robot contact forces after one teacher control."""
+
+    import torch
+
+    sensor = native.scene["npa_robot_contact"]
+    values = _native_tensor(sensor.data.net_forces_w)
+    names = list(sensor.body_names)
+    if values is None or values.ndim != 3 or values.shape[0] != 1:
+        raise RuntimeError("robot contact sensor did not publish per-body forces")
+    if (
+        values.shape[1] != len(names)
+        or values.shape[2] != 3
+        or len(set(names)) != len(names)
+    ):
+        raise RuntimeError("robot contact sensor body mapping is invalid")
+    norms = torch.linalg.vector_norm(values[0], dim=-1).detach().cpu().tolist()
+    forces = {name: float(force) for name, force in zip(names, norms, strict=True)}
+    return {
+        "measurement": "unfiltered_net_contact_force_per_robot_rigid_body",
+        "units": "N",
+        "forces_by_body_n": forces,
+        "maximum_force_n": max(forces.values(), default=0.0),
+        "bodies_above_contact_threshold": [
+            name for name, force in forces.items() if force > CONTACT_FORCE_N
+        ],
+        "contact_partner_identity_available": False,
+    }
+
+
+def _teacher_solver_evidence(native: Any) -> dict[str, Any]:
+    """Read the real differential-IK command and Jacobian conditioning."""
+
+    import torch
+
+    _names, _dimensions, arm, _gripper, _arm_index, _gripper_index = _teacher_terms(
+        native
+    )
+    raw = _native_tensor(arm.raw_actions)
+    processed = _native_tensor(arm.processed_actions)
+    jacobian = _native_tensor(arm.jacobian_w)
+    if (
+        raw is None
+        or processed is None
+        or jacobian is None
+        or raw.shape != (1, 6)
+        or processed.shape != (1, 6)
+        or jacobian.ndim != 3
+        or jacobian.shape[0] != 1
+        or jacobian.shape[1] != 6
+    ):
+        raise RuntimeError("teacher differential-IK telemetry has an invalid shape")
+    singular_values = torch.linalg.svdvals(jacobian[0]).detach().cpu().tolist()
+    if not singular_values or not all(
+        math.isfinite(float(value)) for value in singular_values
+    ):
+        raise RuntimeError("teacher differential-IK Jacobian spectrum is invalid")
+    largest = float(max(singular_values))
+    smallest = float(min(singular_values))
+    return {
+        "method": str(arm.cfg.controller.ik_method),
+        "raw_action": [float(value) for value in raw[0].detach().cpu().tolist()],
+        "processed_action": [
+            float(value) for value in processed[0].detach().cpu().tolist()
+        ],
+        "jacobian_shape": list(jacobian.shape[1:]),
+        "jacobian_singular_values": [float(value) for value in singular_values],
+        "jacobian_condition_number": (
+            largest / smallest if smallest > torch.finfo(jacobian.dtype).eps else None
+        ),
+        "joint_target_available": False,
+        "damping_internal_state_available": False,
     }
 
 
@@ -987,7 +1067,13 @@ def _apply_teacher_step(
     sample = _sample(native, robot, prop, task, initial_z)
     measured_after = measured_policy_state(native, robot)
     tracking = _teacher_tracking_receipt(
-        pose_before, _teacher_end_effector_pose(native), waypoint, robot, measured_after
+        pose_before,
+        _teacher_end_effector_pose(native),
+        waypoint,
+        robot,
+        measured_after,
+        _teacher_contact_evidence(native),
+        _teacher_solver_evidence(native),
     )
     return (
         command,
