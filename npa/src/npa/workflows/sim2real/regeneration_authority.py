@@ -20,6 +20,7 @@ PRODUCER_FIELDS = (
     "workflow_job",
     "execution_mode",
 )
+IMAGE_SOURCE_FIELD = "image_source_sha"
 
 
 def authority_sha256(value: Any) -> str:
@@ -47,8 +48,19 @@ def validate_writer(writer: Any) -> dict[str, Any]:
     Raises:
         ValueError: If writer identity is missing or unqualified.
     """
-    if not isinstance(writer, dict) or set(writer) != set(PRODUCER_FIELDS):
+    if not isinstance(writer, dict):
         raise ValueError("regeneration writer identity is incomplete")
+    fields = set(writer)
+    base_fields = set(PRODUCER_FIELDS)
+    if fields not in (base_fields, base_fields | {IMAGE_SOURCE_FIELD}):
+        raise ValueError("regeneration writer identity is incomplete")
+    image_source = writer.get(IMAGE_SOURCE_FIELD)
+    if image_source is not None and (
+        not isinstance(image_source, str)
+        or len(image_source) != 40
+        or any(char not in "0123456789abcdef" for char in image_source)
+    ):
+        raise ValueError("regeneration writer image source is invalid")
     # This CPU replay does not inherit the original GPU/device claim.
     return build_component_record(
         stage=14,
@@ -171,7 +183,7 @@ def _validate_retained_components(report, retained):
 
 
 def _validate_writer_binding(artifacts, retained, writer):
-    if any(artifacts.get(key) != writer[key] for key in PRODUCER_FIELDS):
+    if any(artifacts.get(key) != value for key, value in writer.items()):
         raise ValueError("regeneration record does not name its current writer")
     if any(key in artifacts for key in ("gpu_products", "gpu_rows")):
         raise ValueError("regeneration inherited a GPU execution claim")

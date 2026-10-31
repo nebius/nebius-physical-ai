@@ -1810,6 +1810,11 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         "sim2real-smolvla-franka-cube-eval.yaml",
         "multi",
         runtime=True,
+        plan_only=True,
+        plan_only_justification=(
+            "Live execution requires operator-owned immutable Franka/cube profile, "
+            "gold cohort, checkpoint and exact development image digests."
+        ),
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
         rotation_skip=True,
         skip_reason=(
@@ -1817,13 +1822,13 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "SmolVLA checkpoint/profile and three exact development image digests."
         ),
         image_overrides=(
-            ("workbench.sim2real.policy_interchange_prepare", "sim2real-policy"),
-            ("workbench.sim2real.runtime_prerequisites_apply", "sim2real-policy"),
+            ("workbench.sim2real.policy_interchange_prepare", "lerobot"),
+            ("workbench.sim2real.runtime_prerequisites_apply", "lerobot"),
             ("workbench.lerobot.smolvla_adapted_service_start", "lerobot"),
             ("workbench.sim2real.smolvla_adapted_gold", "isaac-lab"),
             (
                 "workbench.sim2real.policy_interchange_experimental_eval_finalize",
-                "sim2real-policy",
+                "lerobot",
             ),
         ),
         notes=(

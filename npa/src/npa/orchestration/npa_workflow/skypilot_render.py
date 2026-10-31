@@ -130,6 +130,7 @@ TOOL_REF_IMAGE_TOOL: dict[str, str | None] = {
 IMAGE_TOOLS_REQUIRING_STAGED_NPA_SOURCE = frozenset({"sonic"})
 HABITAT_SIM_TOOL_REF = "workflow.habitat_sim.smoke"
 HABITAT_SIM_ACCELERATOR = "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
+OPENPI_TERMS_ENV = "NPA_OPENPI_ACCEPT_GEMMA_TERMS"
 
 SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     "workbench.cosmos3.generate_variants_endpoint": ("WMH_API_KEY",),
@@ -155,6 +156,7 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     "workflow.paidf.run_visual_qa": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "workflow.paidf.run_attribute_search": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "workflow.paidf.dig_prepare_pretrained": ("HF_TOKEN",),
+    "workbench.openpi": (OPENPI_TERMS_ENV,),
     # The released flex-pi checkpoint is public, but its multi-shard runtime
     # fetch can exceed the anonymous Hub rate limit. Forward an operator token
     # only through the workflow secret channel when one is available.
@@ -2538,6 +2540,13 @@ def secret_env_hints_for_plan(steps: Sequence[PlanStep]) -> tuple[str, ...]:
                 if name not in seen:
                     seen.add(name)
                     hints.append(name)
+        if tool_ref == "workbench.byof.repo" and any(
+            value == "openpi" or "pi05_droid_jointpos_polaris" in value
+            for value in step.argv
+        ):
+            if OPENPI_TERMS_ENV not in seen:
+                seen.add(OPENPI_TERMS_ENV)
+                hints.append(OPENPI_TERMS_ENV)
         matches = [
             (prefix, names)
             for prefix, names in SECRET_ENV_HINTS.items()
