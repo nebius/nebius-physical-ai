@@ -160,6 +160,142 @@ _GEMINI_ROBOTICS_PIPELINE = [
     "npa.workflows.byof.gemini_robotics_pipeline",
 ]
 _ROS2_PIPELINE = ["python3", "-m", "npa.workflows.byof.ros2_pipeline"]
+_ISAAC_RUNTIME_PYTHON = "/isaac-sim/python.sh"
+
+
+def _smolvla_service_argv(command: str) -> list[str]:
+    return [
+        "python3",
+        "-m",
+        "npa.workflows.sim2real.smolvla_service_lifecycle",
+        command,
+        "--run-id",
+        "{{run.id}}",
+        "--checkpoint-role",
+        "adapted",
+        "--checkpoint-uri",
+        "{{config.adapted_checkpoint_uri}}",
+        "--bind-adapter-uri",
+        "{{config.adapted_policy_adapter_uri}}",
+        "--runtime-image",
+        "{{config.runtime_image}}",
+        "--source-commit",
+        "{{config.source_sha}}",
+        "--namespace",
+        "{{config.service_namespace}}",
+        "--service-account",
+        "{{config.adapted_service_account}}",
+        "--auth-secret",
+        "{{config.service_auth_secret}}",
+        "--hf-token-secret",
+        "{{config.hf_token_secret}}",
+        "--gpu-count",
+        "{{config.service_gpu_count}}",
+        "--server-cpu",
+        "{{config.service_server_cpus}}",
+        "--server-memory",
+        "{{config.service_server_memory}}",
+        "--policy-cache-pvc",
+        "{{config.policy_cache_pvc}}",
+        "--gpu-node-selector-key",
+        "{{config.service_gpu_node_selector_key}}",
+        "--gpu-node-selector-value",
+        "{{config.service_gpu_node_selector_value}}",
+        "--hardware-topology",
+        "{{config.service_hardware_topology}}",
+        "--ready-timeout-seconds",
+        "{{config.service_server_ready_timeout_seconds}}",
+        "--output-uri",
+        f"{{{{config.adapted_service_{command}_uri}}}}",
+        "--component-root-uri",
+        "{{config.component_root_uri}}",
+    ]
+
+
+def _sim2real_runtime_prerequisite_argv(action: str) -> list[str]:
+    output_key = (
+        "runtime_prerequisites_uri"
+        if action == "apply"
+        else "runtime_prerequisites_cleanup_uri"
+    )
+    return [
+        "python3",
+        "-m",
+        "npa.workflows.sim2real.runtime_prerequisites",
+        action,
+        "--run-id",
+        "{{run.id}}",
+        "--namespace",
+        "{{config.service_namespace}}",
+        "--isaac-image",
+        "{{config.isaac_image}}",
+        "--isaac-cache-pvc",
+        "{{config.isaac_cache_pvc}}",
+        "--policy-cache-pvc",
+        "{{config.policy_cache_pvc}}",
+        "--auth-secret",
+        "{{config.service_auth_secret}}",
+        "--base-service-account",
+        "{{config.base_service_account}}",
+        "--adapted-service-account",
+        "{{config.adapted_service_account}}",
+        "--isaac-warm-job",
+        "{{config.isaac_warm_job}}",
+        "--storage-class",
+        "{{config.runtime_storage_class}}",
+        "--storage-access-mode",
+        "{{config.runtime_storage_access_mode}}",
+        "--isaac-cache-size",
+        "{{config.isaac_cache_size}}",
+        "--policy-cache-size",
+        "{{config.policy_cache_size}}",
+        "--warm-timeout-seconds",
+        "{{config.isaac_cache_warm_timeout_seconds}}",
+        "--output-uri",
+        f"{{{{config.{output_key}}}}}",
+    ]
+
+
+def _smolvla_closed_loop_argv() -> list[str]:
+    return [
+        _ISAAC_RUNTIME_PYTHON,
+        "-m",
+        "npa.workflows.sim2real.pi05_closed_loop_entry",
+        "--policy-backend",
+        "lerobot_smolvla",
+        "--smolvla-action-selection",
+        "{{config.smolvla_action_selection}}",
+        "--preparation-uri",
+        "{{config.preparation_uri}}",
+        "--service-receipt-uri",
+        "{{config.adapted_service_start_uri}}",
+        "--gold-collection-uri",
+        "{{config.gold_collection_uri}}",
+        "--output-uri",
+        "{{config.adapted_gold_uri}}",
+        "--artifact-root-uri",
+        "{{config.adapted_artifact_root_uri}}",
+        "--component-root-uri",
+        "{{config.component_root_uri}}",
+        "--checkpoint-role",
+        "adapted",
+        "--recording-id",
+        "{{run.id}}",
+        "--split",
+        "gold",
+        "--episodes",
+        "{{config.gold_episodes}}",
+        "--decisions",
+        "{{config.eval_decisions}}",
+        "--seed",
+        "{{config.gold_seed}}",
+        "--wrist-ablation-modes",
+        "{{config.wrist_ablation_modes}}",
+        "--ablation-seed",
+        "{{config.wrist_ablation_seed}}",
+    ]
+
+
 _MOLMOACT_PIPELINE = ["python3", "-m", "npa.workflows.byof.molmoact_pipeline"]
 _OPENVLA_PIPELINE = ["python3", "-m", "npa.workflows.byof.openvla_pipeline"]
 _NEWTON_PIPELINE = ["python3", "-m", "npa.workflows.byof.newton_pipeline"]
@@ -181,6 +317,103 @@ _PAIDF_NATIVE_PIPELINE = ["python3", "-m", "npa.workflows.paidf_native"]
 _HABITAT_SIM_SMOKE = ["python3", "-m", "npa.workflows.habitat_sim_smoke"]
 
 TOOL_CATALOG: dict[str, ToolEntry] = {
+    "workbench.sim2real.policy_interchange_prepare": ToolEntry(
+        name="workbench.sim2real.policy_interchange_prepare",
+        description=(
+            "Validate one sealed robot, camera, rigid-object, task, and native "
+            "policy profile before any GPU stage."
+        ),
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workflows.sim2real.interchange_stage",
+            "prepare",
+            "--run-id",
+            "{{run.id}}",
+            "--profile-uri",
+            "{{config.profile_uri}}",
+            "--output-uri",
+            "{{config.preparation_uri}}",
+            "--component-root-uri",
+            "{{config.component_root_uri}}",
+            "--adapter-output-uri",
+            "{{config.policy_adapter_uri}}",
+            "--execution-profile",
+            "{{config.execution_profile}}",
+        ],
+    ),
+    "workbench.sim2real.runtime_prerequisites_apply": ToolEntry(
+        name="workbench.sim2real.runtime_prerequisites_apply",
+        description=(
+            "Create or exactly adopt run-owned caches, authentication, service "
+            "RBAC and the immutable Isaac cache."
+        ),
+        argv_template=_sim2real_runtime_prerequisite_argv("apply"),
+    ),
+    "workbench.sim2real.runtime_prerequisites_cleanup": ToolEntry(
+        name="workbench.sim2real.runtime_prerequisites_cleanup",
+        description="Delete only the exact run-owned Sim2Real prerequisites.",
+        argv_template=_sim2real_runtime_prerequisite_argv("cleanup"),
+    ),
+    "workbench.lerobot.smolvla_adapted_service_start": ToolEntry(
+        name="workbench.lerobot.smolvla_adapted_service_start",
+        description="Start an owned private typed SmolVLA checkpoint service.",
+        argv_template=_smolvla_service_argv("start"),
+        omit_flags_when_empty=("--hf-token-secret",),
+        config_defaults={"hf_token_secret": ""},
+    ),
+    "workbench.lerobot.smolvla_adapted_service_cleanup": ToolEntry(
+        name="workbench.lerobot.smolvla_adapted_service_cleanup",
+        description="Delete and verify only the exactly owned SmolVLA service.",
+        argv_template=_smolvla_service_argv("cleanup"),
+        omit_flags_when_empty=("--hf-token-secret",),
+        config_defaults={"hf_token_secret": ""},
+    ),
+    "workbench.sim2real.smolvla_adapted_gold": ToolEntry(
+        name="workbench.sim2real.smolvla_adapted_gold",
+        description=(
+            "Evaluate an existing native SmolVLA checkpoint on the sealed "
+            "Franka/cube cohort with matched wrist interventions."
+        ),
+        argv_template=_smolvla_closed_loop_argv(),
+    ),
+    "workbench.sim2real.policy_interchange_experimental_eval_finalize": ToolEntry(
+        name="workbench.sim2real.policy_interchange_experimental_eval_finalize",
+        description=(
+            "Bind one checkpoint-backed Franka/cube simulation evaluation and "
+            "its factual native evidence without training or causal-benefit claims."
+        ),
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workflows.sim2real.interchange_stage",
+            "experimental-eval-finalize",
+            "--run-id",
+            "{{run.id}}",
+            "--adapted-uri",
+            "{{config.adapted_gold_uri}}",
+            "--checkpoint-uri",
+            "{{config.adapted_checkpoint_uri}}",
+            "--episodes",
+            "{{config.gold_episodes}}",
+            "--adapted-artifact-root-uri",
+            "{{config.adapted_artifact_root_uri}}",
+            "--final-mp4-uri",
+            "{{config.final_mp4_uri}}",
+            "--final-witness-mp4-uri",
+            "{{config.final_witness_mp4_uri}}",
+            "--final-rrd-uri",
+            "{{config.final_rrd_uri}}",
+            "--final-policy-inputs-uri",
+            "{{config.final_policy_inputs_uri}}",
+            "--final-html-uri",
+            "{{config.final_html_uri}}",
+            "--output-uri",
+            "{{config.final_report_uri}}",
+            "--component-root-uri",
+            "{{config.component_root_uri}}",
+        ],
+    ),
     "workbench.marble.pallet_preflight": ToolEntry(
         name="workbench.marble.pallet_preflight",
         description="Require World API auth and snapshot disjoint real pallet data.",

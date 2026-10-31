@@ -2942,9 +2942,11 @@ def test_actual_native_sdk_persists_verified_project_and_resource_shape_before_c
     assert requests[0]["shapes"][0]["resources"]["accelerators"] == "B200:1"
     assert requests[0]["shapes"][0]["resources"]["cloud"] == "nebius"
     assert requests[0]["shapes"][0]["resources"]["region"] == "eu-west1"
-    config = yaml.safe_load(
-        Path(controller.call_args.kwargs["env"]["SKYPILOT_GLOBAL_CONFIG"]).read_text()
-    )
+    # The persistent API is checked with its stable server configuration; the
+    # verified project and resource shape belong to the submission-specific
+    # launch config.  Inspect that prepared artifact directly instead of
+    # requiring the daemon identity check to consume it.
+    config = yaml.safe_load(next(tmp_path.rglob("skypilot-config.yaml")).read_text())
     assert (
         config["nebius"]["region_configs"]["eu-west1"]["project_id"] == "project-unit"
     )

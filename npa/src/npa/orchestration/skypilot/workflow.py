@@ -1003,6 +1003,7 @@ class _PreparedWorkflowSubmission:
     global_config: dict[str, Any]
     libero_submission: bool = False
     env: dict[str, str] = field(default_factory=dict)
+    control_env: dict[str, str] = field(default_factory=dict)
 
 
 def _submission_global_config(
@@ -1222,6 +1223,11 @@ def _prepare_workflow_submission(
             yaml.safe_dump(global_config, sort_keys=False), encoding="utf-8"
         )
         _chmod_owner_only(generated)
+        # The persistent API owns the stable server configuration selected by
+        # ``sky_environment``.  The generated config is submission-specific and
+        # must be used only by the launch command; binding the daemon check to
+        # it makes every isolated submission look like an identity change.
+        control_env = dict(env)
         env["SKYPILOT_GLOBAL_CONFIG"] = str(generated)
         if libero_submission:
             generated.chmod(0o400)
@@ -1236,6 +1242,7 @@ def _prepare_workflow_submission(
             global_config,
             libero_submission=libero_submission,
             env=env,
+            control_env=control_env,
         )
     except BaseException:
         if runtime.isolated_config_dir is None:
@@ -1758,7 +1765,7 @@ def submit_workflow(
             generated_config_path = prepared.config_path
             sky_executable = prepared.sky_executable
             global_config = prepared.global_config
-            control_env = env
+            control_env = prepared.control_env
             owned_submission_dir = (
                 submission_dir if runtime_config.isolated_config_dir is None else None
             )

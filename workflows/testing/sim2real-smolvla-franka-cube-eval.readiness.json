@@ -1,0 +1,58 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "1ba5657d2a8a046f79939057af7db6174c7fb8ebe1277488f31fbd23e4bf8ae3",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "The standard workflow parser and production renderer accept the seven-stage evaluation-only graph and its exact-owned failure cleanup.",
+      "evidence": [
+        "validate-spec status valid",
+        "plan-spec --check-render status valid with seven normal-path tasks"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "The rendered evaluator binds an existing checkpoint, sealed Franka/cube cohort, actual workspace and moving-wrist inputs, uniform temporal ensembling, three declared wrist modes, native controls/physics/evidence, service cleanup and runtime cleanup.",
+      "evidence": [
+        "npa/tests/orchestration/npa_workflow/test_sim2real_franka_cube_eval_workflow.py",
+        "npa/tests/workflows/test_sim2real_interchange_stage.py"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "The example bucket is intentionally not writable; the configured project bucket must pass normal read/write preflight.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "A worker-readable qualified profile, sealed Franka/cube gold cohort, selected checkpoint and matching adapter must be supplied.",
+      "evidence": []
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "Project authentication, storage access and exact development-image pull access must pass in the submitting environment.",
+      "evidence": []
+    },
+    "source_image": {
+      "status": "verified",
+      "reason": "The live standard workflow used the independently qualified immutable Isaac and LeRobot image digests with their actual baked source identity, while the workflow consumer remained exact source 9229e268. The images are not relabelled as candidate-built images.",
+      "evidence": [
+        "Mandatory image security, provenance, SPDX/SBOM and anonymous complete-byte qualification passed before submission.",
+        "The exact source/image compatibility preflight and built-runtime import boundary passed in the live workflow."
+      ]
+    },
+    "target_runtime": {
+      "status": "verified",
+      "reason": "The exact-922 standard workflow completed all seven stages: profile preparation, workflow-owned prerequisites, clean checkpoint-service initialization, 24 sealed native trials, exact service cleanup, factual finalization and runtime-prerequisite cleanup.",
+      "evidence": [
+        "All seven managed stages completed successfully without retry or duplicate submission.",
+        "The final native result is fresh 5/8, frozen 0/8 and spatial-and-channel pixel-value shuffle 0/8 with 4,608 paired-noise policy/control decisions.",
+        "The standalone offline HTML contains model-consumed workspace and wrist views plus goal and release witnesses and requires no external network.",
+        "The predeclared positive causal-wrist criterion remains unmet and no causal-benefit claim is made.",
+        "This workflow does not claim the sixteen-stage collect/export/train clean start, interrupted-training adoption, another object, another embodiment, active recovery or physical-robot deployment."
+      ]
+    }
+  }
+}

@@ -17,6 +17,40 @@ class IsaacRobotAssetError(RuntimeError):
     """Raised when Isaac cannot honor the immutable robot asset contract."""
 
 
+URDF_CONVERSION_RECIPE = {
+    "converter": "isaaclab.sim.converters.UrdfConverter",
+    "version": 4,
+    "fix_base": True,
+    "force_usd_conversion": True,
+    "merge_fixed_joints": False,
+    "make_instanceable": False,
+    "flatten_composition": True,
+    "author_contact_reporters_on_all_rigid_bodies": True,
+    "joint_drive_stiffness": None,
+}
+USD_IDENTITY_RECIPE = {"converter": "identity", "version": 1}
+
+
+def conversion_recipe(source_format: str) -> dict:
+    """Return the exact conversion behavior that participates in asset identity."""
+
+    if source_format == "urdf":
+        return dict(URDF_CONVERSION_RECIPE)
+    if source_format == "usd":
+        return dict(USD_IDENTITY_RECIPE)
+    raise IsaacRobotAssetError(f"unsupported robot source format {source_format!r}")
+
+
+def conversion_recipe_sha256(source_format: str) -> str:
+    """Return the canonical digest for one supported conversion recipe."""
+
+    return hashlib.sha256(
+        json.dumps(
+            conversion_recipe(source_format), sort_keys=True, separators=(",", ":")
+        ).encode()
+    ).hexdigest()
+
+
 def _spec() -> dict:
     try:
         payload = json.loads(os.environ["NPA_BYO_ROBOT_SPEC_JSON"])

@@ -273,6 +273,16 @@ if [ "$ISAAC_PYTHON_MINOR" = 3.12 ]; then
   # bytes. The secure 84.1.0 pin carries the official fix natively; older
   # reviewed constrained bytes receive the bounded compatibility backport.
   "$ISAAC_VENV/bin/python" "${COMMON_DIR}/backport_setuptools_manifest.py"
+  "$ISAAC_VENV/bin/python" - <<'PY'
+from importlib import metadata
+
+import torch
+from torch.utils.cpp_extension import BuildExtension, CppExtension, CUDAExtension
+
+assert torch.__version__ == "2.11.0+cu128"
+assert metadata.version("setuptools") == "84.2.1"
+assert all((BuildExtension, CppExtension, CUDAExtension))
+PY
 fi
 # Torch 2.11.0+cu128's released metadata caps Setuptools below the reviewed
 # Isaac 3 security floor, although its tested extension interface works with

@@ -230,7 +230,11 @@ def test_non_cli_argv_entries_are_pinned() -> None:
     unexpected = actual - NON_CLI_ARGV
     for tool_ref in tuple(unexpected):
         argv = TOOL_CATALOG[tool_ref].argv_template
-        if len(argv) > 3 and argv[0] == "python3" and argv[1] == "-m":
+        if (
+            len(argv) > 3
+            and Path(str(argv[0])).name.startswith("python")
+            and argv[1] == "-m"
+        ):
             _check_module_parser(tool_ref, argv)
             unexpected.remove(tool_ref)
     assert not unexpected, (

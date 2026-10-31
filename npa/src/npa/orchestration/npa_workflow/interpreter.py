@@ -19,7 +19,10 @@ from npa.orchestration.npa_workflow.decisions import (
     normalize_decision,
     refresh_context_decision,
 )
-from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+from npa.orchestration.npa_workflow.errors import (
+    NpaWorkflowError,
+    WorkflowExecutionError,
+)
 from npa.orchestration.npa_workflow.image_inputs import validate_immutable_image_inputs
 from npa.orchestration.npa_workflow.predicates import evaluate_predicate
 from npa.orchestration.npa_workflow.run_state import (
@@ -141,6 +144,33 @@ def build_plan(
     return plan
 
 
+def build_failure_plan(
+    spec: NpaWorkflowSpec,
+    *,
+    run_id: str = "plan-run",
+    assume_decision: str = "",
+) -> ExecutionPlan | None:
+    """Build the declared terminal-failure path without changing the normal plan."""
+
+    if not spec.on_failure:
+        return None
+    assume = _resolve_assume(spec, assume_decision)
+    plan = ExecutionPlan(
+        workflow=spec.name,
+        api_version=spec.api_version,
+        initial=spec.on_failure,
+        assume_decision=assume,
+    )
+    _expand_state(
+        spec,
+        spec.on_failure,
+        _make_context(spec, run_id=run_id),
+        plan,
+        assume_decision=assume,
+    )
+    return plan
+
+
 def reachable_state_names(spec: NpaWorkflowSpec) -> list[str]:
     """List possible states after applying ordered static configuration branches.
 
@@ -153,6 +183,8 @@ def reachable_state_names(spec: NpaWorkflowSpec) -> list[str]:
     """
     reachable: list[str] = []
     pending = [spec.initial]
+    if spec.on_failure:
+        pending.append(spec.on_failure)
     while pending:
         state_name = pending.pop()
         if state_name in reachable:
@@ -178,7 +210,6 @@ def reachable_state_names(spec: NpaWorkflowSpec) -> list[str]:
             if state.next:
                 possible_targets.append(state.next)
         pending.extend(reversed(possible_targets))
-
     return reachable
 
 
@@ -305,7 +336,24 @@ def run_workflow(
             status = "planned"
     except NpaWorkflowError as exc:
         status = "failed"
-        error = exc
+        cleanup_error = _run_failure_handler(
+            spec,
+            ctx,
+            execute=execute,
+            assume_decision=assume,
+            require_inputs=require_inputs,
+            on_step=on_step,
+            decision_reader=decision_reader,
+            artifact_checker=artifact_checker,
+            step_executor=step_executor,
+            trigger_waiter=trigger_waiter,
+            results=results,
+        )
+        error = WorkflowExecutionError(
+            exc,
+            failure_handler=spec.on_failure,
+            cleanup_error=cleanup_error,
+        )
     finally:
         if store is not None:
             manifest.status = status
@@ -342,6 +390,43 @@ def run_workflow(
     return report
 
 
+def _run_failure_handler(
+    spec: NpaWorkflowSpec,
+    ctx: RunContext,
+    *,
+    execute: bool,
+    assume_decision: str,
+    require_inputs: bool,
+    on_step: Callable[[PlanStep], None] | None,
+    decision_reader: Any | None,
+    artifact_checker: Any | None,
+    step_executor: Any | None,
+    trigger_waiter: Callable[[StateSpec, str, RunContext], dict[str, Any]] | None,
+    results: list[dict[str, Any]],
+) -> NpaWorkflowError | None:
+    """Run the declared terminal-failure path once and return its error, if any."""
+
+    if not execute or not spec.on_failure:
+        return None
+    try:
+        _execute_state_machine(
+            spec,
+            spec.on_failure,
+            ctx,
+            assume_decision=assume_decision,
+            require_inputs=require_inputs,
+            on_step=on_step,
+            decision_reader=decision_reader,
+            artifact_checker=artifact_checker,
+            step_executor=step_executor,
+            trigger_waiter=trigger_waiter,
+            results_out=results,
+        )
+    except NpaWorkflowError as exc:
+        return exc
+    return None
+
+
 def _make_context(spec: NpaWorkflowSpec, *, run_id: str) -> RunContext:
     run = {"id": run_id, "prefix": f"{spec.name}/{run_id}", **dict(spec.run_defaults)}
     run["id"] = run_id
@@ -353,10 +438,33 @@ def _make_context(spec: NpaWorkflowSpec, *, run_id: str) -> RunContext:
             continue
         for key, value in config_defaults_for_tool(state.tool_ref).items():
             config_with_tool_defaults.setdefault(key, value)
+    _bind_workflow_owned_runtime_identities(config_with_tool_defaults, run_id)
     config = _resolve_config_strings(config_with_tool_defaults, run=run)
     if config.get("prefix"):
         run["prefix"] = resolve_tokens(str(config["prefix"]), config=config, run=run)
     return RunContext(config=config, run=run)
+
+
+def _bind_workflow_owned_runtime_identities(
+    config: dict[str, Any], run_id: str
+) -> None:
+    """Bind collision-safe prerequisite names before config token resolution."""
+
+    if str(config.get("runtime_prerequisites_mode") or "") != "workflow_owned":
+        return
+    from npa.workflows.sim2real.runtime_prerequisites import resource_identities
+
+    identities = resource_identities(run_id)
+    config_keys = {
+        "auth_secret": "service_auth_secret",
+        "base_service_account": "base_service_account",
+        "adapted_service_account": "adapted_service_account",
+        "isaac_cache_pvc": "isaac_cache_pvc",
+        "policy_cache_pvc": "policy_cache_pvc",
+        "isaac_warm_job": "isaac_warm_job",
+    }
+    for identity_key, config_key in config_keys.items():
+        config[config_key] = identities[identity_key]
 
 
 def _resolve_config_strings(

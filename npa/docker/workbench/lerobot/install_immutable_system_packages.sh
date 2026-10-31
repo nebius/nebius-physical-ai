@@ -23,6 +23,7 @@ apt-get install -y --no-install-recommends \
   build-essential=12.9ubuntu3 \
   cmake=3.22.1-1ubuntu1.22.04.2 \
   ffmpeg=7:4.4.2-0ubuntu0.22.04.1 \
+  fuse=2.9.9-5ubuntu3 \
   git=1:2.34.1-1ubuntu1.17 \
   libegl1=1.4.0-1 \
   libegl1-mesa-dev=23.2.1-1ubuntu3.1~22.04.4 \
@@ -44,8 +45,14 @@ apt-get install -y --no-install-recommends \
   rsync=3.2.7-0ubuntu0.22.04.7 \
   sudo=1.9.9-1ubuntu2.6 \
   netcat-openbsd=1.218-4ubuntu1 \
+  wget=1.21.2-2ubuntu1.4 \
   openssl=3.0.2-0ubuntu1.26 \
   libssl3=3.0.2-0ubuntu1.26
+
+test "$(dpkg-query -W -f='${Version}' fuse)" = "2.9.9-5ubuntu3"
+test "$(dpkg-query -W -f='${Version}' wget)" = "1.21.2-2ubuntu1.4"
+test -x /bin/fusermount
+test -x /usr/bin/wget
 
 # cmake-data ships a Windows-only signing template. Remove this known inert
 # PKCS#12 path in the same layer that installs cmake so it is never emitted in
