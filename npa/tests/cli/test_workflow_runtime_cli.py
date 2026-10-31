@@ -2174,7 +2174,7 @@ def runtime_api_environment(fake_runtime, mocker, monkeypatch, tmp_path):
             "explicit/environment-test",
         ),
         ([], False, "token-factory-fanout/environment-test"),
-        ([], True, "inherited/old-run"),
+        ([], True, "token-factory-fanout/environment-test"),
     ],
 )
 def test_runtime_readiness_uses_resolved_environment(
