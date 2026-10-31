@@ -16,6 +16,7 @@ import pytest
 
 import npa.workbench.lerobot.policy_container as policy_container
 from npa.workbench.lerobot.policy_container import (
+    CheckpointValidationResult,
     INTERCHANGE_MANIFEST_FILENAME,
     PolicyContainerError,
     _load_interchange_manifest,
@@ -610,7 +611,14 @@ def test_health_exposes_loaded_interchange_identities_and_byte_hash(
     runtime = SimpleNamespace(
         checkpoint_path=checkpoint,
         manifest=manifest,
-        validation=SimpleNamespace(to_dict=lambda: {"status": "loadable"}),
+        validation=CheckpointValidationResult(
+            status="loadable",
+            checkpoint_path="/private/operator/checkpoint",
+            weight_file="/private/operator/checkpoint/model.safetensors",
+            tensor_count=500,
+            parameter_count=450_046_176,
+            bytes=1_197_811_370,
+        ),
     )
     monkeypatch.setenv("NPA_POLICY_CHECKPOINT", str(checkpoint))
     import npa.workbench.lerobot.policy_container as policy_container
@@ -625,6 +633,15 @@ def test_health_exposes_loaded_interchange_identities_and_byte_hash(
         "/health"
     )
     assert response.status_code == 200, response.text
+    checkpoint_health = response.json()["checkpoint"]
+    assert checkpoint_health == {
+        "status": "loadable",
+        "tensor_count": 500,
+        "parameter_count": 450_046_176,
+        "bytes": 1_197_811_370,
+    }
+    assert "checkpoint_path" not in checkpoint_health
+    assert "weight_file" not in checkpoint_health
     interchange = response.json()["interchange"]
     assert interchange["robot_identity"] == "six-axis-arm"
     assert interchange["checkpoint_sha256"] == "a" * 64

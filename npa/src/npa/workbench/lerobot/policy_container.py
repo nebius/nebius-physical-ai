@@ -315,6 +315,16 @@ class CheckpointValidationResult:
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
+    def to_health_dict(self) -> dict[str, Any]:
+        """Return load proof without exposing operator-local checkpoint paths."""
+
+        return {
+            "status": self.status,
+            "tensor_count": self.tensor_count,
+            "parameter_count": self.parameter_count,
+            "bytes": self.bytes,
+        }
+
 
 @dataclass(frozen=True)
 class LeRobotTrainingResult:
@@ -1907,7 +1917,7 @@ def create_app() -> Any:
         import_result = assert_lerobot_importable().to_dict()
         payload: dict[str, Any] = {"status": "ok", "lerobot": import_result}
         if policy is not None:
-            payload["checkpoint"] = policy.validation.to_dict()
+            payload["checkpoint"] = policy.validation.to_health_dict()
             payload["interchange"] = {
                 "schema": policy.manifest["schema"],
                 "backend": policy.manifest["backend"],
