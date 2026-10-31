@@ -107,6 +107,7 @@ class NpaWorkflowSpec:
     resources: dict[str, Any]
     initial: str
     states: dict[str, StateSpec]
+    on_failure: str = ""
 
     @property
     def name(self) -> str:
@@ -192,6 +193,7 @@ def _parse_document(data: dict[str, Any]) -> NpaWorkflowSpec:
         states[name] = _parse_state(name, entry, config)
 
     initial = str(data.get("initial") or next(iter(states)))
+    on_failure = _optional_string("workflow", "onFailure", data, "onFailure")
     return NpaWorkflowSpec(
         api_version=api_version,
         kind=kind,
@@ -201,6 +203,7 @@ def _parse_document(data: dict[str, Any]) -> NpaWorkflowSpec:
         resources=resources,
         initial=initial,
         states=states,
+        on_failure=on_failure,
     )
 
 
@@ -589,6 +592,10 @@ def validate_spec(spec: NpaWorkflowSpec) -> None:
 
     if spec.initial not in spec.states:
         raise NpaWorkflowError(f"initial state {spec.initial!r} is not defined")
+    if spec.on_failure and spec.on_failure not in spec.states:
+        raise NpaWorkflowError(f"onFailure state {spec.on_failure!r} is not defined")
+    if spec.on_failure == spec.initial:
+        raise NpaWorkflowError("onFailure must not reference the initial state")
 
     for state in spec.states.values():
         _validate_next_state(spec, state)

@@ -1,0 +1,53 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "7c5020a942419017f4579db80b6d909386dd967707305b05caa4df6b134272c4",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "The standard workflow parser and production renderer accept the seven-stage evaluation-only graph and its exact-owned failure cleanup.",
+      "evidence": [
+        "validate-spec status valid",
+        "plan-spec --check-render status valid with seven normal-path tasks"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "The rendered evaluator binds an existing checkpoint, sealed Franka/cube cohort, actual workspace and moving-wrist inputs, uniform temporal ensembling, three declared wrist modes, native controls/physics/evidence, service cleanup and runtime cleanup.",
+      "evidence": [
+        "npa/tests/orchestration/npa_workflow/test_sim2real_franka_cube_eval_workflow.py",
+        "npa/tests/workflows/test_sim2real_interchange_stage.py"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "The example bucket is intentionally not writable; the configured project bucket must pass normal read/write preflight.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "A worker-readable qualified profile, sealed Franka/cube gold cohort, selected checkpoint and matching adapter must be supplied.",
+      "evidence": []
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "Project authentication, storage access and exact development-image pull access must pass in the submitting environment.",
+      "evidence": []
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "The scoped candidate has not yet completed exact-source image qualification. Historical c7 evidence remains bound to its original source, images and execution workflow and is not relabelled as a run of this spec.",
+      "evidence": [
+        "Historical accepted fixed-cube result: fresh 5/8, frozen 0/8, spatial-and-channel pixel-value shuffle 0/8 under uniform temporal ensembling."
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "A live run of this exact evaluation-only spec, including clean service initialization, all 24 trials, factual report generation and exact cleanup, remains required. The historical result did not meet the predeclared positive causal wrist criterion.",
+      "evidence": [
+        "This workflow does not claim the sixteen-stage collect/export/train clean start, interrupted-training adoption, another object, another embodiment, active recovery or physical-robot deployment."
+      ]
+    }
+  }
+}

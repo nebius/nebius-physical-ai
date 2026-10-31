@@ -29,16 +29,37 @@ def test_parse_json_object_rejects_duplicate_nested_identity_fields() -> None:
         workflow_io.parse_json_object(payload, source="retained report")
 
 
-def test_source_sha_requires_workflow_and_image_attestations_to_match(
+def test_source_sha_supports_explicit_mixed_image_attestation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("NPA_IMAGE_SOURCE_SHA", SOURCE_SHA)
     monkeypatch.setenv("NPA_SIM2REAL_SOURCE_SHA", SOURCE_SHA)
     assert workflow_io.source_sha() == SOURCE_SHA
 
-    monkeypatch.setenv("NPA_SIM2REAL_SOURCE_SHA", "3" * 40)
-    with pytest.raises(RuntimeError, match="does not match"):
+    consumer_source = "3" * 40
+    monkeypatch.setenv("NPA_SIM2REAL_SOURCE_SHA", consumer_source)
+    monkeypatch.setenv("NPA_EXPECTED_IMAGE_SOURCE_SHA", SOURCE_SHA)
+    assert workflow_io.source_sha() == consumer_source
+
+    monkeypatch.setenv("NPA_EXPECTED_IMAGE_SOURCE_SHA", "4" * 40)
+    with pytest.raises(RuntimeError, match="expected image source SHA does not match"):
         workflow_io.source_sha()
+
+
+def test_image_provenance_keeps_consumer_and_baked_sources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    consumer_source = "3" * 40
+    monkeypatch.setenv("NPA_IMAGE_SOURCE_SHA", SOURCE_SHA)
+    monkeypatch.setenv("NPA_EXPECTED_IMAGE_SOURCE_SHA", SOURCE_SHA)
+    monkeypatch.setenv("NPA_SIM2REAL_SOURCE_SHA", consumer_source)
+    monkeypatch.setenv("NPA_TASK_IMAGE", IMAGE)
+    monkeypatch.setenv("SKYPILOT_TASK_ID", "mixed-source-stage")
+
+    provenance = workflow_io.image_provenance(require_gpu=False)
+
+    assert provenance["source_sha"] == consumer_source
+    assert provenance["image_source_sha"] == SOURCE_SHA
 
 
 def test_component_records_are_content_addressed_and_stage12_is_a_seam(

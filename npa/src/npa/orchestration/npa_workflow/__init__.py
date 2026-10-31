@@ -4,6 +4,7 @@ from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 from npa.orchestration.npa_workflow.interpreter import (
     ExecutionPlan,
     RunContext,
+    build_failure_plan,
     build_plan,
     build_reachability_plan,
     run_workflow,
@@ -46,6 +47,7 @@ __all__ = [
     "SupervisorLedger",
     "WorkflowRunSupervisor",
     "build_plan",
+    "build_failure_plan",
     "build_reachability_plan",
     "load_spec",
     "run_workflow",

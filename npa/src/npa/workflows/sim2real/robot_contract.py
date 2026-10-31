@@ -14,7 +14,11 @@ from defusedxml import ElementTree as ET
 from defusedxml.common import DefusedXmlException
 
 from npa.genesis import robot_assets
-from npa.workflows.sim2real import isaac_byo_robot_task, onboarding_derive
+from npa.workflows.sim2real import (
+    isaac_byo_robot_task,
+    isaac_robot_asset,
+    onboarding_derive,
+)
 
 
 ROBOT_CONTRACT_SCHEMA = "npa.sim2real.robot_contract.v1"
@@ -229,6 +233,53 @@ def _validate_urdf_structure(
     }
 
 
+def validate_robot_source_bundle(
+    *,
+    spec: robot_assets.RobotSpec,
+    bundle_root: Path,
+    source_path: Path,
+) -> dict[str, Any]:
+    """Validate one complete articulated source bundle independent of task type.
+
+    Task adapters share this byte/provenance boundary, then apply their own
+    explicit morphology and controller compatibility rules.  It deliberately
+    does not declare lift or VLA compatibility.
+    """
+
+    try:
+        relative = source_path.resolve().relative_to(bundle_root.resolve())
+    except ValueError as exc:
+        raise RobotContractError(
+            "RobotSpec.robot_uri resolved outside RobotSpec.asset_root_uri"
+        ) from exc
+    if not source_path.is_file() or source_path.stat().st_size == 0:
+        raise RobotContractError(
+            f"RobotSpec.robot_uri did not resolve to a non-empty file: {spec.robot_uri!r}"
+        )
+    dependencies: list[str] = []
+    urdf: dict[str, Any] = {}
+    if spec.robot_source == robot_assets.ROBOT_SOURCE_BYO_URDF:
+        dependencies = _mesh_dependencies(source_path, bundle_root)
+        urdf = _validate_urdf_structure(source_path, spec)
+    elif spec.robot_source != robot_assets.ROBOT_SOURCE_BYO_USD:
+        raise RobotContractError(
+            "Isaac robot materialization supports byo_urdf and byo_usd sources; "
+            f"got {spec.robot_source!r}"
+        )
+    source_tree_sha256, files = _tree_digest(bundle_root)
+    return {
+        "source_relative_path": relative.as_posix(),
+        "source_sha256": _file_digest(source_path),
+        "source_tree_sha256": source_tree_sha256,
+        "source_format": (
+            "urdf" if spec.robot_source == robot_assets.ROBOT_SOURCE_BYO_URDF else "usd"
+        ),
+        "source_files": files,
+        "urdf_dependencies": dependencies,
+        "urdf": urdf,
+    }
+
+
 def _task_config(doc: dict[str, Any], spec: robot_assets.RobotSpec) -> dict[str, Any]:
     supplied = doc.get("task") or doc.get("task_config") or {}
     if supplied and not isinstance(supplied, dict):
@@ -299,8 +350,18 @@ def materialize_robot_contract(
     root_uri: str,
     work_dir: Path,
     client: Any,
+    task_contract: str = "canonical_lift",
 ) -> dict[str, Any]:
-    """Fetch, validate, normalize, and publish one content-addressed RobotSpec."""
+    """Fetch, validate, normalize, and publish one content-addressed RobotSpec.
+
+    ``canonical_lift`` preserves the established Isaac Lift compatibility gate.
+    ``surface_placement_asset_only`` shares only immutable source and morphology
+    materialization; its controller, cameras, gripper aperture, task geometry,
+    and policy mapping must pass the policy-interchange preparation gate later.
+    """
+
+    if task_contract not in {"canonical_lift", "surface_placement_asset_only"}:
+        raise RobotContractError(f"unsupported task contract {task_contract!r}")
 
     if not robot_spec_uri.startswith("s3://"):
         raise RobotContractError(
@@ -335,11 +396,14 @@ def materialize_robot_contract(
             "a non-empty robot_spec_uri must describe an explicit articulated BYO "
             "robot; omit robot_spec_uri to use the byte-for-byte stock Franka path"
         )
-    if spec.n_gripper_joints != 2 or len(spec.finger_links) != 2:
+    supported_driver_counts = {2} if task_contract == "canonical_lift" else {1, 2}
+    if (
+        spec.n_gripper_joints not in supported_driver_counts
+        or len(spec.finger_links) != 2
+    ):
         raise RobotContractError(
-            "unsupported gripper contract: canonical Isaac Lift currently requires "
-            "a two-joint, two-finger parallel-jaw gripper with explicit ordered "
-            "gripper_joint_names and finger_links"
+            "unsupported gripper contract: the selected task requires a supported "
+            "parallel-jaw driver count and exactly two physical finger_links"
         )
 
     bundle = work_dir / "source"
@@ -359,30 +423,12 @@ def materialize_robot_contract(
                 f"RobotSpec.robot_uri is inaccessible: {spec.robot_uri!r}: {exc}"
             ) from exc
         source_relative = source_path.relative_to(bundle).as_posix()
-    try:
-        source_path.resolve().relative_to(bundle.resolve())
-    except ValueError as exc:
-        raise RobotContractError(
-            "RobotSpec.robot_uri resolved outside RobotSpec.asset_root_uri"
-        ) from exc
-    if not source_path.is_file() or source_path.stat().st_size == 0:
-        raise RobotContractError(
-            f"RobotSpec.robot_uri did not resolve to a non-empty file: {spec.robot_uri!r}"
-        )
-
-    dependencies: list[str] = []
-    urdf: dict[str, Any] = {}
-    if spec.robot_source == robot_assets.ROBOT_SOURCE_BYO_URDF:
-        dependencies = _mesh_dependencies(source_path, bundle)
-        urdf = _validate_urdf_structure(source_path, spec)
-    elif spec.robot_source != robot_assets.ROBOT_SOURCE_BYO_USD:
-        raise RobotContractError(
-            f"Isaac canonical workflow supports byo_urdf and byo_usd robot sources; "
-            f"got {spec.robot_source!r}"
-        )
-
-    source_tree_sha256, files = _tree_digest(bundle)
-    source_sha256 = _file_digest(source_path)
+    source = validate_robot_source_bundle(
+        spec=spec, bundle_root=bundle, source_path=source_path
+    )
+    source_tree_sha256 = source["source_tree_sha256"]
+    source_sha256 = source["source_sha256"]
+    source_relative = source["source_relative_path"]
     source_root_uri = (
         f"{root_uri.rstrip('/')}/stage_02_assets/robot/by-sha256/"
         f"{source_tree_sha256}/source/"
@@ -399,20 +445,41 @@ def materialize_robot_contract(
             "source_sha256": source_sha256,
             "source_tree_sha256": source_tree_sha256,
             "source_relative_path": source_relative,
-            "source_format": "urdf" if spec.robot_source == "byo_urdf" else "usd",
-            "source_files": files,
-            "urdf_dependencies": dependencies,
+            "source_format": source["source_format"],
+            "source_files": source["source_files"],
+            "urdf_dependencies": source["urdf_dependencies"],
         }
     )
-    task_config = _task_config(doc, spec)
-    compatibility = isaac_byo_robot_task.task_robot_compatibility(
-        {**normalized_spec, "usd_path": immutable_source_uri},
-        task_kind=str(task_config["skill"]),
-    )
-    if not compatibility.get("task_robot_compatible"):
-        raise RobotContractError(str(compatibility.get("reason") or compatibility))
+    if task_contract == "canonical_lift":
+        task_config = _task_config(doc, spec)
+        compatibility = isaac_byo_robot_task.task_robot_compatibility(
+            {**normalized_spec, "usd_path": immutable_source_uri},
+            task_kind=str(task_config["skill"]),
+        )
+        if not compatibility.get("task_robot_compatible"):
+            raise RobotContractError(str(compatibility.get("reason") or compatibility))
+    else:
+        task_config = {
+            "skill": "surface_placement",
+            "compatibility_scope": "asset_materialization_only",
+        }
+        compatibility = {
+            "task_robot_compatible": False,
+            "asset_materialized": True,
+            "scope": "asset_materialization_only",
+            "requires": [
+                "explicit joint limits and controller representation",
+                "parallel-jaw aperture mapping",
+                "calibrated exterior and wrist cameras",
+                "surface-placement geometry and policy compatibility",
+            ],
+        }
     expected_action_dim = spec.n_arm_joints + (1 if spec.has_gripper else 0)
-    expected_observation_dim = 2 * spec.dof_count + 10 + expected_action_dim
+    expected_observation_dim = (
+        2 * spec.dof_count + 10 + expected_action_dim
+        if task_contract == "canonical_lift"
+        else None
+    )
     embodiment = {
         "name": spec.name,
         "robot_source": spec.robot_source,
@@ -436,7 +503,11 @@ def materialize_robot_contract(
             "dof": spec.dof_count,
             "action": expected_action_dim,
             "observation": expected_observation_dim,
-            "observation_formula": "2*dof+object_pose7+goal3+last_action",
+            "observation_formula": (
+                "2*dof+object_pose7+goal3+last_action"
+                if task_contract == "canonical_lift"
+                else "typed calibrated cameras plus ordered measured state; no privileged object state"
+            ),
         },
         "task_config": task_config,
         "compatibility": compatibility,
@@ -448,26 +519,35 @@ def materialize_robot_contract(
             "license": dict(doc.get("license") or {}),
             "provenance": dict(doc.get("provenance") or {}),
         },
-        "urdf": urdf,
+        "urdf": source["urdf"],
     }
     embodiment_digest = _canonical_digest(embodiment)
+    conversion_recipe = isaac_robot_asset.conversion_recipe(source["source_format"])
+    conversion_recipe_sha256 = isaac_robot_asset.conversion_recipe_sha256(
+        source["source_format"]
+    )
     normalized_spec.update(
         {
             "embodiment_digest": embodiment_digest,
             "expected_action_dim": expected_action_dim,
             "expected_observation_dim": expected_observation_dim,
             "task_config": task_config,
+            "conversion_recipe": conversion_recipe,
+            "conversion_recipe_sha256": conversion_recipe_sha256,
         }
     )
     resolved_usd_uri = (
         immutable_source_uri
         if spec.robot_source == robot_assets.ROBOT_SOURCE_BYO_USD
-        else f"{root_uri.rstrip('/')}/stage_02_assets/robot/resolved/{embodiment_digest}/robot.usd"
+        else (
+            f"{root_uri.rstrip('/')}/stage_02_assets/robot/resolved/"
+            f"{embodiment_digest}/{conversion_recipe_sha256}/robot.usd"
+        )
     )
     normalized_spec["resolved_usd_uri"] = resolved_usd_uri
     normalized_spec["resolved_manifest_uri"] = (
         f"{root_uri.rstrip('/')}/stage_02_assets/robot/resolved/"
-        f"{embodiment_digest}/manifest.json"
+        f"{embodiment_digest}/{conversion_recipe_sha256}/manifest.json"
     )
     contract = {
         "schema": ROBOT_CONTRACT_SCHEMA,
@@ -490,11 +570,14 @@ def materialize_robot_contract(
                 if spec.robot_source == "byo_urdf"
                 else "none"
             ),
+            "conversion_recipe": conversion_recipe,
+            "conversion_recipe_sha256": conversion_recipe_sha256,
         },
         "requested_inputs": {
             "robot_spec_uri": robot_spec_uri,
             "robot_uri": spec.robot_uri,
             "asset_root_uri": asset_root_uri,
+            "task_contract": task_contract,
         },
     }
     contract["contract_digest"] = _canonical_digest(contract)
